@@ -182,6 +182,12 @@ import './contrib/emergencyAlert/electron-browser/emergencyAlert.contribution.js
 // MCP
 import './contrib/mcp/electron-browser/mcp.contribution.js';
 
+// Volt ACP stdio
+import './services/voltRuntime/electron-browser/voltStdio.contribution.js';
+
+// Volt dev hot reload (VSCODE_DEV only)
+import './contrib/voltAgent/electron-browser/voltDevReload.contribution.js';
+
 //#endregion
 
 

@@ -209,6 +209,16 @@ import './contrib/chat/browser/chat.contribution.js';
 import './contrib/inlineChat/browser/inlineChat.contribution.js';
 import './contrib/mcp/browser/mcp.contribution.js';
 
+// Volt runtime + settings
+import './services/voltRuntime/browser/voltRuntimeService.js';
+import './contrib/voltSettings/browser/voltSettings.contribution.js';
+
+// New Agent editor
+import './contrib/voltAgent/browser/agentEditor.contribution.js';
+
+// Volt Prediction (Tab / NES / cross-file edits)
+import './contrib/voltPrediction/browser/voltPrediction.contribution.js';
+
 // Interactive
 import './contrib/interactive/browser/interactive.contribution.js';
 
