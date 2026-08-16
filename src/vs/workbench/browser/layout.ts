@@ -14,7 +14,7 @@ import { PanelPart } from './parts/panel/panelPart.js';
 import { Position, Parts, PartOpensMaximizedOptions, IWorkbenchLayoutService, positionFromString, positionToString, partOpensMaximizedFromString, PanelAlignment, ActivityBarPosition, LayoutSettings, MULTI_WINDOW_PARTS, SINGLE_WINDOW_PARTS, ZenModeSettings, EditorTabsMode, EditorActionsLocation, shouldShowCustomTitleBar, isHorizontal, isMultiWindowPart } from '../services/layout/browser/layoutService.js';
 import { isTemporaryWorkspace, IWorkspaceContextService, WorkbenchState } from '../../platform/workspace/common/workspace.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../platform/storage/common/storage.js';
-import { IConfigurationChangeEvent, IConfigurationService, isConfigured } from '../../platform/configuration/common/configuration.js';
+import { IConfigurationChangeEvent, IConfigurationService } from '../../platform/configuration/common/configuration.js';
 import { ITitleService } from '../services/title/browser/titleService.js';
 import { ServicesAccessor } from '../../platform/instantiation/common/instantiation.js';
 import { StartupKind, ILifecycleService } from '../services/lifecycle/common/lifecycle.js';
@@ -2863,21 +2863,6 @@ class LayoutStateModel extends Disposable {
 			}
 
 			const configuration = this.configurationService.inspect(WorkbenchLayoutSettings.AUXILIARYBAR_DEFAULT_VISIBILITY);
-
-			// Unless auxiliary bar visibility is explicitly configured, make
-			// sure to not force open it in case we know it was empty before.
-			if (configuration.defaultValue !== 'hidden' && !isConfigured(configuration) && this.stateCache.get(LayoutStateKeys.AUXILIARYBAR_EMPTY.name)) {
-				return true;
-			}
-
-			// New users: Show auxiliary bar even in empty workspaces
-			// but not if the user explicitly hides it
-			if (
-				this.isNew[StorageScope.APPLICATION] &&
-				configuration.value !== 'hidden'
-			) {
-				return false;
-			}
 
 			// Existing users: respect visibility setting
 			switch (configuration.value) {

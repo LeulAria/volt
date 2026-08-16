@@ -117,8 +117,7 @@
 	overflow: hidden;
 	white-space: nowrap;
 	text-overflow: ellipsis;
-	margin-left: auto;
-	margin-right: auto;
+	margin: 0;
 }
 
 .monaco-workbench.web .part.titlebar > .titlebar-container > .titlebar-center > .window-title,
@@ -163,33 +162,54 @@
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-center > .window-title > .command-center .action-item.command-center-center {
 	display: flex;
 	align-items: stretch;
+	justify-content: flex-start;
+	box-sizing: border-box;
 	color: var(--vscode-commandCenter-foreground);
-	background-color: var(--vscode-commandCenter-background);
-	border: 1px solid var(--vscode-commandCenter-border);
+	background-color: transparent !important;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 28%, transparent) !important;
 	overflow: hidden;
 	margin: 0 6px;
-	border-top-left-radius: 6px;
-	border-bottom-left-radius: 6px;
-	border-top-right-radius: 6px;
-	border-bottom-right-radius: 6px;
-	height: 22px;
-	width: 38vw;
-	max-width: 600px;
+	border-radius: 5px;
+	height: 24px;
+	width: 360px;
+	max-width: 360px;
+}
+
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-center > .window-title > .command-center .action-item.command-center-center .monaco-action-bar,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-center > .window-title > .command-center .action-item.command-center-center .monaco-action-bar .actions-container {
+	justify-content: flex-start !important;
+	width: 100%;
+	max-width: 360px;
 }
 
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-center > .window-title > .command-center .action-item.command-center-center .action-item.command-center-quick-pick {
 	display: flex;
-	justify-content: start;
+	align-items: center;
+	justify-content: flex-start !important;
 	overflow: hidden;
-	margin: auto;
-	max-width: 600px;
+	margin: 0;
+	width: 100%;
+	max-width: 360px;
+	padding: 0 8px 0 4px;
+	background: transparent !important;
 }
 
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-center > .window-title > .command-center .action-item.command-center-center .action-item.command-center-quick-pick .search-icon {
-	font-size: 14px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
 	opacity: .8;
-	margin: auto 3px;
+	margin: 0 6px 0 0;
+	flex-shrink: 0;
 	color: var(--vscode-commandCenter-foreground);
+}
+
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-center > .window-title > .command-center .action-item.command-center-center .action-item.command-center-quick-pick .search-icon svg {
+	display: block;
+	width: 14px;
+	height: 14px;
 }
 
 .monaco-workbench .part.titlebar.inactive > .titlebar-container > .titlebar-center > .window-title > .command-center .action-item.command-center-center .action-item.command-center-quick-pick .search-icon {
@@ -216,13 +236,14 @@
 
 .monaco-workbench .part.titlebar.inactive > .titlebar-container > .titlebar-center > .window-title > .command-center .action-item.command-center-center {
 	color: var(--vscode-titleBar-inactiveForeground);
-	border-color: var(--vscode-commandCenter-inactiveBorder) !important;
+	background-color: transparent !important;
+	border-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent) !important;
 }
 
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-center > .window-title > .command-center .action-item.command-center-center:HOVER {
 	color: var(--vscode-commandCenter-activeForeground);
-	background-color: var(--vscode-commandCenter-activeBackground);
-	border-color: var(--vscode-commandCenter-activeBorder);
+	background-color: transparent !important;
+	border-color: color-mix(in srgb, var(--vscode-foreground) 42%, transparent) !important;
 }
 
 /* Menubar */
@@ -374,6 +395,36 @@
 
 .monaco-workbench .part.titlebar .window-controls-container .window-icon.window-close:hover {
 	color: white;
+}
+
+/* Left Action Tool Bar (sidebar toggle) */
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .action-toolbar-container {
+	display: none;
+	padding-left: 4px;
+	flex-grow: 0;
+	flex-shrink: 0;
+	text-align: center;
+	position: relative;
+	z-index: 2500;
+	-webkit-app-region: no-drag;
+	height: 100%;
+	align-items: center;
+}
+
+.monaco-workbench.mac:not(.web) .part.titlebar > .titlebar-container > .titlebar-left {
+	padding-left: 70px;
+}
+
+.monaco-workbench.mac.fullscreen .part.titlebar > .titlebar-container > .titlebar-left {
+	padding-left: 0;
+}
+
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .action-toolbar-container:not(.has-no-actions) {
+	display: flex;
+}
+
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .action-toolbar-container .codicon {
+	color: inherit;
 }
 
 /* Action Tool Bar Controls */

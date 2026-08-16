@@ -24,8 +24,9 @@ import { IInstantiationService, ServicesAccessor } from '../../../../platform/in
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { IStorageService, StorageScope } from '../../../../platform/storage/common/storage.js';
 import { Parts, IWorkbenchLayoutService, ActivityBarPosition, LayoutSettings, EditorActionsLocation, EditorTabsMode } from '../../../services/layout/browser/layoutService.js';
+import { ToggleSidebarVisibilityAction } from '../../actions/layoutActions.js';
 import { createActionViewItem, fillInActionBarActions as fillInActionBarActions } from '../../../../platform/actions/browser/menuEntryActionViewItem.js';
-import { Action2, IMenu, IMenuService, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { Action2, IMenu, IMenuService, MenuId, MenuItemAction, SubmenuItemAction, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IHostService } from '../../../services/host/browser/host.js';
 import { WindowTitle } from './windowTitle.js';
@@ -265,9 +266,12 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 	private lastLayoutDimensions: Dimension | undefined;
 
 	private actionToolBar!: WorkbenchToolBar;
+	private leftActionToolBar: WorkbenchToolBar | undefined;
 	private readonly actionToolBarDisposable = this._register(new DisposableStore());
+	private readonly leftActionToolBarDisposable = this._register(new DisposableStore());
 	private readonly editorActionsChangeDisposable = this._register(new DisposableStore());
 	private actionToolBarElement!: HTMLElement;
+	private leftActionToolBarElement: HTMLElement | undefined;
 
 	private globalToolbarMenu: IMenu | undefined;
 	private layoutToolbarMenu: IMenu | undefined;
@@ -472,16 +476,17 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 			this.installMenubar();
 		}
 
-		// Title
-		this.title = append(this.centerContent, $('div.window-title'));
-		this.createTitle();
-
 		// Create Toolbar Actions
 		if (hasCustomTitlebar(this.configurationService, this.titleBarStyle)) {
+			this.leftActionToolBarElement = append(this.leftContent, $('div.action-toolbar-container.left'));
 			this.actionToolBarElement = append(this.rightContent, $('div.action-toolbar-container'));
 			this.createActionToolBar();
 			this.createActionToolBarMenus();
 		}
+
+		// Title / command center (centered nav + search)
+		this.title = append(this.centerContent, $('div.window-title'));
+		this.createTitle();
 
 		// Window Controls Container
 		if (!hasNativeTitlebar(this.configurationService, this.titleBarStyle)) {
@@ -619,6 +624,7 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 		// Requires to be recreated whenever editor actions enablement changes
 
 		this.actionToolBarDisposable.clear();
+		this.leftActionToolBarDisposable.clear();
 
 		this.actionToolBar = this.actionToolBarDisposable.add(this.instantiationService.createInstance(WorkbenchToolBar, this.actionToolBarElement, {
 			contextMenu: MenuId.TitleBarContext,
@@ -632,6 +638,19 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 			actionViewItemProvider: (action, options) => this.actionViewItemProvider(action, options),
 			hoverDelegate: this.hoverDelegate
 		}));
+
+		if (this.leftActionToolBarElement) {
+			this.leftActionToolBar = this.leftActionToolBarDisposable.add(this.instantiationService.createInstance(WorkbenchToolBar, this.leftActionToolBarElement, {
+				contextMenu: MenuId.TitleBarContext,
+				orientation: ActionsOrientation.HORIZONTAL,
+				ariaLabel: localize('ariaLabelTitleLeftActions', "Title left actions"),
+				getKeyBinding: action => this.getKeybinding(action),
+				anchorAlignmentProvider: () => AnchorAlignment.LEFT,
+				telemetrySource: 'titlePartLeft',
+				actionViewItemProvider: (action, options) => this.actionViewItemProvider(action, options),
+				hoverDelegate: this.hoverDelegate
+			}));
+		}
 
 		if (this.editorActionsEnabled) {
 			this.actionToolBarDisposable.add(this.editorGroupsContainer.onDidChangeActiveGroup(() => this.createActionToolBarMenus({ editorActions: true })));
@@ -671,11 +690,26 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 
 			// --- Layout Actions
 			if (this.layoutToolbarMenu) {
+				const sidebarActions: IAction[] = [];
+				const remainingLayoutActions: [string, Array<MenuItemAction | SubmenuItemAction>][] = [];
+				for (const [group, groupActions] of this.layoutToolbarMenu.getActions()) {
+					const sidebar = groupActions.filter(action => action.id === ToggleSidebarVisibilityAction.ID);
+					const rest = groupActions.filter(action => action.id !== ToggleSidebarVisibilityAction.ID);
+					sidebarActions.push(...sidebar);
+					if (rest.length) {
+						remainingLayoutActions.push([group, rest]);
+					}
+				}
+
+				this.leftActionToolBar?.setActions(prepareActions(sidebarActions));
+
 				fillInActionBarActions(
-					this.layoutToolbarMenu.getActions(),
+					remainingLayoutActions,
 					actions,
 					() => !this.editorActionsEnabled || this.isCompact // layout actions move to "..." if editor actions are enabled unless compact
 				);
+			} else {
+				this.leftActionToolBar?.setActions([]);
 			}
 
 			// --- Activity Actions (always at the end)
@@ -865,8 +899,7 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 			this.customMenubar.value.layout(menubarDimension);
 		}
 
-		const hasCenter = this.isCommandCenterVisible || this.title.textContent !== '';
-		this.rootContainer.classList.toggle('has-center', hasCenter);
+		this.rootContainer.classList.toggle('has-center', this.isCommandCenterVisible || isMacintosh);
 	}
 
 	focus(): void {
