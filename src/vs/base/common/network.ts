@@ -84,6 +84,12 @@ export namespace Schemas {
 	/** Scheme used for the chat input editor. */
 	export const vscodeChatEditor = 'vscode-chat-editor';
 
+	/** Scheme used for VOLT New Agent editor tabs. */
+	export const voltAgent = 'volt-agent';
+
+	/** Scheme used for the Volt Settings editor tab. */
+	export const voltSettings = 'volt-settings';
+
 	/** Scheme used for the chat input part */
 	export const vscodeChatInput = 'chatSessionInput';
 
