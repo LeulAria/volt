@@ -35,7 +35,7 @@ export class EditTelemetryContribution extends Disposable {
 			r.store.add(this._instantiationService.createInstance(EditTrackingFeature, workspace.read(r), annotatedDocuments.read(r)));
 		}));
 
-		const aiStatsEnabled = observableConfigValue(AI_STATS_SETTING_ID, true, this._configurationService);
+		const aiStatsEnabled = observableConfigValue(AI_STATS_SETTING_ID, false, this._configurationService);
 		this._register(autorun(r => {
 			const enabled = aiStatsEnabled.read(r);
 			if (!enabled) {
