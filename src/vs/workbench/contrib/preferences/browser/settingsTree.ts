@@ -69,7 +69,7 @@ import { settingsNumberInputBackground, settingsNumberInputBorder, settingsNumbe
 import { settingsMoreActionIcon } from './preferencesIcons.js';
 import { SettingsTarget } from './preferencesWidgets.js';
 import { ISettingOverrideClickEvent, SettingsTreeIndicatorsLabel, getIndicatorsLabelAriaLabel } from './settingsEditorSettingIndicators.js';
-import { ITOCEntry } from './settingsLayout.js';
+import { ITOCEntry, isHiddenCopilotSetting } from './settingsLayout.js';
 import { ISettingsEditorViewState, SettingsTreeElement, SettingsTreeGroupChild, SettingsTreeGroupElement, SettingsTreeNewExtensionsElement, SettingsTreeSettingElement, inspectSetting, objectSettingSupportsRemoveDefaultValue, settingKeyToDisplayFormat } from './settingsTreeModels.js';
 import { ExcludeSettingWidget, IBoolObjectDataItem, IIncludeExcludeDataItem, IListDataItem, IObjectDataItem, IObjectEnumOption, IObjectKeySuggester, IObjectValueSuggester, IncludeSettingWidget, ListSettingWidget, ObjectSettingCheckboxWidget, ObjectSettingDropdownWidget, ObjectValue, SettingListEvent } from './settingsWidgets.js';
 
@@ -489,6 +489,9 @@ export async function createTocTreeForExtensionSettings(extensionService: IExten
 		const flatSettings = group.sections.map(section => section.settings).flat();
 
 		const extensionId = group.extensionInfo!.id;
+		if (isHiddenCopilotSetting('', extensionId)) {
+			return;
+		}
 		const extension = await extensionService.getExtension(extensionId);
 		const extensionName = extension?.displayName ?? extension?.name ?? extensionId;
 
@@ -638,6 +641,9 @@ function getFlatSettings(settingsGroups: ISettingsGroup[]) {
 	for (const group of settingsGroups) {
 		for (const section of group.sections) {
 			for (const s of section.settings) {
+				if (isHiddenCopilotSetting(s.key, group.extensionInfo?.id)) {
+					continue;
+				}
 				if (!s.overrides || !s.overrides.length) {
 					result.add(s);
 				}

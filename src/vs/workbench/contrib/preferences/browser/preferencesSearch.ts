@@ -21,6 +21,7 @@ import { IWorkbenchExtensionEnablementService } from '../../../services/extensio
 import { IGroupFilter, ISearchResult, ISetting, ISettingMatch, ISettingMatcher, ISettingsEditorModel, ISettingsGroup, SettingKeyMatchTypes, SettingMatchType } from '../../../services/preferences/common/preferences.js';
 import { nullRange } from '../../../services/preferences/common/preferencesModels.js';
 import { EMBEDDINGS_ONLY_SEARCH_PROVIDER_NAME, EMBEDDINGS_SEARCH_PROVIDER_NAME, IAiSearchProvider, IPreferencesSearchService, IRemoteSearchProvider, ISearchProvider, IWorkbenchSettingsConfiguration, LLM_RANKED_SEARCH_PROVIDER_NAME, STRING_MATCH_SEARCH_PROVIDER_NAME, TF_IDF_SEARCH_PROVIDER_NAME } from '../common/preferences.js';
+import { isHiddenCopilotSetting } from './settingsLayout.js';
 
 export interface IEndpointDetails {
 	urlBase?: string;
@@ -106,6 +107,9 @@ export class LocalSearchProvider implements ISearchProvider {
 		}
 
 		const settingMatcher: ISettingMatcher = (setting: ISetting) => {
+			if (isHiddenCopilotSetting(setting.key, setting.extensionInfo?.id)) {
+				return null;
+			}
 			let { matches, matchType, keyMatchScore } = new SettingMatches(
 				this._filter,
 				setting,
@@ -144,6 +148,12 @@ export class LocalSearchProvider implements ISearchProvider {
 	private getGroupFilter(filter: string): IGroupFilter {
 		const regex = strings.createRegExp(filter, false, { global: true });
 		return (group: ISettingsGroup) => {
+			if (group.extensionInfo && isHiddenCopilotSetting('', group.extensionInfo.id)) {
+				return false;
+			}
+			if (/copilot/i.test(group.title) || group.id === 'chatSidebar') {
+				return false;
+			}
 			return group.id !== 'defaultOverrides' && regex.test(group.title);
 		};
 	}

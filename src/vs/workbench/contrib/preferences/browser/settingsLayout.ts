@@ -16,6 +16,16 @@ export interface ITOCEntry<T> {
 	hide?: boolean;
 }
 
+export function isHiddenCopilotSetting(key: string, extensionId?: string): boolean {
+	if (extensionId && /copilot/i.test(extensionId)) {
+		return true;
+	}
+	if (key.startsWith('chat.mcp.') || key === 'mcp' || key.startsWith('mcp.')) {
+		return false;
+	}
+	return /copilot/i.test(key) || key.startsWith('chat.') || key.startsWith('inlineChat.');
+}
+
 const defaultCommonlyUsedSettings: string[] = [
 	'editor.fontSize',
 	'editor.formatOnSave',
@@ -233,9 +243,15 @@ export const tocData: ITOCEntry<string> = {
 					settings: ['mergeEditor.*']
 				},
 				{
+					id: 'features/mcp',
+					label: localize('mcp', 'MCP'),
+					settings: ['mcp', 'mcp.*', 'chat.mcp.*']
+				},
+				{
 					id: 'features/chat',
 					label: localize('chat', 'Chat'),
-					settings: ['chat.*', 'inlineChat.*', 'mcp']
+					settings: ['chat.*', 'inlineChat.*'],
+					hide: true
 				},
 				{
 					id: 'features/issueReporter',

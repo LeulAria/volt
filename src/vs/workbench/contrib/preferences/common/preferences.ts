@@ -157,6 +157,9 @@ export async function getExperimentalExtensionToggleData(
 	if (productService.extensionRecommendations && productService.commonlyUsedSettings) {
 		const settingsEditorRecommendedExtensions: IStringDictionary<IExtensionRecommendations> = {};
 		Object.keys(productService.extensionRecommendations).forEach(extensionId => {
+			if (/copilot/i.test(extensionId)) {
+				return;
+			}
 			const extensionInfo = productService.extensionRecommendations![extensionId];
 			if (extensionInfo.onSettingsEditorOpen) {
 				settingsEditorRecommendedExtensions[extensionId] = extensionInfo;
