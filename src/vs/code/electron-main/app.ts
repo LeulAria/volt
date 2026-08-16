@@ -121,6 +121,8 @@ import { INativeMcpDiscoveryHelperService, NativeMcpDiscoveryHelperChannelName }
 import { NativeMcpDiscoveryHelperService } from '../../platform/mcp/node/nativeMcpDiscoveryHelperService.js';
 import { IWebContentExtractorService } from '../../platform/webContentExtractor/common/webContentExtractor.js';
 import { NativeWebContentExtractorService } from '../../platform/webContentExtractor/electron-main/webContentExtractorService.js';
+import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../platform/voltStdio/common/voltStdio.js';
+import { VoltStdioMainService } from '../../platform/voltStdio/electron-main/voltStdioMainService.js';
 import ErrorTelemetry from '../../platform/telemetry/electron-main/errorTelemetry.js';
 
 /**
@@ -1030,6 +1032,9 @@ export class CodeApplication extends Disposable {
 		// Web Contents Extractor
 		services.set(IWebContentExtractorService, new SyncDescriptor(NativeWebContentExtractorService, undefined, false /* proxied to other processes */));
 
+		// Volt ACP stdio
+		services.set(IVoltStdioService, new SyncDescriptor(VoltStdioMainService, undefined, false /* proxied to other processes */));
+
 		// Webview Manager
 		services.set(IWebviewManagerService, new SyncDescriptor(WebviewMainService));
 
@@ -1185,6 +1190,10 @@ export class CodeApplication extends Disposable {
 		// Web Content Extractor
 		const webContentExtractorChannel = ProxyChannel.fromService(accessor.get(IWebContentExtractorService), disposables);
 		mainProcessElectronServer.registerChannel('webContentExtractor', webContentExtractorChannel);
+
+		// Volt ACP stdio
+		const voltStdioChannel = ProxyChannel.fromService(accessor.get(IVoltStdioService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_STDIO_CHANNEL_NAME, voltStdioChannel);
 
 		// Workspaces
 		const workspacesChannel = ProxyChannel.fromService(accessor.get(IWorkspacesService), disposables);
