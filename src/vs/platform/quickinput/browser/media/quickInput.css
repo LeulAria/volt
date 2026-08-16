@@ -9,15 +9,19 @@
 	z-index: 2550;
 	left: 50%;
 	-webkit-app-region: no-drag;
+	box-sizing: border-box;
 	border-radius: 6px;
+	overflow: hidden;
+	background-color: var(--vscode-sideBar-background) !important;
 }
 
 .quick-input-titlebar {
 	cursor: grab;
 	display: flex;
 	align-items: center;
-	border-top-right-radius: 5px;
-	border-top-left-radius: 5px;
+	border-top-right-radius: 6px;
+	border-top-left-radius: 6px;
+	background-color: transparent !important;
 }
 
 .quick-input-left-action-bar {
@@ -76,7 +80,11 @@
 .quick-input-header {
 	cursor: grab;
 	display: flex;
-	padding: 6px 6px 2px 6px;
+	padding: 4px 0 0;
+	border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+	border-top-left-radius: 6px;
+	border-top-right-radius: 6px;
+	background-color: transparent !important;
 }
 
 .quick-input-widget.hidden-input .quick-input-header {
@@ -110,6 +118,46 @@
 
 .quick-input-box {
 	flex-grow: 1;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 12px 4px;
+	background: transparent !important;
+}
+
+.quick-input-search-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+	color: var(--vscode-foreground);
+	opacity: 0.75;
+}
+
+.quick-input-search-icon svg {
+	display: block;
+	width: 14px;
+	height: 14px;
+}
+
+.quick-input-box .monaco-findInput,
+.quick-input-box .monaco-inputbox,
+.quick-input-box .monaco-inputbox.idle,
+.quick-input-box .monaco-inputbox.synthetic-focus,
+.quick-input-box .monaco-inputbox > .ibwrapper > .input {
+	background: transparent !important;
+	background-color: transparent !important;
+	border: none !important;
+	outline: none !important;
+	box-shadow: none !important;
+	border-radius: 0 !important;
+}
+
+.quick-input-box .monaco-findInput {
+	flex: 1;
+	min-width: 0;
 }
 
 .quick-input-widget.show-checkboxes .quick-input-box,
@@ -172,6 +220,15 @@
 
 .quick-input-list {
 	line-height: 22px;
+	background-color: transparent !important;
+}
+
+.quick-input-list .monaco-list,
+.quick-input-list .monaco-list-rows,
+.quick-input-list .monaco-scrollable-element,
+.quick-input-list .monaco-list-row:not(.focused):not(.selected):not(:hover) {
+	background: transparent !important;
+	background-color: transparent !important;
 }
 
 .quick-input-widget.hidden-input .quick-input-list {

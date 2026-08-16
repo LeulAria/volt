@@ -25,6 +25,21 @@ export class QuickInputBox extends Disposable {
 	) {
 		super();
 		this.container = dom.append(this.parent, $('.quick-input-box'));
+		const searchIcon = dom.append(this.container, $('span.quick-input-search-icon'));
+		searchIcon.setAttribute('aria-hidden', 'true');
+		const svg = searchIcon.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+		svg.setAttribute('viewBox', '0 0 24 24');
+		svg.setAttribute('width', '14');
+		svg.setAttribute('height', '14');
+		svg.setAttribute('fill', 'none');
+		const path = searchIcon.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+		path.setAttribute('d', 'M17 17L22 22M19.5 10.75C19.5 15.5825 15.5825 19.5 10.75 19.5C5.91751 19.5 2 15.5825 2 10.75C2 5.91751 5.91751 2 10.75 2C15.5825 2 19.5 5.91751 19.5 10.75Z');
+		path.setAttribute('stroke', 'currentColor');
+		path.setAttribute('stroke-width', '1.5');
+		path.setAttribute('stroke-linecap', 'round');
+		path.setAttribute('stroke-linejoin', 'round');
+		svg.appendChild(path);
+		searchIcon.appendChild(svg);
 		this.findInput = this._register(new FindInput(this.container, undefined, { label: '', inputBoxStyles, toggleStyles }));
 		const input = this.findInput.inputBox.inputElement;
 		input.role = 'textbox';
