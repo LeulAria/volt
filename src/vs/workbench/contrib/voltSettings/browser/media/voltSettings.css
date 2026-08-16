@@ -1,0 +1,654 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.volt-settings {
+	--volt-settings-pad: 28px;
+	--volt-settings-gap: 8px;
+	--volt-settings-radius: 10px;
+	--volt-settings-border: color-mix(in srgb, var(--vscode-widget-border) 80%, transparent);
+	--volt-settings-surface: color-mix(in srgb, var(--vscode-editorWidget-background) 72%, var(--vscode-editor-background));
+	--volt-settings-hover: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	height: 100%;
+	display: flex;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-foreground);
+	overflow: hidden;
+	outline: none !important;
+}
+
+.volt-settings *,
+.volt-settings *::before,
+.volt-settings *::after {
+	box-sizing: border-box;
+}
+
+/* Sidebar */
+
+.volt-settings-sidebar {
+	flex: 0 0 236px;
+	width: 236px;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	padding: 16px 12px 20px;
+	border-right: 1px solid var(--volt-settings-border);
+	background: color-mix(in srgb, var(--vscode-sideBar-background, var(--vscode-editor-background)) 88%, transparent);
+}
+
+.volt-settings-search {
+	position: relative;
+	flex: 0 0 auto;
+	margin: 0 4px 14px;
+}
+
+.volt-settings-search-icon {
+	position: absolute;
+	left: 10px;
+	top: 50%;
+	transform: translateY(-50%);
+	z-index: 1;
+	opacity: 0.45;
+	pointer-events: none;
+	display: inline-flex;
+}
+
+.volt-settings-search .monaco-inputbox {
+	width: 100%;
+	height: 30px;
+	border-radius: 8px;
+}
+
+.volt-settings-search .monaco-inputbox > .ibwrapper > .input,
+.volt-settings-search .monaco-inputbox input {
+	padding-left: 28px !important;
+}
+
+.volt-settings-toc {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 0 2px;
+}
+
+.volt-settings-toc-group + .volt-settings-toc-group {
+	margin-top: 16px;
+}
+
+.volt-settings-toc-label {
+	padding: 0 10px 6px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	opacity: 0.45;
+}
+
+.volt-settings-toc-item {
+	display: block;
+	width: 100%;
+	text-align: left;
+	background: none;
+	border: none;
+	color: var(--vscode-foreground);
+	padding: 6px 10px;
+	border-radius: 7px;
+	cursor: pointer;
+	font-size: 13px;
+	line-height: 1.3;
+	opacity: 0.78;
+}
+
+.volt-settings-toc-item:hover {
+	opacity: 1;
+	background: var(--volt-settings-hover);
+}
+
+.volt-settings-toc-item.active {
+	opacity: 1;
+	color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+	background: var(--vscode-list-hoverBackground, var(--volt-settings-hover));
+	font-weight: 600;
+}
+
+/* Content */
+
+.volt-settings-content {
+	flex: 1;
+	min-width: 0;
+	overflow: auto;
+}
+
+.volt-settings-content-inner {
+	width: min(760px, 100%);
+	padding: 28px 40px 80px;
+}
+
+.volt-settings-page-head {
+	margin-bottom: 22px;
+}
+
+.volt-settings-page-title {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+}
+
+.volt-settings-page-head h2 {
+	margin: 0;
+	font-size: 20px;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	line-height: 1.25;
+}
+
+.volt-settings-lead {
+	margin: 8px 0 0;
+	max-width: 560px;
+	font-size: 13px;
+	line-height: 1.5;
+	opacity: 0.62;
+}
+
+.volt-settings-page-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex: 0 0 auto;
+	margin-top: 2px;
+}
+
+.volt-settings-checked {
+	font-size: 12px;
+	opacity: 0.5;
+	margin-right: 6px;
+	white-space: nowrap;
+}
+
+.volt-settings-icon-btn {
+	width: 28px;
+	height: 28px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	border-radius: 7px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	opacity: 0.65;
+	cursor: pointer;
+}
+
+.volt-settings-icon-btn:hover {
+	opacity: 1;
+	background: var(--volt-settings-hover);
+}
+
+.volt-settings-section-label {
+	margin: 28px 0 6px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	opacity: 0.48;
+}
+
+.volt-settings-section-hint {
+	margin: 0 0 12px;
+	font-size: 12px;
+	line-height: 1.45;
+	opacity: 0.55;
+}
+
+/* Setting groups */
+
+.volt-settings-group,
+.volt-settings-list,
+.volt-settings-form {
+	background: var(--volt-settings-surface);
+	border: 1px solid var(--volt-settings-border);
+	border-radius: var(--volt-settings-radius);
+	overflow: hidden;
+}
+
+.volt-settings-group + .volt-settings-list,
+.volt-settings-form + .volt-settings-list,
+.volt-settings-list + .volt-settings-form,
+.volt-settings-list + .volt-settings-list,
+.volt-settings-group + .volt-settings-form {
+	margin-top: 16px;
+}
+
+.volt-settings-row,
+.volt-settings-card,
+.volt-settings-mode,
+.volt-settings-provider-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 28px;
+	padding: 14px 16px;
+	min-height: 56px;
+}
+
+.volt-settings-row + .volt-settings-row,
+.volt-settings-card + .volt-settings-card,
+.volt-settings-mode + .volt-settings-mode,
+.volt-settings-provider + .volt-settings-provider {
+	border-top: 1px solid var(--volt-settings-border);
+}
+
+.volt-settings-row-copy,
+.volt-settings-card-copy {
+	min-width: 0;
+	flex: 1;
+}
+
+.volt-settings-row label,
+.volt-settings-card-copy .title,
+.volt-settings-provider-row .name {
+	display: block;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1.3;
+}
+
+.volt-settings-row .desc,
+.volt-settings-card-copy .meta,
+.volt-settings-provider-row .detail {
+	margin-top: 4px;
+	font-size: 12px;
+	line-height: 1.45;
+	opacity: 0.58;
+}
+
+.volt-settings-row-control {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	flex: 0 0 auto;
+	max-width: 320px;
+}
+
+.volt-settings-select,
+.volt-settings-input {
+	width: 220px;
+}
+
+.volt-settings-input.wide {
+	width: 280px;
+}
+
+.volt-settings-select .monaco-select-box,
+.volt-settings-input .monaco-inputbox,
+.volt-settings-control .monaco-inputbox,
+.volt-settings-control .monaco-select-box {
+	width: 100%;
+}
+
+.volt-settings-control .monaco-inputbox,
+.volt-settings-input .monaco-inputbox {
+	height: 28px;
+	border-radius: 7px;
+}
+
+.volt-settings-select .monaco-select-box,
+.volt-settings-control .monaco-select-box {
+	min-height: 28px;
+	border-radius: 7px;
+}
+
+/* Forms */
+
+.volt-settings-form {
+	padding: 18px 18px 16px;
+}
+
+.volt-settings-form-title {
+	display: block;
+	margin-bottom: 16px;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.volt-settings-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-bottom: 14px;
+}
+
+.volt-settings-field:last-of-type {
+	margin-bottom: 4px;
+}
+
+.volt-settings-field > label {
+	font-size: 12px;
+	font-weight: 500;
+	opacity: 0.72;
+}
+
+.volt-settings-control,
+.volt-settings-control .select-box-dropdown-container,
+.volt-settings-control select.monaco-select-box {
+	width: 100%;
+}
+
+.volt-settings-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 16px;
+}
+
+.volt-settings .monaco-button {
+	padding: 5px 12px;
+	font-size: 12px;
+	border-radius: 7px;
+}
+
+.volt-settings-empty {
+	margin-top: 8px;
+	padding: 18px 16px;
+	border: 1px dashed var(--volt-settings-border);
+	border-radius: var(--volt-settings-radius);
+	font-size: 13px;
+	line-height: 1.5;
+	opacity: 0.58;
+}
+
+/* Toggles */
+
+.volt-settings-toggle {
+	width: 36px;
+	height: 20px;
+	border-radius: 999px;
+	border: none;
+	background: color-mix(in srgb, var(--vscode-foreground) 18%, var(--vscode-input-background));
+	position: relative;
+	cursor: pointer;
+	flex: 0 0 auto;
+	transition: background 0.12s ease;
+}
+
+.volt-settings-toggle.on {
+	background: var(--vscode-button-background, #22c55e);
+}
+
+.volt-settings-toggle::after {
+	content: '';
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--vscode-button-foreground, #fff);
+	transition: left 0.12s ease;
+}
+
+.volt-settings-toggle.on::after {
+	left: 18px;
+}
+
+.volt-settings-toggle.small {
+	width: 28px;
+	height: 16px;
+}
+
+.volt-settings-toggle.small::after {
+	width: 12px;
+	height: 12px;
+}
+
+.volt-settings-toggle.small.on::after {
+	left: 14px;
+}
+
+/* Stepper */
+
+.volt-settings-stepper {
+	display: inline-flex;
+	align-items: center;
+	flex: 0 0 auto;
+	height: 28px;
+	border: 1px solid var(--volt-settings-border);
+	border-radius: 8px;
+	overflow: hidden;
+	background: var(--vscode-input-background);
+}
+
+.volt-settings-stepper .step {
+	width: 28px;
+	height: 100%;
+	border: none;
+	background: transparent;
+	color: var(--vscode-foreground);
+	cursor: pointer;
+	font-size: 14px;
+	line-height: 1;
+	opacity: 0.75;
+}
+
+.volt-settings-stepper .step:hover {
+	opacity: 1;
+	background: var(--volt-settings-hover);
+}
+
+.volt-settings-stepper .value {
+	width: 52px;
+	height: 100%;
+	border: none;
+	border-left: 1px solid var(--volt-settings-border);
+	border-right: 1px solid var(--volt-settings-border);
+	background: transparent;
+	color: var(--vscode-foreground);
+	text-align: center;
+	font: inherit;
+	outline: none;
+}
+
+.volt-settings-stepper-unit {
+	flex: 0 0 auto;
+	margin-left: 2px;
+	opacity: 0.5;
+	font-size: 12px;
+}
+
+/* Providers */
+
+.volt-settings-provider-row {
+	align-items: center;
+	padding: 13px 16px;
+}
+
+.volt-settings-dot {
+	flex: 0 0 auto;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	margin-top: 6px;
+	background: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-dot.authenticated,
+.volt-settings-dot.available {
+	background: #22c55e;
+}
+
+.volt-settings-dot.disabled {
+	background: #eab308;
+}
+
+.volt-settings-dot.missing {
+	background: #ef4444;
+}
+
+.volt-settings-dot.checking {
+	background: #6b7280;
+}
+
+.volt-settings-provider-icon {
+	flex: 0 0 auto;
+	width: 18px;
+	height: 18px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	margin-top: 1px;
+}
+
+.volt-settings-provider-row .text {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-settings-provider-row .title {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.volt-settings-provider-row .version {
+	font-size: 12px;
+	opacity: 0.45;
+}
+
+.volt-settings-provider-row .badge {
+	font-size: 10px;
+	line-height: 1;
+	padding: 3px 6px;
+	border-radius: 999px;
+	color: #eab308;
+	background: color-mix(in srgb, #eab308 16%, transparent);
+}
+
+.volt-settings-chevron {
+	flex: 0 0 auto;
+	width: 24px;
+	height: 24px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	background: transparent;
+	color: var(--vscode-foreground);
+	opacity: 0.4;
+	cursor: pointer;
+	border-radius: 6px;
+	margin-top: 0;
+}
+
+.volt-settings-chevron:hover {
+	opacity: 1;
+	background: var(--volt-settings-hover);
+}
+
+.volt-settings-provider-body {
+	padding: 0 16px 14px 48px;
+}
+
+.volt-settings-provider-connection {
+	font-family: var(--monaco-monospace-font);
+	font-size: 11px;
+	opacity: 0.5;
+	margin-bottom: 10px;
+}
+
+.volt-settings-provider-empty {
+	font-size: 12px;
+	opacity: 0.55;
+	padding-bottom: 4px;
+}
+
+.volt-settings-provider-model {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 7px 0;
+	font-size: 12px;
+}
+
+/* Modes + status */
+
+.volt-settings-mode {
+	align-items: flex-start;
+}
+
+.volt-settings-pills {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 6px;
+	flex: 0 0 auto;
+	max-width: 240px;
+}
+
+.volt-settings-pill {
+	font-size: 11px;
+	line-height: 1;
+	padding: 5px 8px;
+	border-radius: 999px;
+	border: 1px solid transparent;
+}
+
+.volt-settings-pill.on {
+	color: #4ade80;
+	background: color-mix(in srgb, #22c55e 14%, transparent);
+}
+
+.volt-settings-pill.off {
+	opacity: 0.55;
+	background: var(--volt-settings-hover);
+}
+
+.volt-settings-status {
+	flex: 0 0 auto;
+	font-size: 11px;
+	line-height: 1;
+	padding: 5px 8px;
+	border-radius: 999px;
+}
+
+.volt-settings-status.ready {
+	color: #4ade80;
+	background: color-mix(in srgb, #22c55e 14%, transparent);
+}
+
+.volt-settings-status.missing {
+	color: #f87171;
+	background: color-mix(in srgb, #ef4444 14%, transparent);
+}
+
+@media (max-width: 820px) {
+	.volt-settings-sidebar {
+		flex-basis: 200px;
+		width: 200px;
+	}
+
+	.volt-settings-content-inner {
+		padding: 22px 20px 64px;
+	}
+
+	.volt-settings-row,
+	.volt-settings-mode,
+	.volt-settings-card {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 10px;
+	}
+
+	.volt-settings-row-control,
+	.volt-settings-pills,
+	.volt-settings-select,
+	.volt-settings-input,
+	.volt-settings-input.wide {
+		width: 100%;
+		max-width: none;
+		justify-content: flex-start;
+	}
+}
