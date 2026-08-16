@@ -165,6 +165,7 @@ module.exports.copyrightFilter = [
 	'!**/*.sh',
 	'!**/*.zsh',
 	'!**/*.fish',
+	'!Makefile',
 	'!**/*.txt',
 	'!**/*.xpm',
 	'!**/*.opts',
