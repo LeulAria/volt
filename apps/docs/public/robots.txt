@@ -1,0 +1,6 @@
+# https://www.robotstxt.org/robotstxt.html
+User-agent: *
+Allow: /
+
+# Add when available:
+# Sitemap: https://voltleularia.com/sitemap.xml
