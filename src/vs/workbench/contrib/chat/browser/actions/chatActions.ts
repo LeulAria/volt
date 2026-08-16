@@ -4,8 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { isAncestorOfActiveElement } from '../../../../../base/browser/dom.js';
-import { mainWindow } from '../../../../../base/browser/window.js';
-import { toAction, WorkbenchActionExecutedClassification, WorkbenchActionExecutedEvent } from '../../../../../base/common/actions.js';
+import { WorkbenchActionExecutedClassification, WorkbenchActionExecutedEvent } from '../../../../../base/common/actions.js';
 import { coalesce } from '../../../../../base/common/arrays.js';
 import { timeout } from '../../../../../base/common/async.js';
 import { CancellationTokenSource } from '../../../../../base/common/cancellation.js';
@@ -14,7 +13,7 @@ import { fromNowByDay, safeIntl } from '../../../../../base/common/date.js';
 import { Event } from '../../../../../base/common/event.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
-import { Disposable, DisposableStore, markAsSingleton } from '../../../../../base/common/lifecycle.js';
+import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { MarshalledId } from '../../../../../base/common/marshallingIds.js';
 import { language } from '../../../../../base/common/platform.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
@@ -26,10 +25,8 @@ import { IRange } from '../../../../../editor/common/core/range.js';
 import { EditorContextKeys } from '../../../../../editor/common/editorContextKeys.js';
 import { SuggestController } from '../../../../../editor/contrib/suggest/browser/suggestController.js';
 import { localize, localize2 } from '../../../../../nls.js';
-import { IActionViewItemService } from '../../../../../platform/actions/browser/actionViewItemService.js';
-import { DropdownWithPrimaryActionViewItem } from '../../../../../platform/actions/browser/dropdownWithPrimaryActionViewItem.js';
 import { getContextMenuActions } from '../../../../../platform/actions/browser/menuEntryActionViewItem.js';
-import { Action2, ICommandPaletteOptions, IMenuService, MenuId, MenuItemAction, MenuRegistry, registerAction2, SubmenuItemAction } from '../../../../../platform/actions/common/actions.js';
+import { Action2, ICommandPaletteOptions, IMenuService, MenuId, MenuRegistry, registerAction2 } from '../../../../../platform/actions/common/actions.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ContextKeyExpr, IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
@@ -43,9 +40,7 @@ import { IOpenerService } from '../../../../../platform/opener/common/opener.js'
 import product from '../../../../../platform/product/common/product.js';
 import { IQuickInputButton, IQuickInputService, IQuickPickItem, IQuickPickSeparator } from '../../../../../platform/quickinput/common/quickInput.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
-import { ToggleTitleBarConfigAction } from '../../../../browser/parts/titlebar/titlebarActions.js';
-import { ActiveEditorContext, IsCompactTitleBarContext } from '../../../../common/contextkeys.js';
-import { IWorkbenchContribution } from '../../../../common/contributions.js';
+import { ActiveEditorContext } from '../../../../common/contextkeys.js';
 import { IViewDescriptorService, ViewContainerLocation } from '../../../../common/views.js';
 import { GroupDirection, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { ACTIVE_GROUP, AUX_WINDOW_GROUP, IEditorService } from '../../../../services/editor/common/editorService.js';
@@ -1646,8 +1641,6 @@ export function stringifyItem(item: IChatRequestViewModel | IChatResponseViewMod
 }
 
 
-// --- Title Bar Chat Controls
-
 const defaultChat = {
 	documentationUrl: product.defaultChatAgent?.documentationUrl ?? '',
 	manageSettingsUrl: product.defaultChatAgent?.manageSettingsUrl ?? '',
@@ -1656,117 +1649,6 @@ const defaultChat = {
 	completionsAdvancedSetting: product.defaultChatAgent?.completionsAdvancedSetting ?? '',
 	completionsMenuCommand: product.defaultChatAgent?.completionsMenuCommand ?? '',
 };
-
-// Add next to the command center if command center is disabled
-MenuRegistry.appendMenuItem(MenuId.CommandCenter, {
-	submenu: MenuId.ChatTitleBarMenu,
-	title: localize('title4', "Chat"),
-	icon: Codicon.chatSparkle,
-	when: ContextKeyExpr.and(
-		ChatContextKeys.supported,
-		ContextKeyExpr.and(
-			ChatContextKeys.Setup.hidden.negate(),
-			ChatContextKeys.Setup.disabled.negate()
-		),
-		ContextKeyExpr.has('config.chat.commandCenter.enabled')
-	),
-	order: 10001 // to the right of command center
-});
-
-// Add to the global title bar if command center is disabled
-MenuRegistry.appendMenuItem(MenuId.TitleBar, {
-	submenu: MenuId.ChatTitleBarMenu,
-	title: localize('title4', "Chat"),
-	group: 'navigation',
-	icon: Codicon.chatSparkle,
-	when: ContextKeyExpr.and(
-		ChatContextKeys.supported,
-		ContextKeyExpr.and(
-			ChatContextKeys.Setup.hidden.negate(),
-			ChatContextKeys.Setup.disabled.negate()
-		),
-		ContextKeyExpr.has('config.chat.commandCenter.enabled'),
-		ContextKeyExpr.has('config.window.commandCenter').negate(),
-	),
-	order: 1
-});
-
-registerAction2(class ToggleCopilotControl extends ToggleTitleBarConfigAction {
-	constructor() {
-		super(
-			'chat.commandCenter.enabled',
-			localize('toggle.chatControl', 'Chat Controls'),
-			localize('toggle.chatControlsDescription', "Toggle visibility of the Chat Controls in title bar"), 5,
-			ContextKeyExpr.and(
-				ContextKeyExpr.and(
-					ChatContextKeys.Setup.hidden.negate(),
-					ChatContextKeys.Setup.disabled.negate()
-				),
-				IsCompactTitleBarContext.negate(),
-				ChatContextKeys.supported
-			)
-		);
-	}
-});
-
-export class CopilotTitleBarMenuRendering extends Disposable implements IWorkbenchContribution {
-
-	static readonly ID = 'workbench.contrib.copilotTitleBarMenuRendering';
-
-	constructor(
-		@IActionViewItemService actionViewItemService: IActionViewItemService,
-		@IChatEntitlementService chatEntitlementService: IChatEntitlementService,
-	) {
-		super();
-
-		const disposable = actionViewItemService.register(MenuId.CommandCenter, MenuId.ChatTitleBarMenu, (action, options, instantiationService, windowId) => {
-			if (!(action instanceof SubmenuItemAction)) {
-				return undefined;
-			}
-
-			const dropdownAction = toAction({
-				id: 'copilot.titleBarMenuRendering.more',
-				label: localize('more', "More..."),
-				run() { }
-			});
-
-			const chatSentiment = chatEntitlementService.sentiment;
-			const chatQuotaExceeded = chatEntitlementService.quotas.chat?.percentRemaining === 0;
-			const signedOut = chatEntitlementService.entitlement === ChatEntitlement.Unknown;
-			const anonymous = chatEntitlementService.anonymous;
-			const free = chatEntitlementService.entitlement === ChatEntitlement.Free;
-
-			const isAuxiliaryWindow = windowId !== mainWindow.vscodeWindowId;
-			let primaryActionId = isAuxiliaryWindow ? CHAT_OPEN_ACTION_ID : TOGGLE_CHAT_ACTION_ID;
-			let primaryActionTitle = isAuxiliaryWindow ? localize('openChat', "Open Chat") : localize('toggleChat', "Toggle Chat");
-			let primaryActionIcon = Codicon.chatSparkle;
-			if (chatSentiment.installed && !chatSentiment.disabled) {
-				if (signedOut && !anonymous) {
-					primaryActionId = CHAT_SETUP_ACTION_ID;
-					primaryActionTitle = localize('signInToChatSetup', "Sign in to use AI features...");
-					primaryActionIcon = Codicon.chatSparkleError;
-				} else if (chatQuotaExceeded && free) {
-					primaryActionId = OPEN_CHAT_QUOTA_EXCEEDED_DIALOG;
-					primaryActionTitle = localize('chatQuotaExceededButton', "GitHub Copilot Free plan chat messages quota reached. Click for details.");
-					primaryActionIcon = Codicon.chatSparkleWarning;
-				}
-			}
-			return instantiationService.createInstance(DropdownWithPrimaryActionViewItem, instantiationService.createInstance(MenuItemAction, {
-				id: primaryActionId,
-				title: primaryActionTitle,
-				icon: primaryActionIcon,
-			}, undefined, undefined, undefined, undefined), dropdownAction, action.actions, '', { ...options, skipTelemetry: true });
-		}, Event.any(
-			chatEntitlementService.onDidChangeSentiment,
-			chatEntitlementService.onDidChangeQuotaExceeded,
-			chatEntitlementService.onDidChangeEntitlement,
-			chatEntitlementService.onDidChangeAnonymous
-		));
-
-		// Reduces flicker a bit on reload/restart
-		markAsSingleton(disposable);
-	}
-}
 
 /**
  * Returns whether we can continue clearing/switching chat sessions, false to cancel.

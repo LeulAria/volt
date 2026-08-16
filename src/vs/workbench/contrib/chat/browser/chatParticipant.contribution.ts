@@ -42,7 +42,7 @@ const chatViewContainer: ViewContainer = Registry.as<IViewContainersRegistry>(Vi
 	storageId: CHAT_SIDEBAR_PANEL_ID,
 	hideIfEmpty: true,
 	order: 1,
-}, ViewContainerLocation.AuxiliaryBar, { isDefault: true, doNotRegisterOpenCommand: true });
+}, ViewContainerLocation.AuxiliaryBar, { doNotRegisterOpenCommand: true });
 
 const chatViewDescriptor: IViewDescriptor[] = [{
 	id: ChatViewId,
@@ -66,10 +66,6 @@ const chatViewDescriptor: IViewDescriptor[] = [{
 	},
 	ctorDescriptor: new SyncDescriptor(ChatViewPane, [{ location: ChatAgentLocation.Chat }]),
 	when: ContextKeyExpr.or(
-		ContextKeyExpr.or(
-			ChatContextKeys.Setup.hidden,
-			ChatContextKeys.Setup.disabled
-		)?.negate(),
 		ChatContextKeys.panelParticipantRegistered,
 		ChatContextKeys.extensionInvalid
 	)

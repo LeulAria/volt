@@ -148,9 +148,8 @@ export class ChatViewWelcomePart extends Disposable {
 		try {
 			const renderer = this.instantiationService.createInstance(MarkdownRenderer, {});
 
-			// Icon
-			const icon = dom.append(this.element, $('.chat-welcome-view-icon'));
 			if (content.icon) {
+				const icon = dom.append(this.element, $('.chat-welcome-view-icon'));
 				icon.appendChild(renderIcon(content.icon));
 			}
 

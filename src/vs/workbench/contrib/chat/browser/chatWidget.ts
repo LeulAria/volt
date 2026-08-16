@@ -1321,7 +1321,6 @@ export class ChatWidget extends Disposable implements IChatWidget {
 		const disclaimerMessage = expEmptyState
 			? this.chatDisclaimer
 			: localize('chatMessage', "Chat is powered by AI, so mistakes are possible. Review output carefully before use.");
-		const icon = Codicon.chatSparkle;
 
 
 		if (this.isLockedToCodingAgent) {
@@ -1344,7 +1343,6 @@ export class ChatWidget extends Disposable implements IChatWidget {
 			return {
 				title: localize('chatDescription', "Ask about your code"),
 				message: new MarkdownString(disclaimerMessage),
-				icon,
 				additionalMessage,
 				suggestedPrompts
 			};
@@ -1355,7 +1353,6 @@ export class ChatWidget extends Disposable implements IChatWidget {
 			return {
 				title: localize('editsTitle', "Edit in context"),
 				message: new MarkdownString(message),
-				icon,
 				additionalMessage,
 				suggestedPrompts
 			};
@@ -1364,9 +1361,8 @@ export class ChatWidget extends Disposable implements IChatWidget {
 			const message = expEmptyState ? disclaimerMessage : `${agentHelpMessage}\n\n${disclaimerMessage}`;
 
 			return {
-				title: localize('agentTitle', "Build with agent mode"),
+				title: localize('agentTitle', "Chat"),
 				message: new MarkdownString(message),
-				icon,
 				additionalMessage,
 				suggestedPrompts
 			};
@@ -1382,9 +1378,8 @@ export class ChatWidget extends Disposable implements IChatWidget {
 		}
 
 		const welcomeContent: IChatViewWelcomeContent = {
-			title: localize('expChatTitle', 'Build with agent mode'),
+			title: localize('expChatTitle', 'Chat'),
 			message: new MarkdownString(localize('expchatMessage', "Let's get started")),
-			icon: Codicon.chatSparkle,
 			inputPart: this.inputPart.element,
 			additionalMessage,
 			isNew: true,
