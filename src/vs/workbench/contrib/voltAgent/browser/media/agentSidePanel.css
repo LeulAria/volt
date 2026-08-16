@@ -1,0 +1,122 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs {
+	border-left: 1px solid var(--vscode-sideBar-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35))) !important;
+	border-right: 1px solid var(--vscode-sideBar-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35))) !important;
+	box-sizing: border-box;
+	background: var(--vscode-editor-background) !important;
+}
+
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs > .content,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-pane-view,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .split-view-view,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .pane,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .pane-body,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .editor-group-container,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .editor-container {
+	background: var(--vscode-editor-background) !important;
+}
+
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .margin,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .monaco-editor-background,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .minimap-decorations-layer,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .minimap {
+	background-color: var(--vscode-editor-background) !important;
+}
+
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs > .title {
+	visibility: hidden;
+	pointer-events: none;
+}
+
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs > .content {
+	position: absolute;
+	top: 0;
+	right: 1px;
+	bottom: 0;
+	left: 1px;
+	height: auto !important;
+}
+
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-pane-view,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .split-view-view,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .pane,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .pane-body {
+	height: 100% !important;
+}
+
+.volt-agent-side-panel {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	background: var(--vscode-editor-background);
+}
+
+.volt-agent-side-panel.drop-target {
+	outline: 1px dashed var(--vscode-focusBorder, #007fd4);
+	outline-offset: -2px;
+}
+
+.volt-agent-side-host.part.editor {
+	flex: 1;
+	min-height: 0;
+	height: 100%;
+	position: relative;
+}
+
+.volt-agent-side-host.single-agent .editor-group-container > .title .editor-actions .action-item:has(.codicon-split-horizontal),
+.volt-agent-side-host.single-agent .editor-group-container > .title .editor-actions .action-item:has(.codicon-split-vertical),
+.volt-agent-side-panel.single-agent .editor-group-container > .title .editor-actions .action-item:has(.codicon-split-horizontal),
+.volt-agent-side-panel.single-agent .editor-group-container > .title .editor-actions .action-item:has(.codicon-split-vertical) {
+	display: none !important;
+}
+
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .editor-group-watermark,
+.volt-agent-side-panel.is-empty .editor-group-watermark {
+	display: none !important;
+}
+
+.volt-agent-side-panel.is-empty .editor-group-container > .title {
+	visibility: hidden;
+}
+
+.volt-agent-empty {
+	position: absolute;
+	inset: 0;
+	z-index: 5;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+	pointer-events: none;
+}
+
+.volt-agent-empty.hidden {
+	display: none;
+}
+
+.volt-agent-empty-action {
+	pointer-events: auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	height: 32px;
+	padding: 0 14px;
+	border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.45)));
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.volt-agent-empty-action:hover {
+	background: rgba(255, 255, 255, 0.06);
+}
