@@ -32,7 +32,7 @@
 .monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark  {
 	display: flex;
 	height: 100%;
-	max-width: 290px;
+	max-width: 320px;
 	margin: auto;
 	flex-direction: column;
 	align-items: center;
@@ -50,12 +50,14 @@
 }
 
 .monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark > .letterpress {
-	width: 100%;
-	max-height: 100%;
+	width: 88px;
+	height: 88px;
+	flex-shrink: 0;
+	margin-bottom: 12px;
 	aspect-ratio: 1/1;
 	background-image: url('./letterpress-light.svg');
 	background-size: contain;
-	background-position-x: center;
+	background-position: center;
 	background-repeat: no-repeat;
 }
 
@@ -78,31 +80,49 @@
 }
 
 .monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark > .shortcuts > .watermark-box {
-	display: inline-table;
-	border-collapse: separate;
-	border-spacing: 11px 17px;
+	display: flex;
+	flex-direction: column;
+	min-width: 230px;
+	gap: 0;
 }
 
 .monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark > .shortcuts dl {
-	display: table-row;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 18px;
+	margin: 0;
+	padding: 3px 2px 3px 8px;
+	border-radius: 5px;
 	opacity: .8;
-	cursor: default;
+	cursor: pointer;
 	color: var(--vscode-editorWatermark-foreground);
 }
 
+.monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark > .shortcuts dl:hover {
+	opacity: 1;
+	background: color-mix(in srgb, var(--vscode-editorWatermark-foreground) 10%, transparent);
+}
+
 .monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark > .shortcuts dt {
-	text-align: right;
-	letter-spacing: 0.04em
+	text-align: left;
+	letter-spacing: 0.02em;
 }
 
 .monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark > .shortcuts dd {
-	text-align: left;
+	text-align: right;
+	margin: 0;
 }
 
 .monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark > .shortcuts dt,
 .monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark > .shortcuts dd {
-	display: table-cell;
-	vertical-align: middle;
+	display: block;
+	font-size: 12px;
+}
+
+.monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark > .shortcuts .monaco-keybinding-key {
+	font-size: 10px;
+	padding: 2px 4px;
 }
 
 /* Title */

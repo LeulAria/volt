@@ -21,7 +21,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IAuxiliaryWindowOpenOptions, IAuxiliaryWindowService } from '../../../services/auxiliaryWindow/browser/auxiliaryWindowService.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { ContextKeyValue, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
-import { isHTMLElement } from '../../../../base/browser/dom.js';
+import { getActiveElement, isHTMLElement } from '../../../../base/browser/dom.js';
 import { ServiceCollection } from '../../../../platform/instantiation/common/serviceCollection.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { DeepPartial } from '../../../../base/common/types.js';
@@ -214,12 +214,43 @@ export class EditorParts extends MultiWindowParts<EditorPart> implements IEditor
 
 	//#region Helpers
 
+	private isAuxiliaryWindowPart(part: EditorPart): boolean {
+		return part.windowId !== mainWindow.vscodeWindowId;
+	}
+
+	protected override getPartByDocument(document: Document): EditorPart {
+		if (this._parts.size > 1) {
+			const active = getActiveElement();
+			if (active) {
+				for (const part of this._parts) {
+					if (part.element && (part.element === active || part.element.contains(active))) {
+						return part;
+					}
+				}
+			}
+
+			for (const part of this._parts) {
+				if (part.element?.ownerDocument === document) {
+					return part;
+				}
+			}
+		}
+
+		return this.mainPart;
+	}
+
 	override getPart(group: IEditorGroupView | GroupIdentifier): EditorPart;
 	override getPart(element: HTMLElement): EditorPart;
 	override getPart(groupOrElement: IEditorGroupView | GroupIdentifier | HTMLElement): EditorPart {
 		if (this._parts.size > 1) {
 			if (isHTMLElement(groupOrElement)) {
 				const element = groupOrElement;
+
+				for (const part of this._parts) {
+					if (part.element && (part.element === element || part.element.contains(element))) {
+						return part;
+					}
+				}
 
 				return this.getPartByDocument(element.ownerDocument);
 			} else {
@@ -304,8 +335,10 @@ export class EditorParts extends MultiWindowParts<EditorPart> implements IEditor
 	}
 
 	private createState(): IEditorPartsUIState {
+		const persistedParts = this.parts.filter(part => part === this.mainPart || this.isAuxiliaryWindowPart(part));
+
 		return {
-			auxiliary: this.parts.filter(part => part !== this.mainPart).map(part => {
+			auxiliary: persistedParts.filter(part => part !== this.mainPart).map(part => {
 				const auxiliaryWindow = this.auxiliaryWindowService.getWindow(part.windowId);
 
 				return {
@@ -313,7 +346,7 @@ export class EditorParts extends MultiWindowParts<EditorPart> implements IEditor
 					...auxiliaryWindow?.createState()
 				};
 			}),
-			mru: this.mostRecentActiveParts.map(part => this.parts.indexOf(part))
+			mru: this.mostRecentActiveParts.filter(part => persistedParts.includes(part)).map(part => persistedParts.indexOf(part))
 		};
 	}
 
@@ -364,8 +397,8 @@ export class EditorParts extends MultiWindowParts<EditorPart> implements IEditor
 		// them merge into the main part.
 
 		for (const part of this.parts) {
-			if (part === this.mainPart) {
-				continue; // main part takes care on its own
+			if (part === this.mainPart || !this.isAuxiliaryWindowPart(part)) {
+				continue; // main part and same-window sidebar parts take care on their own
 			}
 
 			for (const group of part.getGroups(GroupsOrder.MOST_RECENTLY_ACTIVE)) {
