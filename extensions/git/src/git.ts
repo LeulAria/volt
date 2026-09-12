@@ -1699,6 +1699,15 @@ export class Repository {
 		return parseGitDiffShortStat(result.stdout.trim());
 	}
 
+	async diffHEADShortStat(): Promise<{ files: number; insertions: number; deletions: number }> {
+		const result = await this.exec(['diff', '--shortstat', 'HEAD']);
+		if (result.exitCode) {
+			return { files: 0, insertions: 0, deletions: 0 };
+		}
+
+		return parseGitDiffShortStat(result.stdout.trim());
+	}
+
 	private async diffFiles(cached: boolean, ref?: string): Promise<Change[]> {
 		const args = ['diff', '--name-status', '-z', '--diff-filter=ADMR'];
 		if (cached) {

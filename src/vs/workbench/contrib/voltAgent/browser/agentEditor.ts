@@ -4,16 +4,16 @@
  *--------------------------------------------------------------------------------------------*/
 
 import './media/agentEditor.css';
-import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLButtonElement, scheduleAtNextAnimationFrame } from '../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, scheduleAtNextAnimationFrame } from '../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
+import { Emitter, Event } from '../../../../base/common/event.js';
 import { KeyCode } from '../../../../base/common/keyCodes.js';
 import { disposableTimeout } from '../../../../base/common/async.js';
 import { DisposableStore, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { basename, isAbsolute } from '../../../../base/common/path.js';
-import { isMacintosh } from '../../../../base/common/platform.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { escapeRegExpCharacters } from '../../../../base/common/strings.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -43,16 +43,14 @@ import { alwaysAllowPattern } from '../../../services/voltRuntime/common/access/
 import { DEFAULT_MODEL_CAPABILITIES } from '../../../services/voltRuntime/common/capabilities.js';
 import { IVoltEventEnvelope } from '../../../services/voltRuntime/common/events.js';
 import { pickNumber } from '../../../services/voltRuntime/common/modelMeta.js';
-import { describeModelOptions, IModelOptionDescriptor, MODEL_OPTION_CONTEXT, MODEL_OPTION_REASONING, optionValue } from '../../../services/voltRuntime/common/modelOptions.js';
+import { MODEL_OPTION_CONTEXT, optionValue } from '../../../services/voltRuntime/common/modelOptions.js';
 import { normalizeVoltMode, VoltMode } from '../../../services/voltRuntime/common/modes.js';
-import { IVoltCatalogItem } from '../../../services/voltRuntime/common/providers.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
 import { createAccessIcon } from './accessIcons.js';
-import { createBrandIcon, providerFamily, providerFamilyLabel } from '../../../services/voltRuntime/browser/providerBrands.js';
+import { AgentModelPicker, formatTokens, IModelOption } from './agentModelPicker.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../voltSettings/browser/voltSettingsEditorInput.js';
 import { Orientation, Sash } from '../../../../base/browser/ui/sash/sash.js';
 import { DomScrollableElement } from '../../../../base/browser/ui/scrollbar/scrollableElement.js';
-import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../common/editor.js';
 import { GroupsOrder, IEditorGroupsService, IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
@@ -60,8 +58,12 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { ISearchService } from '../../../services/search/common/search.js';
 import { searchFilesAndFolders } from '../../search/browser/searchChatContext.js';
 import { AGENT_EDITOR_LINE_NUMBERS_SETTING, AgentEditorInput, NEW_AGENT_COMMAND_ID } from './agentEditorInput.js';
+import { AgentComposerLists } from './agentComposerLists.js';
 import { AgentFindWidget, IAgentFindHost } from './agentFindWidget.js';
-import { AgentMentionController } from './agentMentions.js';
+import { AgentThreadView } from './agentThreadView.js';
+import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip } from './agentTooltip.js';
+import { createModeIcon, ModeIconId } from './agentModeIcons.js';
+import { AgentMentionController, IAgentDisplayMention, browserMentionColor } from './agentMentions.js';
 import { appendAgentScrollableList } from './agentScrollable.js';
 import { dayjs } from './dayjs.js';
 import { renderAgentBlock, renderMarkdownInto, IBlockRenderContext } from './blocks/agentBlockRenderers.js';
@@ -71,8 +73,9 @@ function createSvgIcon(viewBox: string, pathD: string, extraClass?: string, stro
 	const el = extraClass ? $(`span.volt-agent-svg-icon.${extraClass}`) : $('span.volt-agent-svg-icon');
 	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
 	svg.setAttribute('viewBox', viewBox);
-	svg.setAttribute('width', '24');
-	svg.setAttribute('height', '24');
+	const parts = viewBox.split(' ');
+	svg.setAttribute('width', parts[2] || '24');
+	svg.setAttribute('height', parts[3] || '24');
 	svg.setAttribute('fill', 'none');
 	svg.setAttribute('aria-hidden', 'true');
 	const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -90,12 +93,85 @@ function createSvgIcon(viewBox: string, pathD: string, extraClass?: string, stro
 	return el;
 }
 
+function createStopIcon(): HTMLElement {
+	const el = $('span.volt-agent-svg-icon.stop');
+	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('viewBox', '0 0 384 512');
+	svg.setAttribute('width', '24');
+	svg.setAttribute('height', '24');
+	svg.setAttribute('aria-hidden', 'true');
+	const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+	path.setAttribute('d', 'M0 128c0-35.3 28.7-64 64-64h256c35.3 0 64 28.7 64 64v256c0 35.3-28.7 64-64 64H64c-35.3 0-64-28.7-64-64z');
+	path.setAttribute('fill', 'currentColor');
+	svg.appendChild(path);
+	el.appendChild(svg);
+	return el;
+}
+
+function createSendIcon(): HTMLElement {
+	return createSvgIcon('0 0 24 24', 'M12 19V5M5 12l7-7 7 7', 'send', true, '2.4');
+}
+
+function createPlusIcon(): HTMLElement {
+	return createSvgIcon('0 0 14 14', 'M7 2.5v9M2.5 7h9', 'plus', true, '1');
+}
+
+function createPaperclipIcon(): HTMLElement {
+	return createStrokeIcon('paperclip', [
+		'M16 6v9.5a3.5 3.5 0 0 1-7 0V6a2.5 2.5 0 0 1 5 0v9',
+	]);
+}
+
+function createCubeIcon(): HTMLElement {
+	return createStrokeIcon('cube', [
+		'M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3Z',
+		'M12 12l8-4.5M12 12v9M12 12L4 7.5',
+	]);
+}
+
+function createPlugIcon(): HTMLElement {
+	return createStrokeIcon('plug', [
+		'M9 2v4M15 2v4M7 6h10v5a5 5 0 0 1-10 0V6Z',
+		'M12 16v6',
+	]);
+}
+
+function createMicIcon(): HTMLElement {
+	const el = $('span.volt-agent-svg-icon.mic');
+	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('width', '24');
+	svg.setAttribute('height', '24');
+	svg.setAttribute('fill', 'none');
+	svg.setAttribute('aria-hidden', 'true');
+	const mic = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'rect');
+	mic.setAttribute('x', '9');
+	mic.setAttribute('y', '3');
+	mic.setAttribute('width', '6');
+	mic.setAttribute('height', '11');
+	mic.setAttribute('rx', '3');
+	mic.setAttribute('fill', 'currentColor');
+	const stem = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+	stem.setAttribute('d', 'M7 11a5 5 0 0 0 10 0M12 16v3M9 19h6');
+	stem.setAttribute('stroke', 'currentColor');
+	stem.setAttribute('stroke-width', '1.8');
+	stem.setAttribute('stroke-linecap', 'round');
+	svg.appendChild(mic);
+	svg.appendChild(stem);
+	el.appendChild(svg);
+	return el;
+}
+
 function createChevronIcon(): HTMLElement {
 	return createSvgIcon(
 		'0 0 16 7',
 		'M8 6.5a.47.47 0 0 1-.35-.15l-4.5-4.5c-.2-.2-.2-.51 0-.71s.51-.2.71 0l4.15 4.15l4.14-4.14c.2-.2.51-.2.71 0s.2.51 0 .71l-4.5 4.5c-.1.1-.23.15-.35.15Z',
 		'chevron'
 	);
+}
+
+function createChevronRightIcon(): HTMLElement {
+	return createSvgIcon('0 0 24 24', 'm9 18 6-6-6-6', 'chevron-right', true, '2');
 }
 
 function createExpandIcon(restored: boolean): HTMLElement {
@@ -109,8 +185,6 @@ function createExpandIcon(restored: boolean): HTMLElement {
 		'2',
 	);
 }
-
-type ModeIconId = 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
 
 function createStrokeIcon(extraClass: string, paths: readonly string[]): HTMLElement {
 	const el = $(`span.volt-agent-svg-icon.${extraClass}`);
@@ -133,41 +207,35 @@ function createStrokeIcon(extraClass: string, paths: readonly string[]): HTMLEle
 	return el;
 }
 
-function createModeIcon(icon: ModeIconId): HTMLElement {
-	switch (icon) {
-		case 'plan':
-			return createStrokeIcon('plan', [
-				'M12 8h9m-9 4h5m-5 8h5m-5-4h9M3 4v7c0 1.87 0 2.804.402 3.5A3 3 0 0 0 4.5 15.598C5.196 16 6.13 16 8 16',
-				'M8 8H7c-.93 0-1.395 0-1.776-.102a3 3 0 0 1-2.122-2.122C3 5.395 3 4.93 3 4',
-			]);
-		case 'debug':
-			return createStrokeIcon('debug', [
-				'M8 2l1.88 1.88M14.12 3.88 16 2M9 7.13v-1a3 3 0 1 1 6 0v1',
-				'M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6',
-				'M12 20v-9M6.53 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M20.97 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4',
-			]);
-		case 'multitask':
-			return createStrokeIcon('multitask', [
-				'M8 8h11a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z',
-				'M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3',
-			]);
-		case 'ask':
-			return createStrokeIcon('ask', [
-				'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
-			]);
-		case 'agent':
-		default:
-			return createStrokeIcon('agent', [
-				'M14 9L13.75 9.375M10 9C9.08779 7.78565 7.63574 7 6 7C3.23858 7 1 9.23858 1 12C1 14.7614 3.23858 17 6 17C7.63582 17 9.08816 16.2144 10.0004 15L10.3337 14.5',
-				'M10 9L13.9996 15C14.9118 16.2144 16.3642 17 18 17C20.7614 17 23 14.7614 23 12C23 9.23858 20.7614 7 18 7C16.3642 7 14.9118 7.78555 13.9996 9',
-			]);
-	}
-}
-
 interface IAgentUserMessage {
 	kind: 'user';
 	text: string;
+	agentText?: string;
 	chips?: string[];
+	mentions?: IAgentDisplayMention[];
+}
+
+export interface IAgentPromptDisplay {
+	text: string;
+	mentions?: IAgentDisplayMention[];
+}
+
+export interface IAgentDockTurn {
+	kind: 'user' | 'agent';
+	text: string;
+	status?: string;
+	streaming?: boolean;
+}
+
+export interface IAgentDockState {
+	title: string;
+	streaming: boolean;
+	cancelled: boolean;
+	status: string;
+	startedAt?: number;
+	endedAt?: number;
+	durationMs?: number;
+	turns: IAgentDockTurn[];
 }
 
 interface IAgentActivityItem {
@@ -204,6 +272,7 @@ interface IAgentAssistantMessage {
 	tokensCache?: number;
 	tokensUsed?: number;
 	tokensWindow?: number;
+	cancelled?: boolean;
 	activity?: IAgentActivity;
 }
 
@@ -214,50 +283,16 @@ interface IModeOption {
 	label: string;
 	icon: ModeIconId;
 	keybinding?: string;
-}
-
-interface IModelOption {
-	ref: string;
-	name: string;
-	qualifier?: string;
-	providerId: string;
-	family: string;
-	optionDescriptors: IModelOptionDescriptor[];
-	detail?: string;
 	description?: string;
-	contextLabel?: string;
-	contextWindow: number;
-}
-
-interface IProviderGroup {
-	family: string;
-	label: string;
-	models: IModelOption[];
 }
 
 const MODE_OPTIONS: IModeOption[] = [
-	{ id: 'Agent', label: 'Agent', icon: 'agent', keybinding: 'Tab' },
-	{ id: 'Plan', label: 'Plan', icon: 'plan' },
-	{ id: 'Debug', label: 'Debug', icon: 'debug' },
-	{ id: 'Multitask', label: 'Multitask', icon: 'multitask' },
-	// allow-any-unicode-next-line
-	{ id: 'Ask', label: 'Ask', icon: 'ask', keybinding: isMacintosh ? '⇧Tab' : 'Shift+Tab' },
+	{ id: 'Agent', label: 'Agent', icon: 'agent' },
+	{ id: 'Plan', label: 'Plan', icon: 'plan', keybinding: 'Tab', description: 'Generate an implementation plan' },
+	{ id: 'Debug', label: 'Debug', icon: 'debug', description: 'Pinpoint the root cause of an issue' },
+	{ id: 'Multitask', label: 'Multitask', icon: 'multitask', description: 'Orchestrate multiple subagents in parallel' },
+	{ id: 'Ask', label: 'Ask', icon: 'ask', description: 'Answer questions without making edits' },
 ];
-
-function catalogToOption(item: IVoltCatalogItem): IModelOption {
-	return {
-		ref: item.ref,
-		name: item.label,
-		qualifier: item.qualifier,
-		providerId: item.providerId,
-		family: providerFamily(item.providerId),
-		optionDescriptors: item.optionDescriptors ?? [],
-		detail: item.detail,
-		description: item.description,
-		contextLabel: item.contextLabel,
-		contextWindow: item.capabilities.contextWindow,
-	};
-}
 
 interface IContextUsageItem {
 	label: string;
@@ -279,16 +314,24 @@ interface IContextUsageView {
 	items: IContextUsageItem[];
 }
 
-function formatTokens(n: number): string {
-	if (n < 1000) {
-		return String(n);
+function formatExploringSummary(items: readonly IAgentActivityItem[]): string | undefined {
+	const files = items.filter(item => item.kind === 'read').length;
+	const searches = items.filter(item => item.kind === 'search').length;
+	if (!files && !searches) {
+		return undefined;
 	}
-	if (n >= 1_000_000) {
-		const m = n / 1_000_000;
-		return Number.isInteger(m) ? `${m}M` : `${m.toFixed(1)}M`;
+	const parts: string[] = [];
+	if (files) {
+		parts.push(files === 1
+			? localize('voltAgent.oneFile', "1 file")
+			: localize('voltAgent.manyFiles', "{0} files", files));
 	}
-	const k = n / 1000;
-	return k >= 100 && Number.isInteger(k) ? `${k}K` : `${k.toFixed(1)}K`;
+	if (searches) {
+		parts.push(searches === 1
+			? localize('voltAgent.oneSearch', "1 search")
+			: localize('voltAgent.manySearches', "{0} searches", searches));
+	}
+	return localize('voltAgent.exploring', "Exploring {0}", parts.join(', '));
 }
 
 function formatWorkedDuration(ms: number): string {
@@ -315,20 +358,6 @@ function estimateMessageTokens(message: IAgentAssistantMessage): number {
 	return estimateTokensFromText([agentMessagePlainText(message), message.activity?.thinkingText ?? ''].join('\n'));
 }
 
-function formatWorkedLine(ms: number, tokensIn?: number, tokensOut?: number, estimatedOut?: number): string {
-	const parts = [formatWorkedDuration(ms)];
-	if (tokensIn !== undefined) {
-		parts.push(localize('voltAgent.tokensInCount', "{0} tokens in", formatTokens(tokensIn)));
-	}
-	if (tokensOut !== undefined) {
-		parts.push(localize('voltAgent.tokensOutCount', "{0} tokens out", formatTokens(tokensOut)));
-	}
-	if (tokensIn === undefined && tokensOut === undefined && estimatedOut && estimatedOut > 0) {
-		parts.push(localize('voltAgent.approxTokens', "~{0} tokens", formatTokens(estimatedOut)));
-	}
-	return parts.join(' - ');
-}
-
 function agentMessagePlainText(message: IAgentAssistantMessage): string {
 	const parts: string[] = [];
 	const fromBlocks = blocksPlainText(collectBlocks(message.segments, message.text));
@@ -353,6 +382,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	static readonly ID = AgentEditorInput.EditorID;
 
 	private container!: HTMLElement;
+	private threadView!: AgentThreadView;
 	private threadEl!: HTMLElement;
 	private threadInner!: HTMLElement;
 	private threadScroll!: DomScrollableElement;
@@ -361,28 +391,40 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private monacoHost!: HTMLElement;
 	private placeholderEl!: HTMLElement;
 	private toolbarEl!: HTMLElement;
+	private plusButton!: HTMLButtonElement;
 	private accessButton!: HTMLButtonElement;
 	private modeButton!: HTMLButtonElement;
 	private modelButton!: HTMLButtonElement;
+	private readonly tooltip = this._register(new AgentTooltip());
 	private toolbarStartEl!: HTMLElement;
 	private toolbarEndEl!: HTMLElement;
 	private zoomButton!: HTMLButtonElement;
 	private contextButton!: HTMLButtonElement;
 	private attachButton!: HTMLButtonElement;
 	private sendButton!: HTMLButtonElement;
+	private suggestEl!: HTMLElement;
+	private queueBarEl!: HTMLElement;
+	private readonly suggestListeners = this._register(new DisposableStore());
+	private sendKind: 'mic' | 'send' | 'stop' = 'mic';
+	private promptQueue: { id: string; text: string; display?: IAgentPromptDisplay }[] = [];
+	private queueExpanded = false;
+	private readonly queueBarListeners = this._register(new DisposableStore());
 
 	private inputEditor: ICodeEditor | undefined;
 	private inputModel: ITextModel | undefined;
 	private mentionController: AgentMentionController | undefined;
+	private composerLists: AgentComposerLists | undefined;
 	private readonly editorDisposables = this._register(new DisposableStore());
 
 	private messages: IAgentMessage[] = [];
 	private currentMode = MODE_OPTIONS[0].id;
-	private currentModel = '';
-	private modelAuto = false;
-	private catalog: IModelOption[] = [];
-	private pickerProviderId: string | undefined;
-	private pickerOptionsRef: string | undefined;
+	private readonly modelPicker: AgentModelPicker;
+	private get currentModel(): string { return this.modelPicker.currentModel; }
+	private get modelAuto(): boolean { return this.modelPicker.modelAuto; }
+	private get catalog(): IModelOption[] { return this.modelPicker.catalog; }
+	private plusMenuOpen = false;
+	private plusMenuEl: HTMLElement | undefined;
+	private readonly plusMenuStore = this._register(new DisposableStore());
 	private eventDisposable: IDisposable | undefined;
 	private renderHandle: number | undefined;
 	private findWidget!: AgentFindWidget;
@@ -404,6 +446,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly thinkingStore = this._register(new DisposableStore());
 	private readonly markdownRenderer: MarkdownRenderer;
 	private clockTimer: IDisposable | undefined;
+	private editingUserIndex: number | undefined;
+	private editRestoreDraft = '';
+	private editRestoreMentions: IAgentDisplayMention[] = [];
+	private skipRunEvents = false;
+	private activeRunId: string | undefined;
+	private readonly _onDidChangeDock = this._register(new Emitter<void>());
+	readonly onDidChangeDock: Event<void> = this._onDidChangeDock.event;
+	private readonly _onDidComposerSend = this._register(new Emitter<void>());
+	readonly onDidComposerSend: Event<void> = this._onDidComposerSend.event;
 
 	constructor(
 		group: IEditorGroup,
@@ -426,11 +477,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	) {
 		super(AgentEditor.ID, group, telemetryService, themeService, storageService);
 		this.markdownRenderer = this.instantiationService.createInstance(MarkdownRenderer, {});
-		this.syncCatalog();
-		this._register(this.runtime.onDidChangeCatalog(() => {
-			this.syncCatalog();
-			this.updateModelButton();
-			this.renderContextRing();
+		this.modelPicker = this._register(this.instantiationService.createInstance(AgentModelPicker, {
+			onDidChange: () => {
+				if (this.modelButton) {
+					this.updateModelButton();
+					this.renderContextRing();
+				}
+			},
 		}));
 		this._register(this.runtime.onDidChangeAccess(() => this.updateAccessButton()));
 	}
@@ -448,21 +501,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				void this.mentionController?.handleExternalDrop(e);
 			}
 		}));
-		this.threadEl = append(this.container, $('.volt-agent-thread'));
-		this.threadInner = $('.volt-agent-thread-inner');
-		this.threadScroll = this._register(new DomScrollableElement(this.threadInner, {
-			className: 'volt-agent-thread-scroll',
-			vertical: ScrollbarVisibility.Auto,
-			horizontal: ScrollbarVisibility.Hidden,
-			verticalScrollbarSize: 14,
-			useShadows: false,
-			handleMouseWheel: true,
-			alwaysConsumeMouseWheel: false,
-		}));
-		const threadScrollNode = this.threadScroll.getDomNode();
-		threadScrollNode.style.width = '100%';
-		threadScrollNode.style.height = '100%';
-		this.threadEl.appendChild(threadScrollNode);
+		this.threadView = this._register(new AgentThreadView());
+		this.threadEl = this.threadView.element;
+		this.threadInner = this.threadView.inner;
+		this.threadScroll = this.threadView.scroll;
+		append(this.container, this.threadEl);
+		this.threadView.rememberHome();
 		this._register(this.threadScroll.onScroll(e => {
 			this.stickToBottom = e.scrollTop + e.height >= e.scrollHeight - 32;
 		}));
@@ -470,8 +514,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const threadResizeObserver = new threadWindow.ResizeObserver(() => this.syncThreadScroll());
 		threadResizeObserver.observe(this.threadEl);
 		this._register(toDisposable(() => threadResizeObserver.disconnect()));
+		this._register(addDisposableListener(getWindow(this.container), 'pointerdown', e => this.onEditPointerDown(e), true));
 		this.composerEl = append(this.container, $('.volt-agent-composer'));
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
+		this.queueBarEl = append(this.inputBox, $('.volt-agent-queue-bar'));
+		this.queueBarEl.classList.add('hidden');
 		this.monacoHost = append(this.inputBox, $('.volt-agent-monaco.show-file-icons'));
 		this.placeholderEl = append(this.monacoHost, $('.volt-agent-placeholder'));
 		this.placeholderEl.setAttribute('aria-hidden', 'true');
@@ -480,9 +527,21 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.toolbarEl = append(this.inputBox, $('.volt-agent-toolbar'));
 		this.toolbarStartEl = append(this.toolbarEl, $('.volt-agent-toolbar-start'));
 		this.toolbarEndEl = append(this.toolbarEl, $('.volt-agent-toolbar-end'));
+		this.plusButton = append(this.toolbarStartEl, $('button.volt-agent-plus')) as HTMLButtonElement;
+		setAgentTooltip(this.plusButton, localize('voltAgent.add', "Add"));
+		this.plusButton.appendChild(createPlusIcon());
 		this.modeButton = append(this.toolbarStartEl, $('button.volt-agent-mode')) as HTMLButtonElement;
 		this.accessButton = append(this.toolbarStartEl, $('button.volt-agent-access')) as HTMLButtonElement;
 		this.modelButton = append(this.toolbarStartEl, $('button.volt-agent-model')) as HTMLButtonElement;
+		this._register(this.tooltip.bind(this.modelButton, () => [
+			{ label: localize('voltAgent.selectModel', "Select Model"), shortcut: formatAgentTooltipShortcut({ meta: true, key: '/' }) },
+			{ label: localize('voltAgent.cycleEffort', "Cycle Effort"), shortcut: formatAgentTooltipShortcut({ meta: true, shift: true, key: '/' }) },
+		], {
+			fontSource: () => (this.monacoHost.querySelector('.view-lines')
+				?? this.monacoHost.querySelector('textarea')
+				?? this.placeholderEl
+				?? this.monacoHost) as HTMLElement | null,
+		}));
 
 		this.updateAccessButton();
 		this.updateModeButton();
@@ -503,17 +562,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}));
 
 		this.contextButton = append(this.toolbarEndEl, $('button.volt-agent-context-btn')) as HTMLButtonElement;
-		this.contextButton.title = localize('voltAgent.contextUsage', "Context usage");
+		setAgentTooltip(this.contextButton, localize('voltAgent.contextUsage', "Context usage"));
 		this.renderContextRing();
 
 		this.attachButton = append(this.toolbarEndEl, $('button.volt-agent-icon-btn.volt-agent-attach-btn')) as HTMLButtonElement;
-		this.attachButton.title = localize('voltAgent.attach', "Add context");
+		setAgentTooltip(this.attachButton, localize('voltAgent.attach', "Add context"));
 		this.attachButton.appendChild(renderIcon(Codicon.attach));
 
 		this.sendButton = append(this.toolbarEndEl, $('button.volt-agent-send')) as HTMLButtonElement;
-		// allow-any-unicode-next-line
-		this.sendButton.title = localize('voltAgent.send', "Send (⌘↵)");
-		this.sendButton.appendChild(createSvgIcon('0 0 24 24', 'M12 19V5M5 12l7-7 7 7', 'send', true, '2.3'));
+		this.updateSendButton();
+
+		this.suggestEl = append(this.composerEl, $('.volt-agent-suggest'));
+		this.renderSuggestChips();
 
 		this.sash = this._register(new Sash(this.container, {
 			getHorizontalSashTop: () => this.composerEl.offsetTop + this.inputBox.offsetTop,
@@ -542,6 +602,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.findWidget = this._register(this.instantiationService.createInstance(AgentFindWidget, this));
 		this.container.appendChild(this.findWidget.getDomNode());
 
+		this._register(addDisposableListener(this.plusButton, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.showPlusMenu();
+		}));
 		this._register(addDisposableListener(this.accessButton, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -550,11 +615,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this._register(addDisposableListener(this.modeButton, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
-			this.showModeDropdown();
+			if ((e.target as HTMLElement).closest('.volt-agent-mode-close')) {
+				this.setMode('Agent');
+				return;
+			}
+			this.showPlusMenu();
 		}));
 		this._register(addDisposableListener(this.modelButton, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
+			this.tooltip.hide();
 			this.showModelDropdown();
 		}));
 		this._register(addDisposableListener(this.sendButton, 'click', () => this.send()));
@@ -582,7 +652,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private selectedModel(): IModelOption | undefined {
-		return this.currentModel ? this.catalog.find(option => option.ref === this.currentModel) : undefined;
+		return this.modelPicker.selectedModel();
 	}
 
 	private modelContextWindow(model = this.selectedModel()): number {
@@ -664,7 +734,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const circumference = 2 * Math.PI * radius;
 		const dash = circumference * ratio;
 		this.contextButton.replaceChildren();
-		this.contextButton.title = localize('voltAgent.contextUsageDetail', "Context usage: {0} / {1}", formatTokens(used), formatTokens(limit));
+		setAgentTooltip(this.contextButton, localize('voltAgent.contextUsageDetail', "Context usage: {0} / {1}", formatTokens(used), formatTokens(limit)));
 		const svg = this.contextButton.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
 		svg.setAttribute('viewBox', '0 0 24 24');
 		svg.setAttribute('width', '18');
@@ -756,7 +826,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			getAnchor: () => this.contextButton,
 			anchorAlignment: AnchorAlignment.RIGHT,
 			anchorPosition: AnchorPosition.ABOVE,
-			onDOMEvent: (e: Event) => {
+			onDOMEvent: (e: globalThis.Event) => {
 				if (e.type !== 'click' || !(e.target instanceof Node)) {
 					return;
 				}
@@ -812,7 +882,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.accessButton.appendChild(createAccessIcon(option.id));
 		append(this.accessButton, $('span.volt-agent-access-label')).textContent = option.label;
 		this.accessButton.appendChild(createChevronIcon());
-		this.accessButton.title = option.description;
+		setAgentTooltip(this.accessButton, option.description);
 		this.animateChipWidth(this.accessButton, fromWidth);
 	}
 
@@ -821,7 +891,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			getAnchor: () => this.accessButton,
 			anchorAlignment: AnchorAlignment.LEFT,
 			anchorPosition: AnchorPosition.ABOVE,
-			onDOMEvent: (e: Event) => {
+			onDOMEvent: (e: globalThis.Event) => {
 				if (e.type !== 'click' || !(e.target instanceof Node)) {
 					return;
 				}
@@ -867,13 +937,23 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const fromWidth = this.modeButton.offsetWidth;
 		this.modeButton.replaceChildren();
 		const option = MODE_OPTIONS.find(item => item.id === this.currentMode) ?? MODE_OPTIONS[0];
-		this.modeButton.appendChild(createModeIcon(option.icon));
-		const label = append(this.modeButton, $('span.volt-agent-mode-label'));
-		label.textContent = this.currentMode;
-		this.modeButton.title = localize('voltAgent.modeCycleHint', "{0} - Tab / Shift+Tab to switch", this.currentMode);
-		this.modeButton.appendChild(createChevronIcon());
+		const chip = option.id !== 'Agent';
+		this.modeButton.classList.toggle('hidden', !chip);
+		this.modeButton.classList.toggle('chip', chip);
+		if (chip) {
+			this.modeButton.appendChild(createModeIcon(option.icon));
+			const label = append(this.modeButton, $('span.volt-agent-mode-label'));
+			label.textContent = option.label;
+			const close = append(this.modeButton, $('button.volt-agent-mode-close')) as HTMLButtonElement;
+			setAgentTooltip(close, localize('voltAgent.clearMode', "Back to Agent"));
+			close.appendChild(renderIcon(Codicon.close));
+		}
+		setAgentTooltip(this.modeButton, chip
+			? localize('voltAgent.modeChipHint', "{0} - click x or press Tab to return", option.label)
+			: localize('voltAgent.modeCycleHint', "{0} - Tab / Shift+Tab for Plan", this.currentMode));
 		this.container.dataset.mode = normalizeVoltMode(this.currentMode);
 		this.animateChipWidth(this.modeButton, fromWidth);
+		this.renderSuggestChips();
 	}
 
 	private animateChipWidth(chip: HTMLElement, fromWidth: number): void {
@@ -949,7 +1029,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		let deficit = startNatural + endNatural + gap - available;
 		if (deficit <= 0) {
 			this.syncAccessTooltip(false);
-			this.syncModelTooltip(false);
+			this.syncModelTooltip();
 			return;
 		}
 
@@ -957,7 +1037,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.syncAccessTooltip(true);
 		deficit -= Math.max(0, accessNatural - this.accessButton.offsetWidth);
 		if (deficit <= 0) {
-			this.syncModelTooltip(false);
+			this.syncModelTooltip();
 			return;
 		}
 
@@ -975,13 +1055,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				deficit -= shrink;
 			}
 			if (deficit <= 0) {
-				this.syncModelTooltip(shrink > 0);
+				this.syncModelTooltip();
 				return;
 			}
 		}
 
 		toolbar.classList.add('compact-model-icon');
-		this.syncModelTooltip(true);
+		this.syncModelTooltip();
 		deficit -= Math.max(0, modelNatural - this.modelButton.offsetWidth);
 		if (deficit <= 0) {
 			return;
@@ -1015,26 +1095,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private syncAccessTooltip(iconOnly: boolean): void {
 		const option = accessModeOption(this.runtime.getAccessMode());
-		this.accessButton.title = iconOnly ? option.label : option.description;
+		setAgentTooltip(this.accessButton, iconOnly ? option.label : option.description);
 	}
 
-	private syncModelTooltip(iconOnly: boolean): void {
-		if (!iconOnly) {
-			this.modelButton.removeAttribute('title');
-			return;
-		}
-		const selected = this.currentModel ? this.catalog.find(option => option.ref === this.currentModel) : undefined;
-		this.modelButton.title = this.modelAuto
-			? localize('voltAgent.auto', "Auto")
-			: (selected ? this.modelTitle(selected) : localize('voltAgent.connectModel', "Connect a model"));
+	private syncModelTooltip(): void {
+		this.modelButton.removeAttribute('title');
 	}
 
 	private updateZoomButton(): void {
 		this.zoomButton.replaceChildren();
 		this.zoomButton.appendChild(createExpandIcon(this.composerZoomed));
-		this.zoomButton.title = this.composerZoomed
+		setAgentTooltip(this.zoomButton, this.composerZoomed
 			? localize('voltAgent.zoomOut', "Restore composer size")
-			: localize('voltAgent.zoomIn', "Expand composer");
+			: localize('voltAgent.zoomIn', "Expand composer"));
 	}
 
 	private toggleComposerZoom(): void {
@@ -1097,11 +1170,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		return this.configurationService.getValue<boolean>(AGENT_EDITOR_LINE_NUMBERS_SETTING) === true;
 	}
 
-	private agentInputFontFamily(): string {
-		const fromDom = this.container ? getWindow(this.container).getComputedStyle(this.container).fontFamily : '';
-		return fromDom && fromDom !== 'monospace' ? fromDom : '-apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", sans-serif';
-	}
-
 	private codeFontFamily(): string {
 		const configured = this.configurationService.getValue<string>('editor.fontFamily');
 		return configured && configured !== 'default' ? configured : EDITOR_FONT_DEFAULTS.fontFamily;
@@ -1123,10 +1191,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.monacoHost?.classList.toggle('has-line-numbers', showLineNumbers);
 		return {
 			...editorConfiguration,
-			fontFamily: this.agentInputFontFamily(),
-			fontSize: 13,
-			fontWeight: '400',
-			lineHeight: 18,
+			fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif',
+			fontSize: 14,
+			fontWeight: '300',
+			lineHeight: 22,
 			cursorStyle: 'line',
 			cursorWidth: 1,
 			renderLineHighlight: 'none',
@@ -1157,6 +1225,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				handleMouseWheel: true,
 			},
 			...(expanded ? {} : { minimap: { enabled: false } }),
+			stickyScroll: { enabled: false },
+			editContext: false,
 		};
 	}
 
@@ -1178,6 +1248,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		input.composerZoomed = this.composerZoomed;
 		input.composerHeight = this.composerHeight;
+		input.promptQueue = this.promptQueue;
+		input.queueExpanded = this.queueExpanded;
 	}
 
 	private restoreInputState(input: AgentEditorInput): void {
@@ -1186,7 +1258,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.messages = input.messages as IAgentMessage[];
 		this.sessionTokensUsed = input.contextUsed;
 		this.sessionTokensWindow = input.contextWindow;
+		this.editingUserIndex = undefined;
+		this.editRestoreDraft = '';
+		this.editRestoreMentions = [];
 		this.stickToBottom = true;
+		this.syncComposerPlacement();
 		this.renderThread(true);
 		if (this.inputModel && this.inputModel.getValue() !== input.draft) {
 			this.inputModel.setValue(input.draft);
@@ -1195,14 +1271,33 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!input.composerZoomed) {
 			this.applyComposerHeight(input.composerHeight);
 		}
+		this.promptQueue = Array.isArray(input.promptQueue) ? input.promptQueue.slice() as typeof this.promptQueue : [];
+		this.queueExpanded = !!input.queueExpanded;
+		this.renderQueueBar();
+		this.updateSendButton();
 		input.setHasUnsavedContent(!!input.draft.trim());
 		this.updateInputPlaceholder();
 	}
 
 	private inputPlaceholderText(): string {
-		return this.messages.length
-			? localize('voltAgent.followUpPlaceholder', "Add a follow-up")
-			: localize('voltAgent.inputPlaceholder', "Plan, search, or build anything");
+		if (this.currentMode === 'Plan') {
+			return localize('voltAgent.planPlaceholder', "Plan changes");
+		}
+		if (this.currentMode === 'Debug') {
+			return localize('voltAgent.debugPlaceholder', "Debug issue");
+		}
+		if (this.currentMode === 'Ask') {
+			return localize('voltAgent.askPlaceholder', "Ask a question");
+		}
+		if (this.currentMode === 'Multitask') {
+			return localize('voltAgent.multitaskPlaceholder', "Run subagents");
+		}
+		if (this.editingUserIndex !== undefined) {
+			return localize('voltAgent.editAndSendAgain', "Edit and send again");
+		}
+		return this.isFollowUpComposer()
+			? localize('voltAgent.followUpPlaceholder', "Send follow-up")
+			: localize('voltAgent.inputPlaceholder', "Plan, Build, / for skills, @ for context");
 	}
 
 	private updateInputPlaceholder(): void {
@@ -1224,80 +1319,30 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		input.setHasUnsavedContent(!!draft.trim());
 	}
 
-	private syncCatalog(): void {
-		this.catalog = this.runtime.listCatalog()
-			.filter(item => item.enabled)
-			.map(catalogToOption)
-			.filter(option => option.name.trim().toLowerCase() !== 'auto');
-		// The runtime remembers the composer selection across restarts and shares it with the
-		// Tab Prediction Runtime, so it - not this editor - is the source of truth.
-		const persisted = this.runtime.getActiveCatalogRef();
-		if (persisted && this.catalog.some(item => item.ref === persisted)) {
-			this.currentModel = persisted;
-		}
-		if (!this.currentModel || !this.catalog.some(item => item.ref === this.currentModel)) {
-			this.currentModel = this.catalog[0]?.ref ?? '';
-		}
-		if (this.currentModel && this.currentModel !== persisted) {
-			void this.runtime.setActiveCatalogRef(this.currentModel);
-		}
-	}
-
-	/**
-	 * Groups the enabled catalog into the rail on the left of the picker. Providers that are two
-	 * faces of the same vendor share a tab, so a Codex CLI connection and an OpenAI API key land
-	 * together instead of as two identical icons.
-	 */
-	private providerGroups(): IProviderGroup[] {
-		const groups = new Map<string, IProviderGroup>();
-		for (const option of this.catalog) {
-			let group = groups.get(option.family);
-			if (!group) {
-				group = { family: option.family, label: providerFamilyLabel(option.providerId), models: [] };
-				groups.set(option.family, group);
-			}
-			group.models.push(option);
-		}
-		return [...groups.values()];
-	}
-
-	private modelProviderLabel(model: IModelOption): string | undefined {
-		const label = model.qualifier?.trim() || providerFamilyLabel(model.providerId);
-		if (!label || model.name.toLowerCase().includes(label.toLowerCase())) {
-			return undefined;
-		}
-		return label;
-	}
-
-	private modelOptionsLabel(model: IModelOption): string | undefined {
-		return describeModelOptions(model.optionDescriptors, this.runtime.getModelOptions(model.ref));
-	}
-
-	/** Display title: `Cursor Grok 4.6 High Fast`. */
-	private modelTitle(model: IModelOption): string {
-		return [this.modelProviderLabel(model), model.name, this.modelOptionsLabel(model)].filter(Boolean).join(' ');
-	}
-
 	private updateModelButton(): void {
 		const fromWidth = this.modelButton.offsetWidth;
 		this.modelButton.replaceChildren();
 		const selected = this.currentModel ? this.catalog.find(option => option.ref === this.currentModel) : undefined;
-		if (this.modelAuto) {
-			this.modelButton.appendChild(renderIcon(Codicon.sparkle));
-		} else if (selected) {
-			this.modelButton.appendChild(createBrandIcon(selected.providerId, 13));
-		}
 		const label = append(this.modelButton, $('span.volt-agent-model-label'));
 		if (this.modelAuto) {
 			label.textContent = localize('voltAgent.auto', "Auto");
 		} else if (selected) {
-			label.textContent = this.modelTitle(selected);
+			label.textContent = this.modelPicker.modelOptionsLabel(selected) || selected.name;
 		} else {
 			label.textContent = localize('voltAgent.connectModel', "Connect a model");
 		}
 		this.modelButton.appendChild(createChevronIcon());
 		this.animateChipWidth(this.modelButton, fromWidth);
 		this.renderContextRing();
+	}
+
+	private showModelDropdown(): void {
+		this.tooltip.hide();
+		this.modelPicker.show(this.modelButton, () => this.inputEditor?.focus());
+	}
+
+	private cycleEffort(): void {
+		this.modelPicker.cycleEffort();
 	}
 
 	private bindDropdownDismiss(store: DisposableStore, menu: HTMLElement, anchor: HTMLElement): void {
@@ -1320,466 +1365,227 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}));
 	}
 
-	private cycleMode(delta: number): void {
-		const index = MODE_OPTIONS.findIndex(item => item.id === this.currentMode);
-		const next = MODE_OPTIONS[(Math.max(index, 0) + delta + MODE_OPTIONS.length) % MODE_OPTIONS.length];
-		if (next.id === this.currentMode) {
+	setMode(id: string): void {
+		if (this.currentMode === id) {
 			return;
 		}
-		this.currentMode = next.id;
+		this.currentMode = id;
 		this.updateModeButton();
+		this.updateInputPlaceholder();
 	}
 
-	private showModeDropdown(): void {
-		this.contextViewService.showContextView({
-			getAnchor: () => this.modeButton,
-			anchorAlignment: AnchorAlignment.LEFT,
-			anchorPosition: AnchorPosition.ABOVE,
-			onDOMEvent: (e: Event) => {
-				if (e.type !== 'click' || !(e.target instanceof Node)) {
-					return;
+	private togglePlan(): void {
+		this.setMode(this.currentMode === 'Plan' ? 'Agent' : 'Plan');
+	}
+
+	private hidePlusMenu(): void {
+		this.plusMenuStore.clear();
+		this.plusMenuEl?.remove();
+		this.plusMenuEl = undefined;
+		this.plusMenuOpen = false;
+	}
+
+	private showPlusMenu(): void {
+		if (this.plusMenuOpen) {
+			this.hidePlusMenu();
+			return;
+		}
+		this.tooltip.hide();
+		this.plusMenuStore.clear();
+		this.plusMenuEl?.remove();
+		this.plusMenuOpen = true;
+		const menu = $('.volt-agent-plus-menu');
+		this.plusMenuEl = menu;
+		this.composerEl.insertBefore(menu, this.inputBox);
+		const search = append(menu, $('input.volt-agent-plus-search')) as HTMLInputElement;
+		search.type = 'text';
+		search.placeholder = localize('voltAgent.plusSearch', "Search skills, context, chats...");
+		const list = append(menu, $('.volt-agent-plus-list'));
+		const itemsStore = this.plusMenuStore.add(new DisposableStore());
+
+		const selectableModes = MODE_OPTIONS.filter(option => option.id !== 'Agent');
+		const renderItems = (query: string) => {
+			itemsStore.clear();
+			list.replaceChildren();
+			const q = query.trim().toLowerCase();
+			const modes = selectableModes.filter(option =>
+				!q
+				|| option.label.toLowerCase().includes(q)
+				|| (option.description ?? '').toLowerCase().includes(q)
+			);
+			for (const option of modes) {
+				const item = append(list, $('button.volt-agent-dropdown-item.plus-mode')) as HTMLButtonElement;
+				if (option.id === this.currentMode) {
+					item.classList.add('active');
 				}
-				const view = this.contextViewService.getContextViewElement();
-				if (view.contains(e.target) || this.modeButton.contains(e.target)) {
-					return;
+				const icon = append(item, $('span.icon'));
+				icon.appendChild(createModeIcon(option.icon));
+				append(item, $('span.label')).textContent = option.label;
+				if (option.description) {
+					append(item, $('span.desc')).textContent = option.description;
 				}
-				this.contextViewService.hideContextView();
-			},
-			render: container => {
-				const store = new DisposableStore();
-				const menu = append(container, $('.volt-agent-dropdown.modes.models'));
-				const { list, scroll } = appendAgentScrollableList(menu);
-				store.add(scroll);
-				for (const option of MODE_OPTIONS) {
-					const item = append(list, $('button.volt-agent-dropdown-item')) as HTMLButtonElement;
-					if (option.id === this.currentMode) {
-						item.classList.add('active');
+				itemsStore.add(addDisposableListener(item, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					this.setMode(option.id);
+					this.hidePlusMenu();
+				}));
+			}
+
+			const actions = ([
+				{ id: 'files' as const, label: localize('voltAgent.plusFiles', "Files"), keys: ['files', 'file', 'attach'] },
+				{ id: 'model' as const, label: localize('voltAgent.plusModel', "Model"), keys: ['model'] },
+				{ id: 'mcp' as const, label: localize('voltAgent.plusMcp', "MCP"), keys: ['mcp'] },
+			]).filter(action =>
+				!q
+				|| action.label.toLowerCase().includes(q)
+				|| action.keys.some(key => key.includes(q) || q.includes(key))
+			);
+
+			if (modes.length && actions.length) {
+				append(list, $('.volt-agent-dropdown-sep'));
+			}
+
+			for (const action of actions) {
+				const item = append(list, $('button.volt-agent-dropdown-item.plus-action')) as HTMLButtonElement;
+				const icon = append(item, $('span.icon'));
+				icon.appendChild(action.id === 'files'
+					? createPaperclipIcon()
+					: action.id === 'model'
+						? createCubeIcon()
+						: createPlugIcon());
+				append(item, $('span.label')).textContent = action.label;
+				if (action.id === 'model') {
+					const selected = this.selectedModel();
+					const name = this.modelAuto
+						? localize('voltAgent.auto', "Auto")
+						: selected
+							? [this.modelPicker.modelProviderLabel(selected), selected.name].filter(Boolean).join(' ')
+							: '';
+					if (name) {
+						append(item, $('span.desc')).textContent = name;
 					}
-					const icon = append(item, $('span.icon'));
-					icon.appendChild(createModeIcon(option.icon));
-					append(item, $('span.label')).textContent = option.label;
+				}
+				if (action.id === 'mcp') {
 					const meta = append(item, $('span.meta'));
-					if (option.keybinding) {
-						append(meta, $('span.kb')).textContent = option.keybinding;
-					}
-					if (option.id === this.currentMode) {
-						const check = append(meta, $('span.check'));
-						check.appendChild(renderIcon(Codicon.check));
-					}
-					store.add(addDisposableListener(item, 'click', e => {
-						e.preventDefault();
-						e.stopPropagation();
-						this.currentMode = option.id;
-						this.updateModeButton();
-						this.contextViewService.hideContextView();
-					}));
+					meta.appendChild(createChevronRightIcon());
 				}
-				this.bindDropdownDismiss(store, menu, this.modeButton);
-				store.add(addDisposableListener(getWindow(menu), 'keydown', e => {
-					if (e.key !== 'Tab' || e.altKey || e.metaKey || e.ctrlKey) {
+				itemsStore.add(addDisposableListener(item, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					this.hidePlusMenu();
+					if (action.id === 'files') {
+						this.ensureInputEditor();
+						this.mentionController?.openFilePicker();
+						this.inputEditor?.focus();
 						return;
 					}
-					e.preventDefault();
-					e.stopPropagation();
-					this.cycleMode(e.shiftKey ? -1 : 1);
-					for (const child of list.children) {
-						if (!isHTMLButtonElement(child)) {
-							continue;
-						}
-						const label = child.querySelector('.label')?.textContent;
-						const active = MODE_OPTIONS.some(option => option.id === this.currentMode && option.label === label);
-						child.classList.toggle('active', active);
-						child.querySelector('.check')?.remove();
-						if (active) {
-							const check = append(child.querySelector('.meta') ?? child, $('span.check'));
-							check.appendChild(renderIcon(Codicon.check));
-						}
+					if (action.id === 'model') {
+						scheduleAtNextAnimationFrame(getWindow(this.plusButton), () => this.showModelDropdown());
+						return;
 					}
-				}, true));
-				store.add(toDisposable(() => menu.remove()));
-				scheduleAtNextAnimationFrame(getWindow(menu), () => scroll.scanDomNode());
-				return store;
-			}
-		});
-	}
-
-	/**
-	 * Three stage picker: a provider rail on the left, that provider's models in the middle, and
-	 * an options column on the right for thinking, context window, and reasoning effort.
-	 */
-	private showModelDropdown(): void {
-		this.syncCatalog();
-		if (!this.catalog.length || this.runtime.isCatalogLoading()) {
-			void this.runtime.refreshCatalog();
-		}
-		const selected = this.catalog.find(option => option.ref === this.currentModel);
-		this.pickerProviderId = selected?.family ?? this.pickerProviderId;
-		this.pickerOptionsRef = undefined;
-
-		this.contextViewService.showContextView({
-			getAnchor: () => this.modelButton,
-			anchorAlignment: AnchorAlignment.LEFT,
-			anchorPosition: AnchorPosition.ABOVE,
-			onDOMEvent: (e: Event) => {
-				if (e.type !== 'click' || !(e.target instanceof Node)) {
-					return;
-				}
-				const view = this.contextViewService.getContextViewElement();
-				if (view.contains(e.target) || this.modelButton.contains(e.target)) {
-					return;
-				}
-				this.contextViewService.hideContextView();
-			},
-			render: container => {
-				const store = new DisposableStore();
-				const menu = append(container, $('.volt-agent-dropdown.models.picker'));
-				const hover = append(container, $('.volt-agent-model-hover.hidden'));
-				const rail = append(menu, $('.volt-agent-provider-rail'));
-				const main = append(menu, $('.volt-agent-picker-main'));
-
-				const searchRow = append(main, $('.volt-agent-dropdown-search-row'));
-				append(searchRow, createSvgIcon('0 0 24 24', 'M17 17L22 22M19.5 10.75C19.5 15.5825 15.5825 19.5 10.75 19.5C5.91751 19.5 2 15.5825 2 10.75C2 5.91751 5.91751 2 10.75 2C15.5825 2 19.5 5.91751 19.5 10.75Z', 'search', true));
-				const search = append(searchRow, $('input.volt-agent-dropdown-search')) as HTMLInputElement;
-				search.placeholder = localize('voltAgent.searchModels', "Search models");
-				search.type = 'text';
-
-				const autoRow = append(main, $('.volt-agent-dropdown-auto'));
-				append(autoRow, $('span')).textContent = localize('voltAgent.auto', "Auto");
-				const autoToggle = append(autoRow, $('button.volt-agent-switch')) as HTMLButtonElement;
-				autoToggle.setAttribute('role', 'switch');
-				append(autoToggle, $('span.volt-agent-switch-thumb'));
-				const { list, scroll } = appendAgentScrollableList(main);
-				store.add(scroll);
-				store.add(scroll.onScroll(() => hover.classList.add('hidden')));
-				const optionsColumn = append(menu, $('.volt-agent-picker-options'));
-
-				// Cleared on every re-render so listeners never pile up on replaced nodes.
-				const renderStore = store.add(new DisposableStore());
-				const renderAll = () => {
-					renderStore.clear();
-					autoToggle.classList.toggle('on', this.modelAuto);
-					autoToggle.setAttribute('aria-checked', String(this.modelAuto));
-					main.classList.toggle('auto', this.modelAuto);
-
-					const groups = this.providerGroups();
-					if (this.pickerProviderId && !groups.some(group => group.family === this.pickerProviderId)) {
-						this.pickerProviderId = undefined;
-					}
-					this.pickerProviderId ??= groups[0]?.family;
-					this.renderProviderRail(rail, groups, renderStore, renderAll);
-					this.renderModelList(list, groups, search.value, renderStore, renderAll, hover, menu);
-					this.renderOptionsColumn(optionsColumn, renderStore, renderAll);
-					scroll.scanDomNode();
-					this.contextViewService.layout();
-				};
-				renderAll();
-				store.add(this.runtime.onDidChangeCatalog(() => {
-					this.syncCatalog();
-					this.updateModelButton();
-					renderAll();
+					void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
 				}));
-
-				store.add(addDisposableListener(autoToggle, 'click', e => {
-					e.preventDefault();
-					e.stopPropagation();
-					this.modelAuto = !this.modelAuto;
-					this.updateModelButton();
-					renderAll();
-				}));
-
-				store.add(addDisposableListener(search, 'input', () => renderAll()));
-				this.bindDropdownDismiss(store, menu, this.modelButton);
-				store.add(toDisposable(() => menu.remove()));
-				scheduleAtNextAnimationFrame(getWindow(search), () => {
-					scroll.scanDomNode();
-					search.focus();
-				});
-				return store;
 			}
-		});
-	}
+		};
 
-	private renderProviderRail(rail: HTMLElement, groups: IProviderGroup[], store: DisposableStore, refresh: () => void): void {
-		rail.replaceChildren();
-		if (!groups.length && this.runtime.isCatalogLoading()) {
-			for (let i = 0; i < 4; i++) {
-				append(rail, $('.volt-agent-provider-tab.skeleton'));
-			}
-		}
-		for (const group of groups) {
-			const tab = append(rail, $('button.volt-agent-provider-tab')) as HTMLButtonElement;
-			tab.classList.toggle('active', group.family === this.pickerProviderId);
-			tab.title = group.label;
-			tab.setAttribute('aria-label', group.label);
-			tab.appendChild(createBrandIcon(group.family, 18));
-			store.add(addDisposableListener(tab, 'click', e => {
-				e.preventDefault();
-				e.stopPropagation();
-				this.pickerProviderId = group.family;
-				this.pickerOptionsRef = undefined;
-				refresh();
-			}));
-		}
-		const settings = append(rail, $('button.volt-agent-provider-tab.settings')) as HTMLButtonElement;
-		settings.title = localize('voltAgent.openSettings', "Open Volt Settings");
-		settings.appendChild(renderIcon(Codicon.settingsGear));
-		store.add(addDisposableListener(settings, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			this.contextViewService.hideContextView();
-			void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
-		}));
-	}
-
-	private renderModelList(list: HTMLElement, groups: IProviderGroup[], query: string, store: DisposableStore, refresh: () => void, hover?: HTMLElement, menu?: HTMLElement): void {
-		hover?.classList.add('hidden');
-		list.replaceChildren();
-		if (!groups.length) {
-			if (this.runtime.isCatalogLoading()) {
-				this.renderModelSkeleton(list);
+		renderItems('');
+		this.plusMenuStore.add(addDisposableListener(search, 'input', () => renderItems(search.value)));
+		this.plusMenuStore.add(addDisposableListener(getWindow(menu).document, 'mousedown', e => {
+			if (!(e.target instanceof Node)) {
 				return;
 			}
-			const empty = append(list, $('button.volt-agent-dropdown-item')) as HTMLButtonElement;
-			append(empty, $('span.name')).textContent = localize('voltAgent.openSettings', "Open Volt Settings");
-			store.add(addDisposableListener(empty, 'click', e => {
+			if (menu.contains(e.target) || this.plusButton.contains(e.target) || this.modeButton.contains(e.target)) {
+				return;
+			}
+			this.hidePlusMenu();
+		}, true));
+		this.plusMenuStore.add(addDisposableListener(getWindow(menu), 'keydown', e => {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				this.hidePlusMenu();
+				this.inputEditor?.focus();
+			}
+		}));
+		this.plusMenuStore.add(toDisposable(() => {
+			menu.remove();
+			if (this.plusMenuEl === menu) {
+				this.plusMenuEl = undefined;
+				this.plusMenuOpen = false;
+			}
+		}));
+		scheduleAtNextAnimationFrame(getWindow(menu), () => search.focus());
+	}
+
+	private renderSuggestChips(): void {
+		if (!this.suggestEl) {
+			return;
+		}
+		this.suggestListeners.clear();
+		this.suggestEl.replaceChildren();
+		this.suggestEl.classList.toggle('hidden', this.isFollowUpComposer() || this.editingUserIndex !== undefined);
+		if (this.isFollowUpComposer() || this.editingUserIndex !== undefined) {
+			return;
+		}
+		const addChip = (label: string, onClick: () => void, kb?: string) => {
+			const chip = append(this.suggestEl, $('button.volt-agent-suggest-chip')) as HTMLButtonElement;
+			append(chip, $('span.label')).textContent = label;
+			if (kb) {
+				append(chip, $('span.kb')).textContent = kb;
+			}
+			this.suggestListeners.add(addDisposableListener(chip, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();
-				this.contextViewService.hideContextView();
-				void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
+				onClick();
 			}));
-			return;
-		}
-
-		const needle = query.trim().toLowerCase();
-		// A search spans every provider, otherwise the list is scoped to the selected rail tab.
-		const models = needle
-			? groups.flatMap(group => group.models).filter(model => this.modelTitle(model).toLowerCase().includes(needle))
-			: groups.find(group => group.family === this.pickerProviderId)?.models ?? [];
-
-		if (!models.length) {
-			append(list, $('.volt-agent-picker-empty')).textContent = localize('voltAgent.noModels', "No models match.");
-			return;
-		}
-
-		for (const model of models) {
-			const item = append(list, $('button.volt-agent-dropdown-item')) as HTMLButtonElement;
-			item.classList.toggle('active', model.ref === this.currentModel);
-			const name = append(item, $('span.name'));
-			append(name, $('span.label')).textContent = this.modelTitle(model);
-			const meta = append(item, $('span.meta'));
-			if (model.ref === this.currentModel) {
-				append(meta, $('span.check')).appendChild(renderIcon(Codicon.check));
-			}
-			if (model.optionDescriptors.length) {
-				const edit = append(meta, $('span.volt-agent-picker-edit'));
-				edit.appendChild(renderIcon(Codicon.settingsGear));
-				edit.title = localize('voltAgent.modelOptions', "Model options");
-				store.add(addDisposableListener(edit, 'click', e => {
-					e.preventDefault();
-					e.stopPropagation();
-					this.pickerOptionsRef = this.pickerOptionsRef === model.ref ? undefined : model.ref;
-					refresh();
-				}));
-			}
-			store.add(addDisposableListener(item, 'click', e => {
-				e.preventDefault();
-				e.stopPropagation();
-				this.currentModel = model.ref;
-				this.modelAuto = false;
-				void this.runtime.setActiveCatalogRef(model.ref);
-				this.pickerProviderId = model.family;
-				this.updateModelButton();
-				if (model.optionDescriptors.length) {
-					this.pickerOptionsRef = model.ref;
-					refresh();
-				} else {
-					this.contextViewService.hideContextView();
-				}
-			}));
-			if (hover && menu) {
-				this.bindModelHover(item, model, hover, menu, store);
-			}
-		}
-	}
-
-	private bindModelHover(item: HTMLElement, model: IModelOption, hover: HTMLElement, menu: HTMLElement, store: DisposableStore): void {
-		const win = getWindow(item);
-		let timer: number | undefined;
-		const hide = () => {
-			if (timer !== undefined) {
-				win.clearTimeout(timer);
-				timer = undefined;
-			}
-			hover.classList.add('hidden');
 		};
-		store.add(addDisposableListener(item, 'mouseenter', () => {
-			if (timer !== undefined) {
-				win.clearTimeout(timer);
-			}
-			timer = win.setTimeout(() => {
-				timer = undefined;
-				if (!this.fillModelHover(hover, model)) {
-					hover.classList.add('hidden');
-					return;
-				}
-				hover.classList.remove('hidden');
-				this.positionModelHover(hover, item, menu);
-			}, 220);
-		}));
-		store.add(addDisposableListener(item, 'mouseleave', hide));
-		store.add(toDisposable(hide));
-	}
-
-	private fillModelHover(hover: HTMLElement, model: IModelOption): boolean {
-		hover.replaceChildren();
-		const description = model.description?.trim();
-		const context = this.modelContextLabel(model);
-		const version = this.modelVersionLabel(model);
-		if (!description && !context && !version) {
-			return false;
+		if (this.currentMode !== 'Plan') {
+			addChip(localize('voltAgent.planNewIdea', "Plan New Idea"), () => this.setMode('Plan'), localize('voltAgent.planKb', "⇧Tab"));
 		}
-		append(hover, $('div.title')).textContent = model.name;
-		if (description) {
-			append(hover, $('div.desc')).textContent = description;
+		if (this.currentMode !== 'Multitask') {
+			addChip(localize('voltAgent.multitaskChip', "Multitask"), () => this.setMode('Multitask'));
 		}
-		if (context) {
-			append(hover, $('div.context')).textContent = localize('voltAgent.contextWindow', "{0} context window", context);
-		}
-		if (version) {
-			const line = append(hover, $('div.version'));
-			line.append(localize('voltAgent.modelVersion', "Version: "));
-			append(line, $('em')).textContent = version;
-		}
-		return true;
-	}
-
-	private modelContextLabel(model: IModelOption): string | undefined {
-		const context = model.optionDescriptors.find(descriptor => descriptor.id === MODEL_OPTION_CONTEXT);
-		if (context) {
-			const value = optionValue(context, this.runtime.getModelOptions(model.ref));
-			if (typeof value === 'string' && value.trim()) {
-				return value.trim();
-			}
-		}
-		return model.contextLabel ?? (model.contextWindow ? formatTokens(model.contextWindow) : undefined);
-	}
-
-	private modelVersionLabel(model: IModelOption): string | undefined {
-		const reasoning = model.optionDescriptors.find(descriptor => descriptor.id === MODEL_OPTION_REASONING);
-		if (reasoning) {
-			const value = optionValue(reasoning, this.runtime.getModelOptions(model.ref));
-			const choice = reasoning.options?.find(option => option.value === value);
-			if (choice) {
-				const effort = choice.label.toLowerCase();
-				return effort.includes('effort') ? effort : localize('voltAgent.effortVersion', "{0} effort", effort);
-			}
-		}
-		return model.detail?.trim() || undefined;
-	}
-
-	private positionModelHover(hover: HTMLElement, item: HTMLElement, menu: HTMLElement): void {
-		const itemRect = item.getBoundingClientRect();
-		const menuRect = menu.getBoundingClientRect();
-		const gap = 8;
-		const width = hover.offsetWidth;
-		const height = hover.offsetHeight;
-		const viewport = getWindow(item);
-		let left = menuRect.right + gap;
-		if (left + width > viewport.innerWidth - gap) {
-			left = Math.max(gap, menuRect.left - width - gap);
-		}
-		let top = itemRect.top;
-		if (top + height > viewport.innerHeight - gap) {
-			top = Math.max(gap, viewport.innerHeight - height - gap);
-		}
-		hover.style.left = `${left}px`;
-		hover.style.top = `${top}px`;
-	}
-
-	private renderModelSkeleton(list: HTMLElement): void {
-		const skeleton = append(list, $('.volt-agent-picker-skeleton'));
-		for (let i = 0; i < 8; i++) {
-			const row = append(skeleton, $('.volt-agent-skeleton-row'));
-			append(row, $('span.volt-agent-skeleton-bar'));
-		}
-	}
-
-	/**
-	 * Renders whatever options the provider declared for this model. Toggles share a single
-	 * "Options" heading and each list of choices becomes its own titled group.
-	 */
-	private renderOptionsColumn(column: HTMLElement, store: DisposableStore, refresh: () => void): void {
-		const model = this.catalog.find(option => option.ref === this.pickerOptionsRef);
-		const open = !!model?.optionDescriptors.length;
-		column.closest('.volt-agent-dropdown.picker')?.classList.toggle('has-options', open);
-		column.classList.toggle('hidden', !open);
-		if (!open || !model) {
-			return;
-		}
-		column.replaceChildren();
-
-		const options = this.runtime.getModelOptions(model.ref);
-		const update = (id: string, value: string | boolean) => {
-			void this.runtime.setModelOptions(model.ref, { ...options, [id]: value });
-			this.updateModelButton();
-			refresh();
-		};
-
-		const selects = model.optionDescriptors.filter(descriptor => descriptor.type === 'select' && descriptor.options?.length);
-		const toggles = model.optionDescriptors.filter(descriptor => descriptor.type === 'boolean');
-
-		for (const descriptor of selects) {
-			append(column, $('.volt-agent-picker-group')).textContent = descriptor.label;
-			const active = optionValue(descriptor, options);
-			for (const choice of descriptor.options ?? []) {
-				this.optionChoice(column, choice.label, choice.value === active, store, () => update(descriptor.id, choice.value));
-			}
-		}
-
-		if (toggles.length) {
-			if (selects.length) {
-				append(column, $('.volt-agent-picker-divider'));
-			}
-			append(column, $('.volt-agent-picker-group')).textContent = localize('voltAgent.options', "Options");
-			for (const descriptor of toggles) {
-				const checked = optionValue(descriptor, options) === true;
-				this.optionSwitch(column, descriptor.label, checked, store, value => update(descriptor.id, value));
-			}
-		}
-	}
-
-	private optionSwitch(parent: HTMLElement, label: string, checked: boolean, store: DisposableStore, onChange: (value: boolean) => void): void {
-		const row = append(parent, $('.volt-agent-picker-row'));
-		append(row, $('span.label')).textContent = label;
-		const toggle = append(row, $('button.volt-agent-switch')) as HTMLButtonElement;
-		toggle.classList.toggle('on', checked);
-		toggle.setAttribute('role', 'switch');
-		toggle.setAttribute('aria-checked', String(checked));
-		append(toggle, $('span.volt-agent-switch-thumb'));
-		store.add(addDisposableListener(toggle, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			onChange(!checked);
-		}));
-	}
-
-	private optionChoice(parent: HTMLElement, label: string, checked: boolean, store: DisposableStore, onSelect: () => void): void {
-		const row = append(parent, $('button.volt-agent-picker-row.choice')) as HTMLButtonElement;
-		row.classList.toggle('active', checked);
-		append(row, $('span.label')).textContent = label;
-		if (checked) {
-			append(row, $('span.check')).appendChild(renderIcon(Codicon.check));
-		}
-		store.add(addDisposableListener(row, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			onSelect();
-		}));
+		addChip(localize('voltAgent.runInCloud', "Run in Cloud"), () => { /* visual chip */ });
 	}
 
 	private setSearchableText(parent: HTMLElement, text: string): void {
 		const span = append(parent, $('span.volt-agent-searchable'));
 		span.textContent = text;
+	}
+
+	private renderUserMessageText(parent: HTMLElement, message: IAgentUserMessage): void {
+		const mentions = message.mentions?.filter(mention => mention.label) ?? [];
+		if (!mentions.length) {
+			this.setSearchableText(parent, message.text);
+			return;
+		}
+		let cursor = 0;
+		const text = message.text;
+		for (const mention of mentions) {
+			const index = text.indexOf(mention.label, cursor);
+			if (index < 0) {
+				continue;
+			}
+			if (index > cursor) {
+				this.setSearchableText(parent, text.slice(cursor, index));
+			}
+			const classes = ['volt-agent-inline-mention', mention.kind];
+			if (mention.kind === 'browser') {
+				classes.push(`c${mention.accent ?? 0}`);
+			}
+			const chip = append(parent, $(`.${classes.join('.')}`));
+			if (mention.kind === 'browser') {
+				chip.style.setProperty('--volt-mention-accent', browserMentionColor(mention.accent));
+			}
+			append(chip, $('span.volt-agent-inline-mention-icon'));
+			this.setSearchableText(append(chip, $('span.volt-agent-inline-mention-label')), mention.label);
+			cursor = index + mention.label.length;
+		}
+		if (cursor < text.length) {
+			this.setSearchableText(parent, text.slice(cursor));
+		} else if (cursor === 0) {
+			this.setSearchableText(parent, text);
+		}
 	}
 
 	private blockRenderContext(message: IAgentAssistantMessage): IBlockRenderContext {
@@ -1804,7 +1610,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			getAnchor: () => anchor,
 			anchorAlignment: AnchorAlignment.RIGHT,
 			anchorPosition: AnchorPosition.BELOW,
-			onDOMEvent: (e: Event) => {
+			onDOMEvent: (e: globalThis.Event) => {
 				if (e.type !== 'click' || !(e.target instanceof Node)) {
 					return;
 				}
@@ -1874,25 +1680,27 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.threadListeners.clear();
 		this.threadInner.replaceChildren();
 		if (!this.messages.length) {
+			this.editingUserIndex = undefined;
+			this.editRestoreMentions = [];
+			this.syncComposerPlacement();
 			this.renderContextRing();
+			this.updateInputPlaceholder();
+			this.layoutInputEditor();
+			this._onDidChangeDock.fire();
 			return;
 		}
 		for (const [index, message] of this.messages.entries()) {
 			const turn = append(this.threadInner, $(`.volt-agent-turn.${message.kind}`));
 
 			if (message.kind === 'user') {
-				const bubble = append(turn, $('.volt-agent-bubble'));
-				const text = append(bubble, $('.volt-agent-text'));
-				this.setSearchableText(text, message.text);
-				if (message.chips?.length) {
-					const chips = append(bubble, $('.volt-agent-chips'));
-					for (const chip of message.chips) {
-						const el = append(chips, $('.volt-agent-chip'));
-						this.setSearchableText(el, chip);
-					}
+				if (this.editingUserIndex === index) {
+					turn.classList.add('editing');
+					append(turn, $('.volt-agent-edit-slot'));
+				} else {
+					this.renderUserTurn(turn, message, index);
 				}
 				const next = this.messages[index + 1];
-				if (next?.kind === 'agent') {
+				if (next?.kind === 'agent' && this.editingUserIndex !== index) {
 					this.renderWorkedMeta(turn, next);
 				}
 			} else {
@@ -1944,12 +1752,206 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				}
 			}
 		}
+		this.syncComposerPlacement();
 		this.syncThreadScroll(scrollToEnd);
-		scheduleAtNextAnimationFrame(getWindow(this.threadInner), () => this.syncThreadScroll(scrollToEnd));
+		scheduleAtNextAnimationFrame(getWindow(this.threadInner), () => {
+			if (this.editingUserIndex !== undefined) {
+				this.syncComposerPlacement();
+				this.layoutInputEditor();
+			}
+			this.syncThreadScroll(scrollToEnd);
+		});
 		if (this.findWidget?.isVisible()) {
 			this.applyFindHighlights(false);
 		}
 		this.renderContextRing();
+		this.updateInputPlaceholder();
+		this.layoutInputEditor();
+	}
+
+	private renderUserTurn(turn: HTMLElement, message: IAgentUserMessage, index: number): void {
+		const editable = this.canEditUser(index);
+		if (this.canResendCancelledUser(index)) {
+			turn.classList.add('cancelled');
+		}
+		if (editable) {
+			turn.classList.add('editable');
+		}
+		const row = append(turn, $('.volt-agent-user-row'));
+		const bubble = append(row, $('.volt-agent-bubble'));
+		bubble.style.borderRadius = '8px';
+		const main = append(bubble, $('.volt-agent-user-main'));
+		const text = append(main, $('.volt-agent-text'));
+		this.renderUserMessageText(text, message);
+		if (message.chips?.length) {
+			const chipRow = append(main, $('.volt-agent-chips'));
+			for (const chip of message.chips) {
+				const el = append(chipRow, $('.volt-agent-chip'));
+				this.setSearchableText(el, chip);
+			}
+		}
+		if (this.isStreaming() && this.isLatestUser(index)) {
+			turn.classList.add('running');
+			const stop = append(bubble, $('button.volt-agent-user-stop')) as HTMLButtonElement;
+			setAgentTooltip(stop, localize('voltAgent.stop', "Stop"));
+			stop.appendChild(createStopIcon());
+			this.threadListeners.add(addDisposableListener(stop, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.stopAgent();
+			}));
+		}
+		if (editable) {
+			setAgentTooltip(turn, localize('voltAgent.editMessage', "Edit message"));
+			this.threadListeners.add(addDisposableListener(turn, 'click', e => {
+				if ((e.target as HTMLElement).closest('.volt-agent-user-stop')) {
+					return;
+				}
+				e.preventDefault();
+				e.stopPropagation();
+				this.startUserEdit(index);
+			}));
+		}
+	}
+
+	private isCancelledAgent(message: IAgentAssistantMessage): boolean {
+		if (message.cancelled) {
+			return true;
+		}
+		const status = message.activity?.status?.toLowerCase() ?? '';
+		return /cancel|abort|stopp/.test(status);
+	}
+
+	private isLatestUser(index: number): boolean {
+		return !this.messages.slice(index + 1).some(item => item.kind === 'user');
+	}
+
+	private canEditUser(index: number): boolean {
+		const message = this.messages[index];
+		return !!message && message.kind === 'user';
+	}
+
+	private canResendCancelledUser(index: number): boolean {
+		const next = this.messages[index + 1];
+		return !!next && next.kind === 'agent' && this.isCancelledAgent(next) && !this.isStreaming() && this.isLatestUser(index);
+	}
+
+	private startUserEdit(index: number): void {
+		const message = this.messages[index];
+		if (!message || message.kind !== 'user') {
+			return;
+		}
+		this.ensureInputEditor();
+		this.editRestoreDraft = this.inputModel?.getValue() ?? '';
+		this.editRestoreMentions = this.mentionController?.displayMentions() ?? [];
+		this.editingUserIndex = index;
+		this.mentionController?.clear();
+		if (this.inputModel && !this.inputModel.isDisposed()) {
+			this.inputModel.setValue(message.text);
+			this.mentionController?.restoreMentions(message.mentions ?? []);
+			const lastLine = this.inputModel.getLineCount();
+			this.inputEditor?.setPosition({ lineNumber: lastLine, column: this.inputModel.getLineMaxColumn(lastLine) });
+		}
+		this.renderThread(false);
+		this.renderSuggestChips();
+		this.updateSendButton();
+		this.layoutInputEditor();
+		this.threadInner.querySelector('.volt-agent-edit-slot')?.scrollIntoView({ block: 'nearest' });
+		this.inputEditor?.focus();
+	}
+
+	private onEditPointerDown(e: PointerEvent): void {
+		if (this.editingUserIndex === undefined || !isHTMLElement(e.target)) {
+			return;
+		}
+		if (e.target.closest('.volt-agent-edit-slot')
+			|| e.target.closest('.volt-agent-turn.user.editing')
+			|| e.target.closest('.volt-agent-composer')
+			|| e.target.closest('.volt-agent-dropdown')
+			|| e.target.closest('.volt-agent-plus-menu')
+			|| e.target.closest('.monaco-context-view')
+			|| e.target.closest('.context-view')
+			|| e.target.closest('.suggest-widget')
+			|| e.target.closest('.monaco-hover')) {
+			return;
+		}
+		const other = e.target.closest('.volt-agent-turn.user');
+		if (other && this.threadInner.contains(other)) {
+			const ordinal = Array.from(this.threadInner.querySelectorAll('.volt-agent-turn.user')).indexOf(other);
+			let userOrdinal = -1;
+			for (const [index, item] of this.messages.entries()) {
+				if (item.kind !== 'user') {
+					continue;
+				}
+				userOrdinal++;
+				if (userOrdinal === ordinal) {
+					this.cancelUserEdit(false);
+					this.startUserEdit(index);
+					return;
+				}
+			}
+		}
+		this.cancelUserEdit(false);
+	}
+
+	private cancelUserEdit(focusComposer = true): void {
+		if (this.editingUserIndex === undefined) {
+			return;
+		}
+		this.editingUserIndex = undefined;
+		this.mentionController?.clear();
+		if (this.inputModel && !this.inputModel.isDisposed()) {
+			this.inputModel.setValue(this.editRestoreDraft);
+			this.mentionController?.restoreMentions(this.editRestoreMentions);
+		}
+		this.editRestoreDraft = '';
+		this.editRestoreMentions = [];
+		this.syncComposerPlacement();
+		this.renderThread(this.stickToBottom);
+		this.renderSuggestChips();
+		this.updateSendButton();
+		this.layoutInputEditor();
+		if (focusComposer) {
+			this.inputEditor?.focus();
+		}
+	}
+
+	private commitUserEdit(value: string, display?: IAgentPromptDisplay): void {
+		const index = this.editingUserIndex;
+		if (index === undefined) {
+			this.dispatchPrompt(value, display);
+			return;
+		}
+		if (this.isStreaming()) {
+			this.skipRunEvents = true;
+			this.stopAgent();
+		}
+		this.editingUserIndex = undefined;
+		this.editRestoreDraft = '';
+		this.editRestoreMentions = [];
+		this.messages.splice(index);
+		this.syncComposerPlacement();
+		this.dispatchPrompt(value, display);
+	}
+
+	private syncComposerPlacement(): void {
+		const slot = this.threadInner?.querySelector<HTMLElement>('.volt-agent-edit-slot');
+		const editing = this.editingUserIndex !== undefined && !!slot;
+		this.container.classList.toggle('editing-user', editing);
+		if (editing && slot) {
+			if (this.composerEl.parentElement !== slot) {
+				slot.appendChild(this.composerEl);
+			}
+			return;
+		}
+		if (this.composerEl.parentElement !== this.container) {
+			const find = this.findWidget?.getDomNode();
+			if (find?.parentElement === this.container) {
+				this.container.insertBefore(this.composerEl, find);
+			} else {
+				this.container.appendChild(this.composerEl);
+			}
+		}
 	}
 
 	private measureThreadContentHeight(): number {
@@ -1998,21 +2000,39 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 
 		const section = append(turn, $('.volt-agent-activity'));
+		if (activity.streaming) {
+			const summary = formatExploringSummary(activity.items);
+			if (summary) {
+				const progress = append(section, $('div.volt-agent-activity-progress.shimmer'));
+				activity.shimmerStartedAt ??= Date.now();
+				progress.style.animationDelay = `${-((Date.now() - activity.shimmerStartedAt) % 2000)}ms`;
+				this.setSearchableText(progress, summary);
+			}
+			const status = append(section, $('div.volt-agent-activity-progress.shimmer'));
+			activity.shimmerStartedAt ??= Date.now();
+			status.style.animationDelay = `${-((Date.now() - activity.shimmerStartedAt) % 2000)}ms`;
+			this.setSearchableText(status, activity.status || localize('voltAgent.thinking', "Thinking"));
+			return;
+		}
+
 		const toggle = append(section, $('button.volt-agent-activity-toggle')) as HTMLButtonElement;
 		toggle.classList.toggle('expanded', activity.expanded);
 		const label = append(toggle, $('span.volt-agent-activity-label'));
-		if (activity.streaming) {
-			label.classList.add('shimmer');
-			activity.shimmerStartedAt ??= Date.now();
-			const elapsed = (Date.now() - activity.shimmerStartedAt) % 2000;
-			label.style.animationDelay = `${-elapsed}ms`;
-		}
 		this.setSearchableText(label, activity.status);
 		const chevron = append(toggle, $('span.volt-agent-activity-chevron'));
 		chevron.appendChild(renderIcon(activity.expanded ? Codicon.chevronDown : Codicon.chevronRight));
 		this.threadListeners.add(addDisposableListener(toggle, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
+			if (this.isCancelledAgent(message) && !this.isStreaming()) {
+				const agentIndex = this.messages.indexOf(message);
+				for (let i = agentIndex - 1; i >= 0; i--) {
+					if (this.messages[i].kind === 'user') {
+						this.startUserEdit(i);
+						return;
+					}
+				}
+			}
 			activity.expanded = !activity.expanded;
 			this.renderThread(this.stickToBottom);
 		}));
@@ -2062,20 +2082,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (message.endedAt) {
 			line.dataset.endedAt = String(message.endedAt);
 		}
-		if (message.tokensIn !== undefined) {
-			line.dataset.tokensIn = String(message.tokensIn);
-		}
-		if (message.tokensOut !== undefined) {
-			line.dataset.tokensOut = String(message.tokensOut);
-		}
-		const estimatedOut = message.tokensIn === undefined && message.tokensOut === undefined
-			? estimateMessageTokens(message)
-			: 0;
-		if (estimatedOut > 0) {
-			line.dataset.tokensEst = String(estimatedOut);
-		}
-		this.setSearchableText(line, formatWorkedLine(ended - message.startedAt, message.tokensIn, message.tokensOut, estimatedOut));
+		this.fillWorkedLine(line, ended - message.startedAt);
 		this.ensureClock();
+	}
+
+	private fillWorkedLine(line: HTMLElement, ms: number): void {
+		let duration = line.querySelector<HTMLElement>('.volt-agent-worked-duration');
+		if (!duration) {
+			duration = append(line, $('span.volt-agent-worked-duration.volt-agent-searchable'));
+		}
+		duration.textContent = formatWorkedDuration(ms);
+		line.querySelector('.volt-agent-token-chip')?.remove();
 	}
 
 	private renderAgentFooter(turn: HTMLElement, message: IAgentAssistantMessage): void {
@@ -2089,7 +2106,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 
 		const forkButton = append(footer, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
-		forkButton.title = localize('voltAgent.fork', "Fork");
+		setAgentTooltip(forkButton, localize('voltAgent.fork', "Fork"));
 		forkButton.appendChild(renderIcon(Codicon.repoForked));
 		this.threadListeners.add(addDisposableListener(forkButton, 'click', e => {
 			e.preventDefault();
@@ -2098,21 +2115,21 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}));
 
 		const copyButton = append(footer, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
-		copyButton.title = localize('voltAgent.copy', "Copy");
+		setAgentTooltip(copyButton, localize('voltAgent.copy', "Copy"));
 		copyButton.appendChild(renderIcon(Codicon.copy));
 		this.threadListeners.add(addDisposableListener(copyButton, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
 			void this.clipboardService.writeText(agentMessagePlainText(message)).then(() => {
 				copyButton.replaceChildren(renderIcon(Codicon.check));
-				copyButton.title = localize('voltAgent.copied', "Copied");
+				setAgentTooltip(copyButton, localize('voltAgent.copied', "Copied"));
 				copyButton.classList.add('copied');
 				this.threadListeners.add(disposableTimeout(() => {
 					if (!copyButton.isConnected) {
 						return;
 					}
 					copyButton.replaceChildren(renderIcon(Codicon.copy));
-					copyButton.title = localize('voltAgent.copy', "Copy");
+					setAgentTooltip(copyButton, localize('voltAgent.copy', "Copy"));
 					copyButton.classList.remove('copied');
 				}, 1500));
 			});
@@ -2139,11 +2156,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				continue;
 			}
 			const ended = el.dataset.endedAt ? Number(el.dataset.endedAt) : Date.now();
-			const tokensIn = el.dataset.tokensIn !== undefined ? Number(el.dataset.tokensIn) : undefined;
-			const tokensOut = el.dataset.tokensOut !== undefined ? Number(el.dataset.tokensOut) : undefined;
-			const estimatedOut = el.dataset.tokensEst !== undefined ? Number(el.dataset.tokensEst) : undefined;
-			const text = el.querySelector('.volt-agent-searchable') ?? el;
-			text.textContent = formatWorkedLine(ended - started, tokensIn, tokensOut, estimatedOut);
+			this.fillWorkedLine(el, ended - started);
 		}
 		for (const el of this.threadInner.querySelectorAll<HTMLElement>('.volt-agent-ago')) {
 			const when = Number(el.dataset.endedAt);
@@ -2233,6 +2246,73 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.inputEditor?.focus();
 	}
 
+	submitPrompt(text: string, display?: IAgentPromptDisplay): void {
+		const value = text.trim();
+		if (!value) {
+			return;
+		}
+		this.ensureInputEditor();
+		if (this.isStreaming()) {
+			this.enqueuePrompt(value, display);
+			return;
+		}
+		this.dispatchPrompt(value, display);
+	}
+
+	stopRun(): void {
+		this.stopAgent();
+	}
+
+	getThreadView(): AgentThreadView | undefined {
+		return this.threadView;
+	}
+
+	setBrowserHosted(hosted: boolean): void {
+		this.container.classList.toggle('browser-hosted', hosted);
+		this.syncFollowUpComposer((this.inputModel?.getLineCount() ?? 1) > 1);
+		this.updateInputPlaceholder();
+		this.layoutInputEditor();
+		this.renderSuggestChips();
+	}
+
+	layoutThread(): void {
+		this.syncThreadScroll(this.stickToBottom);
+	}
+
+	getDockState(): IAgentDockState {
+		const firstUser = this.messages.find((message): message is IAgentUserMessage => message.kind === 'user');
+		const lastAgent = [...this.messages].reverse().find((message): message is IAgentAssistantMessage => message.kind === 'agent');
+		const streaming = this.isStreaming();
+		const startedAt = lastAgent?.startedAt;
+		const endedAt = lastAgent?.endedAt;
+		const durationMs = lastAgent?.durationMs ?? (startedAt ? (endedAt ?? Date.now()) - startedAt : undefined);
+		const status = streaming
+			? (lastAgent?.activity?.status || localize('voltAgent.working', "Working"))
+			: lastAgent?.cancelled
+				? localize('voltAgent.cancelled', "Cancelled")
+				: durationMs !== undefined
+					? formatWorkedDuration(durationMs)
+					: '';
+		const title = (firstUser?.text ?? '').trim().split('\n')[0] || localize('voltAgent.chat', "Agent");
+		return {
+			title: title.length > 64 ? `${title.slice(0, 61)}...` : title,
+			streaming,
+			cancelled: !!lastAgent?.cancelled,
+			status,
+			startedAt,
+			endedAt,
+			durationMs,
+			turns: this.messages.map(message => message.kind === 'user'
+				? { kind: 'user', text: message.text }
+				: {
+					kind: 'agent',
+					text: agentMessagePlainText(message),
+					status: message.activity?.status,
+					streaming: !!message.activity?.streaming,
+				}),
+		};
+	}
+
 	addSelectionMention(resource: URI, selection: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number }): void {
 		this.ensureInputEditor();
 		const startLineNumber = selection.startLineNumber;
@@ -2269,6 +2349,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.inputModel = this.modelService.createModel('', null, modelUri, true);
 		this.inputEditor.setModel(this.inputModel);
 		this.mentionController = this.editorDisposables.add(this.instantiationService.createInstance(AgentMentionController, this.inputEditor));
+		this.composerLists = this.editorDisposables.add(new AgentComposerLists(this.inputEditor));
 		this.mentionController.bindDropTarget(this.container);
 		this.mentionController.bindDropTarget(this.inputBox);
 
@@ -2277,6 +2358,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
 			this.layoutInputEditor();
 			this.updateInputPlaceholder();
+			this.updateSendButton();
 			this.syncUnsavedState();
 			this.renderContextRing();
 		}));
@@ -2286,6 +2368,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 		}));
 		this.editorDisposables.add(this.inputEditor.onKeyDown(e => {
+			if (e.keyCode === KeyCode.Enter && !e.altKey && !e.metaKey && !e.ctrlKey && this.composerLists?.tryHandleEnter()) {
+				e.preventDefault();
+				e.stopPropagation();
+				return;
+			}
 			if (e.keyCode === KeyCode.KeyF && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				e.preventDefault();
 				this.revealFind();
@@ -2297,7 +2384,24 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				}
 				e.preventDefault();
 				e.stopPropagation();
-				this.cycleMode(e.shiftKey ? -1 : 1);
+				this.togglePlan();
+				return;
+			}
+			if (e.keyCode === KeyCode.Slash && (e.metaKey || e.ctrlKey) && !e.altKey) {
+				e.preventDefault();
+				e.stopPropagation();
+				if (e.shiftKey) {
+					this.cycleEffort();
+				} else {
+					this.tooltip.hide();
+					this.showModelDropdown();
+				}
+				return;
+			}
+			if (e.keyCode === KeyCode.Escape && this.editingUserIndex !== undefined) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.cancelUserEdit();
 				return;
 			}
 			if (e.keyCode === KeyCode.Enter && (e.metaKey || e.ctrlKey)) {
@@ -2311,13 +2415,52 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private send(): void {
-		const value = this.inputModel?.getValue().trim() ?? '';
-		if (!value || this.isStreaming()) {
+		const displayText = this.inputModel?.getValue() ?? '';
+		const mentions = this.mentionController?.displayMentions() ?? [];
+		const agentText = (this.mentionController?.serialize() || displayText).trim();
+		const display = mentions.length ? { text: displayText, mentions } : undefined;
+		if (this.editingUserIndex !== undefined) {
+			if (!agentText) {
+				return;
+			}
+			this.commitUserEdit(agentText, display);
 			return;
 		}
+		if (this.isStreaming()) {
+			if (agentText) {
+				this.enqueuePrompt(agentText, display);
+				return;
+			}
+			this.stopAgent();
+			return;
+		}
+		if (!agentText) {
+			return;
+		}
+		this._onDidComposerSend.fire();
+		this.dispatchPrompt(agentText, display);
+	}
 
+	private enqueuePrompt(text: string, display?: IAgentPromptDisplay): void {
+		this.promptQueue.push({ id: `q-${Date.now()}-${this.promptQueue.length}`, text, display });
+		if (this.inputModel && !this.inputModel.isDisposed()) {
+			this.inputModel.setValue('');
+		}
+		this.updateInputPlaceholder();
+		this.updateSendButton();
+		this.renderQueueBar();
+		this.persistInputState();
+		this.inputEditor?.focus();
+	}
+
+	private dispatchPrompt(value: string, display?: IAgentPromptDisplay): void {
 		this.thinkingStore.clear();
-		this.messages.push({ kind: 'user', text: value });
+		this.messages.push({
+			kind: 'user',
+			text: display?.text.trim() || value,
+			agentText: display ? value : undefined,
+			mentions: display?.mentions,
+		});
 		const reply: IAgentAssistantMessage = {
 			kind: 'agent',
 			title: '',
@@ -2333,7 +2476,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			},
 		};
 		this.messages.push(reply);
+		this._onDidChangeDock.fire();
 		this.clearComposer();
+		this.updateSendButton();
 		this.stickToBottom = true;
 		this.renderThread(true);
 		this.scrollThreadToEnd();
@@ -2353,7 +2498,109 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			reply.text = errorText;
 			reply.segments.push({ kind: 'text', text: errorText });
 			this.renderThread(true);
+			this.updateSendButton();
+			this.drainPromptQueue();
 		});
+	}
+
+	private stopAgent(): void {
+		const last = this.messages.at(-1);
+		if (last?.kind === 'agent' && last.activity?.streaming) {
+			last.cancelled = true;
+			last.activity.streaming = false;
+			last.activity.expanded = !!last.activity.thinkingText || last.activity.items.length > 0;
+			last.activity.status = localize('voltAgent.cancelled', "Cancelled");
+			last.endedAt = Date.now();
+			last.startedAt ??= last.endedAt;
+			last.durationMs = Math.max(0, last.endedAt - last.startedAt);
+			this.updateSendButton();
+			this.renderThread(this.stickToBottom);
+			this._onDidChangeDock.fire();
+		}
+		const session = this.runtime.getOrCreateSession(this.sessionKey);
+		void this.runtime.cancel(session.sessionId);
+	}
+
+	private drainPromptQueue(): void {
+		if (this.isStreaming()) {
+			this.updateSendButton();
+			return;
+		}
+		const next = this.promptQueue.shift();
+		this.renderQueueBar();
+		this.persistInputState();
+		if (next) {
+			this.dispatchPrompt(next.text, next.display);
+			return;
+		}
+		this.updateSendButton();
+	}
+
+	private hasDraft(): boolean {
+		return !!(this.inputModel?.getValue().trim());
+	}
+
+	private updateSendButton(): void {
+		const stop = this.isStreaming() && (this.editingUserIndex !== undefined || !this.hasDraft());
+		const kind: 'mic' | 'send' | 'stop' = stop ? 'stop' : this.hasDraft() ? 'send' : 'mic';
+		if (this.sendKind === kind && this.sendButton.childElementCount) {
+			this.sendButton.classList.toggle('stop', kind === 'stop');
+			return;
+		}
+		this.sendKind = kind;
+		this.sendButton.replaceChildren();
+		this.sendButton.classList.toggle('stop', kind === 'stop');
+		setAgentTooltip(this.sendButton, kind === 'stop'
+			? localize('voltAgent.stop', "Stop")
+			: kind === 'send'
+				? localize('voltAgent.send', "Send (Cmd+Enter)")
+				: localize('voltAgent.voice', "Voice"));
+		this.sendButton.appendChild(kind === 'stop' ? createStopIcon() : kind === 'send' ? createSendIcon() : createMicIcon());
+	}
+
+	private renderQueueBar(): void {
+		this.queueBarListeners.clear();
+		this.queueBarEl.replaceChildren();
+		const count = this.promptQueue.length;
+		this.queueBarEl.classList.toggle('hidden', count === 0);
+		this.queueBarEl.classList.toggle('expanded', this.queueExpanded && count > 0);
+		if (!count) {
+			this.queueExpanded = false;
+			return;
+		}
+		const toggle = append(this.queueBarEl, $('button.volt-agent-queue-toggle')) as HTMLButtonElement;
+		toggle.setAttribute('aria-expanded', String(this.queueExpanded));
+		const chevron = append(toggle, $('span.volt-agent-queue-chevron'));
+		chevron.appendChild(renderIcon(this.queueExpanded ? Codicon.chevronDown : Codicon.chevronRight));
+		const label = append(toggle, $('span.volt-agent-queue-label'));
+		label.textContent = localize('voltAgent.queuedCount', "{0} queued", count);
+		this.queueBarListeners.add(addDisposableListener(toggle, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.queueExpanded = !this.queueExpanded;
+			this.renderQueueBar();
+		}));
+		if (!this.queueExpanded) {
+			return;
+		}
+		const list = append(this.queueBarEl, $('.volt-agent-queue-list'));
+		for (const item of this.promptQueue) {
+			const row = append(list, $('.volt-agent-queue-item'));
+			const text = append(row, $('span.volt-agent-queue-text'));
+			const preview = item.display?.text.trim() || item.text;
+			text.textContent = preview;
+			setAgentTooltip(text, preview);
+			const remove = append(row, $('button.volt-agent-queue-remove')) as HTMLButtonElement;
+			setAgentTooltip(remove, localize('voltAgent.removeQueued', "Remove from queue"));
+			remove.appendChild(renderIcon(Codicon.close));
+			this.queueBarListeners.add(addDisposableListener(remove, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.promptQueue = this.promptQueue.filter(queued => queued.id !== item.id);
+				this.renderQueueBar();
+				this.persistInputState();
+			}));
+		}
 	}
 
 	private clearComposer(): void {
@@ -2418,6 +2665,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private applyEvent(envelope: IVoltEventEnvelope): void {
 		const event = envelope.event;
+		if (this.skipRunEvents && event.type !== 'run.start') {
+			return;
+		}
+		if (event.type === 'run.start') {
+			this.skipRunEvents = false;
+			this.activeRunId = envelope.runId;
+		} else if (this.activeRunId && envelope.runId !== this.activeRunId) {
+			return;
+		}
 		const last = this.messages.at(-1);
 		if (event.type === 'usage') {
 			this.applyUsage(event, last?.kind === 'agent' ? last : undefined);
@@ -2426,6 +2682,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		if (!last || last.kind !== 'agent') {
+			return;
+		}
+		if (last.cancelled && event.type !== 'run.end') {
 			return;
 		}
 		const activity = last.activity ?? {
@@ -2634,13 +2893,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			case 'run.end':
 				activity.streaming = false;
 				activity.expanded = !!activity.thinkingText || activity.items.length > 0;
-				activity.status = event.reason === 'abort'
+				last.cancelled = last.cancelled || event.reason === 'abort';
+				activity.status = last.cancelled
 					? localize('voltAgent.cancelled', "Cancelled")
 					: localize('voltAgent.thoughtBriefly', "Thought briefly");
 				last.endedAt = Date.now();
 				last.startedAt ??= last.endedAt;
 				last.durationMs = Math.max(0, last.endedAt - last.startedAt);
-				break;
+				this.scheduleThreadRender();
+				if (event.reason === 'abort') {
+					this.updateSendButton();
+				} else {
+					this.drainPromptQueue();
+				}
+				return;
 		}
 		this.scheduleThreadRender();
 	}
@@ -2653,6 +2919,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.renderHandle = win.requestAnimationFrame(() => {
 			this.renderHandle = undefined;
 			this.renderThread(this.stickToBottom);
+			this._onDidChangeDock.fire();
 		});
 	}
 
@@ -2678,14 +2945,43 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
+	private isFollowUpComposer(): boolean {
+		if (this.container?.classList.contains('browser-hosted')) {
+			return false;
+		}
+		return this.messages.length > 0;
+	}
+
+	private placeModelButton(onRight: boolean): void {
+		if (onRight) {
+			if (this.modelButton.parentElement !== this.toolbarEndEl) {
+				this.toolbarEndEl.insertBefore(this.modelButton, this.toolbarEndEl.firstChild);
+			}
+			return;
+		}
+		if (this.modelButton.parentElement !== this.toolbarStartEl) {
+			this.toolbarStartEl.appendChild(this.modelButton);
+		}
+	}
+
+	private syncFollowUpComposer(multiline: boolean): void {
+		const followUp = this.isFollowUpComposer();
+		const editing = this.editingUserIndex !== undefined;
+		const wasFollowUp = this.inputBox.classList.contains('follow-up');
+		this.inputBox.classList.toggle('editing', editing);
+		this.inputBox.classList.toggle('follow-up', followUp && !editing);
+		this.container.classList.toggle('follow-up', followUp && !editing);
+		this.inputBox.classList.toggle('multiline', followUp && multiline && !editing);
+		this.placeModelButton(followUp && !multiline && !editing);
+		if (wasFollowUp !== (followUp && !editing)) {
+			this.renderSuggestChips();
+		}
+	}
+
 	private doLayoutInputEditor(): void {
 		if (!this.inputEditor) {
 			return;
 		}
-		const styles = getWindow(this.monacoHost).getComputedStyle(this.monacoHost);
-		const padX = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
-		const padY = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
-		const width = Math.max(this.monacoHost.clientWidth - padX, 0);
 		const empty = !(this.inputModel?.getValue().trim());
 		if (empty && !this.composerZoomed && this.composerHeight !== undefined) {
 			this.composerHeight = undefined;
@@ -2699,15 +2995,41 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.updateComposerEditorOptions();
 		}
 		if (this.composerZoomed || this.composerHeight !== undefined) {
+			this.syncFollowUpComposer(true);
 			this.monacoHost.style.height = '';
-			const height = Math.max(this.monacoHost.clientHeight - padY, 48);
-			this.inputEditor.layout({ width, height });
+			const nextStyles = getWindow(this.monacoHost).getComputedStyle(this.monacoHost);
+			const nextPadX = parseFloat(nextStyles.paddingLeft) + parseFloat(nextStyles.paddingRight);
+			const nextPadY = parseFloat(nextStyles.paddingTop) + parseFloat(nextStyles.paddingBottom);
+			const height = Math.max(this.monacoHost.clientHeight - nextPadY, 48);
+			this.inputEditor.layout({ width: Math.max(this.monacoHost.clientWidth - nextPadX, 0), height });
 			return;
 		}
-		this.inputEditor.layout({ width, height: 0 });
-		const contentHeight = Math.min(Math.max(this.inputEditor.getContentHeight(), 20), 180);
-		this.monacoHost.style.height = `${contentHeight + padY}px`;
-		this.inputEditor.layout({ width, height: contentHeight });
+		const lineHeight = 22;
+		const value = this.inputModel?.getValue() ?? '';
+		const hasNewline = value.includes('\n');
+		const hasText = !!value.trim();
+		const editing = this.editingUserIndex !== undefined;
+		this.syncFollowUpComposer(hasNewline || editing);
+		const measure = () => {
+			const next = getWindow(this.monacoHost).getComputedStyle(this.monacoHost);
+			const nextPadX = parseFloat(next.paddingLeft) + parseFloat(next.paddingRight);
+			const nextWidth = Math.max(this.monacoHost.clientWidth - nextPadX, 0);
+			this.inputEditor!.layout({ width: nextWidth, height: 0 });
+			return { next, nextWidth, rawHeight: this.inputEditor!.getContentHeight() };
+		};
+		let measured = measure();
+		const wrapped = hasText && !hasNewline && !editing && this.isFollowUpComposer() && measured.rawHeight > lineHeight + 4;
+		if (wrapped) {
+			this.syncFollowUpComposer(true);
+			measured = measure();
+		}
+		const followUpSingle = !editing && this.isFollowUpComposer() && !hasNewline && !wrapped;
+		const contentHeight = followUpSingle
+			? lineHeight
+			: Math.min(Math.max(measured.rawHeight, lineHeight), 180);
+		const padBottomTop = parseFloat(measured.next.paddingTop) + parseFloat(measured.next.paddingBottom);
+		this.monacoHost.style.height = `${contentHeight + padBottomTop}px`;
+		this.inputEditor.layout({ width: measured.nextWidth, height: contentHeight });
 	}
 
 	override async setInput(input: AgentEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {

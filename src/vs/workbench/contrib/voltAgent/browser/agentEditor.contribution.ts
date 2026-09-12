@@ -27,7 +27,7 @@ import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '.
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
-import { ActiveEditorContext, ResourceContextKey } from '../../../common/contextkeys.js';
+import { ActiveEditorContext, IsAuxiliaryWindowContext, ResourceContextKey } from '../../../common/contextkeys.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
 import { EditorExtensions, IEditorFactoryRegistry } from '../../../common/editor.js';
 import { Extensions as ViewExtensions, IViewContainersRegistry, IViewsRegistry, ViewContainerLocation } from '../../../common/views.js';
@@ -36,12 +36,17 @@ import { ExplorerFolderContext } from '../../files/common/files.js';
 import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorResolverService, RegisteredEditorPriority } from '../../../services/editor/common/editorResolverService.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { IOpenerService } from '../../../../platform/opener/common/opener.js';
-import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { AgentEditor } from './agentEditor.js';
+import { VoltBrowserEditor } from './browserEditor.js';
+import {
+	BROWSER_EDITOR_ID,
+	OPEN_BROWSER_COMMAND_ID,
+	VoltBrowserEditorInput,
+	VoltBrowserEditorInputSerializer,
+} from './browserEditorInput.js';
 import {
 	AGENT_EDITOR_ID,
 	AGENT_EDITOR_LINE_NUMBERS_SETTING,
@@ -110,6 +115,20 @@ Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEdit
 	AgentEditorInputSerializer
 );
 
+Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
+	EditorPaneDescriptor.create(
+		VoltBrowserEditor,
+		BROWSER_EDITOR_ID,
+		localize('voltBrowser.editorLabel', "Browser")
+	),
+	[new SyncDescriptor(VoltBrowserEditorInput)]
+);
+
+Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(
+	VoltBrowserEditorInput.TypeID,
+	VoltBrowserEditorInputSerializer
+);
+
 class AgentEditorResolverContribution extends Disposable {
 	static readonly ID = 'workbench.contrib.voltAgentEditorResolver';
 
@@ -134,6 +153,27 @@ class AgentEditorResolverContribution extends Disposable {
 				createEditorInput: ({ resource, options }) => {
 					return {
 						editor: instantiationService.createInstance(AgentEditorInput, resource),
+						options
+					};
+				}
+			}
+		));
+
+		this._register(editorResolverService.registerEditor(
+			`${Schemas.voltBrowser}:**/**`,
+			{
+				id: BROWSER_EDITOR_ID,
+				label: localize('voltBrowser.editorLabel', "Browser"),
+				priority: RegisteredEditorPriority.builtin
+			},
+			{
+				singlePerResource: true,
+				canSupportResource: resource => resource.scheme === Schemas.voltBrowser,
+			},
+			{
+				createEditorInput: ({ resource, options }) => {
+					return {
+						editor: instantiationService.createInstance(VoltBrowserEditorInput, resource),
 						options
 					};
 				}
@@ -185,35 +225,30 @@ registerAction2(class NewAgentAction extends Action2 {
 registerAction2(class OpenBrowserAction extends Action2 {
 	constructor() {
 		super({
-			id: 'workbench.action.openBrowser',
+			id: OPEN_BROWSER_COMMAND_ID,
 			title: localize2('voltAgent.openBrowser', "Open Browser"),
 			category: Categories.View,
 			f1: true,
+			icon: Codicon.browser,
 			keybinding: {
 				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyB,
 				weight: KeybindingWeight.WorkbenchContrib + 50,
+			},
+			menu: {
+				id: MenuId.LayoutControlMenu,
+				group: '0_new',
+				order: 1,
+				when: IsAuxiliaryWindowContext.negate(),
 			},
 		});
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
-		const commandService = accessor.get(ICommandService);
-		try {
-			await commandService.executeCommand('simpleBrowser.show');
-			return;
-		} catch {
-			// Fall through to a built-in URL prompt when Simple Browser is unavailable.
-		}
-
-		const quickInputService = accessor.get(IQuickInputService);
-		const openerService = accessor.get(IOpenerService);
-		const url = await quickInputService.input({
-			prompt: localize('voltAgent.openBrowser.prompt', "Enter URL to open"),
-			placeHolder: 'https://',
-		});
-		if (url) {
-			await openerService.open(url);
-		}
+		const editorService = accessor.get(IEditorService);
+		const editorGroupsService = accessor.get(IEditorGroupsService);
+		const instantiationService = accessor.get(IInstantiationService);
+		const input = instantiationService.createInstance(VoltBrowserEditorInput, VoltBrowserEditorInput.getNewEditorUri());
+		await editorService.openEditor(input, { pinned: true }, editorGroupsService.mainPart.activeGroup);
 	}
 });
 

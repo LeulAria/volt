@@ -1,1 +1,15 @@
-<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><style>.st0{fill:#f6f6f6;fill-opacity:0}.st1{fill:#fff}.st2{fill:#167abf}</style><path class="st0" d="M1024 1024H0V0h1024v1024z"/><path class="st1" d="M1024 85.333v853.333H0V85.333h1024z"/><path class="st2" d="M0 85.333h298.667v853.333H0V85.333zm1024 0v853.333H384V85.333h640zm-554.667 160h341.333v-64H469.333v64zm341.334 533.334H469.333v64h341.333l.001-64zm128-149.334H597.333v64h341.333l.001-64zm0-149.333H597.333v64h341.333l.001-64zm0-149.333H597.333v64h341.333l.001-64z"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 260" fill="none">
+	<defs>
+		<clipPath id="voltL">
+			<path d="M170.9 -10 L163.92 18 L91.74 140 L121.66 140 L96.08 242 L89.1 270 L-10 270 L-10 -10 Z"/>
+		</clipPath>
+		<mask id="voltCut">
+			<rect width="260" height="260" fill="#ffffff"/>
+			<path d="M163.92 18 L91.74 140 L121.66 140 L96.08 242 L168.26 120 L138.34 120 Z" fill="#000000" stroke="#000000" stroke-width="9" stroke-linejoin="round" stroke-linecap="round"/>
+		</mask>
+	</defs>
+	<g mask="url(#voltCut)">
+		<circle cx="130" cy="130" r="96" fill="#ffffff"/>
+		<circle cx="130" cy="130" r="96" fill="#ffffff" fill-opacity="0.82" clip-path="url(#voltL)"/>
+	</g>
+</svg>

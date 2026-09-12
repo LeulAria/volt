@@ -290,10 +290,15 @@
 }
 
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .window-appicon:not(.codicon) {
-	background-image: url('../../../media/code-icon.svg');
+	background-image: url('../../../media/code-icon-light.svg');
 	background-repeat: no-repeat;
 	background-position: center center;
 	background-size: 16px;
+}
+
+.monaco-workbench.vs-dark .part.titlebar > .titlebar-container > .titlebar-left > .window-appicon:not(.codicon),
+.monaco-workbench.hc-black .part.titlebar > .titlebar-container > .titlebar-left > .window-appicon:not(.codicon) {
+	background-image: url('../../../media/code-icon.svg');
 }
 
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .window-appicon.codicon {

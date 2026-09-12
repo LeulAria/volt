@@ -87,6 +87,9 @@ export namespace Schemas {
 	/** Scheme used for VOLT New Agent editor tabs. */
 	export const voltAgent = 'volt-agent';
 
+	/** Scheme used for VOLT built-in browser tabs. */
+	export const voltBrowser = 'volt-browser';
+
 	/** Scheme used for the Volt Settings editor tab. */
 	export const voltSettings = 'volt-settings';
 

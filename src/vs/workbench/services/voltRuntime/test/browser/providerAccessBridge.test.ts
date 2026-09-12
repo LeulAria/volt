@@ -5,7 +5,6 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { IAccessDecision } from '../../common/access/accessTypes.js';
 import { accessBridgeFor } from '../../browser/agents/bridges/accessBridges.js';
 import { compilePolicy } from '../../common/access/policyCompiler.js';
 import { presetRules } from '../../common/access/accessPresets.js';
@@ -14,7 +13,6 @@ suite('Volt provider access bridges (browser)', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	const allowOnce: IAccessDecision = { requestId: '1', effect: 'allow', scope: 'once' };
 	const params = {
 		options: [
 			{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },

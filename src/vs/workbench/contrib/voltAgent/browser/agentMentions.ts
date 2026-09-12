@@ -18,6 +18,7 @@ import { generateUuid } from '../../../../base/common/uuid.js';
 import { ICodeEditor, IEditorMouseEvent, MouseTargetType } from '../../../../editor/browser/editorBrowser.js';
 import { IRange, Range } from '../../../../editor/common/core/range.js';
 import { IPosition } from '../../../../editor/common/core/position.js';
+import { Selection } from '../../../../editor/common/core/selection.js';
 import { IModelDeltaDecoration, TrackedRangeStickiness } from '../../../../editor/common/model.js';
 import { getIconClasses } from '../../../../editor/common/services/getIconClasses.js';
 import { ILanguageService } from '../../../../editor/common/languages/language.js';
@@ -52,7 +53,26 @@ export interface IAgentMention {
 	id: string;
 	kind: AgentMentionKind;
 	label: string;
+	value?: string;
+	accent?: number;
 	decorationId?: string;
+	resource?: URI;
+	range?: { startLineNumber: number; endLineNumber: number };
+	image?: IAgentImagePayload;
+}
+
+export const BROWSER_MENTION_COLORS = ['#89b4fa', '#a6e3a1', '#94e2d5', '#fab387', '#74c7ec', '#cba6f7', '#f9e2af', '#f5c2e7'] as const;
+const BROWSER_MENTION_ACCENTS = BROWSER_MENTION_COLORS.length;
+
+export function browserMentionColor(accent = 0): string {
+	return BROWSER_MENTION_COLORS[((accent % BROWSER_MENTION_ACCENTS) + BROWSER_MENTION_ACCENTS) % BROWSER_MENTION_ACCENTS];
+}
+
+export interface IAgentDisplayMention {
+	label: string;
+	accent?: number;
+	kind: AgentMentionKind;
+	value?: string;
 	resource?: URI;
 	range?: { startLineNumber: number; endLineNumber: number };
 	image?: IAgentImagePayload;
@@ -83,6 +103,8 @@ export class AgentMentionController extends Disposable {
 	private lastDropAt = 0;
 	private hoveredMentionId: string | undefined;
 	private insertingMention = false;
+	onDidHoverMention: ((mention: IAgentMention | undefined) => void) | undefined;
+	onDidRemoveMention: ((mention: IAgentMention) => void) | undefined;
 
 	constructor(
 		private readonly editor: ICodeEditor,
@@ -126,14 +148,124 @@ export class AgentMentionController extends Disposable {
 		return this.mentions.filter(m => m.image).map(m => m.image!);
 	}
 
+	displayMentions(): IAgentDisplayMention[] {
+		const model = this.editor.getModel();
+		const items = this.mentions
+			.map(mention => {
+				const range = mention.decorationId && model ? model.getDecorationRange(mention.decorationId) : undefined;
+				return range ? { mention, offset: model!.getOffsetAt(range.getStartPosition()) } : undefined;
+			})
+			.filter((item): item is { mention: IAgentMention; offset: number } => !!item)
+			.sort((a, b) => a.offset - b.offset);
+		return items.map(({ mention }) => ({
+			label: mention.label,
+			accent: mention.accent,
+			kind: mention.kind,
+			value: mention.value,
+			resource: mention.resource,
+			range: mention.range,
+			image: mention.image,
+		}));
+	}
+
+	restoreMentions(mentions: readonly IAgentDisplayMention[]): void {
+		const model = this.editor.getModel();
+		if (!model) {
+			return;
+		}
+		this.clear();
+		if (!mentions.length) {
+			return;
+		}
+		let cursor = 0;
+		const text = model.getValue();
+		for (const item of mentions) {
+			if (!item.label) {
+				continue;
+			}
+			const index = text.indexOf(item.label, cursor);
+			if (index < 0) {
+				continue;
+			}
+			const start = model.getPositionAt(index);
+			const end = model.getPositionAt(index + item.label.length);
+			const mention: IAgentMention = {
+				id: `${item.kind}:${generateUuid()}`,
+				kind: item.kind,
+				label: item.label,
+				accent: item.accent,
+				value: item.value,
+				resource: item.resource ? URI.revive(item.resource) : undefined,
+				range: item.range,
+				image: item.image,
+			};
+			this.addDecoration(mention, {
+				startLineNumber: start.lineNumber,
+				startColumn: start.column,
+				endLineNumber: end.lineNumber,
+				endColumn: end.column,
+			});
+			this.mentions.push(mention);
+			this.mentionCatalog.push(mention);
+			cursor = index + item.label.length;
+		}
+	}
+
+	serialize(): string {
+		const model = this.editor.getModel();
+		if (!model) {
+			return '';
+		}
+		let text = model.getValue();
+		const replacements = this.mentions
+			.map(mention => {
+				const range = mention.decorationId ? model.getDecorationRange(mention.decorationId) : undefined;
+				return range ? { mention, range } : undefined;
+			})
+			.filter((item): item is { mention: IAgentMention; range: Range } => !!item)
+			.sort((a, b) => model.getOffsetAt(b.range.getStartPosition()) - model.getOffsetAt(a.range.getStartPosition()));
+		for (const { mention, range } of replacements) {
+			const start = model.getOffsetAt(range.getStartPosition());
+			const end = model.getOffsetAt(range.getEndPosition());
+			text = `${text.slice(0, start)}${this.tagValueFor(mention)}${text.slice(end)}`;
+		}
+		return text.trim();
+	}
+
 	clear(): void {
 		const model = this.editor.getModel();
 		const oldIds = this.mentions.map(mention => mention.decorationId).filter((id): id is string => !!id);
+		const removed = this.mentions.slice();
 		this.mentions.length = 0;
 		this.mentionCatalog.length = 0;
 		this.imageCount = 0;
 		if (model && oldIds.length) {
 			model.deltaDecorations(oldIds, []);
+		}
+		for (const mention of removed) {
+			this.onDidRemoveMention?.(mention);
+		}
+	}
+
+	addBrowserMention(label: string, value?: string): IAgentMention | undefined {
+		this.insertingMention = true;
+		try {
+			const insertRange = this.cursorRangeAfterSpacer();
+			if (!insertRange) {
+				return undefined;
+			}
+			const accent = this.mentions.filter(mention => mention.kind === 'browser').length % BROWSER_MENTION_ACCENTS;
+			const mention: IAgentMention = {
+				id: `browser:${generateUuid()}`,
+				kind: 'browser',
+				label: truncateLabel(label, 28),
+				value,
+				accent,
+			};
+			this.insertMention(mention, insertRange);
+			return mention;
+		} finally {
+			this.insertingMention = false;
 		}
 	}
 
@@ -644,14 +776,16 @@ export class AgentMentionController extends Disposable {
 			return;
 		}
 		const text = `${chipText(mention.label)} `;
+		const alreadyInserting = this.insertingMention;
 		this.insertingMention = true;
 		try {
+			const start = { lineNumber: replaceRange.startLineNumber, column: replaceRange.startColumn };
+			const endColumn = start.column + chipText(mention.label).length;
+			const cursor = new Selection(start.lineNumber, endColumn + 1, start.lineNumber, endColumn + 1);
 			this.editor.executeEdits('volt-agent-mention', [{
 				range: Range.lift(replaceRange),
 				text,
-			}]);
-			const start = { lineNumber: replaceRange.startLineNumber, column: replaceRange.startColumn };
-			const endColumn = start.column + chipText(mention.label).length;
+			}], [cursor]);
 			this.addDecoration(mention, {
 				startLineNumber: start.lineNumber,
 				startColumn: start.column,
@@ -660,10 +794,12 @@ export class AgentMentionController extends Disposable {
 			});
 			this.mentions.push(mention);
 			this.mentionCatalog.push(mention);
-			this.editor.setPosition({ lineNumber: start.lineNumber, column: endColumn + 1 });
+			this.editor.setSelections([cursor]);
 			this.editor.focus();
 		} finally {
-			this.insertingMention = false;
+			if (!alreadyInserting) {
+				this.insertingMention = false;
+			}
 		}
 	}
 
@@ -680,16 +816,17 @@ export class AgentMentionController extends Disposable {
 	private decorationsFor(mention: IAgentMention, range: IRange): IModelDeltaDecoration[] {
 		const hovered = this.hoveredMentionId === mention.id;
 		const hoverClass = hovered ? ' hovered' : '';
+		const accentClass = mention.kind === 'browser' ? ` c${mention.accent ?? 0}` : '';
 		return [
 			{
 				range,
 				options: {
 					description: 'volt-agent-mention',
-					inlineClassName: `volt-agent-mention-pill ${mention.kind}${hoverClass}`,
+					inlineClassName: `volt-agent-mention-pill ${mention.kind}${accentClass}${hoverClass}`,
 					inlineClassNameAffectsLetterSpacing: true,
 					before: {
 						content: '\u00a0',
-						inlineClassName: `volt-agent-mention-icon ${mention.kind}${hoverClass} ${this.iconClassesFor(mention).join(' ')}`,
+						inlineClassName: `volt-agent-mention-icon ${mention.kind}${accentClass}${hoverClass} ${this.iconClassesFor(mention).join(' ')}`,
 						inlineClassNameAffectsLetterSpacing: true,
 						attachedData: { mentionId: mention.id },
 					},
@@ -711,7 +848,8 @@ export class AgentMentionController extends Disposable {
 			: mention.kind === 'terminal' ? Codicon.terminal
 				: mention.kind === 'chat' ? Codicon.commentDiscussion
 					: mention.kind === 'branch' ? Codicon.gitBranch
-						: Codicon.globe;
+						: mention.kind === 'browser' ? Codicon.inspect
+							: Codicon.globe;
 		return ['codicon', `codicon-${icon.id}`];
 	}
 
@@ -763,6 +901,7 @@ export class AgentMentionController extends Disposable {
 		if (mention) {
 			this.refreshMentionDecoration(mention);
 		}
+		this.onDidHoverMention?.(mention);
 	}
 
 	private refreshMentionDecoration(mention: IAgentMention): void {
@@ -808,10 +947,15 @@ export class AgentMentionController extends Disposable {
 		}
 		if (this.hoveredMentionId === mention.id) {
 			this.hoveredMentionId = undefined;
+			this.onDidHoverMention?.(undefined);
 		}
+		this.onDidRemoveMention?.(mention);
 	}
 
 	private tagValueFor(mention: IAgentMention): string {
+		if (mention.value) {
+			return mention.value;
+		}
 		if (mention.resource) {
 			const relative = this.labelService.getUriLabel(mention.resource, { relative: true, noPrefix: true, separator: '/' });
 			const path = relative.startsWith('/') ? relative : `/${relative}`;
@@ -883,10 +1027,12 @@ export class AgentMentionController extends Disposable {
 		if (!model) {
 			return;
 		}
+		const dropped: IAgentMention[] = [];
 		for (let i = this.mentions.length - 1; i >= 0; i--) {
 			const mention = this.mentions[i];
 			if (!mention.decorationId) {
 				this.mentions.splice(i, 1);
+				dropped.push(mention);
 				continue;
 			}
 			const range = model.getDecorationRange(mention.decorationId);
@@ -894,9 +1040,15 @@ export class AgentMentionController extends Disposable {
 				model.deltaDecorations([mention.decorationId], []);
 				mention.decorationId = undefined;
 				this.mentions.splice(i, 1);
+				dropped.push(mention);
 			}
 		}
 		this.reattachMentions();
+		for (const mention of dropped) {
+			if (!this.mentions.includes(mention)) {
+				this.onDidRemoveMention?.(mention);
+			}
+		}
 	}
 
 	private reattachMentions(): void {

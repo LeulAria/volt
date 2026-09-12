@@ -47,6 +47,8 @@ export class AgentEditorInput extends EditorInput implements IEditorCloseHandler
 	composerZoomed = false;
 	composerHeight: number | undefined;
 	messages: object[] = [];
+	promptQueue: { id: string; text: string; display?: { text: string; mentions?: { label: string; accent?: number; kind: string }[] } }[] = [];
+	queueExpanded = false;
 	contextUsed?: number;
 	contextWindow?: number;
 

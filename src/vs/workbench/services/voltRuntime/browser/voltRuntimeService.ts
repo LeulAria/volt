@@ -167,8 +167,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		this.denyPending(sessionId);
 		session.cancel?.cancel();
+		const runId = session.activeRun?.runId;
+		if (runId) {
+			this.finish(session, runId, 'abort');
+		}
 		if (session.agentHandle && session.agentProviderId) {
-			await this.agentProviders.get(session.agentProviderId)?.interrupt(session.agentHandle);
+			void this.agentProviders.get(session.agentProviderId)?.interrupt(session.agentHandle);
 		}
 	}
 
@@ -823,9 +827,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	private finish(session: ISessionState, runId: string, reason: 'done' | 'abort' | 'fail'): void {
-		if (session.activeRun?.runId === runId) {
-			session.activeRun = { ...session.activeRun, status: reason === 'done' ? 'completed' : reason === 'abort' ? 'cancelled' : 'failed', endedAt: Date.now() };
+		if (session.activeRun?.runId !== runId) {
+			return;
 		}
+		const status = session.activeRun.status;
+		if (status !== 'running' && status !== 'queued' && status !== 'waiting') {
+			return;
+		}
+		session.activeRun = { ...session.activeRun, status: reason === 'done' ? 'completed' : reason === 'abort' ? 'cancelled' : 'failed', endedAt: Date.now() };
 		this.emit(session, runId, { type: 'run.end', runId, reason });
 	}
 

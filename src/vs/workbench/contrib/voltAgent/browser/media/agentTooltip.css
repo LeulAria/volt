@@ -1,0 +1,127 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.volt-agent-tooltip {
+	position: fixed;
+	z-index: 2500;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	width: max-content;
+	max-width: min(320px, calc(100vw - 16px));
+	padding: 4px 7px;
+	border-radius: 8px;
+	background: #1c1c1c;
+	color: #f5f5f5;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+	box-sizing: border-box;
+	pointer-events: none;
+	font-family: inherit;
+	font-size: 13px;
+	font-weight: 400;
+	line-height: 18px;
+	letter-spacing: 0;
+	white-space: nowrap;
+	-webkit-font-smoothing: antialiased;
+}
+
+.monaco-workbench.vs .volt-agent-tooltip,
+.monaco-workbench.hc-light .volt-agent-tooltip {
+	background: #ececec;
+	color: #1a1a1a;
+	border-color: rgba(0, 0, 0, 0.08);
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.volt-agent-tooltip.hidden {
+	display: none;
+}
+
+.volt-agent-tooltip-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 22px;
+	min-height: 18px;
+}
+
+.volt-agent-tooltip-label {
+	color: inherit;
+}
+
+.volt-agent-tooltip-kb {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: inherit;
+	font-family: inherit;
+	font-size: 11px;
+	font-weight: 400;
+	line-height: 16px;
+}
+
+.volt-agent-tooltip-kb .key {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 16px;
+	height: 17px;
+	padding: 0 3px;
+	border-radius: 4px;
+	background: #2c2c2c;
+	color: #d0d0d0;
+	border: none;
+	box-shadow: none;
+	box-sizing: border-box;
+	font-weight: 400;
+}
+
+.monaco-workbench.vs .volt-agent-tooltip-kb .key,
+.monaco-workbench.hc-light .volt-agent-tooltip-kb .key {
+	background: #dcdcdc;
+	color: #333;
+	box-shadow: none;
+}
+
+.volt-agent-tooltip.pill {
+	padding: 4px 7px;
+	border-radius: 8px;
+	background: #1c1c1c;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+	font-size: 13px;
+	font-weight: 400;
+	line-height: 18px;
+}
+
+.monaco-workbench.vs .volt-agent-tooltip.pill,
+.monaco-workbench.hc-light .volt-agent-tooltip.pill {
+	background: #ececec;
+	border-color: rgba(0, 0, 0, 0.08);
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.volt-agent-tooltip.pill .volt-agent-tooltip-row {
+	gap: 14px;
+}
+
+.volt-agent-tooltip.pill .volt-agent-tooltip-kb {
+	gap: 8px;
+	font-size: 13px;
+	color: #c8c8c8;
+}
+
+.monaco-workbench.vs .volt-agent-tooltip.pill .volt-agent-tooltip-kb,
+.monaco-workbench.hc-light .volt-agent-tooltip.pill .volt-agent-tooltip-kb {
+	color: #555;
+}
+
+.volt-agent-tooltip.pill .volt-agent-tooltip-kb .symbol {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 12px;
+}

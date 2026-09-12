@@ -30,10 +30,15 @@
 	background-repeat: no-repeat;
 	background-position: center center;
 	background-size: 16px;
-	background-image: url('../../../../browser/media/code-icon.svg');
+	background-image: url('../../../../browser/media/code-icon-light.svg');
 	width: 16px;
 	padding: 0;
 	margin: 0 6px 0 10px;
+}
+
+.monaco-workbench.vs-dark .part.banner .icon-container.custom-icon,
+.monaco-workbench.hc-black .part.banner .icon-container.custom-icon {
+	background-image: url('../../../../browser/media/code-icon.svg');
 }
 
 .monaco-workbench .part.banner .message-container {

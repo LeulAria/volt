@@ -1233,6 +1233,10 @@ export class Repository implements Disposable {
 		return this.run(Operation.Diff, () => this.repository.diffBetweenShortStat(ref1, ref2));
 	}
 
+	diffHEADShortStat(): Promise<{ files: number; insertions: number; deletions: number }> {
+		return this.run(Operation.Diff, () => this.repository.diffHEADShortStat());
+	}
+
 	diffTrees(treeish1: string, treeish2?: string): Promise<Change[]> {
 		const scopedConfig = workspace.getConfiguration('git', Uri.file(this.root));
 		const similarityThreshold = scopedConfig.get<number>('similarityThreshold', 50);

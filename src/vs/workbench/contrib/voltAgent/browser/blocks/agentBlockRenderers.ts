@@ -12,6 +12,7 @@ import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownR
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { localize } from '../../../../../nls.js';
 import { createAgentScrollable } from '../agentScrollable.js';
+import { setAgentTooltip } from '../agentTooltip.js';
 import {
 	AgentBlock,
 	classifyTableCell,
@@ -170,7 +171,7 @@ function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IB
 	};
 	if (ctx.onTerminalMenu) {
 		const menuBtn = append(bar, $('button.volt-agent-term-menu')) as HTMLButtonElement;
-		menuBtn.title = localize('voltAgent.terminalMenu', "Command options");
+		setAgentTooltip(menuBtn, localize('voltAgent.terminalMenu', "Command options"));
 		menuBtn.setAttribute('aria-label', menuBtn.title);
 		menuBtn.setAttribute('aria-haspopup', 'menu');
 		menuBtn.appendChild(renderIcon(Codicon.ellipsis));
@@ -263,7 +264,7 @@ function renderTableBlock(parent: HTMLElement, block: ITableBlock, ctx: IBlockRe
 			if (kind === 'file') {
 				const pill = append(td, $('span.volt-agent-path-pill.volt-agent-searchable'));
 				pill.textContent = raw;
-				pill.title = raw;
+				setAgentTooltip(pill, raw);
 				bindPathOpen(pill, parseFileTarget(raw), ctx);
 			} else {
 				const span = append(td, $('span.volt-agent-searchable'));
@@ -464,7 +465,7 @@ function bindPathOpen(el: HTMLElement, target: ReturnType<typeof parseFileTarget
 		return;
 	}
 	el.classList.add('clickable');
-	el.title = target.path;
+	setAgentTooltip(el, target.path);
 	ctx.store.add(addDisposableListener(el, 'click', e => {
 		e.preventDefault();
 		e.stopPropagation();

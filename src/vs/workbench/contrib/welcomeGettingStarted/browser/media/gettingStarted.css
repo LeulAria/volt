@@ -5,6 +5,11 @@
 
 .file-icons-enabled .show-file-icons .vscode_getting_started_page-name-file-icon.file-icon::before {
 	content: ' ';
+	background-image: url('../../../../browser/media/code-icon-light.svg');
+}
+
+.monaco-workbench.vs-dark .file-icons-enabled .show-file-icons .vscode_getting_started_page-name-file-icon.file-icon::before,
+.monaco-workbench.hc-black .file-icons-enabled .show-file-icons .vscode_getting_started_page-name-file-icon.file-icon::before {
 	background-image: url('../../../../browser/media/code-icon.svg');
 }
 

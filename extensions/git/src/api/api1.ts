@@ -522,5 +522,28 @@ export function registerAPICommands(extension: GitExtensionImpl): Disposable {
 		return commands.executeCommand('git-base.api.getRemoteSources', opts);
 	}));
 
+	disposables.push(commands.registerCommand('git.api.getWorkingTreeShortStat', async () => {
+		const model = extension.model;
+		if (!model) {
+			return { files: 0, insertions: 0, deletions: 0 };
+		}
+
+		let files = 0;
+		let insertions = 0;
+		let deletions = 0;
+		for (const repository of model.repositories) {
+			try {
+				const stat = await repository.diffHEADShortStat();
+				files += stat.files;
+				insertions += stat.insertions;
+				deletions += stat.deletions;
+			} catch {
+				// Ignore repositories that cannot report a shortstat.
+			}
+		}
+
+		return { files, insertions, deletions };
+	}));
+
 	return Disposable.from(...disposables);
 }

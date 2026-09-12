@@ -413,8 +413,13 @@ export class CodeApplication extends Disposable {
 				this.auxiliaryWindowsMainService?.registerWindow(contents);
 			}
 
-			// Block any in-page navigation
+			// Block in-page navigation of workbench windows. Guest <webview>
+			// browsers must be allowed to navigate or every page load aborts.
 			contents.on('will-navigate', event => {
+				if (contents.getType() === 'webview') {
+					return;
+				}
+
 				this.logService.error('webContents#will-navigate: Prevented webcontent navigation');
 
 				event.preventDefault();

@@ -217,7 +217,7 @@ export class VoltSettingsEditor extends EditorPane {
 		return titleRow;
 	}
 
-	private group(): HTMLElement {
+	private settingsGroup(): HTMLElement {
 		return append(this.content, $('.volt-settings-group'));
 	}
 
@@ -282,7 +282,7 @@ export class VoltSettingsEditor extends EditorPane {
 		this.renderStore.add(addDisposableListener(refresh, 'click', () => void this.runtime.refreshProviders()));
 
 		this.settingRow(
-			this.group(),
+			this.settingsGroup(),
 			localize('voltSettings.healthInterval', "Health check interval"),
 			localize('voltSettings.healthIntervalDesc', "Refresh provider availability, versions, auth state, and model metadata in the background. Set this to 0 seconds to rely on manual refreshes."),
 			host => this.stepper(host, String(this.runtime.getHealthCheckInterval()), localize('voltSettings.seconds', "seconds"), seconds => {
@@ -462,7 +462,7 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.tabLead', "Tab ghost text uses the model selected in the composer - including Cursor ACP agents - or a dedicated Tab model you pin here."),
 		);
 		const settings = this.prediction.getSettings();
-		const group = this.group();
+		const group = this.settingsGroup();
 
 		this.settingRow(
 			group,
@@ -543,7 +543,7 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.securityLead', "VOLT owns execution authority. Access presets are policy, not a UI-only toggle."),
 		);
 
-		const basics = this.group();
+		const basics = this.settingsGroup();
 		this.settingRow(
 			basics,
 			localize('voltSettings.secrets', "Secrets"),

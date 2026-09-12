@@ -100,6 +100,7 @@ export class AgentSidePanel extends ViewPane {
 		queueMicrotask(() => this.updateAuxiliaryBarClass(this.isBodyVisible()));
 
 		void this.editorPart.whenRestored.then(() => {
+			this.bindAgentOnlyGroups();
 			void this.seedDefaultAgent();
 			this.syncAgentLayout();
 			this.layoutEditor();
@@ -150,14 +151,17 @@ export class AgentSidePanel extends ViewPane {
 		this.syncAgentLayout();
 	}
 
-	async openNewAgent(_options?: { asTab?: boolean }): Promise<void> {
+	async openNewAgent(_options?: { asTab?: boolean; focus?: boolean }): Promise<void> {
 		if (!this.editorPart) {
 			return;
 		}
 		const input = this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri());
-		await this.editorPart.activeGroup.openEditor(input, { pinned: true });
+		const preserveFocus = _options?.focus === false;
+		await this.editorPart.activeGroup.openEditor(input, { pinned: true, preserveFocus });
 		this.syncAgentLayout();
-		this.editorPart.activeGroup.focus();
+		if (!preserveFocus) {
+			this.editorPart.activeGroup.focus();
+		}
 	}
 
 	getActiveAgentEditor(): AgentEditor | undefined {
@@ -238,8 +242,13 @@ export class AgentSidePanel extends ViewPane {
 	private bindAgentOnlyGroups(): void {
 		this.groupListeners.clear();
 		for (const group of this.editorPart?.groups ?? []) {
+			for (const editor of [...group.editors]) {
+				if (!isSidebarEditor(editor)) {
+					this.bounceNonAgent(group, editor);
+				}
+			}
 			this.groupListeners.add(group.onDidModelChange(e => {
-				if (e.kind === GroupModelChangeKind.EDITOR_OPEN && e.editor && !(e.editor instanceof AgentEditorInput)) {
+				if (e.kind === GroupModelChangeKind.EDITOR_OPEN && e.editor && !isSidebarEditor(e.editor)) {
 					this.bounceNonAgent(group, e.editor);
 				}
 				this.syncAgentLayout();
@@ -296,7 +305,7 @@ export class AgentSidePanel extends ViewPane {
 	private isDraggedAgent(): boolean {
 		const editors = LocalSelectionTransfer.getInstance<DraggedEditorIdentifier>().getData(DraggedEditorIdentifier.prototype) ?? [];
 		if (editors.length) {
-			return editors.every(item => item.identifier.editor instanceof AgentEditorInput);
+			return editors.every(item => isSidebarEditor(item.identifier.editor));
 		}
 		const groups = LocalSelectionTransfer.getInstance<DraggedEditorGroupIdentifier>().getData(DraggedEditorGroupIdentifier.prototype) ?? [];
 		if (!groups.length) {
@@ -304,7 +313,11 @@ export class AgentSidePanel extends ViewPane {
 		}
 		return groups.every(item => {
 			const group = this.editorGroupsService.getGroup(item.identifier);
-			return !!group && group.editors.every(editor => editor instanceof AgentEditorInput);
+			return !!group && group.editors.every(editor => isSidebarEditor(editor));
 		});
 	}
+}
+
+function isSidebarEditor(editor: EditorInput): boolean {
+	return editor instanceof AgentEditorInput;
 }

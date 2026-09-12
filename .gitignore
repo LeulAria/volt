@@ -23,8 +23,6 @@ product.overrides.json
 *.tsbuildinfo
 .vscode-test
 vscode-telemetry-docs/
-.aInspirations/t3code/
-.aInspirations/opencode/
-.aInspirations/cline/
-.aInspirations/Roo-Code/
-.aInspirations/zed/
+.aInspirations/
+.aInsp/
+.omo/

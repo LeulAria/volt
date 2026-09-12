@@ -100,6 +100,20 @@ a:hover, a:focus {
 	animation: rise-and-glow 1.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
 }
 
+.vscode-icon-light {
+	display: none;
+}
+
+@media (prefers-color-scheme: light) {
+	.vscode-icon-dark {
+		display: none;
+	}
+
+	.vscode-icon-light {
+		display: block;
+	}
+}
+
 .title {
 	font-size: 28px;
 	font-weight: 300;

@@ -1,0 +1,1314 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.volt-browser-editor {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	width: 100%;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-foreground);
+	overflow: hidden;
+	position: relative;
+}
+
+.volt-browser-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 0 auto;
+	padding: 8px 10px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	box-sizing: border-box;
+}
+
+.monaco-workbench.vs .volt-browser-toolbar,
+.monaco-workbench.hc-light .volt-browser-toolbar {
+	border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+.volt-browser-nav,
+.volt-browser-action {
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: #c2c2c2;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+}
+
+.monaco-workbench.vs .volt-browser-nav,
+.monaco-workbench.hc-light .volt-browser-nav {
+	color: #4a4a4a;
+}
+
+.volt-browser-nav:hover:not(:disabled),
+.volt-browser-action:hover {
+	background: rgba(255, 255, 255, 0.08);
+	color: #fff;
+}
+
+.monaco-workbench.vs .volt-browser-nav:hover:not(:disabled),
+.monaco-workbench.hc-light .volt-browser-nav:hover:not(:disabled) {
+	background: rgba(0, 0, 0, 0.06);
+	color: #000;
+}
+
+.volt-browser-nav:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.volt-browser-nav .codicon,
+.volt-browser-action .codicon {
+	font-size: 14px;
+}
+
+.volt-browser-icon,
+.volt-browser-icon svg {
+	width: 16px;
+	height: 16px;
+	display: block;
+	color: inherit;
+}
+
+.volt-browser-url {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 28px;
+	padding: 0 12px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 13px;
+	outline: none;
+	box-shadow: none;
+	box-sizing: border-box;
+	transition: background-color 120ms ease;
+}
+
+.volt-browser-url:hover:not(:focus) {
+	background: #2a2a2a;
+}
+
+.monaco-workbench.vs .volt-browser-url:hover:not(:focus),
+.monaco-workbench.hc-light .volt-browser-url:hover:not(:focus) {
+	background: rgba(0, 0, 0, 0.08);
+}
+
+.monaco-workbench input.volt-browser-url:focus,
+.monaco-workbench input.volt-browser-url:focus-visible {
+	outline: none !important;
+	border: 0 !important;
+	box-shadow: none !important;
+	background: transparent;
+}
+
+.volt-browser-actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-start;
+	flex: 0 0 auto;
+	height: 24px;
+	padding: 0;
+	gap: 1px;
+	background: transparent;
+}
+
+.volt-browser-actions .volt-browser-action {
+	width: 24px;
+	height: 24px;
+	border-radius: 6px;
+	background: transparent;
+	color: #c2c2c2;
+	transition: background-color 120ms ease, color 120ms ease;
+}
+
+.monaco-workbench.vs .volt-browser-actions .volt-browser-action,
+.monaco-workbench.hc-light .volt-browser-actions .volt-browser-action {
+	color: #4a4a4a;
+}
+
+.volt-browser-actions .volt-browser-action:hover {
+	background: rgba(255, 255, 255, 0.08);
+	color: #fff;
+}
+
+.monaco-workbench.vs .volt-browser-actions .volt-browser-action:hover,
+.monaco-workbench.hc-light .volt-browser-actions .volt-browser-action:hover {
+	background: rgba(0, 0, 0, 0.06);
+	color: #000;
+}
+
+.volt-browser-actions .volt-browser-action.design.active {
+	width: auto;
+	min-width: 24px;
+	height: 24px;
+	padding: 0 5px 0 8px;
+	border-radius: 999px;
+	gap: 6px;
+	background: rgba(59, 130, 246, 0.16);
+	color: #60a5fa;
+}
+
+.monaco-workbench.vs .volt-browser-actions .volt-browser-action.design.active,
+.monaco-workbench.hc-light .volt-browser-actions .volt-browser-action.design.active {
+	background: rgba(37, 99, 235, 0.12);
+	color: #2563eb;
+}
+
+.volt-browser-design-label {
+	font-size: 13px;
+	font-weight: 500;
+	line-height: 1;
+	white-space: nowrap;
+	color: inherit;
+}
+
+.volt-browser-design-close {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	padding: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: inherit;
+	line-height: 1;
+	transition: background-color 120ms ease;
+}
+
+.volt-browser-design-close:hover {
+	background: rgba(96, 165, 250, 0.28);
+}
+
+.monaco-workbench.vs .volt-browser-design-close:hover,
+.monaco-workbench.hc-light .volt-browser-design-close:hover {
+	background: rgba(37, 99, 235, 0.2);
+}
+
+.volt-browser-design-close .volt-browser-icon,
+.volt-browser-design-close .volt-browser-icon svg {
+	width: 10px;
+	height: 10px;
+}
+
+.volt-browser-stage {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
+	width: 100%;
+	overflow: hidden;
+	background: #111;
+}
+
+.volt-browser-frame,
+webview.volt-browser-frame {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	border: 0;
+	background: #fff;
+	display: flex;
+}
+
+.volt-browser-error {
+	position: absolute;
+	inset: 0;
+	z-index: 4;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+	text-align: center;
+	color: var(--vscode-descriptionForeground);
+	background: var(--vscode-editor-background);
+}
+
+.volt-browser-overlay {
+	position: absolute;
+	inset: 0;
+	z-index: 5;
+	pointer-events: none;
+}
+
+.volt-browser-overlay.active {
+	pointer-events: auto;
+	cursor: crosshair;
+}
+
+.volt-browser-box {
+	position: absolute;
+	box-sizing: border-box;
+	pointer-events: none;
+	border-radius: 0;
+}
+
+.volt-browser-box.hover {
+	border: 1.5px solid rgba(96, 165, 250, 0.7);
+	background: rgba(96, 165, 250, 0.06);
+}
+
+.volt-browser-box.select,
+.volt-browser-box.mark {
+	border: 2px solid var(--volt-mark-color, #89b4fa);
+	background: color-mix(in srgb, var(--volt-mark-color, #89b4fa) 8%, transparent);
+	transition: box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.volt-browser-box.mark.glow {
+	z-index: 6;
+	background: color-mix(in srgb, var(--volt-mark-color, #89b4fa) 16%, transparent);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--volt-mark-color, #89b4fa) 55%, transparent);
+}
+
+.volt-browser-box.draw {
+	border: 1.5px dashed #60a5fa;
+	background: rgba(59, 130, 246, 0.12);
+}
+
+.volt-browser-hint {
+	position: absolute;
+	top: 18px;
+	right: 18px;
+	z-index: 6;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 2px;
+	padding: 10px 22px;
+	border: 0;
+	border-radius: 18px;
+	background: #93c5fd;
+	color: #fff;
+	font-size: 15px;
+	line-height: 1.25;
+	pointer-events: none;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+	white-space: nowrap;
+}
+
+.volt-browser-hint-path {
+	font-weight: 500;
+}
+
+.volt-browser-hint-text {
+	font-weight: 400;
+}
+
+.volt-browser-prompt {
+	position: absolute;
+	z-index: 7;
+	width: 350px;
+	pointer-events: auto;
+	cursor: default;
+}
+
+/* Compact follow-up composer: same pill as the agent window, no + / toolbar. */
+.volt-agent-input-box.follow-up.volt-browser-agent-composer,
+.volt-agent-input-box.follow-up:not(.multiline).volt-browser-agent-composer {
+	--volt-composer-bg: transparent;
+	--vscode-editor-background: transparent;
+	--vscode-editorGutter-background: transparent;
+	width: 100%;
+	max-width: none;
+	margin: 0;
+	background: rgba(34, 34, 34, 0.78);
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock,
+.volt-agent-input-box.follow-up:not(.multiline).volt-browser-agent-composer.dock {
+	--volt-composer-bg: transparent !important;
+	--vscode-editor-background: transparent !important;
+	--vscode-editorGutter-background: transparent !important;
+	background: transparent !important;
+	border: 0;
+	box-shadow: none;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+
+.monaco-workbench.vs .volt-agent-input-box.follow-up.volt-browser-agent-composer,
+.monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer {
+	background: rgba(240, 240, 240, 0.82);
+}
+
+.monaco-workbench.vs .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock,
+.monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock {
+	background: transparent;
+}
+
+.volt-browser-agent-composer .volt-agent-monaco {
+	order: 1;
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.volt-browser-composer-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex: 0 0 auto;
+}
+
+/* Selection prompt: empty stays a single-line pill. */
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).empty {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	height: 38px;
+	min-height: 38px;
+	max-height: 38px;
+	border-radius: 999px;
+	padding: 0 6px 0 10px;
+}
+
+.volt-browser-agent-composer:not(.dock).empty .volt-agent-model,
+.volt-browser-agent-composer:not(.dock).empty .volt-browser-composer-mic {
+	display: none !important;
+}
+
+.volt-browser-agent-composer:not(.dock).empty .volt-browser-composer-actions {
+	order: 2;
+	align-self: center;
+	margin-left: 6px;
+}
+
+/* Selection prompt: typed text uses a stacked model/send row. */
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty),
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty).multiline {
+	display: grid !important;
+	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-areas:
+		"input input"
+		"model actions";
+	align-items: center;
+	row-gap: 4px;
+	height: auto !important;
+	min-height: 0;
+	max-height: none !important;
+	border-radius: 18px;
+	padding: 8px 6px 6px 8px;
+	overflow: hidden;
+	flex-direction: unset;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-monaco,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty).multiline .volt-agent-monaco {
+	grid-area: input;
+	grid-column: 1 / -1;
+	width: 100% !important;
+	max-width: none !important;
+	height: auto !important;
+	min-height: 22px;
+	padding: 0 4px !important;
+	align-items: flex-start;
+	align-self: stretch;
+	flex: none;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-monaco .monaco-editor {
+	width: 100% !important;
+	max-width: 100% !important;
+}
+
+.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-placeholder {
+	left: 4px;
+	right: 4px;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-model {
+	grid-area: model;
+	justify-self: start;
+	max-width: 100%;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-browser-composer-actions {
+	grid-area: actions;
+	justify-self: end;
+	align-self: center;
+}
+
+.volt-browser-composer-mic {
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: #b0b0b0;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+}
+
+.volt-browser-composer-mic:hover {
+	color: #e6e6e6;
+}
+
+.volt-browser-agent-composer .volt-agent-send {
+	background: #f4f4f5 !important;
+	color: #111 !important;
+}
+
+.volt-browser-agent-composer .volt-agent-send .volt-agent-svg-icon.send,
+.volt-browser-agent-composer .volt-agent-send .volt-agent-svg-icon.send svg,
+.volt-browser-agent-composer .volt-agent-send .volt-agent-svg-icon.send path {
+	color: #111 !important;
+	stroke: #111 !important;
+	fill: none !important;
+}
+
+.volt-browser-composer-mic .volt-agent-svg-icon,
+.volt-browser-composer-mic .volt-agent-svg-icon svg {
+	width: 14px;
+	height: 14px;
+	color: inherit;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-placeholder,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .overflow-guard,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor-background,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .monaco-editor-background,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .margin,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .margin-view-overlays,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .monaco-scrollable-element,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .lines-content,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .view-overlays,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .view-lines,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .view-line,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .inputarea,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .inputarea.ime-input,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .cursors-layer,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .view-zones,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock .volt-agent-monaco,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock .volt-agent-placeholder {
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .monaco-editor .focused .selected-text {
+	background-color: var(--vscode-editor-selectionBackground, rgba(91, 146, 230, 0.55)) !important;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .monaco-editor .selected-text {
+	background-color: var(--vscode-editor-inactiveSelectionBackground, rgba(91, 146, 230, 0.32)) !important;
+}
+
+/* Browser selection mention: no pill bg, icon + text share the accent. */
+.volt-browser-agent-composer .volt-agent-mention-pill.browser {
+	background-color: transparent !important;
+	color: var(--volt-mention-accent, #89b4fa) !important;
+	padding: 0 2px !important;
+	border-radius: 0 !important;
+}
+
+.volt-browser-agent-composer .volt-agent-mention-icon.browser {
+	background-color: transparent !important;
+	color: var(--volt-mention-accent, #89b4fa) !important;
+	border-radius: 0 !important;
+}
+
+.volt-browser-agent-composer .volt-agent-mention-icon.browser::before {
+	background-color: var(--volt-mention-accent, #89b4fa) !important;
+	color: var(--volt-mention-accent, #89b4fa) !important;
+}
+
+/* On hover the mention system swaps in a codicon X, so drop the mask (otherwise
+the background paints a solid square) and keep the glyph in the accent. */
+.volt-browser-agent-composer .volt-agent-mention-icon.browser.hovered::before {
+	-webkit-mask-image: none !important;
+	mask-image: none !important;
+	background-color: transparent !important;
+	color: var(--volt-mention-accent, #89b4fa) !important;
+}
+
+.volt-browser-source {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: min(420px, 46%);
+	z-index: 8;
+	display: flex;
+	flex-direction: column;
+	background: var(--vscode-editor-background);
+	border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.volt-browser-source-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 8px 10px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	font-size: 12px;
+}
+
+.volt-browser-source-close {
+	border: 0;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	font-size: 16px;
+}
+
+.volt-browser-source-body {
+	flex: 1 1 auto;
+	margin: 0;
+	padding: 10px 12px;
+	overflow: auto;
+	font-size: 11px;
+	line-height: 1.45;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.volt-browser-editor .hidden {
+	display: none !important;
+}
+
+.volt-browser-dock {
+	--volt-dock-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	--volt-dock-max: 650px;
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 9;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+	padding: 0 16px 14px;
+	pointer-events: auto;
+}
+
+.volt-browser-dock.blocked {
+	display: none !important;
+}
+
+.volt-browser-dock-hit {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 228px;
+	min-height: 36px;
+	overflow: visible;
+}
+
+.volt-browser-dock.mode-expanded .volt-browser-dock-hit {
+	width: min(var(--volt-dock-max), 90%);
+	min-width: 0;
+	min-height: 0;
+}
+
+.volt-browser-dock.mode-chip .volt-browser-dock-hit {
+	display: none;
+}
+
+.volt-browser-dock-shell {
+	position: relative;
+	width: 156px;
+	height: 10px;
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	border-radius: 999px;
+	background: rgba(46, 46, 46, 0.95);
+	overflow: hidden;
+	cursor: pointer;
+	transform-origin: bottom center;
+	backdrop-filter: blur(6px);
+	-webkit-backdrop-filter: blur(6px);
+	box-shadow: none;
+	transition:
+		width 480ms var(--volt-dock-ease),
+		height 480ms var(--volt-dock-ease),
+		border-radius 480ms var(--volt-dock-ease),
+		background 360ms var(--volt-dock-ease),
+		box-shadow 480ms var(--volt-dock-ease),
+		border-color 360ms var(--volt-dock-ease),
+		padding 480ms var(--volt-dock-ease);
+}
+
+.monaco-workbench.vs .volt-browser-dock-shell,
+.monaco-workbench.hc-light .volt-browser-dock-shell {
+	background: rgba(228, 228, 228, 0.95);
+	border-color: rgba(0, 0, 0, 0.12);
+	box-shadow: none;
+}
+
+.volt-browser-dock.mode-hover .volt-browser-dock-shell {
+	background: rgba(32, 32, 32, 0.92);
+	border-color: rgba(255, 255, 255, 0.16);
+	box-shadow: 0 8px 22px rgba(0, 0, 0, 0.26);
+	cursor: pointer;
+}
+
+.monaco-workbench.vs .volt-browser-dock.mode-hover .volt-browser-dock-shell,
+.monaco-workbench.hc-light .volt-browser-dock.mode-hover .volt-browser-dock-shell {
+	background: rgba(255, 255, 255, 0.96);
+	border-color: rgba(0, 0, 0, 0.1);
+	box-shadow: 0 8px 22px rgba(0, 0, 0, 0.1);
+}
+
+.volt-browser-dock.mode-expanded .volt-browser-dock-shell {
+	background: rgba(34, 34, 34, 0.9);
+	border-radius: 22px;
+	box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+	backdrop-filter: blur(20px);
+	-webkit-backdrop-filter: blur(20px);
+	cursor: default;
+	overflow: visible;
+}
+
+.volt-browser-dock.mode-expanded .volt-browser-dock-composer,
+.volt-browser-dock.mode-expanded .volt-browser-dock-composer .volt-browser-agent-composer {
+	overflow: visible;
+}
+
+.monaco-workbench.vs .volt-browser-dock.mode-expanded .volt-browser-dock-shell,
+.monaco-workbench.hc-light .volt-browser-dock.mode-expanded .volt-browser-dock-shell {
+	background: rgba(246, 246, 246, 0.94);
+	box-shadow: 0 18px 48px rgba(0, 0, 0, 0.16);
+}
+
+.volt-browser-dock.mode-chip .volt-browser-dock-shell {
+	opacity: 0;
+	pointer-events: none;
+	box-shadow: none;
+}
+
+.volt-browser-dock-label {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 0 12px;
+	border: 0;
+	background: transparent;
+	color: #c8c8c8;
+	font: inherit;
+	font-size: 14px;
+	font-weight: 300;
+	line-height: 1;
+	text-align: left;
+	opacity: 0;
+	pointer-events: none;
+	white-space: nowrap;
+	transition: opacity 220ms var(--volt-dock-ease);
+}
+
+.monaco-workbench.vs .volt-browser-dock-label,
+.monaco-workbench.hc-light .volt-browser-dock-label {
+	color: #8a8a8a;
+}
+
+.volt-browser-dock.mode-hover .volt-browser-dock-label {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.volt-browser-dock-label-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 300;
+}
+
+.volt-browser-dock-label-kb {
+	flex: 0 0 auto;
+	opacity: 0.75;
+	font-size: 12px;
+	font-weight: 300;
+	color: #b0b0b0;
+	letter-spacing: 0.04em;
+}
+
+.volt-browser-dock-chips {
+	display: flex;
+	align-items: center;
+	justify-content: flex-start;
+	flex-wrap: wrap;
+	width: min(var(--volt-dock-max), 90%);
+	gap: 8px;
+	opacity: 0;
+	transform: translateY(8px) scale(0.92);
+	pointer-events: none;
+	transition:
+		opacity 280ms var(--volt-dock-ease),
+		transform 420ms var(--volt-dock-ease);
+}
+
+.volt-browser-dock .volt-agent-composer-chips {
+	display: flex;
+	margin: 0;
+}
+
+.volt-browser-dock .volt-agent-composer-chip {
+	transform: scale(1);
+	transition: transform 320ms var(--volt-dock-ease);
+}
+
+.volt-browser-dock.mode-expanded .volt-browser-dock-chips {
+	margin-bottom: 2px;
+}
+
+.volt-browser-dock-chips:not(.is-visible) {
+	height: 0;
+	margin: 0;
+	overflow: hidden;
+}
+
+.volt-browser-dock-chips.is-visible {
+	opacity: 1;
+	transform: none;
+	pointer-events: auto;
+}
+
+.volt-browser-dock-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	height: 26px;
+	padding: 0 12px 0 10px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 999px;
+	background: #2a2a2a;
+	color: #9a9a9a;
+	font: inherit;
+	font-size: 13px;
+	font-weight: 300;
+	line-height: 26px;
+	cursor: pointer;
+	box-shadow: none;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+	transform: scale(1);
+	transition: transform 320ms var(--volt-dock-ease);
+}
+
+.volt-browser-dock-chip:hover {
+	transform: scale(1.04);
+}
+
+.volt-browser-dock.mode-expanded .volt-browser-dock-chip:hover {
+	transform: none;
+}
+
+.monaco-workbench.vs .volt-browser-dock-chip,
+.monaco-workbench.hc-light .volt-browser-dock-chip {
+	background: #ececec;
+	color: #8a8a8a;
+	border: 1px solid rgba(0, 0, 0, 0.12);
+	box-shadow: none;
+}
+
+.volt-browser-dock-chip-label {
+	font-weight: 300;
+	color: #9a9a9a;
+}
+
+.monaco-workbench.vs .volt-browser-dock-chip-label,
+.monaco-workbench.hc-light .volt-browser-dock-chip-label {
+	color: #8a8a8a;
+}
+
+.volt-browser-dock-dots {
+	display: none;
+	grid-template-columns: repeat(3, 3px);
+	grid-template-rows: repeat(3, 3px);
+	gap: 2px;
+	width: 13px;
+	height: 13px;
+	flex-shrink: 0;
+}
+
+.volt-browser-dock-chip.working .volt-browser-dock-dots {
+	display: grid;
+}
+
+.volt-browser-dock-dot {
+	width: 3px;
+	height: 3px;
+	border-radius: 50%;
+	background: #d0d0d0;
+	opacity: 0.1;
+}
+
+.monaco-workbench.vs .volt-browser-dock-dot,
+.monaco-workbench.hc-light .volt-browser-dock-dot {
+	background: #6f6f6f;
+}
+
+.volt-browser-dock-composer {
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	opacity: 0;
+	pointer-events: none;
+	transform: translateY(6px) scale(0.98);
+	transform-origin: bottom center;
+	transition:
+		opacity 260ms var(--volt-dock-ease),
+		transform 480ms var(--volt-dock-ease);
+}
+
+.volt-browser-dock.mode-expanded .volt-browser-dock-composer {
+	opacity: 1;
+	pointer-events: auto;
+	transform: none;
+}
+
+.volt-browser-dock.mode-expanded .volt-browser-dock-label {
+	opacity: 0 !important;
+	pointer-events: none !important;
+}
+
+.volt-browser-plus-menu {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: calc(100% + 8px);
+	width: 100%;
+	max-width: none;
+	margin: 0;
+	transform: none;
+	z-index: 12;
+	pointer-events: auto;
+}
+
+.volt-browser-dock-float {
+	width: min(var(--volt-dock-max), 90%);
+	max-height: 0;
+	display: flex;
+	flex-direction: column;
+	border-radius: 14px;
+	background: rgba(34, 34, 34, 0.92);
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+	backdrop-filter: blur(22px);
+	-webkit-backdrop-filter: blur(22px);
+	overflow: hidden;
+	opacity: 0;
+	transform: translateY(16px) scale(0.92);
+	transform-origin: bottom center;
+	pointer-events: none;
+	transition:
+		max-height 480ms var(--volt-dock-ease),
+		opacity 320ms var(--volt-dock-ease),
+		transform 480ms var(--volt-dock-ease),
+		box-shadow 480ms var(--volt-dock-ease);
+}
+
+.volt-browser-dock.float-open .volt-browser-dock-float {
+	height: min(520px, 62vh);
+	max-height: min(520px, 62vh);
+	opacity: 1;
+	transform: none;
+	pointer-events: auto;
+}
+
+.monaco-workbench.vs .volt-browser-dock-float,
+.monaco-workbench.hc-light .volt-browser-dock-float {
+	background: rgba(246, 246, 246, 0.96);
+	border-color: rgba(0, 0, 0, 0.1);
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+}
+
+.volt-browser-dock-float-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 10px 8px 14px;
+}
+
+.volt-browser-dock-float-title {
+	flex: 1 1 auto;
+	min-width: 0;
+	font-size: 13px;
+	font-weight: 500;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-browser-dock-float-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.volt-browser-dock-icon {
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.volt-browser-dock-icon:hover {
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.monaco-workbench.vs .volt-browser-dock-icon:hover,
+.monaco-workbench.hc-light .volt-browser-dock-icon:hover {
+	background: rgba(0, 0, 0, 0.06);
+}
+
+.volt-browser-dock-float-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: hidden;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
+.volt-browser-dock-float-body .volt-agent-thread {
+	flex: 1 1 auto;
+	min-height: 0;
+	height: 100%;
+}
+
+.volt-browser-dock-float-body .volt-agent-thread-inner {
+	padding: 8px 16px 16px;
+}
+
+.volt-browser-dock-user {
+	align-self: stretch;
+	padding: 8px 12px;
+	border-radius: 10px;
+	background: rgba(255, 255, 255, 0.08);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.monaco-workbench.vs .volt-browser-dock-user,
+.monaco-workbench.hc-light .volt-browser-dock-user {
+	background: rgba(0, 0, 0, 0.06);
+}
+
+.volt-browser-dock-meta {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-browser-dock-agent {
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.volt-browser-dock-empty {
+	color: var(--vscode-descriptionForeground);
+	padding: 12px 0;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.empty,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock:not(.empty),
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock:not(.empty):not(.multiline) {
+	display: flex !important;
+	flex-direction: row;
+	flex-wrap: nowrap;
+	align-items: center;
+	height: 44px;
+	min-height: 44px;
+	max-height: 44px;
+	border-radius: 22px;
+	padding: 0 8px 0 6px;
+	overflow: visible !important;
+	grid-template-columns: unset;
+	grid-template-areas: unset;
+}
+
+.volt-browser-agent-composer.dock .volt-browser-composer-plus,
+.volt-browser-agent-composer.dock .volt-agent-model,
+.volt-browser-agent-composer.dock.empty .volt-agent-model,
+.volt-browser-agent-composer.dock:not(.multiline) .volt-agent-model {
+	display: inline-flex !important;
+}
+
+.volt-browser-agent-composer.dock:not(.multiline) .volt-browser-composer-plus {
+	order: 0;
+	flex: 0 0 auto;
+}
+
+.volt-browser-agent-composer.dock .volt-agent-mode {
+	order: 0;
+	flex: 0 0 auto;
+	margin-left: 2px;
+}
+
+.volt-browser-agent-composer.dock[data-mode="plan"] {
+	--volt-mode-fg: #E8AC73;
+	--volt-mode-bg: #3D2E24;
+	--volt-mode-border: color-mix(in srgb, #E8AC73 22%, #3D2E24);
+}
+
+.volt-browser-agent-composer.dock[data-mode="ask"] {
+	--volt-mode-fg: #3ea76d;
+	--volt-mode-bg: #1a2b20;
+	--volt-mode-border: color-mix(in srgb, #3ea76d 28%, #1a2b20);
+}
+
+.volt-browser-agent-composer.dock[data-mode="debug"] {
+	--volt-mode-fg: #d65d7a;
+	--volt-mode-bg: #3d1f26;
+	--volt-mode-border: color-mix(in srgb, #d65d7a 22%, #3d1f26);
+}
+
+.volt-browser-agent-composer.dock[data-mode="multitask"] {
+	--volt-mode-fg: #b794f6;
+	--volt-mode-bg: #2d2438;
+	--volt-mode-border: color-mix(in srgb, #b794f6 22%, #2d2438);
+}
+
+.volt-browser-agent-composer.dock .volt-agent-mode .volt-agent-svg-icon,
+.volt-browser-agent-composer.dock .volt-agent-mode .volt-agent-svg-icon svg {
+	width: 14px;
+	height: 14px;
+	color: inherit;
+}
+
+.volt-browser-agent-composer.dock .volt-agent-mode-close,
+.volt-browser-agent-composer.dock .volt-agent-mode-close .codicon {
+	color: var(--volt-mode-fg);
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock:not(.multiline) .volt-agent-monaco,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock:not(.empty):not(.multiline) .volt-agent-monaco {
+	order: 1;
+	flex: 1 1 auto;
+	width: auto !important;
+	min-width: 0;
+	max-width: none !important;
+	height: 22px !important;
+	min-height: 22px !important;
+	padding: 0 8px !important;
+	display: flex !important;
+	align-items: center !important;
+	align-self: center !important;
+	grid-area: unset;
+	grid-column: unset;
+}
+
+.volt-browser-agent-composer.dock:not(.multiline) .volt-agent-placeholder {
+	top: 50%;
+	transform: translateY(-50%);
+	left: 8px;
+	right: 8px;
+	font-size: 14px;
+	font-weight: 300;
+	line-height: 22px;
+	background: transparent !important;
+	background-color: transparent !important;
+	box-shadow: none !important;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock:not(.multiline) .volt-agent-monaco .monaco-editor,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock:not(.multiline) .volt-agent-monaco .monaco-editor .overflow-guard {
+	width: 100% !important;
+	height: 22px !important;
+}
+
+.volt-browser-agent-composer.dock .monaco-editor .view-line,
+.volt-browser-agent-composer.dock .monaco-editor .view-line span {
+	font-weight: 300 !important;
+	font-size: 14px !important;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock:not(.multiline) .monaco-editor .lines-content,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock:not(.multiline) .monaco-editor .view-lines {
+	top: 0 !important;
+}
+
+.volt-browser-agent-composer.dock:not(.multiline) .volt-agent-model {
+	order: 2;
+	flex: 0 0 auto;
+	margin-left: 4px;
+	padding-left: 8px;
+	padding-right: 8px;
+	justify-self: unset;
+	max-width: 160px;
+}
+
+.volt-browser-agent-composer.dock:not(.multiline) .volt-browser-composer-actions {
+	order: 3;
+	margin-left: 2px;
+	flex: 0 0 auto;
+	display: flex !important;
+	position: relative;
+	z-index: 2;
+}
+
+.volt-browser-agent-composer.dock .volt-browser-composer-mic {
+	display: none !important;
+}
+
+.volt-browser-agent-composer.dock.working .volt-browser-composer-mic {
+	display: inline-flex !important;
+}
+
+.volt-browser-agent-composer.dock .volt-agent-send {
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	margin: 0;
+	border: 0;
+	line-height: 0;
+	display: inline-flex !important;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	background: #f4f4f5 !important;
+	color: #111 !important;
+}
+
+.volt-browser-agent-composer.dock .volt-agent-send .volt-agent-svg-icon,
+.volt-browser-agent-composer.dock .volt-agent-send .volt-agent-svg-icon svg {
+	display: block;
+	flex: none;
+	line-height: 0;
+	overflow: hidden;
+	color: #111 !important;
+}
+
+.volt-browser-agent-composer.dock .volt-agent-send .volt-agent-svg-icon.mic,
+.volt-browser-agent-composer.dock .volt-agent-send .volt-agent-svg-icon.mic svg {
+	width: 14px;
+	height: 14px;
+}
+
+.volt-browser-agent-composer.dock .volt-agent-send .volt-agent-svg-icon.mic rect {
+	fill: #111 !important;
+	stroke: none !important;
+}
+
+.volt-browser-agent-composer.dock .volt-agent-send .volt-agent-svg-icon.mic path {
+	fill: none !important;
+	stroke: #111 !important;
+}
+
+.volt-browser-agent-composer.dock .volt-agent-send .volt-agent-svg-icon.send,
+.volt-browser-agent-composer.dock .volt-agent-send .volt-agent-svg-icon.send svg {
+	width: 13px;
+	height: 13px;
+}
+
+.volt-browser-agent-composer.dock .volt-agent-send .volt-agent-svg-icon.send path {
+	fill: none !important;
+	stroke: #111 !important;
+}
+
+.volt-browser-agent-composer.dock .volt-agent-send.stop .volt-agent-svg-icon.stop,
+.volt-browser-agent-composer.dock .volt-agent-send.stop .volt-agent-svg-icon.stop svg {
+	width: 12px;
+	height: 12px;
+}
+
+.volt-browser-agent-composer.dock .volt-agent-send.stop .volt-agent-svg-icon.stop path {
+	fill: #111 !important;
+	stroke: none !important;
+}
+
+.volt-browser-composer-plus {
+	position: relative;
+	z-index: 3;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: rgba(255, 255, 255, 0.12);
+	color: #e8e8e8;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	order: 0;
+}
+
+.monaco-workbench.vs .volt-browser-composer-plus,
+.monaco-workbench.hc-light .volt-browser-composer-plus {
+	background: rgba(0, 0, 0, 0.08);
+	color: #333;
+}
+
+.volt-browser-composer-plus:hover {
+	background: rgba(255, 255, 255, 0.18);
+	color: #fff;
+}
+
+.monaco-workbench.vs .volt-browser-composer-plus:hover,
+.monaco-workbench.hc-light .volt-browser-composer-plus:hover {
+	background: rgba(0, 0, 0, 0.12);
+	color: #111;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock:not(.empty).multiline {
+	display: grid !important;
+	grid-template-columns: auto auto 1fr auto;
+	grid-template-areas:
+		"input input input input"
+		"plus model . actions";
+	align-items: center;
+	row-gap: 6px;
+	height: auto !important;
+	min-height: 0;
+	max-height: none !important;
+	border-radius: 18px;
+	padding: 8px 10px;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline .volt-agent-monaco {
+	grid-area: input;
+	grid-column: 1 / -1;
+	order: unset;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline .volt-browser-composer-plus {
+	grid-area: plus;
+	order: unset;
+	align-self: center;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline .volt-agent-model {
+	grid-area: model;
+	order: unset;
+	justify-self: start;
+	margin-left: 2px;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline .volt-browser-composer-actions {
+	grid-area: actions;
+	order: unset;
+	justify-self: end;
+}
