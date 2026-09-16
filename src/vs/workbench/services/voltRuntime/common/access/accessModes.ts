@@ -32,7 +32,7 @@ export const ACCESS_MODE_OPTIONS: readonly IAccessModeOption[] = [
 	{
 		id: 'supervised',
 		label: 'Supervised',
-		description: 'Ask before commands and file changes.',
+		description: 'Ask before risky commands and file changes.',
 	},
 	{
 		id: 'auto-accept-edits',

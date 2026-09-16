@@ -37,17 +37,20 @@ suite('Volt access broker', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('supervised asks for edits and shell', () => {
+	test('supervised asks for edits and medium shell, auto-allows routine commands', () => {
 		const compiled = policy('supervised');
 		assert.strictEqual(evaluateAccess(req('read', 'src/a.ts'), compiled, { accessMode: 'supervised' }).effect, 'allow');
 		assert.strictEqual(evaluateAccess(req('edit', 'src/a.ts'), compiled, { accessMode: 'supervised' }).effect, 'ask');
-		assert.strictEqual(evaluateAccess(req('shell', 'npm test'), compiled, { accessMode: 'supervised' }).effect, 'ask');
+		assert.strictEqual(evaluateAccess(req('shell', 'npm test'), compiled, { accessMode: 'supervised' }).effect, 'allow');
+		assert.strictEqual(evaluateAccess(req('shell', 'python3 -m http.server 8080'), compiled, { accessMode: 'supervised' }).effect, 'allow');
+		assert.strictEqual(evaluateAccess(req('shell', 'npm install lodash'), compiled, { accessMode: 'supervised' }).effect, 'ask');
 	});
 
-	test('auto-accept edits allows edits and asks for shell', () => {
+	test('auto-accept edits allows edits and routine shell, asks for medium shell', () => {
 		const compiled = policy('auto-accept-edits');
 		assert.strictEqual(evaluateAccess(req('edit', 'src/a.ts'), compiled, { accessMode: 'auto-accept-edits' }).effect, 'allow');
-		assert.strictEqual(evaluateAccess(req('shell', 'npm test'), compiled, { accessMode: 'auto-accept-edits' }).effect, 'ask');
+		assert.strictEqual(evaluateAccess(req('shell', 'npm test'), compiled, { accessMode: 'auto-accept-edits' }).effect, 'allow');
+		assert.strictEqual(evaluateAccess(req('shell', 'npm install lodash'), compiled, { accessMode: 'auto-accept-edits' }).effect, 'ask');
 	});
 
 	test('auto allows safe and low, asks for medium+', () => {

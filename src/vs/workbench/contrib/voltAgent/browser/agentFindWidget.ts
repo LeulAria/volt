@@ -17,6 +17,7 @@ import {
 	AGENT_FIND_TOGGLE_WHOLE_WORD_COMMAND_ID,
 } from './agentEditorInput.js';
 
+export const CONTEXT_IN_AGENT_INPUT = new RawContextKey<boolean>('inAgentInput', false);
 export const CONTEXT_AGENT_FIND_WIDGET_VISIBLE = new RawContextKey<boolean>('voltAgentFindWidgetVisible', false);
 export const CONTEXT_AGENT_FIND_WIDGET_FOCUSED = new RawContextKey<boolean>('voltAgentFindFocus', false);
 export const CONTEXT_AGENT_FIND_INPUT_FOCUSED = new RawContextKey<boolean>('voltAgentFindInputFocus', false);

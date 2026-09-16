@@ -18,7 +18,7 @@
 	border: 1px solid rgba(255, 255, 255, 0.08);
 	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
 	box-sizing: border-box;
-	pointer-events: none;
+	pointer-events: auto;
 	font-family: inherit;
 	font-size: 13px;
 	font-weight: 400;

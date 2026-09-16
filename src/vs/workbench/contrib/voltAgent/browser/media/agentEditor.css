@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 @import './agentTooltip.css';
+@import './fileChangePreview.css';
 
 .volt-agent-editor {
 	--volt-mode-fg: var(--vscode-foreground);
@@ -69,20 +70,68 @@
 }
 
 .volt-agent-thread > .monaco-scrollable-element {
+	position: relative;
+	z-index: 1;
 	width: 100%;
 	height: 100%;
+}
+
+.volt-agent-thread-fade {
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 56px;
+	pointer-events: none;
+	z-index: 3;
+	opacity: 0;
+	transition: opacity 160ms ease;
+}
+
+.volt-agent-thread-fade.top {
+	top: 0;
+	z-index: 0;
+	background: linear-gradient(to bottom, var(--vscode-editor-background, #1e1e1e) 0%, transparent 100%);
+}
+
+.volt-agent-thread-fade.bottom {
+	bottom: 0;
+	background: linear-gradient(to top, var(--vscode-editor-background, #1e1e1e) 0%, transparent 100%);
+}
+
+.volt-agent-thread.scrolled > .volt-agent-thread-fade.top,
+.volt-agent-thread.scrolled:not(.at-end) > .volt-agent-thread-fade.bottom {
+	opacity: 1;
+}
+
+.monaco-workbench.vs .volt-agent-thread-fade.top,
+.monaco-workbench.hc-light .volt-agent-thread-fade.top {
+	background: linear-gradient(to bottom, var(--vscode-editor-background, #ffffff) 0%, transparent 100%);
+}
+
+.monaco-workbench.vs .volt-agent-thread-fade.bottom,
+.monaco-workbench.hc-light .volt-agent-thread-fade.bottom {
+	background: linear-gradient(to top, var(--vscode-editor-background, #ffffff) 0%, transparent 100%);
 }
 
 .volt-agent-thread-inner {
 	height: 100%;
 	width: 100%;
-	padding: 16px 20px 24px;
+	/*
+	 * No top padding: Chromium insets the sticky viewport by the scroller's padding,
+	 * which would leave a strip above pinned sent cards where content scrolls through.
+	 * The 8px breathing room lives on the first exchange instead.
+	 */
+	padding: 0 20px 24px;
 	box-sizing: border-box;
 	display: flex;
 	flex-direction: column;
 	align-items: stretch;
 	gap: 6px;
 	overflow: hidden;
+}
+
+.volt-agent-thread-inner > .volt-agent-exchange:first-child {
+	margin-top: 8px;
 }
 
 .volt-agent-thread-inner::-webkit-scrollbar {
@@ -109,6 +158,16 @@
 	text-align: center;
 }
 
+.volt-agent-exchange {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
+	width: 100%;
+	min-width: 0;
+	overflow: visible;
+}
+
 .volt-agent-turn {
 	display: flex;
 	flex-direction: column;
@@ -122,16 +181,39 @@
 
 .volt-agent-bubble {
 	line-height: 1.55;
-	font-size: 13px;
+	font-size: 14px;
 	min-width: 0;
 	max-width: 100%;
 }
 
+/*
+ * Sent cards pin to the very top of the scroller. The turn always spans the full
+ * scroller width with an 8px bleed above/below the card (cancelled by negative
+ * margins so the card sits exactly where it would without the bleed). Pinning
+ * therefore never changes layout - only the backdrop, shadow and fade appear.
+ */
 .volt-agent-turn.user {
-	position: relative;
+	position: sticky;
+	top: 0;
+	z-index: 5;
+	width: auto;
+	max-width: none;
+	margin: -8px -20px;
+	padding: 8px 20px;
+	box-sizing: border-box;
+	background: transparent;
+	pointer-events: none;
 }
 
-.volt-agent-turn.user.editable,
+.volt-agent-turn.user > * {
+	pointer-events: auto;
+}
+
+.volt-agent-turn.user .volt-agent-user-row {
+	max-width: 760px;
+	margin: 0 auto;
+}
+
 .volt-agent-turn.user.editable .volt-agent-bubble {
 	cursor: pointer;
 }
@@ -145,8 +227,11 @@
 }
 
 .volt-agent-turn.user .volt-agent-bubble {
+	--volt-user-bubble-bg: #222222;
+	--volt-user-bubble-fade: #222222;
+	position: relative;
 	display: flex;
-	align-items: flex-end;
+	align-items: center;
 	gap: 8px;
 	flex: 1;
 	width: 100%;
@@ -154,16 +239,68 @@
 	min-height: 38px;
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	border-radius: 8px !important;
-	background: rgba(34, 34, 34, 0.78);
+	background: #222222;
 	padding: 8px 10px;
 	box-shadow: none;
 	box-sizing: border-box;
+	transition: box-shadow 160ms ease;
+}
+
+/* Soft fade under the pinned card so content slides out instead of hard-clipping. */
+.volt-agent-turn.user::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 100%;
+	height: 40px;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 160ms ease;
+	background: linear-gradient(to bottom, var(--vscode-editor-background, #1e1e1e) 0%, transparent 100%);
+}
+
+/* Pinned: solid, opaque backdrop that fully hides whatever scrolls underneath. */
+.volt-agent-turn.user.stuck {
+	background: var(--vscode-editor-background, #1e1e1e);
+}
+
+.volt-agent-turn.user.stuck::after {
+	opacity: 1;
+}
+
+.volt-agent-turn.user.stuck .volt-agent-bubble {
+	background: #222222 !important;
+	box-shadow: 0 6px 14px rgba(0, 0, 0, 0.3);
 }
 
 .monaco-workbench.vs .volt-agent-turn.user .volt-agent-bubble,
 .monaco-workbench.hc-light .volt-agent-turn.user .volt-agent-bubble {
-	background: rgba(240, 240, 240, 0.82);
+	--volt-user-bubble-bg: #f0f0f0;
+	--volt-user-bubble-fade: #f0f0f0;
+	background: #f0f0f0;
 	border: 1px solid rgba(0, 0, 0, 0.1);
+	box-shadow: none;
+}
+
+.monaco-workbench.vs .volt-agent-turn.user.stuck,
+.monaco-workbench.hc-light .volt-agent-turn.user.stuck {
+	background: var(--vscode-editor-background, #ffffff);
+}
+
+.monaco-workbench.vs .volt-agent-turn.user.stuck .volt-agent-bubble,
+.monaco-workbench.hc-light .volt-agent-turn.user.stuck .volt-agent-bubble {
+	background: #f0f0f0 !important;
+	box-shadow: 0 6px 14px rgba(0, 0, 0, 0.1);
+}
+
+.monaco-workbench.vs .volt-agent-turn.user::after,
+.monaco-workbench.hc-light .volt-agent-turn.user::after {
+	background: linear-gradient(to bottom, var(--vscode-editor-background, #ffffff) 0%, transparent 100%);
+}
+
+.volt-agent-turn.user .volt-agent-bubble.multiline {
+	align-items: flex-end;
 }
 
 .volt-agent-user-main {
@@ -194,8 +331,8 @@
 
 .volt-agent-user-stop .volt-agent-svg-icon,
 .volt-agent-user-stop .volt-agent-svg-icon svg {
-	width: 16px;
-	height: 16px;
+	width: 10px;
+	height: 10px;
 	display: block;
 	color: var(--vscode-editor-background, #111);
 }
@@ -215,15 +352,12 @@
 }
 
 .volt-agent-turn.user.editing {
-	position: sticky;
-	top: 0;
 	z-index: 8;
-	width: 100%;
+}
+
+.volt-agent-turn.user.editing .volt-agent-edit-slot {
 	max-width: 760px;
-	align-self: center;
-	background: transparent;
-	padding: 0;
-	box-sizing: border-box;
+	margin: 0 auto;
 }
 
 .volt-agent-edit-slot {
@@ -301,27 +435,21 @@
 .volt-agent-input-box.editing .volt-agent-toolbar {
 	display: flex !important;
 	align-items: center;
-	justify-content: flex-end;
+	justify-content: space-between;
 	width: 100%;
 	padding: 6px 0 0 !important;
 	margin: 0 !important;
 	background: transparent !important;
 }
 
-.volt-agent-edit-slot .volt-agent-toolbar-start,
-.volt-agent-edit-slot .volt-agent-plus,
 .volt-agent-edit-slot .volt-agent-mode,
 .volt-agent-edit-slot .volt-agent-access,
-.volt-agent-edit-slot .volt-agent-model,
 .volt-agent-edit-slot .volt-agent-zoom-btn,
 .volt-agent-edit-slot .volt-agent-context-btn,
 .volt-agent-edit-slot .volt-agent-attach-btn,
 .volt-agent-edit-slot .volt-agent-queue-bar,
-.volt-agent-input-box.editing .volt-agent-toolbar-start,
-.volt-agent-input-box.editing .volt-agent-plus,
 .volt-agent-input-box.editing .volt-agent-mode,
 .volt-agent-input-box.editing .volt-agent-access,
-.volt-agent-input-box.editing .volt-agent-model,
 .volt-agent-input-box.editing .volt-agent-zoom-btn,
 .volt-agent-input-box.editing .volt-agent-context-btn,
 .volt-agent-input-box.editing .volt-agent-attach-btn,
@@ -329,11 +457,35 @@
 	display: none !important;
 }
 
+.volt-agent-edit-slot .volt-agent-toolbar-start,
+.volt-agent-input-box.editing .volt-agent-toolbar-start {
+	display: flex !important;
+	align-items: center !important;
+	justify-content: flex-start !important;
+	gap: 4px;
+	flex: 0 0 auto !important;
+	width: auto !important;
+	min-width: 0;
+	height: auto !important;
+	margin: 0 !important;
+	padding: 0 !important;
+	overflow: visible !important;
+}
+
+.volt-agent-edit-slot .volt-agent-plus,
+.volt-agent-input-box.editing .volt-agent-plus {
+	display: inline-flex !important;
+	width: 26px;
+	height: 26px;
+	margin: 0 !important;
+}
+
 .volt-agent-edit-slot .volt-agent-toolbar-end,
 .volt-agent-input-box.editing .volt-agent-toolbar-end {
 	display: flex !important;
 	align-items: center !important;
 	justify-content: flex-end !important;
+	gap: 6px;
 	order: unset !important;
 	width: auto !important;
 	height: auto !important;
@@ -341,11 +493,43 @@
 	padding: 0 !important;
 }
 
+.volt-agent-edit-slot .volt-agent-model,
+.volt-agent-input-box.editing .volt-agent-model {
+	display: inline-flex !important;
+	flex: 0 0 auto !important;
+	max-width: 160px;
+	margin: 0 !important;
+}
+
 .volt-agent-edit-slot .volt-agent-send,
 .volt-agent-input-box.editing .volt-agent-send {
-	width: 24px;
-	height: 24px;
+	display: inline-flex !important;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
 	margin: 0 !important;
+	background: #f4f4f5 !important;
+	color: #111 !important;
+}
+
+.volt-agent-edit-slot .volt-agent-send .volt-agent-svg-icon,
+.volt-agent-edit-slot .volt-agent-send .volt-agent-svg-icon svg,
+.volt-agent-edit-slot .volt-agent-send .volt-agent-svg-icon path,
+.volt-agent-input-box.editing .volt-agent-send .volt-agent-svg-icon,
+.volt-agent-input-box.editing .volt-agent-send .volt-agent-svg-icon svg,
+.volt-agent-input-box.editing .volt-agent-send .volt-agent-svg-icon path {
+	color: #111 !important;
+	stroke: #111 !important;
+	fill: none !important;
+}
+
+.volt-agent-edit-slot .volt-agent-send .volt-agent-svg-icon.stop path,
+.volt-agent-edit-slot .volt-agent-send .volt-agent-svg-icon.stop rect,
+.volt-agent-input-box.editing .volt-agent-send .volt-agent-svg-icon.stop path,
+.volt-agent-input-box.editing .volt-agent-send .volt-agent-svg-icon.stop rect {
+	fill: #111 !important;
+	stroke: none !important;
 }
 
 .volt-agent-editor.editing-user .volt-agent-suggest {
@@ -374,10 +558,39 @@
 
 .volt-agent-turn.user .volt-agent-text {
 	white-space: pre-wrap;
-	font-size: 13px;
-	line-height: 1.45;
+	font-size: 14px;
+	line-height: 23px;
 	font-weight: 400;
 	display: block;
+	min-height: 23px;
+}
+
+.volt-agent-turn.user .volt-agent-bubble.clamped {
+	cursor: pointer;
+}
+
+.volt-agent-turn.user .volt-agent-bubble.clamped .volt-agent-text {
+	position: relative;
+	display: block;
+	max-height: calc(23px * 4);
+	overflow: hidden;
+	-webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
+	mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
+}
+
+.volt-agent-turn.user .volt-agent-bubble.clamped .volt-agent-text::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 26px;
+	pointer-events: none;
+	background: linear-gradient(to bottom, transparent 0%, var(--volt-user-bubble-fade) 90%);
+	backdrop-filter: blur(5px);
+	-webkit-backdrop-filter: blur(5px);
+	-webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 72%);
+	mask-image: linear-gradient(to bottom, transparent 0%, #000 72%);
 }
 
 .volt-agent-turn.user .volt-agent-text > .volt-agent-searchable {
@@ -387,7 +600,7 @@
 
 .volt-agent-turn.agent .volt-agent-text {
 	white-space: normal;
-	font-size: 13px;
+	font-size: 14px;
 	line-height: 1.55;
 	font-weight: 400;
 }
@@ -542,11 +755,14 @@ pre.volt-agent-searchable {
 	align-items: center;
 	flex-wrap: wrap;
 	gap: 8px;
+	width: 100%;
+	max-width: 760px;
+	margin: 1px auto 4px;
 	font-size: 11px;
 	line-height: 16px;
 	color: var(--vscode-descriptionForeground);
-	margin: 1px 0 4px;
 	min-height: 18px;
+	box-sizing: border-box;
 }
 
 .volt-agent-worked-duration {
@@ -647,13 +863,172 @@ pre.volt-agent-searchable {
 	color: var(--vscode-charts-green, #89d185);
 }
 
+.volt-agent-thread-body {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	width: 100%;
+	min-width: 0;
+}
+
+.volt-agent-reply {
+	font-size: 14px;
+	line-height: 1.55;
+	font-weight: 400;
+	min-width: 0;
+	max-width: 100%;
+	color: var(--vscode-editor-foreground);
+}
+
 .volt-agent-activity {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
+	min-width: 0;
+	max-width: 100%;
 }
 
 .volt-agent-activity-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	width: fit-content;
+	max-width: 100%;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
+	cursor: pointer;
+	font: inherit;
+	font-size: 14px;
+	font-weight: 400;
+	line-height: 1.4;
+	text-align: left;
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+.volt-agent-activity-toggle:hover {
+	color: color-mix(in srgb, var(--vscode-foreground) 68%, transparent);
+}
+
+.volt-agent-activity-toggle:focus,
+.volt-agent-activity-toggle:focus-visible,
+.monaco-workbench .volt-agent-activity-toggle:focus,
+.monaco-workbench .volt-agent-activity-toggle:focus-visible {
+	outline: none !important;
+	box-shadow: none !important;
+	border-color: transparent;
+}
+
+.volt-agent-activity-label {
+	font-size: 14px;
+	font-weight: 400;
+	line-height: 1.4;
+	color: inherit;
+	min-width: 0;
+	white-space: normal;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+
+.volt-agent-activity-progress {
+	font-size: 14px;
+	font-weight: 300;
+	line-height: 1.5;
+	color: var(--vscode-descriptionForeground);
+	min-width: 0;
+	max-width: 100%;
+	white-space: normal;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+
+.volt-agent-activity-progress + .volt-agent-activity-progress {
+	margin-top: 10px;
+}
+
+@property --volt-shimmer {
+	syntax: '<percentage>';
+	inherits: false;
+	initial-value: -50%;
+}
+
+.volt-agent-activity-progress.shimmer,
+.volt-agent-activity-label.shimmer,
+.volt-agent-term-headline.shimmer {
+	display: block;
+	width: fit-content;
+	max-width: 100%;
+	min-width: 0;
+	white-space: normal;
+	overflow: visible;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+	font-weight: 300;
+	--volt-shimmer: -50%;
+	--volt-shimmer-base: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+	--volt-shimmer-hi: var(--vscode-foreground);
+	color: var(--volt-shimmer-base);
+	background-color: var(--volt-shimmer-base);
+	background-image: linear-gradient(
+		90deg,
+		var(--volt-shimmer-base) 0%,
+		var(--volt-shimmer-base) calc(var(--volt-shimmer) - 40%),
+		var(--volt-shimmer-hi) var(--volt-shimmer),
+		var(--volt-shimmer-base) calc(var(--volt-shimmer) + 40%),
+		var(--volt-shimmer-base) 100%
+	);
+	background-size: 100% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
+	-webkit-box-decoration-break: clone;
+	box-decoration-break: clone;
+	animation: volt-agent-shimmer 0.9s linear infinite;
+}
+
+@keyframes volt-agent-shimmer {
+	from {
+		--volt-shimmer: -50%;
+	}
+	to {
+		--volt-shimmer: 150%;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-agent-activity-progress.shimmer,
+	.volt-agent-activity-label.shimmer,
+	.volt-agent-term-headline.shimmer {
+		background-image: none;
+		-webkit-text-fill-color: unset;
+		color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+		animation: none;
+	}
+}
+
+.volt-agent-activity-chevron {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	opacity: 0.7;
+}
+
+.volt-agent-activity-chevron .codicon {
+	font-size: 13px;
+}
+
+.volt-agent-changes-group {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.volt-agent-changes-toggle {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
@@ -669,70 +1044,28 @@ pre.volt-agent-searchable {
 	text-align: left;
 }
 
-.volt-agent-activity-toggle:hover {
+.volt-agent-changes-toggle:hover {
 	color: var(--vscode-foreground);
 }
 
-.volt-agent-activity-label {
-	font-size: 12px;
-	line-height: 1.4;
-	color: inherit;
+.volt-agent-changes-toggle:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
 }
 
-.volt-agent-activity-progress {
-	font-size: 14px;
-	line-height: 1.5;
-	color: var(--vscode-descriptionForeground);
+.volt-agent-changes-toggle .volt-file-preview-stats {
+	margin-left: 2px;
 }
 
-.volt-agent-activity-progress + .volt-agent-activity-progress {
-	margin-top: 10px;
+.volt-agent-changes-files {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 2px 0 4px;
 }
 
-.volt-agent-activity-progress.shimmer,
-.volt-agent-activity-label.shimmer,
-.volt-agent-term-headline.shimmer {
-	display: inline-block;
-	color: transparent;
-	-webkit-text-fill-color: transparent;
-	/* Cursor-style shimmer: dim solid base with a soft foreground-colored
-	sheen sweeping left to right. Gradient edges share the base color so
-	the repeat-x loop is seamless. */
-	background-image: linear-gradient(
-		90deg,
-		color-mix(in srgb, var(--vscode-foreground) 35%, transparent) 0%,
-		color-mix(in srgb, var(--vscode-foreground) 35%, transparent) 32%,
-		color-mix(in srgb, var(--vscode-foreground) 75%, transparent) 44%,
-		var(--vscode-foreground) 50%,
-		color-mix(in srgb, var(--vscode-foreground) 75%, transparent) 56%,
-		color-mix(in srgb, var(--vscode-foreground) 35%, transparent) 68%,
-		color-mix(in srgb, var(--vscode-foreground) 35%, transparent) 100%
-	);
-	background-size: 200% 100%;
-	background-repeat: repeat-x;
-	background-clip: text;
-	-webkit-background-clip: text;
-	animation: volt-agent-shimmer 2s linear infinite;
-}
-
-@keyframes volt-agent-shimmer {
-	from {
-		background-position: 100% 0;
-	}
-	to {
-		background-position: -100% 0;
-	}
-}
-
-.volt-agent-activity-chevron {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	opacity: 0.7;
-}
-
-.volt-agent-activity-chevron .codicon {
-	font-size: 12px;
+.volt-agent-changes-files.cards {
+	gap: 10px;
 }
 
 .volt-agent-activity-body {
@@ -808,7 +1141,8 @@ pre.volt-agent-searchable {
 
 .volt-agent-thinking-text {
 	margin-top: 4px;
-	font-size: 12px;
+	font-size: 11px;
+	font-weight: 300;
 	line-height: 1.5;
 	color: color-mix(in srgb, var(--vscode-descriptionForeground) 78%, transparent);
 	white-space: normal;
@@ -894,12 +1228,12 @@ pre.volt-agent-searchable {
 
 .volt-agent-markdown code,
 .volt-agent-markdown .monaco-tokenized-source {
-	font-family: var(--monaco-monospace-font, monospace);
+	font-family: var(--volt-code-font, var(--monaco-monospace-font, monospace));
 	font-size: 0.92em;
-	color: var(--vscode-textPreformat-foreground, var(--vscode-editor-foreground));
-	background: var(--vscode-textPreformat-background, color-mix(in srgb, var(--vscode-editor-foreground) 12%, transparent));
-	border-radius: 4px;
-	padding: 1px 5px;
+	color: inherit;
+	background: none;
+	border-radius: 0;
+	padding: 0;
 	white-space: pre-wrap;
 }
 
@@ -1210,6 +1544,7 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-block.terminal.streaming .volt-agent-term-header {
+	align-items: flex-start;
 	cursor: default;
 	opacity: 1;
 }
@@ -1240,11 +1575,8 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-term-headline.shimmer {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
 	font-size: 12.5px;
-	font-weight: 400;
+	font-weight: 300;
 }
 
 .volt-agent-term-title {
@@ -1329,12 +1661,8 @@ pre.volt-agent-searchable {
 	padding-top: 10px;
 }
 
-.volt-agent-block.terminal.streaming .volt-agent-term-body {
-	display: none;
-}
-
 .volt-agent-term-command {
-	display: none;
+	display: block;
 	margin: 0;
 	width: max-content;
 	min-width: 100%;
@@ -1343,10 +1671,6 @@ pre.volt-agent-searchable {
 	line-height: 1.55;
 	white-space: pre;
 	color: var(--vscode-editor-foreground);
-}
-
-.volt-agent-block.terminal.expanded .volt-agent-term-command {
-	display: block;
 }
 
 .volt-agent-term-loading {
@@ -1452,14 +1776,33 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-term-output-clip {
-	max-height: calc(1.45em * 5);
+	max-height: calc(1.45em * 4);
 	overflow: hidden;
 	display: flex;
 	flex-direction: column;
-	justify-content: flex-end;
+	justify-content: flex-start;
 	min-width: 0;
 	max-width: 100%;
 	scrollbar-width: none;
+}
+
+.volt-agent-block.terminal:not(.expanded) .volt-agent-term-body {
+	position: relative;
+}
+
+.volt-agent-block.terminal:not(.expanded).clamped .volt-agent-term-body::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 2.4em;
+	pointer-events: none;
+	background: linear-gradient(
+		to bottom,
+		color-mix(in srgb, var(--vscode-editor-background) 0%, transparent) 0%,
+		var(--vscode-editor-background) 88%
+	);
 }
 
 .volt-agent-term-output-clip > .monaco-scrollable-element {
@@ -1573,7 +1916,7 @@ pre.volt-agent-searchable {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	height: 26px;
+	height: 32px;
 	padding: 0 12px;
 	border: 1px solid rgba(255, 255, 255, 0.12);
 	border-radius: 999px;
@@ -1582,7 +1925,7 @@ pre.volt-agent-searchable {
 	font: inherit;
 	font-size: 13px;
 	font-weight: 300;
-	line-height: 26px;
+	line-height: 32px;
 	cursor: pointer;
 	box-shadow: none;
 	backdrop-filter: none;
@@ -1641,8 +1984,11 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-edit-slot .volt-agent-composer-chips,
+.volt-agent-edit-slot .volt-agent-composer-stack,
 .volt-agent-editor.browser-hosted .volt-agent-composer-chips,
-.volt-agent-editor.editing-user .volt-agent-composer-chips {
+.volt-agent-editor.browser-hosted .volt-agent-composer-stack,
+.volt-agent-editor.editing-user .volt-agent-composer-chips,
+.volt-agent-editor.editing-user .volt-agent-composer-stack {
 	display: none !important;
 }
 
@@ -1689,6 +2035,18 @@ pre.volt-agent-searchable {
 .volt-agent-editor.browser-hosted.follow-up:not(.zoomed):not(.resized) .volt-agent-composer {
 	margin-top: 0 !important;
 	padding: 0 20px !important;
+}
+
+.volt-agent-editor.browser-hosted.editing-user .volt-agent-edit-slot .volt-agent-input-box,
+.volt-agent-editor.browser-hosted .volt-agent-input-box.editing {
+	display: flex !important;
+	flex-direction: column !important;
+	height: auto !important;
+	min-height: 38px !important;
+	max-height: none !important;
+	padding: 8px 10px !important;
+	border-radius: 8px !important;
+	overflow: visible !important;
 }
 
 .volt-agent-editor.browser-hosted .volt-agent-input-box,
@@ -1799,11 +2157,11 @@ pre.volt-agent-searchable {
 	flex-wrap: nowrap;
 	align-items: center;
 	justify-content: flex-start;
-	height: 34px;
-	min-height: 34px;
-	max-height: 34px;
+	height: auto;
+	min-height: 40px;
+	max-height: 62px;
 	border-radius: 999px;
-	padding: 0 6px;
+	padding: 0 7px;
 	box-sizing: border-box;
 	overflow: hidden;
 	border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1849,7 +2207,7 @@ pre.volt-agent-searchable {
 	gap: 2px;
 	flex: 0 0 auto;
 	width: auto;
-	height: 26px;
+	height: 28px;
 	margin: 0;
 	padding: 0;
 	align-self: center;
@@ -1865,13 +2223,16 @@ pre.volt-agent-searchable {
 	width: auto !important;
 	min-width: 0;
 	max-width: none;
-	height: 22px !important;
+	height: auto;
+	min-height: 26px;
+	max-height: 44px;
 	padding: 0 10px;
 	margin: 0;
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	align-self: center;
 	box-sizing: border-box;
+	overflow: hidden;
 }
 
 .volt-agent-input-box.follow-up:not(.multiline) .volt-agent-placeholder {
@@ -1888,7 +2249,7 @@ pre.volt-agent-searchable {
 	gap: 6px;
 	flex: 0 0 auto;
 	margin-left: auto;
-	height: 26px;
+	height: 28px;
 	padding: 0;
 	align-self: center;
 }
@@ -1902,7 +2263,7 @@ pre.volt-agent-searchable {
 .volt-agent-input-box.follow-up:not(.multiline) .volt-agent-model {
 	background: transparent;
 	padding: 0 5px 0 10px;
-	height: 26px;
+	height: 28px;
 	color: #b0b0b0;
 	font-size: 13px;
 	font-weight: 300;
@@ -1956,61 +2317,120 @@ pre.volt-agent-searchable {
 	box-shadow: none;
 }
 
-.volt-agent-queue-bar {
-	flex: 0 0 auto;
+.volt-agent-composer-stack {
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
-	padding: 8px 12px 0;
+	align-items: stretch;
+	gap: 6px;
+	width: 100%;
+	max-width: 720px;
+	margin: 0 auto 6px;
 	box-sizing: border-box;
 }
 
-.volt-agent-queue-bar.hidden {
+.volt-agent-composer-stack:not(.has-stack) {
 	display: none;
 }
 
-.volt-agent-queue-toggle {
-	display: inline-flex;
+.volt-agent-running-card,
+.volt-agent-queue-card {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 8px 10px 8px;
+	border-radius: 12px;
+	background: #222222;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	color: var(--vscode-foreground);
+}
+
+.monaco-workbench.vs .volt-agent-running-card,
+.monaco-workbench.hc-light .volt-agent-running-card,
+.monaco-workbench.vs .volt-agent-queue-card,
+.monaco-workbench.hc-light .volt-agent-queue-card {
+	background: #ececec;
+	border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.volt-agent-running-card.hidden,
+.volt-agent-queue-card.hidden {
+	display: none;
+}
+
+.volt-agent-running-head,
+.volt-agent-queue-head {
+	display: flex;
 	align-items: center;
-	gap: 6px;
-	width: fit-content;
-	max-width: 100%;
-	padding: 2px 2px 2px 0;
+	gap: 8px;
+	min-height: 22px;
+	margin-bottom: 4px;
+}
+
+.volt-agent-queue-title {
+	font-size: 13px;
+	font-weight: 500;
+	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-queue-head-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-left: auto;
+}
+
+.volt-agent-queue-multitask {
 	border: 0;
 	background: transparent;
 	color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
 	cursor: pointer;
 	font: inherit;
-	font-size: 12px;
-	line-height: 16px;
+	font-size: 13px;
+	padding: 0;
 }
 
-.volt-agent-queue-toggle:hover {
+.volt-agent-queue-multitask:hover {
 	color: var(--vscode-foreground);
 }
 
-.volt-agent-queue-chevron {
+.volt-agent-running-status {
 	display: inline-flex;
-	width: 14px;
-	height: 14px;
 	align-items: center;
-	justify-content: center;
-	opacity: 0.8;
+	gap: 7px;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	font: inherit;
+	font-size: 13px;
+	padding: 0;
 }
 
-.volt-agent-queue-chevron .codicon {
-	font-size: 14px;
+.volt-agent-running-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--vscode-charts-green, #3fb950);
+	flex-shrink: 0;
 }
 
-.volt-agent-queue-label {
-	font-variant-numeric: tabular-nums;
+.volt-agent-running-card.working .volt-agent-running-dot {
+	background: var(--vscode-charts-yellow, #d29922);
+}
+
+.volt-agent-running-title {
+	font-size: 13px;
+	line-height: 1.45;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: color-mix(in srgb, var(--vscode-foreground) 88%, transparent);
 }
 
 .volt-agent-queue-list {
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
-	padding: 2px 0 6px 20px;
 }
 
 .volt-agent-queue-item {
@@ -2018,6 +2438,50 @@ pre.volt-agent-searchable {
 	align-items: center;
 	gap: 8px;
 	min-width: 0;
+	min-height: 22px;
+}
+
+.volt-agent-queue-item .volt-agent-svg-icon.grip {
+	width: 10px;
+	height: 16px;
+	color: color-mix(in srgb, var(--vscode-foreground) 38%, transparent);
+	flex-shrink: 0;
+	cursor: grab;
+	touch-action: none;
+}
+
+.volt-agent-queue-item {
+	position: relative;
+	padding: 0 4px;
+	margin: 0 -4px;
+	border-radius: 6px;
+}
+
+.volt-agent-queue-list.reordering {
+	cursor: grabbing;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.volt-agent-queue-list.reordering .volt-agent-svg-icon.grip {
+	cursor: grabbing;
+}
+
+/* The row being dragged lifts above its siblings and follows the pointer. */
+.volt-agent-queue-item.dragging {
+	z-index: 2;
+	background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
+	will-change: transform;
+}
+
+.volt-agent-queue-item.dragging .volt-agent-svg-icon.grip {
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+}
+
+.monaco-workbench.vs .volt-agent-queue-item.dragging,
+.monaco-workbench.hc-light .volt-agent-queue-item.dragging {
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
 
 .volt-agent-queue-text {
@@ -2026,8 +2490,8 @@ pre.volt-agent-searchable {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 12px;
-	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
+	font-size: 13px;
+	color: var(--vscode-foreground);
 }
 
 .volt-agent-queue-remove {
@@ -2052,6 +2516,25 @@ pre.volt-agent-searchable {
 
 .volt-agent-queue-remove .codicon {
 	font-size: 12px;
+}
+
+.volt-agent-queue-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding-top: 6px;
+}
+
+.volt-agent-queue-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 22px;
+	padding: 0 8px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.06);
+	font-size: 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
 }
 
 .volt-agent-monaco {
@@ -2203,6 +2686,11 @@ pre.volt-agent-searchable {
 .volt-agent-monaco .monaco-editor .ime-text-area {
 	caret-color: transparent !important;
 	color: transparent !important;
+}
+
+.volt-agent-monaco .monaco-editor .cursors-layer .cursor {
+	height: 16px !important;
+	margin-top: 3px;
 }
 
 .volt-agent-monaco .scroll-decoration,
@@ -2630,8 +3118,8 @@ pre.volt-agent-searchable {
 	height: 26px;
 	border: 0;
 	border-radius: 50%;
-	background: var(--vscode-editor-foreground, #f4f4f5);
-	color: var(--vscode-editor-background, #111);
+	background: #f4f4f5;
+	color: #111;
 	cursor: pointer;
 	display: inline-flex;
 	align-items: center;
@@ -2646,7 +3134,7 @@ pre.volt-agent-searchable {
 	height: 13px;
 	display: block;
 	overflow: visible;
-	color: var(--vscode-editor-background, #111);
+	color: #111;
 }
 
 .volt-agent-send .volt-agent-svg-icon.mic,
@@ -2656,7 +3144,9 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-send .volt-agent-svg-icon.send path {
+	stroke: #111;
 	stroke-width: 3px;
+	fill: none;
 }
 
 .volt-agent-send .volt-agent-svg-icon.stop,
@@ -2672,18 +3162,18 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-send.stop {
-	background: var(--vscode-editor-foreground, #f4f4f5);
-	color: var(--vscode-editor-background, #111);
+	background: #f4f4f5;
+	color: #111;
 }
 
 .volt-agent-send.stop .volt-agent-svg-icon,
 .volt-agent-send.stop .volt-agent-svg-icon svg {
-	color: var(--vscode-editor-background, #111);
+	color: #111;
 }
 
 .volt-agent-send:hover,
 .volt-agent-send.stop:hover {
-	background: color-mix(in srgb, var(--vscode-editor-foreground, #f4f4f5) 82%, var(--vscode-editor-background, #111));
+	background: #d8d8da;
 }
 
 .volt-agent-send:disabled {
@@ -2879,11 +3369,29 @@ pre.volt-agent-searchable {
 	overflow: hidden;
 }
 
+.volt-agent-input-box .volt-agent-plus-menu {
+	max-width: none;
+	margin: 0 0 8px;
+	padding: 2px 4px 6px;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+	overflow: visible;
+}
+
 .monaco-workbench.vs .volt-agent-plus-menu,
 .monaco-workbench.hc-light .volt-agent-plus-menu {
 	--volt-composer-bg: rgba(236, 236, 236, 0.85);
 	border: 1px solid rgba(0, 0, 0, 0.1);
 	box-shadow: none !important;
+}
+
+.monaco-workbench.vs .volt-agent-input-box .volt-agent-plus-menu,
+.monaco-workbench.hc-light .volt-agent-input-box .volt-agent-plus-menu {
+	border: 0;
+	background: transparent;
 }
 
 .volt-agent-plus-search {
@@ -2898,6 +3406,109 @@ pre.volt-agent-searchable {
 	box-shadow: none !important;
 	font: inherit;
 	font-size: 13px;
+}
+
+.volt-agent-input-box .volt-agent-plus-search {
+	padding: 4px 8px 8px;
+	height: 28px;
+}
+
+.volt-agent-plus-list {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	padding: 0 2px 2px;
+}
+
+.volt-agent-plus-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 10px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 999px;
+	background: #2a2a2a;
+	color: #c4c4c4;
+	font: inherit;
+	font-size: 13px;
+	font-weight: 400;
+	line-height: 28px;
+	cursor: pointer;
+	white-space: nowrap;
+	flex: 0 0 auto;
+}
+
+.monaco-workbench.vs .volt-agent-plus-chip,
+.monaco-workbench.hc-light .volt-agent-plus-chip {
+	background: #ececec;
+	color: #5a5a5a;
+	border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.volt-agent-plus-chip:hover,
+.volt-agent-plus-chip.active {
+	background: #333333;
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+.monaco-workbench.vs .volt-agent-plus-chip:hover,
+.monaco-workbench.vs .volt-agent-plus-chip.active,
+.monaco-workbench.hc-light .volt-agent-plus-chip:hover,
+.monaco-workbench.hc-light .volt-agent-plus-chip.active {
+	background: #e0e0e0;
+	border-color: rgba(0, 0, 0, 0.16);
+}
+
+.volt-agent-plus-chip .volt-agent-svg-icon,
+.volt-agent-plus-chip .volt-agent-svg-icon svg {
+	width: 14px;
+	height: 14px;
+	display: block;
+	flex-shrink: 0;
+	color: currentColor;
+}
+
+.volt-agent-plus-chip.plus-mode .volt-agent-svg-icon.plan,
+.volt-agent-plus-chip.plus-mode .volt-agent-svg-icon.plan svg {
+	color: #E8AC73;
+}
+
+.volt-agent-plus-chip.plus-mode .volt-agent-svg-icon.debug,
+.volt-agent-plus-chip.plus-mode .volt-agent-svg-icon.debug svg {
+	color: #d65d7a;
+}
+
+.volt-agent-plus-chip.plus-mode .volt-agent-svg-icon.multitask,
+.volt-agent-plus-chip.plus-mode .volt-agent-svg-icon.multitask svg {
+	color: #b794f6;
+}
+
+.volt-agent-plus-chip.plus-mode .volt-agent-svg-icon.ask,
+.volt-agent-plus-chip.plus-mode .volt-agent-svg-icon.ask svg {
+	color: #3ea76d;
+}
+
+.volt-agent-plus-chip .label {
+	font-weight: 500;
+	flex-shrink: 0;
+}
+
+.volt-agent-plus-chip .desc {
+	color: var(--vscode-descriptionForeground, #888);
+	font-weight: 400;
+	max-width: 120px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-agent-plus-chip .volt-agent-svg-icon.chevron-right,
+.volt-agent-plus-chip .volt-agent-svg-icon.chevron-right svg {
+	width: 12px;
+	height: 12px;
+	opacity: 0.7;
+	margin-left: 2px;
 }
 
 .volt-agent-plus-search:focus,
@@ -3001,14 +3612,59 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-plus-menu .volt-agent-dropdown-sep {
-	margin: 4px 8px;
-	height: 1px;
-	background: rgba(255, 255, 255, 0.08);
+	flex-basis: 100%;
+	height: 0;
+	margin: 0;
+	background: none;
 }
 
 .monaco-workbench.vs .volt-agent-plus-menu .volt-agent-dropdown-sep,
 .monaco-workbench.hc-light .volt-agent-plus-menu .volt-agent-dropdown-sep {
-	background: rgba(0, 0, 0, 0.08);
+	background: none;
+}
+
+.volt-agent-plus-chip.plus-mode .label,
+.volt-agent-plus-chip.plus-action .label {
+	margin-right: 0;
+}
+
+.volt-agent-input-box.follow-up:not(.multiline).plus-open {
+	display: grid;
+	grid-template-columns: auto 1fr auto;
+	grid-template-areas:
+		"menu menu menu"
+		"start monaco end";
+	align-items: center;
+	column-gap: 2px;
+	row-gap: 8px;
+	height: auto;
+	min-height: 40px;
+	max-height: none;
+	border-radius: 18px;
+	padding: 8px 8px 6px;
+}
+
+.volt-agent-input-box.follow-up:not(.multiline).plus-open .volt-agent-plus-menu {
+	grid-area: menu;
+	margin: 0;
+}
+
+.volt-agent-input-box.follow-up:not(.multiline).plus-open .volt-agent-toolbar {
+	display: contents;
+}
+
+.volt-agent-input-box.follow-up:not(.multiline).plus-open .volt-agent-toolbar-start {
+	grid-area: start;
+}
+
+.volt-agent-input-box.follow-up:not(.multiline).plus-open .volt-agent-monaco {
+	grid-area: monaco;
+}
+
+.volt-agent-input-box.follow-up:not(.multiline).plus-open .volt-agent-toolbar-end {
+	grid-area: end;
+	display: flex;
+	align-items: center;
 }
 
 .volt-agent-suggest {
@@ -4145,4 +4801,104 @@ pre.volt-agent-searchable {
 
 .monaco-editor .volt-agent-add-to-chat:hover {
 	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 8%, var(--vscode-editorWidget-background, var(--vscode-editor-background))));
+}
+
+.volt-agent-snapshot {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+}
+
+.volt-agent-snapshot-link {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 8px;
+	max-width: 100%;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	font-size: 12px;
+	line-height: 1.45;
+	cursor: pointer;
+	text-align: left;
+}
+
+.volt-agent-snapshot-link:hover,
+.volt-agent-snapshot-link:focus-visible {
+	color: var(--vscode-foreground);
+	text-decoration: underline;
+}
+
+.volt-agent-snapshot-link:disabled {
+	cursor: default;
+	text-decoration: none;
+}
+
+.volt-agent-snapshot-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 3000;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 32px;
+	background: color-mix(in srgb, #000 46%, transparent);
+	outline: none;
+}
+
+.volt-agent-snapshot-dialog {
+	display: flex;
+	flex-direction: column;
+	width: min(720px, calc(100vw - 64px));
+	max-height: calc(100vh - 64px);
+	overflow: hidden;
+	border-radius: 18px;
+	background: var(--vscode-editor-background);
+	box-shadow: 0 24px 64px color-mix(in srgb, #000 42%, transparent);
+}
+
+.volt-agent-snapshot-head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 14px 16px 10px 20px;
+}
+
+.volt-agent-snapshot-title {
+	flex: 1;
+	min-width: 0;
+	font-size: 13px;
+	line-height: 1.4;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-snapshot-close {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+}
+
+.volt-agent-snapshot-close:hover {
+	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-snapshot-image {
+	display: block;
+	width: 100%;
+	max-height: calc(100vh - 140px);
+	object-fit: contain;
+	background: var(--vscode-editor-background);
 }

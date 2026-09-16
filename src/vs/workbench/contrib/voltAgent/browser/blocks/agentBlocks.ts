@@ -5,7 +5,7 @@
 
 export type AgentBlockStatus = 'streaming' | 'complete' | 'error';
 
-export type AgentBlockType = 'markdown' | 'code' | 'terminal' | 'table' | 'tool' | 'error' | 'approval';
+export type AgentBlockType = 'markdown' | 'code' | 'terminal' | 'table' | 'tool' | 'file' | 'error' | 'approval';
 
 export interface IAgentBaseBlock {
 	readonly id: string;
@@ -51,6 +51,23 @@ export interface IToolBlock extends IAgentBaseBlock {
 	expanded: boolean;
 }
 
+export type FileChangeVerb = 'Edited' | 'Created' | 'Deleted';
+
+export interface IFileChangeBlock extends IAgentBaseBlock {
+	readonly type: 'file';
+	callId?: string;
+	path: string;
+	verb: FileChangeVerb;
+	input?: string;
+	output?: string;
+	original?: string;
+	modified?: string;
+	unifiedDiff?: string;
+	additions?: number;
+	deletions?: number;
+	expanded: boolean;
+}
+
 export interface IErrorBlock extends IAgentBaseBlock {
 	readonly type: 'error';
 	message: string;
@@ -76,6 +93,7 @@ export type AgentBlock =
 	| ITerminalBlock
 	| ITableBlock
 	| IToolBlock
+	| IFileChangeBlock
 	| IErrorBlock
 	| IApprovalBlock;
 
@@ -97,9 +115,24 @@ export function createApprovalBlock(partial: Omit<IApprovalBlock, 'type' | 'stat
 	};
 }
 
+export type AgentActivityKind = 'thought' | 'read' | 'search' | 'note' | 'wait' | 'browser';
+
+export interface IAgentActivityItem {
+	kind: AgentActivityKind;
+	label: string;
+	detail?: string;
+	path?: string;
+	startLine?: number;
+	endLine?: number;
+	callId?: string;
+	image?: string;
+}
+
 export type AgentSegment =
 	| { kind: 'text'; text: string }
-	| { kind: 'block'; block: AgentBlock };
+	| { kind: 'block'; block: AgentBlock }
+	| { kind: 'activity'; item: IAgentActivityItem }
+	| { kind: 'thought'; text: string };
 
 const FENCE_OPEN_RE = /^(`{3,}|~{3,})([A-Za-z0-9_+-]*)(?:\s+(.*))?$/;
 const TABLE_LINE_RE = /^\s*\|.+\|\s*$/;
@@ -303,6 +336,10 @@ function describeShellCommand(command: string): string {
 		return 'Run kubectl';
 	}
 	if (first === 'python' || first === 'python3' || first === 'node') {
+		if (/http\.server/.test(whole)) {
+			const port = whole.match(/http\.server\s+(\d{2,5})/);
+			return port ? `Start HTTP server on ${port[1]}` : 'Start HTTP server';
+		}
 		return `Run ${first}`;
 	}
 	return capitalizeCommandPhrase(first);
@@ -442,14 +479,46 @@ export function createToolBlock(partial: Omit<IToolBlock, 'type' | 'status' | 'e
 	};
 }
 
-export function findBlockByCallId(segments: AgentSegment[], callId: string): ITerminalBlock | IToolBlock | undefined {
+export function createFileChangeBlock(partial: Omit<IFileChangeBlock, 'type' | 'status' | 'expanded'> & { status?: AgentBlockStatus; expanded?: boolean }): IFileChangeBlock {
+	return {
+		type: 'file',
+		status: partial.status ?? 'streaming',
+		expanded: partial.expanded ?? false,
+		id: partial.id,
+		callId: partial.callId,
+		path: partial.path,
+		verb: partial.verb,
+		input: partial.input,
+		output: partial.output,
+		original: partial.original,
+		modified: partial.modified,
+		unifiedDiff: partial.unifiedDiff,
+		additions: partial.additions,
+		deletions: partial.deletions,
+	};
+}
+
+export function findBlockByCallId(segments: AgentSegment[], callId: string): ITerminalBlock | IToolBlock | IFileChangeBlock | undefined {
 	for (const segment of segments) {
 		if (segment.kind !== 'block') {
 			continue;
 		}
 		const block = segment.block;
-		if ((block.type === 'terminal' || block.type === 'tool') && block.callId === callId) {
+		if ((block.type === 'terminal' || block.type === 'tool' || block.type === 'file') && block.callId === callId) {
 			return block;
+		}
+	}
+	return undefined;
+}
+
+export function findFileBlockByPath(segments: AgentSegment[], path: string): IFileChangeBlock | undefined {
+	const needle = path.replace(/\\/g, '/');
+	for (const segment of segments) {
+		if (segment.kind !== 'block' || segment.block.type !== 'file') {
+			continue;
+		}
+		if (segment.block.path.replace(/\\/g, '/') === needle || segment.block.path.endsWith(needle) || needle.endsWith(segment.block.path)) {
+			return segment.block;
 		}
 	}
 	return undefined;
@@ -462,6 +531,15 @@ export function appendTextDelta(segments: AgentSegment[], delta: string): void {
 		return;
 	}
 	segments.push({ kind: 'text', text: delta });
+}
+
+export function appendThoughtDelta(segments: AgentSegment[], delta: string): void {
+	const last = segments.at(-1);
+	if (last?.kind === 'thought') {
+		last.text += delta;
+		return;
+	}
+	segments.push({ kind: 'thought', text: delta });
 }
 
 export function splitMarkdownToBlocks(text: string, idPrefix: string): AgentBlock[] {
@@ -579,7 +657,7 @@ export function collectBlocks(segments: AgentSegment[] | undefined, fallbackText
 	for (const [index, segment] of source.entries()) {
 		if (segment.kind === 'text') {
 			blocks.push(...splitMarkdownToBlocks(segment.text, `s${index}`));
-		} else {
+		} else if (segment.kind === 'block' && !isHiddenExploreToolBlock(segment.block)) {
 			blocks.push(segment.block);
 		}
 	}
@@ -708,6 +786,8 @@ export function blocksPlainText(blocks: AgentBlock[]): string {
 				return [block.headers.join(' | '), block.rows.map(row => row.join(' | ')).join('\n')].join('\n');
 			case 'tool':
 				return [block.title ?? block.name, block.input, block.output].filter(Boolean).join('\n');
+			case 'file':
+				return [block.verb, block.path].filter(Boolean).join(' ');
 			case 'error':
 				return block.message;
 			case 'approval':
@@ -756,7 +836,7 @@ export interface IAgentFileTarget {
 // allow-any-unicode-next-line
 const LINE_TAIL_RE = /(?:\s+|:)(?:#?L(?:ine)?\s*)?(\d+)(?:\s*[-–:]\s*(?:#?L(?:ine)?\s*)?(\d+))?\s*$/i;
 const PATH_RE = /(?:^|[\s`"'(])((?:~\/|\.\/|\.\.\/|\/|[A-Za-z]:[\\/])?(?:[\w.-]+[\\/])*[\w.-]+\.[A-Za-z0-9]{1,8})/;
-const VERB_RE = /^(Read|Reading|Grepped|Grep|Searched|Search|Edited|Edit|Created|Deleted|Wrote|Write|Explored)\s+(.+)$/i;
+const VERB_RE = /^(Read|Reading|Grepped|Grep|Searched|Search|Edited|Edit|Created|Deleted|Wrote|Write|Explored|Waited|Navigated|Listed)\s+(.+)$/i;
 
 export function parseFileTarget(...parts: Array<string | undefined>): IAgentFileTarget | undefined {
 	for (const part of parts) {
@@ -775,32 +855,79 @@ export function parseFileTarget(...parts: Array<string | undefined>): IAgentFile
 	return undefined;
 }
 
-export function classifyToolActivity(name: string, title?: string): 'read' | 'search' | 'note' {
-	const s = `${name} ${title ?? ''}`.toLowerCase();
+export function classifyToolActivity(name: string, title?: string): AgentActivityKind {
+	const s = `${name} ${title ?? ''}`.toLowerCase().replace(/[_-]+/g, ' ');
+	if (/\b(sleep|wait|delay)\b/.test(s)) {
+		return 'wait';
+	}
+	if (/\b(browser|navigate|snapshot|web fetch|webfetch|simplebrowser)\b/.test(s)) {
+		return 'browser';
+	}
 	if (/\b(search|grep|find|rg|glob)\b/.test(s)) {
 		return 'search';
 	}
-	if (/\b(read|open|cat|view|file|edit|write|create|delete)\b/.test(s) || isPathLike(title ?? name)) {
+	if (/\b(read|open|cat|view|file|list.?dir|list mcp)\b/.test(s) || isPathLike(title ?? name)) {
 		return 'read';
 	}
 	return 'note';
 }
 
+const EXPLORE_TOOL_RE = /\b(find|glob|grep|rg|search|list.?dir|\bls\b|read.?file|\bread\b|cat|view|open.?file|sleep|wait|webfetch|web fetch|mcp|browser|navigate|snapshot|simplebrowser)\b/;
+const MUTATING_TOOL_RE = /\b(edit|edited|write|wrote|create|created|delete|deleted|patch|apply|replace|str.?replace|update)\b/;
+
+/** Read/search/browser tools belong in the activity trail, not as response-body pills. */
+export function isExploreTool(name: string, title?: string): boolean {
+	const s = `${name} ${title ?? ''}`.toLowerCase().replace(/[_-]+/g, ' ');
+	if (MUTATING_TOOL_RE.test(s)) {
+		return false;
+	}
+	const kind = classifyToolActivity(name, title);
+	return kind === 'read' || kind === 'search' || kind === 'wait' || kind === 'browser' || EXPLORE_TOOL_RE.test(s);
+}
+
+export function isFileChangeTool(name: string, title?: string): boolean {
+	const s = `${name} ${title ?? ''}`.toLowerCase().replace(/[_-]+/g, ' ');
+	return MUTATING_TOOL_RE.test(s);
+}
+
+function isHiddenExploreToolBlock(block: AgentBlock): boolean {
+	return block.type === 'tool' && isExploreTool(block.name, block.title);
+}
+
 export function splitActivityLabel(name: string, title?: string, target?: IAgentFileTarget): { label: string; detail?: string } {
 	const raw = (title || name).trim();
-	const verb = raw.match(VERB_RE);
-	if (verb) {
-		return { label: capitalizeActivity(verb[1]), detail: verb[2].trim() };
-	}
 	if (target) {
 		const kind = classifyToolActivity(name, title);
 		const file = target.path.split(/[\\/]/).pop() || target.path;
 		const lines = target.startLine
 			? ` L${target.startLine}${target.endLine && target.endLine !== target.startLine ? `-${target.endLine}` : ''}`
 			: '';
-		return { label: kind === 'search' ? 'Searched' : 'Read', detail: `${file}${lines}` };
+		const verb = raw.match(VERB_RE);
+		const label = kind === 'search'
+			? 'Searched'
+			: verb
+				? capitalizeActivity(verb[1])
+				: 'Read';
+		return { label, detail: `${file}${lines}` };
+	}
+	const verb = raw.match(VERB_RE);
+	if (verb && isPathLike(verb[2].trim())) {
+		return { label: capitalizeActivity(verb[1]), detail: verb[2].trim() };
 	}
 	return { label: raw };
+}
+
+export function applyFileTargetToActivity(item: IAgentActivityItem, target: IAgentFileTarget | undefined): boolean {
+	if (!target) {
+		return false;
+	}
+	item.path = target.path;
+	item.startLine = target.startLine;
+	item.endLine = target.endLine;
+	const split = splitActivityLabel(item.label, item.detail, target);
+	item.label = split.label;
+	item.detail = split.detail;
+	return true;
 }
 
 function parseJsonFileTarget(value: string): IAgentFileTarget | undefined {
@@ -815,7 +942,7 @@ function parseJsonFileTarget(value: string): IAgentFileTarget | undefined {
 			return undefined;
 		}
 		const rec = o as Record<string, unknown>;
-		const path = pickString(rec, ['path', 'file', 'uri', 'target', 'filename']);
+		const path = pickString(rec, ['path', 'file', 'uri', 'target', 'filename', 'target_file', 'targetFile', 'file_path', 'filePath', 'relative_path', 'relativePath']);
 		if (!path) {
 			return undefined;
 		}

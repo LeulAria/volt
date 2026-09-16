@@ -17,9 +17,13 @@ import { basename, isAbsolute } from '../../../../base/common/path.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { escapeRegExpCharacters } from '../../../../base/common/strings.js';
 import { URI } from '../../../../base/common/uri.js';
+import { generateUuid } from '../../../../base/common/uuid.js';
+import { IKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
+import { EditorExtensionsRegistry } from '../../../../editor/browser/editorExtensions.js';
 import { MarkdownRenderer } from '../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { CodeEditorWidget } from '../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
+import { DropIntoEditorController } from '../../../../editor/contrib/dropOrPasteInto/browser/dropIntoEditorController.js';
 import { EDITOR_FONT_DEFAULTS, IEditorOptions as ICodeEditorOptions } from '../../../../editor/common/config/editorOptions.js';
 import { ITextModel } from '../../../../editor/common/model.js';
 import { IModelService } from '../../../../editor/common/services/model.js';
@@ -34,6 +38,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
@@ -46,6 +51,7 @@ import { pickNumber } from '../../../services/voltRuntime/common/modelMeta.js';
 import { MODEL_OPTION_CONTEXT, optionValue } from '../../../services/voltRuntime/common/modelOptions.js';
 import { normalizeVoltMode, VoltMode } from '../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
+import { AgentSessionStatus } from '../../../services/voltRuntime/common/agentHistory.js';
 import { createAccessIcon } from './accessIcons.js';
 import { AgentModelPicker, formatTokens, IModelOption } from './agentModelPicker.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../voltSettings/browser/voltSettingsEditorInput.js';
@@ -57,17 +63,28 @@ import { GroupsOrder, IEditorGroupsService, IEditorGroup } from '../../../servic
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { ISearchService } from '../../../services/search/common/search.js';
 import { searchFilesAndFolders } from '../../search/browser/searchChatContext.js';
-import { AGENT_EDITOR_LINE_NUMBERS_SETTING, AgentEditorInput, NEW_AGENT_COMMAND_ID } from './agentEditorInput.js';
+import { AGENT_EDITOR_LINE_NUMBERS_SETTING, AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from './agentEditorInput.js';
+import { createAgentTitleActionViewItem } from './agentTitleActions.js';
+import { IAction } from '../../../../base/common/actions.js';
+import { IActionViewItem } from '../../../../base/browser/ui/actionbar/actionbar.js';
+import { IBaseActionViewItemOptions } from '../../../../base/browser/ui/actionbar/actionViewItems.js';
+import { getSimpleCodeEditorWidgetOptions } from '../../codeEditor/browser/simpleEditorOptions.js';
+import { OPEN_BROWSER_COMMAND_ID } from './browserEditorInput.js';
+import { extractToolImage } from './browserSnapshot.js';
+import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from './localPreview.js';
 import { AgentComposerLists } from './agentComposerLists.js';
-import { AgentFindWidget, IAgentFindHost } from './agentFindWidget.js';
+import { AgentComposerQueue } from './agentComposerQueue.js';
+import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { AgentThreadView } from './agentThreadView.js';
 import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip } from './agentTooltip.js';
 import { createModeIcon, ModeIconId } from './agentModeIcons.js';
 import { AgentMentionController, IAgentDisplayMention, browserMentionColor } from './agentMentions.js';
 import { appendAgentScrollableList } from './agentScrollable.js';
 import { dayjs } from './dayjs.js';
-import { renderAgentBlock, renderMarkdownInto, IBlockRenderContext } from './blocks/agentBlockRenderers.js';
-import { AgentSegment, appendTextDelta, blocksPlainText, classifyToolActivity, collectBlocks, createApprovalBlock, createTerminalBlock, createToolBlock, findBlockByCallId, firstCommandName, isShellTool, looksLikeShell, parseFileTarget, parseShellToolInput, splitActivityLabel, stringifyToolResult } from './blocks/agentBlocks.js';
+import { renderAgentBlock, renderFileChangesPart, renderMarkdownInto, IBlockRenderContext } from './blocks/agentBlockRenderers.js';
+import { AgentSegment, IAgentActivityItem, IFileChangeBlock, appendTextDelta, appendThoughtDelta, applyFileTargetToActivity, blocksPlainText, classifyToolActivity, collectBlocks, createApprovalBlock, createFileChangeBlock, createTerminalBlock, createToolBlock, findBlockByCallId, findFileBlockByPath, firstCommandName, isExploreTool, isFileChangeTool, isPathLike, isShellTool, looksLikeShell, parseFileTarget, parseShellToolInput, splitActivityLabel, stringifyToolResult } from './blocks/agentBlocks.js';
+import { buildThreadParts, ThreadPart } from './agentTimeline.js';
+import { chooseFileChangeDiffStyle, fileChangeVerb, parseToolFileChange } from './fileChangePreviewModel.js';
 
 function createSvgIcon(viewBox: string, pathD: string, extraClass?: string, stroke = false, strokeWidth = '1.5'): HTMLElement {
 	const el = extraClass ? $(`span.volt-agent-svg-icon.${extraClass}`) : $('span.volt-agent-svg-icon');
@@ -110,6 +127,10 @@ function createStopIcon(): HTMLElement {
 
 function createSendIcon(): HTMLElement {
 	return createSvgIcon('0 0 24 24', 'M12 19V5M5 12l7-7 7 7', 'send', true, '2.4');
+}
+
+function isUnmodifiedEnter(e: IKeyboardEvent): boolean {
+	return e.keyCode === KeyCode.Enter && !e.altKey && !e.metaKey && !e.ctrlKey;
 }
 
 function createPlusIcon(): HTMLElement {
@@ -207,12 +228,15 @@ function createStrokeIcon(extraClass: string, paths: readonly string[]): HTMLEle
 	return el;
 }
 
-interface IAgentUserMessage {
+export interface IAgentUserMessage {
 	kind: 'user';
+	/** Turn id shared with the reply; also the key in durable history. */
+	id?: string;
 	text: string;
 	agentText?: string;
 	chips?: string[];
 	mentions?: IAgentDisplayMention[];
+	promptExpanded?: boolean;
 }
 
 export interface IAgentPromptDisplay {
@@ -238,15 +262,6 @@ export interface IAgentDockState {
 	turns: IAgentDockTurn[];
 }
 
-interface IAgentActivityItem {
-	kind: 'thought' | 'read' | 'search' | 'note';
-	label: string;
-	detail?: string;
-	path?: string;
-	startLine?: number;
-	endLine?: number;
-}
-
 interface IAgentActivity {
 	status: string;
 	expanded: boolean;
@@ -256,8 +271,9 @@ interface IAgentActivity {
 	shimmerStartedAt?: number;
 }
 
-interface IAgentAssistantMessage {
+export interface IAgentAssistantMessage {
 	kind: 'agent';
+	id?: string;
 	title: string;
 	steps: { label: string; state: 'done' | 'current' | 'pending' }[];
 	changes?: string[];
@@ -276,7 +292,7 @@ interface IAgentAssistantMessage {
 	activity?: IAgentActivity;
 }
 
-type IAgentMessage = IAgentUserMessage | IAgentAssistantMessage;
+export type IAgentMessage = IAgentUserMessage | IAgentAssistantMessage;
 
 interface IModeOption {
 	id: string;
@@ -312,26 +328,6 @@ interface IContextUsageView {
 	limit: number;
 	estimated: boolean;
 	items: IContextUsageItem[];
-}
-
-function formatExploringSummary(items: readonly IAgentActivityItem[]): string | undefined {
-	const files = items.filter(item => item.kind === 'read').length;
-	const searches = items.filter(item => item.kind === 'search').length;
-	if (!files && !searches) {
-		return undefined;
-	}
-	const parts: string[] = [];
-	if (files) {
-		parts.push(files === 1
-			? localize('voltAgent.oneFile', "1 file")
-			: localize('voltAgent.manyFiles', "{0} files", files));
-	}
-	if (searches) {
-		parts.push(searches === 1
-			? localize('voltAgent.oneSearch', "1 search")
-			: localize('voltAgent.manySearches', "{0} searches", searches));
-	}
-	return localize('voltAgent.exploring', "Exploring {0}", parts.join(', '));
 }
 
 function formatWorkedDuration(ms: number): string {
@@ -403,12 +399,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private attachButton!: HTMLButtonElement;
 	private sendButton!: HTMLButtonElement;
 	private suggestEl!: HTMLElement;
-	private queueBarEl!: HTMLElement;
+	private composerQueue!: AgentComposerQueue;
 	private readonly suggestListeners = this._register(new DisposableStore());
 	private sendKind: 'mic' | 'send' | 'stop' = 'mic';
+	private submitting = false;
 	private promptQueue: { id: string; text: string; display?: IAgentPromptDisplay }[] = [];
-	private queueExpanded = false;
-	private readonly queueBarListeners = this._register(new DisposableStore());
+	private readonly _onDidChangeQueue = this._register(new Emitter<void>());
+	readonly onDidChangeQueue: Event<void> = this._onDidChangeQueue.event;
 
 	private inputEditor: ICodeEditor | undefined;
 	private inputModel: ITextModel | undefined;
@@ -451,6 +448,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private editRestoreMentions: IAgentDisplayMention[] = [];
 	private skipRunEvents = false;
 	private activeRunId: string | undefined;
+	private openedPreviewUrl: string | undefined;
+	private previewTimer: number | undefined;
+	private snapshotOverlay: HTMLElement | undefined;
+	private readonly snapshotStore = this._register(new DisposableStore());
 	private readonly _onDidChangeDock = this._register(new Emitter<void>());
 	readonly onDidChangeDock: Event<void> = this._onDidChangeDock.event;
 	private readonly _onDidComposerSend = this._register(new Emitter<void>());
@@ -474,6 +475,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@IFileService private readonly fileService: IFileService,
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
 		@ISearchService private readonly searchService: ISearchService,
+		@ILogService private readonly logService: ILogService,
 	) {
 		super(AgentEditor.ID, group, telemetryService, themeService, storageService);
 		this.markdownRenderer = this.instantiationService.createInstance(MarkdownRenderer, {});
@@ -491,7 +493,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	protected override createEditor(parent: HTMLElement): void {
 		this.container = append(parent, $('.volt-agent-editor'));
 		this.container.dataset.mode = normalizeVoltMode(this.currentMode);
-		this.applyCodeFont();
 		this._register(new DragAndDropObserver(parent, {
 			onDragEnter: e => this.blockWorkbenchFileDrop(e),
 			onDragOver: e => this.blockWorkbenchFileDrop(e),
@@ -507,8 +508,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.threadScroll = this.threadView.scroll;
 		append(this.container, this.threadEl);
 		this.threadView.rememberHome();
+		this.applyCodeFont();
 		this._register(this.threadScroll.onScroll(e => {
 			this.stickToBottom = e.scrollTop + e.height >= e.scrollHeight - 32;
+			this.threadView.syncStuckTurns();
 		}));
 		const threadWindow = getWindow(this.threadInner);
 		const threadResizeObserver = new threadWindow.ResizeObserver(() => this.syncThreadScroll());
@@ -516,9 +519,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this._register(toDisposable(() => threadResizeObserver.disconnect()));
 		this._register(addDisposableListener(getWindow(this.container), 'pointerdown', e => this.onEditPointerDown(e), true));
 		this.composerEl = append(this.container, $('.volt-agent-composer'));
+		this.composerQueue = this._register(this.instantiationService.createInstance(AgentComposerQueue, {
+			onRemove: id => this.removeQueuedPrompt(id),
+			onClear: () => this.clearPromptQueue(),
+			onMultitask: () => this.setMode('Multitask'),
+			onReorder: ids => this.reorderQueuedPrompts(ids),
+		}));
+		append(this.composerEl, this.composerQueue.element);
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
-		this.queueBarEl = append(this.inputBox, $('.volt-agent-queue-bar'));
-		this.queueBarEl.classList.add('hidden');
 		this.monacoHost = append(this.inputBox, $('.volt-agent-monaco.show-file-icons'));
 		this.placeholderEl = append(this.monacoHost, $('.volt-agent-placeholder'));
 		this.placeholderEl.setAttribute('aria-hidden', 'true');
@@ -570,6 +578,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.attachButton.appendChild(renderIcon(Codicon.attach));
 
 		this.sendButton = append(this.toolbarEndEl, $('button.volt-agent-send')) as HTMLButtonElement;
+		this.sendButton.type = 'button';
 		this.updateSendButton();
 
 		this.suggestEl = append(this.composerEl, $('.volt-agent-suggest'));
@@ -1176,7 +1185,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private applyCodeFont(): void {
-		this.container.style.setProperty('--volt-code-font', this.codeFontFamily());
+		const font = this.codeFontFamily();
+		this.container?.style.setProperty('--volt-code-font', font);
+		this.threadEl?.style.setProperty('--volt-code-font', font);
+		this.threadInner?.style.setProperty('--volt-code-font', font);
 	}
 
 	private getWorkbenchEditorOptions(): ICodeEditorOptions {
@@ -1195,6 +1207,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			fontSize: 14,
 			fontWeight: '300',
 			lineHeight: 22,
+			wordWrap: 'on',
+			wordWrapOverride2: 'on',
+			wrappingStrategy: 'advanced',
+			wrappingIndent: 'none',
 			cursorStyle: 'line',
 			cursorWidth: 1,
 			renderLineHighlight: 'none',
@@ -1215,6 +1231,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			automaticLayout: false,
 			dropIntoEditor: { enabled: true },
 			scrollBeyondLastLine: false,
+			acceptSuggestionOnEnter: 'off',
+			quickSuggestions: { other: 'off', comments: 'off', strings: 'off' },
+			suggestOnTriggerCharacters: false,
 			ariaLabel: localize('voltAgent.inputAria', "Agent input"),
 			scrollbar: {
 				vertical: 'auto',
@@ -1243,37 +1262,50 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		input.contextUsed = this.sessionTokensUsed;
 		input.contextWindow = this.sessionTokensWindow;
 		if (this.inputModel) {
-			input.draft = this.inputModel.getValue();
+			const editing = this.editingUserIndex !== undefined;
+			input.draft = editing ? this.editRestoreDraft : this.inputModel.getValue();
+			input.draftMentions = editing ? this.editRestoreMentions : (this.mentionController?.displayMentions() ?? []);
 			input.setHasUnsavedContent(!!input.draft.trim());
 		}
 		input.composerZoomed = this.composerZoomed;
 		input.composerHeight = this.composerHeight;
 		input.promptQueue = this.promptQueue;
-		input.queueExpanded = this.queueExpanded;
+		input.queueExpanded = this.promptQueue.length > 0;
+		input.scheduleDraftSave();
 	}
 
 	private restoreInputState(input: AgentEditorInput): void {
 		this.clearFindHighlights();
 		this.thinkingStore.clear();
-		this.messages = input.messages as IAgentMessage[];
+		this.messages = input.messages;
 		this.sessionTokensUsed = input.contextUsed;
 		this.sessionTokensWindow = input.contextWindow;
 		this.editingUserIndex = undefined;
 		this.editRestoreDraft = '';
 		this.editRestoreMentions = [];
 		this.stickToBottom = true;
+		if (input.restoredMode && input.restoredMode !== this.currentMode) {
+			const option = MODE_OPTIONS.find(item => item.id.toLowerCase() === input.restoredMode!.toLowerCase());
+			if (option) {
+				this.currentMode = option.id;
+				this.updateModeButton();
+			}
+		}
 		this.syncComposerPlacement();
 		this.renderThread(true);
 		if (this.inputModel && this.inputModel.getValue() !== input.draft) {
+			this.mentionController?.clear();
 			this.inputModel.setValue(input.draft);
+			if (input.draftMentions.length) {
+				this.mentionController?.restoreMentions(input.draftMentions);
+			}
 		}
 		this.setComposerZoomed(input.composerZoomed);
 		if (!input.composerZoomed) {
 			this.applyComposerHeight(input.composerHeight);
 		}
 		this.promptQueue = Array.isArray(input.promptQueue) ? input.promptQueue.slice() as typeof this.promptQueue : [];
-		this.queueExpanded = !!input.queueExpanded;
-		this.renderQueueBar();
+		this.syncQueueStack();
 		this.updateSendButton();
 		input.setHasUnsavedContent(!!input.draft.trim());
 		this.updateInputPlaceholder();
@@ -1315,8 +1347,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		const draft = this.inputModel?.getValue() ?? '';
+		if (this.editingUserIndex !== undefined) {
+			// While editing an earlier prompt the composer shows that prompt, not the draft.
+			return;
+		}
 		input.draft = draft;
+		input.draftMentions = this.mentionController?.displayMentions() ?? [];
 		input.setHasUnsavedContent(!!draft.trim());
+		input.scheduleDraftSave();
 	}
 
 	private updateModelButton(): void {
@@ -1372,6 +1410,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.currentMode = id;
 		this.updateModeButton();
 		this.updateInputPlaceholder();
+		this.composerQueue?.setMode(id);
+		if (this.input instanceof AgentEditorInput) {
+			this.input.recordMode(normalizeVoltMode(id));
+		}
 	}
 
 	private togglePlan(): void {
@@ -1383,6 +1425,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.plusMenuEl?.remove();
 		this.plusMenuEl = undefined;
 		this.plusMenuOpen = false;
+		this.inputBox.classList.remove('plus-open');
 	}
 
 	private showPlusMenu(): void {
@@ -1394,9 +1437,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.plusMenuStore.clear();
 		this.plusMenuEl?.remove();
 		this.plusMenuOpen = true;
+		this.inputBox.classList.add('plus-open');
 		const menu = $('.volt-agent-plus-menu');
 		this.plusMenuEl = menu;
-		this.composerEl.insertBefore(menu, this.inputBox);
+		this.inputBox.insertBefore(menu, this.inputBox.firstChild);
 		const search = append(menu, $('input.volt-agent-plus-search')) as HTMLInputElement;
 		search.type = 'text';
 		search.placeholder = localize('voltAgent.plusSearch', "Search skills, context, chats...");
@@ -1414,15 +1458,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				|| (option.description ?? '').toLowerCase().includes(q)
 			);
 			for (const option of modes) {
-				const item = append(list, $('button.volt-agent-dropdown-item.plus-mode')) as HTMLButtonElement;
+				const item = append(list, $('button.volt-agent-plus-chip.plus-mode')) as HTMLButtonElement;
 				if (option.id === this.currentMode) {
 					item.classList.add('active');
 				}
-				const icon = append(item, $('span.icon'));
-				icon.appendChild(createModeIcon(option.icon));
+				item.appendChild(createModeIcon(option.icon));
 				append(item, $('span.label')).textContent = option.label;
 				if (option.description) {
-					append(item, $('span.desc')).textContent = option.description;
+					setAgentTooltip(item, option.description);
 				}
 				itemsStore.add(addDisposableListener(item, 'click', e => {
 					e.preventDefault();
@@ -1447,9 +1490,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 
 			for (const action of actions) {
-				const item = append(list, $('button.volt-agent-dropdown-item.plus-action')) as HTMLButtonElement;
-				const icon = append(item, $('span.icon'));
-				icon.appendChild(action.id === 'files'
+				const item = append(list, $('button.volt-agent-plus-chip.plus-action')) as HTMLButtonElement;
+				item.appendChild(action.id === 'files'
 					? createPaperclipIcon()
 					: action.id === 'model'
 						? createCubeIcon()
@@ -1467,8 +1509,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					}
 				}
 				if (action.id === 'mcp') {
-					const meta = append(item, $('span.meta'));
-					meta.appendChild(createChevronRightIcon());
+					item.appendChild(createChevronRightIcon());
 				}
 				itemsStore.add(addDisposableListener(item, 'click', e => {
 					e.preventDefault();
@@ -1509,6 +1550,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}));
 		this.plusMenuStore.add(toDisposable(() => {
 			menu.remove();
+			this.inputBox.classList.remove('plus-open');
 			if (this.plusMenuEl === menu) {
 				this.plusMenuEl = undefined;
 				this.plusMenuOpen = false;
@@ -1595,7 +1637,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			blockState: message.blockState,
 			onToggle: id => this.toggleBlock(message, id),
 			onScroll: () => this.syncThreadScroll(this.stickToBottom),
+			instantiationService: this.instantiationService,
+			diffStyle: chooseFileChangeDiffStyle({
+				surface: this.container.classList.contains('browser-hosted') ? 'browser' : 'sidebar',
+			}),
 			onOpenPath: (path, startLine, endLine) => void this.openWorkspaceFile(path, startLine, endLine),
+			onOpenUrl: url => void this.openLocalPreview(url, true),
 			onTerminalMenu: (anchor, command) => this.showTerminalBlockMenu(anchor, command),
 			onAccessDecision: (requestId, effect, scope, pattern) => this.runtime.respondToAccessRequest(requestId, effect, scope, pattern),
 		};
@@ -1689,8 +1736,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this._onDidChangeDock.fire();
 			return;
 		}
+		let exchange: HTMLElement | undefined;
 		for (const [index, message] of this.messages.entries()) {
-			const turn = append(this.threadInner, $(`.volt-agent-turn.${message.kind}`));
+			if (message.kind === 'user' || !exchange) {
+				exchange = append(this.threadInner, $('.volt-agent-exchange'));
+			}
+			const turn = append(exchange, $(`.volt-agent-turn.${message.kind}`));
 
 			if (message.kind === 'user') {
 				if (this.editingUserIndex === index) {
@@ -1701,55 +1752,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				}
 				const next = this.messages[index + 1];
 				if (next?.kind === 'agent' && this.editingUserIndex !== index) {
-					this.renderWorkedMeta(turn, next);
+					this.renderWorkedMeta(exchange, next);
 				}
 			} else {
-				this.renderActivity(turn, message);
-				const blocks = collectBlocks(message.segments, message.text, !!message.activity?.streaming);
-				const hasBody = !!(blocks.length || message.title || message.steps.length || message.changes?.length);
-				if (hasBody) {
-					const bubble = append(turn, $('.volt-agent-bubble'));
-					if (blocks.length) {
-						const stack = append(bubble, $('.volt-agent-blocks'));
-						const ctx = this.blockRenderContext(message);
-						for (const block of blocks) {
-							renderAgentBlock(stack, block, ctx);
-						}
-					}
-					if (message.title) {
-						const title = append(bubble, $('.volt-agent-plan-title'));
-						this.setSearchableText(title, message.title);
-					}
-					if (message.steps.length) {
-						const list = append(bubble, $('ul.volt-agent-steps'));
-						for (const step of message.steps) {
-							const item = append(list, $('li'));
-							const marker = append(item, $('span.volt-agent-step-marker'));
-							if (step.state === 'done') {
-								item.classList.add('done');
-								// allow-any-unicode-next-line
-								marker.textContent = '✓';
-							} else if (step.state === 'current') {
-								marker.textContent = '->';
-							} else {
-								// allow-any-unicode-next-line
-								marker.textContent = '○';
-							}
-							this.setSearchableText(item, step.label);
-						}
-					}
-					if (message.changes?.length) {
-						const changes = append(bubble, $('.volt-agent-changes'));
-						this.setSearchableText(append(changes, $('.volt-agent-changes-title')), localize('voltAgent.changes', "Changes"));
-						for (const change of message.changes) {
-							const row = append(changes, $('.volt-agent-change'));
-							this.setSearchableText(row, change);
-						}
-					}
-				}
-				if (!message.activity?.streaming) {
-					this.renderAgentFooter(turn, message);
-				}
+				this.renderAgentTurn(turn, message);
 			}
 		}
 		this.syncComposerPlacement();
@@ -1780,9 +1786,41 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const row = append(turn, $('.volt-agent-user-row'));
 		const bubble = append(row, $('.volt-agent-bubble'));
 		bubble.style.borderRadius = '8px';
+		if (/\n/.test(message.text) || !!message.chips?.length) {
+			bubble.classList.add('multiline');
+		}
+		if (message.promptExpanded) {
+			bubble.classList.add('prompt-expanded');
+		} else if (message.text.split('\n').length > 4 || message.text.length > 160) {
+			bubble.classList.add('clamped');
+		}
 		const main = append(bubble, $('.volt-agent-user-main'));
 		const text = append(main, $('.volt-agent-text'));
 		this.renderUserMessageText(text, message);
+		const syncUserPromptClamp = () => {
+			if (text.scrollHeight > 28) {
+				bubble.classList.add('multiline');
+			}
+			if (message.promptExpanded) {
+				bubble.classList.remove('clamped');
+				bubble.classList.add('prompt-expanded');
+				if (editable) {
+					setAgentTooltip(bubble, localize('voltAgent.editMessage', "Edit message"));
+				}
+				return;
+			}
+			const limit = 22 * 4;
+			if (text.scrollHeight > limit + 1) {
+				bubble.classList.add('clamped');
+				setAgentTooltip(bubble, localize('voltAgent.showFullPrompt', "Show full prompt"));
+			} else {
+				bubble.classList.remove('clamped');
+				if (editable) {
+					setAgentTooltip(bubble, localize('voltAgent.editMessage', "Edit message"));
+				}
+			}
+		};
+		this.threadListeners.add(scheduleAtNextAnimationFrame(getWindow(text), syncUserPromptClamp));
 		if (message.chips?.length) {
 			const chipRow = append(main, $('.volt-agent-chips'));
 			for (const chip of message.chips) {
@@ -1802,16 +1840,27 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}));
 		}
 		if (editable) {
-			setAgentTooltip(turn, localize('voltAgent.editMessage', "Edit message"));
-			this.threadListeners.add(addDisposableListener(turn, 'click', e => {
-				if ((e.target as HTMLElement).closest('.volt-agent-user-stop')) {
-					return;
-				}
+			setAgentTooltip(bubble, localize('voltAgent.editMessage', "Edit message"));
+		}
+		this.threadListeners.add(addDisposableListener(turn, 'pointerdown', e => {
+			const target = isHTMLElement(e.target) ? e.target : (e.target as { parentElement?: HTMLElement | null }).parentElement;
+			if (target?.closest('.volt-agent-user-stop')) {
+				return;
+			}
+			if (bubble.classList.contains('clamped')) {
 				e.preventDefault();
 				e.stopPropagation();
-				this.startUserEdit(index);
-			}));
-		}
+				message.promptExpanded = true;
+				syncUserPromptClamp();
+				return;
+			}
+			if (!editable) {
+				return;
+			}
+			e.preventDefault();
+			e.stopPropagation();
+			this.startUserEdit(index);
+		}, true));
 	}
 
 	private isCancelledAgent(message: IAgentAssistantMessage): boolean {
@@ -1929,7 +1978,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.editingUserIndex = undefined;
 		this.editRestoreDraft = '';
 		this.editRestoreMentions = [];
+		const removed = this.messages[index];
 		this.messages.splice(index);
+		if (this.input instanceof AgentEditorInput) {
+			this.input.recordTruncate(removed);
+		}
 		this.syncComposerPlacement();
 		this.dispatchPrompt(value, display);
 	}
@@ -1986,6 +2039,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.threadScroll.setScrollPosition({ scrollTop: scrollHeight });
 			this.stickToBottom = true;
 		}
+		this.threadView.syncStuckTurns();
 	}
 
 	private scrollThreadToEnd(): void {
@@ -1993,59 +2047,119 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.syncThreadScroll(true);
 	}
 
-	private renderActivity(turn: HTMLElement, message: IAgentAssistantMessage): void {
-		const activity = message.activity;
-		if (!activity) {
-			return;
-		}
-
-		const section = append(turn, $('.volt-agent-activity'));
-		if (activity.streaming) {
-			const summary = formatExploringSummary(activity.items);
-			if (summary) {
-				const progress = append(section, $('div.volt-agent-activity-progress.shimmer'));
-				activity.shimmerStartedAt ??= Date.now();
-				progress.style.animationDelay = `${-((Date.now() - activity.shimmerStartedAt) % 2000)}ms`;
-				this.setSearchableText(progress, summary);
+	private renderAgentTurn(turn: HTMLElement, message: IAgentAssistantMessage): void {
+		const streaming = !!message.activity?.streaming;
+		const parts = buildThreadParts(message.segments, message.text, streaming);
+		const body = append(turn, $('.volt-agent-thread-body'));
+		const ctx = this.blockRenderContext(message);
+		const lastGroup = [...parts].reverse().find(part => part.kind === 'group');
+		for (const part of parts) {
+			if (part.kind === 'group') {
+				this.renderActivityGroup(body, message, part, streaming && part === lastGroup);
+			} else if (part.kind === 'snapshot') {
+				this.renderSnapshotPart(body, part.item, streaming && !part.item.image);
+			} else if (part.kind === 'markdown') {
+				const reply = append(body, $('.volt-agent-reply'));
+				renderMarkdownInto(reply, part.content, ctx);
+			} else if (part.kind === 'changes') {
+				renderFileChangesPart(body, part, ctx, streaming);
+			} else {
+				renderAgentBlock(body, part.block, ctx);
 			}
+		}
+		if (message.title) {
+			const title = append(body, $('.volt-agent-plan-title'));
+			this.setSearchableText(title, message.title);
+		}
+		if (message.steps.length) {
+			const list = append(body, $('ul.volt-agent-steps'));
+			for (const step of message.steps) {
+				const item = append(list, $('li'));
+				const marker = append(item, $('span.volt-agent-step-marker'));
+				if (step.state === 'done') {
+					item.classList.add('done');
+					// allow-any-unicode-next-line
+					marker.textContent = '✓';
+				} else if (step.state === 'current') {
+					marker.textContent = '->';
+				} else {
+					// allow-any-unicode-next-line
+					marker.textContent = '○';
+				}
+				this.setSearchableText(item, step.label);
+			}
+		}
+		if (message.changes?.length) {
+			const changes = append(body, $('.volt-agent-changes'));
+			this.setSearchableText(append(changes, $('.volt-agent-changes-title')), localize('voltAgent.changes', "Changes"));
+			for (const change of message.changes) {
+				const row = append(changes, $('.volt-agent-change'));
+				this.setSearchableText(row, change);
+			}
+		}
+		if (!streaming) {
+			this.renderAgentFooter(turn, message);
+		}
+	}
+
+	private renderActivityGroup(parent: HTMLElement, message: IAgentAssistantMessage, part: Extract<ThreadPart, { kind: 'group' }>, streaming: boolean): void {
+		const section = append(parent, $('.volt-agent-activity'));
+		if (streaming) {
 			const status = append(section, $('div.volt-agent-activity-progress.shimmer'));
-			activity.shimmerStartedAt ??= Date.now();
-			status.style.animationDelay = `${-((Date.now() - activity.shimmerStartedAt) % 2000)}ms`;
-			this.setSearchableText(status, activity.status || localize('voltAgent.thinking', "Thinking"));
+			const activity = message.activity;
+			if (activity) {
+				activity.shimmerStartedAt ??= Date.now();
+				status.style.animationDelay = `${-((Date.now() - activity.shimmerStartedAt) % 900)}ms`;
+			}
+			this.setSearchableText(status, part.title);
+			if (part.thinking) {
+				const thought = append(section, $('.volt-agent-thinking-text'));
+				renderMarkdownInto(thought, part.thinking, this.blockRenderContext(message));
+			}
 			return;
 		}
 
+		const expanded = message.blockState[part.id]?.expanded ?? false;
 		const toggle = append(section, $('button.volt-agent-activity-toggle')) as HTMLButtonElement;
-		toggle.classList.toggle('expanded', activity.expanded);
+		toggle.classList.toggle('expanded', expanded);
 		const label = append(toggle, $('span.volt-agent-activity-label'));
-		this.setSearchableText(label, activity.status);
+		this.setSearchableText(label, part.title);
 		const chevron = append(toggle, $('span.volt-agent-activity-chevron'));
-		chevron.appendChild(renderIcon(activity.expanded ? Codicon.chevronDown : Codicon.chevronRight));
+		chevron.appendChild(renderIcon(expanded ? Codicon.chevronDown : Codicon.chevronRight));
 		this.threadListeners.add(addDisposableListener(toggle, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
-			if (this.isCancelledAgent(message) && !this.isStreaming()) {
-				const agentIndex = this.messages.indexOf(message);
-				for (let i = agentIndex - 1; i >= 0; i--) {
-					if (this.messages[i].kind === 'user') {
-						this.startUserEdit(i);
-						return;
-					}
-				}
-			}
-			activity.expanded = !activity.expanded;
+			message.blockState[part.id] = { expanded: !expanded };
 			this.renderThread(this.stickToBottom);
 		}));
 
-		if (!activity.expanded) {
+		if (!expanded) {
 			return;
 		}
 
 		const body = append(section, $('.volt-agent-activity-body'));
-		for (const item of activity.items) {
+		for (const item of part.items) {
 			const row = append(body, $(`.volt-agent-activity-item.${item.kind}`));
-			if (item.path) {
+			const path = item.path || (item.detail && isPathLike(item.detail) ? item.detail : undefined);
+			const fileName = path
+				? (item.detail && isPathLike(item.detail) ? item.detail : basename(path))
+				: item.detail;
+			if (path) {
 				const link = append(row, $('button.volt-agent-file-link')) as HTMLButtonElement;
+				const action = append(link, $('span.action'));
+				action.textContent = item.label;
+				if (fileName) {
+					const detail = append(link, $('span.detail.volt-agent-searchable'));
+					detail.textContent = fileName;
+				}
+				setAgentTooltip(link, path);
+				this.threadListeners.add(addDisposableListener(link, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					void this.openWorkspaceFile(path, item.startLine, item.endLine);
+				}));
+			} else if (item.image) {
+				const link = append(row, $('button.volt-agent-snapshot-link')) as HTMLButtonElement;
 				const action = append(link, $('span.action'));
 				action.textContent = item.label;
 				if (item.detail) {
@@ -2055,7 +2169,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.threadListeners.add(addDisposableListener(link, 'click', e => {
 					e.preventDefault();
 					e.stopPropagation();
-					void this.openWorkspaceFile(item.path!, item.startLine, item.endLine);
+					this.showSnapshotPreview(item);
 				}));
 			} else {
 				const action = append(row, $('span.action'));
@@ -2066,10 +2180,78 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				}
 			}
 		}
-		if (activity.thinkingText) {
+		if (part.thinking) {
 			const thought = append(body, $('.volt-agent-thinking-text'));
-			renderMarkdownInto(thought, activity.thinkingText, this.blockRenderContext(message));
+			renderMarkdownInto(thought, part.thinking, this.blockRenderContext(message));
 		}
+	}
+
+	private renderSnapshotPart(parent: HTMLElement, item: IAgentActivityItem, streaming: boolean): void {
+		const section = append(parent, $('.volt-agent-snapshot'));
+		if (streaming && !item.image) {
+			const status = append(section, $('div.volt-agent-activity-progress.shimmer'));
+			this.setSearchableText(status, localize('voltAgent.takingSnapshot', "Taking a screenshot snapshot."));
+			return;
+		}
+		const button = append(section, $('button.volt-agent-snapshot-link')) as HTMLButtonElement;
+		this.setSearchableText(button, item.label || localize('voltAgent.tookSnapshot', "Took snapshot"));
+		if (!item.image) {
+			button.disabled = true;
+			return;
+		}
+		this.threadListeners.add(addDisposableListener(button, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.showSnapshotPreview(item);
+		}));
+	}
+
+	private showSnapshotPreview(item: IAgentActivityItem): void {
+		if (!item.image) {
+			return;
+		}
+		this.dismissSnapshotPreview();
+		const win = getWindow(this.container);
+		const overlay = append(win.document.body, $('.volt-agent-snapshot-overlay'));
+		overlay.tabIndex = -1;
+		overlay.setAttribute('role', 'dialog');
+		overlay.setAttribute('aria-modal', 'true');
+		const dialog = append(overlay, $('.volt-agent-snapshot-dialog'));
+		const head = append(dialog, $('.volt-agent-snapshot-head'));
+		const title = append(head, $('span.volt-agent-snapshot-title'));
+		title.textContent = item.label || localize('voltAgent.tookSnapshot', "Took snapshot");
+		const close = append(head, $('button.volt-agent-snapshot-close')) as HTMLButtonElement;
+		close.type = 'button';
+		close.setAttribute('aria-label', localize('voltAgent.closeSnapshot', "Close"));
+		close.appendChild(renderIcon(Codicon.close));
+		const img = append(dialog, $('img.volt-agent-snapshot-image')) as HTMLImageElement;
+		img.src = item.image;
+		img.alt = title.textContent;
+		const dismiss = () => this.dismissSnapshotPreview();
+		this.snapshotStore.add(addDisposableListener(close, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			dismiss();
+		}));
+		this.snapshotStore.add(addDisposableListener(overlay, 'click', e => {
+			if (e.target === overlay) {
+				dismiss();
+			}
+		}));
+		this.snapshotStore.add(addDisposableListener(overlay, 'keydown', e => {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				dismiss();
+			}
+		}));
+		this.snapshotOverlay = overlay;
+		overlay.focus();
+	}
+
+	private dismissSnapshotPreview(): void {
+		this.snapshotStore.clear();
+		this.snapshotOverlay?.remove();
+		this.snapshotOverlay = undefined;
 	}
 
 	private renderWorkedMeta(turn: HTMLElement, message: IAgentAssistantMessage): void {
@@ -2169,6 +2351,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private async openWorkspaceFile(path: string, startLine?: number, endLine?: number): Promise<void> {
+		const preview = extractLocalPreviewUrl(path) ?? extractHttpUrl(path);
+		if (preview) {
+			await this.openLocalPreview(preview, true);
+			return;
+		}
 		const resource = await this.resolveWorkspaceFile(path);
 		if (!resource) {
 			return;
@@ -2192,6 +2379,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private async resolveWorkspaceFile(path: string): Promise<URI | undefined> {
 		const trimmed = path.replace(/^["'`]+|["'`]+$/g, '').trim();
 		if (!trimmed) {
+			return undefined;
+		}
+
+		if (/^https?:\/\//i.test(trimmed)) {
 			return undefined;
 		}
 
@@ -2259,8 +2450,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.dispatchPrompt(value, display);
 	}
 
+	getPromptQueue(): readonly { id: string; text: string; display?: IAgentPromptDisplay }[] {
+		return this.promptQueue;
+	}
+
 	stopRun(): void {
 		this.stopAgent();
+	}
+
+	isEditingUser(): boolean {
+		return this.editingUserIndex !== undefined;
 	}
 
 	getThreadView(): AgentThreadView | undefined {
@@ -2268,11 +2467,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	setBrowserHosted(hosted: boolean): void {
+		if (this.container.classList.contains('browser-hosted') === hosted) {
+			return;
+		}
 		this.container.classList.toggle('browser-hosted', hosted);
 		this.syncFollowUpComposer((this.inputModel?.getLineCount() ?? 1) > 1);
 		this.updateInputPlaceholder();
-		this.layoutInputEditor();
-		this.renderSuggestChips();
 	}
 
 	layoutThread(): void {
@@ -2302,14 +2502,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			startedAt,
 			endedAt,
 			durationMs,
-			turns: this.messages.map(message => message.kind === 'user'
-				? { kind: 'user', text: message.text }
-				: {
-					kind: 'agent',
-					text: agentMessagePlainText(message),
-					status: message.activity?.status,
-					streaming: !!message.activity?.streaming,
-				}),
+			turns: this.messages.length ? [{ kind: 'user', text: '' }] : [],
 		};
 	}
 
@@ -2338,11 +2531,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 
+		const widgetOptions = getSimpleCodeEditorWidgetOptions();
+		widgetOptions.contextKeyValues = { [CONTEXT_IN_AGENT_INPUT.key]: true };
+		widgetOptions.contributions = [
+			...(widgetOptions.contributions ?? []),
+			...EditorExtensionsRegistry.getSomeEditorContributions([DropIntoEditorController.ID]),
+		];
 		this.inputEditor = this.editorDisposables.add(this.instantiationService.createInstance(
 			CodeEditorWidget,
 			this.monacoHost,
 			this.getAgentInputEditorOptions(),
-			Object.create(null)
+			widgetOptions
 		));
 
 		const modelUri = URI.from({ scheme: 'volt-agent-input', path: `input-${this.sessionKey}-${Date.now()}` });
@@ -2368,14 +2567,31 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 		}));
 		this.editorDisposables.add(this.inputEditor.onKeyDown(e => {
-			if (e.keyCode === KeyCode.Enter && !e.altKey && !e.metaKey && !e.ctrlKey && this.composerLists?.tryHandleEnter()) {
+			if (isUnmodifiedEnter(e)) {
+				if (e.shiftKey) {
+					if (this.composerLists?.tryHandleEnter()) {
+						e.preventDefault();
+						e.stopPropagation();
+					}
+					return;
+				}
+				if (this.mentionController?.isMenuOpen) {
+					return;
+				}
 				e.preventDefault();
 				e.stopPropagation();
+				this.send();
 				return;
 			}
 			if (e.keyCode === KeyCode.KeyF && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				e.preventDefault();
 				this.revealFind();
+				return;
+			}
+			if (e.keyCode === KeyCode.KeyL && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+				e.preventDefault();
+				e.stopPropagation();
+				void this.commandService.executeCommand(OPEN_AGENT_SIDE_PANEL_COMMAND_ID);
 				return;
 			}
 			if (e.keyCode === KeyCode.Tab && !e.altKey && !e.metaKey && !e.ctrlKey) {
@@ -2404,7 +2620,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.cancelUserEdit();
 				return;
 			}
-			if (e.keyCode === KeyCode.Enter && (e.metaKey || e.ctrlKey)) {
+			if (e.keyCode === KeyCode.Enter && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				e.preventDefault();
 				e.stopPropagation();
 				this.send();
@@ -2414,7 +2630,26 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.updateInputPlaceholder();
 	}
 
+	submitComposer(): void {
+		if (this.mentionController?.isMenuOpen) {
+			return;
+		}
+		this.send();
+	}
+
 	private send(): void {
+		if (this.submitting) {
+			return;
+		}
+		this.submitting = true;
+		try {
+			this.doSend();
+		} finally {
+			this.submitting = false;
+		}
+	}
+
+	private doSend(): void {
 		const displayText = this.inputModel?.getValue() ?? '';
 		const mentions = this.mentionController?.displayMentions() ?? [];
 		const agentText = (this.mentionController?.serialize() || displayText).trim();
@@ -2448,28 +2683,32 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.updateInputPlaceholder();
 		this.updateSendButton();
-		this.renderQueueBar();
+		this.syncQueueStack();
 		this.persistInputState();
 		this.inputEditor?.focus();
 	}
 
 	private dispatchPrompt(value: string, display?: IAgentPromptDisplay): void {
 		this.thinkingStore.clear();
-		this.messages.push({
+		const turn = generateUuid();
+		const userMessage: IAgentUserMessage = {
 			kind: 'user',
+			id: turn,
 			text: display?.text.trim() || value,
 			agentText: display ? value : undefined,
 			mentions: display?.mentions,
-		});
+		};
+		this.messages.push(userMessage);
 		const reply: IAgentAssistantMessage = {
 			kind: 'agent',
+			id: turn,
 			title: '',
 			steps: [],
 			segments: [],
 			blockState: {},
 			startedAt: Date.now(),
 			activity: {
-				status: localize('voltAgent.planningMoves', "Planning next moves"),
+				status: localize('voltAgent.thinking', "Thinking"),
 				expanded: false,
 				streaming: true,
 				items: [],
@@ -2483,6 +2722,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.renderThread(true);
 		this.scrollThreadToEnd();
 		this.inputEditor?.focus();
+
+		const input = this.input instanceof AgentEditorInput ? this.input : undefined;
+		if (input) {
+			// The prompt is durable before the model is asked.
+			input.recordUser(userMessage);
+			input.recordMode(normalizeVoltMode(this.currentMode));
+		}
 
 		const session = this.runtime.getOrCreateSession(this.sessionKey);
 		void this.runtime.send(session.sessionId, {
@@ -2499,8 +2745,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			reply.segments.push({ kind: 'text', text: errorText });
 			this.renderThread(true);
 			this.updateSendButton();
+			this.recordReply(reply, true, 'error');
 			this.drainPromptQueue();
 		});
+	}
+
+	/** Snapshot a reply into durable history; partial snapshots are throttled by the input. */
+	private recordReply(reply: IAgentAssistantMessage, final: boolean, status: AgentSessionStatus): void {
+		const input = this.input;
+		if (input instanceof AgentEditorInput) {
+			input.recordAssistant(reply, final, status, agentMessagePlainText(reply));
+		}
 	}
 
 	private stopAgent(): void {
@@ -2508,7 +2763,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (last?.kind === 'agent' && last.activity?.streaming) {
 			last.cancelled = true;
 			last.activity.streaming = false;
-			last.activity.expanded = !!last.activity.thinkingText || last.activity.items.length > 0;
+			last.activity.expanded = false;
 			last.activity.status = localize('voltAgent.cancelled', "Cancelled");
 			last.endedAt = Date.now();
 			last.startedAt ??= last.endedAt;
@@ -2516,6 +2771,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.updateSendButton();
 			this.renderThread(this.stickToBottom);
 			this._onDidChangeDock.fire();
+			this.recordReply(last, true, 'cancelled');
 		}
 		const session = this.runtime.getOrCreateSession(this.sessionKey);
 		void this.runtime.cancel(session.sessionId);
@@ -2527,7 +2783,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		const next = this.promptQueue.shift();
-		this.renderQueueBar();
+		this.syncQueueStack();
 		this.persistInputState();
 		if (next) {
 			this.dispatchPrompt(next.text, next.display);
@@ -2553,54 +2809,52 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		setAgentTooltip(this.sendButton, kind === 'stop'
 			? localize('voltAgent.stop', "Stop")
 			: kind === 'send'
-				? localize('voltAgent.send', "Send (Cmd+Enter)")
+				? localize('voltAgent.send', "Send")
 				: localize('voltAgent.voice', "Voice"));
 		this.sendButton.appendChild(kind === 'stop' ? createStopIcon() : kind === 'send' ? createSendIcon() : createMicIcon());
 	}
 
-	private renderQueueBar(): void {
-		this.queueBarListeners.clear();
-		this.queueBarEl.replaceChildren();
-		const count = this.promptQueue.length;
-		this.queueBarEl.classList.toggle('hidden', count === 0);
-		this.queueBarEl.classList.toggle('expanded', this.queueExpanded && count > 0);
-		if (!count) {
-			this.queueExpanded = false;
+	removeQueuedPrompt(id: string): void {
+		this.promptQueue = this.promptQueue.filter(queued => queued.id !== id);
+		this.syncQueueStack();
+		this.persistInputState();
+	}
+
+	reorderQueuedPrompts(ids: readonly string[]): void {
+		const map = new Map(this.promptQueue.map(item => [item.id, item]));
+		const next: typeof this.promptQueue = [];
+		for (const id of ids) {
+			const item = map.get(id);
+			if (item) {
+				next.push(item);
+				map.delete(id);
+			}
+		}
+		for (const leftover of map.values()) {
+			next.push(leftover);
+		}
+		this.promptQueue = next;
+		this.syncQueueStack();
+		this.persistInputState();
+	}
+
+	clearPromptQueue(): void {
+		this.promptQueue = [];
+		this.syncQueueStack();
+		this.persistInputState();
+	}
+
+	private syncQueueStack(): void {
+		if (!this.composerQueue) {
 			return;
 		}
-		const toggle = append(this.queueBarEl, $('button.volt-agent-queue-toggle')) as HTMLButtonElement;
-		toggle.setAttribute('aria-expanded', String(this.queueExpanded));
-		const chevron = append(toggle, $('span.volt-agent-queue-chevron'));
-		chevron.appendChild(renderIcon(this.queueExpanded ? Codicon.chevronDown : Codicon.chevronRight));
-		const label = append(toggle, $('span.volt-agent-queue-label'));
-		label.textContent = localize('voltAgent.queuedCount', "{0} queued", count);
-		this.queueBarListeners.add(addDisposableListener(toggle, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			this.queueExpanded = !this.queueExpanded;
-			this.renderQueueBar();
-		}));
-		if (!this.queueExpanded) {
-			return;
-		}
-		const list = append(this.queueBarEl, $('.volt-agent-queue-list'));
-		for (const item of this.promptQueue) {
-			const row = append(list, $('.volt-agent-queue-item'));
-			const text = append(row, $('span.volt-agent-queue-text'));
-			const preview = item.display?.text.trim() || item.text;
-			text.textContent = preview;
-			setAgentTooltip(text, preview);
-			const remove = append(row, $('button.volt-agent-queue-remove')) as HTMLButtonElement;
-			setAgentTooltip(remove, localize('voltAgent.removeQueued', "Remove from queue"));
-			remove.appendChild(renderIcon(Codicon.close));
-			this.queueBarListeners.add(addDisposableListener(remove, 'click', e => {
-				e.preventDefault();
-				e.stopPropagation();
-				this.promptQueue = this.promptQueue.filter(queued => queued.id !== item.id);
-				this.renderQueueBar();
-				this.persistInputState();
-			}));
-		}
+		this.composerQueue.setMode(this.currentMode);
+		this.composerQueue.setQueue(this.promptQueue.map(item => ({
+			id: item.id,
+			text: item.text,
+			preview: item.display?.text ?? item.text,
+		})));
+		this._onDidChangeQueue.fire();
 	}
 
 	private clearComposer(): void {
@@ -2633,6 +2887,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private bindRuntimeSession(): void {
 		this.eventDisposable?.dispose();
 		const session = this.runtime.getOrCreateSession(this.sessionKey);
+		const live = session.activeRun;
+		if (this.isStreaming() && live?.runId && (live.status === 'running' || live.status === 'waiting' || live.status === 'queued')) {
+			this.activeRunId = live.runId;
+			this.skipRunEvents = false;
+		}
 		this.eventDisposable = this.runtime.onEvent(session.sessionId, envelope => this.applyEvent(envelope));
 	}
 
@@ -2700,17 +2959,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		switch (event.type) {
 			case 'run.start':
 				activity.streaming = true;
-				activity.status = localize('voltAgent.planningMoves', "Planning next moves");
+				activity.status = localize('voltAgent.thinking', "Thinking");
 				break;
 			case 'reasoning.delta':
-				activity.expanded = true;
+				activity.expanded = false;
 				activity.status = localize('voltAgent.thinking', "Thinking");
 				activity.thinkingText = (activity.thinkingText ?? '') + (event.delta ?? '');
+				appendThoughtDelta(last.segments, event.delta ?? '');
 				break;
 			case 'text.delta':
 				last.text = (last.text ?? '') + (event.delta ?? '');
 				appendTextDelta(last.segments, event.delta ?? '');
 				activity.status = localize('voltAgent.writing', "Writing");
+				this.maybeOpenLocalPreview(last.text, 0);
 				break;
 			case 'tool.start': {
 				const parsed = parseShellToolInput(event.input);
@@ -2726,19 +2987,29 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 						? localize('voltAgent.runningCommand', "Running {0}", ran)
 						: localize('voltAgent.runningTerminal', "Running command");
 				} else {
-					const target = parseFileTarget(event.input, event.title, event.name);
-					const { label, detail } = splitActivityLabel(event.name, event.title, target);
-					activity.items.push({
-						kind: classifyToolActivity(event.name, event.title),
-						label,
-						detail,
-						path: target?.path,
-						startLine: target?.startLine,
-						endLine: target?.endLine,
-					});
-					activity.status = event.title || event.name;
+					const fileChange = isFileChangeTool(event.name, event.title);
+					if (!fileChange) {
+						const target = parseFileTarget(event.input, event.title, event.name);
+						const { label, detail } = splitActivityLabel(event.name, event.title, target);
+						const item = {
+							kind: classifyToolActivity(event.name, event.title),
+							label,
+							detail,
+							path: target?.path,
+							startLine: target?.startLine,
+							endLine: target?.endLine,
+							callId: event.callId,
+						};
+						applyFileTargetToActivity(item, target);
+						activity.items.push(item);
+						last.segments.push({ kind: 'activity', item });
+						activity.status = event.title || event.name;
+					} else {
+						activity.status = event.title || event.name;
+					}
 				}
 				const id = `tool-${event.callId}`;
+				const explore = !shell && isExploreTool(event.name, event.title);
 				if (shell) {
 					const cwd = event.cwd || parsed.cwd || this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath;
 					last.segments.push({
@@ -2753,7 +3024,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 							expanded: false,
 						}),
 					});
-				} else {
+					this.maybeOpenLocalPreview(parsed.command, 700);
+				} else if (isFileChangeTool(event.name, event.title)) {
+					last.segments.push({
+						kind: 'block',
+						block: this.createFileChangeFromTool(id, event.callId, event.name, event.title, event.input),
+					});
+				} else if (!explore) {
 					last.segments.push({
 						kind: 'block',
 						block: createToolBlock({
@@ -2765,7 +3042,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 						}),
 					});
 				}
-				last.blockState[id] = { expanded: false };
+				if (!explore) {
+					last.blockState[id] = { expanded: false };
+				}
 				break;
 			}
 			case 'tool.input.delta': {
@@ -2782,6 +3061,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					if (parsed.title && !block.title) {
 						block.title = parsed.title;
 					}
+					this.maybeOpenLocalPreview(block.command, 700);
 					const ran = firstCommandName(block.command);
 					if (ran) {
 						activity.status = localize('voltAgent.runningCommand', "Running {0}", ran);
@@ -2790,21 +3070,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 							lastItem.detail = ran;
 						}
 					}
-				} else if (block?.type === 'tool') {
-					block.input = block.input ? (block.input.includes(event.delta) ? block.input : block.input + event.delta) : event.delta;
-					const lastItem = activity.items.at(-1);
-					if (lastItem && !lastItem.path) {
-						const target = parseFileTarget(event.delta, lastItem.detail, lastItem.label);
-						if (target) {
-							lastItem.path = target.path;
-							lastItem.startLine = target.startLine;
-							lastItem.endLine = target.endLine;
-							if (!lastItem.detail) {
-								const split = splitActivityLabel(lastItem.label, undefined, target);
-								lastItem.label = split.label;
-								lastItem.detail = split.detail;
-							}
-						}
+				} else {
+					if (block?.type === 'tool') {
+						block.input = block.input ? (block.input.includes(event.delta) ? block.input : block.input + event.delta) : event.delta;
+					} else if (block?.type === 'file') {
+						block.input = block.input ? (block.input.includes(event.delta) ? block.input : block.input + event.delta) : event.delta;
+						this.mergeFileChange(block, event.delta);
+					}
+					const item = this.findActivityByCallId(last, event.callId);
+					if (item) {
+						applyFileTargetToActivity(item, parseFileTarget(event.delta, item.path, item.detail));
 					}
 				}
 				break;
@@ -2812,13 +3087,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			case 'tool.end': {
 				const block = findBlockByCallId(last.segments, event.callId);
 				const output = stringifyToolResult(event.result);
+				const image = extractToolImage(event.result);
+				if (image) {
+					this.attachSnapshotImage(last, event.callId, image);
+				}
 				if (block?.type === 'terminal') {
 					block.output = output;
 					block.status = event.error ? 'error' : 'complete';
 					block.exitCode = event.error ? 1 : 0;
+					this.maybeOpenLocalPreview(output, block.command, 0);
 				} else if (block?.type === 'tool') {
 					block.output = output;
 					block.status = event.error ? 'error' : 'complete';
+				} else if (block?.type === 'file') {
+					block.output = output;
+					block.status = event.error ? 'error' : 'complete';
+					this.mergeFileChange(block, block.input, output, event.result);
 				}
 				break;
 			}
@@ -2831,12 +3115,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				break;
 			case 'file.change': {
 				const path = event.uri.path || event.uri.fsPath;
-				activity.items.push({
-					kind: 'read',
-					label: event.kind === 'create' ? 'Created' : event.kind === 'delete' ? 'Deleted' : 'Edited',
-					detail: basename(path),
-					path,
-				});
+				if (!findFileBlockByPath(last.segments, path)) {
+					const id = `file-${path}-${last.segments.length}`;
+					last.segments.push({
+						kind: 'block',
+						block: createFileChangeBlock({
+							id,
+							path,
+							verb: event.kind === 'create' ? 'Created' : event.kind === 'delete' ? 'Deleted' : 'Edited',
+							status: 'complete',
+						}),
+					});
+					last.blockState[id] = { expanded: false };
+				}
 				break;
 			}
 			case 'access.ask': {
@@ -2892,7 +3183,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				break;
 			case 'run.end':
 				activity.streaming = false;
-				activity.expanded = !!activity.thinkingText || activity.items.length > 0;
+				activity.expanded = false;
 				last.cancelled = last.cancelled || event.reason === 'abort';
 				activity.status = last.cancelled
 					? localize('voltAgent.cancelled', "Cancelled")
@@ -2900,7 +3191,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				last.endedAt = Date.now();
 				last.startedAt ??= last.endedAt;
 				last.durationMs = Math.max(0, last.endedAt - last.startedAt);
+				this.maybeOpenLocalPreview(last.text, 0);
 				this.scheduleThreadRender();
+				this.recordReply(last, true, last.cancelled ? 'cancelled' : event.reason === 'fail' ? 'error' : 'done');
 				if (event.reason === 'abort') {
 					this.updateSendButton();
 				} else {
@@ -2911,6 +3204,113 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.scheduleThreadRender();
 	}
 
+	private maybeOpenLocalPreview(...parts: Array<string | number | undefined>): void {
+		let delay = 0;
+		const texts: string[] = [];
+		for (const part of parts) {
+			if (typeof part === 'number') {
+				delay = part;
+			} else if (part) {
+				texts.push(part);
+			}
+		}
+		const url = extractLocalPreviewUrl(...texts);
+		if (!url || url === this.openedPreviewUrl) {
+			return;
+		}
+		const win = getWindow(this.container);
+		if (this.previewTimer !== undefined) {
+			win.clearTimeout(this.previewTimer);
+		}
+		this.previewTimer = win.setTimeout(() => {
+			this.previewTimer = undefined;
+			void this.openLocalPreview(url);
+		}, delay);
+	}
+
+	private async openLocalPreview(url: string, force = false): Promise<void> {
+		const clean = sanitizeBrowserUrl(url) ?? extractLocalPreviewUrl(url) ?? extractHttpUrl(url) ?? url;
+		if (!force && this.openedPreviewUrl === clean) {
+			return;
+		}
+		this.openedPreviewUrl = clean;
+		url = clean;
+		let title = localize('voltBrowser.local', "Local");
+		try {
+			title = new URL(url).hostname;
+		} catch {
+			// keep fallback
+		}
+		await this.commandService.executeCommand(OPEN_BROWSER_COMMAND_ID, url, title);
+	}
+
+	private findActivityByCallId(message: IAgentAssistantMessage, callId: string): IAgentActivityItem | undefined {
+		for (const segment of message.segments) {
+			if (segment.kind === 'activity' && segment.item.callId === callId) {
+				return segment.item;
+			}
+		}
+		return message.activity?.items.find(item => item.callId === callId);
+	}
+
+	private createFileChangeFromTool(id: string, callId: string, name: string, title: string | undefined, input?: string): IFileChangeBlock {
+		const parsed = parseToolFileChange({ name, title, input });
+		const target = parseFileTarget(input, title, name, parsed?.path);
+		return createFileChangeBlock({
+			id,
+			callId,
+			path: parsed?.path || target?.path || title || name,
+			verb: fileChangeVerb(name, title, parsed?.path),
+			input,
+			original: parsed?.original,
+			modified: parsed?.modified,
+			unifiedDiff: parsed?.unifiedDiff,
+			additions: parsed?.additions,
+			deletions: parsed?.deletions,
+		});
+	}
+
+	private mergeFileChange(block: IFileChangeBlock, input?: string, output?: string, result?: unknown): void {
+		const parsed = parseToolFileChange({
+			name: block.verb,
+			title: block.path,
+			input: input ?? block.input,
+			output,
+			result,
+			path: block.path,
+		});
+		if (!parsed) {
+			return;
+		}
+		if (parsed.path) {
+			block.path = parsed.path;
+		}
+		if (parsed.original !== undefined) {
+			block.original = parsed.original;
+		}
+		if (parsed.modified !== undefined) {
+			block.modified = parsed.modified;
+		}
+		if (parsed.unifiedDiff) {
+			block.unifiedDiff = parsed.unifiedDiff;
+		}
+		if (parsed.additions !== undefined) {
+			block.additions = parsed.additions;
+		}
+		if (parsed.deletions !== undefined) {
+			block.deletions = parsed.deletions;
+		}
+		block.verb = fileChangeVerb(block.verb, parsed.path, block.path);
+	}
+
+	private attachSnapshotImage(message: IAgentAssistantMessage, callId: string, image: string): void {
+		const item = this.findActivityByCallId(message, callId);
+		if (!item) {
+			return;
+		}
+		item.image = image;
+	}
+
 	private scheduleThreadRender(): void {
 		if (this.renderHandle !== undefined) {
 			return;
@@ -2918,8 +3318,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const win = getWindow(this.threadInner);
 		this.renderHandle = win.requestAnimationFrame(() => {
 			this.renderHandle = undefined;
+			this.persistInputState();
 			this.renderThread(this.stickToBottom);
 			this._onDidChangeDock.fire();
+			const last = this.messages.at(-1);
+			if (last?.kind === 'agent' && last.activity?.streaming) {
+				this.recordReply(last, false, 'running');
+			}
 		});
 	}
 
@@ -2969,10 +3374,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const editing = this.editingUserIndex !== undefined;
 		const wasFollowUp = this.inputBox.classList.contains('follow-up');
 		this.inputBox.classList.toggle('editing', editing);
+		this.composerQueue?.element.classList.toggle('hidden', editing);
 		this.inputBox.classList.toggle('follow-up', followUp && !editing);
 		this.container.classList.toggle('follow-up', followUp && !editing);
 		this.inputBox.classList.toggle('multiline', followUp && multiline && !editing);
-		this.placeModelButton(followUp && !multiline && !editing);
+		this.placeModelButton(!editing && followUp && !multiline);
 		if (wasFollowUp !== (followUp && !editing)) {
 			this.renderSuggestChips();
 		}
@@ -3007,9 +3413,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const lineHeight = 22;
 		const value = this.inputModel?.getValue() ?? '';
 		const hasNewline = value.includes('\n');
-		const hasText = !!value.trim();
 		const editing = this.editingUserIndex !== undefined;
-		this.syncFollowUpComposer(hasNewline || editing);
 		const measure = () => {
 			const next = getWindow(this.monacoHost).getComputedStyle(this.monacoHost);
 			const nextPadX = parseFloat(next.paddingLeft) + parseFloat(next.paddingRight);
@@ -3017,29 +3421,67 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.inputEditor!.layout({ width: nextWidth, height: 0 });
 			return { next, nextWidth, rawHeight: this.inputEditor!.getContentHeight() };
 		};
-		let measured = measure();
-		const wrapped = hasText && !hasNewline && !editing && this.isFollowUpComposer() && measured.rawHeight > lineHeight + 4;
-		if (wrapped) {
-			this.syncFollowUpComposer(true);
-			measured = measure();
+		const apply = (measured: { next: CSSStyleDeclaration; nextWidth: number; rawHeight: number }, maxHeight: number) => {
+			const contentHeight = Math.min(Math.max(measured.rawHeight, lineHeight), maxHeight);
+			const padBottomTop = parseFloat(measured.next.paddingTop) + parseFloat(measured.next.paddingBottom);
+			this.monacoHost.style.height = `${contentHeight + padBottomTop}px`;
+			this.inputEditor!.layout({ width: measured.nextWidth, height: contentHeight });
+		};
+		if (editing || !this.isFollowUpComposer()) {
+			this.syncFollowUpComposer(hasNewline || editing);
+			apply(measure(), 180);
+			return;
 		}
-		const followUpSingle = !editing && this.isFollowUpComposer() && !hasNewline && !wrapped;
-		const contentHeight = followUpSingle
-			? lineHeight
-			: Math.min(Math.max(measured.rawHeight, lineHeight), 180);
-		const padBottomTop = parseFloat(measured.next.paddingTop) + parseFloat(measured.next.paddingBottom);
-		this.monacoHost.style.height = `${contentHeight + padBottomTop}px`;
-		this.inputEditor.layout({ width: measured.nextWidth, height: contentHeight });
+		// The compact pill holds a single line. Measuring in the pill layout keeps
+		// the decision stable: text that wraps there grows into the full composer,
+		// and deleting back to one line returns to the pill.
+		if (!hasNewline) {
+			this.syncFollowUpComposer(false);
+			const compact = measure();
+			if (compact.rawHeight <= lineHeight * 1.5) {
+				apply(compact, lineHeight);
+				return;
+			}
+		}
+		this.syncFollowUpComposer(true);
+		apply(measure(), 180);
+	}
+
+	/** The panel is narrow: let the tab bar shrink instead of overflowing. */
+	override get minimumWidth(): number {
+		return 120;
+	}
+
+	override getActionViewItem(action: IAction, options: IBaseActionViewItemOptions): IActionViewItem | undefined {
+		return createAgentTitleActionViewItem(
+			this.instantiationService,
+			action,
+			options,
+			this.commandService,
+			this.contextViewService,
+			this.input instanceof AgentEditorInput ? this.input.sessionId : undefined,
+		);
 	}
 
 	override async setInput(input: AgentEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		this.persistInputState();
 		await super.setInput(input, options, context, token);
+		try {
+			await input.ensureLoaded();
+		} catch (err) {
+			// A broken history entry must never block opening the editor.
+			this.logService.warn('[volt agent] failed to load session history', err);
+		}
+		if (token.isCancellationRequested || this.input !== input) {
+			return;
+		}
 		this.ensureInputEditor();
 		this.restoreInputState(input);
 		this.bindRuntimeSession();
 		this.layoutInputEditor();
-		this.inputEditor?.focus();
+		if (!options?.preserveFocus) {
+			this.inputEditor?.focus();
+		}
 	}
 
 	override clearInput(): void {
@@ -3241,6 +3683,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	override dispose(): void {
 		this.eventDisposable?.dispose();
 		this.clockTimer?.dispose();
+		this.dismissSnapshotPreview();
 		if (this.inputModel && !this.inputModel.isDisposed()) {
 			this.inputModel.dispose();
 		}

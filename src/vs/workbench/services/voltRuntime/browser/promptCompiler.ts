@@ -6,19 +6,18 @@
 import { modePolicy, VoltMode } from '../common/modes.js';
 import { IModelMessage } from '../common/providers.js';
 
-export function compilePrompt(mode: VoltMode, history: IModelMessage[], userText: string): IModelMessage[] {
+export function compilePrompt(mode: VoltMode, history: IModelMessage[], userText: string, harnessHint?: string): IModelMessage[] {
 	const policy = modePolicy(mode);
 	const system = [
 		'You are Volt, an AI coding assistant inside the Volt IDE.',
-		`Current mode: ${mode}.`,
-		policy.allowWrites ? 'You may propose file edits.' : 'Do not write or modify files. Read-only.',
-		policy.allowTerminal ? 'You may suggest terminal commands.' : 'Do not run or suggest destructive terminal commands.',
-		'When running a shell command, include a short human title of what it does (for example: "List files sorted by size with human-readable sizes"), not the raw command. Pass it as "title" in the tool input when possible.',
-		'Be concise. Stream useful answers immediately.',
+		`Mode: ${mode}.`,
+		policy.allowWrites ? 'You may edit files.' : 'Read-only. Do not modify files.',
+		policy.allowTerminal ? 'You may run terminal commands.' : 'Do not run terminal commands.',
+		'Pass a short human title with each shell command. Be concise. Stream immediately.',
 	].join(' ');
 	return [
 		{ role: 'system', content: system },
 		...history.filter(m => m.role !== 'system'),
-		{ role: 'user', content: userText },
+		{ role: 'user', content: harnessHint ? `${harnessHint}\n\n${userText}` : userText },
 	];
 }

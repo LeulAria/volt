@@ -3,20 +3,23 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, getWindow, isHTMLElement } from '../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, Dimension, getWindow, isHTMLElement } from '../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 import './media/agentEditor.css';
 import { AgentComposerChips } from './agentComposerChips.js';
+import { AgentComposerQueue } from './agentComposerQueue.js';
 import { AgentEditor, IAgentDockState, IAgentPromptDisplay } from './agentEditor.js';
-import { AGENT_SIDE_PANEL_VIEW_ID } from './agentEditorInput.js';
-import { AgentThreadView } from './agentThreadView.js';
+import { AGENT_SIDE_PANEL_VIEW_ID, AgentEditorInput } from './agentEditorInput.js';
 import { AgentSidePanel } from './agentSidePanel.js';
+import { AgentThreadView } from './agentThreadView.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from './agentTooltip.js';
 import { BrowserAgentComposer } from './browserComposer.js';
 
@@ -33,6 +36,7 @@ export class BrowserAgentDock extends Disposable {
 	private readonly floatBody: HTMLElement;
 	private readonly hitEl: HTMLElement;
 	private readonly composer: BrowserAgentComposer;
+	private readonly composerQueue: AgentComposerQueue;
 	private readonly agentStore = this._register(new MutableDisposable<DisposableStore>());
 	private agentEditor: AgentEditor | undefined;
 	private hostedThread: AgentThreadView | undefined;
@@ -44,9 +48,10 @@ export class BrowserAgentDock extends Disposable {
 	private mode: 'idle' | 'hover' | 'expanded' | 'chip' = 'idle';
 
 	constructor(
-		@IInstantiationService instantiationService: IInstantiationService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IViewsService private readonly viewsService: IViewsService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 	) {
 		super();
 		this.element = $('.volt-browser-dock');
@@ -66,14 +71,14 @@ export class BrowserAgentDock extends Disposable {
 		this.chips = this._register(instantiationService.createInstance(AgentComposerChips, {
 			dock: true,
 			onStatusClick: () => {
+				this.setFloatOpen(true);
 				this.setExpanded(true);
-				this.setFloatOpen(!this.floatOpen);
 			},
 		}));
 		this.chips.setHostOpen(false);
-		append(this.element, this.chips.element);
 
 		this.hitEl = append(this.element, $('.volt-browser-dock-hit'));
+		append(this.hitEl, this.chips.element);
 		this.shellEl = append(this.hitEl, $('.volt-browser-dock-shell'));
 		this.labelEl = append(this.shellEl, $('button.volt-browser-dock-label')) as HTMLButtonElement;
 		this.labelEl.type = 'button';
@@ -92,7 +97,7 @@ export class BrowserAgentDock extends Disposable {
 			onBlur: () => {
 				const win = getWindow(this.element);
 				win.setTimeout(() => {
-					if (this.composer.isPlusMenuOpen()) {
+					if (this.shouldStayExpanded() || this.agentEditor?.isEditingUser()) {
 						return;
 					}
 					const active = win.document.activeElement;
@@ -106,9 +111,20 @@ export class BrowserAgentDock extends Disposable {
 				}, 0);
 			},
 			onStop: () => this.stopRun(),
-			onMode: id => this.agentEditor?.setMode(id),
 			onKeepExpanded: () => this.setExpanded(true),
+			onMode: id => this.composerQueue.setMode(id),
 		}));
+		this.composerQueue = this._register(instantiationService.createInstance(AgentComposerQueue, {
+			onRemove: id => this.removeQueued(id),
+			onClear: () => this.clearQueue(),
+			onMultitask: () => {
+				this.composer.setMode('Multitask');
+				this.agentEditor?.setMode('Multitask');
+				this.composerQueue.setMode('Multitask');
+			},
+			onReorder: ids => this.reorderQueued(ids),
+		}));
+		this.hitEl.insertBefore(this.composerQueue.element, this.shellEl);
 		append(this.composerHost, this.composer.element);
 
 		this._register(addDisposableListener(this.shellEl, 'click', e => {
@@ -202,32 +218,53 @@ export class BrowserAgentDock extends Disposable {
 	}
 
 	dismissIfEmpty(): void {
-		if (this.composer.isPlusMenuOpen()) {
+		if (this.floatOpen || this.expanded || this.agentEditor?.isEditingUser() || this.composer.isPlusMenuOpen()) {
 			return;
 		}
 		this.dismissToIdle();
 	}
 
+	private eventElement(target: EventTarget | null): HTMLElement | undefined {
+		if (isHTMLElement(target)) {
+			return target;
+		}
+		const parent = (target as { parentElement?: HTMLElement | null } | null)?.parentElement;
+		return parent ?? undefined;
+	}
+
 	private isDockSurface(target: EventTarget | null): boolean {
-		if (!isHTMLElement(target)) {
+		const element = this.eventElement(target);
+		if (!element) {
 			return false;
 		}
-		return this.hitEl.contains(target)
-			|| this.chips.element.contains(target)
-			|| this.floatEl.contains(target)
-			|| !!target.closest('.volt-agent-dropdown')
-			|| !!target.closest('.volt-agent-plus-menu')
-			|| !!target.closest('.monaco-context-view')
-			|| !!target.closest('.context-view')
-			|| !!target.closest('.monaco-menu')
-			|| !!target.closest('.suggest-widget');
+		return this.hitEl.contains(element)
+			|| this.chips.element.contains(element)
+			|| this.floatEl.contains(element)
+			|| !!this.hostedThread?.element.contains(element)
+			|| !!element.closest('.volt-agent-turn')
+			|| !!element.closest('.volt-agent-composer-stack')
+			|| !!element.closest('.volt-agent-queue-card')
+			|| !!element.closest('.volt-agent-edit-slot')
+			|| !!element.closest('.volt-agent-tooltip')
+			|| !!element.closest('.volt-agent-dropdown')
+			|| !!element.closest('.volt-agent-plus-menu')
+			|| !!element.closest('.monaco-context-view')
+			|| !!element.closest('.context-view')
+			|| !!element.closest('.monaco-menu')
+			|| !!element.closest('.suggest-widget');
 	}
 
 	private onPointerDown(e: PointerEvent): void {
 		if (!this.expanded && !this.floatOpen && !this.hovered) {
 			return;
 		}
-		if (this.isDockSurface(e.target)) {
+		if (this.agentEditor?.isEditingUser() || this.isDockSurface(e.target)) {
+			return;
+		}
+		if (this.shouldStayExpanded()) {
+			this.composer.hidePlusMenu();
+			this.setFloatOpen(false);
+			this.setExpanded(true);
 			return;
 		}
 		this.dismissToIdle();
@@ -239,12 +276,9 @@ export class BrowserAgentDock extends Disposable {
 			this.setExpanded(true);
 			return;
 		}
-		if (this.isWorking()) {
+		if (this.shouldStayExpanded()) {
 			this.setFloatOpen(false);
-			return;
-		}
-		if (this.expanded && this.composer.hasDraft()) {
-			this.setFloatOpen(false);
+			this.setExpanded(true);
 			return;
 		}
 		this.hovered = false;
@@ -257,6 +291,14 @@ export class BrowserAgentDock extends Disposable {
 		return this.pendingWork || !!this.dockState()?.streaming;
 	}
 
+	private hasQueued(): boolean {
+		return (this.agentEditor?.getPromptQueue().length ?? 0) > 0;
+	}
+
+	private shouldStayExpanded(): boolean {
+		return this.isWorking() || this.composer.hasDraft() || this.hasQueued();
+	}
+
 	private stopRun(): void {
 		this.pendingWork = false;
 		this.agentEditor?.stopRun();
@@ -265,6 +307,9 @@ export class BrowserAgentDock extends Disposable {
 	}
 
 	private setExpanded(expanded: boolean): void {
+		if (this.expanded === expanded) {
+			return;
+		}
 		this.expanded = expanded;
 		if (expanded) {
 			this.composer.focus();
@@ -275,6 +320,9 @@ export class BrowserAgentDock extends Disposable {
 	}
 
 	private setFloatOpen(open: boolean): void {
+		if (this.floatOpen === open) {
+			return;
+		}
 		this.floatOpen = open;
 		if (open) {
 			this.renderFloat();
@@ -282,6 +330,10 @@ export class BrowserAgentDock extends Disposable {
 			this.restoreThread();
 		}
 		this.sync();
+		if (open) {
+			this.hostedThread?.layout();
+			this.agentEditor?.layoutThread();
+		}
 	}
 
 	private async submit(text: string, display?: IAgentPromptDisplay, openFloat = true): Promise<void> {
@@ -293,7 +345,7 @@ export class BrowserAgentDock extends Disposable {
 		this.composer.setWorking(true);
 		this.composer.clear();
 		this.setExpanded(true);
-		const editor = await this.ensureAgent(false);
+		const editor = await this.ensureBrowserAgent();
 		if (!editor) {
 			this.pendingWork = false;
 			this.composer.setWorking(false);
@@ -309,40 +361,76 @@ export class BrowserAgentDock extends Disposable {
 	}
 
 	private async openAgentsSidebar(): Promise<void> {
+		await this.revealInAgentsSidebar();
+	}
+
+	async revealInAgentsSidebar(draft?: string): Promise<void> {
+		const input = this.agentEditor?.input;
+		const sessionId = input instanceof AgentEditorInput ? input.sessionId : undefined;
+		const text = draft?.trim() || (this.composer.hasDraft() ? this.composer.getDisplayText() : '');
 		this.browserOwned = false;
 		this.agentEditor?.setBrowserHosted(false);
 		this.setFloatOpen(false);
 		this.restoreThread();
 		this.layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
-		await this.viewsService.openView(AGENT_SIDE_PANEL_VIEW_ID, true);
+		const view = await this.viewsService.openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, true);
+		if (sessionId) {
+			await view?.openSession(sessionId);
+		}
+		const editor = view?.getActiveAgentEditor();
+		if (text && editor) {
+			editor.prefillDraft(text);
+			this.composer.clear();
+		} else {
+			editor?.focus();
+		}
 		this.syncVisibility();
 	}
 
-	private async ensureAgent(show: boolean): Promise<AgentEditor | undefined> {
-		const hidden = !this.isAgentsVisible();
-		let view = this.viewsService.getViewWithId<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID);
-		if (!view) {
-			view = await this.viewsService.openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, false) ?? view;
-			if (hidden && !show) {
-				this.layoutService.setPartHidden(true, Parts.AUXILIARYBAR_PART);
-			}
+	private async ensureBrowserAgent(): Promise<AgentEditor | undefined> {
+		if (this.agentEditor) {
+			return this.agentEditor;
 		}
-		if (!view) {
+		const group = this.editorGroupsService.activeGroup;
+		if (!group) {
 			return undefined;
 		}
-		if (!view.getActiveAgentEditor()) {
-			await view.openNewAgent({ focus: false });
-		}
-		return view.getActiveAgentEditor();
+		const input = this._register(this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri()));
+		const editor = this.instantiationService.createInstance(AgentEditor, group);
+		const host = append(this.element, $('.volt-browser-dock-session'));
+		host.setAttribute('aria-hidden', 'true');
+		editor.create(host);
+		editor.layout(new Dimension(420, 560));
+		await editor.setInput(input, { preserveFocus: true }, Object.create(null), CancellationToken.None);
+		this._register(editor);
+		this.bindAgent(editor);
+		return editor;
 	}
 
 	private activeEditor(): AgentEditor | undefined {
-		const editor = this.agentEditor
-			?? this.viewsService.getViewWithId<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID)?.getActiveAgentEditor();
-		if (editor) {
-			this.bindAgent(editor);
-		}
-		return editor;
+		return this.agentEditor;
+	}
+
+	private syncQueueStack(): void {
+		const editor = this.agentEditor;
+		this.composerQueue.setMode(this.composer.mode);
+		this.composerQueue.setQueue((editor?.getPromptQueue() ?? []).map(item => ({
+			id: item.id,
+			text: item.text,
+			preview: item.display?.text ?? item.text,
+		})));
+	}
+
+	private removeQueued(id: string): void {
+		this.agentEditor?.removeQueuedPrompt(id);
+	}
+
+	private clearQueue(): void {
+		this.agentEditor?.clearPromptQueue();
+	}
+
+	private reorderQueued(ids: readonly string[]): void {
+		this.agentEditor?.reorderQueuedPrompts(ids);
 	}
 
 	private bindAgent(editor: AgentEditor): void {
@@ -353,6 +441,10 @@ export class BrowserAgentDock extends Disposable {
 		const store = new DisposableStore();
 		this.agentStore.value = store;
 		store.add(editor.onDidChangeDock(() => this.sync()));
+		store.add(editor.onDidChangeQueue(() => {
+			this.syncQueueStack();
+			this.sync();
+		}));
 		store.add(editor.onDidComposerSend(() => {
 			this.browserOwned = false;
 			editor.setBrowserHosted(false);
@@ -368,22 +460,12 @@ export class BrowserAgentDock extends Disposable {
 		});
 	}
 
-	private isAgentsVisible(): boolean {
-		return this.layoutService.isVisible(Parts.AUXILIARYBAR_PART) && this.viewsService.isViewVisible(AGENT_SIDE_PANEL_VIEW_ID);
-	}
-
 	private dockState(): IAgentDockState | undefined {
 		return this.activeEditor()?.getDockState();
 	}
 
 	private syncVisibility(): void {
 		this.element.classList.remove('hidden');
-		void this.ensureAgent(false).then(editor => {
-			if (editor) {
-				this.bindAgent(editor);
-				this.sync();
-			}
-		});
 		this.sync();
 	}
 
@@ -400,7 +482,7 @@ export class BrowserAgentDock extends Disposable {
 		const working = streaming || this.pendingWork;
 		const chipLabel = state?.status || (working ? localize('voltAgent.planningMoves', "Planning next moves") : '');
 		const showChip = !!chipLabel && (working || this.browserOwned || hasTurns);
-		if (streaming || this.pendingWork || this.composer.isPlusMenuOpen() || this.browserOwned || showChip) {
+		if (streaming || this.pendingWork || this.browserOwned || showChip || this.shouldStayExpanded()) {
 			this.expanded = true;
 		}
 		const mode: 'idle' | 'hover' | 'expanded' | 'chip' = this.expanded
@@ -413,17 +495,21 @@ export class BrowserAgentDock extends Disposable {
 		this.element.classList.toggle('float-open', this.floatOpen);
 		this.chips.setStatus({ label: chipLabel, working });
 		this.chips.setHostOpen(this.expanded);
+		this.syncQueueStack();
 		this.composer.setWorking(working);
 		this.composer.setPlaceholder(hasTurns || working
 			? localize('voltBrowser.followUpPlaceholder', "Send follow-up")
 			: localize('voltBrowser.kickoffPlaceholder', "Let's kick something off"));
 		if (this.floatOpen) {
-			this.renderFloat();
+			this.floatTitle.textContent = state?.title || localize('voltAgent.chat', "Agent");
 		}
 		this.morphTo(mode);
 	}
 
 	private morphTo(mode: 'idle' | 'hover' | 'expanded' | 'chip'): void {
+		if (this.mode === mode && mode === 'expanded') {
+			return;
+		}
 		const shell = this.shellEl;
 		const from = shell.getBoundingClientRect();
 		this.mode = mode;
@@ -451,7 +537,7 @@ export class BrowserAgentDock extends Disposable {
 				? 36
 				: mode === 'chip'
 					? 0
-					: Math.max(this.composer.element.offsetHeight, this.composerHost.scrollHeight, 44);
+					: Math.max(this.composerHost.scrollHeight, this.composer.element.offsetHeight, 44);
 		if (from.width === toWidth && from.height === toHeight && mode !== 'expanded') {
 			return;
 		}
@@ -473,15 +559,14 @@ export class BrowserAgentDock extends Disposable {
 		if (!editor || !thread) {
 			return;
 		}
+		if (this.hostedThread === thread && thread.element.parentElement === this.floatBody) {
+			return;
+		}
 		editor.setBrowserHosted(true);
 		this.floatBody.querySelector('.volt-browser-dock-empty')?.remove();
-		if (this.hostedThread !== thread || thread.element.parentElement !== this.floatBody) {
-			this.floatBody.replaceChildren();
-			thread.mount(this.floatBody);
-			this.hostedThread = thread;
-		}
-		thread.layout();
-		editor.layoutThread();
+		this.floatBody.replaceChildren();
+		thread.mount(this.floatBody);
+		this.hostedThread = thread;
 	}
 
 	private renderFloat(): void {

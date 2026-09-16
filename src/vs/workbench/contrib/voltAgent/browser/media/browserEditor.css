@@ -319,21 +319,21 @@ webview.volt-browser-frame {
 /* Compact follow-up composer: same pill as the agent window, no + / toolbar. */
 .volt-agent-input-box.follow-up.volt-browser-agent-composer,
 .volt-agent-input-box.follow-up:not(.multiline).volt-browser-agent-composer {
-	--volt-composer-bg: transparent;
-	--vscode-editor-background: transparent;
-	--vscode-editorGutter-background: transparent;
+	--volt-composer-bg: #222222;
+	--vscode-editor-background: #222222;
+	--vscode-editorGutter-background: #222222;
 	width: 100%;
 	max-width: none;
 	margin: 0;
-	background: rgba(34, 34, 34, 0.78);
+	background: #222222;
 }
 
 .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock,
 .volt-agent-input-box.follow-up:not(.multiline).volt-browser-agent-composer.dock {
-	--volt-composer-bg: transparent !important;
-	--vscode-editor-background: transparent !important;
-	--vscode-editorGutter-background: transparent !important;
-	background: transparent !important;
+	--volt-composer-bg: #222222 !important;
+	--vscode-editor-background: #222222 !important;
+	--vscode-editorGutter-background: #222222 !important;
+	background: #222222 !important;
 	border: 0;
 	box-shadow: none;
 	backdrop-filter: none;
@@ -342,12 +342,15 @@ webview.volt-browser-frame {
 
 .monaco-workbench.vs .volt-agent-input-box.follow-up.volt-browser-agent-composer,
 .monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer {
-	background: rgba(240, 240, 240, 0.82);
+	background: #ececec;
 }
 
 .monaco-workbench.vs .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock,
 .monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock {
-	background: transparent;
+	--volt-composer-bg: #ececec !important;
+	--vscode-editor-background: #ececec !important;
+	--vscode-editorGutter-background: #ececec !important;
+	background: #ececec !important;
 }
 
 .volt-browser-agent-composer .volt-agent-monaco {
@@ -375,8 +378,8 @@ webview.volt-browser-frame {
 	padding: 0 6px 0 10px;
 }
 
-.volt-browser-agent-composer:not(.dock).empty .volt-agent-model,
-.volt-browser-agent-composer:not(.dock).empty .volt-browser-composer-mic {
+.volt-browser-agent-composer:not(.dock).empty:not(.has-content) .volt-agent-model,
+.volt-browser-agent-composer:not(.dock).empty:not(.has-content) .volt-browser-composer-mic {
 	display: none !important;
 }
 
@@ -386,9 +389,11 @@ webview.volt-browser-frame {
 	margin-left: 6px;
 }
 
-/* Selection prompt: typed text uses a stacked model/send row. */
+/* Selection prompt: a mention or typed text uses a stacked model/send row. */
 .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty),
-.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty).multiline {
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty).multiline,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content.multiline {
 	display: grid !important;
 	grid-template-columns: minmax(0, 1fr) auto;
 	grid-template-areas:
@@ -406,7 +411,9 @@ webview.volt-browser-frame {
 }
 
 .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-monaco,
-.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty).multiline .volt-agent-monaco {
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content .volt-agent-monaco,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty).multiline .volt-agent-monaco,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content.multiline .volt-agent-monaco {
 	grid-area: input;
 	grid-column: 1 / -1;
 	width: 100% !important;
@@ -419,26 +426,37 @@ webview.volt-browser-frame {
 	flex: none;
 }
 
-.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-monaco .monaco-editor {
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-monaco .monaco-editor,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content .volt-agent-monaco .monaco-editor {
 	width: 100% !important;
 	max-width: 100% !important;
 }
 
-.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-placeholder {
+.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-placeholder,
+.volt-browser-agent-composer:not(.dock).has-content .volt-agent-placeholder {
 	left: 4px;
 	right: 4px;
 }
 
-.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-model {
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-model,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content .volt-agent-model {
+	display: inline-flex !important;
 	grid-area: model;
 	justify-self: start;
 	max-width: 100%;
 }
 
-.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-browser-composer-actions {
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-browser-composer-actions,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content .volt-browser-composer-actions {
+	display: flex !important;
 	grid-area: actions;
 	justify-self: end;
 	align-self: center;
+}
+
+.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-send,
+.volt-browser-agent-composer:not(.dock).has-content .volt-agent-send {
+	display: inline-flex !important;
 }
 
 .volt-browser-composer-mic {
@@ -480,8 +498,13 @@ webview.volt-browser-frame {
 	color: inherit;
 }
 
-.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-placeholder,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock .volt-agent-placeholder {
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .overflow-guard,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor-background,
@@ -497,10 +520,21 @@ webview.volt-browser-frame {
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .inputarea.ime-input,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .cursors-layer,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .view-zones,
-.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock .volt-agent-monaco,
-.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock .volt-agent-placeholder {
-	background: transparent !important;
-	background-color: transparent !important;
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock .volt-agent-monaco {
+	background: #222222 !important;
+	background-color: #222222 !important;
+}
+
+.monaco-workbench.vs .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco,
+.monaco-workbench.vs .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor,
+.monaco-workbench.vs .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor-background,
+.monaco-workbench.vs .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .monaco-editor-background,
+.monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco,
+.monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor,
+.monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor-background,
+.monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .monaco-editor-background {
+	background: #ececec !important;
+	background-color: #ececec !important;
 }
 
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .monaco-editor .focused .selected-text {
@@ -618,6 +652,10 @@ the background paints a solid square) and keep the glyph in the accent. */
 	width: min(var(--volt-dock-max), 90%);
 	min-width: 0;
 	min-height: 0;
+	flex-direction: column;
+	align-items: stretch;
+	justify-content: flex-end;
+	gap: 8px;
 }
 
 .volt-browser-dock.mode-chip .volt-browser-dock-hit {
@@ -669,11 +707,11 @@ the background paints a solid square) and keep the glyph in the accent. */
 }
 
 .volt-browser-dock.mode-expanded .volt-browser-dock-shell {
-	background: rgba(34, 34, 34, 0.9);
+	background: #222222;
 	border-radius: 22px;
 	box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
-	backdrop-filter: blur(20px);
-	-webkit-backdrop-filter: blur(20px);
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
 	cursor: default;
 	overflow: visible;
 }
@@ -685,7 +723,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 
 .monaco-workbench.vs .volt-browser-dock.mode-expanded .volt-browser-dock-shell,
 .monaco-workbench.hc-light .volt-browser-dock.mode-expanded .volt-browser-dock-shell {
-	background: rgba(246, 246, 246, 0.94);
+	background: #ececec;
 	box-shadow: 0 18px 48px rgba(0, 0, 0, 0.16);
 }
 
@@ -788,7 +826,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
-	height: 26px;
+	height: 32px;
 	padding: 0 12px 0 10px;
 	border: 1px solid rgba(255, 255, 255, 0.12);
 	border-radius: 999px;
@@ -797,7 +835,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 	font: inherit;
 	font-size: 13px;
 	font-weight: 300;
-	line-height: 26px;
+	line-height: 32px;
 	cursor: pointer;
 	box-shadow: none;
 	backdrop-filter: none;
@@ -863,6 +901,8 @@ the background paints a solid square) and keep the glyph in the accent. */
 	width: 100%;
 	display: flex;
 	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
 	opacity: 0;
 	pointer-events: none;
 	transform: translateY(6px) scale(0.98);
@@ -878,22 +918,115 @@ the background paints a solid square) and keep the glyph in the accent. */
 	transform: none;
 }
 
+.volt-browser-dock-hit > .volt-agent-composer-chips,
+.volt-browser-dock-hit > .volt-browser-dock-chips,
+.volt-browser-dock-hit > .volt-agent-composer-stack {
+	width: 100%;
+	max-width: none;
+	margin: 0;
+	opacity: 1;
+	transform: none;
+	pointer-events: auto;
+}
+
+.volt-browser-dock-hit > .volt-agent-composer-stack .volt-agent-queue-card {
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+.monaco-workbench.vs .volt-browser-dock-hit > .volt-agent-composer-stack .volt-agent-queue-card,
+.monaco-workbench.hc-light .volt-browser-dock-hit > .volt-agent-composer-stack .volt-agent-queue-card {
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
+}
+
+.volt-browser-dock:not(.mode-expanded) .volt-browser-dock-hit > .volt-agent-composer-stack {
+	display: none;
+}
+
+.volt-browser-dock-hit > .volt-browser-dock-chips:not(.is-visible) {
+	display: none;
+	height: 0;
+	margin: 0;
+	overflow: hidden;
+}
+
+.volt-browser-dock-composer .volt-agent-plus-menu,
+.volt-browser-dock-composer .volt-agent-plus-menu.volt-browser-plus-menu {
+	position: relative;
+	left: auto;
+	right: auto;
+	bottom: auto;
+	margin: 0;
+	max-width: none;
+}
+
 .volt-browser-dock.mode-expanded .volt-browser-dock-label {
 	opacity: 0 !important;
 	pointer-events: none !important;
 }
 
 .volt-browser-plus-menu {
-	position: absolute;
-	left: 0;
-	right: 0;
-	bottom: calc(100% + 8px);
+	position: relative;
+	left: auto;
+	right: auto;
+	bottom: auto;
 	width: 100%;
 	max-width: none;
 	margin: 0;
 	transform: none;
-	z-index: 12;
+	z-index: 2;
 	pointer-events: auto;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.plus-open,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.plus-open.empty,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.plus-open:not(.empty),
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.plus-open:not(.empty):not(.multiline),
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.plus-open:not(.multiline) {
+	display: grid !important;
+	grid-template-columns: auto auto 1fr auto auto;
+	grid-template-areas:
+		"menu menu menu menu menu"
+		"plus mode monaco model actions";
+	align-items: center;
+	column-gap: 2px;
+	row-gap: 8px;
+	height: auto !important;
+	min-height: 44px !important;
+	max-height: none !important;
+	border-radius: 18px;
+	padding: 8px 8px 6px;
+	flex-direction: unset;
+	flex-wrap: unset;
+}
+
+.volt-browser-agent-composer.dock.plus-open .volt-agent-plus-menu {
+	grid-area: menu;
+	width: 100%;
+}
+
+.volt-browser-agent-composer.dock.plus-open .volt-browser-composer-plus {
+	grid-area: plus;
+}
+
+.volt-browser-agent-composer.dock.plus-open .volt-agent-mode {
+	grid-area: mode;
+}
+
+.volt-browser-agent-composer.dock.plus-open .volt-agent-monaco,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.plus-open:not(.multiline) .volt-agent-monaco,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.plus-open:not(.empty):not(.multiline) .volt-agent-monaco {
+	grid-area: monaco;
+	align-self: center !important;
+}
+
+.volt-browser-agent-composer.dock.plus-open .volt-agent-model,
+.volt-browser-agent-composer.dock.plus-open:not(.multiline) .volt-agent-model {
+	grid-area: model;
+}
+
+.volt-browser-agent-composer.dock.plus-open .volt-browser-composer-actions,
+.volt-browser-agent-composer.dock.plus-open:not(.multiline) .volt-browser-composer-actions {
+	grid-area: actions;
 }
 
 .volt-browser-dock-float {
@@ -902,34 +1035,38 @@ the background paints a solid square) and keep the glyph in the accent. */
 	display: flex;
 	flex-direction: column;
 	border-radius: 14px;
-	background: rgba(34, 34, 34, 0.92);
+	background: #222222;
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-	backdrop-filter: blur(22px);
-	-webkit-backdrop-filter: blur(22px);
 	overflow: hidden;
 	opacity: 0;
-	transform: translateY(16px) scale(0.92);
+	visibility: hidden;
+	transform: translateY(10px) scale(0.98);
 	transform-origin: bottom center;
 	pointer-events: none;
+	contain: layout paint;
 	transition:
-		max-height 480ms var(--volt-dock-ease),
-		opacity 320ms var(--volt-dock-ease),
-		transform 480ms var(--volt-dock-ease),
-		box-shadow 480ms var(--volt-dock-ease);
+		opacity 160ms var(--volt-dock-ease),
+		transform 200ms var(--volt-dock-ease),
+		visibility 0s linear 160ms;
 }
 
 .volt-browser-dock.float-open .volt-browser-dock-float {
 	height: min(520px, 62vh);
 	max-height: min(520px, 62vh);
 	opacity: 1;
+	visibility: visible;
 	transform: none;
 	pointer-events: auto;
+	transition:
+		opacity 160ms var(--volt-dock-ease),
+		transform 200ms var(--volt-dock-ease),
+		visibility 0s;
 }
 
 .monaco-workbench.vs .volt-browser-dock-float,
 .monaco-workbench.hc-light .volt-browser-dock-float {
-	background: rgba(246, 246, 246, 0.96);
+	background: #f6f6f6;
 	border-color: rgba(0, 0, 0, 0.1);
 	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
 }
@@ -997,7 +1134,22 @@ the background paints a solid square) and keep the glyph in the accent. */
 }
 
 .volt-browser-dock-float-body .volt-agent-thread-inner {
-	padding: 8px 16px 16px;
+	padding: 0 16px 16px;
+}
+
+.volt-browser-dock-float-body .volt-agent-turn.user {
+	background: transparent;
+	margin: 0;
+	padding: 0;
+}
+
+.volt-browser-dock-float-body .volt-agent-turn.user::after {
+	display: none;
+}
+
+.monaco-workbench.vs .volt-browser-dock-float-body .volt-agent-turn.user,
+.monaco-workbench.hc-light .volt-browser-dock-float-body .volt-agent-turn.user {
+	background: transparent;
 }
 
 .volt-browser-dock-user {
@@ -1311,4 +1463,13 @@ the background paints a solid square) and keep the glyph in the accent. */
 	grid-area: actions;
 	order: unset;
 	justify-self: end;
+}
+
+.volt-browser-dock-session {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	pointer-events: none;
 }

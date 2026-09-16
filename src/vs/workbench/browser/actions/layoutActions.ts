@@ -168,26 +168,6 @@ export class ToggleSidebarPositionAction extends Action2 {
 
 registerAction2(ToggleSidebarPositionAction);
 
-registerAction2(class NewUntitledFileTitleBarAction extends Action2 {
-	constructor() {
-		super({
-			id: 'workbench.action.titleBar.newUntitledFile',
-			title: localize2('newAgentTitleBar', "New Agent"),
-			icon: Codicon.plus,
-			menu: {
-				id: MenuId.LayoutControlMenu,
-				group: '0_new',
-				order: 0,
-				when: IsAuxiliaryWindowContext.negate(),
-			}
-		});
-	}
-
-	override async run(accessor: ServicesAccessor): Promise<void> {
-		await accessor.get(ICommandService).executeCommand('workbench.action.newAgent');
-	}
-});
-
 const configureLayoutIcon = registerIcon('configure-layout-icon', Codicon.layout, localize('cofigureLayoutIcon', 'Icon represents workbench layout configuration.'));
 MenuRegistry.appendMenuItem(MenuId.LayoutControlMenu, {
 	submenu: MenuId.LayoutControlMenuSubmenu,

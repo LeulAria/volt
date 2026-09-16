@@ -20,6 +20,9 @@ import { IProviderProfile } from '../../common/profiles.js';
 import { IAgentMessage, IAgentProvider, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelInfo } from '../../common/providers.js';
 import { DEFAULT_ACP_CAPABILITIES } from '../../common/capabilities.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltHostToolService } from '../../common/hostTools.js';
+import { formatRunPlanHint } from '../../common/runPlan.js';
+import { loadWorkspaceRunPlanHint } from '../workspaceRunPlan.js';
 import { accessBridgeFor } from './bridges/accessBridges.js';
 import { AcpJsonRpcClient } from './acpJsonRpc.js';
 import { IModelOptionDescriptor } from '../../common/modelOptions.js';
@@ -59,6 +62,8 @@ export class AcpAgentProvider implements IAgentProvider {
 	private readonly sessions = new Map<string, IAcpSession>();
 	private readonly bridge: IProviderAccessBridge;
 	private gate: IAccessGate | undefined;
+	private runPlanHint: string | undefined;
+	private readonly hintedSessions = new Set<string>();
 
 	constructor(
 		readonly id: string,
@@ -69,6 +74,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		private readonly workspace: IWorkspaceContextService,
 		private readonly fileService: IFileService,
 		private readonly logService: ILogService,
+		private readonly hostTools?: IVoltHostToolService,
 	) {
 		this.bridge = accessBridgeFor(id);
 	}
@@ -182,7 +188,7 @@ export class AcpAgentProvider implements IAgentProvider {
 
 		const created = await client.request<ISessionNewResponse>('session/new', {
 			cwd: cwd ?? '',
-			mcpServers: [],
+			mcpServers: [...(this.hostTools?.getMcpServers() ?? [])],
 		});
 
 		const handle: IAgentSessionHandle = {
@@ -347,7 +353,7 @@ export class AcpAgentProvider implements IAgentProvider {
 
 		const prompt = live.client.request<{ stopReason?: string; usage?: unknown }>('session/prompt', {
 			sessionId: session.providerSessionId ?? session.id,
-			prompt: [{ type: 'text', text: this.withMode(msg) }],
+			prompt: [{ type: 'text', text: await this.withHarness(session, this.withMode(msg)) }],
 		}).then(result => {
 			const usage = parseTokenUsage(result);
 			if (usage) {
@@ -391,8 +397,22 @@ export class AcpAgentProvider implements IAgentProvider {
 			return;
 		}
 		this.sessions.delete(session.id);
+		this.hintedSessions.delete(session.id);
 		live.client.dispose();
 		await this.stdio.kill(live.processId);
+	}
+
+	private async withHarness(session: IAgentSessionHandle, text: string): Promise<string> {
+		if (this.hintedSessions.has(session.id)) {
+			return text;
+		}
+		this.hintedSessions.add(session.id);
+		try {
+			this.runPlanHint ??= await loadWorkspaceRunPlanHint(this.fileService, this.workspace);
+		} catch {
+			this.runPlanHint = formatRunPlanHint({ kind: 'unknown' });
+		}
+		return `${this.runPlanHint}\n\n${text}`;
 	}
 
 	private withMode(msg: IAgentMessage): string {
@@ -466,19 +486,56 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	private toolInput(update: Record<string, unknown>): string | undefined {
 		const raw = update.rawInput ?? update.input ?? update.arguments;
+		const location = this.toolLocation(update);
 		if (typeof raw === 'string' && raw.trim()) {
+			if (location && !raw.includes(location.path)) {
+				return JSON.stringify({ path: location.path, line: location.line, text: raw });
+			}
 			return raw;
 		}
 		if (raw && typeof raw === 'object') {
-			const o = raw as Record<string, unknown>;
-			for (const key of ['command', 'cmd', 'script', 'code', 'query', 'path']) {
-				if (typeof o[key] === 'string' && o[key]) {
-					return o[key] as string;
+			const o = { ...(raw as Record<string, unknown>) };
+			if (location && !this.objectHasPath(o)) {
+				o.path = location.path;
+				if (location.line !== undefined && o.line === undefined) {
+					o.line = location.line;
 				}
 			}
+			try {
+				return JSON.stringify(o);
+			} catch {
+				return undefined;
+			}
+		}
+		if (location) {
+			return JSON.stringify({ path: location.path, line: location.line });
 		}
 		const content = this.contentText(update.content);
 		return content || undefined;
+	}
+
+	private toolLocation(update: Record<string, unknown>): { path: string; line?: number } | undefined {
+		const locations = update.locations;
+		if (!Array.isArray(locations) || !locations.length) {
+			return undefined;
+		}
+		const first = locations[0];
+		if (!first || typeof first !== 'object') {
+			return undefined;
+		}
+		const rec = first as Record<string, unknown>;
+		const path = typeof rec.path === 'string' && rec.path
+			? rec.path
+			: typeof rec.uri === 'string' && rec.uri ? rec.uri : undefined;
+		if (!path) {
+			return undefined;
+		}
+		const line = Number(rec.line ?? rec.lineNumber ?? rec.line_number);
+		return { path, line: Number.isFinite(line) && line > 0 ? line : undefined };
+	}
+
+	private objectHasPath(o: Record<string, unknown>): boolean {
+		return ['path', 'file', 'uri', 'target', 'filename', 'target_file', 'targetFile', 'file_path', 'filePath'].some(key => typeof o[key] === 'string' && o[key]);
 	}
 
 	private toolCwd(update: Record<string, unknown>): string | undefined {

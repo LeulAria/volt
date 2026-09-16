@@ -33,20 +33,21 @@ import { EditorExtensions, IEditorFactoryRegistry } from '../../../common/editor
 import { Extensions as ViewExtensions, IViewContainersRegistry, IViewsRegistry, ViewContainerLocation } from '../../../common/views.js';
 import { getMultiSelectedResources, IExplorerService } from '../../files/browser/files.js';
 import { ExplorerFolderContext } from '../../files/common/files.js';
-import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
+import { GroupDirection, GroupsOrder, IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorResolverService, RegisteredEditorPriority } from '../../../services/editor/common/editorResolverService.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { AgentEditor } from './agentEditor.js';
-import { VoltBrowserEditor } from './browserEditor.js';
+import { normalizeBrowserUrl, VoltBrowserEditor } from './browserEditor.js';
 import {
 	BROWSER_EDITOR_ID,
 	OPEN_BROWSER_COMMAND_ID,
 	VoltBrowserEditorInput,
 	VoltBrowserEditorInputSerializer,
 } from './browserEditorInput.js';
+import { CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID } from '../../../services/voltRuntime/common/hostTools.js';
 import {
 	AGENT_EDITOR_ID,
 	AGENT_EDITOR_LINE_NUMBERS_SETTING,
@@ -59,12 +60,13 @@ import {
 	AGENT_FIND_TOGGLE_WHOLE_WORD_COMMAND_ID,
 	AGENT_SIDE_PANEL_ID,
 	AGENT_SIDE_PANEL_VIEW_ID,
+	AGENT_SUBMIT_COMMAND_ID,
 	AgentEditorInput,
 	AgentEditorInputSerializer,
 	NEW_AGENT_COMMAND_ID,
 	OPEN_AGENT_SIDE_PANEL_COMMAND_ID,
 } from './agentEditorInput.js';
-import { CONTEXT_AGENT_FIND_INPUT_FOCUSED, CONTEXT_AGENT_FIND_WIDGET_VISIBLE } from './agentFindWidget.js';
+import { CONTEXT_AGENT_FIND_INPUT_FOCUSED, CONTEXT_AGENT_FIND_WIDGET_VISIBLE, CONTEXT_IN_AGENT_INPUT } from './agentFindWidget.js';
 import { AgentSidePanel } from './agentSidePanel.js';
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
@@ -243,14 +245,97 @@ registerAction2(class OpenBrowserAction extends Action2 {
 		});
 	}
 
-	override async run(accessor: ServicesAccessor): Promise<void> {
+	override async run(accessor: ServicesAccessor, url?: string, title?: string): Promise<void> {
 		const editorService = accessor.get(IEditorService);
 		const editorGroupsService = accessor.get(IEditorGroupsService);
 		const instantiationService = accessor.get(IInstantiationService);
+		const resolved = typeof url === 'string' ? normalizeBrowserUrl(url) : '';
+		let heading = title;
+		if (resolved && !heading) {
+			try {
+				heading = new URL(resolved).hostname;
+			} catch {
+				heading = localize('voltBrowser.local', "Local");
+			}
+		}
+		for (const group of editorGroupsService.getGroups(GroupsOrder.GRID_APPEARANCE)) {
+			for (const editor of group.editors) {
+				if (editor instanceof VoltBrowserEditorInput) {
+					if (resolved) {
+						editor.url = resolved;
+						if (heading) {
+							editor.setTitle(heading);
+						}
+					}
+					await editorService.openEditor(editor, { pinned: true }, group);
+					const pane = group.activeEditorPane;
+					if (resolved && pane instanceof VoltBrowserEditor) {
+						pane.openUrl(resolved);
+					}
+					return;
+				}
+			}
+		}
 		const input = instantiationService.createInstance(VoltBrowserEditorInput, VoltBrowserEditorInput.getNewEditorUri());
-		await editorService.openEditor(input, { pinned: true }, editorGroupsService.mainPart.activeGroup);
+		if (resolved) {
+			input.url = resolved;
+			input.setTitle(heading || localize('voltBrowser.local', "Local"));
+		}
+		const target = pickPreviewGroup(editorGroupsService);
+		await editorService.openEditor(input, { pinned: true }, target);
+		closeEmptyEditorGroups(editorGroupsService);
 	}
 });
+
+registerAction2(class CaptureBrowserSnapshotAction extends Action2 {
+	constructor() {
+		super({
+			id: CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID,
+			title: localize2('voltAgent.captureBrowserSnapshot', "Capture Browser Snapshot"),
+			f1: false,
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<string | undefined> {
+		const editorService = accessor.get(IEditorService);
+		for (const pane of editorService.visibleEditorPanes) {
+			if (pane instanceof VoltBrowserEditor) {
+				return pane.captureSnapshot();
+			}
+		}
+		return undefined;
+	}
+});
+
+function pickPreviewGroup(editorGroupsService: IEditorGroupsService) {
+	const groups = editorGroupsService.getGroups(GroupsOrder.GRID_APPEARANCE);
+	for (const group of groups) {
+		if (group.editors.some(editor => editor instanceof VoltBrowserEditorInput)) {
+			return group;
+		}
+	}
+	const reuse = groups.find(group => group.count === 0 || group.editors.some(editor => !(editor instanceof AgentEditorInput)));
+	if (reuse) {
+		return reuse;
+	}
+	const active = editorGroupsService.activeGroup;
+	if (groups.length <= 1) {
+		return editorGroupsService.addGroup(active, GroupDirection.LEFT);
+	}
+	return groups.find(group => group !== active) ?? active;
+}
+
+function closeEmptyEditorGroups(editorGroupsService: IEditorGroupsService): void {
+	const groups = editorGroupsService.getGroups(GroupsOrder.GRID_APPEARANCE);
+	if (groups.length <= 2) {
+		return;
+	}
+	for (const group of groups) {
+		if (group.count === 0) {
+			editorGroupsService.removeGroup(group);
+		}
+	}
+}
 
 registerAction2(class MaximizeChatAction extends Action2 {
 	constructor() {
@@ -303,7 +388,8 @@ const ADD_SELECTION_TO_AGENT_COMMAND_ID = 'workbench.action.voltAgent.addSelecti
 
 const hasEditorSelection = ContextKeyExpr.and(
 	EditorContextKeys.hasNonEmptySelection,
-	ActiveEditorContext.notEqualsTo(AGENT_EDITOR_ID)
+	ActiveEditorContext.notEqualsTo(AGENT_EDITOR_ID),
+	CONTEXT_IN_AGENT_INPUT.negate(),
 );
 
 async function addEditorSelectionToAgent(accessor: ServicesAccessor): Promise<boolean> {
@@ -341,7 +427,7 @@ registerAction2(class AddSelectionToAgentAction extends Action2 {
 			f1: true,
 			precondition: hasEditorSelection,
 			keybinding: {
-				primary: KeyMod.CtrlCmd | KeyCode.KeyL,
+				primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyL,
 				weight: KeybindingWeight.WorkbenchContrib + 60,
 				when: hasEditorSelection,
 			},
@@ -541,16 +627,12 @@ registerAction2(class OpenAgentSidePanelAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AGENT_SIDE_PANEL_COMMAND_ID,
-			title: localize2('voltAgent.openSidePanel', "Open Agents Side Bar"),
+			title: localize2('voltAgent.openSidePanel', "Toggle Agents Side Bar"),
 			category: Categories.View,
 			f1: true,
 			keybinding: {
 				primary: KeyMod.CtrlCmd | KeyCode.KeyL,
-				weight: KeybindingWeight.WorkbenchContrib + 50,
-				when: ContextKeyExpr.or(
-					EditorContextKeys.hasNonEmptySelection.toNegated(),
-					ActiveEditorContext.isEqualTo(AGENT_EDITOR_ID)
-				),
+				weight: KeybindingWeight.WorkbenchContrib + 70,
 			},
 		});
 	}
@@ -558,9 +640,6 @@ registerAction2(class OpenAgentSidePanelAction extends Action2 {
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const layoutService = accessor.get(IWorkbenchLayoutService);
 		const viewsService = accessor.get(IViewsService);
-		if (await addEditorSelectionToAgent(accessor)) {
-			return;
-		}
 		const visible = layoutService.isVisible(Parts.AUXILIARYBAR_PART) && viewsService.isViewVisible(AGENT_SIDE_PANEL_VIEW_ID);
 		if (visible) {
 			layoutService.setPartHidden(true, Parts.AUXILIARYBAR_PART);
@@ -572,11 +651,47 @@ registerAction2(class OpenAgentSidePanelAction extends Action2 {
 });
 
 function getActiveAgentEditor(accessor: ServicesAccessor): AgentEditor | undefined {
-	const pane = accessor.get(IEditorService).activeEditorPane;
-	return pane instanceof AgentEditor ? pane : undefined;
+	const editorService = accessor.get(IEditorService);
+	if (editorService.activeEditorPane instanceof AgentEditor) {
+		return editorService.activeEditorPane;
+	}
+	const groups = accessor.get(IEditorGroupsService);
+	for (const group of groups.getGroups(GroupsOrder.MOST_RECENTLY_ACTIVE)) {
+		if (group.activeEditorPane instanceof AgentEditor) {
+			return group.activeEditorPane;
+		}
+	}
+	const view = accessor.get(IViewsService).getViewWithId<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID);
+	return view?.getActiveAgentEditor();
 }
 
 const agentEditorFocused = ActiveEditorContext.isEqualTo(AGENT_EDITOR_ID);
+const inAgentComposer = ContextKeyExpr.and(CONTEXT_IN_AGENT_INPUT, CONTEXT_AGENT_FIND_INPUT_FOCUSED.negate());
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: AGENT_SUBMIT_COMMAND_ID,
+			title: localize2('voltAgent.submit', "Send Agent Prompt"),
+			precondition: CONTEXT_IN_AGENT_INPUT,
+			keybinding: [
+				{
+					primary: KeyCode.Enter,
+					weight: KeybindingWeight.EditorContrib + 100,
+					when: inAgentComposer,
+				},
+				{
+					primary: KeyMod.CtrlCmd | KeyCode.Enter,
+					weight: KeybindingWeight.EditorContrib + 100,
+					when: inAgentComposer,
+				},
+			],
+		});
+	}
+	run(accessor: ServicesAccessor): void {
+		getActiveAgentEditor(accessor)?.submitComposer();
+	}
+});
 
 registerAction2(class extends Action2 {
 	constructor() {

@@ -25,6 +25,16 @@ suite('Volt risk classifier', () => {
 		assert.strictEqual(classifyRisk('edit', 'src/foo.ts'), 'low');
 	});
 
+	test('low risk run-project commands', () => {
+		assert.strictEqual(classifyRisk('shell', 'python3 -m http.server 5500 --bind 127.0.0.1'), 'low');
+		assert.strictEqual(classifyRisk('shell', 'npm run dev'), 'low');
+		assert.strictEqual(classifyRisk('shell', 'npx vite'), 'low');
+		assert.strictEqual(classifyRisk('shell', 'lsof -iTCP -sTCP:LISTEN'), 'safe');
+		assert.strictEqual(classifyRisk('shell', 'curl http://127.0.0.1:5500/'), 'low');
+		assert.strictEqual(classifyRisk('shell', 'open http://127.0.0.1:5500/'), 'low');
+		assert.strictEqual(classifyRisk('browser', 'http://127.0.0.1:5500/'), 'low');
+	});
+
 	test('medium risk install and network', () => {
 		assert.strictEqual(classifyRisk('shell', 'npm install lodash'), 'medium');
 		assert.strictEqual(classifyRisk('shell', 'curl https://example.com'), 'medium');

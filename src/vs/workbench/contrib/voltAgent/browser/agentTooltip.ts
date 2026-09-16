@@ -154,6 +154,8 @@ export class AgentTooltip extends Disposable {
 
 const TOOLTIP_ATTR = 'data-volt-tooltip';
 const TOOLTIP_KB_ATTR = 'data-volt-tooltip-kb';
+const TOOLTIP_EXTRA_ATTR = 'data-volt-tooltip-extra';
+const TOOLTIP_EXTRA_KB_ATTR = 'data-volt-tooltip-extra-kb';
 
 interface ITooltipDelegate {
 	tooltip: AgentTooltip;
@@ -167,7 +169,12 @@ function tooltipRowsFor(target: HTMLElement): IAgentTooltipRow[] {
 	if (!text) {
 		return [];
 	}
-	return [{ label: text, shortcut: target.getAttribute(TOOLTIP_KB_ATTR) ?? undefined }];
+	const rows: IAgentTooltipRow[] = [{ label: text, shortcut: target.getAttribute(TOOLTIP_KB_ATTR) ?? undefined }];
+	const extra = target.getAttribute(TOOLTIP_EXTRA_ATTR);
+	if (extra) {
+		rows.push({ label: extra, shortcut: target.getAttribute(TOOLTIP_EXTRA_KB_ATTR) ?? undefined });
+	}
+	return rows;
 }
 
 function ensureTooltipDelegate(doc: Document): ITooltipDelegate {
@@ -190,6 +197,9 @@ function ensureTooltipDelegate(doc: Document): ITooltipDelegate {
 		if (target === delegate!.current) {
 			return;
 		}
+		if (!target && (e.target as Element | null)?.closest?.('.volt-agent-tooltip')) {
+			return;
+		}
 		delegate!.current = target ?? undefined;
 		if (target) {
 			show(target);
@@ -197,7 +207,17 @@ function ensureTooltipDelegate(doc: Document): ITooltipDelegate {
 			delegate!.tooltip.hide();
 		}
 	}, true);
-	doc.addEventListener('mousedown', () => {
+	doc.addEventListener('mousedown', e => {
+		const onTooltip = (e.target as Element | null)?.closest?.('.volt-agent-tooltip');
+		if (onTooltip && delegate!.current) {
+			e.preventDefault();
+			e.stopPropagation();
+			const target = delegate!.current;
+			delegate!.current = undefined;
+			delegate!.tooltip.hide();
+			target.click();
+			return;
+		}
 		delegate!.current = undefined;
 		delegate!.tooltip.hide();
 	}, true);
@@ -208,15 +228,27 @@ function ensureTooltipDelegate(doc: Document): ITooltipDelegate {
  * Attach (or update) the shared styled tooltip on an element. Replaces the
  * native `title` attribute so every tooltip in the agent UI looks the same.
  * Optionally takes a formatted shortcut (see {@link formatAgentTooltipShortcut})
- * rendered as key chips next to the label.
+ * rendered as key chips next to the label, plus a second row for a modifier
+ * variant of the same control (for example "⌥ Replace Agent").
  */
-export function setAgentTooltip(element: HTMLElement, text: string | undefined | null, shortcut?: string): void {
+export function setAgentTooltip(element: HTMLElement, text: string | undefined | null, shortcut?: string, extra?: IAgentTooltipRow): void {
 	if (text) {
 		element.setAttribute(TOOLTIP_ATTR, text);
 		if (shortcut) {
 			element.setAttribute(TOOLTIP_KB_ATTR, shortcut);
 		} else {
 			element.removeAttribute(TOOLTIP_KB_ATTR);
+		}
+		if (extra) {
+			element.setAttribute(TOOLTIP_EXTRA_ATTR, extra.label);
+			if (extra.shortcut) {
+				element.setAttribute(TOOLTIP_EXTRA_KB_ATTR, extra.shortcut);
+			} else {
+				element.removeAttribute(TOOLTIP_EXTRA_KB_ATTR);
+			}
+		} else {
+			element.removeAttribute(TOOLTIP_EXTRA_ATTR);
+			element.removeAttribute(TOOLTIP_EXTRA_KB_ATTR);
 		}
 		element.removeAttribute('title');
 		const delegate = ensureTooltipDelegate(element.ownerDocument);
@@ -226,6 +258,8 @@ export function setAgentTooltip(element: HTMLElement, text: string | undefined |
 	} else {
 		element.removeAttribute(TOOLTIP_ATTR);
 		element.removeAttribute(TOOLTIP_KB_ATTR);
+		element.removeAttribute(TOOLTIP_EXTRA_ATTR);
+		element.removeAttribute(TOOLTIP_EXTRA_KB_ATTR);
 		const delegate = tooltipDelegates.get(element.ownerDocument);
 		if (delegate?.current === element) {
 			delegate.current = undefined;

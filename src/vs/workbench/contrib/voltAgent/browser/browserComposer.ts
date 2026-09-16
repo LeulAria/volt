@@ -11,6 +11,8 @@ import { KeyCode } from '../../../../base/common/keyCodes.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../voltSettings/browser/voltSettingsEditorInput.js';
+import { CONTEXT_IN_AGENT_INPUT } from './agentFindWidget.js';
+import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from './agentEditorInput.js';
 import { URI } from '../../../../base/common/uri.js';
 import { CodeEditorWidget } from '../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { IEditorOptions as ICodeEditorOptions } from '../../../../editor/common/config/editorOptions.js';
@@ -279,6 +281,10 @@ export class BrowserAgentComposer extends Disposable {
 		return mention;
 	}
 
+	private hasContent(): boolean {
+		return !!this.value.trim() || (this.mentionController?.displayMentions().length ?? 0) > 0;
+	}
+
 	getSubmitText(): string {
 		return this.mentionController?.serialize() || this.value.trim();
 	}
@@ -322,7 +328,7 @@ export class BrowserAgentComposer extends Disposable {
 	}
 
 	hasDraft(): boolean {
-		return !!this.value.trim();
+		return this.hasContent();
 	}
 
 	setWorking(working: boolean): void {
@@ -336,6 +342,10 @@ export class BrowserAgentComposer extends Disposable {
 
 	get mode(): string {
 		return this.currentMode;
+	}
+
+	setMode(id: string): void {
+		this.setComposerMode(id);
 	}
 
 	private setComposerMode(id: string): void {
@@ -385,6 +395,8 @@ export class BrowserAgentComposer extends Disposable {
 		this.plusMenuEl?.remove();
 		this.plusMenuEl = undefined;
 		this.plusMenuOpen = false;
+		this.element.classList.remove('plus-open');
+		this.layout();
 	}
 
 	isPlusMenuOpen(): boolean {
@@ -430,16 +442,13 @@ export class BrowserAgentComposer extends Disposable {
 			return;
 		}
 		this.callbacks.onKeepExpanded?.();
-		const host = this.element.closest('.volt-browser-dock-hit')
-			?? this.element.closest('.volt-browser-dock')
-			?? this.element.parentElement
-			?? this.element;
 		this.plusMenuStore.clear();
 		this.plusMenuEl?.remove();
 		this.plusMenuOpen = true;
+		this.element.classList.add('plus-open');
 		const menu = $('.volt-agent-plus-menu.volt-browser-plus-menu');
 		this.plusMenuEl = menu;
-		host.appendChild(menu);
+		this.element.insertBefore(menu, this.element.firstChild);
 		const search = append(menu, $('input.volt-agent-plus-search')) as HTMLInputElement;
 		search.type = 'text';
 		search.placeholder = localize('voltAgent.plusSearch', "Search skills, context, chats...");
@@ -456,14 +465,13 @@ export class BrowserAgentComposer extends Disposable {
 				|| option.description.toLowerCase().includes(q)
 			);
 			for (const option of modes) {
-				const item = append(list, $('button.volt-agent-dropdown-item.plus-mode')) as HTMLButtonElement;
+				const item = append(list, $('button.volt-agent-plus-chip.plus-mode')) as HTMLButtonElement;
 				if (option.id === this.currentMode) {
 					item.classList.add('active');
 				}
-				const icon = append(item, $('span.icon'));
-				icon.appendChild(createModeIcon(option.icon));
+				item.appendChild(createModeIcon(option.icon));
 				append(item, $('span.label')).textContent = option.label;
-				append(item, $('span.desc')).textContent = option.description;
+				setAgentTooltip(item, option.description);
 				itemsStore.add(addDisposableListener(item, 'click', e => {
 					e.preventDefault();
 					e.stopPropagation();
@@ -485,9 +493,8 @@ export class BrowserAgentComposer extends Disposable {
 				append(list, $('.volt-agent-dropdown-sep'));
 			}
 			for (const action of actions) {
-				const item = append(list, $('button.volt-agent-dropdown-item.plus-action')) as HTMLButtonElement;
-				const icon = append(item, $('span.icon'));
-				icon.appendChild(action.id === 'files'
+				const item = append(list, $('button.volt-agent-plus-chip.plus-action')) as HTMLButtonElement;
+				item.appendChild(action.id === 'files'
 					? createPaperclipIcon()
 					: action.id === 'model'
 						? createCubeIcon()
@@ -505,7 +512,7 @@ export class BrowserAgentComposer extends Disposable {
 					}
 				}
 				if (action.id === 'mcp') {
-					append(append(item, $('span.meta')), createChevronRightIcon());
+					append(item, createChevronRightIcon());
 				}
 				itemsStore.add(addDisposableListener(item, 'click', e => {
 					e.preventDefault();
@@ -545,11 +552,13 @@ export class BrowserAgentComposer extends Disposable {
 		}));
 		this.plusMenuStore.add(toDisposable(() => {
 			menu.remove();
+			this.element.classList.remove('plus-open');
 			if (this.plusMenuEl === menu) {
 				this.plusMenuEl = undefined;
 				this.plusMenuOpen = false;
 			}
 		}));
+		this.layout();
 		scheduleAtNextAnimationFrame(getWindow(menu), () => search.focus());
 	}
 
@@ -572,7 +581,7 @@ export class BrowserAgentComposer extends Disposable {
 			CodeEditorWidget,
 			this.monacoHost,
 			this.getEditorOptions(),
-			Object.create(null)
+			{ contextKeyValues: { [CONTEXT_IN_AGENT_INPUT.key]: true } }
 		));
 		this.editor.setModel(this.model);
 		this.mentionController = this._register(this.instantiationService.createInstance(AgentMentionController, this.editor));
@@ -608,10 +617,10 @@ export class BrowserAgentComposer extends Disposable {
 				this.submit();
 				return;
 			}
-			if (e.keyCode === KeyCode.KeyL && (e.metaKey || e.ctrlKey)) {
+			if (e.keyCode === KeyCode.KeyL && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				e.preventDefault();
 				e.stopPropagation();
-				this.callbacks.onPrefill(this.getSubmitText());
+				void this.commandService.executeCommand(OPEN_AGENT_SIDE_PANEL_COMMAND_ID);
 			}
 		}));
 		this.syncPlaceholder();
@@ -619,14 +628,15 @@ export class BrowserAgentComposer extends Disposable {
 	}
 
 	private syncPlaceholder(): void {
-		this.placeholderEl.classList.toggle('hidden', !!this.model?.getValue());
+		this.placeholderEl.classList.toggle('hidden', this.hasContent());
 	}
 
-	/** Empty composer stays a single-line pill; typing reveals the model row. */
+	/** Empty composer stays a single-line pill; a mention or typed text reveals model + send. */
 	private syncSend(): void {
-		const hasText = !!this.value.trim();
-		this.element.classList.toggle('empty', !hasText && !this.working);
-		const kind: 'mic' | 'send' | 'stop' = this.working ? 'stop' : hasText ? 'send' : 'mic';
+		const hasContent = this.hasContent();
+		this.element.classList.toggle('empty', !hasContent && !this.working);
+		this.element.classList.toggle('has-content', hasContent || this.working);
+		const kind: 'mic' | 'send' | 'stop' = this.working ? 'stop' : hasContent ? 'send' : 'mic';
 		if (this.sendKind === kind && this.sendButton.childElementCount) {
 			return;
 		}
@@ -689,6 +699,9 @@ export class BrowserAgentComposer extends Disposable {
 			automaticLayout: false,
 			dropIntoEditor: { enabled: true },
 			scrollBeyondLastLine: false,
+			acceptSuggestionOnEnter: 'off',
+			quickSuggestions: { other: 'off', comments: 'off', strings: 'off' },
+			suggestOnTriggerCharacters: false,
 			ariaLabel: localize('voltBrowser.inputAria', "Browser selection input"),
 			scrollbar: {
 				vertical: 'auto',

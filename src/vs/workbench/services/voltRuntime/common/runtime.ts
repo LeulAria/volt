@@ -37,6 +37,8 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	readonly onDidChangeAccess: Event<void>;
 
 	getOrCreateSession(key: string): IVoltSession;
+	/** Restore a session's model transcript from durable history when it has none yet. */
+	seedSession(key: string, messages: readonly { role: 'user' | 'assistant'; content: string }[]): void;
 	send(sessionId: string, request: IVoltSendRequest): Promise<string>;
 	cancel(sessionId: string): Promise<void>;
 	onEvent(sessionId: string, listener: (e: IVoltEventEnvelope) => void): IDisposable;

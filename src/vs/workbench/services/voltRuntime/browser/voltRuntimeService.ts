@@ -31,10 +31,13 @@ import { resolveTabModel } from '../common/modelAccess.js';
 import { IAgentRuntimeService, IVoltTaskModels } from '../common/runtime.js';
 import { IVoltRunSnapshot, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltHostToolService } from '../common/hostTools.js';
 import { AcpAgentProvider } from './agents/acpProvider.js';
+import './hostToolService.js';
 import { CLI_AGENT_DEFINITIONS, cliAgentDefinition, detectCliAgent } from './cliAgents.js';
 import { NullVoltStdioService } from './nullStdioService.js';
 import { compilePrompt } from './promptCompiler.js';
+import { loadWorkspaceRunPlanHint } from './workspaceRunPlan.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { GeminiProvider } from './providers/gemini.js';
 import { OllamaProvider } from './providers/ollama.js';
@@ -85,6 +88,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly pendingApprovals = new Map<string, { resolve: (decision: IAccessDecision) => void; request: IAccessRequest }>();
 	private receipts: IExecutionReceipt[] = [];
 	private saveAccessHandle: ReturnType<typeof setTimeout> | undefined;
+	private runPlanHint: string | undefined;
 
 	private readonly _onDidChangeCatalog = this._register(new Emitter<void>());
 	readonly onDidChangeCatalog: Event<void> = this._onDidChangeCatalog.event;
@@ -109,6 +113,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@IFileService private readonly fileService: IFileService,
 		@ILogService private readonly logService: ILogService,
 		@IVoltStdioService private readonly stdio: IVoltStdioService,
+		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
 	) {
 		super();
 		this.registerProviders();
@@ -132,6 +137,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.sessions.set(key, session);
 		}
 		return session;
+	}
+
+	seedSession(key: string, messages: readonly { role: 'user' | 'assistant'; content: string }[]): void {
+		const session = this.getOrCreateSession(key) as ISessionState;
+		if (session.messages.length || session.activeRun) {
+			return;
+		}
+		session.messages = messages.filter(message => message.content.trim()).map(message => ({ role: message.role, content: message.content }));
 	}
 
 	async send(sessionId: string, request: IVoltSendRequest): Promise<string> {
@@ -746,6 +759,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		await this.executeModel(session, runId, request, profile, item);
 	}
 
+	private async harnessHint(): Promise<string | undefined> {
+		if (this.runPlanHint !== undefined) {
+			return this.runPlanHint || undefined;
+		}
+		try {
+			this.runPlanHint = await loadWorkspaceRunPlanHint(this.fileService, this.workspace);
+		} catch {
+			this.runPlanHint = '';
+		}
+		return this.runPlanHint || undefined;
+	}
+
 	private async executeModel(session: ISessionState, runId: string, request: IVoltSendRequest, profile: IProviderProfile, item: IVoltCatalogItem): Promise<void> {
 		const provider = this.modelProviders.get(profile.providerId);
 		if (!provider) {
@@ -754,7 +779,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
-		const messages = compilePrompt(request.mode, session.messages.slice(0, -1), request.text);
+		const firstTurn = session.messages.filter(message => message.role === 'user').length <= 1;
+		const messages = compilePrompt(request.mode, session.messages.slice(0, -1), request.text, firstTurn ? await this.harnessHint() : undefined);
 		let assistant = '';
 		try {
 			for await (const event of provider.stream({
@@ -870,11 +896,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.modelProviders.set(provider.id, provider);
 		}
 		for (const def of CLI_AGENT_DEFINITIONS) {
-			const provider = new AcpAgentProvider(def.id, def.label, def.commands[0], [...def.acpArgs], this.stdio, this.workspace, this.fileService, this.logService);
+			const provider = new AcpAgentProvider(def.id, def.label, def.commands[0], [...def.acpArgs], this.stdio, this.workspace, this.fileService, this.logService, this.hostTools);
 			provider.setAccessGate(this.accessGate);
 			this.agentProviders.set(provider.id, provider);
 		}
-		const generic = new AcpAgentProvider('acp-generic', 'Agent', 'agent', ['acp'], this.stdio, this.workspace, this.fileService, this.logService);
+		const generic = new AcpAgentProvider('acp-generic', 'Agent', 'agent', ['acp'], this.stdio, this.workspace, this.fileService, this.logService, this.hostTools);
 		generic.setAccessGate(this.accessGate);
 		this.agentProviders.set(generic.id, generic);
 	}

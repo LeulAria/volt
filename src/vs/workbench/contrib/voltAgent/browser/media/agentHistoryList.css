@@ -1,0 +1,280 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.volt-agent-history {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	font-size: 12px;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-history-search {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	margin: 6px 8px 2px;
+	border-radius: 6px;
+	background: var(--vscode-input-background, rgba(255, 255, 255, 0.04));
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-history.compact .volt-agent-history-search {
+	margin: 0;
+	border-radius: 8px 8px 0 0;
+	border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+	background: transparent;
+	padding: 8px 12px;
+}
+
+.volt-agent-history-search .codicon {
+	font-size: 14px;
+	flex: none;
+}
+
+.volt-agent-history.compact .volt-agent-history-search .codicon {
+	display: none;
+}
+
+.volt-agent-history-search-input {
+	flex: 1;
+	min-width: 0;
+	border: 0 !important;
+	outline: none !important;
+	box-shadow: none !important;
+	background: transparent;
+	color: var(--vscode-input-foreground, var(--vscode-foreground));
+	font: inherit;
+	padding: 0;
+}
+
+.volt-agent-history-search-input::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
+.volt-agent-history-scroll {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.volt-agent-history-scroll > .volt-agent-history-list {
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	box-sizing: border-box;
+	padding: 2px 8px 8px;
+	outline: none;
+}
+
+.volt-agent-history.compact .volt-agent-history-scroll {
+	max-height: min(560px, 70vh);
+}
+
+.volt-agent-history.compact .volt-agent-history-scroll > .volt-agent-history-list {
+	padding: 4px;
+}
+
+.volt-agent-history-empty {
+	padding: 14px 10px;
+	color: var(--vscode-descriptionForeground);
+	text-align: center;
+}
+
+.volt-agent-history-heading {
+	padding: 12px 8px 4px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	user-select: none;
+}
+
+.volt-agent-history-group.pinned + .volt-agent-history-group .volt-agent-history-heading {
+	margin-top: 4px;
+}
+
+.volt-agent-history.compact .volt-agent-history-group.pinned {
+	padding-bottom: 4px;
+	border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+}
+
+.volt-agent-history.compact .volt-agent-history-group.pinned .volt-agent-history-heading {
+	display: none;
+}
+
+.volt-agent-history-item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 8px;
+	border-radius: 6px;
+	cursor: pointer;
+	outline: none;
+	user-select: none;
+}
+
+.volt-agent-history.compact .volt-agent-history-item {
+	padding: 4px 8px;
+}
+
+.volt-agent-history-item:hover,
+.volt-agent-history-item:focus-visible,
+.volt-agent-history-more:hover,
+.volt-agent-history-more:focus-visible {
+	background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
+}
+
+.volt-agent-history-item.active {
+	background: var(--vscode-list-activeSelectionBackground, rgba(255, 255, 255, 0.09));
+	color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+}
+
+.volt-agent-history-item .status {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-history-item .status .codicon {
+	font-size: 15px;
+}
+
+.volt-agent-history-item.running .status {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-history-item .copy {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.volt-agent-history-item .title,
+.volt-agent-history-item .summary,
+.volt-agent-history-item .workspace {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-agent-history-item .title {
+	font-size: 12.5px;
+	line-height: 17px;
+}
+
+.volt-agent-history.compact .volt-agent-history-item .title {
+	font-size: 12px;
+}
+
+.volt-agent-history-item .summary,
+.volt-agent-history-item .workspace {
+	font-size: 11px;
+	line-height: 15px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-history-item .workspace {
+	font-size: 10px;
+	opacity: 0.8;
+}
+
+.volt-agent-history-item .draft-dot {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	margin-right: 4px;
+	border-radius: 50%;
+	background: var(--vscode-charts-blue, var(--vscode-focusBorder, #3794ff));
+}
+
+.volt-agent-history-item .actions {
+	position: absolute;
+	right: 4px;
+	top: 50%;
+	transform: translateY(-50%);
+	display: none;
+	align-items: center;
+	gap: 2px;
+	padding-left: 12px;
+	background: linear-gradient(to right, transparent, var(--vscode-list-hoverBackground, rgba(30, 30, 30, 1)) 12px);
+}
+
+.volt-agent-history-item:hover .actions,
+.volt-agent-history-item:focus-within .actions {
+	display: flex;
+}
+
+.volt-agent-history-item:hover .draft-dot,
+.volt-agent-history-item:focus-within .draft-dot {
+	visibility: hidden;
+}
+
+.volt-agent-history-action {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	cursor: pointer;
+	padding: 0;
+}
+
+.volt-agent-history-action:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+}
+
+.volt-agent-history-action .codicon {
+	font-size: 14px;
+}
+
+.volt-agent-history-more {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	box-sizing: border-box;
+	padding: 4px 8px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	outline: none;
+}
+
+.volt-agent-history-more .codicon {
+	width: 16px;
+	font-size: 15px;
+}
+
+/* Clock dropdown */
+.context-view .volt-agent-dropdown.history {
+	width: 300px;
+	max-width: 320px;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+/* Tab-bar clock stays highlighted while its menu is open. */
+.volt-agent-history-open {
+	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+	border-radius: 5px;
+}

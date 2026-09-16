@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, getWindow } from '../../../../base/browser/dom.js';
+import { $, append, getWindow } from '../../../../base/browser/dom.js';
 import { DomScrollableElement } from '../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
@@ -40,6 +40,44 @@ export class AgentThreadView extends Disposable {
 		node.style.width = '100%';
 		node.style.height = '100%';
 		this.element.appendChild(node);
+		append(this.element, $('.volt-agent-thread-fade.top'));
+		append(this.element, $('.volt-agent-thread-fade.bottom'));
+		this._register(this.scroll.onScroll(() => this.syncStuckTurns()));
+	}
+
+	/** Pins fade edges and marks the sent card that is stuck at the top. */
+	syncStuckTurns(): void {
+		const viewport = this.scroll.getDomNode();
+		if (!viewport.isConnected) {
+			return;
+		}
+		const pos = this.scroll.getScrollPosition();
+		const height = viewport.clientHeight;
+		const scrollHeight = Math.max(height, this.inner.scrollHeight);
+		const scrolled = pos.scrollTop > 1;
+		const atEnd = pos.scrollTop + height >= scrollHeight - 2;
+		this.element.classList.toggle('scrolled', scrolled);
+		this.element.classList.toggle('at-end', atEnd);
+
+		const viewportTop = this.inner.getBoundingClientRect().top;
+		const targetWindow = getWindow(this.inner);
+		for (const turn of this.inner.querySelectorAll<HTMLElement>('.volt-agent-turn.user')) {
+			const exchange = turn.parentElement;
+			if (!exchange) {
+				turn.classList.remove('stuck');
+				continue;
+			}
+			const rect = turn.getBoundingClientRect();
+			const exchangeRect = exchange.getBoundingClientRect();
+			// A sent card is pinned once sticky positioning has displaced it from
+			// its natural spot (the top of its exchange, offset by its own margin)
+			// and its exchange is still in view. Comparing against the natural
+			// position keeps the very first card unpinned while at rest.
+			const marginTop = parseFloat(targetWindow.getComputedStyle(turn).marginTop) || 0;
+			const naturalTop = exchangeRect.top + marginTop;
+			const stuck = rect.top > naturalTop + 0.5 && exchangeRect.bottom > viewportTop;
+			turn.classList.toggle('stuck', stuck);
+		}
 	}
 
 	rememberHome(): void {
@@ -82,6 +120,9 @@ export class AgentThreadView extends Disposable {
 		if (!this.element.isConnected) {
 			return;
 		}
-		void getWindow(this.element).requestAnimationFrame(() => this.scroll.scanDomNode());
+		void getWindow(this.element).requestAnimationFrame(() => {
+			this.scroll.scanDomNode();
+			this.syncStuckTurns();
+		});
 	}
 }

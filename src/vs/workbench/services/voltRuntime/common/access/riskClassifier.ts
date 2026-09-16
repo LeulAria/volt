@@ -17,10 +17,13 @@ export function maxRisk(a: RiskLevel, b: RiskLevel): RiskLevel {
 	return RISK_RANK[a] >= RISK_RANK[b] ? a : b;
 }
 
-const SAFE_COMMANDS = /^(ls|pwd|cd|echo|cat|head|tail|less|more|file|which|whoami|date|uname|dirname|basename|wc|sort|uniq|true|false|type|command)\b/;
+const SAFE_COMMANDS = /^(ls|pwd|cd|echo|cat|head|tail|less|more|file|which|whoami|date|uname|dirname|basename|wc|sort|uniq|true|false|type|command|sleep|lsof|netstat|ss)\b/;
 const SAFE_GIT = /^git\s+(status|diff|log|show|branch|rev-parse|describe|remote|stash\s+list|blame|shortlog)\b/;
 const SAFE_SEARCH = /^(grep|rg|find|fd|ag|ack|git\s+grep)\b/;
 const LOW_TEST = /^(npm|pnpm|yarn|bun|npx)\s+(test|run\s+test|run\s+lint|run\s+typecheck|run\s+check)\b|^(tsc|eslint|prettier|vitest|jest|mocha|pytest|cargo\s+test|go\s+test|make\s+test)\b/;
+const LOW_DEV = /^(npm|pnpm|yarn|bun|npx)\s+(run\s+)?(dev|start|preview|serve)\b|^(npx\s+)?(vite|next(\s+dev)?|nuxt|astro|http-server|serve)\b|^python3?\s+(-m\s+)?http\.server\b|^php\s+-S\b/;
+const LOCAL_HOST = /https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])\b|^(localhost|127\.0\.0\.1|0\.0\.0\.0)\b/i;
+const LOW_LOCAL_NET = /^(curl|wget|http|open|xdg-open|start)\b/;
 const MEDIUM_INSTALL = /^(npm|pnpm|yarn|bun|npx)\s+(i|install|add|remove|uninstall)\b|^(pip|pip3|poetry|uv|cargo|go)\s+(install|add|get)\b/;
 const MEDIUM_NET = /^(curl|wget|http|nc|ncat|ssh|scp|rsync|ftp)\b/;
 const HIGH_PUSH = /^git\s+push\b/;
@@ -58,10 +61,16 @@ function classifyCommand(command: string): RiskLevel {
 	if (HIGH_DELETE.test(trimmed) || HIGH_PUSH.test(trimmed) || HIGH_DB.test(trimmed)) {
 		return 'high';
 	}
-	if (MEDIUM_INSTALL.test(trimmed) || MEDIUM_NET.test(trimmed)) {
+	if (MEDIUM_INSTALL.test(trimmed)) {
 		return 'medium';
 	}
-	if (LOW_TEST.test(trimmed)) {
+	if (LOW_LOCAL_NET.test(trimmed) && LOCAL_HOST.test(trimmed)) {
+		return 'low';
+	}
+	if (MEDIUM_NET.test(trimmed)) {
+		return 'medium';
+	}
+	if (LOW_DEV.test(trimmed) || LOW_TEST.test(trimmed)) {
 		return 'low';
 	}
 	if (SAFE_GIT.test(trimmed) || SAFE_SEARCH.test(trimmed) || SAFE_COMMANDS.test(trimmed)) {
@@ -102,7 +111,7 @@ export function classifyRisk(action: PermissionAction, resource: string): RiskLe
 		return 'medium';
 	}
 	if (action === 'network' || action === 'web' || action === 'browser') {
-		return 'medium';
+		return LOCAL_HOST.test(resource) ? 'low' : 'medium';
 	}
 	if (action === 'subagent') {
 		return 'medium';

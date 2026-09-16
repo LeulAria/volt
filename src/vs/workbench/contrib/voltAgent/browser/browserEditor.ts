@@ -8,6 +8,8 @@ import { $, addDisposableListener, append, Dimension, getWindow } from '../../..
 import { StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { toAction } from '../../../../base/common/actions.js';
+import { timeout } from '../../../../base/common/async.js';
+import { encodeBase64, VSBuffer } from '../../../../base/common/buffer.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
@@ -27,11 +29,14 @@ import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../common/editor.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { IHostService } from '../../../services/host/browser/host.js';
 import { IAgentMention, browserMentionColor } from './agentMentions.js';
 import { BrowserAgentComposer } from './browserComposer.js';
+import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from './agentEditorInput.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from './agentTooltip.js';
 import { BrowserAgentDock } from './browserDock.js';
 import { DEFAULT_BROWSER_URL, VoltBrowserEditorInput } from './browserEditorInput.js';
+import { sanitizeBrowserUrl } from './localPreview.js';
 
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const PROBE_SCRIPT = `(() => {
@@ -84,6 +89,12 @@ const PROBE_SCRIPT = `(() => {
 	};
 })()`;
 
+interface IVoltNativeImage {
+	isEmpty?(): boolean;
+	toDataURL?(): string;
+	toPNG?(): Uint8Array;
+}
+
 interface IVoltWebview extends HTMLElement {
 	src: string;
 	getURL?(): string;
@@ -94,6 +105,7 @@ interface IVoltWebview extends HTMLElement {
 	goForward(): void;
 	reload(): void;
 	loadURL?(url: string): void;
+	capturePage?(): Promise<IVoltNativeImage>;
 	executeJavaScript?(code: string, userGesture?: boolean): Promise<unknown>;
 	setUserAgent?(userAgent: string): void;
 }
@@ -125,17 +137,37 @@ interface IBrowserSelection {
 }
 
 export function normalizeBrowserUrl(value: string): string {
+	const sanitized = sanitizeBrowserUrl(value);
+	if (sanitized) {
+		return sanitized;
+	}
 	const trimmed = value.trim();
 	if (!trimmed) {
 		return DEFAULT_BROWSER_URL;
 	}
 	if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
-		return trimmed;
+		return sanitizeBrowserUrl(trimmed) ?? trimmed.split(/[\s\]>]/)[0] ?? trimmed;
 	}
 	if (/^localhost(:\d+)?(\/|$)/i.test(trimmed) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/|$)/.test(trimmed)) {
-		return `http://${trimmed}`;
+		return `http://${trimmed.split(/[\s\]>]/)[0]}`;
 	}
-	return `https://${trimmed}`;
+	return `https://${trimmed.split(/[\s\]>]/)[0]}`;
+}
+
+function browserUrlNeedsRewrite(raw: string, clean: string): boolean {
+	if (/\]\(|%5[dD]\(|\((https?:\/\/)|\*+/i.test(raw)) {
+		return true;
+	}
+	try {
+		const current = new URL(raw);
+		const next = new URL(clean);
+		return current.origin !== next.origin
+			|| current.pathname !== next.pathname
+			|| current.search !== next.search
+			|| current.hash !== next.hash;
+	} catch {
+		return raw !== clean;
+	}
 }
 
 export class VoltBrowserEditor extends EditorPane {
@@ -166,6 +198,7 @@ export class VoltBrowserEditor extends EditorPane {
 	private webview: IVoltWebview | undefined;
 	private readonly webviewListeners = this._register(new DisposableStore());
 	private guestReady = false;
+	private guestIdle = false;
 	private pendingUrl: string | undefined;
 	private designMode = false;
 	private sourceOpen = false;
@@ -188,6 +221,7 @@ export class VoltBrowserEditor extends EditorPane {
 		@IEditorService private readonly editorService: IEditorService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IHostService private readonly hostService: IHostService,
 	) {
 		super(VoltBrowserEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -254,6 +288,13 @@ export class VoltBrowserEditor extends EditorPane {
 			if (e.key === 'Enter') {
 				e.preventDefault();
 				this.navigate(this.urlInput.value);
+				return;
+			}
+			const event = new StandardKeyboardEvent(e);
+			if (event.equals(KeyMod.CtrlCmd | KeyCode.KeyL)) {
+				e.preventDefault();
+				e.stopPropagation();
+				void this.commandService.executeCommand(OPEN_AGENT_SIDE_PANEL_COMMAND_ID);
 			}
 		}));
 		this._register(addDisposableListener(sourceClose, 'click', () => this.setSourceOpen(false)));
@@ -345,6 +386,9 @@ export class VoltBrowserEditor extends EditorPane {
 				this.loadGuest(url);
 			}
 		});
+		on('did-start-loading', () => {
+			this.guestIdle = false;
+		});
 		on('did-navigate', e => this.syncFromGuest((e as Event & { url?: string }).url));
 		on('did-navigate-in-page', e => this.syncFromGuest((e as Event & { url?: string }).url));
 		on('page-title-updated', e => {
@@ -353,7 +397,10 @@ export class VoltBrowserEditor extends EditorPane {
 				this.browserInput()?.setTitle(title);
 			}
 		});
-		on('did-stop-loading', () => this.syncFromGuest());
+		on('did-stop-loading', () => {
+			this.guestIdle = true;
+			this.syncFromGuest();
+		});
 		on('did-fail-load', e => {
 			const fail = e as Event & { isMainFrame?: boolean; errorCode?: number; errorDescription?: string };
 			if (fail.isMainFrame === false || fail.errorCode === -3) {
@@ -362,7 +409,10 @@ export class VoltBrowserEditor extends EditorPane {
 			this.showError(fail.errorDescription || localize('voltBrowser.loadFailed', "This page could not be loaded."));
 			this.syncNavButtons();
 		});
-		on('did-finish-load', () => this.hideError());
+		on('did-finish-load', () => {
+			this.guestIdle = true;
+			this.hideError();
+		});
 		on('new-window', e => {
 			const url = (e as Event & { url?: string }).url;
 			if (url) {
@@ -382,14 +432,16 @@ export class VoltBrowserEditor extends EditorPane {
 		if (!webview) {
 			return;
 		}
+		const href = sanitizeBrowserUrl(url) ?? url;
+		this.guestIdle = false;
 		this.callGuest(() => {
 			if (typeof webview.loadURL === 'function') {
-				void Promise.resolve(webview.loadURL(url)).catch(() => {
+				void Promise.resolve(webview.loadURL(href)).catch(() => {
 					// ERR_ABORTED is normal when a load is replaced or the editor reloads.
 				});
 				return;
 			}
-			webview.setAttribute('src', url);
+			webview.setAttribute('src', href);
 		});
 	}
 
@@ -407,6 +459,75 @@ export class VoltBrowserEditor extends EditorPane {
 	private browserInput(): VoltBrowserEditorInput | undefined {
 		const input = this.input;
 		return input instanceof VoltBrowserEditorInput ? input : undefined;
+	}
+
+	openUrl(value: string): void {
+		this.navigate(value);
+	}
+
+	async captureSnapshot(): Promise<string | undefined> {
+		await this.waitForGuestIdle();
+		for (let attempt = 0; attempt < 4; attempt++) {
+			const image = await this.tryCaptureSnapshot();
+			if (image) {
+				return image;
+			}
+			await timeout(300);
+		}
+		return undefined;
+	}
+
+	private async waitForGuestIdle(timeoutMs = 8000): Promise<void> {
+		const started = Date.now();
+		while (!this.guestIdle || !this.guestReady) {
+			if (Date.now() - started >= timeoutMs) {
+				break;
+			}
+			await timeout(80);
+		}
+		await timeout(350);
+	}
+
+	private async tryCaptureSnapshot(): Promise<string | undefined> {
+		if (this.errorEl && !this.errorEl.classList.contains('hidden')) {
+			return undefined;
+		}
+		const webview = this.webview;
+		if (webview?.capturePage) {
+			try {
+				const image = await webview.capturePage();
+				if (image && !image.isEmpty?.()) {
+					const dataUrl = image.toDataURL?.();
+					if (dataUrl?.startsWith('data:image/')) {
+						return dataUrl;
+					}
+					const png = image.toPNG?.();
+					if (png?.byteLength) {
+						return `data:image/png;base64,${encodeBase64(VSBuffer.wrap(png))}`;
+					}
+				}
+			} catch {
+				// Guest capture throws until the page has painted.
+			}
+		}
+		const frame = (webview ?? this.stage)?.getBoundingClientRect();
+		if (!frame || frame.width < 8 || frame.height < 8) {
+			return undefined;
+		}
+		try {
+			const shot = await this.hostService.getScreenshot({
+				x: Math.round(frame.x),
+				y: Math.round(frame.y),
+				width: Math.round(frame.width),
+				height: Math.round(frame.height),
+			});
+			if (!shot?.byteLength) {
+				return undefined;
+			}
+			return `data:image/png;base64,${encodeBase64(shot)}`;
+		} catch {
+			return undefined;
+		}
 	}
 
 	private navigate(value: string): void {
@@ -439,10 +560,15 @@ export class VoltBrowserEditor extends EditorPane {
 		}
 		const href = guestUrl || webview?.getAttribute('src') || this.browserInput()?.url;
 		if (href && href !== 'about:blank') {
-			this.urlInput.value = href;
+			const clean = sanitizeBrowserUrl(href) ?? href;
+			if (clean !== href && browserUrlNeedsRewrite(href, clean)) {
+				this.navigate(clean);
+				return;
+			}
+			this.urlInput.value = clean;
 			const input = this.browserInput();
 			if (input) {
-				input.url = href;
+				input.url = clean;
 				let title: string | undefined;
 				if (this.guestReady) {
 					try {
@@ -452,7 +578,7 @@ export class VoltBrowserEditor extends EditorPane {
 					}
 				}
 				try {
-					input.setTitle(title || new URL(href).hostname);
+					input.setTitle(title || new URL(clean).hostname);
 				} catch {
 					input.setTitle(title || localize('voltBrowser.tab', "Browser"));
 				}
@@ -935,6 +1061,13 @@ export class VoltBrowserEditor extends EditorPane {
 			this.positionPrompt();
 		}
 		this.dock?.layout();
+	}
+
+	async revealAgentInSidebar(): Promise<void> {
+		const overlayDraft = this.composer && !this.promptEl.classList.contains('hidden')
+			? this.composer.getDisplayText()
+			: undefined;
+		await this.dock?.revealInAgentsSidebar(overlayDraft);
 	}
 
 	override focus(): void {

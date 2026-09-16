@@ -52,7 +52,7 @@
 .volt-agent-side-panel {
 	position: relative;
 	display: flex;
-	flex-direction: column;
+	flex-direction: row;
 	height: 100%;
 	min-height: 0;
 	background: var(--vscode-editor-background);
@@ -63,11 +63,180 @@
 	outline-offset: -2px;
 }
 
+.volt-agent-side-main {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	height: 100%;
+}
+
 .volt-agent-side-host.part.editor {
 	flex: 1;
 	min-height: 0;
 	height: 100%;
 	position: relative;
+}
+
+/* One drawer toggle, pinned to the far right of the agents panel. */
+.volt-agent-drawer-toggle {
+	position: absolute;
+	top: 5px;
+	right: 5px;
+	z-index: 20;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	padding: 0;
+	pointer-events: auto;
+}
+
+.volt-agent-drawer-toggle:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-drawer-toggle-icon {
+	width: 13px;
+	height: 13px;
+	fill: currentColor;
+}
+
+/* Tab-bar actions (+, history, more) sit quieter than the tab labels. */
+.monaco-workbench .volt-agent-side-host .editor-group-container > .title .editor-actions .action-item .action-label.codicon {
+	font-size: 14px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.monaco-workbench .volt-agent-side-host .editor-group-container > .title .editor-actions .action-item .action-label.codicon:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-side-host .editor-group-container > .title .editor-actions {
+	margin-right: 28px;
+}
+
+.drawer-open .volt-agent-side-host .editor-group-container > .title .editor-actions {
+	margin-right: 0;
+}
+
+/* Drawer */
+.volt-agent-drawer {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	width: var(--volt-agent-drawer-width, 280px);
+	/* Resizable between 200px and 280px (see the drawer sash), but never wide
+	 * enough to squeeze the editor out of the panel. */
+	max-width: calc(100% - 120px);
+	min-height: 0;
+	height: 100%;
+	box-sizing: border-box;
+	border-left: 1px solid var(--vscode-sideBar-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+	background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-side-panel:not(.drawer-open) .volt-agent-drawer {
+	display: none;
+}
+
+.volt-agent-side-panel:not(.drawer-open) > .monaco-sash {
+	display: none;
+}
+
+.volt-agent-drawer-header {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	height: 35px;
+	padding: 0 4px;
+}
+
+.volt-agent-drawer-actions {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	padding: 4px 8px 6px;
+}
+
+.volt-agent-drawer-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	box-sizing: border-box;
+	padding: 5px 8px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12.5px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-agent-drawer-row:hover,
+.volt-agent-drawer-row:focus-visible {
+	background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
+	outline: none;
+}
+
+.volt-agent-drawer-row .codicon {
+	width: 16px;
+	font-size: 15px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-drawer-row .label {
+	flex: 1;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-agent-drawer-row .keybinding {
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
+
+.volt-agent-drawer-footer {
+	flex: none;
+	display: flex;
+	justify-content: flex-end;
+	padding: 6px 8px;
+	border-top: 1px solid var(--vscode-sideBar-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25)));
+}
+
+.volt-agent-drawer-scope {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 8px;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.volt-agent-drawer-scope:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+	color: var(--vscode-foreground);
 }
 
 .volt-agent-side-host.single-agent .editor-group-container > .title .editor-actions .action-item:has(.codicon-split-horizontal),

@@ -4,10 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { VoltAccessMode } from './accessModes.js';
-import { IAccessDecision, IAccessRequest, ICompiledPolicy, ICompiledRule, PermissionEffect, maxEffect } from './accessTypes.js';
+import { IAccessDecision, IAccessRequest, ICompiledPolicy, ICompiledRule, PermissionAction, PermissionEffect, maxEffect } from './accessTypes.js';
 import { configuredDenied, lastMatch } from './policyCompiler.js';
 import { autoAllowsRisk } from './riskClassifier.js';
 import { alwaysAllowPattern } from './wildcard.js';
+
+const ROUTINE_ACTIONS = new Set<PermissionAction>(['shell', 'git', 'web', 'browser', 'network', 'read', 'search', 'question']);
 
 export interface IEvaluateOptions {
 	accessMode?: VoltAccessMode;
@@ -53,11 +55,9 @@ export function evaluateAccess(request: IAccessRequest, policy: ICompiledPolicy,
 		}
 	}
 
-	if (effect === 'ask' && options.accessMode === 'auto') {
-		if (autoAllowsRisk(request.risk) || (options.delegateMedium && request.risk === 'medium')) {
-			effect = 'allow';
-			rule = rule ?? { action: request.action, resource: '*', effect: 'allow', source: 'preset', matchesAction: () => true, matchesResource: () => true };
-		}
+	if (effect === 'ask' && shouldAutoAllow(request, options)) {
+		effect = 'allow';
+		rule = rule ?? { action: request.action, resource: '*', effect: 'allow', source: 'preset', matchesAction: () => true, matchesResource: () => true };
 	}
 
 	return {
@@ -68,6 +68,22 @@ export function evaluateAccess(request: IAccessRequest, policy: ICompiledPolicy,
 		policySource: sourceOf(rule, options.accessMode ?? 'preset'),
 		risk: request.risk,
 	};
+}
+
+function shouldAutoAllow(request: IAccessRequest, options: IEvaluateOptions): boolean {
+	if (options.accessMode === 'auto' && options.delegateMedium && request.risk === 'medium') {
+		return true;
+	}
+	if (!autoAllowsRisk(request.risk)) {
+		return false;
+	}
+	if (request.action === 'edit') {
+		return options.accessMode === 'auto' || options.accessMode === 'auto-accept-edits';
+	}
+	if (options.accessMode === 'auto') {
+		return true;
+	}
+	return ROUTINE_ACTIONS.has(request.action);
 }
 
 export function memoKey(action: string, resource: string): string {

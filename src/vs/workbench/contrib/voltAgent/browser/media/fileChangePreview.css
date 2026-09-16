@@ -1,0 +1,282 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.volt-file-preview {
+	--volt-file-preview-add: var(--vscode-chat-linesAddedForeground, var(--vscode-gitDecoration-addedResourceForeground, #3fb950));
+	--volt-file-preview-del: var(--vscode-chat-linesRemovedForeground, var(--vscode-gitDecoration-deletedResourceForeground, #f85149));
+	--volt-file-preview-insert-bg: var(--vscode-diffEditor-insertedLineBackground, color-mix(in srgb, #3fb950 18%, transparent));
+	--volt-file-preview-delete-bg: var(--vscode-diffEditor-removedLineBackground, color-mix(in srgb, #f85149 18%, transparent));
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	max-width: 100%;
+	box-sizing: border-box;
+	overflow: hidden;
+	background: transparent;
+	color: var(--vscode-editor-foreground);
+	font-size: 13px;
+	line-height: 18px;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+.volt-file-preview-head {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	width: fit-content;
+	max-width: 100%;
+	min-height: 22px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: default;
+}
+
+.volt-file-preview-head:disabled {
+	opacity: 1;
+	color: inherit;
+	cursor: default;
+	pointer-events: none;
+}
+
+.volt-file-preview.clickable .volt-file-preview-head,
+.volt-file-preview.collapsible .volt-file-preview-head {
+	cursor: pointer;
+}
+
+.volt-file-preview.clickable .volt-file-preview-head:hover,
+.volt-file-preview.collapsible .volt-file-preview-head:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-file-preview.clickable .volt-file-preview-head:focus-visible,
+.volt-file-preview.collapsible .volt-file-preview-head:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.volt-file-preview-verb {
+	flex-shrink: 0;
+	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
+	font-weight: 400;
+}
+
+.volt-file-preview-icon {
+	position: relative;
+	flex: 0 0 16px;
+	width: 16px;
+	min-width: 16px;
+	max-width: 16px;
+	height: 16px;
+	display: inline-block;
+	font-size: 16px;
+	line-height: 16px;
+	overflow: hidden;
+}
+
+.volt-file-preview.show-file-icons .volt-file-preview-icon.file-icon,
+.volt-file-preview.show-file-icons .volt-file-preview-icon.folder-icon {
+	background-image: none;
+}
+
+.volt-file-preview.show-file-icons .volt-file-preview-icon::before {
+	position: absolute;
+	inset: 0;
+	display: block;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	padding: 0;
+	background-size: 16px 16px;
+	background-repeat: no-repeat;
+	background-position: center;
+	font-size: 16px;
+	line-height: 16px;
+	text-align: center;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+.volt-file-preview-icon.codicon::before {
+	font-family: 'codicon';
+	color: var(--vscode-icon-foreground);
+}
+
+.volt-file-preview-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: color-mix(in srgb, var(--vscode-foreground) 88%, transparent);
+	font-weight: 400;
+}
+
+.volt-file-preview.clickable .volt-file-preview-name {
+	cursor: pointer;
+}
+
+.volt-file-preview.clickable .volt-file-preview-name:hover {
+	color: var(--vscode-textLink-foreground);
+	text-decoration: underline;
+}
+
+.volt-file-preview-stats {
+	display: inline-flex;
+	align-items: baseline;
+	flex-shrink: 0;
+	gap: 4px;
+	font-variant-numeric: tabular-nums;
+	font-weight: 600;
+	letter-spacing: 0;
+}
+
+.volt-file-preview-add {
+	color: var(--volt-file-preview-add);
+}
+
+.volt-file-preview-del {
+	color: var(--volt-file-preview-del);
+}
+
+.volt-file-preview-add:empty,
+.volt-file-preview-del:empty,
+.volt-file-preview-verb:empty,
+.volt-file-preview-chevron:empty {
+	display: none;
+}
+
+.volt-file-preview-chevron {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	opacity: 0.7;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-file-preview-chevron .codicon {
+	font-size: 12px;
+}
+
+.volt-file-preview-body {
+	display: none;
+	flex-direction: column;
+	min-width: 0;
+	margin-top: 4px;
+	padding: 4px 0 6px;
+	overflow: hidden;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--vscode-foreground) 4.5%, var(--vscode-editor-background, #1e1e1e));
+	font-family: var(--volt-code-font, var(--monaco-monospace-font, monospace));
+	font-size: 12px;
+	line-height: 20px;
+}
+
+.volt-file-preview.expanded.has-diff .volt-file-preview-body {
+	display: flex;
+}
+
+.volt-file-preview.card {
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--vscode-foreground) 4.5%, var(--vscode-editor-background, #1e1e1e));
+}
+
+.volt-file-preview.card .volt-file-preview-head {
+	width: 100%;
+	padding: 6px 10px;
+	border-radius: 10px 10px 0 0;
+}
+
+.volt-file-preview.card.has-diff .volt-file-preview-head {
+	border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-file-preview.card .volt-file-preview-chevron {
+	display: none;
+}
+
+.volt-file-preview.card.clickable .volt-file-preview-head:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.volt-file-preview.card .volt-file-preview-body {
+	display: flex;
+	margin-top: 0;
+	border: 0;
+	border-radius: 0 0 10px 10px;
+	background: transparent;
+}
+
+.volt-file-preview.card:not(.has-diff) .volt-file-preview-head {
+	border-radius: 10px;
+}
+
+.volt-file-preview-line {
+	display: flex;
+	align-items: stretch;
+	min-width: 0;
+	min-height: 20px;
+}
+
+.volt-file-preview-line.insert {
+	background: var(--volt-file-preview-insert-bg);
+}
+
+.volt-file-preview-line.delete {
+	background: var(--volt-file-preview-delete-bg);
+}
+
+.volt-file-preview-ln {
+	flex: 0 0 48px;
+	width: 48px;
+	padding: 0 6px 0 10px;
+	color: var(--vscode-editorLineNumber-foreground, rgba(255, 255, 255, 0.32));
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.volt-file-preview-mark {
+	flex: 0 0 12px;
+	width: 12px;
+	color: transparent;
+	font-weight: 600;
+	text-align: center;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.volt-file-preview-line.insert .volt-file-preview-mark {
+	color: var(--volt-file-preview-add);
+}
+
+.volt-file-preview-line.delete .volt-file-preview-mark {
+	color: var(--volt-file-preview-del);
+}
+
+.volt-file-preview-code {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding-right: 12px;
+	white-space: pre;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-file-preview-line.insert .volt-file-preview-code {
+	color: color-mix(in srgb, var(--vscode-editor-foreground) 82%, var(--volt-file-preview-add));
+}
+
+.volt-file-preview-line.delete .volt-file-preview-code {
+	color: color-mix(in srgb, var(--vscode-editor-foreground) 82%, var(--volt-file-preview-del));
+}

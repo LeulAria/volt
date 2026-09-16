@@ -11,6 +11,7 @@ import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { localize } from '../../../../../nls.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { createAgentScrollable } from '../agentScrollable.js';
 import { setAgentTooltip } from '../agentTooltip.js';
 import {
@@ -19,6 +20,7 @@ import {
 	IApprovalBlock,
 	ICodeBlock,
 	IErrorBlock,
+	IFileChangeBlock,
 	IMarkdownBlock,
 	ITableBlock,
 	ITerminalBlock,
@@ -29,7 +31,11 @@ import {
 	stripCellMarkup,
 	terminalCommandLabels,
 } from './agentBlocks.js';
+import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../localPreview.js';
 import { AccessDecisionScope } from '../../../../services/voltRuntime/common/access/accessTypes.js';
+import { FileChangePreview } from '../fileChangePreview.js';
+import { chooseFileChangeDiffStyle, formatChangeStats, type FileChangeDiffStyle } from '../fileChangePreviewModel.js';
+import { fileChangeGroupTitle, fileChangeSource, ThreadPart } from '../agentTimeline.js';
 
 export interface IBlockRenderContext {
 	readonly markdownRenderer: MarkdownRenderer;
@@ -37,7 +43,10 @@ export interface IBlockRenderContext {
 	readonly blockState: Record<string, { expanded: boolean }>;
 	readonly onToggle: (blockId: string) => void;
 	readonly onScroll: () => void;
+	readonly instantiationService: IInstantiationService;
+	readonly diffStyle?: FileChangeDiffStyle;
 	readonly onOpenPath?: (path: string, startLine?: number, endLine?: number) => void;
+	readonly onOpenUrl?: (url: string) => void;
 	readonly onTerminalMenu?: (anchor: HTMLElement, command: string) => void;
 	readonly onAccessDecision?: (requestId: string, effect: 'allow' | 'deny', scope: AccessDecisionScope, pattern?: string) => void;
 }
@@ -59,6 +68,9 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 		case 'tool':
 			renderToolBlock(parent, block, ctx);
 			return;
+		case 'file':
+			renderFileChangeBlock(parent, block, ctx);
+			return;
 		case 'error':
 			renderErrorBlock(parent, block);
 			return;
@@ -68,9 +80,15 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 }
 
 export function renderMarkdownInto(parent: HTMLElement, text: string, ctx: IBlockRenderContext, extraClass?: string): void {
-	const result = ctx.markdownRenderer.render(new MarkdownString(text), {
+	const result = ctx.markdownRenderer.render(new MarkdownString(linkifyPreviewUrls(text)), {
 		fillInIncompleteTokens: true,
 		asyncRenderCallback: ctx.onScroll,
+		actionHandler: link => {
+			const url = extractHttpUrl(link) ?? extractLocalPreviewUrl(link);
+			if (url) {
+				ctx.onOpenUrl?.(url);
+			}
+		},
 	});
 	result.element.classList.add('volt-agent-markdown', 'volt-agent-searchable');
 	if (extraClass) {
@@ -184,8 +202,6 @@ function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IB
 	}
 	if (block.status === 'streaming') {
 		header.setAttribute('aria-busy', 'true');
-		header.disabled = true;
-		return;
 	}
 
 	ctx.store.add(addDisposableListener(header, 'click', e => {
@@ -241,6 +257,81 @@ function renderToolBlock(parent: HTMLElement, block: IToolBlock, ctx: IBlockRend
 		const out = append(body, $('pre.volt-agent-term-output.volt-agent-searchable'));
 		out.textContent = block.output;
 	}
+}
+
+export function renderFileChangesPart(parent: HTMLElement, part: Extract<ThreadPart, { kind: 'changes' }>, ctx: IBlockRenderContext, streaming: boolean): void {
+	const style = resolveDiffStyle(ctx, part.files.length, part.additions, part.deletions);
+	if (style === 'card') {
+		renderFileChangeList(parent, part, ctx, style);
+		return;
+	}
+
+	const section = append(parent, $('.volt-agent-changes-group'));
+	if (streaming) {
+		const status = append(section, $('div.volt-agent-activity-progress.shimmer'));
+		status.textContent = fileChangeGroupTitle(part.files.length, part.commands.length, part.additions, part.deletions);
+		renderFileChangeList(section, part, ctx, style);
+		return;
+	}
+
+	const expanded = ctx.blockState[part.id]?.expanded ?? false;
+	const stats = formatChangeStats(part.additions, part.deletions);
+	const labelText = fileChangeGroupTitle(part.files.length, part.commands.length, 0, 0);
+
+	const toggle = append(section, $('button.volt-agent-changes-toggle')) as HTMLButtonElement;
+	toggle.classList.toggle('expanded', expanded);
+	const label = append(toggle, $('span.volt-agent-activity-label'));
+	label.textContent = labelText;
+	const counts = append(toggle, $('span.volt-file-preview-stats'));
+	if (stats.added) {
+		append(counts, $('span.volt-file-preview-add')).textContent = stats.added;
+	}
+	if (stats.removed) {
+		append(counts, $('span.volt-file-preview-del')).textContent = stats.removed;
+	}
+	const chevron = append(toggle, $('span.volt-agent-activity-chevron'));
+	chevron.appendChild(renderIcon(expanded ? Codicon.chevronDown : Codicon.chevronRight));
+	ctx.store.add(addDisposableListener(toggle, 'click', e => {
+		e.preventDefault();
+		e.stopPropagation();
+		ctx.onToggle(part.id);
+	}));
+	if (!expanded) {
+		return;
+	}
+	renderFileChangeList(section, part, ctx, style);
+}
+
+function renderFileChangeList(parent: HTMLElement, part: Extract<ThreadPart, { kind: 'changes' }>, ctx: IBlockRenderContext, style: FileChangeDiffStyle): void {
+	const list = append(parent, $(style === 'card' ? '.volt-agent-changes-files.cards' : '.volt-agent-changes-files'));
+	for (const file of part.files) {
+		renderFileChangeBlock(list, file, ctx, style);
+	}
+	for (const command of part.commands) {
+		renderTerminalBlock(parent, command, ctx);
+	}
+}
+
+function renderFileChangeBlock(parent: HTMLElement, block: IFileChangeBlock, ctx: IBlockRenderContext, style = resolveDiffStyle(ctx)): void {
+	const preview = ctx.instantiationService.createInstance(FileChangePreview);
+	ctx.store.add(preview);
+	parent.appendChild(preview.element);
+	preview.setInput(fileChangeSource(block), {
+		style,
+		expanded: style === 'card' || isExpanded(block, ctx),
+		openOnClick: true,
+		onToggle: () => ctx.onToggle(block.id),
+		onOpen: (resource, lineNumber) => ctx.onOpenPath?.(block.path || resource.fsPath, lineNumber),
+	});
+}
+
+function resolveDiffStyle(ctx: IBlockRenderContext, files?: number, additions?: number, deletions?: number): FileChangeDiffStyle {
+	return ctx.diffStyle ?? chooseFileChangeDiffStyle({
+		surface: 'sidebar',
+		files,
+		additions,
+		deletions,
+	});
 }
 
 function renderTableBlock(parent: HTMLElement, block: ITableBlock, ctx: IBlockRenderContext): void {
@@ -424,6 +515,10 @@ function attachContainedScroll(wrap: HTMLElement, content: HTMLElement, ctx: IBl
 	ctx.store.add(scroll);
 	const scan = () => {
 		scroll.scanDomNode();
+		const terminal = wrap.closest('.volt-agent-block.terminal');
+		if (terminal) {
+			terminal.classList.toggle('clamped', !terminal.classList.contains('expanded') && content.scrollHeight > wrap.clientHeight + 1);
+		}
 		ctx.onScroll();
 	};
 	queueMicrotask(scan);
@@ -442,6 +537,15 @@ function decorateMarkdownPills(root: HTMLElement, ctx: IBlockRenderContext): voi
 			continue;
 		}
 		const text = code.textContent ?? '';
+		const url = extractHttpUrl(text);
+		if (url) {
+			code.classList.add('volt-agent-path-pill');
+			if (text !== url) {
+				code.textContent = url;
+			}
+			bindUrlOpen(code, url, ctx);
+			continue;
+		}
 		if (isPathLike(text) || text.length > 18) {
 			code.classList.add('volt-agent-path-pill');
 			bindPathOpen(code, parseFileTarget(text), ctx);
@@ -453,11 +557,33 @@ function decorateMarkdownPills(root: HTMLElement, ctx: IBlockRenderContext): voi
 		}
 		const text = (link.textContent ?? '').trim();
 		const href = link.getAttribute('data-href') || link.getAttribute('href') || '';
+		const url = extractHttpUrl(text) || extractHttpUrl(href);
+		if (url) {
+			link.classList.add('volt-agent-path-pill');
+			if (text !== url && /https?:\/\//i.test(text)) {
+				link.textContent = url;
+			}
+			bindUrlOpen(link, url, ctx);
+			continue;
+		}
 		if (isPathLike(text) || isPathLike(href)) {
 			link.classList.add('volt-agent-path-pill');
 			bindPathOpen(link, parseFileTarget(text) ?? parseFileTarget(href), ctx);
 		}
 	}
+}
+
+function bindUrlOpen(el: HTMLElement, url: string, ctx: IBlockRenderContext): void {
+	if (!ctx.onOpenUrl) {
+		return;
+	}
+	el.classList.add('clickable');
+	setAgentTooltip(el, url);
+	ctx.store.add(addDisposableListener(el, 'click', e => {
+		e.preventDefault();
+		e.stopPropagation();
+		ctx.onOpenUrl?.(url);
+	}));
 }
 
 function bindPathOpen(el: HTMLElement, target: ReturnType<typeof parseFileTarget>, ctx: IBlockRenderContext): void {

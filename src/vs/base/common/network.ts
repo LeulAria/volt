@@ -93,6 +93,9 @@ export namespace Schemas {
 	/** Scheme used for the Volt Settings editor tab. */
 	export const voltSettings = 'volt-settings';
 
+	/** Scheme used for the agent Customize (rules, skills, MCP) editor tab. */
+	export const voltCustomize = 'volt-customize';
+
 	/** Scheme used for the chat input part */
 	export const vscodeChatInput = 'chatSessionInput';
 

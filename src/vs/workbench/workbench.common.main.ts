@@ -211,10 +211,12 @@ import './contrib/mcp/browser/mcp.contribution.js';
 
 // Volt runtime + settings
 import './services/voltRuntime/browser/voltRuntimeService.js';
+import './services/voltRuntime/browser/agentHistoryService.js';
 import './contrib/voltSettings/browser/voltSettings.contribution.js';
 
 // New Agent editor
 import './contrib/voltAgent/browser/agentEditor.contribution.js';
+import './contrib/voltAgent/browser/agentHistory.contribution.js';
 
 // Volt Prediction (Tab / NES / cross-file edits)
 import './contrib/voltPrediction/browser/voltPrediction.contribution.js';
