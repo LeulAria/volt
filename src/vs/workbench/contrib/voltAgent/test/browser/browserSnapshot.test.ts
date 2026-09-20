@@ -1,11 +1,11 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { extractToolImage, isSnapshotActivity, isSnapshotTool } from '../../browser/browserSnapshot.js';
+import { extractToolImage, isSnapshotActivity, isSnapshotTool } from '../../browser/preview/browserSnapshot.js';
 
 suite('Browser snapshot', () => {
 

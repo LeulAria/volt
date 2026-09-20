@@ -1,0 +1,475 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.volt-agent-home {
+	display: none;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	height: 100%;
+	padding: 0;
+	overflow: hidden;
+	box-sizing: border-box;
+	color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+}
+
+.volt-agent-side-panel.home-mode .volt-agent-home,
+.monaco-workbench.volt-layout-agent .volt-agent-home {
+	display: flex;
+}
+
+.monaco-workbench.mac.volt-layout-agent .volt-agent-home {
+	padding-top: 20px;
+}
+
+.volt-agent-home-tree {
+	flex: 1;
+	min-height: 0;
+	position: relative;
+	overflow: hidden;
+	padding: 0;
+}
+
+.volt-agent-home-tree .monaco-list,
+.volt-agent-home-tree .monaco-list-rows {
+	background: transparent !important;
+}
+
+.volt-agent-home-tree .monaco-list,
+.volt-agent-home-tree .monaco-list:focus,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-list,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-list:focus {
+	outline: none !important;
+}
+
+.monaco-workbench .volt-agent-home-tree .monaco-list:not(.element-focused):focus::before,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-list:not(.element-focused):focus::before {
+	content: none !important;
+	outline: none !important;
+}
+
+/* Match history/explorer: 4px plus 3px so top-level rows sit with the other side menus. */
+.volt-agent-home-tree .monaco-list-row {
+	padding-left: 7px;
+	outline: none !important;
+	box-shadow: none !important;
+	overflow: hidden;
+}
+
+.volt-agent-home-tree .monaco-list:focus .monaco-list-row.focused,
+.volt-agent-home-tree .monaco-list:focus .monaco-list-row.selected,
+.volt-agent-home-tree .monaco-list .monaco-list-row.focused,
+.volt-agent-home-tree .monaco-list .monaco-list-row.selected {
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+.volt-agent-home-tree .monaco-list-row.selected,
+.volt-agent-home-tree .monaco-list-row.focused {
+	background: var(--vscode-list-inactiveSelectionBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)) !important;
+}
+
+.volt-agent-home-tree .monaco-list:focus .monaco-list-row.selected,
+.volt-agent-home-tree .monaco-list:focus .monaco-list-row.focused {
+	background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-inactiveSelectionBackground, color-mix(in srgb, var(--vscode-foreground) 12%, transparent))) !important;
+}
+
+.volt-agent-home-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 100%;
+	min-width: 0;
+	padding: 0 8px 0 0;
+	box-sizing: border-box;
+	color: inherit;
+	font-size: 13px;
+	font-weight: 400;
+	overflow: hidden;
+}
+
+.volt-agent-home-row > .name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-home-row > .meta {
+	flex: none;
+	font-size: 11px;
+	opacity: 0.5;
+}
+
+.volt-agent-home-row > .keybinding {
+	flex: none;
+	display: none;
+	font-size: 11px;
+	opacity: 0.45;
+	padding: 1px 6px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.volt-agent-home-row.is-new > .keybinding:not(:empty) {
+	display: block;
+}
+
+.volt-agent-home-row > .icon .codicon,
+.volt-agent-home-row > .icon .volt-agent-svg-icon {
+	font-size: 16px;
+	opacity: 0.85;
+}
+
+.volt-agent-home-row > .icon .volt-agent-svg-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+}
+
+.volt-agent-home-row > .icon .volt-agent-svg-icon svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
+.volt-agent-home-row.is-session > .icon .codicon {
+	font-size: 16px;
+	opacity: 0.7;
+}
+
+.volt-agent-home-row > .add {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	opacity: 0.7;
+}
+
+.volt-agent-home-row > .add.hidden {
+	display: none;
+}
+
+.volt-agent-home-row > .add:hover {
+	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+	opacity: 1;
+}
+
+.volt-agent-home-row.is-section {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	opacity: 0.65;
+}
+
+.volt-agent-home-row.is-folder,
+.volt-agent-home-row.is-session,
+.volt-agent-home-row.is-folder > .name,
+.volt-agent-home-row.is-session > .name {
+	font-weight: 400 !important;
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+}
+
+.volt-agent-home-tree .monaco-list-row.selected .volt-agent-home-row.is-folder,
+.volt-agent-home-tree .monaco-list-row.selected .volt-agent-home-row.is-session,
+.volt-agent-home-tree .monaco-list-row.focused .volt-agent-home-row.is-folder,
+.volt-agent-home-tree .monaco-list-row.focused .volt-agent-home-row.is-session,
+.volt-agent-home-tree .monaco-list:focus .monaco-list-row.selected .volt-agent-home-row.is-folder,
+.volt-agent-home-tree .monaco-list:focus .monaco-list-row.focused .volt-agent-home-row.is-folder,
+.volt-agent-home-row.current,
+.volt-agent-home-row.current > .name,
+.volt-agent-home-tree .monaco-list-row.selected .volt-agent-home-row.is-folder > .name,
+.volt-agent-home-tree .monaco-list-row.selected .volt-agent-home-row.is-session > .name,
+.volt-agent-home-tree .monaco-list-row.focused .volt-agent-home-row.is-folder > .name,
+.volt-agent-home-tree .monaco-list-row.focused .volt-agent-home-row.is-session > .name {
+	font-weight: 400 !important;
+	color: var(--vscode-foreground) !important;
+}
+
+.volt-agent-home-row.current > .icon .codicon,
+.volt-agent-home-tree .monaco-list-row.selected .volt-agent-home-row > .icon .codicon,
+.volt-agent-home-tree .monaco-list-row.focused .volt-agent-home-row > .icon .codicon {
+	opacity: 1;
+}
+
+.volt-agent-home-row.pending > .name {
+	animation: volt-agent-home-pending 1.2s ease-in-out infinite;
+}
+
+@keyframes volt-agent-home-pending {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.45; }
+}
+
+.volt-agent-home-tree .monaco-list-row:hover:not(.selected):not(.focused) {
+	background: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 8%, transparent)) !important;
+}
+
+.volt-agent-home-tree .monaco-list-row:has(.volt-agent-home-row.current):not(.selected):not(.focused) {
+	background: var(--vscode-list-inactiveSelectionBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)) !important;
+}
+
+.volt-agent-home-tree .monaco-list-row:has(.volt-agent-home-row.is-new) .monaco-tl-twistie,
+.volt-agent-home-tree .monaco-list-row:has(.volt-agent-home-row.is-action:not(.is-nested)) .monaco-tl-twistie {
+	width: 8px !important;
+	padding-left: 0 !important;
+	padding-right: 0 !important;
+	margin-right: 0;
+	transform: none;
+}
+
+.volt-agent-home-tree .monaco-list-row:has(.volt-agent-home-row.is-section) .monaco-tl-twistie,
+.volt-agent-home-tree .monaco-list-row:has(.volt-agent-home-row.is-nested) .monaco-tl-twistie {
+	width: 16px !important;
+	padding-right: 0 !important;
+	margin-right: 4px;
+	transform: none;
+	box-sizing: content-box;
+}
+
+.volt-agent-home-tree .monaco-list-row:has(.volt-agent-home-row.is-new) .monaco-tl-twistie::before,
+.volt-agent-home-tree .monaco-list-row:has(.volt-agent-home-row.is-action) .monaco-tl-twistie::before {
+	display: none;
+}
+
+.volt-agent-home-row.is-section > .icon {
+	display: none;
+}
+
+.volt-agent-home-tree .monaco-tl-indent,
+.volt-agent-home-tree .indent-guide {
+	display: none !important;
+	border: none !important;
+}
+
+.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title {
+	-webkit-app-region: drag;
+}
+
+.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .tab,
+.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .editor-actions,
+.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .monaco-toolbar,
+.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .action-item,
+.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .breadcrumbs-control,
+.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .scrollbar {
+	-webkit-app-region: no-drag;
+}
+
+html:has(.monaco-workbench.volt-layout-agent),
+html:has(.monaco-workbench.volt-layout-agent) body {
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
+.monaco-workbench.volt-layout-agent {
+	--volt-agent-window-bg: color-mix(in srgb, var(--vscode-sideBar-background, var(--vscode-titleBar-activeBackground, #141414)) 90%, transparent);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--vscode-sideBar-background, var(--vscode-titleBar-activeBackground, #141414)) 60%, transparent);
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
+/* Status bar sits to the right of the full-height sidebar. */
+.monaco-workbench.volt-layout-agent .split-view-view:has(> .part.statusbar) {
+	left: var(--volt-agent-sidebar-width, 0px) !important;
+	width: calc(100% - var(--volt-agent-sidebar-width, 0px)) !important;
+}
+
+/* Continue the sidebar through the vacated status-bar corner. */
+.monaco-workbench.volt-layout-agent::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	width: var(--volt-agent-sidebar-width, 0px);
+	height: var(--volt-agent-statusbar-height, 22px);
+	background: var(--volt-agent-sidebar-bg);
+	border-right: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
+	box-sizing: border-box;
+	pointer-events: none;
+	z-index: 8;
+}
+
+.monaco-workbench.volt-layout-agent .monaco-grid-view,
+.monaco-workbench.volt-layout-agent .monaco-grid-branch-node,
+.monaco-workbench.volt-layout-agent .monaco-split-view2,
+.monaco-workbench.volt-layout-agent .monaco-split-view2 > .monaco-scrollable-element,
+.monaco-workbench.volt-layout-agent .split-view-container,
+.monaco-workbench.volt-layout-agent .split-view-view {
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
+.monaco-workbench.volt-layout-agent .part.titlebar .titlebar-center {
+	visibility: hidden;
+}
+
+.monaco-workbench.mac.volt-layout-agent .part.titlebar {
+	display: none !important;
+	height: 0 !important;
+}
+
+.monaco-workbench.volt-layout-agent .part.titlebar,
+.monaco-workbench.volt-layout-agent .part.editor,
+.monaco-workbench.volt-layout-agent .part.panel,
+.monaco-workbench.volt-layout-agent .part.statusbar {
+	background: var(--volt-agent-window-bg) !important;
+	background-color: var(--volt-agent-window-bg) !important;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar.volt-agent-home,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar.volt-agent-editor-tabs,
+.monaco-workbench.volt-layout-agent .part.sidebar,
+.monaco-workbench.volt-layout-agent .part.sidebar.left,
+.monaco-workbench.volt-layout-agent .part.sidebar.right,
+.monaco-workbench.volt-layout-agent .part.activitybar,
+.monaco-workbench.volt-layout-agent .activitybar.left,
+.monaco-workbench.volt-layout-agent .activitybar.right,
+.monaco-workbench .part.auxiliarybar.volt-agent-home {
+	background: var(--volt-agent-sidebar-bg) !important;
+	background-color: var(--volt-agent-sidebar-bg) !important;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar,
+.monaco-workbench .part.auxiliarybar.volt-agent-home {
+	border-right: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35)) !important;
+	position: relative;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .title,
+.monaco-workbench .part.auxiliarybar.volt-agent-home > .title {
+	display: none !important;
+	height: 0 !important;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .content,
+.monaco-workbench .part.auxiliarybar.volt-agent-home > .content {
+	position: relative;
+	inset: auto;
+	height: 100% !important;
+	background: transparent !important;
+}
+
+.monaco-workbench .part.auxiliarybar.volt-agent-home .monaco-pane-view,
+.monaco-workbench .part.auxiliarybar.volt-agent-home .split-view-view,
+.monaco-workbench .part.auxiliarybar.volt-agent-home .pane,
+.monaco-workbench .part.auxiliarybar.volt-agent-home .pane-body,
+.monaco-workbench .part.auxiliarybar.volt-agent-home .pane-header {
+	background: transparent !important;
+}
+
+.monaco-workbench .part.auxiliarybar.volt-agent-home .monaco-pane-view,
+.monaco-workbench .part.auxiliarybar.volt-agent-home .split-view-view,
+.monaco-workbench .part.auxiliarybar.volt-agent-home .pane,
+.monaco-workbench .part.auxiliarybar.volt-agent-home .pane-body {
+	height: 100% !important;
+}
+
+.monaco-workbench .part.auxiliarybar.volt-agent-home .pane-header {
+	display: none !important;
+}
+
+.monaco-workbench.volt-layout-agent.volt-single-agent .part.editor .editor-group-container > .title {
+	display: none !important;
+	height: 0 !important;
+}
+
+.monaco-workbench.volt-layout-agent .part.editor > .content,
+.monaco-workbench.volt-layout-agent .part.editor .monaco-grid-view,
+.monaco-workbench.volt-layout-agent .part.editor .monaco-split-view2,
+.monaco-workbench.volt-layout-agent .part.editor .split-view-container,
+.monaco-workbench.volt-layout-agent .part.editor .editor-group-container,
+.monaco-workbench.volt-layout-agent .part.editor .editor-container,
+.monaco-workbench.volt-layout-agent .part.editor .editor-instance,
+.monaco-workbench.volt-layout-agent .part.editor .volt-agent-editor,
+.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title,
+.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .tabs-container,
+.monaco-workbench.volt-layout-agent .part.editor .monaco-editor,
+.monaco-workbench.volt-layout-agent .part.editor .monaco-editor .overflow-guard,
+.monaco-workbench.volt-layout-agent .part.editor .monaco-editor .monaco-editor-background,
+.monaco-workbench.volt-layout-agent .part.editor .monaco-editor .margin,
+.monaco-workbench.volt-layout-agent .part.editor .monaco-editor .inputarea.ime-input,
+.monaco-workbench.volt-layout-agent .part.sidebar > .content,
+.monaco-workbench.volt-layout-agent .part.sidebar .monaco-pane-view,
+.monaco-workbench.volt-layout-agent .part.sidebar .pane,
+.monaco-workbench.volt-layout-agent .part.sidebar .pane-header,
+.monaco-workbench.volt-layout-agent .part.sidebar .pane-body,
+.monaco-workbench.volt-layout-agent .part.sidebar .monaco-list,
+.monaco-workbench.volt-layout-agent .part.sidebar .monaco-list-rows,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .content,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-pane-view,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .split-view-view,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .pane,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .pane-body,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .pane-header,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-list,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-list-rows,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-editor,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-editor .margin,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-editor .monaco-editor-background,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .volt-agent-editor,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .editor-group-container,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar .editor-container,
+.monaco-workbench.volt-layout-agent .volt-agent-side-panel,
+.monaco-workbench.volt-layout-agent .volt-agent-side-main,
+.monaco-workbench.volt-layout-agent .volt-agent-home,
+.monaco-workbench.volt-layout-agent .volt-agent-drawer {
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-thread-fade.top {
+	background: linear-gradient(to bottom, var(--volt-agent-window-bg) 0%, transparent 100%) !important;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-thread-fade.bottom {
+	background: linear-gradient(to top, var(--volt-agent-window-bg) 0%, transparent 100%) !important;
+}
+
+.monaco-workbench:not(.volt-layout-agent) .part.sidebar.left,
+.monaco-workbench:not(.volt-layout-agent) .part.sidebar.right {
+	border-color: var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35)) !important;
+	background: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background))) !important;
+	background-color: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background))) !important;
+}
+
+.monaco-workbench .part.sidebar.left {
+	border-right: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35)) !important;
+}
+
+.monaco-workbench .part.sidebar.right {
+	border-left: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35)) !important;
+}
+
+.monaco-workbench .part.sidebar.left > .content,
+.monaco-workbench .part.sidebar.left .monaco-pane-view,
+.monaco-workbench .part.sidebar.left .pane,
+.monaco-workbench .part.sidebar.left .pane-header,
+.monaco-workbench .part.sidebar.left .pane-body,
+.monaco-workbench .part.sidebar.right > .content,
+.monaco-workbench .part.sidebar.right .monaco-pane-view,
+.monaco-workbench .part.sidebar.right .pane,
+.monaco-workbench .part.sidebar.right .pane-header,
+.monaco-workbench .part.sidebar.right .pane-body {
+	background-color: transparent !important;
+}
+
+.monaco-workbench:not(.volt-layout-agent) .activitybar.left,
+.monaco-workbench:not(.volt-layout-agent) .activitybar.right {
+	background: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-activityBar-background))) !important;
+	background-color: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-activityBar-background))) !important;
+}

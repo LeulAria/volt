@@ -1,12 +1,12 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/agentHistory.js';
-import { groupSessionsByDate } from '../../browser/agentHistoryGroups.js';
+import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { groupSessionsByDate, isDetailedHistoryGroup } from '../../browser/history/agentHistoryGroups.js';
 
 function session(id: string, updatedAt: number, extra: Partial<IAgentSessionMeta> = {}): IAgentSessionMeta {
 	return {
@@ -58,5 +58,12 @@ suite('Agent history list grouping', () => {
 	test('falls back to createdAt when there is no activity yet', () => {
 		const groups = groupSessionsByDate([{ ...session('draft', 0), createdAt: now - DAY, updatedAt: 0 }], now);
 		assert.deepStrictEqual(groups.map(group => group.key), ['yesterday']);
+	});
+
+	test('pinned and today are detailed; older buckets are single-line', () => {
+		assert.strictEqual(isDetailedHistoryGroup('pinned'), true);
+		assert.strictEqual(isDetailedHistoryGroup('today'), true);
+		assert.strictEqual(isDetailedHistoryGroup('yesterday'), false);
+		assert.strictEqual(isDetailedHistoryGroup('week'), false);
 	});
 });

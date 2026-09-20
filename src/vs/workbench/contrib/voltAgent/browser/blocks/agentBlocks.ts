@@ -1,7 +1,9 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
+
+import type { IWorkCounts, ToolKind } from '../../../../services/voltRuntime/common/harness/workLog.js';
 
 export type AgentBlockStatus = 'streaming' | 'complete' | 'error';
 
@@ -121,11 +123,16 @@ export interface IAgentActivityItem {
 	kind: AgentActivityKind;
 	label: string;
 	detail?: string;
+	text?: string;
 	path?: string;
 	startLine?: number;
 	endLine?: number;
+	files?: string[];
 	callId?: string;
 	image?: string;
+	input?: string;
+	toolName?: string;
+	toolTitle?: string;
 }
 
 export type AgentSegment =
@@ -134,6 +141,40 @@ export type AgentSegment =
 	| { kind: 'activity'; item: IAgentActivityItem }
 	| { kind: 'thought'; text: string };
 
+/**
+ * What a reply actually did, counted from its segments. Feeds the status line
+ * ("Edited 3 files · ran 2 commands") so the UI never hardcodes an outcome.
+ */
+export function workCountsForSegments(segments: readonly AgentSegment[]): IWorkCounts {
+	const files = new Set<string>();
+	let commands = 0, reads = 0, searches = 0, browser = 0, webFetches = 0, subagents = 0;
+	for (const segment of segments) {
+		if (segment.kind === 'block') {
+			const block = segment.block;
+			if (block.type === 'terminal') {
+				commands++;
+			} else if (block.type === 'file') {
+				files.add(block.path);
+			} else if (block.type === 'tool' && /\b(task|subagent|delegate|spawn)\b/i.test(block.name)) {
+				subagents++;
+			}
+		} else if (segment.kind === 'activity') {
+			switch (segment.item.kind) {
+				case 'read': reads++; break;
+				case 'search': searches++; break;
+				case 'browser':
+					if (/\b(fetch|webfetch|web fetch|url)\b/i.test(`${segment.item.label} ${segment.item.toolName ?? ''}`)) {
+						webFetches++;
+					} else {
+						browser++;
+					}
+					break;
+			}
+		}
+	}
+	return { filesChanged: files.size, commands, reads, searches, browser, webFetches, subagents };
+}
+
 const FENCE_OPEN_RE = /^(`{3,}|~{3,})([A-Za-z0-9_+-]*)(?:\s+(.*))?$/;
 const TABLE_LINE_RE = /^\s*\|.+\|\s*$/;
 const TABLE_SEP_RE = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
@@ -141,7 +182,13 @@ const SIZE_RE = /^\d+(\.\d+)?\s*(B|KB|MB|GB|TB|KiB|MiB|GiB|K|M|G)\s*$/i;
 const SHELL_START_RE = /^(sudo\s+)?(ls|cd|pwd|find|grep|rg|cat|head|tail|git|npm|npx|pnpm|yarn|bun|make|echo|curl|wget|python3?|node|cargo|go|docker|kubectl|chmod|chown|rm|mv|cp|mkdir|touch|which|export|source|bash|zsh|sh|for|if)\b/;
 const TERMINAL_LANGS = new Set(['bash', 'sh', 'shell', 'zsh', 'fish', 'terminal', 'console', 'powershell', 'ps1', 'cmd', 'bat']);
 
-export function isShellTool(name: string, title?: string, input?: string): boolean {
+export function isShellTool(name: string, title?: string, input?: string, kind?: ToolKind): boolean {
+	if (kind === 'execute') {
+		return true;
+	}
+	if (kind) {
+		return false;
+	}
 	const s = `${name} ${title ?? ''}`.toLowerCase();
 	if (/\b(term|shell|bash|zsh|sh|cmd|exec|execute|command|run|process|stdout)\b/.test(s)) {
 		return true;
@@ -855,7 +902,25 @@ export function parseFileTarget(...parts: Array<string | undefined>): IAgentFile
 	return undefined;
 }
 
-export function classifyToolActivity(name: string, title?: string): AgentActivityKind {
+/**
+ * Prefer the runtime's semantic `kind` when ACP or a native tool sent one. Name heuristics
+ * remain for agents that still emit untitled "other" tools.
+ */
+export function classifyToolActivity(name: string, title?: string, kind?: ToolKind): AgentActivityKind {
+	switch (kind) {
+		case 'read': return 'read';
+		case 'search': return 'search';
+		case 'browser':
+		case 'fetch': return 'browser';
+		case 'think': return 'wait';
+		case 'execute':
+		case 'edit':
+		case 'delegate': return 'note';
+	}
+	return classifyToolActivityByName(name, title);
+}
+
+function classifyToolActivityByName(name: string, title?: string): AgentActivityKind {
 	const s = `${name} ${title ?? ''}`.toLowerCase().replace(/[_-]+/g, ' ');
 	if (/\b(sleep|wait|delay)\b/.test(s)) {
 		return 'wait';
@@ -876,16 +941,28 @@ const EXPLORE_TOOL_RE = /\b(find|glob|grep|rg|search|list.?dir|\bls\b|read.?file
 const MUTATING_TOOL_RE = /\b(edit|edited|write|wrote|create|created|delete|deleted|patch|apply|replace|str.?replace|update)\b/;
 
 /** Read/search/browser tools belong in the activity trail, not as response-body pills. */
-export function isExploreTool(name: string, title?: string): boolean {
+export function isExploreTool(name: string, title?: string, kind?: ToolKind): boolean {
+	if (kind === 'read' || kind === 'search' || kind === 'fetch' || kind === 'browser' || kind === 'think') {
+		return true;
+	}
+	if (kind === 'edit' || kind === 'execute' || kind === 'delegate') {
+		return false;
+	}
 	const s = `${name} ${title ?? ''}`.toLowerCase().replace(/[_-]+/g, ' ');
 	if (MUTATING_TOOL_RE.test(s)) {
 		return false;
 	}
-	const kind = classifyToolActivity(name, title);
-	return kind === 'read' || kind === 'search' || kind === 'wait' || kind === 'browser' || EXPLORE_TOOL_RE.test(s);
+	const activity = classifyToolActivityByName(name, title);
+	return activity === 'read' || activity === 'search' || activity === 'wait' || activity === 'browser' || EXPLORE_TOOL_RE.test(s);
 }
 
-export function isFileChangeTool(name: string, title?: string): boolean {
+export function isFileChangeTool(name: string, title?: string, kind?: ToolKind): boolean {
+	if (kind === 'edit') {
+		return true;
+	}
+	if (kind) {
+		return false;
+	}
 	const s = `${name} ${title ?? ''}`.toLowerCase().replace(/[_-]+/g, ' ');
 	return MUTATING_TOOL_RE.test(s);
 }
@@ -928,6 +1005,336 @@ export function applyFileTargetToActivity(item: IAgentActivityItem, target: IAge
 	item.label = split.label;
 	item.detail = split.detail;
 	return true;
+}
+
+export interface IExploreActivity {
+	label: string;
+	detail?: string;
+	path?: string;
+	startLine?: number;
+	endLine?: number;
+	files?: string[];
+	clickable?: boolean;
+}
+
+const GENERIC_TOOL_TITLE_RE = /^(find|grep|rg|glob|search|read(\s+file)?|list(\s+dir(ectory)?)?|ls|cat|view|open(\s+file)?|wait|sleep|web\s*fetch)$/i;
+const DETAIL_MAX = 56;
+
+export function describeExploreActivity(name: string, title: string | undefined, input?: string): IExploreActivity {
+	const kind = classifyToolActivity(name, title);
+	const args = parseExploreArgs(input);
+	const filePath = args.path && looksLikeFilePath(args.path) ? args.path : undefined;
+	const scope = scopeLabel(args.directory || (!filePath ? args.path : undefined));
+	const haystack = `${name} ${title ?? ''}`.toLowerCase();
+	const grepTool = /\bgrep/.test(haystack);
+	const findTool = /\b(find|glob)\b/.test(haystack) && !grepTool;
+
+	if (kind === 'read' && (filePath || args.path) && !args.pattern && !args.glob && !args.query) {
+		const file = basenamePath(filePath || args.path!);
+		return {
+			label: 'Read',
+			detail: `${file}${formatLineRange(args.startLine, args.endLine)}`,
+			path: filePath || args.path,
+			startLine: args.startLine,
+			endLine: args.endLine,
+			files: args.files,
+			clickable: true,
+		};
+	}
+
+	if (findTool || (args.glob && !grepTool) || (args.query && !args.pattern && !grepTool && kind === 'search')) {
+		const needle = args.glob || args.pattern || args.query;
+		if (needle) {
+			return {
+				label: 'Searched files',
+				detail: joinScope(truncateExploreDetail(needle), scope),
+				path: filePath,
+				files: args.files,
+				clickable: !!filePath,
+			};
+		}
+	}
+
+	if (grepTool || args.pattern || (kind === 'search' && args.query)) {
+		const needle = args.pattern || args.query;
+		if (needle) {
+			return {
+				label: grepTool || args.pattern ? 'Grepped' : 'Searched files',
+				detail: joinScope(truncateExploreDetail(needle), scope),
+				path: filePath,
+				startLine: args.startLine,
+				endLine: args.endLine,
+				files: args.files,
+				clickable: !!filePath,
+			};
+		}
+	}
+
+	if (kind === 'wait') {
+		const label = title && !GENERIC_TOOL_TITLE_RE.test(title.trim()) ? title.trim() : 'Waited';
+		return { label };
+	}
+
+	if (title && !GENERIC_TOOL_TITLE_RE.test(title.trim())) {
+		const verb = title.trim().match(VERB_RE);
+		if (verb && isPathLike(verb[2].trim())) {
+			const target = parseTextFileTarget(verb[2].trim());
+			return {
+				label: capitalizeActivity(verb[1]),
+				detail: target ? `${basenamePath(target.path)}${formatLineRange(target.startLine, target.endLine)}` : verb[2].trim(),
+				path: target?.path ?? filePath,
+				startLine: target?.startLine ?? args.startLine,
+				endLine: target?.endLine ?? args.endLine,
+				clickable: !!(target?.path || filePath),
+			};
+		}
+		return {
+			label: title.trim(),
+			path: filePath || args.path,
+			startLine: args.startLine,
+			endLine: args.endLine,
+			clickable: !!filePath,
+		};
+	}
+
+	const target = args.path ? { path: args.path, startLine: args.startLine, endLine: args.endLine } : undefined;
+	const split = splitActivityLabel(name, title, target);
+	return {
+		...split,
+		path: filePath || args.path,
+		startLine: args.startLine,
+		endLine: args.endLine,
+		files: args.files,
+		clickable: !!filePath,
+	};
+}
+
+export function applyExploreInputToActivity(item: IAgentActivityItem, name: string, title: string | undefined, input?: string): boolean {
+	item.toolName ??= name;
+	item.toolTitle ??= title;
+	const described = describeExploreActivity(item.toolName, item.toolTitle, input);
+	const files = mergeActivityFiles(item.files, described.files);
+	const changed = item.label !== described.label
+		|| item.detail !== described.detail
+		|| item.path !== described.path
+		|| item.startLine !== described.startLine
+		|| item.endLine !== described.endLine
+		|| (files?.length ?? 0) !== (item.files?.length ?? 0);
+	item.label = described.label;
+	item.detail = described.detail;
+	item.path = described.path ?? item.path;
+	item.startLine = described.startLine ?? item.startLine;
+	item.endLine = described.endLine ?? item.endLine;
+	item.files = files;
+	item.input = input;
+	return changed;
+}
+
+export function applyExploreResultToActivity(item: IAgentActivityItem, result: unknown, input?: string): boolean {
+	if (input) {
+		applyExploreInputToActivity(item, item.toolName ?? item.label, item.toolTitle, input);
+	}
+	const files = mergeActivityFiles(item.files, parseExploreResultFiles(result));
+	if (files?.length) {
+		item.files = files;
+	}
+	if (item.kind === 'read' && !item.path && item.files?.[0]) {
+		applyFileTargetToActivity(item, {
+			path: item.files[0],
+			startLine: item.startLine,
+			endLine: item.endLine,
+		});
+	}
+	return true;
+}
+
+export function parseExploreResultFiles(result: unknown): string[] {
+	const files: string[] = [];
+	const seen = new Set<string>();
+	const add = (value?: string) => {
+		if (!value) {
+			return;
+		}
+		const path = value.replace(/^file:\/\//, '').trim();
+		if (!path || seen.has(path) || (!looksLikeFilePath(path) && !isPathLike(path))) {
+			return;
+		}
+		seen.add(path);
+		files.push(path);
+	};
+	collectExploreResultPaths(result, add);
+	return files;
+}
+
+export function isExploreItemClickable(item: IAgentActivityItem): boolean {
+	if (item.kind === 'thought' || item.kind === 'wait' || item.kind === 'note') {
+		return false;
+	}
+	if (item.image) {
+		return true;
+	}
+	if (!item.path) {
+		return false;
+	}
+	return item.kind === 'read' || item.startLine !== undefined || looksLikeFilePath(item.path);
+}
+
+function parseExploreArgs(input?: string): {
+	path?: string;
+	directory?: string;
+	pattern?: string;
+	glob?: string;
+	query?: string;
+	startLine?: number;
+	endLine?: number;
+	files?: string[];
+} {
+	if (!input?.trim()) {
+		return {};
+	}
+	const target = parseFileTarget(input);
+	const rec = parseJsonRecord(input);
+	if (!rec) {
+		return {
+			path: target?.path,
+			startLine: target?.startLine,
+			endLine: target?.endLine,
+		};
+	}
+	const path = pickString(rec, ['path', 'file', 'uri', 'target', 'filename', 'target_file', 'targetFile', 'file_path', 'filePath', 'relative_path', 'relativePath']);
+	const directory = pickString(rec, ['target_directory', 'targetDirectory', 'directory', 'dir']);
+	const pattern = pickString(rec, ['pattern', 'regex', 'regexp']);
+	const glob = pickString(rec, ['glob', 'glob_pattern', 'globPattern', 'include', 'file_pattern', 'filePattern']);
+	const query = pickString(rec, ['query', 'searchTerm', 'search_term', 'term', 'q']);
+	const start = pickNumber(rec, ['offset', 'startLine', 'start_line', 'line', 'lineNumber', 'line_number']);
+	const end = pickNumber(rec, ['endLine', 'end_line']);
+	const limit = pickNumber(rec, ['limit', 'count']);
+	return {
+		path: path || target?.path,
+		directory,
+		pattern,
+		glob,
+		query,
+		startLine: start ?? target?.startLine,
+		endLine: end ?? (start && limit ? start + limit - 1 : target?.endLine),
+		files: pickStringArray(rec, ['files', 'paths', 'uris']),
+	};
+}
+
+function collectExploreResultPaths(value: unknown, add: (path: string) => void, depth = 0): void {
+	if (depth > 6 || value === null || value === undefined) {
+		return;
+	}
+	if (typeof value === 'string') {
+		for (const line of value.split('\n')) {
+			const trimmed = line.trim();
+			if (!trimmed) {
+				continue;
+			}
+			const target = parseTextFileTarget(trimmed) ?? parseTextFileTarget(trimmed.replace(/:\d+.*$/, ''));
+			if (target) {
+				add(target.path);
+			}
+		}
+		return;
+	}
+	if (Array.isArray(value)) {
+		for (const item of value) {
+			collectExploreResultPaths(item, add, depth + 1);
+		}
+		return;
+	}
+	if (typeof value !== 'object') {
+		return;
+	}
+	const rec = value as Record<string, unknown>;
+	const path = pickString(rec, ['path', 'file', 'uri', 'target', 'filename', 'target_file', 'targetFile', 'file_path', 'filePath']);
+	if (path) {
+		add(path);
+	}
+	if (Array.isArray(rec.locations)) {
+		collectExploreResultPaths(rec.locations, add, depth + 1);
+	}
+	if (rec.content !== undefined) {
+		collectExploreResultPaths(rec.content, add, depth + 1);
+	}
+	if (typeof rec.text === 'string') {
+		collectExploreResultPaths(rec.text, add, depth + 1);
+	}
+	if (Array.isArray(rec.files)) {
+		collectExploreResultPaths(rec.files, add, depth + 1);
+	}
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> | undefined {
+	const trimmed = value.trim();
+	if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+		return undefined;
+	}
+	try {
+		const parsed = JSON.parse(trimmed) as unknown;
+		const o = Array.isArray(parsed) ? parsed[0] : parsed;
+		return o && typeof o === 'object' ? o as Record<string, unknown> : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function mergeActivityFiles(current?: string[], next?: string[]): string[] | undefined {
+	if (!current?.length && !next?.length) {
+		return current ?? next;
+	}
+	const files: string[] = [];
+	const seen = new Set<string>();
+	for (const path of [...(current ?? []), ...(next ?? [])]) {
+		if (!path || seen.has(path)) {
+			continue;
+		}
+		seen.add(path);
+		files.push(path);
+	}
+	return files.length ? files : undefined;
+}
+
+function looksLikeFilePath(value: string): boolean {
+	const base = value.split(/[\\/]/).pop() ?? '';
+	if (base.startsWith('.') && !base.slice(1).includes('.')) {
+		return false;
+	}
+	return /\.\w{1,8}$/.test(base);
+}
+
+function scopeLabel(path?: string): string | undefined {
+	if (!path) {
+		return undefined;
+	}
+	const clean = path.replace(/[\\/]+$/, '').trim();
+	if (!clean || clean === '.' || clean === './') {
+		return undefined;
+	}
+	return clean.split(/[\\/]/).pop() || clean;
+}
+
+function basenamePath(path: string): string {
+	return path.split(/[\\/]/).pop() || path;
+}
+
+function formatLineRange(start?: number, end?: number): string {
+	if (!start) {
+		return '';
+	}
+	return ` L${start}${end && end !== start ? `-${end}` : ''}`;
+}
+
+function joinScope(detail: string, scope?: string): string {
+	return scope ? `${detail} in ${scope}` : detail;
+}
+
+function truncateExploreDetail(text: string, max = DETAIL_MAX): string {
+	if (text.length <= max) {
+		return text;
+	}
+	return `${text.slice(0, Math.max(8, max - 3))}...`;
 }
 
 function parseJsonFileTarget(value: string): IAgentFileTarget | undefined {
@@ -981,6 +1388,19 @@ function pickString(o: Record<string, unknown>, keys: string[]): string | undefi
 	for (const key of keys) {
 		if (typeof o[key] === 'string' && o[key]) {
 			return o[key] as string;
+		}
+	}
+	return undefined;
+}
+
+function pickStringArray(o: Record<string, unknown>, keys: string[]): string[] | undefined {
+	for (const key of keys) {
+		if (!Array.isArray(o[key])) {
+			continue;
+		}
+		const values = o[key].filter((value): value is string => typeof value === 'string' && !!value.trim());
+		if (values.length) {
+			return values;
 		}
 	}
 	return undefined;

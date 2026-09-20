@@ -1,12 +1,12 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { createFileChangeBlock, createTerminalBlock } from '../../browser/blocks/agentBlocks.js';
-import { buildThreadParts, fileChangeGroupTitle, isProcessNarration, partitionAssistantText } from '../../browser/agentTimeline.js';
+import { buildThreadParts, fileChangeGroupTitle, isProcessNarration, looksLikeAnswerForm, partitionAssistantText, visibleReplyParts } from '../../browser/chrome/agentTimeline.js';
 
 suite('Agent timeline', () => {
 
@@ -16,6 +16,27 @@ suite('Agent timeline', () => {
 		assert.strictEqual(isProcessNarration('No browser MCP tools are available. The in-app browser cannot be used to open the URL.'), true);
 		assert.strictEqual(isProcessNarration('Preparing to run the project per Volt\'s instructions. Skipping repo-wide search.'), true);
 		assert.strictEqual(isProcessNarration('I\'ll inspect the project to see what it is and how to start it.'), false);
+	});
+
+	test('a table stays a reply, not a thought', () => {
+		const table = '| Model | Price |\n| --- | --- |\n| Patrol | AED 1 |\n| Kicks | AED 2 |';
+		assert.strictEqual(looksLikeAnswerForm(table), true);
+		const parts = partitionAssistantText(`Refreshing official prices.\n\n${table}`);
+		assert.ok(parts.some(part => part.kind === 'reply' && part.text.includes('| Patrol |')));
+		assert.ok(!parts.some(part => part.kind === 'thought' && part.text.includes('| Patrol |')));
+	});
+
+	test('the visible reply drops thought and explore chrome', () => {
+		const parts = visibleReplyParts(buildThreadParts([
+			{ kind: 'thought', text: 'Looking this up.' },
+			{ kind: 'activity', item: { kind: 'search', label: 'Searched', detail: 'nissan' } },
+			{ kind: 'text', text: '1. Patrol\n2. Kicks' },
+			{ kind: 'thought', text: 'Need another page.' },
+			{ kind: 'text', text: '3. X-Trail' },
+		]));
+		assert.deepStrictEqual(parts.map(part => part.kind), ['markdown']);
+		assert.ok(parts[0].kind === 'markdown' && /1\. Patrol/.test(parts[0].content) && /3\. X-Trail/.test(parts[0].content));
+		assert.ok(!parts.some(part => part.kind === 'group'));
 	});
 
 	test('keeps the URL reply visible', () => {
@@ -80,6 +101,21 @@ suite('Agent timeline', () => {
 		]);
 		assert.ok(parts[0].kind === 'group' && parts[0].title === 'Explored package.json');
 		assert.ok(parts[0].kind === 'group' && parts[0].items[0].path === 'src/package.json');
+	});
+
+	test('turns later thoughts into Thought briefly rows instead of a text dump', () => {
+		const parts = buildThreadParts([
+			{ kind: 'activity', item: { kind: 'search', label: 'Searched files', detail: '**/*.ts in .alnsp' } },
+			{ kind: 'thought', text: 'Checking agent transcripts and Volt-related files for a long time so this would have been a wall of text.' },
+			{ kind: 'activity', item: { kind: 'read', label: 'Read', detail: 'agentEditor.ts L300-449', path: 'src/agentEditor.ts', startLine: 300, endLine: 449 } },
+		]);
+		assert.strictEqual(parts[0].kind, 'group');
+		if (parts[0].kind !== 'group') {
+			return;
+		}
+		assert.strictEqual(parts[0].thinking, undefined);
+		assert.deepStrictEqual(parts[0].items.map(item => item.label), ['Searched files', 'Thought briefly', 'Read']);
+		assert.ok(parts[0].items[1].text?.includes('Checking agent transcripts'));
 	});
 
 	test('shows thinking immediately while streaming with no content yet', () => {

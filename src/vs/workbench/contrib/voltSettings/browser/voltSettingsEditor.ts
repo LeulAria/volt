@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -31,7 +31,7 @@ import { IProviderProfileDraft, VoltApiStyle, VoltAuthKind, VoltProviderKind, Vo
 import { IVoltCatalogItem, IVoltProviderStatus } from '../../../services/voltRuntime/common/providers.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
 import { IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
-import { createBrandIcon } from '../../../services/voltRuntime/browser/providerBrands.js';
+import { createBrandIcon } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
 
 type SettingsSection = 'common' | 'providers' | 'models' | 'agents' | 'acp' | 'modes' | 'tab' | 'security';

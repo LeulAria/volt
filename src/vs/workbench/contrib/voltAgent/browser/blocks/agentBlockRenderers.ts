@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -12,8 +12,8 @@ import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownR
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { localize } from '../../../../../nls.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { createAgentScrollable } from '../agentScrollable.js';
-import { setAgentTooltip } from '../agentTooltip.js';
+import { createAgentScrollable } from '../editor/agentScrollable.js';
+import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import {
 	AgentBlock,
 	classifyTableCell,
@@ -31,11 +31,11 @@ import {
 	stripCellMarkup,
 	terminalCommandLabels,
 } from './agentBlocks.js';
-import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../localPreview.js';
+import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../preview/localPreview.js';
 import { AccessDecisionScope } from '../../../../services/voltRuntime/common/access/accessTypes.js';
-import { FileChangePreview } from '../fileChangePreview.js';
-import { chooseFileChangeDiffStyle, formatChangeStats, type FileChangeDiffStyle } from '../fileChangePreviewModel.js';
-import { fileChangeGroupTitle, fileChangeSource, ThreadPart } from '../agentTimeline.js';
+import { FileChangePreview } from '../review/fileChangePreview.js';
+import { chooseFileChangeDiffStyle, formatChangeStats, type FileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
+import { fileChangeGroupTitle, fileChangeSource, ThreadPart } from '../chrome/agentTimeline.js';
 
 export interface IBlockRenderContext {
 	readonly markdownRenderer: MarkdownRenderer;
@@ -49,6 +49,8 @@ export interface IBlockRenderContext {
 	readonly onOpenUrl?: (url: string) => void;
 	readonly onTerminalMenu?: (anchor: HTMLElement, command: string) => void;
 	readonly onAccessDecision?: (requestId: string, effect: 'allow' | 'deny', scope: AccessDecisionScope, pattern?: string) => void;
+	/** When false, a still-running command must not keep the streaming shimmer. */
+	readonly streaming?: boolean;
 }
 
 export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IBlockRenderContext): void {
@@ -155,8 +157,9 @@ function appendTerminalToggleIcon(parent: HTMLElement): void {
 function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IBlockRenderContext): void {
 	const expanded = isExpanded(block, ctx);
 	const wrap = append(parent, $('.volt-agent-block.terminal'));
+	const live = block.status === 'streaming' && ctx.streaming !== false;
 	wrap.classList.toggle('expanded', expanded);
-	wrap.classList.toggle('streaming', block.status === 'streaming');
+	wrap.classList.toggle('streaming', live);
 
 	const bar = append(wrap, $('.volt-agent-term-bar'));
 	const header = append(bar, $('button.volt-agent-term-header')) as HTMLButtonElement;
@@ -167,7 +170,7 @@ function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IB
 	const labels = terminalCommandLabels(block.command);
 	const labelText = labels.join(', ');
 	const showLabels = !!labelText && !titleText.toLowerCase().includes(labelText.toLowerCase()) && titleText.toLowerCase() !== (labels[0] ?? '').toLowerCase();
-	if (block.status === 'streaming') {
+	if (live) {
 		headline.classList.add('shimmer');
 		headline.textContent = showLabels ? `${titleText} ${labelText}` : titleText;
 	} else {
@@ -200,7 +203,7 @@ function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IB
 			ctx.onTerminalMenu!(menuBtn, block.command);
 		}));
 	}
-	if (block.status === 'streaming') {
+	if (live) {
 		header.setAttribute('aria-busy', 'true');
 	}
 
@@ -227,7 +230,9 @@ function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IB
 		const out = append(content, $('pre.volt-agent-term-output.volt-agent-searchable'));
 		out.textContent = block.output;
 	}
-	scanOutput.current = attachContainedScroll(clip, content, ctx);
+	scanOutput.current = attachContainedScroll(clip, content, ctx, () => {
+		wrap.classList.toggle('clamped', content.scrollHeight > clip.clientHeight + 2);
+	});
 }
 
 function renderToolBlock(parent: HTMLElement, block: IToolBlock, ctx: IBlockRenderContext): void {
@@ -318,10 +323,11 @@ function renderFileChangeBlock(parent: HTMLElement, block: IFileChangeBlock, ctx
 	parent.appendChild(preview.element);
 	preview.setInput(fileChangeSource(block), {
 		style,
-		expanded: style === 'card' || isExpanded(block, ctx),
+		expanded: isExpanded(block, ctx),
+		reviewExpanded: false,
 		openOnClick: true,
 		onToggle: () => ctx.onToggle(block.id),
-		onOpen: (resource, lineNumber) => ctx.onOpenPath?.(block.path || resource.fsPath, lineNumber),
+		onOpen: (resource, startLine, endLine) => ctx.onOpenPath?.(block.path || resource.fsPath, startLine, endLine),
 	});
 }
 
@@ -498,7 +504,7 @@ function attachTableScroll(wrap: HTMLElement, ctx: IBlockRenderContext): void {
 	attachContainedScroll(wrap, content, ctx);
 }
 
-function attachContainedScroll(wrap: HTMLElement, content: HTMLElement, ctx: IBlockRenderContext): () => void {
+function attachContainedScroll(wrap: HTMLElement, content: HTMLElement, ctx: IBlockRenderContext, afterScan?: () => void): () => void {
 	if (wrap.querySelector('.monaco-scrollable-element')) {
 		return () => { };
 	}
@@ -515,10 +521,7 @@ function attachContainedScroll(wrap: HTMLElement, content: HTMLElement, ctx: IBl
 	ctx.store.add(scroll);
 	const scan = () => {
 		scroll.scanDomNode();
-		const terminal = wrap.closest('.volt-agent-block.terminal');
-		if (terminal) {
-			terminal.classList.toggle('clamped', !terminal.classList.contains('expanded') && content.scrollHeight > wrap.clientHeight + 1);
-		}
+		afterScan?.();
 		ctx.onScroll();
 	};
 	queueMicrotask(scan);

@@ -29,6 +29,7 @@ import { IDiffEditor } from '../../../../editor/common/editorCommon.js';
 import { Range } from '../../../../editor/common/core/range.js';
 import { MultiDiffEditorItem } from './multiDiffSourceResolverService.js';
 import { IEditorProgressService } from '../../../../platform/progress/common/progress.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 
 export class MultiDiffEditor extends AbstractEditorWithViewState<IMultiDiffEditorViewState> {
 	static readonly ID = 'multiDiffEditor';
@@ -159,12 +160,23 @@ export class MultiDiffEditor extends AbstractEditorWithViewState<IMultiDiffEdito
 class WorkbenchUIElementFactory implements IWorkbenchUIElementFactory {
 	constructor(
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
+		@ICommandService private readonly _commandService: ICommandService,
 	) { }
 
 	createResourceLabel(element: HTMLElement): IResourceLabel {
 		const label = this._instantiationService.createInstance(ResourceLabel, element, {});
+		let currentUri: URI | undefined;
+		element.style.cursor = 'pointer';
+		element.addEventListener('click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (currentUri) {
+				void this._commandService.executeCommand('multiDiffEditor.goToFile', currentUri);
+			}
+		});
 		return {
 			setUri(uri, options = {}) {
+				currentUri = uri;
 				if (!uri) {
 					label.element.clear();
 				} else {

@@ -641,6 +641,7 @@ export class TestLayoutService implements IWorkbenchLayoutService {
 	onDidChangeAuxiliaryBarMaximized = Event.None;
 
 	layout(): void { }
+	updateCustomTitleBarVisibility(): void { }
 	isRestored(): boolean { return true; }
 	whenReady: Promise<void> = Promise.resolve(undefined);
 	whenRestored: Promise<void> = Promise.resolve(undefined);

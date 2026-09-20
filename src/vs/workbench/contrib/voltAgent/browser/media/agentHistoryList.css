@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -8,215 +8,273 @@
 	flex-direction: column;
 	flex: 1;
 	min-height: 0;
-	font-size: 12px;
+	font-size: 13px;
 	color: var(--vscode-foreground);
 }
 
 .volt-agent-history-search {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 6px 10px;
-	margin: 6px 8px 2px;
-	border-radius: 6px;
-	background: var(--vscode-input-background, rgba(255, 255, 255, 0.04));
-	color: var(--vscode-descriptionForeground);
+	flex: none;
+	margin: 6px 12px 8px;
 }
 
 .volt-agent-history.compact .volt-agent-history-search {
-	margin: 0;
-	border-radius: 8px 8px 0 0;
-	border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
-	background: transparent;
-	padding: 8px 12px;
+	margin: 8px 12px 6px;
 }
 
-.volt-agent-history-search .codicon {
-	font-size: 14px;
-	flex: none;
+.volt-agent-history-search .monaco-findInput {
+	display: block;
+	width: 100%;
 }
 
-.volt-agent-history.compact .volt-agent-history-search .codicon {
-	display: none;
+.volt-agent-history-search .monaco-inputbox {
+	width: 100%;
+	height: 28px;
 }
 
-.volt-agent-history-search-input {
-	flex: 1;
-	min-width: 0;
-	border: 0 !important;
-	outline: none !important;
-	box-shadow: none !important;
-	background: transparent;
-	color: var(--vscode-input-foreground, var(--vscode-foreground));
-	font: inherit;
-	padding: 0;
+.volt-agent-history-search .monaco-findInput > .controls {
+	top: 3px;
+	right: 2px;
 }
 
-.volt-agent-history-search-input::placeholder {
-	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
-}
-
-.volt-agent-history-scroll {
+.volt-agent-history-tree {
 	flex: 1;
 	min-height: 0;
-	display: flex;
-	flex-direction: column;
-}
-
-.volt-agent-history-scroll > .volt-agent-history-list {
-	flex: 1;
-	min-height: 0;
+	position: relative;
 	overflow: hidden;
-	box-sizing: border-box;
-	padding: 2px 8px 8px;
-	outline: none;
 }
 
-.volt-agent-history.compact .volt-agent-history-scroll {
+.volt-agent-history.compact .volt-agent-history-tree {
 	max-height: min(560px, 70vh);
 }
 
-.volt-agent-history.compact .volt-agent-history-scroll > .volt-agent-history-list {
-	padding: 4px;
+.volt-agent-history-tree .monaco-list {
+	outline: none;
+	height: 100%;
 }
 
-.volt-agent-history-empty {
-	padding: 14px 10px;
-	color: var(--vscode-descriptionForeground);
-	text-align: center;
+.volt-agent-history-tree .monaco-list-row,
+.volt-agent-history-tree .monaco-list:focus .monaco-list-row.focused,
+.volt-agent-history-tree .monaco-list:focus .monaco-list-row.selected,
+.volt-agent-history-tree .monaco-list .monaco-list-row.focused,
+.volt-agent-history-tree .monaco-list .monaco-list-row.selected {
+	outline: none !important;
+	box-shadow: none !important;
 }
 
-.volt-agent-history-heading {
-	padding: 12px 8px 4px;
-	color: var(--vscode-descriptionForeground);
-	font-size: 11px;
-	user-select: none;
+/* Match explorer: 4px so top-level twisties align with the view title, plus 3px. */
+.volt-agent-history-tree .monaco-list-row {
+	padding-left: 7px;
 }
 
-.volt-agent-history-group.pinned + .volt-agent-history-group .volt-agent-history-heading {
-	margin-top: 4px;
+/* Root childless rows: modest inset. Nested sessions keep the tree indent. */
+.volt-agent-history-tree .monaco-list-row:has(.volt-agent-history-row:not(.is-group):not(.is-nested)) .monaco-tl-twistie {
+	width: 8px !important;
+	padding-left: 0 !important;
+	padding-right: 0 !important;
+	margin-right: 0;
+	transform: none;
 }
 
-.volt-agent-history.compact .volt-agent-history-group.pinned {
-	padding-bottom: 4px;
-	border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+.volt-agent-history-tree .monaco-list-row:has(.volt-agent-history-row.is-nested) .monaco-tl-twistie {
+	width: 8px !important;
+	padding-right: 0 !important;
+	margin-right: 0;
+	transform: none;
+	box-sizing: content-box;
 }
 
-.volt-agent-history.compact .volt-agent-history-group.pinned .volt-agent-history-heading {
-	display: none;
+/* Date groups: chevron sits in the same 16px + 4px slot as the root icons. */
+.volt-agent-history-tree .monaco-list-row:has(.volt-agent-history-row.is-group) .monaco-tl-twistie {
+	width: 16px !important;
+	padding-right: 0 !important;
+	margin-right: 4px;
+	transform: none;
 }
 
-.volt-agent-history-item {
-	position: relative;
+.volt-agent-history-row {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	padding: 5px 8px;
-	border-radius: 6px;
-	cursor: pointer;
-	outline: none;
-	user-select: none;
+	gap: 4px;
+	height: 100%;
+	min-width: 0;
+	overflow: hidden;
 }
 
-.volt-agent-history.compact .volt-agent-history-item {
-	padding: 4px 8px;
-}
-
-.volt-agent-history-item:hover,
-.volt-agent-history-item:focus-visible,
-.volt-agent-history-more:hover,
-.volt-agent-history-more:focus-visible {
-	background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
-}
-
-.volt-agent-history-item.active {
-	background: var(--vscode-list-activeSelectionBackground, rgba(255, 255, 255, 0.09));
-	color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
-}
-
-.volt-agent-history-item .status {
+.volt-agent-history-row .status {
 	flex: none;
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	width: 16px;
-	color: var(--vscode-descriptionForeground);
+	height: 16px;
+	overflow: hidden;
+	color: var(--vscode-icon-foreground, var(--vscode-descriptionForeground));
 }
 
-.volt-agent-history-item .status .codicon {
-	font-size: 15px;
+.volt-agent-history-row .status .codicon {
+	font-size: 16px;
+	line-height: 16px;
 }
 
-.volt-agent-history-item.running .status {
-	color: var(--vscode-foreground);
+.volt-agent-history-row .status .volt-agent-svg-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	color: inherit;
 }
 
-.volt-agent-history-item .copy {
+.volt-agent-history-row .status .volt-agent-svg-icon svg {
+	width: 16px;
+	height: 16px;
+	display: block;
+	flex: none;
+}
+
+.volt-agent-history-row .status .volt-agent-svg-icon.running svg {
+	animation: volt-agent-history-spin 1.1s linear infinite;
+	transform-origin: 50% 50%;
+}
+
+@keyframes volt-agent-history-spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+.volt-agent-history-text {
 	flex: 1;
 	min-width: 0;
 	display: flex;
 	flex-direction: column;
-	gap: 1px;
+	justify-content: center;
+	overflow: hidden;
+	line-height: 16px;
 }
 
-.volt-agent-history-item .title,
-.volt-agent-history-item .summary,
-.volt-agent-history-item .workspace {
-	white-space: nowrap;
+.volt-agent-history-text .name,
+.volt-agent-history-text .description {
 	overflow: hidden;
 	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
-.volt-agent-history-item .title {
-	font-size: 12.5px;
-	line-height: 17px;
-}
-
-.volt-agent-history.compact .volt-agent-history-item .title {
+.volt-agent-history-text .description {
+	display: none;
+	color: var(--vscode-descriptionForeground);
 	font-size: 12px;
 }
 
-.volt-agent-history-item .summary,
-.volt-agent-history-item .workspace {
-	font-size: 11px;
-	line-height: 15px;
+.volt-agent-history-row.is-group .status,
+.volt-agent-history-row.is-message .status,
+.volt-agent-history-row.is-divider .status {
+	display: none;
+}
+
+.volt-agent-history-row.is-divider {
+	pointer-events: none;
+}
+
+.volt-agent-history-row.is-divider > * {
+	display: none;
+}
+
+.volt-agent-history-tree .monaco-list-row:has(.volt-agent-history-row.is-divider) {
+	pointer-events: none;
+}
+
+.volt-agent-history-tree .monaco-list-row:has(.volt-agent-history-row.is-divider):hover,
+.volt-agent-history-tree .monaco-list-row:has(.volt-agent-history-row.is-divider).focused,
+.volt-agent-history-tree .monaco-list-row:has(.volt-agent-history-row.is-divider).selected,
+.volt-agent-history-tree .monaco-list:focus .monaco-list-row:has(.volt-agent-history-row.is-divider).focused,
+.volt-agent-history-tree .monaco-list:focus .monaco-list-row:has(.volt-agent-history-row.is-divider).selected {
+	background: transparent !important;
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+.volt-agent-history-tree .monaco-list-row:has(.volt-agent-history-row.is-divider) .monaco-tl-twistie,
+.volt-agent-history-tree .monaco-list-row:has(.volt-agent-history-row.is-divider) .monaco-tl-indent {
+	visibility: hidden;
+}
+
+.volt-agent-history-tree .monaco-list-row:has(.volt-agent-history-row.is-divider)::after {
+	content: '';
+	position: absolute;
+	left: 12px;
+	right: 12px;
+	top: 50%;
+	height: 1px;
+	background: var(--vscode-sideBar-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+}
+
+.volt-agent-history-row.is-message {
 	color: var(--vscode-descriptionForeground);
 }
 
-.volt-agent-history-item .workspace {
-	font-size: 10px;
-	opacity: 0.8;
+.volt-agent-history-row .keybinding {
+	flex: none;
+	display: none;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	padding-right: 6px;
 }
 
-.volt-agent-history-item .draft-dot {
+.volt-agent-history-row.is-action .keybinding:not(:empty) {
+	display: block;
+}
+
+.volt-agent-history-row .draft-dot {
+	display: none;
 	flex: none;
 	width: 6px;
 	height: 6px;
-	margin-right: 4px;
 	border-radius: 50%;
 	background: var(--vscode-charts-blue, var(--vscode-focusBorder, #3794ff));
 }
 
-.volt-agent-history-item .actions {
-	position: absolute;
-	right: 4px;
-	top: 50%;
-	transform: translateY(-50%);
-	display: none;
-	align-items: center;
-	gap: 2px;
-	padding-left: 12px;
-	background: linear-gradient(to right, transparent, var(--vscode-list-hoverBackground, rgba(30, 30, 30, 1)) 12px);
+.volt-agent-history-row.has-draft .draft-dot {
+	display: block;
 }
 
-.volt-agent-history-item:hover .actions,
-.volt-agent-history-item:focus-within .actions {
+.volt-agent-history-row > .pin {
+	flex: none;
+	display: none;
+	opacity: 0.75;
+}
+
+.volt-agent-history:not(.compact) .volt-agent-history-row.is-pinned > .pin,
+.volt-agent-history:not(.compact) .monaco-list-row:hover .volt-agent-history-row.is-session > .pin,
+.volt-agent-history:not(.compact) .monaco-list-row.focused .volt-agent-history-row.is-session > .pin,
+.volt-agent-history:not(.compact) .monaco-list-row.selected .volt-agent-history-row.is-session > .pin {
 	display: flex;
 }
 
-.volt-agent-history-item:hover .draft-dot,
-.volt-agent-history-item:focus-within .draft-dot {
+.volt-agent-history-row .actions {
+	flex: none;
+	display: none;
+	align-items: center;
+	gap: 0;
+}
+
+.monaco-list-row:hover .volt-agent-history-row.is-session .actions,
+.monaco-list-row.focused .volt-agent-history-row.is-session .actions,
+.monaco-list-row.selected .volt-agent-history-row.is-session .actions {
+	display: flex;
+}
+
+.monaco-list-row:hover .volt-agent-history-row.has-draft .draft-dot,
+.monaco-list-row.focused .volt-agent-history-row.has-draft .draft-dot,
+.monaco-list-row.selected .volt-agent-history-row.has-draft .draft-dot {
 	visibility: hidden;
+}
+
+.volt-agent-history:not(.compact) .volt-agent-history-row .actions .volt-agent-history-action:last-child {
+	display: none;
+}
+
+.volt-agent-history.compact .volt-agent-history-row > .pin {
+	display: none !important;
 }
 
 .volt-agent-history-action {
@@ -226,9 +284,9 @@
 	width: 22px;
 	height: 22px;
 	border: 0;
-	border-radius: 4px;
+	border-radius: 0;
 	background: transparent;
-	color: var(--vscode-foreground);
+	color: var(--vscode-icon-foreground, var(--vscode-foreground));
 	cursor: pointer;
 	padding: 0;
 }
@@ -238,29 +296,16 @@
 }
 
 .volt-agent-history-action .codicon {
-	font-size: 14px;
+	font-size: 16px;
 }
 
-.volt-agent-history-more {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	width: 100%;
-	box-sizing: border-box;
-	padding: 4px 8px;
-	border: 0;
-	border-radius: 6px;
-	background: transparent;
-	color: var(--vscode-descriptionForeground);
-	font: inherit;
-	text-align: left;
-	cursor: pointer;
-	outline: none;
+.volt-agent-history-row.detailed .volt-agent-history-text .description {
+	display: block;
 }
 
-.volt-agent-history-more .codicon {
-	width: 16px;
-	font-size: 15px;
+.volt-agent-history-row.detailed .status {
+	align-self: flex-start;
+	margin-top: 3px;
 }
 
 /* Clock dropdown */
@@ -273,7 +318,6 @@
 	overflow: hidden;
 }
 
-/* Tab-bar clock stays highlighted while its menu is open. */
 .volt-agent-history-open {
 	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
 	border-radius: 5px;

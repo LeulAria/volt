@@ -111,6 +111,7 @@ export class TestNativeHostService implements INativeHostService {
 	async setMinimumSize(width: number | undefined, height: number | undefined): Promise<void> { }
 	async saveWindowSplash(value: IPartsSplash): Promise<void> { }
 	async setBackgroundThrottling(throttling: boolean): Promise<void> { }
+	async setWindowTransparentChrome(enabled: boolean): Promise<void> { }
 	async focusWindow(options?: INativeHostOptions): Promise<void> { }
 	async showMessageBox(options: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> { throw new Error('Method not implemented.'); }
 	async showSaveDialog(options: Electron.SaveDialogOptions): Promise<Electron.SaveDialogReturnValue> { throw new Error('Method not implemented.'); }
@@ -144,6 +145,7 @@ export class TestNativeHostService implements INativeHostService {
 	async installShellCommand(): Promise<void> { }
 	async uninstallShellCommand(): Promise<void> { }
 	async notifyReady(): Promise<void> { }
+	async notifyWorkbenchRestored(): Promise<void> { }
 	async relaunch(options?: { addArgs?: string[] | undefined; removeArgs?: string[] | undefined } | undefined): Promise<void> { }
 	async reload(): Promise<void> { }
 	async closeWindow(): Promise<void> { }

@@ -187,6 +187,7 @@ import './services/voltRuntime/electron-browser/voltStdio.contribution.js';
 
 // Volt dev hot reload (VSCODE_DEV only)
 import './contrib/voltAgent/electron-browser/voltDevReload.contribution.js';
+import './contrib/voltAgent/electron-browser/voltAgentWindowChrome.contribution.js';
 
 //#endregion
 

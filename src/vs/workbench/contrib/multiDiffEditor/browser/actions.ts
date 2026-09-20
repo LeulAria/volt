@@ -41,6 +41,9 @@ export class GoToFileAction extends Action2 {
 		const activeEditorPane = editorService.activeEditorPane;
 		let selections: Selection[] | undefined = undefined;
 		if (!(activeEditorPane instanceof MultiDiffEditor)) {
+			if (URI.isUri(uri)) {
+				await editorService.openEditor({ resource: uri, options: { pinned: true } });
+			}
 			return;
 		}
 

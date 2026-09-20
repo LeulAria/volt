@@ -1,0 +1,177 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.volt-agent-changes-editor {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	background: var(--vscode-editor-background);
+}
+
+.volt-agent-changes-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	flex: 0 0 auto;
+	height: 36px;
+	padding: 0 12px;
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+}
+
+.volt-agent-changes-scope,
+.volt-agent-changes-commit {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 26px;
+	padding: 0 10px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.volt-agent-changes-scope:hover,
+.volt-agent-changes-commit:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.08));
+}
+
+.volt-agent-changes-scope-stats {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-changes-scope-stats.hidden,
+.volt-agent-changes-empty.hidden,
+.volt-agent-changes-widget.hidden {
+	display: none;
+}
+
+.volt-agent-changes-scope-stats .add,
+.volt-agent-changes-empty-row-stats .add {
+	color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+}
+
+.volt-agent-changes-scope-stats .del,
+.volt-agent-changes-empty-row-stats .del {
+	color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+}
+
+.volt-agent-changes-scope-label {
+	opacity: 0.86;
+}
+
+.volt-agent-changes-scope-chevron {
+	opacity: 0.7;
+	font-size: 12px !important;
+}
+
+.volt-agent-changes-commit {
+	border: 1px solid var(--vscode-button-border, rgba(255, 255, 255, 0.12));
+	border-radius: 999px;
+	background: var(--vscode-button-secondaryBackground, transparent);
+}
+
+.volt-agent-changes-body {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.volt-agent-changes-widget {
+	height: 100%;
+	min-height: 0;
+}
+
+.volt-agent-changes-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	padding: 24px;
+	box-sizing: border-box;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-changes-empty-title {
+	margin-bottom: 28px;
+	font-size: 16px;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-changes-empty-list {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-width: 320px;
+}
+
+.volt-agent-changes-empty-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 28px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+	text-align: left;
+}
+
+.volt-agent-changes-empty-row:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-changes-empty-icon {
+	opacity: 0.7;
+}
+
+.volt-agent-changes-empty-row-label {
+	flex: 1 1 auto;
+}
+
+.volt-agent-changes-empty-row-stats {
+	display: inline-flex;
+	gap: 8px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-changes-file-label {
+	cursor: pointer;
+}
+
+.volt-agent-changes-editor .multiDiffEntry .status.added {
+	color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+}
+
+.volt-agent-changes-editor .monaco-action-bar .action-label[aria-label="New"] {
+	color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+	font-size: 12px;
+	padding: 0 6px;
+}
+
+.volt-agent-changes-editor .monaco-editor .view-overlays .current-line,
+.volt-agent-changes-editor .monaco-editor .view-overlays .current-line-exact,
+.volt-agent-changes-editor .monaco-editor .view-overlays .current-line-both,
+.volt-agent-changes-editor .monaco-editor .margin-view-overlays .current-line,
+.volt-agent-changes-editor .monaco-editor .margin-view-overlays .current-line-margin,
+.volt-agent-changes-editor .monaco-editor .margin-view-overlays .current-line-exact-margin,
+.volt-agent-changes-editor .monaco-editor .margin-view-overlays .current-line-margin-both {
+	background: transparent !important;
+	background-color: transparent !important;
+	border: none !important;
+	box-shadow: none !important;
+}

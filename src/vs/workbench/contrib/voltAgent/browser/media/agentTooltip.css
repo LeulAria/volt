@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -26,6 +26,66 @@
 	letter-spacing: 0;
 	white-space: nowrap;
 	-webkit-font-smoothing: antialiased;
+}
+
+.volt-agent-tooltip.beside {
+	white-space: normal;
+	max-width: min(280px, 42vw);
+}
+
+.volt-agent-tooltip.files {
+	max-width: min(420px, calc(100vw - 16px));
+	max-height: min(360px, 50vh);
+	overflow-y: auto;
+	padding: 6px 8px;
+	gap: 1px;
+}
+
+.volt-agent-tooltip-row.file {
+	align-items: center;
+	justify-content: flex-start;
+	gap: 8px;
+	min-width: 0;
+	padding: 3px 4px;
+	border-radius: 6px;
+}
+
+.volt-agent-tooltip-row.file.clickable {
+	cursor: pointer;
+}
+
+.volt-agent-tooltip-row.file.clickable:hover {
+	background: rgba(255, 255, 255, 0.06);
+}
+
+.monaco-workbench.vs .volt-agent-tooltip-row.file.clickable:hover,
+.monaco-workbench.hc-light .volt-agent-tooltip-row.file.clickable:hover {
+	background: rgba(0, 0, 0, 0.06);
+}
+
+.volt-agent-tooltip-file-icon {
+	flex-shrink: 0;
+	font-size: 16px;
+	opacity: 0.85;
+}
+
+.volt-agent-tooltip-file-text {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.volt-agent-tooltip-file-path {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: color-mix(in srgb, currentColor 55%, transparent);
+}
+
+.volt-agent-tooltip.beside .volt-agent-tooltip-label {
+	white-space: pre-wrap;
 }
 
 .monaco-workbench.vs .volt-agent-tooltip,

@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -15,8 +15,8 @@ import { IMarkerService } from '../../../../platform/markers/common/markers.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IProgressService, ProgressLocation } from '../../../../platform/progress/common/progress.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
-import { AGENT_SIDE_PANEL_VIEW_ID } from '../../voltAgent/browser/agentEditorInput.js';
-import { AgentSidePanel } from '../../voltAgent/browser/agentSidePanel.js';
+import { AGENT_SIDE_PANEL_VIEW_ID } from '../../voltAgent/browser/editor/agentEditorInput.js';
+import { AgentSidePanel } from '../../voltAgent/browser/chrome/agentSidePanel.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';

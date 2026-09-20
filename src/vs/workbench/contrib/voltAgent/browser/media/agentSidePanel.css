@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -7,25 +7,29 @@
 	border-left: 1px solid var(--vscode-sideBar-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35))) !important;
 	border-right: 1px solid var(--vscode-sideBar-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35))) !important;
 	box-sizing: border-box;
-	background: var(--vscode-editor-background) !important;
 }
 
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs > .content,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-pane-view,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .split-view-view,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .pane,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .pane-body,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .editor-group-container,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .editor-container {
-	background: var(--vscode-editor-background) !important;
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs {
+	background: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background))) !important;
 }
 
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .margin,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .monaco-editor-background,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .minimap-decorations-layer,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .minimap {
-	background-color: var(--vscode-editor-background) !important;
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs > .content,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .monaco-pane-view,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .split-view-view,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .pane,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .pane-body,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .editor-group-container,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .editor-container {
+	background: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background))) !important;
+}
+
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .margin,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .monaco-editor-background,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .minimap-decorations-layer,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .minimap,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar .volt-agent-editor {
+	background-color: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background))) !important;
 }
 
 .monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs > .title {
@@ -55,12 +59,28 @@
 	flex-direction: row;
 	height: 100%;
 	min-height: 0;
-	background: var(--vscode-editor-background);
+	background: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
+}
+
+.volt-agent-side-panel.home-mode {
+	background: transparent;
+}
+
+.volt-agent-side-panel.home-mode .volt-agent-side-host,
+.volt-agent-side-panel.home-mode .volt-agent-empty,
+.volt-agent-side-panel.home-mode .volt-agent-drawer-actions,
+.volt-agent-side-panel.home-mode .volt-agent-drawer,
+.volt-agent-side-panel.home-mode > .monaco-sash,
+.monaco-workbench.volt-layout-agent .volt-agent-side-host,
+.monaco-workbench.volt-layout-agent .volt-agent-empty,
+.monaco-workbench.volt-layout-agent .volt-agent-drawer-actions,
+.monaco-workbench.volt-layout-agent .volt-agent-drawer,
+.monaco-workbench.volt-layout-agent .volt-agent-side-panel > .monaco-sash {
+	display: none !important;
 }
 
 .volt-agent-side-panel.drop-target {
-	outline: 1px dashed var(--vscode-focusBorder, #007fd4);
-	outline-offset: -2px;
+	outline: none;
 }
 
 .volt-agent-side-main {
@@ -80,38 +100,121 @@
 	position: relative;
 }
 
-/* One drawer toggle, pinned to the far right of the agents panel. */
-.volt-agent-drawer-toggle {
+/* Closed: overlay on the tab bar so the toggle does not take a column. */
+.volt-agent-side-panel > .volt-agent-drawer-actions {
 	position: absolute;
 	top: 5px;
 	right: 5px;
 	z-index: 20;
+}
+
+.volt-agent-drawer-actions {
+	display: flex;
+	align-items: center;
+	gap: 0;
+	pointer-events: auto;
+}
+
+.volt-agent-drawer-action,
+.volt-agent-drawer-toggle {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 24px;
-	height: 24px;
+	width: 22px;
+	height: 22px;
 	border: 0;
 	border-radius: 5px;
 	background: transparent;
 	color: var(--vscode-descriptionForeground);
 	cursor: pointer;
 	padding: 0;
-	pointer-events: auto;
+	box-sizing: border-box;
 }
 
-.volt-agent-drawer-toggle:hover {
-	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+.monaco-workbench .volt-agent-drawer-action:focus,
+.monaco-workbench .volt-agent-drawer-toggle:focus {
+	outline: none !important;
+}
+
+.volt-agent-side-panel:not(.drawer-open) .volt-agent-drawer-when-open {
+	display: none !important;
+}
+
+.volt-agent-drawer-action:hover,
+.volt-agent-drawer-toggle:hover,
+.monaco-workbench .volt-agent-drawer-action:focus-visible,
+.monaco-workbench .volt-agent-drawer-toggle:focus-visible {
+	background: var(--vscode-toolbar-hoverBackground);
 	color: var(--vscode-foreground);
+	outline: 1px dashed var(--vscode-toolbar-hoverOutline);
+	outline-offset: -1px;
 }
 
-.volt-agent-drawer-toggle-icon {
-	width: 13px;
-	height: 13px;
-	fill: currentColor;
+.volt-agent-drawer-action .codicon,
+.volt-agent-drawer-toggle .codicon {
+	font-size: 16px;
+}
+
+/* Overlay on the tab bar: same weight as +, history, more. */
+.volt-agent-side-panel > .volt-agent-drawer-actions .volt-agent-drawer-toggle .codicon {
+	font-size: 14px;
 }
 
 /* Tab-bar actions (+, history, more) sit quieter than the tab labels. */
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .pane,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .pane-body,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .split-view-view,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .editor-group-container,
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .editor-group-container.empty.active:focus,
+.monaco-workbench .volt-agent-side-host .editor-group-container.empty.active:focus,
+.volt-agent-side-panel,
+.volt-agent-drawer,
+.volt-agent-history {
+	outline: none !important;
+}
+
+.volt-agent-side-panel.is-empty.drawer-open .volt-agent-side-main {
+	display: none;
+}
+
+.volt-agent-side-panel.is-empty.drawer-open .volt-agent-drawer {
+	flex: 1;
+	width: auto;
+	max-width: none;
+	border-left: none;
+}
+
+/* Center the tab-bar + glyph inside its icon button. */
+.monaco-workbench .editor-group-container > .title .editor-actions .action-item .action-label.codicon-plus,
+.monaco-workbench .editor-group-container > .title .editor-actions .action-item .action-label.codicon-add {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	width: 22px;
+	height: 22px;
+	box-sizing: border-box;
+}
+
+.monaco-workbench .editor-group-container > .title .editor-actions .action-item .action-label.codicon-plus::before,
+.monaco-workbench .editor-group-container > .title .editor-actions .action-item .action-label.codicon-add::before {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	line-height: 16px;
+	text-align: center;
+	position: relative;
+	top: 0.5px;
+}
+
+.monaco-workbench .editor-group-container > .title .editor-actions .action-item .action-label.codicon-plus:hover,
+.monaco-workbench .editor-group-container > .title .editor-actions .action-item .action-label.codicon-add:hover {
+	outline: none;
+}
+
 .monaco-workbench .volt-agent-side-host .editor-group-container > .title .editor-actions .action-item .action-label.codicon {
 	font-size: 14px;
 	color: var(--vscode-descriptionForeground);
@@ -142,7 +245,7 @@
 	height: 100%;
 	box-sizing: border-box;
 	border-left: 1px solid var(--vscode-sideBar-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
-	background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+	background: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
 	color: var(--vscode-foreground);
 }
 
@@ -163,53 +266,8 @@
 	padding: 0 4px;
 }
 
-.volt-agent-drawer-actions {
-	flex: none;
-	display: flex;
-	flex-direction: column;
-	padding: 4px 8px 6px;
-}
-
-.volt-agent-drawer-row {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	width: 100%;
-	box-sizing: border-box;
-	padding: 5px 8px;
-	border: 0;
-	border-radius: 6px;
-	background: transparent;
-	color: var(--vscode-foreground);
-	font: inherit;
-	font-size: 12.5px;
-	text-align: left;
-	cursor: pointer;
-}
-
-.volt-agent-drawer-row:hover,
-.volt-agent-drawer-row:focus-visible {
-	background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
-	outline: none;
-}
-
-.volt-agent-drawer-row .codicon {
-	width: 16px;
-	font-size: 15px;
-	color: var(--vscode-descriptionForeground);
-}
-
-.volt-agent-drawer-row .label {
-	flex: 1;
-	min-width: 0;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.volt-agent-drawer-row .keybinding {
-	color: var(--vscode-descriptionForeground);
-	font-size: 11px;
+.volt-agent-drawer-header .volt-agent-drawer-actions {
+	position: static;
 }
 
 .volt-agent-drawer-footer {

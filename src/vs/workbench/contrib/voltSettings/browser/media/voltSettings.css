@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -498,6 +498,11 @@
 	align-items: center;
 	justify-content: center;
 	margin-top: 1px;
+}
+
+.volt-settings-provider-icon .volt-brand-icon svg {
+	display: block;
+	overflow: visible;
 }
 
 .volt-settings-provider-row .text {

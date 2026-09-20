@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -8,6 +8,8 @@
 	--volt-file-preview-del: var(--vscode-chat-linesRemovedForeground, var(--vscode-gitDecoration-deletedResourceForeground, #f85149));
 	--volt-file-preview-insert-bg: var(--vscode-diffEditor-insertedLineBackground, color-mix(in srgb, #3fb950 18%, transparent));
 	--volt-file-preview-delete-bg: var(--vscode-diffEditor-removedLineBackground, color-mix(in srgb, #f85149 18%, transparent));
+	--volt-file-preview-insert-bar: color-mix(in srgb, var(--volt-file-preview-add) 88%, transparent);
+	--volt-file-preview-delete-bar: color-mix(in srgb, var(--volt-file-preview-del) 88%, transparent);
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
@@ -52,15 +54,20 @@
 	cursor: pointer;
 }
 
-.volt-file-preview.clickable .volt-file-preview-head:hover,
-.volt-file-preview.collapsible .volt-file-preview-head:hover {
-	color: var(--vscode-foreground);
+.volt-file-preview.clickable:not(.card) .volt-file-preview-head:hover,
+.volt-file-preview.collapsible:not(.card) .volt-file-preview-head:hover {
+	background: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
 }
 
+.volt-file-preview-head:focus,
+.volt-file-preview-head:focus-visible,
+.volt-file-preview.clickable .volt-file-preview-head:focus,
 .volt-file-preview.clickable .volt-file-preview-head:focus-visible,
+.volt-file-preview.collapsible .volt-file-preview-head:focus,
 .volt-file-preview.collapsible .volt-file-preview-head:focus-visible {
-	outline: 1px solid var(--vscode-focusBorder);
-	outline-offset: 2px;
+	outline: none !important;
+	box-shadow: none !important;
+	border-color: transparent;
 }
 
 .volt-file-preview-verb {
@@ -123,18 +130,13 @@
 	cursor: pointer;
 }
 
-.volt-file-preview.clickable .volt-file-preview-name:hover {
-	color: var(--vscode-textLink-foreground);
-	text-decoration: underline;
-}
-
 .volt-file-preview-stats {
 	display: inline-flex;
 	align-items: baseline;
 	flex-shrink: 0;
 	gap: 4px;
 	font-variant-numeric: tabular-nums;
-	font-weight: 600;
+	font-weight: 300;
 	letter-spacing: 0;
 }
 
@@ -170,113 +172,332 @@
 	flex-direction: column;
 	min-width: 0;
 	margin-top: 4px;
-	padding: 4px 0 6px;
+	padding: 0;
 	overflow: hidden;
-	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
-	border-radius: 10px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 12px;
 	background: color-mix(in srgb, var(--vscode-foreground) 4.5%, var(--vscode-editor-background, #1e1e1e));
-	font-family: var(--volt-code-font, var(--monaco-monospace-font, monospace));
-	font-size: 12px;
-	line-height: 20px;
+}
+
+.monaco-workbench.vs .volt-file-preview-body,
+.monaco-workbench.hc-light .volt-file-preview-body {
+	border-color: rgba(0, 0, 0, 0.1);
 }
 
 .volt-file-preview.expanded.has-diff .volt-file-preview-body {
 	display: flex;
 }
 
+.volt-file-preview-editor {
+	position: relative;
+	width: 100%;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.volt-file-preview-editor .monaco-scrollable-element > .scrollbar,
+.volt-file-preview-editor .monaco-scrollable-element > .scrollbar.visible {
+	z-index: 1 !important;
+}
+
+.volt-file-preview-editor .monaco-diff-editor,
+.volt-file-preview-editor .monaco-editor,
+.volt-file-preview-editor .monaco-editor .overflow-guard,
+.volt-file-preview-editor .monaco-editor-background,
+.volt-file-preview-editor .monaco-editor .margin,
+.volt-file-preview-editor .monaco-editor .monaco-editor-background {
+	background-color: transparent !important;
+}
+
+.volt-file-preview-editor .monaco-editor .cursors-layer,
+.volt-file-preview-editor .monaco-editor .cursors-layer .cursor,
+.volt-file-preview-editor .monaco-editor .cursor {
+	display: none !important;
+	visibility: hidden !important;
+	opacity: 0 !important;
+	width: 0 !important;
+}
+
+.volt-file-preview-editor .monaco-editor .inputarea,
+.volt-file-preview-editor .monaco-editor .inputarea.ime-input,
+.volt-file-preview-editor .monaco-editor .native-edit-context,
+.volt-file-preview-editor .monaco-editor .native-edit-context:focus,
+.volt-file-preview-editor .monaco-editor [class*="native-edit-context"] {
+	caret-color: transparent !important;
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+.volt-file-preview-editor .monaco-editor .view-overlays .current-line,
+.volt-file-preview-editor .monaco-editor .view-overlays .current-line-exact,
+.volt-file-preview-editor .monaco-editor .view-overlays .current-line-both,
+.volt-file-preview-editor .monaco-editor .margin-view-overlays .current-line,
+.volt-file-preview-editor .monaco-editor .margin-view-overlays .current-line-margin,
+.volt-file-preview-editor .monaco-editor .margin-view-overlays .current-line-exact-margin,
+.volt-file-preview-editor .monaco-editor .margin-view-overlays .current-line-margin-both,
+.volt-file-preview-editor .monaco-editor .current-line,
+.volt-file-preview-editor .monaco-editor .current-line-exact,
+.volt-file-preview-editor .monaco-editor .current-line-both,
+.volt-file-preview-editor .monaco-editor .current-line-margin,
+.volt-file-preview-editor .monaco-editor .current-line-exact-margin,
+.volt-file-preview-editor .monaco-editor .current-line-margin-both,
+.volt-file-preview-editor .monaco-editor .focused .current-line,
+.volt-file-preview-editor .monaco-editor .focused .current-line-exact {
+	display: none !important;
+	border: none !important;
+	box-shadow: none !important;
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
+.volt-file-preview-editor .monaco-editor .line-numbers.active-line-number {
+	color: var(--vscode-editorLineNumber-foreground) !important;
+}
+
+.volt-file-preview-editor .monaco-editor .insert-sign,
+.volt-file-preview-editor .monaco-diff-editor .insert-sign,
+.volt-file-preview-editor .monaco-editor .delete-sign,
+.volt-file-preview-editor .monaco-diff-editor .delete-sign {
+	padding-left: 8px !important;
+	box-sizing: border-box;
+	font-size: 11px !important;
+	font-weight: normal;
+	opacity: 0.7 !important;
+	-webkit-text-stroke: 0;
+}
+
+.volt-file-preview-editor .monaco-editor.hc-black .insert-sign,
+.volt-file-preview-editor .monaco-diff-editor.hc-black .insert-sign,
+.volt-file-preview-editor .monaco-editor.hc-black .delete-sign,
+.volt-file-preview-editor .monaco-diff-editor.hc-black .delete-sign,
+.volt-file-preview-editor .monaco-editor.hc-light .insert-sign,
+.volt-file-preview-editor .monaco-diff-editor.hc-light .insert-sign,
+.volt-file-preview-editor .monaco-editor.hc-light .delete-sign,
+.volt-file-preview-editor .monaco-diff-editor.hc-light .delete-sign {
+	opacity: 1 !important;
+}
+
 .volt-file-preview.card {
-	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
-	border-radius: 10px;
-	background: color-mix(in srgb, var(--vscode-foreground) 4.5%, var(--vscode-editor-background, #1e1e1e));
+	--volt-file-preview-fade: var(--vscode-editor-background, #1e1e1e);
+	--volt-file-preview-head-hover: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 6%, var(--volt-file-preview-fade)));
+	position: relative;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 12px;
+	background: var(--volt-file-preview-fade);
+	overflow: hidden;
+	isolation: isolate;
+}
+
+.monaco-workbench.vs .volt-file-preview.card,
+.monaco-workbench.hc-light .volt-file-preview.card {
+	--volt-file-preview-fade: var(--vscode-editor-background, #ffffff);
+	border-color: rgba(0, 0, 0, 0.1);
 }
 
 .volt-file-preview.card .volt-file-preview-head {
 	width: 100%;
-	padding: 6px 10px;
-	border-radius: 10px 10px 0 0;
+	gap: 6px;
+	padding: 7px 10px 6px;
+	border: 0;
+	border-radius: 12px 12px 0 0;
+	background: var(--volt-file-preview-fade);
+	color: inherit;
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+.volt-file-preview.card .volt-file-preview-head:focus,
+.volt-file-preview.card .volt-file-preview-head:focus-visible,
+.volt-file-preview.card .volt-file-preview-head:active {
+	outline: none !important;
+	box-shadow: none !important;
+	border: 0;
 }
 
 .volt-file-preview.card.has-diff .volt-file-preview-head {
-	border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.monaco-workbench.vs .volt-file-preview.card.has-diff .volt-file-preview-head,
+.monaco-workbench.hc-light .volt-file-preview.card.has-diff .volt-file-preview-head {
+	border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+.volt-file-preview.card .volt-file-preview-verb,
 .volt-file-preview.card .volt-file-preview-chevron {
 	display: none;
 }
 
-.volt-file-preview.card.clickable .volt-file-preview-head:hover {
-	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+.volt-file-preview.card .volt-file-preview-name {
+	color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
 }
 
-.volt-file-preview.card .volt-file-preview-body {
-	display: flex;
-	margin-top: 0;
-	border: 0;
-	border-radius: 0 0 10px 10px;
-	background: transparent;
+.volt-file-preview.card .volt-file-preview-stats {
+	gap: 4px;
+	font-weight: 300;
 }
 
-.volt-file-preview.card:not(.has-diff) .volt-file-preview-head {
-	border-radius: 10px;
-}
-
-.volt-file-preview-line {
-	display: flex;
-	align-items: stretch;
-	min-width: 0;
-	min-height: 20px;
-}
-
-.volt-file-preview-line.insert {
-	background: var(--volt-file-preview-insert-bg);
-}
-
-.volt-file-preview-line.delete {
-	background: var(--volt-file-preview-delete-bg);
-}
-
-.volt-file-preview-ln {
-	flex: 0 0 48px;
-	width: 48px;
-	padding: 0 6px 0 10px;
-	color: var(--vscode-editorLineNumber-foreground, rgba(255, 255, 255, 0.32));
-	font-variant-numeric: tabular-nums;
-	text-align: right;
-	user-select: none;
-	-webkit-user-select: none;
-}
-
-.volt-file-preview-mark {
-	flex: 0 0 12px;
-	width: 12px;
-	color: transparent;
-	font-weight: 600;
-	text-align: center;
-	user-select: none;
-	-webkit-user-select: none;
-}
-
-.volt-file-preview-line.insert .volt-file-preview-mark {
+.volt-file-preview.card .volt-file-preview-add {
 	color: var(--volt-file-preview-add);
 }
 
-.volt-file-preview-line.delete .volt-file-preview-mark {
+.volt-file-preview.card .volt-file-preview-del {
 	color: var(--volt-file-preview-del);
 }
 
-.volt-file-preview-code {
-	flex: 1 1 auto;
-	min-width: 0;
-	padding-right: 12px;
-	white-space: pre;
-	overflow: hidden;
-	text-overflow: ellipsis;
+.volt-file-preview.card.clickable .volt-file-preview-head:hover,
+.volt-file-preview.card.collapsible .volt-file-preview-head:hover {
+	background: var(--volt-file-preview-head-hover);
+	color: inherit;
 }
 
-.volt-file-preview-line.insert .volt-file-preview-code {
-	color: color-mix(in srgb, var(--vscode-editor-foreground) 82%, var(--volt-file-preview-add));
+.volt-file-preview.card .volt-file-preview-body {
+	position: relative;
+	display: none;
+	margin-top: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0 0 12px 12px;
+	background: transparent;
 }
 
-.volt-file-preview-line.delete .volt-file-preview-code {
-	color: color-mix(in srgb, var(--vscode-editor-foreground) 82%, var(--volt-file-preview-del));
+.volt-file-preview.card.expanded.has-diff .volt-file-preview-body {
+	display: flex;
+}
+
+.volt-file-preview.card.reviewable:not(.expanded) .volt-file-preview-head {
+	padding-bottom: 18px;
+	border-radius: 12px;
+}
+
+.volt-file-preview.clamped.has-diff .volt-file-preview-editor {
+	isolation: isolate;
+	-webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - 28px), rgb(0 0 0 / 0.2) 100%);
+	mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - 28px), rgb(0 0 0 / 0.2) 100%);
+}
+
+.volt-file-preview.clamped.has-diff .volt-file-preview-body::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 28px;
+	pointer-events: none;
+	border-radius: 0 0 12px 12px;
+	background: linear-gradient(to bottom, rgb(0 0 0 / 0) 0%, color-mix(in srgb, var(--volt-file-preview-fade, var(--vscode-editor-background, #1e1e1e)) 80%, transparent) 100%);
+	z-index: 2;
+}
+
+.volt-file-preview.card .volt-file-preview-editor,
+.volt-file-preview.card .volt-file-preview-editor .monaco-diff-editor,
+.volt-file-preview.card .volt-file-preview-editor .monaco-editor,
+.volt-file-preview.card .volt-file-preview-editor .monaco-editor .overflow-guard {
+	border-radius: 0 0 12px 12px;
+}
+
+.volt-file-preview.card:not(.has-diff) .volt-file-preview-head {
+	border-radius: 12px;
+}
+
+.volt-file-preview-expand {
+	position: absolute;
+	left: 50%;
+	bottom: 3px;
+	z-index: 100;
+	display: none;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 16px;
+	margin: 0;
+	padding: 0;
+	border: none;
+	outline: none;
+	box-shadow: none;
+	border-radius: 4px;
+	transform: translateX(-50%);
+	appearance: none;
+	-webkit-appearance: none;
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	cursor: pointer;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.volt-file-preview.card.reviewable .volt-file-preview-expand {
+	display: inline-flex;
+}
+
+.volt-file-preview.card.reviewable:not(.expanded) .volt-file-preview-expand {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.volt-file-preview.card.reviewable.expanded:hover .volt-file-preview-expand {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.volt-file-preview-expand:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-file-preview-expand:focus,
+.volt-file-preview-expand:focus-visible,
+.volt-file-preview-expand:active {
+	outline: none !important;
+	border: none !important;
+	box-shadow: none !important;
+}
+
+.volt-file-preview-expand .codicon {
+	font-size: 14px;
+}
+
+.volt-file-preview-editor .monaco-editor .line-insert,
+.volt-file-preview-editor .monaco-diff-editor .line-insert,
+.volt-file-preview-editor .monaco-editor .gutter-insert,
+.volt-file-preview-editor .monaco-editor .inline-added-margin-view-zone {
+	background-color: var(--volt-file-preview-insert-bg) !important;
+	border: none !important;
+}
+
+.volt-file-preview-editor .monaco-editor .line-delete,
+.volt-file-preview-editor .monaco-diff-editor .line-delete,
+.volt-file-preview-editor .monaco-editor .gutter-delete,
+.volt-file-preview-editor .monaco-editor .inline-deleted-margin-view-zone,
+.volt-file-preview-editor .monaco-editor .view-lines.line-delete {
+	background-color: var(--volt-file-preview-delete-bg) !important;
+	border: none !important;
+}
+
+.volt-file-preview-editor .monaco-editor .inline-deleted-margin-view-zone,
+.volt-file-preview-editor .monaco-editor .inline-added-margin-view-zone {
+	width: 100%;
+	box-sizing: border-box;
+}
+
+.volt-file-preview-editor .monaco-editor .margin-view-overlays .gutter-insert,
+.volt-file-preview-editor .monaco-editor .inline-added-margin-view-zone {
+	box-shadow: inset 1px 0 0 var(--volt-file-preview-insert-bar);
+}
+
+.volt-file-preview-editor .monaco-editor .margin-view-overlays .gutter-delete,
+.volt-file-preview-editor .monaco-editor .inline-deleted-margin-view-zone {
+	box-shadow: inset 1px 0 0 var(--volt-file-preview-delete-bar);
+}
+
+.volt-file-preview-editor .monaco-editor .line-insert,
+.volt-file-preview-editor .monaco-editor .line-delete,
+.volt-file-preview-editor .monaco-editor .char-insert,
+.volt-file-preview-editor .monaco-editor .char-delete {
+	border: none !important;
+}
+
+.volt-file-preview-editor .monaco-editor .inline-deleted-text {
+	color: inherit !important;
+	background-color: transparent !important;
+	text-decoration: none !important;
 }

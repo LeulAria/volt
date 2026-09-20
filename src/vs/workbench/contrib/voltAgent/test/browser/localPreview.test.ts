@@ -1,11 +1,11 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { extractHttpUrl, extractLocalPreviewUrl, inferPreviewUrlFromCommand, linkifyPreviewUrls, sanitizeBrowserUrl } from '../../browser/localPreview.js';
+import { extractHttpUrl, extractLocalPreviewUrl, inferPreviewUrlFromCommand, linkifyPreviewUrls, sanitizeBrowserUrl } from '../../browser/preview/localPreview.js';
 
 suite('Local preview URL', () => {
 
@@ -39,6 +39,12 @@ suite('Local preview URL', () => {
 	test('extracts a clickable http url', () => {
 		assert.strictEqual(extractHttpUrl('http://127.0.0.1:8080/'), 'http://127.0.0.1:8080/');
 		assert.strictEqual(extractHttpUrl('http://127.0.0.1:8080/.'), 'http://127.0.0.1:8080/');
+		assert.strictEqual(extractHttpUrl('http://127.0.0.1:8080/.The'), 'http://127.0.0.1:8080/');
+		assert.strictEqual(sanitizeBrowserUrl('http://127.0.0.1:8080/.The'), 'http://127.0.0.1:8080/');
+		assert.strictEqual(
+			extractLocalPreviewUrl('The local preview is ready at http://127.0.0.1:8080/.The local preview is ready'),
+			'http://127.0.0.1:8080/',
+		);
 	});
 
 	test('strips markdown bold stars glued to a preview url', () => {
@@ -58,6 +64,10 @@ suite('Local preview URL', () => {
 		assert.strictEqual(
 			linkifyPreviewUrls('The project is running at http://127.0.0.1:8080/.'),
 			'The project is running at [`http://127.0.0.1:8080/`](http://127.0.0.1:8080/).',
+		);
+		assert.strictEqual(
+			linkifyPreviewUrls('ready at http://127.0.0.1:8080/.The local preview is ready'),
+			'ready at [`http://127.0.0.1:8080/`](http://127.0.0.1:8080/). The local preview is ready',
 		);
 		assert.strictEqual(
 			linkifyPreviewUrls('Open [`http://127.0.0.1:8080/`](http://127.0.0.1:8080/).'),
