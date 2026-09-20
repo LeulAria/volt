@@ -59,7 +59,7 @@ export function DynamicText({ variant = "default", align = "left" }: DynamicText
             animate={textVariants.visible}
             exit={textVariants.exit}
             transition={{ duration: 0.2, ease: "easeOut" }}
-            className={`absolute top-0 ${isCentered ? "left-1/2 -translate-x-1/2 text-center" : "left-0 text-left"} rounded-sm border border-zinc-300/5 bg-white/5 p-1 px-3 tracking-wide shadow-xs`}
+            className={`absolute top-0 ${isCentered ? "left-1/2 -translate-x-1/2 text-center" : "left-0 text-left"} rounded-sm border border-white/10 bg-white/[0.06] p-1 px-3 tracking-wide text-white/70`}
             style={{
               fontSize: "0.8rem",
               fontWeight: 400,

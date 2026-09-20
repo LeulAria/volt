@@ -1,7 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Check, Play } from "lucide-react";
+import { Check } from "lucide-react";
 import { useEffect, useState } from "react";
+import { ComposerPrompt } from "@/components/composerPrompt";
 import { DynamicText } from "@/components/dynamicText";
+import { ParticleLogo } from "@/components/particleLogo";
 import { homeRouteLinks, homeRouteMeta } from "@/lib/seo";
 import { gitConfig } from "@/lib/shared";
 
@@ -11,9 +13,6 @@ const RELEASES_BASE = `https://github.com/${gitConfig.user}/${gitConfig.repo}/re
 const DOWNLOAD_MAC = `${RELEASES_BASE}/download/Volt-mac.dmg`;
 const DOWNLOAD_WIN = `${RELEASES_BASE}/download/Volt-windows.exe`;
 const DOWNLOAD_LINUX = `${RELEASES_BASE}/download/Volt-linux.AppImage`;
-
-/** Replace with your public demo URL when it ships (YouTube, Loom, etc.) */
-const DEMO_VIDEO_URL = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
 
 /** Windows logo — 4 panes, monochrome (inherits `currentColor`) */
 function WindowsIcon({ className }: { className?: string }) {
@@ -70,9 +69,11 @@ function AppleIcon({ className }: { className?: string }) {
   );
 }
 
+const focusRing =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0a0a]";
+
 /** Fixed square so Windows & Linux controls always match. */
-const platformOutlineBtn =
-  "inline-flex size-11 shrink-0 items-center justify-center rounded-[4px] border border-white/40 bg-transparent text-white transition-colors hover:border-white/55 hover:bg-white/5";
+const platformOutlineBtn = `inline-flex size-9 shrink-0 items-center justify-center rounded-[5px] border border-white/25 bg-transparent text-white transition-colors duration-150 hover:border-white/40 hover:bg-white/5 ${focusRing}`;
 
 export const Route = createFileRoute("/")({
   component: Home,
@@ -112,31 +113,19 @@ function Home() {
   }
 
   return (
-    <div className="relative min-h-screen bg-black font-sans text-white antialiased">
-      <img
-        src="/hero-ide.png"
-        alt=""
-        width={1024}
-        height={656}
-        className="pointer-events-none absolute inset-0 h-full w-full object-cover object-top-left"
-        decoding="async"
-        fetchPriority="high"
-        sizes="100vw"
-      />
-      <div
-        className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,#00000066_0%,#00000066_50%,#00000080_58%,#000000bf_72%,#000_88%,#000_100%)]"
-        aria-hidden
-      />
-
-      {/* md–xl: baked-in ~90% scale so layout matches reference whether browser is at 100% or 90% zoom */}
-      <div className="relative z-10 flex min-h-screen flex-col md:min-h-[111.11vh] md:[zoom:0.9]">
-        <header className="mx-auto flex w-full max-w-[1200px] shrink-0 flex-wrap items-center justify-end gap-2 px-4 pt-5 sm:gap-3 sm:px-6 sm:pt-6 md:px-10 lg:px-12">
-          <div className="flex flex-col gap-0.5 rounded-[4px] border border-white/20 px-2 py-1.5 text-[10px] font-medium uppercase tracking-[0.2em] text-white/95">
-            <span>Public beta</span>
+    <div className="home-shell relative min-h-dvh bg-[#0a0a0a] font-sans text-white antialiased md:h-[100vh] md:overflow-hidden">
+      <div className="home-grain" aria-hidden />
+      <div className="relative z-10 flex min-h-dvh flex-col md:h-full md:min-h-0">
+        <header className="relative z-20 mx-auto flex w-full max-w-[1200px] shrink-0 items-center justify-end gap-1.5 px-5 pt-5 sm:px-6 sm:pt-5 md:px-10 lg:px-12">
+          <div className="inline-flex h-6 items-center justify-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-2.5 text-center text-[10px] font-medium tracking-[0.16em] text-white/75 backdrop-blur-xl">
+            <span className="inline-flex items-center pt-px pl-[0.16em] uppercase leading-none">Public beta</span>
             {releaseTag ? (
-              <span className="font-mono text-[9px] font-semibold normal-case tracking-normal text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.85)]">
-                {releaseTag}
-              </span>
+              <>
+                <span className="inline-block h-2.5 w-px shrink-0 self-center bg-white/20" aria-hidden />
+                <span className="inline-flex items-center pt-px font-mono text-[10px] font-semibold leading-none tracking-normal text-white/55">
+                  {releaseTag}
+                </span>
+              </>
             ) : null}
           </div>
           <a
@@ -145,43 +134,55 @@ function Home() {
             rel="noreferrer"
             title="Volt on GitHub"
             aria-label="Volt on GitHub"
-            className="group inline-flex items-center gap-2 rounded-[4px] px-1.5 py-1 text-[10px] font-medium uppercase tracking-wider text-white/90 transition-colors [text-shadow:0_1px_2px_rgba(0,0,0,0.9),0_2px_8px_rgba(0,0,0,0.55)] hover:bg-white/5 hover:text-white"
+            className={`group inline-flex h-6 items-center justify-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2.5 leading-none text-[10px] font-medium uppercase tracking-[0.16em] text-white/70 backdrop-blur-xl transition-colors duration-150 hover:border-white/25 hover:bg-white/10 hover:text-white ${focusRing}`}
           >
-            <GithubMarkIcon className="size-4 shrink-0 filter-[drop-shadow(0_1px_1px_rgba(0,0,0,0.85))] transition-transform group-hover:scale-105" />
+            <GithubMarkIcon className="size-3.5 shrink-0 opacity-80 transition-opacity group-hover:opacity-100" />
             <span>GitHub</span>
           </a>
         </header>
 
-        <div className="flex min-h-0 flex-1 flex-col justify-end overflow-x-hidden px-4 pb-10 pt-6 sm:px-6 sm:pb-12 sm:pt-8 md:px-10 md:pb-16 md:pt-12 lg:px-12">
-          <div className="mx-auto w-full max-h-[1200px] min-h-0 max-w-[1200px] overflow-y-auto overscroll-contain">
-            <h1 className="font-sans font-semibold tracking-tight">
-              <div className="min-h-[36px] h-[40px]">
-                <DynamicText />
-              </div>
-              <span className="inline-flex shrink-0 items-center font-mono text-4xl font-bold tracking-wide sm:text-5xl md:text-7xl">
-                volt
-              </span>
-              <div className="flex flex-col gap-2">
-                <span className="mt-2 max-w-xl py-1 text-xl leading-tight sm:py-2 sm:text-2xl md:mt-3 md:text-4xl md:leading-[1.05]">
-                  The agentic development workspace.
-                </span>
-              </div>
-            </h1>
+        <div className="relative z-0 flex flex-col md:min-h-0 md:flex-1">
+          <div className="relative z-0 flex shrink-0 items-center justify-center px-5 py-8 sm:py-10 md:min-h-0 md:flex-1 md:px-4 md:py-1">
+            <ParticleLogo key="bolt-circle-hole" />
+          </div>
 
-            <div className="mt-3 w-full space-y-1.5 text-sm leading-snug text-white/55 sm:mt-4 sm:text-[15px] md:text-base">
-              <p className="max-w-xl">
-                Workspace, editor, Git, and terminal, unified in one lightning-fast surface.
-                <br className="hidden sm:block" /> AI agents handle the mechanics so you stay in
-                flow.
-              </p>
+          <div className="relative z-20 px-5 pb-12 pt-1 sm:px-6 sm:pb-10 md:px-10 md:pb-6 md:pt-2 lg:px-12">
+            <div className="mx-auto w-full max-w-[1200px]">
+            <div className="flex flex-col">
+              <div className="min-w-0">
+                <h1 className="font-sans font-semibold tracking-tight">
+                  <div className="h-[40px] min-h-[36px]">
+                    <DynamicText />
+                  </div>
+                  <span className="inline-flex shrink-0 items-center font-mono text-4xl font-semibold tracking-wide text-white sm:text-4xl md:text-6xl">
+                    volt
+                  </span>
+                  <div className="flex flex-col gap-2">
+                    <span className="mt-2 max-w-xl text-balance text-[22px] leading-tight text-white sm:mt-1.5 sm:text-xl md:mt-2 md:text-[32px] md:leading-[1.1]">
+                      The agentic development workspace.
+                    </span>
+                  </div>
+                </h1>
+
+                <div className="mt-4 w-full text-[14px] leading-relaxed text-white/55 sm:mt-3 sm:text-sm md:text-[15px] md:leading-snug">
+                  <p className="max-w-xl text-pretty">
+                    Workspace, editor, Git, and terminal, unified in one lightning-fast surface.
+                    <br className="hidden sm:block" /> AI agents handle the mechanics so you stay in
+                    flow.
+                  </p>
+                </div>
+              </div>
             </div>
 
-            <div className="mt-5 w-full min-w-0 sm:mt-6">
-              <div className="mb-1 text-xs text-white/40">Install</div>
-              <div className="flex w-full min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
+            <div className="mt-8 w-full min-w-0 sm:mt-6">
+              <div className="flex w-full min-w-0 flex-col gap-6 md:flex-row md:items-end md:justify-between md:gap-8">
                 {/* Below md: 2 lines (curl, then platforms). md+: one line with curl capped at 300px */}
-                <div className="flex w-full min-w-0 flex-col gap-3 md:flex-row md:items-center md:gap-3">
-                  <div className="flex min-h-11 w-full min-w-0 items-center gap-2 rounded-[4px] border border-white/30 bg-black/40 py-[5px] pl-3 pr-2 text-[11px] text-white/75 md:max-w-[300px] md:shrink-0 md:text-xs">
+                <div className="flex w-full min-w-0 flex-col gap-3 md:flex-row md:items-end md:gap-3">
+                  <div className="flex w-full min-w-0 flex-col md:w-auto md:max-w-[300px] md:shrink-0">
+                    <div className="mb-1 w-fit text-[10px] font-medium uppercase tracking-[0.16em] text-white/35">
+                      Install
+                    </div>
+                    <div className="flex h-9 min-h-9 w-full min-w-0 items-center gap-2 rounded-[5px] border border-white/15 bg-transparent py-1 pl-3 pr-1.5 text-[11px] text-white/75 md:text-xs">
                     <span className="shrink-0 font-mono text-emerald-400/90">&gt;_</span>
                     <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]">
                       <code className="block whitespace-nowrap pr-1 font-mono">{INSTALL_CURL}</code>
@@ -189,7 +190,7 @@ function Home() {
                     <button
                       type="button"
                       onClick={copyInstall}
-                      className="shrink-0 rounded-[4px] border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-white/90 transition-colors hover:bg-white/10 sm:px-3 sm:text-sm"
+                      className={`shrink-0 rounded-[5px] border border-white/20 bg-transparent px-2 py-1 text-[11px] font-semibold text-white/90 transition-colors duration-150 hover:border-white/35 hover:bg-white/5 sm:px-2.5 ${focusRing}`}
                     >
                       {copied ? (
                         <span className="inline-flex items-center gap-1.5 text-emerald-400/90">
@@ -200,6 +201,7 @@ function Home() {
                         "Copy"
                       )}
                     </button>
+                    </div>
                   </div>
 
                   {/* Mac + Win + Linux — single row; Mac grows, platform icons fixed size */}
@@ -211,10 +213,10 @@ function Home() {
                         rel="noreferrer"
                         title="Download for Mac"
                         aria-label="Download for Mac"
-                        className="inline-flex h-11 min-h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-[4px] bg-white px-2.5 font-sans text-sm font-semibold text-black transition-opacity hover:opacity-90 sm:px-3.5"
+                        className={`inline-flex h-9 min-h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-[5px] bg-white px-2.5 font-sans text-xs font-semibold text-black transition-opacity duration-150 hover:opacity-90 sm:px-3 ${focusRing}`}
                       >
                         <span className="min-w-0 truncate sm:whitespace-nowrap">Download for Mac</span>
-                        <AppleIcon className="size-5 shrink-0 text-black" />
+                        <AppleIcon className="size-4 shrink-0 text-black" />
                       </a>
                       <a
                         href={DOWNLOAD_WIN}
@@ -224,7 +226,7 @@ function Home() {
                         aria-label="Download for Windows"
                         className={platformOutlineBtn}
                       >
-                        <WindowsIcon className="size-[22px] text-white" />
+                        <WindowsIcon className="size-[18px] text-white" />
                       </a>
                       <a
                         href={DOWNLOAD_LINUX}
@@ -237,28 +239,23 @@ function Home() {
                         <img
                           src="/linux-icon.svg"
                           alt=""
-                          className="size-6 opacity-90 grayscale brightness-0 invert"
+                          className="size-5 opacity-90 brightness-0 invert"
                         />
                       </a>
                     </div>
                   </div>
                 </div>
 
-                <a
-                  href={DEMO_VIDEO_URL}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-[4px] border border-white/35 bg-white/5 px-3 font-sans text-xs font-semibold text-white backdrop-blur-sm transition-colors hover:border-white/50 hover:bg-white/10 sm:h-11 md:w-auto md:min-w-[220px] md:px-4 md:text-sm"
-                >
-                  <Play className="size-3.5 shrink-0 sm:size-4" strokeWidth={2.25} />
-                  <span className="whitespace-nowrap">Watch 47-second demo</span>
-                </a>
+                <div className="shrink-0">
+                  <ComposerPrompt />
+                </div>
               </div>
             </div>
 
-            <p className="mt-3 max-w-xl text-pretty text-[11px] leading-relaxed text-white/45 [text-shadow:0_1px_16px_rgba(0,0,0,0.75)] sm:mt-4 sm:text-xs">
+            <p className="mt-5 max-w-xl text-pretty text-[12px] leading-relaxed text-white/40 sm:mt-4 sm:text-xs">
               Already in public beta • 4.9k developers joined this week
             </p>
+            </div>
           </div>
         </div>
       </div>
