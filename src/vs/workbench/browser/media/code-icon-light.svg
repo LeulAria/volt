@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 260" fill="none">
 	<defs>
 		<clipPath id="voltL">
-			<path d="M170.9 -10 L163.92 18 L91.74 140 L121.66 140 L96.08 242 L89.1 270 L-10 270 L-10 -10 Z"/>
+			<path d="M-10 -10L162.50 -10L150.50 56.50L88.41 147.30L134.68 147.30L111.50 203.50L99.50 270L-10 270Z"/>
 		</clipPath>
 		<mask id="voltCut">
 			<rect width="260" height="260" fill="#ffffff"/>
-			<path d="M163.92 18 L91.74 140 L121.66 140 L96.08 242 L168.26 120 L138.34 120 Z" fill="#000000" stroke="#000000" stroke-width="9" stroke-linejoin="round" stroke-linecap="round"/>
+			<path d="M148.08 65.55A1.60 1.60 0 0 0 145.21 64.23L97.18 134.47A8.20 8.20 0 0 0 103.95 147.30L124.52 147.30A6.80 6.80 0 0 1 130.81 156.69L114.94 195.15A1.60 1.60 0 0 0 117.60 196.84L175.72 133.44A8.20 8.20 0 0 0 169.68 119.70L142.45 119.70A6.80 6.80 0 0 1 135.88 111.14Z" fill="#000000"/>
 		</mask>
 	</defs>
 	<g mask="url(#voltCut)">
