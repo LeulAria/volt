@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -19,7 +19,7 @@ export interface IVoltStdioSpawnOptions {
 export interface IVoltStdioService {
 	readonly _serviceBrand: undefined;
 	readonly onData: Event<{ id: string; data: string }>;
-	readonly onExit: Event<{ id: string; code: number | null }>;
+	readonly onExit: Event<{ id: string; code: number | null; stderr?: string }>;
 	spawn(options: IVoltStdioSpawnOptions): Promise<string>;
 	write(id: string, data: string): Promise<void>;
 	kill(id: string): Promise<void>;

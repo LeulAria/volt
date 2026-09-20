@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -18,10 +18,11 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 	declare readonly _serviceBrand: undefined;
 
 	private readonly processes = new Map<string, ChildProcessWithoutNullStreams>();
+	private readonly stderr = new Map<string, string>();
 	private readonly _onData = this._register(new Emitter<{ id: string; data: string }>());
-	private readonly _onExit = this._register(new Emitter<{ id: string; code: number | null }>());
+	private readonly _onExit = this._register(new Emitter<{ id: string; code: number | null; stderr?: string }>());
 	readonly onData: Event<{ id: string; data: string }> = this._onData.event;
-	readonly onExit: Event<{ id: string; code: number | null }> = this._onExit.event;
+	readonly onExit: Event<{ id: string; code: number | null; stderr?: string }> = this._onExit.event;
 
 	constructor(@ILogService private readonly logService: ILogService) {
 		super();
@@ -38,10 +39,15 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 		child.stdout.setEncoding('utf8');
 		child.stderr.setEncoding('utf8');
 		child.stdout.on('data', (data: string) => this._onData.fire({ id, data }));
-		child.stderr.on('data', (data: string) => this.logService.trace(`[volt-stdio:${id}] ${data}`));
+		child.stderr.on('data', (data: string) => {
+			this.stderr.set(id, tailText(`${this.stderr.get(id) ?? ''}${data}`, 4_000));
+			this.logService.warn(`[volt-stdio:${id}] ${data}`);
+		});
 		child.on('exit', code => {
+			const stderr = this.stderr.get(id);
 			this.processes.delete(id);
-			this._onExit.fire({ id, code });
+			this.stderr.delete(id);
+			this._onExit.fire({ id, code, ...(stderr ? { stderr } : {}) });
 		});
 		child.on('error', err => this.logService.error('[volt-stdio]', err));
 		return id;
@@ -81,6 +87,11 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 			child.kill();
 			this.processes.delete(id);
 		}
+		this.stderr.clear();
 		super.dispose();
 	}
+}
+
+function tailText(text: string, max: number): string {
+	return text.length > max ? text.slice(text.length - max) : text;
 }
