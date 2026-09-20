@@ -14,12 +14,14 @@ const pall = require('p-all');
 
 const { all, copyrightFilter, unicodeFilter, indentationFilter, tsFormattingFilter, eslintFilter, stylelintFilter } = require('./filters');
 
-const copyrightHeaderLines = [
-	'/*---------------------------------------------------------------------------------------------',
-	' *  Copyright (c) Microsoft Corporation. All rights reserved.',
+const copyrightHeaderStart = '/*---------------------------------------------------------------------------------------------';
+const copyrightHeaderEnd = [
 	' *  Licensed under the MIT License. See License.txt in the project root for license information.',
 	' *--------------------------------------------------------------------------------------------*/',
 ];
+const microsoftCopyright = ' *  Copyright (c) Microsoft Corporation. All rights reserved.';
+const voltCopyright = ' *  Copyright (c) Volt ADK. All rights reserved.';
+const voltFolderRe = /(?:^|[\\/])[^\\/]*volt[^\\/]*[\\/]/i;
 
 /**
  * @param {string[] | NodeJS.ReadWriteStream} some
@@ -35,8 +37,8 @@ function hygiene(some, linting = true) {
 	const productJson = es.through(function (file) {
 		const product = JSON.parse(file.contents.toString('utf8'));
 
-		if (product.extensionsGallery) {
-			console.error(`product.json: Contains 'extensionsGallery'`);
+		if (product.extensionsGallery?.serviceUrl && /marketplace\.visualstudio\.com/i.test(product.extensionsGallery.serviceUrl)) {
+			console.error(`product.json: Contains Microsoft Marketplace 'extensionsGallery'`);
 			errorCount++;
 		}
 
@@ -106,13 +108,15 @@ function hygiene(some, linting = true) {
 
 	const copyrights = es.through(function (file) {
 		const lines = file.__lines;
+		const expectedOwner = voltFolderRe.test(file.relative) ? voltCopyright : microsoftCopyright;
+		const headerOk = lines[0] === copyrightHeaderStart
+			&& lines[1] === expectedOwner
+			&& lines[2] === copyrightHeaderEnd[0]
+			&& lines[3] === copyrightHeaderEnd[1];
 
-		for (let i = 0; i < copyrightHeaderLines.length; i++) {
-			if (lines[i] !== copyrightHeaderLines[i]) {
-				console.error(file.relative + ': Missing or bad copyright statement');
-				errorCount++;
-				break;
-			}
+		if (!headerOk) {
+			console.error(file.relative + ': Missing or bad copyright statement');
+			errorCount++;
 		}
 
 		this.emit('data', file);
