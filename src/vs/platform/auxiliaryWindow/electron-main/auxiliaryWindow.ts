@@ -34,7 +34,7 @@ export class AuxiliaryWindow extends BaseWindow implements IAuxiliaryWindow {
 	private stateApplied = false;
 
 	constructor(
-		private readonly webContents: WebContents,
+		readonly webContents: WebContents,
 		@IEnvironmentMainService environmentMainService: IEnvironmentMainService,
 		@ILogService logService: ILogService,
 		@IConfigurationService configurationService: IConfigurationService,

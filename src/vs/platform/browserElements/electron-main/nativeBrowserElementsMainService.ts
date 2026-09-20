@@ -157,7 +157,7 @@ export class NativeBrowserElementsMainService extends Disposable implements INat
 			throw new Error('No target found');
 		}
 
-		window.win.webContents.on('ipc-message', async (event, channel, closedCancelAndDetachId) => {
+		window.webContents.on('ipc-message', async (event, channel, closedCancelAndDetachId) => {
 			if (channel === `vscode:cancelCurrentSession${cancelAndDetachId}`) {
 				if (cancelAndDetachId !== closedCancelAndDetachId) {
 					return;
@@ -166,7 +166,7 @@ export class NativeBrowserElementsMainService extends Disposable implements INat
 					debuggers.detach();
 				}
 				if (window.win) {
-					window.win.webContents.removeAllListeners('ipc-message');
+					window.webContents.removeAllListeners('ipc-message');
 				}
 			}
 		});

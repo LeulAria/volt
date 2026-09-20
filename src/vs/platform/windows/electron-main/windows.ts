@@ -54,6 +54,12 @@ export interface IWindowsMainService {
 
 	getWindowById(windowId: number): ICodeWindow | undefined;
 	getWindowByWebContents(webContents: electron.WebContents): ICodeWindow | undefined;
+
+	/**
+	 * Several project sessions can share one browser window. This returns
+	 * the session currently shown in the given browser window, if any.
+	 */
+	getFrontWindowOf(browserWindowId: number): ICodeWindow | undefined;
 }
 
 export interface IWindowsCountChangedEvent {
@@ -99,6 +105,7 @@ export interface IOpenConfiguration extends IBaseOpenConfiguration {
 	readonly forceNewWindow?: boolean;
 	readonly forceNewTabbedWindow?: boolean;
 	readonly forceReuseWindow?: boolean;
+	readonly parkAndSwitch?: boolean;
 	readonly forceEmpty?: boolean;
 	readonly diffMode?: boolean;
 	readonly mergeMode?: boolean;

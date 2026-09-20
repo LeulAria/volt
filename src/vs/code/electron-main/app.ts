@@ -245,6 +245,13 @@ export class CodeApplication extends Disposable {
 				}
 			}
 
+			// Project sessions render into views of their own inside a browser window
+			for (const window of this.windowsMainService.getWindows()) {
+				if (!window.webContents.isDestroyed() && frame.processId === window.webContents.mainFrame.processId) {
+					return true;
+				}
+			}
+
 			return false;
 		};
 
@@ -260,10 +267,8 @@ export class CodeApplication extends Disposable {
 
 			// Check to see if the request comes from one of the main editor windows.
 			for (const window of this.windowsMainService.getWindows()) {
-				if (window.win) {
-					if (frame.processId === window.win.webContents.mainFrame.processId) {
-						return true;
-					}
+				if (!window.webContents.isDestroyed() && frame.processId === window.webContents.mainFrame.processId) {
+					return true;
 				}
 			}
 

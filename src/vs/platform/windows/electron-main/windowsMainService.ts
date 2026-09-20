@@ -8,6 +8,7 @@ import { app, BrowserWindow, WebContents, shell } from 'electron';
 import { addUNCHostToAllowlist } from '../../../base/node/unc.js';
 import { hostname, release, arch } from 'os';
 import { coalesce, distinct } from '../../../base/common/arrays.js';
+import { raceTimeout, timeout } from '../../../base/common/async.js';
 import { CancellationToken } from '../../../base/common/cancellation.js';
 import { CharCode } from '../../../base/common/charCode.js';
 import { Emitter, Event } from '../../../base/common/event.js';
@@ -20,7 +21,6 @@ import { getMarks, mark } from '../../../base/common/performance.js';
 import { IProcessEnvironment, isMacintosh, isWindows, OS } from '../../../base/common/platform.js';
 import { cwd } from '../../../base/common/process.js';
 import { extUriBiasedIgnorePathCase, isEqualAuthority, normalizePath, originalFSPath, removeTrailingPathSeparator } from '../../../base/common/resources.js';
-import { assertReturnsDefined } from '../../../base/common/types.js';
 import { URI } from '../../../base/common/uri.js';
 import { getNLSLanguage, getNLSMessages, localize } from '../../../nls.js';
 import { IBackupMainService } from '../../backup/electron-main/backup.js';
@@ -43,7 +43,7 @@ import { IOpenConfiguration, IOpenEmptyConfiguration, IWindowsCountChangedEvent,
 import { findWindowOnExtensionDevelopmentPath, findWindowOnFile, findWindowOnWorkspaceOrFolder } from './windowsFinder.js';
 import { IWindowState, WindowsStateHandler } from './windowsStateHandler.js';
 import { IRecent } from '../../workspaces/common/workspaces.js';
-import { hasWorkspaceFileExtension, IAnyWorkspaceIdentifier, ISingleFolderWorkspaceIdentifier, isSingleFolderWorkspaceIdentifier, isWorkspaceIdentifier, IWorkspaceIdentifier, toWorkspaceIdentifier } from '../../workspace/common/workspace.js';
+import { hasWorkspaceFileExtension, IAnyWorkspaceIdentifier, ISingleFolderWorkspaceIdentifier, isSingleFolderWorkspaceIdentifier, isWorkspaceIdentifier, IWorkspaceIdentifier, shouldParkWorkspaceSession, toWorkspaceIdentifier } from '../../workspace/common/workspace.js';
 import { createEmptyWorkspaceIdentifier, getSingleFolderWorkspaceIdentifier, getWorkspaceIdentifier } from '../../workspaces/node/workspaces.js';
 import { IWorkspacesHistoryMainService } from '../../workspaces/electron-main/workspacesHistoryMainService.js';
 import { IWorkspacesManagementMainService } from '../../workspaces/electron-main/workspacesManagementMainService.js';
@@ -62,6 +62,31 @@ import { ResourceSet } from '../../../base/common/map.js';
 //#region Helper Interfaces
 
 type RestoreWindowsSetting = 'preserve' | 'all' | 'folders' | 'one' | 'none';
+
+/**
+ * How long a project switch waits for the new workbench to paint before
+ * showing it anyway, so a stuck renderer cannot leave the window invisible.
+ */
+const WORKSPACE_SWITCH_TIMEOUT = 10000;
+const WORKSPACE_SWITCH_PAINT_TIMEOUT = 300;
+
+/**
+ * Resolves once the session's renderer has produced two frames, so that
+ * bringing it to the front shows a finished workbench and not the last
+ * state of its startup.
+ */
+function whenPainted(window: ICodeWindow): Promise<void> {
+	if (window.webContents.isDestroyed()) {
+		return Promise.resolve();
+	}
+
+	const painted = window.webContents.executeJavaScript(
+		'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+		false
+	).then(() => undefined, () => undefined);
+
+	return raceTimeout(painted, WORKSPACE_SWITCH_PAINT_TIMEOUT).then(() => undefined);
+}
 
 interface IOpenBrowserWindowOptions {
 	readonly userEnv?: IProcessEnvironment;
@@ -82,6 +107,13 @@ interface IOpenBrowserWindowOptions {
 	readonly emptyWindowBackupInfo?: IEmptyWindowBackupInfo;
 	readonly forceProfile?: string;
 	readonly forceTempProfile?: boolean;
+
+	/**
+	 * Boot this window behind the given one and swap them once it has
+	 * painted, so switching projects never shows an empty workbench and
+	 * never loses the session it switches away from.
+	 */
+	readonly switchFrom?: ICodeWindow;
 }
 
 interface IPathResolveOptions {
@@ -209,6 +241,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 	readonly onDidTriggerSystemContextMenu = this._onDidTriggerSystemContextMenu.event;
 
 	private readonly windows = new Map<number, ICodeWindow>();
+	private readonly pendingWorkspaceSwitch = new Map<number /* window switched away from */, number /* window switched to */>();
 
 	private readonly windowsStateHandler: WindowsStateHandler;
 
@@ -686,7 +719,16 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 	private doOpenFilesInExistingWindow(configuration: IOpenConfiguration, window: ICodeWindow, filesToOpen?: IFilesToOpen): ICodeWindow {
 		this.logService.trace('windowsManager#doOpenFilesInExistingWindow', { filesToOpen });
 
-		this.focusMainOrChildWindow(window); // make sure window or any of the children has focus
+		// A project switch into a session we already have running is just a
+		// swap of which session owns the screen, so it happens immediately.
+		// A newer switch always wins over one that is still booting.
+		const sourceWindow = configuration.parkAndSwitch ? this.getOpenContextWindow(configuration) : undefined;
+		if (sourceWindow && sourceWindow.id !== window.id) {
+			this.pendingWorkspaceSwitch.delete(sourceWindow.id);
+			this.switchWorkspaceSession(sourceWindow, window);
+		} else {
+			this.focusMainOrChildWindow(window); // make sure window or any of the children has focus
+		}
 
 		const params: INativeOpenFileRequest = {
 			filesToOpenOrCreate: filesToOpen?.filesToOpenOrCreate,
@@ -755,18 +797,26 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 			windowToUse = this.getWindowById(openConfig.contextWindowId); // fix for https://github.com/microsoft/vscode/issues/49587
 		}
 
+		const sourceWindow = windowToUse
+			?? (typeof openConfig.contextWindowId === 'number' ? this.getWindowById(openConfig.contextWindowId) : undefined)
+			?? (!forceNewWindow ? this.getLastActiveWindow() : undefined);
+		const switchFrom = openConfig.parkAndSwitch && shouldParkWorkspaceSession(sourceWindow, folderOrWorkspace.workspace)
+			? sourceWindow
+			: undefined;
+
 		return this.openInBrowserWindow({
 			workspace: folderOrWorkspace.workspace,
 			userEnv: openConfig.userEnv,
 			cli: openConfig.cli,
 			initialStartup: openConfig.initialStartup,
 			remoteAuthority: folderOrWorkspace.remoteAuthority,
-			forceNewWindow,
+			forceNewWindow: forceNewWindow || !!switchFrom,
 			forceNewTabbedWindow: openConfig.forceNewTabbedWindow,
 			filesToOpen,
-			windowToUse,
+			windowToUse: switchFrom ? undefined : windowToUse,
 			forceProfile: openConfig.forceProfile,
-			forceTempProfile: openConfig.forceTempProfile
+			forceTempProfile: openConfig.forceTempProfile,
+			switchFrom
 		});
 	}
 
@@ -1010,19 +1060,18 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 	}
 
 	private getRestoreWindowsSetting(): RestoreWindowsSetting {
-		let restoreWindows: RestoreWindowsSetting;
-		if (this.lifecycleMainService.wasRestarted) {
-			restoreWindows = 'all'; // always reopen all windows when an update was applied
-		} else {
-			const windowConfig = this.configurationService.getValue<IWindowSettings | undefined>('window');
-			restoreWindows = windowConfig?.restoreWindows || 'all'; // by default restore all windows
 
-			if (!['preserve', 'all', 'folders', 'one', 'none'].includes(restoreWindows)) {
-				restoreWindows = 'all'; // by default restore all windows
-			}
+		// Projects live side by side in one window and are switched between,
+		// so a restart brings back the project that was last on screen rather
+		// than tiling every project that was open into its own window.
+		if (this.lifecycleMainService.wasRestarted) {
+			return 'one';
 		}
 
-		return restoreWindows;
+		const windowConfig = this.configurationService.getValue<IWindowSettings | undefined>('window');
+		const restoreWindows = windowConfig?.restoreWindows ?? 'one';
+
+		return ['preserve', 'all', 'folders', 'one', 'none'].includes(restoreWindows) ? restoreWindows : 'one';
 	}
 
 	private async doGetWorkspaceMatchingFoldersFromLastSession(remoteAuthority: string | undefined, folders: ISingleFolderWorkspacePathToOpen[]): Promise<IWorkspaceIdentifier | undefined> {
@@ -1547,12 +1596,14 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		if (!window) {
 			const state = this.windowsStateHandler.getNewWindowState(configuration);
 
-			// Create the window
+			// Create the window. A project switch joins the browser window of
+			// the session we switch away from as a new session instead.
 			mark('code/willCreateCodeWindow');
 			const createdWindow = window = this.instantiationService.createInstance(CodeWindow, {
 				state,
 				extensionDevelopmentPath: configuration.extensionDevelopmentPath,
-				isExtensionTestHost: !!configuration.extensionTestsPath
+				isExtensionTestHost: !!configuration.extensionTestsPath,
+				hostWindow: options.switchFrom
 			});
 			mark('code/didCreateCodeWindow');
 
@@ -1564,6 +1615,10 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 
 			// Add to our list of windows
 			this.windows.set(createdWindow.id, createdWindow);
+
+			if (options.switchFrom) {
+				this.beginWorkspaceSwitch(options.switchFrom, createdWindow);
+			}
 
 			// Indicate new window via event
 			this._onDidOpenWindow.fire(createdWindow);
@@ -1582,7 +1637,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 			disposables.add(createdWindow.onDidLeaveFullScreen(() => this._onDidChangeFullScreen.fire({ window: createdWindow, fullscreen: false })));
 			disposables.add(createdWindow.onDidTriggerSystemContextMenu(({ x, y }) => this._onDidTriggerSystemContextMenu.fire({ window: createdWindow, x, y })));
 
-			const webContents = assertReturnsDefined(createdWindow.win?.webContents);
+			const webContents = createdWindow.webContents;
 			webContents.removeAllListeners('devtools-reload-page'); // remove built in listener so we can handle this on our own
 			disposables.add(Event.fromNodeEventEmitter(webContents, 'devtools-reload-page')(() => this.lifecycleMainService.reload(createdWindow)));
 
@@ -1693,10 +1748,78 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		return this.userDataProfilesMainService.getProfileForWorkspace(workspace) ?? defaultProfile;
 	}
 
+	private getOpenContextWindow(openConfig: IOpenConfiguration): ICodeWindow | undefined {
+		if (typeof openConfig.contextWindowId === 'number') {
+			return this.getWindowById(openConfig.contextWindowId);
+		}
+
+		return this.getLastActiveWindow();
+	}
+
+	/**
+	 * Start a project switch into a session that still has to boot. The new
+	 * session renders underneath the current project, which stays usable,
+	 * and is brought to the front once its workbench has painted.
+	 */
+	private beginWorkspaceSwitch(from: ICodeWindow, to: ICodeWindow): void {
+		this.logService.trace('windowsManager#beginWorkspaceSwitch', { from: from.id, to: to.id });
+
+		this.pendingWorkspaceSwitch.set(from.id, to.id);
+
+		Promise.race([
+			to.whenRestored().then(() => whenPainted(to)),
+			timeout(WORKSPACE_SWITCH_TIMEOUT)
+		]).then(() => {
+			if (this.pendingWorkspaceSwitch.get(from.id) !== to.id) {
+				return; // a newer switch took over while this one was booting; it stays a parked session
+			}
+
+			this.pendingWorkspaceSwitch.delete(from.id);
+
+			this.switchWorkspaceSession(from, to);
+		}, error => this.logService.error('windowsManager#beginWorkspaceSwitch failed', error));
+	}
+
+	/**
+	 * Bring `to` to the front of the browser window and park `from` beneath
+	 * it without painting. The parked session keeps its editors, terminals
+	 * and extension host alive so switching back is just another reorder.
+	 */
+	private switchWorkspaceSession(from: ICodeWindow, to: ICodeWindow): void {
+		this.logService.trace('windowsManager#switchWorkspaceSession', { from: from.id, to: to.id });
+
+		if (!to.win || to.win.isDestroyed()) {
+			return;
+		}
+
+		if (from.win === to.win) {
+			for (const session of this.getWindows()) {
+				if (session.win === to.win && session !== to) {
+					session.setBackgrounded(true);
+				}
+			}
+		}
+
+		to.setBackgrounded(false);
+		to.bringToFront();
+		to.focus();
+	}
+
 	private onWindowClosed(window: ICodeWindow, disposables: IDisposable): void {
 
 		// Remove from our list so that Electron can clean it up
 		this.windows.delete(window.id);
+		this.pendingWorkspaceSwitch.delete(window.id);
+
+		// A session that went away while on screen hands the window to the
+		// most recently used session that shares it
+		const browserWindow = window.win;
+		if (!window.isBackgrounded && browserWindow && !browserWindow.isDestroyed()) {
+			const sibling = getLastFocused(this.getWindows().filter(candidate => candidate.win === browserWindow));
+			if (sibling) {
+				this.switchWorkspaceSession(window, sibling);
+			}
+		}
 
 		// Emit
 		this._onDidChangeWindowsCount.fire({ oldCount: this.getWindowCount() + 1, newCount: this.getWindowCount() });
@@ -1709,6 +1832,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 
 		// Remove from our list so that Electron can clean it up
 		this.windows.delete(window.id);
+		this.pendingWorkspaceSwitch.delete(window.id);
 
 		// Emit
 		this._onDidDestroyWindow.fire(window);
@@ -1717,10 +1841,16 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 	getFocusedWindow(): ICodeWindow | undefined {
 		const window = BrowserWindow.getFocusedWindow();
 		if (window) {
-			return this.getWindowById(window.id);
+			return this.getFrontWindowOf(window.id);
 		}
 
 		return undefined;
+	}
+
+	getFrontWindowOf(browserWindowId: number): ICodeWindow | undefined {
+		const sessions = this.getWindows().filter(window => window.win?.id === browserWindowId);
+
+		return sessions.find(window => !window.isBackgrounded) ?? getLastFocused(sessions);
 	}
 
 	getLastActiveWindow(): ICodeWindow | undefined {
@@ -1732,7 +1862,9 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 	}
 
 	private doGetLastActiveWindow(windows: ICodeWindow[]): ICodeWindow | undefined {
-		return getLastFocused(windows);
+		const onScreen = windows.filter(window => !window.isBackgrounded);
+
+		return getLastFocused(onScreen.length ? onScreen : windows);
 	}
 
 	sendToFocused(channel: string, ...args: any[]): void {
@@ -1770,13 +1902,6 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 	}
 
 	getWindowByWebContents(webContents: WebContents): ICodeWindow | undefined {
-		const browserWindow = BrowserWindow.fromWebContents(webContents);
-		if (!browserWindow) {
-			return undefined;
-		}
-
-		const window = this.getWindowById(browserWindow.id);
-
-		return window?.matches(webContents) ? window : undefined;
+		return this.getWindows().find(window => window.matches(webContents));
 	}
 }

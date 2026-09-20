@@ -26,6 +26,13 @@ export interface IBaseWindow extends IDisposable {
 	readonly id: number;
 	readonly win: electron.BrowserWindow | null;
 
+	/**
+	 * The web contents rendering this window's workbench. Several code
+	 * windows (project sessions) can share one browser window, so this is
+	 * not necessarily `win.webContents`.
+	 */
+	readonly webContents: electron.WebContents;
+
 	readonly lastFocusTime: number;
 	focus(options?: { mode: FocusMode }): void;
 
@@ -40,6 +47,8 @@ export interface IBaseWindow extends IDisposable {
 
 	updateWindowControls(options: { height?: number; backgroundColor?: string; foregroundColor?: string }): void;
 
+	setTransparentChrome(enabled: boolean): void;
+
 	matches(webContents: electron.WebContents): boolean;
 }
 
@@ -47,6 +56,7 @@ export interface ICodeWindow extends IBaseWindow {
 
 	readonly onWillLoad: Event<ILoadEvent>;
 	readonly onDidSignalReady: Event<void>;
+	readonly onDidSignalRestored: Event<void>;
 	readonly onDidDestroy: Event<void>;
 
 	readonly whenClosedOrLoaded: Promise<void>;
@@ -67,6 +77,28 @@ export interface ICodeWindow extends IBaseWindow {
 	readonly isReady: boolean;
 	ready(): Promise<ICodeWindow>;
 	setReady(): void;
+
+	/**
+	 * Resolves once the workbench reached its `Restored` lifecycle phase.
+	 * Unlike `ready()`, which fires while the parts splash is still up, this
+	 * is late enough that the window has something to show.
+	 */
+	whenRestored(): Promise<ICodeWindow>;
+	setRestored(): void;
+
+	/**
+	 * A backgrounded session keeps running but is not painted, so frosted
+	 * agent chrome cannot show its tree through the session on screen.
+	 * Switching back is bringing this view to the front again.
+	 */
+	readonly isBackgrounded: boolean;
+	setBackgrounded(backgrounded: boolean): void;
+
+	/**
+	 * Make this session the one shown in its browser window. Other sessions
+	 * that share the window keep running without painting.
+	 */
+	bringToFront(): void;
 
 	addTabbedWindow(window: ICodeWindow): void;
 

@@ -101,10 +101,10 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 				Event.map(this.auxiliaryWindowsMainService.onDidChangeAlwaysOnTop, e => ({ windowId: e.window.id, alwaysOnTop: e.alwaysOnTop }))
 			);
 
-			this.onDidBlurMainWindow = Event.filter(Event.fromNodeEventEmitter(app, 'browser-window-blur', (event, window: BrowserWindow) => window.id), windowId => !!this.windowsMainService.getWindowById(windowId));
+			this.onDidBlurMainWindow = this.frontWindowIdEvent('browser-window-blur');
 			this.onDidFocusMainWindow = Event.any(
 				Event.map(Event.filter(Event.map(this.windowsMainService.onDidChangeWindowsCount, () => this.windowsMainService.getLastActiveWindow()), window => !!window), window => window!.id),
-				Event.filter(Event.fromNodeEventEmitter(app, 'browser-window-focus', (event, window: BrowserWindow) => window.id), windowId => !!this.windowsMainService.getWindowById(windowId))
+				this.frontWindowIdEvent('browser-window-focus')
 			);
 
 			this.onDidBlurMainOrAuxiliaryWindow = Event.any(
@@ -246,6 +246,7 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 				cli: this.environmentMainService.args,
 				forceNewWindow: options.forceNewWindow,
 				forceReuseWindow: options.forceReuseWindow,
+				parkAndSwitch: options.parkAndSwitch,
 				preferNewWindow: options.preferNewWindow,
 				diffMode: options.diffMode,
 				mergeMode: options.mergeMode,
@@ -405,7 +406,9 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 	async saveWindowSplash(windowId: number | undefined, splash: IPartsSplash): Promise<void> {
 		const window = this.codeWindowById(windowId);
 
-		this.themeMainService.saveWindowSplash(windowId, window?.openedWorkspace, splash);
+		// The background color belongs to the browser window, which the
+		// session shares with others and which has an id of its own.
+		this.themeMainService.saveWindowSplash(window?.win?.id ?? windowId, window?.openedWorkspace, splash);
 	}
 
 	async setBackgroundThrottling(windowId: number | undefined, allowed: boolean): Promise<void> {
@@ -413,7 +416,12 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 
 		this.logService.trace(`Setting background throttling for window ${windowId} to '${allowed}'`);
 
-		window?.win?.webContents?.setBackgroundThrottling(allowed);
+		window?.webContents.setBackgroundThrottling(allowed);
+	}
+
+	async setWindowTransparentChrome(windowId: number | undefined, enabled: boolean, options?: INativeHostOptions): Promise<void> {
+		const window = this.windowById(options?.targetWindowId, windowId);
+		window?.setTransparentChrome(enabled);
 	}
 
 	//#endregion
@@ -815,7 +823,7 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 
 	async getScreenshot(windowId: number | undefined, rect?: IRectangle, options?: INativeHostOptions): Promise<VSBuffer | undefined> {
 		const window = this.windowById(options?.targetWindowId, windowId);
-		const captured = await window?.win?.webContents.capturePage(rect);
+		const captured = await window?.webContents.capturePage(rect);
 
 		const buf = captured?.toJPEG(95);
 		return buf && VSBuffer.wrap(buf);
@@ -828,7 +836,7 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 
 	async getProcessId(windowId: number | undefined): Promise<number | undefined> {
 		const window = this.windowById(undefined, windowId);
-		return window?.win?.webContents.getOSProcessId();
+		return window?.webContents.getOSProcessId();
 	}
 
 	async killProcess(windowId: number | undefined, pid: number, code: string): Promise<void> {
@@ -850,7 +858,7 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 	async triggerPaste(windowId: number | undefined, options?: INativeHostOptions): Promise<void> {
 		this.logService.trace(`Triggering paste in window ${windowId} with options:`, options);
 		const window = this.windowById(options?.targetWindowId, windowId);
-		return window?.win?.webContents.paste() ?? Promise.resolve();
+		return window?.webContents.paste() ?? Promise.resolve();
 	}
 
 	async readImage(): Promise<Uint8Array> {
@@ -931,6 +939,11 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		window?.setReady();
 	}
 
+	async notifyWorkbenchRestored(windowId: number | undefined): Promise<void> {
+		const window = this.codeWindowById(windowId);
+		window?.setRestored();
+	}
+
 	async relaunch(windowId: number | undefined, options?: IRelaunchOptions): Promise<void> {
 		return this.lifecycleMainService.relaunch(options);
 	}
@@ -990,7 +1003,7 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 
 	async resolveProxy(windowId: number | undefined, url: string): Promise<string | undefined> {
 		const window = this.codeWindowById(windowId);
-		const session = window?.win?.webContents?.session;
+		const session = window?.webContents.session;
 
 		return session?.resolveProxy(url);
 	}
@@ -1024,12 +1037,12 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 
 	async openDevTools(windowId: number | undefined, options?: Partial<OpenDevToolsOptions> & INativeHostOptions): Promise<void> {
 		const window = this.windowById(options?.targetWindowId, windowId);
-		window?.win?.webContents.openDevTools(options?.mode ? { mode: options.mode, activate: options.activate } : undefined);
+		window?.webContents.openDevTools(options?.mode ? { mode: options.mode, activate: options.activate } : undefined);
 	}
 
 	async toggleDevTools(windowId: number | undefined, options?: INativeHostOptions): Promise<void> {
 		const window = this.windowById(options?.targetWindowId, windowId);
-		window?.win?.webContents.toggleDevTools();
+		window?.webContents.toggleDevTools();
 	}
 
 	async openDevToolsWindow(windowId: number | undefined, url: string): Promise<void> {
@@ -1128,6 +1141,16 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 	}
 
 	//#endregion
+
+	/**
+	 * Browser window focus events, reported for the session that is
+	 * currently shown in the browser window (several sessions share one).
+	 */
+	private frontWindowIdEvent(eventName: 'browser-window-focus' | 'browser-window-blur'): Event<number> {
+		const onBrowserWindow = Event.fromNodeEventEmitter<number | undefined>(app, eventName, (event, window: BrowserWindow) => this.windowsMainService.getFrontWindowOf(window.id)?.id);
+
+		return Event.map(Event.filter(onBrowserWindow, windowId => typeof windowId === 'number'), windowId => windowId as number);
+	}
 
 	private windowById(windowId: number | undefined, fallbackCodeWindowId?: number): ICodeWindow | IAuxiliaryWindow | undefined {
 		return this.codeWindowById(windowId) ?? this.auxiliaryWindowById(windowId) ?? this.codeWindowById(fallbackCodeWindowId);

@@ -51,6 +51,16 @@ export interface IWindowCreationOptions {
 	readonly state: IWindowState;
 	readonly extensionDevelopmentPath?: string[];
 	readonly isExtensionTestHost?: boolean;
+
+	/**
+	 * Host this window as a session inside the browser window of another
+	 * code window instead of creating a browser window of its own. The
+	 * session starts out backgrounded: it boots without painting, then
+	 * takes over the surface once it is brought to the front. Used by
+	 * project switching so the current project stays usable while the next
+	 * one boots, and so a project is never a second window on the desktop.
+	 */
+	readonly hostWindow?: ICodeWindow;
 }
 
 interface ITouchBarSegment extends electron.SegmentedControlSegment {
@@ -111,7 +121,7 @@ export abstract class BaseWindow extends Disposable implements IBaseWindow {
 
 	//#region Events
 
-	private readonly _onDidClose = this._register(new Emitter<void>());
+	protected readonly _onDidClose = this._register(new Emitter<void>());
 	readonly onDidClose = this._onDidClose.event;
 
 	private readonly _onDidMaximize = this._register(new Emitter<void>());
@@ -135,6 +145,7 @@ export abstract class BaseWindow extends Disposable implements IBaseWindow {
 	//#endregion
 
 	abstract readonly id: number;
+	abstract readonly webContents: electron.WebContents;
 
 	protected _lastFocusTime = Date.now(); // window is shown on creation so take current time
 	get lastFocusTime(): number { return this._lastFocusTime; }
@@ -219,7 +230,7 @@ export abstract class BaseWindow extends Disposable implements IBaseWindow {
 
 		// Open devtools if instructed from command line args
 		if (this.environmentMainService.args['open-devtools'] === true) {
-			win.webContents.openDevTools();
+			this.webContents.openDevTools();
 		}
 
 		// macOS: Window Fullscreen Transitions
@@ -392,6 +403,12 @@ export abstract class BaseWindow extends Disposable implements IBaseWindow {
 		}
 
 		win.focus();
+
+		// The browser window may host several sessions, so
+		// make sure keyboard focus lands in this one.
+		if (!this.webContents.isDestroyed()) {
+			this.webContents.focus();
+		}
 	}
 
 	//#region Window Control Overlays
@@ -425,13 +442,17 @@ export abstract class BaseWindow extends Disposable implements IBaseWindow {
 			// the height for centering is 12px + 2 * 2px = 16px. When the position
 			// is set, the horizontal margin is offset to ensure the distance between
 			// the traffic lights and the window frame is equal in both directions.
-			const offset = Math.floor((options.height - 16) / 2);
+			const offset = Math.floor((Math.max(options.height, 16) - 16) / 2);
 			if (!offset) {
 				win.setWindowButtonPosition(null);
 			} else {
 				win.setWindowButtonPosition({ x: offset + 1, y: offset });
 			}
 		}
+	}
+
+	setTransparentChrome(_enabled: boolean): void {
+		// Implemented on CodeWindow, which owns the session view.
 	}
 
 	//#endregion
@@ -537,7 +558,7 @@ export abstract class BaseWindow extends Disposable implements IBaseWindow {
 		}
 
 		win?.setSimpleFullScreen(fullscreen);
-		win?.webContents.focus(); // workaround issue where focus is not going into window
+		this.webContents.focus(); // workaround issue where focus is not going into window
 	}
 
 	//#endregion
@@ -561,6 +582,9 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 	private readonly _onDidSignalReady = this._register(new Emitter<void>());
 	readonly onDidSignalReady = this._onDidSignalReady.event;
 
+	private readonly _onDidSignalRestored = this._register(new Emitter<void>());
+	readonly onDidSignalRestored = this._onDidSignalRestored.event;
+
 	private readonly _onDidDestroy = this._register(new Emitter<void>());
 	readonly onDidDestroy = this._onDidDestroy.event;
 
@@ -573,6 +597,52 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 	get id(): number { return this._id; }
 
 	protected override _win: electron.BrowserWindow;
+
+	/**
+	 * Every session renders into a view of its own inside the browser
+	 * window, so that several sessions can share one window and switching
+	 * between them is a reorder of views rather than a window change.
+	 */
+	private readonly view: electron.WebContentsView;
+	get webContents(): electron.WebContents { return this.view.webContents; }
+
+	override setTransparentChrome(enabled: boolean): void {
+		this.transparentChrome = enabled;
+		this.applyTransparentChrome();
+	}
+
+	private applyTransparentChrome(): void {
+		const win = this._win;
+		if (!win || win.isDestroyed()) {
+			return;
+		}
+		const transparent = '#00000000';
+		if (this.backgrounded) {
+			// Parked sessions must not own the shared window chrome, or a
+			// background IDE session would strip vibrancy from the project
+			// on screen. Their view still follows the requested color.
+			this.view.setBackgroundColor(this.transparentChrome ? transparent : this.themeMainService.getBackgroundColor());
+			return;
+		}
+		if (this.transparentChrome) {
+			if (isMacintosh) {
+				win.setVibrancy('under-window');
+			} else if (isWindows && typeof win.setBackgroundMaterial === 'function') {
+				win.setBackgroundMaterial('acrylic');
+			}
+			win.setBackgroundColor(transparent);
+			this.view.setBackgroundColor(transparent);
+			return;
+		}
+		if (isMacintosh) {
+			win.setVibrancy(null);
+		} else if (isWindows && typeof win.setBackgroundMaterial === 'function') {
+			win.setBackgroundMaterial('none');
+		}
+		const background = this.themeMainService.getBackgroundColor();
+		win.setBackgroundColor(background);
+		this.view.setBackgroundColor(background);
+	}
 
 	get backupPath(): string | undefined { return this._config?.backupPath; }
 
@@ -608,6 +678,7 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 	private currentMenuBarVisibility: MenuBarVisibility | undefined;
 
 	private readonly whenReadyCallbacks: { (window: ICodeWindow): void }[] = [];
+	private readonly whenRestoredCallbacks: { (window: ICodeWindow): void }[] = [];
 
 	private readonly touchBarGroups: electron.TouchBarSegmentedControl[] = [];
 
@@ -619,6 +690,8 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 	private readonly configObjectUrl: IIPCObjectUrl<INativeWindowConfiguration>;
 	private pendingLoadConfig: INativeWindowConfiguration | undefined;
 	private wasLoaded = false;
+	private transparentChrome = false;
+	private backgrounded: boolean;
 
 	private readonly jsCallStackMap: Map<string, number>;
 	private readonly jsCallStackEffectiveSampleCount: number;
@@ -650,6 +723,9 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 	) {
 		super(configurationService, stateService, environmentMainService, logService);
 
+		const host = config.hostWindow?.win && !config.hostWindow.win.isDestroyed() ? config.hostWindow.win : undefined;
+		this.backgrounded = !!host;
+
 		//#region create browser window
 		{
 			this.configObjectUrl = this._register(protocolMainService.createIPCObjectUrl<INativeWindowConfiguration>());
@@ -665,16 +741,34 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 				v8CacheOptions: this.environmentMainService.useCodeCache ? 'bypassHeatCheck' : 'none',
 			});
 
-			// Create the browser window
-			mark('code/willCreateCodeBrowserWindow');
-			this._win = new electron.BrowserWindow(options);
-			mark('code/didCreateCodeBrowserWindow');
+			// Create the browser window unless we join an existing one
+			if (host) {
+				this._win = host;
+			} else {
+				mark('code/willCreateCodeBrowserWindow');
+				this._win = new electron.BrowserWindow(options);
+				mark('code/didCreateCodeBrowserWindow');
+			}
 
-			this._id = this._win.id;
+			// Create the view that renders this session. A session joining a
+			// window starts hidden under the session on screen so it can boot
+			// without being seen; the sole session of a fresh window simply
+			// owns the surface.
+			this.view = new electron.WebContentsView({ webPreferences: options.webPreferences });
+			if (options.backgroundColor) {
+				this.view.setBackgroundColor(options.backgroundColor);
+			}
+			this._win.contentView.addChildView(this.view, host ? 0 : undefined);
+			this.layoutView();
+			this.syncSessionView();
+
+			this._id = this.webContents.id;
 			this.setWin(this._win, options);
 
 			// Apply some state after window creation
-			this.applyState(this.windowState, hasMultipleDisplays);
+			if (!host) {
+				this.applyState(this.windowState, hasMultipleDisplays);
+			}
 
 			this._lastFocusTime = Date.now(); // since we show directly, we need to set the last focus time too
 		}
@@ -740,6 +834,85 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 		return this.readyState === ReadyState.READY;
 	}
 
+	private restored = false;
+
+	setRestored(): void {
+		this.logService.trace(`window#load: window reported restored (id: ${this._id})`);
+
+		this.restored = true;
+
+		while (this.whenRestoredCallbacks.length) {
+			this.whenRestoredCallbacks.pop()!(this);
+		}
+
+		this._onDidSignalRestored.fire();
+	}
+
+	whenRestored(): Promise<ICodeWindow> {
+		return new Promise<ICodeWindow>(resolve => {
+			if (this.restored) {
+				return resolve(this);
+			}
+
+			this.whenRestoredCallbacks.push(resolve);
+		});
+	}
+
+	get isBackgrounded(): boolean {
+		return this.backgrounded;
+	}
+
+	setBackgrounded(backgrounded: boolean): void {
+		this.backgrounded = backgrounded;
+		this.layoutView();
+		if (!backgrounded) {
+			this.applyTransparentChrome();
+		}
+	}
+
+	bringToFront(): void {
+		if (this._win.isDestroyed()) {
+			return;
+		}
+
+		this.backgrounded = false;
+		this.layoutView();
+
+		// Re-adding a child view moves it to the top of the stack. Parked
+		// sessions keep running but stay unpainted so frosted chrome cannot
+		// show their sidebar through the session on screen.
+		this._win.contentView.addChildView(this.view);
+		this.syncSessionView();
+		this.applyTransparentChrome();
+		this._win.setTitle(this.webContents.getTitle() || this.productService.nameLong);
+	}
+
+	private layoutView(): void {
+		if (this._win.isDestroyed()) {
+			return;
+		}
+
+		const { width, height } = this._win.getContentBounds();
+		if (this.backgrounded) {
+			this.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+		} else {
+			this.view.setBounds({ x: 0, y: 0, width, height });
+		}
+		this.syncSessionView();
+	}
+
+	private syncSessionView(): void {
+		this.view.setVisible(!this.backgrounded);
+	}
+
+	override focus(options?: { mode: FocusMode }): void {
+		if (this.backgrounded) {
+			return; // a backgrounded session must never steal focus from the project on screen
+		}
+
+		super.focus(options);
+	}
+
 	get whenClosedOrLoaded(): Promise<void> {
 		return new Promise<void>(resolve => {
 
@@ -760,24 +933,37 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 		// Window error conditions to handle
 		this._register(Event.fromNodeEventEmitter(this._win, 'unresponsive')(() => this.onWindowError(WindowError.UNRESPONSIVE)));
 		this._register(Event.fromNodeEventEmitter(this._win, 'responsive')(() => this.onWindowError(WindowError.RESPONSIVE)));
-		this._register(Event.fromNodeEventEmitter(this._win.webContents, 'render-process-gone', (event, details) => details)(details => this.onWindowError(WindowError.PROCESS_GONE, { ...details })));
-		this._register(Event.fromNodeEventEmitter(this._win.webContents, 'did-fail-load', (event, exitCode, reason) => ({ exitCode, reason }))(({ exitCode, reason }) => this.onWindowError(WindowError.LOAD, { reason, exitCode })));
+		this._register(Event.fromNodeEventEmitter(this.webContents, 'render-process-gone', (event, details) => details)(details => this.onWindowError(WindowError.PROCESS_GONE, { ...details })));
+		this._register(Event.fromNodeEventEmitter(this.webContents, 'did-fail-load', (event, exitCode, reason) => ({ exitCode, reason }))(({ exitCode, reason }) => this.onWindowError(WindowError.LOAD, { reason, exitCode })));
 
 		// Prevent windows/iframes from blocking the unload
 		// through DOM events. We have our own logic for
 		// unloading a window that should not be confused
 		// with the DOM way.
 		// (https://github.com/microsoft/vscode/issues/122736)
-		this._register(Event.fromNodeEventEmitter<electron.Event>(this._win.webContents, 'will-prevent-unload')(event => event.preventDefault()));
+		this._register(Event.fromNodeEventEmitter<electron.Event>(this.webContents, 'will-prevent-unload')(event => event.preventDefault()));
 
 		// Remember that we loaded
-		this._register(Event.fromNodeEventEmitter(this._win.webContents, 'did-finish-load')(() => {
+		this._register(Event.fromNodeEventEmitter(this.webContents, 'did-finish-load')(() => {
 
 			// Associate properties from the load request if provided
 			if (this.pendingLoadConfig) {
 				this._config = this.pendingLoadConfig;
 
 				this.pendingLoadConfig = undefined;
+			}
+		}));
+
+		// Keep the session view covering the window
+		for (const event of ['resize', 'maximize', 'unmaximize', 'restore', 'enter-full-screen', 'leave-full-screen', 'enter-html-full-screen', 'leave-html-full-screen'] as const) {
+			this._register(Event.fromNodeEventEmitter(this._win, event)(() => this.layoutView()));
+		}
+
+		// The window title follows the session on screen (a view's document
+		// title does not propagate to the window on its own)
+		this._register(Event.fromNodeEventEmitter(this.webContents, 'page-title-updated', (event, title: string) => title)(title => {
+			if (!this.backgrounded && !this._win.isDestroyed()) {
+				this._win.setTitle(title);
 			}
 		}));
 
@@ -815,7 +1001,7 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 			const serviceUrl = URI.parse(this.productService.extensionsGallery.serviceUrl);
 			urls.push(`${serviceUrl.scheme}://${serviceUrl.authority}/*`);
 		}
-		this._win.webContents.session.webRequest.onBeforeSendHeaders({ urls }, async (details, cb) => {
+		this.webContents.session.webRequest.onBeforeSendHeaders({ urls }, async (details, cb) => {
 			const headers = await this.getMarketplaceHeaders();
 
 			cb({ cancel: false, requestHeaders: Object.assign(details.requestHeaders, headers) });
@@ -902,7 +1088,7 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 				// Unresponsive
 				if (type === WindowError.UNRESPONSIVE) {
-					if (this.isExtensionDevelopmentHost || this.isExtensionTestHost || (this._win && this._win.webContents && this._win.webContents.isDevToolsOpened())) {
+					if (this.isExtensionDevelopmentHost || this.isExtensionTestHost || (this.webContents.isDevToolsOpened())) {
 						// TODO@electron Workaround for https://github.com/microsoft/vscode/issues/56994
 						// In certain cases the window can report unresponsiveness because a breakpoint was hit
 						// and the process is stopped executing. The most typical cases are:
@@ -1026,8 +1212,13 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 		} finally {
 			// make sure to destroy the window as its renderer process is gone. do this
 			// after the code for reopening the window, to prevent the entire application
-			// from quitting when the last window closes as a result.
-			this._win?.destroy();
+			// from quitting when the last window closes as a result. Sessions that
+			// share their window with others only take themselves down.
+			if (this.hasSiblingSessions) {
+				this.destroySession();
+			} else {
+				this._win?.destroy();
+			}
 		}
 	}
 
@@ -1079,7 +1270,7 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 				const proxyRules = newHttpProxy || '';
 				const proxyBypassRules = newNoProxy ? `${newNoProxy},<local>` : '<local>';
 				this.logService.trace(`Setting proxy to '${proxyRules}', bypassing '${proxyBypassRules}'`);
-				this._win.webContents.session.setProxy({ proxyRules, proxyBypassRules, pacScript: '' });
+				this.webContents.session.setProxy({ proxyRules, proxyBypassRules, pacScript: '' });
 				electron.app.setProxy({ proxyRules, proxyBypassRules, pacScript: '' });
 			}
 		}
@@ -1130,9 +1321,10 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 		// Indicate we are navigting now
 		this.readyState = ReadyState.NAVIGATING;
+		this.restored = false;
 
 		// Load URL
-		this._win.loadURL(FileAccess.asBrowserUri(`vs/code/electron-browser/workbench/workbench${this.environmentMainService.isBuilt ? '' : '-dev'}.html`).toString(true));
+		this.webContents.loadURL(FileAccess.asBrowserUri(`vs/code/electron-browser/workbench/workbench${this.environmentMainService.isBuilt ? '' : '-dev'}.html`).toString(true));
 
 		// Remember that we did load
 		const wasLoaded = this.wasLoaded;
@@ -1140,12 +1332,12 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 		// Make window visible if it did not open in N seconds because this indicates an error
 		// Only do this when running out of sources and not when running tests
-		if (!this.environmentMainService.isBuilt && !this.environmentMainService.extensionTestsLocationURI) {
+		if (!this.environmentMainService.isBuilt && !this.environmentMainService.extensionTestsLocationURI && !this.backgrounded) {
 			this._register(new RunOnceScheduler(() => {
 				if (this._win && !this._win.isVisible() && !this._win.isMinimized()) {
 					this._win.show();
 					this.focus({ mode: FocusMode.Force });
-					this._win.webContents.openDevTools();
+					this.webContents.openDevTools();
 				}
 			}, 10000)).schedule();
 		}
@@ -1487,13 +1679,13 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 	send(channel: string, ...args: any[]): void {
 		if (this._win) {
-			if (this._win.isDestroyed() || this._win.webContents.isDestroyed()) {
+			if (this._win.isDestroyed() || this.webContents.isDestroyed()) {
 				this.logService.warn(`Sending IPC message to channel '${channel}' for window that is destroyed`);
 				return;
 			}
 
 			try {
-				this._win.webContents.send(channel, ...args);
+				this.webContents.send(channel, ...args);
 			} catch (error) {
 				this.logService.warn(`Error sending IPC message to channel '${channel}' of window ${this._id}: ${toErrorMessage(error)}`);
 			}
@@ -1576,7 +1768,7 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 	private async startCollectingJScallStacks(): Promise<void> {
 		if (!this.jsCallStackCollector.isTriggered()) {
-			const stack = await this._win.webContents.mainFrame.collectJavaScriptCallStack();
+			const stack = await this.webContents.mainFrame.collectJavaScriptCallStack();
 
 			// Increment the count for this stack trace
 			if (stack) {
@@ -1604,7 +1796,7 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 				// If the stack appears more than 20 percent of the time, log it
 				// to the error telemetry as UnresponsiveSampleError.
 				if (Math.round((count * 100) / this.jsCallStackEffectiveSampleCount) > 20) {
-					const fakeError = new UnresponsiveError(stack, this.id, this.win?.webContents.getOSProcessId());
+					const fakeError = new UnresponsiveError(stack, this.id, this.webContents.getOSProcessId());
 					errorHandler.onUnexpectedError(fakeError);
 				}
 				logMessage += `<${count}> ${stack}\n`;
@@ -1619,7 +1811,29 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 	}
 
 	matches(webContents: electron.WebContents): boolean {
-		return this._win?.webContents.id === webContents.id;
+		return this.webContents.id === webContents.id;
+	}
+
+	private get hasSiblingSessions(): boolean {
+		return this.windowsMainService.getWindows().some(window => window !== this && window.win === this._win);
+	}
+
+	/**
+	 * Tear down this session only, leaving the browser window to the
+	 * sessions that share it. The window itself signals `closed` for the
+	 * last session, so this is what closing means for the others.
+	 */
+	private destroySession(): void {
+		if (!this._win.isDestroyed()) {
+			this._win.contentView.removeChildView(this.view);
+		}
+
+		if (!this.webContents.isDestroyed()) {
+			this.webContents.close();
+		}
+
+		this._onDidClose.fire();
+		this.dispose();
 	}
 
 	override dispose(): void {

@@ -39,6 +39,7 @@ suite('WindowsFinder', () => {
 			onDidUnmaximize = Event.None;
 			onDidTriggerSystemContextMenu: Event<{ x: number; y: number }> = Event.None;
 			onDidSignalReady: Event<void> = Event.None;
+			onDidSignalRestored: Event<void> = Event.None;
 			onDidClose: Event<void> = Event.None;
 			onDidDestroy: Event<void> = Event.None;
 			onDidEnterFullScreen: Event<void> = Event.None;
@@ -46,6 +47,7 @@ suite('WindowsFinder', () => {
 			whenClosedOrLoaded: Promise<void> = Promise.resolve();
 			id: number = -1;
 			win: Electron.BrowserWindow = null!;
+			webContents: Electron.WebContents = null!;
 			config: INativeWindowConfiguration | undefined;
 			openedWorkspace = options.openedFolderUri ? { id: '', uri: options.openedFolderUri } : options.openedWorkspace;
 			backupPath?: string | undefined;
@@ -55,9 +57,14 @@ suite('WindowsFinder', () => {
 			lastFocusTime = options.lastFocusTime;
 			isFullScreen = false;
 			isReady = true;
+			isBackgrounded = false;
 
 			ready(): Promise<ICodeWindow> { throw new Error('Method not implemented.'); }
 			setReady(): void { throw new Error('Method not implemented.'); }
+			whenRestored(): Promise<ICodeWindow> { throw new Error('Method not implemented.'); }
+			setRestored(): void { throw new Error('Method not implemented.'); }
+			setBackgrounded(backgrounded: boolean): void { throw new Error('Method not implemented.'); }
+			bringToFront(): void { throw new Error('Method not implemented.'); }
 			addTabbedWindow(window: ICodeWindow): void { throw new Error('Method not implemented.'); }
 			load(config: INativeWindowConfiguration, options: { isReload?: boolean }): void { throw new Error('Method not implemented.'); }
 			reload(cli?: NativeParsedArgs): void { throw new Error('Method not implemented.'); }

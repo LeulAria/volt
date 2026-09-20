@@ -8,7 +8,7 @@ import { join } from '../../../../base/common/path.js';
 import { isLinux, isWindows } from '../../../../base/common/platform.js';
 import { extUriBiasedIgnorePathCase } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
-import { IRawFileWorkspaceFolder, Workspace, WorkspaceFolder } from '../../common/workspace.js';
+import { IRawFileWorkspaceFolder, isSameOpenedWorkspace, shouldParkWorkspaceSession, Workspace, WorkspaceFolder } from '../../common/workspace.js';
 import { toWorkspaceFolders } from '../../../workspaces/common/workspaces.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 
@@ -28,6 +28,55 @@ suite('Workspace', () => {
 	const abcTest3FolderUri = URI.file(join(abcFolder, 'test3'));
 
 	const workspaceConfigUri = URI.file(join(fileFolder, 'test.code-workspace'));
+
+	test('isSameOpenedWorkspace matches folders and workspace files', () => {
+		const folderA = { id: 'folder-a', uri: testFolderUri };
+		const folderAAgain = { id: 'folder-a-other', uri: testFolderUri };
+		const folderB = { id: 'folder-b', uri: mainFolderUri };
+		const workspaceA = { id: 'ws-a', configPath: workspaceConfigUri };
+		const workspaceAAgain = { id: 'ws-a', configPath: URI.file(join(abcFolder, 'other.code-workspace')) };
+		const workspaceB = { id: 'ws-b', configPath: workspaceConfigUri };
+
+		assert.strictEqual(isSameOpenedWorkspace(folderA, folderAAgain), true);
+		assert.strictEqual(isSameOpenedWorkspace(folderA, folderB), false);
+		assert.strictEqual(isSameOpenedWorkspace(workspaceA, workspaceAAgain), true);
+		assert.strictEqual(isSameOpenedWorkspace(workspaceA, workspaceB), false);
+		assert.strictEqual(isSameOpenedWorkspace(folderA, workspaceA), false);
+		assert.strictEqual(isSameOpenedWorkspace(undefined, folderA), false);
+	});
+
+	test('shouldParkWorkspaceSession parks a different folder and skips same or empty', () => {
+		const folderA = { id: 'folder-a', uri: testFolderUri };
+		const folderB = { id: 'folder-b', uri: mainFolderUri };
+		const workspaceA = { id: 'ws-a', configPath: workspaceConfigUri };
+
+		assert.strictEqual(shouldParkWorkspaceSession({
+			openedWorkspace: folderA,
+			isExtensionDevelopmentHost: false,
+			isExtensionTestHost: false
+		}, folderB), true);
+		assert.strictEqual(shouldParkWorkspaceSession({
+			openedWorkspace: folderA,
+			isExtensionDevelopmentHost: false,
+			isExtensionTestHost: false
+		}, folderA), false);
+		assert.strictEqual(shouldParkWorkspaceSession({
+			openedWorkspace: undefined,
+			isExtensionDevelopmentHost: false,
+			isExtensionTestHost: false
+		}, folderA), false);
+		assert.strictEqual(shouldParkWorkspaceSession({
+			openedWorkspace: folderA,
+			isExtensionDevelopmentHost: true,
+			isExtensionTestHost: false
+		}, folderB), false);
+		assert.strictEqual(shouldParkWorkspaceSession({
+			openedWorkspace: folderA,
+			isExtensionDevelopmentHost: false,
+			isExtensionTestHost: false
+		}, workspaceA), true);
+		assert.strictEqual(shouldParkWorkspaceSession(undefined, folderA), false);
+	});
 
 	test('getFolder returns the folder with given uri', () => {
 		const expected = new WorkspaceFolder({ uri: testFolderUri, name: '', index: 2 });

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { BrowserWindow } from 'electron';
+import { WebContents } from 'electron';
 import { Socket } from 'net';
 import { VSBuffer } from '../../../base/common/buffer.js';
 import { DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
@@ -35,11 +35,11 @@ export class ElectronExtensionHostDebugBroadcastChannel<TContext> extends Extens
 
 	private async attachToCurrentWindowRenderer(windowId: number): Promise<IOpenExtensionWindowResult> {
 		const codeWindow = this.windowsMainService.getWindowById(windowId);
-		if (!codeWindow?.win) {
+		if (!codeWindow || codeWindow.webContents.isDestroyed()) {
 			return { success: false };
 		}
 
-		return this.openCdp(codeWindow.win);
+		return this.openCdp(codeWindow.webContents);
 	}
 
 	private async openExtensionDevelopmentHostWindow(args: string[], debugRenderer: boolean): Promise<IOpenExtensionWindowResult> {
@@ -62,12 +62,11 @@ export class ElectronExtensionHostDebugBroadcastChannel<TContext> extends Extens
 			return { success: true };
 		}
 
-		const win = codeWindow.win;
-		if (!win) {
+		if (codeWindow.webContents.isDestroyed()) {
 			return { success: true };
 		}
 
-		return this.openCdp(win);
+		return this.openCdp(codeWindow.webContents);
 	}
 
 	private async openCdpServer(ident: string, onSocket: (socket: ISocket) => void) {
@@ -94,8 +93,8 @@ export class ElectronExtensionHostDebugBroadcastChannel<TContext> extends Extens
 		return server;
 	}
 
-	private async openCdp(win: BrowserWindow): Promise<IOpenExtensionWindowResult> {
-		const debug = win.webContents.debugger;
+	private async openCdp(webContents: WebContents): Promise<IOpenExtensionWindowResult> {
+		const debug = webContents.debugger;
 
 		let listeners = debug.isAttached() ? Infinity : 0;
 		const ident = generateUuid();
@@ -121,8 +120,8 @@ export class ElectronExtensionHostDebugBroadcastChannel<TContext> extends Extens
 				store.dispose();
 			};
 
-			win.addListener('close', onWindowClose);
-			store.add(toDisposable(() => win.removeListener('close', onWindowClose)));
+			webContents.addListener('destroyed', onWindowClose);
+			store.add(toDisposable(() => webContents.removeListener('destroyed', onWindowClose)));
 
 			debug.addListener('message', onMessage);
 			store.add(toDisposable(() => debug.removeListener('message', onMessage)));
@@ -149,7 +148,7 @@ export class ElectronExtensionHostDebugBroadcastChannel<TContext> extends Extens
 		});
 
 		await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
-		win.on('close', () => server.close());
+		webContents.on('destroyed', () => server.close());
 
 		const serverAddr = server.address();
 		const serverAddrBase = typeof serverAddr === 'string' ? serverAddr : `ws://127.0.0.1:${serverAddr?.port}`;

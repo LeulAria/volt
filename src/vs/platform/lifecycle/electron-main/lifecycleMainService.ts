@@ -238,6 +238,7 @@ export class LifecycleMainService extends Disposable implements ILifecycleMainSe
 	get phase(): LifecycleMainPhase { return this._phase; }
 
 	private readonly windowToCloseRequest = new Set<number>();
+	private readonly windowSessions = new Map<electron.BrowserWindow, Set<ICodeWindow>>();
 	private oneTimeListenerTokenGenerator = 0;
 	private windowCounter = 0;
 
@@ -428,42 +429,63 @@ export class LifecycleMainService extends Disposable implements ILifecycleMainSe
 		windowListeners.add(window.onWillLoad(e => this._onWillLoadWindow.fire({ window, workspace: e.workspace, reason: e.reason })));
 
 		// Window Before Closing: Main -> Renderer
+		// Several sessions can share one browser window, so the close
+		// handshake is done once per browser window for all of them.
 		const win = assertReturnsDefined(window.win);
-		windowListeners.add(Event.fromNodeEventEmitter<electron.Event>(win, 'close')(e => {
+		let sessions = this.windowSessions.get(win);
+		if (!sessions) {
+			sessions = new Set<ICodeWindow>();
+			this.windowSessions.set(win, sessions);
 
-			// The window already acknowledged to be closed
-			const windowId = window.id;
-			if (this.windowToCloseRequest.has(windowId)) {
-				this.windowToCloseRequest.delete(windowId);
+			const hostListeners = new DisposableStore();
+			hostListeners.add(Event.fromNodeEventEmitter<electron.Event>(win, 'close')(e => {
 
-				return;
-			}
+				// The window already acknowledged to be closed
+				const browserWindowId = win.id;
+				if (this.windowToCloseRequest.has(browserWindowId)) {
+					this.windowToCloseRequest.delete(browserWindowId);
 
-			this.trace(`Lifecycle#window.on('close') - window ID ${window.id}`);
-
-			// Otherwise prevent unload and handle it from window
-			e.preventDefault();
-			this.unload(window, UnloadReason.CLOSE).then(veto => {
-				if (veto) {
-					this.windowToCloseRequest.delete(windowId);
 					return;
 				}
 
-				this.windowToCloseRequest.add(windowId);
+				const closing = Array.from(this.windowSessions.get(win) ?? []);
+				this.trace(`Lifecycle#window.on('close') - window IDs ${closing.map(session => session.id).join(', ')}`);
 
-				// Fire onBeforeCloseWindow before actually closing
-				this.trace(`Lifecycle#onBeforeCloseWindow.fire() - window ID ${windowId}`);
-				this._onBeforeCloseWindow.fire(window);
+				// Otherwise prevent unload and handle it from window
+				e.preventDefault();
+				this.unloadSessions(closing).then(veto => {
+					if (veto) {
+						this.windowToCloseRequest.delete(browserWindowId);
+						return;
+					}
 
-				// No veto, close window now
-				window.close();
-			});
-		}));
-		windowListeners.add(Event.fromNodeEventEmitter<electron.Event>(win, 'closed')(() => {
+					this.windowToCloseRequest.add(browserWindowId);
+
+					// Fire onBeforeCloseWindow before actually closing
+					for (const session of closing) {
+						this.trace(`Lifecycle#onBeforeCloseWindow.fire() - window ID ${session.id}`);
+						this._onBeforeCloseWindow.fire(session);
+					}
+
+					// No veto, close window now
+					if (!win.isDestroyed()) {
+						win.close();
+					}
+				});
+			}));
+			hostListeners.add(Event.fromNodeEventEmitter<electron.Event>(win, 'closed')(() => {
+				this.windowSessions.delete(win);
+				hostListeners.dispose();
+			}));
+		}
+		sessions.add(window);
+
+		windowListeners.add(window.onDidClose(() => {
 			this.trace(`Lifecycle#window.on('closed') - window ID ${window.id}`);
 
 			// update window count
 			this.windowCounter--;
+			this.windowSessions.get(win)?.delete(window);
 
 			// clear window listeners
 			windowListeners.dispose();
@@ -514,6 +536,20 @@ export class LifecycleMainService extends Disposable implements ILifecycleMainSe
 		if (!veto) {
 			window.reload(cli);
 		}
+	}
+
+	/**
+	 * Unload sessions that share a browser window one after the other, so
+	 * that a veto from one of them leaves the rest untouched.
+	 */
+	private async unloadSessions(sessions: ICodeWindow[]): Promise<boolean /* veto */> {
+		for (const session of sessions) {
+			if (await this.unload(session, UnloadReason.CLOSE)) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	unload(window: ICodeWindow, reason: UnloadReason): Promise<boolean /* veto */> {

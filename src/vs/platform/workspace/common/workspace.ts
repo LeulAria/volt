@@ -203,6 +203,47 @@ export function isWorkspaceIdentifier(obj: unknown): obj is IWorkspaceIdentifier
 	return typeof workspaceIdentifier?.id === 'string' && URI.isUri(workspaceIdentifier.configPath);
 }
 
+export function isSameOpenedWorkspace(
+	a: IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier | undefined,
+	b: IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier | undefined
+): boolean {
+	if (!a || !b) {
+		return false;
+	}
+	if (isWorkspaceIdentifier(a) && isWorkspaceIdentifier(b)) {
+		return a.id === b.id;
+	}
+	if (isSingleFolderWorkspaceIdentifier(a) && isSingleFolderWorkspaceIdentifier(b)) {
+		return extUriBiasedIgnorePathCase.isEqual(a.uri, b.uri);
+	}
+	return false;
+}
+
+export interface IWorkspaceSwitchSource {
+	readonly openedWorkspace?: IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier;
+	readonly isExtensionDevelopmentHost: boolean;
+	readonly isExtensionTestHost: boolean;
+}
+
+/**
+ * Project switch keeps each workspace in its own BrowserWindow.
+ * Park the current session instead of reloading it when the target
+ * folder or workspace file is different.
+ */
+export function shouldParkWorkspaceSession(
+	source: IWorkspaceSwitchSource | undefined,
+	targetWorkspace: IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier | undefined
+): boolean {
+	if (!source || !targetWorkspace || !source.openedWorkspace) {
+		return false;
+	}
+	if (source.isExtensionDevelopmentHost || source.isExtensionTestHost) {
+		return false;
+	}
+
+	return !isSameOpenedWorkspace(source.openedWorkspace, targetWorkspace);
+}
+
 export interface ISerializedSingleFolderWorkspaceIdentifier extends IBaseWorkspaceIdentifier {
 	readonly uri: UriComponents;
 }

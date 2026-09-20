@@ -43,6 +43,12 @@ export interface IBaseOpenWindowsOptions {
 	readonly forceReuseWindow?: boolean;
 
 	/**
+	 * Open or reveal the target workspace in its own window and park
+	 * the current window so editors, size, and layout stay intact.
+	 */
+	readonly parkAndSwitch?: boolean;
+
+	/**
 	 * The remote authority to use when windows are opened with either
 	 * - no workspace (empty window)
 	 * - a workspace that is neither `file://` nor `vscode-remote://`

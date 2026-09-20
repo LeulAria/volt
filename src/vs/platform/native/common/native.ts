@@ -135,6 +135,12 @@ export interface ICommonNativeHostService {
 	setBackgroundThrottling(allowed: boolean): Promise<void>;
 
 	/**
+	 * Frosted, translucent chrome used by Agent layout. Restores the opaque
+	 * workbench background when `enabled` is false.
+	 */
+	setWindowTransparentChrome(enabled: boolean, options?: INativeHostOptions): Promise<void>;
+
+	/**
 	 * Make the window focused.
 	 * @param options specify the specific window to focus and the focus mode.
 	 * Defaults to {@link FocusMode.Transfer}.
@@ -203,6 +209,7 @@ export interface ICommonNativeHostService {
 
 	// Lifecycle
 	notifyReady(): Promise<void>;
+	notifyWorkbenchRestored(): Promise<void>;
 	relaunch(options?: { addArgs?: string[]; removeArgs?: string[] }): Promise<void>;
 	reload(options?: { disableExtensions?: boolean }): Promise<void>;
 	closeWindow(options?: INativeHostOptions): Promise<void>;

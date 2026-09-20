@@ -163,7 +163,7 @@ export class WindowsStateHandler extends Disposable {
 		if (!currentWindowsState.lastActiveWindow) {
 			let activeWindow = this.windowsMainService.getLastActiveWindow();
 			if (!activeWindow || activeWindow.isExtensionDevelopmentHost) {
-				activeWindow = this.windowsMainService.getWindows().find(window => !window.isExtensionDevelopmentHost);
+				activeWindow = this.windowsMainService.getWindows().find(window => !window.isExtensionDevelopmentHost && !window.isBackgrounded);
 			}
 
 			if (activeWindow) {
@@ -197,7 +197,7 @@ export class WindowsStateHandler extends Disposable {
 		// so if we ever want to persist the UI state of the last closed window (window count === 1), it has
 		// to come from the stored lastClosedWindowState on Win/Linux at least
 		if (this.windowsMainService.getWindowCount() > 1) {
-			currentWindowsState.openedWindows = this.windowsMainService.getWindows().filter(window => !window.isExtensionDevelopmentHost).map(window => {
+			currentWindowsState.openedWindows = this.windowsMainService.getWindows().filter(window => !window.isExtensionDevelopmentHost && !window.isBackgrounded).map(window => {
 				const windowState = this.toWindowState(window);
 
 				if (windowState.uiState.mode === WindowMode.Fullscreen) {
@@ -227,6 +227,10 @@ export class WindowsStateHandler extends Disposable {
 	private onBeforeCloseWindow(window: ICodeWindow): void {
 		if (this.lifecycleMainService.quitRequested) {
 			return; // during quit, many windows close in parallel so let it be handled in the before-quit handler
+		}
+
+		if (window.isBackgrounded) {
+			return; // a parked project session was never on screen, so it must not become the state we restore
 		}
 
 		// On Window close, update our stored UI state of this window

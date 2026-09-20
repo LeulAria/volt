@@ -81,7 +81,7 @@ export class DiagnosticsMainService implements IDiagnosticsMainService {
 
 		const windows: IWindowDiagnostics[] = [];
 		for (const window of getAllWindowsExcludingOffscreen()) {
-			const codeWindow = this.windowsMainService.getWindowById(window.id);
+			const codeWindow = this.windowsMainService.getFrontWindowOf(window.id);
 			if (codeWindow) {
 				windows.push(await this.codeWindowToInfo(codeWindow));
 			} else {
