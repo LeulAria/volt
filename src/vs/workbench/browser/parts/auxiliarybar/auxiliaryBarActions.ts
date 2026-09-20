@@ -24,9 +24,9 @@ const maximizeIcon = registerIcon('auxiliarybar-maximize', Codicon.screenFull, l
 const closeIcon = registerIcon('auxiliarybar-close', panelCloseIcon, localize('closeIcon', 'Icon to close the secondary side bar.'));
 
 const auxiliaryBarRightIcon = registerIcon('auxiliarybar-right-layout-icon', Codicon.layoutSidebarRight, localize('toggleAuxiliaryIconRight', 'Icon to toggle the secondary side bar off in its right position.'));
-const auxiliaryBarRightOffIcon = registerIcon('auxiliarybar-right-off-layout-icon', Codicon.layoutSidebarRightOff, localize('toggleAuxiliaryIconRightOn', 'Icon to toggle the secondary side bar on in its right position.'));
-const auxiliaryBarLeftIcon = registerIcon('auxiliarybar-left-layout-icon', Codicon.layoutSidebarLeft, localize('toggleAuxiliaryIconLeft', 'Icon to toggle the secondary side bar in its left position.'));
-const auxiliaryBarLeftOffIcon = registerIcon('auxiliarybar-left-off-layout-icon', Codicon.layoutSidebarLeftOff, localize('toggleAuxiliaryIconLeftOn', 'Icon to toggle the secondary side bar on in its left position.'));
+registerIcon('auxiliarybar-right-off-layout-icon', Codicon.layoutSidebarRightOff, localize('toggleAuxiliaryIconRightOn', 'Icon to toggle the secondary side bar on in its right position.'));
+registerIcon('auxiliarybar-left-layout-icon', Codicon.layoutSidebarLeft, localize('toggleAuxiliaryIconLeft', 'Icon to toggle the secondary side bar in its left position.'));
+registerIcon('auxiliarybar-left-off-layout-icon', Codicon.layoutSidebarLeftOff, localize('toggleAuxiliaryIconLeftOn', 'Icon to toggle the secondary side bar on in its left position.'));
 
 export class ToggleAuxiliaryBarAction extends Action2 {
 
@@ -143,38 +143,16 @@ MenuRegistry.appendMenuItems([
 	{
 		id: MenuId.LayoutControlMenu,
 		item: {
-			group: '2_pane_toggles',
+			group: '0_new',
 			command: {
 				id: ToggleAuxiliaryBarAction.ID,
-				title: localize('toggleSecondarySideBar', "Toggle Secondary Side Bar"),
-				toggled: { condition: AuxiliaryBarVisibleContext, icon: auxiliaryBarLeftIcon },
-				icon: auxiliaryBarLeftOffIcon,
+				title: localize('showSecondarySideBar', "Show Secondary Side Bar"),
+				icon: auxiliaryBarRightIcon,
 			},
 			when: ContextKeyExpr.and(
 				IsAuxiliaryWindowContext.negate(),
-				ContextKeyExpr.or(
-					ContextKeyExpr.equals('config.workbench.layoutControl.type', 'toggles'),
-					ContextKeyExpr.equals('config.workbench.layoutControl.type', 'both')),
-				ContextKeyExpr.equals('config.workbench.sideBar.location', 'right')
-			),
-			order: 0
-		}
-	}, {
-		id: MenuId.LayoutControlMenu,
-		item: {
-			group: '2_pane_toggles',
-			command: {
-				id: ToggleAuxiliaryBarAction.ID,
-				title: localize('toggleSecondarySideBar', "Toggle Secondary Side Bar"),
-				toggled: { condition: AuxiliaryBarVisibleContext, icon: auxiliaryBarRightIcon },
-				icon: auxiliaryBarRightOffIcon,
-			},
-			when: ContextKeyExpr.and(
-				IsAuxiliaryWindowContext.negate(),
-				ContextKeyExpr.or(
-					ContextKeyExpr.equals('config.workbench.layoutControl.type', 'toggles'),
-					ContextKeyExpr.equals('config.workbench.layoutControl.type', 'both')),
-				ContextKeyExpr.equals('config.workbench.sideBar.location', 'left')
+				AuxiliaryBarVisibleContext.negate(),
+				ContextKeyExpr.equals('config.workbench.layoutControl.type', 'menu'),
 			),
 			order: 2
 		}

@@ -1,0 +1,68 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.volt-agent-chrome {
+	display: none;
+}
+
+.monaco-workbench.volt-layout-agent > .volt-agent-chrome {
+	display: block;
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: 3000;
+}
+
+.volt-agent-chrome-drag {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 28px;
+	-webkit-app-region: drag;
+	pointer-events: auto;
+}
+
+.monaco-workbench.volt-layout-agent:not(.volt-single-agent) > .volt-agent-chrome > .volt-agent-chrome-drag {
+	width: min(42%, 380px);
+	width: var(--volt-agent-sidebar-width);
+}
+
+.volt-agent-chrome-controls {
+	position: absolute;
+	top: 0;
+	left: 78px;
+	height: 28px;
+	display: flex;
+	align-items: center;
+	pointer-events: auto;
+	-webkit-app-region: no-drag;
+}
+
+.volt-agent-ide-switch {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	cursor: pointer;
+}
+
+.volt-agent-ide-switch:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-agent-ide-switch .codicon {
+	font-size: 14px;
+}
+
+body:has(.monaco-workbench.volt-layout-agent) {
+	background: transparent !important;
+}

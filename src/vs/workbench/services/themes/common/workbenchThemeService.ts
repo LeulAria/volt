@@ -47,7 +47,7 @@ export enum ThemeSettingDefaults {
 	COLOR_THEME_DARK_OLD = 'Default Dark+',
 	COLOR_THEME_LIGHT_OLD = 'Default Light+',
 
-	FILE_ICON_THEME = 'vs-seti',
+	FILE_ICON_THEME = 'material-icon-theme',
 	PRODUCT_ICON_THEME = 'Default',
 }
 
@@ -108,7 +108,9 @@ export const COLOR_THEME_DARK_INITIAL_COLORS = {
 	'inputOption.activeBackground': '#F0F0F01E',
 	'inputOption.activeBorder': '#F0F0F000',
 	'keybindingLabel.foreground': '#CCCCCC',
+	'list.activeSelectionForeground': '#F0F0F0',
 	'list.activeSelectionIconForeground': '#FFF',
+	'list.inactiveSelectionForeground': '#F0F0F0',
 	'list.dropBackground': '#F0F0F011',
 	'menu.background': '#141414',
 	'menu.border': '#F0F0F013',

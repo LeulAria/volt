@@ -16,7 +16,7 @@ import { ILifecycleService, LifecyclePhase, StartupKind } from '../../../service
 import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { joinPath } from '../../../../base/common/resources.js';
-import { IWorkbenchLayoutService } from '../../../services/layout/browser/layoutService.js';
+import { IWorkbenchLayoutService, Position } from '../../../services/layout/browser/layoutService.js';
 import { GettingStartedEditorOptions, GettingStartedInput, gettingStartedInputTypeId } from './gettingStartedInput.js';
 import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
@@ -112,6 +112,10 @@ export class StartupPageRunnerContribution extends Disposable implements IWorkbe
 
 		if (AuxiliaryBarMaximizedContext.getValue(this.contextKeyService)) {
 			// If the auxiliary bar is maximized, we do not show the welcome page.
+			return;
+		}
+
+		if (this.layoutService.getSideBarPosition() === Position.RIGHT) {
 			return;
 		}
 

@@ -11,6 +11,29 @@
 
 .explorer-folders-view .monaco-list-row {
 	padding-left: 4px; /* align top level twistie with `Explorer` title label */
+	font-weight: 400;
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+}
+
+.explorer-folders-view .monaco-list-row .explorer-item,
+.explorer-folders-view .monaco-list-row .label-name {
+	font-weight: 400;
+}
+
+.explorer-folders-view .monaco-list-row.selected,
+.explorer-folders-view .monaco-list-row.focused,
+.explorer-folders-view .monaco-list:focus .monaco-list-row.selected,
+.explorer-folders-view .monaco-list:focus .monaco-list-row.focused {
+	font-weight: 400 !important;
+	color: var(--vscode-foreground) !important;
+}
+
+.explorer-folders-view .monaco-list-row.selected .explorer-item,
+.explorer-folders-view .monaco-list-row.focused .explorer-item,
+.explorer-folders-view .monaco-list-row.selected .label-name,
+.explorer-folders-view .monaco-list-row.focused .label-name {
+	font-weight: 400 !important;
+	color: inherit !important;
 }
 
 .explorer-folders-view .explorer-folders-view.highlight .monaco-list .explorer-item:not(.explorer-item-edited),

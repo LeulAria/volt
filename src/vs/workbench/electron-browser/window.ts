@@ -680,6 +680,10 @@ export class NativeWindow extends BaseWindow {
 		this.lifecycleService.when(LifecyclePhase.Restored).then(() => {
 			this.sharedProcessService.notifyRestored();
 			this.utilityProcessWorkerWorkbenchService.notifyRestored();
+
+			// A project switch boots the next workbench behind the current one
+			// and waits for this before swapping which window is on screen.
+			this.nativeHostService.notifyWorkbenchRestored();
 		});
 
 		// Check for situations that are worth warning the user about

@@ -14,7 +14,7 @@ import { IStorageService } from '../../../../platform/storage/common/storage.js'
 import { contrastBorder } from '../../../../platform/theme/common/colorRegistry.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { ActiveAuxiliaryContext, AuxiliaryBarFocusContext } from '../../../common/contextkeys.js';
-import { ACTIVITY_BAR_BADGE_BACKGROUND, ACTIVITY_BAR_BADGE_FOREGROUND, ACTIVITY_BAR_TOP_ACTIVE_BORDER, ACTIVITY_BAR_TOP_DRAG_AND_DROP_BORDER, ACTIVITY_BAR_TOP_FOREGROUND, ACTIVITY_BAR_TOP_INACTIVE_FOREGROUND, PANEL_ACTIVE_TITLE_BORDER, PANEL_ACTIVE_TITLE_FOREGROUND, PANEL_DRAG_AND_DROP_BORDER, PANEL_INACTIVE_TITLE_FOREGROUND, SIDE_BAR_BACKGROUND, SIDE_BAR_BORDER, SIDE_BAR_TITLE_BORDER, SIDE_BAR_FOREGROUND } from '../../../common/theme.js';
+import { ACTIVITY_BAR_BADGE_BACKGROUND, ACTIVITY_BAR_BADGE_FOREGROUND, ACTIVITY_BAR_TOP_ACTIVE_BORDER, ACTIVITY_BAR_TOP_DRAG_AND_DROP_BORDER, ACTIVITY_BAR_TOP_FOREGROUND, ACTIVITY_BAR_TOP_INACTIVE_FOREGROUND, PANEL_ACTIVE_TITLE_BORDER, PANEL_ACTIVE_TITLE_FOREGROUND, PANEL_DRAG_AND_DROP_BORDER, PANEL_INACTIVE_TITLE_FOREGROUND, SIDE_BAR_BACKGROUND, SIDE_BAR_BORDER, SIDE_BAR_TITLE_BORDER, SIDE_BAR_FOREGROUND, TITLE_BAR_ACTIVE_BACKGROUND } from '../../../common/theme.js';
 import { IViewDescriptorService } from '../../../common/views.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { ActivityBarPosition, IWorkbenchLayoutService, LayoutSettings, Parts, Position } from '../../../services/layout/browser/layoutService.js';
@@ -32,6 +32,7 @@ import { IMenuService, MenuId } from '../../../../platform/actions/common/action
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { getContextMenuActions } from '../../../../platform/actions/browser/menuEntryActionViewItem.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
+import { applyAgentStatusbarShift, resetAgentStatusbarShift } from '../titlebar/agentLayoutChrome.js';
 
 interface IAuxiliaryBarPartConfiguration {
 	position: ActivityBarPosition;
@@ -47,11 +48,28 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 	static readonly placeholdeViewContainersKey = 'workbench.auxiliarybar.placeholderPanels';
 	static readonly viewContainersWorkspaceStateKey = 'workbench.auxiliarybar.viewContainersWorkspaceState';
 
-	// Use the side bar dimensions
-	override readonly minimumWidth: number = 300;
-	override readonly maximumWidth: number = Number.POSITIVE_INFINITY;
+	static readonly AGENT_MIN_WIDTH = 180;
+	static readonly AGENT_DEFAULT_WIDTH = 290;
+	static readonly AGENT_MAX_RATIO = 0.35;
+
 	override readonly minimumHeight: number = 0;
 	override readonly maximumHeight: number = Number.POSITIVE_INFINITY;
+
+	private get isAgentLayout(): boolean {
+		return this.layoutService.mainContainer.classList.contains('volt-layout-agent');
+	}
+
+	override get minimumWidth(): number {
+		return this.isAgentLayout ? AuxiliaryBarPart.AGENT_MIN_WIDTH : 300;
+	}
+
+	override get maximumWidth(): number {
+		if (!this.isAgentLayout) {
+			return Number.POSITIVE_INFINITY;
+		}
+		const width = this.layoutService.mainContainerDimension?.width ?? 0;
+		return Math.max(AuxiliaryBarPart.AGENT_MIN_WIDTH, Math.floor(width * AuxiliaryBarPart.AGENT_MAX_RATIO));
+	}
 
 	get preferredHeight(): number | undefined {
 		// Don't worry about titlebar or statusbar visibility
@@ -60,6 +78,9 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 	}
 
 	get preferredWidth(): number | undefined {
+		if (this.isAgentLayout) {
+			return AuxiliaryBarPart.AGENT_DEFAULT_WIDTH;
+		}
 		const activeComposite = this.getActivePaneComposite();
 
 		if (!activeComposite) {
@@ -71,7 +92,7 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 			return;
 		}
 
-		return Math.max(width, 300);
+		return Math.max(width, this.minimumWidth);
 	}
 
 	readonly priority = LayoutPriority.Low;
@@ -130,6 +151,9 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 			} else if (e.affectsConfiguration('workbench.secondarySideBar.showLabels')) {
 				this.configuration = this.resolveConfiguration();
 				this.updateCompositeBar(true);
+			} else if (e.affectsConfiguration('workbench.sideBar.location')) {
+				this.updateStyles();
+				this._onDidChange.fire(undefined);
 			}
 		}));
 	}
@@ -156,7 +180,11 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 		super.updateStyles();
 
 		const container = assertReturnsDefined(this.getContainer());
-		container.style.backgroundColor = this.getColor(SIDE_BAR_BACKGROUND) || '';
+		const agentSurface = this.layoutService.getSideBarPosition() === Position.RIGHT
+			|| container.classList.contains('volt-agent-home')
+			|| container.classList.contains('volt-agent-editor-tabs');
+		const agentLayout = this.layoutService.mainContainer.classList.contains('volt-layout-agent');
+		container.style.backgroundColor = agentLayout ? '' : (this.getColor(agentSurface ? TITLE_BAR_ACTIVE_BACKGROUND : SIDE_BAR_BACKGROUND) || '');
 		const borderColor = this.getColor(SIDE_BAR_BORDER) || this.getColor(contrastBorder);
 		const isPositionLeft = this.layoutService.getSideBarPosition() === Position.RIGHT;
 
@@ -232,6 +260,20 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 			toggleShowLabelsAction,
 			toAction({ id: ToggleAuxiliaryBarAction.ID, label: localize('hide second side bar', "Hide Secondary Side Bar"), run: () => this.commandService.executeCommand(ToggleAuxiliaryBarAction.ID) })
 		]);
+	}
+
+	override layout(width: number, height: number, top: number, left: number): void {
+		super.layout(width, height, top, left);
+		this.syncAgentSidebarChrome(this.isAgentLayout, width);
+	}
+
+	private syncAgentSidebarChrome(agent: boolean, sidebarWidth: number): void {
+		const root = this.layoutService.mainContainer;
+		if (agent) {
+			applyAgentStatusbarShift(root, sidebarWidth);
+			return;
+		}
+		resetAgentStatusbarShift(root);
 	}
 
 	protected shouldShowCompositeBar(): boolean {

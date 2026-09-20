@@ -19,6 +19,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { INativeHostService } from '../../../../platform/native/common/native.js';
 import { hasNativeTitlebar, useWindowControlsOverlay, DEFAULT_CUSTOM_TITLEBAR_HEIGHT, hasNativeMenu } from '../../../../platform/window/common/window.js';
+import { AGENT_CHROME_HEIGHT } from '../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
@@ -278,7 +279,11 @@ export class NativeTitlebarPart extends BrowserTitlebarPart {
 			// so that they can have the traffic lights rendered at the proper offset.
 			// Ref https://github.com/microsoft/vscode/issues/159862
 
-			const newHeight = (height > 0 || this.bigSurOrNewer) ? Math.round(height * getZoomFactor(getWindow(this.element))) : this.macTitlebarSize;
+			const zoomed = Math.round(height * getZoomFactor(getWindow(this.element)));
+			const agentChrome = this.layoutService.mainContainer.classList.contains('volt-layout-agent');
+			const newHeight = agentChrome
+				? AGENT_CHROME_HEIGHT
+				: (height > 0 || this.bigSurOrNewer) ? zoomed : this.macTitlebarSize;
 			if (newHeight !== this.cachedWindowControlHeight) {
 				this.cachedWindowControlHeight = newHeight;
 				this.nativeHostService.updateWindowControls({

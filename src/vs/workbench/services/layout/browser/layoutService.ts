@@ -190,6 +190,11 @@ export interface IWorkbenchLayoutService extends ILayoutService {
 	layout(): void;
 
 	/**
+	 * Recomputes whether the custom title bar should be visible.
+	 */
+	updateCustomTitleBarVisibility(): void;
+
+	/**
 	 * Asks the part service if all parts have been fully restored. For editor part
 	 * this means that the contents of visible editors have loaded.
 	 */

@@ -47,7 +47,8 @@ import { mainWindow } from '../../../../base/browser/window.js';
 
 const defaultThemeExtensionId = 'vscode-theme-defaults';
 
-const DEFAULT_FILE_ICON_THEME_ID = 'vscode.vscode-theme-seti-vs-seti';
+const DEFAULT_FILE_ICON_THEME_ID = 'PKief.material-icon-theme-material-icon-theme';
+const FALLBACK_FILE_ICON_THEME_ID = 'vscode.vscode-theme-seti-vs-seti';
 const fileIconsEnabledClass = 'file-icons-enabled';
 
 const colorThemeRulesClassName = 'contributedColorTheme';
@@ -221,7 +222,10 @@ export class WorkbenchThemeService extends Disposable implements IWorkbenchTheme
 				await this.userDataInitializationService.whenInitializationFinished();
 				theme = this.fileIconThemeRegistry.findThemeBySettingsId(this.settings.fileIconTheme);
 			}
-			return this.setFileIconTheme(theme ? theme.id : DEFAULT_FILE_ICON_THEME_ID, undefined);
+			const defaultThemeId = this.fileIconThemeRegistry.findThemeById(DEFAULT_FILE_ICON_THEME_ID)?.id
+				?? this.fileIconThemeRegistry.findThemeById(FALLBACK_FILE_ICON_THEME_ID)?.id
+				?? DEFAULT_FILE_ICON_THEME_ID;
+			return this.setFileIconTheme(theme ? theme.id : defaultThemeId, undefined);
 		};
 
 		const initializeProductIconTheme = async () => {

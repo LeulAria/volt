@@ -989,7 +989,8 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupsView {
 	}
 
 	override updateStyles(): void {
-		this.container.style.backgroundColor = this.getColor(editorBackground) || '';
+		const agentLayout = this.layoutService.mainContainer.classList.contains('volt-layout-agent');
+		this.container.style.backgroundColor = agentLayout ? '' : (this.getColor(editorBackground) || '');
 
 		const separatorBorderStyle = { separatorBorder: this.gridSeparatorBorder, background: this.theme.getColor(EDITOR_PANE_BACKGROUND) || Color.transparent };
 		this.gridWidget.style(separatorBorderStyle);
