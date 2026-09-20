@@ -392,6 +392,13 @@ function formatWorkedDuration(ms: number): string {
 		: localize('voltAgent.workedMinutes', "Worked for {0}m", minutes);
 }
 
+function hasVisibleReply(message: IAgentAssistantMessage): boolean {
+	if ((message.text ?? '').trim()) {
+		return true;
+	}
+	return (message.segments ?? []).some(segment => segment.kind === 'text' && segment.text.trim());
+}
+
 export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	static readonly ID = AgentEditorInput.EditorID;
@@ -422,7 +429,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private composerQueue!: AgentComposerQueue;
 	private composerChips!: AgentComposerChips;
 	private readonly suggestListeners = this._register(new DisposableStore());
-	private sendKind: 'mic' | 'send' | 'stop' = 'mic';
+	private sendKind: 'mic' | 'send' = 'mic';
 	private submitting = false;
 	private promptQueue: { id: string; text: string; display?: IAgentPromptDisplay }[] = [];
 	private readonly _onDidChangeQueue = this._register(new Emitter<void>());
@@ -732,10 +739,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			void this.openEditInNewAgent();
 		}));
 		this._register(addDisposableListener(this.sendButton, 'click', () => {
-			if (this.isStreaming()) {
-				this.stopAgent();
-				return;
-			}
 			this.send();
 		}));
 		this._register(addDisposableListener(this.zoomButton, 'click', e => {
@@ -1791,6 +1794,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		if (this.isStreaming() && this.isLatestUser(index)) {
 			turn.classList.add('running');
+			const stop = append(bubble, $('button.volt-agent-user-stop')) as HTMLButtonElement;
+			stop.type = 'button';
+			stop.setAttribute('aria-label', localize('voltAgent.stop', "Stop"));
+			setAgentTooltip(stop, localize('voltAgent.stop', "Stop"));
+			stop.appendChild(createStopIcon());
+			this.threadListeners.add(addDisposableListener(stop, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.stopAgent();
+			}));
 		}
 	}
 
@@ -1798,7 +1811,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.suppressStartEdit || this.editingUserIndex !== undefined || !isHTMLElement(e.target)) {
 			return;
 		}
-		if (e.target.closest('.volt-agent-edit-slot')) {
+		if (e.target.closest('.volt-agent-edit-slot') || e.target.closest('.volt-agent-user-stop')) {
 			return;
 		}
 		const turn = e.target.closest('.volt-agent-turn.user');
@@ -3141,26 +3154,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private updateSendButton(): void {
-		const kind: 'mic' | 'send' | 'stop' = this.isStreaming()
-			? 'stop'
-			: this.isFollowUpComposer() || this.hasDraft() ? 'send' : 'mic';
+		const kind: 'mic' | 'send' = this.isFollowUpComposer() || this.hasDraft() ? 'send' : 'mic';
 		if (this.sendKind === kind && this.sendButton.childElementCount) {
-			this.sendButton.classList.toggle('stop', kind === 'stop');
+			this.sendButton.classList.remove('stop');
 			return;
 		}
 		this.sendKind = kind;
 		this.sendButton.replaceChildren();
-		this.sendButton.classList.toggle('stop', kind === 'stop');
-		setAgentTooltip(this.sendButton, kind === 'stop'
-			? localize('voltAgent.stop', "Stop")
-			: kind === 'send'
-				? localize('voltAgent.send', "Send")
-				: localize('voltAgent.voice', "Voice"));
-		this.sendButton.appendChild(kind === 'stop'
-			? createStopIcon()
-			: kind === 'send'
-				? createSendIcon()
-				: createMicIcon());
+		this.sendButton.classList.remove('stop');
+		setAgentTooltip(this.sendButton, kind === 'send'
+			? localize('voltAgent.send', "Send")
+			: localize('voltAgent.voice', "Voice"));
+		this.sendButton.appendChild(kind === 'send' ? createSendIcon() : createMicIcon());
 	}
 
 	removeQueuedPrompt(id: string): void {
@@ -3245,10 +3250,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private applyUsage(event: Extract<IVoltEventEnvelope['event'], { type: 'usage' }>, last?: IAgentAssistantMessage): void {
-		if (event.used !== undefined && Number.isFinite(event.used) && event.used >= 0) {
-			this.sessionTokensUsed = event.used;
+		const prompt = Number.isFinite(event.input) ? event.input : 0;
+		const completion = Number.isFinite(event.output) ? event.output : 0;
+		const measured = event.used !== undefined && Number.isFinite(event.used) && event.used >= 0
+			? event.used
+			: (prompt + completion > 0 ? prompt + completion : undefined);
+		if (measured !== undefined) {
+			this.sessionTokensUsed = measured;
 			if (last) {
-				last.tokensUsed = event.used;
+				last.tokensUsed = measured;
 			}
 		}
 		if (event.size !== undefined && Number.isFinite(event.size) && event.size > 0) {
@@ -3588,6 +3598,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				last.endedAt = Date.now();
 				last.startedAt ??= last.endedAt;
 				last.durationMs = Math.max(0, last.endedAt - last.startedAt);
+				if (!last.cancelled && event.reason !== 'fail' && !hasVisibleReply(last)) {
+					const empty = localize('voltAgent.emptyReply', "Stopped before a reply.");
+					last.text = empty;
+					appendTextDelta(last.segments, empty);
+				}
 				activity.status = last.cancelled
 					? localize('voltAgent.cancelled', "Cancelled")
 					: runStatusLine(workCountsForSegments(last.segments), last.durationMs);

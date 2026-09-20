@@ -284,7 +284,6 @@ export class AgentContextUsageView extends Disposable {
 		}));
 		const list = append(scroll, $('.volt-agent-context-list'));
 		const session = append(scroll, $('.volt-agent-context-session'));
-		const chart = append(scroll, $('.volt-agent-context-chart'));
 		const fit = append(scroll, $('.volt-agent-context-fit'));
 		const chrome = append(fit, $('.volt-agent-context-fit-chrome'));
 		const toggle = append(chrome, $('button.volt-agent-context-models-toggle')) as HTMLButtonElement;
@@ -320,7 +319,6 @@ export class AgentContextUsageView extends Disposable {
 			bar,
 			list,
 			session,
-			chart,
 			fit,
 			toggle,
 			search,
@@ -443,12 +441,6 @@ export class AgentContextUsageView extends Disposable {
 			}
 		}
 
-		popup.chart.replaceChildren();
-		if (snapshot.history.length > 1) {
-			append(popup.chart, $('div.heading')).textContent = localize('voltAgent.contextHistory', "Usage over turns");
-			popup.chart.appendChild(this.createSparkline(snapshot.history, snapshot.limit));
-		}
-
 		const canCompare = snapshot.models.length > 1;
 		popup.fit.classList.toggle('hidden', !canCompare);
 		popup.fit.classList.toggle('expanded', this.modelsExpanded);
@@ -534,33 +526,6 @@ export class AgentContextUsageView extends Disposable {
 		return { fill, label };
 	}
 
-	private createSparkline(history: readonly number[], limit: number): SVGSVGElement {
-		const width = 320;
-		const height = 56;
-		const pad = 4;
-		const max = Math.max(limit, ...history, 1);
-		const svg = this.element.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
-		svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-		svg.setAttribute('width', '100%');
-		svg.setAttribute('height', String(height));
-		svg.setAttribute('aria-hidden', 'true');
-		svg.classList.add('sparkline');
-		const points = history.map((value, index) => {
-			const x = pad + (index / Math.max(history.length - 1, 1)) * (width - pad * 2);
-			const y = height - pad - (value / max) * (height - pad * 2);
-			return `${x},${y}`;
-		});
-		const area = this.element.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-		area.setAttribute('points', `${pad},${height - pad} ${points.join(' ')} ${width - pad},${height - pad}`);
-		area.classList.add('area');
-		const line = this.element.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-		line.setAttribute('points', points.join(' '));
-		line.setAttribute('fill', 'none');
-		line.classList.add('line');
-		svg.appendChild(area);
-		svg.appendChild(line);
-		return svg;
-	}
 }
 
 const DONUT_RADIUS = 20;
@@ -575,7 +540,6 @@ interface IContextPopupRefs {
 	bar: HTMLElement;
 	list: HTMLElement;
 	session: HTMLElement;
-	chart: HTMLElement;
 	fit: HTMLElement;
 	toggle: HTMLButtonElement;
 	search: FindInput;

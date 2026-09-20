@@ -11,6 +11,26 @@ suite('Volt harness pipeline', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
+	test('a check-in stays a direct answer with no tools', () => {
+		const prepared = prepareRun({ text: 'testing', mode: 'agent', intentContext: { hasWorkspace: true, priorLane: 'agent' } });
+		assert.strictEqual(prepared.intent.lane, 'chat');
+		assert.ok(prepared.intent.signals.includes('ping'));
+		assert.strictEqual(prepared.dispatch, 'direct');
+		assert.deepStrictEqual(prepared.intent.groups, ['meta']);
+		assert.strictEqual(prepared.intent.budget.maxToolCalls, 0);
+		assert.strictEqual(prepared.plan, undefined);
+	});
+
+	test('a smashed project question is a real chat turn with read tools', () => {
+		const prepared = prepareRun({ text: 'whatistheproject', mode: 'agent', intentContext: { hasWorkspace: true } });
+		assert.strictEqual(prepared.intent.lane, 'chat');
+		assert.ok(!prepared.intent.signals.includes('ping'));
+		assert.strictEqual(prepared.intent.referencesWorkspace, true);
+		assert.ok(prepared.intent.groups.includes('read'));
+		assert.ok(prepared.intent.groups.includes('search'));
+		assert.ok(prepared.intent.budget.maxToolCalls > 0);
+	});
+
 	test('a chat question is a direct dispatch with no plan', () => {
 		const prepared = prepareRun({ text: 'what is 2+2', mode: 'agent' });
 		assert.strictEqual(prepared.intent.lane, 'chat');

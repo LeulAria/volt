@@ -14,6 +14,22 @@
 	background-color: var(--vscode-sideBar-background);
 }
 
+.monaco-workbench .part.auxiliarybar > .content .volt-agent-input-box,
+.monaco-workbench .part.auxiliarybar > .content .volt-agent-input-box .volt-agent-monaco,
+.monaco-workbench .part.auxiliarybar > .content .volt-agent-input-box .volt-agent-toolbar,
+.monaco-workbench .part.auxiliarybar > .content .volt-agent-input-box .monaco-editor,
+.monaco-workbench .part.auxiliarybar > .content .volt-agent-input-box .monaco-editor .margin,
+.monaco-workbench .part.auxiliarybar > .content .volt-agent-input-box .monaco-editor .monaco-editor-background,
+.monaco-workbench .part.auxiliarybar > .content .volt-agent-input-box .monaco-editor .overflow-guard,
+.monaco-workbench .part.auxiliarybar > .content .volt-agent-input-box .monaco-editor .monaco-scrollable-element,
+.monaco-workbench .part.auxiliarybar > .content .volt-agent-input-box .monaco-editor .lines-content,
+.monaco-workbench .part.auxiliarybar > .content .volt-agent-input-box .monaco-editor .view-overlays,
+.monaco-workbench .part.auxiliarybar > .content .volt-agent-input-box .monaco-editor .view-lines,
+.monaco-workbench .part.auxiliarybar > .content .volt-agent-input-box .monaco-editor .inputarea {
+	background: var(--volt-composer-bg, #222222) !important;
+	background-color: var(--volt-composer-bg, #222222) !important;
+}
+
 .monaco-workbench .part.auxiliarybar .title-actions .actions-container {
 	justify-content: flex-end;
 }

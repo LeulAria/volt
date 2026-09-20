@@ -249,7 +249,7 @@
 	min-width: 0;
 	min-height: 0;
 	border: 1px solid rgba(255, 255, 255, 0.12);
-	border-radius: 7px !important;
+	border-radius: 8px !important;
 	background: #222222;
 	padding: 8px 10px;
 	box-shadow: none;
@@ -334,12 +334,17 @@
 	background: var(--vscode-editor-foreground, #f4f4f5);
 	color: var(--vscode-editor-background, #111);
 	cursor: pointer;
-	display: inline-flex;
+	display: none;
 	align-items: center;
 	justify-content: center;
 	flex-shrink: 0;
 	align-self: center;
+	margin-left: auto;
 	transition: background-color 200ms ease, color 200ms ease;
+}
+
+.volt-agent-turn.user.running .volt-agent-user-stop {
+	display: inline-flex;
 }
 
 .volt-agent-user-stop .volt-agent-svg-icon,
@@ -1109,8 +1114,8 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-activity-progress {
-	font-size: 15px;
-	font-weight: 400;
+	font-size: 14px;
+	font-weight: 300;
 	line-height: 1.4;
 	color: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
 	min-width: 0;
@@ -1141,7 +1146,7 @@ pre.volt-agent-searchable {
 	overflow: visible;
 	overflow-wrap: anywhere;
 	word-break: break-word;
-	font-weight: 400;
+	font-weight: 300;
 	--volt-shimmer: -50%;
 	--volt-shimmer-base: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
 	--volt-shimmer-hi: var(--vscode-foreground);
@@ -2456,6 +2461,40 @@ pre.volt-agent-searchable {
 	transition: background-color 180ms ease, border-color 180ms ease;
 }
 
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box {
+	--volt-composer-bg: #222222;
+	--vscode-editor-background: #222222;
+	--vscode-editorGutter-background: #222222;
+}
+
+.monaco-workbench.vs .part.auxiliarybar .volt-agent-input-box,
+.monaco-workbench.hc-light .part.auxiliarybar .volt-agent-input-box {
+	--volt-composer-bg: #ececec;
+	--vscode-editor-background: #ececec;
+	--vscode-editorGutter-background: #ececec;
+}
+
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .volt-agent-monaco,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .volt-agent-toolbar,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .overflow-guard,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .monaco-editor-background,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .margin,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .margin-view-overlays,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .monaco-scrollable-element,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .lines-content,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .view-overlays,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .view-lines,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .view-line,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .inputarea,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .inputarea.ime-input,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .native-edit-context,
+.monaco-workbench .part.auxiliarybar .volt-agent-input-box .monaco-editor .ime-text-area {
+	background: var(--volt-composer-bg, #222222) !important;
+	background-color: var(--volt-composer-bg, #222222) !important;
+}
+
 .monaco-workbench.vs .volt-agent-input-box,
 .monaco-workbench.hc-light .volt-agent-input-box {
 	--volt-composer-bg: #ececec;
@@ -2881,13 +2920,13 @@ pre.volt-agent-searchable {
 	top: 8px;
 	left: 10px;
 	right: 10px;
-	z-index: 20;
+	z-index: 1;
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif;
 	font-size: 14px;
 	font-weight: 300;
 	line-height: 22px;
 	color: var(--vscode-input-placeholderForeground, #8b8b8b);
-	background: var(--volt-composer-bg, #222222);
+	background: transparent;
 	opacity: 1;
 	pointer-events: none;
 	white-space: nowrap;
@@ -3006,9 +3045,16 @@ pre.volt-agent-searchable {
 	z-index: 0 !important;
 }
 
+.volt-agent-monaco .monaco-editor .cursors-layer {
+	z-index: 5;
+}
+
 .volt-agent-monaco .monaco-editor .cursors-layer .cursor {
-	height: 16px !important;
-	margin-top: 3px;
+	background-color: var(--vscode-editorCursor-foreground, var(--vscode-foreground, #fff)) !important;
+	border-color: var(--vscode-editorCursor-foreground, var(--vscode-foreground, #fff)) !important;
+	width: 1px !important;
+	height: 18px !important;
+	margin-top: 2px;
 }
 
 .volt-agent-monaco .scroll-decoration,
@@ -3906,7 +3952,8 @@ pre.volt-agent-searchable {
 .volt-agent-editor.zoomed .volt-agent-landing-chrome,
 .volt-agent-editor.resized .volt-agent-landing-chrome,
 .volt-agent-editor.browser-hosted .volt-agent-landing-chrome,
-.monaco-workbench:not(.volt-layout-agent) .volt-agent-landing-chrome {
+.monaco-workbench:not(.volt-layout-agent) .volt-agent-landing-chrome,
+.monaco-workbench .part.auxiliarybar .volt-agent-landing-chrome {
 	display: none !important;
 }
 
@@ -5177,8 +5224,7 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-context-list,
-.volt-agent-context-session,
-.volt-agent-context-chart {
+.volt-agent-context-session {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
@@ -5231,12 +5277,7 @@ pre.volt-agent-searchable {
 	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 }
 
-.volt-agent-context-chart {
-	padding-top: 12px;
-}
-
 .volt-agent-context-session:empty,
-.volt-agent-context-chart:empty,
 .volt-agent-context-fit.hidden {
 	display: none;
 }
@@ -5468,14 +5509,6 @@ pre.volt-agent-searchable {
 	text-align: right;
 }
 
-.volt-agent-context-panel .heading {
-	font-size: 11px;
-	font-weight: 600;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
-	color: var(--vscode-descriptionForeground);
-}
-
 .volt-agent-context-session .metrics {
 	display: flex;
 	flex-wrap: wrap;
@@ -5500,17 +5533,6 @@ pre.volt-agent-searchable {
 .volt-agent-context-session .metric .v {
 	font-variant-numeric: tabular-nums;
 	font-weight: 500;
-}
-
-.volt-agent-context-chart .sparkline .area {
-	fill: color-mix(in srgb, var(--vscode-charts-blue, #58a6ff) 18%, transparent);
-}
-
-.volt-agent-context-chart .sparkline .line {
-	stroke: var(--vscode-charts-blue, #58a6ff);
-	stroke-width: 1.6;
-	stroke-linecap: round;
-	stroke-linejoin: round;
 }
 
 .volt-agent-context-note {

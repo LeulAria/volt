@@ -618,7 +618,6 @@ webview.volt-browser-frame {
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .view-line,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .inputarea,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .inputarea.ime-input,
-.volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .cursors-layer,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .view-zones,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock .volt-agent-monaco {
 	background: #222222 !important;

@@ -1,16 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg width="100%" height="100%" viewBox="0 0 260 260" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="100%" height="100%" viewBox="44 44 172 172" fill="none" xmlns="http://www.w3.org/2000/svg">
 	<defs>
 		<clipPath id="voltL">
-			<path d="M-10 -10L162.50 -10L150.50 56.50L88.41 147.30L134.68 147.30L111.50 203.50L99.50 270L-10 270Z"/>
+			<g transform="translate(130 130) scale(0.84) translate(-130 -130)">
+				<path d="M-12 -12L152.37 -12L152.37 48.95L84.07 136.20A8.01 8.01 0 0 0 87.13 142.87L116.90 144.22A6.29 6.29 0 0 1 122.07 150.70L111.46 209.45L111.46 272L-12 272Z"/>
+			</g>
 		</clipPath>
 		<mask id="voltCut">
-			<rect width="260" height="260" fill="#ffffff"/>
-			<path d="M148.08 65.55A1.60 1.60 0 0 0 145.21 64.23L97.18 134.47A8.20 8.20 0 0 0 103.95 147.30L124.52 147.30A6.80 6.80 0 0 1 130.81 156.69L114.94 195.15A1.60 1.60 0 0 0 117.60 196.84L175.72 133.44A8.20 8.20 0 0 0 169.68 119.70L142.45 119.70A6.80 6.80 0 0 1 135.88 111.14Z" fill="#000000"/>
+			<rect x="44" y="44" width="172" height="172" fill="#ffffff"/>
+			<g transform="translate(130 130) scale(0.84) translate(-130 -130)">
+				<path d="M152.37 48.95L84.07 136.20A8.01 8.01 0 0 0 87.13 142.87L116.90 144.22A6.29 6.29 0 0 1 122.07 150.70L111.46 209.45L178.37 123.09A8.01 8.01 0 0 0 175.26 116.65L145.08 116.26A6.29 6.29 0 0 1 140.03 110.01Z" fill="#000000"/>
+			</g>
 		</mask>
 	</defs>
 	<g mask="url(#voltCut)">
-		<circle cx="130" cy="130" r="96" fill="#000000"/>
-		<circle cx="130" cy="130" r="96" fill="#000000" fill-opacity="0.84" clip-path="url(#voltL)"/>
+		<circle cx="130" cy="130" r="70" fill="#000000"/>
+		<circle cx="130" cy="130" r="70" fill="#000000" fill-opacity="0.84" clip-path="url(#voltL)"/>
 	</g>
 </svg>

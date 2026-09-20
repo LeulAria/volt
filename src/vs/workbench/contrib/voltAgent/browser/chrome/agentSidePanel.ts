@@ -209,6 +209,10 @@ export class AgentSidePanel extends ViewPane {
 			return;
 		}
 		if (this.isEmpty()) {
+			if (this.drawerOpen) {
+				this.drawer?.focus();
+				return;
+			}
 			(this.emptyEl.querySelector('button') as HTMLButtonElement | null)?.focus();
 			return;
 		}
@@ -234,10 +238,12 @@ export class AgentSidePanel extends ViewPane {
 		if (agent) {
 			void this.seedCenterAgent();
 		} else {
+			this.revealCenterEditors();
 			void this.seedDefaultAgent();
 		}
 		this.updateAuxiliaryBarClass(this.isBodyVisible());
 		this.syncCenterTabs();
+		this.syncAgentLayout();
 		this.layoutEditor();
 	}
 
@@ -257,6 +263,15 @@ export class AgentSidePanel extends ViewPane {
 			showTabs: showTabs ? 'multiple' : 'none',
 		});
 		workbench?.classList.toggle('volt-single-agent', !showTabs);
+		if (openEditors === 0) {
+			this.workbenchLayoutService.setAuxiliaryBarMaximized(true);
+		}
+	}
+
+	private revealCenterEditors(): void {
+		if (this.workbenchLayoutService.isAuxiliaryBarMaximized()) {
+			this.workbenchLayoutService.setAuxiliaryBarMaximized(false);
+		}
 	}
 
 	private layoutEditor(): void {
@@ -416,6 +431,7 @@ export class AgentSidePanel extends ViewPane {
 	/** Opens the Customize tab beside the agent sessions. */
 	async openCustomize(): Promise<void> {
 		if (this.isAgentLayout()) {
+			this.revealCenterEditors();
 			const input = this.instantiationService.createInstance(AgentCustomizeEditorInput);
 			await this.editorService.openEditor(input, { pinned: true });
 			return;
@@ -435,6 +451,7 @@ export class AgentSidePanel extends ViewPane {
 	/** Shows a stored session, reusing its tab when it is already open. */
 	async openSession(sessionId: string): Promise<void> {
 		if (this.isAgentLayout()) {
+			this.revealCenterEditors();
 			const input = this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(sessionId));
 			await this.editorService.openEditor(input, { pinned: true });
 			return;
@@ -481,6 +498,7 @@ export class AgentSidePanel extends ViewPane {
 
 	async openNewAgent(options?: { asTab?: boolean; focus?: boolean; groupId?: number }): Promise<void> {
 		if (this.isAgentLayout()) {
+			this.revealCenterEditors();
 			const input = this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri());
 			await this.editorService.openEditor(input, { pinned: true, preserveFocus: options?.focus === false });
 			return;
@@ -538,10 +556,7 @@ export class AgentSidePanel extends ViewPane {
 		if (welcome.length) {
 			await this.editorService.closeEditors(welcome);
 		}
-		if (this.editorService.editors.some(editor => editor instanceof AgentEditorInput)) {
-			return;
-		}
-		await this.openNewAgent({ focus: false });
+		this.syncCenterTabs();
 	}
 
 	/** The group with this id when it lives inside this panel. */
@@ -574,8 +589,12 @@ export class AgentSidePanel extends ViewPane {
 
 	private syncEmptyState(): void {
 		const empty = this.isEmpty();
-		this.emptyEl.classList.toggle('hidden', !empty);
+		if (empty && !this.isAgentLayout() && !this.drawerOpen) {
+			this.setDrawerOpen(true, false);
+		}
+		this.emptyEl.classList.toggle('hidden', !empty || this.drawerOpen);
 		this.element.classList.toggle('is-empty', empty);
+		this.bodyEl.classList.toggle('is-empty', empty);
 	}
 
 	private syncAgentLayout(): void {

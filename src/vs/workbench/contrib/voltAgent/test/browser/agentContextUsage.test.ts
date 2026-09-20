@@ -14,6 +14,7 @@ import {
 	formatContextPercent,
 	formatContextTokens,
 	groupContextModels,
+	occupancyFromUsage,
 	overheadFromCustomizations,
 	resolveModelContextWindow,
 } from '../../browser/context/agentContextUsage.js';
@@ -87,7 +88,38 @@ suite('Agent context usage', () => {
 		assert.strictEqual(snapshot.models[0].active, true);
 		assert.ok(snapshot.models[0].percent > 70);
 		assert.ok(snapshot.fitsOn >= 1);
-		assert.ok(snapshot.history.length >= 1);
+	});
+
+	test('treats last-request prompt and completion as occupancy when used is missing', () => {
+		const snapshot = buildContextUsageSnapshot({
+			messages: [
+				{ kind: 'user', text: 'hello' },
+				{ kind: 'agent', text: 'hi', tokensIn: 40_000, tokensOut: 1_200 },
+			],
+			draft: '',
+			modelWindow: 200_000,
+			nativeAgent: true,
+			models: [{ ref: 'a', name: 'Grok 4.6', family: 'grok', window: 200_000, active: true }],
+		});
+
+		assert.strictEqual(occupancyFromUsage({ tokensIn: 40_000, tokensOut: 1_200 }), 41_200);
+		assert.strictEqual(snapshot.used, 41_200);
+		assert.strictEqual(snapshot.estimated, false);
+		assert.ok(snapshot.percent > 20);
+	});
+
+	test('counts the expanded user prompt, not the short display label', () => {
+		const snapshot = buildContextUsageSnapshot({
+			messages: [{ kind: 'user', text: 'fix this', agentText: 'a'.repeat(8_000) }],
+			draft: '',
+			modelWindow: 200_000,
+			nativeAgent: true,
+			models: [{ ref: 'a', name: 'Grok 4.6', family: 'grok', window: 200_000, active: true }],
+		});
+
+		assert.ok(snapshot.used > 2_000);
+		const conversation = snapshot.items.find(item => item.id === 'conversation');
+		assert.ok(conversation && conversation.tokens >= 2_000);
 	});
 
 	test('new sessions stay at zero until the transcript or provider reports usage', () => {

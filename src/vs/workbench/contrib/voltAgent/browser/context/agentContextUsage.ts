@@ -77,6 +77,8 @@ export interface IContextOverhead {
 export interface IContextUsageMessage {
 	readonly kind: 'user' | 'agent';
 	readonly text?: string;
+	/** Expanded prompt the model received (mentions, attached files). */
+	readonly agentText?: string;
 	readonly title?: string;
 	readonly steps?: readonly { label: string }[];
 	readonly changes?: readonly string[];
@@ -112,7 +114,6 @@ export interface IContextUsageSnapshot {
 	readonly cache?: number;
 	readonly draft: number;
 	readonly items: readonly IContextUsageCategory[];
-	readonly history: readonly number[];
 	readonly models: readonly IContextUsageModelRow[];
 	readonly modelName?: string;
 	readonly compacted: boolean;
@@ -151,7 +152,7 @@ export function estimateTokensFromText(text: string): number {
 }
 
 export function estimateMessageTokens(message: IContextUsageMessage): number {
-	return estimateTokensFromText([agentMessagePlainText(message), message.activity?.thinkingText ?? ''].join('\n'));
+	return estimateTokensFromText(messageOccupancyText(message));
 }
 
 export function agentMessagePlainText(message: IContextUsageMessage): string {
@@ -269,9 +270,21 @@ export function lastUsageMessage(messages: readonly IContextUsageMessage[]): ICo
 	return undefined;
 }
 
+/** Last-request prompt+completion is session occupancy when ACP `used` is missing. */
+export function occupancyFromUsage(message: Pick<IContextUsageMessage, 'tokensUsed' | 'tokensIn' | 'tokensOut'> | undefined, reportedUsed?: number): number | undefined {
+	if (message?.tokensUsed && message.tokensUsed > 0) {
+		return message.tokensUsed;
+	}
+	if (reportedUsed && reportedUsed > 0) {
+		return reportedUsed;
+	}
+	const turn = (message?.tokensIn ?? 0) + (message?.tokensOut ?? 0);
+	return turn > 0 ? turn : undefined;
+}
+
 export function buildContextUsageSnapshot(input: IContextUsageInput): IContextUsageSnapshot {
 	const last = lastUsageMessage(input.messages);
-	const reportedUsed = last?.tokensUsed ?? input.reportedUsed;
+	const reportedUsed = occupancyFromUsage(last, input.reportedUsed);
 	const reportedLimit = last?.tokensWindow ?? input.reportedLimit;
 	const limit = reportedLimit && reportedLimit > 0 ? reportedLimit : Math.max(1, input.modelWindow);
 	const draft = estimateTokensFromText(input.draft);
@@ -281,8 +294,7 @@ export function buildContextUsageSnapshot(input: IContextUsageInput): IContextUs
 		? scaleOverhead(input.overhead ?? defaultOverhead(input.nativeAgent), reportedUsed)
 		: zeroOverhead();
 	const overheadTotal = overheadSum(overhead);
-	const conversation = conversationTokens(input.messages, last);
-	const history = usageHistory(input.messages, hasTranscript ? overheadTotal : 0);
+	const conversation = conversationTokens(input.messages);
 	const inputTokens = last?.tokensIn;
 	const outputTokens = last?.tokensOut;
 	const cacheTokens = last?.tokensCache;
@@ -367,7 +379,6 @@ export function buildContextUsageSnapshot(input: IContextUsageInput): IContextUs
 		cache: cacheTokens,
 		draft,
 		items,
-		history,
 		models,
 		modelName: input.modelName,
 		compacted,
@@ -416,36 +427,23 @@ export function groupContextModels(models: readonly IContextUsageModelRow[]): IC
 		});
 }
 
-function conversationTokens(messages: readonly IContextUsageMessage[], last?: IContextUsageMessage): number {
-	let total = 0;
-	for (const message of messages) {
-		if (last && message === last) {
-			continue;
-		}
-		total += message.kind === 'user' ? estimateTokensFromText(message.text ?? '') : estimateMessageTokens(message);
-	}
-	if (last) {
-		total += estimateMessageTokens(last);
-	}
-	return total;
+function conversationTokens(messages: readonly IContextUsageMessage[]): number {
+	return messages.reduce((total, message) => total + estimateMessageTokens(message), 0);
 }
 
-function usageHistory(messages: readonly IContextUsageMessage[], overhead: number): number[] {
-	const history: number[] = [];
-	let running = overhead;
-	for (const message of messages) {
-		if (message.kind === 'user') {
-			running += estimateTokensFromText(message.text ?? '');
-			continue;
-		}
-		if (message.tokensUsed && message.tokensUsed > 0) {
-			running = message.tokensUsed;
-		} else {
-			running += estimateMessageTokens(message);
-		}
-		history.push(running);
+function messageOccupancyText(message: IContextUsageMessage): string {
+	if (message.kind === 'user') {
+		return message.agentText || message.text || '';
 	}
-	return history;
+	const parts: string[] = [agentMessagePlainText(message), message.activity?.thinkingText ?? ''];
+	for (const segment of message.segments ?? []) {
+		if (segment.kind === 'thought') {
+			parts.push(segment.text);
+		} else if (segment.kind === 'activity') {
+			parts.push(segment.item.label, segment.item.detail ?? '', segment.item.text ?? '', segment.item.input ?? '');
+		}
+	}
+	return parts.filter(Boolean).join('\n');
 }
 
 function overheadSum(overhead: IContextOverhead): number {

@@ -23,25 +23,8 @@
 	background: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background))) !important;
 }
 
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor,
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .margin,
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .monaco-editor-background,
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .minimap-decorations-layer,
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .monaco-editor .minimap,
 .monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar .volt-agent-editor {
 	background-color: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background))) !important;
-}
-
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box,
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .volt-agent-monaco,
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .volt-agent-placeholder,
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .monaco-editor,
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .monaco-editor .margin,
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .monaco-editor .monaco-editor-background,
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .monaco-editor .minimap-decorations-layer,
-.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .monaco-editor .minimap {
-	background: var(--volt-composer-bg, #222222) !important;
-	background-color: var(--volt-composer-bg, #222222) !important;
 }
 
 .monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs > .title {
@@ -185,11 +168,14 @@
 	outline: none !important;
 }
 
-.volt-agent-side-panel.is-empty.drawer-open .volt-agent-side-main {
+/* Last agent tab closed: drop the empty editor host and let the sidebar fill the panel. */
+.volt-agent-side-panel.is-empty.drawer-open .volt-agent-side-main,
+.pane.is-empty.drawer-open .volt-agent-side-main {
 	display: none;
 }
 
-.volt-agent-side-panel.is-empty.drawer-open .volt-agent-drawer {
+.volt-agent-side-panel.is-empty.drawer-open .volt-agent-drawer,
+.pane.is-empty.drawer-open .volt-agent-drawer {
 	flex: 1;
 	width: auto;
 	max-width: none;

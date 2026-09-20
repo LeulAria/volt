@@ -97,6 +97,10 @@ async function openNewAgentInFocusedGroup(accessor: ServicesAccessor, replace: b
 		}
 		return;
 	}
+	const layoutService = accessor.get(IWorkbenchLayoutService);
+	if (getLayoutMode(layoutService) === 'agent' && layoutService.isAuxiliaryBarMaximized()) {
+		layoutService.setAuxiliaryBarMaximized(false);
+	}
 	const group = (groupId !== undefined ? groups.getGroup(groupId) : undefined) ?? groups.activeGroup;
 	const input = accessor.get(IInstantiationService).createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri());
 	const previous = replace ? group.activeEditor : undefined;

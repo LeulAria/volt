@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { classifyIntent, mergeGrantedGroups } from '../../../common/harness/intent.js';
+import { classifyIntent, mergeGrantedGroups, pingReply } from '../../../common/harness/intent.js';
 
 suite('Volt intent router', () => {
 
@@ -35,6 +35,38 @@ suite('Volt intent router', () => {
 		assert.strictEqual(classifyIntent('thanks!', 'agent').lane, 'chat');
 		assert.strictEqual(classifyIntent('nissan kicks 2026 price dubai', 'agent').lane, 'chat');
 		assert.strictEqual(classifyIntent('what is 2+2', 'agent').lane, 'chat');
+	});
+
+	test('check-ins are chat with no tools, even after a coding turn', () => {
+		for (const text of ['testing', 'test', 'testthing', 'hello', 'thanks', 'ok']) {
+			const intent = classifyIntent(text, 'agent', { hasWorkspace: true, priorLane: 'agent' });
+			assert.strictEqual(intent.lane, 'chat', text);
+			assert.ok(intent.signals.includes('ping'), text);
+			assert.deepStrictEqual(intent.groups, ['meta'], text);
+			assert.strictEqual(intent.budget.maxToolCalls, 0, text);
+			assert.strictEqual(intent.budget.maxModelCalls, 1, text);
+		}
+	});
+
+	test('check-ins get a local one-line reply', () => {
+		assert.strictEqual(pingReply('thanks'), 'You\'re welcome.');
+		assert.strictEqual(pingReply('hello'), 'Hey.');
+		assert.strictEqual(pingReply('ok'), 'Okay.');
+		assert.strictEqual(pingReply('testthing'), 'Here.');
+	});
+
+	test('smashed questions are not check-ins', () => {
+		const intent = classifyIntent('whatistheproject', 'agent', { hasWorkspace: true });
+		assert.strictEqual(intent.lane, 'chat');
+		assert.ok(!intent.signals.includes('ping'));
+		assert.strictEqual(intent.referencesWorkspace, true);
+		assert.ok(intent.groups.includes('read'));
+		assert.ok(intent.groups.includes('search'));
+		assert.ok(!intent.groups.includes('edit'));
+	});
+
+	test('run the tests stays in a coding lane', () => {
+		assert.notStrictEqual(classifyIntent('run the tests', 'agent', { hasWorkspace: true }).lane, 'chat');
 	});
 
 	test('questions about the workspace stay chat but may read', () => {

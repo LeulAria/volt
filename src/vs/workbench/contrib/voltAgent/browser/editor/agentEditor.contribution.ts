@@ -320,6 +320,9 @@ registerAction2(class NewAgentAction extends Action2 {
 	override async run(accessor: ServicesAccessor, options?: { asTab?: boolean }): Promise<void> {
 		const layoutService = accessor.get(IWorkbenchLayoutService);
 		if (getLayoutMode(layoutService) === 'agent') {
+			if (layoutService.isAuxiliaryBarMaximized()) {
+				layoutService.setAuxiliaryBarMaximized(false);
+			}
 			const input = accessor.get(IInstantiationService).createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri());
 			await accessor.get(IEditorService).openEditor(input, { pinned: true });
 			return;

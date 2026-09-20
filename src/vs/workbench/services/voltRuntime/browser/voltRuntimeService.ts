@@ -41,8 +41,9 @@ import { CLI_AGENT_DEFINITIONS, cliAgentDefinition, detectCliAgent } from './age
 import { NullVoltStdioService } from './host/nullStdioService.js';
 import { compilePrompt } from './prompt/promptCompiler.js';
 import { loadProjectCheckFiles, loadWorkspaceRunPlan } from './host/workspaceRunPlan.js';
-import { IIntent, mergeGrantedGroups } from '../common/harness/intent.js';
+import { IIntent, isConversationalPing, mergeGrantedGroups, pingReply } from '../common/harness/intent.js';
 import { buildAcpLead, IContextPackInput, IEnvironmentFacts } from '../common/harness/contextPack.js';
+import { estimateTokens, totalTokens } from '../common/harness/contextEngine.js';
 import { INativeLoopMessage, NativeFinishReason, runNativeLoop } from '../common/harness/nativeLoop.js';
 import { nativeToModelMessages } from '../common/harness/providerMessages.js';
 import { runToolBatch } from '../common/harness/toolRuntime.js';
@@ -207,7 +208,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const catalogItem = this.catalog.find(item => item.ref === session.providerRef && item.enabled) ?? this.catalog.find(item => item.enabled);
 		const folder = this.workspace.getWorkspace().folders[0];
 		const hasWorkspace = this.workspace.getWorkspace().folders.length > 0;
-		const hasGit = folder ? await this.fileService.exists(URI.joinPath(folder.uri, '.git')) : false;
+		const ping = isConversationalPing(request.text);
+		const hasGit = !ping && folder ? await this.fileService.exists(URI.joinPath(folder.uri, '.git')) : false;
 		const prepared = prepareRun({
 			text: request.text,
 			mode: request.mode,
@@ -237,7 +239,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			},
 			evalHints: this.evalLedger.hints(),
 		});
-		session.lastLane = prepared.intent.lane;
+		if (!prepared.intent.signals.includes('ping')) {
+			session.lastLane = prepared.intent.lane;
+		}
 		session.prepared = prepared;
 
 		const runId = generateUuid();
@@ -266,6 +270,13 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (prepared.clarify) {
 			this.emit(session, runId, { type: 'clarify', question: prepared.clarify, reasons: prepared.intel.ambiguity.reasons });
 			this.emit(session, runId, { type: 'text.delta', id: 'clarify', delta: prepared.clarify });
+			this.finish(session, runId, 'done');
+			return runId;
+		}
+		if (prepared.intent.signals.includes('ping')) {
+			const reply = pingReply(request.text);
+			session.messages.push({ role: 'assistant', content: reply });
+			this.emit(session, runId, { type: 'text.delta', id: 'ping', delta: reply });
 			this.finish(session, runId, 'done');
 			return runId;
 		}
@@ -1012,6 +1023,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	private async contextPackInput(session: ISessionState, mode: VoltMode, intent: IIntent, tools?: IVoltTool[]): Promise<IContextPackInput> {
+		if (intent.signals.includes('ping')) {
+			return { mode, intent: { ...intent, groups: ['meta'] } };
+		}
 		const prepared = session.prepared;
 		const brief = prepared ? formatTaskBrief(prepared.intel) : undefined;
 		const memory = session.harness?.memory.promptBlock(intent.signals.join(' ') || (prepared?.intel.goal ?? ''));
@@ -1045,9 +1059,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
-		const toolsFor = () => this.visibleSessionTools(session, intent);
+		const ping = intent.signals.includes('ping');
+		const toolsFor = () => ping ? [] : this.visibleSessionTools(session, intent);
 		const prepared = session.prepared;
-		const checks = detectProjectChecks(await loadProjectCheckFiles(this.fileService, this.workspace.getWorkspace().folders[0]?.uri));
+		const checks = ping ? {} : detectProjectChecks(await loadProjectCheckFiles(this.fileService, this.workspace.getWorkspace().folders[0]?.uri));
 		const harness = prepared ? createRunHarness(prepared, checks, () => this.harnessCapabilities(session, item.ref)) : undefined;
 		session.harness = harness;
 		harness?.lifecycle.tryTransition('planning');
@@ -1067,8 +1082,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			role: message.role === 'assistant' ? 'assistant' : message.role === 'system' ? 'system' : 'user',
 			content: message.content,
 		}));
+		this.emitOccupancy(session, runId, loopMessages, toolsFor(), item.capabilities.contextWindow || 128_000);
 		const cancel = session.cancel!.token;
-		if (prepared && harness) {
+		if (prepared && harness && !ping) {
 			const reads = speculativeReads(prepared.tools);
 			if (reads.length) {
 				this.emit(session, runId, { type: 'prefetch', paths: reads.map(read => read.args.path) });
@@ -1176,11 +1192,13 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						},
 					}),
 					prepareTurn: messages => {
-						const next = compactTurn(harness, messages, currentItem.capabilities.contextWindow || 128_000);
+						const contextWindow = currentItem.capabilities.contextWindow || 128_000;
+						const next = compactTurn(harness, messages, contextWindow);
 						const compact = compactionEvent(harness);
 						if (compact) {
 							this.emit(session, runId, compact);
 						}
+						this.emitOccupancy(session, runId, next, toolsFor(), contextWindow);
 						return next;
 					},
 					enqueueInbox: text => { harness.inbox.inject(text, { wake: true, target: 'step' }); },
@@ -1495,6 +1513,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			canReset: laneDefinition(prepared.intent.lane).compaction,
 			canIsolate: prepared.strategy.policy.isolateWorkers || prepared.orchestration.concurrency > 1,
 		};
+	}
+
+	private emitOccupancy(session: ISessionState, runId: string, messages: readonly INativeLoopMessage[], tools: readonly IVoltTool[], contextWindow: number): void {
+		this.emit(session, runId, {
+			type: 'usage',
+			input: 0,
+			output: 0,
+			used: totalTokens(messages) + estimateTokens(JSON.stringify(toolSchemas(tools))),
+			size: contextWindow,
+		});
 	}
 
 	private emit(session: ISessionState, runId: string, event: IVoltEvent): void {

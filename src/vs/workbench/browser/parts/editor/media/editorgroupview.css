@@ -50,10 +50,10 @@
 }
 
 .monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark > .letterpress {
-	width: 88px;
-	height: 88px;
+	width: 80px;
+	height: 80px;
 	flex-shrink: 0;
-	margin-bottom: 12px;
+	margin-bottom: 14px;
 	aspect-ratio: 1/1;
 	background-image: url('./letterpress-light.svg');
 	background-size: contain;
