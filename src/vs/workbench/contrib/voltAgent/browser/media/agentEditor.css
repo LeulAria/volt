@@ -2855,7 +2855,7 @@ pre.volt-agent-searchable {
 	overflow: hidden;
 	padding: 8px 10px;
 	box-sizing: border-box;
-	background: var(--volt-composer-bg, #262626);
+	background: var(--volt-composer-bg, #222222);
 }
 
 .volt-agent-input-box:not(.follow-up) .volt-agent-monaco,
@@ -2887,6 +2887,7 @@ pre.volt-agent-searchable {
 	font-weight: 300;
 	line-height: 22px;
 	color: var(--vscode-input-placeholderForeground, #8b8b8b);
+	background: var(--volt-composer-bg, #222222);
 	opacity: 1;
 	pointer-events: none;
 	white-space: nowrap;
@@ -3904,7 +3905,8 @@ pre.volt-agent-searchable {
 .volt-agent-editor:has(.volt-agent-turn) .volt-agent-landing-chrome,
 .volt-agent-editor.zoomed .volt-agent-landing-chrome,
 .volt-agent-editor.resized .volt-agent-landing-chrome,
-.volt-agent-editor.browser-hosted .volt-agent-landing-chrome {
+.volt-agent-editor.browser-hosted .volt-agent-landing-chrome,
+.monaco-workbench:not(.volt-layout-agent) .volt-agent-landing-chrome {
 	display: none !important;
 }
 

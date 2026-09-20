@@ -32,6 +32,18 @@
 	background-color: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background))) !important;
 }
 
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .volt-agent-monaco,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .volt-agent-placeholder,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .monaco-editor,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .monaco-editor .margin,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .monaco-editor .monaco-editor-background,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .monaco-editor .minimap-decorations-layer,
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar.volt-agent-editor-tabs .volt-agent-input-box .monaco-editor .minimap {
+	background: var(--volt-composer-bg, #222222) !important;
+	background-color: var(--volt-composer-bg, #222222) !important;
+}
+
 .monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs > .title {
 	visibility: hidden;
 	pointer-events: none;
