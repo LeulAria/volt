@@ -9,7 +9,7 @@ import { Position } from '../position.js';
 import { PositionOffsetTransformer } from './positionToOffsetImpl.js';
 import { Range } from '../range.js';
 import { LineRange } from '../ranges/lineRange.js';
-import { TextLength } from '../text/textLength.js';
+import { TextLength } from './textLength.js';
 import { OffsetRange } from '../ranges/offsetRange.js';
 
 export abstract class AbstractText {

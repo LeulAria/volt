@@ -5,7 +5,7 @@
 
 import type { Parser, Language, Query } from '@vscode/tree-sitter-wasm';
 import { IReader } from '../../../base/common/observable.js';
-import { ITreeSitterLibraryService } from '../../../editor/common/services/treeSitter/treeSitterLibraryService.js';
+import { ITreeSitterLibraryService } from '../../common/services/treeSitter/treeSitterLibraryService.js';
 
 export class StandaloneTreeSitterLibraryService implements ITreeSitterLibraryService {
 	readonly _serviceBrand: undefined;

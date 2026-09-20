@@ -9,7 +9,7 @@ import { OffsetRange } from '../ranges/offsetRange.js';
 import { Position } from '../position.js';
 import { Range } from '../range.js';
 import type { TextReplacement, TextEdit } from '../edits/textEdit.js';
-import type { TextLength } from '../text/textLength.js';
+import type { TextLength } from './textLength.js';
 
 export abstract class PositionOffsetTransformerBase {
 	abstract getOffset(position: Position): number;
