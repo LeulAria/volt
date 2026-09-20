@@ -33,6 +33,18 @@
 	"nodejsRepository": "https://nodejs.org",
 	"urlProtocol": "code-oss",
 	"webviewContentExternalBaseUrlTemplate": "https://{{uuid}}.vscode-cdn.net/insider/ef65ac1ba57f57f2a3961bfe94aa20481caca4c6/out/vs/workbench/contrib/webview/browser/pre/",
+	"linkProtectionTrustedDomains": [
+		"https://open-vsx.org"
+	],
+	"extensionsGallery": {
+		"serviceUrl": "https://open-vsx.org/vscode/gallery",
+		"itemUrl": "https://open-vsx.org/vscode/item",
+		"publisherUrl": "https://open-vsx.org/namespace",
+		"resourceUrlTemplate": "https://open-vsx.org/vscode/unpkg/{publisher}/{name}/{version}/{path}",
+		"extensionUrlTemplate": "https://open-vsx.org/vscode/gallery/{publisher}/{name}/latest",
+		"controlUrl": "https://raw.githubusercontent.com/EclipseFdn/publish-extensions/refs/heads/master/extension-control/extensions.json",
+		"nlsBaseUrl": ""
+	},
 	"builtInExtensions": [
 		{
 			"name": "ms-vscode.js-debug-companion",
@@ -80,6 +92,22 @@
 					"flags": "verified"
 				},
 				"publisherDisplayName": "Microsoft"
+			}
+		},
+		{
+			"name": "PKief.material-icon-theme",
+			"version": "5.38.1",
+			"sha256": "fa7515831a2d68b1f78bd02de40f96260bfe74efb03a238c2bde70265e04b696",
+			"repo": "https://github.com/material-extensions/vscode-material-icon-theme",
+			"metadata": {
+				"id": "455d84ae-3bc8-487a-821c-a1db31e1b26a",
+				"publisherId": {
+					"publisherId": "77dac191-be6e-4a39-af30-c54f10f49989",
+					"publisherName": "PKief",
+					"displayName": "PKief",
+					"flags": "verified"
+				},
+				"publisherDisplayName": "PKief"
 			}
 		}
 	]

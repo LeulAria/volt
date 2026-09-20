@@ -85,6 +85,12 @@ function getExtensionDownloadStream(extension) {
     if (extension.vsix) {
         input = ext.fromVsix(path_1.default.join(root, extension.vsix), extension);
     }
+    else if (extension.repo) {
+        // Prefer GitHub release assets when a repo is recorded. Enabling an
+        // Open VSX gallery must not switch built-in downloads to marketplace
+        // packages whose checksums differ from product.json.
+        input = ext.fromGithub(extension);
+    }
     else if (productjson.extensionsGallery?.serviceUrl) {
         input = ext.fromMarketplace(productjson.extensionsGallery.serviceUrl, extension);
     }
@@ -103,8 +109,7 @@ function getExtensionStream(extension) {
     return getExtensionDownloadStream(extension);
 }
 function syncMarketplaceExtension(extension) {
-    const galleryServiceUrl = productjson.extensionsGallery?.serviceUrl;
-    const source = ansi_colors_1.default.blue(galleryServiceUrl ? '[marketplace]' : '[github]');
+    const source = ansi_colors_1.default.blue(extension.vsix ? '[vsix]' : extension.repo ? '[github]' : productjson.extensionsGallery?.serviceUrl ? '[marketplace]' : '[github]');
     if (isUpToDate(extension)) {
         log(source, `${extension.name}@${extension.version}`, ansi_colors_1.default.green('✔︎'));
         return event_stream_1.default.readArray([]);

@@ -224,7 +224,7 @@ export class ExtensionGalleryManifestService extends Disposable implements IExte
 					flags,
 				},
 				signing: {
-					allPublicRepositorySigned: true,
+					allPublicRepositorySigned: !/^https:\/\/open-vsx\.org\b/i.test(extensionsGallery.serviceUrl),
 				}
 			}
 		};
