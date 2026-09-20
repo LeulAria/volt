@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -8,10 +8,12 @@ import { IRequestService } from '../../../../../platform/request/common/request.
 import { DEFAULT_MODEL_CAPABILITIES, IProviderCapabilities } from '../../common/capabilities.js';
 import { IVoltEvent } from '../../common/events.js';
 import { IProviderProfile } from '../../common/profiles.js';
-import { contextLabelFromTokens, pickText } from '../../common/modelMeta.js';
-import { booleanOption, IModelOptionDescriptor, MODEL_OPTION_THINKING } from '../../common/modelOptions.js';
+import { contextLabelFromTokens, pickText } from '../../common/models/modelMeta.js';
+import { booleanOption, IModelOptionDescriptor, MODEL_OPTION_THINKING } from '../../common/models/modelOptions.js';
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
-import { parseSseData, requestSseLines, requestText } from '../httpStream.js';
+import { AnthropicToolAssembler } from '../../common/harness/anthropicToolStream.js';
+import { toAnthropicMessages, toAnthropicTools } from '../../common/harness/providerMessages.js';
+import { parseSseData, requestSseLines, requestText } from '../host/httpStream.js';
 
 interface IAnthropicModel {
 	id: string;
@@ -88,12 +90,10 @@ export class AnthropicProvider implements IModelProvider {
 
 	async *stream(req: IModelRequest, token: CancellationToken): AsyncIterable<IVoltEvent> {
 		const system = req.messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n');
-		const messages = req.messages.filter(m => m.role !== 'system').map(m => ({
-			role: m.role === 'assistant' ? 'assistant' : 'user',
-			content: m.content,
-		}));
+		const tools = req.tools?.length ? toAnthropicTools(req.tools) : undefined;
 		const url = `${(req.profile.endpoint?.baseURL || 'https://api.anthropic.com').replace(/\/$/, '')}/v1/messages`;
 		const textId = `text-${Date.now()}`;
+		const assembler = new AnthropicToolAssembler();
 		let started = false;
 		for await (const line of requestSseLines(this.requestService, url, {
 			type: 'POST',
@@ -107,19 +107,26 @@ export class AnthropicProvider implements IModelProvider {
 				max_tokens: MAX_TOKENS,
 				stream: true,
 				system: system || undefined,
-				messages,
+				messages: toAnthropicMessages(req.messages),
+				...(tools ? { tools } : {}),
 				...(req.options?.[MODEL_OPTION_THINKING] === true
 					? { thinking: { type: 'enabled', budget_tokens: THINKING_BUDGET_TOKENS } }
 					: {}),
 			}),
 		}, token)) {
+			if (token.isCancellationRequested) {
+				yield { type: 'finish', reason: 'abort' };
+				return;
+			}
 			const data = parseSseData(line);
 			if (!data) {
 				continue;
 			}
 			let json: {
 				type?: string;
-				delta?: { type?: string; text?: string; thinking?: string };
+				index?: number;
+				content_block?: { type?: string; id?: string; name?: string };
+				delta?: { type?: string; text?: string; thinking?: string; partial_json?: string; stop_reason?: string };
 				usage?: { input_tokens?: number; output_tokens?: number };
 				message?: { usage?: { input_tokens?: number; output_tokens?: number } };
 			};
@@ -142,10 +149,14 @@ export class AnthropicProvider implements IModelProvider {
 				}
 				yield { type: 'text.delta', id: textId, delta: json.delta.text };
 			}
+			for (const event of assembler.apply(json)) {
+				yield event;
+			}
 		}
 		if (started) {
 			yield { type: 'text.end', id: textId };
 		}
+		yield assembler.finish();
 	}
 
 	private caps(id: string): IProviderCapabilities {

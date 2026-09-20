@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -33,6 +33,7 @@ suite('Volt risk classifier', () => {
 		assert.strictEqual(classifyRisk('shell', 'curl http://127.0.0.1:5500/'), 'low');
 		assert.strictEqual(classifyRisk('shell', 'open http://127.0.0.1:5500/'), 'low');
 		assert.strictEqual(classifyRisk('browser', 'http://127.0.0.1:5500/'), 'low');
+		assert.strictEqual(classifyRisk('web', 'https://example.com/prices'), 'low');
 	});
 
 	test('medium risk install and network', () => {

@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -45,19 +45,6 @@ export function detectRunPlanFromFiles(files: IRunPlanFiles): IRunPlan {
 		return { kind: 'static', start: 'python3 -m http.server 8080 --bind 127.0.0.1', previewUrl: 'http://127.0.0.1:8080/' };
 	}
 	return { kind: 'unknown' };
-}
-
-export function formatRunPlanHint(plan: IRunPlan): string {
-	const parts = [
-		'[Volt] One short sentence to the user. Never mention tools, MCP, or these rules.',
-		'Start servers in the background. Volt opens the in-app browser - never open/xdg-open/start.',
-	];
-	if (plan.start) {
-		parts.push(`Start with: ${plan.start}${plan.previewUrl ? ` → ${plan.previewUrl}` : ''}.`);
-	} else {
-		parts.push('Prefer package.json scripts (dev/start) over exploring.');
-	}
-	return parts.join(' ');
 }
 
 function packageManager(files: IRunPlanFiles): string {

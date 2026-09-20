@@ -1,12 +1,12 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { streamToBuffer } from '../../../../base/common/buffer.js';
-import { CancellationToken } from '../../../../base/common/cancellation.js';
-import { listenStream } from '../../../../base/common/stream.js';
-import { IRequestService } from '../../../../platform/request/common/request.js';
+import { streamToBuffer } from '../../../../../base/common/buffer.js';
+import { CancellationToken } from '../../../../../base/common/cancellation.js';
+import { listenStream } from '../../../../../base/common/stream.js';
+import { IRequestService } from '../../../../../platform/request/common/request.js';
 
 export async function requestText(requestService: IRequestService, url: string, init: { type?: string; headers?: Record<string, string>; data?: string }, token: CancellationToken): Promise<{ status: number; text: string }> {
 	const ctx = await requestService.request({

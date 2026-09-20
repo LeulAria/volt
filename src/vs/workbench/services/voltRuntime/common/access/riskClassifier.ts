@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -110,7 +110,10 @@ export function classifyRisk(action: PermissionAction, resource: string): RiskLe
 		}
 		return 'medium';
 	}
-	if (action === 'network' || action === 'web' || action === 'browser') {
+	if (action === 'web') {
+		return 'low';
+	}
+	if (action === 'network' || action === 'browser') {
 		return LOCAL_HOST.test(resource) ? 'low' : 'medium';
 	}
 	if (action === 'subagent') {

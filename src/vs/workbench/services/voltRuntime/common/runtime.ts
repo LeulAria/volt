@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -10,11 +10,12 @@ import { VoltAccessMode } from './access/accessModes.js';
 import { AccessDecisionScope, IAccessRequest, IExecutionReceipt, IPermissionRule, PermissionEffect } from './access/accessTypes.js';
 import { IVoltEventEnvelope } from './events.js';
 import { VoltMode } from './modes.js';
-import { IVoltModelOptions } from './modelOptions.js';
+import { IVoltModelOptions } from './models/modelOptions.js';
 import { IAgentDetectResult, IVoltCatalogItem, IVoltProviderStatus } from './providers.js';
 import { IProviderProfile, IProviderProfileDraft } from './profiles.js';
 import { IVoltSendRequest, IVoltSession } from './session.js';
-import { IVoltModelAccess } from './modelAccess.js';
+import { IVoltModelAccess } from './models/modelAccess.js';
+import type { IHumanAction } from './harness/humanLoop.js';
 
 export const IAgentRuntimeService = createDecorator<IAgentRuntimeService>('agentRuntimeService');
 
@@ -41,6 +42,11 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	seedSession(key: string, messages: readonly { role: 'user' | 'assistant'; content: string }[]): void;
 	send(sessionId: string, request: IVoltSendRequest): Promise<string>;
 	cancel(sessionId: string): Promise<void>;
+	pause(sessionId: string): Promise<void>;
+	resume(sessionId: string): Promise<void>;
+	forkSession(sessionId: string): Promise<string>;
+	redirect(sessionId: string, text: string): Promise<string>;
+	applyHuman(sessionId: string, action: IHumanAction): Promise<void>;
 	onEvent(sessionId: string, listener: (e: IVoltEventEnvelope) => void): IDisposable;
 
 	listCatalog(): IVoltCatalogItem[];

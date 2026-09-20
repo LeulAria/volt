@@ -1,12 +1,13 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { decodeBase64 } from '../../../../base/common/buffer.js';
-import { isWindows } from '../../../../base/common/platform.js';
-import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
-import { IDetectResult } from '../common/providers.js';
+import { decodeBase64 } from '../../../../../base/common/buffer.js';
+import { isWindows } from '../../../../../base/common/platform.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { antigravityModelsToInfo, parseAntigravityModelLines } from '../../common/models/antigravityModels.js';
+import { IDetectResult, IModelInfo } from '../../common/providers.js';
 
 export interface ICliAgentDefinition {
 	readonly id: string;
@@ -22,9 +23,10 @@ export interface ICliAgentDefinition {
 }
 
 const CLI_TIMEOUT_MS = 4000;
+const MODEL_LIST_TIMEOUT_MS = 15_000;
 
 /** Runs a short lived command and returns its stdout, or undefined if it failed or timed out. */
-export async function runCli(stdio: IVoltStdioService, command: string, args: readonly string[]): Promise<string | undefined> {
+export async function runCli(stdio: IVoltStdioService, command: string, args: readonly string[], timeoutMs = CLI_TIMEOUT_MS): Promise<string | undefined> {
 	let id: string;
 	try {
 		id = await stdio.spawn({ command, args: [...args] });
@@ -58,7 +60,7 @@ export async function runCli(stdio: IVoltStdioService, command: string, args: re
 		const timer = setTimeout(() => {
 			void stdio.kill(id);
 			finish(output || undefined);
-		}, CLI_TIMEOUT_MS);
+		}, timeoutMs);
 	});
 }
 
@@ -132,6 +134,28 @@ async function probeClaudeAuth(stdio: IVoltStdioService): Promise<{ account?: st
 	};
 }
 
+async function probeHomeConfig(stdio: IVoltStdioService, posixPath: string, account: string, plan: string): Promise<{ account?: string; plan?: string } | undefined> {
+	const raw = await readHomeFile(stdio, posixPath);
+	if (!raw) {
+		return undefined;
+	}
+	return { account, plan };
+}
+
+async function probeKimiAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
+	return probeHomeConfig(stdio, '.kimi-code/config.toml', 'kimi', 'Kimi Code');
+}
+
+async function probeMuseAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
+	return probeHomeConfig(stdio, '.config/muse/settings.json', 'muse', 'Muse Code');
+}
+
+/** Synara's discovery path: `agy models` rather than a throwaway ACP session. */
+export async function listAntigravityModels(stdio: IVoltStdioService, command: string): Promise<IModelInfo[]> {
+	const output = await runCli(stdio, command, ['models'], MODEL_LIST_TIMEOUT_MS);
+	return antigravityModelsToInfo(parseAntigravityModelLines(output ?? ''));
+}
+
 async function probeOpenCodeAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
 	const auth = await readHomeJson<Record<string, unknown>>(stdio, '.local/share/opencode/auth.json');
 	const upstream = auth ? Object.keys(auth).length : 0;
@@ -184,6 +208,29 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 		versionArgs: ['--version'],
 		acpArgs: ['acp'],
 		probeAuth: probeOpenCodeAuth,
+	},
+	{
+		id: 'antigravity',
+		label: 'Antigravity',
+		commands: ['agy'],
+		versionArgs: ['--version'],
+		acpArgs: ['acp'],
+	},
+	{
+		id: 'kimi',
+		label: 'Kimi Code',
+		commands: ['kimi'],
+		versionArgs: ['--version'],
+		acpArgs: ['acp'],
+		probeAuth: probeKimiAuth,
+	},
+	{
+		id: 'muse',
+		label: 'Muse Code',
+		commands: ['muse'],
+		versionArgs: ['--version'],
+		acpArgs: ['acp'],
+		probeAuth: probeMuseAuth,
 	},
 ];
 

@@ -1,11 +1,12 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { detectRunPlanFromFiles, formatRunPlanHint } from '../../common/runPlan.js';
+import { formatRunPlanSection } from '../../common/harness/contextPack.js';
+import { detectRunPlanFromFiles } from '../../common/runPlan.js';
 
 suite('Volt run plan', () => {
 
@@ -30,11 +31,11 @@ suite('Volt run plan', () => {
 		assert.strictEqual(plan.previewUrl, 'http://localhost:5173/');
 	});
 
-	test('hint stays compact and bans system open', () => {
-		const hint = formatRunPlanHint({ kind: 'static', start: 'python3 -m http.server 8080 --bind 127.0.0.1', previewUrl: 'http://127.0.0.1:8080/' });
+	test('preview section stays compact and bans system open', () => {
+		const hint = formatRunPlanSection({ kind: 'static', start: 'python3 -m http.server 8080 --bind 127.0.0.1', previewUrl: 'http://127.0.0.1:8080/' });
 		assert.ok(hint.includes('in-app browser'));
-		assert.ok(hint.includes('never open/xdg-open/start'));
+		assert.ok(/never call open, xdg-open, or start/.test(hint));
 		assert.ok(hint.includes('python3 -m http.server'));
-		assert.ok(hint.length < 320);
+		assert.ok(hint.length < 400);
 	});
 });

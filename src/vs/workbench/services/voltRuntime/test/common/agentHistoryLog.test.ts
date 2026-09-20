@@ -1,11 +1,11 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { AGENT_HISTORY_FORMAT_VERSION, AgentHistoryRecord, IAgentSessionHeader, IAgentSessionMeta } from '../../common/agentHistory.js';
+import { AGENT_HISTORY_FORMAT_VERSION, AgentHistoryRecord, IAgentSessionHeader, IAgentSessionMeta } from '../../common/history/agentHistory.js';
 import {
 	attachmentFileName,
 	attachmentRef,
@@ -24,7 +24,7 @@ import {
 	shouldCompact,
 	sortSessions,
 	truncateAtWord,
-} from '../../common/agentHistoryLog.js';
+} from '../../common/history/agentHistoryLog.js';
 
 const header: IAgentSessionHeader = {
 	type: 'header',
@@ -243,6 +243,26 @@ suite('Volt agent history log', () => {
 		assert.deepStrictEqual(searchSessions(sessions, 'icon changelog').map(item => item.id), ['b']);
 		assert.deepStrictEqual(searchSessions(sessions, 'zzz').map(item => item.id), []);
 		assert.deepStrictEqual(searchSessions(sessions, '   ').map(item => item.id), ['c', 'b', 'a']);
+	});
+
+	test('search is fuzzy across title and preview', () => {
+		const sessions = [
+			meta({ id: 'readme', title: 'Add a readme file', preview: 'document the project', updatedAt: 1 }),
+			meta({ id: 'other', title: 'Unrelated', preview: 'nothing here', updatedAt: 2 }),
+		];
+		assert.deepStrictEqual(searchSessions(sessions, 'rdme').map(item => item.id), ['readme']);
+		assert.deepStrictEqual(searchSessions(sessions, 'adrm').map(item => item.id), ['readme']);
+	});
+
+	test('search respects case, whole word and regex toggles', () => {
+		const sessions = [
+			meta({ id: 'a', title: 'Polished Icon design', preview: 'icons', updatedAt: 1 }),
+			meta({ id: 'b', title: 'iconography notes', preview: 'nothing', updatedAt: 2 }),
+		];
+		assert.deepStrictEqual(searchSessions(sessions, 'Icon', { matchCase: true }).map(item => item.id), ['a']);
+		assert.deepStrictEqual(searchSessions(sessions, 'icon', { wholeWord: true }).map(item => item.id), ['a']);
+		assert.deepStrictEqual(searchSessions(sessions, 'icon.*design', { isRegex: true }).map(item => item.id), ['a']);
+		assert.deepStrictEqual(searchSessions(sessions, '(', { isRegex: true }).map(item => item.id), []);
 	});
 
 	test('attachment refs are content addressed and validated', () => {

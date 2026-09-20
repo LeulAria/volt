@@ -1,10 +1,12 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { contextLabelFromTokens, pickNumber, pickText } from '../../common/modelMeta.js';
-import { booleanOption, IModelOptionDescriptor, IVoltModelOptions, MODEL_OPTION_CONTEXT, MODEL_OPTION_FAST, MODEL_OPTION_REASONING, MODEL_OPTION_THINKING, selectOption } from '../../common/modelOptions.js';
+import { catalogOverlay } from '../../common/models/agentModelCatalogs.js';
+import { normalizeCursorModelId } from '../../common/harness/cursorQuota.js';
+import { contextLabelFromTokens, formatContextChoice, pickNumber, pickText } from '../../common/models/modelMeta.js';
+import { booleanOption, fillDescriptors, IModelOptionDescriptor, IVoltModelOptions, MODEL_OPTION_CONTEXT, MODEL_OPTION_FAST, MODEL_OPTION_REASONING, MODEL_OPTION_SERVICE_TIER, MODEL_OPTION_THINKING, reasoningLabel, reasoningOption, selectOption } from '../../common/models/modelOptions.js';
 
 /**
  * Session config options as reported by an ACP agent.
@@ -43,6 +45,14 @@ export interface IAcpAvailableModel {
 	_meta?: Record<string, unknown>;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+	return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function asArray(value: unknown): unknown[] | undefined {
+	return Array.isArray(value) ? value : undefined;
+}
+
 export interface IAcpModelMeta {
 	description?: string;
 	contextLabel?: string;
@@ -65,10 +75,19 @@ export function metadataFromAcpModel(model: IAcpAvailableModel, params: Record<s
 		extra.blurb,
 		extra.summary,
 	);
+	const limit = asRecord(raw.limit) ?? asRecord(extra.limit);
+	const capabilities = asRecord(raw.capabilities) ?? asRecord(extra.capabilities);
 	const tokens = pickNumber(
 		model.contextWindow,
 		model.contextLength,
 		model.context_length,
+		raw.max_model_len,
+		limit?.context,
+		limit?.contextWindow,
+		limit?.context_length,
+		capabilities?.contextWindow,
+		capabilities?.contextLength,
+		capabilities?.maxContextTokens,
 		extra.contextWindow,
 		extra.contextLength,
 		extra.context_length,
@@ -82,7 +101,7 @@ export function metadataFromAcpModel(model: IAcpAvailableModel, params: Record<s
 
 /** Choices may arrive grouped, so both shapes flatten to a single list. */
 export function flattenChoices(option: IAcpConfigOption | undefined): IAcpSelectChoice[] {
-	if (!option || option.type !== 'select') {
+	if (!option || (option.type && option.type !== 'select' && option.type !== 'string')) {
 		return [];
 	}
 	return (option.options ?? []).flatMap(entry => 'value' in entry
@@ -106,19 +125,34 @@ export function isModelConfigOption(option: IAcpConfigOption): boolean {
 	return category(option) === 'model' || id(option) === 'model';
 }
 
-function isReasoningOption(option: IAcpConfigOption): boolean {
-	return ['effort', 'reasoning'].includes(id(option))
-		|| ['effort', 'reasoning'].includes(name(option))
-		|| name(option).includes('effort')
-		|| name(option).includes('reasoning');
+function isSessionModeOption(option: IAcpConfigOption): boolean {
+	return id(option) === 'mode' || category(option) === 'mode' || name(option) === 'session mode';
 }
 
-function findReasoningOption(configOptions: readonly IAcpConfigOption[]): IAcpConfigOption | undefined {
-	const candidates = configOptions.filter(option => option.type === 'select' && isReasoningOption(option));
-	return candidates.find(option => category(option) === 'model_option')
-		?? candidates.find(option => id(option) === 'effort')
-		?? candidates.find(option => category(option) === 'thought_level')
-		?? candidates[0];
+function isIgnoredConfigOption(option: IAcpConfigOption): boolean {
+	return isModelConfigOption(option) || isSessionModeOption(option);
+}
+
+const EFFORT_VALUES = new Set(['minimal', 'min', 'low', 'medium', 'med', 'high', 'xhigh', 'x-high', 'max', 'ultra', 'ultracode', 'ultrathink']);
+
+function looksLikeEffortValue(value: string): boolean {
+	return EFFORT_VALUES.has(value.trim().toLowerCase());
+}
+
+function isReasoningOption(option: IAcpConfigOption): boolean {
+	if (category(option) === 'thought_level'
+		|| ['effort', 'reasoning'].includes(id(option))
+		|| ['effort', 'reasoning'].includes(name(option))
+		|| name(option).includes('effort')
+		|| name(option).includes('reasoning')) {
+		return true;
+	}
+	if (id(option) === 'variant' || name(option) === 'variant') {
+		const choices = flattenChoices({ ...option, type: option.type ?? 'select' })
+			.filter(choice => choice.value.toLowerCase() !== 'default');
+		return choices.length > 0 && choices.every(choice => looksLikeEffortValue(choice.value) || looksLikeEffortValue(choice.name));
+	}
+	return false;
 }
 
 function isContextOption(option: IAcpConfigOption): boolean {
@@ -131,6 +165,51 @@ function isFastOption(option: IAcpConfigOption): boolean {
 
 function isThinkingOption(option: IAcpConfigOption): boolean {
 	return id(option) === 'thinking' || name(option).includes('thinking');
+}
+
+function isServiceTierOption(option: IAcpConfigOption): boolean {
+	const key = id(option).replace(/[\s-]/g, '');
+	return ['servicetier', 'service_tier', 'speed', 'speedtier'].includes(key)
+		|| name(option).includes('service tier')
+		|| (name(option).includes('speed') && !name(option).includes('reasoning'));
+}
+
+function canonicalSelectId(option: IAcpConfigOption): string {
+	if (isReasoningOption(option)) {
+		return MODEL_OPTION_REASONING;
+	}
+	if (isContextOption(option)) {
+		return MODEL_OPTION_CONTEXT;
+	}
+	if (isServiceTierOption(option)) {
+		return MODEL_OPTION_SERVICE_TIER;
+	}
+	if (isFastOption(option)) {
+		return MODEL_OPTION_FAST;
+	}
+	if (isThinkingOption(option)) {
+		return MODEL_OPTION_THINKING;
+	}
+	return option.id?.trim() || option.name?.trim() || 'option';
+}
+
+function defaultSelectLabel(optionId: string, fallback: string): string {
+	if (optionId === MODEL_OPTION_REASONING) {
+		return 'Reasoning';
+	}
+	if (optionId === MODEL_OPTION_CONTEXT) {
+		return 'Context Window';
+	}
+	if (optionId === MODEL_OPTION_SERVICE_TIER) {
+		return 'Service Tier';
+	}
+	if (optionId === MODEL_OPTION_FAST) {
+		return 'Fast';
+	}
+	if (optionId === MODEL_OPTION_THINKING) {
+		return 'Thinking';
+	}
+	return fallback;
 }
 
 /** Some agents model a toggle as a two value select of "true"/"false". */
@@ -155,38 +234,80 @@ export function descriptorsFromConfigOptions(configOptions: readonly IAcpConfigO
 		return [];
 	}
 	const descriptors: IModelOptionDescriptor[] = [];
-
-	const thinking = configOptions.find(option => isThinkingOption(option) && booleanLike(option));
-	if (thinking) {
-		descriptors.push(booleanOption(MODEL_OPTION_THINKING, thinking.name?.trim() || 'Thinking', booleanCurrentValue(thinking)));
-	}
-
-	const fast = configOptions.find(option => isFastOption(option) && booleanLike(option));
-	if (fast) {
-		descriptors.push(booleanOption(MODEL_OPTION_FAST, fast.name?.trim() || 'Fast', booleanCurrentValue(fast)));
-	}
-
-	const context = configOptions.find(option => option.type === 'select' && isContextOption(option) && !booleanLike(option));
-	const contextChoices = flattenChoices(context);
-	if (context && contextChoices.length > 1) {
-		descriptors.push(selectOption(MODEL_OPTION_CONTEXT, context.name?.trim() || 'Context', contextChoices.map(choice => ({
+	const seen = new Set<string>();
+	for (const option of configOptions) {
+		if (isIgnoredConfigOption(option)) {
+			continue;
+		}
+		if (booleanLike(option)) {
+			const optionId = isThinkingOption(option)
+				? MODEL_OPTION_THINKING
+				: isFastOption(option)
+					? MODEL_OPTION_FAST
+					: option.id?.trim() || 'toggle';
+			if (seen.has(optionId)) {
+				continue;
+			}
+			seen.add(optionId);
+			descriptors.push(booleanOption(optionId, option.name?.trim() || defaultSelectLabel(optionId, 'Option'), booleanCurrentValue(option)));
+			continue;
+		}
+		if (option.type && option.type !== 'select' && option.type !== 'string' && !option.options?.length) {
+			continue;
+		}
+		const optionId = canonicalSelectId(option);
+		const choices = flattenChoices({ ...option, type: 'select' })
+			.filter(choice => optionId !== MODEL_OPTION_REASONING || choice.value.toLowerCase() !== 'default');
+		if (choices.length <= 1) {
+			continue;
+		}
+		if (seen.has(optionId)) {
+			continue;
+		}
+		seen.add(optionId);
+		const current = option.currentValue === undefined ? undefined : String(option.currentValue);
+		const mapped = choices.map(choice => ({
 			value: choice.value,
-			label: choice.name,
-			isDefault: choice.value === context.currentValue,
-		}))));
+			label: optionId === MODEL_OPTION_REASONING
+				? reasoningLabel(choice.name || choice.value)
+				: optionId === MODEL_OPTION_CONTEXT
+					? formatContextChoice(choice.name || choice.value)
+					: optionId === MODEL_OPTION_SERVICE_TIER
+						? serviceTierLabel(choice.name || choice.value)
+						: (choice.name || choice.value),
+			isDefault: current !== undefined && choice.value === current,
+		}));
+		if (optionId === MODEL_OPTION_REASONING && !mapped.some(choice => choice.isDefault)) {
+			const preferred = mapped.find(choice => choice.value === 'high') ?? mapped[0];
+			if (preferred) {
+				preferred.isDefault = true;
+			}
+		}
+		descriptors.push(selectOption(optionId, option.name?.trim() || defaultSelectLabel(optionId, option.id), mapped));
 	}
-
-	const reasoning = findReasoningOption(configOptions);
-	const reasoningChoices = flattenChoices(reasoning);
-	if (reasoning && !booleanLike(reasoning) && reasoningChoices.length > 1) {
-		descriptors.push(selectOption(MODEL_OPTION_REASONING, reasoning.name?.trim() || 'Effort', reasoningChoices.map(choice => ({
-			value: choice.value,
-			label: choice.name,
-			isDefault: choice.value === reasoning.currentValue,
-		}))));
-	}
-
 	return descriptors;
+}
+
+function serviceTierLabel(value: string): string {
+	const key = value.trim().toLowerCase();
+	if (key === 'default' || key === 'standard') {
+		return 'Standard';
+	}
+	if (key === 'fast' || key === 'priority') {
+		return 'Fast';
+	}
+	if (key === 'flex') {
+		return 'Flex';
+	}
+	if (key === 'ultrafast' || key === 'ultra-fast') {
+		return 'Ultra Fast';
+	}
+	return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function normalizeServiceTier(value: string): string {
+	const key = value.trim().toLowerCase();
+	return key === 'priority' ? 'fast' : key;
 }
 
 /**
@@ -225,7 +346,7 @@ function normalizeEffortValue(value: string): string {
 
 /**
  * Turns the keys baked into a Cursor model id into selectable descriptors. `grok-4.6[effort=high,fast=true]`
- * becomes Effort (Low / Medium / High / Extra High) plus a Fast toggle, matching the T3 picker.
+ * becomes Reasoning (Low / Medium / High / X-High) plus a Fast toggle.
  */
 export function descriptorsFromParams(params: Record<string, string>): IModelOptionDescriptor[] {
 	const descriptors: IModelOptionDescriptor[] = [];
@@ -236,15 +357,14 @@ export function descriptorsFromParams(params: Record<string, string>): IModelOpt
 		if (current === 'max' && !choices.some(choice => choice.value === 'max')) {
 			choices.push({ value: 'max', label: 'Max', isDefault: true });
 		}
-		descriptors.push(selectOption(MODEL_OPTION_REASONING, 'Effort', choices));
+		descriptors.push(selectOption(MODEL_OPTION_REASONING, 'Reasoning', choices));
 	}
 	if (params.context) {
-		const windows = [...new Set([params.context, '200k', '272k', '300k', '1m'])];
-		descriptors.push(selectOption(MODEL_OPTION_CONTEXT, 'Context', windows.map(value => ({
-			value,
-			label: value.toUpperCase(),
-			isDefault: value === params.context,
-		}))));
+		descriptors.push(selectOption(MODEL_OPTION_CONTEXT, 'Context Window', [{
+			value: params.context,
+			label: formatContextChoice(params.context),
+			isDefault: true,
+		}]));
 	}
 	if (params.fast !== undefined) {
 		descriptors.push(booleanOption(MODEL_OPTION_FAST, 'Fast', params.fast === 'true'));
@@ -252,7 +372,212 @@ export function descriptorsFromParams(params: Record<string, string>): IModelOpt
 	if (params.thinking !== undefined) {
 		descriptors.push(booleanOption(MODEL_OPTION_THINKING, 'Thinking', params.thinking === 'true'));
 	}
+	const tier = params.servicetier ?? params.service_tier ?? params.speed;
+	if (tier) {
+		descriptors.push(selectOption(MODEL_OPTION_SERVICE_TIER, 'Service Tier', [{
+			value: normalizeServiceTier(tier),
+			label: serviceTierLabel(tier),
+			isDefault: true,
+		}]));
+	}
 	return descriptors;
+}
+
+const VARIANT_LEVELS: Record<string, string> = {
+	minimal: 'minimal',
+	min: 'minimal',
+	low: 'low',
+	medium: 'medium',
+	med: 'medium',
+	high: 'high',
+	xhigh: 'xhigh',
+	'x-high': 'xhigh',
+	max: 'max',
+	ultra: 'ultra',
+	ultracode: 'ultracode',
+	ultrathink: 'ultrathink',
+};
+
+function variantLevel(value: string): string | undefined {
+	return VARIANT_LEVELS[value.trim().toLowerCase()];
+}
+
+function descriptorsFromCursorParameters(model: IAcpAvailableModel | undefined): IModelOptionDescriptor[] {
+	const raw = model as IAcpAvailableModel & Record<string, unknown> | undefined;
+	const extra = asRecord(model?._meta) ?? {};
+	const parameters = asArray(raw?.parameters) ?? asArray(extra.parameters);
+	if (!parameters?.length) {
+		return [];
+	}
+	const variants = asArray(raw?.variants) ?? asArray(extra.variants) ?? [];
+	const defaultParams = asArray(variants.map(item => asRecord(item)).find(item => item?.isDefault === true)?.params) ?? [];
+	const descriptors: IModelOptionDescriptor[] = [];
+	for (const parameter of parameters) {
+		const record = asRecord(parameter);
+		if (!record) {
+			continue;
+		}
+		const parameterId = pickText(record.id, record.name);
+		if (!parameterId) {
+			continue;
+		}
+		const values = asArray(record.values) ?? [];
+		const choices = values.flatMap(value => {
+			const choice = asRecord(value);
+			const id = pickText(choice?.value, choice?.id);
+			if (!id) {
+				return [];
+			}
+			return [{ value: id, label: pickText(choice?.displayName, choice?.name, choice?.label) ?? id }];
+		});
+		if (choices.length <= 1) {
+			continue;
+		}
+		const fake: IAcpConfigOption = { id: parameterId, name: pickText(record.displayName, record.name, record.label) ?? parameterId, type: 'select' };
+		const optionId = canonicalSelectId(fake);
+		const defaultChoice = defaultParams
+			.map(item => asRecord(item))
+			.find(item => pickText(item?.id, item?.name) === parameterId);
+		const current = pickText(defaultChoice?.value, defaultChoice?.id);
+		descriptors.push(selectOption(optionId, fake.name || defaultSelectLabel(optionId, parameterId), choices.map(choice => ({
+			...choice,
+			label: optionId === MODEL_OPTION_REASONING ? reasoningLabel(choice.label) : optionId === MODEL_OPTION_CONTEXT ? formatContextChoice(choice.label) : choice.label,
+			isDefault: current ? choice.value === current : undefined,
+		}))));
+	}
+	return descriptors;
+}
+
+function collectReasoningValues(model: IAcpAvailableModel | undefined): string[] {
+	const raw = model as IAcpAvailableModel & Record<string, unknown> | undefined;
+	const extra = asRecord(model?._meta) ?? {};
+	const values: string[] = [];
+	const push = (value: unknown) => {
+		const record = asRecord(value);
+		const text = pickText(
+			typeof value === 'string' ? value : undefined,
+			record?.reasoningEffort,
+			record?.id,
+			record?.value,
+			record?.name,
+		);
+		const level = text ? variantLevel(text) : undefined;
+		if (level && !values.includes(level)) {
+			values.push(level);
+		}
+	};
+	for (const source of [
+		raw?.supportedReasoningEfforts,
+		raw?.supported_reasoning_efforts,
+		raw?.reasoning_levels,
+		raw?.reasoningLevels,
+		raw?.efforts,
+		extra.supportedReasoningEfforts,
+		extra.supported_reasoning_efforts,
+		extra.reasoning_levels,
+		extra.reasoningLevels,
+		extra.efforts,
+		extra.variants,
+		raw?.variants,
+	]) {
+		if (Array.isArray(source)) {
+			source.forEach(push);
+		} else if (asRecord(source)) {
+			Object.keys(source as Record<string, unknown>).forEach(push);
+		}
+	}
+	return values;
+}
+
+function descriptorsFromReasoningMeta(model: IAcpAvailableModel | undefined): IModelOptionDescriptor[] {
+	const values = collectReasoningValues(model);
+	if (values.length <= 1) {
+		return [];
+	}
+	return [reasoningOption(values, values.includes('high') ? 'high' : values[0])];
+}
+
+function descriptorsFromServiceTierMeta(model: IAcpAvailableModel | undefined): IModelOptionDescriptor[] {
+	const raw = model as IAcpAvailableModel & Record<string, unknown> | undefined;
+	const extra = asRecord(model?._meta) ?? {};
+	const tiers = asArray(raw?.serviceTiers) ?? asArray(extra.serviceTiers) ?? [];
+	const additional = asArray(raw?.additionalSpeedTiers) ?? asArray(extra.additionalSpeedTiers) ?? [];
+	const choices = [{ value: 'default', label: 'Standard', isDefault: true }];
+	const seen = new Set(['default']);
+	const pushTier = (value: unknown) => {
+		const record = asRecord(value);
+		const wire = pickText(record?.id, record?.value, typeof value === 'string' ? value : undefined);
+		if (!wire) {
+			return;
+		}
+		const id = normalizeServiceTier(wire);
+		if (!seen.add(id)) {
+			return;
+		}
+		choices.push({
+			value: id,
+			label: pickText(record?.name, record?.label, record?.displayName) ?? serviceTierLabel(wire),
+			isDefault: false,
+		});
+	};
+	tiers.forEach(pushTier);
+	additional.forEach(pushTier);
+	if (choices.length <= 1) {
+		return [];
+	}
+	const current = pickText(raw?.defaultServiceTier, extra.defaultServiceTier);
+	const normalized = current ? normalizeServiceTier(current) : 'default';
+	return [selectOption(MODEL_OPTION_SERVICE_TIER, 'Service Tier', choices.map(choice => ({
+		...choice,
+		isDefault: choice.value === (seen.has(normalized) ? normalized : 'default'),
+	})))];
+}
+
+/**
+ * Every advertised select/toggle from the model payload, then any parameterized id
+ * fallback, then shared session options. Overlay catalogs fill only what is still missing.
+ */
+export function descriptorsFromAcpModel(
+	model: IAcpAvailableModel | undefined,
+	params: Record<string, string> = {},
+	shared: readonly IModelOptionDescriptor[] = [],
+	providerId?: string,
+	modelId?: string,
+	label?: string,
+): IModelOptionDescriptor[] {
+	let descriptors: IModelOptionDescriptor[] = [];
+	descriptors = fillDescriptors(descriptors, descriptorsFromConfigOptions(model?.configOptions));
+	descriptors = fillDescriptors(descriptors, descriptorsFromCursorParameters(model));
+	descriptors = fillDescriptors(descriptors, descriptorsFromReasoningMeta(model));
+	descriptors = fillDescriptors(descriptors, descriptorsFromServiceTierMeta(model));
+	descriptors = fillDescriptors(descriptors, descriptorsFromParams(params));
+	if (providerId) {
+		const overlay = catalogOverlay(providerId, modelId ?? '', label);
+		if (overlay) {
+			descriptors = fillDescriptors(descriptors, overlay.optionDescriptors);
+		}
+	}
+	descriptors = fillDescriptors(descriptors, shared);
+	return descriptors;
+}
+
+export function metadataForAcpModel(
+	model: IAcpAvailableModel | undefined,
+	params: Record<string, string> = {},
+	providerId?: string,
+	modelId?: string,
+	label?: string,
+): IAcpModelMeta {
+	const wire = model ? metadataFromAcpModel(model, params) : (params.context ? { contextLabel: params.context } : {});
+	const overlay = providerId ? catalogOverlay(providerId, modelId ?? '', label) : undefined;
+	const description = wire.description ?? overlay?.description;
+	const contextWindow = wire.contextWindow ?? overlay?.contextWindow;
+	const contextLabel = wire.contextLabel ?? (contextWindow ? contextLabelFromTokens(contextWindow) : undefined);
+	return {
+		...(description ? { description } : {}),
+		...(contextWindow ? { contextWindow } : {}),
+		...(contextLabel ? { contextLabel } : {}),
+	};
 }
 
 /** `grok-4.6` -> `Grok 4.6`, `gpt-5.6-sol` -> `GPT-5.6 Sol`. */
@@ -284,7 +609,7 @@ export function formatAgentModelLabel(_providerLabel: string, slug: string, rawN
 export function applyOptionsToParameterizedId(modelId: string, options: IVoltModelOptions | undefined): string {
 	const { base, params } = parseParameterizedModelId(modelId);
 	if (!base || !Object.keys(params).length) {
-		return modelId;
+		return normalizeCursorModelId(modelId) ?? modelId;
 	}
 	const next = { ...params };
 	const effort = options?.[MODEL_OPTION_REASONING];
@@ -304,7 +629,35 @@ export function applyOptionsToParameterizedId(modelId: string, options: IVoltMod
 	if (options?.[MODEL_OPTION_CONTEXT] !== undefined && 'context' in next) {
 		next.context = String(options[MODEL_OPTION_CONTEXT]);
 	}
+	const tier = options?.[MODEL_OPTION_SERVICE_TIER];
+	if (typeof tier === 'string') {
+		if ('servicetier' in next) {
+			next.servicetier = tier;
+		} else if ('service_tier' in next) {
+			next.service_tier = tier;
+		} else if ('speed' in next) {
+			next.speed = tier;
+		}
+	}
 	return `${base}[${Object.keys(params).map(key => `${key}=${next[key]}`).join(',')}]`;
+}
+
+/** Claude's 1M window is selected by appending `[1m]` to a bare model id. */
+export function applyContextWindowSuffix(modelId: string, options: IVoltModelOptions | undefined): string {
+	const { params } = parseParameterizedModelId(modelId);
+	if (Object.keys(params).length) {
+		return modelId;
+	}
+	const stripped = modelId.replace(/\[1m\]$/i, '');
+	const value = options?.[MODEL_OPTION_CONTEXT];
+	if (typeof value !== 'string') {
+		return stripped;
+	}
+	const normalized = value.trim().toLowerCase();
+	if (normalized === '1m' || normalized === '1000k' || normalized === '1000000') {
+		return `${stripped}[1m]`;
+	}
+	return stripped;
 }
 
 export interface IAcpConfigUpdate {
@@ -321,10 +674,12 @@ export function configUpdatesForOptions(configOptions: readonly IAcpConfigOption
 		return [];
 	}
 	const updates: IAcpConfigUpdate[] = [];
+	const used = new Set<string>();
 	const push = (option: IAcpConfigOption | undefined, value: string | boolean | undefined) => {
-		if (!option || value === undefined) {
+		if (!option || value === undefined || used.has(option.id)) {
 			return;
 		}
+		used.add(option.id);
 		if (typeof value === 'boolean' && option.type !== 'boolean') {
 			updates.push({ configId: option.id, value: value ? 'true' : 'false' });
 			return;
@@ -332,9 +687,9 @@ export function configUpdatesForOptions(configOptions: readonly IAcpConfigOption
 		updates.push({ configId: option.id, value });
 	};
 
-	push(configOptions.find(option => isThinkingOption(option) && booleanLike(option)), options[MODEL_OPTION_THINKING]);
-	push(configOptions.find(option => isFastOption(option) && booleanLike(option)), options[MODEL_OPTION_FAST]);
-	push(configOptions.find(option => option.type === 'select' && isContextOption(option) && !booleanLike(option)), options[MODEL_OPTION_CONTEXT]);
-	push(findReasoningOption(configOptions), options[MODEL_OPTION_REASONING]);
+	for (const [key, value] of Object.entries(options)) {
+		const option = configOptions.find(item => canonicalSelectId(item) === key || item.id === key);
+		push(option, value);
+	}
 	return updates;
 }

@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -67,4 +67,25 @@ export function formatContextLabel(tokens: number): string {
 
 export function contextLabelFromTokens(tokens: number | undefined): string | undefined {
 	return tokens ? formatContextLabel(tokens) : undefined;
+}
+
+/** Picker labels use 200K / 1M, matching the CLI catalogs. */
+export function formatContextChoice(value: string): string {
+	const tokens = parseContextTokens(value);
+	if (!tokens) {
+		return value.trim().toUpperCase();
+	}
+	if (tokens >= 1_000_000 && tokens % 1_000_000 === 0) {
+		return `${tokens / 1_000_000}M`;
+	}
+	if (tokens >= 1_000 && tokens % 1_000 === 0) {
+		return `${tokens / 1_000}K`;
+	}
+	if (tokens >= 1_000_000) {
+		return `${Number((tokens / 1_000_000).toFixed(1))}M`;
+	}
+	if (tokens >= 1_000) {
+		return `${Math.round(tokens / 1_000)}K`;
+	}
+	return String(tokens);
 }

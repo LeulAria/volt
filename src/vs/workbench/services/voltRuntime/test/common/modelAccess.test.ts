@@ -1,12 +1,12 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { DEFAULT_MODEL_CAPABILITIES } from '../../common/capabilities.js';
-import { formatPredictionError, resolveTabModel } from '../../common/modelAccess.js';
+import { formatPredictionError, resolveTabModel } from '../../common/models/modelAccess.js';
 import { IVoltCatalogItem } from '../../common/providers.js';
 
 function model(ref: string, enabled = true): IVoltCatalogItem {

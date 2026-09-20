@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -38,7 +38,7 @@ const SUPERVISED: readonly IPermissionRule[] = [
 	{ action: 'mcp', resource: '*', effect: 'ask', source: 'preset' },
 	{ action: 'browser', resource: '*', effect: 'ask', source: 'preset' },
 	{ action: 'network', resource: '*', effect: 'ask', source: 'preset' },
-	{ action: 'web', resource: '*', effect: 'ask', source: 'preset' },
+	{ action: 'web', resource: '*', effect: 'allow', source: 'preset' },
 	{ action: 'subagent', resource: '*', effect: 'ask', source: 'preset' },
 ];
 
@@ -52,7 +52,7 @@ const AUTO_ACCEPT_EDITS: readonly IPermissionRule[] = [
 	{ action: 'mcp', resource: '*', effect: 'ask', source: 'preset' },
 	{ action: 'browser', resource: '*', effect: 'ask', source: 'preset' },
 	{ action: 'network', resource: '*', effect: 'ask', source: 'preset' },
-	{ action: 'web', resource: '*', effect: 'ask', source: 'preset' },
+	{ action: 'web', resource: '*', effect: 'allow', source: 'preset' },
 	{ action: 'subagent', resource: '*', effect: 'ask', source: 'preset' },
 ];
 
@@ -102,9 +102,8 @@ export function modeOverlay(mode: VoltMode): IPermissionRule[] {
 		rules.push({ action: 'mcp', resource: '*', effect: 'deny', source: 'overlay' });
 	}
 	if (mode === 'plan' || mode === 'ask') {
-		rules.push({ action: 'network', resource: '*', effect: 'deny', source: 'overlay' });
+		// Lookups stay allowed: Ask/Plan still research, they just cannot edit or run.
 		rules.push({ action: 'browser', resource: '*', effect: 'deny', source: 'overlay' });
-		rules.push({ action: 'web', resource: '*', effect: 'deny', source: 'overlay' });
 		rules.push({ action: 'subagent', resource: '*', effect: 'deny', source: 'overlay' });
 	}
 	return rules;

@@ -1,10 +1,10 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Event } from '../../../../base/common/event.js';
-import { IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { Event } from '../../../../../base/common/event.js';
+import { IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../../platform/voltStdio/common/voltStdio.js';
 
 export class NullVoltStdioService implements IVoltStdioService {
 	declare readonly _serviceBrand: undefined;

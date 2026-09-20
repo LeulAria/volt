@@ -1,13 +1,13 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { CancellationToken } from '../../../../base/common/cancellation.js';
-import { Event } from '../../../../base/common/event.js';
-import { IVoltEvent } from './events.js';
+import { CancellationToken } from '../../../../../base/common/cancellation.js';
+import { Event } from '../../../../../base/common/event.js';
+import { IVoltEvent } from '../events.js';
 import { IVoltModelOptions } from './modelOptions.js';
-import { IModelMessage, IVoltCatalogItem } from './providers.js';
+import { IModelMessage, IVoltCatalogItem } from '../providers.js';
 
 /**
  * Narrow model-access seam shared by the Agent Runtime and the Prediction Runtime (D22).

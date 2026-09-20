@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -7,9 +7,10 @@ import { CancellationToken } from '../../../../base/common/cancellation.js';
 import type { ICompiledPolicy } from './access/accessTypes.js';
 import { IProviderCapabilities } from './capabilities.js';
 import { IVoltEvent } from './events.js';
-import { IModelOptionDescriptor, IVoltModelOptions } from './modelOptions.js';
+import { IModelOptionDescriptor, IVoltModelOptions } from './models/modelOptions.js';
 import { VoltMode } from './modes.js';
 import { IProviderProfile } from './profiles.js';
+import type { IToolSchema } from './tools/tool.js';
 
 export interface IDetectResult {
 	available: boolean;
@@ -39,9 +40,18 @@ export interface IModelInfo {
 	contextLabel?: string;
 }
 
+export interface IModelToolCall {
+	id: string;
+	name: string;
+	arguments: string;
+}
+
 export interface IModelMessage {
-	role: 'system' | 'user' | 'assistant';
+	role: 'system' | 'user' | 'assistant' | 'tool';
 	content: string;
+	toolCalls?: IModelToolCall[];
+	callId?: string;
+	name?: string;
 }
 
 export interface IModelRequest {
@@ -50,6 +60,7 @@ export interface IModelRequest {
 	profile: IProviderProfile;
 	apiKey?: string;
 	options?: IVoltModelOptions;
+	tools?: IToolSchema[];
 }
 
 export interface IModelProvider {
@@ -77,6 +88,12 @@ export interface IAgentSessionHandle {
 export interface IAgentMessage {
 	text: string;
 	mode: VoltMode;
+	/**
+	 * Optional short lead the harness prepends to the user's text for this turn only, e.g. the
+	 * lane framing for a question or the run plan when the user asked to see something running.
+	 * Built by the context pack; providers never invent their own.
+	 */
+	lead?: string;
 }
 
 export interface IAgentProvider {
@@ -89,6 +106,8 @@ export interface IAgentProvider {
 	 */
 	listModels?(profile: IProviderProfile): Promise<IModelInfo[]>;
 	start(req: IAgentStartRequest): Promise<IAgentSessionHandle>;
+	/** False when the CLI process has already exited and the next send must start a new session. */
+	isLive?(session: IAgentSessionHandle): boolean;
 	send(session: IAgentSessionHandle, msg: IAgentMessage, profile: IProviderProfile, token: CancellationToken): AsyncIterable<IVoltEvent>;
 	interrupt(session: IAgentSessionHandle): Promise<void>;
 	dispose(session: IAgentSessionHandle): Promise<void>;

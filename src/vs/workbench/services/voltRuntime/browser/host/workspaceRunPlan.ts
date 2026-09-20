@@ -1,13 +1,14 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { joinPath } from '../../../../base/common/resources.js';
-import { URI } from '../../../../base/common/uri.js';
-import { IFileService } from '../../../../platform/files/common/files.js';
-import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { detectRunPlanFromFiles, formatRunPlanHint, IRunPlan } from '../common/runPlan.js';
+import { joinPath } from '../../../../../base/common/resources.js';
+import { URI } from '../../../../../base/common/uri.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { detectRunPlanFromFiles, IRunPlan } from '../../common/runPlan.js';
+import { IProjectCheckFiles } from '../../common/harness/verification.js';
 
 export async function loadWorkspaceRunPlan(fileService: IFileService, workspace: IWorkspaceContextService): Promise<IRunPlan> {
 	const root = workspace.getWorkspace().folders[0]?.uri;
@@ -44,8 +45,37 @@ export async function loadWorkspaceRunPlan(fileService: IFileService, workspace:
 	});
 }
 
-export async function loadWorkspaceRunPlanHint(fileService: IFileService, workspace: IWorkspaceContextService): Promise<string> {
-	return formatRunPlanHint(await loadWorkspaceRunPlan(fileService, workspace));
+export async function loadProjectCheckFiles(fileService: IFileService, root: URI | undefined): Promise<IProjectCheckFiles> {
+	if (!root) {
+		return {};
+	}
+	const [pkg, tsconfig, cargoToml, goMod, pyproject, pnpm, bun, yarn] = await Promise.all([
+		exists(fileService, root, 'package.json'),
+		exists(fileService, root, 'tsconfig.json'),
+		exists(fileService, root, 'Cargo.toml'),
+		exists(fileService, root, 'go.mod'),
+		exists(fileService, root, 'pyproject.toml'),
+		exists(fileService, root, 'pnpm-lock.yaml'),
+		exists(fileService, root, 'bun.lockb'),
+		exists(fileService, root, 'yarn.lock'),
+	]);
+	let packageJson: IProjectCheckFiles['packageJson'];
+	if (pkg) {
+		try {
+			const raw = await fileService.readFile(joinPath(root, 'package.json'));
+			packageJson = JSON.parse(raw.value.toString());
+		} catch {
+			packageJson = undefined;
+		}
+	}
+	return {
+		...(packageJson ? { packageJson } : {}),
+		lock: pnpm ? 'pnpm' : bun ? 'bun' : yarn ? 'yarn' : pkg ? 'npm' : undefined,
+		tsconfig,
+		cargoToml,
+		goMod,
+		pyproject,
+	};
 }
 
 async function exists(fileService: IFileService, root: URI, name: string): Promise<boolean> {

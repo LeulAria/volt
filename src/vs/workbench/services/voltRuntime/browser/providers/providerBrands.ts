@@ -1,22 +1,27 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $ } from '../../../../base/browser/dom.js';
+import { $ } from '../../../../../base/browser/dom.js';
+import { renderAntigravityBrand } from './antigravityIcon.js';
 
 export interface IProviderBrandPath {
 	readonly d: string;
 	readonly evenOdd?: boolean;
+	/** Explicit fill. Omit to inherit `currentColor`. */
+	readonly fill?: string;
 }
 
 export interface IProviderBrand {
 	readonly id: string;
 	readonly label: string;
 	readonly viewBox: string;
-	readonly paths: readonly IProviderBrandPath[];
+	readonly paths?: readonly IProviderBrandPath[];
 	/** Brand colour. Omit to inherit `currentColor` so the glyph follows the theme. */
 	readonly color?: string;
+	/** Rich marks (filters, masks, mixed fills) that cannot be expressed as paths. */
+	readonly render?: (svg: SVGSVGElement) => void;
 }
 
 const SPARK: IProviderBrandPath = {
@@ -65,12 +70,29 @@ export const PROVIDER_BRANDS: Record<string, IProviderBrand> = {
 		viewBox: '0 0 24 24',
 		paths: [{ d: 'M22 24H2V0h20zM17 4.8H7v14.4h10z' }],
 	},
-	gemini: {
-		id: 'gemini',
-		label: 'Gemini',
+	antigravity: {
+		id: 'antigravity',
+		label: 'Antigravity',
+		viewBox: '0 0 16 15',
+		render: renderAntigravityBrand,
+	},
+	kimi: {
+		id: 'kimi',
+		label: 'Kimi Code',
+		viewBox: '0 0 512 512',
+		paths: [
+			{ d: 'M503 114.333v280c0 60.711-49.29 110-110 110H113c-60.711 0-110-49.289-110-110v-280c0-60.71 49.289-110 110-110h280c60.71 0 110 49.29 110 110z', fill: '#111' },
+			{ d: 'M342.065 189.759c1.886-2.42 3.541-4.63 5.289-6.77.81-1.007.74-1.771-.046-2.824-7.58-9.965-8.298-21.028-3.935-32.254 3.275-8.448 10.52-12.406 19.373-13.25 5.52-.521 10.936.046 15.959 2.73 6.596 3.53 10.438 8.912 11.688 16.341.995 5.926.81 11.712-.868 17.452-2.974 10.161-10.277 15.427-20.287 16.758-8.31 1.11-16.734 1.25-25.113 1.817-.648.046-1.308 0-2.06 0z', fill: '#027aff' },
+			{ d: 'M321.512 144.254h-50.064l-39.637 90.384h-56.036v-89.99H131v232.868h44.787v-98.103h78.973c13.598 0 26.015-7.927 31.744-20.252v118.355h44.787v-98.103c0-23.342-18.239-42.97-41.523-44.671v-.116h-24.593a45.577 45.577 0 0026.884-24.534l29.453-65.838z', fill: '#fff', evenOdd: true },
+		],
+	},
+	muse: {
+		id: 'muse',
+		label: 'Muse Code',
 		viewBox: '0 0 24 24',
-		color: '#8AB4F8',
-		paths: [SPARK],
+		paths: [{
+			d: 'M6.915 4.03c-1.968 0-3.683 1.28-4.871 3.113C.704 9.208 0 11.883 0 14.449c0 .706.07 1.369.21 1.973a6.624 6.624 0 0 0 .265.86 5.297 5.297 0 0 0 .371.761c.696 1.159 1.818 1.927 3.593 1.927 1.497 0 2.633-.671 3.965-2.444.76-1.012 1.144-1.626 2.663-4.32l.756-1.339.186-.325c.061.1.121.196.183.3l2.152 3.595c.724 1.21 1.665 2.556 2.47 3.314 1.046.987 1.992 1.22 3.06 1.22 1.075 0 1.876-.355 2.455-.843a3.743 3.743 0 0 0 .81-.973c.542-.939.861-2.127.861-3.745 0-2.72-.681-5.357-2.084-7.45-1.282-1.912-2.957-2.93-4.716-2.93-1.047 0-2.088.467-3.053 1.308-.652.57-1.257 1.29-1.82 2.05-.69-.875-1.335-1.547-1.958-2.056-1.182-.966-2.315-1.303-3.454-1.303zm10.16 2.053c1.147 0 2.188.758 2.992 1.999 1.132 1.748 1.647 4.195 1.647 6.4 0 1.548-.368 2.9-1.839 2.9-.58 0-1.027-.23-1.664-1.004-.496-.601-1.343-1.878-2.832-4.358l-.617-1.028a44.908 44.908 0 0 0-1.255-1.98c.07-.109.141-.224.211-.327 1.12-1.667 2.118-2.602 3.358-2.602zm-10.201.553c1.265 0 2.058.791 2.675 1.446.307.327.737.871 1.234 1.579l-1.02 1.566c-.757 1.163-1.882 3.017-2.837 4.338-1.191 1.649-1.81 1.817-2.486 1.817-.524 0-1.038-.237-1.383-.794-.263-.426-.464-1.13-.464-2.046 0-2.221.63-4.535 1.66-6.088.454-.687.964-1.226 1.533-1.533a2.264 2.264 0 0 1 1.088-.285z',
+		}],
 	},
 	local: {
 		id: 'local',
@@ -110,8 +132,13 @@ const PROVIDER_FAMILIES: Record<string, string> = {
 	grok: 'grok',
 	xai: 'grok',
 	opencode: 'opencode',
-	gemini: 'gemini',
-	'gemini-cli': 'gemini',
+	antigravity: 'antigravity',
+	agy: 'antigravity',
+	gemini: 'antigravity',
+	'gemini-cli': 'antigravity',
+	'gemini-acp': 'antigravity',
+	kimi: 'kimi',
+	muse: 'muse',
 	ollama: 'local',
 	lmstudio: 'local',
 	'openai-compat': 'local',
@@ -124,7 +151,9 @@ const FAMILY_LABELS: Record<string, string> = {
 	cursor: 'Cursor',
 	grok: 'Grok',
 	opencode: 'OpenCode',
-	gemini: 'Gemini',
+	antigravity: 'Antigravity',
+	kimi: 'Kimi Code',
+	muse: 'Muse Code',
 	local: 'Local',
 	openrouter: 'OpenRouter',
 };
@@ -157,15 +186,19 @@ export function createBrandIcon(providerId: string, size = 16): HTMLElement {
 	svg.setAttribute('height', String(size));
 	svg.setAttribute('aria-hidden', 'true');
 	svg.setAttribute('focusable', 'false');
-	for (const path of brand.paths) {
-		const node = host.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
-		node.setAttribute('d', path.d);
-		node.setAttribute('fill', 'currentColor');
-		if (path.evenOdd) {
-			node.setAttribute('fill-rule', 'evenodd');
-			node.setAttribute('clip-rule', 'evenodd');
+	if (brand.render) {
+		brand.render(svg);
+	} else {
+		for (const path of brand.paths ?? []) {
+			const node = host.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+			node.setAttribute('d', path.d);
+			node.setAttribute('fill', path.fill ?? 'currentColor');
+			if (path.evenOdd) {
+				node.setAttribute('fill-rule', 'evenodd');
+				node.setAttribute('clip-rule', 'evenodd');
+			}
+			svg.appendChild(node);
 		}
-		svg.appendChild(node);
 	}
 	host.appendChild(svg);
 	return host;

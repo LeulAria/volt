@@ -1,10 +1,10 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Event } from '../../../../base/common/event.js';
-import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import { Event } from '../../../../../base/common/event.js';
+import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 
 /**
  * Durable agent history.
@@ -144,7 +144,13 @@ export interface IAgentHistoryIndex {
 	readonly sessions: IAgentSessionMeta[];
 }
 
-export interface IAgentHistoryListOptions {
+export interface IAgentSessionSearchOptions {
+	readonly matchCase?: boolean;
+	readonly wholeWord?: boolean;
+	readonly isRegex?: boolean;
+}
+
+export interface IAgentHistoryListOptions extends IAgentSessionSearchOptions {
 	readonly workspaceId?: string;
 	readonly includeArchived?: boolean;
 	readonly limit?: number;

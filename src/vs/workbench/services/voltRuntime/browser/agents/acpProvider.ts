@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -13,6 +13,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { IAccessGate, ICompiledPolicy } from '../../common/access/accessTypes.js';
 import { IProviderAccessBridge } from '../../common/access/providerAccessBridge.js';
 import { classifyRisk } from '../../common/access/riskClassifier.js';
+import { collectAcpToolInput } from '../../common/acpToolInput.js';
 import { IVoltEvent } from '../../common/events.js';
 import { parseTokenUsage } from '../../common/tokenUsage.js';
 import { VoltMode } from '../../common/modes.js';
@@ -21,12 +22,15 @@ import { IAgentMessage, IAgentProvider, IAgentSessionHandle, IAgentStartRequest,
 import { DEFAULT_ACP_CAPABILITIES } from '../../common/capabilities.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IVoltHostToolService } from '../../common/hostTools.js';
-import { formatRunPlanHint } from '../../common/runPlan.js';
-import { loadWorkspaceRunPlanHint } from '../workspaceRunPlan.js';
+import { mapAcpToolKind } from '../../common/harness/workLog.js';
+import { ACP_PROMPT_STALL_MS, startPromptStall } from '../../common/harness/acpStall.js';
+import { isCursorPlanWall, isCursorPlanWallPrefix, isCursorTransientError, nextCursorFallback, normalizeCursorModelId } from '../../common/harness/cursorQuota.js';
 import { accessBridgeFor } from './bridges/accessBridges.js';
 import { AcpJsonRpcClient } from './acpJsonRpc.js';
-import { IModelOptionDescriptor } from '../../common/modelOptions.js';
-import { applyOptionsToParameterizedId, configUpdatesForOptions, descriptorsFromConfigOptions, descriptorsFromParams, flattenChoices, formatAgentModelLabel, IAcpAvailableModel, IAcpConfigOption, IAcpModelMeta, isModelConfigOption, metadataFromAcpModel, parseParameterizedModelId } from './acpModels.js';
+import { listAntigravityModels } from './cliAgents.js';
+import { resolveAntigravityCliModelLabel } from '../../common/models/antigravityModels.js';
+import { IModelOptionDescriptor, MODEL_OPTION_REASONING, unionDescriptors } from '../../common/models/modelOptions.js';
+import { applyContextWindowSuffix, applyOptionsToParameterizedId, configUpdatesForOptions, descriptorsFromAcpModel, flattenChoices, formatAgentModelLabel, IAcpAvailableModel, IAcpConfigOption, IAcpModelMeta, isModelConfigOption, metadataForAcpModel, parseParameterizedModelId } from './acpModels.js';
 
 interface IAcpSession {
 	handle: IAgentSessionHandle;
@@ -37,6 +41,7 @@ interface IAcpSession {
 	voltSessionId?: string;
 	runId?: string;
 	mode?: VoltMode;
+	currentModel?: string;
 }
 
 interface ISessionNewResponse {
@@ -62,8 +67,6 @@ export class AcpAgentProvider implements IAgentProvider {
 	private readonly sessions = new Map<string, IAcpSession>();
 	private readonly bridge: IProviderAccessBridge;
 	private gate: IAccessGate | undefined;
-	private runPlanHint: string | undefined;
-	private readonly hintedSessions = new Set<string>();
 
 	constructor(
 		readonly id: string,
@@ -130,6 +133,12 @@ export class AcpAgentProvider implements IAgentProvider {
 	 * catalog and the runtime falls back to a single entry for the agent itself.
 	 */
 	async listModels(profile: IProviderProfile): Promise<IModelInfo[]> {
+		if (this.id === 'antigravity') {
+			const listed = await listAntigravityModels(this.stdio, profile.command || this.defaultCommand).catch(() => []);
+			if (listed.length) {
+				return listed;
+			}
+		}
 		return this.probe(profile, async (client, session) => {
 			const listed = await withTimeout(
 				client.request<{ models?: IAcpAvailableModel[] }>('cursor/list_available_models', {}),
@@ -139,18 +148,22 @@ export class AcpAgentProvider implements IAgentProvider {
 				return this.collapseModels(listed.models.map(model => {
 					const value = model.value ?? '';
 					const { base, params } = parseParameterizedModelId(value);
-					const own = descriptorsFromConfigOptions(model.configOptions);
 					return this.toModelInfo(
 						value,
 						formatAgentModelLabel(this.label, base || model.name, model.name),
-						own.length ? own : descriptorsFromParams(params),
+						descriptorsFromAcpModel(model, params, [], this.id, base || value, model.name),
 						undefined,
-						metadataFromAcpModel(model, params),
+						metadataForAcpModel(model, params, this.id, base || value, model.name),
 					);
 				}));
 			}
 
-			const shared = descriptorsFromConfigOptions(session?.configOptions?.filter(option => !isModelConfigOption(option)));
+			const shared = descriptorsFromAcpModel(
+				{ name: this.label, configOptions: session?.configOptions?.filter(option => !isModelConfigOption(option)) },
+				{},
+				[],
+				this.id,
+			);
 
 			const modelOption = session?.configOptions?.find(isModelConfigOption);
 			const choices = flattenChoices(modelOption);
@@ -159,19 +172,25 @@ export class AcpAgentProvider implements IAgentProvider {
 			}
 
 			return this.collapseModels((session?.models?.availableModels ?? []).map(model => {
-				const own = descriptorsFromConfigOptions(model.configOptions);
-				return this.fromParameterized(model.value ?? model.modelId ?? '', model.name, own.length ? own : shared, model);
+				return this.fromParameterized(model.value ?? model.modelId ?? '', model.name, shared, model);
 			}));
 		}).catch(() => []);
 	}
 
 	async start(req: IAgentStartRequest): Promise<IAgentSessionHandle> {
 		const command = req.profile.command || this.defaultCommand;
-		const args = req.profile.args?.length ? req.profile.args : this.defaultArgs;
+		const args = this.startArgs(req);
 		const cwd = req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
 		const processId = await this.stdio.spawn({ command, args, cwd });
 		const client = new AcpJsonRpcClient(this.stdio, processId);
 		this.bindClientRequests(client);
+		client.whenDead(() => {
+			for (const [id, session] of this.sessions) {
+				if (session.client === client) {
+					this.sessions.delete(id);
+				}
+			}
+		});
 
 		const initialized = await client.request<{
 			agentCapabilities?: { session?: { _meta?: unknown; modes?: { availableModes?: { id: string; name?: string }[] } } };
@@ -207,12 +226,55 @@ export class AcpAgentProvider implements IAgentProvider {
 		return handle;
 	}
 
+	isLive(session: IAgentSessionHandle): boolean {
+		const live = this.sessions.get(session.id);
+		return !!live && !live.client.isDead;
+	}
+
+	private startArgs(req: IAgentStartRequest): string[] {
+		const args = req.profile.args?.length ? [...req.profile.args] : [...this.defaultArgs];
+		if (this.id === 'antigravity' && req.modelId) {
+			args.push('--model', this.antigravityModelLabel(req));
+		}
+		if (this.id === 'cursor-acp') {
+			const model = this.cursorModelArg(req);
+			const acp = args.lastIndexOf('acp');
+			if (acp >= 0) {
+				args.splice(acp, 0, '--model', model);
+			} else {
+				args.push('--model', model);
+			}
+		}
+		return args;
+	}
+
+	/** Cursor's CLI default is whatever is in ~/.cursor/cli-config.json - often a premium row that ACP then paywalls. Pin Auto unless the user picked something else. */
+	private cursorModelArg(req: IAgentStartRequest): string {
+		const selected = normalizeCursorModelId(req.modelId);
+		if (!selected) {
+			return 'auto';
+		}
+		return applyContextWindowSuffix(applyOptionsToParameterizedId(selected, req.options), req.options);
+	}
+
+	private antigravityModelLabel(req: IAgentStartRequest): string {
+		const effort = typeof req.options?.[MODEL_OPTION_REASONING] === 'string' ? req.options[MODEL_OPTION_REASONING] : undefined;
+		return resolveAntigravityCliModelLabel(req.modelId ?? '', effort);
+	}
+
 	/** Pushes the picked model and its options onto a freshly created session. */
 	private async applySelection(session: IAcpSession, req: IAgentStartRequest): Promise<void> {
 		const sessionId = session.handle.providerSessionId ?? session.handle.id;
 		const modelConfigId = session.configOptions?.find(isModelConfigOption)?.id ?? 'model';
-		if (req.modelId) {
-			const reconstructed = applyOptionsToParameterizedId(req.modelId, req.options);
+		if (this.id === 'cursor-acp' && !req.modelId) {
+			await this.setConfigOption(session, sessionId, modelConfigId, 'auto');
+		} else if (req.modelId) {
+			const selected = this.id === 'antigravity'
+				? this.antigravityModelLabel(req)
+				: this.id === 'cursor-acp'
+					? this.cursorModelArg(req)
+					: req.modelId;
+			const reconstructed = applyContextWindowSuffix(applyOptionsToParameterizedId(selected, req.options), req.options);
 			const applied = await this.setConfigOption(session, sessionId, modelConfigId, reconstructed);
 			if (!applied && reconstructed !== req.modelId) {
 				await this.setConfigOption(session, sessionId, modelConfigId, req.modelId);
@@ -232,6 +294,9 @@ export class AcpAgentProvider implements IAgentProvider {
 			if (response?.configOptions) {
 				session.configOptions = response.configOptions;
 			}
+			if (typeof value === 'string' && (configId === 'model' || isModelConfigOption({ id: configId, name: configId }))) {
+				session.currentModel = value;
+			}
 			return true;
 		} catch (err) {
 			// Agents that predate the parameterized picker reject unknown config ids; the session
@@ -243,13 +308,14 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	private fromParameterized(id: string, rawName: string, shared: IModelOptionDescriptor[], source?: IAcpAvailableModel): IModelInfo {
 		const { base, params } = parseParameterizedModelId(id);
-		const own = descriptorsFromParams(params);
 		return this.toModelInfo(
 			id,
 			formatAgentModelLabel(this.label, base || rawName, rawName),
-			own.length ? own : shared,
+			descriptorsFromAcpModel(source, params, shared, this.id, base || id, rawName),
 			undefined,
-			source ? metadataFromAcpModel(source, params) : metadataFromAcpModel({ name: rawName }, params),
+			source
+				? metadataForAcpModel(source, params, this.id, base || id, rawName)
+				: metadataForAcpModel({ name: rawName }, params, this.id, base || id, rawName),
 		);
 	}
 
@@ -274,6 +340,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				description: existing.description ?? model.description,
 				contextLabel: existing.contextLabel ?? model.contextLabel,
 				capabilities: existing.contextLabel ? existing.capabilities : model.capabilities,
+				optionDescriptors: unionDescriptors(existing.optionDescriptors ?? [], model.optionDescriptors ?? []),
 			});
 		}
 		return order.map(key => seen.get(key)!);
@@ -325,8 +392,8 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	async *send(session: IAgentSessionHandle, msg: IAgentMessage, _profile: IProviderProfile, token: CancellationToken): AsyncIterable<IVoltEvent> {
 		const live = this.sessions.get(session.id);
-		if (!live) {
-			yield { type: 'error', message: 'ACP session is not running. Reconnect the agent in Volt Settings.' };
+		if (!live || live.client.isDead) {
+			yield { type: 'error', message: 'ACP session is not running. Reconnect the agent in Volt Settings.', retryable: true };
 			return;
 		}
 
@@ -337,34 +404,127 @@ export class AcpAgentProvider implements IAgentProvider {
 			queue.push(event);
 			waiting?.();
 		};
+		const stall = startPromptStall(ACP_PROMPT_STALL_MS, () => {
+			if (finished) {
+				return;
+			}
+			push({ type: 'error', message: 'ACP agent produced no activity. The prompt stalled and the turn was stopped.', retryable: true });
+			push({ type: 'run.end', runId: session.id, reason: 'fail' });
+			finished = true;
+			waiting?.();
+			void live.client.notify('session/cancel', { sessionId: session.providerSessionId ?? session.id });
+		});
+		const pushActivity = (event: IVoltEvent) => {
+			stall.ping();
+			push(event);
+		};
+
+		let assistant = '';
+		let usedTools = false;
+		let held: IVoltEvent[] = [];
+		const tried: string[] = live.currentModel ? [live.currentModel] : [];
+		const sessionId = session.providerSessionId ?? session.id;
+		const modelConfigId = live.configOptions?.find(isModelConfigOption)?.id ?? 'model';
+		const holdPlanWall = this.id === 'cursor-acp';
+
+		const flushHeld = () => {
+			for (const event of held) {
+				push(event);
+			}
+			held = [];
+		};
 
 		const notif = live.client.onNotification(note => {
 			if (note.method !== 'session/update') {
 				return;
 			}
 			for (const event of this.mapUpdate(note.params)) {
-				push(event);
+				if (event.type === 'tool.start') {
+					usedTools = true;
+					flushHeld();
+				}
+				if (holdPlanWall && event.type === 'text.delta' && event.delta) {
+					assistant += event.delta;
+					if (!usedTools && isCursorPlanWallPrefix(assistant)) {
+						held.push(event);
+						stall.ping();
+						continue;
+					}
+					flushHeld();
+				}
+				pushActivity(event);
 			}
 		});
 
 		const cancel = token.onCancellationRequested(() => {
-			void live.client.notify('session/cancel', { sessionId: session.providerSessionId ?? session.id });
+			void live.client.notify('session/cancel', { sessionId });
 		});
 
-		const prompt = live.client.request<{ stopReason?: string; usage?: unknown }>('session/prompt', {
-			sessionId: session.providerSessionId ?? session.id,
-			prompt: [{ type: 'text', text: await this.withHarness(session, this.withMode(msg)) }],
-		}).then(result => {
-			const usage = parseTokenUsage(result);
-			if (usage) {
-				push(usage);
+		const promptBody = [{ type: 'text', text: msg.lead ? `${msg.lead}\n\n${msg.text}` : msg.text }];
+
+		const runPrompt = async (): Promise<void> => {
+			try {
+				const result = await live.client.request<{ stopReason?: string; usage?: unknown }>('session/prompt', {
+					sessionId,
+					prompt: promptBody,
+				});
+				stall.ping();
+				if (holdPlanWall && !usedTools && !token.isCancellationRequested && isCursorPlanWall(assistant)) {
+					const fallback = nextCursorFallback(tried);
+					if (fallback) {
+						tried.push(fallback);
+						held = [];
+						assistant = '';
+						usedTools = false;
+						await this.setConfigOption(live, sessionId, modelConfigId, fallback);
+						push({
+							type: 'retry',
+							attempt: tried.length,
+							delayMs: 0,
+							message: `Cursor blocked that model. Retrying with ${fallback === 'auto' ? 'Auto' : 'Composer 2.5'}.`,
+						});
+						await runPrompt();
+						return;
+					}
+					flushHeld();
+				} else {
+					flushHeld();
+				}
+				const usage = parseTokenUsage(result);
+				if (usage) {
+					push(usage);
+				}
+				push({ type: 'run.end', runId: session.id, reason: result?.stopReason === 'cancelled' ? 'abort' : 'done' });
+			} catch (err) {
+				stall.ping();
+				const message = err instanceof Error ? err.message : String(err);
+				if (holdPlanWall && !live.client.isDead && !token.isCancellationRequested && isCursorTransientError(message)) {
+					const fallback = nextCursorFallback(tried);
+					if (fallback) {
+						tried.push(fallback);
+						held = [];
+						assistant = '';
+						usedTools = false;
+						await this.setConfigOption(live, sessionId, modelConfigId, fallback);
+						push({
+							type: 'retry',
+							attempt: tried.length,
+							delayMs: 0,
+							message: `Cursor hit an internal error. Retrying with ${fallback === 'auto' ? 'Auto' : 'Composer 2.5'}.`,
+						});
+						await runPrompt();
+						return;
+					}
+				}
+				flushHeld();
+				push({ type: 'error', message, retryable: true });
+				push({ type: 'run.end', runId: session.id, reason: token.isCancellationRequested ? 'abort' : 'fail' });
 			}
-			push({ type: 'run.end', runId: session.id, reason: result?.stopReason === 'cancelled' ? 'abort' : 'done' });
-		}).catch(err => {
-			push({ type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
-			push({ type: 'run.end', runId: session.id, reason: token.isCancellationRequested ? 'abort' : 'fail' });
-		}).finally(() => {
+		};
+
+		const prompt = runPrompt().finally(() => {
 			finished = true;
+			stall.dispose();
 			waiting?.();
 		});
 
@@ -379,6 +539,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			}
 			await prompt;
 		} finally {
+			stall.dispose();
 			notif.dispose();
 			cancel.dispose();
 		}
@@ -397,29 +558,8 @@ export class AcpAgentProvider implements IAgentProvider {
 			return;
 		}
 		this.sessions.delete(session.id);
-		this.hintedSessions.delete(session.id);
 		live.client.dispose();
 		await this.stdio.kill(live.processId);
-	}
-
-	private async withHarness(session: IAgentSessionHandle, text: string): Promise<string> {
-		if (this.hintedSessions.has(session.id)) {
-			return text;
-		}
-		this.hintedSessions.add(session.id);
-		try {
-			this.runPlanHint ??= await loadWorkspaceRunPlanHint(this.fileService, this.workspace);
-		} catch {
-			this.runPlanHint = formatRunPlanHint({ kind: 'unknown' });
-		}
-		return `${this.runPlanHint}\n\n${text}`;
-	}
-
-	private withMode(msg: IAgentMessage): string {
-		if (msg.mode === 'agent') {
-			return msg.text;
-		}
-		return `[Volt mode: ${msg.mode}]\n${msg.text}`;
 	}
 
 	private mapUpdate(params: unknown): IVoltEvent[] {
@@ -448,18 +588,21 @@ export class AcpAgentProvider implements IAgentProvider {
 				})),
 			});
 		} else if (kind === 'tool_call') {
-			const input = this.toolInput(update);
+			const title = typeof update.title === 'string' ? update.title : undefined;
+			const toolKind = typeof update.kind === 'string' ? update.kind : undefined;
+			const input = collectAcpToolInput(update);
 			events.push({
 				type: 'tool.start',
 				callId: String(update.toolCallId ?? 'tool'),
-				name: String(update.kind ?? update.title ?? 'tool'),
-				title: typeof update.title === 'string' ? update.title : undefined,
+				name: String(title || (toolKind && toolKind !== 'other' ? toolKind : undefined) || 'tool'),
+				title,
 				input,
 				cwd: this.toolCwd(update),
+				kind: mapAcpToolKind(toolKind),
 			});
 		} else if (kind === 'tool_call_update') {
 			const status = String(update.status ?? '');
-			const input = this.toolInput(update);
+			const input = collectAcpToolInput(update);
 			if (input) {
 				events.push({ type: 'tool.input.delta', callId: String(update.toolCallId ?? 'tool'), delta: input });
 			}
@@ -484,70 +627,23 @@ export class AcpAgentProvider implements IAgentProvider {
 		return events;
 	}
 
-	private toolInput(update: Record<string, unknown>): string | undefined {
-		const raw = update.rawInput ?? update.input ?? update.arguments;
-		const location = this.toolLocation(update);
-		if (typeof raw === 'string' && raw.trim()) {
-			if (location && !raw.includes(location.path)) {
-				return JSON.stringify({ path: location.path, line: location.line, text: raw });
-			}
-			return raw;
+	private toolCwd(update: Record<string, unknown>): string | undefined {
+		const input = collectAcpToolInput(update);
+		if (!input) {
+			return undefined;
 		}
-		if (raw && typeof raw === 'object') {
-			const o = { ...(raw as Record<string, unknown>) };
-			if (location && !this.objectHasPath(o)) {
-				o.path = location.path;
-				if (location.line !== undefined && o.line === undefined) {
-					o.line = location.line;
-				}
-			}
-			try {
-				return JSON.stringify(o);
-			} catch {
+		try {
+			const o = JSON.parse(input) as Record<string, unknown>;
+			if (!o || typeof o !== 'object') {
 				return undefined;
 			}
-		}
-		if (location) {
-			return JSON.stringify({ path: location.path, line: location.line });
-		}
-		const content = this.contentText(update.content);
-		return content || undefined;
-	}
-
-	private toolLocation(update: Record<string, unknown>): { path: string; line?: number } | undefined {
-		const locations = update.locations;
-		if (!Array.isArray(locations) || !locations.length) {
-			return undefined;
-		}
-		const first = locations[0];
-		if (!first || typeof first !== 'object') {
-			return undefined;
-		}
-		const rec = first as Record<string, unknown>;
-		const path = typeof rec.path === 'string' && rec.path
-			? rec.path
-			: typeof rec.uri === 'string' && rec.uri ? rec.uri : undefined;
-		if (!path) {
-			return undefined;
-		}
-		const line = Number(rec.line ?? rec.lineNumber ?? rec.line_number);
-		return { path, line: Number.isFinite(line) && line > 0 ? line : undefined };
-	}
-
-	private objectHasPath(o: Record<string, unknown>): boolean {
-		return ['path', 'file', 'uri', 'target', 'filename', 'target_file', 'targetFile', 'file_path', 'filePath'].some(key => typeof o[key] === 'string' && o[key]);
-	}
-
-	private toolCwd(update: Record<string, unknown>): string | undefined {
-		const raw = update.rawInput ?? update.input ?? update.arguments;
-		if (!raw || typeof raw !== 'object') {
-			return undefined;
-		}
-		const o = raw as Record<string, unknown>;
-		for (const key of ['cwd', 'workdir', 'working_directory', 'workingDirectory']) {
-			if (typeof o[key] === 'string' && o[key]) {
-				return o[key] as string;
+			for (const key of ['cwd', 'workdir', 'working_directory', 'workingDirectory']) {
+				if (typeof o[key] === 'string' && o[key]) {
+					return o[key] as string;
+				}
 			}
+		} catch {
+			return undefined;
 		}
 		return undefined;
 	}
@@ -566,11 +662,11 @@ export class AcpAgentProvider implements IAgentProvider {
 	}
 
 	private bindClientRequests(client: AcpJsonRpcClient): void {
-		client.onRequest(async req => {
+		client.handleRequests(async req => {
 			try {
 				if (req.method === 'fs/read_text_file' || req.method === 'fs/write_text_file') {
-					const params = req.params as { path?: string; uri?: string; content?: string };
-					const path = params.uri || params.path;
+					const params = req.params as { path?: string; uri?: string; file?: string; content?: string; line?: number; limit?: number };
+					const path = params.uri || params.path || params.file;
 					const uri = this.toUri(path);
 					if (!uri) {
 						await client.respondError(req.id, 'Missing path');
@@ -582,8 +678,7 @@ export class AcpAgentProvider implements IAgentProvider {
 						return;
 					}
 					if (req.method === 'fs/read_text_file') {
-						const file = await this.fileService.readFile(uri);
-						await client.respond(req.id, { content: file.value.toString() });
+						await client.respond(req.id, { content: await this.readTextFile(uri, params.line, params.limit) });
 						return;
 					}
 					await this.fileService.writeFile(uri, VSBuffer.fromString(params.content ?? ''));
@@ -639,6 +734,19 @@ export class AcpAgentProvider implements IAgentProvider {
 			createdAt: Date.now(),
 		}));
 		return decision.effect === 'allow';
+	}
+
+	private async readTextFile(uri: URI, line?: number, limit?: number): Promise<string> {
+		const file = await this.fileService.readFile(uri);
+		let text = file.value.toString();
+		if (line || limit) {
+			const lines = text.split('\n');
+			const start = Math.max(0, (typeof line === 'number' && line > 0 ? line : 1) - 1);
+			const end = typeof limit === 'number' && limit > 0 ? start + limit : lines.length;
+			text = lines.slice(start, end).join('\n');
+		}
+		const max = 256_000;
+		return text.length > max ? `${text.slice(0, max)}\n\n[truncated after 256KB]` : text;
 	}
 
 	private toUri(pathOrUri: string | undefined): URI | undefined {

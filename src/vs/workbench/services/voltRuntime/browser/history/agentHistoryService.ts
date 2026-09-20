@@ -1,20 +1,20 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { VSBuffer } from '../../../../base/common/buffer.js';
-import { Emitter, Event } from '../../../../base/common/event.js';
-import { hashAsync } from '../../../../base/common/hash.js';
-import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
-import { basename, joinPath } from '../../../../base/common/resources.js';
-import { URI } from '../../../../base/common/uri.js';
-import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { FileOperationError, FileOperationResult, IFileService } from '../../../../platform/files/common/files.js';
-import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
-import { ILogService } from '../../../../platform/log/common/log.js';
-import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { ILifecycleService } from '../../lifecycle/common/lifecycle.js';
+import { VSBuffer } from '../../../../../base/common/buffer.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
+import { hashAsync } from '../../../../../base/common/hash.js';
+import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { basename, joinPath } from '../../../../../base/common/resources.js';
+import { URI } from '../../../../../base/common/uri.js';
+import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
+import { FileOperationError, FileOperationResult, IFileService } from '../../../../../platform/files/common/files.js';
+import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
+import { ILogService } from '../../../../../platform/log/common/log.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { ILifecycleService } from '../../../lifecycle/common/lifecycle.js';
 import {
 	AGENT_HISTORY_FORMAT_VERSION,
 	AgentHistoryEntry,
@@ -29,7 +29,7 @@ import {
 	IAgentSessionMeta,
 	IAgentSessionTranscript,
 	IAgentSessionWorkspace,
-} from '../common/agentHistory.js';
+} from '../../common/history/agentHistory.js';
 import {
 	attachmentFileName,
 	attachmentRef,
@@ -48,7 +48,7 @@ import {
 	settleIndexAfterRestart,
 	shouldCompact,
 	sortSessions,
-} from '../common/agentHistoryLog.js';
+} from '../../common/history/agentHistoryLog.js';
 
 const ROOT_DIR = 'agentSessions';
 const SESSIONS_DIR = 'sessions';
@@ -557,7 +557,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 
 	search(query: string, options?: IAgentHistoryListOptions): IAgentSessionMeta[] {
 		const candidates = [...this.sessions.values()].filter(meta => this.matches(meta, options));
-		const ranked = searchSessions(candidates, query);
+		const ranked = searchSessions(candidates, query, options);
 		return options?.limit !== undefined ? ranked.slice(0, options.limit) : ranked;
 	}
 

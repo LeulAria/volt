@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -8,10 +8,12 @@ import { IRequestService } from '../../../../../platform/request/common/request.
 import { DEFAULT_MODEL_CAPABILITIES, IProviderCapabilities } from '../../common/capabilities.js';
 import { IVoltEvent } from '../../common/events.js';
 import { IProviderProfile } from '../../common/profiles.js';
-import { contextLabelFromTokens, pickNumber, pickText } from '../../common/modelMeta.js';
+import { contextLabelFromTokens, pickNumber, pickText } from '../../common/models/modelMeta.js';
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
-import { IModelOptionDescriptor, MODEL_OPTION_REASONING, reasoningOption } from '../../common/modelOptions.js';
-import { parseSseData, requestSseLines, requestText } from '../httpStream.js';
+import { IModelOptionDescriptor, MODEL_OPTION_REASONING, reasoningOption } from '../../common/models/modelOptions.js';
+import { OpenAiToolAssembler } from '../../common/harness/openaiToolStream.js';
+import { toOpenAiMessages, toOpenAiTools } from '../../common/harness/providerMessages.js';
+import { parseSseData, requestSseLines, requestText } from '../host/httpStream.js';
 
 interface IListedModel {
 	id: string;
@@ -72,14 +74,17 @@ export class OpenAICompatProvider implements IModelProvider {
 		const url = `${this.baseURL(req.profile)}/chat/completions`;
 		const selected = req.options?.[MODEL_OPTION_REASONING];
 		const effort = reasoningDescriptors(req.modelId) && typeof selected === 'string' ? selected : undefined;
+		const tools = req.tools?.length ? toOpenAiTools(req.tools) : undefined;
 		const body = JSON.stringify({
 			model: req.modelId,
 			stream: true,
 			stream_options: { include_usage: true },
-			messages: req.messages,
+			messages: toOpenAiMessages(req.messages),
 			...(effort ? { reasoning_effort: effort } : {}),
+			...(tools ? { tools, tool_choice: 'auto' } : {}),
 		});
 		const textId = `text-${Date.now()}`;
+		const assembler = new OpenAiToolAssembler();
 		let started = false;
 		for await (const line of requestSseLines(this.requestService, url, {
 			type: 'POST',
@@ -87,14 +92,18 @@ export class OpenAICompatProvider implements IModelProvider {
 			data: body,
 		}, token)) {
 			if (token.isCancellationRequested) {
-				break;
+				yield { type: 'finish', reason: 'abort' };
+				return;
 			}
 			const data = parseSseData(line);
 			if (!data) {
 				continue;
 			}
 			let json: {
-				choices?: { delta?: { content?: string; reasoning_content?: string } }[];
+				choices?: {
+					delta?: { content?: string; reasoning_content?: string; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] };
+					finish_reason?: string | null;
+				}[];
 				usage?: { prompt_tokens?: number; completion_tokens?: number; input_tokens?: number; output_tokens?: number };
 			};
 			try {
@@ -110,24 +119,28 @@ export class OpenAICompatProvider implements IModelProvider {
 					yield { type: 'usage', input: input ?? 0, output: output ?? 0 };
 				}
 			}
-			const delta = json.choices?.[0]?.delta;
+			const choice = json.choices?.[0];
+			const delta = choice?.delta;
 			const reasoning = delta?.reasoning_content;
 			if (reasoning) {
 				yield { type: 'reasoning.delta', id: `${textId}-think`, delta: reasoning };
 			}
 			const content = delta?.content;
-			if (!content) {
-				continue;
+			if (content) {
+				if (!started) {
+					started = true;
+					yield { type: 'text.start', id: textId };
+				}
+				yield { type: 'text.delta', id: textId, delta: content };
 			}
-			if (!started) {
-				started = true;
-				yield { type: 'text.start', id: textId };
+			for (const event of assembler.apply(delta, choice?.finish_reason)) {
+				yield event;
 			}
-			yield { type: 'text.delta', id: textId, delta: content };
 		}
 		if (started) {
 			yield { type: 'text.end', id: textId };
 		}
+		yield assembler.finish();
 	}
 
 	protected headers(apiKey?: string): Record<string, string> {

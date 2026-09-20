@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -27,11 +27,18 @@ export class AcpJsonRpcClient extends Disposable {
 
 	private nextId = 1;
 	private buffer = '';
+	private dead = false;
 	private readonly pending = new Map<string | number, IPending>();
 	private readonly _onNotification = this._register(new Emitter<IAcpNotification>());
 	private readonly _onRequest = this._register(new Emitter<IAcpIncomingRequest>());
+	private readonly _onDead = this._register(new Emitter<Error>());
 	readonly onNotification: Event<IAcpNotification> = this._onNotification.event;
 	readonly onRequest: Event<IAcpIncomingRequest> = this._onRequest.event;
+	readonly onDead: Event<Error> = this._onDead.event;
+
+	get isDead(): boolean {
+		return this.dead;
+	}
 
 	constructor(
 		private readonly stdio: IVoltStdioService,
@@ -45,9 +52,20 @@ export class AcpJsonRpcClient extends Disposable {
 		}));
 		this._register(stdio.onExit(e => {
 			if (e.id === processId) {
-				this.failAll(new Error(`ACP process exited (${e.code ?? 'null'})`));
+				const detail = e.stderr?.trim();
+				this.die(new Error(detail
+					? `ACP process exited (${e.code ?? 'null'}): ${detail.split(/\r?\n/).filter(Boolean).at(-1)}`
+					: `ACP process exited (${e.code ?? 'null'})`));
 			}
 		}));
+	}
+
+	handleRequests(handler: (req: IAcpIncomingRequest) => void): void {
+		this._register(this.onRequest(handler));
+	}
+
+	whenDead(handler: (err: Error) => void): void {
+		this._register(this.onDead(handler));
 	}
 
 	async request<T>(method: string, params?: unknown): Promise<T> {
@@ -59,20 +77,29 @@ export class AcpJsonRpcClient extends Disposable {
 				reject,
 			});
 		});
-		await this.stdio.write(this.processId, JSON.stringify(payload) + '\n');
+		await this.writeLine(payload);
 		return result;
 	}
 
 	async notify(method: string, params?: unknown): Promise<void> {
-		await this.stdio.write(this.processId, JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
+		await this.writeLine({ jsonrpc: '2.0', method, params });
 	}
 
 	async respond(id: string | number, result: unknown): Promise<void> {
-		await this.stdio.write(this.processId, JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
+		await this.writeLine({ jsonrpc: '2.0', id, result });
 	}
 
 	async respondError(id: string | number, message: string): Promise<void> {
-		await this.stdio.write(this.processId, JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32000, message } }) + '\n');
+		await this.writeLine({ jsonrpc: '2.0', id, error: { code: -32000, message } });
+	}
+
+	private async writeLine(payload: unknown): Promise<void> {
+		try {
+			await this.stdio.write(this.processId, JSON.stringify(payload) + '\n');
+		} catch (err) {
+			this.die(err instanceof Error ? err : new Error(String(err)));
+			throw err;
+		}
 	}
 
 	private push(chunk: string): void {
@@ -117,6 +144,16 @@ export class AcpJsonRpcClient extends Disposable {
 		}
 	}
 
+	private die(err: Error): void {
+		if (this.dead) {
+			this.failAll(err);
+			return;
+		}
+		this.dead = true;
+		this.failAll(err);
+		this._onDead.fire(err);
+	}
+
 	private failAll(err: Error): void {
 		for (const pending of this.pending.values()) {
 			pending.reject(err);
@@ -125,7 +162,7 @@ export class AcpJsonRpcClient extends Disposable {
 	}
 
 	override dispose(): void {
-		this.failAll(new Error('ACP client disposed'));
+		this.die(new Error('ACP client disposed'));
 		super.dispose();
 	}
 }

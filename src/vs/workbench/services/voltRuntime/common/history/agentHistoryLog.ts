@@ -1,8 +1,10 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { fuzzyScore } from '../../../../../base/common/filters.js';
+import { escapeRegExpCharacters } from '../../../../../base/common/strings.js';
 import {
 	AGENT_HISTORY_FORMAT_VERSION,
 	AgentHistoryEntry,
@@ -12,6 +14,7 @@ import {
 	IAgentHistoryIndex,
 	IAgentSessionHeader,
 	IAgentSessionMeta,
+	IAgentSessionSearchOptions,
 	IAgentSessionTranscript,
 	IAgentSessionTurn,
 	IAgentUserEntry,
@@ -363,38 +366,95 @@ interface IScored {
 	readonly score: number;
 }
 
+const FUZZY_OPTIONS = { firstMatchCanBeWeak: true, boostFullMatch: true };
+
+function scoreField(pattern: string, patternLow: string, field: string, fieldLow: string): number | undefined {
+	if (!field) {
+		return undefined;
+	}
+	return fuzzyScore(pattern, patternLow, 0, field, fieldLow, 0, FUZZY_OPTIONS)?.[0];
+}
+
+function matchesWholeWord(token: string, text: string, matchCase: boolean): boolean {
+	if (!text) {
+		return false;
+	}
+	try {
+		return new RegExp(`\\b${escapeRegExpCharacters(token)}\\b`, matchCase ? '' : 'i').test(text);
+	} catch {
+		return false;
+	}
+}
+
+function fieldHit(pattern: string, patternLow: string, field: string, fieldLow: string, options: IAgentSessionSearchOptions | undefined): number | undefined {
+	if (options?.wholeWord) {
+		return matchesWholeWord(pattern, field, !!options.matchCase) ? 1 : undefined;
+	}
+	return scoreField(pattern, patternLow, field, fieldLow);
+}
+
 /**
- * Rank sessions for a query. Title matches dominate, then preview and
- * summary; prefix matches beat substring matches; every query token must hit.
+ * Rank sessions for a query. Default matching is fuzzy across title, preview
+ * and summary; every whitespace token must hit. Title matches dominate.
  */
-export function searchSessions(sessions: readonly IAgentSessionMeta[], query: string): IAgentSessionMeta[] {
-	const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-	if (!tokens.length) {
+export function searchSessions(sessions: readonly IAgentSessionMeta[], query: string, options?: IAgentSessionSearchOptions): IAgentSessionMeta[] {
+	const raw = query.trim();
+	if (!raw) {
 		return sortSessions(sessions);
 	}
+
+	if (options?.isRegex) {
+		let regex: RegExp;
+		try {
+			regex = new RegExp(raw, options.matchCase ? '' : 'i');
+		} catch {
+			return [];
+		}
+		const scored: IScored[] = [];
+		for (const meta of sessions) {
+			const title = regex.test(meta.title);
+			const preview = regex.test(meta.preview);
+			const summary = regex.test(meta.summary ?? '');
+			if (!title && !preview && !summary) {
+				continue;
+			}
+			scored.push({
+				meta,
+				score: (title ? 40 : 0) + (preview ? 12 : 0) + (summary ? 4 : 0) + (meta.pinned ? 2 : 0),
+			});
+		}
+		scored.sort((a, b) => b.score - a.score || b.meta.updatedAt - a.meta.updatedAt);
+		return scored.map(item => item.meta);
+	}
+
+	const tokens = raw.split(/\s+/).filter(Boolean);
 	const scored: IScored[] = [];
 	for (const meta of sessions) {
-		const title = meta.title.toLowerCase();
-		const preview = meta.preview.toLowerCase();
-		const summary = (meta.summary ?? '').toLowerCase();
+		const title = meta.title;
+		const preview = meta.preview;
+		const summary = meta.summary ?? '';
+		const titleLow = options?.matchCase ? title : title.toLowerCase();
+		const previewLow = options?.matchCase ? preview : preview.toLowerCase();
+		const summaryLow = options?.matchCase ? summary : summary.toLowerCase();
 		let score = 0;
 		let matched = true;
 		for (const token of tokens) {
-			const inTitle = title.indexOf(token);
-			const inPreview = preview.indexOf(token);
-			const inSummary = summary.indexOf(token);
-			if (inTitle < 0 && inPreview < 0 && inSummary < 0) {
+			const patternLow = options?.matchCase ? token : token.toLowerCase();
+			const inTitle = fieldHit(token, patternLow, title, titleLow, options);
+			const inPreview = fieldHit(token, patternLow, preview, previewLow, options);
+			const inSummary = fieldHit(token, patternLow, summary, summaryLow, options);
+			if (inTitle === undefined && inPreview === undefined && inSummary === undefined) {
 				matched = false;
 				break;
 			}
-			if (inTitle >= 0) {
-				score += inTitle === 0 || title[inTitle - 1] === ' ' ? 40 : 20;
+			if (inTitle !== undefined) {
+				score += 1000 + inTitle;
 			}
-			if (inPreview >= 0) {
-				score += inPreview === 0 ? 12 : 6;
+			if (inPreview !== undefined) {
+				score += 100 + inPreview;
 			}
-			if (inSummary >= 0) {
-				score += 4;
+			if (inSummary !== undefined) {
+				score += 20 + inSummary;
 			}
 		}
 		if (matched) {

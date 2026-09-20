@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Copyright (c) Volt ADK. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
@@ -81,6 +81,14 @@ suite('Volt access broker', () => {
 			session: [{ action: 'shell', resource: 'git push --force*', effect: 'allow' }],
 		});
 		assert.strictEqual(evaluateAccess(req('shell', 'git push --force origin main'), compiled, { accessMode: 'full-access' }).effect, 'deny');
+	});
+
+	test('ask and plan overlays still allow web lookups', () => {
+		for (const mode of ['ask', 'plan'] as const) {
+			const compiled = policy('supervised', mode);
+			assert.strictEqual(evaluateAccess(req('web', 'https://example.com/prices'), compiled, { accessMode: 'supervised' }).effect, 'allow');
+			assert.strictEqual(evaluateAccess(req('edit', 'src/a.ts'), compiled, { accessMode: 'supervised' }).effect, 'deny');
+		}
 	});
 
 	test('plan overlay denies side effects under full access', () => {
