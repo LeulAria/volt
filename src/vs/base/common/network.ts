@@ -96,6 +96,12 @@ export namespace Schemas {
 	/** Scheme used for the agent Customize (rules, skills, MCP) editor tab. */
 	export const voltCustomize = 'volt-customize';
 
+	/** Scheme used for a per-agent-window multi-file changes review tab. */
+	export const voltAgentChanges = 'volt-agent-changes';
+
+	/** Scheme used for in-memory snapshots of files an agent edited. */
+	export const voltAgentSnapshot = 'volt-agent-snapshot';
+
 	/** Scheme used for the chat input part */
 	export const vscodeChatInput = 'chatSessionInput';
 
