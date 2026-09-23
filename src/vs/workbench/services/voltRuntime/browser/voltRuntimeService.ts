@@ -4,7 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IntervalTimer } from '../../../../base/common/async.js';
-import { VSBuffer } from '../../../../base/common/buffer.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
@@ -39,36 +38,32 @@ import { AcpAgentProvider } from './agents/acpProvider.js';
 import './host/hostToolService.js';
 import { CLI_AGENT_DEFINITIONS, cliAgentDefinition, detectCliAgent } from './agents/cliAgents.js';
 import { NullVoltStdioService } from './host/nullStdioService.js';
-import { compilePrompt } from './prompt/promptCompiler.js';
-import { loadProjectCheckFiles, loadWorkspaceRunPlan } from './host/workspaceRunPlan.js';
+import { loadWorkspaceRunPlan } from './host/workspaceRunPlan.js';
 import { IIntent, isConversationalPing, mergeGrantedGroups, pingReply } from '../common/harness/intent.js';
 import { buildAcpLead, IContextPackInput, IEnvironmentFacts } from '../common/harness/contextPack.js';
-import { estimateTokens, totalTokens } from '../common/harness/contextEngine.js';
-import { INativeLoopMessage, NativeFinishReason, runNativeLoop } from '../common/harness/nativeLoop.js';
+import { INativeLoopMessage } from '../common/harness/nativeLoop.js';
 import { nativeToModelMessages } from '../common/harness/providerMessages.js';
 import { runToolBatch } from '../common/harness/toolRuntime.js';
 import { stringifyUnknown } from '../common/harness/toolResult.js';
 import { actionForGroup, resourceForCall } from '../common/harness/toolAccess.js';
 import { classifyRisk } from '../common/access/riskClassifier.js';
-import { CapabilityGroup, laneDefinition } from '../common/harness/lanes.js';
-import { IRoutableModel, IRoleAssignments, canEscalate, escalate } from '../common/harness/modelRouter.js';
+import { CapabilityGroup } from '../common/harness/lanes.js';
+import { IRoutableModel } from '../common/harness/modelRouter.js';
 import { workerFraming } from '../common/harness/orchestrator.js';
 import { planEntries } from '../common/harness/plan.js';
 import { applyHumanAction, IHumanAction } from '../common/harness/humanLoop.js';
 import { IPreparedRun, prepareRun } from '../common/harness/pipeline.js';
-import { bindLoopController, compactTurn, compactionEvent, createRunHarness, IRunHarness, workFromHarness } from '../common/harness/runHarness.js';
-import { parseFinishPayload, renderOutcome, synthesize } from '../common/harness/synthesis.js';
-import { checkTranscriptPairs } from '../common/harness/invariants.js';
-import { detectProjectChecks } from '../common/harness/verification.js';
-import { speculativeReads } from '../common/harness/toolPlanner.js';
-import { runPreStep } from '../common/harness/preStep.js';
+import { IRunHarness } from '../common/harness/runHarness.js';
 import { EvalLedger } from '../common/harness/eval.js';
-import { applyRestored } from '../common/harness/restore.js';
 import { isAcpTurnRestartable } from '../common/harness/sessionRetry.js';
-import { IFileSnapshot } from '../common/harness/stateManager.js';
 import { TaskLifecycle } from '../common/harness/lifecycle.js';
 import { formatTaskBrief } from '../common/harness/taskIntel.js';
-import { IToolCall, IToolResult, IVoltTool, toolSchemas, toolSnippets, visibleTools } from '../common/tools/tool.js';
+import { IToolCall, IVoltTool, toolSchemas, toolSnippets } from '../common/tools/tool.js';
+import { deepseekKnobs, resolveApproval } from '../common/deepseek/approval.js';
+import { runDeepseekLoop } from '../common/deepseek/loop.js';
+import { VoltLlmAdapter } from './deepseek/voltLlmAdapter.js';
+import { nativeModelTurn } from '../common/deepseek/prompt.js';
+import { ApprovalOutcome } from '../common/deepseek/protocol.js';
 import { createBuiltinTools } from './tools/registry.js';
 import { loadProjectInstructions } from './prompt/projectInstructions.js';
 import { IRunPlan } from '../common/runPlan.js';
@@ -92,9 +87,16 @@ interface ISessionState extends IVoltSession {
 	cancel?: CancellationTokenSource;
 	/** Extra capability groups granted mid-session by `request_capabilities`. */
 	extraGroups?: CapabilityGroup[];
-	/** The pre-loop pipeline result for the active run. */
+	/** The pre-loop pipeline result for the active run. ACP only. */
 	prepared?: IPreparedRun;
 	harness?: IRunHarness;
+	/** In-process DeepSeek loop for native models. The open workspace folder is the cwd. */
+	deepseek?: {
+		messages: INativeLoopMessage[];
+		inbox: string[];
+		running: boolean;
+		cwd?: string;
+	};
 }
 
 export class AgentRuntimeService extends Disposable implements IAgentRuntimeService {
@@ -194,7 +196,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const session = this.getOrCreateSession(sessionId) as ISessionState;
 		session.mode = request.mode;
 		session.providerRef = request.providerRef ?? session.providerRef ?? this.defaultRef(request.mode);
-		const live = session.activeRun && (session.activeRun.status === 'running' || session.activeRun.status === 'waiting') && session.harness;
+		const runLive = session.activeRun && (session.activeRun.status === 'running' || session.activeRun.status === 'waiting');
+		if (runLive && session.activeRun && session.deepseek?.running) {
+			this.denyPending(sessionId, 'follow-up');
+			session.messages.push({ role: 'user', content: request.text });
+			session.deepseek.inbox.push(request.text);
+			this.emit(session, session.activeRun.runId, { type: 'human', action: 'redirect', detail: request.text });
+			this.emit(session, session.activeRun.runId, { type: 'inbox', claimed: 0 });
+			return session.activeRun.runId;
+		}
+		const live = runLive && session.harness;
 		if (live && session.activeRun && session.harness) {
 			this.denyPending(sessionId, 'follow-up');
 			session.messages.push({ role: 'user', content: request.text });
@@ -206,6 +217,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.messages.push({ role: 'user', content: request.text });
 
 		const catalogItem = this.catalog.find(item => item.ref === session.providerRef && item.enabled) ?? this.catalog.find(item => item.enabled);
+		if (!catalogItem || catalogItem.kind !== 'agent') {
+			const runId = this.beginRun(session, request);
+			this.emit(session, runId, { type: 'lifecycle', phase: 'running' });
+			void this.execute(session, runId, request).catch(err => {
+				this.emit(session, runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
+				this.finish(session, runId, 'fail');
+			});
+			return runId;
+		}
 		const folder = this.workspace.getWorkspace().folders[0];
 		const hasWorkspace = this.workspace.getWorkspace().folders.length > 0;
 		const ping = isConversationalPing(request.text);
@@ -358,6 +378,13 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const session = this.getOrCreateSession(sessionId) as ISessionState;
 		const runId = session.activeRun?.runId;
 		const running = session.activeRun && (session.activeRun.status === 'running' || session.activeRun.status === 'waiting');
+		if (running && session.deepseek?.running && runId) {
+			session.deepseek.inbox.push(text);
+			session.messages.push({ role: 'user', content: text });
+			this.emit(session, runId, { type: 'human', action: 'redirect', detail: text });
+			this.emit(session, runId, { type: 'inbox', claimed: 0 });
+			return runId;
+		}
 		if (running && session.harness && runId) {
 			session.harness.inbox.inject(text, true);
 			session.messages.push({ role: 'user', content: text });
@@ -399,7 +426,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.emit(session, runId, { type: 'plan', entries: planEntries(effect.plan) });
 		}
 		if (effect.inject) {
-			session.harness?.inbox.inject(effect.inject, true);
+			if (session.deepseek?.running) {
+				session.deepseek.inbox.push(effect.inject);
+			} else {
+				session.harness?.inbox.inject(effect.inject, true);
+			}
 		}
 		if (effect.approval) {
 			this.respondToAccessRequest(effect.approval.requestId, effect.approval.effect, 'once');
@@ -955,7 +986,154 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.healthTimer.cancelAndSet(() => void this.refreshProviders(), seconds * 1000);
 	}
 
-	private async execute(session: ISessionState, runId: string, request: IVoltSendRequest, intent: IIntent): Promise<void> {
+	private beginRun(session: ISessionState, request: IVoltSendRequest): string {
+		const runId = generateUuid();
+		session.activeRun = {
+			runId,
+			sessionId: session.sessionId,
+			status: 'running',
+			startedAt: Date.now(),
+			providerRef: session.providerRef,
+		};
+		session.cancel?.dispose(true);
+		session.cancel = new CancellationTokenSource();
+		this.emit(session, runId, { type: 'run.start', runId, mode: request.mode });
+		return runId;
+	}
+
+	private workspaceTools(session: ISessionState): IVoltTool[] {
+		return createBuiltinTools({
+			fileService: this.fileService,
+			searchService: this.searchService,
+			requestService: this.requestService,
+			stdio: this.stdio,
+			hostTools: this.hostTools,
+			root: () => this.workspace.getWorkspace().folders[0]?.uri,
+			meta: { grantGroups: () => session.extraGroups ?? [] },
+		});
+	}
+
+	/**
+	 * Native model path. DeepSeek owns the turn, the tool pipeline, and approval.
+	 * Volt only streams the selected provider and paints `IVoltEvent`s.
+	 */
+	private async executeDeepseek(session: ISessionState, runId: string, request: IVoltSendRequest, profile: IProviderProfile, item: IVoltCatalogItem): Promise<void> {
+		const provider = this.modelProviders.get(profile.providerId);
+		if (!provider) {
+			this.emit(session, runId, { type: 'error', message: `Unknown model provider ${profile.providerId}` });
+			this.finish(session, runId, 'fail');
+			return;
+		}
+		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
+		const cwd = this.workspace.getWorkspace().folders[0]?.uri.fsPath;
+		const state = session.deepseek ?? { messages: [], inbox: [], running: false, cwd };
+		session.deepseek = state;
+		state.cwd = cwd;
+		state.running = true;
+		if (!state.messages.length) {
+			for (const message of session.messages.slice(0, -1)) {
+				if (!message.content.trim() || message.role === 'system') {
+					continue;
+				}
+				state.messages.push({ role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content });
+			}
+		}
+		const tail = state.messages.at(-1);
+		if (!(tail?.role === 'user' && tail.content === request.text)) {
+			state.messages.push({ role: 'user', content: request.text });
+		}
+		const facts = this.environmentFacts();
+		const tools = this.workspaceTools(session);
+		const turn = nativeModelTurn({
+			text: request.text,
+			mode: request.mode,
+			cwd,
+			platform: facts.platform,
+			date: facts.date,
+			projectInstructions: await this.workspaceProjectInstructions(),
+			tools,
+		});
+		const selected = tools.filter(tool => turn.toolNames.includes(tool.name));
+		const registry = new Map(selected.map(tool => [tool.name, tool]));
+		const cancel = session.cancel?.token ?? CancellationToken.None;
+		try {
+			const result = await runDeepseekLoop({
+				stream: messages => new VoltLlmAdapter(provider).stream({
+					modelId: item.id,
+					messages: nativeToModelMessages([{ role: 'system', content: turn.prompt }, ...messages]),
+					profile,
+					apiKey,
+					options: this.resolvedOptions(item, request.options),
+					tools: toolSchemas(selected),
+				}, cancel),
+				execute: calls => runToolBatch(registry, calls, {
+					cwd,
+					signal: abortSignalFrom(cancel),
+					emit: event => {
+						const forwarded = asToolEvent(event);
+						if (forwarded) {
+							this.emit(session, runId, forwarded);
+						}
+					},
+				}, { authorize: async () => ({ allow: true }) }),
+				authorize: call => this.authorizeDeepseek(session, runId, profile, call, registry.get(call.name)),
+				emit: event => this.emit(session, runId, event),
+				tool: name => registry.get(name),
+				cwd,
+			}, {
+				messages: state.messages,
+				token: cancel,
+				isPaused: () => !!session.paused,
+				claimInbox: () => state.inbox.splice(0, state.inbox.length),
+			});
+			if (result.assistant) {
+				session.messages.push({ role: 'assistant', content: result.assistant });
+			}
+			if (result.outcome === 'budget') {
+				this.emit(session, runId, { type: 'error', message: 'Stopped at the step budget. Send another message to continue.', retryable: true });
+			}
+			const aborted = result.outcome === 'abort' || cancel.isCancellationRequested;
+			this.finish(session, runId, aborted ? 'abort' : result.outcome === 'fail' ? 'fail' : 'done');
+		} catch (err) {
+			this.emit(session, runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
+			this.finish(session, runId, cancel.isCancellationRequested ? 'abort' : 'fail');
+		} finally {
+			state.running = false;
+		}
+	}
+
+	private async authorizeDeepseek(session: ISessionState, runId: string, profile: IProviderProfile, call: IToolCall, tool: IVoltTool | undefined): Promise<ApprovalOutcome> {
+		if (!tool) {
+			return 'rejected';
+		}
+		if (tool.group === 'meta') {
+			return 'allowed-once';
+		}
+		const knobs = deepseekKnobs(this.accessMode);
+		const action = actionForGroup(tool.group);
+		const resource = resourceForCall(tool, call.args);
+		const decision = await this.evaluateAccessRequest({
+			id: generateUuid(),
+			sessionId: session.sessionId,
+			runId,
+			providerId: profile.providerId,
+			action,
+			resource,
+			risk: classifyRisk(action, resource.value),
+			preview: { title: tool.name, detail: stringifyUnknown(call.args).slice(0, 400) },
+			createdAt: Date.now(),
+		}, knobs.approval === 'ask');
+		const step = resolveApproval({
+			policy: knobs.approval,
+			effect: decision.effect,
+			cancelled: decision.policySource === 'cancelled',
+			savedAllow: decision.effect === 'allow' && decision.policySource === 'session',
+			answererAvailable: true,
+		});
+		return step.outcome ?? 'rejected';
+	}
+
+	private async execute(session: ISessionState, runId: string, request: IVoltSendRequest, intent?: IIntent): Promise<void> {
 		const item = this.catalog.find(c => c.ref === session.providerRef && c.enabled) ?? this.catalog.find(c => c.enabled);
 		if (!item) {
 			this.emit(session, runId, { type: 'error', message: 'No model or ACP agent is connected. Open Volt Settings to add one.' });
@@ -971,10 +1149,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 
 		if (item.kind === 'agent') {
+			if (!intent) {
+				this.emit(session, runId, { type: 'error', message: 'Agent run is missing its harness lead.' });
+				this.finish(session, runId, 'fail');
+				return;
+			}
 			await this.executeAgent(session, runId, request, profile, item, intent);
 			return;
 		}
-		await this.executeModel(session, runId, request, profile, item, intent);
+		await this.executeDeepseek(session, runId, request, profile, item);
 	}
 
 	/** Detected once per workspace; only consulted when the user asked to see something running. */
@@ -999,27 +1182,6 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 
 	private effectiveGroups(session: ISessionState, intent: IIntent): CapabilityGroup[] {
 		return mergeGrantedGroups(intent.groups, session.extraGroups ?? [], session.mode);
-	}
-
-	private builtinTools(session: ISessionState, intent: IIntent): IVoltTool[] {
-		return createBuiltinTools({
-			fileService: this.fileService,
-			searchService: this.searchService,
-			requestService: this.requestService,
-			stdio: this.stdio,
-			hostTools: this.hostTools,
-			root: () => this.workspace.getWorkspace().folders[0]?.uri,
-			meta: {
-				grantGroups: requested => {
-					session.extraGroups = mergeGrantedGroups(this.effectiveGroups(session, intent), requested, session.mode);
-					return session.extraGroups;
-				},
-			},
-		});
-	}
-
-	private visibleSessionTools(session: ISessionState, intent: IIntent): IVoltTool[] {
-		return visibleTools(this.builtinTools(session, intent), this.effectiveGroups(session, intent));
 	}
 
 	private async contextPackInput(session: ISessionState, mode: VoltMode, intent: IIntent, tools?: IVoltTool[]): Promise<IContextPackInput> {
@@ -1051,275 +1213,6 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		};
 	}
 
-	private async executeModel(session: ISessionState, runId: string, request: IVoltSendRequest, profile: IProviderProfile, item: IVoltCatalogItem, intent: IIntent): Promise<void> {
-		const provider = this.modelProviders.get(profile.providerId);
-		if (!provider) {
-			this.emit(session, runId, { type: 'error', message: `Unknown model provider ${profile.providerId}` });
-			this.finish(session, runId, 'fail');
-			return;
-		}
-		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
-		const ping = intent.signals.includes('ping');
-		const toolsFor = () => ping ? [] : this.visibleSessionTools(session, intent);
-		const prepared = session.prepared;
-		const checks = ping ? {} : detectProjectChecks(await loadProjectCheckFiles(this.fileService, this.workspace.getWorkspace().folders[0]?.uri));
-		const harness = prepared ? createRunHarness(prepared, checks, () => this.harnessCapabilities(session, item.ref)) : undefined;
-		session.harness = harness;
-		harness?.lifecycle.tryTransition('planning');
-		harness?.lifecycle.tryTransition('running');
-		if (harness) {
-			harness.seams.register('fs', this.fileService, 'host');
-			harness.seams.register('tools', this.hostTools, 'host');
-			harness.seams.register('eval', this.evalLedger, 'host');
-			const start = harness.state.latestCheckpoint();
-			if (start) {
-				this.emit(session, runId, { type: 'checkpoint', id: start.id, label: start.label, kind: start.kind });
-			}
-			this.emit(session, runId, { type: 'title', text: harness.title });
-		}
-		const compiled = compilePrompt(await this.contextPackInput(session, request.mode, intent, toolsFor()), session.messages.slice(0, -1), request.text);
-		const loopMessages: INativeLoopMessage[] = compiled.map(message => ({
-			role: message.role === 'assistant' ? 'assistant' : message.role === 'system' ? 'system' : 'user',
-			content: message.content,
-		}));
-		this.emitOccupancy(session, runId, loopMessages, toolsFor(), item.capabilities.contextWindow || 128_000);
-		const cancel = session.cancel!.token;
-		if (prepared && harness && !ping) {
-			const reads = speculativeReads(prepared.tools);
-			if (reads.length) {
-				this.emit(session, runId, { type: 'prefetch', paths: reads.map(read => read.args.path) });
-				const prefetchCalls = reads.map((read, index) => ({ id: `prefetch-${index}`, name: read.name, args: read.args }));
-				for (const call of prefetchCalls) {
-					this.emit(session, runId, { type: 'tool.start', callId: call.id, name: call.name, kind: 'read' });
-				}
-				const prefetchResults = await this.executeToolCalls(session, runId, profile, intent, prefetchCalls, cancel);
-				for (const result of prefetchResults) {
-					this.emit(session, runId, {
-						type: 'tool.end',
-						callId: result.callId,
-						result: result.text,
-						error: result.isError ? result.text : undefined,
-						durationMs: result.durationMs,
-					});
-					if (!result.isError && result.text.trim()) {
-						loopMessages.push({ role: 'user', content: `Prefetched ${result.name}:\n${result.text}` });
-					}
-				}
-			}
-			const scheduled = harness.scheduler.snapshot();
-			this.emit(session, runId, { type: 'scheduler', queued: scheduled.queued, running: scheduled.leased });
-		}
-		let currentItem = item;
-		const tried: string[] = [];
-		try {
-			const result = await runNativeLoop({
-				stream: messages => {
-					const nextProfile = this.profiles.find(entry => entry.id === currentItem.profileId) ?? profile;
-					const nextProvider = this.modelProviders.get(nextProfile.providerId) ?? provider;
-					return this.streamModelTurn(nextProvider, currentItem, nextProfile, apiKey, request, messages, toolsFor(), cancel);
-				},
-				execute: calls => this.executeToolCalls(session, runId, profile, intent, calls, cancel),
-				emit: event => {
-					if (event.type === 'file.change' && harness) {
-						const path = event.uri.scheme === 'file' ? event.uri.fsPath : (event.uri.path || event.uri.fsPath);
-						harness.controller.recordFileChange(0, path, event.kind);
-						const before = event.existed === false
-							? undefined
-							: event.before !== undefined ? harness.state.snapshot(path, event.before) : undefined;
-						harness.state.record(0, path, event.kind, before);
-					}
-					this.emit(session, runId, event);
-				},
-			}, {
-				messages: loopMessages,
-				budget: intent.budget,
-				token: cancel,
-				isPaused: () => !!session.paused || !!session.harness?.paused,
-				canContinue: () => !session.harness || session.harness.governor.snapshot().exceeded.length === 0,
-				claimInboxBatch: () => harness?.inbox.claimBatch() ?? { texts: [], opensTurn: false },
-				prepareStep: ({ messages, claimed, step }) => runPreStep({ messages, claimed, step, target: 'step' }),
-				...(harness ? {
-					controller: bindLoopController(harness, {
-						emit: event => this.emit(session, runId, event),
-						onAction: async action => {
-							if (action === 'escalate') {
-								const next = escalate(currentItem.ref, this.routableCatalog(), this.taskModelRoles(), {
-									lane: intent.lane,
-									mode: request.mode,
-									intel: prepared!.intel,
-									explicitRef: currentItem.ref,
-								}, tried);
-								if (next) {
-									tried.push(currentItem.ref);
-									const found = this.catalog.find(c => c.ref === next.ref && c.enabled);
-									if (found) {
-										currentItem = found;
-										this.emit(session, runId, { type: 'decision', title: 'escalate', detail: next.reason });
-									}
-								}
-							}
-							if (action === 'rollback') {
-								const point = harness.state.latestCheckpoint();
-								if (point) {
-									const rolled = harness.state.rollback(point.id);
-									if (rolled?.restored.length) {
-										const report = await this.applyFileRestore(rolled.restored);
-										this.emit(session, runId, {
-											type: 'decision',
-											title: 'rollback',
-											detail: `Restored ${report.applied} file${report.applied === 1 ? '' : 's'} to ${point.label}.`,
-										});
-									}
-								}
-							}
-							if (action === 'isolate') {
-								const worker = prepared?.orchestration.workers[0];
-								if (worker) {
-									harness.worktrees.allocate(worker.id);
-									this.emit(session, runId, { type: 'decision', title: 'isolate', detail: `Isolated ${worker.id} into a worktree.` });
-								}
-							}
-							if (action === 'delegate') {
-								const worker = prepared?.orchestration.workers.find(entry => entry.role !== 'general') ?? prepared?.orchestration.workers[1];
-								if (worker) {
-									harness.inbox.inject(workerFraming(worker.role), { wake: true, target: 'step' });
-									this.emit(session, runId, { type: 'decision', title: 'delegate', detail: `Handed the next step to ${worker.title}.` });
-								}
-							}
-							if (action === 'reset') {
-								harness.inbox.inject('Context was compacted. Continue from the evidence digest. Do not redo work already listed there.', { wake: true, target: 'step' });
-							}
-						},
-					}),
-					prepareTurn: messages => {
-						const contextWindow = currentItem.capabilities.contextWindow || 128_000;
-						const next = compactTurn(harness, messages, contextWindow);
-						const compact = compactionEvent(harness);
-						if (compact) {
-							this.emit(session, runId, compact);
-						}
-						this.emitOccupancy(session, runId, next, toolsFor(), contextWindow);
-						return next;
-					},
-					enqueueInbox: text => { harness.inbox.inject(text, { wake: true, target: 'step' }); },
-					assertSurface: messages => {
-						const report = checkTranscriptPairs(messages);
-						if (!report.ok) {
-							this.emit(session, runId, { type: 'error', message: report.failures[0]?.detail ?? 'Transcript invariant failed.', retryable: false });
-						}
-					},
-				} : {}),
-			});
-			if (result.assistant) {
-				session.messages.push({ role: 'assistant', content: result.assistant });
-			}
-			if (harness && laneDefinition(intent.lane).synthesize) {
-				this.emitOutcome(session, runId, harness, result.assistant, result.outcome);
-			}
-			if (result.outcome === 'budget') {
-				this.emit(session, runId, { type: 'error', message: 'Stopped at the lane budget. Send another message to continue.', retryable: true });
-			}
-			this.finish(session, runId, result.outcome === 'abort' || session.cancel?.token.isCancellationRequested ? 'abort' : result.outcome === 'fail' ? 'fail' : 'done');
-		} catch (err) {
-			this.emit(session, runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
-			this.finish(session, runId, session.cancel?.token.isCancellationRequested ? 'abort' : 'fail');
-		} finally {
-			session.harness = undefined;
-		}
-	}
-
-	private async *streamModelTurn(
-		provider: IModelProvider,
-		item: IVoltCatalogItem,
-		profile: IProviderProfile,
-		apiKey: string | undefined,
-		request: IVoltSendRequest,
-		messages: readonly INativeLoopMessage[],
-		tools: IVoltTool[],
-		token: CancellationToken,
-	) {
-		const kinds = new Map(tools.map(tool => [tool.name, tool.kind]));
-		let finish: NativeFinishReason | undefined;
-		for await (const event of provider.stream({
-			modelId: item.id,
-			messages: nativeToModelMessages(messages),
-			profile,
-			apiKey,
-			options: this.resolvedOptions(item, request.options),
-			tools: toolSchemas(tools),
-		}, token)) {
-			if (token.isCancellationRequested) {
-				yield { type: 'finish', reason: 'abort' as const };
-				return;
-			}
-			if (event.type === 'finish') {
-				finish = event.reason;
-				continue;
-			}
-			if (event.type === 'tool.start') {
-				yield { ...event, kind: kinds.get(event.name) ?? event.kind };
-				continue;
-			}
-			yield event;
-		}
-		yield { type: 'finish', reason: token.isCancellationRequested ? 'abort' as const : finish ?? 'stop' };
-	}
-
-	private async executeToolCalls(
-		session: ISessionState,
-		runId: string,
-		profile: IProviderProfile,
-		intent: IIntent,
-		calls: readonly IToolCall[],
-		token: CancellationToken,
-	): Promise<readonly IToolResult[]> {
-		const tools = this.visibleSessionTools(session, intent);
-		const registry = new Map(tools.map(tool => [tool.name, tool]));
-		return runToolBatch(registry, calls, {
-			cwd: this.workspace.getWorkspace().folders[0]?.uri.fsPath,
-			signal: abortSignalFrom(token),
-			emit: event => {
-				const forwarded = asToolEvent(event);
-				if (forwarded) {
-					this.emit(session, runId, forwarded);
-				}
-			},
-		}, {
-			authorize: (call, tool) => this.authorizeTool(session, runId, profile, call, tool),
-			cache: session.harness?.cache,
-			dryRun: session.prepared?.strategy.policy.dryRun,
-			maxParallel: session.harness?.governor.snapshot().remaining.parallel ?? session.prepared?.strategy.policy.parallelism ?? 4,
-			fileTracker: session.harness?.files,
-		});
-	}
-
-	private async authorizeTool(
-		session: ISessionState,
-		runId: string,
-		profile: IProviderProfile,
-		call: IToolCall,
-		tool: IVoltTool,
-	): Promise<{ allow: boolean; reason?: string }> {
-		if (tool.group === 'meta') {
-			return { allow: true };
-		}
-		const action = actionForGroup(tool.group);
-		const resource = resourceForCall(tool, call.args);
-		const decision = await this.evaluateAccessRequest({
-			id: generateUuid(),
-			sessionId: session.sessionId,
-			runId,
-			providerId: profile.providerId,
-			action,
-			resource,
-			risk: classifyRisk(action, resource.value),
-			preview: { title: tool.name, detail: stringifyUnknown(call.args).slice(0, 400) },
-			createdAt: Date.now(),
-		});
-		return decision.effect === 'allow'
-			? { allow: true }
-			: { allow: false, reason: `Blocked by Volt access policy (${decision.policySource ?? 'policy'}).` };
-	}
 
 	private async executeAgent(session: ISessionState, runId: string, request: IVoltSendRequest, profile: IProviderProfile, item: IVoltCatalogItem, intent: IIntent): Promise<void> {
 		const provider = this.agentProviders.get(profile.providerId);
@@ -1418,67 +1311,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.emit(session, runId, { type: 'run.end', runId, reason });
 		session.prepared = undefined;
 		session.harness = undefined;
+		if (session.deepseek) {
+			session.deepseek.running = false;
+		}
 	}
 
-	private emitOutcome(session: ISessionState, runId: string, harness: IRunHarness, assistant: string, loopOutcome: string): void {
-		const finish = parseFinishPayload(assistant) ?? finishFromEvidence(harness);
-		const outcome = synthesize({
-			intel: harness.prepared.intel,
-			store: harness.controller.evidence,
-			gates: harness.controller.gates,
-			completion: harness.controller.completion,
-			work: workFromHarness(harness),
-			durationMs: Date.now() - (session.activeRun?.startedAt ?? Date.now()),
-			...(harness.controller.plan ? { plan: harness.controller.plan } : {}),
-			assistantSummary: finish?.summary ?? assistant,
-			...(finish?.remaining ? { modelRemaining: finish.remaining } : {}),
-			cancelled: loopOutcome === 'abort',
-			failed: loopOutcome === 'fail',
-		});
-		this.emit(session, runId, { type: 'outcome', headline: outcome.headline, markdown: renderOutcome(outcome), status: outcome.status });
-		const spend = harness.governor.snapshot();
-		const progress = harness.controller.lastProgress;
-		const sample = {
-			lane: harness.prepared.intent.lane,
-			strategy: harness.prepared.strategy.strategy,
-			outcome: (loopOutcome === 'abort' ? 'abort' : loopOutcome === 'fail' ? 'fail' : loopOutcome === 'budget' ? 'budget' : 'done') as 'done' | 'abort' | 'fail' | 'budget',
-			complete: harness.controller.completion.complete,
-			steps: spend.spent.steps,
-			tools: spend.spent.tools,
-			toolErrors: harness.controller.evidence.all().filter(item => !item.ok).length,
-			tokens: spend.spent.tokens,
-			durationMs: Date.now() - (session.activeRun?.startedAt ?? Date.now()),
-			recoveries: harness.obs.metrics().recoveries,
-			doom: progress?.doomLoop ?? false,
-			regression: progress?.regression ?? false,
-			stuck: progress?.stuck ?? false,
-			confidence: progress?.score ?? (harness.controller.completion.complete ? 0.8 : 0.3),
-		};
-		const report = this.evalLedger.record(sample);
-		harness.evals.record(sample);
-		this.emit(session, runId, {
-			type: 'eval',
-			score: report.score,
-			successRate: report.meters.successRate,
-			steps: report.meters.stepsPerTask,
-			tokens: report.meters.tokensPerTask,
-			hints: [...report.hints, ...this.evalLedger.hints()].map(hint => hint.message),
-		});
-	}
-
-	private async applyFileRestore(restored: readonly IFileSnapshot[]): Promise<{ applied: number }> {
-		return applyRestored(restored, {
-			write: async (path, content) => {
-				await this.fileService.writeFile(URI.file(path), VSBuffer.fromString(content));
-			},
-			remove: async path => {
-				const uri = URI.file(path);
-				if (await this.fileService.exists(uri)) {
-					await this.fileService.del(uri);
-				}
-			},
-		});
-	}
 
 	private routableCatalog(): IRoutableModel[] {
 		return this.catalog.map(item => ({
@@ -1490,39 +1327,6 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			enabled: item.enabled,
 			healthy: this.detections.get(item.profileId)?.available !== false,
 		}));
-	}
-
-	private taskModelRoles(): IRoleAssignments {
-		return {
-			...(this.taskModels.agent ? { coding: this.taskModels.agent } : {}),
-			...(this.taskModels.plan ? { reasoning: this.taskModels.plan } : {}),
-			...(this.taskModels.ask ? { fast: this.taskModels.ask } : {}),
-		};
-	}
-
-	private harnessCapabilities(session: ISessionState, currentRef: string) {
-		const prepared = session.prepared;
-		if (!prepared) {
-			return { canEscalate: false, canDelegate: false, canRollback: false, canReset: false };
-		}
-		const request = { lane: prepared.intent.lane, mode: session.mode, intel: prepared.intel };
-		return {
-			canEscalate: canEscalate(currentRef, this.routableCatalog(), request),
-			canDelegate: prepared.orchestration.concurrency > 1,
-			canRollback: session.harness?.state.canRollback() ?? false,
-			canReset: laneDefinition(prepared.intent.lane).compaction,
-			canIsolate: prepared.strategy.policy.isolateWorkers || prepared.orchestration.concurrency > 1,
-		};
-	}
-
-	private emitOccupancy(session: ISessionState, runId: string, messages: readonly INativeLoopMessage[], tools: readonly IVoltTool[], contextWindow: number): void {
-		this.emit(session, runId, {
-			type: 'usage',
-			input: 0,
-			output: 0,
-			used: totalTokens(messages) + estimateTokens(JSON.stringify(toolSchemas(tools))),
-			size: contextWindow,
-		});
 	}
 
 	private emit(session: ISessionState, runId: string, event: IVoltEvent): void {
@@ -1719,7 +1523,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 	}
 
-	private evaluateAccessRequest(request: IAccessRequest): IAccessDecision | Promise<IAccessDecision> {
+	private evaluateAccessRequest(request: IAccessRequest, settleAsk = true): IAccessDecision | Promise<IAccessDecision> {
 		const session = this.sessions.get(request.sessionId);
 		const mode = session?.mode ?? (request.sessionId === TAB_PREDICTION_SESSION_ID ? 'ask' : 'agent');
 		const key = `${mode}\0${memoKey(request.action, request.resource.value)}`;
@@ -1749,6 +1553,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.policyMemo.set(key, decision);
 			this.recordReceipt(request, decision, 'denied');
 			this.emitAccess(request, { type: 'access.blocked', request, policySource: decision.policySource ?? 'policy' });
+			return decision;
+		}
+		if (!settleAsk) {
 			return decision;
 		}
 		return this.askAccess(request, decision);
@@ -1847,11 +1654,6 @@ function remainingBudget(harness: IRunHarness | undefined): { steps: number; too
 		return undefined;
 	}
 	return { steps: snap.remaining.steps, tools: snap.remaining.tools, timeMs: snap.remaining.timeMs };
-}
-
-function finishFromEvidence(harness: IRunHarness): { summary?: string; remaining?: string[] } | undefined {
-	const item = [...harness.controller.evidence.all()].reverse().find(entry => entry.tool === 'finish');
-	return item ? parseFinishPayload(item.detail) : undefined;
 }
 
 function abortSignalFrom(token: CancellationToken): AbortSignal {

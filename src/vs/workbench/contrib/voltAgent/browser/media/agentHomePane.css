@@ -276,8 +276,10 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 }
 
 .monaco-workbench.volt-layout-agent {
-	--volt-agent-window-bg: color-mix(in srgb, var(--vscode-sideBar-background, var(--vscode-titleBar-activeBackground, #141414)) 90%, transparent);
-	--volt-agent-sidebar-bg: color-mix(in srgb, var(--vscode-sideBar-background, var(--vscode-titleBar-activeBackground, #141414)) 60%, transparent);
+	--volt-agent-window-bg-base: var(--vscode-sideBar-background, var(--vscode-titleBar-activeBackground, #141414));
+	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 90%, transparent);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 60%, transparent);
+	--volt-agent-chat-bg: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
 	background: transparent !important;
 	background-color: transparent !important;
 }
@@ -432,12 +434,17 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	background-color: transparent !important;
 }
 
-.monaco-workbench.volt-layout-agent .volt-agent-thread-fade.top {
-	background: linear-gradient(to bottom, var(--volt-agent-window-bg) 0%, transparent 100%) !important;
+.monaco-workbench.volt-layout-agent .volt-agent-turn.user {
+	background: var(--volt-agent-chat-bg) !important;
 }
 
-.monaco-workbench.volt-layout-agent .volt-agent-thread-fade.bottom {
-	background: linear-gradient(to top, var(--volt-agent-window-bg) 0%, transparent 100%) !important;
+.monaco-workbench.volt-layout-agent .volt-agent-editor:has(.volt-agent-turn) .volt-agent-composer {
+	background: var(--volt-agent-chat-bg) !important;
+	background-color: var(--volt-agent-chat-bg) !important;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-thread-fade.top {
+	background: linear-gradient(to bottom, var(--volt-agent-chat-bg) 0%, transparent 100%) !important;
 }
 
 .monaco-workbench:not(.volt-layout-agent) .part.sidebar.left,

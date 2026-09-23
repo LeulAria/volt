@@ -3,11 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IVoltToolView } from '../../../../services/voltRuntime/common/events.js';
+import { presentOutput, type OutputView } from '../../../../services/voltRuntime/common/harness/adaptiveOutput.js';
 import type { IWorkCounts, ToolKind } from '../../../../services/voltRuntime/common/harness/workLog.js';
 
 export type AgentBlockStatus = 'streaming' | 'complete' | 'error';
 
-export type AgentBlockType = 'markdown' | 'code' | 'terminal' | 'table' | 'tool' | 'file' | 'error' | 'approval';
+export type AgentBlockType = 'markdown' | 'code' | 'terminal' | 'table' | 'list' | 'cards' | 'chart' | 'mermaid' | 'tool' | 'file' | 'error' | 'approval';
 
 export interface IAgentBaseBlock {
 	readonly id: string;
@@ -41,6 +43,31 @@ export interface ITableBlock extends IAgentBaseBlock {
 	readonly type: 'table';
 	headers: string[];
 	rows: string[][];
+	caption?: string;
+}
+
+export interface IListBlock extends IAgentBaseBlock {
+	readonly type: 'list';
+	ordered: boolean;
+	items: string[];
+}
+
+export interface ICardsBlock extends IAgentBaseBlock {
+	readonly type: 'cards';
+	items: { title: string; body: string; meta?: string }[];
+}
+
+export interface IChartBlock extends IAgentBaseBlock {
+	readonly type: 'chart';
+	labels: string[];
+	values: number[];
+	unit?: string;
+	title?: string;
+}
+
+export interface IMermaidBlock extends IAgentBaseBlock {
+	readonly type: 'mermaid';
+	source: string;
 }
 
 export interface IToolBlock extends IAgentBaseBlock {
@@ -94,6 +121,10 @@ export type AgentBlock =
 	| ICodeBlock
 	| ITerminalBlock
 	| ITableBlock
+	| IListBlock
+	| ICardsBlock
+	| IChartBlock
+	| IMermaidBlock
 	| IToolBlock
 	| IFileChangeBlock
 	| IErrorBlock
@@ -133,6 +164,8 @@ export interface IAgentActivityItem {
 	input?: string;
 	toolName?: string;
 	toolTitle?: string;
+	/** DeepSeek completed card. Drawn under the activity row. */
+	view?: IVoltToolView;
 }
 
 export type AgentSegment =
@@ -175,9 +208,6 @@ export function workCountsForSegments(segments: readonly AgentSegment[]): IWorkC
 	return { filesChanged: files.size, commands, reads, searches, browser, webFetches, subagents };
 }
 
-const FENCE_OPEN_RE = /^(`{3,}|~{3,})([A-Za-z0-9_+-]*)(?:\s+(.*))?$/;
-const TABLE_LINE_RE = /^\s*\|.+\|\s*$/;
-const TABLE_SEP_RE = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
 const SIZE_RE = /^\d+(\.\d+)?\s*(B|KB|MB|GB|TB|KiB|MiB|GiB|K|M|G)\s*$/i;
 const SHELL_START_RE = /^(sudo\s+)?(ls|cd|pwd|find|grep|rg|cat|head|tail|git|npm|npx|pnpm|yarn|bun|make|echo|curl|wget|python3?|node|cargo|go|docker|kubectl|chmod|chown|rm|mv|cp|mkdir|touch|which|export|source|bash|zsh|sh|for|if)\b/;
 const TERMINAL_LANGS = new Set(['bash', 'sh', 'shell', 'zsh', 'fish', 'terminal', 'console', 'powershell', 'ps1', 'cmd', 'bat']);
@@ -591,11 +621,72 @@ export function appendThoughtDelta(segments: AgentSegment[], delta: string): voi
 
 export function splitMarkdownToBlocks(text: string, idPrefix: string): AgentBlock[] {
 	const blocks: AgentBlock[] = [];
+	let markdownIndex = 0;
+	let specialIndex = 0;
+	const markdownId = () => `${idPrefix}-md-${markdownIndex++}`;
+	const specialId = () => `${idPrefix}-x-${specialIndex++}`;
+
+	for (const view of presentOutput(text)) {
+		blocks.push(...blocksFromOutputView(view, markdownId, specialId));
+	}
+	return blocks;
+}
+
+function blocksFromOutputView(view: OutputView, markdownId: () => string, specialId: () => string): AgentBlock[] {
+	switch (view.kind) {
+		case 'text':
+			return splitTextWithShell(view.markdown, markdownId, specialId);
+		case 'table':
+			return [{
+				id: specialId(),
+				type: 'table',
+				status: 'complete',
+				headers: [...view.headers],
+				rows: view.rows.map(row => [...row]),
+				...(view.caption ? { caption: view.caption } : {}),
+			}];
+		case 'list':
+			return [{
+				id: specialId(),
+				type: 'list',
+				status: 'complete',
+				ordered: view.ordered,
+				items: [...view.items],
+			}];
+		case 'cards':
+			return [{
+				id: specialId(),
+				type: 'cards',
+				status: 'complete',
+				items: view.items.map(item => ({ title: item.title, body: item.body, ...(item.meta ? { meta: item.meta } : {}) })),
+			}];
+		case 'chart':
+			return [{
+				id: specialId(),
+				type: 'chart',
+				status: 'complete',
+				labels: [...view.labels],
+				values: [...view.values],
+				...(view.unit ? { unit: view.unit } : {}),
+				...(view.title ? { title: view.title } : {}),
+			}];
+		case 'code':
+			return [blockFromFence(specialId(), view.language, view.code, view.closed !== false)];
+		case 'mermaid':
+			return [{
+				id: specialId(),
+				type: 'mermaid',
+				status: view.closed === false ? 'streaming' : 'complete',
+				source: view.source,
+			}];
+	}
+}
+
+function splitTextWithShell(text: string, markdownId: () => string, specialId: () => string): AgentBlock[] {
+	const blocks: AgentBlock[] = [];
 	const lines = text.split('\n');
 	let i = 0;
 	let markdown: string[] = [];
-	let markdownIndex = 0;
-	let specialIndex = 0;
 
 	const flushMarkdown = () => {
 		const content = markdown.join('\n').trim();
@@ -607,7 +698,7 @@ export function splitMarkdownToBlocks(text: string, idPrefix: string): AgentBloc
 		if (looksLikeShell(unwrapped) && looksLikeUnfencedShell(unwrapped.split('\n')[0] ?? unwrapped)) {
 			const split = splitCommandAndOutput(unwrapped);
 			blocks.push(createTerminalBlock({
-				id: `${idPrefix}-x-${specialIndex++}`,
+				id: specialId(),
 				status: 'complete',
 				title: humanTerminalTitle(undefined, split.command),
 				command: split.command,
@@ -616,7 +707,7 @@ export function splitMarkdownToBlocks(text: string, idPrefix: string): AgentBloc
 			return;
 		}
 		blocks.push({
-			id: `${idPrefix}-md-${markdownIndex++}`,
+			id: markdownId(),
 			type: 'markdown',
 			status: 'complete',
 			content,
@@ -625,29 +716,6 @@ export function splitMarkdownToBlocks(text: string, idPrefix: string): AgentBloc
 
 	while (i < lines.length) {
 		const line = lines[i];
-		const fence = parseFenceLine(line);
-		if (fence) {
-			flushMarkdown();
-			const body: string[] = [];
-			if (fence.rest) {
-				body.push(fence.rest);
-			}
-			i++;
-			let closed = false;
-			while (i < lines.length) {
-				const close = parseFenceLine(lines[i]);
-				if (close && close.marker[0] === fence.marker[0] && close.marker.length >= fence.marker.length && !close.language && !close.rest) {
-					closed = true;
-					i++;
-					break;
-				}
-				body.push(lines[i]);
-				i++;
-			}
-			blocks.push(blockFromFence(`${idPrefix}-x-${specialIndex++}`, fence.language || undefined, body.join('\n'), closed));
-			continue;
-		}
-
 		if (looksLikeUnfencedShell(line)) {
 			flushMarkdown();
 			const body = [line.replace(/^\$\s+/, '')];
@@ -658,7 +726,7 @@ export function splitMarkdownToBlocks(text: string, idPrefix: string): AgentBloc
 			}
 			const split = splitCommandAndOutput(body.join('\n'));
 			blocks.push(createTerminalBlock({
-				id: `${idPrefix}-x-${specialIndex++}`,
+				id: specialId(),
 				status: 'complete',
 				title: humanTerminalTitle(undefined, split.command),
 				command: split.command,
@@ -666,28 +734,6 @@ export function splitMarkdownToBlocks(text: string, idPrefix: string): AgentBloc
 			}));
 			continue;
 		}
-
-		if (TABLE_LINE_RE.test(line) && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1])) {
-			flushMarkdown();
-			const tableLines = [line, lines[i + 1]];
-			i += 2;
-			while (i < lines.length && TABLE_LINE_RE.test(lines[i])) {
-				tableLines.push(lines[i]);
-				i++;
-			}
-			const table = parseMarkdownTable(tableLines);
-			if (table) {
-				blocks.push({
-					id: `${idPrefix}-x-${specialIndex++}`,
-					type: 'table',
-					status: 'complete',
-					headers: table.headers,
-					rows: table.rows,
-				});
-			}
-			continue;
-		}
-
 		markdown.push(line);
 		i++;
 	}
@@ -793,14 +839,6 @@ function unwrapShellMarkup(value: string): string {
 		.trim();
 }
 
-function parseFenceLine(line: string): { marker: string; language: string; rest: string } | undefined {
-	const match = line.match(FENCE_OPEN_RE);
-	if (!match) {
-		return undefined;
-	}
-	return { marker: match[1], language: match[2] || '', rest: (match[3] || '').trim() };
-}
-
 function looksLikeUnfencedShell(line: string): boolean {
 	const trimmed = line.replace(/^\$\s+/, '').trim();
 	if (!trimmed || /^[A-Z]/.test(trimmed)) {
@@ -831,6 +869,14 @@ export function blocksPlainText(blocks: AgentBlock[]): string {
 				return [block.command, block.output].filter(Boolean).join('\n');
 			case 'table':
 				return [block.headers.join(' | '), block.rows.map(row => row.join(' | ')).join('\n')].join('\n');
+			case 'list':
+				return block.items.map((item, index) => block.ordered ? `${index + 1}. ${item}` : `- ${item}`).join('\n');
+			case 'cards':
+				return block.items.map(item => [item.title, item.body, item.meta].filter(Boolean).join('\n')).join('\n\n');
+			case 'chart':
+				return block.labels.map((label, index) => `${label}: ${block.values[index]}${block.unit ?? ''}`).join('\n');
+			case 'mermaid':
+				return block.source;
 			case 'tool':
 				return [block.title ?? block.name, block.input, block.output].filter(Boolean).join('\n');
 			case 'file':
@@ -847,17 +893,25 @@ export function stripCellMarkup(value: string): string {
 	return value.replace(/^[`*_]+|[`*_]+$/g, '').trim();
 }
 
-export function classifyTableCell(value: string, header?: string): 'file' | 'size' | 'rank' | 'text' {
+export function classifyTableCell(value: string, header?: string): 'file' | 'size' | 'rank' | 'number' | 'text' {
 	const raw = stripCellMarkup(value);
 	const head = (header ?? '').toLowerCase();
 	if (SIZE_RE.test(raw) || head === 'size') {
 		return 'size';
 	}
-	if (head === '#' || head === 'rank' || (/^\d+$/.test(raw) && raw.length <= 3 && head !== 'file')) {
+	if (head === '#' || head === 'rank' || (/^\d+$/.test(raw) && raw.length <= 3 && !/file|path|name|population|price|value|count/.test(head))) {
 		return 'rank';
 	}
-	if (head === 'file' || head === 'path' || head === 'name' || isPathLike(raw) || /^`/.test(value.trim())) {
+	if (head === 'file' || head === 'path' || isTableFileCell(raw) || (/^`/.test(value.trim()) && isTableFileCell(stripCellMarkup(value)))) {
 		return 'file';
+	}
+	if (
+		head === 'population' || head === 'price' || head === 'value' || head === 'count' || head === 'score' || head === 'share'
+		|| /^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?$/.test(raw)
+		|| /^(?:[$\u20ac\u00a3\u00a5]|AED|USD|EUR|GBP|INR)\s*-?\d/i.test(raw)
+		|| /^-?\d+(?:\.\d+)?%$/.test(raw)
+	) {
+		return 'number';
 	}
 	return 'text';
 }
@@ -872,6 +926,20 @@ export function truncateMiddle(text: string, max = 44): string {
 
 export function isPathLike(value: string): boolean {
 	return /[\/\\]/.test(value) || /^\.[\w.]/.test(value) || /\.\w{1,8}$/.test(value);
+}
+
+/** A table cell is a file when it is one path token. A slash inside a sentence is not. */
+function isTableFileCell(value: string): boolean {
+	const text = value.trim();
+	if (!text || /\s/.test(text) || !isPathLike(text)) {
+		return false;
+	}
+	if (!/[/\\]/.test(text)) {
+		return true;
+	}
+	return /^(?:~\/|\.\/|\.\.\/|\/|[A-Za-z]:[\\/])/.test(text)
+		|| /\.[A-Za-z0-9]{1,8}$/.test(text)
+		|| (text.match(/[/\\]/g)?.length ?? 0) >= 2;
 }
 
 export interface IAgentFileTarget {
@@ -1454,27 +1522,4 @@ function splitCommandAndOutput(code: string): { command: string; output: string 
 
 function looksLikeOutput(line: string): boolean {
 	return /^[-dl][-rwxs]{9}/.test(line) || /^total\s+\d+/.test(line) || /^\s*\d+\s+\S+/.test(line);
-}
-
-function parseMarkdownTable(lines: string[]): { headers: string[]; rows: string[][] } | undefined {
-	if (lines.length < 2) {
-		return undefined;
-	}
-	const split = (line: string) => line.replace(/^\s*\||\|\s*$/g, '').split('|').map(cell => cell.trim());
-	const headers = split(lines[0]);
-	const rows = lines.slice(2).filter(line => line.trim()).map(split).map(row => {
-		while (row.length < headers.length) {
-			row.push('');
-		}
-		return row.slice(0, headers.length);
-	});
-	for (let col = headers.length - 1; col >= 0; col--) {
-		if (!headers[col] && rows.every(row => !row[col])) {
-			headers.splice(col, 1);
-			for (const row of rows) {
-				row.splice(col, 1);
-			}
-		}
-	}
-	return headers.length ? { headers, rows } : undefined;
 }

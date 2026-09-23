@@ -18,9 +18,12 @@ import {
 	AgentBlock,
 	classifyTableCell,
 	IApprovalBlock,
+	ICardsBlock,
+	IChartBlock,
 	ICodeBlock,
 	IErrorBlock,
 	IFileChangeBlock,
+	IListBlock,
 	IMarkdownBlock,
 	ITableBlock,
 	ITerminalBlock,
@@ -31,6 +34,8 @@ import {
 	stripCellMarkup,
 	terminalCommandLabels,
 } from './agentBlocks.js';
+import { renderMermaidDiagram } from './agentMermaid.js';
+import { tableFromListItems } from '../../../../services/voltRuntime/common/harness/adaptiveOutput.js';
 import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../preview/localPreview.js';
 import { AccessDecisionScope } from '../../../../services/voltRuntime/common/access/accessTypes.js';
 import { FileChangePreview } from '../review/fileChangePreview.js';
@@ -48,6 +53,8 @@ export interface IBlockRenderContext {
 	readonly onOpenPath?: (path: string, startLine?: number, endLine?: number) => void;
 	readonly onOpenUrl?: (url: string) => void;
 	readonly onTerminalMenu?: (anchor: HTMLElement, command: string) => void;
+	readonly onTableCopyMenu?: (anchor: HTMLElement, plain: string, markdown: string) => void;
+	readonly onCopyText?: (text: string) => void;
 	readonly onAccessDecision?: (requestId: string, effect: 'allow' | 'deny', scope: AccessDecisionScope, pattern?: string) => void;
 	/** When false, a still-running command must not keep the streaming shimmer. */
 	readonly streaming?: boolean;
@@ -66,6 +73,18 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 			return;
 		case 'table':
 			renderTableBlock(parent, block, ctx);
+			return;
+		case 'list':
+			renderListBlock(parent, block, ctx);
+			return;
+		case 'cards':
+			renderCardsBlock(parent, block, ctx);
+			return;
+		case 'chart':
+			renderChartBlock(parent, block);
+			return;
+		case 'mermaid':
+			renderMermaidDiagram(parent, block.source);
 			return;
 		case 'tool':
 			renderToolBlock(parent, block, ctx);
@@ -98,6 +117,7 @@ export function renderMarkdownInto(parent: HTMLElement, text: string, ctx: IBloc
 	}
 	decorateMarkdownPills(result.element, ctx);
 	wrapMarkdownTables(result.element, ctx);
+	wrapComparableLists(result.element, ctx);
 	parent.appendChild(result.element);
 	ctx.store.add(result);
 }
@@ -342,6 +362,10 @@ function resolveDiffStyle(ctx: IBlockRenderContext, files?: number, additions?: 
 
 function renderTableBlock(parent: HTMLElement, block: ITableBlock, ctx: IBlockRenderContext): void {
 	const wrap = append(parent, $('.volt-agent-block.table.volt-agent-table-wrap'));
+	if (block.caption) {
+		const caption = append(wrap, $('div.volt-agent-table-caption.volt-agent-searchable'));
+		caption.textContent = block.caption;
+	}
 	const table = append(wrap, $('table.volt-agent-table'));
 	const thead = append(table, $('thead'));
 	const headRow = append(thead, $('tr'));
@@ -369,7 +393,72 @@ function renderTableBlock(parent: HTMLElement, block: ITableBlock, ctx: IBlockRe
 			}
 		}
 	}
-	attachTableScroll(wrap, ctx);
+	balanceTableColumns(table);
+	attachTableCopyControls(wrap, ctx);
+}
+
+function renderListBlock(parent: HTMLElement, block: IListBlock, ctx: IBlockRenderContext): void {
+	const table = tableFromListItems(block.items, '', block.ordered);
+	if (table) {
+		renderTableBlock(parent, {
+			id: block.id,
+			type: 'table',
+			status: block.status,
+			headers: [...table.headers],
+			rows: table.rows.map(row => [...row]),
+		}, ctx);
+		return;
+	}
+	const wrap = append(parent, $(`.volt-agent-block.list.volt-agent-list`));
+	const list = append(wrap, $(block.ordered ? 'ol' : 'ul'));
+	for (const item of block.items) {
+		const li = append(list, $('li.volt-agent-searchable'));
+		if (/[*_`\[]/.test(item)) {
+			renderMarkdownInto(li, item, ctx, 'volt-agent-list-item');
+		} else {
+			li.textContent = item;
+		}
+	}
+}
+
+function renderCardsBlock(parent: HTMLElement, block: ICardsBlock, ctx: IBlockRenderContext): void {
+	const wrap = append(parent, $('.volt-agent-block.cards.volt-agent-cards'));
+	for (const item of block.items) {
+		const card = append(wrap, $('.volt-agent-card'));
+		const title = append(card, $('.volt-agent-card-title.volt-agent-searchable'));
+		title.textContent = item.title;
+		if (item.meta) {
+			const meta = append(card, $('.volt-agent-card-meta.volt-agent-searchable'));
+			meta.textContent = item.meta;
+		}
+		renderMarkdownInto(card, item.body, ctx, 'volt-agent-card-body');
+	}
+}
+
+function renderChartBlock(parent: HTMLElement, block: IChartBlock): void {
+	const wrap = append(parent, $('.volt-agent-block.chart.volt-agent-chart'));
+	if (block.title) {
+		const title = append(wrap, $('.volt-agent-chart-title.volt-agent-searchable'));
+		title.textContent = block.title;
+	}
+	const max = Math.max(...block.values, 0.0001);
+	for (const [index, label] of block.labels.entries()) {
+		const row = append(wrap, $('.volt-agent-chart-row'));
+		const name = append(row, $('span.volt-agent-chart-label.volt-agent-searchable'));
+		name.textContent = label;
+		const track = append(row, $('.volt-agent-chart-track'));
+		const bar = append(track, $('.volt-agent-chart-bar'));
+		bar.style.width = `${Math.max(4, (block.values[index] / max) * 100)}%`;
+		const value = append(row, $('span.volt-agent-chart-value.volt-agent-searchable'));
+		value.textContent = `${formatChartValue(block.values[index])}${block.unit ?? ''}`;
+	}
+}
+
+function formatChartValue(value: number): string {
+	if (Number.isInteger(value)) {
+		return String(value);
+	}
+	return String(Math.round(value * 100) / 100);
 }
 
 function renderErrorBlock(parent: HTMLElement, block: IErrorBlock): void {
@@ -464,9 +553,235 @@ function wrapMarkdownTables(root: HTMLElement, ctx: IBlockRenderContext): void {
 			const htmlTable = table as HTMLTableElement;
 			pruneEmptyTableColumns(htmlTable);
 			decorateTableColumns(htmlTable);
+			balanceTableColumns(htmlTable);
+			attachTableCopyControls(wrap, ctx);
 		}
-		attachTableScroll(wrap, ctx);
 	}
+}
+
+function wrapComparableLists(root: HTMLElement, ctx: IBlockRenderContext): void {
+	for (const list of [...root.querySelectorAll('ol, ul')]) {
+		if (list.closest('.volt-agent-table-wrap, .volt-agent-list, li')) {
+			continue;
+		}
+		const lis = [...list.children].filter((child): child is HTMLLIElement => child.tagName === 'LI');
+		const items = lis.map(child => (child.textContent ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+		if (lis.some(item => item.querySelector('ul, ol, table'))) {
+			continue;
+		}
+		const table = tableFromListItems(items, root.textContent ?? '', list.tagName === 'OL');
+		if (!table) {
+			continue;
+		}
+		const wrap = list.ownerDocument.createElement('div');
+		wrap.className = 'volt-agent-table-wrap';
+		const htmlTable = list.ownerDocument.createElement('table');
+		htmlTable.className = 'volt-agent-table';
+		const thead = htmlTable.createTHead();
+		const headRow = thead.insertRow();
+		for (const header of table.headers) {
+			const th = list.ownerDocument.createElement('th');
+			th.className = classifyTableCell(header, header);
+			const label = list.ownerDocument.createElement('span');
+			label.className = 'volt-agent-searchable';
+			label.textContent = stripCellMarkup(header);
+			th.appendChild(label);
+			headRow.appendChild(th);
+		}
+		const tbody = htmlTable.createTBody();
+		for (const row of table.rows) {
+			const tr = tbody.insertRow();
+			for (const [index, cell] of row.entries()) {
+				const kind = classifyTableCell(cell, table.headers[index]);
+				const td = tr.insertCell();
+				td.className = kind;
+				const raw = stripCellMarkup(cell);
+				if (kind === 'file') {
+					const pill = list.ownerDocument.createElement('span');
+					pill.className = 'volt-agent-path-pill volt-agent-searchable';
+					pill.textContent = raw;
+					td.appendChild(pill);
+					bindPathOpen(pill, parseFileTarget(raw), ctx);
+				} else {
+					const span = list.ownerDocument.createElement('span');
+					span.className = 'volt-agent-searchable';
+					span.textContent = raw;
+					td.appendChild(span);
+				}
+			}
+		}
+		list.replaceWith(wrap);
+		wrap.appendChild(htmlTable);
+		decorateTableColumns(htmlTable);
+		balanceTableColumns(htmlTable);
+		attachTableCopyControls(wrap, ctx);
+	}
+}
+
+export function tableElementToPlainText(table: HTMLTableElement): string {
+	return [...table.rows]
+		.map(row => [...row.cells].map(cell => cellCopyText(cell)).join('\t'))
+		.join('\n');
+}
+
+export function tableElementToMarkdown(table: HTMLTableElement): string {
+	const rows = [...table.rows];
+	if (!rows.length) {
+		return '';
+	}
+	const escape = (value: string) => value.replace(/\|/g, '\\|').replace(/\n/g, ' ').trim();
+	const lines: string[] = [];
+	for (let index = 0; index < rows.length; index++) {
+		const cells = [...rows[index].cells].map(cell => escape(cellCopyText(cell)));
+		lines.push(`| ${cells.join(' | ')} |`);
+		if (index === 0 && table.tHead) {
+			lines.push(`| ${cells.map(() => '---').join(' | ')} |`);
+		}
+	}
+	return lines.join('\n');
+}
+
+function cellCopyText(cell: HTMLTableCellElement): string {
+	const content = cell.querySelector(':scope > .volt-agent-table-cell > .volt-agent-table-cell-content');
+	return (content?.textContent ?? cell.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+const TABLE_COPY_ICON_PATH = 'M16 5L16.0001 2L2 2L2 16.0001L5 16M8 8L22 8L22 22L8 22L8 8Z';
+const TABLE_CHECK_ICON_PATH = 'M20 6 9 17l-5-5';
+
+export function createTableCopyIcon(width = 10, height = 12, extraClass = 'copy-table'): HTMLElement {
+	const el = $(`span.volt-agent-svg-icon.${extraClass}`);
+	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('width', String(width));
+	svg.setAttribute('height', String(height));
+	svg.setAttribute('fill', 'none');
+	svg.setAttribute('aria-hidden', 'true');
+	const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+	path.setAttribute('d', TABLE_COPY_ICON_PATH);
+	path.setAttribute('fill', 'none');
+	path.setAttribute('stroke', 'currentColor');
+	path.setAttribute('stroke-width', '1');
+	path.setAttribute('stroke-linejoin', 'round');
+	svg.appendChild(path);
+	el.appendChild(svg);
+	return el;
+}
+
+export function createTableCheckIcon(width = 10, height = 12, extraClass = 'copy-table-check'): HTMLElement {
+	const el = $(`span.volt-agent-svg-icon.${extraClass}`);
+	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('width', String(width));
+	svg.setAttribute('height', String(height));
+	svg.setAttribute('fill', 'none');
+	svg.setAttribute('aria-hidden', 'true');
+	const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+	path.setAttribute('d', TABLE_CHECK_ICON_PATH);
+	path.setAttribute('fill', 'none');
+	path.setAttribute('stroke', 'currentColor');
+	path.setAttribute('stroke-width', '1');
+	path.setAttribute('stroke-linecap', 'round');
+	path.setAttribute('stroke-linejoin', 'round');
+	svg.appendChild(path);
+	el.appendChild(svg);
+	return el;
+}
+
+export function flashCopyIconSuccess(slot: HTMLElement, win: Window, restoreIcon: () => HTMLElement, durationMs = 1400): void {
+	slot.classList.add('copied');
+	slot.replaceChildren(createTableCheckIcon(10, 12, 'copy-table-check'));
+	win.setTimeout(() => {
+		slot.classList.remove('copied');
+		slot.replaceChildren(restoreIcon());
+	}, durationMs);
+}
+
+function ensureTableShell(wrap: HTMLElement): HTMLElement {
+	const parent = wrap.parentElement;
+	if (parent?.classList.contains('volt-agent-table-shell')) {
+		return parent;
+	}
+	const shell = wrap.ownerDocument.createElement('div');
+	shell.className = 'volt-agent-table-shell';
+	wrap.parentNode?.insertBefore(shell, wrap);
+	shell.appendChild(wrap);
+	return shell;
+}
+
+function attachTableCopyControls(wrap: HTMLElement, ctx: IBlockRenderContext): void {
+	if (wrap.dataset.tableCopyControls === '1') {
+		return;
+	}
+	if (!ctx.onCopyText && !ctx.onTableCopyMenu) {
+		return;
+	}
+	const table = wrap.querySelector('table');
+	if (!isHTMLElement(table) || table.tagName !== 'TABLE') {
+		return;
+	}
+	wrap.dataset.tableCopyControls = '1';
+	if (ctx.onCopyText) {
+		for (const cell of table.querySelectorAll('th, td')) {
+			if (isHTMLElement(cell) && (cell.tagName === 'TD' || cell.tagName === 'TH')) {
+				enhanceTableCell(cell as HTMLTableCellElement, ctx);
+			}
+		}
+	}
+	if (!ctx.onTableCopyMenu) {
+		return;
+	}
+	const shell = ensureTableShell(wrap);
+	const actions = append(shell, $('.volt-agent-table-actions'));
+	const trigger = append(actions, $('button.volt-agent-table-copy-trigger')) as HTMLButtonElement;
+	trigger.type = 'button';
+	trigger.setAttribute('aria-haspopup', 'menu');
+	trigger.title = localize('voltAgent.tableCopyMenu', "Copy Table");
+	trigger.setAttribute('aria-label', trigger.title);
+	const iconSlot = append(trigger, $('span.volt-agent-table-copy-icon'));
+	iconSlot.appendChild(createTableCopyIcon(10, 12, 'copy-table'));
+	append(trigger, $('span.volt-agent-table-copy-label')).textContent = localize('voltAgent.tableCopyTable', "Copy Table");
+	ctx.store.add(addDisposableListener(trigger, 'mousedown', e => e.stopPropagation()));
+	ctx.store.add(addDisposableListener(trigger, 'click', e => {
+		e.preventDefault();
+		e.stopPropagation();
+		ctx.onTableCopyMenu!(trigger, tableElementToPlainText(table), tableElementToMarkdown(table));
+	}));
+}
+
+function enhanceTableCell(cell: HTMLTableCellElement, ctx: IBlockRenderContext): void {
+	if (cell.querySelector(':scope > .volt-agent-table-cell')) {
+		return;
+	}
+	const shell = cell.ownerDocument.createElement('div');
+	shell.className = 'volt-agent-table-cell';
+	const content = cell.ownerDocument.createElement('div');
+	content.className = 'volt-agent-table-cell-content';
+	while (cell.firstChild) {
+		content.appendChild(cell.firstChild);
+	}
+	shell.appendChild(content);
+	cell.appendChild(shell);
+	if (!ctx.onCopyText) {
+		return;
+	}
+	const copyBtn = append(shell, $('button.volt-agent-table-cell-copy')) as HTMLButtonElement;
+	copyBtn.type = 'button';
+	copyBtn.title = localize('voltAgent.tableCopyCell', "Copy cell");
+	copyBtn.setAttribute('aria-label', copyBtn.title);
+	const iconSlot = append(copyBtn, $('span.volt-agent-table-cell-copy-icon'));
+	iconSlot.appendChild(createTableCopyIcon(10, 11, 'copy-table-cell'));
+	ctx.store.add(addDisposableListener(copyBtn, 'mousedown', e => e.stopPropagation()));
+	ctx.store.add(addDisposableListener(copyBtn, 'click', e => {
+		e.preventDefault();
+		e.stopPropagation();
+		const text = cellCopyText(cell);
+		if (!text) {
+			return;
+		}
+		ctx.onCopyText!(text);
+		flashCopyIconSuccess(iconSlot, getWindow(cell), () => createTableCopyIcon(10, 11, 'copy-table-cell'));
+	}));
 }
 
 function pruneEmptyTableColumns(table: HTMLTableElement): void {
@@ -488,20 +803,78 @@ function decorateTableColumns(table: HTMLTableElement): void {
 	const headerRow = table.tHead?.rows[0] ?? table.rows[0];
 	const headers = headerRow ? [...headerRow.cells].map(cell => cell.textContent ?? '') : [];
 	for (const row of table.rows) {
+		const header = row.parentElement?.tagName === 'THEAD';
 		for (const [index, cell] of [...row.cells].entries()) {
 			cell.classList.add(classifyTableCell(cell.textContent ?? '', headers[index]));
+			if (header) {
+				cell.style.fontWeight = '500';
+				for (const child of cell.querySelectorAll('.volt-agent-searchable')) {
+					if (isHTMLElement(child)) {
+						child.style.fontWeight = '500';
+					}
+				}
+			}
 		}
 	}
 }
 
-function attachTableScroll(wrap: HTMLElement, ctx: IBlockRenderContext): void {
-	const table = wrap.querySelector('table');
-	if (!table || wrap.querySelector('.monaco-scrollable-element')) {
+/**
+ * Short columns stay as wide as their text. The long column takes the leftover
+ * width so a rank header cannot spill into the name beside it.
+ */
+function balanceTableColumns(table: HTMLTableElement): void {
+	const rows = [...table.rows];
+	if (!rows.length) {
 		return;
 	}
-	const content = $('.volt-agent-table-scroll');
-	content.appendChild(table);
-	attachContainedScroll(wrap, content, ctx);
+	const colCount = Math.max(...rows.map(row => row.cells.length));
+	if (colCount < 1) {
+		return;
+	}
+	const headerRow = table.tHead?.rows[0];
+	const bodyRows = headerRow ? rows.filter(row => row !== headerRow) : rows;
+	const stats = Array.from({ length: colCount }, (_, col) => {
+		let max = 0;
+		for (const row of bodyRows) {
+			max = Math.max(max, (row.cells[col]?.textContent ?? '').trim().length);
+		}
+		const kind = `${headerRow?.cells[col]?.className ?? ''} ${bodyRows[0]?.cells[col]?.className ?? ''}`;
+		return { max, rank: /\brank\b/.test(kind) };
+	});
+	const grow = stats.map(stat => !stat.rank && stat.max > 28);
+	if (!grow.some(Boolean)) {
+		let idx = stats.length - 1;
+		let best = -1;
+		stats.forEach((stat, i) => {
+			if (!stat.rank && stat.max >= best) {
+				best = stat.max;
+				idx = i;
+			}
+		});
+		grow[idx] = true;
+	}
+	const growCount = grow.filter(Boolean).length || 1;
+	let colgroup = table.querySelector('colgroup');
+	if (!colgroup) {
+		colgroup = table.ownerDocument.createElement('colgroup');
+		table.insertBefore(colgroup, table.firstChild);
+	}
+	colgroup.replaceChildren();
+	for (let col = 0; col < colCount; col++) {
+		const flexible = grow[col];
+		const colEl = table.ownerDocument.createElement('col');
+		colEl.className = flexible ? 'grow' : 'fit';
+		colEl.style.width = flexible ? `${Math.floor(100 / growCount)}%` : '1%';
+		colgroup.appendChild(colEl);
+		for (const row of rows) {
+			const cell = row.cells[col];
+			if (!cell) {
+				continue;
+			}
+			cell.classList.remove('fit', 'grow');
+			cell.classList.add(flexible ? 'grow' : 'fit');
+		}
+	}
 }
 
 function attachContainedScroll(wrap: HTMLElement, content: HTMLElement, ctx: IBlockRenderContext, afterScan?: () => void): () => void {

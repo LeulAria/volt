@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { createFileChangeBlock, createTerminalBlock } from '../../browser/blocks/agentBlocks.js';
-import { buildThreadParts, fileChangeGroupTitle, isProcessNarration, looksLikeAnswerForm, partitionAssistantText, visibleReplyParts } from '../../browser/chrome/agentTimeline.js';
+import { buildThreadParts, fileChangeGroupTitle, isProcessNarration, looksLikeAnswerForm, partitionAssistantText, STATUS_ROTATE_MS, streamingActivityLines, visibleReplyParts } from '../../browser/chrome/agentTimeline.js';
 
 suite('Agent timeline', () => {
 
@@ -34,9 +34,31 @@ suite('Agent timeline', () => {
 			{ kind: 'thought', text: 'Need another page.' },
 			{ kind: 'text', text: '3. X-Trail' },
 		]));
-		assert.deepStrictEqual(parts.map(part => part.kind), ['markdown']);
-		assert.ok(parts[0].kind === 'markdown' && /1\. Patrol/.test(parts[0].content) && /3\. X-Trail/.test(parts[0].content));
+		const visible = parts.filter(part => part.kind !== 'group');
+		assert.ok(visible.length >= 1);
+		const text = visible.map(part => {
+			if (part.kind === 'markdown') {
+				return part.content;
+			}
+			if (part.kind === 'block' && part.block.type === 'list') {
+				return part.block.items.join('\n');
+			}
+			return '';
+		}).join('\n');
+		assert.ok(/Patrol/.test(text) && /Kicks/.test(text) && /X-Trail/.test(text));
 		assert.ok(!parts.some(part => part.kind === 'group'));
+	});
+
+	test('renders comparable rankings as a table', () => {
+		const parts = visibleReplyParts(buildThreadParts([
+			{ kind: 'text', text: 'The 10 most populated countries:\n\n1. India — 1,476,625,576\n2. China — 1,412,914,089\n3. United States — 349,035,494' },
+		]));
+		const table = parts.find(part => part.kind === 'block' && part.block.type === 'table');
+		assert.ok(table && table.kind === 'block' && table.block.type === 'table');
+		if (table && table.kind === 'block' && table.block.type === 'table') {
+			assert.deepStrictEqual(table.block.headers, ['Rank', 'Country', 'Population']);
+			assert.strictEqual(table.block.rows[0][1], 'India');
+		}
 	});
 
 	test('keeps the URL reply visible', () => {
@@ -116,6 +138,24 @@ suite('Agent timeline', () => {
 		assert.strictEqual(parts[0].thinking, undefined);
 		assert.deepStrictEqual(parts[0].items.map(item => item.label), ['Searched files', 'Thought briefly', 'Read']);
 		assert.ok(parts[0].items[1].text?.includes('Checking agent transcripts'));
+	});
+
+	test('keeps a live working row after the reply has started', () => {
+		const parts = visibleReplyParts(buildThreadParts([
+			{ kind: 'text', text: 'I\'ll look up official Nissan UAE pricing.' },
+		], undefined, true), true);
+		assert.deepStrictEqual(parts.map(part => part.kind), ['markdown', 'group']);
+		assert.ok(parts[1].kind === 'group' && parts[1].title === 'Thinking');
+	});
+
+	test('keeps an in-progress search visible after the reply has started', () => {
+		const parts = visibleReplyParts(buildThreadParts([
+			{ kind: 'text', text: 'I\'ll look it up.' },
+			{ kind: 'activity', item: { kind: 'search', label: 'Searched', detail: 'nissan uae' } },
+		], undefined, true), true);
+		assert.ok(parts.some(part => part.kind === 'markdown'));
+		const last = parts.at(-1);
+		assert.ok(last?.kind === 'group' && /Exploring/.test(last.title));
 	});
 
 	test('shows thinking immediately while streaming with no content yet', () => {
@@ -202,5 +242,47 @@ suite('Agent timeline', () => {
 		]);
 		assert.strictEqual(parts.length, 1);
 		assert.ok(parts[0].kind === 'block' && parts[0].block.type === 'file');
+	});
+
+	test('idle streaming swaps Thinking and Planning next moves on one line', () => {
+		const started = 1_000;
+		const idle = streamingActivityLines('Thinking', 'Thinking', [], started, started);
+		assert.deepStrictEqual(idle, { summary: undefined, phrase: 'Thinking', rotate: true });
+		const next = streamingActivityLines('Thinking', 'Thinking', [], started + STATUS_ROTATE_MS, started);
+		assert.strictEqual(next.phrase, 'Planning next moves');
+		assert.strictEqual(next.rotate, true);
+		assert.strictEqual(next.summary, undefined);
+	});
+
+	test('exploring keeps the summary and swaps the live action under it', () => {
+		const started = 5_000;
+		const thinking = streamingActivityLines('Exploring 4 files, 3 searches', 'Thinking', [
+			{ kind: 'read', label: 'Read', detail: 'a.ts' },
+			{ kind: 'search', label: 'Searched', detail: 'query' },
+		], started, started);
+		assert.strictEqual(thinking.summary, 'Exploring 4 files, 3 searches');
+		assert.strictEqual(thinking.phrase, 'Thinking');
+		assert.strictEqual(thinking.rotate, true);
+		const planning = streamingActivityLines('Exploring 4 files, 3 searches', 'Thinking', [], started + STATUS_ROTATE_MS, started);
+		assert.strictEqual(planning.summary, 'Exploring 4 files, 3 searches');
+		assert.strictEqual(planning.phrase, 'Planning next moves');
+
+		const reading = streamingActivityLines('Exploring 4 files, 3 searches', 'Read src/app.ts', [
+			{ kind: 'read', label: 'Read', detail: 'app.ts' },
+		], started, started);
+		assert.strictEqual(reading.summary, 'Exploring 4 files, 3 searches');
+		assert.strictEqual(reading.phrase, 'Reading app.ts');
+		assert.strictEqual(reading.rotate, false);
+
+		const browsing = streamingActivityLines('Exploring 1 browser action', 'web_search nissan uae', [
+			{ kind: 'browser', label: 'Searched', detail: 'nissan uae' },
+		], started, started);
+		assert.strictEqual(browsing.phrase, 'Browsing nissan uae');
+		assert.strictEqual(browsing.rotate, false);
+
+		const running = streamingActivityLines('Thinking', 'Running npm test', [], started, started);
+		assert.strictEqual(running.summary, undefined);
+		assert.strictEqual(running.phrase, 'Running npm test');
+		assert.strictEqual(running.rotate, false);
 	});
 });

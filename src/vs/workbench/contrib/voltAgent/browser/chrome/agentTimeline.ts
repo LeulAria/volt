@@ -6,7 +6,7 @@
 import { localize } from '../../../../../nls.js';
 import { extractLocalPreviewUrl } from '../preview/localPreview.js';
 import { isSnapshotActivity } from '../preview/browserSnapshot.js';
-import { AgentSegment, IAgentActivityItem, IFileChangeBlock, ITerminalBlock, isExploreTool } from '../blocks/agentBlocks.js';
+import { AgentSegment, IAgentActivityItem, IFileChangeBlock, ITerminalBlock, isExploreTool, splitMarkdownToBlocks } from '../blocks/agentBlocks.js';
 import { computeFileChangePreview, formatChangeStats } from '../review/fileChangePreviewModel.js';
 
 export type ThreadPart =
@@ -79,9 +79,6 @@ export function visibleReplyParts(parts: readonly ThreadPart[], streaming = fals
 	const visible: ThreadPart[] = [];
 	for (const part of parts) {
 		if (part.kind === 'group') {
-			if (streaming && !parts.some(item => item.kind === 'markdown' || item.kind === 'changes' || item.kind === 'block')) {
-				visible.push(part);
-			}
 			continue;
 		}
 		if (part.kind === 'block' && (part.block.type === 'approval' || part.block.type === 'tool')) {
@@ -93,6 +90,12 @@ export function visibleReplyParts(parts: readonly ThreadPart[], streaming = fals
 			continue;
 		}
 		visible.push(part);
+	}
+	if (streaming) {
+		const live = [...parts].reverse().find(part => part.kind === 'group');
+		if (live) {
+			visible.push(live);
+		}
 	}
 	return visible;
 }
@@ -107,6 +110,7 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 	let work: Array<IFileChangeBlock | ITerminalBlock> = [];
 	let groupIndex = 0;
 	let textIndex = 0;
+	let reply = '';
 
 	const flushThought = () => {
 		const text = thinking.trim();
@@ -167,8 +171,26 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 		work = [];
 	};
 
+	const flushReply = () => {
+		const text = reply.trim();
+		reply = '';
+		if (!text) {
+			return;
+		}
+		flushWork();
+		flushGroup();
+		for (const block of splitMarkdownToBlocks(text, `md-${textIndex++}`)) {
+			if (block.type === 'markdown') {
+				parts.push({ kind: 'markdown', id: block.id, content: block.content });
+			} else {
+				parts.push({ kind: 'block', block });
+			}
+		}
+	};
+
 	for (const segment of source) {
 		if (segment.kind === 'thought') {
+			flushReply();
 			thinking = joinText(thinking, segment.text);
 			if (items.length) {
 				flushThought();
@@ -176,6 +198,7 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 			continue;
 		}
 		if (segment.kind === 'activity') {
+			flushReply();
 			if (isSnapshotActivity(segment.item)) {
 				flushWork();
 				flushGroup();
@@ -191,18 +214,18 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 		if (segment.kind === 'text') {
 			for (const chunk of partitionAssistantText(segment.text)) {
 				if (chunk.kind === 'thought') {
+					flushReply();
 					thinking = joinText(thinking, chunk.text);
 					if (items.length) {
 						flushThought();
 					}
 				} else {
-					flushWork();
-					flushGroup();
-					parts.push({ kind: 'markdown', id: `md-${textIndex++}`, content: chunk.text });
+					reply = reply ? `${reply}\n\n${chunk.text}` : chunk.text;
 				}
 			}
 			continue;
 		}
+		flushReply();
 		if (segment.block.type === 'tool' && isExploreTool(segment.block.name, segment.block.title)) {
 			continue;
 		}
@@ -215,6 +238,7 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 		flushGroup();
 		parts.push({ kind: 'block', block: segment.block });
 	}
+	flushReply();
 	flushWork();
 	flushGroup();
 	if (streaming) {
@@ -231,6 +255,155 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 		}
 	}
 	return parts;
+}
+
+/** How long each idle status phrase stays before the line swaps to the next. */
+export const STATUS_ROTATE_MS = 2200;
+
+/** Vertical text-swap duration. The shimmer timing is separate and unchanged. */
+export const STATUS_SWAP_MS = 420;
+
+const THINKING_PHRASE = localize('voltAgent.thinking', "Thinking");
+const PLANNING_PHRASE = localize('voltAgent.planningNext', "Planning next moves");
+
+export interface IStreamingActivityLines {
+	/** Work summary, such as "Exploring 4 files, 3 searches". Omitted when it would repeat the live phrase. */
+	summary?: string;
+	/** Current action on the swapping line. */
+	phrase: string;
+	/** When true, the phrase advances on {@link STATUS_ROTATE_MS} while the model is between tools. */
+	rotate: boolean;
+}
+
+/**
+ * What to draw while a turn is still streaming and has no answer text yet.
+ * The summary stays put. The phrase is the live action, and it swaps in place
+ * between "Thinking" and "Planning next moves" when nothing more specific is running.
+ */
+export function streamingActivityLines(
+	title: string,
+	status: string | undefined,
+	items: readonly IAgentActivityItem[],
+	now: number,
+	rotateAnchor: number,
+): IStreamingActivityLines {
+	const live = liveStatusPhrase(status, items, now, rotateAnchor);
+	const generic = !title || title === THINKING_PHRASE || title === localize('voltAgent.thoughtBriefly', "Thought briefly") || title === live.phrase;
+	return {
+		summary: generic ? undefined : title,
+		phrase: live.phrase,
+		rotate: live.rotate,
+	};
+}
+
+function liveStatusPhrase(
+	status: string | undefined,
+	items: readonly IAgentActivityItem[],
+	now: number,
+	rotateAnchor: number,
+): { phrase: string; rotate: boolean } {
+	const raw = (status ?? '').trim();
+	if (!raw || raw === THINKING_PHRASE) {
+		return { phrase: rotatedThinkingPhrase(now, rotateAnchor), rotate: true };
+	}
+	if (raw === localize('voltAgent.planning', "Planning") || raw === PLANNING_PHRASE) {
+		return { phrase: PLANNING_PHRASE, rotate: false };
+	}
+	if (raw === localize('voltAgent.verifying', "Verifying")) {
+		return { phrase: raw, rotate: false };
+	}
+	if (raw === localize('voltAgent.waiting', "Waiting")) {
+		return { phrase: raw, rotate: false };
+	}
+	if (raw === localize('voltAgent.writing', "Writing")) {
+		return { phrase: raw, rotate: false };
+	}
+	if (raw === localize('voltAgent.clarify', "Needs a decision")) {
+		return { phrase: raw, rotate: false };
+	}
+	const fromStatus = verbFromStatus(raw);
+	if (fromStatus) {
+		return { phrase: fromStatus, rotate: false };
+	}
+	const latest = [...items].reverse().find(item => item.kind !== 'thought');
+	if (latest?.kind === 'browser') {
+		return { phrase: localize('voltAgent.browsing', "Browsing"), rotate: false };
+	}
+	if (latest?.kind === 'search') {
+		return { phrase: localize('voltAgent.searching', "Searching"), rotate: false };
+	}
+	if (latest?.kind === 'read') {
+		return { phrase: localize('voltAgent.reading', "Reading"), rotate: false };
+	}
+	if (latest?.kind === 'wait') {
+		return { phrase: localize('voltAgent.waiting', "Waiting"), rotate: false };
+	}
+	if (raw.length <= 48) {
+		return { phrase: raw, rotate: false };
+	}
+	return { phrase: rotatedThinkingPhrase(now, rotateAnchor), rotate: true };
+}
+
+function rotatedThinkingPhrase(now: number, anchor: number): string {
+	const elapsed = Math.max(0, now - anchor);
+	const index = Math.floor(elapsed / STATUS_ROTATE_MS) % 2;
+	return index === 0 ? THINKING_PHRASE : PLANNING_PHRASE;
+}
+
+function verbFromStatus(status: string): string | undefined {
+	const lower = status.toLowerCase();
+	if (/^running\b/.test(lower)) {
+		return status;
+	}
+	const reading = localize('voltAgent.reading', "Reading");
+	const searching = localize('voltAgent.searching', "Searching");
+	const browsing = localize('voltAgent.browsing', "Browsing");
+	const editing = localize('voltAgent.editing', "Editing");
+	const waiting = localize('voltAgent.waiting', "Waiting");
+	if (/^(read|reading)\b/.test(lower)) {
+		return joinVerb(reading, status);
+	}
+	if (/^(search|searched|searching|grep|grepped|find|glob)\b/.test(lower)) {
+		return joinVerb(searching, status);
+	}
+	if (/web[_\s-]?search|web[_\s-]?fetch|\b(browser|browsing|navigate|snapshot)\b/.test(lower)) {
+		const host = status.match(/https?:\/\/([^/\s]+)/i)?.[1]?.replace(/^www\./, '');
+		const detail = host || compactDetail(status.replace(/^.*?web[_\s-]?(?:search|fetch)\s*/i, ''));
+		return detail && detail.toLowerCase() !== lower ? `${browsing} ${detail}` : browsing;
+	}
+	if (/^(edit|editing|write|wrote|creat|delet|patch|apply)\b/.test(lower)) {
+		return joinVerb(editing, status);
+	}
+	if (/^(wait|waiting|sleep)\b/.test(lower)) {
+		return waiting;
+	}
+	return undefined;
+}
+
+function joinVerb(verb: string, status: string): string {
+	const tail = status.replace(/^(read|reading|search(?:ed|ing)?|grep(?:ped)?|find|glob|edit(?:ing)?|write|wrote|creat\w*|delet\w*|patch\w*|apply)\s+/i, '').replace(/^files\s+/i, '');
+	const detail = compactDetail(tail);
+	if (!detail || /^(grep|find|glob|search|read|edit|write|files)$/i.test(detail)) {
+		return verb;
+	}
+	return `${verb} ${detail}`;
+}
+
+function compactDetail(raw: string): string | undefined {
+	const trimmed = raw.trim().replace(/[.,;:]+$/, '');
+	if (!trimmed || trimmed.toLowerCase() === 'command') {
+		return undefined;
+	}
+	let text = trimmed;
+	if (text.includes('/') || text.includes('\\')) {
+		const token = text.split(/\s+/)[0];
+		const base = token.split(/[\\/]/).pop() || token;
+		text = `${base}${text.slice(token.length)}`.trim();
+	}
+	if (text.length > 42) {
+		return `${text.slice(0, 39).trimEnd()}...`;
+	}
+	return text;
 }
 
 export function activityGroupTitle(items: readonly IAgentActivityItem[], thinking?: string, streaming = false): string {

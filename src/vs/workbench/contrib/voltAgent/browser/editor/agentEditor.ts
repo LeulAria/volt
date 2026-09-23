@@ -46,7 +46,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ACCESS_MODE_OPTIONS, accessModeOption } from '../../../../services/voltRuntime/common/access/accessModes.js';
 import { alwaysAllowPattern } from '../../../../services/voltRuntime/common/access/wildcard.js';
-import { IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
+import { IVoltEvent, IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
 import { runStatusLine } from '../../../../services/voltRuntime/common/harness/workLog.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
@@ -88,10 +88,10 @@ import { AgentMentionController, IAgentDisplayMention, browserMentionColor, clon
 import { MentionCodePreview } from '../composer/mentionCodePreview.js';
 import { appendAgentScrollableList } from './agentScrollable.js';
 import { dayjs } from '../chrome/dayjs.js';
-import { renderAgentBlock, renderFileChangesPart, renderMarkdownInto, IBlockRenderContext } from '../blocks/agentBlockRenderers.js';
-import { AgentSegment, IAgentActivityItem, IFileChangeBlock, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, isExploreItemClickable, isExploreTool, isFileChangeTool, isShellTool, looksLikeShell, parseFileTarget, parseShellToolInput, stringifyToolResult, workCountsForSegments } from '../blocks/agentBlocks.js';
+import { createTableCopyIcon, flashCopyIconSuccess, renderAgentBlock, renderFileChangesPart, renderMarkdownInto, IBlockRenderContext } from '../blocks/agentBlockRenderers.js';
+import { AgentSegment, IAgentActivityItem, IFileChangeBlock, ITerminalBlock, IToolBlock, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, isExploreItemClickable, isExploreTool, isFileChangeTool, isShellTool, looksLikeShell, parseFileTarget, parseShellToolInput, stringifyToolResult, workCountsForSegments } from '../blocks/agentBlocks.js';
 import { mergeToolInput } from '../../../../services/voltRuntime/common/acpToolInput.js';
-import { buildThreadParts, ThreadPart, visibleReplyParts } from '../chrome/agentTimeline.js';
+import { buildThreadParts, STATUS_ROTATE_MS, STATUS_SWAP_MS, streamingActivityLines, ThreadPart, visibleReplyParts } from '../chrome/agentTimeline.js';
 import { chooseFileChangeDiffStyle, fileChangeVerb, parseToolFileChange } from '../review/fileChangePreviewModel.js';
 
 function createSvgIcon(viewBox: string, pathD: string, extraClass?: string, stroke = false, strokeWidth = '1.5'): HTMLElement {
@@ -470,6 +470,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly markdownRenderer: MarkdownRenderer;
 	private mentionPreview: MentionCodePreview | undefined;
 	private clockTimer: IDisposable | undefined;
+	private statusRotateTimer: IDisposable | undefined;
+	private readonly statusMotion = new Map<string, { text: string; from?: string; started?: number }>();
 	private editingUserIndex: number | undefined;
 	private suppressEditDismiss = false;
 	private suppressStartEdit = false;
@@ -1595,9 +1597,80 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onOpenPath: (path, startLine, endLine) => void this.openWorkspaceFile(path, startLine, endLine),
 			onOpenUrl: url => void this.openLocalPreview(url, true),
 			onTerminalMenu: (anchor, command) => this.showTerminalBlockMenu(anchor, command),
+			onTableCopyMenu: (anchor, plain, markdown) => this.showTableCopyMenu(anchor, plain, markdown),
+			onCopyText: text => void this.clipboardService.writeText(text),
 			onAccessDecision: (requestId, effect, scope, pattern) => this.runtime.respondToAccessRequest(requestId, effect, scope, pattern),
 			streaming: !!message.activity?.streaming,
 		};
+	}
+
+	private flashTableCopyButton(anchor: HTMLElement): void {
+		const slot = anchor.querySelector('.volt-agent-table-copy-icon');
+		if (!slot) {
+			return;
+		}
+		flashCopyIconSuccess(slot, getWindow(anchor), () => createTableCopyIcon(10, 12, 'copy-table'));
+	}
+
+	private showTableCopyMenu(anchor: HTMLElement, plain: string, markdown: string): void {
+		if (anchor.classList.contains('open')) {
+			this.contextViewService.hideContextView();
+			return;
+		}
+		this.contextViewService.showContextView({
+			getAnchor: () => anchor,
+			anchorAlignment: AnchorAlignment.RIGHT,
+			anchorPosition: AnchorPosition.ABOVE,
+			onDOMEvent: (e: globalThis.Event) => {
+				if (e.type !== 'click' || !(e.target instanceof Node)) {
+					return;
+				}
+				const view = this.contextViewService.getContextViewElement();
+				if (view.contains(e.target) || anchor.contains(e.target)) {
+					return;
+				}
+				this.contextViewService.hideContextView();
+			},
+			render: container => {
+				const store = new DisposableStore();
+				anchor.classList.add('open');
+				store.add(toDisposable(() => anchor.classList.remove('open')));
+				const menu = append(container, $('.volt-agent-dropdown.table-copy-menu'));
+				const copyText = append(menu, $('button.volt-agent-dropdown-item')) as HTMLButtonElement;
+				append(copyText, $('span.icon')).appendChild(createTableCopyIcon(10, 12, 'copy-table-menu'));
+				append(copyText, $('span.label')).textContent = localize('voltAgent.tableCopyAsText', "Copy as text");
+				copyText.disabled = !plain;
+				store.add(addDisposableListener(copyText, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					if (plain) {
+						void this.clipboardService.writeText(plain);
+					}
+					this.contextViewService.hideContextView();
+					if (plain) {
+						scheduleAtNextAnimationFrame(getWindow(anchor), () => this.flashTableCopyButton(anchor));
+					}
+				}));
+				const copyMarkdown = append(menu, $('button.volt-agent-dropdown-item')) as HTMLButtonElement;
+				append(copyMarkdown, $('span.icon')).appendChild(createTableCopyIcon(10, 12, 'copy-table-menu'));
+				append(copyMarkdown, $('span.label')).textContent = localize('voltAgent.tableCopyAsMarkdown', "Copy as markdown");
+				copyMarkdown.disabled = !markdown;
+				store.add(addDisposableListener(copyMarkdown, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					if (markdown) {
+						void this.clipboardService.writeText(markdown);
+					}
+					this.contextViewService.hideContextView();
+					if (markdown) {
+						scheduleAtNextAnimationFrame(getWindow(anchor), () => this.flashTableCopyButton(anchor));
+					}
+				}));
+				this.bindDropdownDismiss(store, menu, anchor);
+				store.add(toDisposable(() => menu.remove()));
+				return store;
+			}
+		});
 	}
 
 	private showTerminalBlockMenu(anchor: HTMLElement, command: string): void {
@@ -2315,7 +2388,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			if (part.kind === 'group') {
 				this.renderActivityGroup(body, message, part, streaming && part === lastGroup);
 			} else if (part.kind === 'snapshot') {
-				this.renderSnapshotPart(body, part.item, streaming && !part.item.image);
+				this.renderSnapshotPart(body, message, part.item, streaming && !part.item.image);
 			} else if (part.kind === 'markdown') {
 				const reply = append(body, $('.volt-agent-reply'));
 				renderMarkdownInto(reply, part.content, ctx);
@@ -2360,20 +2433,93 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
+	private renderLiveStatus(parent: HTMLElement, message: IAgentAssistantMessage, key: string, text: string): void {
+		const activity = message.activity;
+		if (activity) {
+			activity.shimmerStartedAt ??= Date.now();
+		}
+		const anchor = activity?.shimmerStartedAt ?? Date.now();
+		const keyBase = String(message.startedAt ?? message.id ?? 'live');
+		this.renderStatusLine(parent, `${keyBase}:${key}`, text, anchor);
+	}
+
+	private renderStatusLine(parent: HTMLElement, key: string, text: string, shimmerAnchor: number, animate = true): void {
+		const now = Date.now();
+		const motion = animate ? this.statusMotion.get(key) : undefined;
+		let from: string | undefined;
+		let started = 0;
+		if (animate && motion && motion.text !== text) {
+			from = motion.text;
+			started = now;
+			this.statusMotion.set(key, { text, from, started });
+		} else if (animate && motion?.from && motion.started !== undefined && motion.text === text && now - motion.started < STATUS_SWAP_MS) {
+			from = motion.from;
+			started = motion.started;
+		} else if (animate) {
+			this.statusMotion.set(key, { text });
+		}
+		const switching = !!from && from !== text;
+		const swap = append(parent, $('.volt-agent-status-swap'));
+		swap.classList.toggle('is-switching', switching);
+		const paint = (value: string, role: 'out' | 'in' | 'still') => {
+			const motionEl = append(swap, $(role === 'still' ? 'span.volt-agent-status-motion' : `span.volt-agent-status-motion.${role === 'out' ? 'phrase-out' : 'phrase-in'}`));
+			if (switching) {
+				motionEl.style.animationDelay = `${-(now - started)}ms`;
+			}
+			if (role === 'out') {
+				motionEl.setAttribute('aria-hidden', 'true');
+			}
+			const status = append(motionEl, $('span.volt-agent-activity-progress.shimmer'));
+			status.style.animationDelay = `${-((now - shimmerAnchor) % 900)}ms`;
+			this.setSearchableText(status, value);
+		};
+		if (switching && from) {
+			paint(from, 'out');
+			paint(text, 'in');
+		} else {
+			paint(text, 'still');
+		}
+	}
+
+	/** Redraws at the next phrase boundary when the model is quiet between tokens. */
+	private armStatusRotation(anchor: number): void {
+		const elapsed = (Date.now() - anchor) % STATUS_ROTATE_MS;
+		const wait = Math.max(32, STATUS_ROTATE_MS - elapsed + 24);
+		this.statusRotateTimer?.dispose();
+		this.statusRotateTimer = disposableTimeout(() => {
+			this.statusRotateTimer = undefined;
+			if (this.isStreaming()) {
+				this.renderThread(this.stickToBottom);
+			}
+		}, wait);
+	}
+
 	private renderActivityGroup(parent: HTMLElement, message: IAgentAssistantMessage, part: Extract<ThreadPart, { kind: 'group' }>, streaming: boolean): void {
 		const section = append(parent, $('.volt-agent-activity'));
 		if (streaming) {
-			const status = append(section, $('div.volt-agent-activity-progress.shimmer'));
+			section.classList.add('live');
 			const activity = message.activity;
 			if (activity) {
 				activity.shimmerStartedAt ??= Date.now();
-				status.style.animationDelay = `${-((Date.now() - activity.shimmerStartedAt) % 900)}ms`;
 			}
-			this.setSearchableText(status, part.title);
+			const anchor = activity?.shimmerStartedAt ?? Date.now();
+			const lines = streamingActivityLines(part.title, activity?.status, part.items, Date.now(), anchor);
+			const keyBase = String(message.startedAt ?? message.id ?? 'live');
+			if (lines.summary) {
+				this.renderStatusLine(section, `${keyBase}:summary`, lines.summary, anchor, false);
+			}
+			this.renderStatusLine(section, `${keyBase}:phrase`, lines.phrase, anchor, true);
+			if (lines.rotate) {
+				this.armStatusRotation(anchor);
+			} else {
+				this.statusRotateTimer?.dispose();
+				this.statusRotateTimer = undefined;
+			}
 			return;
 		}
 
-		const expanded = message.blockState[part.id]?.expanded ?? false;
+		const hasCard = part.items.some(item => !!item.view);
+		const expanded = message.blockState[part.id]?.expanded ?? hasCard;
 		const toggle = append(section, $('button.volt-agent-activity-toggle')) as HTMLButtonElement;
 		toggle.classList.toggle('expanded', expanded);
 		const label = append(toggle, $('span.volt-agent-activity-label'));
@@ -2421,6 +2567,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					setAgentTooltip(host, tip);
 				}
 			}
+			if (item.view) {
+				this.renderToolView(body, item.view);
+			}
 			if (!clickable) {
 				continue;
 			}
@@ -2434,6 +2583,73 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				if (item.path) {
 					void this.openWorkspaceFile(item.path, item.startLine, item.endLine);
 				}
+			}));
+		}
+	}
+
+	private renderToolView(parent: HTMLElement, view: IAgentActivityItem['view']): void {
+		if (!view) {
+			return;
+		}
+		const card = append(parent, $(`.volt-agent-card.${view.card}`));
+		if (view.card === 'read') {
+			const head = append(card, $('div.volt-agent-card-head'));
+			head.textContent = `${basename(view.path)}  ${view.lines.length ? `${view.lines[0].number}-${view.lines.at(-1)?.number}` : ''}`.trim();
+			this.threadListeners.add(addDisposableListener(head, 'click', () => void this.openWorkspaceFile(view.path, view.lines[0]?.number)));
+			const body = append(card, $('div.volt-agent-card-code'));
+			for (const line of view.lines.slice(0, 12)) {
+				const row = append(body, $('div.volt-agent-card-line'));
+				append(row, $('span.num')).textContent = String(line.number);
+				append(row, $('span.txt')).textContent = line.text;
+			}
+			if (view.totalLines > view.lines.length) {
+				append(card, $('div.volt-agent-card-more')).textContent = `${view.totalLines} lines`;
+			}
+			return;
+		}
+		if (view.card === 'search' && view.shape === 'matches') {
+			const shown = view.files.slice(0, 4);
+			for (const file of shown) {
+				const head = append(card, $('button.volt-agent-card-head'));
+				head.textContent = file.path;
+				this.threadListeners.add(addDisposableListener(head, 'click', () => void this.openWorkspaceFile(file.path, file.matches[0]?.lineNumber)));
+				for (const match of file.matches.slice(0, 4)) {
+					const row = append(card, $('div.volt-agent-card-line'));
+					append(row, $('span.num')).textContent = String(match.lineNumber);
+					append(row, $('span.txt')).textContent = match.line;
+				}
+			}
+			if (view.total > shown.reduce((sum, file) => sum + file.matches.length, 0)) {
+				append(card, $('div.volt-agent-card-more')).textContent = `${view.total} matches`;
+			}
+			return;
+		}
+		if (view.card === 'search' && view.shape === 'paths') {
+			for (const path of view.paths.slice(0, 8)) {
+				const head = append(card, $('button.volt-agent-card-head'));
+				head.textContent = path;
+				this.threadListeners.add(addDisposableListener(head, 'click', () => void this.openWorkspaceFile(path)));
+			}
+			if (view.total > 8) {
+				append(card, $('div.volt-agent-card-more')).textContent = `${view.total} files`;
+			}
+			return;
+		}
+		if (view.card === 'web' && view.kind === 'search') {
+			for (const source of view.sources.slice(0, 6)) {
+				const link = append(card, $('button.volt-agent-card-link'));
+				link.textContent = source.title || source.url;
+				this.threadListeners.add(addDisposableListener(link, 'click', () => {
+					void this.commandService.executeCommand(OPEN_BROWSER_COMMAND_ID, source.url, source.title);
+				}));
+			}
+			return;
+		}
+		if (view.card === 'web' && view.kind === 'fetch') {
+			const link = append(card, $('button.volt-agent-card-link'));
+			link.textContent = view.statusCode === 200 ? view.url : `${view.statusCode}  ${view.url}`;
+			this.threadListeners.add(addDisposableListener(link, 'click', () => {
+				void this.commandService.executeCommand(OPEN_BROWSER_COMMAND_ID, view.url);
 			}));
 		}
 	}
@@ -2472,11 +2688,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
-	private renderSnapshotPart(parent: HTMLElement, item: IAgentActivityItem, streaming: boolean): void {
+	private renderSnapshotPart(parent: HTMLElement, message: IAgentAssistantMessage, item: IAgentActivityItem, streaming: boolean): void {
 		const section = append(parent, $('.volt-agent-snapshot'));
 		if (streaming && !item.image) {
-			const status = append(section, $('div.volt-agent-activity-progress.shimmer'));
-			this.setSearchableText(status, localize('voltAgent.takingSnapshot', "Taking a screenshot snapshot."));
+			this.renderLiveStatus(section, message, 'snapshot', localize('voltAgent.takingSnapshot', "Taking a screenshot snapshot."));
 			return;
 		}
 		const button = append(section, $('button.volt-agent-snapshot-link')) as HTMLButtonElement;
@@ -3281,6 +3496,110 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
+	/** DeepSeek `presentCall`. Card wins over the tool-name heuristics used for ACP. */
+	private applyPresentedTool(last: IAgentAssistantMessage, event: Extract<IVoltEvent, { type: 'tool.start' }>, activity: IAgentActivity): void {
+		const id = `tool-${event.callId}`;
+		if (event.card === 'terminal') {
+			const existing = findBlockByCallId(last.segments, event.callId);
+			if (existing?.type === 'terminal') {
+				existing.command = event.title || existing.command;
+				existing.cwd = event.cwd || existing.cwd;
+				existing.title = event.title || existing.title;
+			} else {
+				this.replaceCallBlock(last, event.callId, createTerminalBlock({
+					id,
+					callId: event.callId,
+					title: event.title,
+					command: event.title || event.input || '',
+					output: '',
+					cwd: event.cwd || this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath,
+				}));
+			}
+			const ran = firstCommandName(event.title || event.input || '');
+			activity.status = ran
+				? localize('voltAgent.runningCommand', "Running {0}", ran)
+				: localize('voltAgent.runningTerminal', "Running command");
+			return;
+		}
+		if (event.card === 'diff') {
+			const diff = event.diffs?.[0];
+			const path = diff?.path || event.locations?.[0]?.path || event.title || event.name;
+			const existing = findBlockByCallId(last.segments, event.callId);
+			if (existing?.type === 'file') {
+				existing.path = path;
+				existing.original = diff?.oldText ?? existing.original;
+				existing.modified = diff?.newText ?? existing.modified;
+				existing.verb = diff?.oldText === null ? 'Created' : 'Edited';
+				existing.input = event.input ?? existing.input;
+			} else {
+				this.replaceCallBlock(last, event.callId, createFileChangeBlock({
+					id,
+					callId: event.callId,
+					path,
+					verb: diff?.oldText === null ? 'Created' : 'Edited',
+					input: event.input,
+					original: diff?.oldText ?? undefined,
+					modified: diff?.newText,
+				}));
+			}
+			activity.status = event.title || event.name;
+			return;
+		}
+		const existing = findBlockByCallId(last.segments, event.callId);
+		const item = this.findActivityByCallId(last, event.callId);
+		const explore = isExploreTool(event.name, event.title, event.kind);
+		if (explore && !item) {
+			const described = describeExploreActivity(event.name, event.title, event.input);
+			const created: IAgentActivityItem = {
+				kind: classifyToolActivity(event.name, event.title, event.kind),
+				label: described.label,
+				detail: described.detail,
+				path: described.path,
+				startLine: described.startLine,
+				endLine: described.endLine,
+				files: described.files,
+				callId: event.callId,
+				input: event.input,
+				toolName: event.name,
+				toolTitle: event.title,
+			};
+			activity.items.push(created);
+			last.segments.push({ kind: 'activity', item: created });
+		} else if (item && event.title) {
+			item.toolTitle = event.title;
+			item.label = event.title;
+		}
+		if (existing?.type === 'tool' && event.title) {
+			existing.title = event.title;
+		}
+		if (!existing && !item && !explore) {
+			this.replaceCallBlock(last, event.callId, createToolBlock({
+				id,
+				callId: event.callId,
+				name: event.name,
+				title: event.title,
+				input: event.input,
+			}));
+		}
+		activity.status = event.title || event.name;
+	}
+
+	private replaceCallBlock(last: IAgentAssistantMessage, callId: string, block: ITerminalBlock | IFileChangeBlock | IToolBlock): void {
+		let replaced = false;
+		for (let i = 0; i < last.segments.length; i++) {
+			const segment = last.segments[i];
+			if (segment.kind === 'block' && 'callId' in segment.block && segment.block.callId === callId) {
+				last.segments[i] = { kind: 'block', block };
+				replaced = true;
+				break;
+			}
+		}
+		if (!replaced) {
+			last.segments.push({ kind: 'block', block });
+		}
+		last.blockState[block.id] = last.blockState[block.id] ?? { expanded: false };
+	}
+
 	private applyEvent(envelope: IVoltEventEnvelope): void {
 		const event = envelope.event;
 		if (this.skipRunEvents && event.type !== 'run.start') {
@@ -3370,6 +3689,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				activity.status = localize('voltAgent.writing', "Writing");
 				break;
 			case 'tool.start': {
+				if (event.card) {
+					this.applyPresentedTool(last, event, activity);
+					break;
+				}
 				const kind = event.kind;
 				const parsed = parseShellToolInput(event.input);
 				const shell = isShellTool(event.name, event.title, event.input, kind) || (!kind && looksLikeShell(parsed.command));
@@ -3492,21 +3815,34 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					this.attachSnapshotImage(last, event.callId, image);
 				}
 				if (block?.type === 'terminal') {
-					block.output = output;
+					block.output = event.output || output;
 					block.status = event.error ? 'error' : 'complete';
-					block.exitCode = event.error ? 1 : 0;
-					this.maybeOpenLocalPreview(output, block.command, 0);
+					block.exitCode = event.exitCode ?? (event.error ? 1 : 0);
+					if (event.title) {
+						block.title = event.title;
+					}
+					this.maybeOpenLocalPreview(block.output, block.command, 0);
 				} else if (block?.type === 'tool') {
-					block.output = output;
+					block.output = event.output || output;
 					block.status = event.error ? 'error' : 'complete';
 				} else if (block?.type === 'file') {
-					block.output = output;
+					block.output = event.output || output;
 					block.status = event.error ? 'error' : 'complete';
-					this.mergeFileChange(block, block.input, output, event.result);
+					const diff = event.diffs?.[0];
+					if (diff) {
+						block.path = diff.path || block.path;
+						block.original = diff.oldText ?? block.original;
+						block.modified = diff.newText;
+						block.verb = diff.oldText === null ? 'Created' : block.verb;
+					}
+					this.mergeFileChange(block, block.input, block.output, event.result);
 				}
 				const item = this.findActivityByCallId(last, event.callId);
 				if (item) {
 					applyExploreResultToActivity(item, event.result, item.input);
+					if (event.view) {
+						item.view = event.view;
+					}
 				}
 				break;
 			}
@@ -4117,6 +4453,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	override dispose(): void {
 		this.eventDisposable?.dispose();
 		this.clockTimer?.dispose();
+		this.statusRotateTimer?.dispose();
 		this.dismissSnapshotPreview();
 		if (this.inputModel && !this.inputModel.isDisposed()) {
 			this.inputModel.dispose();

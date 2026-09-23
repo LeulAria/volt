@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { applyExploreInputToActivity, applyExploreResultToActivity, applyFileTargetToActivity, classifyToolActivity, collectBlocks, createToolBlock, describeExploreActivity, IAgentActivityItem, isExploreItemClickable, isExploreTool, isFileChangeTool, isShellTool, parseExploreResultFiles, parseFileTarget, splitActivityLabel, workCountsForSegments } from '../../browser/blocks/agentBlocks.js';
+import { applyExploreInputToActivity, applyExploreResultToActivity, applyFileTargetToActivity, classifyToolActivity, collectBlocks, createToolBlock, describeExploreActivity, IAgentActivityItem, isExploreItemClickable, isExploreTool, isFileChangeTool, isShellTool, parseExploreResultFiles, parseFileTarget, splitActivityLabel, splitMarkdownToBlocks, workCountsForSegments } from '../../browser/blocks/agentBlocks.js';
 
 suite('Agent explore tool cards', () => {
 
@@ -67,6 +67,33 @@ suite('Agent explore tool cards', () => {
 			},
 		]);
 		assert.deepStrictEqual(blocks.map(block => block.id), ['edit']);
+	});
+});
+
+suite('Adaptive answer blocks', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('lifts a comparable ranking into a table block', () => {
+		const blocks = splitMarkdownToBlocks([
+			'The 10 most populated countries:',
+			'',
+			'1. India — 1,476,625,576',
+			'2. China — 1,412,914,089',
+			'3. United States — 349,035,494',
+		].join('\n'), 's0');
+		assert.strictEqual(blocks[0].type, 'markdown');
+		assert.strictEqual(blocks[1].type, 'table');
+		if (blocks[1].type === 'table') {
+			assert.deepStrictEqual(blocks[1].headers, ['Rank', 'Country', 'Population']);
+			assert.strictEqual(blocks[1].rows.length, 3);
+			assert.deepStrictEqual(blocks[1].rows[0], ['1', 'India', '1,476,625,576']);
+		}
+	});
+
+	test('keeps mermaid fences as mermaid blocks', () => {
+		const blocks = splitMarkdownToBlocks('```mermaid\ngraph TD\n  A[Start] --> B[Done]\n```', 's0');
+		assert.strictEqual(blocks[0].type, 'mermaid');
 	});
 });
 

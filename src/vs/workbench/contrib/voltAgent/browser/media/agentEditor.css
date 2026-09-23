@@ -7,6 +7,7 @@
 @import './fileChangePreview.css';
 
 .volt-agent-editor {
+	--volt-agent-chat-bg: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
 	--volt-mode-fg: var(--vscode-foreground);
 	--volt-mode-bg: rgba(255, 255, 255, 0.08);
 	--volt-mode-border: transparent;
@@ -17,7 +18,7 @@
 	flex-direction: column;
 	height: 100%;
 	width: 100%;
-	background-color: var(--vscode-editor-background);
+	background-color: var(--volt-agent-chat-bg);
 	color: var(--vscode-editor-foreground);
 	overflow: hidden;
 	outline: none !important;
@@ -94,27 +95,26 @@
 .volt-agent-thread-fade.top {
 	top: 0;
 	z-index: 0;
-	background: linear-gradient(to bottom, var(--vscode-editor-background, #1e1e1e) 0%, transparent 100%);
+	background: linear-gradient(to bottom, var(--volt-agent-chat-bg, var(--vscode-editor-background, #1e1e1e)) 0%, transparent 100%);
 }
 
 .volt-agent-thread-fade.bottom {
 	bottom: 0;
-	background: linear-gradient(to top, var(--vscode-editor-background, #1e1e1e) 0%, transparent 100%);
+	background: linear-gradient(to top, var(--volt-agent-chat-bg, var(--vscode-editor-background, #1e1e1e)) 0%, transparent 100%);
 }
 
-.volt-agent-thread.scrolled > .volt-agent-thread-fade.top,
-.volt-agent-thread.scrolled:not(.at-end) > .volt-agent-thread-fade.bottom {
+.volt-agent-thread.scrolled > .volt-agent-thread-fade.top {
 	opacity: 1;
 }
 
 .monaco-workbench.vs .volt-agent-thread-fade.top,
 .monaco-workbench.hc-light .volt-agent-thread-fade.top {
-	background: linear-gradient(to bottom, var(--vscode-editor-background, #ffffff) 0%, transparent 100%);
+	background: linear-gradient(to bottom, var(--volt-agent-chat-bg, var(--vscode-editor-background, #ffffff)) 0%, transparent 100%);
 }
 
 .monaco-workbench.vs .volt-agent-thread-fade.bottom,
 .monaco-workbench.hc-light .volt-agent-thread-fade.bottom {
-	background: linear-gradient(to top, var(--vscode-editor-background, #ffffff) 0%, transparent 100%);
+	background: linear-gradient(to top, var(--volt-agent-chat-bg, var(--vscode-editor-background, #ffffff)) 0%, transparent 100%);
 }
 
 .volt-agent-thread-inner {
@@ -130,7 +130,8 @@
 	display: flex;
 	flex-direction: column;
 	align-items: stretch;
-	gap: 6px;
+	/* Room between one turn and the next sent message; user card vertical bleed cancels itself. */
+	gap: 20px;
 	overflow: hidden;
 }
 
@@ -212,7 +213,7 @@
 	margin: -8px -20px;
 	padding: 8px 20px;
 	box-sizing: border-box;
-	background: transparent;
+	background: var(--volt-agent-chat-bg, var(--vscode-editor-background, #1e1e1e));
 	pointer-events: none;
 }
 
@@ -258,29 +259,6 @@
 	isolation: isolate;
 }
 
-/* Soft fade under the pinned card so content slides out instead of hard-clipping. */
-.volt-agent-turn.user::after {
-	content: '';
-	position: absolute;
-	left: 0;
-	right: 0;
-	top: 100%;
-	height: 40px;
-	pointer-events: none;
-	opacity: 0;
-	transition: opacity 160ms ease;
-	background: linear-gradient(to bottom, var(--vscode-editor-background, #1e1e1e) 0%, transparent 100%);
-}
-
-/* Pinned: solid, opaque backdrop that fully hides whatever scrolls underneath. */
-.volt-agent-turn.user.stuck {
-	background: var(--vscode-editor-background, #1e1e1e);
-}
-
-.volt-agent-turn.user.stuck::after {
-	opacity: 1;
-}
-
 .volt-agent-turn.user.stuck .volt-agent-bubble {
 	background: #222222 !important;
 	box-shadow: none;
@@ -295,24 +273,14 @@
 	box-shadow: none;
 }
 
-.monaco-workbench.vs .volt-agent-turn.user.stuck,
-.monaco-workbench.hc-light .volt-agent-turn.user.stuck {
-	background: var(--vscode-editor-background, #ffffff);
-}
-
 .monaco-workbench.vs .volt-agent-turn.user.stuck .volt-agent-bubble,
 .monaco-workbench.hc-light .volt-agent-turn.user.stuck .volt-agent-bubble {
 	background: #ececec !important;
 	box-shadow: none;
 }
 
-.monaco-workbench.vs .volt-agent-turn.user::after,
-.monaco-workbench.hc-light .volt-agent-turn.user::after {
-	background: linear-gradient(to bottom, var(--vscode-editor-background, #ffffff) 0%, transparent 100%);
-}
-
 .volt-agent-turn.user .volt-agent-bubble.multiline {
-	align-items: flex-end;
+	align-items: flex-start;
 }
 
 .volt-agent-user-main {
@@ -689,8 +657,7 @@
 	cursor: pointer;
 }
 
-.volt-agent-turn.user .volt-agent-bubble.clamped .volt-agent-user-clip,
-.volt-agent-turn.user .volt-agent-bubble.multiline .volt-agent-user-clip {
+.volt-agent-turn.user .volt-agent-bubble.clamped .volt-agent-user-clip {
 	isolation: isolate;
 	-webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - 28px), rgb(0 0 0 / 0.2) 100%);
 	mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - 28px), rgb(0 0 0 / 0.2) 100%);
@@ -701,8 +668,7 @@
 	overflow: hidden;
 }
 
-.volt-agent-turn.user .volt-agent-bubble.clamped::after,
-.volt-agent-turn.user .volt-agent-bubble.multiline::after {
+.volt-agent-turn.user .volt-agent-bubble.clamped::after {
 	content: '';
 	position: absolute;
 	left: 0;
@@ -1189,6 +1155,78 @@ pre.volt-agent-searchable {
 	}
 }
 
+.volt-agent-activity.live {
+	gap: 16px;
+}
+
+/* One-line clip. The shimmer stays on the inner text; only the phrase moves. */
+.volt-agent-status-swap {
+	display: grid;
+	align-items: center;
+	width: fit-content;
+	max-width: 100%;
+	min-width: 0;
+	height: 1.4em;
+	overflow: hidden;
+	font-size: 14px;
+	line-height: 1.4;
+}
+
+.volt-agent-status-motion {
+	grid-area: 1 / 1;
+	width: max-content;
+	max-width: 100%;
+	min-width: 0;
+}
+
+.volt-agent-status-swap .volt-agent-activity-progress.shimmer {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-agent-status-swap.is-switching .phrase-out {
+	animation: volt-agent-status-out 420ms cubic-bezier(0.22, 0.8, 0.24, 1) both;
+}
+
+.volt-agent-status-swap.is-switching .phrase-in {
+	animation: volt-agent-status-in 420ms cubic-bezier(0.22, 0.8, 0.24, 1) both;
+}
+
+@keyframes volt-agent-status-out {
+	from {
+		transform: translateY(0);
+		opacity: 1;
+	}
+	to {
+		transform: translateY(-110%);
+		opacity: 0;
+	}
+}
+
+@keyframes volt-agent-status-in {
+	from {
+		transform: translateY(70%);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-agent-status-swap.is-switching .phrase-out {
+		display: none;
+	}
+
+	.volt-agent-status-swap.is-switching .phrase-in {
+		animation: none;
+		transform: none;
+		opacity: 1;
+	}
+}
+
 .volt-agent-activity-chevron {
 	display: inline-flex;
 	align-items: center;
@@ -1258,6 +1296,79 @@ pre.volt-agent-searchable {
 	flex-direction: column;
 	gap: 1px;
 	padding: 4px 0 6px;
+}
+
+.volt-agent-card {
+	margin: 4px 0 8px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 12px;
+	overflow: hidden;
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, var(--vscode-editor-background));
+}
+
+.monaco-workbench.vs .volt-agent-card,
+.monaco-workbench.hc-light .volt-agent-card {
+	border-color: rgba(0, 0, 0, 0.1);
+}
+
+.volt-agent-card-head,
+.volt-agent-card-link,
+.volt-agent-card-more {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	margin: 0;
+	padding: 6px 10px;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	font-size: 12px;
+	line-height: 1.4;
+	text-align: left;
+}
+
+.volt-agent-card-head,
+.volt-agent-card-link {
+	cursor: pointer;
+}
+
+.volt-agent-card-head:hover,
+.volt-agent-card-link:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-card-code,
+.volt-agent-card-line {
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.volt-agent-card-line {
+	display: flex;
+	gap: 10px;
+	padding: 0 10px;
+	min-width: 0;
+}
+
+.volt-agent-card-line .num {
+	flex: 0 0 2.5em;
+	color: var(--vscode-editorLineNumber-foreground);
+	text-align: right;
+	user-select: none;
+}
+
+.volt-agent-card-line .txt {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vscode-editor-foreground);
+}
+
+.volt-agent-card-more {
+	color: var(--vscode-descriptionForeground);
 }
 
 .volt-agent-activity-item {
@@ -1511,22 +1622,31 @@ pre.volt-agent-searchable {
 	font-size: inherit;
 }
 
+.volt-agent-table-shell {
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	margin: 8px 0;
+}
+
+.volt-agent-table-shell > .volt-agent-table-wrap {
+	margin: 0;
+}
+
 .volt-agent-table-wrap {
 	--volt-table-border: color-mix(in srgb, var(--vscode-widget-border, rgba(255, 255, 255, 0.16)) 100%, transparent);
 	margin: 8px 0;
 	border: 1px solid var(--volt-table-border);
-	border-radius: 5px;
+	border-radius: 8px;
 	overflow: hidden;
 	width: 100%;
 	max-width: 100%;
 	min-width: 0;
 	position: relative;
 	background: transparent;
-	scrollbar-width: none;
 }
 
 .volt-agent-table-wrap::-webkit-scrollbar,
-.volt-agent-table-scroll::-webkit-scrollbar,
 .volt-agent-term-output-clip::-webkit-scrollbar,
 .volt-agent-term-output-scroll::-webkit-scrollbar,
 .volt-agent-term-output::-webkit-scrollbar {
@@ -1535,27 +1655,13 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
-.volt-agent-table-wrap > .monaco-scrollable-element {
-	width: 100%;
-	max-width: 100%;
-	max-height: 360px;
-}
-
-.volt-agent-table-scroll {
-	width: 100%;
-	max-width: 100%;
-	max-height: 360px;
-	box-sizing: border-box;
-}
-
 .volt-agent-table,
 .volt-agent-table-wrap table {
-	width: max-content;
-	min-width: 100%;
+	width: 100%;
 	border-collapse: collapse;
 	margin: 0;
-	font-size: 11px;
-	line-height: 1.4;
+	font-size: 13px;
+	line-height: 1.45;
 	table-layout: auto;
 }
 
@@ -1565,11 +1671,12 @@ pre.volt-agent-searchable {
 .volt-agent-table-wrap td {
 	display: table-cell;
 	text-align: left;
-	padding: 6px 10px;
+	padding: 8px 12px;
 	border-right: 1px solid var(--volt-table-border, color-mix(in srgb, var(--vscode-widget-border, rgba(255, 255, 255, 0.16)) 100%, transparent));
 	border-bottom: 1px solid var(--volt-table-border, color-mix(in srgb, var(--vscode-widget-border, rgba(255, 255, 255, 0.16)) 100%, transparent));
 	vertical-align: middle;
-	white-space: nowrap;
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 
 .volt-agent-table tr > *:last-child,
@@ -1582,12 +1689,323 @@ pre.volt-agent-searchable {
 	border-bottom: none;
 }
 
-.volt-agent-table th,
-.volt-agent-table-wrap th,
-.volt-agent-table th .volt-agent-searchable,
-.volt-agent-table-wrap th .volt-agent-searchable {
-	font-weight: 400;
+.volt-agent-table thead th,
+.volt-agent-table-wrap thead th,
+.volt-agent-table thead th .volt-agent-searchable,
+.volt-agent-table-wrap thead th .volt-agent-searchable {
+	font-weight: 500;
+	font-synthesis: weight;
 	color: var(--vscode-foreground);
+}
+
+.volt-agent-table th.number,
+.volt-agent-table td.number,
+.volt-agent-table th.size,
+.volt-agent-table td.size {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-table-cell {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	width: 100%;
+}
+
+.volt-agent-table-cell-content {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.volt-agent-table-cell-copy {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	width: 22px;
+	height: 22px;
+	margin: -2px -4px -2px 0;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	opacity: 0;
+	pointer-events: none;
+	cursor: pointer;
+}
+
+.volt-agent-table-cell:hover .volt-agent-table-cell-copy {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.volt-agent-table-cell-copy:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-table-cell-copy .volt-agent-svg-icon,
+.volt-agent-table-cell-copy .volt-agent-svg-icon svg {
+	display: block;
+	color: color-mix(in srgb, var(--vscode-descriptionForeground) 88%, transparent);
+}
+
+.volt-agent-table-actions {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	margin-bottom: 5px;
+	padding: 4px 2px 0;
+	background: transparent;
+	border: 0;
+}
+
+.volt-agent-table-copy-trigger {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: auto;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-descriptionForeground) 88%, transparent);
+	font: inherit;
+	cursor: pointer;
+	outline: none;
+	box-shadow: none;
+}
+
+.volt-agent-table-copy-trigger:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-table-copy-trigger:focus,
+.volt-agent-table-copy-trigger:focus-visible,
+.volt-agent-table-copy-trigger.open,
+.volt-agent-table-copy-trigger:active {
+	outline: none !important;
+	box-shadow: none !important;
+	border: 0;
+	background: transparent;
+}
+
+.volt-agent-table-copy-trigger .volt-agent-svg-icon.copy-table {
+	flex: 0 0 auto;
+	width: 10px;
+	line-height: 0;
+}
+
+.volt-agent-table-copy-trigger .volt-agent-svg-icon,
+.volt-agent-table-copy-trigger .volt-agent-svg-icon svg {
+	display: block;
+	color: inherit;
+}
+
+.volt-agent-table-copy-trigger .volt-agent-svg-icon.copy-table svg,
+.volt-agent-table-copy-trigger .volt-agent-svg-icon.copy-table-check svg {
+	width: 10px;
+	height: 12px;
+}
+
+.volt-agent-table-copy-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	width: 10px;
+	line-height: 0;
+}
+
+.volt-agent-table-copy-icon.copied .volt-agent-svg-icon.copy-table-check,
+.volt-agent-table-cell-copy-icon.copied .volt-agent-svg-icon.copy-table-check {
+	animation: volt-agent-table-copy-check 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+.volt-agent-table-cell-copy-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	line-height: 0;
+}
+
+.volt-agent-table-cell-copy-icon .volt-agent-svg-icon.copy-table-check svg {
+	width: 10px;
+	height: 11px;
+}
+
+@keyframes volt-agent-table-copy-check {
+	from {
+		transform: scale(0.55);
+		opacity: 0;
+	}
+	to {
+		transform: scale(1);
+		opacity: 1;
+	}
+}
+
+.volt-agent-table-copy-label {
+	font-size: 11px;
+	font-weight: 300;
+	line-height: 1.2;
+	color: inherit;
+}
+
+.volt-agent-table-cell-copy:focus,
+.volt-agent-table-cell-copy:focus-visible,
+.volt-agent-table-cell-copy:active {
+	outline: none !important;
+	box-shadow: none !important;
+	border: 0;
+}
+
+.volt-agent-list {
+	margin: 4px 0 8px;
+}
+
+.volt-agent-list ol,
+.volt-agent-list ul {
+	margin: 0;
+	padding-left: 1.35em;
+}
+
+.volt-agent-list li {
+	margin: 3px 0;
+	line-height: 1.5;
+}
+
+.volt-agent-list .volt-agent-markdown {
+	display: inline;
+}
+
+.volt-agent-list .volt-agent-markdown > p {
+	display: inline;
+	margin: 0;
+}
+
+.volt-agent-cards {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 8px 0;
+	min-width: 0;
+}
+
+.volt-agent-card {
+	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.12));
+	border-radius: 8px;
+	padding: 10px 12px;
+	min-width: 0;
+	background: color-mix(in srgb, var(--vscode-editorWidget-background, #252526) 55%, transparent);
+}
+
+.volt-agent-card-title {
+	font-size: 13px;
+	line-height: 1.35;
+	margin-bottom: 4px;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-card-meta {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	margin-bottom: 4px;
+}
+
+.volt-agent-card-body,
+.volt-agent-card .volt-agent-markdown {
+	font-size: 13px;
+	line-height: 1.45;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-chart {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 8px 0;
+	min-width: 0;
+}
+
+.volt-agent-chart-title {
+	font-size: 13px;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-chart-row {
+	display: grid;
+	grid-template-columns: minmax(64px, 28%) 1fr auto;
+	gap: 8px;
+	align-items: center;
+	min-width: 0;
+}
+
+.volt-agent-chart-label {
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-chart-track {
+	height: 8px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	overflow: hidden;
+	min-width: 0;
+}
+
+.volt-agent-chart-bar {
+	height: 100%;
+	border-radius: inherit;
+	background: var(--vscode-charts-blue, #58a6ff);
+}
+
+.volt-agent-chart-value {
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-mermaid {
+	margin: 8px 0;
+	padding: 12px;
+	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.12));
+	border-radius: 8px;
+	overflow: auto;
+	max-width: 100%;
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-editorWidget-background, #252526) 40%, transparent);
+}
+
+.volt-agent-mermaid svg {
+	display: block;
+	max-width: 100%;
+	height: auto;
+}
+
+.volt-agent-mermaid-node {
+	font-size: 12px;
+	fill: currentColor;
+	font-family: inherit;
+}
+
+.volt-agent-mermaid-label {
+	font-size: 11px;
+	fill: currentColor;
+	opacity: 0.72;
+	font-family: inherit;
+}
+
+.volt-agent-mermaid pre {
+	margin: 0;
+	white-space: pre-wrap;
+	font-family: var(--volt-code-font, var(--monaco-monospace-font, monospace));
+	font-size: 12px;
 }
 
 .volt-agent-markdown blockquote {
@@ -2130,17 +2548,36 @@ pre.volt-agent-searchable {
 	color: color-mix(in srgb, var(--vscode-foreground) 32%, transparent);
 }
 
+.volt-agent-table col.fit,
+.volt-agent-table th.fit,
+.volt-agent-table td.fit {
+	width: 1%;
+	white-space: nowrap;
+}
+
+.volt-agent-table col.grow,
+.volt-agent-table th.grow,
+.volt-agent-table td.grow {
+	width: auto;
+	white-space: normal;
+}
+
+.volt-agent-table tbody td {
+	vertical-align: top;
+}
+
 .volt-agent-table th.rank,
 .volt-agent-table td.rank {
-	width: 1%;
 	color: var(--vscode-descriptionForeground);
 	white-space: nowrap;
 }
 
 .volt-agent-table th.size,
-.volt-agent-table td.size {
-	width: 1%;
+.volt-agent-table td.size,
+.volt-agent-table th.number,
+.volt-agent-table td.number {
 	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
 }
 
 .volt-agent-table th.file,
@@ -2172,13 +2609,15 @@ pre.volt-agent-searchable {
 
 .volt-agent-composer {
 	--volt-composer-bg: #222222;
+	position: relative;
 	flex-shrink: 0;
-	padding: 10px 20px 18px;
+	padding: 10px 20px 8px;
 	box-sizing: border-box;
 	width: 100%;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
+	background: var(--volt-agent-chat-bg, var(--vscode-editor-background, #1e1e1e));
 }
 
 .monaco-workbench.vs .volt-agent-composer,
@@ -2415,7 +2854,7 @@ pre.volt-agent-searchable {
 
 .volt-agent-editor.follow-up:not(:has(.volt-agent-turn)):not(.zoomed):not(.resized) .volt-agent-composer {
 	margin-top: auto;
-	padding: 10px 20px 18px;
+	padding: 10px 20px 8px;
 }
 
 .volt-agent-editor:not(:has(.volt-agent-turn)):not(.zoomed):not(.resized) .monaco-sash.horizontal {
@@ -2437,7 +2876,7 @@ pre.volt-agent-searchable {
 .volt-agent-editor:has(.volt-agent-turn):not(.zoomed):not(.resized) .volt-agent-composer {
 	flex: 0 0 auto;
 	margin-top: 0;
-	padding: 10px 20px 18px;
+	padding: 10px 20px 8px;
 }
 
 .volt-agent-input-box {
@@ -4009,7 +4448,7 @@ pre.volt-agent-searchable {
 	gap: 12px;
 	width: 100%;
 	max-width: 720px;
-	margin: 8px auto 0;
+	margin: 4px auto 0;
 	padding: 0 6px;
 	box-sizing: border-box;
 	min-height: 22px;
@@ -4712,7 +5151,8 @@ pre.volt-agent-searchable {
 }
 
 
-.context-view .volt-agent-dropdown.terminal-menu {
+.context-view .volt-agent-dropdown.terminal-menu,
+.context-view .volt-agent-dropdown.table-copy-menu {
 	min-width: 236px;
 	max-width: 280px;
 	width: max-content;
@@ -4722,6 +5162,26 @@ pre.volt-agent-searchable {
 .context-view .volt-agent-dropdown.terminal-menu .volt-agent-dropdown-item .label {
 	flex: 1;
 	min-width: 0;
+}
+
+.context-view .volt-agent-dropdown.table-copy-menu .volt-agent-dropdown-item .icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	flex: 0 0 14px;
+	color: color-mix(in srgb, var(--vscode-descriptionForeground) 88%, transparent);
+}
+
+.context-view .volt-agent-dropdown.table-copy-menu .volt-agent-dropdown-item .icon .volt-agent-svg-icon svg {
+	width: 10px;
+	height: 12px;
+	display: block;
+}
+
+.context-view .volt-agent-dropdown.table-copy-menu .volt-agent-dropdown-item:hover .icon,
+.context-view .volt-agent-dropdown.table-copy-menu .volt-agent-dropdown-item:focus-visible .icon {
+	color: var(--vscode-foreground);
 }
 
 .volt-agent-dropdown-search-row {

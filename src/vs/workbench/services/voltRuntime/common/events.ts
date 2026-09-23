@@ -10,6 +10,28 @@ import type { TaskPhase } from './harness/lifecycle.js';
 import type { ToolKind } from './harness/workLog.js';
 import { VoltMode } from './modes.js';
 
+/** DeepSeek tool card. The editor picks a Volt block from this instead of the tool name. */
+export type IVoltToolCard = 'generic' | 'terminal' | 'diff' | 'search' | 'read' | 'web';
+
+export interface IVoltToolDiff {
+	readonly path: string;
+	readonly oldText: string | null;
+	readonly newText: string;
+}
+
+export interface IVoltToolLocation {
+	readonly path: string;
+	readonly line?: number;
+}
+
+/** Completed search, read, or web card. The editor draws this instead of raw tool text. */
+export type IVoltToolView =
+	| { readonly card: 'search'; readonly shape: 'matches'; readonly files: readonly { readonly path: string; readonly matches: readonly { readonly lineNumber: number; readonly line: string }[] }[]; readonly total: number; readonly truncated?: boolean }
+	| { readonly card: 'search'; readonly shape: 'paths'; readonly paths: readonly string[]; readonly total: number; readonly truncated?: boolean }
+	| { readonly card: 'read'; readonly path: string; readonly lines: readonly { readonly number: number; readonly text: string }[]; readonly totalLines: number }
+	| { readonly card: 'web'; readonly kind: 'search'; readonly sources: readonly { readonly url: string; readonly title?: string }[]; readonly answer?: string }
+	| { readonly card: 'web'; readonly kind: 'fetch'; readonly url: string; readonly statusCode: number };
+
 export type IVoltEvent =
 	| { type: 'run.start'; runId: string; mode: VoltMode }
 	/** Which lane the intent router chose and why. Emitted once per run right after run.start. */
@@ -22,13 +44,12 @@ export type IVoltEvent =
 	| { type: 'text.start' | 'text.delta' | 'text.end'; id: string; delta?: string }
 	| { type: 'reasoning.start' | 'reasoning.delta' | 'reasoning.end'; id: string; delta?: string }
 	/**
-	 * `kind` is the semantic class of the tool (read/search/edit/execute/...). Native tools always
-	 * set it; ACP agents set it when they report one. The UI renders from `kind` first and falls
-	 * back to name heuristics only when it is missing.
+	 * `card` is how DeepSeek asked the call to be drawn. The editor uses it first.
+	 * `kind` is the semantic class. ACP agents often omit both; the editor then falls back to the tool name.
 	 */
-	| { type: 'tool.start'; callId: string; name: string; title?: string; input?: string; cwd?: string; kind?: ToolKind }
+	| { type: 'tool.start'; callId: string; name: string; title?: string; input?: string; cwd?: string; kind?: ToolKind; card?: 'generic' | 'terminal' | 'diff'; diffs?: readonly IVoltToolDiff[]; locations?: readonly IVoltToolLocation[] }
 	| { type: 'tool.input.delta'; callId: string; delta: string }
-	| { type: 'tool.end'; callId: string; result?: unknown; error?: string; durationMs?: number }
+	| { type: 'tool.end'; callId: string; result?: unknown; error?: string; durationMs?: number; card?: IVoltToolCard; title?: string; output?: string; exitCode?: number; diffs?: readonly IVoltToolDiff[]; view?: IVoltToolView }
 	| { type: 'plan'; entries: { content: string; status: 'pending' | 'in_progress' | 'completed'; priority?: string }[] }
 	| { type: 'file.change'; uri: URI; kind: 'edit' | 'create' | 'delete'; before?: string; existed?: boolean }
 	| { type: 'access.ask'; request: IAccessRequest }

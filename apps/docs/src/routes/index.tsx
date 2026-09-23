@@ -113,7 +113,7 @@ function Home() {
   }
 
   return (
-    <div className="home-shell relative min-h-dvh bg-[#0a0a0a] font-sans text-white antialiased md:h-[100vh] md:overflow-hidden">
+    <div className="home-shell relative min-h-dvh bg-[#0a0a0a] font-sans text-white antialiased md:h-[100vh] md:overflow-x-hidden md:overflow-y-auto">
       <div className="home-grain" aria-hidden />
       <div className="relative z-10 flex min-h-dvh flex-col md:h-full md:min-h-0">
         <header className="relative z-20 mx-auto flex w-full max-w-[1200px] shrink-0 items-center justify-end gap-1.5 px-5 pt-5 sm:px-6 sm:pt-5 md:px-10 lg:px-12">
@@ -142,7 +142,7 @@ function Home() {
         </header>
 
         <div className="relative z-0 flex flex-col md:min-h-0 md:flex-1">
-          <div className="relative z-0 flex shrink-0 items-center justify-center px-5 py-8 sm:py-10 md:min-h-0 md:flex-1 md:px-4 md:py-1">
+          <div className="relative z-0 flex shrink-0 items-center justify-center px-5 py-8 sm:py-10 md:flex-none md:px-4 md:py-1">
             <ParticleLogo key="bolt-circle-hole" />
           </div>
 
@@ -154,7 +154,7 @@ function Home() {
                   <div className="h-[40px] min-h-[36px]">
                     <DynamicText />
                   </div>
-                  <span className="inline-flex shrink-0 items-center font-mono text-4xl font-semibold tracking-wide text-white sm:text-4xl md:text-6xl">
+                  <span className="inline-flex shrink-0 items-center font-mono text-5xl font-bold tracking-wide text-white sm:text-5xl md:text-7xl">
                     volt
                   </span>
                   <div className="flex flex-col gap-2">
