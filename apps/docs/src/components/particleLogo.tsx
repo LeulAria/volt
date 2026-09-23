@@ -508,7 +508,8 @@ export function ParticleLogo({ className }: { className?: string }) {
       const w = rect.width;
       const h = rect.height;
       if (w < 8 || h < 8) return;
-      dpr = Math.min(window.devicePixelRatio || 1, 3);
+      const lite = Math.min(w, h) < 340;
+      dpr = Math.min(window.devicePixelRatio || 1, lite ? 2 : 3);
       slotW = w;
       slotH = h;
       wrapTop = rect.top;
@@ -858,9 +859,11 @@ export function ParticleLogo({ className }: { className?: string }) {
       sctx.fill(hot);
 
       ctx.globalCompositeOperation = "lighter";
-      ctx.filter = `blur(${Math.max(4, unit * dpr * 0.012)}px)`;
-      ctx.globalAlpha = 0.18;
-      ctx.drawImage(sharp, 0, 0);
+      if (unit >= 340) {
+        ctx.filter = `blur(${Math.max(4, unit * dpr * 0.012)}px)`;
+        ctx.globalAlpha = 0.18;
+        ctx.drawImage(sharp, 0, 0);
+      }
       ctx.filter = `blur(${Math.max(1.2, unit * dpr * 0.0035)}px)`;
       ctx.globalAlpha = 0.46;
       ctx.drawImage(sharp, 0, 0);
@@ -1130,7 +1133,7 @@ export function ParticleLogo({ className }: { className?: string }) {
       ref={wrapRef}
       className={cn(
         "relative aspect-square overflow-visible",
-        "mx-auto size-[min(70vw,220px)] sm:size-[min(48vw,260px)]",
+        "mx-auto size-[min(76vw,320px)] sm:size-[min(46vw,300px)]",
         "md:mx-0 md:size-auto md:h-[min(60vh,680px)] md:max-h-[min(92vw,680px)] md:w-auto md:max-w-[min(92vw,680px)] md:shrink-0",
         className,
       )}

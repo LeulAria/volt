@@ -196,15 +196,15 @@ export function ComposerPrompt() {
   );
 
   return (
-    <div ref={rootRef} className="w-full max-w-full text-white md:w-[min(500px,88vw)]">
-      <div className="mb-2 flex items-center gap-1.5">
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
+    <div ref={rootRef} className="w-full min-w-0 max-w-full text-white md:w-[min(500px,88vw)]">
+      <div className="mb-2 flex w-full min-w-0 flex-wrap items-center gap-1.5">
+        <div className="flex w-full min-w-0 flex-1 flex-wrap items-center gap-1.5">
           <span className="inline-flex h-7 shrink-0 items-center rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/80 backdrop-blur-xl">
             Changes
             <span className="ml-1.5 text-[#3ecf8e]">+15863</span>
             <span className="ml-1 text-[#f07178]">-1237</span>
           </span>
-          <span className="inline-flex h-7 shrink-0 items-center rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/80 backdrop-blur-xl">
+          <span className="hidden h-7 shrink-0 items-center rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/80 backdrop-blur-xl md:inline-flex">
             Worked for 36s
           </span>
           <button
@@ -215,12 +215,12 @@ export function ComposerPrompt() {
             <ChevronDownIcon className="w-[9px] text-white/45" />
           </button>
         </div>
-        <span className="hidden h-7 shrink-0 items-center rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/45 backdrop-blur-xl sm:inline-flex">
+        <span className="hidden h-7 shrink-0 items-center rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/45 backdrop-blur-xl md:inline-flex">
           {triggerLabel(selected, effort, fast)}
         </span>
       </div>
 
-      <div className="flex h-9 min-h-9 items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.08] py-0.5 pr-1.5 pl-1 backdrop-blur-xl">
+      <div className="flex h-9 min-h-9 w-full min-w-0 items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.08] py-0.5 pr-1.5 pl-1 backdrop-blur-xl">
         <span className="inline-flex size-[25px] shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-white/55">
           <Plus className="size-3" strokeWidth={1.75} />
         </span>
@@ -232,7 +232,7 @@ export function ComposerPrompt() {
           spellCheck
           aria-label="Follow-up"
           placeholder="Send follow-up"
-          className="max-h-24 min-h-7 w-full resize-none overflow-y-auto bg-transparent py-1 text-[13px] leading-5 text-white/90 outline-none placeholder:text-white/35"
+          className="max-h-24 min-h-7 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-1 text-[13px] leading-5 text-white/90 outline-none placeholder:text-white/35"
         />
         {picker}
         <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-white text-black">

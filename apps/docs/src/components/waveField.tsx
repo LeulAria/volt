@@ -98,7 +98,7 @@ export function WaveField() {
   return (
     <canvas
       ref={ref}
-      className="pointer-events-none absolute inset-0 z-[1] h-full w-full opacity-20"
+      className="pointer-events-none absolute inset-0 z-[1] h-full w-full opacity-[0.12] md:opacity-20"
       aria-hidden
     />
   );

@@ -74,7 +74,7 @@ const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0a0a]";
 
 /** Fixed square so Windows & Linux controls always match. */
-const platformOutlineBtn = `inline-flex size-9 shrink-0 items-center justify-center rounded-[5px] border border-white/25 bg-transparent text-white transition-colors duration-150 hover:border-white/40 hover:bg-white/5 ${focusRing}`;
+const platformOutlineBtn = `inline-flex size-11 shrink-0 items-center justify-center rounded-[5px] border border-white/25 bg-transparent text-white transition-colors duration-150 hover:border-white/40 hover:bg-white/5 md:size-9 ${focusRing}`;
 
 export const Route = createFileRoute("/")({
   component: Home,
@@ -114,12 +114,12 @@ function Home() {
   }
 
   return (
-    <div className="home-shell relative min-h-dvh bg-[#101614] font-sans text-white antialiased md:h-[100vh] md:overflow-hidden">
+    <div className="home-shell relative min-h-dvh overflow-x-hidden bg-[#101614] font-sans text-white antialiased md:h-[100vh] md:overflow-hidden">
       <div className="home-grain" aria-hidden />
       <WaveField />
       <div className="relative z-10 flex min-h-dvh flex-col md:h-[100vh] md:min-h-0 md:overflow-hidden">
-        <header className="relative z-20 mx-auto flex w-full max-w-[1200px] shrink-0 items-center justify-end gap-1.5 px-5 pt-5 sm:px-6 sm:pt-5 md:px-10 lg:px-12">
-          <div className="inline-flex h-6 items-center justify-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-2.5 text-center text-[10px] font-medium tracking-[0.16em] text-white/75 backdrop-blur-xl">
+        <header className="relative z-20 mx-auto flex w-full max-w-[1200px] shrink-0 items-center justify-end gap-1.5 px-4 pt-4 sm:px-6 sm:pt-5 md:px-10 lg:px-12">
+          <div className="inline-flex h-6 min-w-0 items-center justify-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2 text-center text-[10px] font-medium tracking-[0.08em] text-white/75 backdrop-blur-xl sm:gap-2 sm:px-2.5 sm:tracking-[0.16em]">
             <span className="inline-flex items-center pt-px pl-[0.16em] uppercase leading-none">Public beta</span>
             {releaseTag ? (
               <>
@@ -139,16 +139,16 @@ function Home() {
             className={`group inline-flex h-6 items-center justify-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2.5 leading-none text-[10px] font-medium uppercase tracking-[0.16em] text-white/70 backdrop-blur-xl transition-colors duration-150 hover:border-white/25 hover:bg-white/10 hover:text-white ${focusRing}`}
           >
             <GithubMarkIcon className="size-3.5 shrink-0 opacity-80 transition-opacity group-hover:opacity-100" />
-            <span>GitHub</span>
+            <span className="max-[380px]:sr-only">GitHub</span>
           </a>
         </header>
 
-        <div className="relative z-0 flex flex-col md:min-h-0 md:flex-1">
-          <div className="relative z-0 flex shrink-0 items-center justify-center px-5 py-8 sm:py-10 md:flex-none md:px-4 md:py-1">
+        <div className="relative z-0 flex min-h-0 flex-1 flex-col md:min-h-0 md:flex-1">
+          <div className="relative z-0 flex flex-1 items-center justify-center px-4 py-2 sm:px-5 sm:py-6 md:flex-none md:px-4 md:py-1">
             <ParticleLogo key="bolt-circle-hole" />
           </div>
 
-          <div className="relative z-20 flex flex-col px-5 pb-12 pt-1 sm:px-6 sm:pb-10 md:-mt-[calc(min(60vh,680px)+0.5rem)] md:h-[calc(100vh-2.75rem)] md:justify-end md:px-10 md:pb-6 md:pt-0 lg:px-12">
+          <div className="relative z-20 flex shrink-0 flex-col px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-1 max-md:mt-auto sm:px-6 sm:pb-10 md:-mt-[calc(min(60vh,680px)+0.5rem)] md:h-[calc(100vh-2.75rem)] md:justify-end md:px-10 md:pb-6 md:pt-0 lg:px-12">
             <div className="mx-auto w-full max-w-[1200px]">
             <div className="flex flex-col">
               <div className="min-w-0">
@@ -156,11 +156,11 @@ function Home() {
                   <div className="h-[40px] min-h-[36px]">
                     <DynamicText />
                   </div>
-                  <span className="inline-flex shrink-0 items-center font-mono text-5xl font-bold tracking-wide text-white sm:text-5xl md:text-7xl">
+                  <span className="inline-flex shrink-0 items-center font-mono text-4xl font-semibold tracking-wide text-white sm:text-5xl md:text-7xl">
                     volt
                   </span>
                   <div className="flex flex-col gap-2">
-                    <span className="mt-2 max-w-xl text-balance text-[22px] leading-tight text-white sm:mt-1.5 sm:text-xl md:mt-2 md:text-[32px] md:leading-[1.1]">
+                    <span className="mt-2 max-w-xl text-balance text-[20px] leading-tight text-white sm:mt-1.5 sm:text-xl md:mt-2 md:text-[32px] md:leading-[1.1]">
                       The agentic development workspace.
                     </span>
                   </div>
@@ -176,7 +176,7 @@ function Home() {
               </div>
             </div>
 
-            <div className="mt-8 w-full min-w-0 sm:mt-6">
+            <div className="mt-6 w-full min-w-0 sm:mt-6">
               <div className="flex w-full min-w-0 flex-col gap-6 md:flex-row md:items-end md:justify-between md:gap-8">
                 {/* Below md: 2 lines (curl, then platforms). md+: one line with curl capped at 300px */}
                 <div className="flex w-full min-w-0 flex-col gap-3 md:flex-row md:items-end md:gap-3">
@@ -186,8 +186,8 @@ function Home() {
                     </div>
                     <div className="flex h-9 min-h-9 w-full min-w-0 items-center gap-2 rounded-[5px] border border-white/15 bg-transparent py-1 pl-3 pr-1.5 text-[11px] text-white/75 md:text-xs">
                     <span className="shrink-0 font-mono text-emerald-400/90">&gt;_</span>
-                    <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]">
-                      <code className="block whitespace-nowrap pr-1 font-mono">{INSTALL_CURL}</code>
+                    <div className="min-w-0 flex-1 overflow-hidden [mask-image:linear-gradient(90deg,#000_72%,transparent)]">
+                      <code className="block whitespace-nowrap pr-6 font-mono">{INSTALL_CURL}</code>
                     </div>
                     <button
                       type="button"
@@ -217,7 +217,7 @@ function Home() {
                   </div>
 
                   {/* Mac + Win + Linux — single row; Mac grows, platform icons fixed size */}
-                  <div className="w-full min-w-0 overflow-x-auto [scrollbar-width:thin] md:w-auto md:min-w-0 md:overflow-visible">
+                  <div className="w-full min-w-0 md:w-auto md:overflow-visible">
                     <div className="flex w-full min-w-0 flex-nowrap items-center gap-2 sm:gap-2.5 md:w-max md:max-w-full">
                       <a
                         href={DOWNLOAD_MAC}
@@ -238,7 +238,7 @@ function Home() {
                         aria-label="Download for Windows"
                         className={platformOutlineBtn}
                       >
-                        <WindowsIcon className="size-[18px] text-white" />
+                        <WindowsIcon className="size-5 text-white md:size-[18px]" />
                       </a>
                       <a
                         href={DOWNLOAD_LINUX}
@@ -251,14 +251,14 @@ function Home() {
                         <img
                           src="/linux-icon.svg"
                           alt=""
-                          className="size-5 opacity-90 brightness-0 invert"
+                          className="size-6 opacity-90 brightness-0 invert md:size-5"
                         />
                       </a>
                     </div>
                   </div>
                 </div>
 
-                <div className="shrink-0">
+                <div className="hidden w-full min-w-0 md:block">
                   <ComposerPrompt />
                 </div>
               </div>
