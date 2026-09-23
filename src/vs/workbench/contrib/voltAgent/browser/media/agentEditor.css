@@ -1757,6 +1757,7 @@ pre.volt-agent-searchable {
 	display: flex;
 	justify-content: flex-end;
 	align-items: center;
+	margin-top: 4px;
 	margin-bottom: 5px;
 	padding: 4px 2px 0;
 	background: transparent;
@@ -5151,12 +5152,22 @@ pre.volt-agent-searchable {
 }
 
 
-.context-view .volt-agent-dropdown.terminal-menu,
-.context-view .volt-agent-dropdown.table-copy-menu {
+.context-view .volt-agent-dropdown.terminal-menu {
 	min-width: 236px;
 	max-width: 280px;
 	width: max-content;
 	padding: 4px;
+}
+
+.context-view .volt-agent-dropdown.table-copy-menu {
+	min-width: 0;
+	width: max-content;
+	padding: 4px;
+	font-size: 11px;
+}
+
+.context-view .volt-agent-dropdown.table-copy-menu .volt-agent-dropdown-item .label {
+	white-space: nowrap;
 }
 
 .context-view .volt-agent-dropdown.terminal-menu .volt-agent-dropdown-item .label {
