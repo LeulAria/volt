@@ -50,7 +50,7 @@ const DOT_GAMMA = 0.62;
 const COVER_MIN = 0.1;
 const MIN_RADIUS = 0.7;
 const TAU = Math.PI * 2;
-const DOT_ALPHA = 0.55;
+const DOT_ALPHA = 0.5;
 const WANDER_MIN = 2.8;
 const WANDER_SPAN = 4.4;
 const RETARGET_MIN_MS = 2200;
@@ -78,17 +78,18 @@ const INTRO_MS = 2100;
 const HANDOFF_MS = 720;
 const WARP_SPIN = 0.05;
 const WARP_PULSE = 0.4;
-const STREAK_SPARK = 0.55;
 const WAVE_DELAY = [0, 160, 380];
 const WAVE_STAGGER = [110, 200, 320];
 const WAVE_GATHER = [700, 980, 1280];
+const DUST_GAP_MIN_MS = 180;
+const DUST_GAP_SPAN_MS = 380;
 
 const GLOW_COLOR = "rgb(236, 242, 255)";
 const GLOW_PAD = 0.12;
 const GLOW_HALO_BLUR = 0.04;
-const GLOW_HALO_ALPHA = 0.14;
+const GLOW_HALO_ALPHA = 0.1;
 const GLOW_CORE_BLUR = 0.016;
-const GLOW_CORE_ALPHA = 0.055;
+const GLOW_CORE_ALPHA = 0.04;
 
 type Bitmap = {
   alpha: Uint8Array;
@@ -654,9 +655,14 @@ export function ParticleLogo({ className }: { className?: string }) {
       r: number;
       born: number;
       life: number;
+      out: boolean;
+      ang: number;
+      drift: number;
+      wobble: number;
     };
     const motes: Mote[] = [];
     let moteGate = 0;
+    let dustAt = performance.now() + 700 + Math.random() * 600;
 
     function nearBolt(x: number, y: number) {
       const reach2 = 36 * 36;
@@ -690,6 +696,45 @@ export function ParticleLogo({ className }: { className?: string }) {
           r: 0.9 + Math.random() * 1.1,
           born: now,
           life: 900 + Math.random() * 600,
+          out: false,
+          ang: 0,
+          drift: 0,
+          wobble: 0,
+        });
+      }
+    }
+
+    function emitDrift(now: number) {
+      if (reduceMotion || !assembled || now < dustAt || particles.length === 0) return;
+      dustAt = now + DUST_GAP_MIN_MS + Math.random() * DUST_GAP_SPAN_MS;
+      const unit = Math.min(slotW, slotH) || 1;
+      let origin = particles[(Math.random() * particles.length) | 0];
+      for (let k = 0; k < 5; k++) {
+        const p = particles[(Math.random() * particles.length) | 0];
+        if (Math.hypot(p.ox - midX, p.oy - midY) > unit * 0.18) {
+          origin = p;
+          break;
+        }
+      }
+      const radial = Math.atan2(origin.oy - midY, origin.ox - midX);
+      const count = 2;
+      for (let i = 0; i < count; i++) {
+        if (motes.length > 40) motes.shift();
+        const spread = radial + (Math.random() - 0.5) * 0.55;
+        const c = Math.cos(spread);
+        const s = Math.sin(spread);
+        motes.push({
+          x: origin.x + c * Math.random() * 2,
+          y: origin.y + s * Math.random() * 2,
+          vx: 0,
+          vy: 0,
+          r: 0.85 + Math.random() * 0.9,
+          born: now,
+          life: 2800 + Math.random() * 1400,
+          out: true,
+          ang: spread,
+          drift: (unit / 1050) * (0.4 + Math.random() * 0.45),
+          wobble: Math.random() * TAU,
         });
       }
     }
@@ -701,29 +746,58 @@ export function ParticleLogo({ className }: { className?: string }) {
           motes.splice(i, 1);
           continue;
         }
-        m.vy -= 0.008;
-        m.vx *= 0.99;
-        m.vy *= 0.99;
-        m.x += m.vx;
-        m.y += m.vy;
+        if (m.out) {
+          const flutter = Math.sin(now * 0.0024 + m.wobble) * 0.42;
+          const side = Math.cos(now * 0.0018 + m.wobble * 1.6) * m.drift * 0.55;
+          const ang = m.ang + flutter;
+          m.x += Math.cos(ang) * m.drift + Math.cos(ang + Math.PI / 2) * side;
+          m.y += Math.sin(ang) * m.drift + Math.sin(ang + Math.PI / 2) * side;
+        } else {
+          m.vy -= 0.008;
+          m.vx *= 0.99;
+          m.vy *= 0.99;
+          m.x += m.vx;
+          m.y += m.vy;
+        }
       }
     }
 
     function paintMotes(now: number) {
-      if (!motes.length) return;
+      if (tctx) {
+        tctx.setTransform(1, 0, 0, 1, 0, 0);
+        tctx.globalCompositeOperation = "source-over";
+        tctx.clearRect(0, 0, trail.width, trail.height);
+        tctx.lineCap = "round";
+      }
       ctx.globalCompositeOperation = "source-over";
       ctx.filter = "none";
       ctx.globalAlpha = 1;
+      ctx.lineCap = "round";
       for (let i = 0; i < motes.length; i++) {
         const m = motes[i];
         const u = Math.min(1, (now - m.born) / m.life);
-        const a = (1 - u) * (1 - u) * 0.55;
+        const flame = m.out ? (u < 0.18 ? u / 0.18 : 1 - smoothstep(0.22, 1, u)) : (1 - u) * (1 - u);
+        const a = flame * (m.out ? 0.72 : 0.55);
         if (a < 0.02) continue;
+        const rad = Math.max(0.3, m.r * (m.out ? 0.85 + 0.15 * (1 - u) : 1 - u * 0.4)) * dpr;
+        if (m.out && tctx) {
+          const head = trailPoint(m.x, m.y);
+          tctx.beginPath();
+          tctx.arc(head.x, head.y, rad * 2.4, 0, TAU);
+          tctx.fillStyle = `rgba(198,212,232,${a * 0.22})`;
+          tctx.fill();
+          tctx.beginPath();
+          tctx.arc(head.x, head.y, rad, 0, TAU);
+          tctx.fillStyle = `rgba(232,238,248,${a})`;
+          tctx.fill();
+          continue;
+        }
         ctx.beginPath();
-        ctx.arc(m.x * dpr, m.y * dpr, Math.max(0.35, m.r * (1 - u * 0.45)) * dpr, 0, TAU);
+        ctx.arc(m.x * dpr, m.y * dpr, rad, 0, TAU);
         ctx.fillStyle = `rgba(226,230,238,${a})`;
         ctx.fill();
       }
+      if (tctx) tctx.globalCompositeOperation = "lighter";
     }
 
     function onPointerMove(e: PointerEvent) {
@@ -751,14 +825,12 @@ export function ParticleLogo({ className }: { className?: string }) {
     function paintEnergy(
       alphaOf: (p: Particle) => number,
       radiusOf: (p: Particle) => number,
-      energy: number,
     ) {
       if (!syncSharp() || !sctx) return;
       const unit = Math.min(slotW, slotH) || 1;
       const now = performance.now();
       sctx.setTransform(1, 0, 0, 1, 0, 0);
       sctx.clearRect(0, 0, sharp.width, sharp.height);
-      sctx.lineCap = "round";
       sctx.globalCompositeOperation = "lighter";
 
       const dust = new Path2D();
@@ -768,62 +840,29 @@ export function ParticleLogo({ className }: { className?: string }) {
         const p = particles[i];
         const base = alphaOf(p);
         if (base <= 0.01) continue;
-        const dx = p.x - midX;
-        const dy = p.y - midY;
-        const dist = Math.hypot(dx, dy) || 1;
         const grain = 0.55 + hash01(p.seed + 4.2) * 0.45;
         const twinkle = 0.9 + 0.1 * Math.sin(now * 0.0032 + p.seed);
         const bright = Math.min(1, base * grain * twinkle);
         const rad = Math.max(0.45, radiusOf(p));
         const x = p.x * dpr;
         const y = p.y * dpr;
-        const bin = bright > 0.88 ? hot : bright > 0.48 ? embers : dust;
+        const bin = bright > 0.78 ? hot : bright > 0.42 ? embers : dust;
         bin.moveTo(x + rad, y);
         bin.arc(x, y, rad, 0, TAU);
-
-        const spark = hash01(p.seed + 71.3) < STREAK_SPARK * (0.45 + energy * 0.7);
-        if (!spark) continue;
-        const speed = Math.hypot(p.vx, p.vy);
-        let ux = dx / dist;
-        let uy = dy / dist;
-        if (speed > 0.85) {
-          ux = p.vx / speed;
-          uy = p.vy / speed;
-        }
-        const ray = Math.max(0, 1 - dist / (unit * 0.62));
-        const span = unit * dpr;
-        const tail = span * (0.006 + ray * 0.022 * energy) + rad * 1.2 + speed * dpr * 1.1 * energy;
-        const inward = Math.min(tail, Math.max(0, dist - unit * 0.1) * dpr);
-        const headX = x + ux * rad * 0.4;
-        const headY = y + uy * rad * 0.4;
-        const tailX = x - ux * inward;
-        const tailY = y - uy * inward;
-        sctx.beginPath();
-        sctx.moveTo(tailX, tailY);
-        sctx.lineTo(headX, headY);
-        sctx.strokeStyle = `rgba(214,226,255,${bright * (0.22 + ray * 0.28)})`;
-        sctx.lineWidth = Math.max(0.8, rad * (1.5 + ray));
-        sctx.stroke();
-        sctx.beginPath();
-        sctx.moveTo(x - ux * inward * 0.38, y - uy * inward * 0.38);
-        sctx.lineTo(headX, headY);
-        sctx.strokeStyle = `rgba(255,255,255,${Math.min(1, bright * (0.7 + ray * 0.45))})`;
-        sctx.lineWidth = Math.max(0.45, rad * (0.55 + ray * 0.35));
-        sctx.stroke();
       }
-      sctx.fillStyle = "rgba(255,255,255,0.34)";
+      sctx.fillStyle = "rgba(255,255,255,0.3)";
       sctx.fill(dust);
-      sctx.fillStyle = "rgba(236,244,255,0.55)";
+      sctx.fillStyle = "rgba(236,244,255,0.48)";
       sctx.fill(embers);
-      sctx.fillStyle = "rgba(255,255,255,1)";
+      sctx.fillStyle = "rgba(255,255,255,0.88)";
       sctx.fill(hot);
 
       ctx.globalCompositeOperation = "lighter";
       ctx.filter = `blur(${Math.max(4, unit * dpr * 0.012)}px)`;
-      ctx.globalAlpha = 0.22;
+      ctx.globalAlpha = 0.18;
       ctx.drawImage(sharp, 0, 0);
       ctx.filter = `blur(${Math.max(1.2, unit * dpr * 0.0035)}px)`;
-      ctx.globalAlpha = 0.55;
+      ctx.globalAlpha = 0.46;
       ctx.drawImage(sharp, 0, 0);
       ctx.filter = "none";
       ctx.globalAlpha = 1;
@@ -838,7 +877,7 @@ export function ParticleLogo({ className }: { className?: string }) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
-      paintEnergy(() => DOT_ALPHA, (p) => p.r, 0.72);
+      paintEnergy(() => DOT_ALPHA, (p) => p.r);
       paintMotes(performance.now());
     }
 
@@ -859,7 +898,6 @@ export function ParticleLogo({ className }: { className?: string }) {
           const introR = p.r * (0.35 + 0.65 * smoothstep(0.08, 0.7, Math.max(p.introT, 0.2)));
           return introR + (p.r - introR) * blend;
         },
-        1.2 - blend * 0.45,
       );
     }
 
@@ -1062,6 +1100,7 @@ export function ParticleLogo({ className }: { className?: string }) {
       }
 
       emitMotes(now, mvx, mvy);
+      emitDrift(now);
       stepMotes(now);
       paintIdle();
     }

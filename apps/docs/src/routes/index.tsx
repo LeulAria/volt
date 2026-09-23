@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ComposerPrompt } from "@/components/composerPrompt";
 import { DynamicText } from "@/components/dynamicText";
 import { ParticleLogo } from "@/components/particleLogo";
+import { WaveField } from "@/components/waveField";
 import { homeRouteLinks, homeRouteMeta } from "@/lib/seo";
 import { gitConfig } from "@/lib/shared";
 
@@ -113,9 +114,10 @@ function Home() {
   }
 
   return (
-    <div className="home-shell relative min-h-dvh bg-[#0a0a0a] font-sans text-white antialiased md:h-[100vh] md:overflow-x-hidden md:overflow-y-auto">
+    <div className="home-shell relative min-h-dvh bg-[#101614] font-sans text-white antialiased md:h-[100vh] md:overflow-hidden">
       <div className="home-grain" aria-hidden />
-      <div className="relative z-10 flex min-h-dvh flex-col md:h-full md:min-h-0">
+      <WaveField />
+      <div className="relative z-10 flex min-h-dvh flex-col md:h-[100vh] md:min-h-0 md:overflow-hidden">
         <header className="relative z-20 mx-auto flex w-full max-w-[1200px] shrink-0 items-center justify-end gap-1.5 px-5 pt-5 sm:px-6 sm:pt-5 md:px-10 lg:px-12">
           <div className="inline-flex h-6 items-center justify-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-2.5 text-center text-[10px] font-medium tracking-[0.16em] text-white/75 backdrop-blur-xl">
             <span className="inline-flex items-center pt-px pl-[0.16em] uppercase leading-none">Public beta</span>
@@ -146,7 +148,7 @@ function Home() {
             <ParticleLogo key="bolt-circle-hole" />
           </div>
 
-          <div className="relative z-20 px-5 pb-12 pt-1 sm:px-6 sm:pb-10 md:px-10 md:pb-6 md:pt-2 lg:px-12">
+          <div className="relative z-20 flex flex-col px-5 pb-12 pt-1 sm:px-6 sm:pb-10 md:-mt-[calc(min(60vh,680px)+0.5rem)] md:h-[calc(100vh-2.75rem)] md:justify-end md:px-10 md:pb-6 md:pt-0 lg:px-12">
             <div className="mx-auto w-full max-w-[1200px]">
             <div className="flex flex-col">
               <div className="min-w-0">
@@ -190,16 +192,26 @@ function Home() {
                     <button
                       type="button"
                       onClick={copyInstall}
-                      className={`shrink-0 rounded-[5px] border border-white/20 bg-transparent px-2 py-1 text-[11px] font-semibold text-white/90 transition-colors duration-150 hover:border-white/35 hover:bg-white/5 sm:px-2.5 ${focusRing}`}
+                      aria-label={copied ? "Copied" : "Copy"}
+                      className={`relative inline-grid h-6 shrink-0 place-items-center overflow-hidden rounded-[5px] border border-white/20 bg-transparent px-2 text-[11px] font-semibold leading-none text-white/90 transition-colors duration-200 hover:border-white/35 hover:bg-white/5 sm:px-2.5 ${focusRing}`}
                     >
-                      {copied ? (
-                        <span className="inline-flex items-center gap-1.5 text-emerald-400/90">
-                          <Check className="size-3.5" strokeWidth={2.5} />
-                          Copied
-                        </span>
-                      ) : (
-                        "Copy"
-                      )}
+                      <span
+                        className={`col-start-1 row-start-1 inline-flex items-center gap-1 text-emerald-400 transition-all duration-200 ease-out ${
+                          copied ? "scale-100 opacity-100" : "pointer-events-none scale-95 opacity-0"
+                        }`}
+                        aria-hidden={!copied}
+                      >
+                        <Check className="size-3.5 shrink-0" strokeWidth={2.5} />
+                        Copied
+                      </span>
+                      <span
+                        className={`col-start-1 row-start-1 transition-all duration-200 ease-out ${
+                          copied ? "pointer-events-none scale-95 opacity-0" : "scale-100 opacity-100"
+                        }`}
+                        aria-hidden={copied}
+                      >
+                        Copy
+                      </span>
                     </button>
                     </div>
                   </div>

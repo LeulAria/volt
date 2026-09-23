@@ -13,7 +13,7 @@ html {
 
 html:has(.home-shell),
 html:has(.home-shell) body {
-  background: #0a0a0a;
+  background: #101614;
 }
 
 @media (min-width: 768px) {
@@ -35,23 +35,58 @@ html:has(body[data-scroll-locked]) {
 
 .home-grain {
   position: absolute;
-  inset: 0;
+  inset: -8px;
   z-index: 0;
   pointer-events: none;
-  background: radial-gradient(
-    ellipse 62% 52% at 50% 30%,
-    rgba(255, 255, 255, 0.016),
-    transparent 68%
-  );
+  filter: blur(1px);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='d'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch' seed='11'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.45 0 0 0 0 0.4 0 0 0 0 0.28 1.4 0 0 0 -0.85'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23d)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
 }
 
+.home-grain::before,
 .home-grain::after {
   content: '';
   position: absolute;
   inset: 0;
-  opacity: 0.16;
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='4' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
-  background-size: 220px 220px;
+  pointer-events: none;
+  background-repeat: repeat, no-repeat;
+  background-size: 6px 6px, auto;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+
+/* Corner stipple. The fade is the mask, so the stroke dissolves instead of getting cut. */
+.home-grain::before {
+  background-image:
+    radial-gradient(circle, rgba(244, 244, 240, 0.55) 0.6px, transparent 0.85px),
+    radial-gradient(ellipse 900px 800px at 0% 0%, rgba(255, 255, 255, 0.045) 0%, transparent 72%);
+  -webkit-mask-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='800'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='turbulence' baseFrequency='0.0035' numOctaves='2' seed='3'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.22 0 0 0 0.82'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23b)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 900px 800px at 0% 0%, #000 0%, rgba(0, 0, 0, 0.45) 48%, transparent 100%);
+  mask-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='800'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='turbulence' baseFrequency='0.0035' numOctaves='2' seed='3'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.22 0 0 0 0.82'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23b)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 900px 800px at 0% 0%, #000 0%, rgba(0, 0, 0, 0.45) 48%, transparent 100%);
+  -webkit-mask-size: 2400px 2400px, 900px 800px;
+  mask-size: 2400px 2400px, 900px 800px;
+  -webkit-mask-position: -500px -420px, 0 0;
+  mask-position: -500px -420px, 0 0;
+}
+
+.home-grain::after {
+  background-image:
+    radial-gradient(circle, rgba(236, 236, 232, 0.48) 0.55px, transparent 0.8px),
+    radial-gradient(ellipse 820px 720px at 100% 100%, rgba(255, 255, 255, 0.035) 0%, transparent 70%);
+  -webkit-mask-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='800'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='turbulence' baseFrequency='0.004' numOctaves='2' seed='9'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.2 0 0 0 0.84'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23b)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 820px 720px at 100% 100%, #000 0%, rgba(0, 0, 0, 0.4) 46%, transparent 100%);
+  mask-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='800'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='turbulence' baseFrequency='0.004' numOctaves='2' seed='9'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.2 0 0 0 0.84'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23b)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 820px 720px at 100% 100%, #000 0%, rgba(0, 0, 0, 0.4) 46%, transparent 100%);
+  -webkit-mask-size: 2200px 2200px, 820px 720px;
+  mask-size: 2200px 2200px, 820px 720px;
+  -webkit-mask-position: right -480px bottom -400px, right bottom;
+  mask-position: right -480px bottom -400px, right bottom;
 }
 
