@@ -38,7 +38,9 @@ import { IEditorResolverService, RegisteredEditorPriority } from '../../../../se
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
-import { getLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { getLayoutMode, isAgentLeftSidebarHidden } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import '../chrome/agentViewSidebars.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { AgentChangesEditor, AgentChangesEditorInput, AgentChangesEditorInputSerializer, AGENT_CHANGES_EDITOR_ID, OPEN_AGENT_CHANGES_COMMAND_ID, openAgentChanges } from '../review/agentChangesEditor.js';
 import '../review/agentChangesActions.js';
@@ -294,10 +296,14 @@ class AgentSidePanelStartupContribution extends Disposable {
 	constructor(
 		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
 		@IViewsService viewsService: IViewsService,
+		@IStorageService storageService: IStorageService,
 	) {
 		super();
-		layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
-		void viewsService.openView(AGENT_SIDE_PANEL_VIEW_ID, false);
+		const hide = getLayoutMode(layoutService) === 'agent' && isAgentLeftSidebarHidden(storageService);
+		layoutService.setPartHidden(hide, Parts.AUXILIARYBAR_PART);
+		if (!hide) {
+			void viewsService.openView(AGENT_SIDE_PANEL_VIEW_ID, false);
+		}
 	}
 }
 

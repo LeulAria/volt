@@ -13,6 +13,7 @@ import { Categories } from '../../../../platform/action/common/actionCommonCateg
 import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IStorageService, StorageScope } from '../../../../platform/storage/common/storage.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
@@ -27,8 +28,22 @@ export const SET_AGENT_LAYOUT_MODE_COMMAND_ID = 'workbench.action.setAgentLayout
 export const SET_IDE_LAYOUT_MODE_COMMAND_ID = 'workbench.action.setIdeLayoutMode';
 
 const SIDEBAR_LOCATION_KEY = 'workbench.sideBar.location';
+const STATUSBAR_VISIBLE_KEY = 'workbench.statusBar.visible';
 
 export const AGENT_CHROME_HEIGHT = 28;
+export type LayoutMode = 'agent' | 'ide';
+export const AGENT_LEFT_SIDEBAR_HIDDEN_KEY = 'volt.agent.leftSidebar.hidden';
+export const AGENT_RIGHT_DOCK_COLLAPSED_KEY = 'volt.agent.rightDock.collapsed.v2';
+export const AGENT_RIGHT_DOCK_COLLAPSED_WIDTH = 0;
+export const AGENT_RIGHT_DOCK_EXPANDED_WIDTH = 252;
+
+export function isAgentLeftSidebarHidden(storageService: IStorageService): boolean {
+	return storageService.getBoolean(AGENT_LEFT_SIDEBAR_HIDDEN_KEY, StorageScope.PROFILE, false);
+}
+
+export function isAgentRightDockCollapsed(storageService: IStorageService): boolean {
+	return storageService.getBoolean(AGENT_RIGHT_DOCK_COLLAPSED_KEY, StorageScope.PROFILE, false);
+}
 
 const agentLayoutIcon = registerIcon('volt-layout-agent', Codicon.robot, localize('volt.layoutMode.agentIcon', 'Icon for Agent Mode.'));
 const ideLayoutIcon = registerIcon('volt-layout-ide', Codicon.code, localize('volt.layoutMode.ideIcon', 'Icon for IDE Mode.'));
@@ -41,27 +56,37 @@ export async function setLayoutMode(
 	configurationService: IConfigurationService,
 	layoutService: IWorkbenchLayoutService,
 	mode: LayoutMode,
+	storageService: IStorageService,
 ): Promise<void> {
 	const location = mode === 'agent' ? 'right' : 'left';
 	if (configurationService.getValue<string>(SIDEBAR_LOCATION_KEY) !== location) {
 		await configurationService.updateValue(SIDEBAR_LOCATION_KEY, location);
 	}
 
-	applyLayoutModeChrome(layoutService);
+	applyLayoutModeChrome(layoutService, configurationService, storageService);
 }
 
-export function applyLayoutModeChrome(layoutService: IWorkbenchLayoutService): void {
+export function applyLayoutModeChrome(layoutService: IWorkbenchLayoutService, configurationService: IConfigurationService, storageService?: IStorageService): void {
 	const agent = getLayoutMode(layoutService) === 'agent';
-	layoutService.mainContainer.classList.toggle('volt-layout-agent', agent);
+	const root = layoutService.mainContainer;
+	root.classList.toggle('volt-layout-agent', agent);
 	if (!agent) {
-		resetAgentStatusbarShift(layoutService.mainContainer);
+		resetAgentStatusbarShift(root);
 	}
 	layoutService.setPartHidden(agent, Parts.ACTIVITYBAR_PART);
 	layoutService.setPartHidden(agent, Parts.SIDEBAR_PART);
-	layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
+	const hideLeftSidebar = agent && !!storageService && isAgentLeftSidebarHidden(storageService);
+	layoutService.setPartHidden(hideLeftSidebar, Parts.AUXILIARYBAR_PART);
+	if (agent) {
+		const collapsed = !!storageService && isAgentRightDockCollapsed(storageService);
+		root.style.setProperty('--volt-agent-right-dock-width', `${collapsed ? AGENT_RIGHT_DOCK_COLLAPSED_WIDTH : AGENT_RIGHT_DOCK_EXPANDED_WIDTH}px`);
+		root.classList.toggle('volt-agent-right-collapsed', collapsed);
+	}
+	const statusBarHiddenByUser = configurationService.getValue<boolean>(STATUSBAR_VISIBLE_KEY) === false;
+	layoutService.setPartHidden(agent || statusBarHiddenByUser, Parts.STATUSBAR_PART);
 	layoutService.updateCustomTitleBarVisibility();
 	layoutService.layout();
-	if (agent) {
+	if (agent && !hideLeftSidebar) {
 		const size = layoutService.getSize(Parts.AUXILIARYBAR_PART);
 		if (size.width !== AuxiliaryBarPart.AGENT_DEFAULT_WIDTH) {
 			layoutService.setSize(Parts.AUXILIARYBAR_PART, {
@@ -69,6 +94,9 @@ export function applyLayoutModeChrome(layoutService: IWorkbenchLayoutService): v
 				height: size.height,
 			});
 		}
+	}
+	if (hideLeftSidebar) {
+		root.style.setProperty('--volt-agent-sidebar-width', '0px');
 	}
 }
 
@@ -87,7 +115,7 @@ registerAction2(class ToggleLayoutModeAction extends Action2 {
 	override run(accessor: ServicesAccessor): Promise<void> {
 		const layoutService = accessor.get(IWorkbenchLayoutService);
 		const next: LayoutMode = getLayoutMode(layoutService) === 'agent' ? 'ide' : 'agent';
-		return setLayoutMode(accessor.get(IConfigurationService), layoutService, next);
+		return setLayoutMode(accessor.get(IConfigurationService), layoutService, next, accessor.get(IStorageService));
 	}
 });
 
@@ -120,7 +148,7 @@ registerAction2(class SetAgentLayoutModeAction extends Action2 {
 	}
 
 	override run(accessor: ServicesAccessor): Promise<void> {
-		return setLayoutMode(accessor.get(IConfigurationService), accessor.get(IWorkbenchLayoutService), 'agent');
+		return setLayoutMode(accessor.get(IConfigurationService), accessor.get(IWorkbenchLayoutService), 'agent', accessor.get(IStorageService));
 	}
 });
 
@@ -153,7 +181,7 @@ registerAction2(class SetIdeLayoutModeAction extends Action2 {
 	}
 
 	override run(accessor: ServicesAccessor): Promise<void> {
-		return setLayoutMode(accessor.get(IConfigurationService), accessor.get(IWorkbenchLayoutService), 'ide');
+		return setLayoutMode(accessor.get(IConfigurationService), accessor.get(IWorkbenchLayoutService), 'ide', accessor.get(IStorageService));
 	}
 });
 
@@ -164,13 +192,14 @@ class LayoutModeChromeContribution extends Disposable {
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@IConfigurationService configurationService: IConfigurationService,
 		@ICommandService commandService: ICommandService,
+		@IStorageService storageService: IStorageService,
 	) {
 		super();
 		this.createAgentChrome(commandService);
-		applyLayoutModeChrome(layoutService);
+		applyLayoutModeChrome(layoutService, configurationService, storageService);
 		this._register(configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(SIDEBAR_LOCATION_KEY)) {
-				applyLayoutModeChrome(layoutService);
+				applyLayoutModeChrome(layoutService, configurationService, storageService);
 			}
 		}));
 	}

@@ -248,10 +248,10 @@ function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IB
 	}
 	if (block.output) {
 		const out = append(content, $('pre.volt-agent-term-output.volt-agent-searchable'));
-		out.textContent = block.output;
+		out.textContent = block.output.replace(/[\r\n]+$/, '');
 	}
-	scanOutput.current = attachContainedScroll(clip, content, ctx, () => {
-		wrap.classList.toggle('clamped', content.scrollHeight > clip.clientHeight + 2);
+	scanOutput.current = attachContainedScroll(clip, content, ctx, scroll => {
+		pinCollapsedTerminalTail(wrap, clip, content, scroll);
 	});
 }
 
@@ -877,7 +877,20 @@ function balanceTableColumns(table: HTMLTableElement): void {
 	}
 }
 
-function attachContainedScroll(wrap: HTMLElement, content: HTMLElement, ctx: IBlockRenderContext, afterScan?: () => void): () => void {
+function pinCollapsedTerminalTail(wrap: HTMLElement, clip: HTMLElement, content: HTMLElement, scroll: { setScrollPosition(update: { scrollTop: number }): void }): void {
+	const visible = clip.clientHeight;
+	const full = content.scrollHeight;
+	wrap.classList.toggle('clamped', visible > 0 && full > visible + 2);
+	if (wrap.classList.contains('expanded') || visible < 8) {
+		return;
+	}
+	const top = Math.max(0, content.scrollHeight - content.clientHeight);
+	if (Math.abs(content.scrollTop - top) > 1) {
+		scroll.setScrollPosition({ scrollTop: top });
+	}
+}
+
+function attachContainedScroll(wrap: HTMLElement, content: HTMLElement, ctx: IBlockRenderContext, afterScan?: (scroll: { setScrollPosition(update: { scrollTop: number }): void }) => void): () => void {
 	if (wrap.querySelector('.monaco-scrollable-element')) {
 		return () => { };
 	}
@@ -894,7 +907,7 @@ function attachContainedScroll(wrap: HTMLElement, content: HTMLElement, ctx: IBl
 	ctx.store.add(scroll);
 	const scan = () => {
 		scroll.scanDomNode();
-		afterScan?.();
+		afterScan?.(scroll);
 		ctx.onScroll();
 	};
 	queueMicrotask(scan);

@@ -40,13 +40,11 @@ import {
 	OPEN_AGENT_CUSTOMIZE_COMMAND_ID,
 	NEW_AGENT_TAB_COMMAND_ID,
 	OPEN_AGENT_HISTORY_COMMAND_ID,
-	OPEN_AGENT_SEARCH_COMMAND_ID,
 	REPLACE_AGENT_COMMAND_ID,
 	TOGGLE_AGENT_DRAWER_COMMAND_ID,
 } from '../editor/agentEditorInput.js';
 import { AGENT_CUSTOMIZE_EDITOR_ID, AgentCustomizeEditor, AgentCustomizeEditorInput, AgentCustomizeEditorInputSerializer } from '../customize/agentCustomizeEditor.js';
 import { findEditorCommandsContext } from '../editor/agentEditorCommandsContext.js';
-import { toggleAgentSearchPalette } from '../search/agentSearchPalette.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
 
@@ -160,21 +158,6 @@ registerAction2(class ReplaceAgentAction extends Action2 {
 	/** Swaps the agent in place instead of adding a tab (⌥-click on `+`). */
 	override async run(accessor: ServicesAccessor, ...args: unknown[]): Promise<void> {
 		await openNewAgentInFocusedGroup(accessor, true, ...args);
-	}
-});
-
-registerAction2(class OpenAgentSearchAction extends Action2 {
-	constructor() {
-		super({
-			id: OPEN_AGENT_SEARCH_COMMAND_ID,
-			title: localize2('voltAgent.search', "Search"),
-			category: Categories.View,
-			f1: true,
-		});
-	}
-
-	override async run(accessor: ServicesAccessor): Promise<void> {
-		toggleAgentSearchPalette(accessor.get(IInstantiationService));
 	}
 });
 

@@ -1,0 +1,253 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.volt-agent-right-dock {
+	display: none;
+}
+
+.volt-agent-right-dock > .volt-agent-sidebar-toggle.right {
+	position: absolute;
+	top: 4px;
+	z-index: 3;
+}
+
+.volt-agent-right-dock.collapsed > .volt-agent-sidebar-toggle.right {
+	position: relative;
+	top: auto;
+	right: auto;
+}
+
+.volt-agent-right-dock.expanded > .volt-agent-sidebar-toggle.right {
+	right: 8px;
+}
+
+.volt-agent-sidebar-toggle,
+.volt-agent-dock-chevron,
+.volt-agent-rail-btn {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	cursor: pointer;
+}
+
+.volt-agent-sidebar-toggle.right {
+	cursor: default;
+}
+
+.volt-agent-sidebar-toggle.left svg,
+.volt-agent-right-dock.collapsed .volt-agent-dock-chevron svg {
+	transform: scaleX(-1);
+}
+
+.volt-agent-sidebar-toggle:hover,
+.volt-agent-dock-chevron:hover,
+.volt-agent-rail-btn:hover,
+.monaco-workbench .volt-agent-sidebar-toggle:focus-visible,
+.monaco-workbench .volt-agent-dock-chevron:focus-visible,
+.monaco-workbench .volt-agent-rail-btn:focus-visible {
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	outline: none;
+}
+
+.monaco-workbench .volt-agent-sidebar-toggle:focus,
+.monaco-workbench .volt-agent-dock-chevron:focus,
+.monaco-workbench .volt-agent-rail-btn:focus,
+.monaco-workbench .volt-agent-dock-row:focus {
+	outline: none;
+}
+
+.volt-agent-dock-label {
+	display: none;
+	position: absolute;
+	top: 50%;
+	right: calc(100% + 8px);
+	transform: translateY(-50%);
+	padding: 3px 8px;
+	border: 1px solid var(--vscode-editorHoverWidget-border, transparent);
+	border-radius: 6px;
+	background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
+	color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+	font-size: 12px;
+	line-height: 16px;
+	white-space: nowrap;
+	pointer-events: none;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
+.volt-agent-dock-chevron:hover .volt-agent-dock-label,
+.volt-agent-rail-btn:hover .volt-agent-dock-label,
+.volt-agent-right-dock-hover:hover .volt-agent-dock-label,
+.volt-agent-dock-chevron:focus-visible .volt-agent-dock-label,
+.volt-agent-rail-btn:focus-visible .volt-agent-dock-label {
+	display: block;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-right-dock,
+.monaco-workbench.volt-layout-agent .volt-agent-editor > .volt-agent-right-dock {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 12;
+	display: flex;
+	flex-direction: column;
+	width: var(--volt-agent-right-dock-width, 252px);
+	box-sizing: border-box;
+	background: transparent;
+	border-left: 0;
+	color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+	-webkit-app-region: no-drag;
+	pointer-events: none;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-editor:has(.volt-agent-right-dock.expanded) > .volt-agent-editor-main {
+	padding-right: var(--volt-agent-right-dock-width, 252px);
+	box-sizing: border-box;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-right-dock.expanded,
+.monaco-workbench.volt-layout-agent .volt-agent-editor > .volt-agent-right-dock.expanded {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	flex: none;
+	width: var(--volt-agent-right-dock-width, 252px);
+	height: auto;
+	background: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
+	pointer-events: auto;
+}
+
+.volt-agent-right-dock.expanded .volt-agent-right-dock-body,
+.volt-agent-right-dock.expanded .volt-agent-dock-chevron,
+.volt-agent-right-dock.expanded .volt-agent-sidebar-toggle {
+	pointer-events: auto;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-right-dock.collapsed,
+.monaco-workbench.volt-layout-agent .volt-agent-editor > .volt-agent-right-dock.collapsed {
+	top: 8px;
+	right: 8px;
+	bottom: auto;
+	width: auto;
+	height: auto;
+	align-items: center;
+	padding: 4px 2px;
+	background: transparent;
+}
+
+.volt-agent-right-dock.collapsed .volt-agent-dock-chevron,
+.volt-agent-right-dock.collapsed .volt-agent-rail-btn,
+.volt-agent-right-dock.collapsed .volt-agent-sidebar-toggle {
+	pointer-events: auto;
+}
+
+.volt-agent-right-dock.collapsed .volt-agent-right-dock-body {
+	display: none;
+}
+
+.volt-agent-right-dock.expanded .volt-agent-right-rail {
+	display: none;
+}
+
+.volt-agent-right-dock.expanded .volt-agent-right-dock-hover {
+	position: absolute;
+	top: 0;
+	right: 36px;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 36px;
+}
+
+.volt-agent-right-dock.expanded .volt-agent-dock-chevron {
+	opacity: 0;
+}
+
+.volt-agent-right-dock.expanded .volt-agent-right-dock-hover:hover .volt-agent-dock-chevron,
+.volt-agent-right-dock.expanded .volt-agent-dock-chevron:focus-visible {
+	opacity: 1;
+}
+
+.volt-agent-right-dock-body {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding-top: 8px;
+}
+
+.volt-agent-dock-heading {
+	padding: 8px 12px 4px;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-dock-tabs .volt-agent-dock-heading {
+	padding-right: 76px;
+}
+
+.volt-agent-dock-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: calc(100% - 12px);
+	height: 28px;
+	margin: 0 6px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-agent-dock-row > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-dock-row:hover,
+.monaco-workbench .volt-agent-dock-row:focus-visible {
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.volt-agent-dock-row .codicon,
+.volt-agent-rail-btn .codicon {
+	font-size: 16px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-dock-row:hover .codicon,
+.volt-agent-rail-btn:hover .codicon {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-right-rail {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 2px;
+}
+
+.volt-agent-dock-actions {
+	display: flex;
+	flex-direction: column;
+}

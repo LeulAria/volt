@@ -29,7 +29,6 @@ export const NEW_AGENT_TAB_COMMAND_ID = 'workbench.action.voltAgent.newAgentTab'
 export const REPLACE_AGENT_COMMAND_ID = 'workbench.action.voltAgent.replaceAgent';
 export const OPEN_AGENT_COMMAND_ID = 'workbench.action.voltAgent.openSession';
 export const OPEN_AGENT_HISTORY_COMMAND_ID = 'workbench.action.voltAgent.showHistory';
-export const OPEN_AGENT_SEARCH_COMMAND_ID = 'workbench.action.voltAgent.search';
 export const TOGGLE_AGENT_DRAWER_COMMAND_ID = 'workbench.action.voltAgent.toggleDrawer';
 export const EXPORT_AGENT_TRANSCRIPT_COMMAND_ID = 'workbench.action.voltAgent.exportTranscript';
 export const OPEN_AGENT_SETTINGS_COMMAND_ID = 'workbench.action.voltAgent.openSettings';

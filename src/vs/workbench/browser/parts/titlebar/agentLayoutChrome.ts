@@ -5,21 +5,24 @@
 
 import { isHTMLElement } from '../../../../base/browser/dom.js';
 
-const DEFAULT_STATUSBAR_HEIGHT = 22;
-
 export function applyAgentStatusbarShift(root: HTMLElement, sidebarWidth: number): void {
 	const width = Math.max(0, Math.round(sidebarWidth));
-	const status = root.querySelector('.part.statusbar');
-	const height = isHTMLElement(status)
-		? (Math.round(status.getBoundingClientRect().height) || DEFAULT_STATUSBAR_HEIGHT)
-		: DEFAULT_STATUSBAR_HEIGHT;
 	root.style.setProperty('--volt-agent-sidebar-width', `${width}px`);
-	root.style.setProperty('--volt-agent-statusbar-height', `${height}px`);
+}
+
+export function getAgentRightDockInset(root: HTMLElement): number {
+	if (!root.classList.contains('volt-layout-agent')) {
+		return 0;
+	}
+	const width = Number.parseInt(root.style.getPropertyValue('--volt-agent-right-dock-width'), 10);
+	return Number.isFinite(width) && width > 0 ? width : 0;
 }
 
 export function resetAgentStatusbarShift(root: HTMLElement): void {
 	root.style.removeProperty('--volt-agent-sidebar-width');
+	root.style.removeProperty('--volt-agent-right-dock-width');
 	root.style.removeProperty('--volt-agent-statusbar-height');
+	root.classList.remove('volt-agent-right-collapsed');
 	const statusWrap = root.querySelector('.part.statusbar')?.parentElement;
 	if (isHTMLElement(statusWrap)) {
 		statusWrap.style.left = '';

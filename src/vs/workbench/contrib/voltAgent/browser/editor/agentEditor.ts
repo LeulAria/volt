@@ -404,6 +404,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	static readonly ID = AgentEditorInput.EditorID;
 
 	private container!: HTMLElement;
+	private editorMainEl!: HTMLElement;
 	private threadView!: AgentThreadView;
 	private threadEl!: HTMLElement;
 	private threadInner!: HTMLElement;
@@ -561,8 +562,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.threadEl = this.threadView.element;
 		this.threadInner = this.threadView.inner;
 		this.threadScroll = this.threadView.scroll;
-		append(this.container, this.threadEl);
+		this.editorMainEl = append(this.container, $('.volt-agent-editor-main'));
+		append(this.editorMainEl, this.threadEl);
 		this.threadView.rememberHome();
+		const dock = getWindow(this.container).document.querySelector('.volt-agent-right-dock');
+		if (isHTMLElement(dock)) {
+			this.container.appendChild(dock);
+		}
 		this.applyCodeFont();
 		this._register(this.threadScroll.onScroll(e => {
 			if (!this.threadScrollFrozen && !this.applyingEditPin) {
@@ -595,7 +601,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.cancelUserEdit();
 			}
 		}, true));
-		this.composerEl = append(this.container, $('.volt-agent-composer'));
+		this.composerEl = append(this.editorMainEl, $('.volt-agent-composer'));
 		this.composerChips = this._register(this.instantiationService.createInstance(AgentComposerChips, {
 			onChangesClick: () => void this.openSessionChanges(),
 		}));
@@ -683,9 +689,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.suggestEl = append(this.composerEl, $('.volt-agent-suggest'));
 		this.renderSuggestChips();
 
-		this.sash = this._register(new Sash(this.container, {
+		this.sash = this._register(new Sash(this.editorMainEl, {
 			getHorizontalSashTop: () => this.composerEl.offsetTop + this.inputBox.offsetTop,
-			getHorizontalSashWidth: () => this.container.clientWidth,
+			getHorizontalSashWidth: () => this.editorMainEl.clientWidth,
 		}, { orientation: Orientation.HORIZONTAL, size: 3 }));
 		this._register(this.sash.onDidStart(() => {
 			this.resizeStartHeight = this.composerEl.offsetHeight;
@@ -2082,13 +2088,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.dispatchPrompt(value, display);
 	}
 
+	/** Keep the composer in the chat column so empty chats stay centered and threads pin it to the bottom. */
 	private syncComposerPlacement(): void {
-		if (this.composerEl.parentElement !== this.container) {
+		const home = this.editorMainEl ?? this.container;
+		if (this.composerEl.parentElement !== home) {
 			const find = this.findWidget?.getDomNode();
-			if (find?.parentElement === this.container) {
-				this.container.insertBefore(this.composerEl, find);
+			if (find?.parentElement === home) {
+				home.insertBefore(this.composerEl, find);
 			} else {
-				this.container.appendChild(this.composerEl);
+				home.appendChild(this.composerEl);
 			}
 		}
 		const slot = this.threadInner?.querySelector<HTMLElement>('.volt-agent-edit-slot');

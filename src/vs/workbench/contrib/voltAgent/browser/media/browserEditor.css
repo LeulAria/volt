@@ -1165,6 +1165,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 	padding: 0;
 }
 
+.volt-browser-dock-float-body .volt-agent-turn.user::before,
 .volt-browser-dock-float-body .volt-agent-turn.user::after {
 	display: none;
 }

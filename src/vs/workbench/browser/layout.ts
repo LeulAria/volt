@@ -1513,17 +1513,20 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	}
 
 	private setStatusBarHidden(hidden: boolean): void {
-		this.stateModel.setRuntimeValue(LayoutStateKeys.STATUSBAR_HIDDEN, hidden);
+		// Agent layout never shows the status bar. The visibility setting is left
+		// alone so IDE layout can restore whatever the user had configured.
+		const effectiveHidden = hidden || this.mainContainer.classList.contains('volt-layout-agent');
+		this.stateModel.setRuntimeValue(LayoutStateKeys.STATUSBAR_HIDDEN, effectiveHidden);
 
 		// Adjust CSS
-		if (hidden) {
+		if (effectiveHidden) {
 			this.mainContainer.classList.add(LayoutClasses.STATUSBAR_HIDDEN);
 		} else {
 			this.mainContainer.classList.remove(LayoutClasses.STATUSBAR_HIDDEN);
 		}
 
 		// Propagate to grid
-		this.workbenchGrid.setViewVisible(this.statusBarPartView, !hidden);
+		this.workbenchGrid.setViewVisible(this.statusBarPartView, !effectiveHidden);
 	}
 
 	protected createWorkbenchLayout(): void {
@@ -2198,6 +2201,8 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 				return this.setAuxiliaryBarHidden(hidden);
 			case Parts.PANEL_PART:
 				return this.setPanelHidden(hidden);
+			case Parts.STATUSBAR_PART:
+				return this.setStatusBarHidden(hidden);
 		}
 	}
 

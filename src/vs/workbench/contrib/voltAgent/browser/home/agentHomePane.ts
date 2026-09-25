@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentHomePane.css';
-import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, isMouseEvent } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IIdentityProvider, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
 import { IListAccessibilityProvider } from '../../../../../base/browser/ui/list/listWidget.js';
@@ -28,7 +28,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IRecentFolder, IRecentWorkspace, IWorkspacesService, isRecentFolder, isRecentWorkspace } from '../../../../../platform/workspaces/common/workspaces.js';
-import { NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID, OPEN_AGENT_SEARCH_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { createHomeNewChatIcon, createHomeSearchIcon } from './agentHomeIcons.js';
 import { AgentHomeElement, IAgentHomeFolder, IAgentHomeNode, buildAgentHomeTree, compactSessionAge, homeFolderKey } from './agentHomeModel.js';
 
@@ -256,7 +256,7 @@ export class AgentHomePane extends Disposable {
 				multipleSelectionSupport: false,
 				hideTwistiesOfChildlessElements: true,
 				renderIndentGuides: RenderIndentGuides.None,
-				expandOnlyOnTwistieClick: (element: AgentHomeElement) => element.type === 'folder',
+				expandOnlyOnTwistieClick: false,
 				collapseByDefault: (element: AgentHomeElement) => element.type === 'folder' && !element.folder.current,
 				paddingBottom: ROW_HEIGHT,
 				setRowLineHeight: false,
@@ -267,7 +267,7 @@ export class AgentHomePane extends Disposable {
 
 		this._register(this.tree.onDidOpen(e => {
 			const element = e.element;
-			if (!element) {
+			if (!element || this.isFolderExpandClick(element, e.browserEvent)) {
 				return;
 			}
 			void this.activate(element).finally(() => {
@@ -316,6 +316,17 @@ export class AgentHomePane extends Disposable {
 		await this.openFolder({ uri: folder, name: basename(folder), current: false, workspace: false });
 	}
 
+	/**
+	 * A single click anywhere on a folder that has chats toggles it open or
+	 * closed. Switching into that folder stays on double-click and keyboard.
+	 */
+	private isFolderExpandClick(element: AgentHomeElement, browserEvent: UIEvent | undefined): boolean {
+		if (element.type !== 'folder' || !isMouseEvent(browserEvent) || browserEvent.detail === 2) {
+			return false;
+		}
+		return this.tree.getNode(element).collapsible;
+	}
+
 	private async activate(element: AgentHomeElement): Promise<void> {
 		switch (element.type) {
 			case 'newChat':
@@ -336,7 +347,7 @@ export class AgentHomePane extends Disposable {
 	private async runAction(id: string): Promise<void> {
 		switch (id) {
 			case 'search':
-				await this.commandService.executeCommand(OPEN_AGENT_SEARCH_COMMAND_ID);
+				await this.commandService.executeCommand('workbench.action.showCommands');
 				return;
 			case 'automations':
 			case 'customize':

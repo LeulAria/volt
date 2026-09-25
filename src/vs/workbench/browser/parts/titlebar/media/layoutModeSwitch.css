@@ -37,6 +37,7 @@
 	height: 28px;
 	display: flex;
 	align-items: center;
+	gap: 2px;
 	pointer-events: auto;
 	-webkit-app-region: no-drag;
 }

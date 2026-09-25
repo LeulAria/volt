@@ -1314,8 +1314,9 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupsView {
 		// Layout contents
 		const contentAreaSize = super.layoutContents(width, height).contentSize;
 
-		// Layout editor container
-		this.doLayout(Dimension.lift(contentAreaSize), top, left);
+		// The agent dock lives inside the chat container, so the editor grid
+		// keeps the full part width.
+		this.doLayout(new Dimension(contentAreaSize.width, contentAreaSize.height), top, left);
 	}
 
 	private doLayout(dimension: Dimension, top = this.top, left = this.left): void {
