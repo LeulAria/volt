@@ -297,6 +297,24 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	background-color: var(--volt-agent-window-bg) !important;
 }
 
+.monaco-workbench.volt-layout-agent .part.titlebar,
+.monaco-workbench.volt-layout-agent .split-view-view:has(> .part.titlebar) {
+	border: none !important;
+	box-shadow: none !important;
+	filter: none !important;
+	background-image: none !important;
+}
+
+/* The row under the title bar draws its own separator. That reads as a shadow under the primary top bar. */
+.monaco-workbench.volt-layout-agent .split-view-view:has(> .part.titlebar) + .split-view-view::before,
+.monaco-workbench.volt-layout-agent .part.editor .monaco-scrollable-element > .shadow,
+.monaco-workbench.volt-layout-agent .part.panel .monaco-scrollable-element > .shadow.top {
+	content: none !important;
+	display: none !important;
+	box-shadow: none !important;
+	background: none !important;
+}
+
 /* Left sidebar is edge-to-edge; the titlebar fills only the remaining width. */
 .monaco-workbench.volt-layout-agent .monaco-grid-view .split-view-view:has(> .part.titlebar) {
 	left: var(--volt-agent-sidebar-width, 0px) !important;
@@ -427,26 +445,97 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	padding-left: 8px;
 }
 
+/* Agent window: search, back, and forward stay off the primary title bar. */
+.monaco-workbench.volt-layout-agent .part.titlebar .command-center {
+	display: none !important;
+}
+
+/* Open agent sidebar: the toggle lives in the sidebar header, not the primary title bar. */
+.monaco-workbench.volt-layout-agent:not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.titlebar > .titlebar-container > .titlebar-left > .action-toolbar-container.left {
+	display: none !important;
+}
+
 /* Closed sidebar: keep controls out of the traffic-light dead zone. */
 .monaco-workbench.volt-layout-agent.mac:not(.web).noauxiliarybar .part.titlebar > .titlebar-container > .titlebar-left,
 .monaco-workbench.volt-layout-agent.mac:not(.web).volt-agent-left-collapsed .part.titlebar > .titlebar-container > .titlebar-left {
 	padding-left: 78px;
 }
 
-.monaco-workbench.volt-layout-agent.mac:not(.web) .part.auxiliarybar > .content {
+.monaco-workbench.volt-layout-agent:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.auxiliarybar > .content {
 	padding-top: var(--volt-agent-titlebar-height, 35px);
 	box-sizing: border-box;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle {
+	position: absolute;
+	top: calc((var(--volt-agent-titlebar-height, 35px) - 22px) / 2);
+	left: 8px;
+	z-index: 20;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-titleBar-activeForeground, var(--vscode-foreground));
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+	pointer-events: auto;
+}
+
+.monaco-workbench.volt-layout-agent.mac:not(.web):not(.fullscreen) .part.auxiliarybar > .volt-primary-sidebar-toggle {
+	left: 78px;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle:hover {
+	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle:focus {
+	outline: none;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+	fill: none;
+	color: inherit;
+	pointer-events: none;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle svg rect,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle svg path {
+	fill: none;
+	stroke: currentColor;
+}
+
+.monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar > .volt-primary-sidebar-toggle {
+	display: none !important;
 }
 
 .monaco-workbench.volt-layout-agent.mac:not(.web) .part.auxiliarybar::after {
 	content: '';
 	position: absolute;
 	top: 0;
-	left: 0;
+	left: 108px;
 	right: 0;
 	height: var(--volt-agent-titlebar-height, 35px);
 	z-index: 2;
 	-webkit-app-region: drag;
+}
+
+.monaco-workbench.volt-layout-agent.mac:not(.web).fullscreen .part.auxiliarybar::after {
+	left: 38px;
 }
 
 .monaco-workbench.volt-layout-agent.mac:not(.web).noauxiliarybar .part.auxiliarybar::after,
@@ -592,16 +681,23 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	background-color: transparent !important;
 }
 
-.monaco-workbench.volt-layout-agent .volt-agent-turn.user,
-.monaco-workbench.volt-layout-agent .volt-agent-turn.user.stuck {
+.monaco-workbench.volt-layout-agent .volt-agent-turn.user {
 	background: transparent !important;
 	background-color: transparent !important;
 }
 
-/* Pinned cover uses the chat surface, not a darker mix. */
-.monaco-workbench.volt-layout-agent .volt-agent-turn.user.stuck::before,
-.monaco-workbench.volt-layout-agent .volt-agent-turn.user.stuck::after {
-	background: var(--volt-agent-window-bg) !important;
+/* Pinned sent cards need an opaque top. The window surface is 90% and would let text show through the 10px padding. */
+.monaco-workbench.volt-layout-agent .volt-agent-turn.user.stuck {
+	background-color: transparent !important;
+	background-image: linear-gradient(var(--volt-agent-window-bg-base), var(--volt-agent-window-bg-base)) !important;
+	background-size: min(760px, calc(100% - 40px)) 100% !important;
+	background-repeat: no-repeat !important;
+	background-position: top center !important;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-turn.user.stuck::before {
+	background: var(--volt-agent-window-bg-base) !important;
+	background-color: var(--volt-agent-window-bg-base) !important;
 }
 
 .monaco-workbench.volt-layout-agent .volt-agent-turn.user.stuck::after {

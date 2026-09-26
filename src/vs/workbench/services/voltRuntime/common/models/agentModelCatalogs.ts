@@ -6,9 +6,8 @@
 import { booleanOption, IModelOptionDescriptor, MODEL_OPTION_CONTEXT, MODEL_OPTION_FAST, MODEL_OPTION_SERVICE_TIER, reasoningOption, selectOption } from './modelOptions.js';
 
 /**
- * CLI agents often under-report effort ladders and extra selects over ACP. These catalogs
- * overlay the missing traits onto models the agent actually advertised, using the same
- * per-family ladders Zeron reads from Claude Code / Codex. Nothing here invents a model row.
+ * Historical per-family ladders. The picker does not consult these. Model rows and their
+ * effort, fast, thinking, and context options come from the signed-in CLI.
  */
 
 export interface ICatalogOverlay {

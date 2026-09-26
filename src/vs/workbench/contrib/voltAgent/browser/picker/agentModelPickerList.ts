@@ -9,8 +9,7 @@ import { IListRenderer, IListVirtualDelegate } from '../../../../../base/browser
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
-import { splitModelDisplayName } from '../../../../services/voltRuntime/common/models/modelOptions.js';
-import { pickerShortcutLabel, type IModelOption } from './agentModelPickerModel.js';
+import type { IModelOption } from './agentModelPickerModel.js';
 
 export const MODEL_PICKER_ROW_HEIGHT = 28;
 export const MODEL_PICKER_LIST_MAX_HEIGHT = 220;
@@ -31,7 +30,12 @@ export interface IModelPickerListHost {
 	modelAuto: boolean;
 	favorites: ReadonlySet<string>;
 	subtitle(model: IModelOption): string | undefined;
+	rowLabel(model: IModelOption): string;
+	canEdit(model: IModelOption): boolean;
 	onToggleFavorite(ref: string): void;
+	onEdit(model: IModelOption, anchor: HTMLElement): void;
+	onPreview(model: IModelOption, anchor: HTMLElement): void;
+	onPreviewEnd(): void;
 }
 
 interface IModelPickerTemplate {
@@ -40,7 +44,8 @@ interface IModelPickerTemplate {
 	readonly copy: HTMLElement;
 	readonly label: HTMLElement;
 	readonly desc: HTMLElement;
-	readonly kb: HTMLElement;
+	readonly trail: HTMLElement;
+	readonly edit: HTMLButtonElement;
 	readonly star: HTMLButtonElement;
 	readonly disposables: DisposableStore;
 }
@@ -67,11 +72,15 @@ export class ModelPickerListRenderer implements IListRenderer<IModelPickerRow, I
 		const copy = append(container, $('span.copy'));
 		const label = append(copy, $('span.label'));
 		const desc = append(copy, $('span.desc'));
-		const kb = append(container, $('span.kb'));
+		const trail = append(container, $('span.trail'));
+		const edit = append(trail, $('button.volt-agent-picker-edit')) as HTMLButtonElement;
+		edit.type = 'button';
+		edit.tabIndex = -1;
+		edit.textContent = localize('voltAgent.editModel', "Edit");
 		const star = append(container, $('button.volt-agent-picker-star')) as HTMLButtonElement;
 		star.type = 'button';
 		star.tabIndex = -1;
-		return { container, check, copy, label, desc, kb, star, disposables: new DisposableStore() };
+		return { container, check, copy, label, desc, trail, edit, star, disposables: new DisposableStore() };
 	}
 
 	renderElement(row: IModelPickerRow, _index: number, template: IModelPickerTemplate): void {
@@ -79,11 +88,12 @@ export class ModelPickerListRenderer implements IListRenderer<IModelPickerRow, I
 		clearNode(template.check);
 		template.star.replaceChildren();
 		template.star.classList.add('hidden');
-		template.kb.textContent = '';
+		template.edit.classList.add('hidden');
 		template.desc.textContent = '';
 		template.label.textContent = '';
 		template.container.classList.toggle('message', row.kind === 'message' || row.kind === 'settings');
 		template.container.classList.toggle('skeleton', row.kind === 'skeleton');
+		template.container.classList.toggle('model', row.kind === 'model');
 
 		if (row.kind === 'skeleton') {
 			return;
@@ -105,20 +115,32 @@ export class ModelPickerListRenderer implements IListRenderer<IModelPickerRow, I
 			return;
 		}
 
-		const selected = !this.host.modelAuto && row.model.ref === this.host.selectedRef;
-		template.label.textContent = splitModelDisplayName(row.model.name).name;
+		template.label.textContent = this.host.rowLabel(row.model);
 		const subtitle = this.host.subtitle(row.model);
 		if (subtitle) {
 			template.desc.textContent = subtitle;
 			template.desc.title = subtitle;
 		}
-		if (selected) {
-			template.check.appendChild(renderIcon(Codicon.check));
+		if (this.host.canEdit(row.model)) {
+			template.edit.classList.remove('hidden');
+			template.edit.setAttribute('aria-label', localize('voltAgent.editModelOptions', "Edit {0}", row.model.name));
+			const stop = (event: Event) => {
+				event.preventDefault();
+				event.stopPropagation();
+			};
+			template.disposables.add(addDisposableListener(template.edit, 'mousedown', stop));
+			template.disposables.add(addDisposableListener(template.edit, 'mouseup', stop));
+			template.disposables.add(addDisposableListener(template.edit, 'click', event => {
+				stop(event);
+				this.host.onEdit(row.model, template.container);
+			}));
 		}
-		const shortcut = pickerShortcutLabel(row.index);
-		if (shortcut) {
-			template.kb.textContent = shortcut;
-		}
+		template.disposables.add(addDisposableListener(template.container, 'mouseenter', () => {
+			this.host.onPreview(row.model, template.container);
+		}));
+		template.disposables.add(addDisposableListener(template.container, 'mouseleave', () => {
+			this.host.onPreviewEnd();
+		}));
 		template.star.classList.remove('hidden');
 		const favorited = this.host.favorites.has(row.model.ref);
 		template.star.classList.toggle('on', favorited);

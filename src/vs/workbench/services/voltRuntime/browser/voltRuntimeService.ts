@@ -27,7 +27,7 @@ import { DEFAULT_ACP_CAPABILITIES, DEFAULT_MODEL_CAPABILITIES } from '../common/
 import { IVoltEvent, IVoltEventEnvelope } from '../common/events.js';
 import { IVoltModelOptions, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
 import { modePolicy, VoltMode } from '../common/modes.js';
-import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
+import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
 import { IAgentDetectResult, IAgentProvider, IAgentSessionHandle, IDetectResult, IModelInfo, IModelMessage, IModelProvider, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
 import { resolveTabModel } from '../common/models/modelAccess.js';
 import { IAgentRuntimeService, IVoltTaskModels } from '../common/runtime.js';
@@ -707,6 +707,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			});
 		}
 
+		const definition = cliAgentDefinition(profile.providerId);
+		let detect = this.detections.get(profile.id);
+		if (!detect) {
+			detect = await this.detectProfile(profile).catch(() => ({ available: false, detail: 'Health check failed.' }) satisfies IDetectResult);
+			this.detections.set(profile.id, detect);
+		}
+		if (!detect.available || (definition?.probeAuth && !detect.authenticated)) {
+			return [];
+		}
 		const label = displayProviderLabel(profile.label, profile.providerId);
 		const models = await this.discoverAgentModels(profile);
 		if (models.length) {
@@ -729,18 +738,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				};
 			});
 		}
-		const ref = `agent:${profile.id}`;
-		return [{
-			ref,
-			kind: 'agent',
-			providerId: profile.providerId,
-			profileId: profile.id,
-			id: profile.providerId,
-			label,
-			qualifier: undefined,
-			enabled: this.enabled.size ? this.enabled.has(ref) : true,
-			capabilities: DEFAULT_ACP_CAPABILITIES,
-		}];
+		return [];
 	}
 
 	async detectAgents(): Promise<IAgentDetectResult[]> {
@@ -783,6 +781,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		this.healthCheckRunning = true;
+		this.agentModels.clear();
 		try {
 			const results = await Promise.all(this.profiles.map(async profile => {
 				const detect = profile.enabled
@@ -926,7 +925,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!provider?.listModels || this.detections.get(profile.id)?.available === false) {
 			return [];
 		}
-		const models = await provider.listModels(profile).catch(() => []);
+		const models = await provider.listModels(profile).catch(() => undefined);
+		if (!models) {
+			return this.agentModels.get(profile.id) ?? [];
+		}
 		this.agentModels.set(profile.id, models);
 		return models;
 	}
@@ -1402,14 +1404,20 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.projectRules = this.readWorkspaceJson(VOLT_ACCESS_PROJECT_RULES_STORAGE_KEY, []);
 		this.savedRules = this.readWorkspaceJson(VOLT_ACCESS_SAVED_RULES_STORAGE_KEY, []);
 		this.recompilePolicy();
-		const cached = this.readJson<IVoltCatalogItem[]>(VOLT_CATALOG_STORAGE_KEY, []);
+		const revision = this.storageService.getNumber(VOLT_CATALOG_REVISION_STORAGE_KEY, StorageScope.APPLICATION) ?? 0;
+		const cached = revision >= VOLT_CATALOG_REVISION ? this.readJson<IVoltCatalogItem[]>(VOLT_CATALOG_STORAGE_KEY, []) : [];
 		this.catalog = Array.isArray(cached) ? cached : [];
+		if (revision < VOLT_CATALOG_REVISION && this.enabled.size) {
+			this.enabled = new Set();
+			this.storageService.store(VOLT_ENABLED_MODELS_STORAGE_KEY, '[]', StorageScope.APPLICATION, StorageTarget.USER);
+		}
 		this.activeCatalogRef = this.storageService.get(VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, StorageScope.APPLICATION) || undefined;
 		this.hydrateAgentModelsFromCatalog();
 	}
 
 	private persistCatalog(): void {
 		this.storageService.store(VOLT_CATALOG_STORAGE_KEY, JSON.stringify(this.catalog), StorageScope.APPLICATION, StorageTarget.MACHINE);
+		this.storageService.store(VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_REVISION, StorageScope.APPLICATION, StorageTarget.MACHINE);
 	}
 
 	/** Reuses the last catalog so a restart does not wait on another CLI spawn. */
@@ -1432,7 +1440,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			byProfile.set(item.profileId, models);
 		}
 		for (const [profileId, models] of byProfile) {
-			if (models.some(model => model.description || model.contextLabel)) {
+			if (models.some(model => !!(model.optionDescriptors?.length || model.description || model.contextLabel))) {
 				this.agentModels.set(profileId, models);
 			}
 		}

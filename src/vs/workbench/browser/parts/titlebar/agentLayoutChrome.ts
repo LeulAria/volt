@@ -4,15 +4,44 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { isHTMLElement } from '../../../../base/browser/dom.js';
+import { agentPrimarySidebarToggleInTitlebar } from './sidebarToggleIcon.js';
 
 export const AGENT_SIDE_PANEL_ID = 'workbench.panel.voltAgent';
 
 export function applyAgentStatusbarShift(root: HTMLElement, sidebarWidth: number, titlebarHeight?: number): void {
 	const width = Math.max(0, Math.round(sidebarWidth));
-	root.style.setProperty('--volt-agent-sidebar-width', `${width}px`);
-	root.classList.toggle('volt-agent-left-collapsed', width === 0);
+	setCssPx(root, '--volt-agent-sidebar-width', width);
+	const collapsed = width === 0;
+	if (root.classList.contains('volt-agent-left-collapsed') !== collapsed) {
+		root.classList.toggle('volt-agent-left-collapsed', collapsed);
+	}
 	if (typeof titlebarHeight === 'number' && titlebarHeight > 0) {
-		root.style.setProperty('--volt-agent-titlebar-height', `${Math.round(titlebarHeight)}px`);
+		setCssPx(root, '--volt-agent-titlebar-height', titlebarHeight);
+	}
+}
+
+/** Mark agent or IDE chrome before the workbench is shown, so the first frame is already final. */
+export function stampLayoutModeChrome(root: HTMLElement, agent: boolean, sidebarWidth: number, titlebarHeight?: number): void {
+	const mode = agent ? 'agent' : 'ide';
+	if (root.dataset.voltLayoutMode !== mode) {
+		root.dataset.voltLayoutMode = mode;
+	}
+	root.classList.toggle('volt-layout-agent', agent);
+	const sidebarOpen = agent && sidebarWidth > 0;
+	root.classList.toggle('volt-primary-sidebar-toggle-in-titlebar', agentPrimarySidebarToggleInTitlebar(agent, sidebarOpen));
+	if (!agent) {
+		resetAgentStatusbarShift(root);
+		return;
+	}
+	applyAgentStatusbarShift(root, sidebarWidth, titlebarHeight);
+	setCssPx(root, '--volt-agent-right-dock-width', 0);
+	root.classList.remove('volt-agent-right-collapsed');
+}
+
+function setCssPx(root: HTMLElement, name: string, value: number): void {
+	const next = `${Math.max(0, Math.round(value))}px`;
+	if (root.style.getPropertyValue(name) !== next) {
+		root.style.setProperty(name, next);
 	}
 }
 

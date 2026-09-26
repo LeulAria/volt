@@ -235,5 +235,21 @@ export interface IPartsSplash {
 		statusBarHeight: number;
 		windowBorder: boolean;
 		windowBorderRadius: string | undefined;
+		/** Agent windows paint a full-height left list and a title bar beside it. */
+		agentLayout?: boolean;
 	} | undefined;
+}
+
+/** Agent splash must not be rewritten into an IDE sidebar layout. */
+export function isAgentPartsSplash(layoutInfo: NonNullable<IPartsSplash['layoutInfo']>): boolean {
+	if (layoutInfo.agentLayout === true) {
+		return true;
+	}
+	if (layoutInfo.agentLayout === false) {
+		return false;
+	}
+	return layoutInfo.sideBarSide === 'right'
+		&& layoutInfo.activityBarWidth === 0
+		&& layoutInfo.sideBarWidth === 0
+		&& layoutInfo.statusBarHeight === 0;
 }

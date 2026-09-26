@@ -110,6 +110,15 @@ export class ActivitybarPart extends Part {
 		return this.content;
 	}
 
+	override setVisible(visible: boolean): void {
+		super.setVisible(visible);
+		// Agent mode hides this part before the first layout, so the icon bar is
+		// not built then. Create it when IDE mode shows the part later.
+		if (visible) {
+			this.show();
+		}
+	}
+
 	getPinnedPaneCompositeIds(): string[] {
 		return this.compositeBar.value?.getPinnedPaneCompositeIds() ?? [];
 	}

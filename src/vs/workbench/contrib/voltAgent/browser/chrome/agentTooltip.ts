@@ -25,6 +25,8 @@ export interface IAgentTooltipShowOptions {
 	fontSource?: HTMLElement | (() => HTMLElement | null | undefined);
 	placement?: AgentTooltipPlacement;
 	variant?: AgentTooltipVariant;
+	/** Milliseconds the pointer must stay on the anchor before the tooltip appears. */
+	delay?: number;
 }
 
 export interface IAgentTooltipShortcut {
@@ -75,11 +77,21 @@ export class AgentTooltip extends Disposable {
 
 	readonly domNode: HTMLElement;
 
+	private showHandle: number | undefined;
+	private showWindow: Window | undefined;
+
 	constructor() {
 		super();
 		this.domNode = $('.volt-agent-tooltip.hidden');
 		this.domNode.setAttribute('role', 'tooltip');
 		this._register(toDisposable(() => this.domNode.remove()));
+	}
+
+	private cancelScheduledShow(): void {
+		if (this.showHandle !== undefined) {
+			this.showWindow?.clearTimeout(this.showHandle);
+			this.showHandle = undefined;
+		}
 	}
 
 	show(anchor: HTMLElement, rows: readonly IAgentTooltipRow[], options?: IAgentTooltipShowOptions): void {
@@ -154,6 +166,7 @@ export class AgentTooltip extends Disposable {
 	}
 
 	hide(): void {
+		this.cancelScheduledShow();
 		this.domNode.classList.add('hidden');
 	}
 
@@ -169,6 +182,7 @@ export class AgentTooltip extends Disposable {
 		};
 		const hide = () => {
 			clearTimer();
+			this.cancelScheduledShow();
 			if (options?.variant === 'files') {
 				hideTimer = win.setTimeout(() => {
 					hideTimer = undefined;
@@ -180,7 +194,17 @@ export class AgentTooltip extends Disposable {
 		};
 		store.add(addDisposableListener(anchor, 'mouseenter', () => {
 			clearTimer();
-			this.show(anchor, getRows(), options);
+			this.cancelScheduledShow();
+			const delay = options?.delay ?? 0;
+			if (delay <= 0) {
+				this.show(anchor, getRows(), options);
+				return;
+			}
+			this.showWindow = win;
+			this.showHandle = win.setTimeout(() => {
+				this.showHandle = undefined;
+				this.show(anchor, getRows(), options);
+			}, delay);
 		}));
 		store.add(addDisposableListener(anchor, 'mouseleave', hide));
 		store.add(addDisposableListener(this.domNode, 'mouseenter', clearTimer));

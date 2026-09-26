@@ -223,10 +223,11 @@
 }
 
 /*
- * Sent cards pin flush to the top of the scroller. Horizontal margins keep the
- * sticky box aligned with the scroller, but the cover itself is only as wide
- * as the card. No negative top margin: sticky offsets the margin edge, which
- * left a strip above the card where scrolled text showed through.
+ * Sent cards pin to the top of the scroller with 10px above the bubble.
+ * Horizontal margins keep the sticky box aligned with the scroller, but the
+ * cover itself is only as wide as the card. No negative top margin: sticky
+ * offsets the margin edge, which left a strip above the card where scrolled
+ * text showed through.
  */
 .volt-agent-turn.user {
 	position: sticky;
@@ -235,7 +236,7 @@
 	width: auto;
 	max-width: none;
 	margin: 0 -20px -8px;
-	padding: 0 20px 8px;
+	padding: 10px 20px 8px;
 	box-sizing: border-box;
 	background: transparent;
 	pointer-events: none;
@@ -249,21 +250,36 @@
 .volt-agent-turn.user.stuck {
 	padding-bottom: 0;
 	margin-bottom: 0;
+	/*
+	 * Solid card-width fill, including the 10px top padding. The agent window
+	 * surface is translucent, so a transparent padding lets scrolled text show
+	 * through that strip.
+	 */
+	background-color: transparent;
+	background-image: linear-gradient(
+		var(--volt-agent-window-bg-base, var(--volt-agent-chat-bg, var(--vscode-editor-background, #1e1e1e))),
+		var(--volt-agent-window-bg-base, var(--volt-agent-chat-bg, var(--vscode-editor-background, #1e1e1e)))
+	);
+	background-size: min(760px, calc(100% - 40px)) 100%;
+	background-repeat: no-repeat;
+	background-position: top center;
 }
 
-/* Card-width cover above a pinned bubble, in the chat background color. */
+/* Card-width cover above a pinned bubble. Opaque, and it overlaps the 10px top padding so scrolled text cannot show in that gap. */
 .volt-agent-turn.user.stuck::before {
 	content: '';
 	position: absolute;
-	bottom: 100%;
+	top: 0;
 	left: 0;
 	right: 0;
 	width: min(760px, calc(100% - 40px));
-	height: 48px;
+	height: 58px;
+	margin-top: -48px;
 	margin-left: auto;
 	margin-right: auto;
-	background: var(--volt-agent-window-bg, var(--volt-agent-chat-bg, var(--vscode-editor-background, #1e1e1e)));
+	background: var(--volt-agent-window-bg-base, var(--volt-agent-chat-bg, var(--vscode-editor-background, #1e1e1e)));
 	pointer-events: none;
+	z-index: 1;
 }
 
 /* Fade matches the sent card, not the full scroller. The card is the centered column. */
@@ -1021,6 +1037,13 @@ pre.volt-agent-searchable {
 	height: 12px;
 	display: block;
 	margin: 0 auto;
+}
+
+.volt-agent-footer-btn .volt-agent-svg-icon.copy rect,
+.volt-agent-footer-btn .volt-agent-svg-icon.copy path,
+.volt-agent-footer-btn .volt-agent-svg-icon.fork path {
+	stroke-width: 1.3px;
+	vector-effect: non-scaling-stroke;
 }
 
 .volt-agent-turn.user .volt-agent-bubble.has-edit {
@@ -2694,7 +2717,8 @@ pre.volt-agent-searchable {
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
-	background: var(--volt-agent-chat-bg, var(--vscode-editor-background, #1e1e1e));
+	background: transparent;
+	background-color: transparent;
 }
 
 .monaco-workbench.vs .volt-agent-composer,
@@ -4729,8 +4753,8 @@ pre.volt-agent-searchable {
 	position: absolute;
 	left: calc(100% + 6px);
 	bottom: 0;
-	width: 176px;
-	min-width: 176px;
+	width: 220px;
+	min-width: 200px;
 	padding: 0;
 	overflow: hidden;
 	z-index: 2;
@@ -4750,8 +4774,56 @@ pre.volt-agent-searchable {
 	z-index: 4;
 }
 
+.volt-agent-picker-flyout.card {
+	width: 280px;
+	min-width: 240px;
+}
+
 .volt-agent-picker-flyout.hidden {
 	display: none !important;
+}
+
+.volt-agent-model-card {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 12px 14px 14px;
+}
+
+.volt-agent-model-card .title {
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1.3;
+}
+
+.volt-agent-model-card .blurb,
+.volt-agent-model-card .meta {
+	margin: 0;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	font-weight: 300;
+	line-height: 1.45;
+}
+
+.volt-agent-picker-section {
+	display: flex;
+	flex-direction: column;
+	padding: 4px 0;
+}
+
+.volt-agent-picker-section + .volt-agent-picker-section {
+	border-top: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+}
+
+.volt-agent-picker-section-label {
+	padding: 6px 10px 2px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	font-weight: 400;
+}
+
+.volt-agent-picker-section .volt-agent-picker-row.toggle .volt-agent-switch {
+	margin-left: auto;
 }
 
 .volt-agent-picker-flyout-panel {
@@ -4966,6 +5038,50 @@ pre.volt-agent-searchable {
 	justify-content: center;
 }
 
+.volt-agent-picker-list .monaco-list-row.model .check {
+	display: none;
+}
+
+.volt-agent-picker-list .trail {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: flex-end;
+	min-width: 0;
+	flex: 0 0 auto;
+}
+
+.volt-agent-picker-edit {
+	position: absolute;
+	right: 0;
+	border: 0;
+	background: transparent;
+	margin: 0;
+	padding: 0 2px;
+	font: inherit;
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 16px;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.volt-agent-picker-edit.hidden {
+	display: none;
+}
+
+.volt-agent-picker-list .monaco-list-row:hover .volt-agent-picker-edit:not(.hidden),
+.volt-agent-picker-list .monaco-list-row.focused .volt-agent-picker-edit:not(.hidden) {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.volt-agent-picker-edit:hover {
+	color: color-mix(in srgb, var(--vscode-textLink-foreground, #c4b5fd) 72%, white);
+}
+
 .volt-agent-picker-list .check .codicon {
 	font-size: 14px;
 }
@@ -4996,16 +5112,6 @@ pre.volt-agent-searchable {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-}
-
-.volt-agent-picker-list .kb {
-	font-size: 10px;
-	line-height: 14px;
-	padding: 0 4px;
-	border-radius: 2px;
-	background: var(--vscode-keybindingLabel-background, rgba(127, 127, 127, 0.16));
-	border: 1px solid var(--vscode-keybindingLabel-border, transparent);
-	color: var(--vscode-keybindingLabel-foreground, var(--vscode-descriptionForeground));
 }
 
 .volt-agent-picker-star {

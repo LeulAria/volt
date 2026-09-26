@@ -19,7 +19,8 @@ import { WorkbenchList } from '../../../../../platform/list/browser/listService.
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { defaultInputBoxStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
 import { editorWidgetBackground } from '../../../../../platform/theme/common/colorRegistry.js';
-import { compactEffortLabel, describeModelOptions, MODEL_OPTION_REASONING, optionChoiceLabel, optionValue, splitModelDisplayName, traitDescriptors, type IModelOptionChoice, type IModelOptionDescriptor } from '../../../../services/voltRuntime/common/models/modelOptions.js';
+import { modelEditSections, modelHoverCard } from '../../../../services/voltRuntime/common/models/harnessCatalog.js';
+import { compactEffortLabel, describeModelOptions, MODEL_OPTION_CONTEXT, MODEL_OPTION_FAST, MODEL_OPTION_REASONING, optionValue, splitModelDisplayName, type IVoltModelOptions } from '../../../../services/voltRuntime/common/models/modelOptions.js';
 import type { IVoltCatalogItem } from '../../../../services/voltRuntime/common/providers.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { createBrandIcon, providerFamily, providerFamilyLabel } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
@@ -51,10 +52,6 @@ export function catalogToOption(item: IVoltCatalogItem): IModelOption {
 	};
 }
 
-function descriptorChoices(descriptor: IModelOptionDescriptor): IModelOptionChoice[] {
-	return descriptor.options ?? [];
-}
-
 function focusedRowIndex(rows: readonly IModelPickerRow[], modelIndex: number): number {
 	for (let i = 0; i < rows.length; i++) {
 		const row = rows[i];
@@ -77,7 +74,8 @@ export class AgentModelPicker extends Disposable {
 	currentModel = '';
 	modelAuto = false;
 	private pickerProviderId: string | undefined;
-	private pickerFlyout: string | undefined;
+	private pickerDetail: { mode: 'preview' | 'edit'; ref: string } | undefined;
+	private pickerDetailAnchor: HTMLElement | undefined;
 	private favorites = new Set<string>();
 
 	constructor(
@@ -214,7 +212,8 @@ export class AgentModelPicker extends Disposable {
 		}
 		const selected = this.catalog.find(option => option.ref === this.currentModel);
 		this.pickerProviderId = selected?.family ?? this.pickerProviderId ?? this.providerGroups()[0]?.family;
-		this.pickerFlyout = undefined;
+		this.pickerDetail = undefined;
+		this.pickerDetailAnchor = undefined;
 
 		this.contextViewService.showContextView({
 			getAnchor: () => anchor,
@@ -263,14 +262,54 @@ export class AgentModelPicker extends Disposable {
 
 				const body = append(panel, $('.volt-agent-picker-body'));
 				const listHost = append(body, $('.volt-agent-picker-list'));
+				let previewTimer: ReturnType<typeof setTimeout> | undefined;
 				const listContext = {
 					selectedRef: this.currentModel,
 					modelAuto: this.modelAuto,
 					favorites: this.favorites,
 					subtitle: (model: IModelOption) => this.modelSubtitle(model),
+					rowLabel: (model: IModelOption) => this.modelRowLabel(model),
+					canEdit: (model: IModelOption) => modelEditSections(model.optionDescriptors).length > 0,
 					onToggleFavorite: (ref: string) => {
 						this.toggleFavorite(ref);
 						renderList();
+					},
+					onEdit: (model: IModelOption, anchor: HTMLElement) => {
+						this.pickerDetail = { mode: 'edit', ref: model.ref };
+						this.pickerDetailAnchor = anchor;
+						renderDetail();
+						syncFlyout();
+					},
+					onPreview: (model: IModelOption, anchor: HTMLElement) => {
+						if (previewTimer) {
+							clearTimeout(previewTimer);
+							previewTimer = undefined;
+						}
+						if (this.pickerDetail?.mode === 'edit') {
+							return;
+						}
+						this.pickerDetail = { mode: 'preview', ref: model.ref };
+						this.pickerDetailAnchor = anchor;
+						renderDetail();
+						syncFlyout();
+					},
+					onPreviewEnd: () => {
+						if (this.pickerDetail?.mode === 'edit') {
+							return;
+						}
+						if (previewTimer) {
+							clearTimeout(previewTimer);
+						}
+						previewTimer = setTimeout(() => {
+							previewTimer = undefined;
+							if (this.pickerDetail?.mode === 'edit') {
+								return;
+							}
+							this.pickerDetail = undefined;
+							this.pickerDetailAnchor = undefined;
+							renderDetail();
+							syncFlyout();
+						}, 120);
 					},
 				};
 				const modelsList = store.add(this.instantiationService.createInstance(
@@ -315,29 +354,35 @@ export class AgentModelPicker extends Disposable {
 				search.setAttribute('aria-controls', 'volt-agent-picker-models');
 				modelsList.getHTMLElement().id = 'volt-agent-picker-models';
 
-				const traits = append(panel, $('.volt-agent-picker-traits'));
-
 				let activeIndex = 0;
 				const tabStore = store.add(new DisposableStore());
-				const traitStore = store.add(new DisposableStore());
 				const optionStore = store.add(new DisposableStore());
 
 				const visibleModels = () => filterPickerModels(this.providerGroups(), this.pickerProviderId, input.value, this.favorites);
 				const relayout = () => scheduleAtNextAnimationFrame(getWindow(menu), () => this.contextViewService.layout());
 
 				const syncFlyout = () => {
-					flyout.classList.toggle('hidden', !this.pickerFlyout);
-					scheduleAtNextAnimationFrame(getWindow(menu), () => this.placePickerFlyout(menu, flyout));
+					const open = !!this.pickerDetail;
+					flyout.classList.toggle('hidden', !open);
+					flyout.classList.toggle('card', this.pickerDetail?.mode === 'preview');
+					flyout.classList.toggle('options', this.pickerDetail?.mode === 'edit');
+					scheduleAtNextAnimationFrame(getWindow(menu), () => this.placePickerFlyout(menu, flyout, this.pickerDetailAnchor));
 				};
-				const openFlyout = (id: string) => {
-					if (this.pickerFlyout === id) {
+				store.add(addDisposableListener(flyout, 'mouseenter', () => {
+					if (previewTimer) {
+						clearTimeout(previewTimer);
+						previewTimer = undefined;
+					}
+				}));
+				store.add(addDisposableListener(flyout, 'mouseleave', () => {
+					if (this.pickerDetail?.mode !== 'preview') {
 						return;
 					}
-					this.pickerFlyout = id;
-					renderTraits();
-					renderOptionFlyout();
+					this.pickerDetail = undefined;
+					this.pickerDetailAnchor = undefined;
+					renderDetail();
 					syncFlyout();
-				};
+				}));
 
 				const tabIds = () => [PICKER_FAVORITES_TAB, ...this.providerGroups().map(group => group.family)];
 
@@ -365,7 +410,8 @@ export class AgentModelPicker extends Disposable {
 							e.preventDefault();
 							e.stopPropagation();
 							this.pickerProviderId = id;
-							this.pickerFlyout = undefined;
+							this.pickerDetail = undefined;
+							this.pickerDetailAnchor = undefined;
 							activeIndex = 0;
 							renderAll();
 							search.focus();
@@ -425,108 +471,33 @@ export class AgentModelPicker extends Disposable {
 					relayout();
 				};
 
-				const renderTraits = () => {
-					traitStore.clear();
-					traits.replaceChildren();
-					if (this.modelAuto) {
-						traits.classList.add('hidden');
-						return;
-					}
-					const model = this.selectedModel();
-					const descriptors = traitDescriptors(model?.optionDescriptors);
-					if (!model || !descriptors.length) {
-						traits.classList.add('hidden');
-						return;
-					}
-					traits.classList.remove('hidden');
-					const options = this.runtime.getModelOptions(model.ref);
-					for (const descriptor of descriptors) {
-						if (descriptor.type === 'boolean') {
-							const on = isBooleanOn(descriptor, options);
-							const row = append(traits, $('.volt-agent-picker-row.toggle'));
-							append(row, $('span.label')).textContent = descriptor.label;
-							const toggle = append(row, $('button.volt-agent-switch')) as HTMLButtonElement;
-							toggle.type = 'button';
-							toggle.classList.toggle('on', on);
-							toggle.setAttribute('role', 'switch');
-							toggle.setAttribute('aria-checked', String(on));
-							toggle.setAttribute('aria-label', descriptor.label);
-							append(toggle, $('span.volt-agent-switch-thumb'));
-							const setFast = (next: boolean) => {
-								void this.runtime.setModelOptions(model.ref, { ...options, [descriptor.id]: next });
-								this.host.onDidChange?.();
-								if (this.pickerFlyout === descriptor.id) {
-									this.pickerFlyout = undefined;
-								}
-								renderTraits();
-								renderOptionFlyout();
-								syncFlyout();
-							};
-							traitStore.add(addDisposableListener(toggle, 'click', e => {
-								e.preventDefault();
-								e.stopPropagation();
-								setFast(!on);
-							}));
-							traitStore.add(addDisposableListener(row, 'click', e => {
-								e.preventDefault();
-								e.stopPropagation();
-								setFast(!on);
-							}));
-							continue;
-						}
-						const row = append(traits, $('button.volt-agent-picker-row.choice')) as HTMLButtonElement;
-						row.type = 'button';
-						row.classList.toggle('open', this.pickerFlyout === descriptor.id);
-						row.setAttribute('aria-haspopup', 'menu');
-						row.setAttribute('aria-expanded', String(this.pickerFlyout === descriptor.id));
-						append(row, $('span.label')).textContent = descriptor.label;
-						const meta = append(row, $('span.meta'));
-						append(meta, $('span.value')).textContent = optionChoiceLabel(descriptor, options);
-						meta.appendChild(renderIcon(Codicon.chevronRight)).classList.add('chevron');
-						traitStore.add(addDisposableListener(row, 'mouseenter', () => openFlyout(descriptor.id)));
-						traitStore.add(addDisposableListener(row, 'click', e => {
-							e.preventDefault();
-							e.stopPropagation();
-							openFlyout(descriptor.id);
-						}));
-					}
-				};
-
-				const renderOptionFlyout = () => {
+				const renderDetail = () => {
 					optionStore.clear();
 					optionPanel.replaceChildren();
-					const model = this.selectedModel();
-					const descriptor = model?.optionDescriptors.find(option => option.id === this.pickerFlyout);
-					if (!model || !descriptor || descriptor.type === 'boolean') {
+					const detail = this.pickerDetail;
+					if (!detail) {
 						return;
 					}
-					optionPanel.setAttribute('role', 'menu');
-					optionPanel.setAttribute('aria-label', descriptor.label);
+					const model = this.catalog.find(option => option.ref === detail.ref);
+					if (!model) {
+						return;
+					}
 					const options = this.runtime.getModelOptions(model.ref);
-					const active = String(optionValue(descriptor, options) ?? '');
-					for (const choice of descriptorChoices(descriptor)) {
-						const row = append(optionPanel, $('button.volt-agent-picker-row.choice')) as HTMLButtonElement;
-						row.type = 'button';
-						row.setAttribute('role', 'menuitemradio');
-						row.setAttribute('aria-checked', String(choice.value === active));
-						const text = append(row, $('span.text'));
-						append(text, $('span.label')).textContent = choice.label;
-						if (choice.isDefault) {
-							append(text, $('span.default')).textContent = localize('voltAgent.optionDefault', "Default");
+					switch (detail.mode) {
+						case 'preview':
+							this.renderHoverCard(optionPanel, model, options);
+							return;
+						case 'edit':
+							this.renderEditPanel(optionPanel, model, options, optionStore, () => {
+								renderList();
+								renderDetail();
+								syncFlyout();
+							});
+							return;
+						default: {
+							const unexpected: never = detail.mode;
+							return unexpected;
 						}
-						const check = append(row, $('span.check'));
-						if (choice.value === active) {
-							check.appendChild(renderIcon(Codicon.check));
-						}
-						optionStore.add(addDisposableListener(row, 'click', e => {
-							e.preventDefault();
-							e.stopPropagation();
-							void this.runtime.setModelOptions(model.ref, { ...options, [descriptor.id]: choice.value });
-							this.host.onDidChange?.();
-							renderTraits();
-							renderOptionFlyout();
-							syncFlyout();
-						}));
 					}
 				};
 
@@ -537,8 +508,7 @@ export class AgentModelPicker extends Disposable {
 					}
 					renderTabs();
 					renderList();
-					renderTraits();
-					renderOptionFlyout();
+					renderDetail();
 					syncFlyout();
 				};
 
@@ -567,7 +537,8 @@ export class AgentModelPicker extends Disposable {
 						return;
 					}
 					this.pickerProviderId = id;
-					this.pickerFlyout = undefined;
+					this.pickerDetail = undefined;
+					this.pickerDetailAnchor = undefined;
 					activeIndex = 0;
 					renderAll();
 					tabs.querySelector<HTMLElement>('.volt-agent-provider-tab.active')?.focus();
@@ -587,9 +558,10 @@ export class AgentModelPicker extends Disposable {
 					if (event.keyCode === KeyCode.Escape) {
 						event.preventDefault();
 						event.stopPropagation();
-						if (this.pickerFlyout) {
-							this.pickerFlyout = undefined;
-							renderTraits();
+						if (this.pickerDetail) {
+							this.pickerDetail = undefined;
+							this.pickerDetailAnchor = undefined;
+							renderDetail();
 							syncFlyout();
 							return;
 						}
@@ -694,17 +666,115 @@ export class AgentModelPicker extends Disposable {
 	}
 
 	private modelSubtitle(model: IModelOption): string | undefined {
-		const description = model.description?.trim();
-		if (description) {
-			return description;
-		}
 		if (this.pickerProviderId === PICKER_FAVORITES_TAB) {
 			return this.modelProviderLabel(model);
 		}
-		return model.detail?.trim() || undefined;
+		return undefined;
 	}
 
-	private placePickerFlyout(menu: HTMLElement, flyout: HTMLElement): void {
+	private modelRowLabel(model: IModelOption): string {
+		const base = splitModelDisplayName(model.name).name;
+		const options = describeModelOptions(model.optionDescriptors, this.runtime.getModelOptions(model.ref));
+		return options ? `${base} ${options}` : base;
+	}
+
+	private renderHoverCard(panel: HTMLElement, model: IModelOption, options: IVoltModelOptions): void {
+		const reasoning = model.optionDescriptors.find(descriptor => descriptor.id === MODEL_OPTION_REASONING);
+		const fast = model.optionDescriptors.find(descriptor => descriptor.id === MODEL_OPTION_FAST);
+		const effort = reasoning ? reasoning.options?.find(choice => choice.value === optionValue(reasoning, options))?.label : undefined;
+		const context = this.selectedContextLabel(model, options);
+		const card = modelHoverCard(splitModelDisplayName(model.name).name, model.description, context, effort, fast ? isBooleanOn(fast, options) : false);
+		const root = append(panel, $('.volt-agent-model-card'));
+		append(root, $('div.title')).textContent = card.title;
+		if (card.description) {
+			append(root, $('p.blurb')).textContent = card.description;
+		}
+		if (card.context) {
+			append(root, $('p.meta')).textContent = card.context;
+		}
+		if (card.version) {
+			append(root, $('p.meta.version')).textContent = card.version;
+		}
+	}
+
+	private renderEditPanel(
+		panel: HTMLElement,
+		model: IModelOption,
+		options: IVoltModelOptions,
+		store: DisposableStore,
+		onChange: () => void,
+	): void {
+		panel.setAttribute('role', 'menu');
+		panel.setAttribute('aria-label', localize('voltAgent.modelOptions', "Model options"));
+		const sections = modelEditSections(model.optionDescriptors);
+		for (const section of sections) {
+			const block = append(panel, $('.volt-agent-picker-section'));
+			append(block, $('div.volt-agent-picker-section-label')).textContent = section.label;
+			for (const descriptor of section.descriptors) {
+				if (descriptor.type === 'boolean') {
+					const on = isBooleanOn(descriptor, options);
+					const row = append(block, $('.volt-agent-picker-row.toggle'));
+					append(row, $('span.label')).textContent = descriptor.label;
+					const toggle = append(row, $('button.volt-agent-switch')) as HTMLButtonElement;
+					toggle.type = 'button';
+					toggle.classList.toggle('on', on);
+					toggle.setAttribute('role', 'switch');
+					toggle.setAttribute('aria-checked', String(on));
+					toggle.setAttribute('aria-label', descriptor.label);
+					append(toggle, $('span.volt-agent-switch-thumb'));
+					const setOn = (next: boolean) => {
+						void this.runtime.setModelOptions(model.ref, { ...this.runtime.getModelOptions(model.ref), [descriptor.id]: next });
+						this.host.onDidChange?.();
+						onChange();
+					};
+					store.add(addDisposableListener(toggle, 'click', e => {
+						e.preventDefault();
+						e.stopPropagation();
+						setOn(!on);
+					}));
+					store.add(addDisposableListener(row, 'click', e => {
+						if (e.target === toggle || toggle.contains(e.target as Node)) {
+							return;
+						}
+						e.preventDefault();
+						e.stopPropagation();
+						setOn(!on);
+					}));
+					continue;
+				}
+				const active = String(optionValue(descriptor, options) ?? '');
+				for (const choice of descriptor.options ?? []) {
+					const row = append(block, $('button.volt-agent-picker-row.choice')) as HTMLButtonElement;
+					row.type = 'button';
+					row.setAttribute('role', 'menuitemradio');
+					row.setAttribute('aria-checked', String(choice.value === active));
+					append(row, $('span.label')).textContent = choice.label;
+					const check = append(row, $('span.check'));
+					if (choice.value === active) {
+						check.appendChild(renderIcon(Codicon.check));
+					}
+					store.add(addDisposableListener(row, 'click', e => {
+						e.preventDefault();
+						e.stopPropagation();
+						void this.runtime.setModelOptions(model.ref, { ...this.runtime.getModelOptions(model.ref), [descriptor.id]: choice.value });
+						this.host.onDidChange?.();
+						onChange();
+					}));
+				}
+			}
+		}
+	}
+
+	private selectedContextLabel(model: IModelOption, options: IVoltModelOptions): string | undefined {
+		const context = model.optionDescriptors.find(descriptor => descriptor.id === MODEL_OPTION_CONTEXT);
+		if (context?.options?.length) {
+			const value = optionValue(context, options);
+			return context.options.find(choice => choice.value === value)?.label ?? model.contextLabel;
+		}
+		return model.contextLabel;
+	}
+
+	private placePickerFlyout(menu: HTMLElement, flyout: HTMLElement, anchorRow?: HTMLElement): void {
 		flyout.style.left = '';
 		flyout.style.right = '';
 		flyout.style.top = '';
@@ -748,6 +818,17 @@ export class AgentModelPicker extends Disposable {
 			flyout.classList.add('overlap');
 		}
 
+		const rowTop = anchorRow ? anchorRow.getBoundingClientRect().top - menuRect.top : undefined;
+		if (rowTop !== undefined) {
+			const maxTop = Math.max(pad - menuRect.top, viewH - pad - flyoutH - menuRect.top);
+			const top = Math.min(Math.max(rowTop, pad - menuRect.top), maxTop);
+			flyout.style.top = `${top}px`;
+			flyout.style.bottom = 'auto';
+			if (flyoutH > viewH - pad * 2) {
+				flyout.style.maxHeight = `${Math.max(120, viewH - pad * 2)}px`;
+			}
+			return;
+		}
 		const spaceUp = menuRect.bottom - pad;
 		const spaceDown = viewH - pad - menuRect.top;
 		if (flyoutH <= spaceUp) {

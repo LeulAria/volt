@@ -25,6 +25,7 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { IStorageService, StorageScope } from '../../../../platform/storage/common/storage.js';
 import { Parts, IWorkbenchLayoutService, ActivityBarPosition, LayoutSettings, EditorActionsLocation, EditorTabsMode } from '../../../services/layout/browser/layoutService.js';
 import { ToggleSidebarVisibilityAction } from '../../actions/layoutActions.js';
+import { createPrimarySidebarToggleIcon } from './sidebarToggleIcon.js';
 import { createActionViewItem, fillInActionBarActions as fillInActionBarActions } from '../../../../platform/actions/browser/menuEntryActionViewItem.js';
 import { ActionViewItem, IActionViewItemOptions, IBaseActionViewItemOptions } from '../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { Action2, IMenu, IMenuService, MenuId, MenuItemAction, SubmenuItemAction, registerAction2 } from '../../../../platform/actions/common/actions.js';
@@ -238,6 +239,10 @@ class SidebarToggleActionViewItem extends ActionViewItem {
 			const face = document.createElement('div');
 			face.className = anchor.className;
 			face.classList.add('volt-sidebar-toggle');
+			const icon = anchor.querySelector('svg.volt-primary-sidebar-toggle-icon');
+			if (icon) {
+				face.appendChild(icon);
+			}
 			for (const attribute of ['aria-label', 'aria-checked']) {
 				const value = anchor.getAttribute(attribute);
 				if (value !== null) {
@@ -256,6 +261,27 @@ class SidebarToggleActionViewItem extends ActionViewItem {
 				this.onClick(e);
 			}));
 		}
+		this.ensureIcon();
+	}
+
+	protected override updateClass(): void {
+		super.updateClass();
+		this.ensureIcon();
+	}
+
+	private ensureIcon(): void {
+		const label = this.label;
+		if (!isHTMLElement(label)) {
+			return;
+		}
+		label.classList.add('volt-sidebar-toggle');
+		for (const className of [...label.classList]) {
+			if (className === 'codicon' || className.startsWith('codicon-')) {
+				label.classList.remove(className);
+			}
+		}
+		label.querySelector(':scope > svg.volt-primary-sidebar-toggle-icon')?.remove();
+		label.appendChild(createPrimarySidebarToggleIcon(label, 'closed'));
 	}
 
 	override onClick(event: EventLike, preserveFocus = false): void {
@@ -893,14 +919,16 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 				this.element.classList.remove('inactive');
 			}
 
-			const titleBackground = this.getColor(this.isInactive ? TITLE_BAR_INACTIVE_BACKGROUND : TITLE_BAR_ACTIVE_BACKGROUND, (color, theme) => {
+			const agentLayout = this.element.closest('.monaco-workbench')?.classList.contains('volt-layout-agent') === true;
+			const titleBackground = agentLayout ? '' : (this.getColor(this.isInactive ? TITLE_BAR_INACTIVE_BACKGROUND : TITLE_BAR_ACTIVE_BACKGROUND, (color, theme) => {
 				// LCD Rendering Support: the title bar part is a defining its own GPU layer.
 				// To benefit from LCD font rendering, we must ensure that we always set an
 				// opaque background color. As such, we compute an opaque color given we know
 				// the background color is the workbench background.
 				return color.isOpaque() ? color : color.makeOpaque(WORKBENCH_BACKGROUND(theme));
-			}) || '';
+			}) || '');
 			this.element.style.backgroundColor = titleBackground;
+			this.element.style.boxShadow = agentLayout ? 'none' : '';
 
 			if (this.appIconBadge) {
 				this.appIconBadge.style.backgroundColor = titleBackground;
@@ -915,7 +943,7 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 			const titleForeground = this.getColor(this.isInactive ? TITLE_BAR_INACTIVE_FOREGROUND : TITLE_BAR_ACTIVE_FOREGROUND);
 			this.element.style.color = titleForeground || '';
 
-			const titleBorder = this.getColor(TITLE_BAR_BORDER);
+			const titleBorder = agentLayout ? undefined : this.getColor(TITLE_BAR_BORDER);
 			this.element.style.borderBottom = titleBorder ? `1px solid ${titleBorder}` : '';
 		}
 	}

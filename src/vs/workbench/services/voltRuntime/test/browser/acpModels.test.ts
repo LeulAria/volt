@@ -74,7 +74,7 @@ suite('ACP model option parsing', () => {
 		assert.ok(tier?.options?.some(choice => choice.value === 'flex'));
 	});
 
-	test('Claude overlay fills context when the agent omitted it', () => {
+	test('omitted traits are not invented from a static catalog', () => {
 		const descriptors = descriptorsFromAcpModel(
 			{ name: 'Fable 5.1' },
 			{},
@@ -83,8 +83,7 @@ suite('ACP model option parsing', () => {
 			'claude-fable-5-1',
 			'Fable 5.1',
 		);
-		assert.ok(descriptors.some(option => option.id === MODEL_OPTION_REASONING));
-		assert.ok(descriptors.some(option => option.id === MODEL_OPTION_CONTEXT));
+		assert.deepStrictEqual(descriptors, []);
 	});
 
 	test('advertised reasoning is not replaced by the overlay ladder', () => {

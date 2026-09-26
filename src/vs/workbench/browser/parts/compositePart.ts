@@ -83,7 +83,7 @@ export abstract class CompositePart<T extends Composite> extends Part {
 		protected readonly contextMenuService: IContextMenuService,
 		layoutService: IWorkbenchLayoutService,
 		protected readonly keybindingService: IKeybindingService,
-		private readonly hoverService: IHoverService,
+		protected readonly hoverService: IHoverService,
 		protected readonly instantiationService: IInstantiationService,
 		themeService: IThemeService,
 		protected readonly registry: CompositeRegistry<T>,

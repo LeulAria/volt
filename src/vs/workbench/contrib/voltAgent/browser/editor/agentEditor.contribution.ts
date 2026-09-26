@@ -300,10 +300,18 @@ class AgentSidePanelStartupContribution extends Disposable {
 		@IViewsService viewsService: IViewsService,
 	) {
 		super();
+		if (getLayoutMode(layoutService) === 'agent') {
+			if (layoutService.isVisible(Parts.AUXILIARYBAR_PART)) {
+				void viewsService.openView(AGENT_SIDE_PANEL_VIEW_ID, false);
+			}
+			return;
+		}
 		if (layoutService.isAuxiliaryBarMaximized()) {
 			layoutService.setAuxiliaryBarMaximized(false);
 		}
-		layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
+		if (!layoutService.isVisible(Parts.AUXILIARYBAR_PART)) {
+			layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
+		}
 		void viewsService.openView(AGENT_SIDE_PANEL_VIEW_ID, false);
 	}
 }

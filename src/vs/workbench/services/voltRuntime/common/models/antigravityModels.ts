@@ -5,8 +5,7 @@
 
 import { DEFAULT_ACP_CAPABILITIES } from '../capabilities.js';
 import { IModelInfo } from '../providers.js';
-import { catalogOverlay } from './agentModelCatalogs.js';
-import { fillDescriptors, reasoningOption } from './modelOptions.js';
+import { reasoningOption } from './modelOptions.js';
 
 /**
  * `agy models` discovery, matching Synara's Antigravity adapter.
@@ -119,16 +118,12 @@ export function resolveAntigravityCliModelLabel(model: string, effort?: string):
 
 export function antigravityModelsToInfo(models: readonly IAntigravityCatalogModel[]): IModelInfo[] {
 	return models.map(model => {
-		const overlay = catalogOverlay('antigravity', model.slug, model.name);
-		const fromCli = model.efforts.length ? [reasoningOption(model.efforts, model.defaultEffort)] : [];
-		const optionDescriptors = overlay ? fillDescriptors(fromCli, overlay.optionDescriptors) : fromCli;
-		const contextWindow = overlay?.contextWindow ?? DEFAULT_ACP_CAPABILITIES.contextWindow;
+		const optionDescriptors = model.efforts.length ? [reasoningOption(model.efforts, model.defaultEffort)] : [];
 		return {
 			id: model.slug,
 			label: model.name,
-			capabilities: { ...DEFAULT_ACP_CAPABILITIES, reasoning: model.efforts.length > 0, contextWindow },
+			capabilities: { ...DEFAULT_ACP_CAPABILITIES, reasoning: model.efforts.length > 0 },
 			...(optionDescriptors.length ? { optionDescriptors } : {}),
-			...(overlay?.description ? { description: overlay.description } : {}),
 		};
 	});
 }

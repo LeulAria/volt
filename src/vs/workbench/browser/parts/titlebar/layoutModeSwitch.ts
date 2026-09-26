@@ -20,20 +20,19 @@ import { IsAuxiliaryWindowContext } from '../../../common/contextkeys.js';
 import { IViewDescriptorService, ViewContainerLocation } from '../../../common/views.js';
 import { IPaneCompositePartService } from '../../../services/panecomposite/browser/panecomposite.js';
 import { IWorkbenchLayoutService, Parts, Position } from '../../../services/layout/browser/layoutService.js';
-import { AGENT_SIDE_PANEL_ID, resetAgentStatusbarShift } from './agentLayoutChrome.js';
+import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
+import { AGENT_SIDE_PANEL_ID, stampLayoutModeChrome } from './agentLayoutChrome.js';
+import { AGENT_LIST_WIDTH, AGENT_SIDEBAR_MIN_WIDTH, AGENT_LEFT_SIDEBAR_HIDDEN_KEY, LAYOUT_MODE_STORAGE_KEY, readStoredLayoutModeValue, SIDEBAR_LOCATION_KEY, type LayoutMode } from './layoutModeStartup.js';
 
-const AGENT_LIST_WIDTH = 290;
+export type { LayoutMode } from './layoutModeStartup.js';
+export { AGENT_LEFT_SIDEBAR_HIDDEN_KEY } from './layoutModeStartup.js';
 
 export const TOGGLE_LAYOUT_MODE_COMMAND_ID = 'workbench.action.toggleAgentIdeLayout';
 export const SET_AGENT_LAYOUT_MODE_COMMAND_ID = 'workbench.action.setAgentLayoutMode';
 export const SET_IDE_LAYOUT_MODE_COMMAND_ID = 'workbench.action.setIdeLayoutMode';
 
-const SIDEBAR_LOCATION_KEY = 'workbench.sideBar.location';
 const STATUSBAR_VISIBLE_KEY = 'workbench.statusBar.visible';
-const LAYOUT_MODE_STORAGE_KEY = 'volt.layoutMode';
-export const AGENT_LEFT_SIDEBAR_HIDDEN_KEY = 'volt.agent.leftSidebar.hidden';
 
-export type LayoutMode = 'agent' | 'ide';
 export const LayoutModeContext = new RawContextKey<LayoutMode>('volt.layoutMode', 'ide');
 export const AGENT_RIGHT_DOCK_COLLAPSED_KEY = 'volt.agent.rightDock.collapsed.v2';
 export const AGENT_RIGHT_DOCK_COLLAPSED_WIDTH = 0;
@@ -53,10 +52,7 @@ export function storeAgentLeftSidebarHidden(storageService: IStorageService, hid
 
 export function readStoredLayoutMode(storageService: IStorageService, layoutService: IWorkbenchLayoutService): LayoutMode {
 	const stored = storageService.get(LAYOUT_MODE_STORAGE_KEY, StorageScope.PROFILE, '');
-	if (stored === 'agent' || stored === 'ide') {
-		return stored;
-	}
-	return layoutService.getSideBarPosition() === Position.RIGHT ? 'agent' : 'ide';
+	return readStoredLayoutModeValue(stored, layoutService.getSideBarPosition() === Position.RIGHT);
 }
 
 export function isAgentRightDockCollapsed(storageService: IStorageService): boolean {
@@ -85,16 +81,17 @@ export async function openAgentSidebar(
 	if (layoutService.isAuxiliaryBarMaximized()) {
 		layoutService.setAuxiliaryBarMaximized(false);
 	}
-	layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
+	if (!layoutService.isVisible(Parts.AUXILIARYBAR_PART)) {
+		layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
+	}
 	await paneCompositeService.openPaneComposite(AGENT_SIDE_PANEL_ID, ViewContainerLocation.AuxiliaryBar, true);
 	const size = layoutService.getSize(Parts.AUXILIARYBAR_PART);
-	if (size.width < 180) {
+	if (size.width < AGENT_SIDEBAR_MIN_WIDTH) {
 		layoutService.setSize(Parts.AUXILIARYBAR_PART, {
 			width: AGENT_LIST_WIDTH,
 			height: size.height,
 		});
 	}
-	layoutService.layout();
 }
 
 export async function setLayoutMode(
@@ -116,6 +113,14 @@ export async function setLayoutMode(
 	onDidChangeLayoutModeEmitter.fire(mode);
 }
 
+function hidePartIfNeeded(layoutService: IWorkbenchLayoutService, part: Parts, hidden: boolean): boolean {
+	if (layoutService.isVisible(part) === !hidden) {
+		return false;
+	}
+	layoutService.setPartHidden(hidden, part);
+	return true;
+}
+
 export function applyLayoutModeChrome(
 	layoutService: IWorkbenchLayoutService,
 	configurationService: IConfigurationService,
@@ -123,41 +128,39 @@ export function applyLayoutModeChrome(
 ): void {
 	const agent = getLayoutMode(layoutService) === 'agent';
 	const root = layoutService.mainContainer;
-	root.dataset.voltLayoutMode = agent ? 'agent' : 'ide';
-	root.classList.toggle('volt-layout-agent', agent);
-	if (!agent) {
-		resetAgentStatusbarShift(root);
-	}
-	layoutService.setPartHidden(agent, Parts.ACTIVITYBAR_PART);
-	layoutService.setPartHidden(agent, Parts.SIDEBAR_PART);
 	const hideLeftSidebar = agent && !!storageService && isAgentLeftSidebarHidden(storageService);
-	layoutService.setPartHidden(hideLeftSidebar, Parts.AUXILIARYBAR_PART);
-	if (agent) {
-		root.style.setProperty('--volt-agent-right-dock-width', '0px');
-		root.classList.remove('volt-agent-right-collapsed');
+	let changed = false;
+	if (hidePartIfNeeded(layoutService, Parts.ACTIVITYBAR_PART, agent)) {
+		changed = true;
+	}
+	if (hidePartIfNeeded(layoutService, Parts.SIDEBAR_PART, agent)) {
+		changed = true;
+	}
+	if (hidePartIfNeeded(layoutService, Parts.AUXILIARYBAR_PART, hideLeftSidebar)) {
+		changed = true;
 	}
 	const statusBarHiddenByUser = configurationService.getValue<boolean>(STATUSBAR_VISIBLE_KEY) === false;
-	layoutService.setPartHidden(agent || statusBarHiddenByUser, Parts.STATUSBAR_PART);
-	layoutService.updateCustomTitleBarVisibility();
-	layoutService.layout();
-	if (agent && !hideLeftSidebar) {
+	if (hidePartIfNeeded(layoutService, Parts.STATUSBAR_PART, agent || statusBarHiddenByUser)) {
+		changed = true;
+	}
+	if (agent && !hideLeftSidebar && layoutService.isVisible(Parts.AUXILIARYBAR_PART)) {
 		const size = layoutService.getSize(Parts.AUXILIARYBAR_PART);
-		if (size.width !== AGENT_LIST_WIDTH) {
+		if (size.width < AGENT_SIDEBAR_MIN_WIDTH) {
 			layoutService.setSize(Parts.AUXILIARYBAR_PART, {
 				width: AGENT_LIST_WIDTH,
 				height: size.height,
 			});
+			changed = true;
 		}
 	}
-	if (agent) {
-		const titlebarHeight = layoutService.getSize(Parts.TITLEBAR_PART).height;
-		if (titlebarHeight > 0) {
-			root.style.setProperty('--volt-agent-titlebar-height', `${Math.round(titlebarHeight)}px`);
-		}
-	}
-	if (hideLeftSidebar) {
-		root.style.setProperty('--volt-agent-sidebar-width', '0px');
-		root.classList.add('volt-agent-left-collapsed');
+	const sidebarWidth = agent && !hideLeftSidebar && layoutService.isVisible(Parts.AUXILIARYBAR_PART)
+		? layoutService.getSize(Parts.AUXILIARYBAR_PART).width
+		: 0;
+	const titlebarHeight = layoutService.getSize(Parts.TITLEBAR_PART).height;
+	stampLayoutModeChrome(root, agent, sidebarWidth, titlebarHeight > 0 ? titlebarHeight : undefined);
+	layoutService.updateCustomTitleBarVisibility();
+	if (changed) {
+		layoutService.layout();
 	}
 }
 
@@ -252,10 +255,12 @@ class LayoutModeChromeContribution extends Disposable {
 		@IContextKeyService contextKeyService: IContextKeyService,
 		@IViewDescriptorService private readonly viewDescriptorService: IViewDescriptorService,
 		@IPaneCompositePartService private readonly paneCompositeService: IPaneCompositePartService,
+		@ILifecycleService lifecycleService: ILifecycleService,
 	) {
 		super();
 		this.layoutModeKey = LayoutModeContext.bindTo(contextKeyService);
-		this.layoutModeKey.set(getLayoutMode(layoutService));
+		const mode = readStoredLayoutMode(this.storageService, this.layoutService);
+		this.layoutModeKey.set(mode);
 		this._register(onDidChangeLayoutMode(next => this.layoutModeKey.set(next)));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(SIDEBAR_LOCATION_KEY)) {
@@ -264,26 +269,34 @@ class LayoutModeChromeContribution extends Disposable {
 				this.keepAgentsOnAuxiliaryBar();
 			}
 		}));
-		void this.finish();
+		void lifecycleService.when(LifecyclePhase.Restored).then(() => {
+			if (!this.disposed) {
+				this.finish();
+			}
+		});
 	}
 
-	private async finish(): Promise<void> {
+	private disposed = false;
+
+	override dispose(): void {
+		this.disposed = true;
+		super.dispose();
+	}
+
+	private finish(): void {
 		const mode = readStoredLayoutMode(this.storageService, this.layoutService);
 		if (this.storageService.get(LAYOUT_MODE_STORAGE_KEY, StorageScope.PROFILE, '') !== mode) {
 			this.storageService.store(LAYOUT_MODE_STORAGE_KEY, mode, StorageScope.PROFILE, StorageTarget.USER);
 		}
-		const location = mode === 'agent' ? 'right' : 'left';
-		if (this.configurationService.getValue<string>(SIDEBAR_LOCATION_KEY) !== location) {
-			await this.configurationService.updateValue(SIDEBAR_LOCATION_KEY, location);
-		}
-		if (mode === 'agent') {
-			storeAgentLeftSidebarHidden(this.storageService, false);
-		}
 		applyLayoutModeChrome(this.layoutService, this.configurationService, this.storageService);
 		this.layoutModeKey.set(getLayoutMode(this.layoutService));
 		this.keepAgentsOnAuxiliaryBar();
-		if (mode === 'agent') {
-			await openAgentSidebar(this.configurationService, this.layoutService, this.paneCompositeService);
+		const location = mode === 'agent' ? 'right' : 'left';
+		if (this.configurationService.getValue<string>(SIDEBAR_LOCATION_KEY) !== location) {
+			void this.configurationService.updateValue(SIDEBAR_LOCATION_KEY, location);
+		}
+		if (mode === 'agent' && !isAgentLeftSidebarHidden(this.storageService)) {
+			void openAgentSidebar(this.configurationService, this.layoutService, this.paneCompositeService);
 		}
 	}
 
@@ -298,4 +311,4 @@ class LayoutModeChromeContribution extends Disposable {
 	}
 }
 
-registerWorkbenchContribution2(LayoutModeChromeContribution.ID, LayoutModeChromeContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(LayoutModeChromeContribution.ID, LayoutModeChromeContribution, WorkbenchPhase.BlockStartup);

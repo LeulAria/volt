@@ -98,7 +98,8 @@ export class PartsSplash {
 				auxiliaryBarWidth: this._layoutService.isAuxiliaryBarMaximized() ? Number.MAX_SAFE_INTEGER /* marker for maximized state */ : this._layoutService.isVisible(Parts.AUXILIARYBAR_PART) ? dom.getTotalWidth(assertReturnsDefined(this._layoutService.getContainer(mainWindow, Parts.AUXILIARYBAR_PART))) : 0,
 				statusBarHeight: this._layoutService.isVisible(Parts.STATUSBAR_PART, mainWindow) ? dom.getTotalHeight(assertReturnsDefined(this._layoutService.getContainer(mainWindow, Parts.STATUSBAR_PART))) : 0,
 				windowBorder: this._layoutService.hasMainWindowBorder(),
-				windowBorderRadius: this._layoutService.getMainWindowBorderRadius()
+				windowBorderRadius: this._layoutService.getMainWindowBorderRadius(),
+				agentLayout: this._layoutService.mainContainer.classList.contains('volt-layout-agent')
 			}
 		});
 	}

@@ -3,7 +3,6 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { catalogOverlay } from '../../common/models/agentModelCatalogs.js';
 import { normalizeCursorModelId } from '../../common/harness/cursorQuota.js';
 import { contextLabelFromTokens, formatContextChoice, pickNumber, pickText } from '../../common/models/modelMeta.js';
 import { booleanOption, fillDescriptors, IModelOptionDescriptor, IVoltModelOptions, MODEL_OPTION_CONTEXT, MODEL_OPTION_FAST, MODEL_OPTION_REASONING, MODEL_OPTION_SERVICE_TIER, MODEL_OPTION_THINKING, reasoningLabel, reasoningOption, selectOption } from '../../common/models/modelOptions.js';
@@ -535,15 +534,15 @@ function descriptorsFromServiceTierMeta(model: IAcpAvailableModel | undefined): 
 
 /**
  * Every advertised select/toggle from the model payload, then any parameterized id
- * fallback, then shared session options. Overlay catalogs fill only what is still missing.
+ * fallback, then shared session options. Options the agent did not send are not invented.
  */
 export function descriptorsFromAcpModel(
 	model: IAcpAvailableModel | undefined,
 	params: Record<string, string> = {},
 	shared: readonly IModelOptionDescriptor[] = [],
-	providerId?: string,
-	modelId?: string,
-	label?: string,
+	_providerId?: string,
+	_modelId?: string,
+	_label?: string,
 ): IModelOptionDescriptor[] {
 	let descriptors: IModelOptionDescriptor[] = [];
 	descriptors = fillDescriptors(descriptors, descriptorsFromConfigOptions(model?.configOptions));
@@ -551,12 +550,6 @@ export function descriptorsFromAcpModel(
 	descriptors = fillDescriptors(descriptors, descriptorsFromReasoningMeta(model));
 	descriptors = fillDescriptors(descriptors, descriptorsFromServiceTierMeta(model));
 	descriptors = fillDescriptors(descriptors, descriptorsFromParams(params));
-	if (providerId) {
-		const overlay = catalogOverlay(providerId, modelId ?? '', label);
-		if (overlay) {
-			descriptors = fillDescriptors(descriptors, overlay.optionDescriptors);
-		}
-	}
 	descriptors = fillDescriptors(descriptors, shared);
 	return descriptors;
 }
@@ -564,14 +557,13 @@ export function descriptorsFromAcpModel(
 export function metadataForAcpModel(
 	model: IAcpAvailableModel | undefined,
 	params: Record<string, string> = {},
-	providerId?: string,
-	modelId?: string,
-	label?: string,
+	_providerId?: string,
+	_modelId?: string,
+	_label?: string,
 ): IAcpModelMeta {
 	const wire = model ? metadataFromAcpModel(model, params) : (params.context ? { contextLabel: params.context } : {});
-	const overlay = providerId ? catalogOverlay(providerId, modelId ?? '', label) : undefined;
-	const description = wire.description ?? overlay?.description;
-	const contextWindow = wire.contextWindow ?? overlay?.contextWindow;
+	const description = wire.description;
+	const contextWindow = wire.contextWindow;
 	const contextLabel = wire.contextLabel ?? (contextWindow ? contextLabelFromTokens(contextWindow) : undefined);
 	return {
 		...(description ? { description } : {}),

@@ -18,7 +18,7 @@ import { IConfigurationChangeEvent, IConfigurationService } from '../../platform
 import { ITitleService } from '../services/title/browser/titleService.js';
 import { ServicesAccessor } from '../../platform/instantiation/common/instantiation.js';
 import { StartupKind, ILifecycleService } from '../services/lifecycle/common/lifecycle.js';
-import { getMenuBarVisibility, IPath, hasNativeTitlebar, hasCustomTitlebar, TitleBarSetting, CustomTitleBarVisibility, useWindowControlsOverlay, DEFAULT_EMPTY_WINDOW_SIZE, DEFAULT_WORKSPACE_WINDOW_SIZE, hasNativeMenu, MenuSettings } from '../../platform/window/common/window.js';
+import { getMenuBarVisibility, IPath, hasNativeTitlebar, hasCustomTitlebar, TitleBarSetting, CustomTitleBarVisibility, useWindowControlsOverlay, DEFAULT_EMPTY_WINDOW_SIZE, DEFAULT_WORKSPACE_WINDOW_SIZE, DEFAULT_CUSTOM_TITLEBAR_HEIGHT, hasNativeMenu, MenuSettings } from '../../platform/window/common/window.js';
 import { IHostService } from '../services/host/browser/host.js';
 import { IBrowserWorkbenchEnvironmentService } from '../services/environment/browser/environmentService.js';
 import { IEditorService } from '../services/editor/common/editorService.js';
@@ -44,6 +44,8 @@ import { DeferredPromise, Promises } from '../../base/common/async.js';
 import { IBannerService } from '../services/banner/browser/bannerService.js';
 import { IPaneCompositePartService } from '../services/panecomposite/browser/panecomposite.js';
 import { AuxiliaryBarPart } from './parts/auxiliarybar/auxiliaryBarPart.js';
+import { stampLayoutModeChrome } from './parts/titlebar/agentLayoutChrome.js';
+import { AGENT_LEFT_SIDEBAR_HIDDEN_KEY, agentStartupSidebarWidth, LAYOUT_MODE_STORAGE_KEY, readStoredLayoutModeValue } from './parts/titlebar/layoutModeStartup.js';
 import { ITelemetryService } from '../../platform/telemetry/common/telemetry.js';
 import { IAuxiliaryWindowService } from '../services/auxiliaryWindow/browser/auxiliaryWindowService.js';
 import { CodeWindow, mainWindow } from '../../base/browser/window.js';
@@ -557,6 +559,15 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		const auxiliaryBar = this.getPart(Parts.AUXILIARYBAR_PART);
 		const newPositionValue = (position === Position.LEFT) ? 'left' : 'right';
 		const oldPositionValue = (position === Position.RIGHT) ? 'left' : 'right';
+		const currentSideBar = sideBar.getContainer();
+		const currentAuxiliaryBar = auxiliaryBar.getContainer();
+		if (
+			this.stateModel.getRuntimeValue(LayoutStateKeys.SIDEBAR_POSITON) === position &&
+			currentSideBar?.classList.contains(newPositionValue) &&
+			currentAuxiliaryBar?.classList.contains(oldPositionValue)
+		) {
+			return;
+		}
 		const panelAlignment = this.getPanelAlignment();
 		const panelPosition = this.getPanelPosition();
 
@@ -637,6 +648,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			mainContainerDimension: this._mainContainerDimension,
 			resetLayout: Boolean(this.layoutOptions?.resetLayout)
 		});
+		this.primeLayoutMode();
 
 		this._register(this.stateModel.onDidChangeState(change => {
 			if (change.key === LayoutStateKeys.ACTIVITYBAR_HIDDEN) {
@@ -741,13 +753,79 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			const viewContainerToRestore = this.storageService.get(AuxiliaryBarPart.activeViewSettingsKey, StorageScope.WORKSPACE, this.viewDescriptorService.getDefaultViewContainer(ViewContainerLocation.AuxiliaryBar)?.id);
 			if (viewContainerToRestore) {
 				this.state.initialization.views.containerToRestore.auxiliaryBar = viewContainerToRestore;
-			} else {
+			} else if (this.mainContainer.dataset.voltLayoutMode !== 'agent') {
 				this.stateModel.setRuntimeValue(LayoutStateKeys.AUXILIARYBAR_HIDDEN, true);
 			}
 		}
 
 		// Window border
 		this.updateWindowBorder(true);
+	}
+
+	/**
+	 * Resolve agent vs IDE before the first grid layout. The opening frame then
+	 * already has the final sidebars, title bar, and status bar.
+	 */
+	private primeLayoutMode(): void {
+		const stored = this.storageService.get(LAYOUT_MODE_STORAGE_KEY, StorageScope.PROFILE, '');
+		const location = this.configurationService.getValue<string>(LegacyWorkbenchLayoutSettings.SIDEBAR_POSITION);
+		const mode = readStoredLayoutModeValue(stored, location !== 'left');
+		if (mode === 'ide') {
+			this.stateModel.setRuntimeValue(LayoutStateKeys.SIDEBAR_POSITON, Position.LEFT);
+			stampLayoutModeChrome(this.mainContainer, false, 0);
+			return;
+		}
+
+		if (this.stateModel.getRuntimeValue(LayoutStateKeys.AUXILIARYBAR_WAS_LAST_MAXIMIZED)) {
+			const visibility = this.stateModel.getRuntimeValue(LayoutStateKeys.AUXILIARYBAR_LAST_NON_MAXIMIZED_VISIBILITY);
+			this.stateModel.setRuntimeValue(LayoutStateKeys.EDITOR_HIDDEN, !visibility.editorVisible);
+			this.stateModel.setRuntimeValue(LayoutStateKeys.PANEL_HIDDEN, !visibility.panelVisible);
+			this.stateModel.setRuntimeValue(LayoutStateKeys.AUXILIARYBAR_WAS_LAST_MAXIMIZED, false);
+			if (this.stateModel.getRuntimeValue(LayoutStateKeys.EDITOR_HIDDEN) && this.stateModel.getRuntimeValue(LayoutStateKeys.PANEL_HIDDEN)) {
+				this.stateModel.setRuntimeValue(LayoutStateKeys.EDITOR_HIDDEN, false);
+			}
+		}
+
+		const hideLeftSidebar = this.storageService.getBoolean(AGENT_LEFT_SIDEBAR_HIDDEN_KEY, StorageScope.PROFILE, false);
+		const windowWidth = this._mainContainerDimension?.width ?? 0;
+		const openWidth = agentStartupSidebarWidth(
+			this.stateModel.getInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE),
+			false,
+			{
+				min: AuxiliaryBarPart.AGENT_MIN_WIDTH,
+				max: windowWidth > 0 ? Math.max(AuxiliaryBarPart.AGENT_MIN_WIDTH, Math.floor(windowWidth * AuxiliaryBarPart.AGENT_MAX_RATIO)) : undefined,
+				fallback: AuxiliaryBarPart.AGENT_DEFAULT_WIDTH,
+			},
+		);
+		this.stateModel.setRuntimeValue(LayoutStateKeys.ACTIVITYBAR_HIDDEN, true);
+		this.stateModel.setRuntimeValue(LayoutStateKeys.SIDEBAR_HIDDEN, true);
+		this.stateModel.setRuntimeValue(LayoutStateKeys.STATUSBAR_HIDDEN, true);
+		this.stateModel.setRuntimeValue(LayoutStateKeys.SIDEBAR_POSITON, Position.RIGHT);
+		this.stateModel.setRuntimeValue(LayoutStateKeys.AUXILIARYBAR_HIDDEN, hideLeftSidebar);
+		if (!hideLeftSidebar) {
+			this.stateModel.setInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE, openWidth);
+		}
+		const commandCenterVisible = this.configurationService.getValue<boolean>(LayoutSettings.COMMAND_CENTER) !== false;
+		stampLayoutModeChrome(
+			this.mainContainer,
+			true,
+			hideLeftSidebar ? 0 : openWidth,
+			commandCenterVisible ? DEFAULT_CUSTOM_TITLEBAR_HEIGHT : 30,
+		);
+	}
+
+	private syncPrimedAgentTitlebar(): void {
+		if (!this.titleBarPartView || !this.mainContainer.classList.contains('volt-layout-agent')) {
+			return;
+		}
+		const height = Math.round(this.titleBarPartView.minimumHeight);
+		if (height <= 0) {
+			return;
+		}
+		const next = `${height}px`;
+		if (this.mainContainer.style.getPropertyValue('--volt-agent-titlebar-height') !== next) {
+			this.mainContainer.style.setProperty('--volt-agent-titlebar-height', next);
+		}
 	}
 
 	private getDefaultLayoutViews(environmentService: IBrowserWorkbenchEnvironmentService, storageService: IStorageService): string[] | undefined {
@@ -1632,6 +1710,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 
 	layout(): void {
 		if (!this.disposed) {
+			this.syncPrimedAgentTitlebar();
 			this._mainContainerDimension = getClientArea(this.state.runtime.mainWindowFullscreen ?
 				mainWindow.document.body : 	// in fullscreen mode, make sure to use <body> element because
 				this.parent,				// in that case the workbench will span the entire site

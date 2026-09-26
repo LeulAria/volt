@@ -124,6 +124,7 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly tabList: HTMLElement;
 	private readonly workspaceHeading: HTMLElement;
 	private readonly tabListeners = this._register(new DisposableStore());
+	private editorObserver: MutationObserver | undefined;
 	private collapsed = false;
 
 	constructor(
@@ -178,13 +179,36 @@ class AgentViewSidebarsContribution extends Disposable {
 		this._register(editorService.onDidEditorsChange(syncDock));
 		this._register(editorService.onDidActiveEditorChange(syncDock));
 		this._register(editorService.onDidVisibleEditorsChange(syncDock));
-		const editorPart = this.layoutService.getContainer(mainWindow, Parts.EDITOR_PART);
-		const observeTarget = isHTMLElement(editorPart) ? editorPart : root;
-		const observer = new MutationObserver(mutations => this.onEditorMutation(mutations));
-		observer.observe(observeTarget, { childList: true, subtree: true });
-		this._register(toDisposable(() => observer.disconnect()));
+		this.observeEditorPart();
 		this._register(workspaceContextService.onDidChangeWorkspaceFolders(() => this.updateWorkspaceHeading()));
 		this._register(workspaceContextService.onDidChangeWorkspaceName(() => this.updateWorkspaceHeading()));
+	}
+
+	/** Watch the editor part once it exists. Observing the whole workbench during startup would run on every node. */
+	private observeEditorPart(): void {
+		const attach = (): boolean => {
+			if (this.editorObserver) {
+				return true;
+			}
+			const editorPart = this.layoutService.getContainer(mainWindow, Parts.EDITOR_PART);
+			if (!isHTMLElement(editorPart)) {
+				return false;
+			}
+			const observer = new MutationObserver(mutations => this.onEditorMutation(mutations));
+			observer.observe(editorPart, { childList: true, subtree: true });
+			this.editorObserver = observer;
+			this._register(toDisposable(() => observer.disconnect()));
+			return true;
+		};
+		if (attach()) {
+			return;
+		}
+		const listener = this.layoutService.onDidLayoutMainContainer(() => {
+			if (attach()) {
+				listener.dispose();
+			}
+		});
+		this._register(listener);
 	}
 
 	private dockActions(): IDockAction[] {
@@ -253,7 +277,8 @@ class AgentViewSidebarsContribution extends Disposable {
 			return;
 		}
 		this.placeScheduled = true;
-		mainWindow.requestAnimationFrame(() => {
+		// Before the next paint. A frame delay is the startup layout shift.
+		queueMicrotask(() => {
 			this.placeScheduled = false;
 			this.placeQuickOpen(this.layoutService.mainContainer);
 		});
@@ -392,4 +417,4 @@ class AgentViewSidebarsContribution extends Disposable {
 	}
 }
 
-registerWorkbenchContribution2(AgentViewSidebarsContribution.ID, AgentViewSidebarsContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(AgentViewSidebarsContribution.ID, AgentViewSidebarsContribution, WorkbenchPhase.BlockRestore);

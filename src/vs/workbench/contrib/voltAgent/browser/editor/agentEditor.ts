@@ -243,39 +243,45 @@ function createExpandIcon(restored: boolean): HTMLElement {
 }
 
 function createCopyIcon(): HTMLElement {
-	return createSvgIcon(
-		'1.25 1.25 13.5 13.5',
-		'm11.25 4.25v-2.5h-9.5v9.5h2.5m.5-6.5v9.5h9.5v-9.5z',
-		'copy',
-		true,
-		'1',
-	);
-}
-
-function createForkIcon(): HTMLElement {
-	const el = $('span.volt-agent-svg-icon.fork');
+	const el = $('span.volt-agent-svg-icon.copy');
 	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('viewBox', '0 0 512 512');
 	svg.setAttribute('width', '24');
 	svg.setAttribute('height', '24');
 	svg.setAttribute('fill', 'none');
 	svg.setAttribute('aria-hidden', 'true');
-	for (const d of [
-		'M16 3h5v5',
-		'M8 3h-5v5',
-		'M21 3l-7.536 7.536a5 5 0 0 0 -1.464 3.534v6.93',
-		'M3 3l7.536 7.536a5 5 0 0 1 1.464 3.534v.93',
-	]) {
-		const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
-		path.setAttribute('d', d);
-		path.setAttribute('stroke', 'currentColor');
-		path.setAttribute('stroke-width', '1');
-		path.setAttribute('stroke-linecap', 'round');
-		path.setAttribute('stroke-linejoin', 'round');
-		svg.appendChild(path);
-	}
+	const rect = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'rect');
+	rect.setAttribute('x', '128');
+	rect.setAttribute('y', '128');
+	rect.setAttribute('width', '336');
+	rect.setAttribute('height', '336');
+	rect.setAttribute('rx', '57');
+	rect.setAttribute('ry', '57');
+	rect.setAttribute('fill', 'none');
+	rect.setAttribute('stroke', 'currentColor');
+	rect.setAttribute('stroke-width', '21.333');
+	rect.setAttribute('stroke-linejoin', 'round');
+	const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+	path.setAttribute('d', 'M383.5,128l.5-24a56.16,56.16,0,0,0-56-56H112a64.19,64.19,0,0,0-64,64V328a56.16,56.16,0,0,0,56,56h24');
+	path.setAttribute('fill', 'none');
+	path.setAttribute('stroke', 'currentColor');
+	path.setAttribute('stroke-width', '21.333');
+	path.setAttribute('stroke-linecap', 'round');
+	path.setAttribute('stroke-linejoin', 'round');
+	svg.appendChild(rect);
+	svg.appendChild(path);
 	el.appendChild(svg);
 	return el;
+}
+
+function createForkIcon(): HTMLElement {
+	return createSvgIcon(
+		'0 0 24 24',
+		'M3 3L10.6575 9.80663C11.5114 10.5657 12 11.6537 12 12.7963V22M3 3V9M3 3H9M21 3L15 9M21 3V9M21 3H15',
+		'fork',
+		true,
+		'1',
+	);
 }
 
 function createStrokeIcon(extraClass: string, paths: readonly string[]): HTMLElement {
@@ -650,6 +656,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				},
 			];
 		}, {
+			delay: 2000,
 			fontSource: () => (this.monacoHost.querySelector('.view-lines')
 				?? this.monacoHost.querySelector('textarea')
 				?? this.placeholderEl

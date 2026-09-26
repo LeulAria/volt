@@ -7,6 +7,7 @@ import { decodeBase64 } from '../../../../../base/common/buffer.js';
 import { isWindows } from '../../../../../base/common/platform.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { antigravityModelsToInfo, parseAntigravityModelLines } from '../../common/models/antigravityModels.js';
+import { parseOpenCodeModelLines } from '../../common/models/harnessCatalog.js';
 import { IDetectResult, IModelInfo } from '../../common/providers.js';
 
 export interface ICliAgentDefinition {
@@ -65,7 +66,7 @@ export async function runCli(stdio: IVoltStdioService, command: string, args: re
 }
 
 /** Reads a file below the user's home directory through the shell, since the renderer has no home path. */
-async function readHomeFile(stdio: IVoltStdioService, posixPath: string): Promise<string | undefined> {
+export async function readHomeFile(stdio: IVoltStdioService, posixPath: string): Promise<string | undefined> {
 	const output = isWindows
 		? await runCli(stdio, 'cmd', ['/c', `type "%USERPROFILE%\\${posixPath.replace(/\//g, '\\')}"`])
 		: await runCli(stdio, '/bin/sh', ['-c', `cat "$HOME/${posixPath}" 2>/dev/null`]);
@@ -102,7 +103,7 @@ function titleCase(value: string): string {
 	return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-async function probeCodexAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
+export async function probeCodexAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
 	const auth = await readHomeJson<{ tokens?: { id_token?: string } }>(stdio, '.codex/auth.json');
 	const idToken = auth?.tokens?.id_token;
 	if (!idToken) {
@@ -120,7 +121,7 @@ async function probeCodexAuth(stdio: IVoltStdioService): Promise<{ account?: str
 	};
 }
 
-async function probeClaudeAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
+export async function probeClaudeAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
 	const config = await readHomeJson<{ oauthAccount?: { emailAddress?: string } }>(stdio, '.claude.json');
 	const credentials = await readHomeJson<{ claudeAiOauth?: { subscriptionType?: string } }>(stdio, '.claude/.credentials.json');
 	const account = config?.oauthAccount?.emailAddress;
@@ -156,7 +157,7 @@ export async function listAntigravityModels(stdio: IVoltStdioService, command: s
 	return antigravityModelsToInfo(parseAntigravityModelLines(output ?? ''));
 }
 
-async function probeOpenCodeAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
+export async function probeOpenCodeAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
 	const auth = await readHomeJson<Record<string, unknown>>(stdio, '.local/share/opencode/auth.json');
 	const upstream = auth ? Object.keys(auth).length : 0;
 	if (!upstream) {
@@ -233,6 +234,16 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 		probeAuth: probeMuseAuth,
 	},
 ];
+
+/** OpenCode's model command. Empty when the CLI is missing or nobody is signed in. */
+export async function listOpenCodeModels(stdio: IVoltStdioService, command = 'opencode'): Promise<IModelInfo[]> {
+	const auth = await probeOpenCodeAuth(stdio).catch(() => undefined);
+	if (!auth) {
+		return [];
+	}
+	const output = await runCli(stdio, command, ['models'], MODEL_LIST_TIMEOUT_MS);
+	return parseOpenCodeModelLines(output ?? '');
+}
 
 export function cliAgentDefinition(providerId: string): ICliAgentDefinition | undefined {
 	return CLI_AGENT_DEFINITIONS.find(def => def.id === providerId);

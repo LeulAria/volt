@@ -22,6 +22,20 @@
 
 	//#region Splash Screen Helpers
 
+	function isAgentSplash(layoutInfo: { agentLayout?: boolean; sideBarSide: string; activityBarWidth: number; sideBarWidth: number; statusBarHeight: number }): boolean {
+		if (layoutInfo.agentLayout === true) {
+			return true;
+		}
+		if (layoutInfo.agentLayout === false) {
+			return false;
+		}
+		// Saved before the flag existed: agent windows keep the primary sidebar on the right and hide the IDE chrome.
+		return layoutInfo.sideBarSide === 'right'
+			&& layoutInfo.activityBarWidth === 0
+			&& layoutInfo.sideBarWidth === 0
+			&& layoutInfo.statusBarHeight === 0;
+	}
+
 	function showSplash(configuration: INativeWindowConfiguration) {
 		performance.mark('code/willShowPartsSplash');
 
@@ -73,10 +87,13 @@
 			}
 		}
 
+		const agentLayout = !!data?.layoutInfo && isAgentSplash(data.layoutInfo);
 		const style = document.createElement('style');
 		style.className = 'initialShellColors';
 		window.document.head.appendChild(style);
-		style.textContent = `body {	background-color: ${shellBackground}; color: ${shellForeground}; margin: 0; padding: 0; }`;
+		style.textContent = agentLayout
+			? `body { background-color: transparent; color: ${shellForeground}; margin: 0; padding: 0; }`
+			: `body { background-color: ${shellBackground}; color: ${shellForeground}; margin: 0; padding: 0; }`;
 
 		// set zoom level as soon as possible
 		if (typeof data?.zoomLevel === 'number' && typeof preloadGlobals?.webFrame?.setZoomLevel === 'function') {
@@ -105,6 +122,50 @@
 				}
 
 				splash.appendChild(borderElement);
+			}
+
+			if (agentLayout) {
+				let auxWidth = layoutInfo.auxiliaryBarWidth;
+				if (!Number.isFinite(auxWidth) || auxWidth === Number.MAX_SAFE_INTEGER || auxWidth < 0) {
+					auxWidth = 0;
+				}
+				auxWidth = Math.min(auxWidth, Math.max(0, window.innerWidth - layoutInfo.editorPartMinWidth));
+				const titleHeight = Math.max(0, layoutInfo.titleBarHeight);
+
+				if (auxWidth > 0) {
+					const auxSideDiv = document.createElement('div');
+					auxSideDiv.style.position = 'absolute';
+					auxSideDiv.style.left = '0';
+					auxSideDiv.style.top = '0';
+					auxSideDiv.style.width = `${auxWidth}px`;
+					auxSideDiv.style.height = '100%';
+					auxSideDiv.style.backgroundColor = `${colorInfo.sideBarBackground ?? colorInfo.titleBarBackground ?? ''}`;
+					splash.appendChild(auxSideDiv);
+				}
+
+				if (titleHeight > 0) {
+					const titleDiv = document.createElement('div');
+					titleDiv.style.position = 'absolute';
+					titleDiv.style.left = `${auxWidth}px`;
+					titleDiv.style.top = '0';
+					titleDiv.style.width = `calc(100% - ${auxWidth}px)`;
+					titleDiv.style.height = `${titleHeight}px`;
+					titleDiv.style.backgroundColor = `${colorInfo.titleBarBackground ?? ''}`;
+					(titleDiv.style as any)['-webkit-app-region'] = 'drag';
+					splash.appendChild(titleDiv);
+				}
+
+				const editorDiv = document.createElement('div');
+				editorDiv.style.position = 'absolute';
+				editorDiv.style.left = `${auxWidth}px`;
+				editorDiv.style.top = `${titleHeight}px`;
+				editorDiv.style.right = '0';
+				editorDiv.style.bottom = '0';
+				editorDiv.style.backgroundColor = `${colorInfo.titleBarBackground ?? colorInfo.editorBackground ?? ''}`;
+				splash.appendChild(editorDiv);
+				window.document.body.appendChild(splash);
+				performance.mark('code/didShowPartsSplash');
+				return;
 			}
 
 			if (layoutInfo.auxiliaryBarWidth === Number.MAX_SAFE_INTEGER) {

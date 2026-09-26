@@ -27,7 +27,9 @@ import { ACP_PROMPT_STALL_MS, startPromptStall } from '../../common/harness/acpS
 import { isCursorPlanWall, isCursorPlanWallPrefix, isCursorTransientError, nextCursorFallback, normalizeCursorModelId } from '../../common/harness/cursorQuota.js';
 import { accessBridgeFor } from './bridges/accessBridges.js';
 import { AcpJsonRpcClient } from './acpJsonRpc.js';
-import { listAntigravityModels } from './cliAgents.js';
+import { listClaudeModels } from './claudeCatalog.js';
+import { listAntigravityModels, listOpenCodeModels } from './cliAgents.js';
+import { listCodexModels } from './codexAppServer.js';
 import { resolveAntigravityCliModelLabel } from '../../common/models/antigravityModels.js';
 import { IModelOptionDescriptor, MODEL_OPTION_REASONING, unionDescriptors } from '../../common/models/modelOptions.js';
 import { applyContextWindowSuffix, applyOptionsToParameterizedId, configUpdatesForOptions, descriptorsFromAcpModel, flattenChoices, formatAgentModelLabel, IAcpAvailableModel, IAcpConfigOption, IAcpModelMeta, isModelConfigOption, metadataForAcpModel, parseParameterizedModelId } from './acpModels.js';
@@ -130,15 +132,29 @@ export class AcpAgentProvider implements IAgentProvider {
 	 * Asks the CLI what it can run. Cursor answers the `cursor/list_available_models` extension
 	 * with per model config options; other agents expose a `model` select or an
 	 * `availableModels` list on the new session. An agent that answers none of these has no
-	 * catalog and the runtime falls back to a single entry for the agent itself.
+	 * catalog. A signed-out or missing CLI contributes nothing, so the picker does not invent a row.
 	 */
 	async listModels(profile: IProviderProfile): Promise<IModelInfo[]> {
+		if (this.id === 'codex') {
+			return listCodexModels(this.stdio, profile.command || this.defaultCommand).catch(() => []);
+		}
+		if (this.id === 'claude-code') {
+			return listClaudeModels(this.stdio).catch(() => []);
+		}
 		if (this.id === 'antigravity') {
 			const listed = await listAntigravityModels(this.stdio, profile.command || this.defaultCommand).catch(() => []);
 			if (listed.length) {
 				return listed;
 			}
 		}
+		if (this.id === 'opencode') {
+			const listed = await this.probeAcpModels(profile);
+			return listed.length ? listed : listOpenCodeModels(this.stdio, profile.command || this.defaultCommand).catch(() => []);
+		}
+		return this.probeAcpModels(profile);
+	}
+
+	private probeAcpModels(profile: IProviderProfile): Promise<IModelInfo[]> {
 		return this.probe(profile, async (client, session) => {
 			const listed = await withTimeout(
 				client.request<{ models?: IAcpAvailableModel[] }>('cursor/list_available_models', {}),

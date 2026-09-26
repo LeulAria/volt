@@ -9,7 +9,7 @@ import { Disposable } from '../../../base/common/lifecycle.js';
 import { isLinux, isMacintosh, isWindows } from '../../../base/common/platform.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { IStateService } from '../../state/node/state.js';
-import { IPartsSplash } from '../common/themeService.js';
+import { IPartsSplash, isAgentPartsSplash } from '../common/themeService.js';
 import { IColorScheme } from '../../window/common/window.js';
 import { ThemeTypeSelector } from '../common/theme.js';
 import { ISingleFolderWorkspaceIdentifier, IWorkspaceIdentifier } from '../../workspace/common/workspace.js';
@@ -317,6 +317,20 @@ export class ThemeMainService extends Disposable implements IThemeMainService {
 		const partSplash = this.stateService.getItem<IPartsSplash>(THEME_WINDOW_SPLASH_KEY);
 		if (!partSplash?.layoutInfo) {
 			return partSplash; // return early: overrides currently only apply to layout info
+		}
+
+		// Workspace sidebar overrides would put the IDE sidebar back on an agent window.
+		if (isAgentPartsSplash(partSplash.layoutInfo)) {
+			return {
+				...partSplash,
+				layoutInfo: {
+					...partSplash.layoutInfo,
+					sideBarWidth: 0,
+					activityBarWidth: 0,
+					statusBarHeight: 0,
+					agentLayout: true,
+				}
+			};
 		}
 
 		const override = this.getWindowSplashOverride();

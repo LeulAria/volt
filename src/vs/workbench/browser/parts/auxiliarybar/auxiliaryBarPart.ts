@@ -18,12 +18,13 @@ import { ACTIVITY_BAR_BADGE_BACKGROUND, ACTIVITY_BAR_BADGE_FOREGROUND, ACTIVITY_
 import { IViewDescriptorService } from '../../../common/views.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { ActivityBarPosition, IWorkbenchLayoutService, LayoutSettings, Parts, Position } from '../../../services/layout/browser/layoutService.js';
+import { $, addDisposableListener, append } from '../../../../base/browser/dom.js';
 import { HoverPosition } from '../../../../base/browser/ui/hover/hoverWidget.js';
 import { IAction, Separator, SubmenuAction, toAction } from '../../../../base/common/actions.js';
 import { ToggleAuxiliaryBarAction } from './auxiliaryBarActions.js';
 import { assertReturnsDefined } from '../../../../base/common/types.js';
 import { LayoutPriority } from '../../../../base/browser/ui/splitview/splitview.js';
-import { ToggleSidebarPositionAction } from '../../actions/layoutActions.js';
+import { ToggleSidebarPositionAction, ToggleSidebarVisibilityAction } from '../../actions/layoutActions.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { AbstractPaneCompositePart, CompositeBarPosition } from '../paneCompositePart.js';
 import { ActionsOrientation } from '../../../../base/browser/ui/actionbar/actionbar.js';
@@ -33,6 +34,7 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { getContextMenuActions } from '../../../../platform/actions/browser/menuEntryActionViewItem.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { applyAgentStatusbarShift, resetAgentStatusbarShift } from '../titlebar/agentLayoutChrome.js';
+import { agentPrimarySidebarToggleInTitlebar, createPrimarySidebarToggleIcon } from '../titlebar/sidebarToggleIcon.js';
 
 interface IAuxiliaryBarPartConfiguration {
 	position: ActivityBarPosition;
@@ -98,6 +100,7 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 	readonly priority = LayoutPriority.Low;
 
 	private configuration: IAuxiliaryBarPartConfiguration;
+	private primarySidebarToggle: HTMLButtonElement | undefined;
 
 	constructor(
 		@INotificationService notificationService: INotificationService,
@@ -167,6 +170,41 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 		const showLabels = canShowLabels && this.configurationService.getValue('workbench.secondarySideBar.showLabels') !== false;
 
 		return { position, canShowLabels, showLabels };
+	}
+
+	override create(parent: HTMLElement): void {
+		super.create(parent);
+		this.installPrimarySidebarToggle(parent);
+	}
+
+	private installPrimarySidebarToggle(parent: HTMLElement): void {
+		const button = append(parent, $('button.volt-primary-sidebar-toggle')) as HTMLButtonElement;
+		button.type = 'button';
+		button.appendChild(createPrimarySidebarToggleIcon(button, 'open'));
+		this.primarySidebarToggle = button;
+		this.updatePrimarySidebarToggleLabel();
+
+		this._register(addDisposableListener(button, 'click', event => {
+			event.preventDefault();
+			event.stopPropagation();
+			void this.commandService.executeCommand(ToggleSidebarVisibilityAction.ID);
+		}));
+		this._register(this.hoverService.setupDelayedHover(button, () => ({
+			content: this.primarySidebarToggleLabel(),
+			position: { hoverPosition: HoverPosition.BELOW },
+			appearance: { compact: true, showHoverHint: false },
+		})));
+		this._register(this.keybindingService.onDidUpdateKeybindings(() => this.updatePrimarySidebarToggleLabel()));
+	}
+
+	private primarySidebarToggleLabel(): string {
+		const label = localize('togglePrimarySideBar', "Toggle Primary Side Bar");
+		const keybinding = this.keybindingService.lookupKeybinding(ToggleSidebarVisibilityAction.ID)?.getLabel();
+		return keybinding ? localize('togglePrimarySideBarKb', "{0} ({1})", label, keybinding) : label;
+	}
+
+	private updatePrimarySidebarToggleLabel(): void {
+		this.primarySidebarToggle?.setAttribute('aria-label', this.primarySidebarToggleLabel());
 	}
 
 	private onDidChangeActivityBarLocation(): void {
@@ -283,9 +321,11 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 		const root = this.layoutService.mainContainer;
 		if (agent) {
 			applyAgentStatusbarShift(root, sidebarWidth, this.layoutService.getSize(Parts.TITLEBAR_PART).height);
-			return;
+		} else {
+			resetAgentStatusbarShift(root);
 		}
-		resetAgentStatusbarShift(root);
+		const sidebarOpen = agent && sidebarWidth > 0;
+		root.classList.toggle('volt-primary-sidebar-toggle-in-titlebar', agentPrimarySidebarToggleInTitlebar(agent, sidebarOpen));
 	}
 
 	protected shouldShowCompositeBar(): boolean {
