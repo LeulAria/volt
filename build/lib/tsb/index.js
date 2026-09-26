@@ -131,9 +131,14 @@ function create(projectPath, existingOptions, config, onError = _defaultOnError)
     }
     let result;
     if (config.transpileOnly) {
-        const transpiler = !config.transpileWithEsbuild
-            ? new transpiler_1.TscTranspiler(logFn, printDiagnostic, projectPath, cmdLine)
-            : new transpiler_1.ESBuildTranspiler(logFn, printDiagnostic, projectPath, cmdLine);
+        const engine = config.transpileEngine ?? (config.transpileWithEsbuild ? 'esbuild' : 'tsc');
+        const transpiler = engine === 'oxc'
+            ? new transpiler_1.OxcTranspiler(logFn, printDiagnostic, projectPath, cmdLine)
+            : engine === 'rolldown'
+                ? new transpiler_1.RolldownTranspiler(logFn, printDiagnostic, projectPath, cmdLine)
+                : engine === 'esbuild'
+                    ? new transpiler_1.ESBuildTranspiler(logFn, printDiagnostic, projectPath, cmdLine)
+                    : new transpiler_1.TscTranspiler(logFn, printDiagnostic, projectPath, cmdLine);
         result = (() => createTranspileStream(transpiler));
     }
     else {

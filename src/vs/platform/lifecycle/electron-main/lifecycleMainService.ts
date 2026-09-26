@@ -306,7 +306,8 @@ export class LifecycleMainService extends Disposable implements ILifecycleMainSe
 
 			// Windows/Linux: we quit when all windows have closed
 			// Mac: we only quit when quit was requested
-			if (this._quitRequested || !isMacintosh) {
+			// Dev: keep the process alive so a failed reload does not kill the app
+			if (this._quitRequested || (!isMacintosh && !process.env['VSCODE_DEV'])) {
 				electron.app.quit();
 			}
 		};

@@ -1129,6 +1129,16 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 				// Process gone
 				else if (type === WindowError.PROCESS_GONE) {
+					if (!this.environmentMainService.isBuilt) {
+						this.logService.error('[volt] renderer gone in development, reloading the window instead of quitting');
+						try {
+							this.webContents.reloadIgnoringCache();
+						} catch (error) {
+							this.logService.error(error);
+						}
+						return;
+					}
+
 					let message: string;
 					if (!details) {
 						message = localize('appGone', "The window terminated unexpectedly");

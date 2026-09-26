@@ -58,9 +58,22 @@
 			}
 		},
 		{
+			"type": "npm",
+			"script": "watch-typesd",
+			"label": "Types - tsgo",
+			"isBackground": true,
+			"presentation": {
+				"reveal": "never",
+				"group": "buildWatchers",
+				"close": false
+			},
+			"problemMatcher": "$tsc-watch"
+		},
+		{
 			"label": "VS Code - Build",
 			"dependsOn": [
 				"Core - Build",
+				"Types - tsgo",
 				"Ext - Build"
 			],
 			"group": {

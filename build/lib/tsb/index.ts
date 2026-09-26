@@ -12,7 +12,8 @@ import { dirname } from 'path';
 import { strings } from './utils';
 import { readFileSync, statSync } from 'fs';
 import log from 'fancy-log';
-import { ESBuildTranspiler, ITranspiler, TscTranspiler } from './transpiler';
+import { ESBuildTranspiler, ITranspiler, OxcTranspiler, RolldownTranspiler, TscTranspiler } from './transpiler';
+import { DevTranspileEngine } from './devEngine';
 import colors = require('ansi-colors');
 
 export interface IncrementalCompiler {
@@ -36,7 +37,7 @@ const _defaultOnError = (err: string) => console.log(JSON.stringify(err, null, 4
 export function create(
 	projectPath: string,
 	existingOptions: Partial<ts.CompilerOptions>,
-	config: { verbose?: boolean; transpileOnly?: boolean; transpileOnlyIncludesDts?: boolean; transpileWithEsbuild?: boolean },
+	config: { verbose?: boolean; transpileOnly?: boolean; transpileOnlyIncludesDts?: boolean; transpileWithEsbuild?: boolean; transpileEngine?: DevTranspileEngine },
 	onError: (message: string) => void = _defaultOnError
 ): IncrementalCompiler {
 
@@ -128,9 +129,14 @@ export function create(
 
 	let result: IncrementalCompiler;
 	if (config.transpileOnly) {
-		const transpiler = !config.transpileWithEsbuild
-			? new TscTranspiler(logFn, printDiagnostic, projectPath, cmdLine)
-			: new ESBuildTranspiler(logFn, printDiagnostic, projectPath, cmdLine);
+		const engine = config.transpileEngine ?? (config.transpileWithEsbuild ? 'esbuild' : 'tsc');
+		const transpiler = engine === 'oxc'
+			? new OxcTranspiler(logFn, printDiagnostic, projectPath, cmdLine)
+			: engine === 'rolldown'
+				? new RolldownTranspiler(logFn, printDiagnostic, projectPath, cmdLine)
+				: engine === 'esbuild'
+					? new ESBuildTranspiler(logFn, printDiagnostic, projectPath, cmdLine)
+					: new TscTranspiler(logFn, printDiagnostic, projectPath, cmdLine);
 		result = <any>(() => createTranspileStream(transpiler));
 	} else {
 		const _builder = builder.createTypeScriptBuilder({ logFn }, projectPath, cmdLine);

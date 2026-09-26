@@ -372,6 +372,156 @@ export class ESBuildTranspiler implements ITranspiler {
 	}
 }
 
+type OxcModule = typeof import('oxc-transform');
+type RolldownUtils = typeof import('rolldown/utils');
+
+let oxcModule: Promise<OxcModule> | undefined;
+let rolldownUtils: Promise<RolldownUtils> | undefined;
+
+function loadOxc(): Promise<OxcModule> {
+	return oxcModule ??= import('oxc-transform');
+}
+
+function loadRolldownUtils(): Promise<RolldownUtils> {
+	return rolldownUtils ??= import('rolldown/utils');
+}
+
+function inlineSourcemap(code: string, map: { mappings?: string } | undefined): string {
+	if (!map?.mappings) {
+		return code;
+	}
+	const encoded = Buffer.from(JSON.stringify(map)).toString('base64');
+	return `${code}\n//# sourceMappingURL=data:application/json;base64,${encoded}`;
+}
+
+export class OxcTranspiler implements ITranspiler {
+
+	private readonly _outputFileNames: OutputFileNameOracle;
+	private readonly _jobs: Promise<unknown>[] = [];
+	private readonly _isExtension: boolean;
+
+	onOutfile?: ((file: Vinyl) => void) | undefined;
+
+	constructor(
+		private readonly _logFn: (topic: string, message: string) => void,
+		private readonly _onError: (err: any) => void,
+		configFilePath: string,
+		private readonly _cmdLine: ts.ParsedCommandLine
+	) {
+		_logFn('Transpile', `will use Oxc to transpile source files`);
+		this._outputFileNames = new OutputFileNameOracle(_cmdLine, configFilePath);
+		this._isExtension = configFilePath.includes('extensions');
+	}
+
+	async join(): Promise<void> {
+		const jobs = this._jobs.slice();
+		this._jobs.length = 0;
+		await Promise.allSettled(jobs);
+	}
+
+	transpile(file: Vinyl): void {
+		if (!(file.contents instanceof Buffer)) {
+			throw Error('file.contents must be a Buffer');
+		}
+		const t1 = Date.now();
+		const source = file.contents.toString('utf8');
+		this._jobs.push(loadOxc().then(({ transformSync }) => {
+			const result = transformSync(file.path, source, {
+				lang: file.path.endsWith('.tsx') ? 'tsx' : file.path.endsWith('.d.ts') ? 'dts' : 'ts',
+				sourceType: this._isExtension ? 'commonjs' : 'module',
+				sourcemap: true,
+				target: 'es2022',
+				decorator: { legacy: true },
+				typescript: {
+					onlyRemoveTypeImports: false,
+					removeClassFieldsWithoutInitializer: true,
+					optimizeConstEnums: false,
+				},
+				assumptions: {
+					setPublicClassFields: true,
+				},
+			});
+			const fatal = result.errors.filter(error => error.severity === 'Error');
+			if (fatal.length > 0 && !result.code) {
+				throw new Error(fatal.map(error => error.message).join('\n'));
+			}
+			if (file.path.endsWith('.d.ts') && _isDefaultEmpty(result.code)) {
+				return;
+			}
+			const outBase = this._cmdLine.options.outDir ?? file.base;
+			const outPath = this._outputFileNames.getOutputFileName(file.path);
+			this.onOutfile!(new Vinyl({
+				path: outPath,
+				base: outBase,
+				contents: Buffer.from(inlineSourcemap(result.code, result.map)),
+			}));
+			this._logFn('Transpile', `oxc took ${Date.now() - t1}ms for ${file.path}`);
+		}).catch(err => {
+			this._onError(err);
+		}));
+	}
+}
+
+export class RolldownTranspiler implements ITranspiler {
+
+	private readonly _outputFileNames: OutputFileNameOracle;
+	private readonly _jobs: Promise<unknown>[] = [];
+	private readonly _isExtension: boolean;
+	private readonly _configFilePath: string;
+
+	onOutfile?: ((file: Vinyl) => void) | undefined;
+
+	constructor(
+		private readonly _logFn: (topic: string, message: string) => void,
+		private readonly _onError: (err: any) => void,
+		configFilePath: string,
+		private readonly _cmdLine: ts.ParsedCommandLine
+	) {
+		_logFn('Transpile', `will use Rolldown/Oxc to transpile source files`);
+		this._outputFileNames = new OutputFileNameOracle(_cmdLine, configFilePath);
+		this._isExtension = configFilePath.includes('extensions');
+		this._configFilePath = configFilePath;
+	}
+
+	async join(): Promise<void> {
+		const jobs = this._jobs.slice();
+		this._jobs.length = 0;
+		await Promise.allSettled(jobs);
+	}
+
+	transpile(file: Vinyl): void {
+		if (!(file.contents instanceof Buffer)) {
+			throw Error('file.contents must be a Buffer');
+		}
+		const t1 = Date.now();
+		const source = file.contents.toString('utf8');
+		this._jobs.push(loadRolldownUtils().then(({ transformSync }) => {
+			const result = transformSync(file.path, source, {
+				sourcemap: true,
+				tsconfig: this._configFilePath,
+				target: 'es2022',
+				sourceType: this._isExtension ? 'commonjs' : 'module',
+			} as Parameters<RolldownUtils['transformSync']>[2]);
+			if (result.errors?.length && !result.code) {
+				throw new Error(result.errors.map((error: { message?: string } | string) => typeof error === 'string' ? error : error.message ?? String(error)).join('\n'));
+			}
+			if (file.path.endsWith('.d.ts') && _isDefaultEmpty(result.code)) {
+				return;
+			}
+			const outBase = this._cmdLine.options.outDir ?? file.base;
+			const outPath = this._outputFileNames.getOutputFileName(file.path);
+			this.onOutfile!(new Vinyl({
+				path: outPath,
+				base: outBase,
+				contents: Buffer.from(inlineSourcemap(result.code, result.map)),
+			}));
+			this._logFn('Transpile', `rolldown took ${Date.now() - t1}ms for ${file.path}`);
+		}).catch(err => {
+			this._onError(err);
+		}));
+	}
+}
+
 function _isDefaultEmpty(src: string): boolean {
 	return src
 		.replace('"use strict";', '')

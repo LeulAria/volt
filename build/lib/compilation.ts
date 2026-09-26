@@ -19,6 +19,7 @@ import * as task from './task';
 import { Mangler } from './mangle/index';
 import { RawSourceMap } from 'source-map';
 import ts = require('typescript');
+import { DevTranspileEngine, isFastTranspileEngine, resolveDevTranspileEngine } from './tsb/devEngine';
 const watch = require('./watch');
 
 
@@ -44,7 +45,7 @@ function getTypeScriptCompilerOptions(src: string): ts.CompilerOptions {
 interface ICompileTaskOptions {
 	readonly build: boolean;
 	readonly emitError: boolean;
-	readonly transpileOnly: boolean | { esbuild: boolean };
+	readonly transpileOnly: boolean | { esbuild?: boolean; engine?: DevTranspileEngine };
 	readonly preserveEnglish: boolean;
 }
 
@@ -59,10 +60,14 @@ export function createCompile(src: string, { build, emitError, transpileOnly, pr
 		overrideOptions.inlineSourceMap = true;
 	}
 
+	const engine = typeof transpileOnly === 'object'
+		? (transpileOnly.engine ?? (transpileOnly.esbuild ? 'esbuild' : 'oxc'))
+		: undefined;
 	const compilation = tsb.create(projectPath, overrideOptions, {
 		verbose: false,
 		transpileOnly: Boolean(transpileOnly),
-		transpileWithEsbuild: typeof transpileOnly !== 'boolean' && transpileOnly.esbuild
+		transpileWithEsbuild: engine === 'esbuild',
+		transpileEngine: engine
 	}, err => reporter(err));
 
 	function pipeline(token?: util.ICancellationToken) {
@@ -103,8 +108,8 @@ export function createCompile(src: string, { build, emitError, transpileOnly, pr
 export function transpileTask(src: string, out: string, esbuild?: boolean): task.StreamTask {
 
 	const task = () => {
-
-		const transpile = createCompile(src, { build: false, emitError: true, transpileOnly: { esbuild: !!esbuild }, preserveEnglish: false });
+		const engine = esbuild ? 'esbuild' : resolveDevTranspileEngine();
+		const transpile = createCompile(src, { build: false, emitError: true, transpileOnly: { engine: isFastTranspileEngine(engine) ? engine : 'oxc' }, preserveEnglish: false });
 		const srcPipe = gulp.src(`${src}/**`, { base: `${src}` });
 
 		return srcPipe
@@ -168,10 +173,11 @@ export function compileTask(src: string, out: string, build: boolean, options: {
 export function watchTask(out: string, build: boolean, srcPath: string = 'src'): task.StreamTask {
 
 	const task = () => {
-		const compile = createCompile(srcPath, { build, emitError: false, transpileOnly: false, preserveEnglish: false });
+		const engine = resolveDevTranspileEngine();
+		const compile = createCompile(srcPath, { build, emitError: false, transpileOnly: isFastTranspileEngine(engine) ? { engine } : false, preserveEnglish: false });
 
 		const src = gulp.src(`${srcPath}/**`, { base: srcPath });
-		const watchSrc = watch(`${srcPath}/**`, { base: srcPath, readDelay: 200 });
+		const watchSrc = watch(`${srcPath}/**`, { base: srcPath, readDelay: 50 });
 
 		const generator = new MonacoGenerator(true);
 		generator.execute();

@@ -4,13 +4,19 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IDisposable } from './lifecycle.js';
+import { env } from './process.js';
 
 export function isHotReloadEnabled(): boolean {
-	// return env && !!env['VSCODE_DEV_DEBUG'];
-	return false; // TODO@hediet investigate how to get hot reload
+	// Class-rewrapping (wrapInHotClass) is opt-in. It breaks DI and can crash the window.
+	return !!env['VSCODE_DEV_DEBUG'];
 }
+
+export function isDevHotApplyEnabled(): boolean {
+	return !!(env['VSCODE_DEV'] || env['VSCODE_DEV_DEBUG']);
+}
+
 export function registerHotReloadHandler(handler: HotReloadHandler): IDisposable {
-	if (!isHotReloadEnabled()) {
+	if (!isDevHotApplyEnabled()) {
 		return { dispose() { } };
 	} else {
 		const handlers = registerGlobalHotReloadHandler();
@@ -78,7 +84,7 @@ interface GlobalThisAddition {
 
 type AcceptNewExportsFn = (newExports: Record<string, unknown>) => boolean;
 
-if (isHotReloadEnabled()) {
+if (isDevHotApplyEnabled()) {
 	// This code does not run in production.
 	registerHotReloadHandler(({ oldExports, newSrc, config }) => {
 		if (config.mode !== 'patch-prototype') {

@@ -60,6 +60,7 @@ const vinyl_1 = __importDefault(require("vinyl"));
 const task = __importStar(require("./task"));
 const index_1 = require("./mangle/index");
 const ts = require("typescript");
+const devEngine_1 = require("./tsb/devEngine");
 const watch = require('./watch');
 // --- gulp-tsb: compile and transpile --------------------------------
 const reporter = (0, reporter_1.createReporter)();
@@ -85,10 +86,14 @@ function createCompile(src, { build, emitError, transpileOnly, preserveEnglish }
     if (!build) {
         overrideOptions.inlineSourceMap = true;
     }
+    const engine = typeof transpileOnly === 'object'
+        ? (transpileOnly.engine ?? (transpileOnly.esbuild ? 'esbuild' : 'oxc'))
+        : undefined;
     const compilation = tsb.create(projectPath, overrideOptions, {
         verbose: false,
         transpileOnly: Boolean(transpileOnly),
-        transpileWithEsbuild: typeof transpileOnly !== 'boolean' && transpileOnly.esbuild
+        transpileWithEsbuild: engine === 'esbuild',
+        transpileEngine: engine
     }, err => reporter(err));
     function pipeline(token) {
         const bom = require('gulp-bom');
@@ -123,7 +128,8 @@ function createCompile(src, { build, emitError, transpileOnly, preserveEnglish }
 }
 function transpileTask(src, out, esbuild) {
     const task = () => {
-        const transpile = createCompile(src, { build: false, emitError: true, transpileOnly: { esbuild: !!esbuild }, preserveEnglish: false });
+        const engine = esbuild ? 'esbuild' : (0, devEngine_1.resolveDevTranspileEngine)();
+        const transpile = createCompile(src, { build: false, emitError: true, transpileOnly: { engine: (0, devEngine_1.isFastTranspileEngine)(engine) ? engine : 'oxc' }, preserveEnglish: false });
         const srcPipe = gulp_1.default.src(`${src}/**`, { base: `${src}` });
         return srcPipe
             .pipe(transpile())
@@ -174,9 +180,10 @@ function compileTask(src, out, build, options = {}) {
 }
 function watchTask(out, build, srcPath = 'src') {
     const task = () => {
-        const compile = createCompile(srcPath, { build, emitError: false, transpileOnly: false, preserveEnglish: false });
+        const engine = (0, devEngine_1.resolveDevTranspileEngine)();
+        const compile = createCompile(srcPath, { build, emitError: false, transpileOnly: (0, devEngine_1.isFastTranspileEngine)(engine) ? { engine } : false, preserveEnglish: false });
         const src = gulp_1.default.src(`${srcPath}/**`, { base: srcPath });
-        const watchSrc = watch(`${srcPath}/**`, { base: srcPath, readDelay: 200 });
+        const watchSrc = watch(`${srcPath}/**`, { base: srcPath, readDelay: 50 });
         const generator = new MonacoGenerator(true);
         generator.execute();
         return watchSrc

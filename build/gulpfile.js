@@ -31,8 +31,12 @@ gulp.task(transpileClientTask);
 const compileClientTask = task.define('compile-client', task.series(util.rimraf('out'), compileApiProposalNamesTask, compileTask('src', 'out', false)));
 gulp.task(compileClientTask);
 
+// Fast incremental transpile via Oxc (default). VOLT_WATCH_ENGINE=rolldown|esbuild|tsc overrides.
 const watchClientTask = task.define('watch-client', task.series(util.rimraf('out'), task.parallel(watchTask('out', false), watchApiProposalNamesTask)));
 gulp.task(watchClientTask);
+
+const transpileClientOxcTask = task.define('transpile-client-oxc', task.series(util.rimraf('out'), transpileTask('src', 'out')));
+gulp.task(transpileClientOxcTask);
 
 // All
 const _compileTask = task.define('compile', task.parallel(monacoTypecheckTask, compileClientTask, compileExtensionsTask, compileExtensionMediaTask));

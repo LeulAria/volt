@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ESBuildTranspiler = exports.TscTranspiler = void 0;
+exports.RolldownTranspiler = exports.OxcTranspiler = exports.ESBuildTranspiler = exports.TscTranspiler = void 0;
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -294,6 +294,141 @@ class ESBuildTranspiler {
     }
 }
 exports.ESBuildTranspiler = ESBuildTranspiler;
+let oxcModule;
+let rolldownUtils;
+function loadOxc() {
+    return oxcModule ??= import('oxc-transform');
+}
+function loadRolldownUtils() {
+    return rolldownUtils ??= import('rolldown/utils');
+}
+function inlineSourcemap(code, map) {
+    if (!map?.mappings) {
+        return code;
+    }
+    const encoded = Buffer.from(JSON.stringify(map)).toString('base64');
+    return `${code}\n//# sourceMappingURL=data:application/json;base64,${encoded}`;
+}
+class OxcTranspiler {
+    _logFn;
+    _onError;
+    _cmdLine;
+    _outputFileNames;
+    _jobs = [];
+    _isExtension;
+    onOutfile;
+    constructor(_logFn, _onError, configFilePath, _cmdLine) {
+        this._logFn = _logFn;
+        this._onError = _onError;
+        this._cmdLine = _cmdLine;
+        _logFn('Transpile', `will use Oxc to transpile source files`);
+        this._outputFileNames = new OutputFileNameOracle(_cmdLine, configFilePath);
+        this._isExtension = configFilePath.includes('extensions');
+    }
+    async join() {
+        const jobs = this._jobs.slice();
+        this._jobs.length = 0;
+        await Promise.allSettled(jobs);
+    }
+    transpile(file) {
+        if (!(file.contents instanceof Buffer)) {
+            throw Error('file.contents must be a Buffer');
+        }
+        const t1 = Date.now();
+        const source = file.contents.toString('utf8');
+        this._jobs.push(loadOxc().then(({ transformSync }) => {
+            const result = transformSync(file.path, source, {
+                lang: file.path.endsWith('.tsx') ? 'tsx' : file.path.endsWith('.d.ts') ? 'dts' : 'ts',
+                sourceType: this._isExtension ? 'commonjs' : 'module',
+                sourcemap: true,
+                target: 'es2022',
+                decorator: { legacy: true },
+                typescript: {
+                    onlyRemoveTypeImports: false,
+                    removeClassFieldsWithoutInitializer: true,
+                    optimizeConstEnums: false,
+                },
+                assumptions: {
+                    setPublicClassFields: true,
+                },
+            });
+            const fatal = result.errors.filter(error => error.severity === 'Error');
+            if (fatal.length > 0 && !result.code) {
+                throw new Error(fatal.map(error => error.message).join('\n'));
+            }
+            if (file.path.endsWith('.d.ts') && _isDefaultEmpty(result.code)) {
+                return;
+            }
+            const outBase = this._cmdLine.options.outDir ?? file.base;
+            const outPath = this._outputFileNames.getOutputFileName(file.path);
+            this.onOutfile(new vinyl_1.default({
+                path: outPath,
+                base: outBase,
+                contents: Buffer.from(inlineSourcemap(result.code, result.map)),
+            }));
+            this._logFn('Transpile', `oxc took ${Date.now() - t1}ms for ${file.path}`);
+        }).catch(err => {
+            this._onError(err);
+        }));
+    }
+}
+exports.OxcTranspiler = OxcTranspiler;
+class RolldownTranspiler {
+    _logFn;
+    _onError;
+    _cmdLine;
+    _outputFileNames;
+    _jobs = [];
+    _isExtension;
+    _configFilePath;
+    onOutfile;
+    constructor(_logFn, _onError, configFilePath, _cmdLine) {
+        this._logFn = _logFn;
+        this._onError = _onError;
+        this._cmdLine = _cmdLine;
+        _logFn('Transpile', `will use Rolldown/Oxc to transpile source files`);
+        this._outputFileNames = new OutputFileNameOracle(_cmdLine, configFilePath);
+        this._isExtension = configFilePath.includes('extensions');
+        this._configFilePath = configFilePath;
+    }
+    async join() {
+        const jobs = this._jobs.slice();
+        this._jobs.length = 0;
+        await Promise.allSettled(jobs);
+    }
+    transpile(file) {
+        if (!(file.contents instanceof Buffer)) {
+            throw Error('file.contents must be a Buffer');
+        }
+        const t1 = Date.now();
+        const source = file.contents.toString('utf8');
+        this._jobs.push(loadRolldownUtils().then(({ transformSync }) => {
+            const result = transformSync(file.path, source, {
+                sourcemap: true,
+                tsconfig: this._configFilePath,
+                target: 'es2022',
+                sourceType: this._isExtension ? 'commonjs' : 'module',
+            });
+            if (result.errors?.length && !result.code) {
+                throw new Error(result.errors.map((error) => typeof error === 'string' ? error : error.message ?? String(error)).join('\n'));
+            }
+            if (file.path.endsWith('.d.ts') && _isDefaultEmpty(result.code)) {
+                return;
+            }
+            const outBase = this._cmdLine.options.outDir ?? file.base;
+            const outPath = this._outputFileNames.getOutputFileName(file.path);
+            this.onOutfile(new vinyl_1.default({
+                path: outPath,
+                base: outBase,
+                contents: Buffer.from(inlineSourcemap(result.code, result.map)),
+            }));
+            this._logFn('Transpile', `rolldown took ${Date.now() - t1}ms for ${file.path}`);
+        }).catch(err => {
+            this._onError(err);
+        }));
+    }
+}
+exports.RolldownTranspiler = RolldownTranspiler;
 function _isDefaultEmpty(src) {
     return src
         .replace('"use strict";', '')
