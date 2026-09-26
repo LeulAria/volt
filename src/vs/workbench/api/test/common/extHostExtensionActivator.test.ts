@@ -8,7 +8,7 @@ import { promiseWithResolvers, timeout } from '../../../../base/common/async.js'
 import { Mutable } from '../../../../base/common/types.js';
 import { URI } from '../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { ExtensionIdentifier, IExtensionDescription, TargetPlatform } from '../../../../platform/extensions/common/extensions.js';
+import { ExtensionIdentifier, IExtensionDescription, TargetPlatform, isMissingExtensionEntryPointError } from '../../../../platform/extensions/common/extensions.js';
 import { NullLogService } from '../../../../platform/log/common/log.js';
 import { ActivatedExtension, EmptyExtension, ExtensionActivationTimes, ExtensionsActivator, IExtensionsActivatorHost } from '../../common/extHostExtensionActivator.js';
 import { ExtensionDescriptionRegistry, IActivationEventsReader } from '../../../services/extensions/common/extensionDescriptionRegistry.js';
@@ -224,6 +224,13 @@ suite('ExtensionsActivator', () => {
 		extActivationA.resolve();
 
 		disposables.dispose();
+	});
+
+	test('isMissingExtensionEntryPointError matches node module-not-found', () => {
+		const entryPoint = URI.file('/Users/leularia/Desktop/VOLT/volt/extensions/vscode-colorize-tests/out/colorizerTestMain');
+		const error = Object.assign(new Error(`Cannot find module '${entryPoint.fsPath}'\nRequire stack:\n- /Users/leularia/Desktop/VOLT/volt/out/vs/workbench/api/node/extHostExtensionService.js`), { code: 'MODULE_NOT_FOUND' });
+		assert.strictEqual(isMissingExtensionEntryPointError(error, entryPoint), true);
+		assert.strictEqual(isMissingExtensionEntryPointError(new Error('something else'), entryPoint), false);
 	});
 
 	class SimpleExtensionsActivatorHost implements IExtensionsActivatorHost {

@@ -7,6 +7,7 @@ import { ILocalizedString, localize, localize2 } from '../../../nls.js';
 import { MenuId, MenuRegistry, registerAction2, Action2 } from '../../../platform/actions/common/actions.js';
 import { Categories } from '../../../platform/action/common/actionCommonCategories.js';
 import { IConfigurationService } from '../../../platform/configuration/common/configuration.js';
+import { IStorageService } from '../../../platform/storage/common/storage.js';
 import { alert } from '../../../base/browser/ui/aria/aria.js';
 import { EditorActionsLocation, EditorTabsMode, IWorkbenchLayoutService, LayoutSettings, Parts, Position, ZenModeSettings, positionToString } from '../../services/layout/browser/layoutService.js';
 import { ServicesAccessor, IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
@@ -35,6 +36,8 @@ import { MenuSettings, TitlebarStyle } from '../../../platform/window/common/win
 import { IPreferencesService } from '../../services/preferences/common/preferences.js';
 import { QuickInputAlignmentContextKey } from '../../../platform/quickinput/browser/quickInput.js';
 import { IEditorGroupsService } from '../../services/editor/common/editorGroupsService.js';
+import { applyAgentStatusbarShift } from '../parts/titlebar/agentLayoutChrome.js';
+import { getLayoutMode, openAgentSidebar, storeAgentLeftSidebarHidden } from '../parts/titlebar/layoutModeSwitch.js';
 
 // Register Icons
 const menubarIcon = registerIcon('menuBar', Codicon.layoutMenubar, localize('menuBarIcon', "Represents the menu bar"));
@@ -320,7 +323,26 @@ export class ToggleSidebarVisibilityAction extends Action2 {
 
 	run(accessor: ServicesAccessor): void {
 		const layoutService = accessor.get(IWorkbenchLayoutService);
+		const storageService = accessor.get(IStorageService);
 		const isCurrentlyVisible = layoutService.isVisible(Parts.SIDEBAR_PART);
+
+		if (getLayoutMode(layoutService) === 'agent') {
+			const visible = layoutService.isVisible(Parts.AUXILIARYBAR_PART);
+			const width = visible ? layoutService.getSize(Parts.AUXILIARYBAR_PART).width : 0;
+			const showing = visible && width >= 180;
+			if (showing) {
+				storeAgentLeftSidebarHidden(storageService, true);
+				layoutService.setPartHidden(true, Parts.AUXILIARYBAR_PART);
+				applyAgentStatusbarShift(layoutService.mainContainer, 0, layoutService.getSize(Parts.TITLEBAR_PART).height);
+			} else {
+				storeAgentLeftSidebarHidden(storageService, false);
+				void openAgentSidebar(accessor.get(IConfigurationService), layoutService, accessor.get(IPaneCompositePartService));
+			}
+			alert(showing
+				? localize('sidebarHidden', "Primary Side Bar hidden")
+				: localize('sidebarVisible', "Primary Side Bar shown"));
+			return;
+		}
 
 		layoutService.setPartHidden(isCurrentlyVisible, Parts.SIDEBAR_PART);
 

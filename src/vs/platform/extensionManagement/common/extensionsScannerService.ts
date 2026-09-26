@@ -22,7 +22,7 @@ import { localize } from '../../../nls.js';
 import { IEnvironmentService } from '../../environment/common/environment.js';
 import { IProductVersion, Metadata } from './extensionManagement.js';
 import { areSameExtensions, computeTargetPlatform, getExtensionId, getGalleryExtensionId } from './extensionManagementUtil.js';
-import { ExtensionType, ExtensionIdentifier, IExtensionManifest, TargetPlatform, IExtensionIdentifier, IRelaxedExtensionManifest, UNDEFINED_PUBLISHER, IExtensionDescription, BUILTIN_MANIFEST_CACHE_FILE, USER_MANIFEST_CACHE_FILE, ExtensionIdentifierMap, parseEnabledApiProposalNames } from '../../extensions/common/extensions.js';
+import { ExtensionType, ExtensionIdentifier, IExtensionManifest, TargetPlatform, IExtensionIdentifier, IRelaxedExtensionManifest, UNDEFINED_PUBLISHER, IExtensionDescription, BUILTIN_MANIFEST_CACHE_FILE, USER_MANIFEST_CACHE_FILE, ExtensionIdentifierMap, parseEnabledApiProposalNames, isDevelopmentOnlyBuiltinExtensionFolder } from '../../extensions/common/extensions.js';
 import { validateExtensionManifest } from '../../extensions/common/extensionValidator.js';
 import { FileOperationResult, IFileService, toFileOperationResult } from '../../files/common/files.js';
 import { createDecorator, IInstantiationService } from '../../instantiation/common/instantiation.js';
@@ -594,6 +594,12 @@ class ExtensionsScanner extends Disposable {
 				}
 				// Do not consider user extension folder starting with `.`
 				if (input.type === ExtensionType.User && basename(c.resource).indexOf('.') === 0) {
+					return null;
+				}
+				// Test-only builtins live in `extensions/` for integration tests.
+				// Skip them during a system scan so they cannot activate in the product.
+				// `--extensionDevelopmentPath` still loads them via `scanOneOrMultipleExtensions`.
+				if (input.type === ExtensionType.System && isDevelopmentOnlyBuiltinExtensionFolder(basename(c.resource))) {
 					return null;
 				}
 				const extensionScannerInput = new ExtensionScannerInput(c.resource, input.mtime, input.applicationExtensionslocation, input.applicationExtensionslocationMtime, input.profile, input.profileScanOptions, input.type, input.validate, input.productVersion, input.productDate, input.productCommit, input.devMode, input.language, input.translations);

@@ -7,7 +7,7 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { INativeHostService } from '../../../../platform/native/common/native.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
-import { getLayoutMode } from '../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { getLayoutMode, onDidChangeLayoutMode } from '../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IWorkbenchLayoutService } from '../../../services/layout/browser/layoutService.js';
 
 class VoltAgentWindowChromeContribution extends Disposable implements IWorkbenchContribution {
@@ -21,6 +21,7 @@ class VoltAgentWindowChromeContribution extends Disposable implements IWorkbench
 	) {
 		super();
 		this.apply();
+		this._register(onDidChangeLayoutMode(() => this.apply()));
 		this._register(configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration('workbench.sideBar.location')) {
 				this.apply();

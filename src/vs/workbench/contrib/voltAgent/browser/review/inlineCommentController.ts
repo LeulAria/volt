@@ -24,7 +24,8 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
-import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
+import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
+import { revealAgentSidePanel } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { AGENT_SIDE_PANEL_VIEW_ID } from '../editor/agentEditorInput.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
 import {
@@ -176,7 +177,7 @@ export class InlineCommentController extends Disposable implements IEditorContri
 	}
 
 	private async sendToChat(resource: URI, lines: ILineRange, comment: string): Promise<void> {
-		this.layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
+		revealAgentSidePanel(this.layoutService);
 		const view = await this.viewsService.openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, true);
 		if (!view) {
 			return;

@@ -31,6 +31,29 @@ suite('Agent layout chrome', () => {
 		assert.strictEqual(root.classList.contains('volt-agent-left-collapsed'), true);
 	});
 
+	test('keeps chrome at the sidebar edge instead of snapping next to traffic lights', () => {
+		const root = document.createElement('div');
+
+		applyAgentStatusbarShift(root, 290, 35);
+
+		assert.strictEqual(root.style.getPropertyValue('--volt-agent-sidebar-width'), '290px');
+		assert.strictEqual(root.classList.contains('volt-agent-left-collapsed'), false);
+
+		applyAgentStatusbarShift(root, 0, 35);
+
+		assert.strictEqual(root.style.getPropertyValue('--volt-agent-sidebar-width'), '0px');
+		assert.strictEqual(root.classList.contains('volt-agent-left-collapsed'), true);
+	});
+
+	test('marks the agent chrome collapsed when the sidebar is hidden', () => {
+		const root = document.createElement('div');
+
+		applyAgentStatusbarShift(root, 0);
+
+		assert.strictEqual(root.style.getPropertyValue('--volt-agent-sidebar-width'), '0px');
+		assert.strictEqual(root.classList.contains('volt-agent-left-collapsed'), true);
+	});
+
 	test('clears leftover status bar shift when leaving agent layout', () => {
 		const root = document.createElement('div');
 		const wrap = document.createElement('div');

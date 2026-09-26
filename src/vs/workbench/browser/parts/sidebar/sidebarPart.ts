@@ -156,14 +156,6 @@ export class SidebarPart extends AbstractPaneCompositePart {
 		container.style.outlineColor = this.getColor(SIDE_BAR_DRAG_AND_DROP_BACKGROUND) ?? '';
 	}
 
-	override layout(width: number, height: number, top: number, left: number): void {
-		if (!this.layoutService.isVisible(Parts.SIDEBAR_PART)) {
-			return;
-		}
-
-		super.layout(width, height, top, left);
-	}
-
 	protected override getTitleAreaDropDownAnchorAlignment(): AnchorAlignment {
 		return this.layoutService.getSideBarPosition() === SideBarPosition.LEFT ? AnchorAlignment.LEFT : AnchorAlignment.RIGHT;
 	}

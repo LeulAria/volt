@@ -898,6 +898,7 @@
 		"--monaco-monospace-font",
 		"--monaco-monospace-font",
 		"--volt-agent-drawer-width",
+		"--volt-agent-quick-open-reserve",
 		"--volt-agent-right-dock-width",
 		"--volt-agent-sidebar-bg",
 		"--volt-agent-sidebar-width",

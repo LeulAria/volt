@@ -5,6 +5,8 @@
 
 import { isHTMLElement } from '../../../../base/browser/dom.js';
 
+export const AGENT_SIDE_PANEL_ID = 'workbench.panel.voltAgent';
+
 export function applyAgentStatusbarShift(root: HTMLElement, sidebarWidth: number, titlebarHeight?: number): void {
 	const width = Math.max(0, Math.round(sidebarWidth));
 	root.style.setProperty('--volt-agent-sidebar-width', `${width}px`);

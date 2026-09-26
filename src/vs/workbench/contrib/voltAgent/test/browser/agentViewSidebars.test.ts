@@ -6,25 +6,66 @@
 import assert from 'assert';
 import { $ } from '../../../../../base/browser/dom.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { agentRightDockHost } from '../../browser/chrome/agentViewSidebars.js';
+import { QUICK_OPEN_NARROW_WINDOW_WIDTH, agentQuickOpenActionsHost, mountAgentQuickOpenActions, quickOpenCollapsedForWidth } from '../../browser/chrome/agentViewSidebars.js';
 
 suite('Agent view sidebars', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('pins the right dock to the open chat editor', () => {
+	test('puts Quick Open Actions in the chat scroller before a transcript exists', () => {
 		const editorPart = $('.editor');
 		const chat = editorPart.appendChild($('.volt-agent-editor'));
+		const thread = chat.appendChild($('.volt-agent-thread'));
+		const scroll = thread.appendChild($('.monaco-scrollable-element'));
 		const fallback = $('.root');
 
-		assert.strictEqual(agentRightDockHost(editorPart, fallback), chat);
+		assert.strictEqual(agentQuickOpenActionsHost(editorPart, fallback), scroll);
 	});
 
-	test('keeps the right dock on the editor part when no chat is mounted', () => {
+	test('puts Quick Open Actions in the chat scroller once a transcript exists', () => {
+		const editorPart = $('.editor');
+		const chat = editorPart.appendChild($('.volt-agent-editor'));
+		const thread = chat.appendChild($('.volt-agent-thread'));
+		const scroll = thread.appendChild($('.monaco-scrollable-element'));
+		scroll.appendChild($('.volt-agent-turn'));
+		const fallback = $('.root');
+
+		assert.strictEqual(agentQuickOpenActionsHost(editorPart, fallback), scroll);
+	});
+
+	test('collapses Quick Open Actions by default on a narrow window', () => {
+		assert.strictEqual(quickOpenCollapsedForWidth(QUICK_OPEN_NARROW_WINDOW_WIDTH, false), true);
+		assert.strictEqual(quickOpenCollapsedForWidth(800, false), true);
+		assert.strictEqual(quickOpenCollapsedForWidth(QUICK_OPEN_NARROW_WINDOW_WIDTH + 1, false), false);
+	});
+
+	test('keeps a manual Quick Open choice on a large window', () => {
+		assert.strictEqual(quickOpenCollapsedForWidth(1400, true), true);
+		assert.strictEqual(quickOpenCollapsedForWidth(1400, false), false);
+		assert.strictEqual(quickOpenCollapsedForWidth(800, false, false), false);
+	});
+
+	test('keeps Quick Open Actions on the editor part when no chat is mounted', () => {
 		const editorPart = $('.editor');
 		const fallback = $('.root');
 
-		assert.strictEqual(agentRightDockHost(editorPart, fallback), editorPart);
-		assert.strictEqual(agentRightDockHost(undefined, fallback), fallback);
+		assert.strictEqual(agentQuickOpenActionsHost(editorPart, fallback), editorPart);
+		assert.strictEqual(agentQuickOpenActionsHost(undefined, fallback), fallback);
+	});
+
+	test('keeps Quick Open Actions an in-flow sibling of the transcript on the chat scroller', () => {
+		const scroll = $('.monaco-scrollable-element');
+		const inner = scroll.appendChild($('.volt-agent-thread-inner'));
+		const scrollbar = scroll.appendChild($('.scrollbar.vertical'));
+		const quickOpen = $('.volt-agent-quick-open-actions');
+		const leftover = $('.root');
+		leftover.appendChild(quickOpen);
+
+		mountAgentQuickOpenActions(scroll, quickOpen);
+
+		assert.strictEqual(quickOpen.parentElement, scroll);
+		assert.strictEqual(quickOpen.previousElementSibling, inner);
+		assert.strictEqual(quickOpen.nextElementSibling, scrollbar);
+		assert.strictEqual(leftover.contains(quickOpen), false);
 	});
 });

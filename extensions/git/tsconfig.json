@@ -2,6 +2,7 @@
 	"extends": "../tsconfig.base.json",
 	"compilerOptions": {
 		"outDir": "./out",
+		"lib": ["ES2024", "DOM"],
 		"typeRoots": [
 			"./node_modules/@types"
 		]
@@ -25,7 +26,6 @@
 		"../../src/vscode-dts/vscode.proposed.tabInputMultiDiff.d.ts",
 		"../../src/vscode-dts/vscode.proposed.tabInputTextMerge.d.ts",
 		"../../src/vscode-dts/vscode.proposed.textEditorDiffInformation.d.ts",
-		"../../src/vscode-dts/vscode.proposed.timeline.d.ts",
-		"../types/lib.textEncoder.d.ts"
+		"../../src/vscode-dts/vscode.proposed.timeline.d.ts"
 	]
 }

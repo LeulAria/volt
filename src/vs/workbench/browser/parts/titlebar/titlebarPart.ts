@@ -18,7 +18,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { TITLE_BAR_ACTIVE_BACKGROUND, TITLE_BAR_ACTIVE_FOREGROUND, TITLE_BAR_INACTIVE_FOREGROUND, TITLE_BAR_INACTIVE_BACKGROUND, TITLE_BAR_BORDER, WORKBENCH_BACKGROUND } from '../../../common/theme.js';
 import { isMacintosh, isWindows, isLinux, isWeb, isNative, platformLocale } from '../../../../base/common/platform.js';
 import { Color } from '../../../../base/common/color.js';
-import { EventType, EventHelper, Dimension, append, $, addDisposableListener, prepend, reset, getWindow, getWindowId, isAncestor, getActiveDocument, isHTMLElement } from '../../../../base/browser/dom.js';
+import { EventType, EventHelper, EventLike, Dimension, append, $, addDisposableListener, prepend, reset, getWindow, getWindowId, isAncestor, getActiveDocument, isHTMLElement } from '../../../../base/browser/dom.js';
 import { CustomMenubarControl } from './menubarControl.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
@@ -26,6 +26,7 @@ import { IStorageService, StorageScope } from '../../../../platform/storage/comm
 import { Parts, IWorkbenchLayoutService, ActivityBarPosition, LayoutSettings, EditorActionsLocation, EditorTabsMode } from '../../../services/layout/browser/layoutService.js';
 import { ToggleSidebarVisibilityAction } from '../../actions/layoutActions.js';
 import { createActionViewItem, fillInActionBarActions as fillInActionBarActions } from '../../../../platform/actions/browser/menuEntryActionViewItem.js';
+import { ActionViewItem, IActionViewItemOptions, IBaseActionViewItemOptions } from '../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { Action2, IMenu, IMenuService, MenuId, MenuItemAction, SubmenuItemAction, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IHostService } from '../../../services/host/browser/host.js';
@@ -52,7 +53,6 @@ import { CodeWindow, mainWindow } from '../../../../base/browser/window.js';
 import { ACCOUNTS_ACTIVITY_TILE_ACTION, GLOBAL_ACTIVITY_TITLE_ACTION } from './titlebarActions.js';
 import { IView } from '../../../../base/browser/ui/grid/grid.js';
 import { createInstantHoverDelegate } from '../../../../base/browser/ui/hover/hoverDelegateFactory.js';
-import { IBaseActionViewItemOptions } from '../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { IHoverDelegate } from '../../../../base/browser/ui/hover/hoverDelegate.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { safeIntl } from '../../../../base/common/date.js';
@@ -217,6 +217,75 @@ export class BrowserTitleService extends MultiWindowParts<BrowserTitlebarPart> i
 	}
 
 	//#endregion
+}
+
+/**
+ * The stock titlebar action is an anchor with role=button. On macOS that
+ * becomes a window-toolbar capsule and the click never reaches the workbench.
+ * A plain element keeps the same icon and still runs the toggle.
+ */
+class SidebarToggleActionViewItem extends ActionViewItem {
+	private suppressClick = false;
+
+	constructor(action: IAction, options: IActionViewItemOptions) {
+		super(undefined, action, { ...options, icon: true, label: false });
+	}
+
+	override render(container: HTMLElement): void {
+		super.render(container);
+		const anchor = this.label;
+		if (anchor?.tagName === 'A') {
+			const face = document.createElement('div');
+			face.className = anchor.className;
+			face.classList.add('volt-sidebar-toggle');
+			for (const attribute of ['aria-label', 'aria-checked']) {
+				const value = anchor.getAttribute(attribute);
+				if (value !== null) {
+					face.setAttribute(attribute, value);
+				}
+			}
+			anchor.replaceWith(face);
+			this.label = face;
+			// macOS eats the click on a titlebar control next to the traffic lights.
+			// The press still arrives, so run the toggle from that.
+			this._register(addDisposableListener(face, EventType.MOUSE_DOWN, e => {
+				if (e.button !== 0) {
+					return;
+				}
+				this.suppressClick = true;
+				this.onClick(e);
+			}));
+		}
+	}
+
+	override onClick(event: EventLike, preserveFocus = false): void {
+		const type = 'type' in event ? (event as { type?: string }).type : undefined;
+		if (this.suppressClick && type === EventType.CLICK) {
+			this.suppressClick = false;
+			EventHelper.stop(event, true);
+			return;
+		}
+		super.onClick(event, preserveFocus);
+	}
+
+	protected override updateChecked(): void {
+		super.updateChecked();
+		this.label?.setAttribute('role', 'presentation');
+	}
+}
+
+function isTitlebarControl(node: HTMLElement): HTMLElement | undefined {
+	if (node.closest('.window-controls-container, .titlebar-drag-region')) {
+		return undefined;
+	}
+	const item = node.closest('.action-item, .command-center-quick-pick, .command-center-center, .volt-sidebar-toggle');
+	if (!isHTMLElement(item) || item.classList.contains('disabled')) {
+		return undefined;
+	}
+	if (item.classList.contains('volt-sidebar-toggle') || item.querySelector(':scope > .volt-sidebar-toggle')) {
+		return undefined;
+	}
+	return item;
 }
 
 export class BrowserTitlebarPart extends Part implements ITitlebarPart {
@@ -554,9 +623,39 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 			}
 		}
 
+		if (isMacintosh && isNative && !this.isAuxiliary) {
+			this.installMacTitlebarClickFix();
+		}
+
 		this.updateStyles();
 
 		return this.element;
+	}
+
+	private installMacTitlebarClickFix(): void {
+		let suppressClick = false;
+		this._register(addDisposableListener(this.rootContainer, EventType.MOUSE_DOWN, e => {
+			if (e.button !== 0) {
+				return;
+			}
+			const node = e.target;
+			if (!isHTMLElement(node)) {
+				return;
+			}
+			const item = isTitlebarControl(node);
+			if (!item) {
+				return;
+			}
+			suppressClick = true;
+			item.click();
+		}, true));
+		this._register(addDisposableListener(this.rootContainer, EventType.CLICK, e => {
+			if (!suppressClick) {
+				return;
+			}
+			suppressClick = false;
+			EventHelper.stop(e, true);
+		}, true));
 	}
 
 	private createTitle(): void {
@@ -607,6 +706,10 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 			if (result) {
 				return result;
 			}
+		}
+
+		if (action.id === ToggleSidebarVisibilityAction.ID) {
+			return new SidebarToggleActionViewItem(action, options);
 		}
 
 		// Check extensions

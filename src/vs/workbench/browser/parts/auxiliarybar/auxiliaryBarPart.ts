@@ -144,6 +144,8 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 
 		this.configuration = this.resolveConfiguration();
 
+		this._register(this.layoutService.onDidChangePartVisibility(() => this.syncAgentSidebarChromeFromVisibility()));
+
 		this._register(configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(LayoutSettings.ACTIVITY_BAR_LOCATION)) {
 				this.configuration = this.resolveConfiguration();
@@ -264,7 +266,17 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 
 	override layout(width: number, height: number, top: number, left: number): void {
 		super.layout(width, height, top, left);
-		this.syncAgentSidebarChrome(this.isAgentLayout, width);
+		const visible = this.layoutService.isVisible(Parts.AUXILIARYBAR_PART);
+		this.syncAgentSidebarChrome(this.isAgentLayout, visible ? width : 0);
+	}
+
+	private syncAgentSidebarChromeFromVisibility(): void {
+		if (!this.isAgentLayout) {
+			return;
+		}
+		const visible = this.layoutService.isVisible(Parts.AUXILIARYBAR_PART);
+		const width = visible ? this.layoutService.getSize(Parts.AUXILIARYBAR_PART).width : 0;
+		this.syncAgentSidebarChrome(true, width);
 	}
 
 	private syncAgentSidebarChrome(agent: boolean, sidebarWidth: number): void {

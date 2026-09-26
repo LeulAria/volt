@@ -71,8 +71,19 @@
 	z-index: 1;
 }
 
-.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left,
-.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left *,
+/* Empty space in the left column must not be a native drag region. Electron swallows hover and click for the whole box, including no-drag children, once this column stretches from the traffic lights to the command center. The strip still moves the window via the drag region behind it. */
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left {
+	-webkit-app-region: no-drag;
+	pointer-events: none;
+}
+
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .menubar,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .menubar *,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .window-appicon,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .window-controls-container,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .window-controls-container *,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .action-toolbar-container,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .action-toolbar-container *,
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-center > .window-title,
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container,
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container * {
@@ -449,6 +460,13 @@
 
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .action-toolbar-container .codicon {
 	color: inherit;
+}
+
+.monaco-workbench .part.titlebar .volt-sidebar-toggle {
+	-webkit-appearance: none;
+	appearance: none;
+	background: transparent;
+	border: 0;
 }
 
 /* Action Tool Bar Controls */

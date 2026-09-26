@@ -317,6 +317,9 @@ function fromGithub({ name, version, repo, sha256, metadata }) {
 const nativeExtensions = [
     'microsoft-authentication',
 ];
+// Keep the vscode-* test folders in sync with DEVELOPMENT_ONLY_BUILTIN_EXTENSION_FOLDERS
+// in src/vs/platform/extensions/common/extensions.ts so they are neither shipped nor
+// loaded when running from source.
 const excludedExtensions = [
     'vscode-api-tests',
     'vscode-colorize-tests',

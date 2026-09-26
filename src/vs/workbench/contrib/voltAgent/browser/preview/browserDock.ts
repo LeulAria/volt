@@ -11,7 +11,8 @@ import { Disposable, DisposableStore, MutableDisposable } from '../../../../../b
 import { localize } from '../../../../../nls.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
-import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
+import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
+import { revealAgentSidePanel } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import '../media/agentEditor.css';
 import { AgentComposerChips } from '../composer/agentComposerChips.js';
@@ -374,7 +375,7 @@ export class BrowserAgentDock extends Disposable {
 		this.agentEditor?.setBrowserHosted(false);
 		this.setFloatOpen(false);
 		this.restoreThread();
-		this.layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
+		revealAgentSidePanel(this.layoutService);
 		const view = await this.viewsService.openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, true);
 		if (sessionId) {
 			await view?.openSession(sessionId);

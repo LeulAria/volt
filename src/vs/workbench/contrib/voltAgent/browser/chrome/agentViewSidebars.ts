@@ -4,11 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentViewSidebars.css';
-import { $, addDisposableListener, append, isHTMLElement, prepend } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -27,27 +27,71 @@ import {
 	getLayoutMode,
 	isAgentRightDockCollapsed,
 } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { applyAgentStatusbarShift } from '../../../../browser/parts/titlebar/agentLayoutChrome.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { OPEN_BROWSER_COMMAND_ID, VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { AgentChangesEditorInput, OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
 
-const PANEL_ICON_PATH = 'M15 4.5v15m4.875 0H4.125A1.125 1.125 0 0 1 3 18.375V5.625C3 5.004 3.504 4.5 4.125 4.5h15.75c.621 0 1.125.504 1.125 1.125v12.75c0 .621-.504 1.125-1.125 1.125';
-const CHEVRON_ICON_PATH = 'm5.36 19l5.763-5.763a1.74 1.74 0 0 0 0-2.474L5.36 5m7 14l5.763-5.763a1.74 1.74 0 0 0 0-2.474L12.36 5';
+/** Chevrons point right. Collapsed state rotates this 180deg. */
+const CHEVRON_RIGHT_PATH = 'M6 7L11 12L6 17M13 7L18 12L13 17';
+const CHANGES_ICON_PATH = 'M12 3v14m7-7H5m14 11H5';
+/** Expanded Quick Open Actions are 228px. Below this window width they collapse. */
+export const QUICK_OPEN_NARROW_WINDOW_WIDTH = 1100;
+
+/** Narrow windows collapse Quick Open Actions unless the user opened them in this narrow session. */
+export function quickOpenCollapsedForWidth(windowWidth: number, userCollapsed: boolean, narrowOverride?: boolean): boolean {
+	if (typeof narrowOverride === 'boolean') {
+		return narrowOverride;
+	}
+	const narrow = windowWidth > 0 && windowWidth <= QUICK_OPEN_NARROW_WINDOW_WIDTH;
+	return narrow || userCollapsed;
+}
 
 interface IDockAction {
 	readonly id: string;
 	readonly label: string;
-	readonly icon: ThemeIcon;
+	readonly icon?: ThemeIcon;
+	readonly iconPath?: string;
 	readonly command: string;
 }
 
-/** Put the dock on the open chat when it exists, otherwise keep it on the editor part. */
-export function agentRightDockHost(editorPart: HTMLElement | undefined, fallback: HTMLElement): HTMLElement {
-	const chat = editorPart?.querySelector('.volt-agent-editor');
-	return isHTMLElement(chat) ? chat : editorPart ?? fallback;
+/**
+ * Quick Open Actions live on the chat scroller, the same node as its scrollbar.
+ * They take in-flow width there and push the transcript. Collapse only changes this component.
+ */
+export function agentQuickOpenActionsHost(editorPart: HTMLElement | undefined, fallback: HTMLElement): HTMLElement {
+	const scope = editorPart ?? fallback;
+	const chat = scope.classList.contains('volt-agent-editor')
+		? scope
+		: scope.querySelector('.volt-agent-editor:not(.browser-hosted)');
+	if (isHTMLElement(chat) && !chat.classList.contains('browser-hosted')) {
+		const scroller = chat.querySelector('.volt-agent-thread > .monaco-scrollable-element');
+		if (isHTMLElement(scroller)) {
+			return scroller;
+		}
+		return chat;
+	}
+	return editorPart ?? fallback;
 }
 
-function createStrokeIcon(owner: HTMLElement, pathD: string): SVGElement {
+/** Sit on the scroller immediately before the vertical scrollbar, not in a column outside it. */
+export function mountAgentQuickOpenActions(host: HTMLElement, quickOpen: HTMLElement): void {
+	const scrollbar = host.classList.contains('monaco-scrollable-element')
+		? host.querySelector(':scope > .scrollbar.vertical')
+		: null;
+	if (quickOpen.parentElement === host && (!isHTMLElement(scrollbar) || quickOpen.nextElementSibling === scrollbar)) {
+		return;
+	}
+	if (isHTMLElement(scrollbar)) {
+		host.insertBefore(quickOpen, scrollbar);
+		return;
+	}
+	if (quickOpen.parentElement !== host) {
+		host.appendChild(quickOpen);
+	}
+}
+
+function createStrokeIcon(owner: HTMLElement, pathD: string, strokeWidth = '1.5'): SVGElement {
 	const svg = owner.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
 	svg.setAttribute('viewBox', '0 0 24 24');
 	svg.setAttribute('width', '16');
@@ -58,7 +102,7 @@ function createStrokeIcon(owner: HTMLElement, pathD: string): SVGElement {
 	path.setAttribute('d', pathD);
 	path.setAttribute('fill', 'none');
 	path.setAttribute('stroke', 'currentColor');
-	path.setAttribute('stroke-width', '1.5');
+	path.setAttribute('stroke-width', strokeWidth);
 	path.setAttribute('stroke-linecap', 'round');
 	path.setAttribute('stroke-linejoin', 'round');
 	svg.appendChild(path);
@@ -72,7 +116,6 @@ function createStrokeIcon(owner: HTMLElement, pathD: string): SVGElement {
 class AgentViewSidebarsContribution extends Disposable {
 	static readonly ID = 'workbench.contrib.voltAgentViewSidebars';
 
-	private readonly leftButton: HTMLButtonElement;
 	private readonly rightButton: HTMLButtonElement;
 	private readonly dock: HTMLElement;
 	private readonly chevron: HTMLButtonElement;
@@ -93,20 +136,20 @@ class AgentViewSidebarsContribution extends Disposable {
 	) {
 		super();
 		const root = layoutService.mainContainer;
-		this.leftButton = this.createToggle(root, 'left');
-		this.rightButton = this.createToggle(root, 'right');
-		this.rightButton.setAttribute('aria-label', localize('voltAgent.dock.right', "Right Sidebar"));
 
-		this.dock = $('.volt-agent-right-dock.expanded');
-		this.dock.appendChild(this.rightButton);
-		const hover = append(this.dock, $('.volt-agent-right-dock-hover'));
-		this.chevron = append(hover, $('button.volt-agent-dock-chevron')) as HTMLButtonElement;
+		this.quickOpen = $('.volt-agent-quick-open-actions.expanded');
+		this.quickOpen.setAttribute('aria-label', localize('voltAgent.quickOpenActions', "Quick Open Actions"));
+		this.chevron = append(this.quickOpen, $('button.volt-agent-quick-open-toggle')) as HTMLButtonElement;
 		this.chevron.type = 'button';
 		this.chevronLabel = append(this.chevron, $('span.volt-agent-dock-label'));
-		this.chevron.appendChild(createStrokeIcon(this.chevron, CHEVRON_ICON_PATH));
+		const chevronIcon = createStrokeIcon(this.chevron, CHEVRON_RIGHT_PATH, '1');
+		chevronIcon.setAttribute('viewBox', '4 5 16 14');
+		chevronIcon.setAttribute('width', '16');
+		chevronIcon.setAttribute('height', '16');
+		this.chevron.appendChild(chevronIcon);
 
-		const rail = append(this.dock, $('.volt-agent-right-rail'));
-		const body = append(this.dock, $('.volt-agent-right-dock-body'));
+		const rail = append(this.quickOpen, $('.volt-agent-quick-open-rail'));
+		const body = append(this.quickOpen, $('.volt-agent-quick-open-body'));
 		this.tabsSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-tabs'));
 		const tabsHeading = append(this.tabsSection, $('.volt-agent-dock-heading'));
 		tabsHeading.textContent = localize('voltAgent.dock.openTabs', "Open Tabs");
@@ -120,48 +163,55 @@ class AgentViewSidebarsContribution extends Disposable {
 			this.createRailButton(rail, action);
 		}
 
-		this.mount(root);
+		this.placeQuickOpen(root);
 		this.updateWorkspaceHeading();
 		this.renderTabs();
-		this.applyDock(isAgentRightDockCollapsed(storageService));
-		this.syncLeftButton();
+		this.windowNarrow = this.isWindowNarrow();
+		this.syncDockToWindow();
 
-		this._register(addDisposableListener(this.leftButton, 'click', () => this.toggleLeft()));
 		this._register(addDisposableListener(this.chevron, 'click', () => this.toggleDock()));
-		this._register(layoutService.onDidChangePartVisibility(() => this.syncLeftButton()));
+		this._register(layoutService.onDidLayoutMainContainer(() => this.syncDockToWindow()));
 		const syncDock = () => {
-			this.placeDock(this.layoutService.mainContainer);
+			this.schedulePlace();
 			this.renderTabs();
-			mainWindow.requestAnimationFrame(() => this.placeDock(this.layoutService.mainContainer));
 		};
 		this._register(editorService.onDidEditorsChange(syncDock));
 		this._register(editorService.onDidActiveEditorChange(syncDock));
 		this._register(editorService.onDidVisibleEditorsChange(syncDock));
+		const editorPart = this.layoutService.getContainer(mainWindow, Parts.EDITOR_PART);
+		const observeTarget = isHTMLElement(editorPart) ? editorPart : root;
+		const observer = new MutationObserver(mutations => this.onEditorMutation(mutations));
+		observer.observe(observeTarget, { childList: true, subtree: true });
+		this._register(toDisposable(() => observer.disconnect()));
 		this._register(workspaceContextService.onDidChangeWorkspaceFolders(() => this.updateWorkspaceHeading()));
 		this._register(workspaceContextService.onDidChangeWorkspaceName(() => this.updateWorkspaceHeading()));
 	}
 
 	private dockActions(): IDockAction[] {
 		return [
-			{ id: 'changes', label: localize('voltAgent.dock.changes', "Changes"), icon: Codicon.diff, command: OPEN_AGENT_CHANGES_COMMAND_ID },
+			{ id: 'changes', label: localize('voltAgent.dock.changes', "Changes"), iconPath: CHANGES_ICON_PATH, command: OPEN_AGENT_CHANGES_COMMAND_ID },
 			{ id: 'browser', label: localize('voltAgent.dock.browser', "Browser"), icon: Codicon.globe, command: OPEN_BROWSER_COMMAND_ID },
 			{ id: 'terminal', label: localize('voltAgent.dock.terminal', "Terminal"), icon: Codicon.terminal, command: 'workbench.action.terminal.toggleTerminal' },
 			{ id: 'files', label: localize('voltAgent.dock.files', "Files"), icon: Codicon.file, command: 'workbench.action.quickOpen' },
 		];
 	}
 
-	private createToggle(owner: HTMLElement, side: 'left' | 'right'): HTMLButtonElement {
-		const button = $('button.volt-agent-sidebar-toggle') as HTMLButtonElement;
-		button.classList.add(side);
-		button.type = 'button';
-		button.appendChild(createStrokeIcon(owner, PANEL_ICON_PATH));
-		return button;
+	private appendActionIcon(parent: HTMLElement, action: IDockAction): void {
+		if (action.iconPath) {
+			const icon = createStrokeIcon(parent, action.iconPath, '0.5');
+			icon.classList.add('volt-agent-stroke-icon');
+			parent.appendChild(icon);
+			return;
+		}
+		if (action.icon) {
+			parent.appendChild(renderIcon(action.icon));
+		}
 	}
 
 	private createActionRow(parent: HTMLElement, action: IDockAction): void {
 		const row = append(parent, $('button.volt-agent-dock-row')) as HTMLButtonElement;
 		row.type = 'button';
-		row.appendChild(renderIcon(action.icon));
+		this.appendActionIcon(row, action);
 		append(row, $('span')).textContent = action.label;
 		this._register(addDisposableListener(row, 'click', () => {
 			void this.commandService.executeCommand(action.command);
@@ -174,18 +224,45 @@ class AgentViewSidebarsContribution extends Disposable {
 		button.setAttribute('aria-label', action.label);
 		const label = append(button, $('span.volt-agent-dock-label'));
 		label.textContent = action.label;
-		button.appendChild(renderIcon(action.icon));
+		this.appendActionIcon(button, action);
 		this._register(addDisposableListener(button, 'click', () => {
 			void this.commandService.executeCommand(action.command);
 		}));
 	}
 
-	private placeDock(root: HTMLElement): void {
-		const editor = this.layoutService.getContainer(mainWindow, Parts.EDITOR_PART);
-		const host = agentRightDockHost(isHTMLElement(editor) ? editor : undefined, root);
-		if (this.dock.parentElement !== host) {
-			host.appendChild(this.dock);
+	private onEditorMutation(mutations: MutationRecord[]): void {
+		for (const mutation of mutations) {
+			if (mutation.target === this.quickOpen || this.quickOpen.contains(mutation.target)) {
+				continue;
+			}
+			const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
+			for (const node of nodes) {
+				if (!isHTMLElement(node)) {
+					continue;
+				}
+				if (node.classList.contains('volt-agent-editor') || node.classList.contains('volt-agent-thread') || node.classList.contains('volt-agent-turn') || node.querySelector('.volt-agent-editor, .volt-agent-thread, .volt-agent-turn')) {
+					this.schedulePlace();
+					return;
+				}
+			}
 		}
+	}
+
+	private schedulePlace(): void {
+		if (this.placeScheduled) {
+			return;
+		}
+		this.placeScheduled = true;
+		mainWindow.requestAnimationFrame(() => {
+			this.placeScheduled = false;
+			this.placeQuickOpen(this.layoutService.mainContainer);
+		});
+	}
+
+	private placeQuickOpen(root: HTMLElement): void {
+		const editor = this.layoutService.getContainer(mainWindow, Parts.EDITOR_PART);
+		const host = agentQuickOpenActionsHost(isHTMLElement(editor) ? editor : undefined, root);
+		mountAgentQuickOpenActions(host, this.quickOpen);
 	}
 
 	private mount(root: HTMLElement): void {
@@ -199,7 +276,7 @@ class AgentViewSidebarsContribution extends Disposable {
 			root.appendChild(this.leftButton);
 		}
 
-		this.placeDock(root);
+		this.placeQuickOpen(root);
 	}
 
 	private toggleLeft(): void {
@@ -209,10 +286,8 @@ class AgentViewSidebarsContribution extends Disposable {
 		const hide = this.layoutService.isVisible(Parts.AUXILIARYBAR_PART);
 		this.storageService.store(AGENT_LEFT_SIDEBAR_HIDDEN_KEY, hide, StorageScope.PROFILE, StorageTarget.USER);
 		this.layoutService.setPartHidden(hide, Parts.AUXILIARYBAR_PART);
-		if (hide) {
-			this.layoutService.mainContainer.style.setProperty('--volt-agent-sidebar-width', '0px');
-			this.layoutService.mainContainer.classList.add('volt-agent-left-collapsed');
-		}
+		const width = hide ? 0 : this.layoutService.getSize(Parts.AUXILIARYBAR_PART).width;
+		applyAgentStatusbarShift(this.layoutService.mainContainer, width, this.layoutService.getSize(Parts.TITLEBAR_PART).height);
 		this.syncLeftButton();
 	}
 
@@ -225,36 +300,51 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.leftButton.setAttribute('aria-pressed', String(open));
 	}
 
+	private isWindowNarrow(): boolean {
+		const width = this.layoutService.mainContainerDimension?.width ?? 0;
+		return width > 0 && width <= QUICK_OPEN_NARROW_WINDOW_WIDTH;
+	}
+
+	private syncDockToWindow(): void {
+		const narrow = this.isWindowNarrow();
+		if (narrow !== this.windowNarrow) {
+			this.windowNarrow = narrow;
+			this.narrowOverride = undefined;
+		}
+		const collapsed = quickOpenCollapsedForWidth(
+			this.layoutService.mainContainerDimension?.width ?? 0,
+			isAgentRightDockCollapsed(this.storageService),
+			this.narrowOverride,
+		);
+		if (this.dockApplied && collapsed === this.collapsed) {
+			return;
+		}
+		this.dockApplied = true;
+		this.applyDock(collapsed);
+	}
+
 	private toggleDock(): void {
 		const collapsed = !this.collapsed;
+		if (this.windowNarrow) {
+			this.narrowOverride = collapsed;
+			this.applyDock(collapsed);
+			return;
+		}
+		this.narrowOverride = undefined;
 		this.storageService.store(AGENT_RIGHT_DOCK_COLLAPSED_KEY, collapsed, StorageScope.PROFILE, StorageTarget.USER);
 		this.applyDock(collapsed);
 	}
 
 	private applyDock(collapsed: boolean): void {
 		this.collapsed = collapsed;
-		const agent = getLayoutMode(this.layoutService) === 'agent';
-		const root = this.layoutService.mainContainer;
-		this.dock.classList.toggle('collapsed', collapsed);
-		this.dock.classList.toggle('expanded', !collapsed);
+		this.quickOpen.classList.toggle('collapsed', collapsed);
+		this.quickOpen.classList.toggle('expanded', !collapsed);
 		const label = collapsed
 			? localize('voltAgent.dock.expand', "Expand")
 			: localize('voltAgent.dock.collapse', "Collapse");
 		this.chevronLabel.textContent = label;
 		this.chevron.setAttribute('aria-label', label);
 		this.chevron.setAttribute('aria-expanded', String(!collapsed));
-		if (agent) {
-			root.style.setProperty('--volt-agent-right-dock-width', `${collapsed ? AGENT_RIGHT_DOCK_COLLAPSED_WIDTH : AGENT_RIGHT_DOCK_EXPANDED_WIDTH}px`);
-			root.classList.toggle('volt-agent-right-collapsed', collapsed);
-		} else {
-			root.style.removeProperty('--volt-agent-right-dock-width');
-			root.classList.remove('volt-agent-right-collapsed');
-		}
-		this.layoutService.layout();
-		if (agent && !this.layoutService.isVisible(Parts.AUXILIARYBAR_PART)) {
-			root.style.setProperty('--volt-agent-sidebar-width', '0px');
-			root.classList.add('volt-agent-left-collapsed');
-		}
 	}
 
 	private updateWorkspaceHeading(): void {

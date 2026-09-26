@@ -114,15 +114,17 @@
 	background: linear-gradient(to top, var(--volt-agent-chat-bg, var(--vscode-editor-background, #1e1e1e)) 0%, transparent 100%);
 }
 
+/* Center on the transcript column. The quick-open rail sits in the thread, so centering on the full thread leaves the fade short of the text on the left. */
 .volt-agent-editor:has(.volt-agent-turn) .volt-agent-thread-fade.bottom {
 	opacity: 1;
 	z-index: 4;
 	height: 36px;
-	left: 50%;
-	right: auto;
-	width: min(760px, calc(100% - 40px));
-	transform: translateX(-50%);
-	margin: 0;
+	left: 0;
+	right: var(--volt-agent-quick-open-reserve, 0px);
+	width: min(760px, calc(100% - var(--volt-agent-quick-open-reserve, 0px) - 40px));
+	transform: none;
+	margin-left: auto;
+	margin-right: auto;
 }
 
 .volt-agent-thread.scrolled > .volt-agent-thread-fade.top {
@@ -3567,8 +3569,8 @@ pre.volt-agent-searchable {
 	background-color: var(--vscode-editorCursor-foreground, var(--vscode-foreground, #fff)) !important;
 	border-color: var(--vscode-editorCursor-foreground, var(--vscode-foreground, #fff)) !important;
 	width: 1px !important;
-	height: 18px !important;
-	margin-top: 2px;
+	height: 15px !important;
+	margin-top: 4px;
 }
 
 .volt-agent-monaco .scroll-decoration,

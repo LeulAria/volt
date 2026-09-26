@@ -31,7 +31,6 @@ export class AgentThreadView extends Disposable {
 			className: 'volt-agent-thread-scroll',
 			vertical: ScrollbarVisibility.Auto,
 			horizontal: ScrollbarVisibility.Hidden,
-			verticalScrollbarSize: 14,
 			useShadows: false,
 			handleMouseWheel: true,
 			alwaysConsumeMouseWheel: false,

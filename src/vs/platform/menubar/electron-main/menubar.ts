@@ -23,6 +23,7 @@ import { IStateService } from '../../state/node/state.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { IUpdateService, StateType } from '../../update/common/update.js';
 import { INativeRunActionInWindowRequest, INativeRunKeybindingInWindowRequest, IWindowOpenable, hasNativeMenu } from '../../window/common/window.js';
+import { ICodeWindow } from '../../window/electron-main/window.js';
 import { IWindowsCountChangedEvent, IWindowsMainService, OpenContext } from '../../windows/electron-main/windows.js';
 import { IWorkspacesHistoryMainService } from '../../workspaces/electron-main/workspacesHistoryMainService.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
@@ -754,10 +755,11 @@ export class Menubar extends Disposable {
 				return contextSpecificHandlers.inNoWindow();
 			}
 
-			// DevTools focused
-			if (activeWindow.webContents.isDevToolsFocused() &&
-				activeWindow.webContents.devToolsWebContents) {
-				return contextSpecificHandlers.inDevTools(activeWindow.webContents.devToolsWebContents);
+			// DevTools focused. The workbench lives in a child view, so the
+			// browser window's own webContents is not the page.
+			const pageContents = this.windowsMainService.getFrontWindowOf(activeWindow.id)?.webContents ?? activeWindow.webContents;
+			if (pageContents.isDevToolsFocused() && pageContents.devToolsWebContents) {
+				return contextSpecificHandlers.inDevTools(pageContents.devToolsWebContents);
 			}
 
 			// Finally execute command in Window
@@ -767,14 +769,16 @@ export class Menubar extends Disposable {
 
 	private runActionInRenderer(invocation: IMenuItemInvocation): boolean {
 
-		// We want to support auxililary windows that may have focus by
+		// We want to support auxiliary windows that may have focus by
 		// returning their parent windows as target to support running
 		// actions via the main window.
 		let activeBrowserWindow = BrowserWindow.getFocusedWindow();
+		let activeWindow: ICodeWindow | undefined;
 		if (activeBrowserWindow) {
 			const auxiliaryWindowCandidate = this.auxiliaryWindowsMainService.getWindowByWebContents(activeBrowserWindow.webContents);
 			if (auxiliaryWindowCandidate) {
-				activeBrowserWindow = this.windowsMainService.getWindowById(auxiliaryWindowCandidate.parentId)?.win ?? null;
+				activeWindow = this.windowsMainService.getWindowById(auxiliaryWindowCandidate.parentId);
+				activeBrowserWindow = activeWindow?.win ?? null;
 			}
 		}
 
@@ -787,10 +791,15 @@ export class Menubar extends Disposable {
 			const lastActiveWindow = this.windowsMainService.getLastActiveWindow();
 			if (lastActiveWindow?.win?.isMinimized()) {
 				activeBrowserWindow = lastActiveWindow.win;
+				activeWindow = lastActiveWindow;
 			}
 		}
 
-		const activeWindow = activeBrowserWindow ? this.windowsMainService.getWindowById(activeBrowserWindow.id) : undefined;
+		// Session ids are the view's webContents id, not the browser window id.
+		// Looking the menu target up by browser window id drops the action.
+		if (!activeWindow && activeBrowserWindow) {
+			activeWindow = this.windowsMainService.getFrontWindowOf(activeBrowserWindow.id);
+		}
 		if (activeWindow) {
 			this.logService.trace('menubar#runActionInRenderer', invocation);
 

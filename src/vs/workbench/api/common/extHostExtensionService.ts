@@ -24,7 +24,7 @@ import { MissingExtensionDependency, ActivationKind, checkProposedApiEnabled, is
 import { ExtensionDescriptionRegistry, IActivationEventsReader } from '../../services/extensions/common/extensionDescriptionRegistry.js';
 import * as errors from '../../../base/common/errors.js';
 import type * as vscode from 'vscode';
-import { ExtensionIdentifier, ExtensionIdentifierMap, ExtensionIdentifierSet, IExtensionDescription } from '../../../platform/extensions/common/extensions.js';
+import { ExtensionIdentifier, ExtensionIdentifierMap, ExtensionIdentifierSet, IExtensionDescription, isMissingExtensionEntryPointError } from '../../../platform/extensions/common/extensions.js';
 import { VSBuffer } from '../../../base/common/buffer.js';
 import { ExtensionGlobalMemento, ExtensionMemento } from './extHostMemento.js';
 import { RemoteAuthorityResolverError, ExtensionKind, ExtensionMode, ExtensionRuntime, ManagedResolvedAuthority as ExtHostManagedResolvedAuthority } from './extHostTypes.js';
@@ -486,10 +486,11 @@ export abstract class AbstractExtHostExtensionService extends Disposable impleme
 
 		const extensionInternalStore = new DisposableStore(); // disposables that follow the extension lifecycle
 		const activationTimesBuilder = new ExtensionActivationTimesBuilder(reason.startup);
+		const entryPointUri = joinPath(extensionDescription.extensionLocation, entryPoint);
 		return Promise.all([
 			isESM
-				? this._loadESMModule<IExtensionModule>(extensionDescription, joinPath(extensionDescription.extensionLocation, entryPoint), activationTimesBuilder)
-				: this._loadCommonJSModule<IExtensionModule>(extensionDescription, joinPath(extensionDescription.extensionLocation, entryPoint), activationTimesBuilder),
+				? this._loadESMModule<IExtensionModule>(extensionDescription, entryPointUri, activationTimesBuilder)
+				: this._loadCommonJSModule<IExtensionModule>(extensionDescription, entryPointUri, activationTimesBuilder),
 			this._loadExtensionContext(extensionDescription, extensionInternalStore)
 		]).then(values => {
 			performance.mark(`code/extHost/willActivateExtension/${extensionDescription.identifier.value}`);
@@ -497,6 +498,15 @@ export abstract class AbstractExtHostExtensionService extends Disposable impleme
 		}).then((activatedExtension) => {
 			performance.mark(`code/extHost/didActivateExtension/${extensionDescription.identifier.value}`);
 			return activatedExtension;
+		}).catch((err: unknown) => {
+			// From-source runs can see builtins whose `out/` was never compiled.
+			// Treat a missing entry point as empty instead of a user-facing activation error,
+			// unless the extension is being developed (tests still need the real failure).
+			if (!extensionDescription.isUnderDevelopment && isMissingExtensionEntryPointError(err, entryPointUri)) {
+				this._logService.warn(`Skipping activation of '${extensionDescription.identifier.value}' because its entry point is missing: ${entryPoint}`);
+				return new EmptyExtension(ExtensionActivationTimes.NONE);
+			}
+			throw err;
 		});
 	}
 

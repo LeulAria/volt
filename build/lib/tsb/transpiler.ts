@@ -394,6 +394,47 @@ function inlineSourcemap(code: string, map: { mappings?: string } | undefined): 
 	return `${code}\n//# sourceMappingURL=data:application/json;base64,${encoded}`;
 }
 
+// Oxc's legacy decorator transform imports helpers from `@oxc-project/runtime`.
+// Workbench modules are native ESM, so that bare specifier never resolves.
+// Bodies match TypeScript's `__decorate`, `__param`, and `__metadata` emit helpers.
+const oxcRuntimeHelperBodies: Record<string, (localName: string) => string> = {
+	decorate(localName: string): string {
+		return [
+			`function ${localName}(decorators, target, key, desc) {`,
+			`\tvar c = arguments.length, r = c < 3 ? target : desc === null ? (desc = Object.getOwnPropertyDescriptor(target, key)) : desc, d;`,
+			`\tif (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);`,
+			`\telse for (var i = decorators.length - 1; i >= 0; i--) if ((d = decorators[i])) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;`,
+			`\treturn c > 3 && r && Object.defineProperty(target, key, r), r;`,
+			`}`,
+		].join('\n');
+	},
+	decorateParam(localName: string): string {
+		return `function ${localName}(paramIndex, decorator) {\n\treturn function (target, key) { decorator(target, key, paramIndex); };\n}`;
+	},
+	decorateMetadata(localName: string): string {
+		return `function ${localName}(k, v) {\n\tif (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);\n}`;
+	},
+};
+
+export function inlineOxcRuntimeHelpers(code: string): string {
+	const bodies: string[] = [];
+	const rewritten = code.replace(/^[ \t]*import\s+([A-Za-z_$][\w$]*)\s+from\s+["']@oxc-project\/runtime\/helpers\/([A-Za-z0-9_]+)["'];?[ \t]*\r?$/gm, (_match, localName: string, helperName: string) => {
+		const createBody = oxcRuntimeHelperBodies[helperName];
+		if (!createBody) {
+			throw new Error(`Oxc emitted unsupported runtime helper "@oxc-project/runtime/helpers/${helperName}".`);
+		}
+		bodies.push(createBody(localName));
+		return '';
+	});
+	if (rewritten.includes('@oxc-project/runtime/')) {
+		throw new Error('Oxc emitted a @oxc-project/runtime import that could not be inlined.');
+	}
+	if (bodies.length === 0) {
+		return code;
+	}
+	return `${rewritten}\n${bodies.join('\n')}\n`;
+}
+
 export class OxcTranspiler implements ITranspiler {
 
 	private readonly _outputFileNames: OutputFileNameOracle;
@@ -453,7 +494,7 @@ export class OxcTranspiler implements ITranspiler {
 			this.onOutfile!(new Vinyl({
 				path: outPath,
 				base: outBase,
-				contents: Buffer.from(inlineSourcemap(result.code, result.map)),
+				contents: Buffer.from(inlineSourcemap(inlineOxcRuntimeHelpers(result.code), result.map)),
 			}));
 			this._logFn('Transpile', `oxc took ${Date.now() - t1}ms for ${file.path}`);
 		}).catch(err => {

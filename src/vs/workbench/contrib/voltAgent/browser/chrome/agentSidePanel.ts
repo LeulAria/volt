@@ -31,7 +31,7 @@ import { IViewDescriptorService } from '../../../../common/views.js';
 import { GroupsOrder, IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
-import { getLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { getLayoutMode, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
 import { AgentEditor } from '../editor/agentEditor.js';
 import { AgentEditorInput, TOGGLE_AGENT_DRAWER_COMMAND_ID } from '../editor/agentEditorInput.js';
@@ -187,6 +187,7 @@ export class AgentSidePanel extends ViewPane {
 				this.syncLayoutMode();
 			}
 		}));
+		this._register(onDidChangeLayoutMode(() => this.syncLayoutMode()));
 		this._register(this.editorService.onDidEditorsChange(() => this.syncCenterTabs()));
 		this.syncLayoutMode();
 
@@ -263,9 +264,6 @@ export class AgentSidePanel extends ViewPane {
 			showTabs: showTabs ? 'multiple' : 'none',
 		});
 		workbench?.classList.toggle('volt-single-agent', !showTabs);
-		if (openEditors === 0) {
-			this.workbenchLayoutService.setAuxiliaryBarMaximized(true);
-		}
 	}
 
 	private revealCenterEditors(): void {
@@ -475,7 +473,7 @@ export class AgentSidePanel extends ViewPane {
 	}
 
 	private updateAuxiliaryBarClass(visible: boolean): void {
-		const bar = this.element.closest('.part.auxiliarybar');
+		const bar = this.element.closest('.part.sidebar, .part.auxiliarybar');
 		bar?.classList.toggle('volt-agent-editor-tabs', visible && !this.isAgentLayout());
 		bar?.classList.toggle('volt-agent-home', this.isAgentLayout());
 	}

@@ -3,28 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-.volt-agent-right-dock {
+.volt-agent-quick-open-actions {
 	display: none;
 }
 
-.volt-agent-right-dock > .volt-agent-sidebar-toggle.right {
-	position: absolute;
-	top: 4px;
-	z-index: 3;
-}
-
-.volt-agent-right-dock.collapsed > .volt-agent-sidebar-toggle.right {
-	position: relative;
-	top: auto;
-	right: auto;
-}
-
-.volt-agent-right-dock.expanded > .volt-agent-sidebar-toggle.right {
-	right: 8px;
-}
-
-.volt-agent-sidebar-toggle,
-.volt-agent-dock-chevron,
+.volt-agent-quick-open-toggle,
 .volt-agent-rail-btn {
 	position: relative;
 	display: inline-flex;
@@ -40,27 +23,37 @@
 	cursor: pointer;
 }
 
+.volt-agent-quick-open-toggle {
+	width: 28px;
+	height: 28px;
+}
+
 .volt-agent-sidebar-toggle.right {
 	cursor: default;
 }
 
-.volt-agent-sidebar-toggle.left svg,
-.volt-agent-right-dock.collapsed .volt-agent-dock-chevron svg {
-	transform: scaleX(-1);
+.volt-agent-quick-open-toggle svg {
+	width: 16px;
+	height: 16px;
+	transform: none;
+}
+
+.volt-agent-quick-open-actions.collapsed .volt-agent-quick-open-toggle svg {
+	transform: rotate(180deg);
 }
 
 .volt-agent-sidebar-toggle:hover,
-.volt-agent-dock-chevron:hover,
+.volt-agent-quick-open-toggle:hover,
 .volt-agent-rail-btn:hover,
 .monaco-workbench .volt-agent-sidebar-toggle:focus-visible,
-.monaco-workbench .volt-agent-dock-chevron:focus-visible,
+.monaco-workbench .volt-agent-quick-open-toggle:focus-visible,
 .monaco-workbench .volt-agent-rail-btn:focus-visible {
 	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 	outline: none;
 }
 
 .monaco-workbench .volt-agent-sidebar-toggle:focus,
-.monaco-workbench .volt-agent-dock-chevron:focus,
+.monaco-workbench .volt-agent-quick-open-toggle:focus,
 .monaco-workbench .volt-agent-rail-btn:focus,
 .monaco-workbench .volt-agent-dock-row:focus {
 	outline: none;
@@ -84,108 +77,132 @@
 	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
 }
 
-.volt-agent-dock-chevron:hover .volt-agent-dock-label,
+.volt-agent-quick-open-toggle:hover .volt-agent-dock-label,
 .volt-agent-rail-btn:hover .volt-agent-dock-label,
-.volt-agent-right-dock-hover:hover .volt-agent-dock-label,
-.volt-agent-dock-chevron:focus-visible .volt-agent-dock-label,
+.volt-agent-quick-open-toggle:focus-visible .volt-agent-dock-label,
 .volt-agent-rail-btn:focus-visible .volt-agent-dock-label {
 	display: block;
 }
 
-.monaco-workbench.volt-layout-agent .volt-agent-right-dock,
-.monaco-workbench.volt-layout-agent .volt-agent-editor > .volt-agent-right-dock {
-	position: absolute;
-	top: 0;
-	right: 0;
-	bottom: 0;
-	z-index: 12;
+/* Same scroller as the chat scrollbar. In-flow width pushes the transcript. */
+.monaco-workbench.volt-layout-agent .volt-agent-editor:has(.volt-agent-quick-open-actions.expanded) {
+	--volt-agent-quick-open-reserve: 243px;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-editor:has(.volt-agent-quick-open-actions.collapsed) {
+	--volt-agent-quick-open-reserve: 41px;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element {
 	display: flex;
+	flex-direction: row;
+	align-items: stretch;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-thread-inner {
+	flex: 1 1 0;
+	width: 0;
+	min-width: 0;
+	height: 100%;
+	align-self: stretch;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions {
+	position: relative;
+	top: auto;
+	right: auto;
+	bottom: auto;
+	left: auto;
+	z-index: 6;
+	display: flex;
+	flex: 0 0 auto;
 	flex-direction: column;
-	width: var(--volt-agent-right-dock-width, 252px);
+	align-items: stretch;
+	align-self: flex-start;
+	width: auto;
+	height: auto;
+	max-height: none;
+	margin: 8px 15px 0 0;
 	box-sizing: border-box;
 	background: transparent;
-	border-left: 0;
 	color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
 	-webkit-app-region: no-drag;
+	pointer-events: auto;
+	overflow: visible;
+	filter: none;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+	transition: none;
+	animation: none;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.expanded {
+	flex: 0 0 228px;
+	width: 228px;
+	background: transparent;
+	border: 0;
+	border-radius: 0;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.collapsed {
+	flex: 0 0 auto;
+	width: auto;
+	margin-right: 18px;
+	align-items: center;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	background-clip: padding-box;
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-editor:has(.volt-agent-turn):not(.zoomed):not(.resized) .volt-agent-composer {
+	width: auto;
+	margin-right: var(--volt-agent-quick-open-reserve, 0px);
+}
+
+.volt-agent-quick-open-actions.expanded .volt-agent-quick-open-toggle {
+	position: absolute;
+	top: 4px;
+	right: 2px;
+	z-index: 2;
+	opacity: 0;
 	pointer-events: none;
 }
 
-.monaco-workbench.volt-layout-agent .volt-agent-editor:has(.volt-agent-right-dock.expanded) > .volt-agent-editor-main {
-	padding-right: var(--volt-agent-right-dock-width, 252px);
-	box-sizing: border-box;
-}
-
-.monaco-workbench.volt-layout-agent .volt-agent-right-dock.expanded,
-.monaco-workbench.volt-layout-agent .volt-agent-editor > .volt-agent-right-dock.expanded {
-	position: absolute;
-	top: 0;
-	right: 0;
-	bottom: 0;
-	flex: none;
-	width: var(--volt-agent-right-dock-width, 252px);
-	height: auto;
-	background: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
-	pointer-events: auto;
-}
-
-.volt-agent-right-dock.expanded .volt-agent-right-dock-body,
-.volt-agent-right-dock.expanded .volt-agent-dock-chevron,
-.volt-agent-right-dock.expanded .volt-agent-sidebar-toggle {
-	pointer-events: auto;
-}
-
-.monaco-workbench.volt-layout-agent .volt-agent-right-dock.collapsed,
-.monaco-workbench.volt-layout-agent .volt-agent-editor > .volt-agent-right-dock.collapsed {
-	top: 8px;
-	right: 8px;
-	bottom: auto;
-	width: auto;
-	height: auto;
-	align-items: center;
-	padding: 4px 2px;
-	background: transparent;
-}
-
-.volt-agent-right-dock.collapsed .volt-agent-dock-chevron,
-.volt-agent-right-dock.collapsed .volt-agent-rail-btn,
-.volt-agent-right-dock.collapsed .volt-agent-sidebar-toggle {
-	pointer-events: auto;
-}
-
-.volt-agent-right-dock.collapsed .volt-agent-right-dock-body {
-	display: none;
-}
-
-.volt-agent-right-dock.expanded .volt-agent-right-rail {
-	display: none;
-}
-
-.volt-agent-right-dock.expanded .volt-agent-right-dock-hover {
-	position: absolute;
-	top: 0;
-	right: 36px;
-	z-index: 2;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 32px;
-	height: 36px;
-}
-
-.volt-agent-right-dock.expanded .volt-agent-dock-chevron {
-	opacity: 0;
-}
-
-.volt-agent-right-dock.expanded .volt-agent-right-dock-hover:hover .volt-agent-dock-chevron,
-.volt-agent-right-dock.expanded .volt-agent-dock-chevron:focus-visible {
+.volt-agent-quick-open-actions.expanded:hover .volt-agent-quick-open-toggle,
+.volt-agent-quick-open-actions.expanded .volt-agent-quick-open-toggle:focus-visible {
 	opacity: 1;
+	pointer-events: auto;
 }
 
-.volt-agent-right-dock-body {
-	flex: 1;
-	min-height: 0;
-	overflow: auto;
-	padding-top: 8px;
+.volt-agent-quick-open-actions.collapsed .volt-agent-quick-open-body {
+	display: none;
+}
+
+.volt-agent-quick-open-actions.expanded .volt-agent-quick-open-rail {
+	display: none;
+}
+
+.volt-agent-quick-open-actions.collapsed .volt-agent-quick-open-toggle {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-quick-open-actions.collapsed .volt-agent-quick-open-toggle:hover,
+.volt-agent-quick-open-actions.collapsed .volt-agent-quick-open-toggle:focus-visible {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-quick-open-body {
+	flex: none;
+	height: auto;
+	overflow: visible;
+	padding: 4px 0 6px;
+	background: transparent;
 }
 
 .volt-agent-dock-heading {
@@ -195,18 +212,26 @@
 	color: var(--vscode-descriptionForeground);
 }
 
-.volt-agent-dock-tabs .volt-agent-dock-heading {
-	padding-right: 76px;
+.volt-agent-quick-open-actions.expanded .volt-agent-dock-heading {
+	padding-right: 36px;
 }
 
-.volt-agent-dock-row {
+.volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body > .volt-agent-dock-section:first-child > .volt-agent-dock-heading,
+.volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body > .volt-agent-dock-tabs[style*='display: none'] + .volt-agent-dock-section > .volt-agent-dock-heading {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	width: calc(100% - 12px);
-	height: 28px;
-	margin: 0 6px;
-	padding: 0 8px;
+	box-sizing: border-box;
+	min-height: 28px;
+}
+
+.volt-agent-quick-open-actions .volt-agent-dock-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: calc(100% - 8px);
+	height: 30px;
+	margin: 0 4px;
+	padding: 0 4px;
 	border: 0;
 	border-radius: 6px;
 	background: transparent;
@@ -229,25 +254,48 @@
 	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 }
 
-.volt-agent-dock-row .codicon,
-.volt-agent-rail-btn .codicon {
-	font-size: 16px;
-	color: var(--vscode-descriptionForeground);
+.volt-agent-quick-open-actions .volt-agent-dock-row .codicon,
+.volt-agent-quick-open-actions .volt-agent-rail-btn .codicon {
+	font-size: 15px;
+	width: 15px;
+	height: 15px;
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
 }
 
-.volt-agent-dock-row:hover .codicon,
-.volt-agent-rail-btn:hover .codicon {
+.volt-agent-quick-open-actions .volt-agent-stroke-icon {
+	width: 15px;
+	height: 15px;
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+}
+
+.volt-agent-quick-open-actions .volt-agent-stroke-icon path {
+	stroke: currentColor;
+	stroke-width: 1.5;
+}
+
+.volt-agent-quick-open-actions .volt-agent-dock-row:hover .codicon,
+.volt-agent-quick-open-actions .volt-agent-rail-btn:hover .codicon,
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row:focus-visible .codicon,
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-rail-btn:focus-visible .codicon,
+.volt-agent-quick-open-actions .volt-agent-dock-row:hover .volt-agent-stroke-icon,
+.volt-agent-quick-open-actions .volt-agent-rail-btn:hover .volt-agent-stroke-icon,
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row:focus-visible .volt-agent-stroke-icon,
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-rail-btn:focus-visible .volt-agent-stroke-icon {
 	color: var(--vscode-foreground);
 }
 
-.volt-agent-right-rail {
+.volt-agent-quick-open-rail {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 2px;
+	gap: 0;
 }
 
 .volt-agent-dock-actions {
 	display: flex;
 	flex-direction: column;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-editor.browser-hosted .volt-agent-quick-open-actions {
+	display: none;
 }

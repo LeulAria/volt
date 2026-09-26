@@ -25,7 +25,7 @@ import { EditorExtensions, IEditorFactoryRegistry } from '../../../../common/edi
 import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
-import { getLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { getLayoutMode, revealAgentSidePanel } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -54,7 +54,8 @@ const agentTitleActions = ContextKeyExpr.or(
 );
 
 async function showAgentSidePanel(accessor: ServicesAccessor, focus: boolean): Promise<AgentSidePanel | undefined> {
-	accessor.get(IWorkbenchLayoutService).setPartHidden(false, Parts.AUXILIARYBAR_PART);
+	const layoutService = accessor.get(IWorkbenchLayoutService);
+	revealAgentSidePanel(layoutService);
 	return (await accessor.get(IViewsService).openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, focus)) ?? undefined;
 }
 
@@ -211,7 +212,8 @@ registerAction2(class ToggleAgentDrawerAction extends Action2 {
 		const layoutService = accessor.get(IWorkbenchLayoutService);
 		const viewsService = accessor.get(IViewsService);
 		const existing = viewsService.getViewWithId<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID);
-		const showing = layoutService.isVisible(Parts.AUXILIARYBAR_PART) && viewsService.isViewVisible(AGENT_SIDE_PANEL_VIEW_ID);
+		const part = getLayoutMode(layoutService) === 'agent' ? Parts.SIDEBAR_PART : Parts.AUXILIARYBAR_PART;
+		const showing = layoutService.isVisible(part) && viewsService.isViewVisible(AGENT_SIDE_PANEL_VIEW_ID);
 		if (existing && showing) {
 			existing.toggleDrawer();
 			return;

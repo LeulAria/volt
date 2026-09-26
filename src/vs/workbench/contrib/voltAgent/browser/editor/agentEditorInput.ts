@@ -34,7 +34,7 @@ export const EXPORT_AGENT_TRANSCRIPT_COMMAND_ID = 'workbench.action.voltAgent.ex
 export const OPEN_AGENT_SETTINGS_COMMAND_ID = 'workbench.action.voltAgent.openSettings';
 export const OPEN_AGENT_CUSTOMIZE_COMMAND_ID = 'workbench.action.voltAgent.customize';
 export const OPEN_AGENT_SIDE_PANEL_COMMAND_ID = 'workbench.action.openAgentSidePanel';
-export const AGENT_SIDE_PANEL_ID = 'workbench.panel.voltAgent';
+export { AGENT_SIDE_PANEL_ID } from '../../../../browser/parts/titlebar/agentLayoutChrome.js';
 export const AGENT_SIDE_PANEL_VIEW_ID = 'workbench.panel.voltAgent.view';
 
 export const AGENT_SUBMIT_COMMAND_ID = 'workbench.action.voltAgent.submit';

@@ -15,6 +15,38 @@ export const USER_MANIFEST_CACHE_FILE = 'extensions.user.cache';
 export const BUILTIN_MANIFEST_CACHE_FILE = 'extensions.builtin.cache';
 export const UNDEFINED_PUBLISHER = 'undefined_publisher';
 
+/**
+ * Built-in folders that exist only for VS Code's own integration tests.
+ * They live under `extensions/` so a from-source scan would otherwise load them
+ * as product extensions. Keep in sync with `excludedExtensions` in `build/lib/extensions.ts`.
+ */
+export const DEVELOPMENT_ONLY_BUILTIN_EXTENSION_FOLDERS = Object.freeze(new Set([
+	'vscode-api-tests',
+	'vscode-colorize-tests',
+	'vscode-colorize-perf-tests',
+	'vscode-test-resolver',
+]));
+
+export function isDevelopmentOnlyBuiltinExtensionFolder(folderName: string): boolean {
+	return DEVELOPMENT_ONLY_BUILTIN_EXTENSION_FOLDERS.has(folderName);
+}
+
+export function isMissingExtensionEntryPointError(error: unknown, entryPoint: URI): boolean {
+	if (!error) {
+		return false;
+	}
+	const err = error as { code?: string; message?: string };
+	const message = typeof err.message === 'string' ? err.message : String(error);
+	const looksMissing = err.code === 'MODULE_NOT_FOUND'
+		|| err.code === 'ERR_MODULE_NOT_FOUND'
+		|| /Cannot find module/i.test(message)
+		|| /ERR_MODULE_NOT_FOUND/.test(message);
+	if (!looksMissing) {
+		return false;
+	}
+	return [entryPoint.fsPath, entryPoint.path, entryPoint.toString(true)].some(needle => !!needle && message.includes(needle));
+}
+
 export interface ICommand {
 	command: string;
 	title: string | ILocalizedString;

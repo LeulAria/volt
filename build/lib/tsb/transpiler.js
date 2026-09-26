@@ -309,6 +309,43 @@ function inlineSourcemap(code, map) {
     const encoded = Buffer.from(JSON.stringify(map)).toString('base64');
     return `${code}\n//# sourceMappingURL=data:application/json;base64,${encoded}`;
 }
+const oxcRuntimeHelperBodies = {
+    decorate(localName) {
+        return [
+            `function ${localName}(decorators, target, key, desc) {`,
+            `\tvar c = arguments.length, r = c < 3 ? target : desc === null ? (desc = Object.getOwnPropertyDescriptor(target, key)) : desc, d;`,
+            `\tif (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);`,
+            `\telse for (var i = decorators.length - 1; i >= 0; i--) if ((d = decorators[i])) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;`,
+            `\treturn c > 3 && r && Object.defineProperty(target, key, r), r;`,
+            `}`,
+        ].join('\n');
+    },
+    decorateParam(localName) {
+        return `function ${localName}(paramIndex, decorator) {\n\treturn function (target, key) { decorator(target, key, paramIndex); };\n}`;
+    },
+    decorateMetadata(localName) {
+        return `function ${localName}(k, v) {\n\tif (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);\n}`;
+    },
+};
+function inlineOxcRuntimeHelpers(code) {
+    const bodies = [];
+    const rewritten = code.replace(/^[ \t]*import\s+([A-Za-z_$][\w$]*)\s+from\s+["']@oxc-project\/runtime\/helpers\/([A-Za-z0-9_]+)["'];?[ \t]*\r?$/gm, (_match, localName, helperName) => {
+        const createBody = oxcRuntimeHelperBodies[helperName];
+        if (!createBody) {
+            throw new Error(`Oxc emitted unsupported runtime helper "@oxc-project/runtime/helpers/${helperName}".`);
+        }
+        bodies.push(createBody(localName));
+        return '';
+    });
+    if (rewritten.includes('@oxc-project/runtime/')) {
+        throw new Error('Oxc emitted a @oxc-project/runtime import that could not be inlined.');
+    }
+    if (bodies.length === 0) {
+        return code;
+    }
+    return `${rewritten}\n${bodies.join('\n')}\n`;
+}
+exports.inlineOxcRuntimeHelpers = inlineOxcRuntimeHelpers;
 class OxcTranspiler {
     _logFn;
     _onError;
@@ -364,7 +401,7 @@ class OxcTranspiler {
             this.onOutfile(new vinyl_1.default({
                 path: outPath,
                 base: outBase,
-                contents: Buffer.from(inlineSourcemap(result.code, result.map)),
+                contents: Buffer.from(inlineSourcemap(inlineOxcRuntimeHelpers(result.code), result.map)),
             }));
             this._logFn('Transpile', `oxc took ${Date.now() - t1}ms for ${file.path}`);
         }).catch(err => {

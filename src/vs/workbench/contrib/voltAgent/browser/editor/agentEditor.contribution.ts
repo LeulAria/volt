@@ -38,7 +38,9 @@ import { IEditorResolverService, RegisteredEditorPriority } from '../../../../se
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
-import { getLayoutMode, isAgentLeftSidebarHidden } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { getLayoutMode, LayoutModeContext, openAgentSidebar, revealAgentSidePanel, storeAgentLeftSidebarHidden } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { IPaneCompositePartService } from '../../../../services/panecomposite/browser/panecomposite.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import '../chrome/agentViewSidebars.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
@@ -296,14 +298,13 @@ class AgentSidePanelStartupContribution extends Disposable {
 	constructor(
 		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
 		@IViewsService viewsService: IViewsService,
-		@IStorageService storageService: IStorageService,
 	) {
 		super();
-		const hide = getLayoutMode(layoutService) === 'agent' && isAgentLeftSidebarHidden(storageService);
-		layoutService.setPartHidden(hide, Parts.AUXILIARYBAR_PART);
-		if (!hide) {
-			void viewsService.openView(AGENT_SIDE_PANEL_VIEW_ID, false);
+		if (layoutService.isAuxiliaryBarMaximized()) {
+			layoutService.setAuxiliaryBarMaximized(false);
 		}
+		layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
+		void viewsService.openView(AGENT_SIDE_PANEL_VIEW_ID, false);
 	}
 }
 
@@ -334,7 +335,7 @@ registerAction2(class NewAgentAction extends Action2 {
 			return;
 		}
 		const viewsService = accessor.get(IViewsService);
-		layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
+		revealAgentSidePanel(layoutService);
 		const view = await viewsService.openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, true);
 		await view?.openNewAgent(options);
 	}
@@ -470,6 +471,10 @@ registerAction2(class MaximizeChatAction extends Action2 {
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const layoutService = accessor.get(IWorkbenchLayoutService);
 		const viewsService = accessor.get(IViewsService);
+		if (getLayoutMode(layoutService) === 'agent') {
+			revealAgentSidePanel(layoutService);
+			return;
+		}
 		layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
 		await viewsService.openView(AGENT_SIDE_PANEL_VIEW_ID, true);
 		layoutService.toggleMaximizedAuxiliaryBar();
@@ -522,7 +527,7 @@ async function addEditorSelectionToAgent(accessor: ServicesAccessor): Promise<bo
 
 	const layoutService = accessor.get(IWorkbenchLayoutService);
 	const viewsService = accessor.get(IViewsService);
-	layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
+	revealAgentSidePanel(layoutService);
 	const view = await viewsService.openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, true);
 	if (!view) {
 		return false;
@@ -683,7 +688,7 @@ async function addResourcesToAgent(accessor: ServicesAccessor, resource: URI | u
 
 	const layoutService = accessor.get(IWorkbenchLayoutService);
 	const viewsService = accessor.get(IViewsService);
-	layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
+	revealAgentSidePanel(layoutService);
 	const view = await viewsService.openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, true);
 	if (!view) {
 		return;
@@ -873,6 +878,8 @@ registerAction2(class OpenAgentSidePanelAction extends Action2 {
 				order: 2,
 				when: ContextKeyExpr.and(
 					IsAuxiliaryWindowContext.negate(),
+					LayoutModeContext.isEqualTo('ide'),
+					ContextKeyExpr.equals('config.workbench.sideBar.location', 'left'),
 					ContextKeyExpr.or(
 						ContextKeyExpr.equals('config.workbench.layoutControl.type', 'toggles'),
 						ContextKeyExpr.equals('config.workbench.layoutControl.type', 'both'),
@@ -885,6 +892,23 @@ registerAction2(class OpenAgentSidePanelAction extends Action2 {
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const layoutService = accessor.get(IWorkbenchLayoutService);
 		const viewsService = accessor.get(IViewsService);
+		const storageService = accessor.get(IStorageService);
+		if (getLayoutMode(layoutService) === 'agent') {
+			const visible = layoutService.isVisible(Parts.AUXILIARYBAR_PART);
+			const width = visible ? layoutService.getSize(Parts.AUXILIARYBAR_PART).width : 0;
+			const showing = visible && width >= 180;
+			if (showing) {
+				storeAgentLeftSidebarHidden(storageService, true);
+				layoutService.setPartHidden(true, Parts.AUXILIARYBAR_PART);
+				return;
+			}
+			storeAgentLeftSidebarHidden(storageService, false);
+			await openAgentSidebar(accessor.get(IConfigurationService), layoutService, accessor.get(IPaneCompositePartService));
+			return;
+		}
+		if (layoutService.isAuxiliaryBarMaximized()) {
+			layoutService.setAuxiliaryBarMaximized(false);
+		}
 		const visible = layoutService.isVisible(Parts.AUXILIARYBAR_PART) && viewsService.isViewVisible(AGENT_SIDE_PANEL_VIEW_ID);
 		if (visible) {
 			layoutService.setPartHidden(true, Parts.AUXILIARYBAR_PART);

@@ -52,6 +52,7 @@ import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/co
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { AgentSessionStatus } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { createAccessIcon } from '../chrome/accessIcons.js';
+import { mountAgentQuickOpenActions } from '../chrome/agentViewSidebars.js';
 import { agentMessagePlainText, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
 import { AgentContextUsageView } from '../context/agentContextUsageView.js';
 import { AgentModelPicker, type IModelOption } from '../picker/agentModelPicker.js';
@@ -565,9 +566,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.editorMainEl = append(this.container, $('.volt-agent-editor-main'));
 		append(this.editorMainEl, this.threadEl);
 		this.threadView.rememberHome();
-		const dock = getWindow(this.container).document.querySelector('.volt-agent-right-dock');
-		if (isHTMLElement(dock)) {
-			this.container.appendChild(dock);
+		const quickOpen = getWindow(this.container).document.querySelector('.volt-agent-quick-open-actions');
+		if (isHTMLElement(quickOpen)) {
+			mountAgentQuickOpenActions(this.threadScroll.getDomNode(), quickOpen);
 		}
 		this.applyCodeFont();
 		this._register(this.threadScroll.onScroll(e => {
@@ -592,6 +593,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.syncThreadScroll();
 		});
 		threadResizeObserver.observe(this.threadEl);
+		threadResizeObserver.observe(this.threadInner);
 		this._register(toDisposable(() => threadResizeObserver.disconnect()));
 		this._register(addDisposableListener(getWindow(this.container), 'pointerdown', e => this.onEditPointerDown(e), true));
 		this._register(addDisposableListener(this.threadInner, 'click', e => this.onUserMessageClick(e)));

@@ -11,7 +11,7 @@ import { INativeEnvironmentService } from '../../../environment/common/environme
 import { IExtensionsProfileScannerService, IProfileExtensionsScanOptions } from '../../common/extensionsProfileScannerService.js';
 import { AbstractExtensionsScannerService, ExtensionScannerInput, IExtensionsScannerService, IScannedExtensionManifest, Translations } from '../../common/extensionsScannerService.js';
 import { ExtensionsProfileScannerService } from '../../node/extensionsProfileScannerService.js';
-import { ExtensionType, IExtensionManifest, TargetPlatform } from '../../../extensions/common/extensions.js';
+import { ExtensionType, IExtensionManifest, TargetPlatform, isDevelopmentOnlyBuiltinExtensionFolder } from '../../../extensions/common/extensions.js';
 import { IFileService } from '../../../files/common/files.js';
 import { FileService } from '../../../files/common/fileService.js';
 import { InMemoryFileSystemProvider } from '../../../files/common/inMemoryFilesystemProvider.js';
@@ -233,6 +233,37 @@ suite('NativeExtensionsScanerService Test', () => {
 		assert.deepStrictEqual(actual.length, 2);
 		assert.deepStrictEqual(actual[0].identifier, { id: 'pub.name' });
 		assert.deepStrictEqual(actual[1].identifier, { id: 'pub.name2' });
+	});
+
+	test('scan system extensions skips development-only test extensions', async () => {
+		const fileService = instantiationService.get(IFileService);
+		const environmentService = instantiationService.get(INativeEnvironmentService);
+		const systemRoot = URI.file(environmentService.builtinExtensionsPath);
+		const productLocation = await aSystemExtension(anExtensionManifest({ name: 'name', publisher: 'pub' }));
+		for (const folder of ['vscode-colorize-tests', 'vscode-colorize-perf-tests', 'vscode-api-tests', 'vscode-test-resolver']) {
+			await fileService.writeFile(joinPath(systemRoot, folder, 'package.json'), VSBuffer.fromString(JSON.stringify(anExtensionManifest({ name: folder, publisher: 'vscode' }))));
+		}
+		const testObject: IExtensionsScannerService = disposables.add(instantiationService.createInstance(ExtensionsScannerService));
+
+		const actual = await testObject.scanSystemExtensions({});
+
+		assert.deepStrictEqual(actual.map(e => e.identifier.id), ['pub.name']);
+		assert.deepStrictEqual(actual[0].location.toString(), productLocation.toString());
+		assert.strictEqual(isDevelopmentOnlyBuiltinExtensionFolder('vscode-colorize-tests'), true);
+		assert.strictEqual(isDevelopmentOnlyBuiltinExtensionFolder('git'), false);
+	});
+
+	test('scan one development-only test extension by exact location still works', async () => {
+		const fileService = instantiationService.get(IFileService);
+		const environmentService = instantiationService.get(INativeEnvironmentService);
+		const extensionLocation = joinPath(URI.file(environmentService.builtinExtensionsPath), 'vscode-colorize-tests');
+		await fileService.writeFile(joinPath(extensionLocation, 'package.json'), VSBuffer.fromString(JSON.stringify(anExtensionManifest({ name: 'vscode-colorize-tests', publisher: 'vscode' }))));
+		const testObject: IExtensionsScannerService = disposables.add(instantiationService.createInstance(ExtensionsScannerService));
+
+		const actual = await testObject.scanOneOrMultipleExtensions(extensionLocation, ExtensionType.System, {});
+
+		assert.deepStrictEqual(actual.length, 1);
+		assert.deepStrictEqual(actual[0].identifier, { id: 'vscode.vscode-colorize-tests' });
 	});
 
 	test('scan system extensions include additional builtin extensions', async () => {
