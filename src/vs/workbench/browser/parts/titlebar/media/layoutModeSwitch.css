@@ -16,30 +16,24 @@
 }
 
 .volt-agent-chrome-drag {
-	position: absolute;
-	top: 0;
-	left: 0;
-	width: 100%;
-	height: 28px;
-	-webkit-app-region: drag;
-	pointer-events: auto;
-}
-
-.monaco-workbench.volt-layout-agent:not(.volt-single-agent) > .volt-agent-chrome > .volt-agent-chrome-drag {
-	width: min(42%, 380px);
-	width: var(--volt-agent-sidebar-width);
+	display: none;
 }
 
 .volt-agent-chrome-controls {
 	position: absolute;
 	top: 0;
-	left: 78px;
-	height: 28px;
+	left: var(--volt-agent-sidebar-width, 0px);
+	width: max-content;
+	height: 35px;
 	display: flex;
 	align-items: center;
 	gap: 2px;
 	pointer-events: auto;
 	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench.volt-layout-agent.mac:not(.web).volt-agent-left-collapsed > .volt-agent-chrome .volt-agent-chrome-controls {
+	left: 78px;
 }
 
 .volt-agent-ide-switch {

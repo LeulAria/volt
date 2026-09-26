@@ -901,6 +901,7 @@
 		"--volt-agent-right-dock-width",
 		"--volt-agent-sidebar-bg",
 		"--volt-agent-sidebar-width",
+		"--volt-agent-titlebar-height",
 		"--volt-agent-chat-bg",
 		"--volt-agent-window-bg",
 		"--volt-agent-window-bg-base",

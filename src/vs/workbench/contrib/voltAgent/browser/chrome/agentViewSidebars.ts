@@ -211,6 +211,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.layoutService.setPartHidden(hide, Parts.AUXILIARYBAR_PART);
 		if (hide) {
 			this.layoutService.mainContainer.style.setProperty('--volt-agent-sidebar-width', '0px');
+			this.layoutService.mainContainer.classList.add('volt-agent-left-collapsed');
 		}
 		this.syncLeftButton();
 	}
@@ -252,6 +253,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.layoutService.layout();
 		if (agent && !this.layoutService.isVisible(Parts.AUXILIARYBAR_PART)) {
 			root.style.setProperty('--volt-agent-sidebar-width', '0px');
+			root.classList.add('volt-agent-left-collapsed');
 		}
 	}
 

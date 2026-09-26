@@ -30,7 +30,6 @@ export const SET_IDE_LAYOUT_MODE_COMMAND_ID = 'workbench.action.setIdeLayoutMode
 const SIDEBAR_LOCATION_KEY = 'workbench.sideBar.location';
 const STATUSBAR_VISIBLE_KEY = 'workbench.statusBar.visible';
 
-export const AGENT_CHROME_HEIGHT = 28;
 export type LayoutMode = 'agent' | 'ide';
 export const AGENT_LEFT_SIDEBAR_HIDDEN_KEY = 'volt.agent.leftSidebar.hidden';
 export const AGENT_RIGHT_DOCK_COLLAPSED_KEY = 'volt.agent.rightDock.collapsed.v2';
@@ -95,8 +94,15 @@ export function applyLayoutModeChrome(layoutService: IWorkbenchLayoutService, co
 			});
 		}
 	}
+	if (agent) {
+		const titlebarHeight = layoutService.getSize(Parts.TITLEBAR_PART).height;
+		if (titlebarHeight > 0) {
+			root.style.setProperty('--volt-agent-titlebar-height', `${Math.round(titlebarHeight)}px`);
+		}
+	}
 	if (hideLeftSidebar) {
 		root.style.setProperty('--volt-agent-sidebar-width', '0px');
+		root.classList.add('volt-agent-left-collapsed');
 	}
 }
 

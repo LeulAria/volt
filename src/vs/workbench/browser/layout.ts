@@ -2241,9 +2241,6 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	}
 
 	private shouldShowTitleBar(): boolean {
-		if (this.getSideBarPosition() === Position.RIGHT && isMacintosh) {
-			return false;
-		}
 		return shouldShowCustomTitleBar(this.configurationService, mainWindow, this.state.runtime.menuBar.toggled);
 	}
 

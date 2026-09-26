@@ -11,7 +11,6 @@ import { Categories } from '../../../platform/action/common/actionCommonCategori
 import { ServicesAccessor } from '../../../platform/instantiation/common/instantiation.js';
 import { IWorkbenchEnvironmentService } from '../../services/environment/common/environmentService.js';
 import { KeybindingWeight } from '../../../platform/keybinding/common/keybindingsRegistry.js';
-import { IsDevelopmentContext } from '../../../platform/contextkey/common/contextkeys.js';
 import { KeyCode, KeyMod } from '../../../base/common/keyCodes.js';
 import { INativeWorkbenchEnvironmentService } from '../../services/environment/electron-browser/environmentService.js';
 import { URI } from '../../../base/common/uri.js';
@@ -30,9 +29,9 @@ export class ToggleDevToolsAction extends Action2 {
 			f1: true,
 			keybinding: {
 				weight: KeybindingWeight.WorkbenchContrib + 50,
-				when: IsDevelopmentContext,
 				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyI,
-				mac: { primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyI }
+				secondary: [KeyCode.F12],
+				mac: { primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyI, secondary: [KeyCode.F12] }
 			},
 			menu: {
 				id: MenuId.MenubarHelpMenu,

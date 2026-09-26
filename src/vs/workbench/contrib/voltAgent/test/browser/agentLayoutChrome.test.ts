@@ -14,10 +14,21 @@ suite('Agent layout chrome', () => {
 	test('records the sidebar width for agent chrome', () => {
 		const root = document.createElement('div');
 
-		applyAgentStatusbarShift(root, 240);
+		applyAgentStatusbarShift(root, 240, 35);
 
 		assert.strictEqual(root.style.getPropertyValue('--volt-agent-sidebar-width'), '240px');
+		assert.strictEqual(root.style.getPropertyValue('--volt-agent-titlebar-height'), '35px');
+		assert.strictEqual(root.classList.contains('volt-agent-left-collapsed'), false);
 		assert.strictEqual(root.style.getPropertyValue('--volt-agent-statusbar-height'), '');
+	});
+
+	test('marks the agent chrome collapsed when the sidebar is hidden', () => {
+		const root = document.createElement('div');
+
+		applyAgentStatusbarShift(root, 0);
+
+		assert.strictEqual(root.style.getPropertyValue('--volt-agent-sidebar-width'), '0px');
+		assert.strictEqual(root.classList.contains('volt-agent-left-collapsed'), true);
 	});
 
 	test('clears leftover status bar shift when leaving agent layout', () => {
@@ -32,14 +43,18 @@ suite('Agent layout chrome', () => {
 		root.style.setProperty('--volt-agent-sidebar-width', '240px');
 		root.style.setProperty('--volt-agent-right-dock-width', '46px');
 		root.style.setProperty('--volt-agent-statusbar-height', '22px');
+		root.style.setProperty('--volt-agent-titlebar-height', '35px');
 		root.classList.add('volt-agent-right-collapsed');
+		root.classList.add('volt-agent-left-collapsed');
 
 		resetAgentStatusbarShift(root);
 
 		assert.strictEqual(root.style.getPropertyValue('--volt-agent-sidebar-width'), '');
 		assert.strictEqual(root.style.getPropertyValue('--volt-agent-right-dock-width'), '');
 		assert.strictEqual(root.style.getPropertyValue('--volt-agent-statusbar-height'), '');
+		assert.strictEqual(root.style.getPropertyValue('--volt-agent-titlebar-height'), '');
 		assert.strictEqual(root.classList.contains('volt-agent-right-collapsed'), false);
+		assert.strictEqual(root.classList.contains('volt-agent-left-collapsed'), false);
 		assert.strictEqual(wrap.style.left, '');
 		assert.strictEqual(wrap.style.width, '');
 	});

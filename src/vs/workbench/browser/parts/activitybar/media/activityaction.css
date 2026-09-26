@@ -72,6 +72,25 @@
 	z-index: 1;
 }
 
+.monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-label.codicon-search-view-icon::before {
+	content: '' !important;
+	display: block;
+	width: 20px;
+	height: 20px;
+	flex: 0 0 20px;
+	background-color: currentColor;
+	-webkit-mask-image: url('./search-view-icon.svg');
+	-webkit-mask-repeat: no-repeat;
+	-webkit-mask-position: center;
+	-webkit-mask-size: 20px 20px;
+	-webkit-mask-mode: alpha;
+	mask-image: url('./search-view-icon.svg');
+	mask-repeat: no-repeat;
+	mask-position: center;
+	mask-size: 20px 20px;
+	mask-mode: alpha;
+}
+
 .monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item.checked .action-label,
 .monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item:hover .action-label {
 	border-radius: 8px;

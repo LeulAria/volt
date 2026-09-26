@@ -20,10 +20,6 @@
 	display: flex;
 }
 
-.monaco-workbench.mac.volt-layout-agent .volt-agent-home {
-	padding-top: 32px;
-}
-
 .volt-agent-home-tree {
 	flex: 1;
 	min-height: 0;
@@ -256,16 +252,12 @@
 	border: none !important;
 }
 
-.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title {
-	-webkit-app-region: drag;
-}
-
-.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .tab,
-.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .editor-actions,
-.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .monaco-toolbar,
-.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .action-item,
-.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .breadcrumbs-control,
-.monaco-workbench.volt-layout-agent .part.editor .editor-group-container > .title .scrollbar {
+.monaco-workbench .part.editor .editor-group-container > .title,
+.monaco-workbench .part.editor .editor-group-container > .title .tab,
+.monaco-workbench .part.editor .editor-group-container > .title .editor-actions,
+.monaco-workbench .part.editor .editor-group-container > .title .monaco-toolbar,
+.monaco-workbench .part.editor .editor-group-container > .title .action-item,
+.monaco-workbench .part.editor .editor-group-container > .title .breadcrumbs-control {
 	-webkit-app-region: no-drag;
 }
 
@@ -280,6 +272,7 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 90%, transparent);
 	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 60%, transparent);
 	--volt-agent-chat-bg: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
+	--volt-agent-titlebar-height: 35px;
 	background: transparent !important;
 	background-color: transparent !important;
 }
@@ -294,20 +287,74 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	background-color: transparent !important;
 }
 
-.monaco-workbench.volt-layout-agent .part.titlebar .titlebar-center {
-	visibility: hidden;
-}
-
-.monaco-workbench.mac.volt-layout-agent .part.titlebar {
-	display: none !important;
-	height: 0 !important;
-}
-
 .monaco-workbench.volt-layout-agent .part.titlebar,
 .monaco-workbench.volt-layout-agent .part.editor,
 .monaco-workbench.volt-layout-agent .part.panel {
 	background: var(--volt-agent-window-bg) !important;
 	background-color: var(--volt-agent-window-bg) !important;
+}
+
+/* Left sidebar is edge-to-edge; the titlebar fills only the remaining width. */
+.monaco-workbench.volt-layout-agent .monaco-grid-view .split-view-view:has(> .part.titlebar) {
+	left: var(--volt-agent-sidebar-width, 0px) !important;
+	right: 0 !important;
+	width: auto !important;
+	max-width: calc(100% - var(--volt-agent-sidebar-width, 0px)) !important;
+	box-sizing: border-box;
+	overflow: hidden;
+	z-index: 100 !important;
+}
+
+.monaco-workbench.volt-layout-agent .part.titlebar,
+.monaco-workbench.volt-layout-agent .part.titlebar > .titlebar-container {
+	width: 100% !important;
+	max-width: 100% !important;
+	box-sizing: border-box;
+}
+
+.monaco-workbench.volt-layout-agent .monaco-grid-view > .monaco-split-view2 > .monaco-scrollable-element > .split-view-container > .split-view-view:has(.part.auxiliarybar),
+.monaco-workbench.volt-layout-agent .monaco-grid-branch-node,
+.monaco-workbench.volt-layout-agent .monaco-grid-branch-node > .monaco-split-view2,
+.monaco-workbench.volt-layout-agent .monaco-grid-branch-node > .monaco-split-view2 > .monaco-scrollable-element,
+.monaco-workbench.volt-layout-agent .monaco-grid-branch-node > .monaco-split-view2 > .monaco-scrollable-element > .split-view-container {
+	overflow: visible !important;
+}
+
+.monaco-workbench.volt-layout-agent .monaco-grid-view .split-view-view:has(> .part.auxiliarybar) {
+	top: calc(-1 * var(--volt-agent-titlebar-height, 35px)) !important;
+	height: calc(100% + var(--volt-agent-titlebar-height, 35px)) !important;
+	overflow: hidden;
+	z-index: 20;
+}
+
+.monaco-workbench.volt-layout-agent .split-view-view:has(> .part.auxiliarybar),
+.monaco-workbench.volt-layout-agent .part.auxiliarybar,
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .content {
+	pointer-events: none;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .content > * {
+	pointer-events: auto;
+}
+
+.monaco-workbench.volt-layout-agent.mac:not(.web):not(.volt-agent-left-collapsed) .part.titlebar > .titlebar-container > .titlebar-left {
+	padding-left: 8px;
+}
+
+.monaco-workbench.volt-layout-agent.mac:not(.web) .part.auxiliarybar > .content {
+	padding-top: var(--volt-agent-titlebar-height, 35px);
+	box-sizing: border-box;
+}
+
+.monaco-workbench.volt-layout-agent.mac:not(.web) .part.auxiliarybar::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: var(--volt-agent-titlebar-height, 35px);
+	z-index: 2;
+	pointer-events: none;
 }
 
 .monaco-workbench.volt-layout-agent .part.auxiliarybar,
@@ -428,7 +475,7 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	background: linear-gradient(to bottom, var(--volt-agent-window-bg) 0%, transparent 100%) !important;
 }
 
-.monaco-workbench.volt-layout-agent .volt-agent-editor:has(.volt-agent-turn) .volt-agent-composer {
+.monaco-workbench.volt-layout-agent .volt-agent-composer {
 	background: transparent !important;
 	background-color: transparent !important;
 }

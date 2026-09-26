@@ -270,7 +270,7 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 	private syncAgentSidebarChrome(agent: boolean, sidebarWidth: number): void {
 		const root = this.layoutService.mainContainer;
 		if (agent) {
-			applyAgentStatusbarShift(root, sidebarWidth);
+			applyAgentStatusbarShift(root, sidebarWidth, this.layoutService.getSize(Parts.TITLEBAR_PART).height);
 			return;
 		}
 		resetAgentStatusbarShift(root);

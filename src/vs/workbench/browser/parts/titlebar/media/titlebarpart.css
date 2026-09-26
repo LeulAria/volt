@@ -60,7 +60,24 @@
 	position: absolute;
 	width: 100%;
 	height: 100%;
+	z-index: 0;
 	-webkit-app-region: drag;
+}
+
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-center,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right {
+	position: relative;
+	z-index: 1;
+}
+
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left *,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-center > .window-title,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container,
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container * {
+	-webkit-app-region: no-drag;
+	pointer-events: auto;
 }
 
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left,
@@ -137,8 +154,10 @@
 
 /* Window Title Menu */
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-center > .window-title > .command-center {
+	position: relative;
 	z-index: 2500;
 	-webkit-app-region: no-drag;
+	pointer-events: auto;
 }
 
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-center > .window-title > .command-center.hide {
