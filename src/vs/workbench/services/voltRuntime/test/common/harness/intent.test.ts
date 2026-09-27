@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { classifyIntent, mergeGrantedGroups, pingReply } from '../../../common/harness/intent.js';
+import { classifyIntent, mergeGrantedGroups } from '../../../common/harness/intent.js';
 
 suite('Volt intent router', () => {
 
@@ -37,22 +37,15 @@ suite('Volt intent router', () => {
 		assert.strictEqual(classifyIntent('what is 2+2', 'agent').lane, 'chat');
 	});
 
-	test('check-ins are chat with no tools, even after a coding turn', () => {
-		for (const text of ['testing', 'test', 'testthing', 'hello', 'thanks', 'ok']) {
+	test('short messages including test and hello are real turns', () => {
+		for (const text of ['testing', 'hello', 'thanks', 'ok', '23432+242']) {
 			const intent = classifyIntent(text, 'agent', { hasWorkspace: true, priorLane: 'agent' });
-			assert.strictEqual(intent.lane, 'chat', text);
-			assert.ok(intent.signals.includes('ping'), text);
-			assert.deepStrictEqual(intent.groups, ['meta'], text);
-			assert.strictEqual(intent.budget.maxToolCalls, 0, text);
-			assert.strictEqual(intent.budget.maxModelCalls, 1, text);
+			assert.ok(!intent.signals.includes('ping'), text);
+			assert.ok(intent.budget.maxModelCalls > 0, text);
+			assert.ok(intent.groups.includes('read') || intent.groups.includes('edit'), text);
 		}
-	});
-
-	test('check-ins get a local one-line reply', () => {
-		assert.strictEqual(pingReply('thanks'), 'You\'re welcome.');
-		assert.strictEqual(pingReply('hello'), 'Hey.');
-		assert.strictEqual(pingReply('ok'), 'Okay.');
-		assert.strictEqual(pingReply('testthing'), 'Here.');
+		assert.strictEqual(classifyIntent('testing', 'agent', { hasWorkspace: true }).lane, 'chat');
+		assert.notStrictEqual(classifyIntent('test', 'agent', { hasWorkspace: true }).lane, 'chat');
 	});
 
 	test('smashed questions are not check-ins', () => {

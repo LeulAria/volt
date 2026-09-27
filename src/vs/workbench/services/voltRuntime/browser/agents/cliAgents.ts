@@ -10,6 +10,14 @@ import { antigravityModelsToInfo, parseAntigravityModelLines } from '../../commo
 import { parseOpenCodeModelLines } from '../../common/models/harnessCatalog.js';
 import { IDetectResult, IModelInfo } from '../../common/providers.js';
 
+/** A separate ACP server for a CLI that has no ACP mode of its own. It drives the CLI with the same login. */
+export interface IAcpAdapter {
+	/** Executable name when the adapter is installed globally. */
+	readonly command: string;
+	/** Pinned npm package run through npx otherwise. */
+	readonly package: string;
+}
+
 export interface ICliAgentDefinition {
 	readonly id: string;
 	readonly label: string;
@@ -19,6 +27,7 @@ export interface ICliAgentDefinition {
 	/** Arguments that put the CLI into Agent Client Protocol mode. */
 	readonly acpArgs: readonly string[];
 	readonly earlyAccess?: boolean;
+	readonly acpAdapter?: IAcpAdapter;
 	/** Reads the CLI's own config to work out who is signed in. */
 	readonly probeAuth?: (stdio: IVoltStdioService) => Promise<{ account?: string; plan?: string } | undefined>;
 }
@@ -26,43 +35,83 @@ export interface ICliAgentDefinition {
 const CLI_TIMEOUT_MS = 4000;
 const MODEL_LIST_TIMEOUT_MS = 15_000;
 
-/** Runs a short lived command and returns its stdout, or undefined if it failed or timed out. */
+/**
+ * Runs a short lived command and returns its stdout, or undefined if it failed or timed out.
+ *
+ * Listeners go on before the spawn: the IPC event subscription is lazy, so a fast command
+ * (a `cat` of an auth file, a `--version`) can print and exit before a listener attached
+ * after `spawn()` resolves, and its output would be lost.
+ */
 export async function runCli(stdio: IVoltStdioService, command: string, args: readonly string[], timeoutMs = CLI_TIMEOUT_MS): Promise<string | undefined> {
-	let id: string;
-	try {
-		id = await stdio.spawn({ command, args: [...args] });
-	} catch {
-		return undefined;
-	}
-
-	return new Promise<string | undefined>(resolve => {
-		let output = '';
+	let id: string | undefined;
+	let output = '';
+	const early = new Map<string, string>();
+	const exitedEarly = new Set<string>();
+	let finish: (value: string | undefined) => void = () => { };
+	const done = new Promise<string | undefined>(resolve => {
 		let settled = false;
-		const finish = (value: string | undefined) => {
-			if (settled) {
-				return;
+		finish = value => {
+			if (!settled) {
+				settled = true;
+				resolve(value);
 			}
-			settled = true;
-			clearTimeout(timer);
-			dataListener.dispose();
-			exitListener.dispose();
-			resolve(value);
 		};
-		const dataListener = stdio.onData(e => {
-			if (e.id === id) {
-				output += e.data;
-			}
-		});
-		const exitListener = stdio.onExit(e => {
-			if (e.id === id) {
-				finish(output);
-			}
-		});
+	});
+	const dataListener = stdio.onData(e => {
+		if (id === undefined) {
+			early.set(e.id, (early.get(e.id) ?? '') + e.data);
+		} else if (e.id === id) {
+			output += e.data;
+		}
+	});
+	const exitListener = stdio.onExit(e => {
+		if (id === undefined) {
+			exitedEarly.add(e.id);
+		} else if (e.id === id) {
+			finish(output);
+		}
+	});
+	try {
+		try {
+			id = await stdio.spawn({ command, args: [...args] });
+		} catch {
+			return undefined;
+		}
+		output = early.get(id) ?? '';
+		early.clear();
+		if (exitedEarly.has(id)) {
+			return output;
+		}
+		const spawned = id;
 		const timer = setTimeout(() => {
-			void stdio.kill(id);
+			void stdio.kill(spawned);
 			finish(output || undefined);
 		}, timeoutMs);
-	});
+		try {
+			return await done;
+		} finally {
+			clearTimeout(timer);
+		}
+	} finally {
+		dataListener.dispose();
+		exitListener.dispose();
+	}
+}
+
+/**
+ * What to spawn for an ACP session. A profile still pointing at the bare CLI of an agent that
+ * needs an adapter (including stored `claude acp` and `codex acp` profiles) launches the adapter
+ * instead; a custom command is left alone.
+ */
+export function acpLaunchFor(def: ICliAgentDefinition | undefined, command: string, args: readonly string[], adapterOnPath: boolean): { command: string; args: string[] } {
+	const adapter = def?.acpAdapter;
+	if (!adapter || !def.commands.includes(command)) {
+		return { command, args: [...args] };
+	}
+	if (adapterOnPath) {
+		return { command: adapter.command, args: [] };
+	}
+	return { command: isWindows ? 'npx.cmd' : 'npx', args: ['-y', adapter.package] };
 }
 
 /** Reads a file below the user's home directory through the shell, since the renderer has no home path. */
@@ -175,7 +224,10 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 		label: 'Codex',
 		commands: ['codex'],
 		versionArgs: ['--version'],
-		acpArgs: ['acp'],
+		// Codex has no `acp` subcommand. `codex acp` starts the TUI, which exits with
+		// "stdin is not a terminal" when Volt pipes stdio. The adapter speaks ACP for it.
+		acpArgs: [],
+		acpAdapter: { command: 'codex-acp', package: '@agentclientprotocol/codex-acp@1.13.1' },
 		probeAuth: probeCodexAuth,
 	},
 	{
@@ -183,7 +235,9 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 		label: 'Claude',
 		commands: ['claude'],
 		versionArgs: ['--version'],
-		acpArgs: ['acp'],
+		// Claude Code has no `acp` subcommand; the official adapter speaks ACP for it.
+		acpArgs: [],
+		acpAdapter: { command: 'claude-agent-acp', package: '@agentclientprotocol/claude-agent-acp@0.81.2' },
 		probeAuth: probeClaudeAuth,
 	},
 	{

@@ -20,18 +20,70 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../../pla
 import { defaultInputBoxStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
 import { editorWidgetBackground } from '../../../../../platform/theme/common/colorRegistry.js';
 import { modelEditSections, modelHoverCard } from '../../../../services/voltRuntime/common/models/harnessCatalog.js';
-import { compactEffortLabel, describeModelOptions, MODEL_OPTION_CONTEXT, MODEL_OPTION_FAST, MODEL_OPTION_REASONING, optionValue, splitModelDisplayName, type IVoltModelOptions } from '../../../../services/voltRuntime/common/models/modelOptions.js';
+import { compactEffortLabel, describeModelOptions, MODEL_OPTION_CONTEXT, MODEL_OPTION_FAST, MODEL_OPTION_REASONING, optionValue, splitModelDisplayName, type IModelOptionDescriptor, type IVoltModelOptions } from '../../../../services/voltRuntime/common/models/modelOptions.js';
 import type { IVoltCatalogItem } from '../../../../services/voltRuntime/common/providers.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { createBrandIcon, providerFamily, providerFamilyLabel } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { createHomeSearchIcon } from '../home/agentHomeIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { IModelPickerRow, ModelPickerListDelegate, ModelPickerListRenderer, pickerListHeight } from './agentModelPickerList.js';
-import { filterPickerModels, MODEL_FAVORITES_STORAGE_KEY, parseFavoriteRefs, PICKER_FAVORITES_TAB, PICKER_SHORTCUT_COUNT, toggleFavoriteRefs, type IModelOption, type IProviderGroup } from './agentModelPickerModel.js';
+import { createAutoSparkIcon, IModelPickerRow, ModelPickerListDelegate, ModelPickerListRenderer, pickerListHeight } from './agentModelPickerList.js';
+import { filterPickerModels, sortProviderGroups, MODEL_FAVORITES_STORAGE_KEY, parseFavoriteRefs, PICKER_FAVORITES_TAB, PICKER_SHORTCUT_COUNT, toggleFavoriteRefs, type IModelOption, type IProviderGroup } from './agentModelPickerModel.js';
 
 export type { IModelOption, IProviderGroup } from './agentModelPickerModel.js';
 export { PICKER_FAVORITES_TAB } from './agentModelPickerModel.js';
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svgEl(doc: Document, name: string, attrs: Record<string, string>): SVGElement {
+	const el = doc.createElementNS(SVG_NS, name);
+	for (const [key, value] of Object.entries(attrs)) {
+		el.setAttribute(key, value);
+	}
+	return el;
+}
+
+const SETTINGS_GEAR_PATH = 'M262.29 192.31a64 64 0 1 0 57.4 57.4a64.13 64.13 0 0 0-57.4-57.4M416.39 256a154 154 0 0 1-1.53 20.79l45.21 35.46a10.81 10.81 0 0 1 2.45 13.75l-42.77 74a10.81 10.81 0 0 1-13.14 4.59l-44.9-18.08a16.11 16.11 0 0 0-15.17 1.75A164.5 164.5 0 0 1 325 400.8a15.94 15.94 0 0 0-8.82 12.14l-6.73 47.89a11.08 11.08 0 0 1-10.68 9.17h-85.54a11.11 11.11 0 0 1-10.69-8.87l-6.72-47.82a16.07 16.07 0 0 0-9-12.22a155 155 0 0 1-21.46-12.57a16 16 0 0 0-15.11-1.71l-44.89 18.07a10.81 10.81 0 0 1-13.14-4.58l-42.77-74a10.8 10.8 0 0 1 2.45-13.75l38.21-30a16.05 16.05 0 0 0 6-14.08c-.36-4.17-.58-8.33-.58-12.5s.21-8.27.58-12.35a16 16 0 0 0-6.07-13.94l-38.19-30A10.81 10.81 0 0 1 49.48 186l42.77-74a10.81 10.81 0 0 1 13.14-4.59l44.9 18.08a16.11 16.11 0 0 0 15.17-1.75A164.5 164.5 0 0 1 187 111.2a15.94 15.94 0 0 0 8.82-12.14l6.73-47.89A11.08 11.08 0 0 1 213.23 42h85.54a11.11 11.11 0 0 1 10.69 8.87l6.72 47.82a16.07 16.07 0 0 0 9 12.22a155 155 0 0 1 21.46 12.57a16 16 0 0 0 15.11 1.71l44.89-18.07a10.81 10.81 0 0 1 13.14 4.58l42.77 74a10.8 10.8 0 0 1-2.45 13.75l-38.21 30a16.05 16.05 0 0 0-6.05 14.08c.33 4.14.55 8.3.55 12.47';
+
+/** Gear on the provider tab bar; opens Volt Settings. */
+function createSettingsIcon(): HTMLElement {
+	const host = $('span.volt-agent-settings-icon');
+	const doc = host.ownerDocument;
+	const svg = svgEl(doc, 'svg', {
+		viewBox: '0 0 512 512',
+		width: '16',
+		height: '16',
+		fill: 'none',
+		'aria-hidden': 'true',
+		focusable: 'false',
+	});
+	svg.appendChild(svgEl(doc, 'path', {
+		d: SETTINGS_GEAR_PATH,
+		fill: 'none',
+		stroke: 'currentColor',
+		'stroke-linecap': 'round',
+		'stroke-linejoin': 'round',
+		'stroke-width': '21.333',
+	}));
+	host.appendChild(svg);
+	return host;
+}
+
+function editSectionHint(sectionId: 'options' | 'context' | 'effort' | 'custom'): string | undefined {
+	switch (sectionId) {
+		case 'effort':
+			return localize('voltAgent.effortHint', "Effort the model uses to generate its response.");
+		case 'context':
+			return localize('voltAgent.contextHint', "Context size the model has available.");
+		case 'options':
+		case 'custom':
+			return undefined;
+		default: {
+			const unexpected: never = sectionId;
+			return unexpected;
+		}
+	}
+}
 
 export interface IAgentModelPickerHost {
 	onDidChange?: () => void;
@@ -63,7 +115,7 @@ function focusedRowIndex(rows: readonly IModelPickerRow[], modelIndex: number): 
 	return fallback;
 }
 
-function isBooleanOn(descriptor: IModelOptionDescriptor, options: Readonly<Record<string, unknown>>): boolean {
+function isBooleanOn(descriptor: IModelOptionDescriptor, options: IVoltModelOptions): boolean {
 	return optionValue(descriptor, options) === true;
 }
 
@@ -170,7 +222,7 @@ export class AgentModelPicker extends Disposable {
 	renderTrigger(button: HTMLElement): void {
 		const selected = this.selectedModel();
 		if (this.modelAuto) {
-			button.appendChild(createBrandIcon('generic', 13));
+			button.appendChild(createAutoSparkIcon());
 		} else if (selected) {
 			button.appendChild(createBrandIcon(selected.family, 13));
 		}
@@ -239,15 +291,12 @@ export class AgentModelPicker extends Disposable {
 				const flyout = append(menu, $('.volt-agent-picker-flyout.hidden'));
 				const optionPanel = append(flyout, $('.volt-agent-picker-flyout-panel'));
 
-				const tabs = append(panel, $('.volt-agent-provider-tabs'));
-				tabs.setAttribute('role', 'tablist');
-				tabs.setAttribute('aria-label', localize('voltAgent.providers', "Providers"));
-
 				const searchRow = append(panel, $('.volt-agent-picker-search'));
 				searchRow.appendChild(createHomeSearchIcon());
 				const input = store.add(new InputBox(searchRow, undefined, {
 					placeholder: localize('voltAgent.searchModelsPlaceholder', "Search models..."),
 					ariaLabel: localize('voltAgent.searchModels', "Search models"),
+					tooltip: '',
 					inputBoxStyles: {
 						...defaultInputBoxStyles,
 						inputBackground: 'transparent',
@@ -259,6 +308,24 @@ export class AgentModelPicker extends Disposable {
 				search.setAttribute('role', 'combobox');
 				search.setAttribute('aria-autocomplete', 'list');
 				search.setAttribute('aria-expanded', 'true');
+
+				const tabBar = append(panel, $('.volt-agent-picker-tabbar'));
+				const tabs = append(tabBar, $('.volt-agent-provider-tabs'));
+				tabs.setAttribute('role', 'tablist');
+				tabs.setAttribute('aria-label', localize('voltAgent.providers', "Providers"));
+				// Outside the scrolling tab strip, so it stays put however many providers there are.
+				const settings = append(tabBar, $('button.volt-agent-picker-settings')) as HTMLButtonElement;
+				settings.type = 'button';
+				settings.appendChild(createSettingsIcon());
+				settings.setAttribute('aria-label', localize('voltAgent.openSettings', "Open Volt Settings"));
+				setAgentTooltip(settings, localize('voltAgent.openSettings', "Open Volt Settings"));
+				store.add(addDisposableListener(settings, 'mousedown', e => e.stopPropagation()));
+				store.add(addDisposableListener(settings, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					this.contextViewService.hideContextView();
+					void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
+				}));
 
 				const body = append(panel, $('.volt-agent-picker-body'));
 				const listHost = append(body, $('.volt-agent-picker-list'));
@@ -648,7 +715,7 @@ export class AgentModelPicker extends Disposable {
 			}
 			group.models.push(option);
 		}
-		return [...groups.values()];
+		return sortProviderGroups([...groups.values()]);
 	}
 
 	private selectModel(model: IModelOption): void {
@@ -709,7 +776,15 @@ export class AgentModelPicker extends Disposable {
 		const sections = modelEditSections(model.optionDescriptors);
 		for (const section of sections) {
 			const block = append(panel, $('.volt-agent-picker-section'));
-			append(block, $('div.volt-agent-picker-section-label')).textContent = section.label;
+			const heading = append(block, $('div.volt-agent-picker-section-label'));
+			heading.textContent = section.label;
+			const hint = editSectionHint(section.id);
+			if (hint) {
+				if (section.id === 'effort') {
+					heading.setAttribute('data-volt-tooltip-compact', '1');
+				}
+				setAgentTooltip(heading, hint, undefined, undefined, 'end');
+			}
 			for (const descriptor of section.descriptors) {
 				if (descriptor.type === 'boolean') {
 					const on = isBooleanOn(descriptor, options);
@@ -781,6 +856,7 @@ export class AgentModelPicker extends Disposable {
 		flyout.style.bottom = '';
 		flyout.style.maxHeight = '';
 		flyout.style.width = '';
+		flyout.style.position = '';
 		flyout.classList.remove('place-start', 'overlap');
 		if (flyout.classList.contains('hidden')) {
 			return;
@@ -789,6 +865,13 @@ export class AgentModelPicker extends Disposable {
 		const win = getWindow(menu);
 		const gap = 6;
 		const pad = 8;
+		menu.style.position = 'relative';
+		menu.style.overflow = 'visible';
+		if (menu.parentElement) {
+			menu.parentElement.style.overflow = 'visible';
+		}
+		flyout.style.position = 'absolute';
+		flyout.style.bottom = 'auto';
 		const menuRect = menu.getBoundingClientRect();
 		const flyoutRect = flyout.getBoundingClientRect();
 		const viewW = win.innerWidth;
@@ -796,51 +879,21 @@ export class AgentModelPicker extends Disposable {
 		const flyoutW = Math.max(flyoutRect.width, 188);
 		const flyoutH = Math.min(Math.max(flyout.scrollHeight, flyoutRect.height), 360, viewH - pad * 2);
 		const spaceRight = viewW - pad - menuRect.right - gap;
-		const spaceLeft = menuRect.left - pad - gap;
-
 		if (spaceRight >= flyoutW) {
 			flyout.style.left = `calc(100% + ${gap}px)`;
 			flyout.style.right = 'auto';
-		} else if (spaceLeft >= flyoutW) {
+		} else {
 			flyout.style.left = 'auto';
 			flyout.style.right = `calc(100% + ${gap}px)`;
 			flyout.classList.add('place-start');
-		} else {
-			let left = 0;
-			if (menuRect.left + flyoutW > viewW - pad) {
-				left = viewW - pad - flyoutW - menuRect.left;
-			}
-			if (menuRect.left + left < pad) {
-				left = pad - menuRect.left;
-			}
-			flyout.style.left = `${left}px`;
-			flyout.style.right = 'auto';
-			flyout.classList.add('overlap');
 		}
 
-		const rowTop = anchorRow ? anchorRow.getBoundingClientRect().top - menuRect.top : undefined;
-		if (rowTop !== undefined) {
-			const maxTop = Math.max(pad - menuRect.top, viewH - pad - flyoutH - menuRect.top);
-			const top = Math.min(Math.max(rowTop, pad - menuRect.top), maxTop);
-			flyout.style.top = `${top}px`;
-			flyout.style.bottom = 'auto';
-			if (flyoutH > viewH - pad * 2) {
-				flyout.style.maxHeight = `${Math.max(120, viewH - pad * 2)}px`;
-			}
-			return;
-		}
-		const spaceUp = menuRect.bottom - pad;
-		const spaceDown = viewH - pad - menuRect.top;
-		if (flyoutH <= spaceUp) {
-			flyout.style.bottom = '0';
-			flyout.style.top = 'auto';
-		} else if (flyoutH <= spaceDown) {
-			flyout.style.top = '0';
-			flyout.style.bottom = 'auto';
-		} else {
+		const rowTop = anchorRow ? anchorRow.getBoundingClientRect().top - menuRect.top : 0;
+		const minTop = pad - menuRect.top;
+		const maxTop = Math.max(minTop, viewH - pad - flyoutH - menuRect.top);
+		flyout.style.top = `${Math.min(Math.max(rowTop, minTop), maxTop)}px`;
+		if (flyoutH > viewH - pad * 2) {
 			flyout.style.maxHeight = `${Math.max(120, viewH - pad * 2)}px`;
-			flyout.style.top = `${pad - menuRect.top}px`;
-			flyout.style.bottom = 'auto';
 		}
 	}
 

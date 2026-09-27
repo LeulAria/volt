@@ -11,24 +11,20 @@ html {
   scrollbar-gutter: stable;
 }
 
-html:has(.home-shell),
-html:has(.home-shell) body {
-  background: #101614;
+html:has(.home-page),
+html:has(.home-page) body {
+  background: #0a0d0c;
 }
 
-@media (min-width: 768px) {
-  html:has(.home-shell),
-  html:has(.home-shell) body {
-    height: 100vh;
-    overflow: hidden;
-  }
+html:has(.home-page) {
+  scroll-behavior: smooth;
 }
 
 html:has(body[data-scroll-locked]) {
   scrollbar-gutter: auto;
 }
 
-.home-shell ::selection {
+.home-page ::selection {
   background: rgba(125, 190, 255, 0.26);
   color: #fff;
 }
@@ -90,3 +86,158 @@ html:has(body[data-scroll-locked]) {
   mask-position: right -480px bottom -400px, right bottom;
 }
 
+
+/* "Working…" label: a soft highlight sweeping across the text. */
+.shimmer-text {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.4) 40%, #fff 50%, rgba(255, 255, 255, 0.4) 60%, rgba(255, 255, 255, 0.4) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 1.8s linear infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -150% 0;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Pointer-following spotlight on feature cards. */
+.bento-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 0%), rgba(255, 138, 90, 0.09), transparent 60%);
+}
+
+.bento-card:hover::before {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:has(.home-page) {
+    scroll-behavior: auto;
+  }
+  .shimmer-text {
+    animation: none;
+  }
+}
+
+/* Journey stop on the left rail (see geometry.tsx). The node box is 0×0 at the anchor point. */
+.chapter-node {
+  width: 0;
+  height: 0;
+}
+
+.chapter-node__dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 11px;
+  height: 11px;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: #0a0d0c;
+  transition:
+    border-color 0.5s ease,
+    background-color 0.5s ease,
+    box-shadow 0.5s ease;
+}
+
+.chapter-node__dot::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.35);
+  transition: background-color 0.5s ease;
+}
+
+.chapter-node__lead {
+  position: absolute;
+  top: 0;
+  left: 9px;
+  width: 11px;
+  height: 1px;
+  background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.35) 0 2px, transparent 2px 4px);
+}
+
+.chapter-node__label {
+  position: absolute;
+  top: 0;
+  right: 14px;
+  display: none;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.3);
+  transition: color 0.5s ease;
+}
+
+@media (min-width: 1280px) {
+  .chapter-node__label {
+    display: block;
+  }
+}
+
+.chapter-node.is-on .chapter-node__dot {
+  border-color: #ff6228;
+  box-shadow:
+    0 0 0 4px rgba(255, 98, 40, 0.14),
+    0 0 16px rgba(255, 98, 40, 0.55);
+}
+
+.chapter-node.is-on .chapter-node__dot::after {
+  background: #ffb07a;
+}
+
+.chapter-node.is-on .chapter-node__label {
+  color: #ff8a5a;
+}
+
+/* Hero copy starts hidden and is revealed by the GSAP intro. If scripts never run,
+   the fallback animation shows it after 3s; reduced motion shows it immediately. */
+[data-hero] {
+  visibility: hidden;
+  animation: hero-fallback 0s 3s forwards;
+}
+
+@keyframes hero-fallback {
+  to {
+    visibility: visible;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-hero] {
+    visibility: visible;
+    animation: none;
+  }
+}
+
+/* SplitText line masks need a little room so descenders aren't clipped. */
+.split-line-mask {
+  padding-bottom: 0.08em;
+  margin-bottom: -0.08em;
+}

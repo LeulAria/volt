@@ -19,7 +19,7 @@ import { escapeRegExpCharacters } from '../../../../../base/common/strings.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
-import { getCodeEditor, ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
+import { ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
 import { EditorExtensionsRegistry } from '../../../../../editor/browser/editorExtensions.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
@@ -33,24 +33,23 @@ import { deepClone } from '../../../../../base/common/objects.js';
 import { isObject } from '../../../../../base/common/types.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
-import { IEditorOptions, ITextEditorOptions, TextEditorSelectionRevealType, TextEditorSelectionSource } from '../../../../../platform/editor/common/editor.js';
+import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
-import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IStorageService, StorageScope } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ACCESS_MODE_OPTIONS, accessModeOption } from '../../../../services/voltRuntime/common/access/accessModes.js';
-import { alwaysAllowPattern } from '../../../../services/voltRuntime/common/access/wildcard.js';
-import { IVoltEvent, IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
-import { runStatusLine } from '../../../../services/voltRuntime/common/harness/workLog.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
-import { AgentSessionStatus } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { agentRunOnStorageKey, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { createAccessIcon } from '../chrome/accessIcons.js';
 import { mountAgentQuickOpenActions } from '../chrome/agentViewSidebars.js';
 import { agentMessagePlainText, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
@@ -62,7 +61,7 @@ import { Orientation, Sash } from '../../../../../base/browser/ui/sash/sash.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
-import { GroupsOrder, IEditorGroupsService, IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
+import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { ISearchService } from '../../../../services/search/common/search.js';
 import { searchFilesAndFolders } from '../../../search/browser/searchChatContext.js';
@@ -72,15 +71,16 @@ import { IAction } from '../../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
 import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { getSimpleCodeEditorWidgetOptions } from '../../../codeEditor/browser/simpleEditorOptions.js';
-import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
-import { extractToolImage } from '../preview/browserSnapshot.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
-import { openAgentChanges } from '../review/agentChangesEditor.js';
+import { completeStreamingBlocks } from './agentSessionController.js';
+import { AgentSurfaceHost } from '../workspace/agentSurfaceHost.js';
 import { AgentComposerChips } from '../composer/agentComposerChips.js';
 import { AgentComposerLists } from '../composer/agentComposerLists.js';
 import { AgentComposerQueue } from '../composer/agentComposerQueue.js';
+import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
+import { agentComposerCanSend, agentComposerNeedsProjectChip } from '../workspace/agentShell.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { AgentThreadView } from './agentThreadView.js';
 import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
@@ -90,10 +90,9 @@ import { MentionCodePreview } from '../composer/mentionCodePreview.js';
 import { appendAgentScrollableList } from './agentScrollable.js';
 import { dayjs } from '../chrome/dayjs.js';
 import { createTableCopyIcon, flashCopyIconSuccess, renderAgentBlock, renderFileChangesPart, renderMarkdownInto, IBlockRenderContext } from '../blocks/agentBlockRenderers.js';
-import { AgentSegment, IAgentActivityItem, IFileChangeBlock, ITerminalBlock, IToolBlock, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, isExploreItemClickable, isExploreTool, isFileChangeTool, isShellTool, looksLikeShell, parseFileTarget, parseShellToolInput, stringifyToolResult, workCountsForSegments } from '../blocks/agentBlocks.js';
-import { mergeToolInput } from '../../../../services/voltRuntime/common/acpToolInput.js';
+import { AgentSegment, IAgentActivityItem, isExploreItemClickable } from '../blocks/agentBlocks.js';
 import { buildThreadParts, STATUS_ROTATE_MS, STATUS_SWAP_MS, streamingActivityLines, ThreadPart, visibleReplyParts } from '../chrome/agentTimeline.js';
-import { chooseFileChangeDiffStyle, fileChangeVerb, parseToolFileChange } from '../review/fileChangePreviewModel.js';
+import { chooseFileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
 
 function createSvgIcon(viewBox: string, pathD: string, extraClass?: string, stroke = false, strokeWidth = '1.5'): HTMLElement {
 	const el = extraClass ? $(`span.volt-agent-svg-icon.${extraClass}`) : $('span.volt-agent-svg-icon');
@@ -244,30 +243,26 @@ function createExpandIcon(restored: boolean): HTMLElement {
 
 function createCopyIcon(): HTMLElement {
 	const el = $('span.volt-agent-svg-icon.copy');
-	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', '0 0 512 512');
+	const doc = el.ownerDocument;
+	const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('viewBox', '0 0 24 24');
 	svg.setAttribute('width', '24');
 	svg.setAttribute('height', '24');
 	svg.setAttribute('fill', 'none');
+	svg.setAttribute('stroke', 'currentColor');
+	svg.setAttribute('stroke-width', '1');
+	svg.setAttribute('stroke-linecap', 'round');
+	svg.setAttribute('stroke-linejoin', 'round');
 	svg.setAttribute('aria-hidden', 'true');
-	const rect = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'rect');
-	rect.setAttribute('x', '128');
-	rect.setAttribute('y', '128');
-	rect.setAttribute('width', '336');
-	rect.setAttribute('height', '336');
-	rect.setAttribute('rx', '57');
-	rect.setAttribute('ry', '57');
-	rect.setAttribute('fill', 'none');
-	rect.setAttribute('stroke', 'currentColor');
-	rect.setAttribute('stroke-width', '21.333');
-	rect.setAttribute('stroke-linejoin', 'round');
-	const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
-	path.setAttribute('d', 'M383.5,128l.5-24a56.16,56.16,0,0,0-56-56H112a64.19,64.19,0,0,0-64,64V328a56.16,56.16,0,0,0,56,56h24');
-	path.setAttribute('fill', 'none');
-	path.setAttribute('stroke', 'currentColor');
-	path.setAttribute('stroke-width', '21.333');
-	path.setAttribute('stroke-linecap', 'round');
-	path.setAttribute('stroke-linejoin', 'round');
+	const rect = doc.createElementNS('http://www.w3.org/2000/svg', 'rect');
+	rect.setAttribute('width', '14');
+	rect.setAttribute('height', '14');
+	rect.setAttribute('x', '8');
+	rect.setAttribute('y', '8');
+	rect.setAttribute('rx', '2');
+	rect.setAttribute('ry', '2');
+	const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
+	path.setAttribute('d', 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2');
 	svg.appendChild(rect);
 	svg.appendChild(path);
 	el.appendChild(svg);
@@ -339,8 +334,10 @@ export interface IAgentDockState {
 	turns: IAgentDockTurn[];
 }
 
-interface IAgentActivity {
+export interface IAgentActivity {
 	status: string;
+	/** When set, the live line keeps this status instead of rotating back to "Thinking". */
+	statusPinned?: boolean;
 	expanded: boolean;
 	streaming: boolean;
 	items: IAgentActivityItem[];
@@ -397,13 +394,6 @@ function formatWorkedDuration(ms: number): string {
 	return seconds
 		? localize('voltAgent.workedMinutesSeconds', "Worked for {0}m {1}s", minutes, seconds)
 		: localize('voltAgent.workedMinutes', "Worked for {0}m", minutes);
-}
-
-function hasVisibleReply(message: IAgentAssistantMessage): boolean {
-	if ((message.text ?? '').trim()) {
-		return true;
-	}
-	return (message.segments ?? []).some(segment => segment.kind === 'text' && segment.text.trim());
 }
 
 export class AgentEditor extends EditorPane implements IAgentFindHost {
@@ -472,7 +462,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private sessionTokensWindow: number | undefined;
 	private toolbarLayoutHandle: number | undefined;
 	private stickToBottom = true;
-	private readonly threadListeners = this._register(new DisposableStore());
+	/** Listeners of the turn being rendered. Points at `tailListeners` while the last exchange renders. */
+	private readonly settledListeners = this._register(new DisposableStore());
+	/** The last exchange (user turn and reply) owns its own listeners so it can be redrawn alone. */
+	private readonly tailListeners = this._register(new DisposableStore());
+	private renderingTail = false;
+	private get threadListeners(): DisposableStore {
+		return this.renderingTail ? this.tailListeners : this.settledListeners;
+	}
+	private tailExchange: HTMLElement | undefined;
+	private tailFrom = -1;
+	private renderedCount = 0;
 	private readonly thinkingStore = this._register(new DisposableStore());
 	private readonly exploreHitsTooltip = this._register(new AgentTooltip());
 	private readonly markdownRenderer: MarkdownRenderer;
@@ -500,12 +500,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private editModelButton: HTMLButtonElement | undefined;
 	private editSendButton: HTMLButtonElement | undefined;
 	private readonly editEditorDisposables = this._register(new DisposableStore());
-	private skipRunEvents = false;
-	private activeRunId: string | undefined;
 	private openedPreviewUrl: string | undefined;
-	private previewTimer: number | undefined;
-	/** Set from the runtime `lane` event. Preview only opens when the user asked to see something running. */
-	private runWantsPreview = false;
+	private surfaceHost!: AgentSurfaceHost;
+	private restoringChat = false;
+	private chatSaveTimer: number | undefined;
 	private snapshotOverlay: HTMLElement | undefined;
 	private readonly snapshotStore = this._register(new DisposableStore());
 	private readonly _onDidChangeDock = this._register(new Emitter<void>());
@@ -517,7 +515,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		group: IEditorGroup,
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IThemeService themeService: IThemeService,
-		@IStorageService storageService: IStorageService,
+		@IStorageService private readonly storageService: IStorageService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ITextResourceConfigurationService private readonly textResourceConfigurationService: ITextResourceConfigurationService,
@@ -534,6 +532,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@ISearchService private readonly searchService: ISearchService,
 		@ILogService private readonly logService: ILogService,
 		@IAgentSessionChangesService private readonly sessionChanges: IAgentSessionChangesService,
+		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
+		@IAgentHistoryService private readonly history: IAgentHistoryService,
 	) {
 		super(AgentEditor.ID, group, telemetryService, themeService, storageService);
 		this.markdownRenderer = this.instantiationService.createInstance(MarkdownRenderer, {});
@@ -547,16 +547,36 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			},
 		}));
 		this._register(this.runtime.onDidChangeAccess(() => this.updateAccessButton()));
+		this._register(this.sessionContext.onDidChangeActiveProject(() => {
+			this.renderSuggestChips();
+			this.updateSendButton();
+		}));
+		this._register(this.sessionContext.onDidChangeProjects(() => {
+			this.renderSuggestChips();
+			this.updateSendButton();
+		}));
 	}
 
 	protected override createEditor(parent: HTMLElement): void {
 		this.container = append(parent, $('.volt-agent-editor'));
 		this.container.dataset.mode = normalizeVoltMode(this.currentMode);
 		this._register(new DragAndDropObserver(parent, {
-			onDragEnter: e => this.blockWorkbenchFileDrop(e),
-			onDragOver: e => this.blockWorkbenchFileDrop(e),
+			onDragEnter: e => {
+				this.blockWorkbenchFileDrop(e);
+				this.surfaceHost?.onDragOver(e);
+			},
+			onDragOver: e => {
+				this.blockWorkbenchFileDrop(e);
+				this.surfaceHost?.onDragOver(e);
+			},
+			onDragLeave: () => this.surfaceHost?.clearDropFeedback(),
+			onDragEnd: () => this.surfaceHost?.clearDropFeedback(),
 			onDrop: e => {
 				this.blockWorkbenchFileDrop(e);
+				// Tabs and terminals dropped beside the chat, or anything dropped on its tools, open as tools.
+				if (this.surfaceHost?.handleDrop(e)) {
+					return;
+				}
 				if (this.editingUserIndex !== undefined && isHTMLElement(e.target) && e.target.closest('.volt-agent-edit-slot')) {
 					void this.editMentionController?.handleExternalDrop(e);
 					return;
@@ -570,6 +590,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.threadInner = this.threadView.inner;
 		this.threadScroll = this.threadView.scroll;
 		this.editorMainEl = append(this.container, $('.volt-agent-editor-main'));
+		this.surfaceHost = this._register(this.instantiationService.createInstance(AgentSurfaceHost, this.container, this.editorMainEl));
 		append(this.editorMainEl, this.threadEl);
 		this.threadView.rememberHome();
 		const quickOpen = getWindow(this.container).document.querySelector('.volt-agent-quick-open-actions');
@@ -580,6 +601,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this._register(this.threadScroll.onScroll(e => {
 			if (!this.threadScrollFrozen && !this.applyingEditPin) {
 				this.stickToBottom = e.scrollTop + e.height >= e.scrollHeight - 32;
+				if (!this.restoringChat) {
+					this.scheduleChatSave();
+				}
 				if (this.editingUserIndex !== undefined) {
 					const editing = this.threadInner.querySelector<HTMLElement>('.volt-agent-turn.user.editing');
 					if (editing) {
@@ -612,6 +636,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.composerEl = append(this.editorMainEl, $('.volt-agent-composer'));
 		this.composerChips = this._register(this.instantiationService.createInstance(AgentComposerChips, {
 			onChangesClick: () => void this.openSessionChanges(),
+			onTerminalClick: () => this.surfaceHost.openTerminal(),
 		}));
 		append(this.composerEl, this.composerChips.element);
 		this.composerQueue = this._register(this.instantiationService.createInstance(AgentComposerQueue, {
@@ -656,7 +681,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				},
 			];
 		}, {
-			delay: 2000,
+			delay: 4000,
 			fontSource: () => (this.monacoHost.querySelector('.view-lines')
 				?? this.monacoHost.querySelector('textarea')
 				?? this.placeholderEl
@@ -756,6 +781,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			void this.openEditInNewAgent();
 		}));
 		this._register(addDisposableListener(this.sendButton, 'click', () => {
+			if (!this.composerCanSend()) {
+				return;
+			}
 			this.send();
 		}));
 		this._register(addDisposableListener(this.zoomButton, 'click', e => {
@@ -1185,6 +1213,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.editEditor?.updateOptions(this.getAgentInputEditorOptions(true));
 	}
 
+	private scheduleChatSave(): void {
+		const sessionId = this.sessionKey;
+		if (!sessionId || !this.surfaceHost) {
+			return;
+		}
+		const scrollTop = this.threadScroll?.getScrollPosition().scrollTop;
+		const win = getWindow(this.container);
+		if (this.chatSaveTimer !== undefined) {
+			win.clearTimeout(this.chatSaveTimer);
+		}
+		this.chatSaveTimer = win.setTimeout(() => {
+			this.chatSaveTimer = undefined;
+			this.surfaceHost.rememberChat(sessionId, { followTail: this.stickToBottom, scrollTop });
+		}, 200);
+	}
+
 	private persistInputState(): void {
 		const input = this.input;
 		if (!(input instanceof AgentEditorInput)) {
@@ -1213,7 +1257,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.sessionTokensWindow = input.contextWindow;
 		this.editingUserIndex = undefined;
 		this.clearEditComposer();
-		this.stickToBottom = true;
+		const chat = this.surfaceHost.chatView(input.sessionId);
+		const followTail = chat.followTail !== false;
+		this.stickToBottom = followTail;
+		this.restoringChat = true;
 		if (input.restoredMode && input.restoredMode !== this.currentMode) {
 			const option = MODE_OPTIONS.find(item => item.id.toLowerCase() === input.restoredMode!.toLowerCase());
 			if (option) {
@@ -1222,7 +1269,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 		}
 		this.syncComposerPlacement();
-		this.renderThread(true);
+		this.renderThread(followTail);
+		if (!followTail && chat.scrollTop !== undefined) {
+			this.threadScroll.setScrollPosition({ scrollTop: chat.scrollTop });
+		}
+		this.restoringChat = false;
 		if (this.inputModel && this.inputModel.getValue() !== input.draft) {
 			this.inputModel.setValue(input.draft);
 		}
@@ -1406,6 +1457,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 			const actions = ([
 				{ id: 'files' as const, label: localize('voltAgent.plusFiles', "Files"), keys: ['files', 'file', 'attach'] },
+				{ id: 'openFile' as const, label: localize('voltAgent.plusOpenFile', "Open File"), keys: ['open', 'file', 'editor'] },
+				{ id: 'terminal' as const, label: localize('voltAgent.plusTerminal', "Terminal"), keys: ['terminal', 'shell'] },
+				{ id: 'browser' as const, label: localize('voltAgent.plusBrowser', "Browser"), keys: ['browser', 'preview'] },
 				{ id: 'model' as const, label: localize('voltAgent.plusModel', "Model"), keys: ['model'] },
 				{ id: 'mcp' as const, label: localize('voltAgent.plusMcp', "MCP"), keys: ['mcp'] },
 			]).filter(action =>
@@ -1424,7 +1478,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					? createPaperclipIcon()
 					: action.id === 'model'
 						? createCubeIcon()
-						: createPlugIcon());
+						: action.id === 'mcp'
+							? createPlugIcon()
+							: renderIcon(action.id === 'terminal' ? Codicon.terminal : action.id === 'browser' ? Codicon.globe : Codicon.file));
 				append(item, $('span.label')).textContent = action.label;
 				if (action.id === 'model') {
 					const selected = this.selectedModel();
@@ -1455,6 +1511,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 							this.mentionController?.openFilePicker();
 							this.inputEditor?.focus();
 						}
+						return;
+					}
+					if (action.id === 'openFile') {
+						void this.surfaceHost.openFileFromDialog();
+						return;
+					}
+					if (action.id === 'terminal') {
+						this.surfaceHost.openTerminal();
+						return;
+					}
+					if (action.id === 'browser') {
+						this.surfaceHost.openBrowser();
 						return;
 					}
 					if (action.id === 'model') {
@@ -1509,25 +1577,46 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.isFollowUpComposer()) {
 			return;
 		}
-		const addChip = (label: string, onClick: () => void, kb?: string) => {
+		const chips = agentEmptyComposerChips({
+			mode: this.currentMode,
+			needsProject: this.composerNeedsProject(),
+		});
+		for (const chipSpec of chips) {
 			const chip = append(this.suggestEl, $('button.volt-agent-suggest-chip')) as HTMLButtonElement;
-			append(chip, $('span.label')).textContent = label;
-			if (kb) {
-				append(chip, $('span.kb')).textContent = kb;
+			append(chip, $('span.label')).textContent = chipSpec.label;
+			if (chipSpec.kb) {
+				append(chip, $('span.kb')).textContent = chipSpec.kb;
 			}
 			this.suggestListeners.add(addDisposableListener(chip, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();
-				onClick();
+				switch (chipSpec.id) {
+					case 'plan':
+						this.setMode('Plan');
+						return;
+					case 'multitask':
+						this.setMode('Multitask');
+						return;
+					case 'selectProject':
+					case 'cloud':
+						// Placeholder: action TBD.
+						return;
+					default: {
+						const unexpected: never = chipSpec.id;
+						return unexpected;
+					}
+				}
 			}));
-		};
-		if (this.currentMode !== 'Plan') {
-			addChip(localize('voltAgent.planNewIdea', "Plan New Idea"), () => this.setMode('Plan'), localize('voltAgent.planKb', "⇧Tab"));
 		}
-		if (this.currentMode !== 'Multitask') {
-			addChip(localize('voltAgent.multitaskChip', "Multitask"), () => this.setMode('Multitask'));
-		}
-		addChip(localize('voltAgent.runInCloud', "Run in Cloud"), () => { /* visual chip */ });
+	}
+
+	/** No project binding and no saved folder: Send/Enter off and Select project chip on. */
+	private composerNeedsProject(): boolean {
+		return agentComposerNeedsProjectChip(this.sessionContext, this.sessionKey, this.history.get(this.sessionKey));
+	}
+
+	private composerCanSend(): boolean {
+		return agentComposerCanSend(this.sessionContext, this.sessionKey, this.history.get(this.sessionKey));
 	}
 
 	private setSearchableText(parent: HTMLElement, text: string): void {
@@ -1764,7 +1853,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private renderThread(scrollToEnd = false): void {
-		this.threadListeners.clear();
+		this.settledListeners.clear();
+		this.tailListeners.clear();
+		this.renderingTail = false;
+		this.tailExchange = undefined;
+		this.tailFrom = -1;
+		this.renderedCount = this.messages.length;
 		this.threadInner.replaceChildren();
 		if (!this.messages.length) {
 			this.editingUserIndex = undefined;
@@ -1779,28 +1873,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this._onDidChangeDock.fire();
 			return;
 		}
+		const tailFrom = this.lastExchangeStart();
 		let exchange: HTMLElement | undefined;
 		for (const [index, message] of this.messages.entries()) {
 			if (message.kind === 'user' || !exchange) {
+				if (index === tailFrom) {
+					this.renderingTail = true;
+				}
 				exchange = append(this.threadInner, $('.volt-agent-exchange'));
-			}
-			const turn = append(exchange, $(`.volt-agent-turn.${message.kind}`));
-
-			if (message.kind === 'user') {
-				if (this.editingUserIndex === index) {
-					turn.classList.add('editing');
-					append(turn, $('.volt-agent-edit-slot'));
-				} else {
-					this.renderUserTurn(turn, message, index);
+				if (index === tailFrom) {
+					this.tailExchange = exchange;
+					this.tailFrom = tailFrom;
 				}
-				const next = this.messages[index + 1];
-				if (next?.kind === 'agent' && this.editingUserIndex !== index) {
-					this.renderWorkedMeta(exchange, next);
-				}
-			} else {
-				this.renderAgentTurn(turn, message);
 			}
+			this.renderThreadMessage(exchange, message, index);
 		}
+		this.renderingTail = false;
 		this.syncComposerPlacement();
 		this.syncThreadScroll(scrollToEnd);
 		scheduleAtNextAnimationFrame(getWindow(this.threadInner), () => {
@@ -1819,12 +1907,72 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.publishSessionChanges();
 	}
 
+	private renderThreadMessage(exchange: HTMLElement, message: IAgentMessage, index: number): void {
+		const turn = append(exchange, $(`.volt-agent-turn.${message.kind}`));
+		if (message.kind === 'user') {
+			if (this.editingUserIndex === index) {
+				turn.classList.add('editing');
+				append(turn, $('.volt-agent-edit-slot'));
+			} else {
+				this.renderUserTurn(turn, message, index);
+			}
+			const next = this.messages[index + 1];
+			if (next?.kind === 'agent' && this.editingUserIndex !== index) {
+				this.renderWorkedMeta(exchange, next);
+			}
+		} else {
+			this.renderAgentTurn(turn, message);
+		}
+	}
+
+	/** Index of the message that starts the last exchange. */
+	private lastExchangeStart(): number {
+		for (let i = this.messages.length - 1; i >= 0; i--) {
+			if (this.messages[i].kind === 'user') {
+				return i;
+			}
+		}
+		return this.messages.length ? 0 : -1;
+	}
+
+	/**
+	 * Streaming redraw: only the last exchange is rebuilt; everything above it keeps its DOM,
+	 * its rendered markdown, and its highlighted code. Frame cost no longer grows with the
+	 * length of the conversation. Anything structural falls back to a full render.
+	 */
+	private renderThreadTail(scrollToEnd: boolean): void {
+		const exchange = this.tailExchange;
+		if (!exchange || !exchange.isConnected || this.renderedCount !== this.messages.length || this.editingUserIndex !== undefined || this.tailFrom !== this.lastExchangeStart() || this.tailFrom < 0) {
+			this.renderThread(scrollToEnd);
+			return;
+		}
+		this.tailListeners.clear();
+		this.renderingTail = true;
+		const fresh = $('.volt-agent-exchange');
+		try {
+			for (let index = this.tailFrom; index < this.messages.length; index++) {
+				this.renderThreadMessage(fresh, this.messages[index], index);
+			}
+		} finally {
+			this.renderingTail = false;
+		}
+		exchange.replaceWith(fresh);
+		this.tailExchange = fresh;
+		this.syncThreadScroll(scrollToEnd);
+		if (this.findWidget?.isVisible()) {
+			this.applyFindHighlights(false);
+		}
+		this.refreshContextUsage();
+		this.publishSessionChanges();
+	}
+
 	private publishSessionChanges(): void {
 		this.sessionChanges.setSessionTranscript(this.sessionKey, this.messages);
 	}
 
 	openSessionChanges(): Promise<void> {
-		return openAgentChanges(this.instantiationService, this.editorService, this.editorGroupsService, this.sessionKey);
+		this.surfaceHost.openChanges();
+		return Promise.resolve();
 	}
 
 	get sessionId(): string {
@@ -2083,7 +2231,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		if (this.isStreaming()) {
-			this.skipRunEvents = true;
+			if (this.input instanceof AgentEditorInput) {
+				this.input.controller.skipCurrentRun();
+			}
 			this.stopAgent();
 		}
 		this.editingUserIndex = undefined;
@@ -2093,6 +2243,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.input instanceof AgentEditorInput) {
 			this.input.recordTruncate(removed);
 		}
+		this.runtime.truncateSession(this.sessionKey, this.messages.filter(message => message.kind === 'user').length);
 		this.syncComposerPlacement();
 		this.dispatchPrompt(value, display);
 	}
@@ -2406,6 +2557,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.renderActivityGroup(body, message, part, streaming && part === lastGroup);
 			} else if (part.kind === 'snapshot') {
 				this.renderSnapshotPart(body, message, part.item, streaming && !part.item.image);
+			} else if (part.kind === 'notice') {
+				this.renderProviderNotice(body, part);
 			} else if (part.kind === 'markdown') {
 				const reply = append(body, $('.volt-agent-reply'));
 				renderMarkdownInto(reply, part.content, ctx);
@@ -2511,6 +2664,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}, wait);
 	}
 
+	private renderProviderNotice(parent: HTMLElement, part: Extract<ThreadPart, { kind: 'notice' }>): void {
+		const notice = append(parent, $(`.volt-agent-provider-notice.severity-${part.severity}`));
+		const title = append(notice, $('div.volt-agent-provider-notice-title'));
+		this.setSearchableText(title, part.title);
+		if (part.description) {
+			const detail = append(notice, $('div.volt-agent-provider-notice-detail'));
+			this.setSearchableText(detail, part.description);
+		}
+	}
+
 	private renderActivityGroup(parent: HTMLElement, message: IAgentAssistantMessage, part: Extract<ThreadPart, { kind: 'group' }>, streaming: boolean): void {
 		const section = append(parent, $('.volt-agent-activity'));
 		if (streaming) {
@@ -2520,7 +2683,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				activity.shimmerStartedAt ??= Date.now();
 			}
 			const anchor = activity?.shimmerStartedAt ?? Date.now();
-			const lines = streamingActivityLines(part.title, activity?.status, part.items, Date.now(), anchor);
+			const lines = streamingActivityLines(part.title, activity?.status, part.items, Date.now(), anchor, activity?.statusPinned === true);
 			const keyBase = String(message.startedAt ?? message.id ?? 'live');
 			if (lines.summary) {
 				this.renderStatusLine(section, `${keyBase}:summary`, lines.summary, anchor, false);
@@ -2657,7 +2820,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				const link = append(card, $('button.volt-agent-card-link'));
 				link.textContent = source.title || source.url;
 				this.threadListeners.add(addDisposableListener(link, 'click', () => {
-					void this.commandService.executeCommand(OPEN_BROWSER_COMMAND_ID, source.url, source.title);
+					this.surfaceHost.openBrowser(source.url, source.title, true);
 				}));
 			}
 			return;
@@ -2666,7 +2829,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			const link = append(card, $('button.volt-agent-card-link'));
 			link.textContent = view.statusCode === 200 ? view.url : `${view.statusCode}  ${view.url}`;
 			this.threadListeners.add(addDisposableListener(link, 'click', () => {
-				void this.commandService.executeCommand(OPEN_BROWSER_COMMAND_ID, view.url);
+				this.surfaceHost.openBrowser(view.url, undefined, true);
 			}));
 		}
 	}
@@ -2884,41 +3047,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!resource) {
 			return;
 		}
-		const group = this.editorGroupsService.getGroups(GroupsOrder.MOST_RECENTLY_ACTIVE).find(g => g !== this.group) ?? this.group;
-		const options: ITextEditorOptions = {
-			pinned: true,
-			revealIfOpened: true,
-			revealIfVisible: true,
-		};
-		if (startLine) {
-			options.selection = {
-				startLineNumber: startLine,
-				startColumn: 1,
-				endLineNumber: endLine ?? startLine,
-				endColumn: Number.MAX_SAFE_INTEGER,
-			};
-			options.selectionRevealType = TextEditorSelectionRevealType.NearTopIfOutsideViewport;
-			options.selectionSource = TextEditorSelectionSource.NAVIGATION;
-		}
-		const pane = await this.editorService.openEditor({ resource, options }, group);
-		if (!startLine) {
-			return;
-		}
-		const editor = getCodeEditor(pane?.getControl());
-		const model = editor?.getModel();
-		if (!editor || !model) {
-			return;
-		}
-		const start = Math.min(startLine, model.getLineCount());
-		const end = Math.min(endLine ?? startLine, model.getLineCount());
-		const range = {
-			startLineNumber: start,
-			startColumn: 1,
-			endLineNumber: end,
-			endColumn: model.getLineMaxColumn(end),
-		};
-		editor.setSelection(range, TextEditorSelectionSource.NAVIGATION);
-		editor.revealRangeNearTopIfOutsideViewport(range);
+		this.surfaceHost.openFile(resource, startLine ? { startLine, endLine } : undefined);
 	}
 
 	private async resolveWorkspaceFile(path: string): Promise<URI | undefined> {
@@ -2941,6 +3070,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		if (isAbsolute(trimmed)) {
 			candidates.push(URI.file(trimmed));
+		}
+		const sessionRoot = this.surfaceHost.executionRoot();
+		if (sessionRoot) {
+			candidates.push(joinPath(sessionRoot, trimmed.replace(/^\.\//, '')));
 		}
 		for (const folder of this.workspaceContextService.getWorkspace().folders) {
 			candidates.push(joinPath(folder.uri, trimmed.replace(/^\.\//, '')));
@@ -3138,7 +3271,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.mentionController.bindDropTarget(this.container);
 		this.mentionController.bindDropTarget(this.inputBox);
 
-		this.editorDisposables.add(this.inputEditor.onDidFocusEditorText(() => this.inputBox.classList.add('focused')));
+		this.editorDisposables.add(this.inputEditor.onDidFocusEditorText(() => {
+			this.inputBox.classList.add('focused');
+			// Focus means a message is coming: start a CLI agent now so the first send skips its cold start.
+			this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode);
+		}));
 		this.editorDisposables.add(this.inputEditor.onDidBlurEditorText(() => this.inputBox.classList.remove('focused')));
 		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
 			this.layoutInputEditor();
@@ -3166,7 +3303,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				}
 				e.preventDefault();
 				e.stopPropagation();
-				this.send();
+				if (this.composerCanSend()) {
+					this.send();
+				}
 				return;
 			}
 			if (e.keyCode === KeyCode.KeyF && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
@@ -3209,7 +3348,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			if (e.keyCode === KeyCode.Enter && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				e.preventDefault();
 				e.stopPropagation();
-				this.send();
+				if (this.composerCanSend()) {
+					this.send();
+				}
 			}
 		}));
 		this.updateComposerEditorOptions();
@@ -3227,11 +3368,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.mentionController?.isMenuOpen) {
 			return;
 		}
+		if (!this.composerCanSend()) {
+			return;
+		}
 		this.send();
 	}
 
 	private send(): void {
-		if (this.submitting) {
+		if (this.submitting || !this.composerCanSend()) {
 			return;
 		}
 		this.submitting = true;
@@ -3323,9 +3467,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			mode: normalizeVoltMode(this.currentMode) as VoltMode,
 			providerRef: this.modelAuto ? undefined : (this.currentModel || undefined),
 			options: this.modelAuto || !this.currentModel ? undefined : this.runtime.getModelOptions(this.currentModel),
+			runOn: normalizeAgentRunOn(this.storageService.get(agentRunOnStorageKey(this.sessionContext.activeProject?.id), StorageScope.APPLICATION)),
 		}).catch(err => {
 			reply.activity!.streaming = false;
-			this.completeStreamingBlocks(reply);
+			completeStreamingBlocks(reply);
 			reply.endedAt = Date.now();
 			reply.durationMs = reply.endedAt - (reply.startedAt ?? reply.endedAt);
 			const errorText = err instanceof Error ? err.message : String(err);
@@ -3356,7 +3501,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			last.endedAt = Date.now();
 			last.startedAt ??= last.endedAt;
 			last.durationMs = Math.max(0, last.endedAt - last.startedAt);
-			this.completeStreamingBlocks(last);
+			completeStreamingBlocks(last);
 			this.updateSendButton();
 			this.renderThread(this.stickToBottom);
 			this._onDidChangeDock.fire();
@@ -3386,7 +3531,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private updateSendButton(): void {
+		const canSend = this.composerCanSend();
 		const kind: 'mic' | 'send' = this.isFollowUpComposer() || this.hasDraft() ? 'send' : 'mic';
+		this.sendButton.disabled = !canSend;
+		this.sendButton.classList.toggle('disabled', !canSend);
 		if (this.sendKind === kind && this.sendButton.childElementCount) {
 			this.sendButton.classList.remove('stop');
 			return;
@@ -3394,9 +3542,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.sendKind = kind;
 		this.sendButton.replaceChildren();
 		this.sendButton.classList.remove('stop');
-		setAgentTooltip(this.sendButton, kind === 'send'
-			? localize('voltAgent.send', "Send")
-			: localize('voltAgent.voice', "Voice"));
+		setAgentTooltip(this.sendButton, !canSend
+			? localize('voltAgent.selectProjectFirst', "Select a project to send")
+			: kind === 'send'
+				? localize('voltAgent.send', "Send")
+				: localize('voltAgent.voice', "Voice"));
 		this.sendButton.appendChild(kind === 'send' ? createSendIcon() : createMicIcon());
 	}
 
@@ -3470,533 +3620,47 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		return last?.kind === 'agent' && !!last.activity?.streaming;
 	}
 
+	/**
+	 * Run events are reduced by the input's session controller even while this
+	 * panel shows another chat. The panel only redraws and drives the composer.
+	 */
 	private bindRuntimeSession(): void {
 		this.eventDisposable?.dispose();
-		const session = this.runtime.getOrCreateSession(this.sessionKey);
-		const live = session.activeRun;
-		if (this.isStreaming() && live?.runId && (live.status === 'running' || live.status === 'waiting' || live.status === 'queued')) {
-			this.activeRunId = live.runId;
-			this.skipRunEvents = false;
-		}
-		this.eventDisposable = this.runtime.onEvent(session.sessionId, envelope => this.applyEvent(envelope));
-	}
-
-	private applyUsage(event: Extract<IVoltEventEnvelope['event'], { type: 'usage' }>, last?: IAgentAssistantMessage): void {
-		const prompt = Number.isFinite(event.input) ? event.input : 0;
-		const completion = Number.isFinite(event.output) ? event.output : 0;
-		const measured = event.used !== undefined && Number.isFinite(event.used) && event.used >= 0
-			? event.used
-			: (prompt + completion > 0 ? prompt + completion : undefined);
-		if (measured !== undefined) {
-			this.sessionTokensUsed = measured;
-			if (last) {
-				last.tokensUsed = measured;
-			}
-		}
-		if (event.size !== undefined && Number.isFinite(event.size) && event.size > 0) {
-			this.sessionTokensWindow = event.size;
-			if (last) {
-				last.tokensWindow = event.size;
-			}
-		}
-		if (!last) {
+		this.eventDisposable = undefined;
+		const input = this.input;
+		if (!(input instanceof AgentEditorInput)) {
 			return;
 		}
-		if (Number.isFinite(event.input) && event.input > 0) {
-			last.tokensIn = event.input;
-		}
-		if (Number.isFinite(event.output) && event.output > 0) {
-			last.tokensOut = event.output;
-		}
-		if (event.cache !== undefined && Number.isFinite(event.cache) && event.cache >= 0) {
-			last.tokensCache = event.cache;
-		}
-	}
-
-	/** DeepSeek `presentCall`. Card wins over the tool-name heuristics used for ACP. */
-	private applyPresentedTool(last: IAgentAssistantMessage, event: Extract<IVoltEvent, { type: 'tool.start' }>, activity: IAgentActivity): void {
-		const id = `tool-${event.callId}`;
-		if (event.card === 'terminal') {
-			const existing = findBlockByCallId(last.segments, event.callId);
-			if (existing?.type === 'terminal') {
-				existing.command = event.title || existing.command;
-				existing.cwd = event.cwd || existing.cwd;
-				existing.title = event.title || existing.title;
-			} else {
-				this.replaceCallBlock(last, event.callId, createTerminalBlock({
-					id,
-					callId: event.callId,
-					title: event.title,
-					command: event.title || event.input || '',
-					output: '',
-					cwd: event.cwd || this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath,
-				}));
-			}
-			const ran = firstCommandName(event.title || event.input || '');
-			activity.status = ran
-				? localize('voltAgent.runningCommand', "Running {0}", ran)
-				: localize('voltAgent.runningTerminal', "Running command");
-			return;
-		}
-		if (event.card === 'diff') {
-			const diff = event.diffs?.[0];
-			const path = diff?.path || event.locations?.[0]?.path || event.title || event.name;
-			const existing = findBlockByCallId(last.segments, event.callId);
-			if (existing?.type === 'file') {
-				existing.path = path;
-				existing.original = diff?.oldText ?? existing.original;
-				existing.modified = diff?.newText ?? existing.modified;
-				existing.verb = diff?.oldText === null ? 'Created' : 'Edited';
-				existing.input = event.input ?? existing.input;
-			} else {
-				this.replaceCallBlock(last, event.callId, createFileChangeBlock({
-					id,
-					callId: event.callId,
-					path,
-					verb: diff?.oldText === null ? 'Created' : 'Edited',
-					input: event.input,
-					original: diff?.oldText ?? undefined,
-					modified: diff?.newText,
-				}));
-			}
-			activity.status = event.title || event.name;
-			return;
-		}
-		const existing = findBlockByCallId(last.segments, event.callId);
-		const item = this.findActivityByCallId(last, event.callId);
-		const explore = isExploreTool(event.name, event.title, event.kind);
-		if (explore && !item) {
-			const described = describeExploreActivity(event.name, event.title, event.input);
-			const created: IAgentActivityItem = {
-				kind: classifyToolActivity(event.name, event.title, event.kind),
-				label: described.label,
-				detail: described.detail,
-				path: described.path,
-				startLine: described.startLine,
-				endLine: described.endLine,
-				files: described.files,
-				callId: event.callId,
-				input: event.input,
-				toolName: event.name,
-				toolTitle: event.title,
-			};
-			activity.items.push(created);
-			last.segments.push({ kind: 'activity', item: created });
-		} else if (item && event.title) {
-			item.toolTitle = event.title;
-			item.label = event.title;
-		}
-		if (existing?.type === 'tool' && event.title) {
-			existing.title = event.title;
-		}
-		if (!existing && !item && !explore) {
-			this.replaceCallBlock(last, event.callId, createToolBlock({
-				id,
-				callId: event.callId,
-				name: event.name,
-				title: event.title,
-				input: event.input,
-			}));
-		}
-		activity.status = event.title || event.name;
-	}
-
-	private replaceCallBlock(last: IAgentAssistantMessage, callId: string, block: ITerminalBlock | IFileChangeBlock | IToolBlock): void {
-		let replaced = false;
-		for (let i = 0; i < last.segments.length; i++) {
-			const segment = last.segments[i];
-			if (segment.kind === 'block' && 'callId' in segment.block && segment.block.callId === callId) {
-				last.segments[i] = { kind: 'block', block };
-				replaced = true;
-				break;
-			}
-		}
-		if (!replaced) {
-			last.segments.push({ kind: 'block', block });
-		}
-		last.blockState[block.id] = last.blockState[block.id] ?? { expanded: false };
-	}
-
-	private applyEvent(envelope: IVoltEventEnvelope): void {
-		const event = envelope.event;
-		if (this.skipRunEvents && event.type !== 'run.start') {
-			return;
-		}
-		if (event.type === 'run.start') {
-			this.skipRunEvents = false;
-			this.activeRunId = envelope.runId;
-		} else if (this.activeRunId && envelope.runId !== this.activeRunId) {
-			return;
-		}
-		const last = this.messages.at(-1);
-		if (event.type === 'usage') {
-			this.applyUsage(event, last?.kind === 'agent' ? last : undefined);
-			this.persistInputState();
-			this.refreshContextUsage();
-			this.scheduleThreadRender();
-			return;
-		}
-		if (!last || last.kind !== 'agent') {
-			return;
-		}
-		if (last.cancelled && event.type !== 'run.end') {
-			return;
-		}
-		const activity = last.activity ?? {
-			status: localize('voltAgent.thinking', "Thinking"),
-			expanded: false,
-			streaming: true,
-			items: [],
-		};
-		last.activity = activity;
-		last.segments ??= [];
-		last.blockState ??= {};
-
-		switch (event.type) {
-			case 'run.start':
-				activity.streaming = true;
-				activity.status = localize('voltAgent.thinking', "Thinking");
-				this.runWantsPreview = false;
-				break;
-			case 'lane':
-				this.runWantsPreview = event.wantsPreview;
-				break;
-			case 'lifecycle':
-				if (event.phase === 'planning') {
-					activity.status = localize('voltAgent.planning', "Planning");
-				} else if (event.phase === 'verifying') {
-					activity.status = localize('voltAgent.verifying', "Verifying");
-				} else if (event.phase === 'waiting' || event.phase === 'paused') {
-					activity.status = localize('voltAgent.waiting', "Waiting");
-				}
-				break;
-			case 'clarify':
-				last.text = (last.text ?? '') + event.question;
-				appendTextDelta(last.segments, event.question);
-				activity.status = localize('voltAgent.clarify', "Needs a decision");
-				break;
-			case 'decision':
-				activity.status = event.title;
-				activity.items.push({ kind: 'note', label: event.title, detail: event.detail });
-				break;
-			case 'outcome':
-				if (event.markdown && !(last.text ?? '').includes(event.headline)) {
-					const suffix = last.text?.trim() ? `\n\n${event.markdown}` : event.markdown;
-					last.text = (last.text ?? '') + suffix;
-					appendTextDelta(last.segments, suffix);
-				}
-				activity.status = event.headline;
-				break;
-			case 'step.start':
-			case 'step.end':
-			case 'text.start':
-			case 'text.end':
-			case 'reasoning.start':
-			case 'reasoning.end':
-				break;
-			case 'reasoning.delta':
-				activity.expanded = false;
-				activity.status = localize('voltAgent.thinking', "Thinking");
-				activity.thinkingText = (activity.thinkingText ?? '') + (event.delta ?? '');
-				appendThoughtDelta(last.segments, event.delta ?? '');
-				break;
-			case 'text.delta':
-				last.text = (last.text ?? '') + (event.delta ?? '');
-				appendTextDelta(last.segments, event.delta ?? '');
-				activity.status = localize('voltAgent.writing', "Writing");
-				break;
-			case 'tool.start': {
-				if (event.card) {
-					this.applyPresentedTool(last, event, activity);
-					break;
-				}
-				const kind = event.kind;
-				const parsed = parseShellToolInput(event.input);
-				const shell = isShellTool(event.name, event.title, event.input, kind) || (!kind && looksLikeShell(parsed.command));
-				if (shell) {
-					const ran = firstCommandName(parsed.command);
-					activity.items.push({
-						kind: 'note',
-						label: localize('voltAgent.ran', "Ran"),
-						detail: ran || undefined,
-					});
-					activity.status = ran
-						? localize('voltAgent.runningCommand', "Running {0}", ran)
-						: localize('voltAgent.runningTerminal', "Running command");
-				} else {
-					const fileChange = isFileChangeTool(event.name, event.title, kind);
-					if (!fileChange) {
-						const described = describeExploreActivity(event.name, event.title, event.input);
-						const item: IAgentActivityItem = {
-							kind: classifyToolActivity(event.name, event.title, kind),
-							label: described.label,
-							detail: described.detail,
-							path: described.path,
-							startLine: described.startLine,
-							endLine: described.endLine,
-							files: described.files,
-							callId: event.callId,
-							input: event.input,
-							toolName: event.name,
-							toolTitle: event.title,
-						};
-						activity.items.push(item);
-						last.segments.push({ kind: 'activity', item });
-						activity.status = [described.label, described.detail].filter(Boolean).join(' ') || event.title || event.name;
-					} else {
-						activity.status = event.title || event.name;
-					}
-				}
-				const id = `tool-${event.callId}`;
-				const explore = !shell && isExploreTool(event.name, event.title, kind);
-				if (shell) {
-					const cwd = event.cwd || parsed.cwd || this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath;
-					last.segments.push({
-						kind: 'block',
-						block: createTerminalBlock({
-							id,
-							callId: event.callId,
-							title: parsed.title || event.title,
-							command: parsed.command,
-							output: '',
-							cwd,
-							expanded: false,
-						}),
-					});
-					this.maybeOpenLocalPreview(parsed.command, 700);
-				} else if (isFileChangeTool(event.name, event.title, kind)) {
-					last.segments.push({
-						kind: 'block',
-						block: this.createFileChangeFromTool(id, event.callId, event.name, event.title, event.input),
-					});
-				} else if (!explore) {
-					last.segments.push({
-						kind: 'block',
-						block: createToolBlock({
-							id,
-							callId: event.callId,
-							name: event.name,
-							title: event.title,
-							input: event.input,
-						}),
-					});
-				}
-				if (!explore) {
-					last.blockState[id] = { expanded: false };
-				}
-				break;
-			}
-			case 'tool.input.delta': {
-				const block = findBlockByCallId(last.segments, event.callId);
-				if (block?.type === 'terminal') {
-					const parsed = parseShellToolInput(event.delta);
-					const next = parsed.command || event.delta;
-					block.command = block.command
-						? (block.command.includes(next) ? block.command : block.command + next)
-						: next;
-					if (parsed.cwd && !block.cwd) {
-						block.cwd = parsed.cwd;
-					}
-					if (parsed.title && !block.title) {
-						block.title = parsed.title;
-					}
-					this.maybeOpenLocalPreview(block.command, 700);
-					const ran = firstCommandName(block.command);
-					if (ran) {
-						activity.status = localize('voltAgent.runningCommand', "Running {0}", ran);
-						const lastItem = activity.items.at(-1);
-						if (lastItem && lastItem.label === localize('voltAgent.ran', "Ran") && !lastItem.detail) {
-							lastItem.detail = ran;
-						}
-					}
-				} else {
-					if (block?.type === 'tool') {
-						block.input = block.input ? (block.input.includes(event.delta) ? block.input : block.input + event.delta) : event.delta;
-					} else if (block?.type === 'file') {
-						block.input = block.input ? (block.input.includes(event.delta) ? block.input : block.input + event.delta) : event.delta;
-						this.mergeFileChange(block, event.delta);
-					}
-					const item = this.findActivityByCallId(last, event.callId);
-					if (item) {
-						const input = mergeToolInput(item.input, event.delta);
-						applyExploreInputToActivity(item, item.toolName ?? item.label, item.toolTitle, input);
-					}
-				}
-				break;
-			}
-			case 'tool.end': {
-				const block = findBlockByCallId(last.segments, event.callId);
-				const output = stringifyToolResult(event.result);
-				const image = extractToolImage(event.result);
-				if (image) {
-					this.attachSnapshotImage(last, event.callId, image);
-				}
-				if (block?.type === 'terminal') {
-					block.output = event.output || output;
-					block.status = event.error ? 'error' : 'complete';
-					block.exitCode = event.exitCode ?? (event.error ? 1 : 0);
-					if (event.title) {
-						block.title = event.title;
-					}
-					this.maybeOpenLocalPreview(block.output, block.command, 0);
-				} else if (block?.type === 'tool') {
-					block.output = event.output || output;
-					block.status = event.error ? 'error' : 'complete';
-				} else if (block?.type === 'file') {
-					block.output = event.output || output;
-					block.status = event.error ? 'error' : 'complete';
-					const diff = event.diffs?.[0];
-					if (diff) {
-						block.path = diff.path || block.path;
-						block.original = diff.oldText ?? block.original;
-						block.modified = diff.newText;
-						block.verb = diff.oldText === null ? 'Created' : block.verb;
-					}
-					this.mergeFileChange(block, block.input, block.output, event.result);
-				}
-				const item = this.findActivityByCallId(last, event.callId);
-				if (item) {
-					applyExploreResultToActivity(item, event.result, item.input);
-					if (event.view) {
-						item.view = event.view;
-					}
-				}
-				break;
-			}
-			case 'plan':
-				last.title = localize('voltAgent.planTitle', "Plan");
-				last.steps = event.entries.map(entry => ({
-					label: entry.content,
-					state: entry.status === 'completed' ? 'done' : entry.status === 'in_progress' ? 'current' : 'pending',
-				}));
-				break;
-			case 'file.change': {
-				const path = event.uri.path || event.uri.fsPath;
-				if (!findFileBlockByPath(last.segments, path)) {
-					const id = `file-${path}-${last.segments.length}`;
-					last.segments.push({
-						kind: 'block',
-						block: createFileChangeBlock({
-							id,
-							path,
-							verb: event.kind === 'create' ? 'Created' : event.kind === 'delete' ? 'Deleted' : 'Edited',
-							status: 'complete',
-						}),
-					});
-					last.blockState[id] = { expanded: false };
-				}
-				break;
-			}
-			case 'access.ask': {
-				const id = `access-${event.request.id}`;
-				last.segments.push({
-					kind: 'block',
-					block: createApprovalBlock({
-						id,
-						requestId: event.request.id,
-						action: event.request.action,
-						resource: event.request.resource.value,
-						risk: event.request.risk,
-						reason: event.request.reason,
-						pattern: alwaysAllowPattern(event.request.action, event.request.resource.value),
-					}),
-				});
-				activity.status = localize('voltAgent.waitingApproval', "Waiting for approval");
-				break;
-			}
-			case 'access.resolved': {
-				for (const segment of last.segments) {
-					if (segment.kind === 'block' && segment.block.type === 'approval' && segment.block.requestId === event.requestId) {
-						segment.block.decision = event.effect;
-						segment.block.scope = event.scope;
-						segment.block.status = event.effect === 'deny' ? 'error' : 'complete';
-					}
-				}
-				break;
-			}
-			case 'access.blocked': {
-				const id = `access-${event.request.id}`;
-				last.segments.push({
-					kind: 'block',
-					block: createApprovalBlock({
-						id,
-						requestId: event.request.id,
-						action: event.request.action,
-						resource: event.request.resource.value,
-						risk: event.request.risk,
-						reason: event.request.reason,
-						blocked: true,
-						policySource: event.policySource,
-						status: 'error',
-					}),
-				});
-				activity.status = localize('voltAgent.blocked', "Blocked");
-				break;
-			}
-			case 'finish':
-				break;
-			case 'retry':
-				activity.status = event.message;
-				activity.items.push({ kind: 'note', label: event.message });
-				break;
-			case 'error':
-				last.text = event.message;
-				appendTextDelta(last.segments, event.message);
-				activity.status = localize('voltAgent.error', "Error");
-				break;
-			case 'run.end':
-				activity.streaming = false;
-				activity.expanded = false;
-				last.cancelled = last.cancelled || event.reason === 'abort';
-				last.endedAt = Date.now();
-				last.startedAt ??= last.endedAt;
-				last.durationMs = Math.max(0, last.endedAt - last.startedAt);
-				if (!last.cancelled && event.reason !== 'fail' && !hasVisibleReply(last)) {
-					const empty = localize('voltAgent.emptyReply', "Stopped before a reply.");
-					last.text = empty;
-					appendTextDelta(last.segments, empty);
-				}
-				activity.status = last.cancelled
-					? localize('voltAgent.cancelled', "Cancelled")
-					: runStatusLine(workCountsForSegments(last.segments), last.durationMs);
-				this.completeStreamingBlocks(last);
-				this.scheduleThreadRender();
-				this.recordReply(last, true, last.cancelled ? 'cancelled' : event.reason === 'fail' ? 'error' : 'done');
-				if (event.reason === 'abort') {
-					this.updateSendButton();
-				} else {
-					this.drainPromptQueue();
-				}
+		const controller = input.controller;
+		this.eventDisposable = controller.onDidChange(change => {
+			if (this.input !== input) {
 				return;
-		}
-		this.scheduleThreadRender();
-	}
-
-	private maybeOpenLocalPreview(...parts: Array<string | number | undefined>): void {
-		if (!this.runWantsPreview) {
-			return;
-		}
-		let delay = 0;
-		const texts: string[] = [];
-		for (const part of parts) {
-			if (typeof part === 'number') {
-				delay = part;
-			} else if (part) {
-				texts.push(part);
 			}
+			switch (change.kind) {
+				case 'usage':
+					this.sessionTokensUsed = input.contextUsed;
+					this.sessionTokensWindow = input.contextWindow;
+					this.refreshContextUsage();
+					this.scheduleThreadRender();
+					break;
+				case 'render':
+					this.scheduleThreadRender();
+					break;
+				case 'runEnd':
+					this.scheduleThreadRender();
+					if (change.aborted) {
+						this.updateSendButton();
+					} else {
+						controller.consumePendingDrain();
+						this.drainPromptQueue();
+					}
+					break;
+			}
+		});
+		// A run that ended while another chat was showing leaves its queue for now.
+		if (controller.consumePendingDrain() && !this.isStreaming()) {
+			this.drainPromptQueue();
 		}
-		const url = extractLocalPreviewUrl(...texts);
-		if (!url || url === this.openedPreviewUrl) {
-			return;
-		}
-		const win = getWindow(this.container);
-		if (this.previewTimer !== undefined) {
-			win.clearTimeout(this.previewTimer);
-		}
-		this.previewTimer = win.setTimeout(() => {
-			this.previewTimer = undefined;
-			void this.openLocalPreview(url);
-		}, delay);
 	}
 
 	private async openLocalPreview(url: string, force = false): Promise<void> {
@@ -4012,82 +3676,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		} catch {
 			// keep fallback
 		}
-		await this.commandService.executeCommand(OPEN_BROWSER_COMMAND_ID, url, title);
-	}
-
-	private completeStreamingBlocks(message: IAgentAssistantMessage): void {
-		for (const segment of message.segments ?? []) {
-			if (segment.kind === 'block' && segment.block.status === 'streaming') {
-				segment.block.status = segment.block.type === 'approval' ? 'error' : 'complete';
-			}
-		}
-	}
-
-	private findActivityByCallId(message: IAgentAssistantMessage, callId: string): IAgentActivityItem | undefined {
-		for (const segment of message.segments) {
-			if (segment.kind === 'activity' && segment.item.callId === callId) {
-				return segment.item;
-			}
-		}
-		return message.activity?.items.find(item => item.callId === callId);
-	}
-
-	private createFileChangeFromTool(id: string, callId: string, name: string, title: string | undefined, input?: string): IFileChangeBlock {
-		const parsed = parseToolFileChange({ name, title, input });
-		const target = parseFileTarget(input, title, name, parsed?.path);
-		return createFileChangeBlock({
-			id,
-			callId,
-			path: parsed?.path || target?.path || title || name,
-			verb: fileChangeVerb(name, title, parsed?.path),
-			input,
-			original: parsed?.original,
-			modified: parsed?.modified,
-			unifiedDiff: parsed?.unifiedDiff,
-			additions: parsed?.additions,
-			deletions: parsed?.deletions,
-		});
-	}
-
-	private mergeFileChange(block: IFileChangeBlock, input?: string, output?: string, result?: unknown): void {
-		const parsed = parseToolFileChange({
-			name: block.verb,
-			title: block.path,
-			input: input ?? block.input,
-			output,
-			result,
-			path: block.path,
-		});
-		if (!parsed) {
-			return;
-		}
-		if (parsed.path) {
-			block.path = parsed.path;
-		}
-		if (parsed.original !== undefined) {
-			block.original = parsed.original;
-		}
-		if (parsed.modified !== undefined) {
-			block.modified = parsed.modified;
-		}
-		if (parsed.unifiedDiff) {
-			block.unifiedDiff = parsed.unifiedDiff;
-		}
-		if (parsed.additions !== undefined) {
-			block.additions = parsed.additions;
-		}
-		if (parsed.deletions !== undefined) {
-			block.deletions = parsed.deletions;
-		}
-		block.verb = fileChangeVerb(block.verb, parsed.path, block.path);
-	}
-
-	private attachSnapshotImage(message: IAgentAssistantMessage, callId: string, image: string): void {
-		const item = this.findActivityByCallId(message, callId);
-		if (!item) {
-			return;
-		}
-		item.image = image;
+		this.surfaceHost.openBrowser(url, title, true);
 	}
 
 	private scheduleThreadRender(): void {
@@ -4098,12 +3687,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.renderHandle = win.requestAnimationFrame(() => {
 			this.renderHandle = undefined;
 			this.persistInputState();
-			this.renderThread(this.stickToBottom);
+			this.renderThreadTail(this.stickToBottom);
 			this._onDidChangeDock.fire();
-			const last = this.messages.at(-1);
-			if (last?.kind === 'agent' && last.activity?.streaming) {
-				this.recordReply(last, false, 'running');
-			}
 		});
 	}
 
@@ -4246,6 +3831,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	override async setInput(input: AgentEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		this.persistInputState();
+		this.surfaceHost.present(input.sessionId);
 		await super.setInput(input, options, context, token);
 		try {
 			await input.ensureLoaded();
@@ -4261,6 +3847,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.composerChips.setSessionId(this.sessionKey);
 		this.publishSessionChanges();
 		this.bindRuntimeSession();
+		this.renderSuggestChips();
+		this.updateSendButton();
 		this.layoutInputEditor();
 		if (!options?.preserveFocus) {
 			this.inputEditor?.focus();
@@ -4269,12 +3857,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	override clearInput(): void {
 		this.persistInputState();
+		this.surfaceHost.present(undefined);
 		this.setComposerZoomed(false);
 		super.clearInput();
 	}
 
 	override layout(dimension: Dimension): void {
+		// A side chat opened in another chat's tools uses the compact chat chrome.
+		if (this.container.closest('.volt-agent-tools-area')) {
+			this.setBrowserHosted(true);
+		}
 		this.container.style.height = `${dimension.height}px`;
+		this.surfaceHost.layout(dimension);
 		this.layoutInputEditor();
 		this.syncThreadScroll();
 		this.sash?.layout();

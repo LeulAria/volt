@@ -42,15 +42,30 @@ interface IClaudeEffortOption {
 	badge?: { message?: string };
 }
 
+interface IClaudeModeOption {
+	id?: string;
+	name?: string;
+}
+
 interface IClaudeCatalogModel {
 	id?: string;
 	name?: string;
 	description?: string;
 	section?: string;
-	thinking?: { type?: string; effort_options?: IClaudeEffortOption[] };
+	context_window?: number;
+	supports_fast_mode?: boolean;
+	thinking?: {
+		type?: string;
+		always_on?: boolean;
+		effort_options?: IClaudeEffortOption[];
+		mode_options?: IClaudeModeOption[];
+	};
 	fast_mode?: { type?: string };
 	runtime?: { max_input_tokens?: number; default_effort?: string };
 }
+
+/** Bare Claude Code ids use this window. `[1m]` selects `runtime.max_input_tokens` when that cap is larger. */
+const CLAUDE_STANDARD_CONTEXT = 200_000;
 
 export interface ICodexContextWindow {
 	contextWindow?: number;
@@ -116,6 +131,47 @@ function contextChoices(contextWindow: number | undefined, maxContextWindow: num
 	return selectOption(MODEL_OPTION_CONTEXT, 'Context', [
 		{ value: current, label: formatContextChoice(current), isDefault: true },
 		{ value: max, label: formatContextChoice(max) },
+	]);
+}
+
+function claudeThinkingToggle(thinking: IClaudeCatalogModel['thinking']): IModelOptionDescriptor | undefined {
+	if (!thinking || thinking.always_on) {
+		return undefined;
+	}
+	const modes = thinking.mode_options ?? [];
+	const off = modes.some(mode => mode.id?.trim().toLowerCase() === 'off');
+	const on = modes.some(mode => {
+		const modeId = mode.id?.trim().toLowerCase();
+		return !!modeId && modeId !== 'off';
+	});
+	if (!off || !on) {
+		return undefined;
+	}
+	return booleanOption(MODEL_OPTION_THINKING, 'Thinking', true);
+}
+
+/**
+ * Claude publishes one input cap. Models above the standard window also accept the bare id
+ * (200K) or `[1m]` (the cap). A single cap at or below 200K is not a choice.
+ */
+function claudeContextDescriptor(maxTokens: number | undefined, contextWindow: number | undefined): IModelOptionDescriptor | undefined {
+	const max = maxTokens && maxTokens > 0 ? maxTokens : undefined;
+	const listed = contextWindow && contextWindow > 0 ? contextWindow : undefined;
+	if (listed && max && listed !== max) {
+		return contextChoices(Math.min(listed, max), Math.max(listed, max));
+	}
+	const cap = max ?? listed;
+	if (!cap || cap <= CLAUDE_STANDARD_CONTEXT) {
+		return undefined;
+	}
+	const standard = formatContextLabel(CLAUDE_STANDARD_CONTEXT);
+	const extended = formatContextLabel(cap);
+	if (!standard || standard === extended) {
+		return undefined;
+	}
+	return selectOption(MODEL_OPTION_CONTEXT, 'Context', [
+		{ value: standard, label: formatContextChoice(standard), isDefault: true },
+		{ value: extended, label: formatContextChoice(extended) },
 	]);
 }
 
@@ -186,16 +242,47 @@ export function parseCodexModels(payload: unknown, contextById?: ReadonlyMap<str
 	return models;
 }
 
-/** Claude Code's published model catalog (`surfaces.cc`). */
+function surfaceModels(surface: unknown): IClaudeCatalogModel[] {
+	const record = asRecord(surface);
+	const configs = Array.isArray(record?.model_selector_config) ? record.model_selector_config : [];
+	const config = asRecord(configs[0]);
+	return Array.isArray(config?.models) ? config.models as IClaudeCatalogModel[] : [];
+}
+
+/**
+ * The `cc` surface lists effort only. The other surfaces describe the same model ids with
+ * their thinking modes, fast mode, and context window, so those fill in what `cc` leaves out.
+ */
+function enrichClaudeModel(entry: IClaudeCatalogModel, others: readonly IClaudeCatalogModel[]): IClaudeCatalogModel {
+	const id = entry.id?.trim();
+	const matches = others.filter(other => other.id?.trim() === id);
+	if (!matches.length) {
+		return entry;
+	}
+	const withModes = entry.thinking?.mode_options?.length ? undefined : matches.find(other => other.thinking?.mode_options?.length);
+	const alwaysOn = entry.thinking?.always_on ?? matches.find(other => other.thinking?.always_on !== undefined)?.thinking?.always_on;
+	return {
+		...entry,
+		description: entry.description || matches.find(other => other.description)?.description,
+		context_window: entry.context_window ?? matches.find(other => other.context_window)?.context_window,
+		supports_fast_mode: entry.supports_fast_mode ?? (matches.some(other => other.supports_fast_mode === true || other.fast_mode?.type === 'toggle') || undefined),
+		thinking: {
+			...entry.thinking,
+			...(withModes ? { mode_options: withModes.thinking?.mode_options } : {}),
+			...(alwaysOn !== undefined ? { always_on: alwaysOn } : {}),
+		},
+	};
+}
+
+/** Claude Code's published model catalog: the `surfaces.cc` rows, enriched from the other surfaces. */
 export function parseClaudeCatalog(payload: unknown): IModelInfo[] {
 	const root = asRecord(payload);
-	const surfaces = asRecord(root?.surfaces);
-	const cc = asRecord(surfaces?.cc);
-	const configs = Array.isArray(cc?.model_selector_config) ? cc.model_selector_config : [];
-	const config = asRecord(configs[0]);
-	const listed = Array.isArray(config?.models) ? config.models as IClaudeCatalogModel[] : [];
+	const surfaces = asRecord(root?.surfaces) ?? {};
+	const listed = surfaceModels(surfaces.cc);
+	const others = Object.entries(surfaces).filter(([key]) => key !== 'cc').flatMap(([, surface]) => surfaceModels(surface));
 	const models: IModelInfo[] = [];
-	for (const entry of listed) {
+	for (const raw of listed) {
+		const entry = enrichClaudeModel(raw, others);
 		const id = entry.id?.trim();
 		const label = entry.name?.trim();
 		if (!id || !label) {
@@ -203,8 +290,16 @@ export function parseClaudeCatalog(payload: unknown): IModelInfo[] {
 		}
 		const runtime = entry.runtime;
 		const defaultEffort = runtime?.default_effort;
-		const effortOptions = entry.thinking?.type === 'effort' ? entry.thinking.effort_options ?? [] : [];
+		const effortOptions = entry.thinking?.effort_options ?? [];
 		const descriptors: IModelOptionDescriptor[] = [];
+		const thinking = claudeThinkingToggle(entry.thinking);
+		if (thinking) {
+			descriptors.push(thinking);
+		}
+		const context = claudeContextDescriptor(runtime?.max_input_tokens, entry.context_window);
+		if (context) {
+			descriptors.push(context);
+		}
 		const effort = effortChoices(effortOptions.flatMap(option => {
 			const value = option.id?.trim();
 			if (!value) {
@@ -218,10 +313,10 @@ export function parseClaudeCatalog(payload: unknown): IModelInfo[] {
 		if (effort) {
 			descriptors.push(effort);
 		}
-		if (entry.fast_mode?.type === 'toggle') {
+		if (entry.fast_mode?.type === 'toggle' || entry.supports_fast_mode === true) {
 			descriptors.push(booleanOption(MODEL_OPTION_FAST, 'Fast', false));
 		}
-		models.push(modelInfo(id, label, entry.description?.trim(), descriptors, runtime?.max_input_tokens));
+		models.push(modelInfo(id, label, entry.description?.trim(), descriptors, runtime?.max_input_tokens ?? entry.context_window));
 	}
 	return models;
 }
@@ -260,42 +355,58 @@ export interface IModelEditSection {
 	readonly descriptors: readonly IModelOptionDescriptor[];
 }
 
+function optionRank(id: string): number {
+	if (id === MODEL_OPTION_THINKING) {
+		return 0;
+	}
+	if (id === MODEL_OPTION_FAST) {
+		return 1;
+	}
+	return 2;
+}
+
 /**
- * Groups harness descriptors into the edit panel. Booleans land in Options at the position of
- * the first toggle, so a model that advertises effort then fast renders Effort then Options,
- * and one that advertises thinking then context then effort renders Options, Context, Effort.
+ * Groups harness descriptors into the edit panel: Options (Thinking, Fast), then Context, then Effort.
+ * That is the order the picker shows whenever a model advertises those traits.
  */
 export function modelEditSections(descriptors: readonly IModelOptionDescriptor[] | undefined): IModelEditSection[] {
-	const sections: IModelEditSection[] = [];
 	const options: IModelOptionDescriptor[] = [];
-	let optionsPlaced = false;
-	const placeOptions = () => {
-		if (optionsPlaced) {
-			return;
-		}
-		optionsPlaced = true;
-		sections.push({ id: 'options', label: 'Options', descriptors: options });
-	};
+	const context: IModelOptionDescriptor[] = [];
+	const effort: IModelOptionDescriptor[] = [];
+	const custom: IModelOptionDescriptor[] = [];
 	for (const descriptor of descriptors ?? []) {
 		if (descriptor.type === 'boolean' || descriptor.id === MODEL_OPTION_FAST || descriptor.id === MODEL_OPTION_THINKING) {
 			options.push(descriptor);
-			placeOptions();
 			continue;
 		}
 		if (descriptor.type === 'select' && (descriptor.options?.length ?? 0) <= 1) {
 			continue;
 		}
 		if (descriptor.id === MODEL_OPTION_CONTEXT) {
-			sections.push({ id: 'context', label: 'Context', descriptors: [descriptor] });
+			context.push(descriptor);
 			continue;
 		}
 		if (descriptor.id === MODEL_OPTION_REASONING) {
-			sections.push({ id: 'effort', label: 'Effort', descriptors: [descriptor] });
+			effort.push(descriptor);
 			continue;
 		}
+		custom.push(descriptor);
+	}
+	options.sort((left, right) => optionRank(left.id) - optionRank(right.id));
+	const sections: IModelEditSection[] = [];
+	if (options.length) {
+		sections.push({ id: 'options', label: 'Options', descriptors: options });
+	}
+	if (context.length) {
+		sections.push({ id: 'context', label: 'Context', descriptors: context });
+	}
+	if (effort.length) {
+		sections.push({ id: 'effort', label: 'Effort', descriptors: effort });
+	}
+	for (const descriptor of custom) {
 		sections.push({ id: 'custom', label: descriptor.label, descriptors: [descriptor] });
 	}
-	return sections.filter(section => section.descriptors.length);
+	return sections;
 }
 
 export interface IModelHoverCard {

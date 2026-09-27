@@ -29,6 +29,18 @@ export interface IProviderGroup {
 	models: IModelOption[];
 }
 
+/** Provider tabs lead with these families, in this order; the rest follow as they arrive. */
+export const PROVIDER_FAMILY_ORDER: readonly string[] = ['claude', 'codex', 'cursor', 'antigravity'];
+
+export function sortProviderGroups<T extends { family: string }>(groups: readonly T[]): T[] {
+	const rank = (family: string) => {
+		const index = PROVIDER_FAMILY_ORDER.indexOf(family);
+		return index === -1 ? PROVIDER_FAMILY_ORDER.length : index;
+	};
+	// Array.prototype.sort is stable, so unranked families keep their arrival order.
+	return [...groups].sort((a, b) => rank(a.family) - rank(b.family));
+}
+
 export function parseFavoriteRefs(raw: string | undefined): string[] {
 	if (!raw) {
 		return [];

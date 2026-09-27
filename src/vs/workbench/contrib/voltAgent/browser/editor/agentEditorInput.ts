@@ -17,6 +17,7 @@ import { AgentSessionStatus, IAgentHistoryService, IAgentSessionHandle } from '.
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import type { IAgentAssistantMessage, IAgentMessage, IAgentPromptDisplay, IAgentUserMessage } from './agentEditor.js';
 import { AgentHistoryCodec, assistantSummary, userMessageText } from '../history/agentHistoryCodec.js';
+import { AgentSessionController } from './agentSessionController.js';
 import type { IAgentDisplayMention } from '../composer/agentMentions.js';
 
 const AgentEditorIcon = registerIcon('volt-agent-editor-label-icon', Codicon.robot, localize('voltAgentEditorLabelIcon', 'Icon of the New Agent editor tab.'));
@@ -49,6 +50,12 @@ export const AGENT_EDITOR_LINE_NUMBERS_SETTING = 'volt.agent.editor.lineNumbers'
 
 /** Streaming replies are snapshotted to disk at most this often. */
 const PARTIAL_SNAPSHOT_INTERVAL_MS = 3000;
+
+/**
+ * Inputs closed while their agent was still running. They keep recording until
+ * the run ends, and a new input for the same chat takes over their state.
+ */
+const runningDetached = new Map<string, AgentEditorInput>();
 
 export interface IAgentQueuedPrompt {
 	id: string;
@@ -89,6 +96,10 @@ export class AgentEditorInput extends EditorInput {
 	private recordChain: Promise<void> = Promise.resolve();
 	private partialTimer: ReturnType<typeof setTimeout> | undefined;
 	private draftTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Reduces and records this chat's run events, whether or not a panel shows it. */
+	private _controller: AgentSessionController;
+	private detached = false;
+	private adopted = false;
 
 	static getNewEditorUri(): URI {
 		return URI.from({ scheme: Schemas.voltAgent, path: `agent-${generateUuid()}` });
@@ -102,9 +113,17 @@ export class AgentEditorInput extends EditorInput {
 		readonly resource: URI,
 		@IAgentHistoryService private readonly historyService: IAgentHistoryService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@IInstantiationService instantiationService: IInstantiationService,
 	) {
 		super();
 		this.codec = new AgentHistoryCodec(historyService);
+		const running = runningDetached.get(this.sessionId);
+		if (running) {
+			runningDetached.delete(this.sessionId);
+			this._controller = running.handOver(this);
+		} else {
+			this._controller = instantiationService.createInstance(AgentSessionController, this);
+		}
 		this.lastTitle = historyService.get(this.sessionId)?.title || undefined;
 		this._register(historyService.onDidChange(() => {
 			const title = historyService.get(this.sessionId)?.title || undefined;
@@ -113,6 +132,25 @@ export class AgentEditorInput extends EditorInput {
 				this._onDidChangeLabel.fire();
 			}
 		}));
+	}
+
+	get controller(): AgentSessionController {
+		return this._controller;
+	}
+
+	/** Gives a reopened input the live transcript, history log, and controller of the run still going here. */
+	private handOver(next: AgentEditorInput): AgentSessionController {
+		this.adopted = true;
+		next.messages = this.messages;
+		next.contextUsed = this.contextUsed;
+		next.contextWindow = this.contextWindow;
+		next.restoredMode = this.restoredMode;
+		next.historyHandle = this.historyHandle;
+		next.recordChain = this.recordChain;
+		next.lastPartialAt = this.lastPartialAt;
+		next.loading = Promise.resolve();
+		this._controller.setHost(next);
+		return this._controller;
 	}
 
 	/** Matches the runtime session key so history and runtime share one id. */
@@ -168,6 +206,7 @@ export class AgentEditorInput extends EditorInput {
 			this.messages = messages;
 			this.runtime.seedSession(this.sessionId, modelTranscript);
 		}
+		this.runtime.rememberWorktree(this.sessionId, transcript.worktreePath, transcript.worktreeBranch);
 		this.restoredMode = transcript.mode;
 		if (draft && !this.draft.trim() && !this.promptQueue.length) {
 			this.draft = draft.text;
@@ -346,6 +385,30 @@ export class AgentEditorInput extends EditorInput {
 	}
 
 	override dispose(): void {
+		if (this.detached) {
+			return;
+		}
+		// Closing a busy chat does not stop its agent: keep recording until the run ends.
+		if (this._controller.isRunning) {
+			this.detached = true;
+			runningDetached.set(this.sessionId, this);
+			const idle = this._controller.onDidBecomeIdle(() => {
+				idle.dispose();
+				if (runningDetached.get(this.sessionId) === this) {
+					runningDetached.delete(this.sessionId);
+				}
+				this.detached = false;
+				this.dispose();
+			});
+			super.dispose();
+			return;
+		}
+		if (this.adopted) {
+			// The reopened input owns the controller and the history log now.
+			super.dispose();
+			return;
+		}
+		this._controller.dispose();
 		if (this.partialTimer !== undefined) {
 			clearTimeout(this.partialTimer);
 			this.partialTimer = undefined;

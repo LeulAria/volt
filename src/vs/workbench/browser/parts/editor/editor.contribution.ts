@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Registry } from '../../../../platform/registry/common/platform.js';
+import { LAYOUT_MODE_CONTEXT_KEY } from '../titlebar/layoutKeybindingMode.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { IEditorPaneRegistry, EditorPaneDescriptor } from '../../editor.js';
 import { IEditorFactoryRegistry, EditorExtensions } from '../../../common/editor.js';
@@ -456,6 +457,8 @@ function appendEditorToolItem(primary: ICommandAction, when: ContextKeyExpressio
 }
 
 const SPLIT_ORDER = 100000;  // towards the end
+/** The Agent window hides split and close in the title bar; the IDE and the agent's tools area keep them. */
+const NOT_AGENT_LAYOUT = ContextKeyExpr.or(ContextKeyExpr.notEquals(LAYOUT_MODE_CONTEXT_KEY, 'agent'), ContextKeyExpr.has('voltAgentToolsPart'));
 const CLOSE_ORDER = 1000000; // towards the far end
 
 // Editor Title Menu: Split Editor
@@ -465,7 +468,7 @@ appendEditorToolItem(
 		title: localize('splitEditorRight', "Split Editor Right"),
 		icon: Codicon.splitHorizontal
 	},
-	SplitEditorsVertically.negate(),
+	ContextKeyExpr.and(SplitEditorsVertically.negate(), NOT_AGENT_LAYOUT),
 	SPLIT_ORDER,
 	{
 		id: SPLIT_EDITOR_DOWN,
@@ -480,7 +483,7 @@ appendEditorToolItem(
 		title: localize('splitEditorDown', "Split Editor Down"),
 		icon: Codicon.splitVertical
 	},
-	SplitEditorsVertically,
+	ContextKeyExpr.and(SplitEditorsVertically, NOT_AGENT_LAYOUT),
 	SPLIT_ORDER,
 	{
 		id: SPLIT_EDITOR_RIGHT,
@@ -507,7 +510,7 @@ appendEditorToolItem(
 		title: localize('close', "Close"),
 		icon: Codicon.close
 	},
-	ContextKeyExpr.and(EditorTabsVisibleContext.toNegated(), ActiveEditorDirtyContext.toNegated(), ActiveEditorStickyContext.toNegated()),
+	ContextKeyExpr.and(EditorTabsVisibleContext.toNegated(), ActiveEditorDirtyContext.toNegated(), ActiveEditorStickyContext.toNegated(), NOT_AGENT_LAYOUT),
 	CLOSE_ORDER,
 	{
 		id: CLOSE_EDITORS_IN_GROUP_COMMAND_ID,
@@ -523,7 +526,7 @@ appendEditorToolItem(
 		title: localize('close', "Close"),
 		icon: Codicon.closeDirty
 	},
-	ContextKeyExpr.and(EditorTabsVisibleContext.toNegated(), ActiveEditorDirtyContext, ActiveEditorStickyContext.toNegated()),
+	ContextKeyExpr.and(EditorTabsVisibleContext.toNegated(), ActiveEditorDirtyContext, ActiveEditorStickyContext.toNegated(), NOT_AGENT_LAYOUT),
 	CLOSE_ORDER,
 	{
 		id: CLOSE_EDITORS_IN_GROUP_COMMAND_ID,
@@ -539,7 +542,7 @@ appendEditorToolItem(
 		title: localize('unpin', "Unpin"),
 		icon: Codicon.pinned
 	},
-	ContextKeyExpr.and(EditorTabsVisibleContext.toNegated(), ActiveEditorDirtyContext.toNegated(), ActiveEditorStickyContext),
+	ContextKeyExpr.and(EditorTabsVisibleContext.toNegated(), ActiveEditorDirtyContext.toNegated(), ActiveEditorStickyContext, NOT_AGENT_LAYOUT),
 	CLOSE_ORDER,
 	{
 		id: CLOSE_EDITOR_COMMAND_ID,
@@ -555,7 +558,7 @@ appendEditorToolItem(
 		title: localize('unpin', "Unpin"),
 		icon: Codicon.pinnedDirty
 	},
-	ContextKeyExpr.and(EditorTabsVisibleContext.toNegated(), ActiveEditorDirtyContext, ActiveEditorStickyContext),
+	ContextKeyExpr.and(EditorTabsVisibleContext.toNegated(), ActiveEditorDirtyContext, ActiveEditorStickyContext, NOT_AGENT_LAYOUT),
 	CLOSE_ORDER,
 	{
 		id: CLOSE_EDITOR_COMMAND_ID,

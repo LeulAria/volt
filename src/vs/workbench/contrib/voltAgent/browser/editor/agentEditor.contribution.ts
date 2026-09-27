@@ -21,7 +21,7 @@ import { Position } from '../../../../../editor/common/core/position.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
-import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
+import { KeybindingsRegistry, KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { IListService } from '../../../../../platform/list/browser/listService.js';
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../../platform/registry/common/platform.js';
@@ -43,6 +43,7 @@ import { IPaneCompositePartService } from '../../../../services/panecomposite/br
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import '../chrome/agentViewSidebars.js';
+import '../chrome/agentTitlebarHeader.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { AgentChangesEditor, AgentChangesEditorInput, AgentChangesEditorInputSerializer, AGENT_CHANGES_EDITOR_ID, OPEN_AGENT_CHANGES_COMMAND_ID, openAgentChanges } from '../review/agentChangesEditor.js';
 import '../review/agentChangesActions.js';
@@ -53,6 +54,7 @@ import { ITextModelService } from '../../../../../editor/common/services/resolve
 import { normalizeBrowserUrl, VoltBrowserEditor } from '../preview/browserEditor.js';
 import {
 	BROWSER_EDITOR_ID,
+	DEFAULT_BROWSER_URL,
 	OPEN_BROWSER_COMMAND_ID,
 	OpenBrowserIcon,
 	VoltBrowserEditorInput,
@@ -80,6 +82,10 @@ import {
 } from './agentEditorInput.js';
 import { CONTEXT_AGENT_FIND_INPUT_FOCUSED, CONTEXT_AGENT_FIND_WIDGET_VISIBLE, CONTEXT_IN_AGENT_INPUT } from './agentFindWidget.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
+import { openAgentPanel, startAgentChat } from '../workspace/agentPanels.js';
+import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
+import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import {
 	CONTEXT_INLINE_COMMENT_HAS_PREVIEW,
 	CONTEXT_INLINE_COMMENT_VISIBLE,
@@ -277,10 +283,15 @@ registerAction2(class OpenAgentChangesAction extends Action2 {
 	}
 
 	override async run(accessor: ServicesAccessor, sessionId?: string): Promise<void> {
+		const editor = getActiveAgentEditor(accessor);
 		const id = typeof sessionId === 'string' && sessionId
 			? sessionId
-			: getActiveAgentEditor(accessor)?.sessionId;
+			: editor?.sessionId;
 		if (!id) {
+			return;
+		}
+		if (editor && editor.sessionId === id) {
+			editor.openSessionChanges();
 			return;
 		}
 		await openAgentChanges(
@@ -338,8 +349,14 @@ registerAction2(class NewAgentAction extends Action2 {
 			if (layoutService.isAuxiliaryBarMaximized()) {
 				layoutService.setAuxiliaryBarMaximized(false);
 			}
-			const input = accessor.get(IInstantiationService).createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri());
-			await accessor.get(IEditorService).openEditor(input, { pinned: true });
+			await startAgentChat(
+				accessor.get(IVoltSessionContextService),
+				accessor.get(IAgentWorkspaceService),
+				accessor.get(IAgentHistoryService),
+				accessor.get(IEditorGroupsService),
+				accessor.get(IInstantiationService),
+				{ kind: 'active' },
+			);
 			return;
 		}
 		const viewsService = accessor.get(IViewsService);
@@ -347,6 +364,16 @@ registerAction2(class NewAgentAction extends Action2 {
 		const view = await viewsService.openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, true);
 		await view?.openNewAgent(options);
 	}
+});
+
+// Cmd+N opens a new agent while the window is in agent mode. It outranks
+// Shift+Cmd+L so the header shortcut is Cmd+N. Inline-comment undo keeps Cmd+N
+// while a preview is open.
+KeybindingsRegistry.registerKeybindingRule({
+	id: NEW_AGENT_COMMAND_ID,
+	weight: KeybindingWeight.WorkbenchContrib + 60,
+	when: ContextKeyExpr.and(LayoutModeContext.isEqualTo('agent'), CONTEXT_INLINE_COMMENT_HAS_PREVIEW.negate()),
+	primary: KeyMod.CtrlCmd | KeyCode.KeyN,
 });
 
 registerAction2(class OpenBrowserAction extends Action2 {
@@ -374,7 +401,20 @@ registerAction2(class OpenBrowserAction extends Action2 {
 		const editorService = accessor.get(IEditorService);
 		const editorGroupsService = accessor.get(IEditorGroupsService);
 		const instantiationService = accessor.get(IInstantiationService);
+		const layoutService = accessor.get(IWorkbenchLayoutService);
 		const resolved = typeof url === 'string' ? normalizeBrowserUrl(url) : '';
+		if (getLayoutMode(layoutService) === 'agent') {
+			const workspace = accessor.get(IAgentWorkspaceService);
+			const sessionId = workspace.active?.sessionId;
+			if (sessionId) {
+				workspace.openSurface(sessionId, {
+					kind: 'browser',
+					url: resolved || DEFAULT_BROWSER_URL,
+					title,
+				}, !!resolved);
+				return;
+			}
+		}
 		let heading = title;
 		if (resolved && !heading) {
 			try {

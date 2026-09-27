@@ -44,19 +44,38 @@ export type IVoltEvent =
 	| { type: 'text.start' | 'text.delta' | 'text.end'; id: string; delta?: string }
 	| { type: 'reasoning.start' | 'reasoning.delta' | 'reasoning.end'; id: string; delta?: string }
 	/**
+	 * A finished reasoning block with its provider-native payload (Anthropic signature or
+	 * redacted data). The loop replays it verbatim to the same model; the editor never sees it.
+	 */
+	| { type: 'reasoning.block'; provider: string; model: string; text: string; opaque?: unknown }
+	/**
 	 * `card` is how DeepSeek asked the call to be drawn. The editor uses it first.
 	 * `kind` is the semantic class. ACP agents often omit both; the editor then falls back to the tool name.
 	 */
 	| { type: 'tool.start'; callId: string; name: string; title?: string; input?: string; cwd?: string; kind?: ToolKind; card?: 'generic' | 'terminal' | 'diff'; diffs?: readonly IVoltToolDiff[]; locations?: readonly IVoltToolLocation[] }
-	| { type: 'tool.input.delta'; callId: string; delta: string }
+	/**
+	 * `append` deltas are pure continuations (native providers). Without it the delta may be a
+	 * snapshot of the whole input so far (ACP agents), and has to be merged instead of appended.
+	 */
+	| { type: 'tool.input.delta'; callId: string; delta: string; append?: boolean }
+	/** The provider finished streaming this call's arguments. Read-only calls may start now. */
+	| { type: 'tool.input.end'; callId: string }
+	/** Live status from a running tool (a sub-agent step, a job line). Not persisted. */
+	| { type: 'tool.progress'; callId: string; status: string }
 	| { type: 'tool.end'; callId: string; result?: unknown; error?: string; durationMs?: number; card?: IVoltToolCard; title?: string; output?: string; exitCode?: number; diffs?: readonly IVoltToolDiff[]; view?: IVoltToolView }
 	| { type: 'plan'; entries: { content: string; status: 'pending' | 'in_progress' | 'completed'; priority?: string }[] }
 	| { type: 'file.change'; uri: URI; kind: 'edit' | 'create' | 'delete'; before?: string; existed?: boolean }
 	| { type: 'access.ask'; request: IAccessRequest }
 	| { type: 'access.resolved'; requestId: string; effect: 'allow' | 'deny'; scope: 'once' | 'always' }
 	| { type: 'access.blocked'; request: IAccessRequest; policySource: string }
-	| { type: 'usage'; input: number; output: number; used?: number; cache?: number; size?: number }
+	/**
+	 * `input` is uncached prompt tokens, `cache` is prompt tokens read from the provider cache,
+	 * and `cacheWrite` is prompt tokens written to it. `used` is the whole prompt the model saw.
+	 */
+	| { type: 'usage'; input: number; output: number; used?: number; cache?: number; cacheWrite?: number; size?: number }
 	| { type: 'error'; message: string; retryable?: boolean }
+	/** Provider status that is not assistant prose: usage limits, retries, and other ACP notices. */
+	| { type: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string }
 	/** Provider stream is being retried. Live-only in spirit; persisted so the trace shows the stall. */
 	| { type: 'retry'; attempt: number; delayMs: number; message: string }
 	| { type: 'finish'; reason: 'stop' | 'tool_calls' | 'length' | 'error' | 'abort' }
@@ -91,5 +110,5 @@ export interface IVoltEventEnvelope {
 }
 
 export function isLiveOnlyEvent(event: IVoltEvent): boolean {
-	return event.type === 'text.delta' || event.type === 'reasoning.delta' || event.type === 'tool.input.delta';
+	return event.type === 'text.delta' || event.type === 'reasoning.delta' || event.type === 'tool.input.delta' || event.type === 'tool.progress';
 }

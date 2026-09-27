@@ -16,6 +16,10 @@ import { IRequestService } from '../../../../platform/request/common/request.js'
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { IAgentWorktreeService } from '../common/git/agentWorktree.js';
+import { IAgentHistoryService } from '../common/history/agentHistory.js';
+import { IVoltSessionContextService } from '../common/sessionContext.js';
+import './sessionContextService.js';
 import { ISearchService } from '../../search/common/search.js';
 import { evaluateAccess, memoKey } from '../common/access/accessBroker.js';
 import { DEFAULT_ACCESS_MODE, normalizeVoltAccessMode, VOLT_ACCESS_MODE_STORAGE_KEY, VOLT_ACCESS_PROJECT_RULES_STORAGE_KEY, VOLT_ACCESS_SAVED_RULES_STORAGE_KEY, VoltAccessMode } from '../common/access/accessModes.js';
@@ -23,9 +27,9 @@ import { modeOverlay, presetRules, SYSTEM_HARD_DENY } from '../common/access/acc
 import { AccessDecisionScope, IAccessDecision, IAccessGate, IAccessRequest, ICompiledPolicy, IExecutionReceipt, IPermissionRule, PermissionEffect } from '../common/access/accessTypes.js';
 import { compilePolicy } from '../common/access/policyCompiler.js';
 import { accessBridgeFor } from './agents/bridges/accessBridges.js';
-import { DEFAULT_ACP_CAPABILITIES, DEFAULT_MODEL_CAPABILITIES } from '../common/capabilities.js';
+import { DEFAULT_MODEL_CAPABILITIES } from '../common/capabilities.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../common/events.js';
-import { IVoltModelOptions, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
+import { IVoltModelOptions, MODEL_OPTION_REASONING, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
 import { modePolicy, VoltMode } from '../common/modes.js';
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
 import { IAgentDetectResult, IAgentProvider, IAgentSessionHandle, IDetectResult, IModelInfo, IModelMessage, IModelProvider, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
@@ -36,14 +40,35 @@ import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStd
 import { IVoltHostToolService } from '../common/hostTools.js';
 import { AcpAgentProvider } from './agents/acpProvider.js';
 import './host/hostToolService.js';
+import { clearClaudeModelCache } from './agents/claudeCatalog.js';
 import { CLI_AGENT_DEFINITIONS, cliAgentDefinition, detectCliAgent } from './agents/cliAgents.js';
 import { NullVoltStdioService } from './host/nullStdioService.js';
 import { loadWorkspaceRunPlan } from './host/workspaceRunPlan.js';
-import { IIntent, isConversationalPing, mergeGrantedGroups, pingReply } from '../common/harness/intent.js';
+import { IIntent, mergeGrantedGroups } from '../common/harness/intent.js';
 import { buildAcpLead, IContextPackInput, IEnvironmentFacts } from '../common/harness/contextPack.js';
 import { INativeLoopMessage } from '../common/harness/nativeLoop.js';
 import { nativeToModelMessages } from '../common/harness/providerMessages.js';
 import { runToolBatch } from '../common/harness/toolRuntime.js';
+import { estimateTokens, totalTokens } from '../common/harness/contextEngine.js';
+import { FileLedger } from '../common/harness/fileLedger.js';
+import { alwaysRules, findInstruction, instructionsIndex, rulesForPath } from '../common/harness/instructions.js';
+import { applyCompaction, COMPACTION_SYSTEM, compactionBoundary, compactionRequest, DEFAULT_COMPACTION, effectiveWindow, mechanicalSummary, serializeForSummary, shouldCompact } from '../common/harness/nativeCompaction.js';
+import { chooseEffort, EffortLevel } from '../common/deepseek/effort.js';
+import { IToolDocuments } from './tools/fileTools.js';
+import { ISubagentRequest } from './tools/metaTools.js';
+import { CodeIntelHost } from './host/codeIntelHost.js';
+import { McpHost } from './host/mcpHost.js';
+import { NativeJournal } from './history/nativeJournal.js';
+import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
+import { IInstructionsSnapshot, loadInstructions } from './prompt/instructionsLoader.js';
+import { ResourceMap } from '../../../../base/common/map.js';
+import { posix } from '../../../../base/common/path.js';
+import { joinPath, relativePath } from '../../../../base/common/resources.js';
+import { ITextFileService } from '../../textfile/common/textfiles.js';
+import { IPathService } from '../../path/common/pathService.js';
+import { IMarkerService } from '../../../../platform/markers/common/markers.js';
+import { ITextModelService } from '../../../../editor/common/services/resolverService.js';
+import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
 import { stringifyUnknown } from '../common/harness/toolResult.js';
 import { actionForGroup, resourceForCall } from '../common/harness/toolAccess.js';
 import { classifyRisk } from '../common/access/riskClassifier.js';
@@ -58,11 +83,11 @@ import { EvalLedger } from '../common/harness/eval.js';
 import { isAcpTurnRestartable } from '../common/harness/sessionRetry.js';
 import { TaskLifecycle } from '../common/harness/lifecycle.js';
 import { formatTaskBrief } from '../common/harness/taskIntel.js';
-import { IToolCall, IVoltTool, toolSchemas, toolSnippets } from '../common/tools/tool.js';
+import { IToolCall, IToolContext, IVoltTool, toolSchemas, toolSnippets } from '../common/tools/tool.js';
 import { deepseekKnobs, resolveApproval } from '../common/deepseek/approval.js';
 import { runDeepseekLoop } from '../common/deepseek/loop.js';
 import { VoltLlmAdapter } from './deepseek/voltLlmAdapter.js';
-import { nativeModelTurn } from '../common/deepseek/prompt.js';
+import { buildSubagentPrompt, nativeModelTurn } from '../common/deepseek/prompt.js';
 import { ApprovalOutcome } from '../common/deepseek/protocol.js';
 import { createBuiltinTools } from './tools/registry.js';
 import { loadProjectInstructions } from './prompt/projectInstructions.js';
@@ -91,13 +116,42 @@ interface ISessionState extends IVoltSession {
 	prepared?: IPreparedRun;
 	harness?: IRunHarness;
 	/** In-process DeepSeek loop for native models. The open workspace folder is the cwd. */
-	deepseek?: {
-		messages: INativeLoopMessage[];
-		inbox: string[];
-		running: boolean;
-		cwd?: string;
-	};
+	deepseek?: INativeState;
+	/** How many of `messages` the current ACP agent session has seen. */
+	agentSynced?: number;
+	/** Catalog ref the live agent session was started for. */
+	agentRef?: string;
+	/** A prewarm in flight; a send waits for it instead of starting a second process. */
+	agentStarting?: Promise<void>;
+	/** One notice after a checkout is created or restored. */
+	announceWorktree?: boolean;
 }
+
+/** Native-model conversation state that outlives a single run. */
+interface INativeState {
+	messages: INativeLoopMessage[];
+	inbox: string[];
+	running: boolean;
+	cwd?: string;
+	/** How many of the session's `messages` this transcript already contains. */
+	synced: number;
+	ledger: FileLedger;
+	/** Folders holding spilled command logs, readable by read_file. */
+	logRoots: URI[];
+	/** Files changed in the current run, with their error markers from before the first change. */
+	changed: ResourceMap<Map<string, number>>;
+	/** Prompt size the provider last reported. */
+	promptTokens: number;
+	effort?: EffortLevel;
+	todo?: string;
+	instructions?: IInstructionsSnapshot;
+}
+
+/** Languages whose editor services report diagnostics worth waiting for. */
+const DIAGNOSED_EXTENSIONS = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|cs|c|cc|cpp|h|hpp|php|rb|swift|dart|vue|svelte|css|scss|less|json)$/i;
+const SUBAGENT_TOOLS = ['read_file', 'list_dir', 'grep', 'glob', 'diagnostics', 'code_nav', 'git_status', 'git_diff', 'git_log', 'git_show', 'skill'];
+const INSTRUCTIONS_TTL_MS = 5_000;
+const RECAP_CHARS = 24_000;
 
 export class AgentRuntimeService extends Disposable implements IAgentRuntimeService {
 
@@ -120,7 +174,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly agentModels = new Map<string, IModelInfo[]>();
 	private lastProviderCheck: number | undefined;
 	private readonly healthTimer = this._register(new IntervalTimer());
-	private healthCheckRunning = false;
+	private providerRefresh: Promise<void> | undefined;
+	private providerRefreshAgain = false;
 	private accessMode: VoltAccessMode = DEFAULT_ACCESS_MODE;
 	private projectRules: IPermissionRule[] = [];
 	private savedRules: IPermissionRule[] = [];
@@ -130,8 +185,13 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly pendingApprovals = new Map<string, { resolve: (decision: IAccessDecision) => void; request: IAccessRequest }>();
 	private receipts: IExecutionReceipt[] = [];
 	private saveAccessHandle: ReturnType<typeof setTimeout> | undefined;
-	private runPlan: Promise<IRunPlan> | undefined;
-	private projectInstructions: Promise<string | undefined> | undefined;
+	private readonly runPlans = new Map<string, Promise<IRunPlan>>();
+	private readonly projectInstructionsByRoot = new Map<string, Promise<string | undefined>>();
+	private readonly instructionsByRoot = new Map<string, { readonly at: number; readonly value: Promise<IInstructionsSnapshot> }>();
+	private readonly codeIntel: CodeIntelHost;
+	private readonly mcpHost: McpHost;
+	private readonly journal: NativeJournal;
+	private readonly nativeRestores = new Map<string, Promise<void>>();
 	private readonly evalLedger = new EvalLedger();
 
 	private readonly _onDidChangeCatalog = this._register(new Emitter<void>());
@@ -159,8 +219,20 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@IVoltStdioService private readonly stdio: IVoltStdioService,
 		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
 		@ISearchService private readonly searchService: ISearchService,
+		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
+		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
+		@ITextFileService private readonly textFileService: ITextFileService,
+		@IPathService private readonly pathService: IPathService,
+		@IMarkerService markerService: IMarkerService,
+		@ITextModelService textModelService: ITextModelService,
+		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
+		@IEnvironmentService environmentService: IEnvironmentService,
 	) {
 		super();
+		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeaturesService, fileService));
+		this.mcpHost = this._register(new McpHost(fileService, stdio, requestService, logService));
+		this.journal = this._register(new NativeJournal(joinPath(environmentService.userRoamingDataHome, 'voltNative'), fileService, logService));
 		this.registerProviders();
 		this.loadState();
 		void this.refreshCatalog();
@@ -190,6 +262,27 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		session.messages = messages.filter(message => message.content.trim()).map(message => ({ role: message.role, content: message.content }));
+		// The saved native transcript carries tool calls and results the text history does not.
+		const seeded = session.messages.length;
+		this.nativeRestores.set(key, this.journal.load(key).then(entry => {
+			if (!entry || session.deepseek) {
+				return;
+			}
+			const state = this.nativeState(session);
+			state.messages.push(...entry.messages);
+			state.synced = Math.min(entry.synced, seeded);
+			state.effort = entry.effort as EffortLevel | undefined;
+			state.todo = entry.todo;
+		}, () => undefined));
+	}
+
+	rememberWorktree(sessionId: string, path: string | undefined, branch: string | undefined): void {
+		if (!path || !branch) {
+			return;
+		}
+		const session = this.getOrCreateSession(sessionId) as ISessionState;
+		session.worktreePath = path;
+		session.worktreeBranch = branch;
 	}
 
 	async send(sessionId: string, request: IVoltSendRequest): Promise<string> {
@@ -215,6 +308,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return session.activeRun.runId;
 		}
 		session.messages.push({ role: 'user', content: request.text });
+		try {
+			await this.prepareWorktree(session, request);
+		} catch (err) {
+			const runId = this.beginRun(session, request);
+			this.emit(session, runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
+			this.finish(session, runId, 'fail');
+			return runId;
+		}
 
 		const catalogItem = this.catalog.find(item => item.ref === session.providerRef && item.enabled) ?? this.catalog.find(item => item.enabled);
 		if (!catalogItem || catalogItem.kind !== 'agent') {
@@ -226,10 +327,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			});
 			return runId;
 		}
-		const folder = this.workspace.getWorkspace().folders[0];
-		const hasWorkspace = this.workspace.getWorkspace().folders.length > 0;
-		const ping = isConversationalPing(request.text);
-		const hasGit = !ping && folder ? await this.fileService.exists(URI.joinPath(folder.uri, '.git')) : false;
+		const root = this.executionRoot(session);
+		const hasWorkspace = !!root;
+		const hasGit = root ? await this.fileService.exists(URI.joinPath(root, '.git')) : false;
 		const prepared = prepareRun({
 			text: request.text,
 			mode: request.mode,
@@ -247,21 +347,19 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			explicitRef: session.providerRef,
 			sessionId,
 			conversationId: session.conversationId,
-			workspaceId: folder?.uri.toString(),
+			workspaceId: root?.toString(),
 			accessMode: this.accessMode,
 			environment: {
 				hasWorkspace,
 				hasGit,
 				hasBrowserHost: true,
 				hasNetwork: true,
-				...(folder ? { cwd: folder.uri.fsPath } : {}),
+				...(root ? { cwd: root.fsPath } : {}),
 				platform: isMacintosh ? 'darwin' : isWindows ? 'win32' : 'linux',
 			},
 			evalHints: this.evalLedger.hints(),
 		});
-		if (!prepared.intent.signals.includes('ping')) {
-			session.lastLane = prepared.intent.lane;
-		}
+		session.lastLane = prepared.intent.lane;
 		session.prepared = prepared;
 
 		const runId = generateUuid();
@@ -278,6 +376,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.cancel = new CancellationTokenSource();
 
 		this.emit(session, runId, { type: 'run.start', runId, mode: request.mode });
+		this.noteWorktree(session, runId);
 		this.emit(session, runId, { type: 'envelope', id: prepared.envelope.id, mode: request.mode, permissions: prepared.envelope.permissions });
 		this.emit(session, runId, { type: 'lifecycle', phase: 'planning' });
 		this.emit(session, runId, { type: 'lane', lane: prepared.intent.lane, signals: prepared.intent.signals, wantsPreview: prepared.intent.wantsPreview, wantsWeb: prepared.intent.wantsWeb });
@@ -293,19 +392,98 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.finish(session, runId, 'done');
 			return runId;
 		}
-		if (prepared.intent.signals.includes('ping')) {
-			const reply = pingReply(request.text);
-			session.messages.push({ role: 'assistant', content: reply });
-			this.emit(session, runId, { type: 'text.delta', id: 'ping', delta: reply });
-			this.finish(session, runId, 'done');
-			return runId;
-		}
 		this.emit(session, runId, { type: 'lifecycle', phase: 'running' });
 		void this.execute(session, runId, request, prepared.intent).catch(err => {
 			this.emit(session, runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
 			this.finish(session, runId, 'fail');
 		});
 		return runId;
+	}
+
+	/**
+	 * Starts the selected ACP agent before the first message (spawn, initialize, session/new),
+	 * so the user's first send does not pay the cold start. Native models need no warm-up.
+	 */
+	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void {
+		const session = this.getOrCreateSession(sessionId) as ISessionState;
+		if (session.activeRun?.status === 'running' || session.agentStarting) {
+			return;
+		}
+		const ref = providerRef ?? session.providerRef ?? this.defaultRef(mode);
+		const item = this.catalog.find(candidate => candidate.ref === ref && candidate.enabled);
+		const profile = item ? this.profiles.find(candidate => candidate.id === item.profileId) : undefined;
+		const provider = profile ? this.agentProviders.get(profile.providerId) : undefined;
+		if (!item || item.kind !== 'agent' || !profile || !provider) {
+			return;
+		}
+		if (session.agentHandle && session.agentRef === item.ref && (provider.isLive?.(session.agentHandle) ?? true)) {
+			return;
+		}
+		const starting: Promise<void> = this.startAgentSession(session, provider, profile, item, mode, undefined)
+			.catch(err => this.logService.trace('[volt] agent prewarm failed', err))
+			.finally(() => {
+				if (session.agentStarting === starting) {
+					session.agentStarting = undefined;
+				}
+			});
+		session.agentStarting = starting;
+	}
+
+	private async startAgentSession(session: ISessionState, provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, mode: VoltMode, options: IVoltModelOptions | undefined): Promise<void> {
+		if (session.agentHandle && session.agentProviderId) {
+			await this.agentProviders.get(session.agentProviderId)?.dispose(session.agentHandle).catch(() => undefined);
+		}
+		session.agentHandle = undefined;
+		const handle = await provider.start({
+			mode,
+			profile,
+			cwd: this.executionRoot(session)?.fsPath,
+			modelId: item.id === profile.providerId ? undefined : item.id,
+			options: this.resolvedOptions(item, options),
+		});
+		session.agentHandle = handle;
+		session.agentProviderId = provider.id;
+		session.agentRef = item.ref;
+		// A fresh agent process has seen nothing of this conversation yet.
+		session.agentSynced = 0;
+		await provider.applyAccessPolicy?.(handle, this.compiledPolicy);
+	}
+
+	truncateSession(sessionId: string, userTurns: number): void {
+		const session = this.sessions.get(sessionId);
+		if (!session || session.activeRun?.status === 'running') {
+			return;
+		}
+		let seen = 0;
+		const cut = session.messages.findIndex(message => message.role === 'user' && seen++ === userTurns);
+		if (cut < 0) {
+			return;
+		}
+		session.messages = session.messages.slice(0, cut);
+		const state = session.deepseek;
+		if (state) {
+			let turns = 0;
+			const nativeCut = state.messages.findIndex(message => message.role === 'user' && message.turn && turns++ === userTurns);
+			if (nativeCut >= 0) {
+				state.messages.splice(nativeCut);
+				state.synced = session.messages.length;
+			} else {
+				// Compaction merged the turns; start the model transcript over from the text history.
+				state.messages.splice(0);
+				state.synced = 0;
+			}
+			state.inbox.splice(0);
+			state.ledger.invalidateReferences();
+			void this.journal.schedule(sessionId, () => ({ version: 1, messages: state.messages, synced: state.synced, effort: state.effort, todo: state.todo, savedAt: Date.now() }), true);
+		}
+		// An ACP agent cannot forget turns; the next message starts a fresh agent with a recap.
+		if (session.agentHandle && (session.agentSynced ?? 0) > session.messages.length) {
+			const provider = session.agentProviderId ? this.agentProviders.get(session.agentProviderId) : undefined;
+			void provider?.dispose(session.agentHandle).catch(() => undefined);
+			session.agentHandle = undefined;
+			session.agentProviderId = undefined;
+			session.agentSynced = 0;
+		}
 	}
 
 	async cancel(sessionId: string): Promise<void> {
@@ -575,12 +753,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			throw new Error(`Unknown model provider ${profile.providerId}`);
 		}
 		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
+		const resolved = this.resolvedOptions(item, options);
+		if (resolved[MODEL_OPTION_REASONING] === 'auto') {
+			// One-shot completions (Tab, titles) want the first token now, not deep thought.
+			resolved[MODEL_OPTION_REASONING] = closestLevel('low', (item.optionDescriptors?.find(option => option.id === MODEL_OPTION_REASONING)?.options ?? []).map(option => option.value).filter(value => value !== 'auto' && value !== 'off')) ?? 'low';
+		}
 		yield* provider.stream({
 			modelId: item.id,
 			messages,
 			profile,
 			apiKey,
-			options: this.resolvedOptions(item, options),
+			options: resolved,
 		}, token);
 	}
 
@@ -777,25 +960,33 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	async refreshProviders(): Promise<void> {
-		if (this.healthCheckRunning) {
-			return;
+		if (this.providerRefresh) {
+			this.providerRefreshAgain = true;
+			return this.providerRefresh;
 		}
-		this.healthCheckRunning = true;
+		this.providerRefresh = this.executeProviderRefresh().finally(() => {
+			this.providerRefresh = undefined;
+		});
+		return this.providerRefresh;
+	}
+
+	private async executeProviderRefresh(): Promise<void> {
+		clearClaudeModelCache();
 		this.agentModels.clear();
-		try {
-			const results = await Promise.all(this.profiles.map(async profile => {
-				const detect = profile.enabled
-					? await this.detectProfile(profile).catch(() => ({ available: false, detail: 'Health check failed.' }) satisfies IDetectResult)
-					: undefined;
-				return [profile.id, detect] as const;
-			}));
-			this.detections = new Map(results.filter((entry): entry is readonly [string, IDetectResult] => !!entry[1]));
-			this.lastProviderCheck = Date.now();
-		} finally {
-			this.healthCheckRunning = false;
-		}
+		const results = await Promise.all(this.profiles.map(async profile => {
+			const detect = profile.enabled
+				? await this.detectProfile(profile).catch(() => ({ available: false, detail: 'Health check failed.' }) satisfies IDetectResult)
+				: undefined;
+			return [profile.id, detect] as const;
+		}));
+		this.detections = new Map(results.filter((entry): entry is readonly [string, IDetectResult] => !!entry[1]));
+		this.lastProviderCheck = Date.now();
 		await this.refreshCatalog();
 		this._onDidChangeProviderStatus.fire();
+		if (this.providerRefreshAgain) {
+			this.providerRefreshAgain = false;
+			await this.executeProviderRefresh();
+		}
 	}
 
 	async setProfileEnabled(profileId: string, enabled: boolean): Promise<void> {
@@ -1000,24 +1191,115 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.cancel?.dispose(true);
 		session.cancel = new CancellationTokenSource();
 		this.emit(session, runId, { type: 'run.start', runId, mode: request.mode });
+		this.noteWorktree(session, runId);
 		return runId;
 	}
 
-	private workspaceTools(session: ISessionState): IVoltTool[] {
+	/** The open project, never the managed checkout. */
+	private projectRoot(session: ISessionState): URI | undefined {
+		return this.sessionContext.rootFor(session.sessionId) ?? this.workspace.getWorkspace().folders[0]?.uri;
+	}
+
+	/** The session's project root, or its worktree once one exists. A visible chat must not retarget a run that already has a binding. */
+	private executionRoot(session: ISessionState): URI | undefined {
+		if (session.worktreePath) {
+			return URI.file(session.worktreePath);
+		}
+		return this.projectRoot(session);
+	}
+
+	/** First send in New Worktree mode creates the checkout. Later sends stay there, recreating it if archive pruned the files. */
+	private async prepareWorktree(session: ISessionState, request: IVoltSendRequest): Promise<void> {
+		const project = this.projectRoot(session);
+		if (session.worktreePath && session.worktreeBranch) {
+			if (!project) {
+				throw new Error('Open a folder before using a worktree.');
+			}
+			const recreated = await this.worktrees.ensure(project.fsPath, session.worktreePath, session.worktreeBranch);
+			if (recreated) {
+				session.announceWorktree = true;
+			}
+			return;
+		}
+		const userTurns = session.messages.filter(message => message.role === 'user').length;
+		if (request.runOn !== 'worktree' || userTurns > 1) {
+			return;
+		}
+		if (!project) {
+			throw new Error('Open a folder before using a worktree.');
+		}
+		const created = await this.worktrees.create(project.fsPath);
+		session.worktreePath = created.path;
+		session.worktreeBranch = created.branch;
+		session.announceWorktree = true;
+		this.history.open(session.sessionId).setMeta({ worktreePath: created.path, worktreeBranch: created.branch });
+	}
+
+	private noteWorktree(session: ISessionState, runId: string): void {
+		if (!session.announceWorktree || !session.worktreeBranch || !session.worktreePath) {
+			return;
+		}
+		session.announceWorktree = false;
+		this.emit(session, runId, { type: 'notice', severity: 'info', title: `Running in ${session.worktreeBranch}`, description: session.worktreePath });
+	}
+
+	private workspaceTools(session: ISessionState, state?: INativeState): IVoltTool[] {
 		return createBuiltinTools({
 			fileService: this.fileService,
 			searchService: this.searchService,
 			requestService: this.requestService,
 			stdio: this.stdio,
 			hostTools: this.hostTools,
-			root: () => this.workspace.getWorkspace().folders[0]?.uri,
-			meta: { grantGroups: () => session.extraGroups ?? [] },
+			root: () => this.executionRoot(session),
+			meta: {
+				grantGroups: () => session.extraGroups ?? [],
+				...(state ? {
+					loadSkill: name => this.loadSkill(session, name),
+					runSubagent: (request, ctx) => this.runSubagent(session, state, request, ctx),
+				} : {}),
+			},
+			...(state ? {
+				ledger: () => state.ledger,
+				documents: this.toolDocuments,
+				readRoots: () => [...(state.instructions?.readRoots ?? []), ...state.logRoots],
+				rulesFor: uri => {
+					const rules = state.instructions?.rules;
+					const root = this.executionRoot(session);
+					return rules?.length && root ? rulesForPath(rules, relativeToRoot(root, uri)) : undefined;
+				},
+				codeIntel: this.codeIntel,
+				onLog: path => {
+					const dir = URI.file(path).with({ path: posix.dirname(URI.file(path).path) });
+					if (!state.logRoots.some(root => root.toString() === dir.toString())) {
+						state.logRoots.push(dir);
+					}
+				},
+			} : {}),
 		});
 	}
 
+	/** Open editors: agent edits go into the buffer the user sees when it has unsaved changes. */
+	private readonly toolDocuments: IToolDocuments = {
+		dirtyText: uri => {
+			const model = this.textFileService.files.get(uri);
+			return model?.isDirty() ? model.textEditorModel?.getValue() : undefined;
+		},
+		writeOpen: async (uri, text) => {
+			const model = this.textFileService.files.get(uri);
+			const editor = model?.textEditorModel;
+			if (!model || !editor) {
+				return false;
+			}
+			editor.pushEditOperations([], [{ range: editor.getFullModelRange(), text }], () => null);
+			await model.save();
+			return true;
+		},
+	};
+
 	/**
 	 * Native model path. DeepSeek owns the turn, the tool pipeline, and approval.
-	 * Volt only streams the selected provider and paints `IVoltEvent`s.
+	 * Volt streams the selected provider, paints `IVoltEvent`s, and owns what the loop cannot:
+	 * the cache-stable prompt, effort, compaction, sub-agents, and the completion review.
 	 */
 	private async executeDeepseek(session: ISessionState, runId: string, request: IVoltSendRequest, profile: IProviderProfile, item: IVoltCatalogItem): Promise<void> {
 		const provider = this.modelProviders.get(profile.providerId);
@@ -1027,61 +1309,92 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
-		const cwd = this.workspace.getWorkspace().folders[0]?.uri.fsPath;
-		const state = session.deepseek ?? { messages: [], inbox: [], running: false, cwd };
-		session.deepseek = state;
+		const root = this.executionRoot(session);
+		const cwd = root?.fsPath;
+		await this.nativeRestores.get(session.sessionId);
+		this.nativeRestores.delete(session.sessionId);
+		const state = this.nativeState(session);
 		state.cwd = cwd;
 		state.running = true;
-		if (!state.messages.length) {
-			for (const message of session.messages.slice(0, -1)) {
-				if (!message.content.trim() || message.role === 'system') {
-					continue;
-				}
-				state.messages.push({ role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content });
-			}
-		}
-		const tail = state.messages.at(-1);
-		if (!(tail?.role === 'user' && tail.content === request.text)) {
-			state.messages.push({ role: 'user', content: request.text });
-		}
-		const facts = this.environmentFacts();
-		const tools = this.workspaceTools(session);
+		const journal = () => ({ version: 1 as const, messages: state.messages, synced: state.synced, effort: state.effort, todo: state.todo, savedAt: Date.now() });
+		state.changed.clear();
+		state.ledger.resumeReferences();
+		this.syncNativeTranscript(session, state, request.text);
+
+		const [projectInstructions, instructions, mcpTools] = await Promise.all([
+			this.workspaceProjectInstructions(root),
+			this.workspaceInstructions(root),
+			// MCP servers get a short, bounded wait: a slow server joins the next run instead of stalling this one.
+			modePolicy(request.mode).allowMcp
+				? this.pathService.userHome().catch(() => undefined).then(home => this.mcpHost.tools(root, home, state.messages.length > 1 ? 1_500 : 4_000)).catch(() => [])
+				: Promise.resolve([]),
+		]);
+		state.instructions = instructions;
+		const facts = this.environmentFacts(root);
+		const tools = [...this.workspaceTools(session, state), ...mcpTools];
 		const turn = nativeModelTurn({
 			text: request.text,
 			mode: request.mode,
 			cwd,
 			platform: facts.platform,
+			shell: facts.shell,
 			date: facts.date,
-			projectInstructions: await this.workspaceProjectInstructions(),
+			projectInstructions,
+			rules: alwaysRules(instructions.rules),
+			skills: instructionsIndex(instructions.skills, instructions.rules),
 			tools,
 		});
 		const selected = tools.filter(tool => turn.toolNames.includes(tool.name));
 		const registry = new Map(selected.map(tool => [tool.name, tool]));
 		const cancel = session.cancel?.token ?? CancellationToken.None;
+		const options = this.runOptions(item, request, state);
+		const schemas = toolSchemas(selected);
+		const contextWindow = item.capabilities.contextWindow || DEFAULT_MODEL_CAPABILITIES.contextWindow;
+		const system: INativeLoopMessage = { role: 'system', content: turn.prompt };
+		const emit = (event: IVoltEvent) => {
+			if (event.type === 'usage') {
+				state.promptTokens = event.used ?? event.input + (event.cache ?? 0) + (event.cacheWrite ?? 0);
+			}
+			this.emit(session, runId, event);
+		};
+		const compact = (messages: INativeLoopMessage[], aggressive: boolean) => this.compactNative(session, runId, state, messages, {
+			provider, profile, apiKey, item, system: turn.prompt, contextWindow, aggressive, token: cancel,
+		});
 		try {
 			const result = await runDeepseekLoop({
-				stream: messages => new VoltLlmAdapter(provider).stream({
+				stream: (messages, _token, streamOptions) => new VoltLlmAdapter(provider).stream({
 					modelId: item.id,
-					messages: nativeToModelMessages([{ role: 'system', content: turn.prompt }, ...messages]),
+					messages: nativeToModelMessages([system, ...messages]),
 					profile,
 					apiKey,
-					options: this.resolvedOptions(item, request.options),
-					tools: toolSchemas(selected),
+					options,
+					tools: schemas,
+					...(streamOptions?.maxOutputTokens ? { maxOutputTokens: streamOptions.maxOutputTokens } : {}),
 				}, cancel),
-				execute: calls => runToolBatch(registry, calls, {
+				execute: (calls, onResult) => runToolBatch(registry, calls, {
 					cwd,
 					signal: abortSignalFrom(cancel),
-					emit: event => {
-						const forwarded = asToolEvent(event);
-						if (forwarded) {
-							this.emit(session, runId, forwarded);
-						}
-					},
-				}, { authorize: async () => ({ allow: true }) }),
+					emit: event => this.onToolEvent(session, runId, state, event),
+				}, { authorize: async () => ({ allow: true }), onResult }),
 				authorize: call => this.authorizeDeepseek(session, runId, profile, call, registry.get(call.name)),
-				emit: event => this.emit(session, runId, event),
+				preauthorize: call => this.preauthorizeDeepseek(session, runId, profile, call, registry.get(call.name)),
+				emit,
 				tool: name => registry.get(name),
 				cwd,
+				contextWindow,
+				maxOutputTokens: 128_000,
+				prepareTurn: async (messages, step) => {
+					state.ledger.nextStep();
+					this.journal.schedule(session.sessionId, journal);
+					if (step > 1 || messages.length > 2) {
+						const estimate = Math.max(state.promptTokens, estimateTokens(turn.prompt) + totalTokens(messages));
+						if (shouldCompact(estimate, { window: contextWindow, ...DEFAULT_COMPACTION })) {
+							await compact(messages, false);
+						}
+					}
+				},
+				recoverOverflow: messages => compact(messages, true),
+				reviewCompletion: modePolicy(request.mode).allowWrites ? input => this.reviewCompletion(state, input.attempt) : undefined,
 			}, {
 				messages: state.messages,
 				token: cancel,
@@ -1091,8 +1404,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			if (result.assistant) {
 				session.messages.push({ role: 'assistant', content: result.assistant });
 			}
+			state.synced = session.messages.length;
 			if (result.outcome === 'budget') {
-				this.emit(session, runId, { type: 'error', message: 'Stopped at the step budget. Send another message to continue.', retryable: true });
+				this.emit(session, runId, { type: 'notice', severity: 'warning', title: 'Paused at the step limit for one run.', description: 'Send "continue" to keep going from here.' });
 			}
 			const aborted = result.outcome === 'abort' || cancel.isCancellationRequested;
 			this.finish(session, runId, aborted ? 'abort' : result.outcome === 'fail' ? 'fail' : 'done');
@@ -1101,20 +1415,291 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.finish(session, runId, cancel.isCancellationRequested ? 'abort' : 'fail');
 		} finally {
 			state.running = false;
+			state.synced = Math.max(state.synced, session.messages.length);
+			void this.journal.schedule(session.sessionId, journal, true);
 		}
 	}
 
-	private async authorizeDeepseek(session: ISessionState, runId: string, profile: IProviderProfile, call: IToolCall, tool: IVoltTool | undefined): Promise<ApprovalOutcome> {
+	private nativeState(session: ISessionState): INativeState {
+		session.deepseek ??= {
+			messages: [],
+			inbox: [],
+			running: false,
+			synced: 0,
+			ledger: new FileLedger(),
+			logRoots: [],
+			changed: new ResourceMap(),
+			promptTokens: 0,
+		};
+		return session.deepseek;
+	}
+
+	/**
+	 * The native transcript and `session.messages` can drift apart when the user switches between
+	 * a native model and an ACP agent. Turns the native transcript has not seen are mirrored in as
+	 * plain text before the new message, so a model switch never loses the conversation.
+	 */
+	private syncNativeTranscript(session: ISessionState, state: INativeState, text: string): void {
+		const unseen = session.messages.slice(state.synced, -1);
+		for (const message of unseen) {
+			if (!message.content.trim() || message.role === 'system') {
+				continue;
+			}
+			state.messages.push(message.role === 'assistant' ? { role: 'assistant', content: message.content } : { role: 'user', content: message.content, turn: true });
+		}
+		const tail = state.messages.at(-1);
+		if (!(tail?.role === 'user' && tail.content === text)) {
+			state.messages.push({ role: 'user', content: text, turn: true });
+		}
+		state.synced = session.messages.length;
+	}
+
+	/** Model options for this run, with reasoning `auto` resolved to a concrete level. */
+	private runOptions(item: IVoltCatalogItem, request: IVoltSendRequest, state: INativeState): IVoltModelOptions {
+		const options = { ...this.resolvedOptions(item, request.options) };
+		const descriptor = item.optionDescriptors?.find(option => option.id === MODEL_OPTION_REASONING);
+		if (!descriptor || options[MODEL_OPTION_REASONING] !== 'auto') {
+			return options;
+		}
+		const level = chooseEffort(request.text, { mode: request.mode, previous: state.effort, attachments: request.mentions?.length });
+		state.effort = level;
+		const values = (descriptor.options ?? []).map(option => option.value).filter(value => value !== 'auto' && value !== 'off');
+		options[MODEL_OPTION_REASONING] = closestLevel(level, values) ?? level;
+		return options;
+	}
+
+	private onToolEvent(session: ISessionState, runId: string, state: INativeState, event: { type: string;[key: string]: unknown }): void {
+		if (event.type === 'file.change' && URI.isUri(event.uri)) {
+			if (!state.changed.has(event.uri)) {
+				state.changed.set(event.uri, this.codeIntel.errorCounts(event.uri));
+			}
+			this.codeIntel.noteWrite(event.uri);
+		}
+		if (event.type === 'plan' && Array.isArray(event.entries)) {
+			state.todo = (event.entries as { content: string; status: string }[]).map(entry => `- [${entry.status}] ${entry.content}`).join('\n');
+		}
+		const forwarded = asToolEvent(event);
+		if (forwarded) {
+			this.emit(session, runId, forwarded);
+		}
+	}
+
+	/**
+	 * Before the model is allowed to stop: did its edits introduce compiler or linter errors in the
+	 * files it changed? Language services already know, so this costs a second, not a build.
+	 */
+	private async reviewCompletion(state: INativeState, attempt: number): Promise<string | undefined> {
+		const files = [...state.changed.entries()].filter(([uri]) => DIAGNOSED_EXTENSIONS.test(uri.path));
+		if (!files.length) {
+			return undefined;
+		}
+		const found = await Promise.all(files.map(async ([uri, baseline]) => ({ uri, added: await this.codeIntel.newErrors(uri, baseline).catch(() => []) })));
+		const root = state.cwd ? URI.file(state.cwd) : undefined;
+		const lines = found.flatMap(({ uri, added }) => added.slice(0, 10).map(item => `${root ? relativeToRoot(root, uri) : uri.fsPath}:${item.line}:${item.column} ${item.message.split('\n')[0]}${item.source ? ` (${item.source})` : ''}`));
+		if (!lines.length) {
+			return undefined;
+		}
+		return [
+			`Before you finish: the editor reports ${lines.length} new error${lines.length === 1 ? '' : 's'} in files you changed${attempt > 1 ? ' (still present after your last attempt)' : ''}:`,
+			...lines.slice(0, 30),
+			'Fix them, or if they are expected (for example, pre-existing or intentionally deferred), say so explicitly in your final answer.',
+		].join('\n');
+	}
+
+	/**
+	 * Summarizes older turns into one handoff message and keeps the recent tail verbatim. Done in
+	 * place on the loop's own array, at one boundary, so the prompt cache restarts only once.
+	 */
+	private async compactNative(session: ISessionState, runId: string, state: INativeState, messages: INativeLoopMessage[], input: {
+		readonly provider: IModelProvider;
+		readonly profile: IProviderProfile;
+		readonly apiKey: string | undefined;
+		readonly item: IVoltCatalogItem;
+		readonly system: string;
+		readonly contextWindow: number;
+		readonly aggressive: boolean;
+		readonly token: CancellationToken;
+	}): Promise<boolean> {
+		const window = effectiveWindow({ window: input.contextWindow, ...DEFAULT_COMPACTION });
+		const boundary = compactionBoundary(messages, Math.floor(window * (input.aggressive ? 0.1 : 0.25)));
+		if (boundary <= 0) {
+			return false;
+		}
+		const older = messages.slice(0, boundary);
+		const carry = { files: state.ledger.summary(), todo: state.todo };
+		this.emit(session, runId, { type: 'notice', severity: 'info', title: 'Compacting the conversation to keep it within the model\'s context.' });
+		let summary: string | undefined;
+		try {
+			let text = '';
+			for await (const event of input.provider.stream({
+				modelId: input.item.id,
+				messages: [
+					{ role: 'system', content: COMPACTION_SYSTEM },
+					{ role: 'user', content: compactionRequest(serializeForSummary(older), carry) },
+				],
+				profile: input.profile,
+				apiKey: input.apiKey,
+				options: { ...this.resolvedOptions(input.item, undefined), [MODEL_OPTION_REASONING]: 'low' },
+				maxOutputTokens: 8_000,
+			}, input.token)) {
+				if (event.type === 'text.delta' && event.delta) {
+					text += event.delta;
+				}
+			}
+			summary = text.trim() || undefined;
+		} catch (err) {
+			this.logService.warn('[volt] compaction summary failed; using a mechanical summary', err);
+		}
+		const next = applyCompaction(messages, boundary, summary ?? mechanicalSummary(older, carry));
+		messages.splice(0, messages.length, ...next);
+		state.ledger.invalidateReferences();
+		state.promptTokens = estimateTokens(input.system) + totalTokens(messages);
+		this.emit(session, runId, { type: 'compaction', stages: [summary ? 'summarize' : 'mechanical'], dropped: boundary });
+		return true;
+	}
+
+	/**
+	 * A read-only sub-agent: its own context, the read/search/web tools, the same model at a lower
+	 * effort. The parent sees one progress line per step and gets back only the final report.
+	 */
+	private async runSubagent(session: ISessionState, parent: INativeState, request: ISubagentRequest, ctx: IToolContext): Promise<{ text: string; isError?: boolean }> {
+		const item = this.catalog.find(c => c.ref === session.providerRef && c.enabled) ?? this.catalog.find(c => c.enabled);
+		const profile = item ? this.profiles.find(p => p.id === item.profileId) : undefined;
+		const provider = profile ? this.modelProviders.get(profile.providerId) : undefined;
+		const runId = session.activeRun?.runId;
+		if (!item || !profile || !provider || item.kind !== 'model' || !runId) {
+			return { text: 'Sub-agents need a native model to be selected.', isError: true };
+		}
+		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
+		const allowed = new Set([...SUBAGENT_TOOLS, ...(request.kind === 'research' ? ['web_search', 'web_fetch'] : [])]);
+		const tools = this.workspaceTools(session, { ...parent, ledger: new FileLedger() }).filter(tool => allowed.has(tool.name));
+		const registry = new Map(tools.map(tool => [tool.name, tool]));
+		const root = this.executionRoot(session);
+		const facts = this.environmentFacts(root);
+		const system: INativeLoopMessage = { role: 'system', content: buildSubagentPrompt({ kind: request.kind, cwd: root?.fsPath, platform: facts.platform, date: facts.date }) };
+		const options = { ...this.resolvedOptions(item, undefined) };
+		if (item.optionDescriptors?.some(option => option.id === MODEL_OPTION_REASONING)) {
+			const values = item.optionDescriptors.find(option => option.id === MODEL_OPTION_REASONING)?.options?.map(option => option.value) ?? [];
+			options[MODEL_OPTION_REASONING] = closestLevel(request.kind === 'research' ? 'medium' : 'low', values.filter(value => value !== 'auto' && value !== 'off')) ?? 'low';
+		}
+		const source = new CancellationTokenSource(session.cancel?.token);
+		const onAbort = () => source.cancel();
+		ctx.signal.addEventListener('abort', onAbort);
+		const progress = (status: string) => {
+			if (ctx.callId) {
+				this.emit(session, runId, { type: 'tool.progress', callId: ctx.callId, status: `${request.description}: ${status}` });
+			}
+		};
+		try {
+			const result = await runDeepseekLoop({
+				stream: messages => new VoltLlmAdapter(provider).stream({
+					modelId: item.id,
+					messages: nativeToModelMessages([system, ...messages]),
+					profile,
+					apiKey,
+					options,
+					tools: toolSchemas(tools),
+				}, source.token),
+				execute: (calls, onResult) => runToolBatch(registry, calls, { cwd: root?.fsPath, signal: abortSignalFrom(source.token) }, { authorize: async () => ({ allow: true }), onResult }),
+				authorize: async call => this.preauthorizeDeepseek(session, runId, profile, call, registry.get(call.name)) ?? 'rejected',
+				preauthorize: call => this.preauthorizeDeepseek(session, runId, profile, call, registry.get(call.name)) ?? 'rejected',
+				emit: event => {
+					if (event.type === 'tool.start' && event.title) {
+						progress(event.title);
+					}
+				},
+				tool: name => registry.get(name),
+				cwd: root?.fsPath,
+			}, {
+				messages: [{ role: 'user', content: request.prompt }],
+				token: source.token,
+				budget: { maxToolCalls: 80, maxModelCalls: 30 },
+			});
+			const text = result.assistant.trim();
+			if (result.outcome === 'abort') {
+				return { text: 'The sub-agent was cancelled.', isError: true };
+			}
+			if (!text) {
+				return { text: 'The sub-agent finished without a report.', isError: true };
+			}
+			return { text: result.outcome === 'budget' ? `${text}\n\n(The sub-agent reached its step limit; this report may be partial.)` : text, ...(result.outcome === 'fail' ? { isError: true } : {}) };
+		} finally {
+			ctx.signal.removeEventListener('abort', onAbort);
+			source.dispose();
+		}
+	}
+
+	private async loadSkill(session: ISessionState, name: string): Promise<string | undefined> {
+		const instructions = session.deepseek?.instructions ?? await this.workspaceInstructions(this.executionRoot(session));
+		const doc = findInstruction(name, instructions.skills, instructions.rules);
+		if (!doc) {
+			return undefined;
+		}
+		let files = '';
+		if (doc.folder) {
+			const folder = URI.parse(doc.folder);
+			const listed: string[] = [];
+			const walk = async (dir: URI, depth: number) => {
+				const stat = await this.fileService.resolve(dir).catch(() => undefined);
+				for (const child of stat?.children ?? []) {
+					if (listed.length >= 40) {
+						return;
+					}
+					if (child.isDirectory) {
+						if (depth < 2) {
+							await walk(child.resource, depth + 1);
+						}
+					} else if (!/^skill\.md$/i.test(child.name)) {
+						listed.push(child.resource.fsPath);
+					}
+				}
+			};
+			await walk(folder, 0);
+			if (listed.length) {
+				files = `\n\nFiles bundled with this skill (read them with read_file when the instructions refer to them):\n${listed.map(path => `- ${path}`).join('\n')}`;
+			}
+		}
+		return `<skill name="${doc.name}">\n${doc.body}\n</skill>${files}`;
+	}
+
+	/** Skills and rules, reloaded at most every few seconds so edits to them apply to the next run. */
+	private workspaceInstructions(root: URI | undefined): Promise<IInstructionsSnapshot> {
+		const key = root?.toString() ?? '';
+		const cached = this.instructionsByRoot.get(key);
+		if (cached && Date.now() - cached.at < INSTRUCTIONS_TTL_MS) {
+			return cached.value;
+		}
+		const value = this.pathService.userHome()
+			.catch(() => undefined)
+			.then(home => loadInstructions(this.fileService, root, home))
+			.catch(() => ({ skills: [], rules: [], readRoots: [] }));
+		this.instructionsByRoot.set(key, { at: Date.now(), value });
+		return value;
+	}
+
+	/** Policy's answer when no person has to be asked; `undefined` when one does. */
+	private preauthorizeDeepseek(session: ISessionState, runId: string, profile: IProviderProfile, call: IToolCall, tool: IVoltTool | undefined): ApprovalOutcome | undefined {
 		if (!tool) {
 			return 'rejected';
 		}
-		if (tool.group === 'meta') {
+		if (tool.group === 'meta' || (tool.group === 'shell' && tool.parallelSafe)) {
 			return 'allowed-once';
 		}
 		const knobs = deepseekKnobs(this.accessMode);
+		const decision = this.evaluateAccessRequest(this.accessRequest(session, runId, profile, call, tool), false) as IAccessDecision;
+		if (decision.effect === 'allow') {
+			return 'allowed-once';
+		}
+		if (decision.effect === 'deny') {
+			return 'rejected';
+		}
+		return knobs.approval === 'never' ? 'allowed-once' : undefined;
+	}
+
+	private accessRequest(session: ISessionState, runId: string, profile: IProviderProfile, call: IToolCall, tool: IVoltTool): IAccessRequest {
 		const action = actionForGroup(tool.group);
 		const resource = resourceForCall(tool, call.args);
-		const decision = await this.evaluateAccessRequest({
+		return {
 			id: generateUuid(),
 			sessionId: session.sessionId,
 			runId,
@@ -1124,7 +1709,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			risk: classifyRisk(action, resource.value),
 			preview: { title: tool.name, detail: stringifyUnknown(call.args).slice(0, 400) },
 			createdAt: Date.now(),
-		}, knobs.approval === 'ask');
+		};
+	}
+
+	private async authorizeDeepseek(session: ISessionState, runId: string, profile: IProviderProfile, call: IToolCall, tool: IVoltTool | undefined): Promise<ApprovalOutcome> {
+		if (!tool) {
+			return 'rejected';
+		}
+		if (tool.group === 'meta' || (tool.group === 'shell' && tool.parallelSafe)) {
+			return 'allowed-once';
+		}
+		const knobs = deepseekKnobs(this.accessMode);
+		const decision = await this.evaluateAccessRequest(this.accessRequest(session, runId, profile, call, tool), knobs.approval === 'ask');
 		const step = resolveApproval({
 			policy: knobs.approval,
 			effect: decision.effect,
@@ -1162,24 +1758,34 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		await this.executeDeepseek(session, runId, request, profile, item);
 	}
 
-	/** Detected once per workspace; only consulted when the user asked to see something running. */
-	private workspaceRunPlan(): Promise<IRunPlan> {
-		this.runPlan ??= loadWorkspaceRunPlan(this.fileService, this.workspace).catch(() => ({ kind: 'unknown' }));
-		return this.runPlan;
+	/** Detected once per project root; only consulted when the user asked to see something running. */
+	private workspaceRunPlan(root: URI | undefined): Promise<IRunPlan> {
+		const key = root?.toString() ?? '';
+		let plan = this.runPlans.get(key);
+		if (!plan) {
+			plan = loadWorkspaceRunPlan(this.fileService, this.workspace, root).catch(() => ({ kind: 'unknown' }));
+			this.runPlans.set(key, plan);
+		}
+		return plan;
 	}
 
-	private environmentFacts(): IEnvironmentFacts {
+	private environmentFacts(root: URI | undefined): IEnvironmentFacts {
 		return {
-			cwd: this.workspace.getWorkspace().folders[0]?.uri.fsPath,
+			cwd: root?.fsPath,
 			platform: isWindows ? 'windows' : isMacintosh ? 'macos' : 'linux',
 			shell: isWindows ? 'cmd' : 'zsh',
 			date: new Date().toISOString().slice(0, 10),
 		};
 	}
 
-	private workspaceProjectInstructions(): Promise<string | undefined> {
-		this.projectInstructions ??= loadProjectInstructions(this.fileService, this.workspace.getWorkspace().folders[0]?.uri).catch(() => undefined);
-		return this.projectInstructions;
+	private workspaceProjectInstructions(root: URI | undefined): Promise<string | undefined> {
+		const key = root?.toString() ?? '';
+		let instructions = this.projectInstructionsByRoot.get(key);
+		if (!instructions) {
+			instructions = loadProjectInstructions(this.fileService, root).catch(() => undefined);
+			this.projectInstructionsByRoot.set(key, instructions);
+		}
+		return instructions;
 	}
 
 	private effectiveGroups(session: ISessionState, intent: IIntent): CapabilityGroup[] {
@@ -1187,9 +1793,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	private async contextPackInput(session: ISessionState, mode: VoltMode, intent: IIntent, tools?: IVoltTool[]): Promise<IContextPackInput> {
-		if (intent.signals.includes('ping')) {
-			return { mode, intent: { ...intent, groups: ['meta'] } };
-		}
+		const root = this.executionRoot(session);
 		const prepared = session.prepared;
 		const brief = prepared ? formatTaskBrief(prepared.intel) : undefined;
 		const memory = session.harness?.memory.promptBlock(intent.signals.join(' ') || (prepared?.intel.goal ?? ''));
@@ -1201,9 +1805,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return {
 			mode,
 			intent: { ...intent, groups: this.effectiveGroups(session, intent) },
-			runPlan: intent.wantsPreview ? await this.workspaceRunPlan() : undefined,
-			environment: this.environmentFacts(),
-			projectInstructions: await this.workspaceProjectInstructions(),
+			runPlan: intent.wantsPreview ? await this.workspaceRunPlan(root) : undefined,
+			environment: this.environmentFacts(root),
+			projectInstructions: await this.workspaceProjectInstructions(root),
 			toolSnippets: tools?.length ? toolSnippets(tools) : undefined,
 			...(brief ? { taskBrief: brief } : {}),
 			...(memory ? { memory } : {}),
@@ -1223,21 +1827,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.finish(session, runId, 'fail');
 			return;
 		}
-		const startAgent = async () => {
-			if (session.agentHandle && session.agentProviderId) {
-				await this.agentProviders.get(session.agentProviderId)?.dispose(session.agentHandle).catch(() => undefined);
-			}
-			session.agentHandle = await provider.start({
-				mode: request.mode,
-				profile,
-				cwd: this.workspace.getWorkspace().folders[0]?.uri.fsPath,
-				modelId: item.id === profile.providerId ? undefined : item.id,
-				options: this.resolvedOptions(item, request.options),
-			});
-			session.agentProviderId = provider.id;
-			await provider.applyAccessPolicy?.(session.agentHandle, this.compiledPolicy);
-		};
-		const hasLiveAgent = () => !!session.agentHandle && session.agentProviderId === provider.id && (provider.isLive?.(session.agentHandle) ?? true);
+		const startAgent = () => this.startAgentSession(session, provider, profile, item, request.mode, request.options);
+		// Another model from the same CLI is another agent session: restart it; the recap carries the thread over.
+		const hasLiveAgent = () => !!session.agentHandle && session.agentProviderId === provider.id && session.agentRef === item.ref && (provider.isLive?.(session.agentHandle) ?? true);
+		await session.agentStarting?.catch(() => undefined);
 
 		try {
 			for (let attempt = 0; attempt < 2; attempt++) {
@@ -1246,7 +1839,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						await startAgent();
 					}
 					provider.setRunContext?.(session.agentHandle!, { sessionId: session.sessionId, runId, mode: request.mode });
-					const lead = buildAcpLead(await this.contextPackInput(session, request.mode, intent));
+					const recap = conversationRecap(session.messages.slice(session.agentSynced ?? 0, -1));
+					const lead = [recap, buildAcpLead(await this.contextPackInput(session, request.mode, intent))].filter(Boolean).join('\n\n') || undefined;
 					let assistant = '';
 					let restart = false;
 					for await (const event of provider.send(session.agentHandle!, { text: request.text, mode: request.mode, lead }, profile, session.cancel!.token)) {
@@ -1264,6 +1858,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 							if (assistant) {
 								session.messages.push({ role: 'assistant', content: assistant });
 							}
+							session.agentSynced = session.messages.length;
 							this.finish(session, runId, event.reason);
 							return;
 						}
@@ -1279,6 +1874,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					if (assistant) {
 						session.messages.push({ role: 'assistant', content: assistant });
 					}
+					session.agentSynced = session.messages.length;
 					this.finish(session, runId, 'done');
 					return;
 				} catch (err) {
@@ -1672,6 +2268,52 @@ function abortSignalFrom(token: CancellationToken): AbortSignal {
 	}
 	token.onCancellationRequested(() => controller.abort());
 	return controller.signal;
+}
+
+/**
+ * Turns an ACP agent has not seen (the user was on another model), newest kept when long, so
+ * switching models mid-conversation keeps the thread instead of starting over.
+ */
+function conversationRecap(messages: readonly { role: string; content: string }[]): string | undefined {
+	const turns = messages.filter(message => message.content.trim() && message.role !== 'system');
+	if (!turns.length) {
+		return undefined;
+	}
+	const lines: string[] = [];
+	let used = 0;
+	for (let i = turns.length - 1; i >= 0 && used < RECAP_CHARS; i--) {
+		const text = turns[i].content.trim();
+		const clipped = text.length > 4_000 ? `${text.slice(0, 4_000)} [...]` : text;
+		lines.unshift(`${turns[i].role === 'assistant' ? 'Assistant' : 'User'}: ${clipped}`);
+		used += clipped.length;
+	}
+	return [
+		'<conversation_so_far>',
+		'This conversation started with another model. Here is what was said before this message; continue from it.',
+		...lines,
+		'</conversation_so_far>',
+	].join('\n');
+}
+
+/** `src/a.ts` for display, falling back to the absolute path outside the root. */
+function relativeToRoot(root: URI, uri: URI): string {
+	return relativePath(root, uri) ?? uri.fsPath;
+}
+
+const EFFORT_ORDER: readonly string[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+/** The option value nearest to `level` that the model actually offers, never above it when avoidable. */
+function closestLevel(level: string, values: readonly string[]): string | undefined {
+	if (!values.length) {
+		return undefined;
+	}
+	if (values.includes(level)) {
+		return level;
+	}
+	const rank = EFFORT_ORDER.indexOf(level);
+	const ranked = values.map(value => ({ value, rank: EFFORT_ORDER.indexOf(value) })).filter(entry => entry.rank >= 0).sort((a, b) => a.rank - b.rank);
+	const below = ranked.filter(entry => entry.rank <= rank);
+	return (below.at(-1) ?? ranked[0])?.value ?? values[0];
 }
 
 function asToolEvent(event: { type: string;[key: string]: unknown }): IVoltEvent | undefined {

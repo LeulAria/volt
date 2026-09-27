@@ -37,6 +37,7 @@ import { IsMacNativeContext, IsWebContext } from '../../../../platform/contextke
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { OpenRecentAction } from '../../actions/windowActions.js';
+import { LAYOUT_MODE_CONTEXT_KEY, NEW_UNTITLED_FILE_COMMAND_ID } from './layoutKeybindingMode.js';
 import { isICommandActionToggleInfo } from '../../../../platform/action/common/action.js';
 import { getFlatContextMenuActions } from '../../../../platform/actions/browser/menuEntryActionViewItem.js';
 import { defaultMenuStyles } from '../../../../platform/theme/browser/defaultStyles.js';
@@ -197,6 +198,13 @@ export abstract class MenubarControl extends Disposable {
 
 		// Listen to keybindings change
 		this._register(this.keybindingService.onDidUpdateKeybindings(() => this.updateMenubar()));
+
+		// Cmd+N follows the layout mode, so the native menu accelerator has to refresh with it.
+		this._register(this.contextKeyService.onDidChangeContext(e => {
+			if (e.affectsSome(new Set([LAYOUT_MODE_CONTEXT_KEY]))) {
+				this.updateMenubar();
+			}
+		}));
 
 		// Update recent menu items on formatter registration
 		this._register(this.labelService.onDidChangeFormatters(() => { this.onDidChangeRecentlyOpened(); }));
@@ -743,7 +751,7 @@ export class CustomMenubarControl extends MenubarControl {
 			disableAltFocus: this.currentDisableMenuBarAltFocus,
 			visibility: this.currentMenubarVisibility,
 			actionRunner: this.actionRunner,
-			getKeybinding: (action) => this.keybindingService.lookupKeybinding(action.id),
+			getKeybinding: (action) => this.keybindingService.lookupKeybinding(action.id, this.contextKeyService, action.id === NEW_UNTITLED_FILE_COMMAND_ID),
 			alwaysOnMnemonics: this.alwaysOnMnemonics,
 			compactMode: this.currentCompactMenuMode,
 			getCompactMenuActions: () => {

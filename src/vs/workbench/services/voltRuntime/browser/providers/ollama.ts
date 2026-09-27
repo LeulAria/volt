@@ -12,7 +12,7 @@ import { IProviderProfile } from '../../common/profiles.js';
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
 import { OpenAiToolAssembler } from '../../common/harness/openaiToolStream.js';
 import { stringifyToolArgs, toOpenAiMessages, toOpenAiTools } from '../../common/harness/providerMessages.js';
-import { requestSseLines, requestText } from '../host/httpStream.js';
+import { requestSseStream, requestText } from '../host/httpStream.js';
 
 export class OllamaProvider implements IModelProvider {
 	readonly id = 'ollama';
@@ -72,8 +72,9 @@ export class OllamaProvider implements IModelProvider {
 		const tools = req.tools?.length ? toOpenAiTools(req.tools) : undefined;
 		const textId = `text-${Date.now()}`;
 		const assembler = new OpenAiToolAssembler();
+		const callPrefix = `ollama_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 		let started = false;
-		for await (const line of requestSseLines(this.requestService, url, {
+		for await (const line of requestSseStream(this.requestService, url, {
 			type: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			data: JSON.stringify({
@@ -83,6 +84,10 @@ export class OllamaProvider implements IModelProvider {
 				...(tools ? { tools } : {}),
 			}),
 		}, token)) {
+			if (typeof line !== 'string') {
+				yield { type: 'retry', ...line.retry };
+				continue;
+			}
 			if (token.isCancellationRequested) {
 				yield { type: 'finish', reason: 'abort' };
 				return;
@@ -115,7 +120,7 @@ export class OllamaProvider implements IModelProvider {
 			}
 			const toolCalls = json.message?.tool_calls?.map((call, index) => ({
 				index,
-				id: call.id ?? `ollama-${index}`,
+				id: call.id ?? `${callPrefix}_${index}`,
 				function: {
 					name: call.function?.name,
 					arguments: stringifyToolArgs(call.function?.arguments),
@@ -140,6 +145,7 @@ export class OllamaProvider implements IModelProvider {
 		if (started) {
 			yield { type: 'text.end', id: textId };
 		}
+		yield* assembler.drain();
 		yield assembler.finish();
 	}
 }

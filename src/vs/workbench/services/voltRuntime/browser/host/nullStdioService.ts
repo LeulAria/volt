@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../../base/common/event.js';
-import { IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltExecResult, IVoltJobOutput, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../../platform/voltStdio/common/voltStdio.js';
 
 export class NullVoltStdioService implements IVoltStdioService {
 	declare readonly _serviceBrand: undefined;
@@ -21,5 +21,23 @@ export class NullVoltStdioService implements IVoltStdioService {
 
 	async which(): Promise<string | undefined> {
 		return undefined;
+	}
+
+	async exec(): Promise<IVoltExecResult> {
+		throw new Error('Shell commands are only available in the Volt desktop app.');
+	}
+
+	async cancelExec(): Promise<void> { }
+
+	async jobOutput(): Promise<IVoltJobOutput | undefined> {
+		return undefined;
+	}
+
+	async jobWait(): Promise<IVoltJobOutput | undefined> {
+		return undefined;
+	}
+
+	async listJobs(): Promise<readonly IVoltJobOutput[]> {
+		return [];
 	}
 }

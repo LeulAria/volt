@@ -1,20 +1,34 @@
-in browser inspection and selection
+in browser inspection, selection and commenting functionality
 - lets have option to put it as claude comment
 - then we can open the comment icon to view the message
 - also we can basically batch and send it
 - we can send it in batch but as queue
-- we can send it in different tabs in parallel
 
-- show sub agents as nested tabs as such
+---
 
 - markdowns, files etc to have option to comment like claude kidna
-
 - ability to revert from sent chat like git revert the changed things
 
-- icon to add to chat on files and folders
+- highlevel map scrolling option https://x.com/darrenjr/status/2089755857382744166?s=20
+- hover to view changed files next to fork when chat agent is done https://x.com/darrenjr/status/2089755857382744166?s=20
 
+- search view analyze, AI sessions https://jazzyalex.github.io/agent-sessions/
 
+- login from inside the vscode, also install agent interminal from inside out editor
 
+- port forwarding on agent window to view the build in other device
+
+-----
+
+- start once reset is done option to continue task once reset is back scheduling
+- schedule a task option
+
+- voice insert option  (optional)
+- / inside the editor text area
+
+- Questions, Plan mode recommendation, Work progress
+- SubAgent rendering view
+- show sub agents as nested tabs as such
 
 
 

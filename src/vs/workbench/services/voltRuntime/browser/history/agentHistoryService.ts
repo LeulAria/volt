@@ -14,11 +14,14 @@ import { FileOperationError, FileOperationResult, IFileService } from '../../../
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILifecycleService } from '../../../lifecycle/common/lifecycle.js';
+import { IAgentWorktreeService } from '../../common/git/agentWorktree.js';
 import {
 	AGENT_HISTORY_FORMAT_VERSION,
 	AgentHistoryEntry,
 	AgentHistoryRecord,
+	AgentSessionAttention,
 	IAgentHistoryIndex,
 	IAgentHistoryListOptions,
 	IAgentHistoryService,
@@ -42,6 +45,7 @@ import {
 	encodeRecord,
 	encodeRecords,
 	foldTranscript,
+	metaAfterEntry,
 	normalizeIndex,
 	parseAttachmentRef,
 	searchSessions,
@@ -122,8 +126,16 @@ class SessionHandle implements IAgentSessionHandle {
 			version: AGENT_HISTORY_FORMAT_VERSION,
 			id,
 			createdAt: service.get(id)?.createdAt ?? Date.now(),
-			workspace: service.currentWorkspace,
+			workspace: service.pinnedWorkspace(id) ?? service.currentWorkspace,
 		};
+	}
+
+	/** A new chat can be bound after the handle exists and before the first append. */
+	adoptWorkspace(workspace: IAgentSessionWorkspace): void {
+		if (this.materialized) {
+			return;
+		}
+		this.header = { ...this.header, workspace };
 	}
 
 	get meta(): IAgentSessionMeta | undefined {
@@ -206,7 +218,7 @@ class SessionHandle implements IAgentSessionHandle {
 		this.append({ type: 'truncate', at: Date.now(), from: fromTurn });
 	}
 
-	setMeta(meta: { title?: string; mode?: string; model?: string }): void {
+	setMeta(meta: { title?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string }): void {
 		this.append({ type: 'meta', at: Date.now(), ...meta });
 	}
 
@@ -220,7 +232,7 @@ class SessionHandle implements IAgentSessionHandle {
 		this.entries.push(snapshot);
 		this.pending.push(encoded);
 		this.transcript = foldTranscript(this.header, this.entries);
-		this.service.updateMeta(deriveMeta(this.transcript, this.meta));
+		this.service.updateMeta(metaAfterEntry(deriveMeta(this.transcript, this.meta), snapshot));
 		if (this.appendTimer === undefined) {
 			this.appendTimer = setTimeout(() => {
 				this.appendTimer = undefined;
@@ -326,14 +338,19 @@ class SessionHandle implements IAgentSessionHandle {
 
 	/** Atomically rewrite the log with only the effective records. */
 	private async rewrite(): Promise<void> {
+		// Records appended while the write is in flight are not in this snapshot; keep them
+		// (in `entries` and `pending`) so the next drain writes them instead of losing them.
+		const entriesAtStart = this.entries.length;
+		const pendingAtStart = this.pending.length;
 		const transcript = this.transcript ?? foldTranscript(this.header, this.entries);
 		const records: AgentHistoryRecord[] = compactRecords(transcript);
 		const content = VSBuffer.fromString(encodeRecords(records));
 		await this.service.ensureDirectories();
 		await this.service.fileService.writeFile(this.logFile, content, ATOMIC);
-		this.entries = records.filter((record): record is AgentHistoryEntry => record.type !== 'header');
-		this.pending = [];
-		this.recordCount = records.length;
+		const arrived = this.entries.slice(entriesAtStart);
+		this.entries = [...records.filter((record): record is AgentHistoryEntry => record.type !== 'header'), ...arrived];
+		this.pending = this.pending.slice(pendingAtStart);
+		this.recordCount = records.length + arrived.length;
 		this.damaged = false;
 		this.materialized = true;
 		this.service.rememberOnDisk(this.id);
@@ -387,6 +404,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 	private readonly sessions = new Map<string, IAgentSessionMeta>();
 	private readonly onDisk = new Set<string>();
 	private readonly handles = new Map<string, SessionHandle>();
+	private readonly pinnedWorkspaces = new Map<string, IAgentSessionWorkspace>();
 	private readonly closing = new Map<string, Promise<void>>();
 	private readonly indexQueue = new WriteQueue();
 	private indexTimer: ReturnType<typeof setTimeout> | undefined;
@@ -404,6 +422,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService,
 		@ILifecycleService lifecycleService: ILifecycleService,
 		@ILogService public readonly logService: ILogService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) {
 		super();
 		this.root = joinPath(environmentService.userRoamingDataHome, ROOT_DIR);
@@ -586,6 +605,19 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 
 	//#region Handles
 
+	pinSessionWorkspace(id: string, workspace: IAgentSessionWorkspace): void {
+		const safe = safeSessionId(id);
+		if (!safe) {
+			return;
+		}
+		this.pinnedWorkspaces.set(safe, workspace);
+		this.handles.get(safe)?.adoptWorkspace(workspace);
+	}
+
+	pinnedWorkspace(id: string): IAgentSessionWorkspace | undefined {
+		return this.pinnedWorkspaces.get(id);
+	}
+
 	open(id: string): IAgentSessionHandle {
 		const safe = safeSessionId(id);
 		if (!safe) {
@@ -642,6 +674,62 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		if (meta && !!meta.archived !== archived) {
 			this.updateMeta({ ...meta, archived, pinned: archived ? false : meta.pinned });
 		}
+		if (archived) {
+			const pending = this.instantiationService.invokeFunction(accessor => accessor.get(IAgentWorktreeService).pruneArchived());
+			void pending.catch(err => this.logService.warn('[agent history] worktree prune failed', err));
+		}
+	}
+
+	async setSettled(id: string, settled: boolean): Promise<void> {
+		const meta = this.sessions.get(id);
+		if (!meta || !!meta.settled === settled) {
+			return;
+		}
+		this.updateMeta({
+			...meta,
+			settled: settled || undefined,
+			snoozed: settled ? undefined : meta.snoozed,
+		});
+	}
+
+	async setSnoozed(id: string, snoozed: boolean): Promise<void> {
+		const meta = this.sessions.get(id);
+		if (!meta || !!meta.snoozed === snoozed) {
+			return;
+		}
+		this.updateMeta({
+			...meta,
+			snoozed: snoozed || undefined,
+			settled: snoozed ? undefined : meta.settled,
+		});
+	}
+
+	async setUnread(id: string, unread: boolean): Promise<void> {
+		const meta = this.sessions.get(id);
+		if (meta && !!meta.unread !== unread) {
+			this.updateMeta({ ...meta, unread: unread || undefined });
+		}
+	}
+
+	async markAllRead(): Promise<void> {
+		let changed = false;
+		for (const meta of this.sessions.values()) {
+			if (meta.unread) {
+				this.sessions.set(meta.id, { ...meta, unread: undefined });
+				changed = true;
+			}
+		}
+		if (changed) {
+			this.scheduleIndexWrite();
+			this._onDidChange.fire();
+		}
+	}
+
+	async setAttention(id: string, attention: AgentSessionAttention | undefined): Promise<void> {
+		const meta = this.sessions.get(id);
+		if (meta && meta.attention !== attention) {
+			this.updateMeta({ ...meta, attention });
+		}
 	}
 
 	async rename(id: string, title: string | undefined): Promise<void> {
@@ -656,6 +744,10 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 	}
 
 	async delete(id: string): Promise<void> {
+		const meta = this.sessions.get(id);
+		if (meta?.worktreePath) {
+			await this.instantiationService.invokeFunction(accessor => accessor.get(IAgentWorktreeService).removeForDeletedChat(meta.workspaceFolder, meta.worktreePath, meta.worktreeBranch));
+		}
 		const handle = this.handles.get(id);
 		if (handle) {
 			handle.abandon();

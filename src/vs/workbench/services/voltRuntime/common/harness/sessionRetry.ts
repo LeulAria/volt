@@ -23,6 +23,7 @@ const TRANSIENT = /overloaded|rate.?limit|try again|temporar(?:y|ily)|timeout|ti
 const ACP_DEAD = /ACP process exited|ACP process is not writable|ACP session is not running|ACP client disposed|EPIPE/i;
 const ACP_INTERNAL = /^internal error\.?$/i;
 const ACP_STALL = /ACP agent produced no activity/i;
+const PROVIDER_LIMIT = /\b(spend limit|usage limit|rate limit|quota|session limit)\b/i;
 
 export function classifyProviderError(error: unknown): RetryKind {
 	const message = errorMessage(error);
@@ -42,9 +43,12 @@ export function classifyProviderError(error: unknown): RetryKind {
 	return 'fail';
 }
 
-/** Dead or poisoned ACP session - drop the process and retry the turn on a fresh one. */
+/** Dead or poisoned ACP session - drop the process and retry the turn on a fresh one. A usage or spend limit is the provider's own message, not a dead process. */
 export function isAcpTurnRestartable(message: string): boolean {
 	const trimmed = message.trim();
+	if (PROVIDER_LIMIT.test(trimmed)) {
+		return false;
+	}
 	return ACP_DEAD.test(trimmed) || ACP_INTERNAL.test(trimmed) || ACP_STALL.test(trimmed);
 }
 

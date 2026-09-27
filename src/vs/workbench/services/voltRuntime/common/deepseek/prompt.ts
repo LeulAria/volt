@@ -6,8 +6,12 @@
 import { CapabilityGroup } from '../harness/lanes.js';
 import { modePolicy, VoltMode } from '../modes.js';
 
-/** Safety ceiling. The model decides when to stop; this only prevents a runaway loop. */
-export const DEEPSEEK_BUDGET = { maxToolCalls: 200, maxModelCalls: 80 } as const;
+/**
+ * Safety ceiling for one run. The model decides when to stop; this only prevents a runaway loop.
+ * It is high enough that a long task finishes unattended, and the doom-loop detector catches
+ * spinning long before it is reached.
+ */
+export const DEEPSEEK_BUDGET = { maxToolCalls: 500, maxModelCalls: 150 } as const;
 
 export interface IDeepseekToolRef {
 	readonly name: string;
@@ -16,7 +20,8 @@ export interface IDeepseekToolRef {
 
 /**
  * Mode policy is the only filter. Question-shaped text still sees web, read, and (in agent mode) shell.
- * `request_capabilities` is omitted: the model is not asked to beg for tools.
+ * `request_capabilities` is omitted: the model is not asked to beg for tools. Git tools are
+ * read-only, so read-only modes keep them.
  */
 export function selectDeepseekTools<T extends IDeepseekToolRef>(tools: readonly T[], mode: VoltMode): T[] {
 	const policy = modePolicy(mode);
@@ -27,7 +32,7 @@ export function selectDeepseekTools<T extends IDeepseekToolRef>(tools: readonly 
 		if (tool.group === 'meta') {
 			return true;
 		}
-		if (!policy.allowWrites && (tool.group === 'edit' || tool.group === 'git')) {
+		if (!policy.allowWrites && tool.group === 'edit') {
 			return false;
 		}
 		if (!policy.allowTerminal && tool.group === 'shell') {
@@ -44,47 +49,101 @@ export interface IDeepseekPromptInput {
 	readonly mode: VoltMode;
 	readonly cwd?: string;
 	readonly platform?: string;
+	readonly shell?: string;
 	readonly date?: string;
 	readonly projectInstructions?: string;
+	/** Always-on project rules, already wrapped in `<rules>`. */
+	readonly rules?: string;
+	/** Loadable skills index, already wrapped in `<skills>`. */
+	readonly skills?: string;
+	/** Tool names actually offered, so the prompt never mentions a tool the model cannot call. */
+	readonly toolNames?: readonly string[];
 }
 
 /**
- * Ordered prompt sections, in the same spirit as DeepSeek's assembly:
- * identity, then how to implement, then how to present, then the live workspace.
- * The user message is not rewritten and is not copied in here.
+ * The system prompt. Stable for a whole conversation (the date is day-granular), so it is
+ * served from the prompt cache after the first request. Nothing per-message goes in here.
  */
 export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 	const policy = modePolicy(input.mode);
-	const sections = [
-		[
-			'You are Volt, a coding agent in the editor the user already has open.',
-			'The user message is the task. Do not replace it with a different project, a plan, or a server.',
-		].join(' '),
-		[
-			'Turn a short or rough request into a finished result.',
-			'Read the files that matter before you change them. Match the code around the change.',
-			'Make the smallest complete change that does the job, then check it.',
-			'When a fact is current or outside the workspace, look it up before you answer.',
-			'Ask only when a missing fact would change the result.',
-		].join(' '),
-		[
-			'Lead with the answer. Name the files you actually used.',
-			'Show the result, not a tour of your tools.',
-			'Do not add a plan the user did not ask to see.',
-		].join(' '),
-		[
-			'Use a tool when it changes the answer. Do not repeat an identical call.',
-			`Mode: ${input.mode}.`,
-			policy.allowWrites ? 'You may edit files in the open workspace.' : 'Read-only: do not modify files.',
-			policy.allowTerminal ? 'You may run commands.' : 'Do not run commands.',
-		].join(' '),
+	const has = (name: string) => !input.toolNames || input.toolNames.includes(name);
+	const sections: string[] = [];
+
+	sections.push([
+		'You are Volt, a coding agent working inside the editor the user already has open.',
+		'The user message is the task. Do not replace it with a different project, a plan, or a server.',
+		'Turn a short or rough request into a finished result.',
+	].join(' '));
+
+	const work = [
+		'# How you work',
+		'- Answer questions directly. Change files only when the user asked for a change.',
+		'- Find context fast: search to locate the right files, then read what matters. When calls do not depend on each other, make them all in the same turn so they run in parallel (several reads, several searches).',
+		'- Read a file before you edit it, and match the code around the change: its style, naming, and patterns.',
+		'- Make the smallest complete change that does the job. No unrequested features, refactors, or comments.',
 	];
+	if (policy.allowWrites) {
+		work.push(`- After editing, check your work${has('diagnostics') ? ': run diagnostics on the files you changed' : ''}${policy.allowTerminal ? ', and run the relevant tests, type-check, or build when the project has them' : ''}. Fix what you broke before you finish.`);
+	}
+	if (has('todo')) {
+		work.push('- For work with three or more steps, keep a todo list and update it as you go.');
+	}
+	if (has('task')) {
+		work.push('- For broad investigations, send independent questions to task sub-agents in parallel; they return short reports and keep your context small.');
+	}
+	work.push(
+		'- When something fails, read the error and fix the cause. Do not repeat an identical call. If you are blocked, say exactly what is blocking you.',
+		'- Ask only when a missing decision would change the result; otherwise choose sensibly and say what you chose.',
+	);
+	if (has('web_search')) {
+		work.push('- When a fact is current or outside the workspace (versions, APIs, error messages, prices), look it up before you answer.');
+	}
+	sections.push(work.join('\n'));
+
+	const tools = ['# Tools'];
+	if (policy.allowWrites) {
+		tools.push('- edit_file for existing files: old_string must match exactly; several changes to one file go in one call via edits. write_file only for new files or full rewrites.');
+	}
+	if (policy.allowTerminal && has('shell')) {
+		tools.push('- shell runs non-interactive commands with no stdin. Run servers and watchers with background: true, then job_wait for readiness. Never start an interactive program or editor.');
+	}
+	tools.push('- Prefer the dedicated tools over shell for reading, searching, and editing files.');
+	if (has('code_nav')) {
+		tools.push('- code_nav answers "where is this defined" and "who uses this" precisely; grep is for text.');
+	}
+	sections.push(tools.join('\n'));
+
+	sections.push([
+		'# How you answer',
+		'- Lead with the answer. Be concise and direct; no preamble, no narration of each tool call.',
+		'- Use Markdown. Put file paths, commands, and identifiers in backticks; put code in fenced blocks with a language.',
+		'- Name the files you actually used or changed. After a change, end with a short summary of what changed and how you verified it.',
+		'- Do not add a plan the user did not ask to see.',
+	].join('\n'));
+
+	const mode = [`Mode: ${input.mode}.`];
+	switch (input.mode) {
+		case 'ask':
+			mode.push('Read-only: answer the question. Do not modify files or run commands.');
+			break;
+		case 'plan':
+			mode.push('Read-only: investigate, then give a concrete implementation plan (files, steps, risks, how to verify). Do not modify files.');
+			break;
+		case 'debug':
+			mode.push('Reproduce the problem, find the root cause with evidence, fix it, and verify the fix.');
+			break;
+		default:
+			mode.push(policy.allowWrites ? 'You may edit files in the open workspace.' : 'Read-only: do not modify files.');
+			mode.push(policy.allowTerminal ? 'You may run commands.' : 'Do not run commands.');
+	}
+	sections.push(mode.join(' '));
+
 	const environment: string[] = [];
 	if (input.cwd) {
 		environment.push(`Workspace: ${input.cwd}`);
 	}
 	if (input.platform) {
-		environment.push(`Platform: ${input.platform}`);
+		environment.push(`Platform: ${input.platform}${input.shell ? ` (shell: ${input.shell})` : ''}`);
 	}
 	if (input.date) {
 		environment.push(`Date: ${input.date}`);
@@ -95,7 +154,35 @@ export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 	if (input.projectInstructions?.trim()) {
 		sections.push(`<project_instructions>\n${input.projectInstructions.trim()}\n</project_instructions>`);
 	}
+	if (input.rules?.trim()) {
+		sections.push(input.rules.trim());
+	}
+	if (input.skills?.trim()) {
+		sections.push(input.skills.trim());
+	}
 	return sections.join('\n\n');
+}
+
+/** The sub-agent's own prompt: read-only, fast, and a report as its only output. */
+export function buildSubagentPrompt(input: { readonly kind: 'explore' | 'research'; readonly cwd?: string; readonly platform?: string; readonly date?: string }): string {
+	return [
+		[
+			'You are a Volt sub-agent doing one focused, read-only investigation for the main agent.',
+			'You cannot edit files or run commands.',
+			input.kind === 'research' ? 'You can read the workspace and search and fetch the web.' : 'You can read, search, and navigate the workspace.',
+		].join(' '),
+		[
+			'- Work fast: make independent searches and reads in the same turn so they run in parallel. Stop as soon as you can answer.',
+			'- Your final message is the only thing the main agent sees. Make it a complete, self-contained report:',
+			'  the direct answer first, then the evidence as `path:line` references with short excerpts only where they matter.',
+			'- No preamble, no description of your process, no suggestions beyond what was asked.',
+		].join('\n'),
+		[
+			input.cwd ? `Workspace: ${input.cwd}` : '',
+			input.platform ? `Platform: ${input.platform}` : '',
+			input.date ? `Date: ${input.date}` : '',
+		].filter(Boolean).join('\n'),
+	].filter(Boolean).join('\n\n');
 }
 
 export interface INativeModelTurn {
@@ -118,11 +205,12 @@ export function nativeModelTurn(input: IDeepseekPromptInput & {
 	readonly tools: readonly IDeepseekToolRef[];
 }): INativeModelTurn {
 	const selected = selectDeepseekTools(input.tools, input.mode);
+	const toolNames = selected.map(tool => tool.name);
 	return {
 		prefetch: [],
 		runPlan: false,
 		classified: false,
-		toolNames: selected.map(tool => tool.name),
-		prompt: buildDeepseekSystemPrompt(input),
+		toolNames,
+		prompt: buildDeepseekSystemPrompt({ ...input, toolNames }),
 	};
 }

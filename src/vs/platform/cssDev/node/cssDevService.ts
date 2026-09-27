@@ -23,8 +23,6 @@ export class CSSDevelopmentService implements ICSSDevelopmentService {
 
 	declare _serviceBrand: undefined;
 
-	private _cssModules?: Promise<string[]>;
-
 	constructor(
 		@IEnvironmentService private readonly envService: IEnvironmentService,
 		@ILogService private readonly logService: ILogService
@@ -34,9 +32,9 @@ export class CSSDevelopmentService implements ICSSDevelopmentService {
 		return !this.envService.isBuilt;
 	}
 
+	/** Rescanned per window load so a CSS file added while the app runs is picked up by Reload Window. */
 	getCssModules(): Promise<string[]> {
-		this._cssModules ??= this.computeCssModules();
-		return this._cssModules;
+		return this.computeCssModules();
 	}
 
 	private async computeCssModules(): Promise<string[]> {

@@ -13,14 +13,17 @@ import { encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
-import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { Emitter, Event as BaseEvent } from '../../../../../base/common/event.js';
+import { Disposable, DisposableMap, DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
+import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextMenuService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
+import { createDecorator, IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
@@ -30,8 +33,10 @@ import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IHostService } from '../../../../services/host/browser/host.js';
-import { IAgentMention, browserMentionColor } from '../composer/agentMentions.js';
+import { IAgentMention, browserMentionColor, cloneDisplayMentions } from '../composer/agentMentions.js';
+import { BrowserCommentCard } from './browserCommentCard.js';
 import { BrowserAgentComposer } from './browserComposer.js';
+import { commentPreviewText } from './browserComments.js';
 import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { BrowserAgentDock } from './browserDock.js';
@@ -39,6 +44,12 @@ import { DEFAULT_BROWSER_URL, VoltBrowserEditorInput } from './browserEditorInpu
 import { sanitizeBrowserUrl } from './localPreview.js';
 
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+interface IPinnedBrowserComment {
+	card: BrowserCommentCard;
+	selection: IBrowserSelection;
+	markId: string;
+}
 const PROBE_SCRIPT = `(() => {
 	const x = __X__;
 	const y = __Y__;
@@ -136,6 +147,19 @@ interface IBrowserSelection {
 	text?: string;
 }
 
+/** The URL as shown in the address bar: a bare root path drops its trailing slash (`https://google.com`). */
+export function displayBrowserUrl(url: string): string {
+	try {
+		const parsed = new URL(url);
+		if (parsed.pathname === '/' && !parsed.search && !parsed.hash && url.endsWith('/')) {
+			return url.slice(0, -1);
+		}
+	} catch {
+		// Not a parseable URL; show it as is.
+	}
+	return url;
+}
+
 export function normalizeBrowserUrl(value: string): string {
 	const sanitized = sanitizeBrowserUrl(value);
 	if (sanitized) {
@@ -154,25 +178,6 @@ export function normalizeBrowserUrl(value: string): string {
 	return `https://${trimmed.split(/[\s\]>]/)[0]}`;
 }
 
-function createPromptDragIcon(): HTMLElement {
-	const el = $('span.volt-browser-prompt-drag-icon');
-	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', '0 0 24 24');
-	svg.setAttribute('width', '18');
-	svg.setAttribute('height', '18');
-	svg.setAttribute('aria-hidden', 'true');
-	for (const [x, y] of [[9, 6], [15, 6], [9, 12], [15, 12], [9, 18], [15, 18]]) {
-		const dot = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'circle');
-		dot.setAttribute('cx', String(x));
-		dot.setAttribute('cy', String(y));
-		dot.setAttribute('r', '1.35');
-		dot.setAttribute('fill', 'currentColor');
-		svg.appendChild(dot);
-	}
-	el.appendChild(svg);
-	return el;
-}
-
 function browserUrlNeedsRewrite(raw: string, clean: string): boolean {
 	if (/\]\(|%5[dD]\(|\((https?:\/\/)|\*+/i.test(raw)) {
 		return true;
@@ -189,9 +194,23 @@ function browserUrlNeedsRewrite(raw: string, clean: string): boolean {
 	}
 }
 
-export class VoltBrowserEditor extends EditorPane {
+/**
+ * One browser tab's page and chrome. It lives as long as the tab, not as long as the pane
+ * showing it: moving a tab to another group gives it a new pane, and a `<webview>` taken
+ * out of the DOM restarts its page. So the view sits in one layer per editor part
+ * (`browserViewLayer`) and is laid over whichever pane shows the tab.
+ */
+export class VoltBrowserView extends Disposable {
 
-	static readonly ID = VoltBrowserEditorInput.EditorID;
+	readonly element: HTMLElement;
+	private layer: HTMLElement | undefined;
+	/** The pane slot this view is laid over; only that slot may hide it. */
+	private owner: HTMLElement | undefined;
+	private relayoutHandle: number | undefined;
+	private readonly dragListeners = this._register(new DisposableStore());
+	private readonly _onDidFocus = this._register(new Emitter<void>());
+	/** Pointer or focus went into the view, which is outside the group's DOM. */
+	readonly onDidFocus: BaseEvent<void> = this._onDidFocus.event;
 
 	private container!: HTMLElement;
 	private backButton!: HTMLButtonElement;
@@ -208,13 +227,7 @@ export class VoltBrowserEditor extends EditorPane {
 	private hintPathEl!: HTMLElement;
 	private hintTextEl!: HTMLElement;
 	private promptEl!: HTMLElement;
-	private promptDragEl!: HTMLElement;
-	private readonly promptDragStore = this._register(new DisposableStore());
-	private promptPinned = false;
-	private promptOffsetX = 0;
-	private promptOffsetY = 0;
-	private promptBaseLeft = 0;
-	private promptBaseTop = 0;
+	private readonly comments: IPinnedBrowserComment[] = [];
 	private composer: BrowserAgentComposer | undefined;
 	private dock: BrowserAgentDock | undefined;
 	private errorEl!: HTMLElement;
@@ -232,10 +245,7 @@ export class VoltBrowserEditor extends EditorPane {
 	private lastProbe = '';
 
 	constructor(
-		group: IEditorGroup,
-		@ITelemetryService telemetryService: ITelemetryService,
-		@IThemeService themeService: IThemeService,
-		@IStorageService storageService: IStorageService,
+		private readonly input: VoltBrowserEditorInput,
 		@ICommandService private readonly commandService: ICommandService,
 		@IContextMenuService private readonly contextMenuService: IContextMenuService,
 		@IOpenerService private readonly openerService: IOpenerService,
@@ -245,18 +255,105 @@ export class VoltBrowserEditor extends EditorPane {
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IHostService private readonly hostService: IHostService,
 	) {
-		super(VoltBrowserEditor.ID, group, telemetryService, themeService, storageService);
-	}
-
-	protected override createEditor(parent: HTMLElement): void {
+		super();
+		this.element = $('.volt-browser-view.parked');
+		this._register(addDisposableListener(this.element, 'pointerdown', () => this._onDidFocus.fire(), true));
+		this._register(addDisposableListener(this.element, 'focusin', () => this._onDidFocus.fire()));
 		try {
-			this.createBrowserChrome(parent);
+			this.createBrowserChrome(this.element);
 		} catch (err) {
-			this.container ??= append(parent, $('.volt-browser-editor'));
+			this.container ??= append(this.element, $('.volt-browser-editor'));
 			this.errorEl ??= append(this.container, $('.volt-browser-error'));
 			this.errorEl.classList.remove('hidden');
 			this.errorEl.textContent = err instanceof Error ? err.message : String(err);
+			return;
 		}
+		try {
+			// The webview starts loading once `show` puts the view in the DOM.
+			this.navigate(input.url || DEFAULT_BROWSER_URL);
+		} catch (err) {
+			this.showError(err instanceof Error ? err.message : localize('voltBrowser.loadFailed', "This page could not be loaded."));
+		}
+	}
+
+	/** Lay the view over `slot`, the area of the pane now showing this tab. */
+	show(slot: HTMLElement): void {
+		const layer = browserViewLayer(slot);
+		if (this.element.parentElement !== layer) {
+			// First show, or the tab moved to another part or window: the page restarts once here.
+			layer.appendChild(this.element);
+			this.dragListeners.clear();
+			this.passDragsThroughPage(layer.ownerDocument);
+		}
+		this.layer = layer;
+		this.owner = slot;
+		this.element.classList.remove('parked');
+		this.layoutOver(slot);
+	}
+
+	/** Hide the view if `slot` still shows it. A pane that lost the tab to another group leaves it alone. */
+	hide(slot: HTMLElement): void {
+		if (this.owner !== slot) {
+			return;
+		}
+		this.owner = undefined;
+		this.element.classList.add('parked');
+	}
+
+	layoutOver(slot: HTMLElement): void {
+		if (this.owner !== slot) {
+			return;
+		}
+		this.place(slot);
+		// Group moves set positions top-down before layout, but a resize mid-frame can still settle later.
+		if (this.relayoutHandle === undefined) {
+			this.relayoutHandle = getWindow(slot).requestAnimationFrame(() => {
+				this.relayoutHandle = undefined;
+				if (this.owner) {
+					this.place(this.owner);
+				}
+			});
+		}
+	}
+
+	private place(slot: HTMLElement): void {
+		if (!this.layer) {
+			return;
+		}
+		const box = slot.getBoundingClientRect();
+		const origin = this.layer.getBoundingClientRect();
+		const style = this.element.style;
+		const left = `${box.left - origin.left}px`;
+		const top = `${box.top - origin.top}px`;
+		const width = `${box.width}px`;
+		const height = `${box.height}px`;
+		if (style.left === left && style.top === top && style.width === width && style.height === height) {
+			return;
+		}
+		style.left = left;
+		style.top = top;
+		style.width = width;
+		style.height = height;
+		this.layout();
+	}
+
+	/**
+	 * A guest page swallows drag events, so a tab dragged over it never reaches the editor
+	 * drop zones (split left, right, up, down). While anything is dragged in the window the
+	 * page lets the pointer through, like VS Code's own webviews.
+	 */
+	private passDragsThroughPage(doc: Document): void {
+		const set = (dragging: boolean) => this.container.classList.toggle('drag-passthrough', dragging);
+		this.dragListeners.add(addDisposableListener(doc, 'dragstart', () => set(true), true));
+		this.dragListeners.add(addDisposableListener(doc, 'dragenter', () => set(true), true));
+		this.dragListeners.add(addDisposableListener(doc, 'dragend', () => set(false), true));
+		this.dragListeners.add(addDisposableListener(doc, 'drop', () => set(false), true));
+		// No related target: the drag left the window.
+		this.dragListeners.add(addDisposableListener(doc, 'dragleave', e => {
+			if (!e.relatedTarget) {
+				set(false);
+			}
+		}, true));
 	}
 
 	private createBrowserChrome(parent: HTMLElement): void {
@@ -316,11 +413,19 @@ export class VoltBrowserEditor extends EditorPane {
 		this._register(addDisposableListener(this.container, 'keydown', e => {
 			const event = new StandardKeyboardEvent(e);
 			if (event.keyCode === KeyCode.Escape) {
+				const openPin = this.comments.find(pin => pin.card.expanded);
+				if (openPin) {
+					this.collapseComment(openPin);
+					e.preventDefault();
+					return;
+				}
+				if (this.selection || !this.promptEl.classList.contains('hidden')) {
+					this.closeDraft();
+					e.preventDefault();
+					return;
+				}
 				if (this.designMode) {
 					this.setDesignMode(false);
-					e.preventDefault();
-				} else if (this.selection) {
-					this.clearSelection();
 					e.preventDefault();
 				}
 				return;
@@ -360,22 +465,13 @@ export class VoltBrowserEditor extends EditorPane {
 	}
 
 	private buildPrompt(): void {
-		this.promptDragEl = append(this.promptEl, $('button.volt-browser-prompt-drag'));
-		(this.promptDragEl as HTMLButtonElement).type = 'button';
-		this.promptDragEl.tabIndex = -1;
-		this.promptDragEl.setAttribute('aria-label', localize('voltBrowser.moveComposer', "Drag to move"));
-		setAgentTooltip(this.promptDragEl, localize('voltBrowser.moveComposer', "Drag to move"));
-		this.promptDragEl.appendChild(createPromptDragIcon());
-		this._register(addDisposableListener(this.promptDragEl, 'pointerdown', e => this.beginPromptDrag(e)));
-		this._register(addDisposableListener(this.promptDragEl, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-		}));
 		this.composer = this._register(this.instantiationService.createInstance(BrowserAgentComposer, {
 			onSubmit: text => void this.sendSelectionToAgent(true, text),
 			onPrefill: text => void this.sendSelectionToAgent(false, text),
+			onComment: () => this.pinPromptAsComment(),
 			onHoverMention: mention => this.glowMark(mention),
 			onRemoveMention: mention => this.removeMark(mention.id),
+			onLayout: () => this.positionPrompt(),
 		}));
 		append(this.promptEl, this.composer.element);
 	}
@@ -400,6 +496,12 @@ export class VoltBrowserEditor extends EditorPane {
 			this.guestReady = true;
 			this.syncNavButtons();
 			if (!firstReady) {
+				// Moving the editor (split, drag to another group) detaches the webview, and Electron
+				// restarts the guest from its `src` (about:blank). Load the tab's page again.
+				const url = this.browserInput()?.url;
+				if (url && this.guestUrl() === 'about:blank') {
+					this.loadGuest(url);
+				}
 				return;
 			}
 			const url = this.pendingUrl || initialUrl;
@@ -467,6 +569,14 @@ export class VoltBrowserEditor extends EditorPane {
 		});
 	}
 
+	private guestUrl(): string | undefined {
+		try {
+			return this.webview?.getURL?.();
+		} catch {
+			return undefined;
+		}
+	}
+
 	private callGuest(fn: () => void): void {
 		if (!this.guestReady || !this.webview) {
 			return;
@@ -478,9 +588,8 @@ export class VoltBrowserEditor extends EditorPane {
 		}
 	}
 
-	private browserInput(): VoltBrowserEditorInput | undefined {
-		const input = this.input;
-		return input instanceof VoltBrowserEditorInput ? input : undefined;
+	private browserInput(): VoltBrowserEditorInput {
+		return this.input;
 	}
 
 	openUrl(value: string): void {
@@ -558,9 +667,10 @@ export class VoltBrowserEditor extends EditorPane {
 		if (input) {
 			input.url = url;
 		}
-		this.urlInput.value = url;
+		this.urlInput.value = displayBrowserUrl(url);
 		this.hideError();
-		this.clearSelection(true);
+		this.closeDraft();
+		this.clearComments();
 		this.pendingUrl = url;
 		this.ensureWebview(url);
 		if (this.guestReady) {
@@ -587,7 +697,7 @@ export class VoltBrowserEditor extends EditorPane {
 				this.navigate(clean);
 				return;
 			}
-			this.urlInput.value = clean;
+			this.urlInput.value = displayBrowserUrl(clean);
 			const input = this.browserInput();
 			if (input) {
 				input.url = clean;
@@ -805,17 +915,23 @@ export class VoltBrowserEditor extends EditorPane {
 		if (!this.selection) {
 			return;
 		}
-		this.resetPromptDrag();
+		for (const pin of this.comments) {
+			if (pin.card.expanded) {
+				pin.card.collapse();
+				this.placeComment(pin);
+			}
+		}
 		this.hoverBox.classList.add('hidden');
 		this.hintEl.classList.add('hidden');
 		this.promptEl.classList.remove('hidden');
-		this.dock?.setBlocked(true);
+		this.composer?.clear();
 		const mention = this.composer?.setSelectionChip(this.selectionChipLabel(), this.formatBrowserElement());
-		if (mention) {
+		if (mention && this.selection) {
 			this.addMark(mention, this.selection.bounds);
 		}
 		this.composer?.layout();
 		this.positionPrompt();
+		this.syncDockBlocked();
 		getWindow(this.promptEl).requestAnimationFrame(() => this.positionPrompt());
 	}
 
@@ -824,28 +940,44 @@ export class VoltBrowserEditor extends EditorPane {
 	}
 
 	private clearSelection(exitPrompt = false): void {
+		if (exitPrompt) {
+			this.closeDraft();
+			return;
+		}
 		this.selection = undefined;
 		this.selectBox.classList.add('hidden');
 		this.drawBox.classList.add('hidden');
-		if (exitPrompt) {
-			this.clearMarks();
-			this.resetPromptDrag();
-			this.promptEl.classList.add('hidden');
-			this.composer?.clear();
-			this.dock?.setBlocked(false);
-		}
-		this.syncHint(exitPrompt ? undefined : this.hoverHit);
+		this.syncHint(this.hoverHit);
+	}
+
+	private closeDraft(): void {
+		this.selection = undefined;
+		this.selectBox.classList.add('hidden');
+		this.drawBox.classList.add('hidden');
+		this.promptEl?.classList.add('hidden');
+		this.composer?.clear();
+		this.syncDockBlocked();
+		this.syncHint();
+	}
+
+	private syncDockBlocked(): void {
+		const draftOpen = !!this.selection && !this.promptEl.classList.contains('hidden');
+		const commentOpen = this.comments.some(pin => pin.card.expanded);
+		this.dock?.setBlocked(draftOpen || commentOpen);
 	}
 
 	private addMark(mention: IAgentMention, bounds: { x: number; y: number; w: number; h: number }): void {
-		if (this.marks.has(mention.id)) {
+		this.addBoundsMark(mention.id, bounds, mention.accent ?? 0);
+	}
+
+	private addBoundsMark(id: string, bounds: { x: number; y: number; w: number; h: number }, accent: number): void {
+		if (this.marks.has(id)) {
 			return;
 		}
 		const box = append(this.overlay, $('div.volt-browser-box.mark'));
-		const color = browserMentionColor(mention.accent);
-		box.style.setProperty('--volt-mark-color', color);
+		box.style.setProperty('--volt-mark-color', browserMentionColor(accent));
 		this.placeBox(box, bounds);
-		this.marks.set(mention.id, { box, accent: mention.accent ?? 0, bounds });
+		this.marks.set(id, { box, accent, bounds });
 	}
 
 	private removeMark(id: string): void {
@@ -855,13 +987,6 @@ export class VoltBrowserEditor extends EditorPane {
 		}
 		mark.box.remove();
 		this.marks.delete(id);
-	}
-
-	private clearMarks(): void {
-		for (const mark of this.marks.values()) {
-			mark.box.remove();
-		}
-		this.marks.clear();
 	}
 
 	private glowMark(mention: IAgentMention | undefined): void {
@@ -916,22 +1041,150 @@ export class VoltBrowserEditor extends EditorPane {
 	}
 
 	private positionPrompt(): void {
-		if (!this.selection) {
+		if (!this.selection || this.promptEl.classList.contains('hidden')) {
 			return;
 		}
 		const stage = this.stage.getBoundingClientRect();
 		const pad = 8;
 		const width = Math.min(350, Math.max(160, stage.width - pad * 2));
-		this.promptEl.style.width = `${width}px`;
-		this.composer?.layout();
-		if (this.promptPinned) {
-			this.applyPromptPosition();
-			this.composer?.layout();
+		const nextWidth = `${width}px`;
+		if (this.promptEl.style.width !== nextWidth) {
+			this.promptEl.style.width = nextWidth;
+		}
+		const height = Math.max(this.composer?.element.offsetHeight || 72, 72);
+		const placed = this.placeAroundSelection(width, height);
+		this.applyPromptBox({ left: placed.left, top: placed.top, width, height }, false);
+	}
+
+	private pinPromptAsComment(): void {
+		const composer = this.composer;
+		const selection = this.selection;
+		if (!composer || !selection || this.promptEl.classList.contains('hidden') || !composer.hasDraft()) {
 			return;
 		}
-		const sel = this.selection.bounds;
-		const gap = 12;
-		const height = Math.max(this.promptEl.offsetHeight || 72, 72);
+		const label = this.selectionChipLabel();
+		const preview = commentPreviewText(composer.getDisplayText(), label);
+		const payload = this.formatBrowserElement();
+		const body = preview === label ? '' : preview;
+		const markId = `comment:${generateUuid()}`;
+		const pinnedSelection = cloneBrowserSelection(selection);
+		this.addBoundsMark(markId, pinnedSelection.bounds, this.comments.length);
+		// eslint-disable-next-line prefer-const -- card callbacks close over the pin, filled in once the card exists
+		let pin!: IPinnedBrowserComment;
+		const card = this._register(new BrowserCommentCard({
+			index: this.comments.length + 1,
+			preview,
+			selectionLabel: label,
+			onOpen: () => this.openComment(pin),
+			createComposer: () => this.instantiationService.createInstance(BrowserAgentComposer, {
+				onSubmit: text => { void this.sendPinned(pin, text); },
+				onPrefill: text => { this.dock?.prefillFromBrowser(text); },
+				onComment: () => this.collapseComment(pin),
+				onLayout: () => this.placeComment(pin),
+				onHoverMention: mention => this.glowMark(mention),
+			}),
+			seed: next => {
+				next.setDraft('');
+				next.setSelectionChip(label, payload);
+				next.appendPlainText(body);
+			},
+		}));
+		pin = { card, selection: pinnedSelection, markId };
+		this.comments.push(pin);
+		this.overlay.appendChild(card.element);
+		this.closeDraft();
+		this.placeComment(pin);
+		getWindow(card.element).requestAnimationFrame(() => this.placeComment(pin));
+	}
+
+	private openComment(pin: IPinnedBrowserComment): void {
+		this.closeDraft();
+		for (const other of this.comments) {
+			if (other !== pin && other.card.expanded) {
+				other.card.collapse();
+				this.placeComment(other);
+			}
+		}
+		pin.card.expand();
+		this.placeComment(pin);
+		this.syncDockBlocked();
+	}
+
+	private collapseComment(pin: IPinnedBrowserComment): void {
+		pin.card.collapse();
+		this.placeComment(pin);
+		this.syncDockBlocked();
+	}
+
+	private removeComment(pin: IPinnedBrowserComment): void {
+		const index = this.comments.indexOf(pin);
+		if (index >= 0) {
+			this.comments.splice(index, 1);
+		}
+		this.removeMark(pin.markId);
+		pin.card.dispose();
+		this.comments.forEach((item, itemIndex) => item.card.setIndex(itemIndex + 1));
+		this.syncDockBlocked();
+	}
+
+	private clearComments(): void {
+		for (const pin of this.comments) {
+			this.removeMark(pin.markId);
+			pin.card.dispose();
+		}
+		this.comments.length = 0;
+	}
+
+	private async sendPinned(pin: IPinnedBrowserComment, prompt: string): Promise<void> {
+		const text = prompt.trim();
+		if (!text) {
+			return;
+		}
+		const composer = pin.card.input;
+		const displayText = composer?.getDisplayText() ?? text;
+		const mentions = cloneDisplayMentions(composer?.getDisplayMentions() ?? []);
+		const display = mentions.length ? { text: displayText, mentions } : undefined;
+		await Promise.resolve();
+		this.removeComment(pin);
+		this.clearHover();
+		await this.dock?.submitFromBrowser(text, display);
+	}
+
+	private placeComment(pin: IPinnedBrowserComment): void {
+		const el = pin.card.element;
+		if (!el.isConnected) {
+			return;
+		}
+		const stage = this.stage.getBoundingClientRect();
+		const pad = 8;
+		const sel = pin.selection.bounds;
+		if (pin.card.expanded) {
+			const width = Math.min(350, Math.max(160, stage.width - pad * 2));
+			const nextWidth = `${width}px`;
+			if (el.style.width !== nextWidth) {
+				el.style.width = nextWidth;
+			}
+			const height = Math.max(el.offsetHeight, 72);
+			const placed = this.placeAroundSelection(width, height, sel);
+			el.style.left = `${placed.left}px`;
+			el.style.top = `${placed.top}px`;
+			el.style.height = 'auto';
+			return;
+		}
+		const width = 30;
+		const height = 32;
+		el.style.width = `${width}px`;
+		el.style.height = `${height}px`;
+		const left = Math.min(Math.max(pad, sel.x - 6), Math.max(pad, stage.width - width - pad));
+		const top = Math.min(Math.max(pad, sel.y - 10), Math.max(pad, stage.height - height - pad));
+		el.style.left = `${left}px`;
+		el.style.top = `${top}px`;
+	}
+
+	private placeAroundSelection(width: number, height: number, bounds?: { x: number; y: number; w: number; h: number }): { left: number; top: number } {
+		const stage = this.stage.getBoundingClientRect();
+		const pad = 8;
+		const sel = bounds ?? this.selection?.bounds ?? { x: pad, y: pad, w: 0, h: 0 };
 		const clamp = (left: number, top: number) => ({
 			left: Math.min(Math.max(pad, left), Math.max(pad, stage.width - width - pad)),
 			top: Math.min(Math.max(pad, top), Math.max(pad, stage.height - height - pad)),
@@ -941,7 +1194,12 @@ export class VoltBrowserEditor extends EditorPane {
 			const y = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
 			return x * y;
 		};
-		const obstacles = [sel, ...[...this.marks.values()].map(mark => mark.bounds)];
+		const gap = 12;
+		const obstacles = [
+			sel,
+			...[...this.marks.values()].map(mark => mark.bounds),
+			...this.comments.map(pin => pin.selection.bounds),
+		];
 		const candidates = [
 			clamp(sel.x + sel.w / 2 - width / 2, sel.y + sel.h + gap),
 			clamp(sel.x + sel.w / 2 - width / 2, sel.y - height - gap),
@@ -962,93 +1220,14 @@ export class VoltBrowserEditor extends EditorPane {
 				bestScore = score;
 			}
 		}
-		this.promptBaseLeft = best.left;
-		this.promptBaseTop = best.top;
-		this.promptOffsetX = 0;
-		this.promptOffsetY = 0;
-		this.applyPromptPosition();
-		this.composer?.layout();
+		return best;
 	}
 
-	private applyPromptPosition(): void {
-		const stage = this.stage.getBoundingClientRect();
-		const pad = 8;
-		const width = this.promptEl.offsetWidth || 350;
-		const height = this.promptEl.offsetHeight || 72;
-		const left = Math.min(Math.max(pad, this.promptBaseLeft + this.promptOffsetX), Math.max(pad, stage.width - width - pad));
-		const top = Math.min(Math.max(pad, this.promptBaseTop + this.promptOffsetY), Math.max(pad, stage.height - height - pad));
-		this.promptEl.style.left = `${left}px`;
-		this.promptEl.style.top = `${top}px`;
-	}
-
-	private resetPromptDrag(): void {
-		this.promptDragStore.clear();
-		this.promptPinned = false;
-		this.promptOffsetX = 0;
-		this.promptOffsetY = 0;
-		this.promptEl.classList.remove('dragging');
-	}
-
-	private beginPromptDrag(e: PointerEvent): void {
-		if (e.button !== 0 || this.promptEl.classList.contains('hidden')) {
-			return;
-		}
-		e.preventDefault();
-		e.stopPropagation();
-		this.promptPinned = true;
-		this.promptEl.classList.add('dragging');
-		const win = getWindow(this.promptEl);
-		const pointerId = e.pointerId;
-		const startX = e.clientX;
-		const startY = e.clientY;
-		const originX = this.promptOffsetX;
-		const originY = this.promptOffsetY;
-		try {
-			this.promptDragEl.setPointerCapture(pointerId);
-		} catch {
-			// Pointer may already be gone.
-		}
-		const finish = () => {
-			this.promptDragStore.clear();
-			try {
-				if (this.promptDragEl.hasPointerCapture(pointerId)) {
-					this.promptDragEl.releasePointerCapture(pointerId);
-				}
-			} catch {
-				// ignore
-			}
-			this.promptEl.classList.remove('dragging');
-		};
-		this.promptDragStore.clear();
-		this.promptDragStore.add(addDisposableListener(win, 'pointermove', ev => {
-			if (ev.pointerId !== pointerId) {
-				return;
-			}
-			ev.preventDefault();
-			this.promptOffsetX = originX + (ev.clientX - startX);
-			this.promptOffsetY = originY + (ev.clientY - startY);
-			this.applyPromptPosition();
-		}, true));
-		this.promptDragStore.add(addDisposableListener(win, 'pointerup', ev => {
-			if (ev.pointerId === pointerId) {
-				finish();
-			}
-		}, true));
-		this.promptDragStore.add(addDisposableListener(win, 'pointercancel', ev => {
-			if (ev.pointerId === pointerId) {
-				finish();
-			}
-		}, true));
-		this.promptDragStore.add(addDisposableListener(win, 'keydown', ev => {
-			if (ev.key === 'Escape') {
-				ev.preventDefault();
-				ev.stopPropagation();
-				this.promptOffsetX = originX;
-				this.promptOffsetY = originY;
-				this.applyPromptPosition();
-				finish();
-			}
-		}, true));
+	private applyPromptBox(box: { left: number; top: number; width: number; height: number }, lockHeight: boolean): void {
+		this.promptEl.style.width = `${box.width}px`;
+		this.promptEl.style.left = `${box.left}px`;
+		this.promptEl.style.top = `${box.top}px`;
+		this.promptEl.style.height = lockHeight ? `${box.height}px` : 'auto';
 	}
 
 	private async sendSelectionToAgent(submit: boolean, prompt: string): Promise<void> {
@@ -1057,9 +1236,9 @@ export class VoltBrowserEditor extends EditorPane {
 		}
 		const text = prompt.trim() || localize('voltBrowser.defaultPrompt', "Update this selection.");
 		const displayText = this.composer?.getDisplayText() ?? text;
-		const mentions = this.composer?.getDisplayMentions() ?? [];
+		const mentions = cloneDisplayMentions(this.composer?.getDisplayMentions() ?? []);
 		const display = mentions.length ? { text: displayText, mentions } : undefined;
-		this.clearSelection(true);
+		this.closeDraft();
 		this.clearHover();
 		if (submit) {
 			await this.dock?.submitFromBrowser(text, display);
@@ -1126,8 +1305,13 @@ export class VoltBrowserEditor extends EditorPane {
 	}
 
 	private eventOnPrompt(e: Event): boolean {
-		return this.promptEl.contains(e.target as Node)
-			|| !!this.dock?.element.contains(e.target as Node);
+		const target = e.target as Node | null;
+		if (!target) {
+			return false;
+		}
+		return this.promptEl.contains(target)
+			|| this.comments.some(pin => pin.card.element.contains(target))
+			|| !!this.dock?.element.contains(target);
 	}
 
 	private placeBox(box: HTMLElement, rect: { x: number; y: number; w: number; h: number }): void {
@@ -1138,18 +1322,12 @@ export class VoltBrowserEditor extends EditorPane {
 		box.classList.remove('hidden');
 	}
 
-	override async setInput(input: VoltBrowserEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
-		await super.setInput(input, options, context, token);
-		try {
-			this.navigate(input.url || DEFAULT_BROWSER_URL);
-		} catch (err) {
-			this.showError(err instanceof Error ? err.message : localize('voltBrowser.loadFailed', "This page could not be loaded."));
-		}
-	}
-
-	override layout(_dimension: Dimension): void {
+	private layout(): void {
 		if (this.selection) {
 			this.positionPrompt();
+		}
+		for (const pin of this.comments) {
+			this.placeComment(pin);
 		}
 		this.dock?.layout();
 	}
@@ -1161,9 +1339,14 @@ export class VoltBrowserEditor extends EditorPane {
 		await this.dock?.revealInAgentsSidebar(overlayDraft);
 	}
 
-	override focus(): void {
-		if (this.selection) {
+	focus(): void {
+		if (this.selection && !this.promptEl.classList.contains('hidden')) {
 			this.composer?.focus();
+			return;
+		}
+		const open = this.comments.find(pin => pin.card.expanded);
+		if (open) {
+			open.card.focus();
 			return;
 		}
 		this.urlInput.focus();
@@ -1171,16 +1354,157 @@ export class VoltBrowserEditor extends EditorPane {
 	}
 
 	override dispose(): void {
-		if (this.probeHandle !== undefined) {
+		if (this.probeHandle !== undefined && this.container) {
 			getWindow(this.container).cancelAnimationFrame(this.probeHandle);
+		}
+		if (this.relayoutHandle !== undefined) {
+			getWindow(this.element).cancelAnimationFrame(this.relayoutHandle);
 		}
 		this.webviewListeners.clear();
 		this.webview?.remove();
 		this.webview = undefined;
 		this.guestReady = false;
 		this.pendingUrl = undefined;
+		this.element.remove();
 		super.dispose();
 	}
+}
+
+/** One layer per editor part holds its browser views; views are never moved between groups' DOM. */
+function browserViewLayer(slot: HTMLElement): HTMLElement {
+	const host = slot.closest<HTMLElement>('.part.editor') ?? slot.ownerDocument.body;
+	let layer = host.querySelector<HTMLElement>(':scope > .volt-browser-view-layer');
+	if (!layer) {
+		host.classList.add('volt-browser-view-host');
+		layer = append(host, $('.volt-browser-view-layer'));
+	}
+	return layer;
+}
+
+export const IVoltBrowserViews = createDecorator<IVoltBrowserViews>('voltBrowserViews');
+
+/** Keeps each browser tab's view alive from first show until the tab closes. */
+export interface IVoltBrowserViews {
+	readonly _serviceBrand: undefined;
+	viewFor(input: VoltBrowserEditorInput): VoltBrowserView;
+}
+
+class VoltBrowserViews extends Disposable implements IVoltBrowserViews {
+
+	declare readonly _serviceBrand: undefined;
+
+	private readonly views = this._register(new DisposableMap<VoltBrowserEditorInput, VoltBrowserView>());
+
+	constructor(@IInstantiationService private readonly instantiationService: IInstantiationService) {
+		super();
+	}
+
+	viewFor(input: VoltBrowserEditorInput): VoltBrowserView {
+		let view = this.views.get(input);
+		if (!view) {
+			// Root services: the view outlives the group (and its scoped services) it opened in.
+			view = this.instantiationService.createInstance(VoltBrowserView, input);
+			this.views.set(input, view);
+			BaseEvent.once(input.onWillDispose)(() => this.views.deleteAndDispose(input));
+		}
+		return view;
+	}
+}
+
+registerSingleton(IVoltBrowserViews, VoltBrowserViews, InstantiationType.Delayed);
+
+/** The editor pane for a browser tab: a slot the tab's `VoltBrowserView` is laid over. */
+export class VoltBrowserEditor extends EditorPane {
+
+	static readonly ID = VoltBrowserEditorInput.EditorID;
+
+	private slot!: HTMLElement;
+	private view: VoltBrowserView | undefined;
+	private readonly viewListeners = this._register(new DisposableStore());
+
+	constructor(
+		group: IEditorGroup,
+		@ITelemetryService telemetryService: ITelemetryService,
+		@IThemeService themeService: IThemeService,
+		@IStorageService storageService: IStorageService,
+		@IVoltBrowserViews private readonly browserViews: IVoltBrowserViews,
+		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
+	) {
+		super(VoltBrowserEditor.ID, group, telemetryService, themeService, storageService);
+	}
+
+	protected override createEditor(parent: HTMLElement): void {
+		this.slot = append(parent, $('.volt-browser-slot'));
+	}
+
+	override async setInput(input: VoltBrowserEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
+		await super.setInput(input, options, context, token);
+		if (token.isCancellationRequested) {
+			return;
+		}
+		const view = this.browserViews.viewFor(input);
+		if (view !== this.view) {
+			this.releaseView();
+			this.view = view;
+			this.viewListeners.add(view.onDidFocus(() => this.editorGroupsService.activateGroup(this.group)));
+		}
+		if (this.isVisible()) {
+			view.show(this.slot);
+		}
+	}
+
+	override clearInput(): void {
+		this.releaseView();
+		super.clearInput();
+	}
+
+	protected override setEditorVisible(visible: boolean): void {
+		super.setEditorVisible(visible);
+		if (!this.view) {
+			return;
+		}
+		if (visible) {
+			this.view.show(this.slot);
+		} else {
+			this.view.hide(this.slot);
+		}
+	}
+
+	override layout(_dimension: Dimension): void {
+		this.view?.layoutOver(this.slot);
+	}
+
+	override focus(): void {
+		super.focus();
+		this.view?.focus();
+	}
+
+	openUrl(value: string): void {
+		this.view?.openUrl(value);
+	}
+
+	captureSnapshot(): Promise<string | undefined> {
+		return this.view?.captureSnapshot() ?? Promise.resolve(undefined);
+	}
+
+	private releaseView(): void {
+		this.viewListeners.clear();
+		this.view?.hide(this.slot);
+		this.view = undefined;
+	}
+
+	override dispose(): void {
+		this.releaseView();
+		super.dispose();
+	}
+}
+
+function cloneBrowserSelection(selection: IBrowserSelection): IBrowserSelection {
+	return {
+		...selection,
+		bounds: { ...selection.bounds },
+		attributes: selection.attributes ? { ...selection.attributes } : undefined,
+	};
 }
 
 function hitToRect(hit: IBrowserHit): { x: number; y: number; w: number; h: number } {

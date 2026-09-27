@@ -8,12 +8,24 @@ import { asRecord, pickString } from '../../common/tools/args.js';
 import { IToolContext, IToolResult, IVoltTool } from '../../common/tools/tool.js';
 import { objectSchema } from './schema.js';
 
+export type SubagentKind = 'explore' | 'research';
+
+export interface ISubagentRequest {
+	readonly description: string;
+	readonly prompt: string;
+	readonly kind: SubagentKind;
+}
+
 export interface IMetaToolHost {
 	grantGroups(groups: readonly CapabilityGroup[], reason: string): readonly CapabilityGroup[];
+	/** The skill or agent-requested rule body, or `undefined` when no such name exists. */
+	loadSkill?(name: string): Promise<string | undefined>;
+	/** Runs a read-only sub-agent and returns its final report. */
+	runSubagent?(request: ISubagentRequest, ctx: IToolContext): Promise<{ readonly text: string; readonly isError?: boolean }>;
 }
 
 export function createMetaTools(host: IMetaToolHost): IVoltTool[] {
-	return [
+	const tools: IVoltTool[] = [
 		{
 			name: 'request_capabilities',
 			group: 'meta',
@@ -36,11 +48,11 @@ export function createMetaTools(host: IMetaToolHost): IVoltTool[] {
 			group: 'meta',
 			kind: 'think',
 			parallelSafe: true,
-			snippet: 'todo - set or update the plan entries for this run',
+			snippet: 'todo - set or update the task list for this run',
 			description: [
-				'Replace the current plan with the given entries.',
-				'Use for multi-step work so the user can see progress.',
-				'Do not use for a single obvious edit.',
+				'Replace the visible task list. Use for work with three or more steps: add the steps up front,',
+				'keep exactly one in_progress, and mark each completed as soon as it is done.',
+				'Do not use for a single obvious edit or a question.',
 			].join(' '),
 			schema: objectSchema({
 				entries: {
@@ -50,7 +62,6 @@ export function createMetaTools(host: IMetaToolHost): IVoltTool[] {
 						properties: {
 							content: { type: 'string' },
 							status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
-							priority: { type: 'string' },
 						},
 						required: ['content', 'status'],
 					},
@@ -63,21 +74,78 @@ export function createMetaTools(host: IMetaToolHost): IVoltTool[] {
 			group: 'meta',
 			kind: 'think',
 			parallelSafe: true,
-			snippet: 'finish - structured completion (summary, changed, verified, remaining)',
+			snippet: 'finish - end a multi-step task with what changed and how it was verified',
 			description: [
-				'Mark the run complete with a structured result.',
-				'Use when the user-visible work is done and you have evidence.',
-				'Do not use mid-task, and do not use instead of answering a simple question in text.',
+				'End a multi-step coding task with a structured result: summary, files changed, how it was verified, and anything left.',
+				'Use only when the work is done. For a question or a small answer, just reply in text instead.',
 			].join(' '),
 			schema: objectSchema({
 				summary: { type: 'string' },
 				changed: { type: 'array', items: { type: 'string' } },
-				verified: { type: 'array', items: { type: 'string' } },
-				remaining: { type: 'array', items: { type: 'string' } },
+				verified: { type: 'array', items: { type: 'string' }, description: 'Commands or checks that passed' },
+				remaining: { type: 'array', items: { type: 'string' }, description: 'Anything not done or not verified' },
 			}, ['summary']),
 			execute: async args => runFinish(args),
 		},
 	];
+	if (host.loadSkill) {
+		const load = host.loadSkill.bind(host);
+		tools.push({
+			name: 'skill',
+			group: 'meta',
+			kind: 'think',
+			parallelSafe: true,
+			idempotent: true,
+			snippet: 'skill - load a listed skill or rule by name',
+			description: 'Load the full instructions of a skill or rule listed under <skills> in the system prompt. Load it before doing the task it describes, then follow it.',
+			schema: objectSchema({
+				name: { type: 'string' },
+			}, ['name']),
+			execute: async args => {
+				const name = pickString(args, 'name', 'skill') ?? '';
+				const body = name ? await load(name) : undefined;
+				return body
+					? { callId: '', name: 'skill', kind: 'think', text: body }
+					: { callId: '', name: 'skill', kind: 'think', text: `No skill named "${name}". Use a name from the <skills> list.`, isError: true };
+			},
+		});
+	}
+	if (host.runSubagent) {
+		const run = host.runSubagent.bind(host);
+		tools.push({
+			name: 'task',
+			group: 'meta',
+			kind: 'think',
+			parallelSafe: true,
+			snippet: 'task - delegate a read-only investigation to a sub-agent',
+			description: [
+				'Start a sub-agent with its own context to investigate and report back. It can read, search, and navigate code',
+				'(agent "explore") and also search and fetch the web (agent "research"); it cannot edit or run commands.',
+				'Use for broad searches ("where and how is X handled across the codebase"), comparing approaches, or researching docs,',
+				'especially several independent questions at once: call task several times in one turn and they run in parallel.',
+				'Give a complete, self-contained prompt and say exactly what to return. Only its final report comes back.',
+				'Do not use for a single known file or a one-off grep; do those directly.',
+			].join(' '),
+			schema: objectSchema({
+				description: { type: 'string', description: 'Three-to-six word label shown to the user' },
+				prompt: { type: 'string', description: 'Everything the sub-agent needs to know, and what to report' },
+				agent: { type: 'string', enum: ['explore', 'research'], description: 'Default explore' },
+			}, ['description', 'prompt']),
+			timeoutMs: 15 * 60_000,
+			execute: async (args, ctx) => {
+				const prompt = pickString(args, 'prompt') ?? '';
+				const description = pickString(args, 'description') ?? 'Sub-agent task';
+				const kind: SubagentKind = pickString(args, 'agent') === 'research' ? 'research' : 'explore';
+				try {
+					const report = await run({ description, prompt, kind }, ctx);
+					return { callId: '', name: 'task', kind: 'think', text: report.text, ...(report.isError ? { isError: true } : {}) };
+				} catch (err) {
+					return { callId: '', name: 'task', kind: 'think', text: err instanceof Error ? err.message : String(err), isError: true };
+				}
+			},
+		});
+	}
+	return tools;
 }
 
 function runGrant(host: IMetaToolHost, args: unknown): IToolResult {
@@ -107,14 +175,15 @@ function runTodo(args: unknown, ctx: IToolContext): IToolResult {
 			return [];
 		}
 		const status = item.status === 'completed' || item.status === 'in_progress' ? item.status : 'pending';
-		return [{ content, status, priority: typeof item.priority === 'string' ? item.priority : undefined }];
+		return [{ content, status }];
 	}) : [];
 	ctx.emit?.({ type: 'plan', entries });
+	const done = entries.filter(entry => entry.status === 'completed').length;
 	return {
 		callId: '',
 		name: 'todo',
 		kind: 'think',
-		text: entries.length ? entries.map(entry => `- [${entry.status}] ${entry.content}`).join('\n') : 'Plan cleared.',
+		text: entries.length ? `Task list updated (${done}/${entries.length} done).` : 'Task list cleared.',
 	};
 }
 

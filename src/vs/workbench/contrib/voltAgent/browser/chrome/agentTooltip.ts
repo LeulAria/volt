@@ -8,17 +8,25 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { isMacintosh } from '../../../../../base/common/platform.js';
+import { ThemeIcon } from '../../../../../base/common/themables.js';
+
+/** Codicon, or a factory so a card row can draw a custom SVG at show time. */
+export type AgentTooltipIcon = ThemeIcon | (() => HTMLElement);
 
 export interface IAgentTooltipRow {
 	label: string;
 	detail?: string;
 	shortcut?: string;
+	/** Card rows only: leading icon; the detail sits under the label. */
+	icon?: AgentTooltipIcon;
+	/** Card rows only: quieter label (e.g. folder path under the chat title). */
+	muted?: boolean;
 	onClick?: () => void;
 }
 
-export type AgentTooltipPlacement = 'above' | 'below' | 'start';
+export type AgentTooltipPlacement = 'above' | 'below' | 'start' | 'end';
 
-export type AgentTooltipVariant = 'default' | 'pill' | 'files';
+export type AgentTooltipVariant = 'default' | 'pill' | 'files' | 'card';
 
 export interface IAgentTooltipShowOptions {
 	gap?: number;
@@ -98,8 +106,14 @@ export class AgentTooltip extends Disposable {
 		this.domNode.replaceChildren();
 		this.domNode.classList.toggle('pill', options?.variant === 'pill');
 		this.domNode.classList.toggle('files', options?.variant === 'files');
-		this.domNode.classList.toggle('beside', options?.placement === 'start');
+		this.domNode.classList.toggle('card', options?.variant === 'card');
+		this.domNode.classList.toggle('beside', options?.placement === 'start' || options?.placement === 'end');
+		this.domNode.classList.toggle('compact', anchor.getAttribute('data-volt-tooltip-compact') === '1');
 		for (const row of rows) {
+			if (options?.variant === 'card') {
+				this.renderCardRow(row);
+				continue;
+			}
 			const rowEl = append(this.domNode, $(row.detail || row.onClick ? '.volt-agent-tooltip-row.file' : '.volt-agent-tooltip-row'));
 			if (row.detail || row.onClick) {
 				const icon = rowEl.appendChild(renderIcon(Codicon.file));
@@ -147,8 +161,13 @@ export class AgentTooltip extends Disposable {
 		const width = this.domNode.offsetWidth;
 		const height = this.domNode.offsetHeight;
 		const win = getWindow(anchor);
-		if (options?.placement === 'start') {
-			const left = Math.max(8, rect.left - width - gap);
+		if (options?.placement === 'start' || options?.placement === 'end') {
+			const preferred = options.placement === 'end' ? rect.right + gap : rect.left - width - gap;
+			const fallback = options.placement === 'end' ? rect.left - width - gap : rect.right + gap;
+			const fits = options.placement === 'end'
+				? preferred + width <= win.innerWidth - 8
+				: preferred >= 8;
+			const left = Math.max(8, Math.min(fits ? preferred : fallback, win.innerWidth - width - 8));
 			const top = Math.max(8, Math.min(rect.top + (rect.height - height) / 2, win.innerHeight - height - 8));
 			this.domNode.style.left = `${left}px`;
 			this.domNode.style.top = `${top}px`;
@@ -230,6 +249,25 @@ export class AgentTooltip extends Disposable {
 		this.domNode.style.fontFeatureSettings = style.fontFeatureSettings;
 	}
 
+	/** A card: a title row, then icon rows whose detail sits under the label. */
+	private renderCardRow(row: IAgentTooltipRow): void {
+		if (!row.icon) {
+			append(this.domNode, $('.volt-agent-tooltip-card-title')).textContent = row.label;
+			return;
+		}
+		const rowEl = append(this.domNode, $('.volt-agent-tooltip-card-row'));
+		rowEl.appendChild(renderCardIcon(row.icon));
+		const text = append(rowEl, $('.volt-agent-tooltip-card-text'));
+		const label = append(text, $('span.volt-agent-tooltip-label'));
+		label.textContent = row.label;
+		if (row.muted) {
+			label.classList.add('muted');
+		}
+		if (row.detail) {
+			append(text, $('span.volt-agent-tooltip-card-detail')).textContent = row.detail;
+		}
+	}
+
 	private renderShortcut(shortcut: string, bare = false): HTMLElement {
 		const el = $('span.volt-agent-tooltip-kb');
 		for (const token of shortcut.split(/\s+/).filter(Boolean)) {
@@ -237,6 +275,12 @@ export class AgentTooltip extends Disposable {
 		}
 		return el;
 	}
+}
+
+function renderCardIcon(icon: AgentTooltipIcon): HTMLElement {
+	const node = typeof icon === 'function' ? icon() : renderIcon(icon);
+	node.classList.add('volt-agent-tooltip-card-icon');
+	return node;
 }
 
 const TOOLTIP_ATTR = 'data-volt-tooltip';
@@ -279,7 +323,7 @@ function ensureTooltipDelegate(doc: Document): ITooltipDelegate {
 			const placement = target.getAttribute(TOOLTIP_PLACEMENT_ATTR);
 			const variant = target.getAttribute(TOOLTIP_VARIANT_ATTR);
 			delegate!.tooltip.show(target, rows, {
-				placement: placement === 'start' || placement === 'below' || placement === 'above' ? placement : undefined,
+				placement: placement === 'start' || placement === 'end' || placement === 'below' || placement === 'above' ? placement : undefined,
 				variant: variant === 'pill' || variant === 'files' ? variant : undefined,
 			});
 		} else {

@@ -40,6 +40,15 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	getOrCreateSession(key: string): IVoltSession;
 	/** Restore a session's model transcript from durable history when it has none yet. */
 	seedSession(key: string, messages: readonly { role: 'user' | 'assistant'; content: string }[]): void;
+	/**
+	 * The user rewrote history: keep only the first `userTurns` user messages (and the replies
+	 * between them). Model-side transcripts are cut to match, so the old turns are forgotten.
+	 */
+	truncateSession(sessionId: string, userTurns: number): void;
+	/** Starts the selected ACP agent ahead of the first message. No-op for native models. */
+	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void;
+	/** Restore the checkout a chat already created, so a reload does not fall through to the open folder. */
+	rememberWorktree(sessionId: string, path: string | undefined, branch: string | undefined): void;
 	send(sessionId: string, request: IVoltSendRequest): Promise<string>;
 	cancel(sessionId: string): Promise<void>;
 	pause(sessionId: string): Promise<void>;

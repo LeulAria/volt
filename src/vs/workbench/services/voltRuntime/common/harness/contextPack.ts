@@ -64,10 +64,6 @@ export function buildContextSections(input: IContextPackInput): IContextSection[
 	const policy = modePolicy(input.mode);
 
 	sections.push({ id: 'identity', cacheable: true, text: identity() });
-	if (input.intent.signals.includes('ping')) {
-		sections.push({ id: 'lane', cacheable: false, text: 'This is a check-in. Reply immediately in one short line. Do not use tools.' });
-		return sections;
-	}
 	sections.push({ id: 'judgement', cacheable: true, text: judgement() });
 	sections.push({
 		id: 'mode', cacheable: true, text: [
@@ -180,9 +176,7 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	const parts: string[] = [];
 	const allowWrites = modePolicy(input.mode).allowWrites && input.intent.lane !== 'chat';
 	const shaped = framingForShape(input.shape ?? input.intent.shape, input.intent.wantsWeb, { allowWrites });
-	if (input.intent.signals.includes('ping')) {
-		parts.push('[Volt] This is a check-in. Reply immediately in one short line. Do not use tools.');
-	} else if (input.intent.lane === 'chat') {
+	if (input.intent.lane === 'chat') {
 		parts.push(`[Volt] ${shaped ?? laneDefinition('chat').framing}`);
 	} else if (input.intent.lane === 'fast') {
 		parts.push(`[Volt] ${laneDefinition('fast').framing.replace(' If it turns out to be larger than it looks, call request_capabilities.', '')}`);

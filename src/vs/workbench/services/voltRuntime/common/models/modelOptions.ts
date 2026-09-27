@@ -62,6 +62,8 @@ export function reasoningOption(values: readonly (string | IModelOptionChoice)[]
 }
 
 const REASONING_LABELS: Record<string, string> = {
+	auto: 'Auto',
+	off: 'Off',
 	none: 'None',
 	minimal: 'Minimal',
 	min: 'Minimal',
@@ -83,6 +85,8 @@ const REASONING_LABELS: Record<string, string> = {
 
 /** Short trigger chip so "X-High" does not stretch the model button. */
 const COMPACT_REASONING_LABELS: Record<string, string> = {
+	auto: '',
+	off: 'Off',
 	none: '',
 	minimal: 'Min',
 	min: 'Min',

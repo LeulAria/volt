@@ -8,6 +8,7 @@ import { ILaneBudget } from './lanes.js';
 import { IDoomLoopState, recordToolBatch } from './doomLoop.js';
 import { classifyProviderError, DEFAULT_RETRY_POLICY, IRetryPolicy, parseRetryAfter, retryDelayMs } from './sessionRetry.js';
 import { IToolCall, IToolResult } from '../tools/tool.js';
+import type { IModelAssistantPart, IModelImage } from '../providers.js';
 
 export type NativeFinishReason = 'stop' | 'tool_calls' | 'length' | 'error' | 'abort';
 export type NativeLoopOutcome = 'done' | 'abort' | 'fail' | 'budget';
@@ -18,6 +19,14 @@ export interface INativeLoopMessage {
 	toolCalls?: IToolCall[];
 	callId?: string;
 	name?: string;
+	/** Assistant only: text, reasoning, and tool calls in the order the model produced them. */
+	parts?: IModelAssistantPart[];
+	/** Tool only: the call failed. */
+	isError?: boolean;
+	/** Tool only: images the model should see, e.g. a browser snapshot. */
+	images?: IModelImage[];
+	/** User only: this message is a turn the user typed (not a harness note), so history edits can cut here. */
+	turn?: boolean;
 }
 
 export interface INativeLoopHost {

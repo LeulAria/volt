@@ -5,9 +5,10 @@
 
 import { IToolCall, IToolContext, IToolResult, IVoltTool } from '../tools/tool.js';
 import { IntelligentCache, cacheKey } from './cache.js';
+import { toolCallKey } from './doomLoop.js';
 import { FileTracker, staleEditHook } from './fileTracker.js';
-import { mutationLane } from './mutationQueue.js';
-import { dryRunPreview, planToolBatch, validateArgs } from './toolPolicy.js';
+import { batchDependencies } from './resources.js';
+import { dryRunPreview, normalizeArgs, validateArgs } from './toolPolicy.js';
 import { defaultToolPipeline, ToolPipeline } from './waterfall.js';
 
 export interface IToolAuthorizer {
@@ -15,11 +16,13 @@ export interface IToolAuthorizer {
 }
 
 /**
- * Runs a tool batch: unknown names fail, denied tools fail, parallel-safe tools run together,
- * mutating tools run one at a time. Result order matches the model's call order.
+ * Runs a tool batch. Unknown names and invalid arguments fail in place, denied tools fail in
+ * place, and everything else is scheduled by the resources it touches: calls that conflict run
+ * in the model's order, calls that don't run together (bounded by `maxParallel`). Identical
+ * read-only calls share one execution. Result order always matches the call order.
  *
- * Every dispatched call goes through the tool waterfall (pre / around / post) so timeout,
- * retry, redaction, and context injection stay off the loop itself.
+ * Every call runs under its own abort signal. A timeout aborts it, so a "timed out" command is
+ * actually stopped, and only idempotent tools are retried after a transient failure.
  */
 export interface IToolRuntimeOptions {
 	readonly authorize?: IToolAuthorizer;
@@ -28,7 +31,13 @@ export interface IToolRuntimeOptions {
 	readonly pipeline?: ToolPipeline;
 	readonly maxParallel?: number;
 	readonly fileTracker?: FileTracker;
+	/** Called as each call finishes, before the batch does. */
+	readonly onResult?: (result: IToolResult) => void;
+	/** Default per-call ceiling when the tool declares none. */
+	readonly timeoutMs?: number;
 }
+
+const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
 export async function runToolBatch(
 	tools: ReadonlyMap<string, IVoltTool>,
@@ -43,87 +52,79 @@ export async function runToolBatch(
 	if (options.fileTracker) {
 		pipeline.use(staleEditHook(options.fileTracker));
 	}
-	const plan = planToolBatch(calls, tools);
+	const prepared = calls.map(call => {
+		const tool = tools.get(call.name);
+		return tool ? { ...call, args: normalizeArgs(tool.schema, call.args) } : call;
+	});
 	const results: IToolResult[] = new Array(calls.length);
-	const parallel: number[] = [];
-	const serial: number[] = [];
+	const deliver = (index: number, result: IToolResult) => {
+		results[index] = result;
+		options.onResult?.(result);
+	};
+	const runnable: number[] = [];
 
-	for (let i = 0; i < calls.length; i++) {
-		const call = calls[i];
-		const skipped = plan.skipped.find(item => item.call === call);
-		if (skipped) {
-			results[i] = { callId: call.id, name: call.name, kind: tools.get(call.name)?.kind ?? 'other', text: skipped.reason, isError: true };
-			continue;
-		}
+	for (let i = 0; i < prepared.length; i++) {
+		const call = prepared[i];
 		const tool = tools.get(call.name);
 		if (!tool) {
-			results[i] = unknownTool(call);
+			deliver(i, unknownTool(call));
 			continue;
 		}
 		const schema = validateArgs(tool.schema, call.args);
 		if (!schema.ok) {
-			results[i] = { callId: call.id, name: call.name, kind: tool.kind, text: schema.issues.map(issue => issue.message).join(' '), isError: true };
+			deliver(i, { callId: call.id, name: call.name, kind: tool.kind, text: schema.issues.map(issue => issue.message).join(' '), isError: true });
 			continue;
 		}
 		if (options.dryRun) {
 			const preview = dryRunPreview(tool, call.args);
-			results[i] = { callId: call.id, name: call.name, kind: tool.kind, text: `[dry-run] ${preview.summary}` };
+			deliver(i, { callId: call.id, name: call.name, kind: tool.kind, text: `[dry-run] ${preview.summary}` });
 			continue;
 		}
 		if (options.cache && tool.parallelSafe) {
 			const hit = options.cache.get<IToolResult>('tool', cacheKey(call.name, JSON.stringify(call.args)));
 			if (hit) {
-				results[i] = { ...hit, callId: call.id };
+				deliver(i, { ...hit, callId: call.id });
 				continue;
 			}
 		}
-		if (tool.parallelSafe) {
-			parallel.push(i);
-		} else {
-			serial.push(i);
-		}
+		runnable.push(i);
 	}
 
+	const deps = batchDependencies(prepared, tools, ctx.cwd);
+	const done = new Map<number, Promise<void>>();
+	const shared = new Map<string, Promise<IToolResult>>();
+	const slots = new Semaphore(Math.max(1, options.maxParallel ?? 8));
+
 	const runIndexed = async (i: number): Promise<void> => {
-		const result = await runOne(tools, calls[i], ctx, options.authorize, pipeline);
-		results[i] = result;
-		if (options.cache && !result.isError && tools.get(calls[i].name)?.parallelSafe) {
-			options.cache.set('tool', cacheKey(calls[i].name, JSON.stringify(calls[i].args)), result);
+		await Promise.all(deps[i].map(dep => done.get(dep)).filter((wait): wait is Promise<void> => !!wait));
+		const call = prepared[i];
+		const tool = tools.get(call.name)!;
+		const key = tool.parallelSafe ? toolCallKey(call) : undefined;
+		const existing = key ? shared.get(key) : undefined;
+		if (existing) {
+			const result = await existing;
+			deliver(i, { ...result, callId: call.id });
+			return;
+		}
+		const execution = slots.run(() => runOne(tool, call, ctx, options, pipeline));
+		if (key) {
+			shared.set(key, execution);
+		}
+		const result = await execution;
+		deliver(i, result);
+		if (options.cache && !result.isError && tool.parallelSafe) {
+			options.cache.set('tool', cacheKey(call.name, JSON.stringify(call.args)), result);
 		}
 		if (options.fileTracker && !result.isError) {
-			options.fileTracker.touch(filePath(calls[i]) ?? calls[i].name, tools.get(calls[i].name)?.group === 'edit' ? 'write' : 'read');
+			options.fileTracker.touch(filePath(call) ?? call.name, tool.group === 'edit' ? 'write' : 'read');
 		}
 	};
 
-	await runPool(parallel, options.maxParallel ?? 8, runIndexed);
-	await runMutating(calls, tools, serial, runIndexed);
-	return results;
-}
-
-async function runMutating(
-	calls: readonly IToolCall[],
-	tools: ReadonlyMap<string, IVoltTool>,
-	serial: readonly number[],
-	runIndexed: (index: number) => Promise<void>,
-): Promise<void> {
-	let exclusive = Promise.resolve();
-	const paths = new Map<string, Promise<void>>();
-	const pending: Promise<void>[] = [];
-	for (const index of serial) {
-		const lane = mutationLane(calls[index], tools.get(calls[index].name));
-		if (lane.kind === 'path') {
-			const prev = paths.get(lane.path) ?? exclusive;
-			const run = prev.then(() => runIndexed(index));
-			paths.set(lane.path, run.then(() => undefined, () => undefined));
-			pending.push(run);
-			continue;
-		}
-		const wait = Promise.all([exclusive, ...paths.values()]).then(() => undefined);
-		const run = wait.then(() => runIndexed(index));
-		exclusive = run.then(() => undefined, () => undefined);
-		pending.push(run);
+	for (const i of runnable) {
+		done.set(i, runIndexed(i).catch(() => undefined));
 	}
-	await Promise.all(pending);
+	await Promise.all(done.values());
+	return results;
 }
 
 function filePath(call: IToolCall): string | undefined {
@@ -133,18 +134,14 @@ function filePath(call: IToolCall): string | undefined {
 }
 
 async function runOne(
-	tools: ReadonlyMap<string, IVoltTool>,
+	tool: IVoltTool,
 	call: IToolCall,
 	ctx: IToolContext,
-	authorize: IToolAuthorizer | undefined,
+	options: IToolRuntimeOptions,
 	pipeline: ToolPipeline,
 ): Promise<IToolResult> {
-	const tool = tools.get(call.name);
-	if (!tool) {
-		return unknownTool(call);
-	}
-	if (authorize) {
-		const decision = await authorize(call, tool);
+	if (options.authorize) {
+		const decision = await options.authorize(call, tool);
 		if (!decision.allow) {
 			return pipeline.run(call, tool, async () => ({
 				callId: call.id,
@@ -156,35 +153,74 @@ async function runOne(
 		}
 	}
 	const started = Date.now();
+	const timeoutMs = tool.timeoutMs ?? options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	return pipeline.run(call, tool, async args => {
+		const controller = new AbortController();
+		const onParentAbort = () => controller.abort();
+		if (ctx.signal.aborted) {
+			controller.abort();
+		} else {
+			ctx.signal.addEventListener('abort', onParentAbort);
+		}
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timedOut = new Promise<IToolResult>(resolve => {
+			timer = setTimeout(() => {
+				controller.abort();
+				resolve({
+					callId: call.id,
+					name: tool.name,
+					kind: tool.kind,
+					text: `${tool.name} timed out after ${Math.round(timeoutMs / 1000)}s and was stopped. Its effects, if any, are unknown; check before retrying.`,
+					isError: true,
+					durationMs: Date.now() - started,
+				});
+			}, timeoutMs);
+		});
 		try {
-			const result = await tool.execute(args, ctx);
-			return { ...result, callId: call.id, name: tool.name, kind: tool.kind, durationMs: result.durationMs ?? (Date.now() - started) };
-		} catch (err) {
-			return {
-				callId: call.id,
-				name: tool.name,
-				kind: tool.kind,
-				text: err instanceof Error ? err.message : String(err),
-				isError: true,
-				durationMs: Date.now() - started,
-			};
+			const body = tool.execute(args, { ...ctx, signal: controller.signal, callId: call.id })
+				.then(result => ({ ...result, callId: call.id, name: tool.name, kind: tool.kind, durationMs: result.durationMs ?? (Date.now() - started) }))
+				.catch(err => ({
+					callId: call.id,
+					name: tool.name,
+					kind: tool.kind,
+					text: err instanceof Error ? err.message : String(err),
+					isError: true,
+					durationMs: Date.now() - started,
+				}));
+			return await Promise.race([body, timedOut]);
+		} finally {
+			if (timer) {
+				clearTimeout(timer);
+			}
+			ctx.signal.removeEventListener('abort', onParentAbort);
 		}
 	});
 }
 
-async function runPool(indices: readonly number[], limit: number, work: (index: number) => Promise<void>): Promise<void> {
-	if (!indices.length) {
-		return;
-	}
-	let cursor = 0;
-	const workers = Math.min(Math.max(1, limit), indices.length);
-	await Promise.all(Array.from({ length: workers }, async () => {
-		while (cursor < indices.length) {
-			const index = indices[cursor++];
-			await work(index);
+class Semaphore {
+	private active = 0;
+	private readonly waiting: (() => void)[] = [];
+
+	constructor(private readonly limit: number) { }
+
+	async run<T>(work: () => Promise<T>): Promise<T> {
+		if (this.active >= this.limit) {
+			// The finishing call hands its slot straight to us, so `active` never overshoots.
+			await new Promise<void>(resolve => this.waiting.push(resolve));
+		} else {
+			this.active++;
 		}
-	}));
+		try {
+			return await work();
+		} finally {
+			const next = this.waiting.shift();
+			if (next) {
+				next();
+			} else {
+				this.active--;
+			}
+		}
+	}
 }
 
 function unknownTool(call: IToolCall): IToolResult {

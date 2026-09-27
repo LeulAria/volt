@@ -64,6 +64,7 @@ import { IEditorGroup } from '../../../services/editor/common/editorGroupsServic
 import type { IManagedHover } from '../../../../base/browser/ui/hover/hover.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IAccessibilityService } from '../../../../platform/accessibility/common/accessibility.js';
+import { explicitLayoutMode, LAYOUT_MODE_CONTEXT_KEY, layoutModeKeybindingConflict, withLayoutModeWhen, type LayoutKeybindingMode } from '../../../browser/parts/titlebar/layoutKeybindingMode.js';
 
 const $ = DOM.$;
 
@@ -99,6 +100,7 @@ export class KeybindingsEditor extends EditorPane implements IKeybindingsEditorP
 	private keybindingsTable!: WorkbenchTable<IKeybindingItemEntry>;
 
 	private dimension: DOM.Dimension | null = null;
+	private definingKeybinding: { entry: IKeybindingItemEntry; add: boolean } | undefined;
 	private delayedFiltering: Delayer<void>;
 	private latestEmptyFilters: string[] = [];
 	private keybindingsEditorContextKey: IContextKey<boolean>;
@@ -214,14 +216,20 @@ export class KeybindingsEditor extends EditorPane implements IKeybindingsEditorP
 	async defineKeybinding(keybindingEntry: IKeybindingItemEntry, add: boolean): Promise<void> {
 		this.selectEntry(keybindingEntry);
 		this.showOverlayContainer();
+		this.definingKeybinding = { entry: keybindingEntry, add };
+		this.defineKeybindingWidget.setLayoutMode(this.initialLayoutMode(keybindingEntry.keybindingItem.when));
 		try {
 			const key = await this.defineKeybindingWidget.define();
-			if (key) {
-				await this.updateKeybinding(keybindingEntry, key, keybindingEntry.keybindingItem.when, add);
+			if (key && !this.layoutModeConflictMessage(key)) {
+				const when = this.defineKeybindingWidget.showsLayoutModes
+					? withLayoutModeWhen(keybindingEntry.keybindingItem.when, this.defineKeybindingWidget.layoutMode)
+					: keybindingEntry.keybindingItem.when;
+				await this.updateKeybinding(keybindingEntry, key, when, add);
 			}
 		} catch (error) {
 			this.onKeybindingEditingError(error);
 		} finally {
+			this.definingKeybinding = undefined;
 			this.hideOverlayContainer();
 			this.selectEntry(keybindingEntry);
 		}
@@ -336,8 +344,14 @@ export class KeybindingsEditor extends EditorPane implements IKeybindingsEditorP
 		this.overlayContainer = DOM.append(parent, $('.overlay-container'));
 		this.overlayContainer.style.position = 'absolute';
 		this.overlayContainer.style.zIndex = '40'; // has to greater than sash z-index which is 35
-		this.defineKeybindingWidget = this._register(this.instantiationService.createInstance(DefineKeybindingWidget, this.overlayContainer));
-		this._register(this.defineKeybindingWidget.onDidChange(keybindingStr => this.defineKeybindingWidget.printExisting(this.keybindingsEditorModel!.fetch(`"${keybindingStr}"`).length)));
+		this.defineKeybindingWidget = this._register(this.instantiationService.createInstance(DefineKeybindingWidget, this.overlayContainer, { layoutModes: true }));
+		this._register(this.defineKeybindingWidget.onDidChange(keybindingStr => {
+			if (this.defineKeybindingWidget.showsLayoutModes) {
+				this.defineKeybindingWidget.setLayoutModeConflict(this.layoutModeConflictMessage(keybindingStr));
+				return;
+			}
+			this.defineKeybindingWidget.printExisting(this.keybindingsEditorModel!.fetch(`"${keybindingStr}"`).length);
+		}));
 		this._register(this.defineKeybindingWidget.onShowExistingKeybidings(keybindingStr => this.searchWidget.setValue(`"${keybindingStr}"`)));
 		this.hideOverlayContainer();
 	}
@@ -348,6 +362,41 @@ export class KeybindingsEditor extends EditorPane implements IKeybindingsEditorP
 
 	private hideOverlayContainer() {
 		this.overlayContainer.style.display = 'none';
+	}
+
+	private initialLayoutMode(when: string): LayoutKeybindingMode {
+		const explicit = explicitLayoutMode(when);
+		if (explicit) {
+			return explicit;
+		}
+		return this.contextKeyService.getContextKeyValue<LayoutKeybindingMode>(LAYOUT_MODE_CONTEXT_KEY) === 'agent' ? 'agent' : 'ide';
+	}
+
+	private layoutModeConflictMessage(key: string): string | undefined {
+		const defining = this.definingKeybinding;
+		if (!defining || !this.defineKeybindingWidget?.showsLayoutModes) {
+			return undefined;
+		}
+		const mode = this.defineKeybindingWidget.layoutMode;
+		const conflict = layoutModeKeybindingConflict(
+			(this.keybindingsEditorModel?.fetch('') ?? []).map(entry => ({
+				command: entry.keybindingItem.command,
+				commandLabel: entry.keybindingItem.commandLabel || entry.keybindingItem.command,
+				key: entry.keybindingItem.keybinding?.getUserSettingsLabel() ?? undefined,
+				when: entry.keybindingItem.when,
+			})),
+			key,
+			mode,
+			defining.add ? undefined : {
+				command: defining.entry.keybindingItem.command,
+				key: defining.entry.keybindingItem.keybinding?.getUserSettingsLabel() ?? undefined,
+				when: defining.entry.keybindingItem.when,
+			},
+		);
+		if (!conflict) {
+			return undefined;
+		}
+		return localize('layoutModeConflict', "Already used in {0} by {1}. Each shortcut can only be used once in that mode.", layoutModeConflictLabel(mode), conflict.commandLabel);
 	}
 
 	private createHeader(parent: HTMLElement): void {
@@ -471,21 +520,30 @@ export class KeybindingsEditor extends EditorPane implements IKeybindingsEditorP
 				{
 					label: localize('command', "Command"),
 					tooltip: '',
-					weight: 0.3,
+					weight: 0.28,
 					templateId: CommandColumnRenderer.TEMPLATE_ID,
 					project(row: IKeybindingItemEntry): IKeybindingItemEntry { return row; }
 				},
 				{
 					label: localize('keybinding', "Keybinding"),
 					tooltip: '',
-					weight: 0.2,
+					weight: 0.17,
 					templateId: KeybindingColumnRenderer.TEMPLATE_ID,
+					project(row: IKeybindingItemEntry): IKeybindingItemEntry { return row; }
+				},
+				{
+					label: localize('layoutMode', "Mode"),
+					tooltip: localize('layoutModeTooltip', "Agent mode or IDE mode. A shortcut can be used once in each mode."),
+					weight: 0.12,
+					minimumWidth: 88,
+					maximumWidth: 120,
+					templateId: LayoutModeColumnRenderer.TEMPLATE_ID,
 					project(row: IKeybindingItemEntry): IKeybindingItemEntry { return row; }
 				},
 				{
 					label: localize('when', "When"),
 					tooltip: '',
-					weight: 0.35,
+					weight: 0.28,
 					templateId: WhenColumnRenderer.TEMPLATE_ID,
 					project(row: IKeybindingItemEntry): IKeybindingItemEntry { return row; }
 				},
@@ -501,6 +559,7 @@ export class KeybindingsEditor extends EditorPane implements IKeybindingsEditorP
 				this.instantiationService.createInstance(ActionsColumnRenderer, this),
 				this.instantiationService.createInstance(CommandColumnRenderer),
 				this.instantiationService.createInstance(KeybindingColumnRenderer),
+				new LayoutModeColumnRenderer(),
 				this.instantiationService.createInstance(WhenColumnRenderer, this),
 				this.instantiationService.createInstance(SourceColumnRenderer),
 			],
@@ -1198,7 +1257,9 @@ class WhenColumnRenderer implements ITableRenderer<IKeybindingItemEntry, IWhenCo
 
 				whenInputDisposables.add(inputWidget.onDidAccept(value => {
 					hideInputWidget();
-					this.keybindingsEditor.updateKeybinding(keybindingItemEntry, keybindingItemEntry.keybindingItem.keybinding ? keybindingItemEntry.keybindingItem.keybinding.getUserSettingsLabel() || '' : '', value);
+					const mode = explicitLayoutMode(keybindingItemEntry.keybindingItem.when);
+					const when = mode ? withLayoutModeWhen(value, mode) : value;
+					this.keybindingsEditor.updateKeybinding(keybindingItemEntry, keybindingItemEntry.keybindingItem.keybinding ? keybindingItemEntry.keybindingItem.keybinding.getUserSettingsLabel() || '' : '', when);
 					this.keybindingsEditor.selectKeybinding(keybindingItemEntry);
 				}));
 
@@ -1228,6 +1289,56 @@ class WhenColumnRenderer implements ITableRenderer<IKeybindingItemEntry, IWhenCo
 	}
 }
 
+class LayoutModeColumnRenderer implements ITableRenderer<IKeybindingItemEntry, { label: HTMLElement }> {
+
+	static readonly TEMPLATE_ID = 'layoutMode';
+
+	readonly templateId: string = LayoutModeColumnRenderer.TEMPLATE_ID;
+
+	renderTemplate(container: HTMLElement): { label: HTMLElement } {
+		return { label: DOM.append(container, $('.layout-mode')) };
+	}
+
+	renderElement(keybindingItemEntry: IKeybindingItemEntry, _index: number, templateData: { label: HTMLElement }): void {
+		const mode = explicitLayoutMode(keybindingItemEntry.keybindingItem.when);
+		templateData.label.textContent = layoutModeColumnLabel(mode);
+		templateData.label.title = layoutModeConflictLabel(mode);
+		templateData.label.classList.toggle('empty', !mode);
+	}
+
+	disposeTemplate(_templateData: { label: HTMLElement }): void { }
+}
+
+function layoutModeColumnLabel(mode: LayoutKeybindingMode | undefined): string {
+	switch (mode) {
+		case 'agent':
+			return localize('layoutMode.agent', "Agent");
+		case 'ide':
+			return localize('layoutMode.ide', "IDE");
+		case undefined:
+			return '-';
+		default: {
+			const unexpected: never = mode;
+			return unexpected;
+		}
+	}
+}
+
+function layoutModeConflictLabel(mode: LayoutKeybindingMode | undefined): string {
+	switch (mode) {
+		case 'agent':
+			return localize('layoutMode.agentFull', "Agent mode");
+		case 'ide':
+			return localize('layoutMode.ideFull', "IDE mode");
+		case undefined:
+			return '';
+		default: {
+			const unexpected: never = mode;
+			return unexpected;
+		}
+	}
+}
+
 class AccessibilityProvider implements IListAccessibilityProvider<IKeybindingItemEntry> {
 
 	constructor(private readonly configurationService: IConfigurationService) { }
@@ -1240,6 +1351,7 @@ class AccessibilityProvider implements IListAccessibilityProvider<IKeybindingIte
 		const ariaLabel = [
 			keybindingItem.commandLabel ? keybindingItem.commandLabel : keybindingItem.command,
 			keybindingItem.keybinding?.getAriaLabel() || localize('noKeybinding', "No keybinding assigned"),
+			layoutModeConflictLabel(explicitLayoutMode(keybindingItem.when)) || localize('layoutMode.any', "Any mode"),
 			keybindingItem.when ? keybindingItem.when : localize('noWhen', "No when context"),
 			isString(keybindingItem.source) ? keybindingItem.source : keybindingItem.source.description ?? keybindingItem.source.identifier.value,
 		];

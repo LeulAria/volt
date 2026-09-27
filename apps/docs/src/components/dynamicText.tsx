@@ -7,17 +7,13 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState } from "react";
 
 const ROTATING_TEXTS = [
-  "The better API client",
-  "Build & test APIs",
-  "Collections & envs",
-  "Database connections",
-  "Team ready",
-  "REST & GraphQL",
-  "Variables",
-  "Environments",
-  "Request history",
-  "Scripts & tests",
-  "Documentation",
+  "Agents that ship",
+  "Every frontier model",
+  "Git, handled",
+  "A real terminal",
+  "Parallel worktrees",
+  "Automations",
+  "Your VS Code extensions",
 ];
 
 export interface DynamicTextProps {
@@ -27,13 +23,16 @@ export interface DynamicTextProps {
   align?: "left" | "center";
 }
 
-export function DynamicText({ variant = "default", align = "left" }: DynamicTextProps) {
+export function DynamicText({
+  variant = "default",
+  align = "left",
+}: DynamicTextProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
 
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentIndex((prev) => (prev + 1) % ROTATING_TEXTS.length);
-    }, 600);
+    }, 2200);
     return () => clearInterval(interval);
   }, []);
 
@@ -58,7 +57,7 @@ export function DynamicText({ variant = "default", align = "left" }: DynamicText
             initial={textVariants.hidden}
             animate={textVariants.visible}
             exit={textVariants.exit}
-            transition={{ duration: 0.2, ease: "easeOut" }}
+            transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
             className={`absolute top-0 ${isCentered ? "left-1/2 -translate-x-1/2 text-center" : "left-0 text-left"} rounded-sm border border-white/10 bg-white/[0.06] p-1 px-3 tracking-wide text-white/70`}
             style={{
               fontSize: "0.8rem",

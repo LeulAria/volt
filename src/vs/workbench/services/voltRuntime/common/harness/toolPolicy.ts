@@ -34,6 +34,103 @@ export interface IJsonSchema {
 	readonly enum?: readonly unknown[];
 }
 
+// --- argument normalization ------------------------------------------------------------------
+
+/**
+ * Names models reach for instead of the schema's own. Mapping them before validation keeps
+ * validation and execution in agreement: a call is never rejected for a key the body accepts.
+ */
+const ARG_ALIASES: Record<string, readonly string[]> = {
+	path: ['file_path', 'filePath', 'file', 'filename', 'target_file', 'directory', 'dir', 'relative_workspace_path'],
+	command: ['cmd', 'script', 'shell_command'],
+	contents: ['content', 'text', 'file_text', 'code'],
+	old_string: ['oldString', 'old_str', 'old_text', 'search'],
+	new_string: ['newString', 'new_str', 'new_text', 'replace', 'replacement'],
+	pattern: ['query', 'regex', 'glob_pattern', 'search_pattern'],
+	query: ['q', 'search_term', 'search_query'],
+	url: ['href', 'link', 'uri'],
+	offset: ['start_line', 'line', 'startLine', 'from'],
+	limit: ['count', 'max_lines', 'lines', 'maxLines'],
+	timeout_ms: ['timeout', 'timeoutMs'],
+	prompt: ['task', 'instructions', 'description'],
+	name: ['skill', 'skill_name'],
+};
+
+/** A call whose argument JSON did not parse arrives as `{ raw }` from the stream assembler. */
+export function isUnparsedArgs(args: unknown): args is { raw: string } {
+	const record = asRecord(args);
+	return typeof record.raw === 'string' && Object.keys(record).length === 1;
+}
+
+/** Maps aliases onto schema keys and coerces scalars the model sent as strings. */
+export function normalizeArgs(schema: object | undefined, args: unknown): unknown {
+	const properties = (schema as IJsonSchema | undefined)?.properties;
+	if (!properties || !args || typeof args !== 'object' || Array.isArray(args) || isUnparsedArgs(args)) {
+		return args;
+	}
+	const out: Record<string, unknown> = { ...(args as Record<string, unknown>) };
+	for (const [key, raw] of Object.entries(properties)) {
+		if (out[key] === undefined) {
+			for (const alias of ARG_ALIASES[key] ?? []) {
+				if (out[alias] !== undefined && !(alias in properties)) {
+					out[key] = out[alias];
+					delete out[alias];
+					break;
+				}
+			}
+		}
+		if (out[key] !== undefined) {
+			out[key] = coerce((raw as IJsonSchema).type, out[key]);
+		}
+	}
+	return out;
+}
+
+function coerce(type: string | undefined, value: unknown): unknown {
+	if (typeof value !== 'string') {
+		return type === 'string' && (typeof value === 'number' || typeof value === 'boolean') ? String(value) : value;
+	}
+	const trimmed = value.trim();
+	switch (type) {
+		case 'integer':
+		case 'number': {
+			const n = Number(trimmed);
+			return trimmed && Number.isFinite(n) ? (type === 'integer' ? Math.trunc(n) : n) : value;
+		}
+		case 'boolean':
+			return trimmed === 'true' ? true : trimmed === 'false' ? false : value;
+		case 'array':
+		case 'object':
+			if ((type === 'array' && trimmed.startsWith('[')) || (type === 'object' && trimmed.startsWith('{'))) {
+				try {
+					return JSON.parse(trimmed);
+				} catch {
+					return value;
+				}
+			}
+			return type === 'array' && trimmed ? [value] : value;
+		default:
+			return value;
+	}
+}
+
+/**
+ * Validation failure text that tells the model how to recover: what was wrong, then the
+ * parameters the tool takes, so the retry is right the first time.
+ */
+export function describeArgIssues(tool: IVoltTool, args: unknown, issues: readonly ISchemaIssue[]): string {
+	if (isUnparsedArgs(args)) {
+		return `The arguments for ${tool.name} were not valid JSON, so the call did not run. Resend it with one complete JSON object. Received: ${args.raw.slice(0, 200)}`;
+	}
+	const schema = tool.schema as IJsonSchema;
+	const required = new Set(schema.required ?? []);
+	const params = Object.entries(schema.properties ?? {}).map(([key, raw]) => {
+		const type = (raw as IJsonSchema).type ?? 'any';
+		return `${key}${required.has(key) ? '' : '?'}: ${type}`;
+	});
+	return `${tool.name} did not run: ${issues.map(issue => issue.message).join(' ')} Parameters: {${params.join(', ')}}.`;
+}
+
 export function validateArgs(schema: object | undefined, args: unknown): ISchemaCheck {
 	if (!schema || typeof schema !== 'object') {
 		return { ok: true, issues: [] };

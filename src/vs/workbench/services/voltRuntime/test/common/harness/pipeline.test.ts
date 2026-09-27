@@ -11,14 +11,12 @@ suite('Volt harness pipeline', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('a check-in stays a direct answer with no tools', () => {
+	test('a short message is a normal turn, not a local reply', () => {
 		const prepared = prepareRun({ text: 'testing', mode: 'agent', intentContext: { hasWorkspace: true, priorLane: 'agent' } });
-		assert.strictEqual(prepared.intent.lane, 'chat');
-		assert.ok(prepared.intent.signals.includes('ping'));
-		assert.strictEqual(prepared.dispatch, 'direct');
-		assert.deepStrictEqual(prepared.intent.groups, ['meta']);
-		assert.strictEqual(prepared.intent.budget.maxToolCalls, 0);
-		assert.strictEqual(prepared.plan, undefined);
+		assert.ok(!prepared.intent.signals.includes('ping'));
+		assert.ok(prepared.intent.groups.includes('read') || prepared.intent.groups.includes('edit'));
+		assert.ok(prepared.intent.budget.maxToolCalls > 0);
+		assert.ok(prepared.intent.budget.maxModelCalls > 0);
 	});
 
 	test('a smashed project question is a real chat turn with read tools', () => {

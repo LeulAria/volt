@@ -31,9 +31,40 @@
 	justify-content: center;
 }
 
+.defineKeybindingWidget .layout-modes {
+	display: flex;
+	justify-content: center;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.defineKeybindingWidget .layout-mode {
+	font: inherit;
+	color: inherit;
+	background: transparent;
+	border: 1px solid var(--vscode-contrastBorder, rgba(128, 128, 128, 0.4));
+	border-radius: 4px;
+	padding: 3px 10px;
+	cursor: pointer;
+}
+
+.defineKeybindingWidget .layout-mode.selected {
+	background: var(--vscode-inputOption-activeBackground);
+	border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder));
+}
+
 .defineKeybindingWidget .existing .existingText {
 	text-decoration: underline;
 	cursor: pointer;
+}
+
+.defineKeybindingWidget .existing .layout-mode-conflict {
+	text-decoration: none;
+	cursor: default;
+	color: var(--vscode-errorForeground);
+	white-space: normal;
+	display: inline-block;
+	line-height: 1.4;
 }
 
 .defineKeybindingWidget .output .monaco-keybinding {

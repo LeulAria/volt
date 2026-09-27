@@ -639,7 +639,9 @@ export class AgentHistoryList extends Disposable implements IHistoryRendererHost
 		const { confirmed } = await this.dialogService.confirm({
 			type: 'warning',
 			message: localize('voltAgent.history.deleteConfirm', "Delete \"{0}\"?", session.title || localize('voltAgent.history.untitled', "New Agent")),
-			detail: localize('voltAgent.history.deleteDetail', "The conversation and its draft are removed from disk. This cannot be undone."),
+			detail: session.worktreePath
+				? localize('voltAgent.history.deleteWorktreeDetail', "The conversation, its draft, and its worktree are removed from disk. This cannot be undone.")
+				: localize('voltAgent.history.deleteDetail', "The conversation and its draft are removed from disk. This cannot be undone."),
 			primaryButton: localize({ key: 'voltAgent.history.deleteButton', comment: ['&& denotes a mnemonic'] }, "&&Delete"),
 		});
 		if (!confirmed) {

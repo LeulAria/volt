@@ -1159,6 +1159,7 @@ function workbenchTreeDataPreamble<T, TFilterData, TOptions extends IAbstractTre
 			findWidgetStyles: defaultFindWidgetStyles,
 			enableStickyScroll: Boolean(configurationService.getValue(treeStickyScroll)),
 			stickyScrollMaxItemCount: Number(configurationService.getValue(treeStickyScrollMaxElements)),
+			stickyScrollBackdrop: options.stickyScrollBackdrop,
 		} as TOptions
 	};
 }

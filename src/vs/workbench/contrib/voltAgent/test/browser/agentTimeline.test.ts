@@ -285,4 +285,22 @@ suite('Agent timeline', () => {
 		assert.strictEqual(running.phrase, 'Running npm test');
 		assert.strictEqual(running.rotate, false);
 	});
+
+	test('a provider limit stays on screen instead of rotating back to Thinking', () => {
+		const limit = 'You\'ve hit your monthly spend limit · your session limit resets 3:20am (Asia/Dubai)';
+		const parts = visibleReplyParts(buildThreadParts([
+			{ kind: 'notice', severity: 'error', title: limit, description: 'Continuing automatically at 3:20am' },
+		], undefined, true));
+		const notice = parts.find(part => part.kind === 'notice');
+		if (notice?.kind !== 'notice') {
+			assert.fail('missing notice');
+		}
+		assert.strictEqual(notice.title, limit);
+		assert.strictEqual(notice.description, 'Continuing automatically at 3:20am');
+		const live = streamingActivityLines('Thinking', limit, [], 1_000, 1_000, true);
+		assert.strictEqual(live.phrase, limit);
+		assert.strictEqual(live.rotate, false);
+		const masked = streamingActivityLines('Thinking', limit, [], 1_000, 1_000);
+		assert.strictEqual(masked.phrase, 'Thinking');
+	});
 });

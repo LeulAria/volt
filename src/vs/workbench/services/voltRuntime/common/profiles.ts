@@ -49,7 +49,7 @@ export const VOLT_HEALTH_INTERVAL_STORAGE_KEY = 'volt.runtime.healthInterval';
 export const VOLT_SEED_VERSION_STORAGE_KEY = 'volt.runtime.seedVersion';
 export const VOLT_CATALOG_STORAGE_KEY = 'volt.runtime.catalog';
 /** Bump when discovered model metadata should replace an older stored catalog. */
-export const VOLT_CATALOG_REVISION = 2;
+export const VOLT_CATALOG_REVISION = 3;
 export const VOLT_CATALOG_REVISION_STORAGE_KEY = 'volt.runtime.catalogRevision';
 export const VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY = 'volt.runtime.activeCatalogRef';
 

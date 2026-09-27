@@ -21,7 +21,7 @@ export interface ITranscriptRepair {
 }
 
 export function repairTranscript(messages: readonly INativeLoopMessage[]): ITranscriptRepair {
-	const next = messages.map(message => ({ ...message, toolCalls: message.toolCalls?.slice() }));
+	const next: INativeLoopMessage[] = messages.map(message => ({ ...message, toolCalls: message.toolCalls?.slice() }));
 	let missing = 0;
 	let remapped = 0;
 

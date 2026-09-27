@@ -108,6 +108,108 @@ suite('Agent context usage', () => {
 		assert.ok(snapshot.percent > 20);
 	});
 
+	test('new session first snapshot is not contaminated by a previous session usage', () => {
+		const previous = buildContextUsageSnapshot({
+			messages: [
+				{ kind: 'user', text: 'earlier chat' },
+				{ kind: 'agent', text: 'reply', tokensIn: 2, tokensOut: 3, tokensCache: 16_800, tokensUsed: 5 },
+			],
+			draft: '',
+			modelWindow: 1_000_000,
+			modelName: 'Sonnet 5',
+			nativeAgent: true,
+			overhead: {
+				system: 0,
+				tools: 10_000,
+				rules: 0,
+				skills: 40_000,
+				mcp: 0,
+				subagents: 0,
+				ruleCount: 0,
+				skillCount: 35,
+				mcpCount: 0,
+				subagentCount: 0,
+			},
+			models: [{ ref: 'a', name: 'Sonnet 5', family: 'anthropic', window: 1_000_000, active: true }],
+		});
+		// Previous session occupancy includes cache; chips and rows share that total.
+		assert.strictEqual(previous.used, 16_805);
+		assert.strictEqual(previous.input, 2);
+		assert.strictEqual(previous.output, 3);
+		assert.strictEqual(previous.cache, 16_800);
+		assert.strictEqual(previous.items.reduce((sum, item) => sum + item.tokens, 0), previous.used);
+		assert.ok(previous.percent > 0);
+
+		const fresh = buildContextUsageSnapshot({
+			messages: [],
+			draft: '',
+			modelWindow: 1_000_000,
+			modelName: 'Sonnet 5',
+			nativeAgent: true,
+			overhead: {
+				system: 0,
+				tools: 10_000,
+				rules: 0,
+				skills: 40_000,
+				mcp: 0,
+				subagents: 0,
+				ruleCount: 0,
+				skillCount: 35,
+				mcpCount: 0,
+				subagentCount: 0,
+			},
+			models: [{ ref: 'a', name: 'Sonnet 5', family: 'anthropic', window: 1_000_000, active: true }],
+		});
+
+		assert.strictEqual(fresh.used, 0);
+		assert.strictEqual(fresh.percent, 0);
+		assert.strictEqual(fresh.input, undefined);
+		assert.strictEqual(fresh.output, undefined);
+		assert.strictEqual(fresh.cache, undefined);
+		assert.strictEqual(fresh.items.length, 0);
+		assert.ok(!fresh.compacted);
+	});
+
+	test('live usage breakdown rows are shares of the same header total', () => {
+		const snapshot = buildContextUsageSnapshot({
+			messages: [
+				{ kind: 'user', text: 'a'.repeat(40_000) },
+				{ kind: 'agent', text: 'b'.repeat(4_000), tokensIn: 2, tokensOut: 3, tokensCache: 16_800 },
+			],
+			draft: '',
+			modelWindow: 1_000_000,
+			nativeAgent: true,
+			overhead: {
+				system: 0,
+				tools: 1,
+				rules: 0,
+				skills: 4,
+				mcp: 0,
+				subagents: 0,
+				ruleCount: 0,
+				skillCount: 35,
+				mcpCount: 0,
+				subagentCount: 0,
+			},
+			models: [{ ref: 'a', name: 'Sonnet 5', family: 'anthropic', window: 1_000_000, active: true }],
+		});
+
+		assert.strictEqual(occupancyFromUsage({ tokensIn: 2, tokensOut: 3, tokensCache: 16_800 }), 16_805);
+		assert.strictEqual(snapshot.used, 16_805);
+		assert.strictEqual(snapshot.cache, 16_800);
+		assert.strictEqual(snapshot.estimated, false);
+		const itemSum = snapshot.items.reduce((sum, item) => sum + item.tokens, 0);
+		assert.strictEqual(itemSum, snapshot.used);
+		const shareSum = snapshot.items.reduce((sum, item) => sum + (item.tokens / snapshot.used) * 100, 0);
+		assert.ok(Math.abs(shareSum - 100) < 0.01);
+	});
+
+	test('includes cache when deriving occupancy from turn tokens', () => {
+		assert.strictEqual(occupancyFromUsage({ tokensIn: 2, tokensOut: 3, tokensCache: 16_800 }), 16_805);
+		assert.strictEqual(occupancyFromUsage({ tokensUsed: 5, tokensIn: 2, tokensOut: 3, tokensCache: 16_800 }), 16_805);
+		assert.strictEqual(occupancyFromUsage({ tokensUsed: 53_000, tokensIn: 2, tokensOut: 3, tokensCache: 16_800 }), 53_000);
+	});
+
 	test('counts the expanded user prompt, not the short display label', () => {
 		const snapshot = buildContextUsageSnapshot({
 			messages: [{ kind: 'user', text: 'fix this', agentText: 'a'.repeat(8_000) }],

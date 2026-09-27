@@ -13,6 +13,11 @@ const CLAUDE_CATALOG_URL = 'https://downloads.claude.ai/model-catalog/v1/catalog
 
 let inflight: Promise<IModelInfo[]> | undefined;
 
+/** Drops the in-memory catalog so the next provider check fetches again. */
+export function clearClaudeModelCache(): void {
+	inflight = undefined;
+}
+
 /**
  * Claude Code models for a signed-in install. The current CLI has no `acp` model handshake,
  * so this reads the same catalog the CLI uses, once, and then serves it from memory.

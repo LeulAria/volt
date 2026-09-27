@@ -10,8 +10,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { detectRunPlanFromFiles, IRunPlan } from '../../common/runPlan.js';
 import { IProjectCheckFiles } from '../../common/harness/verification.js';
 
-export async function loadWorkspaceRunPlan(fileService: IFileService, workspace: IWorkspaceContextService): Promise<IRunPlan> {
-	const root = workspace.getWorkspace().folders[0]?.uri;
+export async function loadWorkspaceRunPlan(fileService: IFileService, workspace: IWorkspaceContextService, root = workspace.getWorkspace().folders[0]?.uri): Promise<IRunPlan> {
 	if (!root) {
 		return { kind: 'unknown' };
 	}

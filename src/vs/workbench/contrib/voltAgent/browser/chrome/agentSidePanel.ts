@@ -37,7 +37,8 @@ import { AgentEditor } from '../editor/agentEditor.js';
 import { AgentEditorInput, TOGGLE_AGENT_DRAWER_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { AgentHistoryDrawer } from '../history/agentHistoryDrawer.js';
 import { AgentHomePane } from '../home/agentHomePane.js';
-import { shouldShowAgentEditorTabs } from '../home/agentHomeModel.js';
+import { agentPanelTabsMode } from '../home/agentHomeModel.js';
+import { openAgentPanel } from '../workspace/agentPanels.js';
 import { setAgentTooltip } from './agentTooltip.js';
 import { SidebarEditorPart } from '../editor/sidebarEditorPart.js';
 
@@ -255,15 +256,13 @@ export class AgentSidePanel extends ViewPane {
 			workbench?.classList.remove('volt-single-agent');
 			return;
 		}
-		let openEditors = 0;
+		let nonAgentEditors = 0;
 		for (const group of this.editorGroupsService.mainPart.groups) {
-			openEditors += group.count;
+			nonAgentEditors += group.editors.filter(editor => !(editor instanceof AgentEditorInput)).length;
 		}
-		const showTabs = shouldShowAgentEditorTabs(openEditors);
-		this.centerTabs.value = this.editorGroupsService.mainPart.enforcePartOptions({
-			showTabs: showTabs ? 'multiple' : 'none',
-		});
-		workbench?.classList.toggle('volt-single-agent', !showTabs);
+		const showTabs = agentPanelTabsMode(nonAgentEditors);
+		this.centerTabs.value = this.editorGroupsService.mainPart.enforcePartOptions({ showTabs });
+		workbench?.classList.toggle('volt-single-agent', showTabs === 'none');
 	}
 
 	private revealCenterEditors(): void {
@@ -446,12 +445,11 @@ export class AgentSidePanel extends ViewPane {
 		group.focus();
 	}
 
-	/** Shows a stored session, reusing its tab when it is already open. */
+	/** Shows a stored session, reusing its tab when it is already open. In agent layout it becomes the main panel. */
 	async openSession(sessionId: string): Promise<void> {
 		if (this.isAgentLayout()) {
 			this.revealCenterEditors();
-			const input = this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(sessionId));
-			await this.editorService.openEditor(input, { pinned: true });
+			await openAgentPanel(this.editorGroupsService, this.instantiationService, sessionId);
 			return;
 		}
 		if (!this.editorPart) {
@@ -497,8 +495,7 @@ export class AgentSidePanel extends ViewPane {
 	async openNewAgent(options?: { asTab?: boolean; focus?: boolean; groupId?: number }): Promise<void> {
 		if (this.isAgentLayout()) {
 			this.revealCenterEditors();
-			const input = this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri());
-			await this.editorService.openEditor(input, { pinned: true, preserveFocus: options?.focus === false });
+			await openAgentPanel(this.editorGroupsService, this.instantiationService, undefined, { preserveFocus: options?.focus === false });
 			return;
 		}
 		if (!this.editorPart) {

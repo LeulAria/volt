@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { filterPickerModels, parseFavoriteRefs, pickerShortcutLabel, PICKER_FAVORITES_TAB, toggleFavoriteRefs, type IModelOption } from '../../browser/picker/agentModelPickerModel.js';
+import { filterPickerModels, parseFavoriteRefs, pickerShortcutLabel, PICKER_FAVORITES_TAB, sortProviderGroups, toggleFavoriteRefs, type IModelOption } from '../../browser/picker/agentModelPickerModel.js';
 
 function model(ref: string, family: string, name = ref): IModelOption {
 	return {
@@ -22,6 +22,11 @@ function model(ref: string, family: string, name = ref): IModelOption {
 suite('Agent model picker model', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('provider tabs lead with Claude, Codex, Cursor, Gemini', () => {
+		const order = sortProviderGroups(['local', 'antigravity', 'grok', 'codex', 'cursor', 'claude', 'opencode'].map(family => ({ family })));
+		assert.deepStrictEqual(order.map(group => group.family), ['claude', 'codex', 'cursor', 'antigravity', 'local', 'grok', 'opencode']);
+	});
 
 	test('parses favorite refs and toggles membership', () => {
 		assert.deepStrictEqual(parseFavoriteRefs('["a","b"]'), ['a', 'b']);

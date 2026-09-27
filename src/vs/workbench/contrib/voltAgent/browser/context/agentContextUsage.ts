@@ -163,6 +163,11 @@ export function agentMessagePlainText(message: IContextUsageMessage): string {
 			parts.push(fromBlocks);
 		}
 	}
+	for (const segment of message.segments ?? []) {
+		if (segment.kind === 'notice') {
+			parts.push(segment.description ? `${segment.title}\n${segment.description}` : segment.title);
+		}
+	}
 	if (message.title) {
 		parts.push(message.title);
 	}
@@ -263,22 +268,30 @@ export function overheadFromCustomizations(
 export function lastUsageMessage(messages: readonly IContextUsageMessage[]): IContextUsageMessage | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i];
-		if (message.kind === 'agent' && (message.tokensUsed || message.tokensWindow || message.tokensIn || message.tokensOut)) {
+		if (message.kind === 'agent' && (message.tokensUsed || message.tokensWindow || message.tokensIn || message.tokensOut || message.tokensCache)) {
 			return message;
 		}
 	}
 	return undefined;
 }
 
-/** Last-request prompt+completion is session occupancy when ACP `used` is missing. */
-export function occupancyFromUsage(message: Pick<IContextUsageMessage, 'tokensUsed' | 'tokensIn' | 'tokensOut'> | undefined, reportedUsed?: number): number | undefined {
-	if (message?.tokensUsed && message.tokensUsed > 0) {
-		return message.tokensUsed;
+/**
+ * Session occupancy from the latest usage event. Prefer ACP/`used`. When that is
+ * missing, prompt + completion + cache is one coherent turn total so the header
+ * and Input/Output/Cached chips describe the same snapshot.
+ */
+export function occupancyFromUsage(message: Pick<IContextUsageMessage, 'tokensUsed' | 'tokensIn' | 'tokensOut' | 'tokensCache'> | undefined, reportedUsed?: number): number | undefined {
+	const turn = (message?.tokensIn ?? 0) + (message?.tokensOut ?? 0) + (message?.tokensCache ?? 0);
+	const preferred = (message?.tokensUsed && message.tokensUsed > 0)
+		? message.tokensUsed
+		: (reportedUsed && reportedUsed > 0 ? reportedUsed : undefined);
+	if (preferred !== undefined) {
+		// Partial `used` that ignored cache (input+output only). Prefer the turn total.
+		if (turn > preferred && (message?.tokensCache ?? 0) > preferred) {
+			return turn;
+		}
+		return preferred;
 	}
-	if (reportedUsed && reportedUsed > 0) {
-		return reportedUsed;
-	}
-	const turn = (message?.tokensIn ?? 0) + (message?.tokensOut ?? 0);
 	return turn > 0 ? turn : undefined;
 }
 
@@ -324,24 +337,24 @@ export function buildContextUsageSnapshot(input: IContextUsageInput): IContextUs
 		estimated = false;
 		const remaining = Math.max(0, reportedUsed - overheadTotal);
 		if (conversation > remaining) {
-			const visible = remaining;
-			const summarized = conversation - remaining;
-			compacted = summarized > 0;
-			push('summarized', localize('voltAgent.contextSummarized', "Summarized conversation"), summarized);
-			push('conversation', localize('voltAgent.contextConversation', "Conversation"), visible);
+			// Compacted: allocate only what still sits in the live occupancy.
+			// Do not paint overflow estimates into the bar. Those tokens are gone.
+			compacted = true;
+			allocateCompactedConversation(push, remaining, conversation);
 		} else {
 			push('conversation', localize('voltAgent.contextConversation', "Conversation"), conversation);
 			const leftover = remaining - conversation;
 			push('unaccounted', localize('voltAgent.contextOverhead', "Prompt & tools"), leftover);
 		}
-	} else if (last?.tokensIn) {
-		const prompt = last.tokensIn;
+	} else if (last && ((last.tokensIn ?? 0) > 0 || (last.tokensCache ?? 0) > 0)) {
+		const prompt = (last.tokensIn ?? 0) + (last.tokensCache ?? 0);
 		const output = last.tokensOut ?? 0;
 		used = prompt + output + draft;
 		estimated = false;
-		const visible = Math.min(conversation, Math.max(0, prompt - overheadTotal));
+		const budget = Math.max(0, prompt - overheadTotal);
+		const visible = Math.min(conversation, budget);
 		push('conversation', localize('voltAgent.contextConversation', "Conversation"), visible);
-		push('unaccounted', localize('voltAgent.contextOverhead', "Prompt & tools"), Math.max(0, prompt - overheadTotal - visible));
+		push('unaccounted', localize('voltAgent.contextOverhead', "Prompt & tools"), Math.max(0, budget - visible));
 		push('reply', localize('voltAgent.contextReply', "Last reply"), output);
 	} else if (hasTranscript) {
 		used = overheadTotal + conversation + draft;
@@ -471,19 +484,55 @@ function scaleOverhead(overhead: IContextOverhead, reportedUsed?: number): ICont
 		return overhead;
 	}
 	const scale = reportedUsed / total;
-	const scaled = (value: number) => Math.round(value * scale);
+	const keys = ['system', 'tools', 'rules', 'skills', 'mcp', 'subagents'] as const;
+	const scaledValues = keys.map(key => Math.round(overhead[key] * scale));
+	let allocated = scaledValues.reduce((sum, value) => sum + value, 0);
+	// Rounding can overshoot the live occupancy; shave from the largest buckets.
+	while (allocated > reportedUsed) {
+		let largest = 0;
+		for (let i = 1; i < scaledValues.length; i++) {
+			if (scaledValues[i] > scaledValues[largest]) {
+				largest = i;
+			}
+		}
+		if (scaledValues[largest] <= 0) {
+			break;
+		}
+		scaledValues[largest] -= 1;
+		allocated -= 1;
+	}
 	return {
-		system: scaled(overhead.system),
-		tools: scaled(overhead.tools),
-		rules: scaled(overhead.rules),
-		skills: scaled(overhead.skills),
-		mcp: scaled(overhead.mcp),
-		subagents: scaled(overhead.subagents),
+		system: scaledValues[0],
+		tools: scaledValues[1],
+		rules: scaledValues[2],
+		skills: scaledValues[3],
+		mcp: scaledValues[4],
+		subagents: scaledValues[5],
 		ruleCount: overhead.ruleCount,
 		skillCount: overhead.skillCount,
 		mcpCount: overhead.mcpCount,
 		subagentCount: overhead.subagentCount,
 	};
+}
+
+/**
+ * Split the remaining live occupancy between summarized + recent conversation
+ * so both rows are shares of the same header total (never overflow estimates).
+ */
+function allocateCompactedConversation(
+	push: (id: ContextCategoryId, label: string, tokens: number, detail?: string) => void,
+	remaining: number,
+	conversationEstimate: number,
+): void {
+	if (remaining <= 0) {
+		return;
+	}
+	const overflow = Math.max(0, conversationEstimate - remaining);
+	const rawTotal = overflow + remaining;
+	const summarized = rawTotal > 0 ? Math.round(remaining * (overflow / rawTotal)) : 0;
+	const visible = remaining - summarized;
+	push('summarized', localize('voltAgent.contextSummarized', "Summarized conversation"), summarized);
+	push('conversation', localize('voltAgent.contextConversation', "Conversation"), visible);
 }
 
 function countDetail(count: number, one: string, many: string): string | undefined {

@@ -20,14 +20,9 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import {
-	AGENT_LEFT_SIDEBAR_HIDDEN_KEY,
 	AGENT_RIGHT_DOCK_COLLAPSED_KEY,
-	AGENT_RIGHT_DOCK_COLLAPSED_WIDTH,
-	AGENT_RIGHT_DOCK_EXPANDED_WIDTH,
-	getLayoutMode,
 	isAgentRightDockCollapsed,
 } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
-import { applyAgentStatusbarShift } from '../../../../browser/parts/titlebar/agentLayoutChrome.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { OPEN_BROWSER_COMMAND_ID, VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { AgentChangesEditorInput, OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
@@ -37,6 +32,15 @@ const CHEVRON_RIGHT_PATH = 'M6 7L11 12L6 17M13 7L18 12L13 17';
 const CHANGES_ICON_PATH = 'M12 3v14m7-7H5m14 11H5';
 /** Expanded Quick Open Actions are 228px. Below this window width they collapse. */
 export const QUICK_OPEN_NARROW_WINDOW_WIDTH = 1100;
+
+/** Below this chat column width the actions leave too little room for the conversation. */
+export const QUICK_OPEN_NARROW_CHAT_WIDTH = 900;
+
+/** A narrow window, or a chat column squeezed by tools opened beside it. Zero means not measured yet. */
+export function quickOpenNarrowForSpace(windowWidth: number, chatWidth: number): boolean {
+	return (windowWidth > 0 && windowWidth <= QUICK_OPEN_NARROW_WINDOW_WIDTH)
+		|| (chatWidth > 0 && chatWidth <= QUICK_OPEN_NARROW_CHAT_WIDTH);
+}
 
 /** Narrow windows collapse Quick Open Actions unless the user opened them in this narrow session. */
 export function quickOpenCollapsedForWidth(windowWidth: number, userCollapsed: boolean, narrowOverride?: boolean): boolean {
@@ -116,8 +120,7 @@ function createStrokeIcon(owner: HTMLElement, pathD: string, strokeWidth = '1.5'
 class AgentViewSidebarsContribution extends Disposable {
 	static readonly ID = 'workbench.contrib.voltAgentViewSidebars';
 
-	private readonly rightButton: HTMLButtonElement;
-	private readonly dock: HTMLElement;
+	private readonly quickOpen: HTMLElement;
 	private readonly chevron: HTMLButtonElement;
 	private readonly chevronLabel: HTMLElement;
 	private readonly tabsSection: HTMLElement;
@@ -125,6 +128,14 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly workspaceHeading: HTMLElement;
 	private readonly tabListeners = this._register(new DisposableStore());
 	private editorObserver: MutationObserver | undefined;
+	/** Watches the chat column the actions sit in; opening tools beside the chat narrows it. */
+	private readonly chatResize: ResizeObserver;
+	private observedChat: HTMLElement | undefined;
+	private windowNarrow = false;
+	/** The user's choice while the space is narrow. Cleared whenever narrow flips. */
+	private narrowOverride: boolean | undefined;
+	private placeScheduled = false;
+	private dockApplied = false;
 	private collapsed = false;
 
 	constructor(
@@ -164,6 +175,8 @@ class AgentViewSidebarsContribution extends Disposable {
 			this.createRailButton(rail, action);
 		}
 
+		this.chatResize = new ResizeObserver(() => this.syncDockToWindow());
+		this._register(toDisposable(() => this.chatResize.disconnect()));
 		this.placeQuickOpen(root);
 		this.updateWorkspaceHeading();
 		this.renderTabs();
@@ -288,46 +301,31 @@ class AgentViewSidebarsContribution extends Disposable {
 		const editor = this.layoutService.getContainer(mainWindow, Parts.EDITOR_PART);
 		const host = agentQuickOpenActionsHost(isHTMLElement(editor) ? editor : undefined, root);
 		mountAgentQuickOpenActions(host, this.quickOpen);
+		this.observeChatColumn();
 	}
 
-	private mount(root: HTMLElement): void {
-		const chrome = root.querySelector('.volt-agent-chrome');
-		const controls = chrome?.querySelector('.volt-agent-chrome-controls');
-		if (isHTMLElement(controls)) {
-			prepend(controls, this.leftButton);
-		} else if (isHTMLElement(chrome)) {
-			chrome.appendChild(this.leftButton);
-		} else {
-			root.appendChild(this.leftButton);
-		}
-
-		this.placeQuickOpen(root);
+	/** Narrow window, or a chat column squeezed by the tools panel or a dragged split. */
+	private isWindowNarrow(): boolean {
+		return quickOpenNarrowForSpace(
+			this.layoutService.mainContainerDimension?.width ?? 0,
+			this.observedChat?.clientWidth ?? 0,
+		);
 	}
 
-	private toggleLeft(): void {
-		if (getLayoutMode(this.layoutService) !== 'agent') {
+	private observeChatColumn(): void {
+		const chat = this.quickOpen.closest('.volt-agent-editor-main');
+		const next = isHTMLElement(chat) ? chat : undefined;
+		if (next === this.observedChat) {
 			return;
 		}
-		const hide = this.layoutService.isVisible(Parts.AUXILIARYBAR_PART);
-		this.storageService.store(AGENT_LEFT_SIDEBAR_HIDDEN_KEY, hide, StorageScope.PROFILE, StorageTarget.USER);
-		this.layoutService.setPartHidden(hide, Parts.AUXILIARYBAR_PART);
-		const width = hide ? 0 : this.layoutService.getSize(Parts.AUXILIARYBAR_PART).width;
-		applyAgentStatusbarShift(this.layoutService.mainContainer, width, this.layoutService.getSize(Parts.TITLEBAR_PART).height);
-		this.syncLeftButton();
-	}
-
-	private syncLeftButton(): void {
-		const open = this.layoutService.isVisible(Parts.AUXILIARYBAR_PART);
-		const label = open
-			? localize('voltAgent.dock.hideLeft', "Hide Sidebar")
-			: localize('voltAgent.dock.showLeft', "Show Sidebar");
-		this.leftButton.setAttribute('aria-label', label);
-		this.leftButton.setAttribute('aria-pressed', String(open));
-	}
-
-	private isWindowNarrow(): boolean {
-		const width = this.layoutService.mainContainerDimension?.width ?? 0;
-		return width > 0 && width <= QUICK_OPEN_NARROW_WINDOW_WIDTH;
+		if (this.observedChat) {
+			this.chatResize.unobserve(this.observedChat);
+		}
+		this.observedChat = next;
+		if (next) {
+			this.chatResize.observe(next);
+		}
+		this.syncDockToWindow();
 	}
 
 	private syncDockToWindow(): void {
@@ -336,11 +334,9 @@ class AgentViewSidebarsContribution extends Disposable {
 			this.windowNarrow = narrow;
 			this.narrowOverride = undefined;
 		}
-		const collapsed = quickOpenCollapsedForWidth(
-			this.layoutService.mainContainerDimension?.width ?? 0,
-			isAgentRightDockCollapsed(this.storageService),
-			this.narrowOverride,
-		);
+		const collapsed = typeof this.narrowOverride === 'boolean'
+			? this.narrowOverride
+			: narrow || isAgentRightDockCollapsed(this.storageService);
 		if (this.dockApplied && collapsed === this.collapsed) {
 			return;
 		}

@@ -22,6 +22,8 @@ suite('Volt session retry', () => {
 		assert.strictEqual(isAcpTurnRestartable('Internal error'), true);
 		assert.strictEqual(isAcpTurnRestartable('ACP process exited (1)'), true);
 		assert.strictEqual(isAcpTurnRestartable('invalid api key'), false);
+		assert.strictEqual(isAcpTurnRestartable('Internal error: You\'ve hit your monthly spend limit · your session limit resets 3:20am (Asia/Dubai)'), false);
+		assert.strictEqual(isAcpTurnRestartable('Usage limit reached · resets 3:20 AM'), false);
 	});
 
 	test('honours Retry-After and caps backoff', () => {

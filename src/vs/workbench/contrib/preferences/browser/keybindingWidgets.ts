@@ -132,19 +132,29 @@ export class KeybindingsSearchWidget extends SearchWidget {
 	}
 }
 
+export type DefineKeybindingLayoutMode = 'agent' | 'ide';
+
+export interface IDefineKeybindingWidgetOptions {
+	readonly layoutModes?: boolean;
+}
+
 export class DefineKeybindingWidget extends Widget {
 
 	private static readonly WIDTH = 400;
 	private static readonly HEIGHT = 110;
+	private static readonly HEIGHT_WITH_MODE = 240;
 
 	private _domNode: FastDomNode<HTMLElement>;
 	private _keybindingInputWidget: KeybindingsSearchWidget;
 	private _outputNode: HTMLElement;
 	private _showExistingKeybindingsNode: HTMLElement;
 	private readonly _keybindingDisposables = this._register(new DisposableStore());
+	private readonly _modeButtons: HTMLButtonElement[] = [];
 
 	private _chords: ResolvedKeybinding[] | null = null;
 	private _isVisible: boolean = false;
+	private _layoutMode: DefineKeybindingLayoutMode = 'ide';
+	private _conflict: string | undefined;
 
 	private _onHide = this._register(new Emitter<void>());
 
@@ -156,6 +166,7 @@ export class DefineKeybindingWidget extends Widget {
 
 	constructor(
 		parent: HTMLElement | null,
+		private readonly options: IDefineKeybindingWidgetOptions | undefined,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) {
 		super();
@@ -164,10 +175,15 @@ export class DefineKeybindingWidget extends Widget {
 		this._domNode.setDisplay('none');
 		this._domNode.setClassName('defineKeybindingWidget');
 		this._domNode.setWidth(DefineKeybindingWidget.WIDTH);
-		this._domNode.setHeight(DefineKeybindingWidget.HEIGHT);
+		this._domNode.setHeight(this.widgetHeight());
 
-		const message = nls.localize('defineKeybinding.initial', "Press desired key combination and then press ENTER.");
+		const message = this.showsLayoutModes
+			? nls.localize('defineKeybinding.initialWithMode', "Press the shortcut, choose Agent mode or IDE mode, then press Enter.")
+			: nls.localize('defineKeybinding.initial', "Press desired key combination and then press ENTER.");
 		dom.append(this._domNode.domNode, dom.$('.message', undefined, message));
+		if (this.showsLayoutModes) {
+			this.createLayoutModePicker();
+		}
 
 		this._domNode.domNode.style.backgroundColor = asCssVariable(editorWidgetBackground);
 		this._domNode.domNode.style.color = asCssVariable(editorWidgetForeground);
@@ -176,7 +192,12 @@ export class DefineKeybindingWidget extends Widget {
 		this._keybindingInputWidget = this._register(this.instantiationService.createInstance(KeybindingsSearchWidget, this._domNode.domNode, { ariaLabel: message, history: new Set([]), inputBoxStyles: defaultInputBoxStyles }));
 		this._keybindingInputWidget.startRecordingKeys();
 		this._register(this._keybindingInputWidget.onKeybinding(keybinding => this.onKeybinding(keybinding)));
-		this._register(this._keybindingInputWidget.onEnter(() => this.hide()));
+		this._register(this._keybindingInputWidget.onEnter(() => {
+			if (this._conflict) {
+				return;
+			}
+			this.hide();
+		}));
 		this._register(this._keybindingInputWidget.onEscape(() => this.clearOrHide()));
 		this._register(this._keybindingInputWidget.onBlur(() => this.onCancel()));
 
@@ -192,7 +213,37 @@ export class DefineKeybindingWidget extends Widget {
 		return this._domNode.domNode;
 	}
 
+	get showsLayoutModes(): boolean {
+		return this.options?.layoutModes === true;
+	}
+
+	get layoutMode(): DefineKeybindingLayoutMode {
+		return this._layoutMode;
+	}
+
+	setLayoutMode(mode: DefineKeybindingLayoutMode): void {
+		this._layoutMode = mode;
+		for (const button of this._modeButtons) {
+			const selected = button.dataset.mode === mode;
+			button.classList.toggle('selected', selected);
+			button.setAttribute('aria-checked', selected ? 'true' : 'false');
+		}
+	}
+
+	setLayoutModeConflict(message: string | undefined): void {
+		this._conflict = message;
+		dom.clearNode(this._showExistingKeybindingsNode);
+		if (!message) {
+			return;
+		}
+		const existingElement = dom.$('span.existingText.layout-mode-conflict');
+		existingElement.textContent = message;
+		aria.alert(message);
+		this._showExistingKeybindingsNode.appendChild(existingElement);
+	}
+
 	define(): Promise<string | null> {
+		this._conflict = undefined;
 		this._keybindingInputWidget.clear();
 		return Promises.withAsyncBody<string | null>(async (c) => {
 			if (!this._isVisible) {
@@ -218,7 +269,7 @@ export class DefineKeybindingWidget extends Widget {
 	}
 
 	layout(layout: dom.Dimension): void {
-		const top = Math.round((layout.height - DefineKeybindingWidget.HEIGHT) / 2);
+		const top = Math.round((layout.height - this.widgetHeight()) / 2);
 		this._domNode.setTop(top);
 
 		const left = Math.round((layout.width - DefineKeybindingWidget.WIDTH) / 2);
@@ -256,8 +307,8 @@ export class DefineKeybindingWidget extends Widget {
 		}
 
 		const label = this.getUserSettingsLabel();
-		if (label) {
-			this._onDidChange.fire(label);
+		if (label || this.showsLayoutModes) {
+			this._onDidChange.fire(label ?? '');
 		}
 	}
 
@@ -282,7 +333,41 @@ export class DefineKeybindingWidget extends Widget {
 			this._keybindingInputWidget.clear();
 			dom.clearNode(this._outputNode);
 			dom.clearNode(this._showExistingKeybindingsNode);
+			if (this.showsLayoutModes) {
+				this._onDidChange.fire('');
+			}
 		}
+	}
+
+	private widgetHeight(): number {
+		return this.showsLayoutModes ? DefineKeybindingWidget.HEIGHT_WITH_MODE : DefineKeybindingWidget.HEIGHT;
+	}
+
+	private createLayoutModePicker(): void {
+		const modes = dom.append(this._domNode.domNode, dom.$('.layout-modes'));
+		modes.setAttribute('role', 'radiogroup');
+		modes.setAttribute('aria-label', nls.localize('defineKeybinding.layoutMode', "Where this shortcut works"));
+		this._register(dom.addDisposableListener(modes, dom.EventType.MOUSE_DOWN, event => {
+			event.preventDefault();
+		}));
+		this._modeButtons.push(this.createLayoutModeButton(modes, 'agent', nls.localize('defineKeybinding.agentMode', "Agent mode")));
+		this._modeButtons.push(this.createLayoutModeButton(modes, 'ide', nls.localize('defineKeybinding.ideMode', "IDE mode")));
+		this.setLayoutMode(this._layoutMode);
+	}
+
+	private createLayoutModeButton(parent: HTMLElement, mode: DefineKeybindingLayoutMode, label: string): HTMLButtonElement {
+		const button = document.createElement('button');
+		button.className = 'layout-mode';
+		button.type = 'button';
+		button.setAttribute('role', 'radio');
+		button.dataset.mode = mode;
+		button.textContent = label;
+		parent.appendChild(button);
+		this._register(dom.addDisposableListener(button, dom.EventType.CLICK, () => {
+			this.setLayoutMode(mode);
+			this._onDidChange.fire(this.getUserSettingsLabel() ?? '');
+		}));
+		return button;
 	}
 
 	private hide(): void {
@@ -303,7 +388,7 @@ export class DefineKeybindingOverlayWidget extends Disposable implements IOverla
 	) {
 		super();
 
-		this._widget = this._register(instantiationService.createInstance(DefineKeybindingWidget, null));
+		this._widget = this._register(instantiationService.createInstance(DefineKeybindingWidget, null, undefined));
 		this._editor.addOverlayWidget(this);
 	}
 

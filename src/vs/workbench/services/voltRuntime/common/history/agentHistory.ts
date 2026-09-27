@@ -27,6 +27,9 @@ export const AGENT_HISTORY_FORMAT_VERSION = 1;
 
 export type AgentSessionStatus = 'idle' | 'running' | 'done' | 'cancelled' | 'error' | 'interrupted';
 
+/** What the harness is waiting on the user for: an access approval or an answer to a question. */
+export type AgentSessionAttention = 'approval' | 'question';
+
 export interface IAgentSessionWorkspace {
 	/** Stable workspace identity (IWorkspace.id). */
 	readonly id: string;
@@ -87,6 +90,9 @@ export interface IAgentMetaEntry {
 	readonly title?: string;
 	readonly mode?: string;
 	readonly model?: string;
+	/** Checkout created for a New Worktree chat. Absent when the chat runs on the open branch. */
+	readonly worktreePath?: string;
+	readonly worktreeBranch?: string;
 }
 
 export type AgentHistoryEntry = IAgentUserEntry | IAgentAssistantEntry | IAgentTruncateEntry | IAgentMetaEntry;
@@ -105,6 +111,8 @@ export interface IAgentSessionTranscript {
 	readonly title?: string;
 	readonly mode?: string;
 	readonly model?: string;
+	readonly worktreePath?: string;
+	readonly worktreeBranch?: string;
 }
 
 /** Composer state kept beside the log so unsent work survives restarts. */
@@ -126,6 +134,8 @@ export interface IAgentSessionMeta {
 	readonly workspaceId: string;
 	readonly workspaceLabel: string;
 	readonly workspaceFolder?: string;
+	/** Every folder of a multi-folder session. Absent when the session has one folder. */
+	readonly workspaceFolders?: readonly string[];
 	readonly turnCount: number;
 	/** First prompt, trimmed, for search and previews. */
 	readonly preview: string;
@@ -134,9 +144,19 @@ export interface IAgentSessionMeta {
 	readonly status: AgentSessionStatus;
 	readonly pinned?: boolean;
 	readonly archived?: boolean;
+	/** Session parked out of the active Workspaces list into Settled. */
+	readonly settled?: boolean;
+	/** Session parked out of the active Workspaces list into Snooze. */
+	readonly snoozed?: boolean;
 	readonly hasDraft?: boolean;
+	/** A reply finished while the chat was not on screen. */
+	readonly unread?: boolean;
+	/** The harness is blocked on the user. Cleared by the next prompt. */
+	readonly attention?: AgentSessionAttention;
 	readonly mode?: string;
 	readonly model?: string;
+	readonly worktreePath?: string;
+	readonly worktreeBranch?: string;
 }
 
 export interface IAgentHistoryIndex {
@@ -180,7 +200,7 @@ export interface IAgentSessionHandle {
 	appendUser(turn: string, text: string, message: unknown): void;
 	appendAssistant(entry: IAgentSessionAppendAssistant): void;
 	truncate(fromTurn: string): void;
-	setMeta(meta: { title?: string; mode?: string; model?: string }): void;
+	setMeta(meta: { title?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string }): void;
 	saveDraft(draft: Omit<IAgentSessionDraft, 'updatedAt'> | undefined): void;
 
 	/** Durability barrier: every accepted append is on disk when this resolves. */
@@ -210,8 +230,20 @@ export interface IAgentHistoryService {
 	/** Open (creating on first append) the handle for a session id. */
 	open(id: string): IAgentSessionHandle;
 
+	/**
+	 * Workspace written into a session that has not been saved yet.
+	 * A log that already exists keeps the folder stored in its header.
+	 */
+	pinSessionWorkspace(id: string, workspace: IAgentSessionWorkspace): void;
+
 	setPinned(id: string, pinned: boolean): Promise<void>;
 	setArchived(id: string, archived: boolean): Promise<void>;
+	setSettled(id: string, settled: boolean): Promise<void>;
+	setSnoozed(id: string, snoozed: boolean): Promise<void>;
+	setUnread(id: string, unread: boolean): Promise<void>;
+	markAllRead(): Promise<void>;
+	/** Recorded by the session controller from harness events (`access.ask`, `clarify`). */
+	setAttention(id: string, attention: AgentSessionAttention | undefined): Promise<void>;
 	rename(id: string, title: string | undefined): Promise<void>;
 	delete(id: string): Promise<void>;
 

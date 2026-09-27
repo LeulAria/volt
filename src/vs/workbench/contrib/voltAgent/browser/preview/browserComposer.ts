@@ -9,6 +9,7 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { CONTEXT_IN_AGENT_INPUT } from '../editor/agentFindWidget.js';
@@ -31,6 +32,8 @@ import { normalizeVoltMode } from '../../../../services/voltRuntime/common/modes
 export interface IBrowserComposerCallbacks {
 	onSubmit(text: string): void;
 	onPrefill(text: string): void;
+	/** Pin the draft as its own comment. Does not send or clear other comments. */
+	onComment?(): void;
 	onHoverMention?(mention: IAgentMention | undefined): void;
 	onRemoveMention?(mention: IAgentMention): void;
 	onPlus?(): void;
@@ -252,6 +255,20 @@ export class BrowserAgentComposer extends Disposable {
 		setAgentTooltip(this.micButton, localize('voltBrowser.voice', "Voice"));
 		this.micButton.appendChild(createComposerMicIcon());
 
+		if (!callbacks.dock && callbacks.onComment) {
+			const commentButton = append(actions, $('button.volt-browser-composer-comment')) as HTMLButtonElement;
+			commentButton.type = 'button';
+			commentButton.textContent = localize('voltBrowser.comment', "Comment");
+			this._register(addDisposableListener(commentButton, 'mousedown', e => {
+				e.preventDefault();
+			}));
+			this._register(addDisposableListener(commentButton, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.callbacks.onComment?.();
+			}));
+		}
+
 		this.sendButton = append(actions, $('button.volt-agent-send')) as HTMLButtonElement;
 		this.sendButton.type = 'button';
 		this._register(addDisposableListener(this.sendButton, 'click', () => {
@@ -321,6 +338,31 @@ export class BrowserAgentComposer extends Disposable {
 		this.syncSend();
 		this.layout();
 		this.editor?.focus();
+	}
+
+	appendPlainText(text: string): void {
+		const extra = text.trim();
+		if (!extra) {
+			return;
+		}
+		this.ensureEditor();
+		const model = this.model;
+		if (!model || model.isDisposed()) {
+			return;
+		}
+		const endLine = model.getLineCount();
+		const endColumn = model.getLineMaxColumn(endLine);
+		const prefix = model.getValue().length ? ' ' : '';
+		model.applyEdits([{
+			range: { startLineNumber: endLine, startColumn: endColumn, endLineNumber: endLine, endColumn },
+			text: `${prefix}${extra}`,
+		}]);
+		const last = model.getLineCount();
+		const column = model.getLineMaxColumn(last);
+		this.editor?.setPosition({ lineNumber: last, column });
+		this.syncPlaceholder();
+		this.syncSend();
+		this.layout();
 	}
 
 	setPlaceholder(text: string): void {
@@ -590,7 +632,7 @@ export class BrowserAgentComposer extends Disposable {
 		if (this.editor) {
 			return;
 		}
-		const modelUri = URI.from({ scheme: 'volt-agent-input', path: `browser-${Date.now()}` });
+		const modelUri = URI.from({ scheme: 'volt-agent-input', path: `browser-${generateUuid()}` });
 		this.model = this._register(this.modelService.createModel('', null, modelUri, true));
 		this.editor = this._register(this.instantiationService.createInstance(
 			CodeEditorWidget,
@@ -629,6 +671,12 @@ export class BrowserAgentComposer extends Disposable {
 			if (e.keyCode === KeyCode.Enter && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
 				e.preventDefault();
 				e.stopPropagation();
+				if (this.callbacks.onComment) {
+					if (!this.mentionController?.isMenuOpen) {
+						this.callbacks.onComment();
+					}
+					return;
+				}
 				this.submit();
 				return;
 			}

@@ -6,6 +6,7 @@
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { acpRpcErrorMessage } from '../../common/acpNotices.js';
 
 interface IPending {
 	resolve: (value: unknown) => void;
@@ -116,7 +117,7 @@ export class AcpJsonRpcClient extends Disposable {
 	}
 
 	private dispatch(line: string): void {
-		let msg: { jsonrpc?: string; id?: string | number; method?: string; params?: unknown; result?: unknown; error?: { message?: string } };
+		let msg: { jsonrpc?: string; id?: string | number; method?: string; params?: unknown; result?: unknown; error?: { message?: string; data?: unknown } };
 		try {
 			msg = JSON.parse(line);
 		} catch {
@@ -137,7 +138,7 @@ export class AcpJsonRpcClient extends Disposable {
 			}
 			this.pending.delete(msg.id);
 			if (msg.error) {
-				pending.reject(new Error(msg.error.message || 'ACP error'));
+				pending.reject(new Error(acpRpcErrorMessage(msg.error)));
 			} else {
 				pending.resolve(msg.result);
 			}

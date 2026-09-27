@@ -9,33 +9,34 @@ import { DEFAULT_MODEL_CAPABILITIES, IProviderCapabilities } from '../../common/
 import { IVoltEvent } from '../../common/events.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { contextLabelFromTokens, pickText } from '../../common/models/modelMeta.js';
-import { booleanOption, IModelOptionDescriptor, MODEL_OPTION_THINKING } from '../../common/models/modelOptions.js';
+import { CLAUDE_STREAM_OUTPUT_TOKENS, claudeModelMeta, IClaudeModelMeta, IListedClaudeLimits } from '../../common/models/claudeModels.js';
+import { IModelOptionDescriptor, MODEL_OPTION_REASONING, reasoningOption } from '../../common/models/modelOptions.js';
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
-import { AnthropicToolAssembler } from '../../common/harness/anthropicToolStream.js';
-import { toAnthropicMessages, toAnthropicTools } from '../../common/harness/providerMessages.js';
-import { parseSseData, requestSseLines, requestText } from '../host/httpStream.js';
+import { AnthropicStreamParser, IAnthropicStreamJson } from '../../common/harness/anthropicToolStream.js';
+import { buildAnthropicRequest } from '../../common/harness/anthropicRequest.js';
+import { parseSseData, requestSseStream, requestText } from '../host/httpStream.js';
 
 interface IAnthropicModel {
 	id: string;
 	label: string;
-	optionDescriptors?: IModelOptionDescriptor[];
+	limits?: IListedClaudeLimits;
 }
 
-const THINKING = [booleanOption(MODEL_OPTION_THINKING, 'Thinking', true)];
-
-const MODELS: IAnthropicModel[] = [
-	{ id: 'claude-opus-4-20250514', label: 'Claude Opus 4', optionDescriptors: THINKING },
-	{ id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4', optionDescriptors: THINKING },
-	{ id: 'claude-3-5-haiku-20241022', label: 'Claude Haiku 3.5' },
+/** Used only when the Models API is unreachable. The live list always wins. */
+const FALLBACK_MODELS: IAnthropicModel[] = [
+	{ id: 'claude-opus-5', label: 'Claude Opus 5' },
+	{ id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+	{ id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
 ];
 
-/** Anthropic bills extended thinking as a token budget rather than an effort level. */
-const THINKING_BUDGET_TOKENS = 4096;
-const MAX_TOKENS = 8192;
+const DEFAULT_BASE_URL = 'https://api.anthropic.com';
 
 export class AnthropicProvider implements IModelProvider {
 	readonly id = 'anthropic';
 	readonly label = 'Anthropic';
+
+	/** Limits the Models API reported, keyed by model id. */
+	private readonly limits = new Map<string, IListedClaudeLimits>();
 
 	constructor(private readonly requestService: IRequestService) { }
 
@@ -45,14 +46,19 @@ export class AnthropicProvider implements IModelProvider {
 
 	async listModels(profile: IProviderProfile, apiKey?: string): Promise<IModelInfo[]> {
 		const fetched = await this.fetchModels(profile, apiKey);
-		const models = fetched.length ? fetched : MODELS;
+		const models = fetched.length ? fetched : FALLBACK_MODELS;
 		return models.map(model => {
-			const capabilities = this.caps(model.id);
+			if (model.limits) {
+				this.limits.set(model.id, model.limits);
+			}
+			const meta = claudeModelMeta(model.id, model.limits);
+			const capabilities = this.caps(meta);
+			const optionDescriptors = reasoningDescriptors(meta);
 			return {
 				id: model.id,
 				label: model.label,
 				capabilities,
-				...(model.optionDescriptors ? { optionDescriptors: model.optionDescriptors } : {}),
+				...(optionDescriptors ? { optionDescriptors } : {}),
 				contextLabel: contextLabelFromTokens(capabilities.contextWindow),
 			};
 		});
@@ -63,8 +69,7 @@ export class AnthropicProvider implements IModelProvider {
 			return [];
 		}
 		try {
-			const url = `${(profile.endpoint?.baseURL || 'https://api.anthropic.com').replace(/\/$/, '')}/v1/models`;
-			const { status, text } = await requestText(this.requestService, url, {
+			const { status, text } = await requestText(this.requestService, `${baseUrl(profile)}/v1/models?limit=100`, {
 				type: 'GET',
 				headers: {
 					'x-api-key': apiKey,
@@ -74,97 +79,91 @@ export class AnthropicProvider implements IModelProvider {
 			if (status < 200 || status >= 300) {
 				return [];
 			}
-			const parsed = JSON.parse(text) as { data?: { id?: string; display_name?: string }[] };
+			const parsed = JSON.parse(text) as { data?: { id?: string; display_name?: string; max_input_tokens?: number; max_tokens?: number }[] };
 			return (parsed.data ?? []).flatMap(item => {
 				const id = pickText(item.id);
-				return id ? [{ id, label: pickText(item.display_name) ?? id, optionDescriptors: this.thinkingFor(id) }] : [];
+				return id ? [{
+					id,
+					label: pickText(item.display_name) ?? id,
+					limits: { max_input_tokens: item.max_input_tokens, max_tokens: item.max_tokens },
+				}] : [];
 			});
 		} catch {
 			return [];
 		}
 	}
 
-	private thinkingFor(id: string): IModelOptionDescriptor[] | undefined {
-		return id.includes('opus') || id.includes('sonnet') ? THINKING : undefined;
-	}
-
 	async *stream(req: IModelRequest, token: CancellationToken): AsyncIterable<IVoltEvent> {
-		const system = req.messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n');
-		const tools = req.tools?.length ? toAnthropicTools(req.tools) : undefined;
-		const url = `${(req.profile.endpoint?.baseURL || 'https://api.anthropic.com').replace(/\/$/, '')}/v1/messages`;
-		const textId = `text-${Date.now()}`;
-		const assembler = new AnthropicToolAssembler();
-		let started = false;
-		for await (const line of requestSseLines(this.requestService, url, {
+		const meta = claudeModelMeta(req.modelId, this.limits.get(req.modelId));
+		const maxTokens = Math.max(1_024, Math.min(req.maxOutputTokens ?? CLAUDE_STREAM_OUTPUT_TOKENS, meta.maxOutputTokens));
+		const base = baseUrl(req.profile);
+		const effort = req.options?.[MODEL_OPTION_REASONING];
+		const request = buildAnthropicRequest({
+			modelId: req.modelId,
+			meta,
+			messages: req.messages,
+			tools: req.tools,
+			maxTokens,
+			effort: typeof effort === 'string' ? effort : undefined,
+			firstParty: base === DEFAULT_BASE_URL,
+		});
+		const parser = new AnthropicStreamParser(req.modelId);
+		for await (const item of requestSseStream(this.requestService, `${base}/v1/messages`, {
 			type: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
 				'x-api-key': req.apiKey ?? '',
 				'anthropic-version': '2023-06-01',
+				...(request.betas.length ? { 'anthropic-beta': request.betas.join(',') } : {}),
 			},
-			data: JSON.stringify({
-				model: req.modelId,
-				max_tokens: MAX_TOKENS,
-				stream: true,
-				system: system || undefined,
-				messages: toAnthropicMessages(req.messages),
-				...(tools ? { tools } : {}),
-				...(req.options?.[MODEL_OPTION_THINKING] === true
-					? { thinking: { type: 'enabled', budget_tokens: THINKING_BUDGET_TOKENS } }
-					: {}),
-			}),
+			data: JSON.stringify(request.body),
 		}, token)) {
+			if (typeof item !== 'string') {
+				yield { type: 'retry', ...item.retry };
+				continue;
+			}
 			if (token.isCancellationRequested) {
 				yield { type: 'finish', reason: 'abort' };
 				return;
 			}
-			const data = parseSseData(line);
+			const data = parseSseData(item);
 			if (!data) {
 				continue;
 			}
-			let json: {
-				type?: string;
-				index?: number;
-				content_block?: { type?: string; id?: string; name?: string };
-				delta?: { type?: string; text?: string; thinking?: string; partial_json?: string; stop_reason?: string };
-				usage?: { input_tokens?: number; output_tokens?: number };
-				message?: { usage?: { input_tokens?: number; output_tokens?: number } };
-			};
+			let json: IAnthropicStreamJson;
 			try {
 				json = JSON.parse(data);
 			} catch {
 				continue;
 			}
-			const usage = json.usage ?? json.message?.usage;
-			if (usage && (usage.input_tokens !== undefined || usage.output_tokens !== undefined)) {
-				yield { type: 'usage', input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0 };
-			}
-			if (json.delta?.thinking) {
-				yield { type: 'reasoning.delta', id: `${textId}-think`, delta: json.delta.thinking };
-			}
-			if (json.type === 'content_block_delta' && json.delta?.text) {
-				if (!started) {
-					started = true;
-					yield { type: 'text.start', id: textId };
-				}
-				yield { type: 'text.delta', id: textId, delta: json.delta.text };
-			}
-			for (const event of assembler.apply(json)) {
-				yield event;
-			}
+			yield* parser.apply(json);
 		}
-		if (started) {
-			yield { type: 'text.end', id: textId };
-		}
-		yield assembler.finish();
+		yield* parser.finish();
 	}
 
-	private caps(id: string): IProviderCapabilities {
+	private caps(meta: IClaudeModelMeta): IProviderCapabilities {
 		return {
 			...DEFAULT_MODEL_CAPABILITIES,
-			reasoning: id.includes('opus') || id.includes('sonnet'),
+			reasoning: meta.thinking !== 'none',
+			parallelToolCalls: true,
+			vision: true,
 			promptCaching: true,
-			contextWindow: 200_000,
+			contextWindow: meta.contextWindow,
 		};
 	}
+}
+
+/** Adaptive models get Auto plus the effort levels they accept; budget models get Auto, Off, and depth. */
+function reasoningDescriptors(meta: IClaudeModelMeta): IModelOptionDescriptor[] | undefined {
+	if (meta.thinking === 'adaptive') {
+		return [reasoningOption(['auto', ...meta.efforts], 'auto')];
+	}
+	if (meta.thinking === 'budget') {
+		return [reasoningOption(['auto', 'off', 'medium', 'high', 'max'], 'auto')];
+	}
+	return undefined;
+}
+
+function baseUrl(profile: IProviderProfile): string {
+	return (profile.endpoint?.baseURL || DEFAULT_BASE_URL).replace(/\/$/, '');
 }

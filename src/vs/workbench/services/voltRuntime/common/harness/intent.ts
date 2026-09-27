@@ -66,39 +66,6 @@ const PREVIEW_INTENT = /\b(run|start|launch|serve|spin up|boot|preview|open|show
 
 const CODE_FENCE = /```/;
 
-const PING = /^(?:(?:hey|hi|hello|yo|sup|thanks|thank you|thx|ty|ok(?:ay)?|k|cool|nice|got it|cheers|bye|ping|pong|test(?:ing)?|just testing|checking|check(?:ing)? in|anyone there|you there|are you (?:there|working|ok)|can you (?:hear|see) me|what'?s up|how are you|gm|gn)[\s!.?,]*)+$/i;
-
-/** Check-ins like "testing" / "hello" / "thanks" - answer immediately, no tools. */
-export function isConversationalPing(text: string): boolean {
-	const raw = text.trim();
-	if (!raw || raw.length > 48) {
-		return false;
-	}
-	if (PING.test(raw)) {
-		return true;
-	}
-	if (QUESTION_START.test(raw) || QUESTION_STEM.test(raw) || raw.includes('?') || SMASHED_WORKSPACE.test(raw)) {
-		return false;
-	}
-	const words = raw.split(/\s+/).filter(Boolean);
-	return words.length <= 2 && !/[/?@#]/.test(raw) && !PATH_RE.test(raw) && !URL_RE.test(raw) && !CODING_VERBS.test(raw);
-}
-
-/** Local reply for a ping. Never calls a model - the point is to prove the harness is alive. */
-export function pingReply(text: string): string {
-	const raw = text.trim().toLowerCase().replace(/[!?.,]+$/g, '');
-	if (/^(thanks|thank you|thx|ty)$/.test(raw)) {
-		return 'You\'re welcome.';
-	}
-	if (/^(hey|hi|hello|yo|sup)$/.test(raw)) {
-		return 'Hey.';
-	}
-	if (/^(ok|okay|k|got it|cool|nice)$/.test(raw)) {
-		return 'Okay.';
-	}
-	return 'Here.';
-}
-
 export function classifyIntent(text: string, mode: VoltMode, context: IIntentContext = {}): IIntent {
 	const raw = text.trim();
 	const signals: string[] = [];
@@ -113,7 +80,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	const hasPath = PATH_RE.test(raw);
 	const hasMention = MENTION_RE.test(raw);
 	const hasFence = CODE_FENCE.test(raw);
-	const smashedQuestion = !raw.includes(' ') && QUESTION_STEM.test(raw) && !PING.test(raw);
+	const smashedQuestion = !raw.includes(' ') && QUESTION_STEM.test(raw);
 	const questionShape = QUESTION_START.test(raw) || raw.endsWith('?') || smashedQuestion;
 	const referencesWorkspace = hasPath || hasMention || hasFence || WORKSPACE_REF.test(raw) || (questionShape && SMASHED_WORKSPACE.test(raw));
 	const codingVerb = CODING_VERBS.test(raw);
@@ -147,15 +114,9 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	} else if (slashChat || mode === 'ask') {
 		lane = 'chat';
 		signals.push(slashChat ? 'slash-chat' : 'mode-ask');
-		if (isConversationalPing(raw)) {
-			signals.push('ping');
-		}
 	} else if (slashFast) {
 		lane = 'fast';
 		signals.push('slash-fast');
-	} else if (isConversationalPing(raw)) {
-		lane = 'chat';
-		signals.push('ping');
 	} else if (!hasWorkspace) {
 		// Nothing to edit or run; the best we can do is answer.
 		lane = 'chat';
@@ -183,26 +144,22 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 
 	// Follow-ups inside a running coding conversation should not drop to chat just because the
 	// user typed a short question ("does it compile?") - keep the coding lane so tools stay.
-	if (lane === 'chat' && !signals.includes('ping') && (context.priorLane === 'agent' || context.priorLane === 'mission') && (referencesWorkspace || wantsPreview) && mode !== 'ask') {
+	if (lane === 'chat' && (context.priorLane === 'agent' || context.priorLane === 'mission') && (referencesWorkspace || wantsPreview) && mode !== 'ask') {
 		lane = context.priorLane;
 		signals.push('sticky-prior-lane');
 	}
 
 	const definition = laneDefinition(lane);
 	let groups = filterGroupsByMode(definition.groups, mode);
-	if (signals.includes('ping')) {
-		groups = filterGroupsByMode(['meta'], mode);
-	} else if ((wantsWeb || shape.lookup) && !groups.includes('web')) {
+	if ((wantsWeb || shape.lookup) && !groups.includes('web')) {
 		groups = filterGroupsByMode([...groups, 'web'], mode);
 	}
-	const budget = signals.includes('ping')
-		? { maxToolCalls: 0, maxModelCalls: 1 }
-		: shape.lookup
-			? {
-				maxToolCalls: Math.max(definition.budget.maxToolCalls, 24),
-				maxModelCalls: Math.max(definition.budget.maxModelCalls, 12),
-			}
-			: definition.budget;
+	const budget = shape.lookup
+		? {
+			maxToolCalls: Math.max(definition.budget.maxToolCalls, 24),
+			maxModelCalls: Math.max(definition.budget.maxModelCalls, 12),
+		}
+		: definition.budget;
 
 	return {
 		lane,

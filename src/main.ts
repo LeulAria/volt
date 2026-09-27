@@ -352,6 +352,13 @@ function configureCommandlineSwitchesSync(cliArgs: NativeParsedArgs) {
 	// Runtime sets the default version to 3, refs https://github.com/electron/electron/pull/44426
 	app.commandLine.appendSwitch('xdg-portal-required-version', '4');
 
+	// The agent layout uses a transparent (vibrancy) window. Once a <webview> is on
+	// screen, partial swaps stop clearing translucent pixels, so the scrolling sidebar
+	// leaves trails of earlier frames. Redraw the whole frame on every swap instead.
+	if (process.platform === 'darwin') {
+		app.commandLine.appendSwitch('ui-disable-partial-swap');
+	}
+
 	return argvConfig;
 }
 

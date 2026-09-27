@@ -7,22 +7,54 @@ import { $ } from '../../../../../base/browser/dom.js';
 
 export const AGENT_HOME_SEARCH_ICON_PATH = 'm21 21l-4.343-4.343m0 0A8 8 0 1 0 5.343 5.343a8 8 0 0 0 11.314 11.314';
 export const AGENT_HOME_NEW_CHAT_ICON_PATH = 'm8.87 6.133l5.863-1.938c3.3-1.09 4.95-1.636 5.825-.76c.875.874.33 2.524-.761 5.825l-1.937 5.862c-1.236 3.74-1.854 5.61-2.98 5.838a2 2 0 0 1-.725.013c-1.136-.19-1.842-2.037-3.253-5.732c-.27-.703-.404-1.055-.645-1.328a2 2 0 0 0-.178-.178c-.273-.241-.624-.376-1.328-.644c-3.695-1.412-5.542-2.118-5.732-3.254c-.04-.24-.035-.486.013-.724c.228-1.126 2.098-1.744 5.838-2.98m3.93 5.054l2.698-2.698';
+/** Folder-plus outline for New project; stroke follows currentColor, square caps. */
+export const AGENT_HOME_NEW_PROJECT_ICON_PATH = 'M22 11V6H11L9 3.5H2V20h11m7-5v3m0 0v3m0-3h-3m3 0h3';
+/** Folder outline from the agent sidebar spec; stroke follows currentColor. */
+export const AGENT_HOME_FOLDER_ICON_PATH = 'M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2';
+/** Folder on the chat-row hover card; stroke follows currentColor. */
+export const AGENT_SESSION_HOVER_FOLDER_ICON_PATH = 'M4 21H20C21.1046 21 22 20.1046 22 19V8C22 6.89543 21.1046 6 20 6H11L9.29687 3.4453C9.1114 3.1671 8.79917 3 8.46482 3H4C2.89543 3 2 3.89543 2 5V19C2 20.1046 2.89543 21 4 21Z';
+/** Filter bars for group headers; stroke follows currentColor. */
+export const AGENT_HOME_FILTER_ICON_PATH = 'M2 5.5h20M5.333 12h13.334m-9.334 6.5h5.334';
+/** Status arcs + center dot used in the home filter Grouping / Ordering menus. */
+export const AGENT_HOME_STATUS_ICON_PATHS = [
+	'M10.1 2.18a9.93 9.93 0 0 1 3.8 0',
+	'M17.6 3.71a9.95 9.95 0 0 1 2.69 2.7',
+	'M21.82 10.1a9.93 9.93 0 0 1 0 3.8',
+	'M20.29 17.6a9.95 9.95 0 0 1-2.7 2.69',
+	'M13.9 21.82a9.94 9.94 0 0 1-3.8 0',
+	'M6.4 20.29a9.95 9.95 0 0 1-2.69-2.7',
+	'M2.18 13.9a9.93 9.93 0 0 1 0-3.8',
+	'M3.71 6.4a9.95 9.95 0 0 1 2.7-2.69',
+] as const;
 
-function createHomeSvgIcon(extraClass: string, pathD: string): HTMLElement {
+function createHomeSvgIcon(extraClass: string, pathD: string, options?: {
+	readonly viewBox?: string;
+	readonly strokeWidth?: string;
+	readonly filled?: boolean;
+	readonly strokeLinecap?: string;
+	readonly strokeLinejoin?: string | null;
+}): HTMLElement {
 	const el = $(`span.volt-agent-svg-icon.${extraClass}`);
 	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('viewBox', options?.viewBox ?? '0 0 24 24');
 	svg.setAttribute('width', '16');
 	svg.setAttribute('height', '16');
 	svg.setAttribute('fill', 'none');
 	svg.setAttribute('aria-hidden', 'true');
 	const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
 	path.setAttribute('d', pathD);
-	path.setAttribute('fill', 'none');
-	path.setAttribute('stroke', 'currentColor');
-	path.setAttribute('stroke-width', '2');
-	path.setAttribute('stroke-linecap', 'round');
-	path.setAttribute('stroke-linejoin', 'round');
+	if (options?.filled) {
+		path.setAttribute('fill', 'currentColor');
+		path.setAttribute('stroke', 'none');
+	} else {
+		path.setAttribute('fill', 'none');
+		path.setAttribute('stroke', 'currentColor');
+		path.setAttribute('stroke-width', options?.strokeWidth ?? '2');
+		path.setAttribute('stroke-linecap', options?.strokeLinecap ?? 'round');
+		if (options?.strokeLinejoin !== null) {
+			path.setAttribute('stroke-linejoin', options?.strokeLinejoin ?? 'round');
+		}
+	}
 	svg.appendChild(path);
 	el.appendChild(svg);
 	return el;
@@ -34,4 +66,105 @@ export function createHomeSearchIcon(): HTMLElement {
 
 export function createHomeNewChatIcon(): HTMLElement {
 	return createHomeSvgIcon('new-chat', AGENT_HOME_NEW_CHAT_ICON_PATH);
+}
+
+export function createHomeNewProjectIcon(): HTMLElement {
+	return createHomeSvgIcon('new-project', AGENT_HOME_NEW_PROJECT_ICON_PATH, {
+		strokeWidth: '2',
+		strokeLinecap: 'square',
+		strokeLinejoin: null,
+	});
+}
+
+export function createHomeFolderIcon(): HTMLElement {
+	return createHomeSvgIcon('folder', AGENT_HOME_FOLDER_ICON_PATH, { strokeWidth: '1' });
+}
+
+/** Folder glyph for the chat-row hover card (stroke 1.5, round caps). */
+export function createSessionHoverFolderIcon(): HTMLElement {
+	return createHomeSvgIcon('session-folder', AGENT_SESSION_HOVER_FOLDER_ICON_PATH, { strokeWidth: '1.5' });
+}
+
+export function createHomeFilterIcon(): HTMLElement {
+	return createHomeSvgIcon('filter', AGENT_HOME_FILTER_ICON_PATH, { strokeWidth: '1.5' });
+}
+
+/** Broken-ring status glyph (stroke currentColor, width 1) for filter menu Status rows. */
+export function createHomeStatusIcon(): HTMLElement {
+	const el = $('span.volt-agent-svg-icon.status');
+	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('width', '16');
+	svg.setAttribute('height', '16');
+	svg.setAttribute('fill', 'none');
+	svg.setAttribute('aria-hidden', 'true');
+	for (const d of AGENT_HOME_STATUS_ICON_PATHS) {
+		const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+		path.setAttribute('d', d);
+		path.setAttribute('fill', 'none');
+		path.setAttribute('stroke', 'currentColor');
+		path.setAttribute('stroke-width', '1');
+		path.setAttribute('stroke-linecap', 'round');
+		path.setAttribute('stroke-linejoin', 'round');
+		svg.appendChild(path);
+	}
+	const dot = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'circle');
+	dot.setAttribute('cx', '12');
+	dot.setAttribute('cy', '12');
+	dot.setAttribute('r', '1');
+	dot.setAttribute('fill', 'none');
+	dot.setAttribute('stroke', 'currentColor');
+	dot.setAttribute('stroke-width', '1');
+	dot.setAttribute('stroke-linecap', 'round');
+	dot.setAttribute('stroke-linejoin', 'round');
+	svg.appendChild(dot);
+	el.appendChild(svg);
+	return el;
+}
+
+/** Two offset folders: a row that spans several folders or repositories. */
+export const AGENT_HOME_FOLDERS_ICON_PATHS = [
+	'M3 9h3.5l2 2H15a2 2 0 0 1 2 2v5a2 2 0 0 1 -2 2H3a2 2 0 0 1 -2 -2v-7a2 2 0 0 1 2 -2',
+	'M5 9V7a2 2 0 0 1 2 -2h3.5l2 2H19a2 2 0 0 1 2 2v5a2 2 0 0 1 -2 2h-2',
+] as const;
+/** Drive outline for the Environment grouping (status lights are drawn as dots). */
+export const AGENT_HOME_ENVIRONMENT_ICON_PATH = 'M2 9a2 2 0 0 1 2 -2h16a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2H4a2 2 0 0 1 -2 -2z';
+
+function createHomeStrokeIcon(extraClass: string, paths: readonly string[], strokeWidth: string, dots: readonly [number, number][] = []): HTMLElement {
+	const el = $(`span.volt-agent-svg-icon.${extraClass}`);
+	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('width', '16');
+	svg.setAttribute('height', '16');
+	svg.setAttribute('fill', 'none');
+	svg.setAttribute('aria-hidden', 'true');
+	for (const d of paths) {
+		const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+		path.setAttribute('d', d);
+		path.setAttribute('fill', 'none');
+		path.setAttribute('stroke', 'currentColor');
+		path.setAttribute('stroke-width', strokeWidth);
+		path.setAttribute('stroke-linecap', 'round');
+		path.setAttribute('stroke-linejoin', 'round');
+		svg.appendChild(path);
+	}
+	for (const [cx, cy] of dots) {
+		const dot = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'circle');
+		dot.setAttribute('cx', String(cx));
+		dot.setAttribute('cy', String(cy));
+		dot.setAttribute('r', '1');
+		dot.setAttribute('fill', 'currentColor');
+		svg.appendChild(dot);
+	}
+	el.appendChild(svg);
+	return el;
+}
+
+export function createHomeFoldersIcon(): HTMLElement {
+	return createHomeStrokeIcon('folders', AGENT_HOME_FOLDERS_ICON_PATHS, '1');
+}
+
+export function createHomeEnvironmentIcon(): HTMLElement {
+	return createHomeStrokeIcon('environment', [AGENT_HOME_ENVIRONMENT_ICON_PATH], '1.25', [[15, 12], [18, 12]]);
 }

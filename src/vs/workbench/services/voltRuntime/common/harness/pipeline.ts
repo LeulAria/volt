@@ -109,10 +109,8 @@ export function prepareRun(input: IPrepareInput): IPreparedRun {
 	let strategy = selectStrategy(intel, { ...taken.intent, groups: capabilities.granted }, taken.signals, input.mode);
 	const intent = {
 		...taken.intent,
-		groups: taken.intent.signals.includes('ping') ? ['meta' as const] : capabilities.granted,
-		budget: taken.intent.signals.includes('ping')
-			? { maxToolCalls: 0, maxModelCalls: 1 }
-			: overlayLaneBudget(taken.intent.budget, strategy.budgets),
+		groups: capabilities.granted,
+		budget: overlayLaneBudget(taken.intent.budget, strategy.budgets),
 	};
 
 	const rawPlan = !clarify && intent.lane !== 'chat'

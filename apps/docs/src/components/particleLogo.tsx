@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { BOLT_H, BOLT_PATH, BOLT_W } from "@/lib/boltGeometry";
 import { cn } from "@/lib/cn";
 
 type Particle = {
@@ -25,23 +26,16 @@ type Particle = {
   lx: number;
   ly: number;
   trailDone: boolean;
+  /** Lambert term from the bolt's soft height field, so the dots read as a lit volume. */
+  shade: number;
+  /** Diagonal position used for the travelling glint, 0 (top-left) → 1 (bottom-right). */
+  diag: number;
 };
 
-const BOLT: { x: number; y: number }[] = [
-  { x: 283, y: 22 },
-  { x: 27, y: 349 },
-  { x: 181, y: 356 },
-  { x: 140, y: 583 },
-  { x: 391, y: 259 },
-  { x: 235.5, y: 257 },
-];
-const BOLT_RADIUS = [0, 28, 22, 0, 28, 22];
-const BOLT_CORNER = 11;
 const MASK_RES = 1200;
 const MASK_MARGIN = 0.05;
-const MASK_HOLE_R = 0.078;
 
-const MIN_PITCH_PX = 8;
+const MIN_PITCH_PX = 7;
 const FIT_PAD = 0.028;
 
 /* Denser hex circles: still gapped, but enough of them that the silhouette holds at the tips. */
@@ -51,6 +45,11 @@ const COVER_MIN = 0.1;
 const MIN_RADIUS = 0.7;
 const TAU = Math.PI * 2;
 const DOT_ALPHA = 0.5;
+/* Soft lighting: height field blur (in mask cells), light direction, and glint timing. */
+const RELIEF_BLUR = 3;
+const LIGHT = { x: -0.62, y: -0.78 };
+const GLINT_MS = 7200;
+const GLINT_WIDTH = 0.09;
 const WANDER_MIN = 2.8;
 const WANDER_SPAN = 4.4;
 const RETARGET_MIN_MS = 2200;
@@ -94,7 +93,6 @@ const GLOW_CORE_ALPHA = 0.04;
 type Bitmap = {
   alpha: Uint8Array;
   res: number;
-  hole: number;
   canvas: HTMLCanvasElement;
   minX: number;
   minY: number;
@@ -105,38 +103,10 @@ type Bitmap = {
 let cached: Bitmap | null = null;
 let tinted: HTMLCanvasElement | null = null;
 
-function edgeLen(a: { x: number; y: number }, b: { x: number; y: number }) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function roundedPoly(
-  ctx: CanvasRenderingContext2D,
-  pts: { x: number; y: number }[],
-  radii: number | number[],
-) {
-  const n = pts.length;
-  const last = pts[n - 1];
-  const first = pts[0];
-  ctx.beginPath();
-  ctx.moveTo((last.x + first.x) / 2, (last.y + first.y) / 2);
-  for (let i = 0; i < n; i++) {
-    const prev = pts[(i - 1 + n) % n];
-    const curr = pts[i];
-    const next = pts[(i + 1) % n];
-    const want = typeof radii === "number" ? radii : (radii[i] ?? 0);
-    const rad = Math.min(want, Math.min(edgeLen(prev, curr), edgeLen(curr, next)) * 0.42);
-    if (rad <= 0.5) ctx.lineTo(curr.x, curr.y);
-    else ctx.arcTo(curr.x, curr.y, next.x, next.y, rad);
-  }
-  ctx.closePath();
-}
-
-function boltPath(ctx: CanvasRenderingContext2D) {
-  roundedPoly(ctx, BOLT, BOLT_RADIUS);
-}
+let boltShape: Path2D | null = null;
 
 function renderBolt(): Bitmap | null {
-  if (cached?.res === MASK_RES && cached.hole === MASK_HOLE_R) return cached;
+  if (cached?.res === MASK_RES) return cached;
   tinted = null;
   const off = document.createElement("canvas");
   off.width = MASK_RES;
@@ -144,41 +114,15 @@ function renderBolt(): Bitmap | null {
   const ctx = off.getContext("2d", { willReadFrequently: true });
   if (!ctx) return null;
 
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const p of BOLT) {
-    if (p.x < minX) minX = p.x;
-    if (p.x > maxX) maxX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.y > maxY) maxY = p.y;
-  }
-  const span = Math.max(maxX - minX, maxY - minY) + BOLT_CORNER * 2;
-  const scale = (MASK_RES * (1 - MASK_MARGIN * 2)) / span;
-
+  boltShape ??= new Path2D(BOLT_PATH);
+  const scale = (MASK_RES * (1 - MASK_MARGIN * 2)) / Math.max(BOLT_W, BOLT_H);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, MASK_RES, MASK_RES);
   ctx.translate(MASK_RES / 2, MASK_RES / 2);
   ctx.scale(scale, scale);
-  ctx.translate(-(minX + maxX) / 2, -(minY + maxY) / 2);
-
+  ctx.translate(-BOLT_W / 2, -BOLT_H / 2);
   ctx.fillStyle = "#fff";
-  ctx.strokeStyle = "#fff";
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
-  ctx.lineWidth = BOLT_CORNER * 2;
-  boltPath(ctx);
-  ctx.fill();
-  ctx.stroke();
-
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2 + span * 0.012;
-  ctx.globalCompositeOperation = "destination-out";
-  ctx.beginPath();
-  ctx.arc(cx, cy, span * MASK_HOLE_R, 0, TAU);
-  ctx.fill();
-  ctx.globalCompositeOperation = "source-over";
+  ctx.fill(boltShape, "evenodd");
 
   const { data } = ctx.getImageData(0, 0, MASK_RES, MASK_RES);
   const alpha = new Uint8Array(MASK_RES * MASK_RES);
@@ -201,7 +145,6 @@ function renderBolt(): Bitmap | null {
   cached = {
     alpha,
     res: MASK_RES,
-    hole: MASK_HOLE_R,
     canvas: off,
     minX: inkMinX,
     minY: inkMinY,
@@ -296,7 +239,48 @@ function sampleMask(mask: Uint8Array, cols: number, u: number, v: number) {
   const b = mask[y0 * cols + x1];
   const c = mask[y1 * cols + x0];
   const d = mask[y1 * cols + x1];
-  return ((a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty) / 255;
+  return (
+    ((a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty) / 255
+  );
+}
+
+/** Box-blurred copy of the coverage mask, 0..1: a cheap height field whose slopes light the dots. */
+function reliefField(mask: Uint8Array, cols: number) {
+  let src = Float32Array.from(mask, (v) => v / 255);
+  let dst = new Float32Array(src.length);
+  const r = RELIEF_BLUR;
+  for (let pass = 0; pass < 3; pass++) {
+    for (let y = 0; y < cols; y++) {
+      for (let x = 0; x < cols; x++) {
+        let sum = 0;
+        let n = 0;
+        for (let k = -r; k <= r; k++) {
+          const xx = pass === 1 ? x : x + k;
+          const yy = pass === 1 ? y + k : y;
+          if (xx < 0 || yy < 0 || xx >= cols || yy >= cols) continue;
+          sum += src[yy * cols + xx];
+          n++;
+        }
+        dst[y * cols + x] = sum / n;
+      }
+    }
+    [src, dst] = [dst, src];
+  }
+  return src;
+}
+
+function sampleField(field: Float32Array, cols: number, u: number, v: number) {
+  const x = Math.max(0, Math.min(cols - 1, u * (cols - 1)));
+  const y = Math.max(0, Math.min(cols - 1, v * (cols - 1)));
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const x1 = Math.min(cols - 1, x0 + 1);
+  const y1 = Math.min(cols - 1, y0 + 1);
+  const tx = x - x0;
+  const ty = y - y0;
+  const top = field[y0 * cols + x0] * (1 - tx) + field[y0 * cols + x1] * tx;
+  const bottom = field[y1 * cols + x0] * (1 - tx) + field[y1 * cols + x1] * tx;
+  return top * (1 - ty) + bottom * ty;
 }
 
 export function ParticleLogo({ className }: { className?: string }) {
@@ -311,7 +295,9 @@ export function ParticleLogo({ className }: { className?: string }) {
     const ctx = canvas.getContext("2d", { alpha: true });
     if (!ctx) return;
 
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
 
     let particles: Particle[] = [];
     let glow: HTMLCanvasElement | null = null;
@@ -395,7 +381,10 @@ export function ParticleLogo({ className }: { className?: string }) {
       if (pageCanvas) return { x: (x - sr.left) * dpr, y: (y - sr.top) * dpr };
       const wr = wrap.getBoundingClientRect();
       const pad = slotPad();
-      return { x: (wr.left - sr.left - pad + x) * dpr, y: (wr.top - sr.top - pad + y) * dpr };
+      return {
+        x: (wr.left - sr.left - pad + x) * dpr,
+        y: (wr.top - sr.top - pad + y) * dpr,
+      };
     }
 
     function fadeTrails(amount: number) {
@@ -547,6 +536,8 @@ export function ParticleLogo({ className }: { className?: string }) {
       const originY = pageCanvas ? wrapRect.top - pad : 0;
 
       const { mask } = boltMask(cols);
+      const relief = reliefField(mask, cols);
+      const step = 1 / cols;
       const next: Particle[] = [];
       const scatter = !assembled && !reduceMotion;
       if (scatter && !introStart) introStart = performance.now();
@@ -568,12 +559,36 @@ export function ParticleLogo({ className }: { className?: string }) {
           const start = scatter
             ? spawnWarp(midX, midY, Math.min(slotW, slotH) * 0.1)
             : { x: px, y: py };
-          const r = Math.max(MIN_RADIUS, maxR * Math.pow(coverage, DOT_GAMMA));
+          const u = fx / cols;
+          const v = y / rows;
+          const height = sampleField(relief, cols, u, v);
+          const gx =
+            (sampleField(relief, cols, u + step, v) -
+              sampleField(relief, cols, u - step, v)) *
+            cols *
+            0.5;
+          const gy =
+            (sampleField(relief, cols, u, v + step) -
+              sampleField(relief, cols, u, v - step)) *
+            cols *
+            0.5;
+          // slopes facing the light brighten, the far side falls into shadow; the crown stays full
+          const facing = -(gx * LIGHT.x + gy * LIGHT.y) * 0.16;
+          const shade = Math.max(
+            0.42,
+            Math.min(1.32, 0.72 + facing + height * 0.28),
+          );
+          const r = Math.max(
+            MIN_RADIUS,
+            maxR * Math.pow(coverage, DOT_GAMMA) * (0.86 + height * 0.2),
+          );
           const detail = 1 - r / maxR;
           const pick = hash01(seed + 41.2);
           const wave = pick < 0.16 ? 0 : detail > 0.52 || pick > 0.78 ? 2 : 1;
-          const arriveDelay = WAVE_DELAY[wave] + hash01(seed + 7.1) * WAVE_STAGGER[wave];
-          const gatherMs = WAVE_GATHER[wave] * (0.78 + hash01(seed + 3.4) * 0.5);
+          const arriveDelay =
+            WAVE_DELAY[wave] + hash01(seed + 7.1) * WAVE_STAGGER[wave];
+          const gatherMs =
+            WAVE_GATHER[wave] * (0.78 + hash01(seed + 3.4) * 0.5);
           const turn = hash01(seed + 19.4) < 0.5 ? -1 : 1;
           const bang = hash01(seed + 2.17) * TAU;
           const launch = 3.4 + hash01(seed + 28.1) * 6.8;
@@ -590,10 +605,16 @@ export function ParticleLogo({ className }: { className?: string }) {
             seed,
             tx,
             ty,
-            nextRetarget: performance.now() + RETARGET_MIN_MS + hash01(seed + 9.4) * RETARGET_SPAN_MS,
+            nextRetarget:
+              performance.now() +
+              RETARGET_MIN_MS +
+              hash01(seed + 9.4) * RETARGET_SPAN_MS,
             wanderR,
             seek: hash01(seed + 13.7) < SEEK_CHANCE,
-            nextSeek: performance.now() + SEEK_FLIP_MIN_MS + hash01(seed + 17.2) * SEEK_FLIP_SPAN_MS,
+            nextSeek:
+              performance.now() +
+              SEEK_FLIP_MIN_MS +
+              hash01(seed + 17.2) * SEEK_FLIP_SPAN_MS,
             arriveDelay,
             gatherMs,
             turn,
@@ -601,6 +622,8 @@ export function ParticleLogo({ className }: { className?: string }) {
             lx: scatter ? start.x : tx,
             ly: scatter ? start.y : ty,
             trailDone: false,
+            shade,
+            diag: (u + v) / 2,
           });
         }
       }
@@ -706,7 +729,8 @@ export function ParticleLogo({ className }: { className?: string }) {
     }
 
     function emitDrift(now: number) {
-      if (reduceMotion || !assembled || now < dustAt || particles.length === 0) return;
+      if (reduceMotion || !assembled || now < dustAt || particles.length === 0)
+        return;
       dustAt = now + DUST_GAP_MIN_MS + Math.random() * DUST_GAP_SPAN_MS;
       const unit = Math.min(slotW, slotH) || 1;
       let origin = particles[(Math.random() * particles.length) | 0];
@@ -777,10 +801,16 @@ export function ParticleLogo({ className }: { className?: string }) {
       for (let i = 0; i < motes.length; i++) {
         const m = motes[i];
         const u = Math.min(1, (now - m.born) / m.life);
-        const flame = m.out ? (u < 0.18 ? u / 0.18 : 1 - smoothstep(0.22, 1, u)) : (1 - u) * (1 - u);
+        const flame = m.out
+          ? u < 0.18
+            ? u / 0.18
+            : 1 - smoothstep(0.22, 1, u)
+          : (1 - u) * (1 - u);
         const a = flame * (m.out ? 0.72 : 0.55);
         if (a < 0.02) continue;
-        const rad = Math.max(0.3, m.r * (m.out ? 0.85 + 0.15 * (1 - u) : 1 - u * 0.4)) * dpr;
+        const rad =
+          Math.max(0.3, m.r * (m.out ? 0.85 + 0.15 * (1 - u) : 1 - u * 0.4)) *
+          dpr;
         if (m.out && tctx) {
           const head = trailPoint(m.x, m.y);
           tctx.beginPath();
@@ -830,6 +860,10 @@ export function ParticleLogo({ className }: { className?: string }) {
       if (!syncSharp() || !sctx) return;
       const unit = Math.min(slotW, slotH) || 1;
       const now = performance.now();
+      // a soft specular band drifts diagonally across the bolt, resting off-shape between passes
+      const glintAt = reduceMotion
+        ? -1
+        : ((now % GLINT_MS) / GLINT_MS) * 1.8 - 0.4;
       sctx.setTransform(1, 0, 0, 1, 0, 0);
       sctx.clearRect(0, 0, sharp.width, sharp.height);
       sctx.globalCompositeOperation = "lighter";
@@ -843,7 +877,9 @@ export function ParticleLogo({ className }: { className?: string }) {
         if (base <= 0.01) continue;
         const grain = 0.55 + hash01(p.seed + 4.2) * 0.45;
         const twinkle = 0.9 + 0.1 * Math.sin(now * 0.0032 + p.seed);
-        const bright = Math.min(1, base * grain * twinkle);
+        const off = (p.diag - glintAt) / GLINT_WIDTH;
+        const glint = glintAt < 0 ? 0 : Math.exp(-off * off) * 0.55;
+        const bright = Math.min(1, base * grain * twinkle * p.shade + glint);
         const rad = Math.max(0.45, radiusOf(p));
         const x = p.x * dpr;
         const y = p.y * dpr;
@@ -880,7 +916,10 @@ export function ParticleLogo({ className }: { className?: string }) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
-      paintEnergy(() => DOT_ALPHA, (p) => p.r);
+      paintEnergy(
+        () => DOT_ALPHA,
+        (p) => p.r,
+      );
       paintMotes(performance.now());
     }
 
@@ -898,7 +937,9 @@ export function ParticleLogo({ className }: { className?: string }) {
           return introA + (DOT_ALPHA - introA) * blend;
         },
         (p) => {
-          const introR = p.r * (0.35 + 0.65 * smoothstep(0.08, 0.7, Math.max(p.introT, 0.2)));
+          const introR =
+            p.r *
+            (0.35 + 0.65 * smoothstep(0.08, 0.7, Math.max(p.introT, 0.2)));
           return introR + (p.r - introR) * blend;
         },
       );
@@ -910,8 +951,14 @@ export function ParticleLogo({ className }: { className?: string }) {
 
       const now = performance.now();
       applyFade(now);
-      const mvx = Math.max(-MAX_MOUSE_SPEED, Math.min(MAX_MOUSE_SPEED, mouse.x - mouse.px));
-      const mvy = Math.max(-MAX_MOUSE_SPEED, Math.min(MAX_MOUSE_SPEED, mouse.y - mouse.py));
+      const mvx = Math.max(
+        -MAX_MOUSE_SPEED,
+        Math.min(MAX_MOUSE_SPEED, mouse.x - mouse.px),
+      );
+      const mvy = Math.max(
+        -MAX_MOUSE_SPEED,
+        Math.min(MAX_MOUSE_SPEED, mouse.y - mouse.py),
+      );
       mouse.px = mouse.x;
       mouse.py = mouse.y;
       const holeR = Math.min(slotW, slotH) * RADIUS_RATIO;
@@ -923,7 +970,10 @@ export function ParticleLogo({ className }: { className?: string }) {
         stillSince = 0;
       }
       const spin = stillSince
-        ? Math.min(1, Math.max(0, (now - stillSince - SPIN_WAIT_MS) / SPIN_RAMP_MS))
+        ? Math.min(
+            1,
+            Math.max(0, (now - stillSince - SPIN_WAIT_MS) / SPIN_RAMP_MS),
+          )
         : 0;
 
       if (!reduceMotion && !assembled) {
@@ -939,8 +989,12 @@ export function ParticleLogo({ className }: { className?: string }) {
             p.vy = 0;
             p.introT = 1;
             p.trailDone = true;
-            p.nextRetarget = now + RETARGET_MIN_MS + hash01(p.seed + 9.4) * RETARGET_SPAN_MS;
-            p.nextSeek = now + SEEK_FLIP_MIN_MS + hash01(p.seed + 17.2) * SEEK_FLIP_SPAN_MS;
+            p.nextRetarget =
+              now + RETARGET_MIN_MS + hash01(p.seed + 9.4) * RETARGET_SPAN_MS;
+            p.nextSeek =
+              now +
+              SEEK_FLIP_MIN_MS +
+              hash01(p.seed + 17.2) * SEEK_FLIP_SPAN_MS;
           }
           if (tctx) {
             tctx.globalCompositeOperation = "source-over";
@@ -970,15 +1024,18 @@ export function ParticleLogo({ className }: { className?: string }) {
             const midD = Math.hypot(midDx, midDy) || 1;
             const ang = p.seed + life * 0.0034 * p.turn;
             const cloud = swirlR * (1 - condense) * live;
-            const tgtX = (midX + Math.cos(ang) * cloud) * (1 - condense) + p.tx * condense;
-            const tgtY = (midY + Math.sin(ang) * cloud) * (1 - condense) + p.ty * condense;
+            const tgtX =
+              (midX + Math.cos(ang) * cloud) * (1 - condense) + p.tx * condense;
+            const tgtY =
+              (midY + Math.sin(ang) * cloud) * (1 - condense) + p.ty * condense;
             const pull = (0.018 + condense * 0.05 + settle * 0.06) * live;
             p.vx += (tgtX - p.x) * pull;
             p.vy += (tgtY - p.y) * pull;
             const curl = (1 - condense) * live * 0.09 * p.turn;
             p.vx += (-midDy / midD) * curl * Math.min(midD, 240);
             p.vy += (midDx / midD) * curl * Math.min(midD, 240);
-            const burst = (1 - condense) * live * Math.sin(life * 0.011 + p.seed);
+            const burst =
+              (1 - condense) * live * Math.sin(life * 0.011 + p.seed);
             p.vx += (-midDx / midD) * burst * 0.28;
             p.vy += (-midDy / midD) * burst * 0.28;
             const turb = (1 - condense) * live * 0.36;
@@ -1015,11 +1072,13 @@ export function ParticleLogo({ className }: { className?: string }) {
             const dist = Math.random() * p.wanderR;
             p.tx = p.ox + Math.cos(angle) * dist;
             p.ty = p.oy + Math.sin(angle) * dist;
-            p.nextRetarget = now + RETARGET_MIN_MS + Math.random() * RETARGET_SPAN_MS;
+            p.nextRetarget =
+              now + RETARGET_MIN_MS + Math.random() * RETARGET_SPAN_MS;
           }
           if (now >= p.nextSeek) {
             p.seek = Math.random() < SEEK_CHANCE;
-            p.nextSeek = now + SEEK_FLIP_MIN_MS + Math.random() * SEEK_FLIP_SPAN_MS;
+            p.nextSeek =
+              now + SEEK_FLIP_MIN_MS + Math.random() * SEEK_FLIP_SPAN_MS;
           }
           let tx = p.tx;
           let ty = p.ty;
@@ -1064,7 +1123,11 @@ export function ParticleLogo({ className }: { className?: string }) {
 
           p.vx *= FRICTION;
           p.vy *= FRICTION;
-          const maxSp = splitting ? MAX_SPLIT_SPEED : mouse.overLogo ? MAX_HOVER_SPEED : MAX_IDLE_SPEED;
+          const maxSp = splitting
+            ? MAX_SPLIT_SPEED
+            : mouse.overLogo
+              ? MAX_HOVER_SPEED
+              : MAX_IDLE_SPEED;
           const sp = Math.hypot(p.vx, p.vy);
           if (sp > maxSp) {
             const k = maxSp / sp;

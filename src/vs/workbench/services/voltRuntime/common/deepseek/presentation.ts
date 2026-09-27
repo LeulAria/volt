@@ -87,11 +87,14 @@ export function presentCall(tool: IVoltTool, args: unknown, cwd?: string): ToolC
 
 /** Completed card. The model-facing text stays on the tool result; this is only how the UI draws it. */
 export function presentResult(tool: IVoltTool, args: unknown, result: IToolResult): ToolResultView {
+	if (tool.group === 'shell' || tool.name === 'shell') {
+		return { card: 'terminal', title: pickString(args, 'command', 'cmd'), output: result.text, exitCode: result.exitCode ?? (result.isError ? 1 : 0) };
+	}
 	if (result.isError) {
 		return { card: 'generic', title: tool.name };
 	}
-	if (tool.group === 'shell' || tool.name === 'shell') {
-		return { card: 'terminal', title: pickString(args, 'command', 'cmd'), output: result.text, exitCode: 0 };
+	if (result.display) {
+		return result.display.title ? result.display : withTitle(result.display, titleFor(tool, args));
 	}
 	if (tool.name === 'write_file' || tool.name === 'edit_file' || tool.kind === 'edit') {
 		const pending = presentCall(tool, args);
@@ -195,6 +198,12 @@ function viewFromResult(view: ToolResultView): IVoltToolView | undefined {
 		return { card: 'web', kind: 'fetch', url: view.url, statusCode: view.statusCode };
 	}
 	return undefined;
+}
+
+function withTitle(view: ToolResultView, title: string): ToolResultView {
+	const titled: ToolResultView = { ...view };
+	(titled as { title?: string }).title = title;
+	return titled;
 }
 
 function presentRead(tool: IVoltTool, args: unknown, text: string): ToolResultView {

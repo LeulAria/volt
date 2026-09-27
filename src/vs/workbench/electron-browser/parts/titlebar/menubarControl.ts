@@ -26,6 +26,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { OpenRecentAction } from '../../../browser/actions/windowActions.js';
 import { isICommandActionToggleInfo } from '../../../../platform/action/common/action.js';
 import { getFlatContextMenuActions } from '../../../../platform/actions/browser/menuEntryActionViewItem.js';
+import { NEW_UNTITLED_FILE_COMMAND_ID } from '../../../browser/parts/titlebar/layoutKeybindingMode.js';
 
 export class NativeMenubarControl extends MenubarControl {
 
@@ -187,7 +188,7 @@ export class NativeMenubarControl extends MenubarControl {
 	}
 
 	private getMenubarKeybinding(id: string): IMenubarKeybinding | undefined {
-		const binding = this.keybindingService.lookupKeybinding(id);
+		const binding = this.keybindingService.lookupKeybinding(id, this.contextKeyService, id === NEW_UNTITLED_FILE_COMMAND_ID);
 		if (!binding) {
 			return undefined;
 		}

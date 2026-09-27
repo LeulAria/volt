@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { VoltLane } from './harness/lanes.js';
+import { AgentRunOn } from './git/agentWorktree.js';
 import { IVoltModelOptions } from './models/modelOptions.js';
 import { VoltMode } from './modes.js';
 
@@ -31,6 +32,9 @@ export interface IVoltSession {
 	lastLane?: VoltLane;
 	/** Human pause: the native loop waits between steps. */
 	paused?: boolean;
+	/** Set when this chat runs in a managed worktree instead of the open checkout. */
+	worktreePath?: string;
+	worktreeBranch?: string;
 }
 
 export interface IVoltSendRequest {
@@ -39,4 +43,6 @@ export interface IVoltSendRequest {
 	providerRef?: string;
 	mentions?: string[];
 	options?: IVoltModelOptions;
+	/** Same branch uses the open checkout. Worktree creates a checkout on the first send. */
+	runOn?: AgentRunOn;
 }

@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { sameProviderNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import type { IVoltToolView } from '../../../../services/voltRuntime/common/events.js';
 import { presentOutput, type OutputView } from '../../../../services/voltRuntime/common/harness/adaptiveOutput.js';
 import type { IWorkCounts, ToolKind } from '../../../../services/voltRuntime/common/harness/workLog.js';
@@ -172,7 +173,35 @@ export type AgentSegment =
 	| { kind: 'text'; text: string }
 	| { kind: 'block'; block: AgentBlock }
 	| { kind: 'activity'; item: IAgentActivityItem }
-	| { kind: 'thought'; text: string };
+	/** Model reasoning. Timestamps are set for streamed reasoning, so the UI can say how long it thought. */
+	| { kind: 'thought'; text: string; startedAt?: number; updatedAt?: number }
+	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string };
+
+/** Keep one visible provider status line. A later, more specific limit message replaces the shorter one. */
+export function appendProviderNotice(segments: AgentSegment[], notice: { severity: 'info' | 'warning' | 'error'; title: string; description?: string }): void {
+	const title = notice.title.trim();
+	if (!title) {
+		return;
+	}
+	const description = notice.description?.trim() || undefined;
+	const reply = segments.filter(segment => segment.kind === 'text').map(segment => segment.text).join('\n');
+	if (reply.includes(title)) {
+		return;
+	}
+	for (let i = segments.length - 1; i >= 0; i--) {
+		const segment = segments[i];
+		if (segment.kind !== 'notice' || !sameProviderNotice(segment.title, title)) {
+			continue;
+		}
+		if (title.length >= segment.title.length) {
+			segment.title = title;
+			segment.severity = notice.severity;
+			segment.description = description;
+		}
+		return;
+	}
+	segments.push({ kind: 'notice', severity: notice.severity, title, ...(description ? { description } : {}) });
+}
 
 /**
  * What a reply actually did, counted from its segments. Feeds the status line
@@ -610,13 +639,16 @@ export function appendTextDelta(segments: AgentSegment[], delta: string): void {
 	segments.push({ kind: 'text', text: delta });
 }
 
-export function appendThoughtDelta(segments: AgentSegment[], delta: string): void {
+export function appendThoughtDelta(segments: AgentSegment[], delta: string, now = Date.now()): void {
 	const last = segments.at(-1);
 	if (last?.kind === 'thought') {
 		last.text += delta;
+		if (last.startedAt !== undefined) {
+			last.updatedAt = now;
+		}
 		return;
 	}
-	segments.push({ kind: 'thought', text: delta });
+	segments.push({ kind: 'thought', text: delta, startedAt: now, updatedAt: now });
 }
 
 export function splitMarkdownToBlocks(text: string, idPrefix: string): AgentBlock[] {

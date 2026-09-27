@@ -37,7 +37,10 @@ suite('Volt provider message transforms', () => {
 
 	test('Anthropic merges consecutive tool results into one user message', () => {
 		const messages = toAnthropicMessages(nativeToModelMessages([
-			...turn,
+			turn[0],
+			turn[1],
+			{ role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'read_file', args: { path: 'a.ts' } }, { id: 'c2', name: 'read_file', args: { path: 'b.ts' } }] },
+			turn[3],
 			{ role: 'tool', content: 'also', callId: 'c2', name: 'read_file' },
 		]));
 		assert.ok(!messages.some(message => (message as { role?: string }).role === 'system'));

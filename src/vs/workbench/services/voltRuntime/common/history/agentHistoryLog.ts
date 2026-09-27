@@ -138,6 +138,8 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 	let title: string | undefined;
 	let mode: string | undefined;
 	let model: string | undefined;
+	let worktreePath: string | undefined;
+	let worktreeBranch: string | undefined;
 	for (const entry of entries) {
 		switch (entry.type) {
 			case 'user': {
@@ -173,6 +175,12 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 				if (entry.model !== undefined) {
 					model = entry.model;
 				}
+				if (entry.worktreePath) {
+					worktreePath = entry.worktreePath;
+				}
+				if (entry.worktreeBranch) {
+					worktreeBranch = entry.worktreeBranch;
+				}
 				break;
 		}
 	}
@@ -183,14 +191,22 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 			folded.push({ id, user: turn.user, assistant: turn.assistant });
 		}
 	}
-	return { header, turns: folded, title, mode, model };
+	return { header, turns: folded, title, mode, model, worktreePath, worktreeBranch };
 }
 
 /** Records needed to reproduce a transcript without superseded entries. */
 export function compactRecords(transcript: IAgentSessionTranscript): AgentHistoryRecord[] {
 	const records: AgentHistoryRecord[] = [transcript.header];
-	if (transcript.title !== undefined || transcript.mode !== undefined || transcript.model !== undefined) {
-		records.push({ type: 'meta', at: transcript.header.createdAt, title: transcript.title, mode: transcript.mode, model: transcript.model });
+	if (transcript.title !== undefined || transcript.mode !== undefined || transcript.model !== undefined || transcript.worktreePath || transcript.worktreeBranch) {
+		records.push({
+			type: 'meta',
+			at: transcript.header.createdAt,
+			title: transcript.title,
+			mode: transcript.mode,
+			model: transcript.model,
+			...(transcript.worktreePath ? { worktreePath: transcript.worktreePath } : {}),
+			...(transcript.worktreeBranch ? { worktreeBranch: transcript.worktreeBranch } : {}),
+		});
 	}
 	for (const turn of transcript.turns) {
 		records.push(turn.user);
@@ -278,16 +294,39 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 		workspaceId: transcript.header.workspace.id,
 		workspaceLabel: transcript.header.workspace.label,
 		workspaceFolder: transcript.header.workspace.folders[0],
+		workspaceFolders: transcript.header.workspace.folders.length > 1 ? transcript.header.workspace.folders : undefined,
 		turnCount: transcript.turns.length,
 		preview: first ? derivePreview(first.user.text) : '',
 		summary,
-		status: deriveStatus(transcript),
+		// A prompt still waiting on its first reply is a live run, not an interrupted one.
+		status: last && !last.assistant && previous?.status === 'running' ? 'running' : deriveStatus(transcript),
 		pinned: previous?.pinned,
 		archived: previous?.archived,
+		settled: previous?.settled,
+		snoozed: previous?.snoozed,
 		hasDraft: previous?.hasDraft,
+		unread: previous?.unread,
+		attention: previous?.attention,
 		mode: transcript.mode ?? previous?.mode,
 		model: transcript.model ?? previous?.model,
+		worktreePath: transcript.worktreePath ?? previous?.worktreePath,
+		worktreeBranch: transcript.worktreeBranch ?? previous?.worktreeBranch,
 	};
+}
+
+/**
+ * Read state and attention follow the conversation. A new prompt starts a run
+ * and answers whatever the session was waiting on. A finished reply is unread
+ * until someone looks at it, and ends any approval that was still pending.
+ */
+export function metaAfterEntry(meta: IAgentSessionMeta, entry: AgentHistoryEntry): IAgentSessionMeta {
+	if (entry.type === 'user') {
+		return { ...meta, status: 'running', unread: undefined, attention: undefined };
+	}
+	if (entry.type === 'agent' && entry.final) {
+		return { ...meta, unread: true, attention: meta.attention === 'approval' ? undefined : meta.attention };
+	}
+	return meta;
 }
 
 //#endregion
@@ -339,9 +378,10 @@ function isMeta(value: unknown): value is IAgentSessionMeta {
 export function settleIndexAfterRestart(index: IAgentHistoryIndex): IAgentHistoryIndex {
 	let changed = false;
 	const sessions = index.sessions.map(meta => {
-		if (meta.status === 'running') {
+		if (meta.status === 'running' || meta.attention === 'approval') {
 			changed = true;
-			return { ...meta, status: 'interrupted' as const };
+			// The pending approval ended with the run that asked for it.
+			return { ...meta, status: meta.status === 'running' ? 'interrupted' as const : meta.status, attention: meta.attention === 'approval' ? undefined : meta.attention };
 		}
 		return meta;
 	});

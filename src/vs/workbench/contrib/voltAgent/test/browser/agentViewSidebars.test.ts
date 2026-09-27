@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { $ } from '../../../../../base/browser/dom.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { QUICK_OPEN_NARROW_WINDOW_WIDTH, agentQuickOpenActionsHost, mountAgentQuickOpenActions, quickOpenCollapsedForWidth } from '../../browser/chrome/agentViewSidebars.js';
+import { QUICK_OPEN_NARROW_CHAT_WIDTH, QUICK_OPEN_NARROW_WINDOW_WIDTH, agentQuickOpenActionsHost, mountAgentQuickOpenActions, quickOpenCollapsedForWidth, quickOpenNarrowForSpace } from '../../browser/chrome/agentViewSidebars.js';
 
 suite('Agent view sidebars', () => {
 
@@ -37,6 +37,13 @@ suite('Agent view sidebars', () => {
 		assert.strictEqual(quickOpenCollapsedForWidth(QUICK_OPEN_NARROW_WINDOW_WIDTH, false), true);
 		assert.strictEqual(quickOpenCollapsedForWidth(800, false), true);
 		assert.strictEqual(quickOpenCollapsedForWidth(QUICK_OPEN_NARROW_WINDOW_WIDTH + 1, false), false);
+	});
+
+	test('a chat column squeezed by tools beside it counts as narrow on a wide window', () => {
+		assert.strictEqual(quickOpenNarrowForSpace(1800, 1400), false);
+		assert.strictEqual(quickOpenNarrowForSpace(1800, QUICK_OPEN_NARROW_CHAT_WIDTH), true);
+		assert.strictEqual(quickOpenNarrowForSpace(1800, 0), false, 'an unmeasured column does not collapse');
+		assert.strictEqual(quickOpenNarrowForSpace(QUICK_OPEN_NARROW_WINDOW_WIDTH, 0), true);
 	});
 
 	test('keeps a manual Quick Open choice on a large window', () => {

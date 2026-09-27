@@ -5,12 +5,21 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { applyContextWindowSuffix, descriptorsFromAcpModel, descriptorsFromConfigOptions } from '../../browser/agents/acpModels.js';
-import { MODEL_OPTION_CONTEXT, MODEL_OPTION_REASONING, MODEL_OPTION_SERVICE_TIER } from '../../common/models/modelOptions.js';
+import { advertisedModelVariant, applyContextWindowSuffix, descriptorsFromAcpModel, descriptorsFromConfigOptions } from '../../browser/agents/acpModels.js';
+import { modelEditSections } from '../../common/models/harnessCatalog.js';
+import { MODEL_OPTION_CONTEXT, MODEL_OPTION_FAST, MODEL_OPTION_REASONING, MODEL_OPTION_SERVICE_TIER, MODEL_OPTION_THINKING } from '../../common/models/modelOptions.js';
 
 suite('ACP model option parsing', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('falls back to the only advertised variant of a model', () => {
+		const model = { id: 'model', name: 'Model', options: ['default', 'opus', 'claude-fable-5-1[1m]', 'sonnet'].map(value => ({ value, name: value })) };
+		assert.strictEqual(advertisedModelVariant(model, 'claude-fable-5-1'), 'claude-fable-5-1[1m]');
+		assert.strictEqual(advertisedModelVariant(model, 'claude-fable-5-1[1m]'), undefined);
+		assert.strictEqual(advertisedModelVariant(model, 'claude-sonnet-5'), undefined);
+		assert.strictEqual(advertisedModelVariant(undefined, 'claude-fable-5-1'), undefined);
+	});
 
 	test('maps advertised selects including service tier', () => {
 		const descriptors = descriptorsFromConfigOptions([
@@ -50,6 +59,64 @@ suite('ACP model option parsing', () => {
 		assert.ok(descriptors[0].options?.some(choice => choice.label === 'Ultracode'));
 		assert.deepStrictEqual(descriptors[1].options?.map(choice => choice.label), ['200K', '1M']);
 		assert.strictEqual(descriptors[2].options?.find(choice => choice.value === 'priority')?.label, 'Fast');
+	});
+
+	test('Cursor per-model config keeps thinking, context, and effort', () => {
+		const descriptors = descriptorsFromConfigOptions([
+			{
+				id: 'thinking',
+				name: 'Thinking',
+				category: 'thought_level',
+				type: 'select',
+				currentValue: 'true',
+				options: [
+					{ value: 'false', name: 'Off' },
+					{ value: 'true', name: 'On' },
+				],
+			},
+			{
+				id: 'context',
+				name: 'Context',
+				category: 'model_config',
+				type: 'select',
+				currentValue: '300k',
+				options: [
+					{ value: '300k', name: '300K' },
+					{ value: '1m', name: '1M' },
+				],
+			},
+			{
+				id: 'effort',
+				name: 'Effort',
+				category: 'thought_level',
+				type: 'select',
+				currentValue: 'high',
+				options: [
+					{ value: 'low', name: 'Low' },
+					{ value: 'medium', name: 'Medium' },
+					{ value: 'high', name: 'High' },
+					{ value: 'xhigh', name: 'Extra High' },
+					{ value: 'max', name: 'Max' },
+				],
+			},
+			{
+				id: 'fast',
+				name: 'Fast',
+				type: 'select',
+				currentValue: 'false',
+				options: [
+					{ value: 'false', name: 'Off' },
+					{ value: 'true', name: 'On' },
+				],
+			},
+		]);
+		assert.deepStrictEqual(descriptors.map(option => option.id), [MODEL_OPTION_THINKING, MODEL_OPTION_CONTEXT, MODEL_OPTION_REASONING, MODEL_OPTION_FAST]);
+		assert.strictEqual(descriptors.find(option => option.id === MODEL_OPTION_THINKING)?.defaultValue, true);
+		assert.deepStrictEqual(descriptors.find(option => option.id === MODEL_OPTION_CONTEXT)?.options?.map(choice => choice.label), ['300K', '1M']);
+		assert.deepStrictEqual(descriptors.find(option => option.id === MODEL_OPTION_REASONING)?.options?.map(choice => choice.value), ['low', 'medium', 'high', 'xhigh', 'max']);
+		const sections = modelEditSections(descriptors);
+		assert.deepStrictEqual(sections.map(section => section.id), ['options', 'context', 'effort']);
+		assert.deepStrictEqual(sections[0].descriptors.map(descriptor => descriptor.id), [MODEL_OPTION_THINKING, MODEL_OPTION_FAST]);
 	});
 
 	test('OpenCode variants become a reasoning ladder', () => {

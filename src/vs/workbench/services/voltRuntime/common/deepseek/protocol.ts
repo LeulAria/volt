@@ -12,10 +12,18 @@
  * Volt still owns HTTP to Claude and the editor components. No directory picker.
  */
 
+import type { IVoltEvent } from '../events.js';
+
 export interface TokenUsage {
+	/** Uncached prompt tokens. */
 	readonly input: number;
 	readonly output: number;
+	/** Prompt tokens read from the provider cache. */
 	readonly cache?: number;
+	/** Prompt tokens written to the provider cache. */
+	readonly cacheWrite?: number;
+	/** Whole prompt the model saw: input + cache reads + cache writes. */
+	readonly used?: number;
 }
 
 export type FinishReason = 'stop' | 'tool_calls' | 'length' | 'error' | 'aborted';
@@ -24,7 +32,8 @@ export type ContentBlockType = 'text' | 'reasoning' | 'tool-call';
 
 export type ContentBlock =
 	| { readonly type: 'text'; readonly text: string }
-	| { readonly type: 'reasoning'; readonly text: string }
+	/** `provider`, `model`, and `opaque` are set when the provider can have the block replayed. */
+	| { readonly type: 'reasoning'; readonly text: string; readonly provider?: string; readonly model?: string; readonly opaque?: unknown }
 	| { readonly type: 'tool-call'; readonly id: string; readonly name: string; readonly arguments: string };
 
 /** Adapter stream. Usage is emitted before finish, and nothing follows finish. Tool arguments stay raw JSON. */
@@ -35,6 +44,8 @@ export type StreamChunk =
 	| { readonly type: 'tool-call-delta'; readonly index: number; readonly id: string; readonly name?: string; readonly argumentsDelta: string }
 	| { readonly type: 'block-end'; readonly index: number; readonly block: ContentBlock }
 	| { readonly type: 'usage'; readonly usage: TokenUsage }
+	/** Provider status the loop forwards untouched: retries, refusals, notices. */
+	| { readonly type: 'event'; readonly event: IVoltEvent }
 	| { readonly type: 'finish'; readonly reason: FinishReason };
 
 export type ToolCallKind = 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'fetch' | 'other';

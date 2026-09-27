@@ -10,9 +10,9 @@ import { IVoltEvent } from '../../common/events.js';
 import { contextLabelFromTokens, pickNumber, pickText } from '../../common/models/modelMeta.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
-import { GeminiToolAssembler } from '../../common/harness/geminiToolStream.js';
+import { GeminiToolAssembler, IGeminiPart } from '../../common/harness/geminiToolStream.js';
 import { toGeminiContents, toGeminiTools } from '../../common/harness/providerMessages.js';
-import { parseSseData, requestSseLines, requestText } from '../host/httpStream.js';
+import { parseSseData, requestSseStream, requestText } from '../host/httpStream.js';
 
 const MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'];
 
@@ -92,17 +92,21 @@ export class GeminiProvider implements IModelProvider {
 		const system = req.messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n');
 		const tools = req.tools?.length ? toGeminiTools(req.tools) : undefined;
 		const textId = `text-${Date.now()}`;
-		const assembler = new GeminiToolAssembler();
+		const assembler = new GeminiToolAssembler(req.modelId);
 		let started = false;
-		for await (const line of requestSseLines(this.requestService, url, {
+		for await (const line of requestSseStream(this.requestService, url, {
 			type: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			data: JSON.stringify({
-				contents: toGeminiContents(req.messages),
+				contents: toGeminiContents(req.messages, { model: req.modelId }),
 				systemInstruction: system ? { parts: [{ text: system }] } : undefined,
 				...(tools ? { tools } : {}),
 			}),
 		}, token)) {
+			if (typeof line !== 'string') {
+				yield { type: 'retry', ...line.retry };
+				continue;
+			}
 			if (token.isCancellationRequested) {
 				yield { type: 'finish', reason: 'abort' };
 				return;
@@ -113,10 +117,10 @@ export class GeminiProvider implements IModelProvider {
 			}
 			let json: {
 				candidates?: {
-					content?: { parts?: { text?: string; thought?: boolean | string; functionCall?: { name?: string; args?: unknown } }[] };
+					content?: { parts?: IGeminiPart[] };
 					finishReason?: string;
 				}[];
-				usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+				usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number };
 			};
 			try {
 				json = JSON.parse(data);
@@ -125,7 +129,9 @@ export class GeminiProvider implements IModelProvider {
 			}
 			const usage = json.usageMetadata;
 			if (usage && (usage.promptTokenCount !== undefined || usage.candidatesTokenCount !== undefined)) {
-				yield { type: 'usage', input: usage.promptTokenCount ?? 0, output: usage.candidatesTokenCount ?? 0 };
+				const prompt = usage.promptTokenCount ?? 0;
+				const cached = usage.cachedContentTokenCount ?? 0;
+				yield { type: 'usage', input: Math.max(0, prompt - cached), output: usage.candidatesTokenCount ?? 0, cache: cached, used: prompt };
 			}
 			const candidate = json.candidates?.[0];
 			const parts = candidate?.content?.parts ?? [];

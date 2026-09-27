@@ -13,7 +13,7 @@ import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../
 import { IModelOptionDescriptor, MODEL_OPTION_REASONING, reasoningOption } from '../../common/models/modelOptions.js';
 import { OpenAiToolAssembler } from '../../common/harness/openaiToolStream.js';
 import { toOpenAiMessages, toOpenAiTools } from '../../common/harness/providerMessages.js';
-import { parseSseData, requestSseLines, requestText } from '../host/httpStream.js';
+import { parseSseData, requestSseStream, requestText } from '../host/httpStream.js';
 
 interface IListedModel {
 	id: string;
@@ -30,7 +30,7 @@ interface IListedModel {
 function reasoningDescriptors(modelId: string): IModelOptionDescriptor[] | undefined {
 	const id = modelId.toLowerCase();
 	const reasoning = /^o\d/.test(id) || id.includes('gpt-5') || id.includes('reason') || id.includes('thinking');
-	return reasoning ? [reasoningOption(['low', 'medium', 'high'], 'medium')] : undefined;
+	return reasoning ? [reasoningOption(['auto', 'low', 'medium', 'high'], 'auto')] : undefined;
 }
 
 export class OpenAICompatProvider implements IModelProvider {
@@ -73,24 +73,28 @@ export class OpenAICompatProvider implements IModelProvider {
 	async *stream(req: IModelRequest, token: CancellationToken): AsyncIterable<IVoltEvent> {
 		const url = `${this.baseURL(req.profile)}/chat/completions`;
 		const selected = req.options?.[MODEL_OPTION_REASONING];
-		const effort = reasoningDescriptors(req.modelId) && typeof selected === 'string' ? selected : undefined;
+		const effort = reasoningDescriptors(req.modelId) && typeof selected === 'string' && selected !== 'auto' && selected !== 'off' ? selected : undefined;
 		const tools = req.tools?.length ? toOpenAiTools(req.tools) : undefined;
 		const body = JSON.stringify({
 			model: req.modelId,
 			stream: true,
 			stream_options: { include_usage: true },
-			messages: toOpenAiMessages(req.messages),
+			messages: toOpenAiMessages(req.messages, { vision: this.capabilitiesFor(req.modelId).vision }),
 			...(effort ? { reasoning_effort: effort } : {}),
 			...(tools ? { tools, tool_choice: 'auto' } : {}),
 		});
 		const textId = `text-${Date.now()}`;
 		const assembler = new OpenAiToolAssembler();
 		let started = false;
-		for await (const line of requestSseLines(this.requestService, url, {
+		for await (const line of requestSseStream(this.requestService, url, {
 			type: 'POST',
 			headers: { ...this.headers(req.apiKey), 'Content-Type': 'application/json' },
 			data: body,
 		}, token)) {
+			if (typeof line !== 'string') {
+				yield { type: 'retry', ...line.retry };
+				continue;
+			}
 			if (token.isCancellationRequested) {
 				yield { type: 'finish', reason: 'abort' };
 				return;
@@ -104,7 +108,7 @@ export class OpenAICompatProvider implements IModelProvider {
 					delta?: { content?: string; reasoning_content?: string; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] };
 					finish_reason?: string | null;
 				}[];
-				usage?: { prompt_tokens?: number; completion_tokens?: number; input_tokens?: number; output_tokens?: number };
+				usage?: { prompt_tokens?: number; completion_tokens?: number; input_tokens?: number; output_tokens?: number; prompt_tokens_details?: { cached_tokens?: number }; prompt_cache_hit_tokens?: number };
 			};
 			try {
 				json = JSON.parse(data);
@@ -113,10 +117,13 @@ export class OpenAICompatProvider implements IModelProvider {
 			}
 			const usage = json.usage;
 			if (usage) {
-				const input = usage.prompt_tokens ?? usage.input_tokens;
+				const prompt = usage.prompt_tokens ?? usage.input_tokens;
 				const output = usage.completion_tokens ?? usage.output_tokens;
-				if (input !== undefined || output !== undefined) {
-					yield { type: 'usage', input: input ?? 0, output: output ?? 0 };
+				if (prompt !== undefined || output !== undefined) {
+					// Prompt counts include cached tokens here; report them apart, as Anthropic does.
+					const cached = usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens ?? 0;
+					const total = prompt ?? 0;
+					yield { type: 'usage', input: Math.max(0, total - cached), output: output ?? 0, cache: cached, used: total };
 				}
 			}
 			const choice = json.choices?.[0];
@@ -140,6 +147,7 @@ export class OpenAICompatProvider implements IModelProvider {
 		if (started) {
 			yield { type: 'text.end', id: textId };
 		}
+		yield* assembler.drain();
 		yield assembler.finish();
 	}
 

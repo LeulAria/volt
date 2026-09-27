@@ -3,9 +3,20 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IModelMessage, IModelToolCall } from '../providers.js';
+import { IModelAssistantPart, IModelMessage, IModelToolCall } from '../providers.js';
 import { IToolSchema } from '../tools/tool.js';
 import { INativeLoopMessage } from './nativeLoop.js';
+
+/**
+ * One provider-neutral transcript, rendered for whichever model runs the next turn. Switching
+ * models mid-conversation is safe because every provider-specific piece is decided here:
+ *
+ * - reasoning is replayed only to the provider and model that produced it;
+ * - call ids are rewritten to what the target accepts, the same way on both sides of a pair;
+ * - every tool call gets exactly one result, and orphaned results are dropped.
+ */
+
+const INTERRUPTED_RESULT = 'Tool call was interrupted before it returned a result.';
 
 export function stringifyToolArgs(args: unknown): string {
 	if (typeof args === 'string') {
@@ -30,38 +41,131 @@ export function parseToolArgs(raw: string | undefined): unknown {
 }
 
 export function nativeToModelMessages(messages: readonly INativeLoopMessage[]): IModelMessage[] {
-	return messages.map(message => ({
+	return repairToolPairs(messages.map(message => ({
 		role: message.role,
 		content: message.content,
-		callId: message.callId,
-		name: message.name,
-		toolCalls: message.toolCalls?.map(call => ({
-			id: call.id,
-			name: call.name,
-			arguments: stringifyToolArgs(call.args),
-		})),
-	}));
+		...(message.callId !== undefined ? { callId: message.callId } : {}),
+		...(message.name !== undefined ? { name: message.name } : {}),
+		...(message.toolCalls?.length ? {
+			toolCalls: message.toolCalls.map(call => ({
+				id: call.id,
+				name: call.name,
+				arguments: stringifyToolArgs(call.args),
+			})),
+		} : {}),
+		...(message.parts?.length ? { parts: message.parts } : {}),
+		...(message.isError ? { isError: true } : {}),
+		...(message.images?.length ? { images: message.images } : {}),
+	})));
 }
 
-export function toOpenAiMessages(messages: readonly IModelMessage[]): object[] {
-	return messages.map(message => {
+/**
+ * Every assistant tool call is answered by a tool message before the next user or assistant
+ * turn, and no tool message answers a call that is not open. Cancellation, compaction, and a
+ * model switch can each leave a transcript that breaks that rule; providers reject it.
+ */
+export function repairToolPairs(messages: readonly IModelMessage[]): IModelMessage[] {
+	const out: IModelMessage[] = [];
+	let open: IModelToolCall[] = [];
+	const answered = new Set<string>();
+	const closeOpen = () => {
+		for (const call of open) {
+			if (!answered.has(call.id)) {
+				out.push({ role: 'tool', content: INTERRUPTED_RESULT, callId: call.id, name: call.name, isError: true });
+			}
+		}
+		open = [];
+		answered.clear();
+	};
+	for (const message of messages) {
 		if (message.role === 'tool') {
-			return {
+			const call = open.find(candidate => candidate.id === message.callId);
+			if (!call || answered.has(call.id)) {
+				continue;
+			}
+			answered.add(call.id);
+			out.push(message);
+			continue;
+		}
+		closeOpen();
+		out.push(message);
+		if (message.role === 'assistant' && message.toolCalls?.length) {
+			open = [...message.toolCalls];
+		}
+	}
+	closeOpen();
+	return out;
+}
+
+// --- call ids ------------------------------------------------------------------------------
+
+export type CallIdStyle = 'anthropic' | 'openai';
+
+/** Anthropic: `^[a-zA-Z0-9_-]{1,64}$`. OpenAI: at most 40 characters. Stable per input. */
+export function sanitizeCallId(id: string, style: CallIdStyle): string {
+	const max = style === 'anthropic' ? 64 : 40;
+	let clean = style === 'anthropic' ? id.replace(/[^a-zA-Z0-9_-]/g, '_') : id;
+	if (!clean) {
+		clean = 'call';
+	}
+	if (clean.length <= max) {
+		return clean;
+	}
+	const hash = shortHash(id);
+	return `${clean.slice(0, max - hash.length - 1)}_${hash}`;
+}
+
+function shortHash(text: string): string {
+	let hash = 5381;
+	for (let i = 0; i < text.length; i++) {
+		hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
+	}
+	return (hash >>> 0).toString(36);
+}
+
+// --- OpenAI-compatible -----------------------------------------------------------------------
+
+export interface IOpenAiMessageOptions {
+	/** The model accepts image parts; tool images are sent as a follow-up user message. */
+	readonly vision?: boolean;
+}
+
+export function toOpenAiMessages(messages: readonly IModelMessage[], options: IOpenAiMessageOptions = {}): object[] {
+	const out: object[] = [];
+	const images: object[] = [];
+	const flushImages = () => {
+		if (images.length) {
+			out.push({ role: 'user', content: [{ type: 'text', text: 'Images returned by the tool calls above:' }, ...images.splice(0)] });
+		}
+	};
+	for (const message of messages) {
+		if (message.role === 'tool') {
+			out.push({
 				role: 'tool',
-				tool_call_id: message.callId ?? '',
+				tool_call_id: sanitizeCallId(message.callId ?? '', 'openai'),
 				content: message.content,
 				...(message.name ? { name: message.name } : {}),
-			};
+			});
+			if (options.vision) {
+				for (const image of message.images ?? []) {
+					images.push({ type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } });
+				}
+			}
+			continue;
 		}
+		flushImages();
 		if (message.role === 'assistant' && message.toolCalls?.length) {
-			return {
+			out.push({
 				role: 'assistant',
 				content: message.content || null,
 				tool_calls: message.toolCalls.map(toOpenAiToolCall),
-			};
+			});
+			continue;
 		}
-		return { role: message.role, content: message.content };
-	});
+		out.push({ role: message.role, content: message.content });
+	}
+	flushImages();
+	return out;
 }
 
 export function toOpenAiTools(tools: readonly IToolSchema[]): object[] {
@@ -75,11 +179,22 @@ export function toOpenAiTools(tools: readonly IToolSchema[]): object[] {
 	}));
 }
 
-export function toAnthropicTools(tools: readonly IToolSchema[]): object[] {
+function toOpenAiToolCall(call: IModelToolCall): object {
+	return {
+		id: sanitizeCallId(call.id, 'openai'),
+		type: 'function',
+		function: { name: call.name, arguments: call.arguments },
+	};
+}
+
+// --- Anthropic -------------------------------------------------------------------------------
+
+export function toAnthropicTools(tools: readonly IToolSchema[], options: { readonly eagerInputStreaming?: boolean } = {}): object[] {
 	return tools.map(tool => ({
 		name: tool.name,
 		description: tool.description,
 		input_schema: tool.parameters,
+		...(options.eagerInputStreaming ? { eager_input_streaming: true } : {}),
 	}));
 }
 
@@ -88,16 +203,21 @@ export interface IAnthropicMessage {
 	content: string | object[];
 }
 
-export function toAnthropicMessages(messages: readonly IModelMessage[]): IAnthropicMessage[] {
+export interface IAnthropicMessageOptions {
+	/** The model this request goes to. Thinking blocks from any other model are left out. */
+	readonly model?: string;
+}
+
+export function toAnthropicMessages(messages: readonly IModelMessage[], options: IAnthropicMessageOptions = {}): IAnthropicMessage[] {
 	const out: IAnthropicMessage[] = [];
 	for (const message of messages) {
 		if (message.role === 'system') {
 			continue;
 		}
 		if (message.role === 'tool') {
-			const part = { type: 'tool_result', tool_use_id: message.callId ?? '', content: message.content };
+			const part = anthropicToolResult(message);
 			const last = out.at(-1);
-			if (last?.role === 'user' && Array.isArray(last.content)) {
+			if (last?.role === 'user' && Array.isArray(last.content) && last.content.every(block => (block as { type?: string }).type === 'tool_result')) {
 				last.content.push(part);
 			} else {
 				out.push({ role: 'user', content: [part] });
@@ -105,25 +225,93 @@ export function toAnthropicMessages(messages: readonly IModelMessage[]): IAnthro
 			continue;
 		}
 		if (message.role === 'assistant') {
-			const parts: object[] = [];
-			if (message.content) {
-				parts.push({ type: 'text', text: message.content });
+			const blocks = anthropicAssistantBlocks(message, options.model);
+			if (blocks.length) {
+				out.push({ role: 'assistant', content: blocks });
 			}
-			for (const call of message.toolCalls ?? []) {
-				parts.push({
-					type: 'tool_use',
-					id: call.id,
-					name: call.name,
-					input: parseToolArgs(call.arguments),
-				});
-			}
-			out.push({ role: 'assistant', content: parts.length ? parts : message.content });
 			continue;
 		}
-		out.push({ role: 'user', content: message.content });
+		if (message.content.trim()) {
+			out.push({ role: 'user', content: message.content });
+		}
 	}
 	return out;
 }
+
+function anthropicToolResult(message: IModelMessage): object {
+	const images = message.images ?? [];
+	const content: object[] | string = images.length
+		? [
+			...(message.content ? [{ type: 'text', text: message.content }] : []),
+			...images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } })),
+		]
+		: message.content || '(no output)';
+	return {
+		type: 'tool_result',
+		tool_use_id: sanitizeCallId(message.callId ?? '', 'anthropic'),
+		content,
+		...(message.isError ? { is_error: true } : {}),
+	};
+}
+
+function anthropicAssistantBlocks(message: IModelMessage, model: string | undefined): object[] {
+	const calls = new Map((message.toolCalls ?? []).map(call => [call.id, call]));
+	const toolUse = (call: IModelToolCall) => ({
+		type: 'tool_use',
+		id: sanitizeCallId(call.id, 'anthropic'),
+		name: call.name,
+		input: objectArgs(parseToolArgs(call.arguments)),
+	});
+	if (!message.parts?.length) {
+		const blocks: object[] = [];
+		if (message.content) {
+			blocks.push({ type: 'text', text: message.content });
+		}
+		for (const call of calls.values()) {
+			blocks.push(toolUse(call));
+		}
+		return blocks;
+	}
+	const blocks: object[] = [];
+	const used = new Set<string>();
+	for (const part of message.parts) {
+		const block = anthropicPart(part, calls, model, toolUse);
+		if (block) {
+			blocks.push(block);
+		}
+		if (part.type === 'tool_call') {
+			used.add(part.callId);
+		}
+	}
+	for (const [id, call] of calls) {
+		if (!used.has(id)) {
+			blocks.push(toolUse(call));
+		}
+	}
+	return blocks;
+}
+
+function anthropicPart(part: IModelAssistantPart, calls: ReadonlyMap<string, IModelToolCall>, model: string | undefined, toolUse: (call: IModelToolCall) => object): object | undefined {
+	switch (part.type) {
+		case 'text':
+			return part.text ? { type: 'text', text: part.text } : undefined;
+		case 'reasoning':
+			return part.block.provider === 'anthropic' && part.block.model === model && part.block.opaque && typeof part.block.opaque === 'object'
+				? part.block.opaque
+				: undefined;
+		case 'tool_call': {
+			const call = calls.get(part.callId);
+			return call ? toolUse(call) : undefined;
+		}
+	}
+}
+
+/** Anthropic `tool_use.input` must be an object. A parse failure is replayed as `{ raw }`. */
+function objectArgs(value: unknown): object {
+	return value && typeof value === 'object' && !Array.isArray(value) ? value : { value };
+}
+
+// --- Gemini ----------------------------------------------------------------------------------
 
 export function toGeminiTools(tools: readonly IToolSchema[]): object[] {
 	return [{
@@ -140,7 +328,12 @@ export interface IGeminiContent {
 	parts: object[];
 }
 
-export function toGeminiContents(messages: readonly IModelMessage[]): IGeminiContent[] {
+export interface IGeminiMessageOptions {
+	/** Thought signatures are replayed only to the model that produced them. */
+	readonly model?: string;
+}
+
+export function toGeminiContents(messages: readonly IModelMessage[], options: IGeminiMessageOptions = {}): IGeminiContent[] {
 	const out: IGeminiContent[] = [];
 	for (const message of messages) {
 		if (message.role === 'system') {
@@ -150,7 +343,7 @@ export function toGeminiContents(messages: readonly IModelMessage[]): IGeminiCon
 			const part = {
 				functionResponse: {
 					name: message.name ?? 'tool',
-					response: { result: message.content },
+					response: message.isError ? { error: message.content } : { result: message.content },
 				},
 			};
 			const last = out.at(-1);
@@ -159,6 +352,9 @@ export function toGeminiContents(messages: readonly IModelMessage[]): IGeminiCon
 			} else {
 				out.push({ role: 'user', parts: [part] });
 			}
+			for (const image of message.images ?? []) {
+				out.at(-1)!.parts.push({ inlineData: { mimeType: image.mediaType, data: image.data } });
+			}
 			continue;
 		}
 		if (message.role === 'assistant') {
@@ -166,23 +362,36 @@ export function toGeminiContents(messages: readonly IModelMessage[]): IGeminiCon
 			if (message.content) {
 				parts.push({ text: message.content });
 			}
+			const signatures = geminiSignatures(message, options.model);
 			for (const call of message.toolCalls ?? []) {
-				parts.push({ functionCall: { name: call.name, args: parseToolArgs(call.arguments) } });
+				const signature = signatures.get(call.id);
+				parts.push({ functionCall: { name: call.name, args: parseToolArgs(call.arguments) }, ...(signature ? { thoughtSignature: signature } : {}) });
 			}
-			out.push({ role: 'model', parts: parts.length ? parts : [{ text: message.content }] });
+			if (parts.length) {
+				out.push({ role: 'model', parts });
+			}
 			continue;
 		}
-		out.push({ role: 'user', parts: [{ text: message.content }] });
+		if (message.content.trim()) {
+			out.push({ role: 'user', parts: [{ text: message.content }] });
+		}
 	}
 	return out;
 }
 
-function toOpenAiToolCall(call: IModelToolCall): object {
-	return {
-		id: call.id,
-		type: 'function',
-		function: { name: call.name, arguments: call.arguments },
-	};
+/** Gemini carries thought signatures on function-call parts; they arrive as reasoning blocks keyed by call id. */
+function geminiSignatures(message: IModelMessage, model: string | undefined): Map<string, string> {
+	const signatures = new Map<string, string>();
+	for (const part of message.parts ?? []) {
+		if (part.type !== 'reasoning' || part.block.provider !== 'gemini' || part.block.model !== model) {
+			continue;
+		}
+		const opaque = part.block.opaque as { callId?: unknown; thoughtSignature?: unknown } | undefined;
+		if (typeof opaque?.callId === 'string' && typeof opaque.thoughtSignature === 'string') {
+			signatures.set(opaque.callId, opaque.thoughtSignature);
+		}
+	}
+	return signatures;
 }
 
 function stripAdditionalProperties(schema: object): object {
@@ -195,7 +404,11 @@ function stripAdditionalProperties(schema: object): object {
 		if (key === 'additionalProperties') {
 			continue;
 		}
-		next[key] = value && typeof value === 'object' && !Array.isArray(value) ? stripAdditionalProperties(value) : value;
+		if (Array.isArray(value)) {
+			next[key] = value.map(item => item && typeof item === 'object' ? stripAdditionalProperties(item) : item);
+			continue;
+		}
+		next[key] = value && typeof value === 'object' ? stripAdditionalProperties(value) : value;
 	}
 	return next;
 }

@@ -46,12 +46,42 @@ export interface IModelToolCall {
 	arguments: string;
 }
 
+/**
+ * A reasoning block tagged with the provider and model that produced it. It is replayed only to
+ * that same model: other models either ignore foreign reasoning or reject it.
+ */
+export interface IModelReasoningBlock {
+	readonly provider: string;
+	readonly model: string;
+	readonly text: string;
+	/** Provider-native payload replayed verbatim, e.g. an Anthropic `thinking` block with its signature. */
+	readonly opaque?: unknown;
+}
+
+/** Assistant content in the order the model produced it. */
+export type IModelAssistantPart =
+	| { readonly type: 'text'; readonly text: string }
+	| { readonly type: 'reasoning'; readonly block: IModelReasoningBlock }
+	| { readonly type: 'tool_call'; readonly callId: string };
+
+export interface IModelImage {
+	readonly mediaType: string;
+	/** Base64 without a data: prefix. */
+	readonly data: string;
+}
+
 export interface IModelMessage {
 	role: 'system' | 'user' | 'assistant' | 'tool';
 	content: string;
 	toolCalls?: IModelToolCall[];
 	callId?: string;
 	name?: string;
+	/** Assistant only. When present, providers that replay reasoning build content from this. */
+	parts?: IModelAssistantPart[];
+	/** Tool only: the call failed. */
+	isError?: boolean;
+	/** Tool results that carry pixels, e.g. a browser snapshot. */
+	images?: IModelImage[];
 }
 
 export interface IModelRequest {
@@ -61,6 +91,8 @@ export interface IModelRequest {
 	apiKey?: string;
 	options?: IVoltModelOptions;
 	tools?: IToolSchema[];
+	/** Output ceiling for this request. Providers fall back to the model's own maximum. */
+	maxOutputTokens?: number;
 }
 
 export interface IModelProvider {

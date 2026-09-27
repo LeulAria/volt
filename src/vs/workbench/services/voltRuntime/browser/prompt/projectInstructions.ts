@@ -12,9 +12,9 @@ export const PROJECT_INSTRUCTION_FILES = [
 	'CLAUDE.md',
 	'.volt/AGENTS.md',
 	'.cursorrules',
+	'.github/copilot-instructions.md',
 ] as const;
 
-const RULES_DIR = '.volt/rules';
 const DEFAULT_BUDGET = 32_000;
 
 /**
@@ -37,20 +37,8 @@ export async function loadProjectInstructions(
 			chunks.push(`# ${rel}\n${text.trim()}`);
 		}
 	}
-	try {
-		const dir = await fileService.resolve(joinPath(root, RULES_DIR));
-		const files = (dir.children ?? [])
-			.filter(child => !child.isDirectory && /\.(md|txt)$/i.test(child.name))
-			.sort((a, b) => a.name.localeCompare(b.name));
-		for (const file of files) {
-			const text = await readText(fileService, file.resource);
-			if (text) {
-				chunks.push(`# ${RULES_DIR}/${file.name}\n${text.trim()}`);
-			}
-		}
-	} catch {
-		// no rules directory
-	}
+	// `.volt/rules` and `.cursor/rules` are loaded by `loadInstructions`, which honours their
+	// `alwaysApply` / `globs` / `description` headers instead of pasting every rule every turn.
 	if (!chunks.length) {
 		return undefined;
 	}

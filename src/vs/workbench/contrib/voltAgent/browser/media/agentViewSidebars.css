@@ -300,3 +300,14 @@
 .monaco-workbench.volt-layout-agent .volt-agent-editor.browser-hosted .volt-agent-quick-open-actions {
 	display: none;
 }
+
+/* Tab bar + menu replaces the vertical Quick Open rail while tools are open. */
+.monaco-workbench.volt-layout-agent .volt-agent-editor.has-surfaces .volt-agent-quick-open-actions {
+	display: none;
+}
+
+/* The rail is hidden, so nothing is reserved. The :has() form outranks the expanded/collapsed reserve rules above. */
+.monaco-workbench.volt-layout-agent .volt-agent-editor.has-surfaces,
+.monaco-workbench.volt-layout-agent .volt-agent-editor.has-surfaces:has(.volt-agent-quick-open-actions) {
+	--volt-agent-quick-open-reserve: 0px;
+}

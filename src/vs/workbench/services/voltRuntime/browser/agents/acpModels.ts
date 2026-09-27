@@ -108,6 +108,16 @@ export function flattenChoices(option: IAcpConfigOption | undefined): IAcpSelect
 		: (entry.options ?? []).map(choice => ({ value: String(choice.value).trim(), name: String(choice.name).trim() })));
 }
 
+/**
+ * The advertised choice for a model the agent only offers in one variant, e.g. Claude's
+ * adapter lists `claude-fable-5-1[1m]` but rejects the bare `claude-fable-5-1`.
+ */
+export function advertisedModelVariant(option: IAcpConfigOption | undefined, modelId: string): string | undefined {
+	const bare = (value: string) => value.replace(/\[[^\]]*\]$/, '').trim().toLowerCase();
+	const wanted = bare(modelId);
+	return flattenChoices(option).find(choice => choice.value !== modelId && bare(choice.value) === wanted)?.value;
+}
+
 function id(option: IAcpConfigOption): string {
 	return option.id?.trim().toLowerCase() ?? '';
 }
@@ -139,8 +149,11 @@ function looksLikeEffortValue(value: string): boolean {
 }
 
 function isReasoningOption(option: IAcpConfigOption): boolean {
+	if (isThinkingOption(option) || isFastOption(option) || isContextOption(option) || isServiceTierOption(option)) {
+		return false;
+	}
 	if (category(option) === 'thought_level'
-		|| ['effort', 'reasoning'].includes(id(option))
+		|| ['effort', 'reasoning', 'reasoning_effort'].includes(id(option))
 		|| ['effort', 'reasoning'].includes(name(option))
 		|| name(option).includes('effort')
 		|| name(option).includes('reasoning')) {

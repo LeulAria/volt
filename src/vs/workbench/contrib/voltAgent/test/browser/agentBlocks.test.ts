@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { applyExploreInputToActivity, applyExploreResultToActivity, applyFileTargetToActivity, classifyToolActivity, collectBlocks, createToolBlock, describeExploreActivity, IAgentActivityItem, isExploreItemClickable, isExploreTool, isFileChangeTool, isShellTool, parseExploreResultFiles, parseFileTarget, splitActivityLabel, splitMarkdownToBlocks, workCountsForSegments } from '../../browser/blocks/agentBlocks.js';
+import { AgentSegment, appendProviderNotice, applyExploreInputToActivity, applyExploreResultToActivity, applyFileTargetToActivity, classifyToolActivity, collectBlocks, createToolBlock, describeExploreActivity, IAgentActivityItem, isExploreItemClickable, isExploreTool, isFileChangeTool, isShellTool, parseExploreResultFiles, parseFileTarget, splitActivityLabel, splitMarkdownToBlocks, workCountsForSegments } from '../../browser/blocks/agentBlocks.js';
 
 suite('Agent explore tool cards', () => {
 
@@ -220,6 +220,23 @@ suite('Agent explore activity details', () => {
 		}));
 		assert.strictEqual(item.label, 'Grepped');
 		assert.deepStrictEqual(item.files, ['src/vs/workbench/contrib/chat/browser/codeBlockPart.ts']);
+	});
+
+	test('a later limit sentence replaces the shorter status', () => {
+		const segments: AgentSegment[] = [];
+		appendProviderNotice(segments, { severity: 'error', title: 'Usage limit reached' });
+		appendProviderNotice(segments, {
+			severity: 'error',
+			title: 'You\'ve hit your monthly spend limit · your session limit resets 3:20am (Asia/Dubai)',
+			description: 'Continuing automatically at 3:20am',
+		});
+		assert.strictEqual(segments.length, 1);
+		const notice = segments[0];
+		if (notice?.kind !== 'notice') {
+			assert.fail('expected a notice');
+		}
+		assert.strictEqual(notice.title, 'You\'ve hit your monthly spend limit · your session limit resets 3:20am (Asia/Dubai)');
+		assert.strictEqual(notice.description, 'Continuing automatically at 3:20am');
 	});
 
 	test('adds grep result paths without losing the pattern', () => {

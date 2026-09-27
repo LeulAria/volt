@@ -26,6 +26,7 @@ import { IEditorGroupsService } from '../../../../services/editor/common/editorG
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
 import { getLayoutMode, revealAgentSidePanel } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { LAYOUT_MODE_CONTEXT_KEY } from '../../../../browser/parts/titlebar/layoutKeybindingMode.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -46,6 +47,7 @@ import {
 import { AGENT_CUSTOMIZE_EDITOR_ID, AgentCustomizeEditor, AgentCustomizeEditorInput, AgentCustomizeEditorInputSerializer } from '../customize/agentCustomizeEditor.js';
 import { findEditorCommandsContext } from '../editor/agentEditorCommandsContext.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
+import { findAgentPanelGroup, openAgentPanel } from '../workspace/agentPanels.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
 
 const agentTitleActions = ContextKeyExpr.or(
@@ -100,6 +102,14 @@ async function openNewAgentInFocusedGroup(accessor: ServicesAccessor, replace: b
 	if (getLayoutMode(layoutService) === 'agent' && layoutService.isAuxiliaryBarMaximized()) {
 		layoutService.setAuxiliaryBarMaximized(false);
 	}
+	if (getLayoutMode(layoutService) === 'agent') {
+		const previous = replace ? findAgentPanelGroup(groups.mainPart).activeEditor : undefined;
+		const input = await openAgentPanel(groups, accessor.get(IInstantiationService), undefined);
+		if (previous && previous !== input) {
+			await findAgentPanelGroup(groups.mainPart).closeEditor(previous);
+		}
+		return;
+	}
 	const group = (groupId !== undefined ? groups.getGroup(groupId) : undefined) ?? groups.activeGroup;
 	const input = accessor.get(IInstantiationService).createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri());
 	const previous = replace ? group.activeEditor : undefined;
@@ -137,7 +147,8 @@ registerAction2(class NewAgentTabAction extends Action2 {
 			title: localize2('voltAgent.newAgentTab', "New Agent"),
 			icon: Codicon.plus,
 			f1: false,
-			menu: { id: MenuId.EditorTitle, group: 'navigation', order: 10, when: agentTitleActions },
+			// The Agent window starts chats from its sidebar; only the IDE shows this in the title bar.
+			menu: { id: MenuId.EditorTitle, group: 'navigation', order: 10, when: ContextKeyExpr.and(agentTitleActions, ContextKeyExpr.notEquals(LAYOUT_MODE_CONTEXT_KEY, 'agent')) },
 		});
 	}
 

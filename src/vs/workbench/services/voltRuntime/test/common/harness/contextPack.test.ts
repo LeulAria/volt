@@ -120,7 +120,7 @@ suite('Volt context pack', () => {
 		assert.ok(/small, well-scoped/.test(prompt));
 	});
 
-	test('a check-in gets a one-line prompt and no tools', () => {
+	test('a short message still gets the normal prompt', () => {
 		const intent = classifyIntent('testing', 'agent', { hasWorkspace: true });
 		const prompt = buildSystemPrompt({
 			mode: 'agent',
@@ -128,11 +128,11 @@ suite('Volt context pack', () => {
 			projectInstructions: 'Always use pnpm.',
 			toolSnippets: ['read_file - read a file'],
 		});
-		assert.ok(/check-in|Reply immediately/.test(prompt));
-		assert.ok(!/read_file/.test(prompt));
-		assert.ok(!/Always use pnpm/.test(prompt));
+		assert.ok(!/check-in|Reply immediately/.test(prompt));
+		assert.ok(/read_file/.test(prompt));
+		assert.ok(/Always use pnpm/.test(prompt));
 		const lead = buildAcpLead({ mode: 'agent', intent });
-		assert.ok(lead && /Reply immediately/.test(lead));
+		assert.ok(!lead || !/Reply immediately/.test(lead));
 	});
 
 	test('remaining budget is a volatile section', () => {

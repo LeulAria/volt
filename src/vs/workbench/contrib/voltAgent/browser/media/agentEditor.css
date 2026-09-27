@@ -246,7 +246,7 @@
 	pointer-events: auto;
 }
 
-/* Pinned cards drop the bottom bleed so the bubble sits flush, then fade the text scrolling underneath. */
+/* Pinned cards drop the bottom bleed so the bubble sits flush on the transcript. */
 .volt-agent-turn.user.stuck {
 	padding-bottom: 0;
 	margin-bottom: 0;
@@ -280,21 +280,6 @@
 	background: var(--volt-agent-window-bg-base, var(--volt-agent-chat-bg, var(--vscode-editor-background, #1e1e1e)));
 	pointer-events: none;
 	z-index: 1;
-}
-
-/* Fade matches the sent card, not the full scroller. The card is the centered column. */
-.volt-agent-turn.user.stuck::after {
-	content: '';
-	position: absolute;
-	top: 100%;
-	left: 0;
-	right: 0;
-	width: min(760px, calc(100% - 40px));
-	height: 36px;
-	margin-left: auto;
-	margin-right: auto;
-	pointer-events: none;
-	background: linear-gradient(to bottom, var(--volt-agent-window-bg, var(--volt-agent-chat-bg, var(--vscode-editor-background, #1e1e1e))) 0%, transparent 100%);
 }
 
 .volt-agent-turn.user .volt-agent-user-row {
@@ -1115,6 +1100,27 @@ pre.volt-agent-searchable {
 	min-width: 0;
 	max-width: 100%;
 	color: var(--vscode-editor-foreground);
+}
+
+.volt-agent-provider-notice {
+	max-width: 100%;
+	min-width: 0;
+	font-size: 13px;
+	line-height: 1.45;
+	white-space: pre-wrap;
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-agent-provider-notice.severity-error {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-agent-provider-notice.severity-info {
+	color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
+}
+
+.volt-agent-provider-notice-detail {
+	color: color-mix(in srgb, currentColor 82%, transparent);
 }
 
 .volt-agent-activity {
@@ -4507,8 +4513,11 @@ pre.volt-agent-searchable {
 	border: 0;
 	background: transparent;
 	color: color-mix(in srgb, var(--vscode-foreground) 68%, transparent);
-	font: inherit;
-	font-size: 13px;
+	font-family: inherit;
+	font-size: 12px;
+	font-weight: 400;
+	font-style: normal;
+	letter-spacing: normal;
 	line-height: 22px;
 	cursor: pointer;
 	border-radius: 6px;
@@ -4518,12 +4527,37 @@ pre.volt-agent-searchable {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	font-family: inherit;
+	font-size: inherit;
+	font-weight: inherit;
+	font-style: inherit;
+	letter-spacing: inherit;
+	line-height: inherit;
 }
 
 .volt-agent-landing-pick .chevron {
-	font-size: 11px;
+	font-family: codicon;
+	font-size: 10px;
+	font-weight: normal;
 	opacity: 0.55;
 	flex-shrink: 0;
+}
+
+.volt-agent-landing-pick .run-icon {
+	display: none;
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+}
+
+.volt-agent-landing-pick.worktree .run-icon {
+	display: inline-flex;
+}
+
+.volt-agent-landing-pick .run-icon svg {
+	display: block;
 }
 
 .volt-agent-landing-pick.empty {
@@ -4730,9 +4764,10 @@ pre.volt-agent-searchable {
 
 .volt-agent-picker-panel,
 .volt-agent-picker-flyout {
+	--volt-picker-stroke: color-mix(in srgb, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)) 58%, transparent);
 	background: var(--vscode-editorWidget-background, var(--vscode-menu-background, #1c1c1c));
 	color: var(--vscode-foreground);
-	border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+	border: 1px solid var(--volt-picker-stroke);
 	border-radius: 8px;
 	box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.32));
 	box-sizing: border-box;
@@ -4743,16 +4778,23 @@ pre.volt-agent-searchable {
 	display: flex;
 	flex-direction: column;
 	width: 100%;
-	/* Tabs + search + 8-row list + up to 5 trait rows (effort/context/tier/fast/thinking). */
+	/* Search + tabs + 10-row list. */
 	max-height: min(460px, calc(100vh - 24px));
 	overflow: hidden;
 	border-radius: 8px;
+	/* The list's scroll layer squares off a CSS border at the bottom corners.
+	 * A radius-following ring stays on the curve. */
+	border: none;
+	box-shadow:
+		0 0 0 1px var(--volt-picker-stroke),
+		0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.32));
 }
 
 .volt-agent-picker-flyout {
 	position: absolute;
+	top: 0;
 	left: calc(100% + 6px);
-	bottom: 0;
+	bottom: auto;
 	width: 220px;
 	min-width: 200px;
 	padding: 0;
@@ -4775,8 +4817,15 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-picker-flyout.card {
-	width: 280px;
-	min-width: 240px;
+	width: 196px;
+	min-width: 168px;
+	border-radius: 8px;
+}
+
+.volt-agent-picker-flyout.options {
+	width: 196px;
+	min-width: 176px;
+	border-radius: 8px;
 }
 
 .volt-agent-picker-flyout.hidden {
@@ -4786,13 +4835,13 @@ pre.volt-agent-searchable {
 .volt-agent-model-card {
 	display: flex;
 	flex-direction: column;
-	gap: 10px;
-	padding: 12px 14px 14px;
+	gap: 2px;
+	padding: 6px 8px;
 }
 
 .volt-agent-model-card .title {
-	font-size: 13px;
-	font-weight: 600;
+	font-size: 12px;
+	font-weight: 500;
 	line-height: 1.3;
 }
 
@@ -4816,7 +4865,7 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-picker-section-label {
-	padding: 6px 10px 2px;
+	padding: 6px 8px 2px;
 	color: var(--vscode-descriptionForeground);
 	font-size: 12px;
 	font-weight: 400;
@@ -4837,17 +4886,70 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
+.volt-agent-picker-tabbar {
+	display: flex;
+	align-items: stretch;
+	flex: 0 0 auto;
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+}
+
 .volt-agent-provider-tabs {
 	display: flex;
 	align-items: stretch;
 	gap: 0;
-	flex: 0 0 auto;
-	padding: 2px 8px 0;
-	border-bottom: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 2px 0 0 8px;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.volt-agent-provider-tabs::-webkit-scrollbar {
+	display: none;
+}
+
+.volt-agent-picker-settings {
+	position: sticky;
+	right: 0;
+	flex: 0 0 36px;
+	width: 36px;
+	height: 36px;
+	margin-left: auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: 0;
+	border-radius: 0;
+	background: var(--vscode-editorWidget-background, var(--vscode-dropdown-background, #252526));
+	color: var(--vscode-foreground);
+	opacity: 0.72;
+	cursor: pointer;
+	padding: 0;
+}
+
+.volt-agent-picker-settings:hover {
+	opacity: 1;
+}
+
+.volt-agent-picker-settings:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -2px;
+	opacity: 1;
+}
+
+.volt-agent-settings-icon {
+	display: inline-flex;
+	width: 16px;
+	height: 16px;
+}
+
+.volt-agent-settings-icon svg {
+	display: block;
 }
 
 .volt-agent-provider-tab {
 	position: relative;
+	flex: 0 0 36px;
 	width: 36px;
 	height: 36px;
 	display: inline-flex;
@@ -4911,6 +5013,30 @@ pre.volt-agent-searchable {
 	opacity: 0.88;
 }
 
+.volt-agent-picker-list .volt-auto-spark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-picker-list .volt-auto-spark path {
+	fill: none;
+	stroke: currentColor;
+}
+
+.volt-agent-model .volt-brand-icon.volt-auto-spark {
+	width: 14px;
+	height: 14px;
+}
+
+.volt-agent-model .volt-auto-spark path {
+	fill: none;
+	stroke: currentColor;
+}
+
 .volt-agent-picker-search,
 .volt-agent-dropdown.models.picker .volt-agent-dropdown-search-row {
 	display: flex;
@@ -4933,8 +5059,8 @@ pre.volt-agent-searchable {
 	width: 16px;
 	height: 16px;
 	flex-shrink: 0;
-	opacity: 0.85;
-	color: var(--vscode-foreground);
+	opacity: 1;
+	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
 }
 
 .context-view .volt-agent-picker-search .monaco-inputbox,
@@ -4970,6 +5096,10 @@ pre.volt-agent-searchable {
 	align-items: stretch;
 	flex: 0 0 auto;
 	min-height: 0;
+	overflow: hidden;
+	border-radius: 0 0 8px 8px;
+	/* Match the 7px inset above the search field. */
+	padding-bottom: 7px;
 }
 
 .volt-agent-picker-list {
@@ -4979,10 +5109,12 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-picker-list .monaco-list,
-.volt-agent-picker-list .monaco-list-rows {
+.volt-agent-picker-list .monaco-list-rows,
+.volt-agent-picker-list .monaco-scrollable-element {
 	width: 100%;
 	height: 100%;
 	outline: none !important;
+	background: transparent !important;
 }
 
 .volt-agent-picker-list .monaco-list-row,
@@ -5058,9 +5190,12 @@ pre.volt-agent-searchable {
 	background: transparent;
 	margin: 0;
 	padding: 0 2px;
-	font: inherit;
+	appearance: none;
+	-webkit-appearance: none;
+	font-family: inherit;
 	font-size: 12px;
-	font-weight: 500;
+	font-weight: 300 !important;
+	font-synthesis: none;
 	line-height: 16px;
 	color: var(--vscode-descriptionForeground);
 	cursor: pointer;
@@ -5072,8 +5207,7 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
-.volt-agent-picker-list .monaco-list-row:hover .volt-agent-picker-edit:not(.hidden),
-.volt-agent-picker-list .monaco-list-row.focused .volt-agent-picker-edit:not(.hidden) {
+.volt-agent-picker-list .monaco-list-row:hover .volt-agent-picker-edit:not(.hidden) {
 	opacity: 1;
 	pointer-events: auto;
 }
@@ -5140,7 +5274,30 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
-.volt-agent-picker-star .codicon {
+.volt-agent-picker-star svg {
+	display: block;
+}
+
+/* Current model: a check just left of the star. */
+.volt-agent-picker-selected {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 22px;
+	flex: 0 0 18px;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-picker-list .monaco-list-row.can-edit:hover .volt-agent-picker-selected {
+	visibility: hidden;
+}
+
+.volt-agent-picker-selected.hidden {
+	display: none;
+}
+
+.volt-agent-picker-selected .codicon {
 	font-size: 14px;
 }
 
@@ -5660,6 +5817,10 @@ pre.volt-agent-searchable {
 	flex-shrink: 0;
 }
 
+.volt-agent-dropdown.run-on .check {
+	margin-left: auto;
+}
+
 .volt-agent-context-panel {
 	--volt-context-panel-bg: var(--vscode-editor-background, #1e1e1e);
 	position: relative;
@@ -6031,7 +6192,8 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-context-models-tree .monaco-list-row {
-	padding-left: 7px;
+	padding-left: 0;
+	width: 100%;
 }
 
 .volt-agent-context-models-tree .monaco-tl-row {
@@ -6045,15 +6207,25 @@ pre.volt-agent-searchable {
 
 .volt-agent-context-models-tree .monaco-list-row:has(.volt-agent-context-model-row.is-group) .monaco-tl-twistie {
 	width: 16px !important;
+	padding-left: 0 !important;
 	padding-right: 0 !important;
 	margin-right: 0;
+	transform: none;
 }
 
-.volt-agent-context-models-tree .monaco-list-row:has(.volt-agent-context-model-row.is-model) .monaco-tl-twistie,
 .volt-agent-context-models-tree .monaco-list-row:has(.volt-agent-context-model-row.is-message) .monaco-tl-twistie {
+	width: 8px !important;
+	padding-left: 0 !important;
+	padding-right: 0 !important;
+	margin-right: 0;
+	transform: none;
+}
+
+.volt-agent-context-models-tree .monaco-list-row:has(.volt-agent-context-model-row.is-model) .monaco-tl-twistie {
 	width: 8px !important;
 	padding-right: 0 !important;
 	margin-right: 0;
+	transform: none;
 }
 
 .volt-agent-context-model-row {
@@ -6384,10 +6556,8 @@ pre.volt-agent-searchable {
 	overflow: hidden;
 	background: #1c1c1c;
 	color: var(--vscode-foreground);
-	border: 1px solid rgba(255, 255, 255, 0.1);
+	border: 1px solid color-mix(in srgb, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)) 58%, transparent);
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 2px 8px rgba(0, 0, 0, 0.22);
-	backdrop-filter: blur(18px);
-	-webkit-backdrop-filter: blur(18px);
 	pointer-events: none;
 	font-size: 12px;
 	line-height: 1.45;
@@ -6441,13 +6611,11 @@ pre.volt-agent-searchable {
 	box-sizing: border-box;
 	border: 1px solid rgba(255, 255, 255, 0.08);
 	border-radius: 8px;
-	background: rgba(28, 28, 28, 0.78);
+	background: rgba(28, 28, 28, 0.94);
 	color: #f5f5f5;
 	font-size: 12px;
 	line-height: 18px;
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 2px 8px rgba(0, 0, 0, 0.22);
-	backdrop-filter: blur(18px);
-	-webkit-backdrop-filter: blur(18px);
 	cursor: pointer;
 	white-space: nowrap;
 	user-select: none;
@@ -6610,4 +6778,628 @@ pre.volt-agent-searchable {
 	max-height: calc(100vh - 140px);
 	object-fit: contain;
 	background: var(--vscode-editor-background);
+}
+
+.volt-agent-editor.has-surfaces {
+	flex-direction: row;
+	align-items: stretch;
+}
+
+.volt-agent-editor.has-surfaces > .volt-agent-editor-main {
+	width: auto;
+	min-width: 0;
+	height: 100%;
+}
+
+/* Split chat only: an 8px thumb, 10px on hover, in a 10px track. */
+.volt-agent-editor.has-surfaces .volt-agent-thread > .monaco-scrollable-element > .scrollbar.vertical {
+	width: 10px !important;
+}
+
+.volt-agent-editor.has-surfaces .volt-agent-thread > .monaco-scrollable-element > .scrollbar.vertical > .slider {
+	width: 8px !important;
+	left: auto !important;
+	right: 0 !important;
+	transition: width 140ms ease;
+}
+
+.volt-agent-editor.has-surfaces .volt-agent-thread > .monaco-scrollable-element > .scrollbar.vertical:hover > .slider {
+	width: 10px !important;
+}
+
+/* After the last tools tab closes, chat must reclaim the full editor width. */
+.volt-agent-editor:not(.has-surfaces) > .volt-agent-editor-main {
+	flex: 1 1 auto;
+	width: 100%;
+	min-width: 0;
+}
+
+.volt-agent-surface-sash {
+	/* A 1px line flush against the tools, like a VS Code split. The grab area overhangs it invisibly. */
+	flex: 0 0 1px;
+	cursor: col-resize;
+	background: var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
+	position: relative;
+	z-index: 2;
+}
+
+.volt-agent-surface-sash::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -3px;
+	right: -3px;
+}
+
+.volt-agent-surface-sash:hover,
+.volt-agent-surface-sash:active,
+.volt-agent-surface-sash.hover,
+.volt-agent-surface-sash.active {
+	background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+	/* Thicken to 3px while grabbed or hovered, like a workbench sash. */
+	box-shadow: 0 0 0 1px var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+}
+
+/* The tools beside a chat: a real editor area laid over the tools' share of the row (fixed, so the
+ * editor's clipping cannot cut it), and in agent layout over the title bar row above it too. */
+.volt-agent-tools-area {
+	position: fixed;
+	z-index: 60;
+	box-sizing: border-box;
+	/* Solid, and its painting kept to itself. The window is transparent (macOS vibrancy): a browser
+	 * <webview> over a see-through layer makes Chromium stop clearing stale pixels, which turns the
+	 * left sidebar black and leaves scroll trails. The old tools pane sat on a solid fill for the same reason. */
+	background: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
+	isolation: isolate;
+	contain: paint;
+}
+
+.volt-agent-tools-area.hidden,
+.volt-agent-tools-part.hidden,
+.volt-agent-surfaces.hidden {
+	display: none;
+}
+
+/* The split line and its grab strip, top to bottom. Matches GRIP_WIDTH in agentSurfaceHost.ts. */
+.volt-agent-tools-grip {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: 7px;
+	z-index: 20;
+	cursor: col-resize;
+	-webkit-app-region: no-drag;
+}
+
+.volt-agent-tools-grip::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 3px;
+	width: 1px;
+	background: var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
+}
+
+.volt-agent-tools-grip.hover::before,
+.volt-agent-tools-grip.active::before {
+	left: 2px;
+	width: 3px;
+	background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+}
+
+/* Right of the line: grip offset (3px) plus the 1px line. */
+.volt-agent-tools-parts {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 4px;
+	right: 0;
+}
+
+.volt-agent-tools-part {
+	width: 100%;
+	height: 100%;
+}
+
+/* The area paints the fill; the part inside adds no second translucent layer on top of it. */
+.monaco-workbench.volt-layout-agent .volt-agent-tools-area .part.editor {
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
+/* The title bar row keeps the window's drag behavior out of the tools tabs; they take clicks like any tab. */
+.volt-agent-tools-area .editor-group-container > .title,
+.volt-agent-tools-area .editor-group-container > .title * {
+	-webkit-app-region: no-drag;
+}
+
+.volt-agent-surface-sash.hidden {
+	display: none;
+}
+
+.volt-agent-surfaces {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-editor-foreground);
+}
+
+.volt-agent-surfaces.parked {
+	/* Off-screen, not only visibility:hidden. An active surface sets visibility:visible,
+	 * and an Electron webview ignores a hidden ancestor and keeps the right pane painted. */
+	position: absolute;
+	left: -10000px;
+	top: 0;
+	visibility: hidden;
+	pointer-events: none;
+	flex: none;
+}
+
+.volt-agent-surfaces.parked .volt-agent-surface-view,
+.volt-agent-surfaces.parked .volt-agent-surface-view.active,
+.volt-agent-surfaces.parked webview {
+	visibility: hidden !important;
+	pointer-events: none !important;
+}
+
+.volt-agent-surface-tabs {
+	display: flex;
+	align-items: stretch;
+	height: 35px;
+	padding: 0;
+	overflow: hidden;
+	position: relative;
+	z-index: 5;
+	background: var(--vscode-editorGroupHeader-tabsBackground);
+}
+
+.volt-agent-surface-tabs::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 2;
+	height: 1px;
+	pointer-events: none;
+	background: var(--vscode-editorGroupHeader-tabsBorder, var(--vscode-tab-border, transparent));
+}
+
+.volt-agent-surface-tab-scroll {
+	display: flex;
+	align-items: stretch;
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: none;
+}
+
+.volt-agent-surface-tab-scroll::-webkit-scrollbar {
+	display: none;
+}
+
+.volt-agent-surface-add {
+	position: relative;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 28px;
+	width: 28px;
+	height: 35px;
+	margin: 0;
+	padding: 0;
+	border: none;
+	border-right: 1px solid var(--vscode-tab-border, transparent);
+	border-radius: 0;
+	background: transparent;
+	color: var(--vscode-tab-inactiveForeground);
+	cursor: pointer;
+	-webkit-appearance: none;
+	appearance: none;
+}
+
+.volt-agent-surface-add:hover,
+.volt-agent-surface-add.active {
+	color: var(--vscode-tab-activeForeground);
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.volt-agent-surface-add .codicon {
+	font-size: 14px;
+}
+
+/* The tools + popover: the filter menu's panel and rows, plus a search field and Browser / Files sections. */
+.volt-agent-home-filter-menu.volt-agent-surface-add-menu {
+	display: flex;
+	flex-direction: column;
+	width: 300px;
+	max-width: calc(100vw - 16px);
+	padding: 0 0 4px;
+}
+
+.volt-agent-surface-add-search {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 34px;
+	padding: 0 10px;
+	margin-bottom: 4px;
+	border-bottom: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
+}
+
+/* Same search glyph as the sidebar and model picker search rows. */
+.volt-agent-surface-add-search > .volt-agent-svg-icon,
+.volt-agent-surface-add-search > .volt-agent-svg-icon svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+	flex-shrink: 0;
+	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
+.volt-agent-surface-add-search input {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	padding: 0;
+	border: 0;
+	outline: none;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 13px;
+}
+
+/* The row's divider is the field's edge; drop the workbench focus outline on the input itself. */
+.monaco-workbench .volt-agent-surface-add-search input[type="text"]:focus,
+.volt-agent-surface-add-search input:focus-visible {
+	outline: none;
+	box-shadow: none;
+}
+
+.volt-agent-surface-add-search input::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
+.volt-agent-surface-add-list {
+	max-height: 360px;
+	overflow-y: auto;
+	overflow-x: hidden;
+}
+
+/* Keyboard selection and pointer hover share one highlight, like Quick Open. */
+.volt-agent-home-filter-row.volt-agent-surface-add-row:hover {
+	background: transparent;
+	color: inherit;
+}
+
+.volt-agent-home-filter-row.volt-agent-surface-add-row.selected {
+	background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)));
+	color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+}
+
+.volt-agent-surface-add-row {
+	min-height: 28px;
+}
+
+.volt-agent-surface-add-row.file {
+	min-height: 40px;
+}
+
+.volt-agent-surface-add-row > .leading {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 16px;
+	height: 16px;
+	opacity: 0.85;
+}
+
+.volt-agent-surface-add-row > .leading .codicon {
+	font-size: 16px;
+}
+
+.volt-agent-surface-add-row > .leading .file-icon-glyph {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
+.volt-agent-surface-add-row > .leading .file-icon-glyph::before {
+	display: block;
+	width: 16px;
+	height: 16px;
+	background-size: 16px 16px;
+	background-repeat: no-repeat;
+	background-position: center;
+	font-size: 16px;
+	line-height: 16px;
+	text-align: center;
+}
+
+.volt-agent-surface-add-row > .text {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.volt-agent-surface-add-row > .label,
+.volt-agent-surface-add-row > .text > .label,
+.volt-agent-surface-add-row > .text > .detail {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-surface-add-row > .label {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-agent-surface-add-row > .text > .detail {
+	font-size: 12px;
+	opacity: 0.6;
+}
+
+.volt-agent-surface-add-row > .trailing {
+	flex: none;
+	font-size: 12px;
+	opacity: 0.6;
+}
+
+.volt-agent-surface-add-empty {
+	padding: 6px 10px;
+	font-size: 12px;
+	opacity: 0.6;
+}
+
+.volt-agent-surface-tab .volt-agent-surface-stroke-icon {
+	flex: none;
+}
+
+.volt-agent-surface-view .volt-agent-surfaces,
+.volt-agent-surface-view .volt-agent-surface-sash {
+	display: none !important;
+}
+
+.volt-agent-surface-changes,
+.volt-agent-surface-chat,
+.volt-agent-surface-browser {
+	width: 100%;
+	height: 100%;
+}
+
+.volt-agent-surface-tab {
+	position: relative;
+	display: flex;
+	align-items: center;
+	box-sizing: border-box;
+	height: 35px;
+	min-width: 80px;
+	max-width: 160px;
+	flex: 0 0 auto;
+	margin: 0;
+	padding: 0 0 0 10px;
+	border: none;
+	border-right: 1px solid var(--vscode-tab-border, transparent);
+	border-radius: 0;
+	background: var(--vscode-tab-inactiveBackground);
+	color: var(--vscode-tab-inactiveForeground);
+	cursor: pointer;
+	font: inherit;
+	font-size: 13px;
+	line-height: 35px;
+	-webkit-appearance: none;
+	appearance: none;
+}
+
+.volt-agent-surface-tab:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-agent-surface-tab .codicon {
+	font-size: 16px;
+}
+
+.volt-agent-surface-tab .label {
+	flex: 1;
+	min-width: 0;
+	margin-left: 4px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-surface-tab .close {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 28px;
+	width: 28px;
+	height: 100%;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: inherit;
+	opacity: 0;
+	cursor: pointer;
+	-webkit-appearance: none;
+	appearance: none;
+}
+
+.volt-agent-surface-tab:hover .close,
+.volt-agent-surface-tab.active .close,
+.volt-agent-surface-tab .close:focus-within {
+	opacity: 1;
+}
+
+.volt-agent-surface-tab .close .codicon {
+	padding: 2px;
+	border-radius: 5px;
+}
+
+.volt-agent-surface-tab .close:hover .codicon {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-agent-surface-tab.active {
+	background: var(--vscode-tab-activeBackground);
+	color: var(--vscode-tab-activeForeground);
+}
+
+.volt-agent-surface-tab.active::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	z-index: 3;
+	height: 1px;
+	pointer-events: none;
+	background: var(--vscode-tab-activeBorderTop, var(--vscode-focusBorder));
+}
+
+.volt-agent-surface-tab.active::after {
+	content: '';
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	right: 0;
+	z-index: 3;
+	height: 1px;
+	pointer-events: none;
+	background: var(--vscode-tab-activeBorder, var(--vscode-tab-activeBackground, var(--vscode-editor-background)));
+}
+
+.volt-agent-surface-body {
+	display: flex;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.volt-agent-surface-explorer {
+	display: flex;
+	flex-direction: column;
+	flex: 0 0 200px;
+	min-width: 0;
+	border-right: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
+	overflow: auto;
+}
+
+.volt-agent-surface-explorer.hidden {
+	display: none;
+}
+
+.volt-agent-surface-explorer-title {
+	padding: 8px 10px 4px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-surface-explorer-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	height: 24px;
+	padding: 0 8px;
+	border: none;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	font: inherit;
+	font-size: 12px;
+	text-align: left;
+}
+
+.volt-agent-surface-explorer-row:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.volt-agent-surface-explorer-row .name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-surface-explorer-nest.hidden,
+.volt-agent-surface-explorer-empty {
+	display: none;
+}
+
+.volt-agent-surface-explorer-empty {
+	display: block;
+	padding: 8px 10px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-agent-surface-stage {
+	position: relative;
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+}
+
+.volt-agent-surface-view {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	visibility: hidden;
+	pointer-events: none;
+}
+
+.volt-agent-surface-view.active {
+	visibility: visible;
+	pointer-events: auto;
+}
+
+.volt-agent-surface-editor {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+/* Host for the IDE VoltBrowserEditor chrome inside an agent surface tab. */
+.volt-agent-surface-browser {
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	position: relative;
+}
+
+.volt-agent-surface-browser > .volt-browser-editor {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+/* Where a dragged tab, terminal, or file will open. Same overlay VS Code shows for an editor split. */
+.volt-agent-surface-drop {
+	position: absolute;
+	z-index: 10;
+	pointer-events: none;
+	background: var(--vscode-editorGroup-dropBackground, rgba(83, 89, 93, 0.5));
+	transition: left 0.1s ease-out, width 0.1s ease-out;
+}
+
+.volt-agent-surface-drop.hidden {
+	display: none;
 }

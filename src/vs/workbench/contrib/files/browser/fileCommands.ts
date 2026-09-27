@@ -19,6 +19,7 @@ import { CommandsRegistry, ICommandHandler, ICommandService } from '../../../../
 import { IContextKey, IContextKeyService, ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { KeybindingsRegistry, KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+import { LAYOUT_MODE_CONTEXT_KEY } from '../../../browser/parts/titlebar/layoutKeybindingMode.js';
 import { KeyMod, KeyCode, KeyChord } from '../../../../base/common/keyCodes.js';
 import { isWeb, isWindows } from '../../../../base/common/platform.js';
 import { ITextModelService } from '../../../../editor/common/services/resolverService.js';
@@ -661,7 +662,7 @@ KeybindingsRegistry.registerCommandAndKeybindingRule({
 
 KeybindingsRegistry.registerCommandAndKeybindingRule({
 	weight: KeybindingWeight.WorkbenchContrib,
-	when: null,
+	when: ContextKeyExpr.equals(LAYOUT_MODE_CONTEXT_KEY, 'ide'),
 	primary: isWeb ? (isWindows ? KeyChord(KeyMod.CtrlCmd | KeyCode.KeyK, KeyCode.KeyN) : KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyN) : KeyMod.CtrlCmd | KeyCode.KeyN,
 	secondary: isWeb ? [KeyMod.CtrlCmd | KeyCode.KeyN] : undefined,
 	id: NEW_UNTITLED_FILE_COMMAND_ID,

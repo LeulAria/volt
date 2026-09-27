@@ -304,7 +304,8 @@ function isTitlebarControl(node: HTMLElement): HTMLElement | undefined {
 	if (node.closest('.window-controls-container, .titlebar-drag-region')) {
 		return undefined;
 	}
-	const item = node.closest('.action-item, .command-center-quick-pick, .command-center-center, .volt-sidebar-toggle');
+	// `.volt-titlebar-control` lets custom buttons placed in the title bar opt into the same fix.
+	const item = node.closest('.volt-titlebar-control, .action-item, .command-center-quick-pick, .command-center-center, .volt-sidebar-toggle');
 	if (!isHTMLElement(item) || item.classList.contains('disabled')) {
 		return undefined;
 	}

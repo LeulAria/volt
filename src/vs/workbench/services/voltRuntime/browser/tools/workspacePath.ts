@@ -16,6 +16,20 @@ export function resolveWorkspaceUri(root: URI | undefined, raw: string | undefin
 	return isEqualOrParent(uri, root) ? uri : undefined;
 }
 
+/** Like `resolveWorkspaceUri`, but also inside `extraRoots` (skill folders) for read-only tools. */
+export function resolveReadableUri(root: URI | undefined, raw: string | undefined, extraRoots: readonly URI[]): URI | undefined {
+	const inside = resolveWorkspaceUri(root, raw);
+	if (inside) {
+		return inside;
+	}
+	const path = raw?.trim();
+	if (!path) {
+		return undefined;
+	}
+	const uri = path.includes('://') ? URI.parse(path) : isAbsolute(path) ? URI.file(path) : undefined;
+	return uri && extraRoots.some(extra => isEqualOrParent(uri, extra)) ? uri : undefined;
+}
+
 export function displayPath(root: URI | undefined, uri: URI): string {
 	if (!root) {
 		return uri.fsPath;

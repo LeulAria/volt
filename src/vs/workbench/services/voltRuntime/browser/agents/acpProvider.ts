@@ -13,6 +13,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { IAccessGate, ICompiledPolicy } from '../../common/access/accessTypes.js';
 import { IProviderAccessBridge } from '../../common/access/providerAccessBridge.js';
 import { classifyRisk } from '../../common/access/riskClassifier.js';
+import { IAcpNotice, noticesFromAcpPayload, noticesFromAcpUpdate } from '../../common/acpNotices.js';
 import { collectAcpToolInput } from '../../common/acpToolInput.js';
 import { IVoltEvent } from '../../common/events.js';
 import { parseTokenUsage } from '../../common/tokenUsage.js';
@@ -28,11 +29,11 @@ import { isCursorPlanWall, isCursorPlanWallPrefix, isCursorTransientError, nextC
 import { accessBridgeFor } from './bridges/accessBridges.js';
 import { AcpJsonRpcClient } from './acpJsonRpc.js';
 import { listClaudeModels } from './claudeCatalog.js';
-import { listAntigravityModels, listOpenCodeModels } from './cliAgents.js';
+import { acpLaunchFor, cliAgentDefinition, listAntigravityModels, listOpenCodeModels } from './cliAgents.js';
 import { listCodexModels } from './codexAppServer.js';
 import { resolveAntigravityCliModelLabel } from '../../common/models/antigravityModels.js';
 import { IModelOptionDescriptor, MODEL_OPTION_REASONING, unionDescriptors } from '../../common/models/modelOptions.js';
-import { applyContextWindowSuffix, applyOptionsToParameterizedId, configUpdatesForOptions, descriptorsFromAcpModel, flattenChoices, formatAgentModelLabel, IAcpAvailableModel, IAcpConfigOption, IAcpModelMeta, isModelConfigOption, metadataForAcpModel, parseParameterizedModelId } from './acpModels.js';
+import { advertisedModelVariant, applyContextWindowSuffix, applyOptionsToParameterizedId, configUpdatesForOptions, descriptorsFromAcpModel, flattenChoices, formatAgentModelLabel, IAcpAvailableModel, IAcpConfigOption, IAcpModelMeta, isModelConfigOption, metadataForAcpModel, parseParameterizedModelId } from './acpModels.js';
 
 interface IAcpSession {
 	handle: IAgentSessionHandle;
@@ -53,7 +54,23 @@ interface ISessionNewResponse {
 }
 
 /** Opting in makes Cursor expose per model reasoning, context, and fast toggles. */
-const PARAMETERIZED_MODEL_PICKER = { _meta: { parameterizedModelPicker: true } };
+/**
+ * Session-failure titles are the sentence the CLI shows for a limit, retry, or sign-in.
+ * Notices stay off: with that capability the adapter drops info-level lines instead of sending them.
+ */
+const ACP_CLIENT_CAPABILITIES = {
+	fs: { readTextFile: true, writeTextFile: true },
+	terminal: false,
+	_meta: {
+		parameterizedModelPicker: true,
+		jetbrains: {
+			air: {
+				version: 1,
+				capabilities: ['sessionFailure'],
+			},
+		},
+	},
+};
 
 const MODEL_PROBE_TIMEOUT_MS = 8000;
 
@@ -194,8 +211,7 @@ export class AcpAgentProvider implements IAgentProvider {
 	}
 
 	async start(req: IAgentStartRequest): Promise<IAgentSessionHandle> {
-		const command = req.profile.command || this.defaultCommand;
-		const args = this.startArgs(req);
+		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
 		const cwd = req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
 		const processId = await this.stdio.spawn({ command, args, cwd });
 		const client = new AcpJsonRpcClient(this.stdio, processId);
@@ -213,11 +229,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			configOptions?: IAcpConfigOption[];
 		}>('initialize', {
 			protocolVersion: 1,
-			clientCapabilities: {
-				fs: { readTextFile: true, writeTextFile: true },
-				terminal: false,
-				...PARAMETERIZED_MODEL_PICKER,
-			},
+			clientCapabilities: ACP_CLIENT_CAPABILITIES,
 			clientInfo: { name: 'volt', title: 'Volt', version: '0.1.0' },
 		});
 
@@ -245,6 +257,14 @@ export class AcpAgentProvider implements IAgentProvider {
 	isLive(session: IAgentSessionHandle): boolean {
 		const live = this.sessions.get(session.id);
 		return !!live && !live.client.isDead;
+	}
+
+	private async launchFor(profile: IProviderProfile, args: string[]): Promise<{ command: string; args: string[] }> {
+		const command = profile.command || this.defaultCommand;
+		const def = cliAgentDefinition(this.id);
+		const adapter = def?.acpAdapter;
+		const adapterOnPath = !!adapter && def.commands.includes(command) && !!await this.stdio.which(adapter.command);
+		return acpLaunchFor(def, command, args, adapterOnPath);
 	}
 
 	private startArgs(req: IAgentStartRequest): string[] {
@@ -291,9 +311,14 @@ export class AcpAgentProvider implements IAgentProvider {
 					? this.cursorModelArg(req)
 					: req.modelId;
 			const reconstructed = applyContextWindowSuffix(applyOptionsToParameterizedId(selected, req.options), req.options);
-			const applied = await this.setConfigOption(session, sessionId, modelConfigId, reconstructed);
+			let applied = await this.setConfigOption(session, sessionId, modelConfigId, reconstructed);
 			if (!applied && reconstructed !== req.modelId) {
-				await this.setConfigOption(session, sessionId, modelConfigId, req.modelId);
+				applied = await this.setConfigOption(session, sessionId, modelConfigId, req.modelId);
+			}
+			// Otherwise the session silently stays on the agent's default model.
+			const variant = applied ? undefined : advertisedModelVariant(session.configOptions?.find(option => option.id === modelConfigId), req.modelId);
+			if (variant) {
+				await this.setConfigOption(session, sessionId, modelConfigId, variant);
 			}
 		}
 		for (const update of configUpdatesForOptions(session.configOptions, req.options)) {
@@ -381,18 +406,14 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (!await this.stdio.which(command)) {
 			throw new Error(`${command} is not installed`);
 		}
-		const args = profile.args?.length ? profile.args : this.defaultArgs;
+		const launch = await this.launchFor(profile, profile.args?.length ? [...profile.args] : [...this.defaultArgs]);
 		const cwd = profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
-		const processId = await this.stdio.spawn({ command, args, cwd });
+		const processId = await this.stdio.spawn({ command: launch.command, args: launch.args, cwd });
 		const client = new AcpJsonRpcClient(this.stdio, processId);
 		try {
 			await withTimeout(client.request('initialize', {
 				protocolVersion: 1,
-				clientCapabilities: {
-					fs: { readTextFile: true, writeTextFile: true },
-					terminal: false,
-					...PARAMETERIZED_MODEL_PICKER,
-				},
+				clientCapabilities: ACP_CLIENT_CAPABILITIES,
 				clientInfo: { name: 'volt', title: 'Volt', version: '0.1.0' },
 			}), MODEL_PROBE_TIMEOUT_MS);
 			const session = await withTimeout(
@@ -450,11 +471,34 @@ export class AcpAgentProvider implements IAgentProvider {
 			held = [];
 		};
 
+		const seenNotices = new Set<string>();
+		const pushNotice = (notice: IAcpNotice) => {
+			const title = notice.title.trim();
+			if (!title) {
+				return;
+			}
+			const key = title.toLowerCase();
+			if (seenNotices.has(key)) {
+				return;
+			}
+			seenNotices.add(key);
+			pushActivity({
+				type: 'notice',
+				severity: notice.severity,
+				title,
+				...(notice.description ? { description: notice.description } : {}),
+			});
+		};
+
 		const notif = live.client.onNotification(note => {
 			if (note.method !== 'session/update') {
 				return;
 			}
 			for (const event of this.mapUpdate(note.params)) {
+				if (event.type === 'notice') {
+					pushNotice(event);
+					continue;
+				}
 				if (event.type === 'tool.start') {
 					usedTools = true;
 					flushHeld();
@@ -488,6 +532,10 @@ export class AcpAgentProvider implements IAgentProvider {
 				if (holdPlanWall && !usedTools && !token.isCancellationRequested && isCursorPlanWall(assistant)) {
 					const fallback = nextCursorFallback(tried);
 					if (fallback) {
+						const wall = assistant.trim();
+						if (wall) {
+							pushNotice({ severity: 'warning', title: wall });
+						}
 						tried.push(fallback);
 						held = [];
 						assistant = '';
@@ -505,6 +553,9 @@ export class AcpAgentProvider implements IAgentProvider {
 					flushHeld();
 				} else {
 					flushHeld();
+				}
+				for (const notice of noticesFromAcpPayload(result)) {
+					pushNotice(notice);
 				}
 				const usage = parseTokenUsage(result);
 				if (usage) {
@@ -639,6 +690,14 @@ export class AcpAgentProvider implements IAgentProvider {
 		const nestedUsage = kind === 'usage_update' || kind === 'state_update' ? undefined : parseTokenUsage(update.usage);
 		if (nestedUsage) {
 			events.push(nestedUsage);
+		}
+		for (const notice of noticesFromAcpUpdate(update)) {
+			events.push({
+				type: 'notice',
+				severity: notice.severity,
+				title: notice.title,
+				...(notice.description ? { description: notice.description } : {}),
+			});
 		}
 		return events;
 	}

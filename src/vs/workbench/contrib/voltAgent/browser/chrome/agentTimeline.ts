@@ -13,6 +13,7 @@ export type ThreadPart =
 	| { kind: 'group'; id: string; title: string; items: IAgentActivityItem[]; thinking?: string }
 	| { kind: 'snapshot'; id: string; item: IAgentActivityItem }
 	| { kind: 'markdown'; id: string; content: string }
+	| { kind: 'notice'; id: string; severity: 'info' | 'warning' | 'error'; title: string; description?: string }
 	| { kind: 'changes'; id: string; files: IFileChangeBlock[]; commands: ITerminalBlock[]; additions: number; deletions: number }
 	| { kind: 'block'; block: import('../blocks/agentBlocks.js').AgentBlock };
 
@@ -107,6 +108,9 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 	const parts: ThreadPart[] = [];
 	let items: IAgentActivityItem[] = [];
 	let thinking = '';
+	/** Streamed model reasoning carries timestamps; narration classified as thought does not. */
+	let thinkingMs = 0;
+	let timed = false;
 	let work: Array<IFileChangeBlock | ITerminalBlock> = [];
 	let groupIndex = 0;
 	let textIndex = 0;
@@ -114,16 +118,21 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 
 	const flushThought = () => {
 		const text = thinking.trim();
-		if (!text || !items.length) {
+		if (!text || (!items.length && !timed)) {
 			return;
 		}
+		const label = timed && thinkingMs >= 1_500
+			? localize('voltAgent.thoughtFor', "Thought for {0}s", Math.round(thinkingMs / 1000))
+			: localize('voltAgent.thoughtBriefly', "Thought briefly");
 		const last = items.at(-1);
 		if (last?.kind === 'thought') {
 			last.text = joinText(last.text ?? '', text);
 		} else {
-			items.push({ kind: 'thought', label: localize('voltAgent.thoughtBriefly', "Thought briefly"), text });
+			items.push({ kind: 'thought', label, text });
 		}
 		thinking = '';
+		thinkingMs = 0;
+		timed = false;
 	};
 
 	const flushGroup = () => {
@@ -192,6 +201,10 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 		if (segment.kind === 'thought') {
 			flushReply();
 			thinking = joinText(thinking, segment.text);
+			if (segment.startedAt !== undefined) {
+				timed = true;
+				thinkingMs += Math.max(0, (segment.updatedAt ?? segment.startedAt) - segment.startedAt);
+			}
 			if (items.length) {
 				flushThought();
 			}
@@ -206,9 +219,26 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 				continue;
 			}
 			if (!items.length) {
-				thinking = '';
+				if (timed) {
+					flushThought();
+				} else {
+					thinking = '';
+				}
 			}
 			items.push(segment.item);
+			continue;
+		}
+		if (segment.kind === 'notice') {
+			flushReply();
+			flushWork();
+			flushGroup();
+			parts.push({
+				kind: 'notice',
+				id: `notice-${textIndex++}`,
+				severity: segment.severity,
+				title: segment.title,
+				...(segment.description ? { description: segment.description } : {}),
+			});
 			continue;
 		}
 		if (segment.kind === 'text') {
@@ -286,8 +316,9 @@ export function streamingActivityLines(
 	items: readonly IAgentActivityItem[],
 	now: number,
 	rotateAnchor: number,
+	pinned = false,
 ): IStreamingActivityLines {
-	const live = liveStatusPhrase(status, items, now, rotateAnchor);
+	const live = liveStatusPhrase(status, items, now, rotateAnchor, pinned);
 	const generic = !title || title === THINKING_PHRASE || title === localize('voltAgent.thoughtBriefly', "Thought briefly") || title === live.phrase;
 	return {
 		summary: generic ? undefined : title,
@@ -301,8 +332,12 @@ function liveStatusPhrase(
 	items: readonly IAgentActivityItem[],
 	now: number,
 	rotateAnchor: number,
+	pinned: boolean,
 ): { phrase: string; rotate: boolean } {
 	const raw = (status ?? '').trim();
+	if (pinned && raw) {
+		return { phrase: raw, rotate: false };
+	}
 	if (!raw || raw === THINKING_PHRASE) {
 		return { phrase: rotatedThinkingPhrase(now, rotateAnchor), rotate: true };
 	}

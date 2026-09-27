@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { ToolResultView } from '../deepseek/protocol.js';
 import type { CapabilityGroup } from '../harness/lanes.js';
 import type { ToolKind } from '../harness/workLog.js';
 
@@ -28,12 +29,18 @@ export interface IToolResult {
 	readonly durationMs?: number;
 	/** Extra model-visible context injected after this result (DeepSeek additionalContexts). */
 	readonly contexts?: readonly string[];
+	/** How the editor draws the result. Never sent to the model. */
+	readonly display?: ToolResultView;
+	/** Shell exit code, for the terminal card. */
+	readonly exitCode?: number;
 }
 
 export interface IToolContext {
 	readonly cwd?: string;
 	readonly signal: AbortSignal;
 	readonly emit?: (event: { type: string;[key: string]: unknown }) => void;
+	/** The call being run, so a long tool can report progress against its own card. */
+	readonly callId?: string;
 }
 
 export interface IVoltTool {
@@ -44,6 +51,10 @@ export interface IVoltTool {
 	readonly schema: object;
 	readonly parallelSafe: boolean;
 	readonly snippet: string;
+	/** Safe to run twice. Only these are retried after a transient failure. Defaults to `parallelSafe`. */
+	readonly idempotent?: boolean;
+	/** Hard ceiling for one call. The call's signal is aborted when it passes. */
+	readonly timeoutMs?: number;
 	execute(args: unknown, ctx: IToolContext): Promise<IToolResult>;
 }
 

@@ -1327,6 +1327,8 @@ class StickyScrollController<T, TFilterData, TRef> extends Disposable {
 	private readonly _widget: StickyScrollWidget<T, TFilterData, TRef>;
 
 	private paddingTop: number;
+	private readonly clipRowsUnderWidget: boolean;
+	private readonly backdrop: HTMLElement | undefined;
 
 	constructor(
 		private readonly tree: AbstractTree<T, TFilterData, TRef>,
@@ -1343,6 +1345,14 @@ class StickyScrollController<T, TFilterData, TRef> extends Disposable {
 
 		this.stickyScrollDelegate = options.stickyScrollDelegate ?? new DefaultStickyScrollDelegate();
 		this.paddingTop = options.paddingTop ?? 0;
+		this.clipRowsUnderWidget = !!options.stickyScrollBackdrop;
+
+		// Sits under the sticky container and holds a copy of the rows the stylesheet can blur.
+		if (this.clipRowsUnderWidget) {
+			this.backdrop = $('.monaco-tree-sticky-backdrop', { 'aria-hidden': 'true' });
+			view.getScrollableElement().appendChild(this.backdrop);
+			this._register(toDisposable(() => this.backdrop?.remove()));
+		}
 
 		this._widget = this._register(new StickyScrollWidget(view.getScrollableElement(), view, tree, renderers, treeDelegate, options.accessibilityProvider));
 		this.onDidChangeHasFocus = this._widget.onDidChangeHasFocus;
@@ -1411,11 +1421,48 @@ class StickyScrollController<T, TFilterData, TRef> extends Disposable {
 		// Don't render anything if there are no elements
 		if (!firstVisibleNode || this.tree.scrollTop <= this.paddingTop) {
 			this._widget.setState(undefined);
+			this.clipRows();
 			return;
 		}
 
 		const stickyState = this.findStickyState(firstVisibleNode);
 		this._widget.setState(stickyState);
+		this.clipRows();
+	}
+
+	/**
+	 * backdrop-filter on the sticky container smears the virtualized list in a
+	 * transparent Chromium window. Instead, clip the real rows below the widget
+	 * (rows sit at `top: -scrollTop`) and mirror them into `.monaco-tree-sticky-backdrop`
+	 * under the widget, where a plain `filter` can blur them without reading back the window.
+	 */
+	private clipRows(): void {
+		if (!this.clipRowsUnderWidget || !this.backdrop) {
+			return;
+		}
+		const rows = this.view.getScrollableElement().querySelector<HTMLElement>(':scope > .monaco-list-rows');
+		if (!rows) {
+			return;
+		}
+		const height = this._widget.height;
+		if (height <= 0) {
+			rows.style.clipPath = '';
+			this.backdrop.style.height = '0';
+			this.backdrop.replaceChildren();
+			return;
+		}
+		const scrollTop = this.view.scrollTop;
+		rows.style.clipPath = `inset(${scrollTop + height}px 0 0 0)`;
+
+		const mirror = rows.cloneNode(true) as HTMLElement;
+		mirror.style.clipPath = '';
+		mirror.style.top = `-${scrollTop}px`;
+		mirror.removeAttribute('id');
+		for (const el of mirror.querySelectorAll('[id]')) {
+			el.removeAttribute('id');
+		}
+		this.backdrop.style.height = `${height}px`;
+		this.backdrop.replaceChildren(mirror);
 	}
 
 	private findStickyState(firstVisibleNode: ITreeNode<T, TFilterData>): StickyScrollState<T, TFilterData, TRef> | undefined {
@@ -2199,6 +2246,8 @@ export interface IAbstractTreeOptions<T, TFilterData = void> extends IAbstractTr
 	readonly findWidgetStyles?: IFindWidgetStyles;
 	readonly defaultFindVisibility?: TreeVisibility | ((e: T) => TreeVisibility);
 	readonly stickyScrollDelegate?: IStickyScrollDelegate<any, TFilterData>;
+	/** The consumer's stylesheet paints the sticky container (no backdrop-filter); rows are clipped below it. */
+	readonly stickyScrollBackdrop?: boolean;
 	readonly disableExpandOnSpacebar?: boolean; // defaults to false
 }
 
@@ -2837,20 +2886,27 @@ export abstract class AbstractTree<T, TFilterData, TRef> implements IDisposable 
 		}
 
 		// Sticky Scroll Background
-		const stickyScrollBackground = styles.treeStickyScrollBackground ?? styles.listBackground;
-		if (stickyScrollBackground) {
-			content.push(`.monaco-list${suffix} .monaco-scrollable-element .monaco-tree-sticky-container { background-color: ${stickyScrollBackground}; }`);
-			content.push(`.monaco-list${suffix} .monaco-scrollable-element .monaco-tree-sticky-container .monaco-tree-sticky-row { background-color: ${stickyScrollBackground}; }`);
-		}
+		if (this._options.stickyScrollBackdrop) {
+			// The consumer's stylesheet owns the sticky container fill; only strip the default row plates here.
+			content.push(`.monaco-list${suffix} .monaco-scrollable-element .monaco-tree-sticky-container .monaco-tree-sticky-row { background: transparent !important; background-color: transparent !important; background-image: none !important; box-shadow: none !important; }`);
+			content.push(`.monaco-list${suffix} .monaco-scrollable-element .monaco-tree-sticky-container .monaco-tree-sticky-row:hover { background: transparent !important; background-color: transparent !important; }`);
+			content.push(`.monaco-list${suffix} .monaco-scrollable-element .monaco-tree-sticky-container .monaco-tree-sticky-container-shadow { display: none !important; box-shadow: none !important; height: 0 !important; }`);
+		} else {
+			const stickyScrollBackground = styles.treeStickyScrollBackground ?? styles.listBackground;
+			if (stickyScrollBackground) {
+				content.push(`.monaco-list${suffix} .monaco-scrollable-element .monaco-tree-sticky-container { background-color: ${stickyScrollBackground}; }`);
+				content.push(`.monaco-list${suffix} .monaco-scrollable-element .monaco-tree-sticky-container .monaco-tree-sticky-row { background-color: ${stickyScrollBackground}; }`);
+			}
 
-		// Sticky Scroll Border
-		if (styles.treeStickyScrollBorder) {
-			content.push(`.monaco-list${suffix} .monaco-scrollable-element .monaco-tree-sticky-container { border-bottom: 1px solid ${styles.treeStickyScrollBorder}; }`);
-		}
+			// Sticky Scroll Border
+			if (styles.treeStickyScrollBorder) {
+				content.push(`.monaco-list${suffix} .monaco-scrollable-element .monaco-tree-sticky-container { border-bottom: 1px solid ${styles.treeStickyScrollBorder}; }`);
+			}
 
-		// Sticky Scroll Shadow
-		if (styles.treeStickyScrollShadow) {
-			content.push(`.monaco-list${suffix} .monaco-scrollable-element .monaco-tree-sticky-container .monaco-tree-sticky-container-shadow { box-shadow: ${styles.treeStickyScrollShadow} 0 6px 6px -6px inset; height: 3px; }`);
+			// Sticky Scroll Shadow
+			if (styles.treeStickyScrollShadow) {
+				content.push(`.monaco-list${suffix} .monaco-scrollable-element .monaco-tree-sticky-container .monaco-tree-sticky-container-shadow { box-shadow: ${styles.treeStickyScrollShadow} 0 6px 6px -6px inset; height: 3px; }`);
+			}
 		}
 
 		// Sticky Scroll Focus

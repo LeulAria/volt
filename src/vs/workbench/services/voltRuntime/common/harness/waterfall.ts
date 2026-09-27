@@ -124,9 +124,15 @@ export class ToolPipeline {
 	}
 }
 
+/**
+ * Retry, then hygiene. Timeouts are not a hook: `runToolBatch` owns them because only it holds
+ * the call's abort controller, and a timeout that cannot stop the call is not a timeout.
+ */
 export function defaultToolPipeline(options: { readonly timeoutMs?: number; readonly retryTransient?: boolean } = {}): ToolPipeline {
 	const pipeline = new ToolPipeline();
-	pipeline.use(timeoutHook(options.timeoutMs ?? 180_000));
+	if (options.timeoutMs !== undefined) {
+		pipeline.use(timeoutHook(options.timeoutMs));
+	}
 	if (options.retryTransient !== false) {
 		pipeline.use(transientRetryHook());
 	}
@@ -155,12 +161,13 @@ export function timeoutHook(ms: number): IToolHook {
 	};
 }
 
+/** One retry after a transient failure, for tools that are safe to run twice. A shell command or a write is not. */
 export function transientRetryHook(): IToolHook {
 	return {
 		name: 'retry-transient',
-		around: async (call, _tool, next) => {
+		around: async (call, tool, next) => {
 			const first = await next();
-			if (!first.isError || classifyError(call.name, first.text) !== 'transient') {
+			if (!first.isError || !(tool.idempotent ?? tool.parallelSafe) || classifyError(call.name, first.text) !== 'transient') {
 				return first;
 			}
 			return next();

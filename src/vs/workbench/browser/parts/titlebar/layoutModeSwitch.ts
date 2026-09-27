@@ -22,6 +22,7 @@ import { IPaneCompositePartService } from '../../../services/panecomposite/brows
 import { IWorkbenchLayoutService, Parts, Position } from '../../../services/layout/browser/layoutService.js';
 import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { AGENT_SIDE_PANEL_ID, stampLayoutModeChrome } from './agentLayoutChrome.js';
+import { LAYOUT_MODE_CONTEXT_KEY } from './layoutKeybindingMode.js';
 import { AGENT_LIST_WIDTH, AGENT_SIDEBAR_MIN_WIDTH, AGENT_LEFT_SIDEBAR_HIDDEN_KEY, LAYOUT_MODE_STORAGE_KEY, readStoredLayoutModeValue, SIDEBAR_LOCATION_KEY, type LayoutMode } from './layoutModeStartup.js';
 
 export type { LayoutMode } from './layoutModeStartup.js';
@@ -33,7 +34,7 @@ export const SET_IDE_LAYOUT_MODE_COMMAND_ID = 'workbench.action.setIdeLayoutMode
 
 const STATUSBAR_VISIBLE_KEY = 'workbench.statusBar.visible';
 
-export const LayoutModeContext = new RawContextKey<LayoutMode>('volt.layoutMode', 'ide');
+export const LayoutModeContext = new RawContextKey<LayoutMode>(LAYOUT_MODE_CONTEXT_KEY, 'ide', localize('volt.layoutMode.context', "Whether the window is in Agent mode ('agent') or IDE mode ('ide')."));
 export const AGENT_RIGHT_DOCK_COLLAPSED_KEY = 'volt.agent.rightDock.collapsed.v2';
 export const AGENT_RIGHT_DOCK_COLLAPSED_WIDTH = 0;
 /** Quick Open Actions no longer reserve a column; they sit in the chat scroller. */

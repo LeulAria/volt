@@ -16,6 +16,7 @@ import {
 	encodeRecord,
 	encodeRecords,
 	foldTranscript,
+	metaAfterEntry,
 	normalizeIndex,
 	parseAttachmentRef,
 	renderTranscriptMarkdown,
@@ -135,6 +136,22 @@ suite('Volt agent history log', () => {
 		assert.strictEqual(transcript.model, 'openai/gpt');
 	});
 
+	test('meta keeps the worktree across later records and compaction', () => {
+		const transcript = foldTranscript(header, [
+			{ type: 'meta', at: 1, worktreePath: '/tmp/wt', worktreeBranch: 'volt/abcd1234' },
+			{ type: 'meta', at: 2, mode: 'agent' },
+		]);
+		assert.strictEqual(transcript.worktreePath, '/tmp/wt');
+		assert.strictEqual(transcript.worktreeBranch, 'volt/abcd1234');
+		assert.strictEqual(transcript.mode, 'agent');
+		const again = foldTranscript(header, compactRecords(transcript).filter(record => record.type !== 'header'));
+		assert.strictEqual(again.worktreePath, '/tmp/wt');
+		assert.strictEqual(again.worktreeBranch, 'volt/abcd1234');
+		const derived = deriveMeta(transcript);
+		assert.strictEqual(derived.worktreePath, '/tmp/wt');
+		assert.strictEqual(derived.worktreeBranch, 'volt/abcd1234');
+	});
+
 	test('compaction keeps only effective records', () => {
 		const transcript = foldTranscript(header, [
 			{ type: 'meta', at: 0, title: 'Named' },
@@ -203,6 +220,52 @@ suite('Volt agent history log', () => {
 		const noReply = foldTranscript(header, [{ type: 'user', turn: 't1', at: 1, text: 'q', message: null }]);
 		assert.strictEqual(deriveMeta(noReply).status, 'interrupted');
 		assert.strictEqual(deriveMeta(foldTranscript(header, [])).status, 'idle');
+	});
+
+	test('keeps every folder of a multi-folder session', () => {
+		const multi: IAgentSessionHeader = { ...header, workspace: { id: 'ws2', label: 'volt', folders: ['/tmp/volt', '/tmp/vscode'] } };
+		const derived = deriveMeta(foldTranscript(multi, []));
+		assert.strictEqual(derived.workspaceFolder, '/tmp/volt');
+		assert.deepStrictEqual(derived.workspaceFolders, ['/tmp/volt', '/tmp/vscode']);
+		assert.strictEqual(deriveMeta(foldTranscript(header, [])).workspaceFolders, undefined);
+	});
+
+	test('a prompt waiting on its first reply stays running while live', () => {
+		const noReply = foldTranscript(header, [{ type: 'user', turn: 't1', at: 1, text: 'q', message: null }]);
+		assert.strictEqual(deriveMeta(noReply, { status: 'running' }).status, 'running');
+		assert.strictEqual(deriveMeta(noReply, { status: 'done' }).status, 'interrupted');
+	});
+
+	test('a prompt answers attention and a finished reply is unread', () => {
+		const base = meta({ id: 'a', status: 'done', unread: true, attention: 'question' });
+		const prompted = metaAfterEntry(base, { type: 'user', turn: 't2', at: 1, text: 'yes', message: null });
+		assert.strictEqual(prompted.status, 'running');
+		assert.strictEqual(prompted.unread, undefined);
+		assert.strictEqual(prompted.attention, undefined);
+
+		const asking = meta({ id: 'a', status: 'running', attention: 'approval' });
+		const partial = metaAfterEntry(asking, { type: 'agent', turn: 't2', at: 2, final: false, status: 'running', text: '', message: null });
+		assert.strictEqual(partial.attention, 'approval');
+		assert.strictEqual(partial.unread, undefined);
+		const finished = metaAfterEntry(asking, { type: 'agent', turn: 't2', at: 3, final: true, status: 'done', text: '', message: null });
+		assert.strictEqual(finished.unread, true);
+		assert.strictEqual(finished.attention, undefined);
+
+		const question = metaAfterEntry(meta({ id: 'q', attention: 'question' }), { type: 'agent', turn: 't1', at: 3, final: true, status: 'done', text: '?', message: null });
+		assert.strictEqual(question.attention, 'question');
+	});
+
+	test('restart drops approvals that died with their run', () => {
+		const settled = settleIndexAfterRestart({
+			version: 1,
+			sessions: [
+				meta({ id: 'a', status: 'running', attention: 'approval' }),
+				meta({ id: 'b', status: 'done', attention: 'question' }),
+			],
+		});
+		assert.strictEqual(settled.sessions[0].status, 'interrupted');
+		assert.strictEqual(settled.sessions[0].attention, undefined);
+		assert.strictEqual(settled.sessions[1].attention, 'question');
 	});
 
 	test('normalizes and settles the index', () => {

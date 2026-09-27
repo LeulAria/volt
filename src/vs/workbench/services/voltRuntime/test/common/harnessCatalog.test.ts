@@ -105,7 +105,102 @@ suite('Harness model catalogs', () => {
 		assert.strictEqual(models[1].contextLabel, '200k');
 		assert.ok(models[0].optionDescriptors?.some(option => option.id === MODEL_OPTION_FAST));
 		assert.ok(!models[1].optionDescriptors?.length);
+		assert.deepStrictEqual(
+			models[0].optionDescriptors?.find(option => option.id === MODEL_OPTION_CONTEXT)?.options?.map(choice => choice.label),
+			['200K', '1M'],
+		);
+		assert.strictEqual(models[0].optionDescriptors?.find(option => option.id === MODEL_OPTION_CONTEXT)?.options?.find(choice => choice.isDefault)?.value, '200k');
 		assert.strictEqual(models[0].optionDescriptors?.find(option => option.id === MODEL_OPTION_REASONING)?.options?.find(choice => choice.value === 'xhigh')?.label, 'Extra High');
+	});
+
+	test('claude catalog keeps a thinking switch when the model advertises on and off', () => {
+		const models = parseClaudeCatalog({
+			surfaces: {
+				cc: {
+					model_selector_config: [{
+						models: [{
+							id: 'claude-sonnet-5',
+							name: 'Sonnet 5',
+							thinking: {
+								type: 'effort_and_mode',
+								effort_options: [
+									{ id: 'low', name: 'Low' },
+									{ id: 'high', name: 'High', badge: { message: 'Default' } },
+								],
+								mode_options: [
+									{ id: 'auto', name: 'Thinking' },
+									{ id: 'off', name: 'Off' },
+								],
+							},
+							runtime: { max_input_tokens: 1000000, default_effort: 'high' },
+						}],
+					}],
+				},
+			},
+		});
+		const thinking = models[0].optionDescriptors?.find(option => option.id === MODEL_OPTION_THINKING);
+		assert.strictEqual(thinking?.type, 'boolean');
+		assert.strictEqual(thinking?.label, 'Thinking');
+		assert.strictEqual(thinking?.defaultValue, true);
+		assert.deepStrictEqual(modelEditSections(models[0].optionDescriptors).map(section => section.id), ['options', 'context', 'effort']);
+	});
+
+	test('claude effort-only models still expose the 1M window as a context choice', () => {
+		const models = parseClaudeCatalog({
+			surfaces: {
+				cc: {
+					model_selector_config: [{
+						models: [{
+							id: 'claude-fable-5-1',
+							name: 'Fable 5.1',
+							thinking: {
+								type: 'effort',
+								effort_options: [
+									{ id: 'low', name: 'Low' },
+									{ id: 'medium', name: 'Medium' },
+									{ id: 'high', name: 'High', badge: { message: 'Default' } },
+									{ id: 'xhigh', name: 'Extra' },
+									{ id: 'max', name: 'Max' },
+								],
+							},
+							runtime: { max_input_tokens: 1000000, default_effort: 'high' },
+						}],
+					}],
+				},
+			},
+		});
+		assert.ok(!models[0].optionDescriptors?.some(option => option.id === MODEL_OPTION_THINKING));
+		assert.deepStrictEqual(modelEditSections(models[0].optionDescriptors).map(section => section.id), ['context', 'effort']);
+		assert.deepStrictEqual(
+			models[0].optionDescriptors?.find(option => option.id === MODEL_OPTION_REASONING)?.options?.map(choice => choice.label),
+			['Low', 'Medium', 'High', 'Extra High', 'Max'],
+		);
+	});
+
+	test('claude code rows pick up thinking and fast mode from the other surfaces', () => {
+		const effort = { type: 'effort', effort_options: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] };
+		const models = parseClaudeCatalog({
+			surfaces: {
+				cc: {
+					model_selector_config: [{
+						models: [{ id: 'claude-sonnet-5', name: 'Sonnet 5', thinking: effort, runtime: { max_input_tokens: 1000000 } }],
+					}],
+				},
+				chat: {
+					model_selector_config: [{
+						models: [{
+							id: 'claude-sonnet-5',
+							name: 'Sonnet 5',
+							supports_fast_mode: true,
+							thinking: { type: 'effort_and_mode', mode_options: [{ id: 'auto', name: 'Thinking' }, { id: 'off', name: 'Off' }] },
+						}],
+					}],
+				},
+			},
+		});
+		assert.deepStrictEqual(models.map(model => model.id), ['claude-sonnet-5']);
+		assert.deepStrictEqual(models[0].optionDescriptors?.map(option => option.id), [MODEL_OPTION_THINKING, MODEL_OPTION_CONTEXT, MODEL_OPTION_REASONING, MODEL_OPTION_FAST]);
+		assert.deepStrictEqual(modelEditSections(models[0].optionDescriptors).map(section => section.id), ['options', 'context', 'effort']);
 	});
 
 	test('opencode lines become rows and banners are ignored', () => {
@@ -114,12 +209,12 @@ suite('Harness model catalogs', () => {
 		assert.strictEqual(models[0].label, 'Big Pickle');
 	});
 
-	test('edit sections follow the order the harness advertised', () => {
+	test('edit sections follow Options, Context, then Effort', () => {
 		const grok = modelEditSections([
 			selectOption(MODEL_OPTION_REASONING, 'Effort', [{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }]),
 			booleanOption(MODEL_OPTION_FAST, 'Fast', true),
 		]);
-		assert.deepStrictEqual(grok.map(section => section.id), ['effort', 'options']);
+		assert.deepStrictEqual(grok.map(section => section.id), ['options', 'effort']);
 
 		const composer = modelEditSections([booleanOption(MODEL_OPTION_FAST, 'Fast', true)]);
 		assert.deepStrictEqual(composer.map(section => section.id), ['options']);

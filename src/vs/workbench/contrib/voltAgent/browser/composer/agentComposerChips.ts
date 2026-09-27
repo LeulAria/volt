@@ -32,6 +32,7 @@ export interface IAgentComposerChipStatus {
 export interface IAgentComposerChipsOptions {
 	onStatusClick?: () => void;
 	onChangesClick?: () => void;
+	onTerminalClick?: () => void;
 	dock?: boolean;
 }
 
@@ -138,6 +139,10 @@ export class AgentComposerChips extends Disposable {
 		this._register(addDisposableListener(this.terminalsChip, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
+			if (this.options.onTerminalClick) {
+				this.options.onTerminalClick();
+				return;
+			}
 			const running = this.terminalService.instances.find(instance => instance.hasChildProcesses);
 			(running ?? this.terminalService.instances[0])?.focus(true);
 			void this.commandService.executeCommand(TerminalCommandId.Focus);
