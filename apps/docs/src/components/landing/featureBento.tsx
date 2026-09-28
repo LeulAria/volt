@@ -11,9 +11,9 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { type PointerEvent, type ReactNode, useRef } from "react";
 import { cn } from "@/lib/cn";
-import { type BrandId, BrandIcon, brandLabel } from "./brandIcons";
 import { gsap, REDUCED, ScrollTrigger, useGSAP } from "@/lib/gsap";
-import { COLUMN, Eyebrow } from "./geometry";
+import { BrandIcon, type BrandId, brandLabel } from "./brandIcons";
+import { COLUMN } from "./geometry";
 import { SectionHeading, Spinner, span, useLoopClock } from "./primitives";
 
 export function FeatureBento() {
@@ -52,7 +52,6 @@ export function FeatureBento() {
       className={cn(COLUMN, "relative pt-24 md:pt-32")}
     >
       <SectionHeading
-        eyebrow={<Eyebrow>The loop</Eyebrow>}
         title={
           <>
             The whole loop,
@@ -140,10 +139,10 @@ function Card({
         onPointerMove={onMove}
         className="bento-card group relative flex h-full min-h-[420px] flex-col overflow-hidden rounded-[22px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.01))] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-colors duration-300 hover:border-white/[0.14]"
       >
-        <span className="absolute top-7 right-7 z-10 font-mono text-[10px] tracking-[0.14em] text-white/25 uppercase">
+        <span className="absolute top-10 right-10 z-10 font-mono text-[10px] tracking-[0.14em] text-white/25 uppercase sm:top-12 sm:right-12 md:top-14 md:right-14">
           fig. {fig}
         </span>
-        <div className="relative z-10 p-7 pb-0">
+        <div className="relative z-10 px-10 pt-10 pb-0 sm:px-12 sm:pt-12 md:px-14 md:pt-14">
           <h3 className="text-[17px] font-semibold tracking-[-0.01em] text-white">
             {title}
           </h3>
@@ -246,10 +245,10 @@ function ModelPickerArt() {
   return (
     <div
       ref={ref}
-      className="relative flex h-[380px] w-full justify-end gap-2.5 overflow-hidden pl-7 sm:pl-10"
+      className="relative flex h-[380px] w-full justify-end gap-3 overflow-hidden px-10 sm:px-12 md:px-14"
     >
       {/* both panels run off the card's bottom edge, so the card clips them rather than a fade */}
-      <div className="mt-14 hidden w-[200px] shrink-0 self-start rounded-t-[12px] border border-b-0 border-white/10 bg-[#232323] py-1.5 text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:block">
+      <div className="mt-14 hidden w-[190px] shrink-0 self-start rounded-t-[12px] border border-b-0 border-white/10 bg-[#232323] py-1.5 text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:block">
         <MenuLabel>Options</MenuLabel>
         <div className="flex h-8 items-center px-3 text-white/90">
           Fast
@@ -280,7 +279,7 @@ function ModelPickerArt() {
         ))}
       </div>
 
-      <div className="h-full w-[330px] shrink-0 overflow-hidden rounded-tl-[12px] border-t border-l border-white/10 bg-[#232323] text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:w-[360px]">
+      <div className="h-full w-[300px] shrink-0 overflow-hidden rounded-t-[12px] border border-b-0 border-white/10 bg-[#232323] text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:w-[330px]">
         <div className="flex h-11 items-center gap-2 border-b border-white/[0.07] px-3.5 text-white/35">
           <Search className="size-3.5" />
           Search models...
@@ -391,7 +390,7 @@ function GitArt() {
   const pushed = t >= 4900;
 
   return (
-    <div ref={ref} className="w-full px-5 pb-5">
+    <div ref={ref} className="w-full px-10 pb-10 sm:px-12 sm:pb-12 md:px-14 md:pb-14">
       <CommitGraph pushed={pushed} />
       <div className="rounded-[14px] border border-white/10 bg-[#161616] p-3 text-[12.5px] shadow-[0_20px_40px_rgba(0,0,0,0.4)]">
         <div className="mb-2.5 flex items-center gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/40">
@@ -555,7 +554,7 @@ function ReviewArt() {
   const done = kept === HUNKS.length;
 
   return (
-    <div ref={ref} className="w-full px-5 pb-5">
+    <div ref={ref} className="w-full px-10 pb-10 sm:px-12 sm:pb-12 md:px-14 md:pb-14">
       <div className="overflow-hidden rounded-[14px] border border-white/10 bg-[#111] shadow-[0_20px_40px_rgba(0,0,0,0.4)]">
         <div className="flex h-9 items-center gap-2 border-b border-white/[0.07] px-3 text-[11.5px]">
           <span className="min-w-0 flex-1 truncate font-mono text-white/75">
@@ -708,7 +707,7 @@ const LANES = [
 function ParallelArt() {
   const { ref, t } = useLoopClock(8000, 7000);
   return (
-    <div ref={ref} className="flex w-full flex-col gap-2 px-5 pb-5">
+    <div ref={ref} className="flex w-full flex-col gap-2 px-10 pb-10 sm:px-12 sm:pb-12 md:px-14 md:pb-14">
       {LANES.map((lane) => {
         const p = span(t, lane.start, lane.dur);
         const finished = p >= 1;
@@ -762,7 +761,7 @@ function AutomationsArt() {
   const { ref, t } = useLoopClock(6000, 5000);
   const firing = t > 1600 && t < 3600;
   return (
-    <div ref={ref} className="w-full px-5 pb-5">
+    <div ref={ref} className="w-full px-10 pb-10 sm:px-12 sm:pb-12 md:px-14 md:pb-14">
       <div className="overflow-hidden rounded-[14px] border border-white/10 bg-[#161616]">
         {JOBS.map((job, i) => (
           <div

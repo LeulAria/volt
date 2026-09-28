@@ -117,7 +117,7 @@ html:has(body[data-scroll-locked]) {
   }
 }
 
-/* Capability drawings (capabilities.tsx): dashed orbits turn, connectors carry a slow flow. */
+/* Capability drawings (capabilities.tsx): solid orbits turn slowly. */
 .cap-orbit {
   transform-box: fill-box;
   transform-origin: center;
@@ -127,16 +127,6 @@ html:has(body[data-scroll-locked]) {
 @keyframes cap-orbit {
   to {
     transform: rotate(360deg);
-  }
-}
-
-.cap-flow {
-  animation: cap-flow 1.6s linear infinite;
-}
-
-@keyframes cap-flow {
-  to {
-    stroke-dashoffset: -14;
   }
 }
 
@@ -175,14 +165,31 @@ html:has(body[data-scroll-locked]) {
   opacity: 1;
 }
 
+/* Demo carousel: the active pip fills for exactly one slide. */
+.demo-progress {
+  transform-origin: left center;
+  animation-name: demo-progress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes demo-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html:has(.home-page) {
     scroll-behavior: auto;
   }
   .shimmer-text,
   .cap-orbit,
-  .cap-flow,
-  .ticker {
+  .ticker,
+  .demo-progress {
     animation: none;
   }
 }

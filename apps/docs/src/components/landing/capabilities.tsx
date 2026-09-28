@@ -1,7 +1,7 @@
 import { type ReactNode, useRef } from "react";
 import { cn } from "@/lib/cn";
 import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
-import { COLUMN, Eyebrow } from "./geometry";
+import { COLUMN } from "./geometry";
 import { SectionHeading } from "./primitives";
 
 const ITEMS: { title: string; body: string; art: ReactNode }[] = [
@@ -87,7 +87,6 @@ export function Capabilities() {
   return (
     <section ref={ref} className={cn(COLUMN, "relative pt-24 md:pt-32")}>
       <SectionHeading
-        eyebrow={<Eyebrow>Capabilities</Eyebrow>}
         title={
           <>
             Everything an agent needs.
@@ -97,7 +96,7 @@ export function Capabilities() {
         }
         body="Modes, permissions, tools, and context are first-class in Volt, so you decide how much rope each chat gets."
       />
-      <ul className="mt-14 grid grid-cols-1 gap-px border-y border-white/[0.07] bg-white/[0.07] sm:grid-cols-2 md:mt-20 lg:grid-cols-3">
+      <ul className="mt-14 grid grid-cols-1 gap-px border border-white/[0.08] bg-white/[0.08] sm:grid-cols-2 md:mt-20 lg:grid-cols-3">
         {ITEMS.map((item) => (
           <li
             key={item.title}
@@ -150,7 +149,7 @@ function Art({ children }: { children: ReactNode }) {
   );
 }
 
-/** Dashed orbit that turns slowly around its own centre. */
+/** Subtle solid orbit that turns slowly around its own centre. */
 function Orbit({ r, speed = 60 }: { r: number; speed?: number }) {
   return (
     <circle
@@ -158,8 +157,7 @@ function Orbit({ r, speed = 60 }: { r: number; speed?: number }) {
       cx={100}
       cy={85}
       r={r}
-      strokeDasharray="2 5"
-      strokeOpacity={0.55}
+      strokeOpacity={0.32}
       className="cap-orbit"
       style={{ animationDuration: `${speed}s` }}
     />
@@ -259,8 +257,7 @@ function ModesArt() {
               y1={85 + Math.sin(a) * 20}
               x2={x - Math.cos(a) * 11}
               y2={y - Math.sin(a) * 11}
-              strokeOpacity={0.45}
-              strokeDasharray={i === 0 ? undefined : "2 3"}
+              strokeOpacity={i === 0 ? 0.9 : 0.4}
               stroke={i === 0 ? ACCENT : undefined}
             />
             <Node x={x} y={y} accent={i === 0}>
@@ -290,7 +287,6 @@ function AccessArt() {
         data-ink
         d="M100 47 A38 38 0 0 1 138 85"
         stroke={ACCENT}
-        strokeWidth={1.5}
       />
       <Tick x={100} y={27} vertical />
       <Tick x={100} y={143} vertical />
@@ -322,17 +318,14 @@ function McpArt() {
         width={156}
         height={130}
         rx={10}
-        strokeDasharray="2 5"
-        strokeOpacity={0.5}
+        strokeOpacity={0.32}
       />
       {sats.map(([x, y]) => (
         <path
           key={`${x}-${y}`}
           data-fade
           d={`M${x < 100 ? x + 11 : x - 11} ${y} H${x < 100 ? 80 : 120} V${y < 85 ? 71 : 99}`}
-          strokeOpacity={0.5}
-          strokeDasharray="3 4"
-          className="cap-flow"
+          strokeOpacity={0.4}
         />
       ))}
       {sats.map(([x, y], i) => (
@@ -386,8 +379,7 @@ function MentionArt() {
         y1={85}
         x2={182}
         y2={85}
-        strokeDasharray="2 4"
-        strokeOpacity={0.45}
+        strokeOpacity={0.32}
       />
       <Tick x={40} y={85} vertical />
       <Tick x={160} y={85} vertical />
@@ -420,8 +412,7 @@ function QueueArt() {
         y1={8}
         x2={100}
         y2={162}
-        strokeDasharray="2 4"
-        strokeOpacity={0.4}
+        strokeOpacity={0.32}
       />
       <Tick x={100} y={20} />
       {[0, 1, 2].map((i) => (
@@ -487,13 +478,11 @@ function ContextArt() {
       <path
         data-fade
         d={`M${sx} ${sy} A${R} ${R} 0 1 1 ${tx} ${ty}`}
-        strokeDasharray="2 4"
-        strokeOpacity={0.5}
+        strokeOpacity={0.32}
       />
       <path
         data-ink
         d={`M${sx} ${sy} A${R} ${R} 0 1 1 ${ex} ${ey}`}
-        strokeWidth={2}
       />
       <circle data-pop cx={ex} cy={ey} r={3} fill={ACCENT} stroke="none" />
       <circle data-ink cx={100} cy={85} r={28} strokeOpacity={0.35} />

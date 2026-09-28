@@ -242,7 +242,14 @@ const FULL = { w: 1056, h: 716 };
 /** Phones get a chat-only frame at a narrower design width so text stays legible. */
 const COMPACT = { w: 584, h: 820 };
 
-export function AgentStage({ mode }: { mode: Mode }) {
+export function AgentStage({
+  mode,
+  plain = false,
+}: {
+  mode: Mode;
+  /** Drop border and drop shadow — used when this stage is a full-width section, not a framed card. */
+  plain?: boolean;
+}) {
   const { ref: boxRef, width } = useElementWidth<HTMLDivElement>();
   const compact = width > 0 && width < 640;
   const design = compact ? COMPACT : FULL;
@@ -252,7 +259,7 @@ export function AgentStage({ mode }: { mode: Mode }) {
     <div className="relative">
       <div
         ref={boxRef}
-        className={WINDOW_FRAME}
+        className={cn(WINDOW_FRAME, plain && "border-0 shadow-none")}
         style={{ aspectRatio: `${design.w} / ${design.h}` }}
       >
         <div

@@ -3,7 +3,7 @@ import { type ReactNode, useRef } from "react";
 import { BOLT_H, BOLT_PATH, BOLT_W } from "@/lib/boltGeometry";
 import { cn } from "@/lib/cn";
 import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
-import { COLUMN, Eyebrow } from "./geometry";
+import { COLUMN } from "./geometry";
 import { SectionHeading } from "./primitives";
 
 const CARRIED: { icon: ReactNode; title: string; body: string }[] = [
@@ -62,14 +62,14 @@ export function PoweredBy() {
   return (
     <section ref={ref} className={cn(COLUMN, "relative pt-24 md:pt-32")}>
       <SectionHeading
-        eyebrow={<Eyebrow>Foundation</Eyebrow>}
+        align="center"
         title="Powered by VS Code."
         body="Volt is built on the open-source VS Code core. The editor, extensions, and muscle memory you rely on come along; the agent layer is what's new."
       />
 
       <div
         data-pair
-        className="flex items-start justify-center gap-20 py-20 sm:gap-36 md:py-28"
+        className="flex items-start justify-center gap-20 py-10 sm:gap-36 md:py-14"
       >
         <Mark side="left" label="VS Code" caption="Open-source core">
           <VsCodeMark className="size-14 sm:size-[76px]" />
@@ -85,7 +85,7 @@ export function PoweredBy() {
         </Mark>
       </div>
 
-      <ul className="grid grid-cols-1 gap-px border-y border-white/[0.07] bg-white/[0.07] sm:grid-cols-2 md:grid-cols-4">
+      <ul className="grid grid-cols-1 gap-px border border-white/[0.08] bg-white/[0.08] sm:grid-cols-2 md:grid-cols-4">
         {CARRIED.map((item) => (
           <li
             key={item.title}

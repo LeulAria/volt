@@ -1,129 +1,208 @@
-import { type ReactNode, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
-import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
 import { AgentStage, type Mode, ModeSwitch } from "./agentShowcase";
 import { BrowserStage } from "./browserComment";
-import { COLUMN, Eyebrow, SectionRule } from "./geometry";
-import { Reveal, SectionHeading } from "./primitives";
+import { COLUMN } from "./geometry";
+import { EASE_OUT, HEADING_INSET } from "./primitives";
 import { SplitStage } from "./splitEditor";
 
-/** The three product demos, one after another. */
+const SLIDE_MS = 10000;
+
+const AGENT = {
+  title: "First ever agent + IDE view.",
+  muted: "One window.",
+  body: "Volt integrates the agent and the IDE into one. Highly inspired by Cursor, Volt is an open-source agentic development environment.",
+} as const;
+
+const SLIDES = [
+  {
+    id: "editor",
+    title: "Chat and code, side by side.",
+    muted: "Watch every edit land.",
+    body: "Open any file next to the conversation. Edits stream into the editor as the agent writes them, marked in the gutter until you keep them.",
+  },
+  {
+    id: "browser",
+    title: "Point at it.",
+    muted: "Say what should change.",
+    body: "Click any element in your running app and leave a comment. The agent gets the element, its source location, and your note, then edits the code while the page updates.",
+  },
+] as const;
+
+type SlideId = (typeof SLIDES)[number]["id"];
+
+const textVariants = {
+  enter: (dir: number) => ({ opacity: 0, y: dir > 0 ? 18 : -18 }),
+  center: { opacity: 1, y: 0 },
+  exit: (dir: number) => ({ opacity: 0, y: dir > 0 ? -14 : 14 }),
+};
+
+const stageVariants = {
+  enter: (dir: number) => ({ opacity: 0, x: dir > 0 ? 36 : -36 }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: dir > 0 ? -36 : 36 }),
+};
+
+/** Agent showcase alone, then a two-slide carousel for editor + browser. */
 export function Demos() {
   const [mode, setMode] = useState<Mode>("agent");
+
   return (
     <>
-      <DemoSection
+      <section
         id="demo"
-        index={1}
-        eyebrow="Agent workspace"
-        title="First ever agent + IDE view."
-        muted="One window."
-        body="Volt integrates the agent and the IDE into one. Highly inspired by Cursor, Volt is an open-source agentic development environment."
-        aside={<ModeSwitch mode={mode} onMode={setMode} />}
+        aria-label="Agent and IDE"
+        className={cn(COLUMN, "relative pt-24 md:pt-32")}
       >
-        <AgentStage mode={mode} />
-      </DemoSection>
-      <SectionRule className="mt-24 md:mt-32" />
-      <DemoSection
-        index={2}
-        eyebrow="Editor"
-        title="Chat and code, side by side."
-        muted="Watch every edit land."
-        body="Open any file next to the conversation. Edits stream into the editor as the agent writes them, marked in the gutter until you keep them."
-      >
-        <SplitStage />
-      </DemoSection>
-      <SectionRule className="mt-24 md:mt-32" />
-      <DemoSection
-        index={3}
-        eyebrow="Built-in browser"
-        title="Point at it."
-        muted="Say what should change."
-        body="Click any element in your running app and leave a comment. The agent gets the element, its source location, and your note, then edits the code while the page updates."
-      >
-        <BrowserStage />
-      </DemoSection>
+        <div className={cn("relative max-w-2xl", HEADING_INSET)}>
+          <h2 className="text-balance text-[32px] font-semibold leading-[1.05] tracking-[-0.03em] text-white sm:text-[44px] md:text-[52px]">
+            {AGENT.title}
+            <br />
+            <span className="text-white/40">{AGENT.muted}</span>
+          </h2>
+          <p className="mt-6 max-w-xl text-pretty text-[15px] leading-[1.65] text-white/50 md:text-[17px]">
+            {AGENT.body}
+          </p>
+          <div className="mt-7">
+            <ModeSwitch mode={mode} onMode={setMode} />
+          </div>
+        </div>
+
+        <div className="relative mx-auto mt-12 w-full max-w-[1080px] md:mt-14">
+          <AgentStage mode={mode} plain />
+        </div>
+      </section>
+
+      <DemoCarousel />
     </>
   );
 }
 
-function DemoSection({
-  id,
-  index,
-  eyebrow,
-  title,
-  muted,
-  body,
-  aside,
-  children,
-}: {
-  id?: string;
-  index: number;
-  eyebrow: string;
-  title: string;
-  muted: string;
-  body: string;
-  aside?: ReactNode;
-  children: ReactNode;
-}) {
-  const stage = useRef<HTMLDivElement>(null);
+function DemoCarousel() {
+  const reduce = useReducedMotion();
+  const [index, setIndex] = useState(0);
+  const [dir, setDir] = useState(1);
+  const slide = SLIDES[index];
 
-  // the window tilts up out of the page and settles flat as it scrolls into view
-  useGSAP(
-    () => {
-      gsap.matchMedia().add(`not ${REDUCED}`, () => {
-        gsap.fromTo(
-          stage.current,
-          {
-            rotateX: 12,
-            scale: 0.92,
-            y: 60,
-            autoAlpha: 0.35,
-            transformPerspective: 1800,
-            transformOrigin: "50% 0%",
-          },
-          {
-            rotateX: 0,
-            scale: 1,
-            y: 0,
-            autoAlpha: 1,
-            ease: "none",
-            scrollTrigger: {
-              trigger: stage.current,
-              start: "top bottom",
-              end: "top 60%",
-              scrub: 0.8,
-            },
-          },
-        );
-      });
-    },
-    { scope: stage },
-  );
+  useEffect(() => {
+    if (reduce) return;
+    const id = window.setTimeout(() => {
+      setDir(1);
+      setIndex((index + 1) % SLIDES.length);
+    }, SLIDE_MS);
+    return () => window.clearTimeout(id);
+  }, [index, reduce]);
+
+  function go(next: number) {
+    if (next === index) return;
+    setDir(next > index ? 1 : -1);
+    setIndex(next);
+  }
+
+  const textEase = reduce
+    ? { duration: 0 }
+    : {
+        y: { duration: 0.4, ease: EASE_OUT },
+        opacity: { duration: 0.28, ease: EASE_OUT },
+      };
+  const stageEase = reduce
+    ? { duration: 0 }
+    : {
+        x: { duration: 0.5, ease: EASE_OUT },
+        opacity: { duration: 0.3, ease: EASE_OUT },
+      };
 
   return (
-    <section id={id} className={cn(COLUMN, "relative pt-24 md:pt-32")}>
-      <div className="flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
-        <SectionHeading
-          eyebrow={<Eyebrow index={index}>{eyebrow}</Eyebrow>}
-          title={
-            <>
-              {title}
+    <section
+      aria-label="Editor and browser demos"
+      className={cn(COLUMN, "relative pt-24 md:pt-32")}
+    >
+      <div className={cn("relative max-w-2xl", HEADING_INSET)}>
+        <AnimatePresence initial={false} custom={dir} mode="wait">
+          <motion.div
+            key={slide.id}
+            custom={dir}
+            variants={textVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={textEase}
+          >
+            <h2 className="text-balance text-[32px] font-semibold leading-[1.05] tracking-[-0.03em] text-white sm:text-[44px] md:text-[52px]">
+              {slide.title}
               <br />
-              <span className="text-white/40">{muted}</span>
-            </>
-          }
-          body={body}
-        />
-        {aside ? (
-          <Reveal delay={0.1} className="shrink-0">
-            {aside}
-          </Reveal>
-        ) : null}
+              <span className="text-white/40">{slide.muted}</span>
+            </h2>
+            <p className="mt-6 max-w-xl text-pretty text-[15px] leading-[1.65] text-white/50 md:text-[17px]">
+              {slide.body}
+            </p>
+          </motion.div>
+        </AnimatePresence>
+
+        <div
+          role="tablist"
+          aria-label="Choose a demo"
+          className="mt-6 flex items-center gap-2"
+        >
+          {SLIDES.map((item, i) => {
+            const active = i === index;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-label={item.title}
+                onClick={() => go(i)}
+                className={cn(
+                  "relative h-[3px] overflow-hidden rounded-full bg-white/15 transition-[width] duration-500",
+                  active ? "w-14" : "w-5 hover:bg-white/30",
+                )}
+              >
+                {active && !reduce ? (
+                  <span
+                    className="demo-progress absolute inset-y-0 left-0 w-full bg-white"
+                    style={{ animationDuration: `${SLIDE_MS}ms` }}
+                  />
+                ) : null}
+                {active && reduce ? (
+                  <span className="absolute inset-0 bg-white" />
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
       </div>
-      <div ref={stage} className="mt-12 md:mt-16">
-        {children}
+
+      <div className="relative mx-auto mt-10 w-full max-w-[1080px] md:mt-12">
+        <AnimatePresence initial={false} custom={dir} mode="wait">
+          <motion.div
+            key={slide.id}
+            custom={dir}
+            variants={stageVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={stageEase}
+          >
+            <CarouselStage id={slide.id} />
+          </motion.div>
+        </AnimatePresence>
       </div>
     </section>
   );
+}
+
+function CarouselStage({ id }: { id: SlideId }) {
+  switch (id) {
+    case "editor":
+      return <SplitStage />;
+    case "browser":
+      return <BrowserStage />;
+    default: {
+      const exhaustive: never = id;
+      return exhaustive;
+    }
+  }
 }

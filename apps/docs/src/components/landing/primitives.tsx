@@ -5,6 +5,9 @@ import { gsap, REDUCED, SplitText, useGSAP } from "@/lib/gsap";
 
 export const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 
+/** Pulls section titles off the column guides. */
+export const HEADING_INSET = "pl-4 sm:pl-6 md:pl-8";
+
 /** Rises content into place once it scrolls into view. */
 export function Reveal({
   children,
@@ -46,11 +49,13 @@ export function SectionHeading({
   title,
   body,
   eyebrow,
+  align = "start",
   className,
 }: {
   title: ReactNode;
   body?: ReactNode;
   eyebrow?: ReactNode;
+  align?: "start" | "center";
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -93,13 +98,25 @@ export function SectionHeading({
   );
 
   return (
-    <div ref={ref} className={cn("relative max-w-2xl", className)}>
+    <div
+      ref={ref}
+      className={cn(
+        "relative max-w-2xl",
+        align === "center" ? "mx-auto text-center" : HEADING_INSET,
+        className,
+      )}
+    >
       {eyebrow ? <div className="mb-5">{eyebrow}</div> : null}
       <h2 className="text-balance text-[32px] font-semibold leading-[1.05] tracking-[-0.03em] text-white sm:text-[44px] md:text-[52px]">
         {title}
       </h2>
       {body ? (
-        <p className="mt-6 max-w-xl text-pretty text-[15px] leading-[1.65] text-white/50 md:text-[17px]">
+        <p
+          className={cn(
+            "mt-6 max-w-xl text-pretty text-[15px] leading-[1.65] text-white/50 md:text-[17px]",
+            align === "center" && "mx-auto",
+          )}
+        >
           {body}
         </p>
       ) : null}

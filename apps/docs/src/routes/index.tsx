@@ -251,7 +251,7 @@ function Home() {
         <FeatureBento />
         <SectionRule className="mt-24 md:mt-32" />
         <Capabilities />
-        <SectionRule className="mt-24 md:mt-32" />
+        <SectionRule className="mt-0" />
         <PoweredBy />
         <SectionRule className="mt-24 md:mt-32" />
         <Models />

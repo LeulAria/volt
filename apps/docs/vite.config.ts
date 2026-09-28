@@ -38,7 +38,11 @@ export default defineConfig({
     }),
     react(),
     // please see https://tanstack.com/start/latest/docs/framework/react/guide/hosting#nitro for guides on hosting
-    nitro(),
+    // Bundle tslib. Node resolves its "import" condition to modules/index.js, which Nitro's
+    // tracer does not copy, so prerender crashes with ERR_MODULE_NOT_FOUND.
+    nitro({
+      noExternals: ["tslib"],
+    }),
   ],
   resolve: {
     tsconfigPaths: true,
