@@ -1,5 +1,6 @@
 import {
   Check,
+  ChevronDown,
   ChevronRight,
   Clock3,
   GitBranch,
@@ -12,7 +13,7 @@ import { type PointerEvent, type ReactNode, useRef } from "react";
 import { cn } from "@/lib/cn";
 import { type BrandId, BrandIcon, brandLabel } from "./brandIcons";
 import { gsap, REDUCED, ScrollTrigger, useGSAP } from "@/lib/gsap";
-import { COLUMN } from "./geometry";
+import { COLUMN, Eyebrow } from "./geometry";
 import { SectionHeading, Spinner, span, useLoopClock } from "./primitives";
 
 export function FeatureBento() {
@@ -51,7 +52,7 @@ export function FeatureBento() {
       className={cn(COLUMN, "relative pt-24 md:pt-32")}
     >
       <SectionHeading
-        chapter={{ index: 3, name: "Loop" }}
+        eyebrow={<Eyebrow>The loop</Eyebrow>}
         title={
           <>
             The whole loop,
@@ -82,10 +83,10 @@ export function FeatureBento() {
         <Card
           className="md:col-span-2"
           fig="3.3"
-          title="A real terminal."
-          body="Agents run your scripts in a shell you can watch and take over."
+          title="Review every change."
+          body="Agent edits land as diffs. Keep or undo them hunk by hunk."
         >
-          <TerminalArt />
+          <ReviewArt />
         </Card>
         <Card
           className="md:col-span-2"
@@ -245,9 +246,10 @@ function ModelPickerArt() {
   return (
     <div
       ref={ref}
-      className="relative flex w-full justify-end gap-2.5 overflow-hidden pr-0 pl-7 [mask-image:linear-gradient(180deg,#000_78%,transparent)] sm:pl-10"
+      className="relative flex h-[380px] w-full justify-end gap-2.5 overflow-hidden pl-7 sm:pl-10"
     >
-      <div className="mt-16 hidden w-[200px] shrink-0 self-start rounded-[12px] border border-white/10 bg-[#232323] py-1.5 text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:block">
+      {/* both panels run off the card's bottom edge, so the card clips them rather than a fade */}
+      <div className="mt-14 hidden w-[200px] shrink-0 self-start rounded-t-[12px] border border-b-0 border-white/10 bg-[#232323] py-1.5 text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:block">
         <MenuLabel>Options</MenuLabel>
         <div className="flex h-8 items-center px-3 text-white/90">
           Fast
@@ -278,7 +280,7 @@ function ModelPickerArt() {
         ))}
       </div>
 
-      <div className="h-[372px] w-[330px] shrink-0 rounded-tl-[12px] border-t border-l border-white/10 bg-[#232323] text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:w-[360px]">
+      <div className="h-full w-[330px] shrink-0 overflow-hidden rounded-tl-[12px] border-t border-l border-white/10 bg-[#232323] text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:w-[360px]">
         <div className="flex h-11 items-center gap-2 border-b border-white/[0.07] px-3.5 text-white/35">
           <Search className="size-3.5" />
           Search models...
@@ -425,17 +427,16 @@ function GitArt() {
             <span className="ml-px inline-block h-3 w-[1.5px] translate-y-[2px] bg-white/80" />
           ) : null}
         </div>
-        <div className="mt-2.5 flex gap-2">
-          <span className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-3 text-white/60">
-            <Star className="size-3" />
-            Generate
-          </span>
-          <span
-            className={cn(
-              "inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg font-medium transition-colors duration-300",
-              pushed ? "bg-[#3ecf8e]/15 text-[#3ecf8e]" : "bg-white text-black",
-            )}
-          >
+        {/* split button: primary action plus a chevron for the other commit modes */}
+        <div
+          className={cn(
+            "mt-2.5 flex h-8 w-full overflow-hidden rounded-lg font-medium transition-colors duration-300",
+            pushed
+              ? "bg-[#3ecf8e]/15 text-[#3ecf8e]"
+              : "bg-[#ececec] text-black",
+          )}
+        >
+          <span className="inline-flex flex-1 items-center justify-center gap-1.5">
             {pushed ? (
               <>
                 <Check className="size-3.5" strokeWidth={2.5} /> Pushed
@@ -447,6 +448,14 @@ function GitArt() {
             ) : (
               "Commit & Push"
             )}
+          </span>
+          <span
+            className={cn(
+              "grid w-8 place-items-center border-l transition-colors duration-300",
+              pushed ? "border-[#3ecf8e]/20" : "border-black/15",
+            )}
+          >
+            <ChevronDown className="size-3.5" />
           </span>
         </div>
       </div>
@@ -515,101 +524,149 @@ function CommitGraph({ pushed }: { pushed: boolean }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Terminal                                                            */
+/* Review                                                              */
 /* ------------------------------------------------------------------ */
 
-const TERM: { at: number; node: ReactNode }[] = [
+type DiffLine = { kind: "ctx" | "add" | "del"; text: string };
+
+const HUNKS: { at: number; head: string; lines: DiffLine[] }[] = [
   {
-    at: 300,
-    node: (
-      <>
-        <span className="text-[#3ecf8e]">~/volt-web</span>{" "}
-        <span className="text-white/40">$</span> bun test api
-      </>
-    ),
-  },
-  { at: 1100, node: <span className="text-white/40">bun test v1.3.2</span> },
-  {
-    at: 1500,
-    node: (
-      <>
-        <Pass /> search › returns results <Dim>4ms</Dim>
-      </>
-    ),
+    at: 1900,
+    head: "@@ -8,2 +8,5 @@ GET",
+    lines: [
+      { kind: "add", text: "  const ip = clientIp(req);" },
+      { kind: "add", text: "  if (!limiter.take(ip))" },
+      { kind: "add", text: "    return tooMany(limiter.retryAfter(ip));" },
+    ],
   },
   {
-    at: 1800,
-    node: (
-      <>
-        <Pass /> search › paginates <Dim>2ms</Dim>
-      </>
-    ),
-  },
-  {
-    at: 2100,
-    node: (
-      <>
-        <Pass /> rateLimit › allows 60/min <Dim>1ms</Dim>
-      </>
-    ),
-  },
-  {
-    at: 2400,
-    node: (
-      <>
-        <Pass /> rateLimit › 429 + Retry-After <Dim>1ms</Dim>
-      </>
-    ),
-  },
-  {
-    at: 2700,
-    node: (
-      <>
-        <Pass /> rateLimit › window slides <Dim>3ms</Dim>
-      </>
-    ),
-  },
-  {
-    at: 3300,
-    node: (
-      <>
-        <span className="text-[#3ecf8e]">24 pass</span>{" "}
-        <span className="text-white/40">0 fail · 312ms</span>
-      </>
-    ),
+    at: 3500,
+    head: "@@ -14 +17 @@ GET",
+    lines: [
+      { kind: "del", text: "  const q = req.query.q;" },
+      { kind: "add", text: "  const q = parseQuery(req.url);" },
+    ],
   },
 ];
 
-function Pass() {
-  return <span className="text-[#3ecf8e]">✓</span>;
-}
-function Dim({ children }: { children: ReactNode }) {
-  return <span className="text-white/30">{children}</span>;
-}
+function ReviewArt() {
+  const { ref, t } = useLoopClock(7000, 5200);
+  const kept = HUNKS.filter((h) => t >= h.at).length;
+  const done = kept === HUNKS.length;
 
-function TerminalArt() {
-  const { ref, t } = useLoopClock(7000, 5000);
-  const lines = TERM.filter((l) => t >= l.at);
   return (
     <div ref={ref} className="w-full px-5 pb-5">
-      <div className="overflow-hidden rounded-[14px] border border-white/10 bg-[#0c0c0c] shadow-[0_20px_40px_rgba(0,0,0,0.4)]">
-        <div className="flex h-8 items-center gap-2 border-b border-white/[0.07] px-3 text-[11px] text-white/45">
-          <span className="rounded-md bg-white/[0.07] px-2 py-0.5 text-white/75">
-            zsh
+      <div className="overflow-hidden rounded-[14px] border border-white/10 bg-[#111] shadow-[0_20px_40px_rgba(0,0,0,0.4)]">
+        <div className="flex h-9 items-center gap-2 border-b border-white/[0.07] px-3 text-[11.5px]">
+          <span className="min-w-0 flex-1 truncate font-mono text-white/75">
+            api/search.ts
           </span>
-          <span>agent · bun</span>
-          <span className="ml-auto size-1.5 rounded-full bg-[#3ecf8e] shadow-[0_0_8px_#3ecf8e]" />
+          <span className="font-mono text-[10.5px] text-[#3ecf8e]">+3</span>
+          <span className="font-mono text-[10.5px] text-[#f47067]">-1</span>
         </div>
-        <div className="h-[210px] px-3 py-2.5 font-mono text-[11.5px] leading-[1.75] text-white/85">
-          {lines.map((l) => (
-            <div key={l.at} className="animate-[fadeIn_.25s_ease-out] truncate">
-              {l.node}
-            </div>
-          ))}
-          <span className="inline-block h-3.5 w-[7px] translate-y-[2px] animate-pulse bg-white/70" />
+        <div className="font-mono text-[11px] leading-[1.9]">
+          {HUNKS.map((hunk, i) => {
+            const accepted = t >= hunk.at;
+            return (
+              <div
+                key={hunk.at}
+                className={cn(i > 0 && "border-t border-white/[0.06]")}
+              >
+                <div className="flex h-8 items-center gap-2 pr-2 pl-3">
+                  <span className="min-w-0 flex-1 truncate text-[10.5px] text-[#7aa7ff]/70">
+                    {hunk.head}
+                  </span>
+                  <HunkActions accepted={accepted} />
+                </div>
+                {hunk.lines.map((line) => (
+                  <div
+                    key={line.text}
+                    className={cn(
+                      "flex gap-2 px-3 transition-colors duration-500",
+                      line.kind === "add" &&
+                        (accepted
+                          ? "bg-[#3ecf8e]/[0.06]"
+                          : "bg-[#3ecf8e]/[0.12]"),
+                      line.kind === "del" &&
+                        (accepted
+                          ? "bg-[#f47067]/[0.05] opacity-45"
+                          : "bg-[#f47067]/[0.12]"),
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "w-2 shrink-0 select-none",
+                        line.kind === "add" && "text-[#3ecf8e]",
+                        line.kind === "del" && "text-[#f47067]",
+                        line.kind === "ctx" && "text-white/20",
+                      )}
+                    >
+                      {line.kind === "add"
+                        ? "+"
+                        : line.kind === "del"
+                          ? "-"
+                          : " "}
+                    </span>
+                    <span
+                      className={cn(
+                        "truncate",
+                        line.kind === "ctx" ? "text-white/40" : "text-white/85",
+                        line.kind === "del" && accepted && "line-through",
+                      )}
+                    >
+                      {line.text}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex h-10 items-center gap-2 border-t border-white/[0.07] px-3 text-[11.5px]">
+          <span className="text-white/45">
+            {kept} of {HUNKS.length} kept
+          </span>
+          <span className="ml-auto h-1 w-16 overflow-hidden rounded-full bg-white/[0.07]">
+            <span
+              className="block h-full rounded-full bg-[#3ecf8e] transition-[width] duration-500"
+              style={{ width: `${(kept / HUNKS.length) * 100}%` }}
+            />
+          </span>
+          <span
+            className={cn(
+              "inline-flex h-6 items-center rounded-md px-2 font-medium transition-colors duration-300",
+              done
+                ? "bg-[#3ecf8e]/15 text-[#3ecf8e]"
+                : "bg-white/[0.07] text-white/70",
+            )}
+          >
+            {done ? "Reviewed" : "Keep all"}
+          </span>
         </div>
       </div>
     </div>
+  );
+}
+
+function HunkActions({ accepted }: { accepted: boolean }) {
+  return (
+    <span className="flex shrink-0 gap-1 font-sans text-[10.5px]">
+      {accepted ? (
+        <span className="inline-flex h-5 animate-[fadeIn_.25s_ease-out] items-center gap-1 rounded-md bg-[#3ecf8e]/15 px-1.5 text-[#3ecf8e]">
+          <Check className="size-3" strokeWidth={2.5} />
+          Kept
+        </span>
+      ) : (
+        <>
+          <span className="inline-flex h-5 items-center rounded-md border border-white/10 px-1.5 text-white/55">
+            Undo
+          </span>
+          <span className="inline-flex h-5 items-center rounded-md bg-white/90 px-1.5 font-medium text-black">
+            Keep
+          </span>
+        </>
+      )}
+    </span>
   );
 }
 

@@ -9,9 +9,8 @@ import {
 import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
 
 /*
- * Construction drawing laid over the particle bolt. The particle field fits the bolt's ink box
- * into its square slot with 2.8% padding (see particleLogo FIT_PAD), so mapping the traced
- * geometry the same way keeps every line registered on the dots.
+ * Construction drawing around the brand bolt. The bolt's ink box is fitted into the square
+ * hero slot with 2.8% padding, and every construction line is mapped the same way.
  */
 const VIEW = 1000;
 const FIT = 1 - 0.028 * 2;
@@ -99,7 +98,7 @@ export function HeroGeometry() {
             { drawSVG: 0, duration: 2.6, ease: "power2.inOut" },
             0.3,
           )
-          .to(outline, { opacity: 0.35, duration: 1.4 }, ">-0.2")
+          .to(outline, { opacity: 0.8, duration: 1.4 }, ">-0.2")
           .from(
             ring,
             {
@@ -265,7 +264,8 @@ export function HeroGeometry() {
           d={BOLT_PATH}
           fillRule="evenodd"
           stroke="currentColor"
-          strokeOpacity={0.6}
+          strokeOpacity={0.92}
+          strokeWidth={1.25}
           vectorEffect="non-scaling-stroke"
           transform={`translate(${f(OX)} ${f(OY)}) scale(${K})`}
         />

@@ -117,6 +117,48 @@ html:has(body[data-scroll-locked]) {
   }
 }
 
+/* Capability drawings (capabilities.tsx): dashed orbits turn, connectors carry a slow flow. */
+.cap-orbit {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: cap-orbit 60s linear infinite;
+}
+
+@keyframes cap-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cap-flow {
+  animation: cap-flow 1.6s linear infinite;
+}
+
+@keyframes cap-flow {
+  to {
+    stroke-dashoffset: -14;
+  }
+}
+
+/* Provider ticker (models.tsx): the list renders twice, so sliding by half loops seamlessly. */
+.ticker {
+  animation: ticker var(--ticker-speed, 60s) linear infinite;
+}
+
+.ticker[data-reverse] {
+  animation-direction: reverse;
+}
+
+.ticker-row:hover .ticker {
+  animation-play-state: paused;
+}
+
+@keyframes ticker {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 /* Pointer-following spotlight on feature cards. */
 .bento-card::before {
   content: '';
@@ -137,83 +179,12 @@ html:has(body[data-scroll-locked]) {
   html:has(.home-page) {
     scroll-behavior: auto;
   }
-  .shimmer-text {
+  .shimmer-text,
+  .cap-orbit,
+  .cap-flow,
+  .ticker {
     animation: none;
   }
-}
-
-/* Journey stop on the left rail (see geometry.tsx). The node box is 0×0 at the anchor point. */
-.chapter-node {
-  width: 0;
-  height: 0;
-}
-
-.chapter-node__dot {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 11px;
-  height: 11px;
-  transform: translate(-50%, -50%);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 999px;
-  background: #0a0d0c;
-  transition:
-    border-color 0.5s ease,
-    background-color 0.5s ease,
-    box-shadow 0.5s ease;
-}
-
-.chapter-node__dot::after {
-  content: '';
-  position: absolute;
-  inset: 3px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.35);
-  transition: background-color 0.5s ease;
-}
-
-.chapter-node__lead {
-  position: absolute;
-  top: 0;
-  left: 9px;
-  width: 11px;
-  height: 1px;
-  background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.35) 0 2px, transparent 2px 4px);
-}
-
-.chapter-node__label {
-  position: absolute;
-  top: 0;
-  right: 14px;
-  display: none;
-  transform: translateY(-50%);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: rgba(255, 255, 255, 0.3);
-  transition: color 0.5s ease;
-}
-
-@media (min-width: 1280px) {
-  .chapter-node__label {
-    display: block;
-  }
-}
-
-.chapter-node.is-on .chapter-node__dot {
-  border-color: #ff6228;
-  box-shadow:
-    0 0 0 4px rgba(255, 98, 40, 0.14),
-    0 0 16px rgba(255, 98, 40, 0.55);
-}
-
-.chapter-node.is-on .chapter-node__dot::after {
-  background: #ffb07a;
-}
-
-.chapter-node.is-on .chapter-node__label {
-  color: #ff8a5a;
 }
 
 /* Hero copy starts hidden and is revealed by the GSAP intro. If scripts never run,

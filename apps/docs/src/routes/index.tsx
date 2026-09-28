@@ -2,13 +2,9 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { ComposerPrompt } from "@/components/composerPrompt";
 import { DynamicText } from "@/components/dynamicText";
-import { AgentShowcase } from "@/components/landing/agentShowcase";
-import {
-  ClosingCta,
-  KeyboardStrip,
-  SiteFooter,
-} from "@/components/landing/closing";
-import { BrowserComment } from "@/components/landing/browserComment";
+import { ClosingCta, SiteFooter } from "@/components/landing/closing";
+import { Capabilities } from "@/components/landing/capabilities";
+import { Demos } from "@/components/landing/demos";
 import { FeatureBento } from "@/components/landing/featureBento";
 import {
   DownloadButtons,
@@ -16,9 +12,10 @@ import {
   GithubMarkIcon,
   InstallCommand,
 } from "@/components/landing/install";
-import { Rails, SectionRule } from "@/components/landing/geometry";
+import { Guides, SectionRule } from "@/components/landing/geometry";
 import { HeroGeometry } from "@/components/landing/heroGeometry";
-import { ParticleLogo } from "@/components/particleLogo";
+import { Models } from "@/components/landing/models";
+import { PoweredBy } from "@/components/landing/poweredBy";
 import { WaveField } from "@/components/waveField";
 import { gsap, REDUCED, SplitText, useGSAP } from "@/lib/gsap";
 import { homeRouteLinks, homeRouteMeta } from "@/lib/seo";
@@ -163,7 +160,8 @@ function Home() {
             <div className="relative z-0 flex flex-1 items-center justify-center px-4 py-2 sm:px-5 sm:py-6 md:flex-none md:px-4 md:py-1">
               <div className="relative">
                 <HeroGeometry />
-                <ParticleLogo key="bolt-brand" />
+                {/* square slot the construction drawing scales into */}
+                <div className="relative mx-auto aspect-square size-[min(76vw,320px)] sm:size-[min(46vw,300px)] md:mx-0 md:size-auto md:h-[min(60vh,680px)] md:max-h-[min(92vw,680px)] md:w-auto md:max-w-[min(92vw,680px)] md:shrink-0" />
               </div>
             </div>
 
@@ -246,15 +244,18 @@ function Home() {
       </section>
 
       <main className="relative">
-        <Rails />
-        <AgentShowcase />
-        <SectionRule className="mt-24 md:mt-32" />
-        <BrowserComment />
+        <Guides />
+        <SectionRule />
+        <Demos />
         <SectionRule className="mt-24 md:mt-32" />
         <FeatureBento />
         <SectionRule className="mt-24 md:mt-32" />
-        <KeyboardStrip />
-        <SectionRule />
+        <Capabilities />
+        <SectionRule className="mt-24 md:mt-32" />
+        <PoweredBy />
+        <SectionRule className="mt-24 md:mt-32" />
+        <Models />
+        <SectionRule className="mt-24 md:mt-32" />
         <ClosingCta />
         <SectionRule />
         <SiteFooter />

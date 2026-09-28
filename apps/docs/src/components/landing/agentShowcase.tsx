@@ -4,12 +4,14 @@ import {
   ChevronDown,
   ChevronsLeft,
   Code2,
+  File,
   FileText,
   FolderPlus,
   GitBranch,
   Globe,
   LaptopMinimal,
   LayoutTemplate,
+  ListFilter,
   MoreHorizontal,
   PanelLeft,
   Pencil,
@@ -19,25 +21,20 @@ import {
   Settings,
   SlidersHorizontal,
   SquareTerminal,
-  File,
-  ListFilter,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
+import { BrandIcon } from "./brandIcons";
 import {
   EASE_OUT,
-  Reveal,
-  SectionHeading,
   Spinner,
-  TrafficLights,
+  WINDOW_FRAME,
   span,
+  TrafficLights,
   useElementWidth,
   useLoopClock,
 } from "./primitives";
-import { BrandIcon } from "./brandIcons";
-import { COLUMN, FramedStage } from "./geometry";
-import { SunsetScene } from "./sunsetScene";
 
 /* ------------------------------------------------------------------ */
 /* Script                                                              */
@@ -199,45 +196,9 @@ const DONE: Chat[] = [
 /* Section                                                             */
 /* ------------------------------------------------------------------ */
 
-type Mode = "agent" | "editor";
+export type Mode = "agent" | "editor";
 
-export function AgentShowcase() {
-  const [mode, setMode] = useState<Mode>("agent");
-
-  return (
-    <section id="demo" className={cn(COLUMN, "relative pt-24 md:pt-32")}>
-      <div className="flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
-        <SectionHeading
-          chapter={{ index: 1, name: "Describe" }}
-          className="max-w-4xl"
-          title={
-            <>
-              The first ever Agent + IDE
-              <br />
-              <span className="text-white/40">Agentic Development Environment.</span>
-            </>
-          }
-          body="Volt is heavily inspired by Cursor, and it's an open-source alternative that truly integrates the agent and the IDE into one development environment. Hand off a change, watch it land, and take the wheel whenever you want."
-        />
-        <Reveal delay={0.1}>
-          <ModeSwitch mode={mode} onMode={setMode} />
-        </Reveal>
-      </div>
-
-      <div className="mt-14 md:mt-20">
-        <FramedStage
-          label={
-            mode === "agent" ? "agent · 1200 × 780" : "editor · 1200 × 780"
-          }
-        >
-          <Stage mode={mode} />
-        </FramedStage>
-      </div>
-    </section>
-  );
-}
-
-function ModeSwitch({
+export function ModeSwitch({
   mode,
   onMode,
 }: {
@@ -277,15 +238,11 @@ function ModeSwitch({
 }
 
 /** The window is laid out at a fixed design size and scaled, so it reads like a screenshot. */
-const FULL = { w: 1200, h: 780, inset: "top-[64px] right-[72px] left-[72px]" };
+const FULL = { w: 1056, h: 716 };
 /** Phones get a chat-only frame at a narrower design width so text stays legible. */
-const COMPACT = {
-  w: 640,
-  h: 860,
-  inset: "top-[40px] right-[28px] left-[28px]",
-};
+const COMPACT = { w: 584, h: 820 };
 
-function Stage({ mode }: { mode: Mode }) {
+export function AgentStage({ mode }: { mode: Mode }) {
   const { ref: boxRef, width } = useElementWidth<HTMLDivElement>();
   const compact = width > 0 && width < 640;
   const design = compact ? COMPACT : FULL;
@@ -295,7 +252,7 @@ function Stage({ mode }: { mode: Mode }) {
     <div className="relative">
       <div
         ref={boxRef}
-        className="relative w-full overflow-hidden rounded-[18px] border border-white/10 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.6)] md:rounded-[28px]"
+        className={WINDOW_FRAME}
         style={{ aspectRatio: `${design.w} / ${design.h}` }}
       >
         <div
@@ -317,10 +274,7 @@ function Stage({ mode }: { mode: Mode }) {
                 exit={{ opacity: 0, scale: 0.99 }}
                 transition={{ duration: 0.5, ease: EASE_OUT }}
               >
-                <SunsetScene className="absolute inset-0 size-full" />
-                <div className={cn("absolute bottom-0", design.inset)}>
-                  <AgentWindow compact={compact} />
-                </div>
+                <AgentWindow compact={compact} />
               </motion.div>
             ) : (
               <motion.div
@@ -370,10 +324,7 @@ function AgentWindow({ compact }: { compact: boolean }) {
   const fade = 1 - span(t, T.fadeOut, T.length - T.fadeOut);
 
   return (
-    <div
-      ref={ref}
-      className="flex size-full overflow-hidden rounded-t-[14px] border border-b-0 border-white/15 text-white shadow-[0_24px_60px_rgba(10,0,20,0.55),0_0_0_0.5px_rgba(0,0,0,0.6)]"
-    >
+    <div ref={ref} className="flex size-full overflow-hidden text-white">
       {compact ? null : <Sidebar running={running} done={done} fade={fade} />}
       <div className="relative flex min-w-0 flex-1 flex-col bg-[#191919]">
         <header className="flex h-[48px] shrink-0 items-center gap-2 px-5 text-[14px]">

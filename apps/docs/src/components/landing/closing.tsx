@@ -9,96 +9,7 @@ import {
 import { useRef } from "react";
 import { cn } from "@/lib/cn";
 import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
-import { ChapterNode, COLUMN } from "./geometry";
-
-const SHORTCUTS: { keys: string[]; label: string }[] = [
-  { keys: ["⌘", "N"], label: "New chat" },
-  { keys: ["⌘", "K"], label: "Command palette" },
-  { keys: ["⌘", "J"], label: "Terminal" },
-  { keys: ["⌘", "⇧", "G"], label: "Source control" },
-  { keys: ["⌘", "E"], label: "Agent ⇄ Editor" },
-];
-
-export function KeyboardStrip() {
-  const ref = useRef<HTMLElement>(null);
-
-  // keycaps land, then each shortcut is "pressed" once in sequence
-  useGSAP(
-    () => {
-      gsap.matchMedia().add(`not ${REDUCED}`, () => {
-        const groups = gsap.utils.toArray<HTMLElement>(
-          "[data-keys]",
-          ref.current,
-        );
-        const caps = gsap.utils.toArray<HTMLElement>("kbd", ref.current);
-        const tl = gsap.timeline({
-          scrollTrigger: { trigger: ref.current, start: "top 80%", once: true },
-        });
-        tl.from(caps, {
-          y: -10,
-          autoAlpha: 0,
-          stagger: 0.035,
-          duration: 0.9,
-          ease: "back.out(2)",
-        });
-        groups.forEach((g, n) => {
-          tl.to(
-            g.querySelectorAll("kbd"),
-            {
-              y: 2,
-              boxShadow:
-                "0 0 0 rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)",
-              duration: 0.09,
-              yoyo: true,
-              repeat: 1,
-              ease: "power1.inOut",
-            },
-            0.9 + n * 0.22,
-          );
-        });
-      });
-    },
-    { scope: ref },
-  );
-
-  return (
-    <section ref={ref} className={cn(COLUMN, "relative py-20 md:py-28")}>
-      <div className="grid gap-10 md:grid-cols-[1fr_2fr] md:items-center">
-        <div className="relative">
-          <ChapterNode
-            index={4}
-            name="Keys"
-            className="top-[0.55em] text-[22px] md:text-[26px]"
-          />
-          <h3 className="text-[22px] font-semibold tracking-[-0.02em] text-white md:text-[26px]">
-            Keyboard-first.
-          </h3>
-          <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-white/45">
-            Built on the VS Code core, so your extensions, themes, and muscle
-            memory come along.
-          </p>
-        </div>
-        <ul className="grid grid-cols-2 gap-x-6 gap-y-6 sm:grid-cols-3 md:grid-cols-5">
-          {SHORTCUTS.map((s) => (
-            <li key={s.label} className="flex flex-col gap-2.5">
-              <span data-keys className="flex gap-1">
-                {s.keys.map((k) => (
-                  <kbd
-                    key={k}
-                    className="grid h-8 min-w-8 place-items-center rounded-[7px] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.02))] px-2 font-sans text-[13px] text-white/80 shadow-[0_2px_0_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.08)]"
-                  >
-                    {k}
-                  </kbd>
-                ))}
-              </span>
-              <span className="text-[12.5px] text-white/45">{s.label}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </section>
-  );
-}
+import { COLUMN } from "./geometry";
 
 /* ------------------------------------------------------------------ */
 /* Closing construction                                                */
@@ -247,12 +158,8 @@ export function ClosingCta() {
   );
 
   return (
-    <section
-      ref={ref}
-      className={cn(COLUMN, "relative py-20 md:py-28")}
-    >
+    <section ref={ref} className={cn(COLUMN, "relative py-20 md:py-28")}>
       <div className="relative flex flex-col items-center text-center">
-        <ChapterNode index={5} name="Ship" className="top-0" />
         <div
           data-construct
           className="relative aspect-square w-[min(88vw,520px)]"
@@ -406,9 +313,15 @@ export function ClosingCta() {
             className="absolute top-1/2 left-1/2 size-[26%] -translate-x-1/2 -translate-y-1/2"
           />
         </div>
+        <h2
+          data-c-rest
+          className="mt-8 text-balance text-[36px] font-semibold leading-[1.05] tracking-[-0.03em] text-white sm:text-[48px] md:mt-10 md:text-[60px]"
+        >
+          Get started with Volt.
+        </h2>
         <p
           data-c-rest
-          className="mt-8 max-w-xl text-balance text-[16px] leading-relaxed text-white/55 md:mt-10 md:text-[19px]"
+          className="mt-4 max-w-xl text-balance text-[16px] leading-relaxed text-white/50 md:text-[18px]"
         >
           Free while in public beta. macOS, Windows, and Linux.
         </p>

@@ -2,7 +2,6 @@ import { useInView, useReducedMotion } from "motion/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { gsap, REDUCED, SplitText, useGSAP } from "@/lib/gsap";
-import { ChapterNode } from "./geometry";
 
 export const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 
@@ -41,18 +40,17 @@ export function Reveal({
 }
 
 /**
- * Section title: lines rise out of masks one after another, the body follows, and a chapter
- * node marks the section on the journey spine.
+ * Section title: lines rise out of masks one after another, then the body follows.
  */
 export function SectionHeading({
   title,
   body,
-  chapter,
+  eyebrow,
   className,
 }: {
   title: ReactNode;
   body?: ReactNode;
-  chapter?: { index: number; name: string };
+  eyebrow?: ReactNode;
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -96,13 +94,7 @@ export function SectionHeading({
 
   return (
     <div ref={ref} className={cn("relative max-w-2xl", className)}>
-      {chapter ? (
-        <ChapterNode
-          index={chapter.index}
-          name={chapter.name}
-          className="top-[0.53em] text-[32px] sm:text-[44px] md:text-[52px]"
-        />
-      ) : null}
+      {eyebrow ? <div className="mb-5">{eyebrow}</div> : null}
       <h2 className="text-balance text-[32px] font-semibold leading-[1.05] tracking-[-0.03em] text-white sm:text-[44px] md:text-[52px]">
         {title}
       </h2>
@@ -211,3 +203,7 @@ export function useElementWidth<T extends HTMLElement>() {
   }, []);
   return { ref, width };
 }
+
+/** Outer frame for the scaled demo windows: the window itself is the frame, no backdrop. */
+export const WINDOW_FRAME =
+  "relative w-full overflow-hidden rounded-[12px] border border-white/[0.12] bg-[#161616] shadow-[0_48px_96px_-32px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.06)] md:rounded-[16px]";

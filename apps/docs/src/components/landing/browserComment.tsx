@@ -2,7 +2,6 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
-  Braces,
   Check,
   Globe,
   Mic,
@@ -11,47 +10,23 @@ import {
   PenTool,
   Plus,
   RotateCw,
-  X,
-  Anchor,
-  Bell,
-  Bookmark,
-  Box,
-  Calendar,
-  Camera,
-  Circle,
-  Clock,
-  Cloud,
-  Heart,
-  Image,
-  Layers,
-  Link2,
-  Lock,
-  Mail,
-  Map as MapIcon,
-  Moon,
-  Music,
   Search,
-  Star,
-  Sun,
-  User,
-  Zap,
+  X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { cn } from "@/lib/cn";
 import { BrandIcon } from "./brandIcons";
-import { COLUMN, FramedStage } from "./geometry";
 import {
   EASE_OUT,
-  SectionHeading,
   Spinner,
-  TrafficLights,
+  WINDOW_FRAME,
   span,
+  TrafficLights,
   useElementWidth,
   useLoopClock,
 } from "./primitives";
-import { SunsetScene } from "./sunsetScene";
 
-const NOTE = "Make this the primary action and add the MCP icon";
+const NOTE = "Make this the primary action and add a plus icon";
 
 /** Timeline in ms. */
 const B = {
@@ -67,33 +42,10 @@ const B = {
   length: 11800,
 } as const;
 
-const FULL = { w: 1200, h: 720 };
-const COMPACT = { w: 720, h: 760 };
+const FULL = { w: 1072, h: 664 };
+const COMPACT = { w: 672, h: 724 };
 
-export function BrowserComment() {
-  return (
-    <section className={cn(COLUMN, "relative pt-24 md:pt-32")}>
-      <SectionHeading
-        chapter={{ index: 2, name: "Point" }}
-        title={
-          <>
-            Point at it.
-            <br />
-            <span className="text-white/40">Say what should change.</span>
-          </>
-        }
-        body="Open your app in the built-in browser, click any element, and leave a comment. The agent gets the element, its source location, and your note, then edits the code while you watch the page update."
-      />
-      <div className="mt-14 md:mt-20">
-        <FramedStage label="browser · 1200 × 720">
-          <BrowserStage />
-        </FramedStage>
-      </div>
-    </section>
-  );
-}
-
-function BrowserStage() {
+export function BrowserStage() {
   const { ref, width } = useElementWidth<HTMLDivElement>();
   const compact = width > 0 && width < 640;
   const design = compact ? COMPACT : FULL;
@@ -102,7 +54,7 @@ function BrowserStage() {
   return (
     <div
       ref={ref}
-      className="relative w-full overflow-hidden rounded-[18px] border border-white/10 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.6)] md:rounded-[28px]"
+      className={WINDOW_FRAME}
       style={{ aspectRatio: `${design.w} / ${design.h}` }}
     >
       <div
@@ -114,18 +66,7 @@ function BrowserStage() {
           opacity: scale ? 1 : 0,
         }}
       >
-        {/* same dusk scene, shifted to night so the two demos read as a pair */}
-        <SunsetScene className="absolute inset-0 size-full [filter:hue-rotate(205deg)_saturate(0.75)_brightness(0.8)]" />
-        <div
-          className={cn(
-            "absolute bottom-0",
-            compact
-              ? "top-[36px] right-[24px] left-[24px]"
-              : "top-[56px] right-[64px] left-[64px]",
-          )}
-        >
-          <Window compact={compact} />
-        </div>
+        <Window compact={compact} />
       </div>
     </div>
   );
@@ -138,7 +79,7 @@ function Window({ compact }: { compact: boolean }) {
   return (
     <div
       ref={ref}
-      className="flex size-full overflow-hidden rounded-t-[14px] border border-b-0 border-white/15 bg-[#161616] text-white shadow-[0_24px_60px_rgba(0,0,20,0.55)]"
+      className="flex size-full overflow-hidden bg-[#161616] text-white"
     >
       {compact ? null : <ChatPane t={t} fade={fade} />}
       <BrowserPane t={t} fade={fade} compact={compact} />
@@ -162,9 +103,7 @@ function ChatPane({ t, fade }: { t: number; fade: number }) {
         <PanelLeft className="ml-2 size-4" />
         <Search className="size-4" />
         <Plus className="size-4" />
-        <span className="truncate text-[13px] text-white/70">
-          Aria Icons landing
-        </span>
+        <span className="truncate text-[13px] text-white/70">Todos</span>
       </div>
 
       <div
@@ -172,12 +111,12 @@ function ChatPane({ t, fade }: { t: number; fade: number }) {
         style={{ opacity: fade }}
       >
         <div className="rounded-xl border border-white/10 bg-white/[0.045] px-3.5 py-2.5 text-[13.5px] text-white/85">
-          Tighten the hero copy to one line
+          Quiet the completed rows
         </div>
         <div className="px-1 text-[13px] leading-relaxed text-white/45">
           Worked for 6s
           <p className="mt-1.5 text-white/80">
-            Shortened the subtitle and balanced the line break.
+            Struck through finished tasks and lifted the open count.
           </p>
         </div>
 
@@ -196,10 +135,10 @@ function ChatPane({ t, fade }: { t: number; fade: number }) {
                     1
                   </span>
                   <code className="rounded-md bg-white/[0.07] px-1.5 py-0.5 font-mono text-[11px] text-[#9cdcfe]">
-                    button.connect-mcp
+                    button.add-task
                   </code>
                   <span className="font-mono text-[11px] text-white/35">
-                    Hero.tsx:42
+                    TodoList.tsx:28
                   </span>
                 </div>
                 {NOTE}
@@ -229,7 +168,7 @@ function ChatPane({ t, fade }: { t: number; fade: number }) {
                   </span>
                   <span className="text-white/50">Edit</span>
                   <span className="font-mono text-[11.5px] text-white/80">
-                    src/components/Hero.tsx
+                    src/components/TodoList.tsx
                   </span>
                   <span className="ml-auto font-mono text-[11.5px] text-[#3ecf8e]">
                     +4 <span className="text-[#f07178]">-2</span>
@@ -266,38 +205,12 @@ function ChatPane({ t, fade }: { t: number; fade: number }) {
 /* Right: browser                                                      */
 /* ------------------------------------------------------------------ */
 
-const GRID_ICONS = [
-  User,
-  Star,
-  Heart,
-  Bell,
-  Bookmark,
-  Calendar,
-  Camera,
-  Cloud,
-  Clock,
-  Globe,
-  Image,
-  Layers,
-  Link2,
-  Lock,
-  Mail,
-  MapIcon,
-  Moon,
-  Music,
-  Sun,
-  Zap,
-  Anchor,
-  Box,
-  Circle,
-  Search,
-  Plus,
-  Check,
-  X,
-  ArrowUp,
-  ArrowLeft,
-  ArrowRight,
-];
+const TASKS = [
+  { title: "Rewrite the landing hero", when: "Today", done: false },
+  { title: "Ship the rate limiter", when: "Done", done: true },
+  { title: "Pin the browser comment", when: "Today", done: false },
+  { title: "Review the settings copy", when: "Later", done: false },
+] as const;
 
 function BrowserPane({
   t,
@@ -333,7 +246,7 @@ function BrowserPane({
       <div className="flex h-[46px] shrink-0 items-center gap-2 border-b border-white/[0.07] bg-[#161616] px-3">
         <span className="inline-flex h-8 items-center gap-2 rounded-t-lg px-3 text-[13px] text-white/85">
           <Globe className="size-3.5 text-white/55" />
-          Aria Icons
+          Todos
           <X className="size-3 text-white/40" />
         </span>
         <div className="ml-auto flex items-center gap-4 pr-1 text-white/45">
@@ -359,113 +272,141 @@ function BrowserPane({
         className="relative min-h-0 flex-1 overflow-hidden"
         style={{ opacity: fade }}
       >
-        <div className="absolute inset-0 grid grid-cols-10 content-start gap-0 opacity-[0.16]">
-          {GRID_ICONS.map((Icon) => (
-            <span
-              key={Icon.displayName}
-              className="grid h-[84px] place-items-center border-r border-b border-white/15"
-            >
-              <Icon className="size-5" strokeWidth={1.4} />
-            </span>
-          ))}
-        </div>
-        <div className="absolute inset-0 bg-[radial-gradient(60%_55%_at_50%_55%,rgba(14,14,14,0.96),rgba(14,14,14,0.55))]" />
-
-        <div className="relative flex h-full flex-col items-center justify-center pb-16 text-center">
-          <span className="mb-4 grid size-11 place-items-center rounded-xl border-2 border-white text-white">
-            <Braces className="size-5" strokeWidth={2.2} />
-          </span>
-          <h3 className="text-[36px] font-bold tracking-[-0.02em] text-white">
-            Aria Icons
-          </h3>
-          <p className="mt-2 max-w-[400px] text-[15px] leading-relaxed text-white/55">
-            Browse curated sets. Shape size, stroke, and color, then copy or
-            download in a click.
-          </p>
-
-          <div className="relative mt-8 flex items-center gap-3">
-            <div className="relative">
-              <motion.span
-                layout
-                transition={{ duration: 0.45, ease: EASE_OUT }}
-                className={cn(
-                  "inline-flex h-11 items-center gap-2 rounded-full px-6 text-[15px] font-medium",
-                  applied
-                    ? "bg-[#4c8dff] text-white shadow-[0_8px_24px_rgba(76,141,255,0.35)]"
-                    : "border border-white/20 text-white/85",
-                )}
-              >
-                {applied ? (
-                  <Braces className="size-4" strokeWidth={2.4} />
-                ) : null}
-                Connect MCP
-              </motion.span>
-
-              {/* element picker outline + pin */}
-              <AnimatePresence>
-                {hover || (pinned && !applied) ? (
-                  <motion.span
-                    key="outline"
-                    initial={{ opacity: 0, scale: 1.08 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.25, ease: EASE_OUT }}
-                    className="pointer-events-none absolute -inset-1.5 rounded-[6px] border-2 border-[#4c8dff] bg-[#4c8dff]/[0.07]"
-                  >
-                    {hover && !pinned ? (
-                      <span className="absolute -top-6 left-0 rounded-[4px] bg-[#4c8dff] px-1.5 py-0.5 font-mono text-[10.5px] whitespace-nowrap text-white">
-                        button.connect-mcp · 152×44
-                      </span>
-                    ) : null}
-                  </motion.span>
-                ) : null}
-              </AnimatePresence>
-              {/* pointer, anchored to the target so it always lands on it */}
-              {t < B.send ? (
-                <svg
-                  className="pointer-events-none absolute z-20 size-5 drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]"
-                  style={{
-                    left: cursor.x,
-                    top: cursor.y,
-                    transform: `scale(${t >= B.pin - 150 && t < B.pin ? 0.85 : 1})`,
-                  }}
-                  viewBox="0 0 24 24"
-                  aria-hidden
-                >
-                  <path
-                    d="M4 2.5 19.5 11l-6.8 1.8L9.6 19.6z"
-                    fill="#fff"
-                    stroke="#000"
-                    strokeWidth="1.3"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              ) : null}
-              <AnimatePresence>
-                {pinned ? (
-                  <motion.span
-                    key="pin"
-                    initial={{ opacity: 0, y: -10, scale: 0.6 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ type: "spring", stiffness: 520, damping: 22 }}
-                    className={cn(
-                      "absolute -top-5 -left-5 grid size-8 place-items-center rounded-full rounded-bl-[4px] border-2 border-white text-[13px] font-semibold text-white shadow-[0_6px_16px_rgba(0,0,0,0.5)]",
-                      applied ? "bg-[#3ecf8e]" : "bg-[#1b1b1b]",
-                    )}
-                  >
-                    {applied ? (
-                      <Check className="size-4" strokeWidth={3} />
-                    ) : (
-                      "1"
-                    )}
-                  </motion.span>
-                ) : null}
-              </AnimatePresence>
+        <div className="relative flex h-full flex-col items-center justify-center px-8 pb-8">
+          <div className="w-full max-w-[460px]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/40">
+              Inbox
+            </p>
+            <div className="mt-1.5 flex items-end justify-between">
+              <h3 className="text-[32px] font-semibold tracking-[-0.03em] text-white">
+                Today
+              </h3>
+              <span className="mb-1.5 text-[13px] text-white/40">3 open</span>
             </div>
-            <span className="inline-flex h-11 items-center rounded-full bg-white px-6 text-[15px] font-medium text-black">
-              Get started
-            </span>
+            <ul className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.035]">
+              {TASKS.map((task) => (
+                <li
+                  key={task.title}
+                  className="flex h-12 items-center gap-3 border-b border-white/[0.06] px-4 last:border-b-0"
+                >
+                  <span
+                    className={cn(
+                      "grid size-[18px] shrink-0 place-items-center rounded-full border",
+                      task.done
+                        ? "border-[#3ecf8e] bg-[#3ecf8e] text-[#0e0e0e]"
+                        : "border-white/25",
+                    )}
+                  >
+                    {task.done ? (
+                      <Check className="size-3" strokeWidth={3} />
+                    ) : null}
+                  </span>
+                  <span
+                    className={cn(
+                      "min-w-0 flex-1 truncate text-[14px]",
+                      task.done
+                        ? "text-white/35 line-through"
+                        : "text-white/90",
+                    )}
+                  >
+                    {task.title}
+                  </span>
+                  <span className="shrink-0 text-[12px] text-white/35">
+                    {task.when}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <div className="relative mt-8 flex items-center gap-3">
+              <div className="relative">
+                <motion.span
+                  layout
+                  transition={{ duration: 0.45, ease: EASE_OUT }}
+                  className={cn(
+                    "inline-flex h-11 items-center gap-2 rounded-full px-6 text-[15px] font-medium",
+                    applied
+                      ? "bg-[#4c8dff] text-white shadow-[0_8px_24px_rgba(76,141,255,0.35)]"
+                      : "border border-white/20 text-white/85",
+                  )}
+                >
+                  {applied ? (
+                    <Plus className="size-4" strokeWidth={2.4} />
+                  ) : null}
+                  Add task
+                </motion.span>
+
+                {/* element picker outline + pin */}
+                <AnimatePresence>
+                  {hover || (pinned && !applied) ? (
+                    <motion.span
+                      key="outline"
+                      initial={{ opacity: 0, scale: 1.08 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.25, ease: EASE_OUT }}
+                      className="pointer-events-none absolute -inset-1.5 rounded-[6px] border-2 border-[#4c8dff] bg-[#4c8dff]/[0.07]"
+                    >
+                      {hover && !pinned ? (
+                        <span className="absolute -top-6 left-0 rounded-[4px] bg-[#4c8dff] px-1.5 py-0.5 font-mono text-[10.5px] whitespace-nowrap text-white">
+                          button.add-task · 132×44
+                        </span>
+                      ) : null}
+                    </motion.span>
+                  ) : null}
+                </AnimatePresence>
+                {/* pointer, anchored to the target so it always lands on it */}
+                {t < B.send ? (
+                  <svg
+                    className="pointer-events-none absolute z-20 size-5 drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]"
+                    style={{
+                      left: cursor.x,
+                      top: cursor.y,
+                      transform: `scale(${t >= B.pin - 150 && t < B.pin ? 0.85 : 1})`,
+                    }}
+                    viewBox="0 0 24 24"
+                    aria-hidden
+                  >
+                    <path
+                      d="M4 2.5 19.5 11l-6.8 1.8L9.6 19.6z"
+                      fill="#fff"
+                      stroke="#000"
+                      strokeWidth="1.3"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : null}
+                <AnimatePresence>
+                  {pinned ? (
+                    <motion.span
+                      key="pin"
+                      initial={{ opacity: 0, y: -10, scale: 0.6, rotate: -45 }}
+                      animate={{ opacity: 1, y: 0, scale: 1, rotate: -45 }}
+                      exit={{ opacity: 0, rotate: -45 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 520,
+                        damping: 22,
+                      }}
+                      className={cn(
+                        "absolute -top-5 -left-5 grid size-8 place-items-center rounded-full rounded-bl-[4px] border-2 border-white text-[13px] font-semibold text-white shadow-[0_6px_16px_rgba(0,0,0,0.5)]",
+                        applied ? "bg-[#3ecf8e]" : "bg-[#1b1b1b]",
+                      )}
+                    >
+                      <span className="grid rotate-45 place-items-center">
+                        {applied ? (
+                          <Check className="size-4" strokeWidth={3} />
+                        ) : (
+                          "1"
+                        )}
+                      </span>
+                    </motion.span>
+                  ) : null}
+                </AnimatePresence>
+              </div>
+              <span className="inline-flex h-11 items-center rounded-full bg-white px-6 text-[15px] font-medium text-black">
+                Clear done
+              </span>
+            </div>
           </div>
         </div>
 
