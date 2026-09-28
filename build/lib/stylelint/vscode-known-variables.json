@@ -882,7 +882,9 @@
 		"--vscode-widget-border",
 		"--vscode-widget-shadow",
 		"--vscode-window-activeBorder",
-		"--vscode-window-inactiveBorder"
+		"--vscode-window-inactiveBorder",
+		"--vscode-voltAgentEdits-keepBackground",
+		"--vscode-voltAgentEdits-keepHoverBackground"
 	],
 	"others": [
 		"--background-dark",
@@ -904,6 +906,7 @@
 		"--volt-agent-sidebar-width",
 		"--volt-agent-titlebar-height",
 		"--volt-agent-chat-bg",
+		"--volt-agent-fresh-text",
 		"--volt-agent-window-bg",
 		"--volt-agent-window-bg-base",
 		"--volt-code-font",

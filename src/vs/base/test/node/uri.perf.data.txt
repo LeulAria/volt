@@ -394,128 +394,128 @@
 /Users/example/.build/node/v18.15.0/darwin-arm64/node
 /Users/example/.build/log_api-proposal-names
 /Users/example/.build/electron/LICENSE
-/Users/example/.build/electron/Code - OSS.app/Contents/MacOS/Electron
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/Javascript.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/Shell.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/css.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/JSON.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/SQL.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/PHP.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/React.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/YAML.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/TypeScript.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/Python.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/Powershell.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/SASS.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/Vue.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/html.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/c.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/Less.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/bat.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/default.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/XML.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/Code - OSS.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/LICENSES.chromium.html
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/cpp.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/Jade.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/Java.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/csharp.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/default_app.asar
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/Bower.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/go.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/config.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/Ruby.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Resources/Markdown.icns
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/de.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ur.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/he.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ar.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/el.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ja.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/fa.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/mr.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/en.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/chrome_200_percent.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/uk.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/es_419.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/gu.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/zh_CN.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/kn.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/nb.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/chrome_100_percent.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/am.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/es.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/sw.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/sl.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/pt_BR.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/da.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/et.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/it.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/bg.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/sk.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/pt_PT.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/icudtl.dat
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/sr.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ms.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ta.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ml.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/sv.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/te.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/cs.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ko.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/fil.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/MainMenu.nib
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/hu.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/v8_context_snapshot.arm64.bin
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/tr.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/pl.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/zh_TW.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/en_GB.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/resources.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/vi.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/lv.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/lt.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ru.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/af.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/fr.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/fi.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/id.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/nl.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/th.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/bn.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ro.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/hr.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/hi.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ca.lproj/locale.pak
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libEGL.dylib
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/vk_swiftshader_icd.json
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libvk_swiftshader.dylib
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libGLESv2.dylib
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libffmpeg.dylib
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/ReactiveObjC.framework/Versions/A/Resources/Info.plist
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/ReactiveObjC.framework/Versions/A/ReactiveObjC
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Squirrel.framework/Versions/A/Resources/ShipIt
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Squirrel.framework/Versions/A/Resources/Info.plist
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Squirrel.framework/Versions/A/Squirrel
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (GPU).app/Contents/MacOS/Code - OSS Helper (GPU)
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (GPU).app/Contents/Info.plist
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (GPU).app/Contents/PkgInfo
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Mantle.framework/Versions/A/Mantle
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Mantle.framework/Versions/A/Resources/Info.plist
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/MacOS/Code - OSS Helper (Plugin)
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/Info.plist
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Plugin).app/Contents/PkgInfo
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Renderer).app/Contents/MacOS/Code - OSS Helper (Renderer)
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Renderer).app/Contents/Info.plist
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper (Renderer).app/Contents/PkgInfo
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/MacOS/Code - OSS Helper
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/Info.plist
-/Users/example/.build/electron/Code - OSS.app/Contents/Frameworks/Code - OSS Helper.app/Contents/PkgInfo
-/Users/example/.build/electron/Code - OSS.app/Contents/Info.plist
-/Users/example/.build/electron/Code - OSS.app/Contents/PkgInfo
+/Users/example/.build/electron/VOLT.app/Contents/MacOS/Electron
+/Users/example/.build/electron/VOLT.app/Contents/Resources/Javascript.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/Shell.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/css.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/JSON.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/SQL.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/PHP.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/React.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/YAML.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/TypeScript.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/Python.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/Powershell.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/SASS.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/Vue.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/html.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/c.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/Less.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/bat.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/default.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/XML.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/VOLT.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/LICENSES.chromium.html
+/Users/example/.build/electron/VOLT.app/Contents/Resources/cpp.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/Jade.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/Java.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/csharp.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/default_app.asar
+/Users/example/.build/electron/VOLT.app/Contents/Resources/Bower.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/go.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/config.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/Ruby.icns
+/Users/example/.build/electron/VOLT.app/Contents/Resources/Markdown.icns
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/de.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ur.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/he.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ar.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/el.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ja.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/fa.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/mr.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/en.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/chrome_200_percent.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/uk.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/es_419.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/gu.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/zh_CN.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/kn.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/nb.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/chrome_100_percent.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/am.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/es.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/sw.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/sl.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/pt_BR.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/da.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/et.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/it.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/bg.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/sk.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/pt_PT.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/icudtl.dat
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/sr.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ms.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ta.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ml.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/sv.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/te.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/cs.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ko.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/fil.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/MainMenu.nib
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/hu.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/v8_context_snapshot.arm64.bin
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/tr.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/pl.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/zh_TW.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/en_GB.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/resources.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/vi.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/lv.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/lt.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ru.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/af.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/fr.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/fi.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/id.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/nl.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/th.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/bn.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ro.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/hr.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/hi.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/ca.lproj/locale.pak
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libEGL.dylib
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/vk_swiftshader_icd.json
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libvk_swiftshader.dylib
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libGLESv2.dylib
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libffmpeg.dylib
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/ReactiveObjC.framework/Versions/A/Resources/Info.plist
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/ReactiveObjC.framework/Versions/A/ReactiveObjC
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Squirrel.framework/Versions/A/Resources/ShipIt
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Squirrel.framework/Versions/A/Resources/Info.plist
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Squirrel.framework/Versions/A/Squirrel
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/VOLT Helper (GPU).app/Contents/MacOS/VOLT Helper (GPU)
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/VOLT Helper (GPU).app/Contents/Info.plist
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/VOLT Helper (GPU).app/Contents/PkgInfo
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Mantle.framework/Versions/A/Mantle
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/Mantle.framework/Versions/A/Resources/Info.plist
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/VOLT Helper (Plugin).app/Contents/MacOS/VOLT Helper (Plugin)
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/VOLT Helper (Plugin).app/Contents/Info.plist
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/VOLT Helper (Plugin).app/Contents/PkgInfo
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/VOLT Helper (Renderer).app/Contents/MacOS/VOLT Helper (Renderer)
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/VOLT Helper (Renderer).app/Contents/Info.plist
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/VOLT Helper (Renderer).app/Contents/PkgInfo
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/VOLT Helper.app/Contents/MacOS/VOLT Helper
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/VOLT Helper.app/Contents/Info.plist
+/Users/example/.build/electron/VOLT.app/Contents/Frameworks/VOLT Helper.app/Contents/PkgInfo
+/Users/example/.build/electron/VOLT.app/Contents/Info.plist
+/Users/example/.build/electron/VOLT.app/Contents/PkgInfo
 /Users/example/.build/electron/version
 /Users/example/.build/builtInExtensions/ms-vscode.js-debug-companion/ThirdPartyNotices.txt
 /Users/example/.build/builtInExtensions/ms-vscode.js-debug-companion/out/extension.js

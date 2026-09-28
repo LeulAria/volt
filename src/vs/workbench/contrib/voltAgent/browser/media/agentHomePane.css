@@ -80,7 +80,8 @@
 	box-shadow: none !important;
 }
 
-.volt-agent-home-filter {
+.volt-agent-home-filter,
+.volt-agent-home-open-workspace {
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -98,17 +99,25 @@
 	cursor: pointer;
 }
 
-/* Header filter and + share the row's 8px gap plus this margin. Drop the margin when both show. */
-.volt-agent-home-row > .volt-agent-home-filter:not(.hidden):has(+ .add:not(.hidden)) {
+/* Header filter, Open Workspace and + share the row's 8px gap plus this margin. Only the last keeps it. */
+.volt-agent-home-row > .volt-agent-home-filter:not(.hidden):has(+ .volt-agent-home-open-workspace:not(.hidden)),
+.volt-agent-home-row > .volt-agent-home-open-workspace:not(.hidden):has(+ .add:not(.hidden)) {
 	margin-right: 0;
 }
 
-.volt-agent-home-filter.hidden {
+.volt-agent-home-row > .volt-agent-home-filter:not(.hidden) + .volt-agent-home-open-workspace:not(.hidden) {
+	margin-left: -4px;
+}
+
+.volt-agent-home-filter.hidden,
+.volt-agent-home-open-workspace.hidden {
 	display: none;
 }
 
 .volt-agent-home-filter:hover,
-.volt-agent-home-filter.active {
+.volt-agent-home-filter.active,
+.volt-agent-home-open-workspace:hover,
+.volt-agent-home-open-workspace.open {
 	opacity: 1;
 	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 }
@@ -125,7 +134,9 @@
 }
 
 .volt-agent-home-filter .volt-agent-svg-icon,
-.volt-agent-home-filter .volt-agent-svg-icon svg {
+.volt-agent-home-filter .volt-agent-svg-icon svg,
+.volt-agent-home-open-workspace .volt-agent-svg-icon,
+.volt-agent-home-open-workspace .volt-agent-svg-icon svg {
 	width: 16px;
 	height: 16px;
 	display: block;
@@ -352,11 +363,6 @@
 	height: 16px;
 }
 
-/* Folder-plus was a 1-unit stroke. Match New Chat and Search. */
-.volt-agent-home-row > .icon .volt-agent-svg-icon.new-project path {
-	stroke-width: 2;
-}
-
 .volt-agent-home-row.is-session > .icon .codicon {
 	font-size: 16px;
 	opacity: 0.7;
@@ -385,7 +391,7 @@
 	opacity: 1;
 }
 
-.volt-agent-home-row > .volt-agent-home-filter:not(.hidden) + .add:not(.hidden) {
+.volt-agent-home-row > .volt-agent-home-open-workspace:not(.hidden) + .add:not(.hidden) {
 	margin-left: -4px;
 }
 
@@ -961,6 +967,11 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	flex: 0 0 auto !important;
 	width: auto !important;
 	min-width: 0 !important;
+}
+
+/* IDE switch, settings, browser, and layout toggles stay on the IDE title bar. */
+.monaco-workbench.volt-layout-agent .part.titlebar > .titlebar-container > .titlebar-right > .action-toolbar-container {
+	display: none !important;
 }
 
 .monaco-workbench.volt-layout-agent .part.titlebar .titlebar-left > *,

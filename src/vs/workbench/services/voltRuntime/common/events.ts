@@ -60,6 +60,11 @@ export type IVoltEvent =
 	| { type: 'tool.input.delta'; callId: string; delta: string; append?: boolean }
 	/** The provider finished streaming this call's arguments. Read-only calls may start now. */
 	| { type: 'tool.input.end'; callId: string }
+	/**
+	 * A started call learned more about itself before it finished: a specific title
+	 * ("Read foo.ts" instead of "Read File"), the files it touches, or the edit it will make.
+	 */
+	| { type: 'tool.update'; callId: string; title?: string; kind?: ToolKind; locations?: readonly IVoltToolLocation[]; diffs?: readonly IVoltToolDiff[] }
 	/** Live status from a running tool (a sub-agent step, a job line). Not persisted. */
 	| { type: 'tool.progress'; callId: string; status: string }
 	| { type: 'tool.end'; callId: string; result?: unknown; error?: string; durationMs?: number; card?: IVoltToolCard; title?: string; output?: string; exitCode?: number; diffs?: readonly IVoltToolDiff[]; view?: IVoltToolView }

@@ -47,8 +47,9 @@ export function extractHttpUrl(value: string | undefined): string | undefined {
 
 /** Turn bare http(s) URLs into markdown so the thread can bind click-to-preview. */
 export function linkifyPreviewUrls(text: string): string {
-	return text.split(/(```[\s\S]*?(?:```|$))/g).map(part => {
-		if (part.startsWith('```')) {
+	// Code keeps its text: a link inside a fence or an inline code span would break the span.
+	return text.split(/(```[\s\S]*?(?:```|$)|`[^`\n]+`)/g).map(part => {
+		if (part.startsWith('`')) {
 			return part;
 		}
 		return part.replace(/(^|[^`\](\[*])(\*{0,2})(https?:\/\/[^\s`'<>*]+)(\*{0,2})/gi, (_full, prefix: string, _starsBefore: string, raw: string, _starsAfter: string) => {

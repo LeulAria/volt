@@ -75,6 +75,9 @@ import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../p
 import { completeStreamingBlocks } from './agentSessionController.js';
 import { AgentSurfaceHost } from '../workspace/agentSurfaceHost.js';
 import { AgentComposerChips } from '../composer/agentComposerChips.js';
+import { AgentPendingChanges } from '../composer/agentPendingChanges.js';
+import { FreshTextTracker } from '../chrome/agentFreshText.js';
+import { IAgentPendingFile } from '../review/agentEditsService.js';
 import { AgentComposerLists } from '../composer/agentComposerLists.js';
 import { AgentComposerQueue } from '../composer/agentComposerQueue.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
@@ -158,6 +161,25 @@ function isUnmodifiedEnter(e: IKeyboardEvent): boolean {
 
 /** Max monaco content height while editing a prior prompt. Extra lines scroll. */
 const USER_EDIT_MAX_HEIGHT = 132;
+/** Rendered threads kept for chats you switched away from, so switching back skips the rebuild. */
+const MAX_STASHED_THREADS = 8;
+/** Shows the pane even if the first chat's history never finishes loading. */
+const RESTORE_REVEAL_TIMEOUT_MS = 1500;
+
+/** A chat's rendered thread, parked while another chat has the pane. */
+interface IStashedThread {
+	readonly input: AgentEditorInput;
+	readonly messages: IAgentMessage[];
+	readonly nodes: DocumentFragment;
+	readonly settled: DisposableStore;
+	readonly tail: DisposableStore;
+	readonly tailExchange: HTMLElement | undefined;
+	readonly tailFrom: number;
+	readonly renderedCount: number;
+	/** The chat changed while parked (a run kept going); its last exchange needs a redraw. */
+	stale: boolean;
+	readonly watch: DisposableStore;
+}
 
 function createPlusIcon(): HTMLElement {
 	return createSvgIcon('0 0 14 14', 'M7 2.5v9M2.5 7h9', 'plus', true, '1');
@@ -426,6 +448,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private suggestEl!: HTMLElement;
 	private composerQueue!: AgentComposerQueue;
 	private composerChips!: AgentComposerChips;
+	private pendingChanges!: AgentPendingChanges;
+	private readonly freshText = new FreshTextTracker();
 	private readonly suggestListeners = this._register(new DisposableStore());
 	private sendKind: 'mic' | 'send' = 'mic';
 	private submitting = false;
@@ -463,9 +487,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private toolbarLayoutHandle: number | undefined;
 	private stickToBottom = true;
 	/** Listeners of the turn being rendered. Points at `tailListeners` while the last exchange renders. */
-	private readonly settledListeners = this._register(new DisposableStore());
+	// eslint-disable-next-line local/code-no-potentially-unsafe-disposables -- replaced when a thread is stashed
+	private settledListeners = new DisposableStore();
 	/** The last exchange (user turn and reply) owns its own listeners so it can be redrawn alone. */
-	private readonly tailListeners = this._register(new DisposableStore());
+	// eslint-disable-next-line local/code-no-potentially-unsafe-disposables -- replaced when a thread is stashed
+	private tailListeners = new DisposableStore();
+	/** The chat whose turns are in `threadInner`. */
+	private threadInput: AgentEditorInput | undefined;
+	/** Least recently shown first. */
+	private readonly stashedThreads = new Map<string, IStashedThread>();
 	private renderingTail = false;
 	private get threadListeners(): DisposableStore {
 		return this.renderingTail ? this.tailListeners : this.settledListeners;
@@ -560,6 +590,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	protected override createEditor(parent: HTMLElement): void {
 		this.container = append(parent, $('.volt-agent-editor'));
 		this.container.dataset.mode = normalizeVoltMode(this.currentMode);
+		// Until the first chat's history is read the thread is empty, which lays out the
+		// new-chat landing for a few frames before the conversation replaces it.
+		this.container.classList.add('restoring');
+		this._register(disposableTimeout(() => this.container.classList.remove('restoring'), RESTORE_REVEAL_TIMEOUT_MS));
 		this._register(new DragAndDropObserver(parent, {
 			onDragEnter: e => {
 				this.blockWorkbenchFileDrop(e);
@@ -639,6 +673,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onTerminalClick: () => this.surfaceHost.openTerminal(),
 		}));
 		append(this.composerEl, this.composerChips.element);
+		this.pendingChanges = this._register(this.instantiationService.createInstance(AgentPendingChanges, {
+			onOpenFile: file => this.openPendingFile(file),
+			onReview: () => this.surfaceHost.openChanges('pending'),
+		}));
+		append(this.composerEl, this.pendingChanges.element);
 		this.composerQueue = this._register(this.instantiationService.createInstance(AgentComposerQueue, {
 			onRemove: id => this.removeQueuedPrompt(id),
 			onClear: () => this.clearPromptQueue(),
@@ -1251,6 +1290,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private restoreInputState(input: AgentEditorInput): void {
 		this.clearFindHighlights();
+		this.stashThread();
 		this.thinkingStore.clear();
 		this.messages = input.messages;
 		this.sessionTokensUsed = input.contextUsed;
@@ -1269,7 +1309,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 		}
 		this.syncComposerPlacement();
-		this.renderThread(followTail);
+		const stashed = this.adoptStashedThread(input);
+		if (!stashed || (stashed.stale && !this.canRenderTail())) {
+			this.renderThread(followTail);
+		} else {
+			if (stashed.stale) {
+				this.renderThreadTail(followTail);
+			}
+			this.finishThreadRender(followTail);
+			this.tickMeta();
+		}
+		this.threadInput = input;
 		if (!followTail && chat.scrollTop !== undefined) {
 			this.threadScroll.setScrollPosition({ scrollTop: chat.scrollTop });
 		}
@@ -1704,6 +1754,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onTableCopyMenu: (anchor, plain, markdown) => this.showTableCopyMenu(anchor, plain, markdown),
 			onCopyText: text => void this.clipboardService.writeText(text),
 			onAccessDecision: (requestId, effect, scope, pattern) => this.runtime.respondToAccessRequest(requestId, effect, scope, pattern),
+			onBuildPlan: () => this.setMode('Agent'),
 			streaming: !!message.activity?.streaming,
 		};
 	}
@@ -1889,6 +1940,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.renderThreadMessage(exchange, message, index);
 		}
 		this.renderingTail = false;
+		this.finishThreadRender(scrollToEnd);
+	}
+
+	/** Layout and bookkeeping once `threadInner` holds the whole thread, freshly built or taken back from the stash. */
+	private finishThreadRender(scrollToEnd: boolean): void {
 		this.syncComposerPlacement();
 		this.syncThreadScroll(scrollToEnd);
 		scheduleAtNextAnimationFrame(getWindow(this.threadInner), () => {
@@ -1940,9 +1996,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	 * its rendered markdown, and its highlighted code. Frame cost no longer grows with the
 	 * length of the conversation. Anything structural falls back to a full render.
 	 */
+	private canRenderTail(): boolean {
+		const exchange = this.tailExchange;
+		return !!exchange && exchange.isConnected && this.renderedCount === this.messages.length && this.editingUserIndex === undefined && this.tailFrom === this.lastExchangeStart() && this.tailFrom >= 0;
+	}
+
 	private renderThreadTail(scrollToEnd: boolean): void {
 		const exchange = this.tailExchange;
-		if (!exchange || !exchange.isConnected || this.renderedCount !== this.messages.length || this.editingUserIndex !== undefined || this.tailFrom !== this.lastExchangeStart() || this.tailFrom < 0) {
+		if (!exchange || !this.canRenderTail()) {
 			this.renderThread(scrollToEnd);
 			return;
 		}
@@ -1966,6 +2027,80 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.publishSessionChanges();
 	}
 
+	/** Parks the shown chat's thread (nodes and listeners) so showing it again is a DOM move, not a rebuild. */
+	private stashThread(): void {
+		const input = this.threadInput;
+		this.threadInput = undefined;
+		if (!input || input.isDisposed() || this.editingUserIndex !== undefined || !this.threadInner.firstChild || this.renderedCount !== this.messages.length) {
+			return;
+		}
+		this.dropStashedThread(input.sessionId);
+		const nodes = this.threadInner.ownerDocument.createDocumentFragment();
+		nodes.append(...this.threadInner.childNodes);
+		const entry: IStashedThread = {
+			input,
+			messages: this.messages,
+			nodes,
+			settled: this.settledListeners,
+			tail: this.tailListeners,
+			tailExchange: this.tailExchange,
+			tailFrom: this.tailFrom,
+			renderedCount: this.renderedCount,
+			// A redraw still queued for the next frame means the nodes are behind the messages.
+			stale: this.renderHandle !== undefined,
+			watch: new DisposableStore(),
+		};
+		entry.watch.add(input.controller.onDidChange(() => entry.stale = true));
+		entry.watch.add(input.onWillDispose(() => this.dropStashedThread(input.sessionId)));
+		this.stashedThreads.set(input.sessionId, entry);
+		this.settledListeners = new DisposableStore();
+		this.tailListeners = new DisposableStore();
+		this.tailExchange = undefined;
+		this.tailFrom = -1;
+		this.renderedCount = 0;
+		for (const sessionId of this.stashedThreads.keys()) {
+			if (this.stashedThreads.size <= MAX_STASHED_THREADS) {
+				break;
+			}
+			this.dropStashedThread(sessionId);
+		}
+	}
+
+	/** Puts a parked thread back into `threadInner`. Undefined when there is none, or it no longer matches the chat. */
+	private adoptStashedThread(input: AgentEditorInput): { readonly stale: boolean } | undefined {
+		const entry = this.stashedThreads.get(input.sessionId);
+		if (!entry) {
+			return undefined;
+		}
+		this.stashedThreads.delete(input.sessionId);
+		entry.watch.dispose();
+		if (entry.input !== input || entry.messages !== input.messages || entry.renderedCount > input.messages.length) {
+			entry.settled.dispose();
+			entry.tail.dispose();
+			return undefined;
+		}
+		this.settledListeners.dispose();
+		this.tailListeners.dispose();
+		this.settledListeners = entry.settled;
+		this.tailListeners = entry.tail;
+		this.threadInner.replaceChildren(entry.nodes);
+		this.tailExchange = entry.tailExchange;
+		this.tailFrom = entry.tailFrom;
+		this.renderedCount = entry.renderedCount;
+		return { stale: entry.stale };
+	}
+
+	private dropStashedThread(sessionId: string): void {
+		const entry = this.stashedThreads.get(sessionId);
+		if (!entry) {
+			return;
+		}
+		this.stashedThreads.delete(sessionId);
+		entry.watch.dispose();
+		entry.settled.dispose();
+		entry.tail.dispose();
+	}
+
 	private publishSessionChanges(): void {
 		this.sessionChanges.setSessionTranscript(this.sessionKey, this.messages);
 	}
@@ -1973,6 +2108,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	openSessionChanges(): Promise<void> {
 		this.surfaceHost.openChanges();
 		return Promise.resolve();
+	}
+
+	/** Opens a file with pending agent edits at its first change, where Keep / Undo are drawn. */
+	private openPendingFile(file: IAgentPendingFile): void {
+		const first = file.changes[0];
+		this.surfaceHost.openFile(file.uri, first ? { startLine: Math.max(1, first.modified.startLineNumber) } : undefined);
 	}
 
 	get sessionId(): string {
@@ -2552,6 +2693,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const body = append(turn, $('.volt-agent-thread-body'));
 		const ctx = this.blockRenderContext(message);
 		const lastGroup = [...parts].reverse().find(part => part.kind === 'group');
+		const replies: HTMLElement[] = [];
 		for (const part of parts) {
 			if (part.kind === 'group') {
 				this.renderActivityGroup(body, message, part, streaming && part === lastGroup);
@@ -2562,12 +2704,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			} else if (part.kind === 'markdown') {
 				const reply = append(body, $('.volt-agent-reply'));
 				renderMarkdownInto(reply, part.content, ctx);
+				replies.push(reply);
 			} else if (part.kind === 'changes') {
 				renderFileChangesPart(body, part, ctx, streaming);
 			} else {
 				renderAgentBlock(body, part.block, ctx);
 			}
 		}
+		this.freshText.apply(message, replies, streaming);
 		if (message.title) {
 			const title = append(body, $('.volt-agent-plan-title'));
 			this.setSearchableText(title, message.title);
@@ -3844,7 +3988,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.ensureInputEditor();
 		this.restoreInputState(input);
+		this.container.classList.remove('restoring');
 		this.composerChips.setSessionId(this.sessionKey);
+		this.pendingChanges.setSessionId(this.sessionKey);
 		this.publishSessionChanges();
 		this.bindRuntimeSession();
 		this.renderSuggestChips();
@@ -4062,6 +4208,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	override dispose(): void {
+		for (const sessionId of [...this.stashedThreads.keys()]) {
+			this.dropStashedThread(sessionId);
+		}
+		this.settledListeners.dispose();
+		this.tailListeners.dispose();
 		this.eventDisposable?.dispose();
 		this.clockTimer?.dispose();
 		this.statusRotateTimer?.dispose();

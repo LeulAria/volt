@@ -60,6 +60,11 @@ suite('Local preview URL', () => {
 		);
 	});
 
+	test('leaves a url inside inline code alone', () => {
+		const text = 'Check it with `curl http://127.0.0.1:3091/api/health` once it is running.';
+		assert.strictEqual(linkifyPreviewUrls(text), text);
+	});
+
 	test('linkifies a bare preview url and keeps trailing punctuation', () => {
 		assert.strictEqual(
 			linkifyPreviewUrls('The project is running at http://127.0.0.1:8080/.'),

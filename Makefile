@@ -45,12 +45,12 @@ watch:
 		echo "Watcher started (pid $$(cat "$(WATCH_PID)")). Log: $(WATCH_LOG)"; \
 		echo "Waiting for first compile..."; \
 		for i in $$(seq 1 180); do \
-			if grep -aE -q "Finished .*compilation" "$(WATCH_LOG)" 2>/dev/null && [ -f out/vs/code/electron-browser/workbench/workbench.js ]; then \
+			if grep -aE -q "Finished compilation with " "$(WATCH_LOG)" 2>/dev/null && [ -f out/vs/code/electron-browser/workbench/workbench.js ] && [ -f out/vs/platform/files/node/watcher/nodejs/nodejsClient.js ]; then \
 				break; \
 			fi; \
 			sleep 1; \
 		done; \
-		if [ ! -f out/vs/code/electron-browser/workbench/workbench.js ]; then \
+		if [ ! -f out/vs/code/electron-browser/workbench/workbench.js ] || [ ! -f out/vs/platform/files/node/watcher/nodejs/nodejsClient.js ]; then \
 			echo "Compile did not produce workbench.js. Last log:"; \
 			tail -n 20 "$(WATCH_LOG)" || true; \
 			exit 1; \
@@ -59,14 +59,14 @@ watch:
 	fi
 
 reload:
-	@pkill -9 -f "Code - OSS" >/dev/null 2>&1 || true; \
+	@pkill -9 -f "VOLT.app" >/dev/null 2>&1 || true; \
 	pkill -9 -f "scripts/code.sh" >/dev/null 2>&1 || true; \
 	sleep 1; \
 	$(MAKE) start
 
 stop:
 	@echo "Stopping Volt..."; \
-	pkill -9 -f "Code - OSS" >/dev/null 2>&1 || true; \
+	pkill -9 -f "VOLT.app" >/dev/null 2>&1 || true; \
 	pkill -9 -f "scripts/code.sh" >/dev/null 2>&1 || true; \
 	if [ -f "$(WATCH_PID)" ]; then \
 		pid=$$(cat "$(WATCH_PID)"); \

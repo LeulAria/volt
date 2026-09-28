@@ -102,6 +102,9 @@ export namespace Schemas {
 	/** Scheme used for in-memory snapshots of files an agent edited. */
 	export const voltAgentSnapshot = 'volt-agent-snapshot';
 
+	/** Scheme used for the kept text of a file with pending agent edits (the left side of Keep/Undo). */
+	export const voltAgentBaseline = 'volt-agent-baseline';
+
 	/** Scheme used for the chat input part */
 	export const vscodeChatInput = 'chatSessionInput';
 

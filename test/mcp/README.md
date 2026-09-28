@@ -1,6 +1,6 @@
-# Code - OSS Development MCP Server
+# VOLT Development MCP Server
 
-This directory contains a Model Context Protocol (MCP) server that provides Playwright browser automation capabilities for Code - OSS development and testing. The MCP server exposes Code - OSS's Playwright testing infrastructure through a standardized interface, allowing AI assistants and other tools to interact with browsers programmatically.
+This directory contains a Model Context Protocol (MCP) server that provides Playwright browser automation capabilities for VOLT development and testing. The MCP server exposes VOLT's Playwright testing infrastructure through a standardized interface, allowing AI assistants and other tools to interact with browsers programmatically.
 
 ## What is MCP?
 
@@ -104,7 +104,7 @@ npm start
 test/mcp/
 ├── src/
 │   ├── main.ts              # Express server and MCP endpoint handlers
-│   ├── playwright.ts        # Code - OSS Playwright integration
+│   ├── playwright.ts        # VOLT Playwright integration
 │   ├── inMemoryEventStore.ts # Session management for resumability
 │   └── utils.ts             # Utility functions
 ├── package.json             # Dependencies and scripts
@@ -116,25 +116,25 @@ test/mcp/
 
 - **Session Management**: Supports multiple concurrent MCP sessions with proper cleanup
 - **Resumability**: Built-in event store for connection resumption
-- **Code - OSS Integration**: Uses Code - OSS's existing Playwright test infrastructure
+- **VOLT Integration**: Uses VOLT's existing Playwright test infrastructure
 - **CORS Support**: Configured for cross-origin requests
 - **Error Handling**: Comprehensive error handling and logging
 
 ## Troubleshooting
 
 ### Server Won't Start
-- Ensure Code - OSS's Core and Extension builds are running (they should start automatically)
+- Ensure VOLT's Core and Extension builds are running (they should start automatically)
 - Check that port 33418 is not already in use
 - Verify all dependencies are installed with `npm install`
 
 ### Browser Automation Issues
-- Ensure Code - OSS has been built and run at least once
+- Ensure VOLT has been built and run at least once
 - Check the server logs for Playwright-related errors
 - Verify the test repository is properly cloned
 
 ## Contributing
 
-This MCP server is part of the Code - OSS development infrastructure. When making changes:
+This MCP server is part of the VOLT development infrastructure. When making changes:
 
 1. Follow the existing TypeScript and coding conventions
 2. Test with multiple MCP clients if possible

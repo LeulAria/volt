@@ -14,8 +14,8 @@
 .volt-agent-changes-header {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
+	justify-content: flex-start;
+	gap: 8px;
 	flex: 0 0 auto;
 	height: 36px;
 	padding: 0 12px;
@@ -76,6 +76,7 @@
 }
 
 .volt-agent-changes-commit {
+	margin-left: auto;
 	border: 1px solid var(--vscode-button-border, rgba(255, 255, 255, 0.12));
 	border-radius: 999px;
 	background: var(--vscode-button-secondaryBackground, transparent);
@@ -174,4 +175,55 @@
 	background-color: transparent !important;
 	border: none !important;
 	box-shadow: none !important;
+}
+
+.volt-agent-changes-tabs {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.volt-agent-changes-tab,
+.volt-agent-changes-action {
+	height: 26px;
+	padding: 0 10px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	font-size: 13px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-agent-changes-tab:hover,
+.volt-agent-changes-action:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-changes-tab.active {
+	background: var(--vscode-toolbar-activeBackground, rgba(255, 255, 255, 0.1));
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-changes-tab.hidden,
+.volt-agent-changes-pending-actions.hidden {
+	display: none;
+}
+
+.volt-agent-changes-pending-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	margin-left: auto;
+}
+
+.volt-agent-changes-pending-actions:not(.hidden) + .volt-agent-changes-commit {
+	margin-left: 0;
+}
+
+.volt-agent-changes-action {
+	color: var(--vscode-foreground);
 }

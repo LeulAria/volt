@@ -49,16 +49,11 @@ suite('Agent timeline', () => {
 		assert.ok(!parts.some(part => part.kind === 'group'));
 	});
 
-	test('renders comparable rankings as a table', () => {
+	test('keeps a ranking list as the model wrote it', () => {
 		const parts = visibleReplyParts(buildThreadParts([
 			{ kind: 'text', text: 'The 10 most populated countries:\n\n1. India — 1,476,625,576\n2. China — 1,412,914,089\n3. United States — 349,035,494' },
 		]));
-		const table = parts.find(part => part.kind === 'block' && part.block.type === 'table');
-		assert.ok(table && table.kind === 'block' && table.block.type === 'table');
-		if (table && table.kind === 'block' && table.block.type === 'table') {
-			assert.deepStrictEqual(table.block.headers, ['Rank', 'Country', 'Population']);
-			assert.strictEqual(table.block.rows[0][1], 'India');
-		}
+		assert.ok(!parts.some(part => part.kind === 'block' && part.block.type === 'table'));
 	});
 
 	test('keeps the URL reply visible', () => {

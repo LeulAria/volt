@@ -373,6 +373,21 @@ export class AgentEditorInput extends EditorInput {
 		return this.lastTitle || localize('voltAgentEditorName', "New Agent");
 	}
 
+	/** The stored session title, if the chat has one. */
+	get storedTitle(): string | undefined {
+		return this.lastTitle;
+	}
+
+	/**
+	 * Title saved with the restored tab. Tabs render before history is read,
+	 * so without it every tab starts as "New Agent" and resizes a moment later.
+	 */
+	seedTitle(title: string | undefined): void {
+		if (title && !this.lastTitle) {
+			this.lastTitle = title;
+		}
+	}
+
 	override getIcon(): ThemeIcon {
 		return AgentEditorIcon;
 	}
@@ -438,12 +453,27 @@ export class AgentEditorInputSerializer implements IEditorSerializer {
 		if (!(editorInput instanceof AgentEditorInput)) {
 			return undefined;
 		}
-		return editorInput.resource.toString();
+		const resource = editorInput.resource.toString();
+		const title = editorInput.storedTitle;
+		return title ? JSON.stringify({ resource, title }) : resource;
 	}
 
 	deserialize(instantiationService: IInstantiationService, serializedEditorInput: string): EditorInput | undefined {
 		try {
-			return instantiationService.createInstance(AgentEditorInput, URI.parse(serializedEditorInput));
+			// Older windows stored the bare resource.
+			let resource = serializedEditorInput;
+			let title: string | undefined;
+			if (serializedEditorInput.startsWith('{')) {
+				const parsed = JSON.parse(serializedEditorInput) as { resource?: unknown; title?: unknown };
+				if (typeof parsed.resource !== 'string') {
+					return undefined;
+				}
+				resource = parsed.resource;
+				title = typeof parsed.title === 'string' ? parsed.title : undefined;
+			}
+			const input = instantiationService.createInstance(AgentEditorInput, URI.parse(resource));
+			input.seedTitle(title);
+			return input;
 		} catch {
 			return undefined;
 		}

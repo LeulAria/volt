@@ -82,7 +82,12 @@ export function visibleReplyParts(parts: readonly ThreadPart[], streaming = fals
 		if (part.kind === 'group') {
 			continue;
 		}
-		if (part.kind === 'block' && (part.block.type === 'approval' || part.block.type === 'tool')) {
+		if (part.kind === 'block' && part.block.type === 'tool') {
+			continue;
+		}
+		// A settled permission is process chrome. One still waiting is how the user answers it,
+		// and a plan or question stays: its text is the content of the turn.
+		if (part.kind === 'block' && part.block.type === 'approval' && (part.block.decision || part.block.blocked) && part.block.action !== 'question') {
 			continue;
 		}
 		const last = visible.at(-1);

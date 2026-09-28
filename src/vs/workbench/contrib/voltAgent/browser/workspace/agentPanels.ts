@@ -3,7 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { runWhenWindowIdle } from '../../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
+import { Disposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
@@ -91,6 +93,7 @@ class AgentPanelsContribution extends Disposable {
 
 	private historyReady = false;
 	private bindGeneration = 0;
+	private readonly preloadIdle = this._register(new MutableDisposable());
 
 	constructor(
 		@IEditorService private readonly editorService: IEditorService,
@@ -107,8 +110,29 @@ class AgentPanelsContribution extends Disposable {
 		void this.history.whenReady.then(() => {
 			this.historyReady = true;
 			this.markVisibleRead();
+			void this.preloadOpenChats();
 		});
 		this.onActiveEditor();
+	}
+
+	/**
+	 * Reads the open chat tabs' history while the window is idle, most recent first,
+	 * so the first switch to one draws at once instead of waiting on disk.
+	 */
+	private async preloadOpenChats(): Promise<void> {
+		const inputs = this.editorGroupsService.mainPart.groups
+			.flatMap(group => group.getEditors(EditorsOrder.MOST_RECENTLY_ACTIVE))
+			.filter((editor): editor is AgentEditorInput => editor instanceof AgentEditorInput)
+			.slice(0, 1 + MAX_BACKGROUND_AGENT_PANELS);
+		for (const input of inputs) {
+			await new Promise<void>(resolve => this.preloadIdle.value = runWhenWindowIdle(mainWindow, () => resolve(), 1000));
+			if (this._store.isDisposed) {
+				return;
+			}
+			if (!input.isDisposed()) {
+				await input.ensureLoaded().catch(() => undefined);
+			}
+		}
 	}
 
 	/** A reply that lands on screen is already read; only chats you have not seen stay unread. */
@@ -196,11 +220,12 @@ export async function newAgentChat(
 	instantiation: IInstantiationService,
 	root: URI,
 	name: string,
-): Promise<void> {
+): Promise<AgentEditorInput> {
 	const project = sessionContext.registerProject(root, name);
 	sessionContext.selectProject(project.id);
 	const input = await openAgentPanel(editorGroups, instantiation, undefined);
 	attachSessionToProject(sessionContext, workspace, history, input.sessionId, project);
+	return input;
 }
 
 /**

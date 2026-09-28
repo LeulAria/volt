@@ -38,7 +38,8 @@ import { IAgentRuntimeService, IVoltTaskModels } from '../common/runtime.js';
 import { IVoltRunSnapshot, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { IVoltHostToolService } from '../common/hostTools.js';
-import { AcpAgentProvider } from './agents/acpProvider.js';
+import { AcpAgentProvider, IAcpFileWrite } from './agents/acpProvider.js';
+import { EditBaselineTracker } from './editBaselines.js';
 import './host/hostToolService.js';
 import { clearClaudeModelCache } from './agents/claudeCatalog.js';
 import { CLI_AGENT_DEFINITIONS, cliAgentDefinition, detectCliAgent } from './agents/cliAgents.js';
@@ -63,7 +64,7 @@ import { IEnvironmentService } from '../../../../platform/environment/common/env
 import { IInstructionsSnapshot, loadInstructions } from './prompt/instructionsLoader.js';
 import { ResourceMap } from '../../../../base/common/map.js';
 import { posix } from '../../../../base/common/path.js';
-import { joinPath, relativePath } from '../../../../base/common/resources.js';
+import { isEqualOrParent, joinPath, relativePath } from '../../../../base/common/resources.js';
 import { ITextFileService } from '../../textfile/common/textfiles.js';
 import { IPathService } from '../../path/common/pathService.js';
 import { IMarkerService } from '../../../../platform/markers/common/markers.js';
@@ -202,6 +203,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	readonly onDidChangeProviderStatus: Event<void> = this._onDidChangeProviderStatus.event;
 	private readonly _onDidChangeAccess = this._register(new Emitter<void>());
 	readonly onDidChangeAccess: Event<void> = this._onDidChangeAccess.event;
+	private readonly _onDidEmit = this._register(new Emitter<IVoltEventEnvelope>());
+	readonly onDidEmit: Event<IVoltEventEnvelope> = this._onDidEmit.event;
+	private readonly editBaselines: EditBaselineTracker;
 	private readonly _onDidChangeActiveCatalog = this._register(new Emitter<void>());
 	readonly onDidChangeActiveCatalog: Event<void> = this._onDidChangeActiveCatalog.event;
 
@@ -233,6 +237,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeaturesService, fileService));
 		this.mcpHost = this._register(new McpHost(fileService, stdio, requestService, logService));
 		this.journal = this._register(new NativeJournal(joinPath(environmentService.userRoamingDataHome, 'voltNative'), fileService, logService));
+		this.editBaselines = new EditBaselineTracker(fileService, (sessionId, path) => this.editableUri(sessionId, path));
 		this.registerProviders();
 		this.loadState();
 		void this.refreshCatalog();
@@ -383,15 +388,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (prepared.mission) {
 			this.emit(session, runId, { type: 'mission', phase: prepared.mission.phase, detail: prepared.mission.goal });
 		}
-		if (prepared.plan) {
-			this.emit(session, runId, { type: 'plan', entries: planEntries(prepared.plan) });
-		}
-		if (prepared.clarify) {
-			this.emit(session, runId, { type: 'clarify', question: prepared.clarify, reasons: prepared.intel.ambiguity.reasons });
-			this.emit(session, runId, { type: 'text.delta', id: 'clarify', delta: prepared.clarify });
-			this.finish(session, runId, 'done');
-			return runId;
-		}
+		// The agent plans, and asks when something is unclear, with its own tools once it has
+		// looked at the code. A plan or question drafted from the prompt text alone would only
+		// restate the request, so neither is shown or allowed to stop the run.
 		this.emit(session, runId, { type: 'lifecycle', phase: 'running' });
 		void this.execute(session, runId, request, prepared.intent).catch(err => {
 			this.emit(session, runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
@@ -1064,6 +1063,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		this.recordReceipt(pending.request, decision, effect === 'allow' ? 'approved' : 'denied');
 		const session = this.sessions.get(pending.request.sessionId);
+		if (session && effect === 'allow' && pending.request.action === 'question' && (session.mode === 'plan' || session.mode === 'ask')) {
+			// Approving the plan is the Build step: the rest of this run implements it.
+			session.mode = 'agent';
+		}
 		if (session?.activeRun) {
 			session.activeRun = { ...session.activeRun, status: 'running' };
 			this.emit(session, pending.request.runId, { type: 'access.resolved', requestId, effect, scope });
@@ -1939,6 +1942,48 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		for (const listener of this.listeners.get(session.sessionId) ?? []) {
 			listener(envelope);
 		}
+		this._onDidEmit.fire(envelope);
+		const baselines = this.editBaselines.observe(session.sessionId, event);
+		if (baselines) {
+			void baselines.then(found => {
+				for (const baseline of found) {
+					this.emit(session, runId, { type: 'file.change', uri: baseline.uri, kind: baseline.kind, ...(baseline.before !== undefined ? { before: baseline.before } : {}), existed: baseline.existed });
+				}
+			}, err => this.logService.trace('[volt] edit baseline failed', err));
+		}
+	}
+
+	/**
+	 * A path an agent edited, as a URI inside the session's checkout. Edits outside it (the
+	 * agent's own plan files, home config) are not part of the change set the user reviews.
+	 */
+	private editableUri(sessionId: string, path: string): URI | undefined {
+		const session = this.sessions.get(sessionId);
+		const root = session ? this.executionRoot(session) : this.workspace.getWorkspace().folders[0]?.uri;
+		if (!root || !path) {
+			return undefined;
+		}
+		const uri = path.includes('://')
+			? URI.parse(path)
+			: posix.isAbsolute(path) || /^[a-zA-Z]:[\\/]/.test(path)
+				? root.with({ path: URI.file(path).path })
+				: joinPath(root, path.replace(/^\.\//, ''));
+		return isEqualOrParent(uri, root) ? uri : undefined;
+	}
+
+	private onAcpFileWrite(write: IAcpFileWrite): void {
+		const session = this.sessions.get(write.sessionId);
+		if (!session) {
+			return;
+		}
+		const existed = write.before !== undefined;
+		this.emit(session, write.runId || session.activeRun?.runId || '', {
+			type: 'file.change',
+			uri: write.uri,
+			kind: existed ? 'edit' : 'create',
+			...(existed ? { before: write.before } : {}),
+			existed,
+		});
 	}
 
 	private defaultRef(mode: VoltMode): string | undefined {
@@ -1962,10 +2007,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		for (const def of CLI_AGENT_DEFINITIONS) {
 			const provider = new AcpAgentProvider(def.id, def.label, def.commands[0], [...def.acpArgs], this.stdio, this.workspace, this.fileService, this.logService, this.hostTools);
 			provider.setAccessGate(this.accessGate);
+			provider.setFileWriteObserver(write => this.onAcpFileWrite(write));
 			this.agentProviders.set(provider.id, provider);
 		}
 		const generic = new AcpAgentProvider('acp-generic', 'Agent', 'agent', ['acp'], this.stdio, this.workspace, this.fileService, this.logService, this.hostTools);
 		generic.setAccessGate(this.accessGate);
+		generic.setFileWriteObserver(write => this.onAcpFileWrite(write));
 		this.agentProviders.set(generic.id, generic);
 	}
 
@@ -2130,6 +2177,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private evaluateAccessRequest(request: IAccessRequest, settleAsk = true): IAccessDecision | Promise<IAccessDecision> {
 		const session = this.sessions.get(request.sessionId);
 		const mode = session?.mode ?? (request.sessionId === TAB_PREDICTION_SESSION_ID ? 'ask' : 'agent');
+		// In Plan and Ask the agent's plan approval (or question) is the user's call, whatever the
+		// access mode: approving it is what lets the agent start changing files.
+		if (request.action === 'question' && (mode === 'plan' || mode === 'ask')) {
+			const decision: IAccessDecision = { requestId: request.id, effect: 'ask', scope: 'once', policySource: request.reason };
+			return settleAsk ? this.askAccess(request, decision) : decision;
+		}
 		const key = `${mode}\0${memoKey(request.action, request.resource.value)}`;
 		const cached = this.policyMemo.get(key);
 		if (cached && cached.effect !== 'ask') {

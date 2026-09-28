@@ -35,6 +35,7 @@ import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { DEFAULT_BROWSER_URL, VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { AgentChangesEditorInput } from '../review/agentChangesEditor.js';
+import { AgentChangesScope } from '../review/agentSessionChanges.js';
 import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost } from './agentSurfaceAddMenu.js';
 import { type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
@@ -274,8 +275,8 @@ export class AgentSurfaceHost extends Disposable {
 	}
 
 	/** One Changes tab per chat; a second open focuses the existing tab. */
-	openChanges(): void {
-		void this.target()?.openChangesInTools(false);
+	openChanges(scope?: AgentChangesScope): void {
+		void this.target()?.openChangesInTools(false, scope);
 	}
 
 	/** New agent tab in the tools, bound to the same project as the parent chat. */
@@ -772,7 +773,7 @@ export class AgentSurfaceHost extends Disposable {
 		await group.openEditor(input, { pinned: true, preserveFocus });
 	}
 
-	private async openChangesInTools(preserveFocus: boolean): Promise<void> {
+	private async openChangesInTools(preserveFocus: boolean, scope?: AgentChangesScope): Promise<void> {
 		const sessionId = this.sessionId;
 		const group = this.toolsGroup();
 		if (!group || !sessionId) {
@@ -780,10 +781,13 @@ export class AgentSurfaceHost extends Disposable {
 		}
 		const existing = this.findInShown(editor => editor instanceof AgentChangesEditorInput && editor.sessionId === sessionId);
 		if (existing) {
+			if (scope && existing.editor instanceof AgentChangesEditorInput) {
+				existing.editor.setScope(scope);
+			}
 			await existing.group.openEditor(existing.editor, { preserveFocus });
 			return;
 		}
-		await group.openEditor(this.instantiationService.createInstance(AgentChangesEditorInput, sessionId, 'lastTurn'), { pinned: true, preserveFocus });
+		await group.openEditor(this.instantiationService.createInstance(AgentChangesEditorInput, sessionId, scope ?? 'lastTurn'), { pinned: true, preserveFocus });
 	}
 
 	private findInShown(match: (editor: EditorInput) => boolean): { group: IEditorGroup; editor: EditorInput } | undefined {

@@ -88,6 +88,14 @@ suite('Volt context pack', () => {
 		assert.ok(/Do not run commands/.test(prompt));
 		const lead = buildAcpLead({ mode: 'plan', intent });
 		assert.ok(lead?.includes('[Volt mode: plan]'));
+		assert.ok(lead?.includes('Do not change files'));
+	});
+
+	test('each non-agent mode tells an ACP agent what it is for', () => {
+		const lead = (mode: 'ask' | 'debug' | 'agent') => buildAcpLead({ mode, intent: classifyIntent('why does the server crash on start', mode) }) ?? '';
+		assert.ok(/Answer only/.test(lead('ask')));
+		assert.ok(/reproduce the problem first/.test(lead('debug')));
+		assert.ok(!lead('agent').includes('[Volt mode'));
 	});
 
 	test('task brief, memory, and evidence land in the prompt', () => {

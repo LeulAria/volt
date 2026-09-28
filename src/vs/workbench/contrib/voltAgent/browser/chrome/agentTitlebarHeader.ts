@@ -591,4 +591,5 @@ class AgentTitlebarHeaderContribution extends Disposable {
 	}
 }
 
-registerWorkbenchContribution2(AgentTitlebarHeaderContribution.ID, AgentTitlebarHeaderContribution, WorkbenchPhase.AfterRestored);
+// Before restore, so the header is in the first frame instead of popping in after the editors load.
+registerWorkbenchContribution2(AgentTitlebarHeaderContribution.ID, AgentTitlebarHeaderContribution, WorkbenchPhase.BlockRestore);

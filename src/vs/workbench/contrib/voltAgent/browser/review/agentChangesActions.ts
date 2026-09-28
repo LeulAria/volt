@@ -16,6 +16,7 @@ import { COPY_PATH_COMMAND_ID } from '../../../files/browser/fileConstants.js';
 import { MultiDiffEditor } from '../../../multiDiffEditor/browser/multiDiffEditor.js';
 import { AGENT_CHANGES_EDITOR_ID, AgentChangesEditorInput } from './agentChangesEditor.js';
 import { IAgentSessionChangesService } from './agentSessionChangesService.js';
+import { fileUriFromBaseline, IAgentEditsService } from './agentEditsService.js';
 
 const AGENT_CHANGE_FILE = ContextKeyExpr.equals('voltAgentChangesFile', true);
 const AGENT_CHANGE_ADDED = ContextKeyExpr.equals('voltAgentChangeKind', 'added');
@@ -109,4 +110,50 @@ registerAction2(class extends Action2 {
 	}
 
 	override async run(): Promise<void> { }
+});
+
+const PENDING_FILE = ContextKeyExpr.equals('voltAgentPendingFile', true);
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'volt.agent.changes.undoPendingFile',
+			title: localize2('voltAgent.undoFile', 'Undo File'),
+			icon: Codicon.close,
+			menu: {
+				id: MenuId.MultiDiffEditorFileToolbar,
+				when: PENDING_FILE,
+				group: 'navigation',
+				order: 30,
+			},
+		});
+	}
+
+	override async run(accessor: ServicesAccessor, resource?: URI): Promise<void> {
+		if (resource) {
+			await accessor.get(IAgentEditsService).undoFile(fileUriFromBaseline(resource) ?? resource);
+		}
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'volt.agent.changes.keepPendingFile',
+			title: localize2('voltAgent.keepFile', 'Keep File'),
+			icon: Codicon.check,
+			menu: {
+				id: MenuId.MultiDiffEditorFileToolbar,
+				when: PENDING_FILE,
+				group: 'navigation',
+				order: 31,
+			},
+		});
+	}
+
+	override async run(accessor: ServicesAccessor, resource?: URI): Promise<void> {
+		if (resource) {
+			await accessor.get(IAgentEditsService).keepFile(fileUriFromBaseline(resource) ?? resource);
+		}
+	}
 });

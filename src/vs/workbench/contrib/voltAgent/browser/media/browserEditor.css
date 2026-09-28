@@ -476,8 +476,11 @@ webview.volt-browser-frame {
 	display: none;
 }
 
-.volt-browser-comment:not(.expanded) .volt-browser-agent-composer {
-	display: none;
+/* The content grid sets display:grid !important. This has to outrank it, or closing
+	a comment leaves the composer painted in the 30px pin (the mic / send pill). */
+.volt-browser-comment:not(.expanded) > .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.multiline),
+.volt-browser-comment:not(.expanded) > .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).multiline {
+	display: none !important;
 }
 
 .volt-browser-comment.expanded > .volt-browser-agent-composer {

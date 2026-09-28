@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentHomePane.css';
-import { $, addDisposableListener, append, isMouseEvent } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow, isMouseEvent, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IIdentityProvider, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
 import { IListAccessibilityProvider } from '../../../../../base/browser/ui/list/listWidget.js';
@@ -12,7 +12,7 @@ import { RenderIndentGuides } from '../../../../../base/browser/ui/tree/abstract
 import { IObjectTreeElement, ITreeNode, ITreeRenderer, ObjectTreeElementCollapseState } from '../../../../../base/browser/ui/tree/tree.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename } from '../../../../../base/common/resources.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
@@ -31,7 +31,7 @@ import { IAgentHistoryService, IAgentSessionMeta } from '../../../../services/vo
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IRecentFolder, IRecentWorkspace, IWorkspacesService, isRecentFolder, isRecentWorkspace } from '../../../../../platform/workspaces/common/workspaces.js';
 import { NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
-import { createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeNewProjectIcon, createHomeSearchIcon } from './agentHomeIcons.js';
+import { createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon } from './agentHomeIcons.js';
 import { activateAgentProject, startAgentChat } from '../workspace/agentPanels.js';
 import { AgentChatStart } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
@@ -47,6 +47,8 @@ import {
 	sessionPrimaryStatus,
 } from './agentHomeFilter.js';
 import { showAgentHomeFilterMenu } from './agentHomeFilterMenu.js';
+import { AgentHomeWorkspaceActions } from './agentHomeWorkspaceActions.js';
+import { showAgentHomeWorkspaceMenu } from './agentHomeWorkspaceMenu.js';
 import {
 	AGENT_HOME_GROUP_EXPAND_ALL,
 	AgentHomeActionId,
@@ -101,6 +103,7 @@ interface IHomeTemplate {
 	readonly meta: HTMLElement;
 	readonly keybinding: HTMLElement;
 	readonly filter: HTMLButtonElement;
+	readonly openWorkspace: HTMLButtonElement;
 	readonly add: HTMLButtonElement;
 	readonly elementDisposables: DisposableStore;
 }
@@ -149,10 +152,15 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		filter.tabIndex = -1;
 		filter.setAttribute('aria-label', localize('voltAgent.home.filter', "Filter and sort"));
 		setAgentTooltip(filter, localize('voltAgent.home.filter', "Filter and sort"));
+		const openWorkspace = append(container, $('button.volt-agent-home-open-workspace.hidden')) as HTMLButtonElement;
+		openWorkspace.appendChild(createHomeOpenWorkspaceIcon());
+		openWorkspace.tabIndex = -1;
+		openWorkspace.setAttribute('aria-label', localize('voltAgent.home.openWorkspace', "Open Workspace"));
+		setAgentTooltip(openWorkspace, localize('voltAgent.home.openWorkspace', "Open Workspace"));
 		const add = append(container, $('button.add')) as HTMLButtonElement;
 		add.appendChild(renderIcon(Codicon.add));
 		add.tabIndex = -1;
-		return { container, icon, twist, glyph, name, actions, pin, archive, meta, keybinding, filter, add, elementDisposables: new DisposableStore() };
+		return { container, icon, twist, glyph, name, actions, pin, archive, meta, keybinding, filter, openWorkspace, add, elementDisposables: new DisposableStore() };
 	}
 
 	renderElement(node: ITreeNode<AgentHomeElement, void>, _index: number, template: IHomeTemplate): void {
@@ -163,6 +171,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.keybinding.textContent = '';
 		template.filter.classList.add('hidden');
 		template.filter.classList.remove('active');
+		template.openWorkspace.classList.add('hidden');
 		template.add.classList.add('hidden');
 		template.container.classList.remove(...ROW_STATE_CLASSES);
 		template.container.style.setProperty('--volt-home-level', String(rowLevel(node.element)));
@@ -224,9 +233,6 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			case 'search':
 				template.glyph.appendChild(createHomeSearchIcon());
 				break;
-			case 'newProject':
-				template.glyph.appendChild(createHomeNewProjectIcon());
-				break;
 			case 'automations':
 			case 'customize':
 				template.glyph.appendChild(renderIcon(spec.icon));
@@ -239,7 +245,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.name.textContent = spec.label;
 	}
 
-	/** The filter control on a header row. Only one header carries it. */
+	/** The filter and Open Workspace controls on a header row. Only one header carries them. */
 	private renderFilter(template: IHomeTemplate): void {
 		template.filter.classList.remove('hidden');
 		template.filter.classList.toggle('active', anyHomeFilterActive(this.host.view));
@@ -248,6 +254,12 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			e.stopPropagation();
 			this.host.openFilterMenu(template.filter);
 			template.filter.blur();
+		}));
+		template.openWorkspace.classList.remove('hidden');
+		template.elementDisposables.add(addDisposableListener(template.openWorkspace, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.host.openWorkspaceMenu(template.openWorkspace);
 		}));
 	}
 
@@ -415,8 +427,6 @@ function actionSpec(id: AgentHomeActionId): { readonly label: string; readonly i
 			return { label: localize('voltAgent.home.automations', "Automations"), icon: Codicon.settingsGear };
 		case 'customize':
 			return { label: localize('voltAgent.home.customize', "Customize"), icon: Codicon.extensions };
-		case 'newProject':
-			return { label: localize('voltAgent.home.newProjectRow', "New project"), icon: Codicon.newFolder };
 		default: {
 			const unexpected: never = id;
 			return unexpected;
@@ -441,6 +451,11 @@ export class AgentHomePane extends Disposable {
 	/** Rows revealed by "More", per group. */
 	private readonly limits = new Map<string, number>();
 	private readonly repoRefresh = this._register(new RunOnceScheduler(() => void this.refresh(), 50));
+	/** Events that land in the same frame (a chat switch fires several) share one rebuild. */
+	private readonly refreshFrame = this._register(new MutableDisposable());
+	/** Recently opened folders, read once and again only when that list changes. */
+	private recents: Promise<readonly (IRecentFolder | IRecentWorkspace)[]> | undefined;
+	private readonly workspaceActions: AgentHomeWorkspaceActions;
 	private refreshSeq = 0;
 	private viewState: IAgentHomeViewState;
 
@@ -463,6 +478,7 @@ export class AgentHomePane extends Disposable {
 	) {
 		super();
 		this.repoResolver = new AgentRepoResolver(fileService);
+		this.workspaceActions = this.instantiationService.createInstance(AgentHomeWorkspaceActions);
 		this.viewState = this.readViewState();
 		this.element = append(parent, $('.volt-agent-home'));
 		this.keepSingleHome(parent);
@@ -513,12 +529,15 @@ export class AgentHomePane extends Disposable {
 			});
 		}));
 
-		this._register(this.workspacesService.onDidChangeRecentlyOpened(() => void this.refresh()));
-		this._register(this.workspaceService.onDidChangeWorkspaceFolders(() => void this.refresh()));
-		this._register(this.workspaceService.onDidChangeWorkbenchState(() => void this.refresh()));
-		this._register(this.history.onDidChange(() => void this.refresh()));
-		this._register(this.voltSessionContext.onDidChangeProjects(() => void this.refresh()));
-		this._register(this.voltSessionContext.onDidChangeActiveProject(() => void this.refresh()));
+		this._register(this.workspacesService.onDidChangeRecentlyOpened(() => {
+			this.recents = undefined;
+			this.scheduleRefresh();
+		}));
+		this._register(this.workspaceService.onDidChangeWorkspaceFolders(() => this.scheduleRefresh()));
+		this._register(this.workspaceService.onDidChangeWorkbenchState(() => this.scheduleRefresh()));
+		this._register(this.history.onDidChange(() => this.scheduleRefresh()));
+		this._register(this.voltSessionContext.onDidChangeProjects(() => this.scheduleRefresh()));
+		this._register(this.voltSessionContext.onDidChangeActiveProject(() => this.scheduleRefresh()));
 
 		const observer = new ResizeObserver(() => this.layout());
 		observer.observe(this.treeContainer);
@@ -532,12 +551,11 @@ export class AgentHomePane extends Disposable {
 	 */
 	private installNav(keybindingService: IKeybindingService): void {
 		const shortcut = keybindingService.lookupKeybinding(NEW_AGENT_COMMAND_ID)?.getLabel() ?? '';
-		const rows: Array<{ readonly element: AgentHomeElement; readonly label: string }> = [
+		const rows: Array<{ readonly element: Extract<AgentHomeElement, { type: 'newChat' | 'action' }>; readonly label: string }> = [
 			{ element: { type: 'newChat' }, label: localize('voltAgent.home.newChat', "New Chat") },
 			{ element: { type: 'action', id: 'search' }, label: actionSpec('search').label },
 			{ element: { type: 'action', id: 'automations' }, label: actionSpec('automations').label },
 			{ element: { type: 'action', id: 'customize' }, label: actionSpec('customize').label },
-			{ element: { type: 'action', id: 'newProject' }, label: actionSpec('newProject').label },
 		];
 		for (const row of rows) {
 			const button = append(this.nav, $('button.volt-agent-home-nav-row')) as HTMLButtonElement;
@@ -558,9 +576,6 @@ export class AgentHomePane extends Disposable {
 				switch (row.element.id) {
 					case 'search':
 						glyph.appendChild(createHomeSearchIcon());
-						break;
-					case 'newProject':
-						glyph.appendChild(createHomeNewProjectIcon());
 						break;
 					case 'automations':
 					case 'customize':
@@ -657,6 +672,19 @@ export class AgentHomePane extends Disposable {
 			setView: next => pane.setView(next),
 			collapseAll: () => pane.collapseAll(),
 			markAllAsRead: () => pane.markAllAsRead(),
+		});
+	}
+
+	/** Open Workspace on the project header: recents, folders on this Mac, clone, new folder. A second click closes it. */
+	openWorkspaceMenu(anchor: HTMLElement): void {
+		if (anchor.classList.contains('open')) {
+			this.contextViewService.hideContextView();
+			return;
+		}
+		void this.workspaceActions.menuHost().then(host => {
+			if (!this._store.isDisposed && anchor.isConnected) {
+				showAgentHomeWorkspaceMenu(this.contextViewService, anchor, host);
+			}
 		});
 	}
 
@@ -774,9 +802,6 @@ export class AgentHomePane extends Disposable {
 			case 'customize':
 				await this.commandService.executeCommand(OPEN_AGENT_CUSTOMIZE_COMMAND_ID);
 				return;
-			case 'newProject':
-				// Placeholder: behavior TBD. Keep a no-op so the row is clickable without throwing.
-				return;
 			default: {
 				const unexpected: never = id;
 				return unexpected;
@@ -809,8 +834,36 @@ export class AgentHomePane extends Disposable {
 		);
 	}
 
+	private scheduleRefresh(): void {
+		if (this.refreshFrame.value || this._store.isDisposed) {
+			return;
+		}
+		this.refreshFrame.value = scheduleAtNextAnimationFrame(getWindow(this.element), () => {
+			this.refreshFrame.clear();
+			void this.refresh();
+		});
+	}
+
+	private recentlyOpened(): Promise<readonly (IRecentFolder | IRecentWorkspace)[]> {
+		if (!this.recents) {
+			const pending = this.workspacesService.getRecentlyOpened().then(recent => recent.workspaces, () => {
+				if (this.recents === pending) {
+					this.recents = undefined;
+				}
+				return [];
+			});
+			this.recents = pending;
+		}
+		return this.recents;
+	}
+
 	private async refresh(): Promise<void> {
+		this.refreshFrame.clear();
 		const seq = ++this.refreshSeq;
+		const recents = await this.recentlyOpened();
+		if (seq !== this.refreshSeq || this._store.isDisposed) {
+			return;
+		}
 		const current = this.currentKeys();
 		const projects = this.voltSessionContext.projects.map(project => ({
 			uri: project.root,
@@ -818,13 +871,9 @@ export class AgentHomePane extends Disposable {
 			current: current.has(project.root.toString()),
 			workspace: false,
 		}));
-		const recents = await this.workspacesService.getRecentlyOpened();
-		if (seq !== this.refreshSeq) {
-			return;
-		}
 		const projectKeys = new Set(projects.map(project => project.uri.toString()));
 		const extras: IAgentHomeFolder[] = [];
-		for (const recent of recents.workspaces) {
+		for (const recent of recents) {
 			const folder = this.toFolder(recent, current);
 			if (!folder || projectKeys.has(folder.uri.toString())) {
 				continue;

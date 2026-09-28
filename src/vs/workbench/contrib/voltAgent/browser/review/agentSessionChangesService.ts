@@ -32,6 +32,7 @@ import {
 	normalizeAgentChangePath,
 	sumAgentChangeStats,
 } from './agentSessionChanges.js';
+import { IAgentEditsService, IAgentPendingFile } from './agentEditsService.js';
 
 export const IAgentSessionChangesService = createDecorator<IAgentSessionChangesService>('voltAgentSessionChanges');
 
@@ -79,7 +80,7 @@ export function parseAgentChangesSourceUri(uri: URI): { sessionId: string; scope
 		return undefined;
 	}
 	const scope = new URLSearchParams(uri.query).get('scope');
-	if (scope === 'lastTurn' || scope === 'staged' || scope === 'unstaged' || scope === 'uncommitted') {
+	if (scope === 'pending' || scope === 'lastTurn' || scope === 'staged' || scope === 'unstaged' || scope === 'uncommitted') {
 		return { sessionId, scope };
 	}
 	return { sessionId, scope: 'uncommitted' };
@@ -121,8 +122,17 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
 		@ISCMService private readonly scmService: ISCMService,
 		@IDialogService private readonly dialogService: IDialogService,
+		@IAgentEditsService private readonly edits: IAgentEditsService,
 	) {
 		super();
+		this._register(this.edits.onDidChange(uri => {
+			const owner = this.edits.getPendingFile(uri)?.sessionId;
+			if (owner) {
+				this._onDidChange.fire(owner);
+			} else {
+				this.fireAll();
+			}
+		}));
 		this._register(this.scmService.onDidAddRepository(() => this.bindRepositories()));
 		this._register(this.scmService.onDidRemoveRepository(() => this.bindRepositories()));
 		this.bindRepositories();
@@ -159,6 +169,14 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 	}
 
 	getStats(sessionId: string, scope: AgentChangesScope = 'uncommitted'): IAgentSessionChangeStats {
+		if (scope === 'pending') {
+			const files = this.edits.getPendingFiles(sessionId);
+			return {
+				files: files.length,
+				additions: files.reduce((sum, file) => sum + file.additions, 0),
+				deletions: files.reduce((sum, file) => sum + file.deletions, 0),
+			};
+		}
 		if (scope === 'staged') {
 			return this.scmStats('index');
 		}
@@ -178,6 +196,9 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 	}
 
 	getMultiDiffItems(sessionId: string, scope: AgentChangesScope): readonly MultiDiffEditorItem[] {
+		if (scope === 'pending') {
+			return this.edits.getPendingFiles(sessionId).map(file => this.pendingItem(sessionId, file));
+		}
 		if (scope === 'staged') {
 			return this.scmItems('index');
 		}
@@ -275,6 +296,20 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 				voltAgentChangesSession: sessionId,
 				scmProvider: 'git',
 				scmResourceGroup: 'workingTree',
+			},
+		);
+	}
+
+	private pendingItem(sessionId: string, file: IAgentPendingFile): MultiDiffEditorItem {
+		return new MultiDiffEditorItem(
+			file.kind === 'added' ? undefined : file.baselineUri,
+			file.kind === 'deleted' ? undefined : file.uri,
+			file.uri,
+			undefined,
+			{
+				voltAgentChangeKind: file.kind,
+				voltAgentPendingFile: true,
+				voltAgentChangesSession: sessionId,
 			},
 		);
 	}

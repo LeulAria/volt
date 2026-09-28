@@ -14,7 +14,7 @@ import { IAccessGate, ICompiledPolicy } from '../../common/access/accessTypes.js
 import { IProviderAccessBridge } from '../../common/access/providerAccessBridge.js';
 import { classifyRisk } from '../../common/access/riskClassifier.js';
 import { IAcpNotice, noticesFromAcpPayload, noticesFromAcpUpdate } from '../../common/acpNotices.js';
-import { collectAcpToolInput } from '../../common/acpToolInput.js';
+import { acpModeForVoltMode, collectAcpToolDiffs, collectAcpToolInput, collectAcpToolLocations, IAcpSessionMode } from '../../common/acpToolInput.js';
 import { IVoltEvent } from '../../common/events.js';
 import { parseTokenUsage } from '../../common/tokenUsage.js';
 import { VoltMode } from '../../common/modes.js';
@@ -40,15 +40,27 @@ interface IAcpSession {
 	client: AcpJsonRpcClient;
 	processId: string;
 	configOptions?: IAcpConfigOption[];
-	modes?: { id: string; name?: string }[];
+	modes?: IAcpSessionMode[];
+	/** The read-only mode switched on for a Plan or Ask turn; undefined while the access policy decides. */
+	voltModeId?: string;
+	policy?: ICompiledPolicy;
 	voltSessionId?: string;
 	runId?: string;
 	mode?: VoltMode;
 	currentModel?: string;
 }
 
+export interface IAcpFileWrite {
+	readonly sessionId: string;
+	readonly runId: string;
+	readonly uri: URI;
+	/** The file's text before this write; undefined when the write created it. */
+	readonly before: string | undefined;
+}
+
 interface ISessionNewResponse {
 	sessionId: string;
+	modes?: { currentModeId?: string; availableModes?: IAcpSessionMode[] };
 	configOptions?: IAcpConfigOption[];
 	models?: { availableModels?: IAcpAvailableModel[]; currentModelId?: string };
 }
@@ -86,6 +98,7 @@ export class AcpAgentProvider implements IAgentProvider {
 	private readonly sessions = new Map<string, IAcpSession>();
 	private readonly bridge: IProviderAccessBridge;
 	private gate: IAccessGate | undefined;
+	private writeObserver: ((write: IAcpFileWrite) => void) | undefined;
 
 	constructor(
 		readonly id: string,
@@ -105,6 +118,11 @@ export class AcpAgentProvider implements IAgentProvider {
 		this.gate = gate;
 	}
 
+	/** Told about every `fs/write_text_file` the agent routes through Volt, with the text it replaced. */
+	setFileWriteObserver(observer: (write: IAcpFileWrite) => void): void {
+		this.writeObserver = observer;
+	}
+
 	setRunContext(session: IAgentSessionHandle, context: { sessionId: string; runId: string; mode: VoltMode }): void {
 		const live = this.sessions.get(session.id);
 		if (!live) {
@@ -118,6 +136,11 @@ export class AcpAgentProvider implements IAgentProvider {
 	async applyAccessPolicy(session: IAgentSessionHandle, policy: ICompiledPolicy): Promise<void> {
 		const live = this.sessions.get(session.id);
 		if (!live) {
+			return;
+		}
+		live.policy = policy;
+		if (live.voltModeId) {
+			// A Plan or Ask turn holds the read-only mode; the policy applies again when it ends.
 			return;
 		}
 		const sessionId = live.handle.providerSessionId ?? live.handle.id;
@@ -247,7 +270,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			client,
 			processId,
 			configOptions: created.configOptions ?? initialized.configOptions,
-			modes: initialized.agentCapabilities?.session?.modes?.availableModes,
+			modes: created.modes?.availableModes ?? initialized.agentCapabilities?.session?.modes?.availableModes,
 		};
 		this.sessions.set(handle.id, live);
 		await this.applySelection(live, req);
@@ -494,6 +517,11 @@ export class AcpAgentProvider implements IAgentProvider {
 			if (note.method !== 'session/update') {
 				return;
 			}
+			const modeUpdate = currentModeUpdate(note.params);
+			if (modeUpdate && live.voltModeId && modeUpdate !== live.voltModeId) {
+				// The agent left the read-only mode itself, e.g. the user approved its plan.
+				live.voltModeId = undefined;
+			}
 			for (const event of this.mapUpdate(note.params)) {
 				if (event.type === 'notice') {
 					pushNotice(event);
@@ -520,6 +548,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			void live.client.notify('session/cancel', { sessionId });
 		});
 
+		await this.applyVoltMode(live, sessionId, msg.mode);
 		const promptBody = [{ type: 'text', text: msg.lead ? `${msg.lead}\n\n${msg.text}` : msg.text }];
 
 		const runPrompt = async (): Promise<void> => {
@@ -612,6 +641,35 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 	}
 
+	/**
+	 * Plan and Ask must not edit, so they run in the agent's own read-only mode when it has one.
+	 * Leaving them hands the mode back to the access policy.
+	 */
+	private async applyVoltMode(live: IAcpSession, sessionId: string, mode: VoltMode): Promise<void> {
+		const target = acpModeForVoltMode(mode, live.modes);
+		if (target === live.voltModeId) {
+			return;
+		}
+		if (target) {
+			try {
+				await live.client.request('session/set_mode', { sessionId, modeId: target });
+				live.voltModeId = target;
+			} catch (err) {
+				this.logService.trace('[ACP] session/set_mode failed', err);
+			}
+			return;
+		}
+		live.voltModeId = undefined;
+		if (live.policy) {
+			await this.applyAccessPolicy(live.handle, live.policy);
+		} else {
+			const fallback = live.modes?.find(candidate => candidate.id === 'default' || candidate.id === 'agent')?.id;
+			if (fallback) {
+				await live.client.request('session/set_mode', { sessionId, modeId: fallback }).catch(err => this.logService.trace('[ACP] session/set_mode failed', err));
+			}
+		}
+	}
+
 	async interrupt(session: IAgentSessionHandle): Promise<void> {
 		const live = this.sessions.get(session.id);
 		if (live) {
@@ -658,6 +716,8 @@ export class AcpAgentProvider implements IAgentProvider {
 			const title = typeof update.title === 'string' ? update.title : undefined;
 			const toolKind = typeof update.kind === 'string' ? update.kind : undefined;
 			const input = collectAcpToolInput(update);
+			const locations = collectAcpToolLocations(update);
+			const diffs = collectAcpToolDiffs(update);
 			events.push({
 				type: 'tool.start',
 				callId: String(update.toolCallId ?? 'tool'),
@@ -666,19 +726,37 @@ export class AcpAgentProvider implements IAgentProvider {
 				input,
 				cwd: this.toolCwd(update),
 				kind: mapAcpToolKind(toolKind),
+				...(locations.length ? { locations } : {}),
+				...(diffs.length ? { diffs } : {}),
 			});
 		} else if (kind === 'tool_call_update') {
 			const status = String(update.status ?? '');
+			const callId = String(update.toolCallId ?? 'tool');
 			const input = collectAcpToolInput(update);
 			if (input) {
-				events.push({ type: 'tool.input.delta', callId: String(update.toolCallId ?? 'tool'), delta: input });
+				events.push({ type: 'tool.input.delta', callId, delta: input });
+			}
+			const title = typeof update.title === 'string' && update.title.trim() ? update.title : undefined;
+			const toolKind = typeof update.kind === 'string' ? mapAcpToolKind(update.kind) : undefined;
+			const locations = collectAcpToolLocations(update);
+			const diffs = collectAcpToolDiffs(update);
+			if (title || toolKind || locations.length || diffs.length) {
+				events.push({
+					type: 'tool.update',
+					callId,
+					...(title ? { title } : {}),
+					...(toolKind ? { kind: toolKind } : {}),
+					...(locations.length ? { locations } : {}),
+					...(diffs.length ? { diffs } : {}),
+				});
 			}
 			if (status === 'completed' || status === 'failed') {
 				events.push({
 					type: 'tool.end',
-					callId: String(update.toolCallId ?? 'tool'),
+					callId,
 					result: update.content ?? update.rawOutput ?? update.output,
 					error: status === 'failed' ? 'Tool failed' : undefined,
+					...(diffs.length ? { diffs } : {}),
 				});
 			}
 		} else if (kind === 'usage_update' || kind === 'state_update') {
@@ -756,7 +834,12 @@ export class AcpAgentProvider implements IAgentProvider {
 						await client.respond(req.id, { content: await this.readTextFile(uri, params.line, params.limit) });
 						return;
 					}
+					const before = await this.fileService.readFile(uri).then(file => file.value.toString(), () => undefined);
 					await this.fileService.writeFile(uri, VSBuffer.fromString(params.content ?? ''));
+					const live = this.sessionForClient(client);
+					if (live?.voltSessionId) {
+						this.writeObserver?.({ sessionId: live.voltSessionId, runId: live.runId ?? '', uri, before });
+					}
 					await client.respond(req.id, {});
 					return;
 				}
@@ -832,3 +915,8 @@ export class AcpAgentProvider implements IAgentProvider {
 	}
 }
 
+function currentModeUpdate(params: unknown): string | undefined {
+	const body = params as { update?: { sessionUpdate?: string; currentModeId?: unknown } } | undefined;
+	const update = body?.update;
+	return update?.sessionUpdate === 'current_mode_update' && typeof update.currentModeId === 'string' ? update.currentModeId : undefined;
+}

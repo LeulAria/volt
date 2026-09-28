@@ -8,7 +8,8 @@ import { computeFileChangePreview } from './fileChangePreviewModel.js';
 
 export type AgentChangeKind = 'added' | 'modified' | 'deleted';
 
-export type AgentChangesScope = 'uncommitted' | 'lastTurn' | 'staged' | 'unstaged';
+/** `pending` is what the agent changed that the user has not kept or undone yet. */
+export type AgentChangesScope = 'pending' | 'uncommitted' | 'lastTurn' | 'staged' | 'unstaged';
 
 export interface IAgentChangeTranscriptMessage {
 	readonly kind: string;

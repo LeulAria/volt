@@ -34,6 +34,13 @@
 	position: relative;
 }
 
+/* The first chat's history is still loading. Hide the empty thread and the landing composer
+	(not the pane fill) so the conversation appears once, already in place. */
+.volt-agent-editor.restoring > .volt-agent-editor-main > .volt-agent-thread,
+.volt-agent-editor.restoring > .volt-agent-editor-main > .volt-agent-composer {
+	visibility: hidden;
+}
+
 .volt-agent-editor[data-mode="plan"] {
 	--volt-mode-fg: #c9924a;
 	--volt-mode-bg: #3D2E24;
@@ -7402,4 +7409,36 @@ pre.volt-agent-searchable {
 
 .volt-agent-surface-drop.hidden {
 	display: none;
+}
+
+/* Streamed reply text arrives light blue and fades to the normal text color (agentFreshText.ts). */
+.volt-agent-editor {
+	--volt-agent-fresh-text: #8fbcff;
+}
+
+.monaco-workbench.vs .volt-agent-editor,
+.monaco-workbench.hc-light .volt-agent-editor {
+	--volt-agent-fresh-text: #1f6feb;
+}
+
+.volt-agent-fresh-text {
+	animation-name: volt-agent-fresh-text;
+	animation-timing-function: ease-out;
+	animation-fill-mode: both;
+}
+
+@keyframes volt-agent-fresh-text {
+	from {
+		color: var(--volt-agent-fresh-text);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-agent-fresh-text {
+		animation: none;
+	}
+}
+
+.monaco-workbench.reduce-motion .volt-agent-fresh-text {
+	animation: none;
 }

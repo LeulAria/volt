@@ -55,7 +55,7 @@ export interface IAgentHomeProject {
 
 export type AgentHomeSectionKey = 'repositories' | 'workspaces' | 'agents';
 export type AgentHomeGroupId = 'settled' | 'snooze';
-export type AgentHomeActionId = 'search' | 'automations' | 'customize' | 'newProject';
+export type AgentHomeActionId = 'search' | 'automations' | 'customize';
 
 export type AgentHomeElement =
 	| { readonly type: 'newChat' }
@@ -231,7 +231,7 @@ export function buildAgentHomeTree(
 		});
 	}
 
-	/* Top nav (New Chat … New project) lives outside the tree so it can pin while this body scrolls. */
+	/* Top nav (New Chat … Customize) lives outside the tree so it can pin while this body scrolls. */
 	const tree: IAgentHomeNode[] = [...body];
 
 	for (const shelf of ['settled', 'snooze'] as const) {

@@ -261,6 +261,18 @@ export function looksLikeShell(code: string): boolean {
 	return SHELL_START_RE.test(first) || first.startsWith('./') || first.startsWith('~/');
 }
 
+/**
+ * Tool output some agents wrap in one Markdown fence (Claude Code sends shell output as
+ * "```console ... ```"). A terminal card shows the text itself.
+ */
+export function unwrapOutputFence(text: string): string {
+	const match = /^\s*(`{3,}|~{3,})[\w+-]*[ \t]*\r?\n([\s\S]*?)\r?\n?\1\s*$/.exec(text);
+	if (!match || match[2].includes(match[1])) {
+		return text;
+	}
+	return match[2];
+}
+
 export function stringifyToolResult(result: unknown): string {
 	if (result === undefined || result === null) {
 		return '';
@@ -322,6 +334,10 @@ export function parseShellToolInput(value: unknown): { command: string; cwd?: st
 	const title = pickString(o, ['title', 'description', 'summary', 'purpose']);
 	if (command) {
 		return { command: stripPrompt(command), cwd, title };
+	}
+	// ACP agents announce a call with `{}` and fill the input in later snapshots.
+	if (!Object.keys(o).length || title || cwd) {
+		return { command: '', cwd, title };
 	}
 	try {
 		return { command: JSON.stringify(value), cwd, title };

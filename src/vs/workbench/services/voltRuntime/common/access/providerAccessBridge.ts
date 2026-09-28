@@ -182,6 +182,10 @@ export function resourceFromParams(params: unknown, action: PermissionAction): {
 	if (action === 'mcp' || action === 'subagent') {
 		return { type: 'tool', value: tool || command || '' };
 	}
+	if (action === 'question') {
+		// A plan to approve or a question to answer: the text the user decides on.
+		return { type: 'tool', value: firstString(raw, ['plan', 'question', 'message', 'prompt']) || tool || '' };
+	}
 	return { type: path ? 'file' : 'tool', value: path || command || tool || '' };
 }
 

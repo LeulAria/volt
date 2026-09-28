@@ -208,3 +208,75 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 function asString(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() ? value : undefined;
 }
+
+/** The files an ACP tool call names in `locations`, with the line when the agent sent one. */
+export function collectAcpToolLocations(update: Record<string, unknown>): { path: string; line?: number }[] {
+	const out: { path: string; line?: number }[] = [];
+	const seen = new Set<string>();
+	const buckets = [update.locations, asRecord(update._meta)?.locations, asRecord(update.item)?.locations];
+	for (const locations of buckets) {
+		if (!Array.isArray(locations)) {
+			continue;
+		}
+		for (const location of locations) {
+			const rec = asRecord(location);
+			const path = rec ? asString(rec.path) ?? asString(rec.uri) ?? asString(rec.file) : asString(location);
+			if (!path || seen.has(path)) {
+				continue;
+			}
+			seen.add(path);
+			const line = Number(rec?.line ?? rec?.lineNumber ?? rec?.line_number);
+			out.push(Number.isFinite(line) && line > 0 ? { path, line } : { path });
+		}
+	}
+	return out;
+}
+
+/**
+ * The edits an ACP tool call carries as `{ type: 'diff', path, oldText, newText }` content.
+ * `oldText` is null for a file the call creates. Agents send either the edited snippet or
+ * the whole file; callers must not assume which.
+ */
+export function collectAcpToolDiffs(update: Record<string, unknown>): { path: string; oldText: string | null; newText: string }[] {
+	const content = update.content;
+	if (!Array.isArray(content)) {
+		return [];
+	}
+	const out: { path: string; oldText: string | null; newText: string }[] = [];
+	for (const item of content) {
+		const rec = asRecord(item);
+		if (!rec || rec.type !== 'diff') {
+			continue;
+		}
+		const path = asString(rec.path);
+		const newText = typeof rec.newText === 'string' ? rec.newText : undefined;
+		if (!path || newText === undefined) {
+			continue;
+		}
+		out.push({ path, oldText: typeof rec.oldText === 'string' ? rec.oldText : null, newText });
+	}
+	return out;
+}
+
+export interface IAcpSessionMode {
+	readonly id: string;
+	readonly name?: string;
+	readonly description?: string;
+	readonly _meta?: unknown;
+}
+
+/**
+ * The agent's own session mode for a Volt mode that must not change files. Plan wants the
+ * agent's read-only planning mode; Ask wants a Q&A mode and falls back to planning, which is
+ * also read-only. Agents name these differently (`plan`, `ask`, or `_meta.kind: 'plan'`), so
+ * the match is on the advertised mode, not on the agent.
+ */
+export function acpModeForVoltMode(mode: string, modes: readonly IAcpSessionMode[] | undefined): string | undefined {
+	if ((mode !== 'plan' && mode !== 'ask') || !modes?.length) {
+		return undefined;
+	}
+	const find = (want: string) => modes.find(candidate => candidate.id.toLowerCase() === want
+		|| asString(asRecord(candidate._meta)?.kind)?.toLowerCase() === want
+		|| candidate.name?.trim().toLowerCase() === want);
+	return (mode === 'ask' ? find('ask') ?? find('plan') : find('plan'))?.id;
+}

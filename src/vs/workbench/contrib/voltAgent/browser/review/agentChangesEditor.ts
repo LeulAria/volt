@@ -37,6 +37,7 @@ import { AGENT_EDITOR_ID } from '../editor/agentEditorInput.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { AgentChangesScope, IAgentSessionChangeStats } from './agentSessionChanges.js';
 import { getAgentChangesSourceUri, IAgentSessionChangesService } from './agentSessionChangesService.js';
+import { IAgentEditsService } from './agentEditsService.js';
 
 export const AGENT_CHANGES_EDITOR_ID = 'workbench.editor.voltAgentChanges';
 export const AGENT_CHANGES_INPUT_ID = 'workbench.input.voltAgentChanges';
@@ -44,10 +45,12 @@ export const OPEN_AGENT_CHANGES_COMMAND_ID = 'workbench.action.voltAgent.openCha
 
 const ChangesIcon = registerIcon('volt-agent-changes-editor-label-icon', Codicon.diffMultiple, localize('voltAgentChangesIcon', 'Icon of the agent changes review tab.'));
 
-const SCOPE_ORDER: AgentChangesScope[] = ['lastTurn', 'uncommitted', 'staged', 'unstaged'];
+const SCOPE_ORDER: AgentChangesScope[] = ['pending', 'lastTurn', 'uncommitted', 'staged', 'unstaged'];
 
 export function agentChangesScopeLabel(scope: AgentChangesScope): string {
 	switch (scope) {
+		case 'pending':
+			return localize('voltAgent.changes.pending', "Pending Changes");
 		case 'lastTurn':
 			return localize('voltAgent.changes.lastTurn', "Last Agent Turn");
 		case 'staged':
@@ -172,6 +175,9 @@ export class AgentChangesEditor extends EditorPane {
 
 	private container!: HTMLElement;
 	private headerEl!: HTMLElement;
+	private allTab!: HTMLButtonElement;
+	private pendingTab!: HTMLButtonElement;
+	private pendingActions!: HTMLElement;
 	private scopeButton!: HTMLButtonElement;
 	private scopeStatsEl!: HTMLElement;
 	private scopeLabelEl!: HTMLElement;
@@ -195,6 +201,7 @@ export class AgentChangesEditor extends EditorPane {
 		@IAgentSessionChangesService private readonly changesService: IAgentSessionChangesService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IContextMenuService private readonly contextMenuService: IContextMenuService,
+		@IAgentEditsService private readonly edits: IAgentEditsService,
 	) {
 		super(AgentChangesEditor.ID, group, telemetryService, themeService, storageService);
 	}
@@ -202,11 +209,38 @@ export class AgentChangesEditor extends EditorPane {
 	protected createEditor(parent: HTMLElement): void {
 		this.container = append(parent, $('.volt-agent-changes-editor'));
 		this.headerEl = append(this.container, $('.volt-agent-changes-header'));
+		const tabs = append(this.headerEl, $('.volt-agent-changes-tabs'));
+		this.allTab = append(tabs, $('button.volt-agent-changes-tab')) as HTMLButtonElement;
+		this.allTab.type = 'button';
+		this.allTab.textContent = localize('voltAgent.changes.all', "All Changes");
+		this.pendingTab = append(tabs, $('button.volt-agent-changes-tab')) as HTMLButtonElement;
+		this.pendingTab.type = 'button';
+		this._register(addDisposableListener(this.allTab, 'click', () => this.setScope('uncommitted')));
+		this._register(addDisposableListener(this.pendingTab, 'click', () => this.setScope('pending')));
 		this.scopeButton = append(this.headerEl, $('button.volt-agent-changes-scope')) as HTMLButtonElement;
 		this.scopeButton.type = 'button';
 		this.scopeStatsEl = append(this.scopeButton, $('span.volt-agent-changes-scope-stats'));
 		this.scopeLabelEl = append(this.scopeButton, $('span.volt-agent-changes-scope-label'));
 		append(this.scopeButton, renderIcon(Codicon.chevronDown)).classList.add('volt-agent-changes-scope-chevron');
+		this.pendingActions = append(this.headerEl, $('.volt-agent-changes-pending-actions'));
+		const undoAll = append(this.pendingActions, $('button.volt-agent-changes-action')) as HTMLButtonElement;
+		undoAll.type = 'button';
+		undoAll.textContent = localize('voltAgent.changes.undoAll', "Undo All");
+		const keepAll = append(this.pendingActions, $('button.volt-agent-changes-action')) as HTMLButtonElement;
+		keepAll.type = 'button';
+		keepAll.textContent = localize('voltAgent.changes.keepAll', "Keep All");
+		this._register(addDisposableListener(undoAll, 'click', () => {
+			const input = this.input;
+			if (input instanceof AgentChangesEditorInput) {
+				void this.edits.undoAll(input.sessionId);
+			}
+		}));
+		this._register(addDisposableListener(keepAll, 'click', () => {
+			const input = this.input;
+			if (input instanceof AgentChangesEditorInput) {
+				void this.edits.keepAll(input.sessionId);
+			}
+		}));
 		this.commitButton = append(this.headerEl, $('button.volt-agent-changes-commit')) as HTMLButtonElement;
 		this.commitButton.type = 'button';
 		append(this.commitButton, $('span')).textContent = localize('voltAgent.commitAndPush', "Commit & Push");
@@ -304,7 +338,22 @@ export class AgentChangesEditor extends EditorPane {
 		control.getModifiedEditor().updateOptions(chrome);
 	}
 
+	private setScope(scope: AgentChangesScope): void {
+		const input = this.input;
+		if (input instanceof AgentChangesEditorInput) {
+			input.setScope(scope);
+		}
+	}
+
 	private renderHeader(input: AgentChangesEditorInput): void {
+		const pending = this.changesService.getStats(input.sessionId, 'pending').files;
+		this.pendingTab.textContent = pending === 1
+			? localize('voltAgent.changes.onePending', "1 Pending Change")
+			: localize('voltAgent.changes.pendingCount', "{0} Pending Changes", pending);
+		this.pendingTab.classList.toggle('hidden', pending === 0 && input.scope !== 'pending');
+		this.allTab.classList.toggle('active', input.scope === 'uncommitted');
+		this.pendingTab.classList.toggle('active', input.scope === 'pending');
+		this.pendingActions.classList.toggle('hidden', input.scope !== 'pending' || pending === 0);
 		const stats = this.changesService.getStats(input.sessionId, input.scope);
 		this.scopeStatsEl.replaceChildren();
 		if (stats.additions > 0) {
@@ -335,6 +384,7 @@ export class AgentChangesEditor extends EditorPane {
 		title.textContent = localize('voltAgent.changes.noneInScope', "No {0} changes", agentChangesScopeLabel(input.scope).toLowerCase());
 		const overview = this.changesService.getOverview(input.sessionId);
 		const rows: Array<{ scope: AgentChangesScope; label: string; stats: IAgentSessionChangeStats; icon: ThemeIcon }> = [
+			{ scope: 'pending', label: localize('voltAgent.changes.pending', "Pending Changes"), stats: this.changesService.getStats(input.sessionId, 'pending'), icon: Codicon.diffMultiple },
 			{ scope: 'uncommitted', label: localize('voltAgent.changes.filesChanged', "Files Changed"), stats: overview.filesChanged, icon: Codicon.file },
 			{ scope: 'lastTurn', label: localize('voltAgent.changes.lastTurn', "Last Agent Turn"), stats: overview.lastTurn, icon: Codicon.history },
 			{ scope: 'unstaged', label: localize('voltAgent.changes.unstaged', "Unstaged"), stats: overview.unstaged, icon: Codicon.diff },

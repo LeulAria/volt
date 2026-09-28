@@ -189,10 +189,31 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.intent.wantsPreview && input.runPlan) {
 		parts.push(`[Volt] ${formatRunPlanSection(input.runPlan)}`);
 	}
-	if (input.mode !== 'agent') {
-		parts.push(`[Volt mode: ${input.mode}]`);
+	const contract = modeContract(input.mode);
+	if (contract) {
+		parts.push(`[Volt mode: ${input.mode}] ${contract}`);
 	}
 	return parts.length ? parts.join('\n') : undefined;
+}
+
+/**
+ * What a Volt mode asks of an agent that runs its own loop. Plan and Ask are also enforced by
+ * switching the agent into its read-only mode when it has one; the sentence covers agents that
+ * do not.
+ */
+function modeContract(mode: VoltMode): string | undefined {
+	switch (mode) {
+		case 'plan':
+			return 'Plan only: read what you need, then present a step-by-step plan for approval. Do not change files.';
+		case 'ask':
+			return 'Answer only: read what you need and answer. Do not change files or run commands that change state.';
+		case 'debug':
+			return 'Debug: reproduce the problem first, find the root cause from evidence (a failing run, logs, the code path), fix it, then run the reproduction again to show it is gone.';
+		case 'multitask':
+			return 'Multitask: split independent parts of the work across parallel subagents when you can, then combine their results.';
+		default:
+			return undefined;
+	}
 }
 
 /** Used only when the user asked to see something running. */

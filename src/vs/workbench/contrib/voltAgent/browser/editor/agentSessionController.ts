@@ -9,16 +9,16 @@ import { localize } from '../../../../../nls.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { alwaysAllowPattern } from '../../../../services/voltRuntime/common/access/wildcard.js';
 import { mergeToolInput } from '../../../../services/voltRuntime/common/acpToolInput.js';
-import { IVoltEvent, IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
+import { IVoltEvent, IVoltEventEnvelope, IVoltToolDiff } from '../../../../services/voltRuntime/common/events.js';
 import { runStatusLine } from '../../../../services/voltRuntime/common/harness/workLog.js';
 import { AgentSessionAttention, AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { appendProviderNotice, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IFileChangeBlock, isExploreTool, isFileChangeTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parseShellToolInput, stringifyToolResult, workCountsForSegments } from '../blocks/agentBlocks.js';
+import { appendProviderNotice, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IFileChangeBlock, isExploreTool, isFileChangeTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments } from '../blocks/agentBlocks.js';
 import { agentMessagePlainText } from '../context/agentContextUsage.js';
 import { extractToolImage } from '../preview/browserSnapshot.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
-import { fileChangeVerb, parseToolFileChange } from '../review/fileChangePreviewModel.js';
+import { computeFileChangePreview, fileChangeVerb, parseToolFileChange } from '../review/fileChangePreviewModel.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import type { IAgentActivity, IAgentAssistantMessage, IAgentMessage } from './agentEditor.js';
 
@@ -516,15 +516,25 @@ export class AgentSessionController extends Disposable {
 				const block = findBlockByCallId(last.segments, event.callId);
 				if (block?.type === 'terminal') {
 					const parsed = parseShellToolInput(event.delta);
-					const next = parsed.command || event.delta;
-					block.command = block.command
-						? (block.command.includes(next) ? block.command : block.command + next)
-						: next;
+					if (/^\s*[{[]/.test(event.delta)) {
+						// A structured snapshot of the whole input so far: it replaces, never appends.
+						if (parsed.command) {
+							block.command = parsed.command;
+						}
+						if (parsed.title) {
+							block.title = parsed.title;
+						}
+					} else {
+						const next = parsed.command || event.delta;
+						block.command = block.command
+							? (block.command.includes(next) ? block.command : block.command + next)
+							: next;
+						if (parsed.title && !block.title) {
+							block.title = parsed.title;
+						}
+					}
 					if (parsed.cwd && !block.cwd) {
 						block.cwd = parsed.cwd;
-					}
-					if (parsed.title && !block.title) {
-						block.title = parsed.title;
 					}
 					this.maybeOpenLocalPreview(block.command, 700);
 					const ran = firstCommandName(block.command);
@@ -539,14 +549,26 @@ export class AgentSessionController extends Disposable {
 					if (block?.type === 'tool') {
 						block.input = block.input ? (block.input.includes(event.delta) ? block.input : block.input + event.delta) : event.delta;
 					} else if (block?.type === 'file') {
-						block.input = block.input ? (block.input.includes(event.delta) ? block.input : block.input + event.delta) : event.delta;
-						this.mergeFileChange(block, event.delta);
+						block.input = mergeToolInput(block.input, event.delta);
+						this.mergeFileChange(block, block.input);
 					}
 					const item = this.findActivityByCallId(last, event.callId);
 					if (item) {
 						const input = mergeToolInput(item.input, event.delta);
 						applyExploreInputToActivity(item, item.toolName ?? item.label, item.toolTitle, input);
 					}
+				}
+				break;
+			}
+			case 'tool.update': {
+				const block = findBlockByCallId(last.segments, event.callId);
+				if (block?.type === 'file') {
+					this.applyToolDiff(block, event.diffs?.[0], event.locations?.[0]?.path);
+				}
+				const item = this.findActivityByCallId(last, event.callId);
+				if (item && event.title && event.title !== item.toolTitle) {
+					item.toolTitle = event.title;
+					applyExploreInputToActivity(item, item.toolName ?? item.label, event.title, item.input);
 				}
 				break;
 			}
@@ -558,7 +580,7 @@ export class AgentSessionController extends Disposable {
 					this.attachSnapshotImage(last, event.callId, image);
 				}
 				if (block?.type === 'terminal') {
-					block.output = event.output || output;
+					block.output = unwrapOutputFence(event.output || output);
 					block.status = event.error ? 'error' : 'complete';
 					block.exitCode = event.exitCode ?? (event.error ? 1 : 0);
 					if (event.title) {
@@ -571,14 +593,11 @@ export class AgentSessionController extends Disposable {
 				} else if (block?.type === 'file') {
 					block.output = event.output || output;
 					block.status = event.error ? 'error' : 'complete';
-					const diff = event.diffs?.[0];
-					if (diff) {
-						block.path = diff.path || block.path;
-						block.original = diff.oldText ?? block.original;
-						block.modified = diff.newText;
-						block.verb = diff.oldText === null ? 'Created' : block.verb;
+					if (event.diffs?.[0]) {
+						this.applyToolDiff(block, event.diffs[0]);
+					} else {
+						this.mergeFileChange(block, block.input, block.output, event.result);
 					}
-					this.mergeFileChange(block, block.input, block.output, event.result);
 				}
 				const item = this.findActivityByCallId(last, event.callId);
 				if (item) {
@@ -807,6 +826,24 @@ export class AgentSessionController extends Disposable {
 			additions: parsed?.additions,
 			deletions: parsed?.deletions,
 		});
+	}
+
+	/** An agent's own `{ path, oldText, newText }` for the call is better than anything parsed from its input. */
+	private applyToolDiff(block: IFileChangeBlock, diff: IVoltToolDiff | undefined, location?: string): void {
+		if (!diff) {
+			if (location && !block.path.includes('/') && !block.path.includes('.')) {
+				block.path = location;
+			}
+			return;
+		}
+		block.path = diff.path || block.path;
+		block.original = diff.oldText ?? '';
+		block.modified = diff.newText;
+		block.unifiedDiff = undefined;
+		const preview = computeFileChangePreview({ original: block.original, modified: block.modified });
+		block.additions = preview.additions;
+		block.deletions = preview.deletions;
+		block.verb = diff.oldText === null ? 'Created' : fileChangeVerb(block.verb, block.path, block.path);
 	}
 
 	private mergeFileChange(block: IFileChangeBlock, input?: string, output?: string, result?: unknown): void {

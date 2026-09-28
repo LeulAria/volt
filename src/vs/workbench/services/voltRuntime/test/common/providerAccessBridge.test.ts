@@ -66,4 +66,14 @@ suite('Volt provider access bridges', () => {
 		assert.strictEqual(advertisedModeId({ modes: [] }, ['plan']), undefined);
 	});
 
+	test('a plan approval carries the plan as what the user decides on', () => {
+		const request = normalizeAcpPermission('session/request_permission', {
+			toolCall: { toolCallId: 't', kind: 'switch_mode', title: 'Approve Plan', rawInput: { plan: '# Theme toggle\n\n1. Tokens' } },
+			options: [{ optionId: 'default', kind: 'allow_always' }, { optionId: 'plan', kind: 'reject_once' }],
+		}, { sessionId: 's', runId: 'r', providerId: 'claude-code' });
+		assert.strictEqual(request?.action, 'question');
+		assert.strictEqual(request?.resource.value, '# Theme toggle\n\n1. Tokens');
+		assert.strictEqual(request?.reason, 'Approve Plan');
+	});
 });
+

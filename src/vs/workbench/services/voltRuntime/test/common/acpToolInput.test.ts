@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { collectAcpToolInput, mergeToolInput } from '../../common/acpToolInput.js';
+import { acpModeForVoltMode, collectAcpToolDiffs, collectAcpToolInput, collectAcpToolLocations, mergeToolInput } from '../../common/acpToolInput.js';
 
 suite('ACP tool input', () => {
 
@@ -87,5 +87,34 @@ suite('ACP tool input', () => {
 			mergeToolInput('{"pattern":"foo"', ',"path":"src"}'),
 			'{"pattern":"foo","path":"src"}',
 		);
+	});
+
+	test('reads the diffs and locations an edit call carries', () => {
+		const update = {
+			locations: [{ path: '/w/a.ts', line: 4 }, { path: '/w/a.ts' }, { path: '/w/b.ts' }],
+			content: [
+				{ type: 'content', content: { type: 'text', text: 'ignored' } },
+				{ type: 'diff', path: '/w/a.ts', oldText: 'x', newText: 'y' },
+				{ type: 'diff', path: '/w/new.ts', newText: 'fresh' },
+			],
+		};
+		assert.deepStrictEqual(collectAcpToolLocations(update), [{ path: '/w/a.ts', line: 4 }, { path: '/w/b.ts' }]);
+		assert.deepStrictEqual(collectAcpToolDiffs(update), [
+			{ path: '/w/a.ts', oldText: 'x', newText: 'y' },
+			{ path: '/w/new.ts', oldText: null, newText: 'fresh' },
+		]);
+	});
+
+	test('maps Plan and Ask onto the read-only mode the agent advertises', () => {
+		const claude = [{ id: 'default' }, { id: 'acceptEdits' }, { id: 'plan', _meta: { kind: 'plan' } }, { id: 'bypassPermissions' }];
+		const cursor = [{ id: 'agent' }, { id: 'plan' }, { id: 'ask' }];
+		const kindOnly = [{ id: 'default' }, { id: 'architect', _meta: { kind: 'plan' } }];
+		assert.strictEqual(acpModeForVoltMode('plan', claude), 'plan');
+		assert.strictEqual(acpModeForVoltMode('ask', claude), 'plan', 'no ask mode: plan is read-only too');
+		assert.strictEqual(acpModeForVoltMode('ask', cursor), 'ask');
+		assert.strictEqual(acpModeForVoltMode('plan', kindOnly), 'architect');
+		assert.strictEqual(acpModeForVoltMode('agent', cursor), undefined);
+		assert.strictEqual(acpModeForVoltMode('debug', cursor), undefined);
+		assert.strictEqual(acpModeForVoltMode('plan', [{ id: 'default' }]), undefined);
 	});
 });

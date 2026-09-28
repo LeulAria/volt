@@ -57,6 +57,8 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	redirect(sessionId: string, text: string): Promise<string>;
 	applyHuman(sessionId: string, action: IHumanAction): Promise<void>;
 	onEvent(sessionId: string, listener: (e: IVoltEventEnvelope) => void): IDisposable;
+	/** Every event from every session, after its own listeners ran. */
+	readonly onDidEmit: Event<IVoltEventEnvelope>;
 
 	listCatalog(): IVoltCatalogItem[];
 	isCatalogLoading(): boolean;

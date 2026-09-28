@@ -168,3 +168,33 @@ export function createHomeFoldersIcon(): HTMLElement {
 export function createHomeEnvironmentIcon(): HTMLElement {
 	return createHomeStrokeIcon('environment', [AGENT_HOME_ENVIRONMENT_ICON_PATH], '1.25', [[15, 12], [18, 12]]);
 }
+
+/** Folder-plus on the Open Workspace header control and the New Folder row; lighter than New project. */
+export function createHomeOpenWorkspaceIcon(): HTMLElement {
+	return createHomeSvgIcon('open-workspace', AGENT_HOME_NEW_PROJECT_ICON_PATH, { strokeWidth: '1.5' });
+}
+
+/** Laptop outline for On This Mac. */
+export const AGENT_HOME_LAPTOP_ICON_PATHS = [
+	'M5 5h14a1 1 0 0 1 1 1v10H4V6a1 1 0 0 1 1 -1',
+	'M2 19h20',
+] as const;
+/** GitLab tanuki outline. */
+export const AGENT_HOME_GITLAB_ICON_PATH = 'M12 21l-9.5-7l2.5-10l3 7h8l3-7l2.5 10z';
+/** Bitbucket bucket outline. */
+export const AGENT_HOME_BITBUCKET_ICON_PATHS = [
+	'M3 4h18l-2.7 16H5.7z',
+	'M9.3 10h5.4l-.8 4.5h-3.8z',
+] as const;
+
+export function createHomeLaptopIcon(): HTMLElement {
+	return createHomeStrokeIcon('laptop', AGENT_HOME_LAPTOP_ICON_PATHS, '1.25');
+}
+
+export function createHomeGitLabIcon(): HTMLElement {
+	return createHomeStrokeIcon('gitlab', [AGENT_HOME_GITLAB_ICON_PATH], '1.25');
+}
+
+export function createHomeBitbucketIcon(): HTMLElement {
+	return createHomeStrokeIcon('bitbucket', AGENT_HOME_BITBUCKET_ICON_PATHS, '1.25');
+}

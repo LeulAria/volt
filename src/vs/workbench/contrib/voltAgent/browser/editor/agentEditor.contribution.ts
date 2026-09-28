@@ -47,6 +47,8 @@ import '../chrome/agentTitlebarHeader.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { AgentChangesEditor, AgentChangesEditorInput, AgentChangesEditorInputSerializer, AGENT_CHANGES_EDITOR_ID, OPEN_AGENT_CHANGES_COMMAND_ID, openAgentChanges } from '../review/agentChangesEditor.js';
 import '../review/agentChangesActions.js';
+import '../review/agentEditsEditor.js';
+import { AgentBaselineContentProvider } from '../review/agentEditsService.js';
 import { AgentEditor } from './agentEditor.js';
 import { AgentChangesMultiDiffSourceResolver, AgentSnapshotContentProvider, parseAgentChangesSourceUri } from '../review/agentSessionChangesService.js';
 import { IMultiDiffSourceResolverService } from '../../../multiDiffEditor/browser/multiDiffSourceResolverService.js';
@@ -267,10 +269,25 @@ class AgentChangesResolverContribution extends Disposable {
 			Schemas.voltAgentSnapshot,
 			instantiationService.createInstance(AgentSnapshotContentProvider),
 		));
+		this._register(textModelService.registerTextModelContentProvider(
+			Schemas.voltAgentBaseline,
+			instantiationService.createInstance(AgentBaselineContentProvider),
+		));
 	}
 }
 
 registerWorkbenchContribution2(AgentChangesResolverContribution.ID, AgentChangesResolverContribution, WorkbenchPhase.BlockStartup);
+
+/** Starts reading the chat index at startup, so restored chat tabs do not wait for it. */
+class AgentHistoryWarmupContribution {
+	static readonly ID = 'workbench.contrib.voltAgentHistoryWarmup';
+
+	constructor(@IAgentHistoryService history: IAgentHistoryService) {
+		void history.whenReady;
+	}
+}
+
+registerWorkbenchContribution2(AgentHistoryWarmupContribution.ID, AgentHistoryWarmupContribution, WorkbenchPhase.BlockStartup);
 
 registerAction2(class OpenAgentChangesAction extends Action2 {
 	constructor() {

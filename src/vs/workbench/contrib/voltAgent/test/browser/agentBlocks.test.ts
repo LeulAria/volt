@@ -74,7 +74,7 @@ suite('Adaptive answer blocks', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('lifts a comparable ranking into a table block', () => {
+	test('keeps a ranking list as the markdown the model wrote', () => {
 		const blocks = splitMarkdownToBlocks([
 			'The 10 most populated countries:',
 			'',
@@ -82,13 +82,7 @@ suite('Adaptive answer blocks', () => {
 			'2. China — 1,412,914,089',
 			'3. United States — 349,035,494',
 		].join('\n'), 's0');
-		assert.strictEqual(blocks[0].type, 'markdown');
-		assert.strictEqual(blocks[1].type, 'table');
-		if (blocks[1].type === 'table') {
-			assert.deepStrictEqual(blocks[1].headers, ['Rank', 'Country', 'Population']);
-			assert.strictEqual(blocks[1].rows.length, 3);
-			assert.deepStrictEqual(blocks[1].rows[0], ['1', 'India', '1,476,625,576']);
-		}
+		assert.deepStrictEqual(blocks.map(block => block.type), ['markdown']);
 	});
 
 	test('keeps mermaid fences as mermaid blocks', () => {

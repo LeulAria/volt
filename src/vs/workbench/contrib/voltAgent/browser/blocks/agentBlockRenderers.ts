@@ -35,7 +35,6 @@ import {
 	terminalCommandLabels,
 } from './agentBlocks.js';
 import { renderMermaidDiagram } from './agentMermaid.js';
-import { tableFromListItems } from '../../../../services/voltRuntime/common/harness/adaptiveOutput.js';
 import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../preview/localPreview.js';
 import { AccessDecisionScope } from '../../../../services/voltRuntime/common/access/accessTypes.js';
 import { FileChangePreview } from '../review/fileChangePreview.js';
@@ -56,6 +55,8 @@ export interface IBlockRenderContext {
 	readonly onTableCopyMenu?: (anchor: HTMLElement, plain: string, markdown: string) => void;
 	readonly onCopyText?: (text: string) => void;
 	readonly onAccessDecision?: (requestId: string, effect: 'allow' | 'deny', scope: AccessDecisionScope, pattern?: string) => void;
+	/** The user approved the agent's plan: later turns should run as Agent, not Plan. */
+	readonly onBuildPlan?: () => void;
 	/** When false, a still-running command must not keep the streaming shimmer. */
 	readonly streaming?: boolean;
 }
@@ -117,7 +118,6 @@ export function renderMarkdownInto(parent: HTMLElement, text: string, ctx: IBloc
 	}
 	decorateMarkdownPills(result.element, ctx);
 	wrapMarkdownTables(result.element, ctx);
-	wrapComparableLists(result.element, ctx);
 	parent.appendChild(result.element);
 	ctx.store.add(result);
 }
@@ -398,17 +398,6 @@ function renderTableBlock(parent: HTMLElement, block: ITableBlock, ctx: IBlockRe
 }
 
 function renderListBlock(parent: HTMLElement, block: IListBlock, ctx: IBlockRenderContext): void {
-	const table = tableFromListItems(block.items, '', block.ordered);
-	if (table) {
-		renderTableBlock(parent, {
-			id: block.id,
-			type: 'table',
-			status: block.status,
-			headers: [...table.headers],
-			rows: table.rows.map(row => [...row]),
-		}, ctx);
-		return;
-	}
 	const wrap = append(parent, $(`.volt-agent-block.list.volt-agent-list`));
 	const list = append(wrap, $(block.ordered ? 'ol' : 'ul'));
 	for (const item of block.items) {
@@ -467,6 +456,10 @@ function renderErrorBlock(parent: HTMLElement, block: IErrorBlock): void {
 }
 
 function renderApprovalBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IBlockRenderContext): void {
+	if (block.action === 'question' && !block.blocked) {
+		renderQuestionBlock(parent, block, ctx);
+		return;
+	}
 	const wrap = append(parent, $('.volt-agent-block.approval'));
 	if (block.blocked) {
 		wrap.classList.add('blocked');
@@ -523,6 +516,45 @@ function renderApprovalBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IB
 	}));
 }
 
+/**
+ * An agent's plan waiting for approval, or a question for the user. It reads as the plan
+ * itself with Build / Keep planning, not as a permission prompt.
+ */
+function renderQuestionBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IBlockRenderContext): void {
+	const plan = /plan/i.test(block.reason ?? '') || /^\s*#/.test(block.resource);
+	const wrap = append(parent, $('.volt-agent-block.approval.question'));
+	if (block.decision) {
+		wrap.classList.add(block.decision);
+	}
+	append(wrap, $('.volt-agent-approval-title')).textContent = plan
+		? localize('voltAgent.plan.ready', "Plan ready")
+		: block.reason || localize('voltAgent.question', "Question");
+	const body = append(wrap, $('.volt-agent-approval-plan'));
+	renderMarkdownInto(body, block.resource, ctx);
+	if (block.decision) {
+		append(wrap, $('.volt-agent-approval-status')).textContent = block.decision === 'allow'
+			? (plan ? localize('voltAgent.plan.building', "Building") : localize('voltAgent.question.yes', "Approved"))
+			: (plan ? localize('voltAgent.plan.kept', "Kept planning") : localize('voltAgent.question.no', "Declined"));
+		return;
+	}
+	const actions = append(wrap, $('.volt-agent-approval-actions'));
+	const build = append(actions, $('button.volt-agent-approval-btn.primary')) as HTMLButtonElement;
+	build.textContent = plan ? localize('voltAgent.plan.build', "Build") : localize('voltAgent.question.approve', "Approve");
+	const keep = append(actions, $('button.volt-agent-approval-btn.deny')) as HTMLButtonElement;
+	keep.textContent = plan ? localize('voltAgent.plan.keepPlanning', "Keep planning") : localize('voltAgent.question.decline', "Decline");
+	ctx.store.add(addDisposableListener(build, 'click', e => {
+		e.preventDefault();
+		ctx.onAccessDecision?.(block.requestId, 'allow', 'once');
+		if (plan) {
+			ctx.onBuildPlan?.();
+		}
+	}));
+	ctx.store.add(addDisposableListener(keep, 'click', e => {
+		e.preventDefault();
+		ctx.onAccessDecision?.(block.requestId, 'deny', 'once');
+	}));
+}
+
 function actionTitle(action: string): string {
 	switch (action) {
 		case 'edit':
@@ -556,65 +588,6 @@ function wrapMarkdownTables(root: HTMLElement, ctx: IBlockRenderContext): void {
 			balanceTableColumns(htmlTable);
 			attachTableCopyControls(wrap, ctx);
 		}
-	}
-}
-
-function wrapComparableLists(root: HTMLElement, ctx: IBlockRenderContext): void {
-	for (const list of [...root.querySelectorAll('ol, ul')]) {
-		if (list.closest('.volt-agent-table-wrap, .volt-agent-list, li')) {
-			continue;
-		}
-		const lis = [...list.children].filter((child): child is HTMLLIElement => child.tagName === 'LI');
-		const items = lis.map(child => (child.textContent ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean);
-		if (lis.some(item => item.querySelector('ul, ol, table'))) {
-			continue;
-		}
-		const table = tableFromListItems(items, root.textContent ?? '', list.tagName === 'OL');
-		if (!table) {
-			continue;
-		}
-		const wrap = list.ownerDocument.createElement('div');
-		wrap.className = 'volt-agent-table-wrap';
-		const htmlTable = list.ownerDocument.createElement('table');
-		htmlTable.className = 'volt-agent-table';
-		const thead = htmlTable.createTHead();
-		const headRow = thead.insertRow();
-		for (const header of table.headers) {
-			const th = list.ownerDocument.createElement('th');
-			th.className = classifyTableCell(header, header);
-			const label = list.ownerDocument.createElement('span');
-			label.className = 'volt-agent-searchable';
-			label.textContent = stripCellMarkup(header);
-			th.appendChild(label);
-			headRow.appendChild(th);
-		}
-		const tbody = htmlTable.createTBody();
-		for (const row of table.rows) {
-			const tr = tbody.insertRow();
-			for (const [index, cell] of row.entries()) {
-				const kind = classifyTableCell(cell, table.headers[index]);
-				const td = tr.insertCell();
-				td.className = kind;
-				const raw = stripCellMarkup(cell);
-				if (kind === 'file') {
-					const pill = list.ownerDocument.createElement('span');
-					pill.className = 'volt-agent-path-pill volt-agent-searchable';
-					pill.textContent = raw;
-					td.appendChild(pill);
-					bindPathOpen(pill, parseFileTarget(raw), ctx);
-				} else {
-					const span = list.ownerDocument.createElement('span');
-					span.className = 'volt-agent-searchable';
-					span.textContent = raw;
-					td.appendChild(span);
-				}
-			}
-		}
-		list.replaceWith(wrap);
-		wrap.appendChild(htmlTable);
-		decorateTableColumns(htmlTable);
-		balanceTableColumns(htmlTable);
-		attachTableCopyControls(wrap, ctx);
 	}
 }
 
