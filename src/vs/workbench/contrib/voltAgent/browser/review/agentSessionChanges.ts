@@ -58,26 +58,29 @@ export function sumAgentChangeStats(changes: readonly IAgentSessionFileChange[])
 	return { files: changes.length, additions, deletions };
 }
 
-export function collectSessionFileChanges(messages: readonly IAgentChangeTranscriptMessage[]): IAgentSessionFileChange[] {
+/** Decides from the path as the agent wrote it (before normalizing) whether a change counts. */
+export type AgentChangePathFilter = (rawPath: string) => boolean;
+
+export function collectSessionFileChanges(messages: readonly IAgentChangeTranscriptMessage[], keep?: AgentChangePathFilter): IAgentSessionFileChange[] {
 	const byPath = new Map<string, IAgentSessionFileChange>();
 	for (const message of messages) {
 		if (message.kind !== 'agent') {
 			continue;
 		}
-		for (const change of collectFileChangesFromSegments(message.segments, message.id)) {
+		for (const change of collectFileChangesFromSegments(message.segments, message.id, keep)) {
 			byPath.set(change.path, mergeAgentFileChange(byPath.get(change.path), change));
 		}
 	}
 	return [...byPath.values()];
 }
 
-export function collectLastTurnFileChanges(messages: readonly IAgentChangeTranscriptMessage[]): IAgentSessionFileChange[] {
+export function collectLastTurnFileChanges(messages: readonly IAgentChangeTranscriptMessage[], keep?: AgentChangePathFilter): IAgentSessionFileChange[] {
 	for (let index = messages.length - 1; index >= 0; index--) {
 		const message = messages[index];
 		if (message.kind !== 'agent') {
 			continue;
 		}
-		const files = collectFileChangesFromSegments(message.segments, message.id);
+		const files = collectFileChangesFromSegments(message.segments, message.id, keep);
 		if (files.length) {
 			return files;
 		}
@@ -85,10 +88,13 @@ export function collectLastTurnFileChanges(messages: readonly IAgentChangeTransc
 	return [];
 }
 
-export function collectFileChangesFromSegments(segments: readonly AgentSegment[] | undefined, turnId?: string): IAgentSessionFileChange[] {
+export function collectFileChangesFromSegments(segments: readonly AgentSegment[] | undefined, turnId?: string, keep?: AgentChangePathFilter): IAgentSessionFileChange[] {
 	const byPath = new Map<string, IAgentSessionFileChange>();
 	for (const segment of segments ?? []) {
 		if (segment.kind !== 'block' || segment.block.type !== 'file') {
+			continue;
+		}
+		if (keep && !keep(segment.block.path)) {
 			continue;
 		}
 		const change = fileChangeFromBlock(segment.block, turnId);

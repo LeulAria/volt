@@ -8,7 +8,7 @@ import { Emitter, Event, IValueWithChangeEvent } from '../../../../../base/commo
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { basename, isAbsolute } from '../../../../../base/common/path.js';
-import { joinPath } from '../../../../../base/common/resources.js';
+import { isEqualOrParent, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
@@ -33,6 +33,7 @@ import {
 	sumAgentChangeStats,
 } from './agentSessionChanges.js';
 import { IAgentEditsService, IAgentPendingFile } from './agentEditsService.js';
+import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 
 export const IAgentSessionChangesService = createDecorator<IAgentSessionChangesService>('voltAgentSessionChanges');
 
@@ -123,6 +124,7 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 		@ISCMService private readonly scmService: ISCMService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@IAgentEditsService private readonly edits: IAgentEditsService,
+		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 	) {
 		super();
 		this._register(this.edits.onDidChange(uri => {
@@ -141,8 +143,9 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 	setSessionTranscript(sessionId: string, messages: readonly IAgentChangeTranscriptMessage[]): void {
 		const previous = this.sessions.get(sessionId);
 		const discarded = previous?.discarded ?? new Map<string, { modified?: string }>();
-		const uncommitted = this.applyDiscards(collectSessionFileChanges(messages), discarded);
-		const lastTurn = this.applyDiscards(collectLastTurnFileChanges(messages), discarded);
+		const inProject = (path: string) => this.isInProject(sessionId, path);
+		const uncommitted = this.applyDiscards(collectSessionFileChanges(messages, inProject), discarded);
+		const lastTurn = this.applyDiscards(collectLastTurnFileChanges(messages, inProject), discarded);
 		this.sessions.set(sessionId, {
 			uncommitted,
 			lastTurn,
@@ -151,6 +154,20 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 		});
 		void this.resolveSessionPaths(sessionId);
 		this._onDidChange.fire(sessionId);
+	}
+
+	/**
+	 * Agents also write their own files outside the project (Claude's plan in ~/.claude/plans).
+	 * Those are not changes the user reviews or commits. Relative paths are the project's.
+	 */
+	private isInProject(sessionId: string, path: string): boolean {
+		path = path.replace(/^["'`]+|["'`]+$/g, '').trim();
+		if (!isAbsolute(path)) {
+			return true;
+		}
+		const roots = [this.sessionContext.rootFor(sessionId), ...this.workspaceContextService.getWorkspace().folders.map(folder => folder.uri)];
+		const file = URI.file(path);
+		return roots.some(root => !!root && isEqualOrParent(file, root));
 	}
 
 	clearSession(sessionId: string): void {

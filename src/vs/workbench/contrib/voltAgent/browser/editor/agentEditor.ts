@@ -76,7 +76,7 @@ import { completeStreamingBlocks } from './agentSessionController.js';
 import { AgentSurfaceHost } from '../workspace/agentSurfaceHost.js';
 import { AgentComposerChips } from '../composer/agentComposerChips.js';
 import { AgentPendingChanges } from '../composer/agentPendingChanges.js';
-import { FreshTextTracker } from '../chrome/agentFreshText.js';
+import { FRESH_TEXT_CLASS, FreshTextTracker } from '../chrome/agentFreshText.js';
 import { IAgentPendingFile } from '../review/agentEditsService.js';
 import { AgentComposerLists } from '../composer/agentComposerLists.js';
 import { AgentComposerQueue } from '../composer/agentComposerQueue.js';
@@ -2037,6 +2037,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.dropStashedThread(input.sessionId);
 		const nodes = this.threadInner.ownerDocument.createDocumentFragment();
 		nodes.append(...this.threadInner.childNodes);
+		// Re-attached nodes restart their CSS animations; drop the fade so parked text does not fade in again.
+		for (const span of nodes.querySelectorAll(`.${FRESH_TEXT_CLASS}`)) {
+			span.replaceWith(...span.childNodes);
+		}
 		const entry: IStashedThread = {
 			input,
 			messages: this.messages,

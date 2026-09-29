@@ -56,6 +56,12 @@ suite('Agent timeline', () => {
 		assert.ok(!parts.some(part => part.kind === 'block' && part.block.type === 'table'));
 	});
 
+	test('keeps a reply made of long paragraphs visible', () => {
+		const paragraph = 'Local development servers bind to 127.0.0.1 because that address is the loopback interface: traffic sent there never leaves the machine, so nothing on the network can reach a half-finished app, and the operating system never has to ask for firewall permission either. It also keeps a stray debug endpoint off the office Wi-Fi.';
+		assert.ok(paragraph.length > 280);
+		assert.deepStrictEqual(partitionAssistantText(`${paragraph}\n\n${paragraph}`).map(part => part.kind), ['reply']);
+	});
+
 	test('keeps the URL reply visible', () => {
 		const parts = partitionAssistantText([
 			'No browser MCP tools are available. The in-app browser cannot be used to open the URL.',

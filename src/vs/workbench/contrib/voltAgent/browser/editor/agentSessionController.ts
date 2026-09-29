@@ -684,6 +684,9 @@ export class AgentSessionController extends Disposable {
 			}
 			case 'finish':
 				break;
+			case 'title':
+				void this.history.setAgentTitle(this.host.sessionId, event.text);
+				break;
 			case 'tool.progress': {
 				// A sub-agent or a long tool reports each step; the card shows the latest few.
 				activity.status = event.status;

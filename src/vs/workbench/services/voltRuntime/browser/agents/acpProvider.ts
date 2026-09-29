@@ -759,6 +759,11 @@ export class AcpAgentProvider implements IAgentProvider {
 					...(diffs.length ? { diffs } : {}),
 				});
 			}
+		} else if (kind === 'session_info_update') {
+			const title = typeof update.title === 'string' ? update.title.trim() : '';
+			if (title) {
+				events.push({ type: 'title', text: title });
+			}
 		} else if (kind === 'usage_update' || kind === 'state_update') {
 			const usage = parseTokenUsage(update.usage ?? update);
 			if (usage) {

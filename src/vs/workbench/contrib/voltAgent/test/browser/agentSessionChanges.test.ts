@@ -152,4 +152,16 @@ suite('Agent session changes', () => {
 		assert.deepStrictEqual(collectSessionFileChanges([{ kind: 'agent', segments: [] }]), []);
 		assert.deepStrictEqual(collectLastTurnFileChanges([{ kind: 'user' }]), []);
 	});
+
+	test('leaves out files the path filter rejects, judged on the raw path', () => {
+		const block = (id: string, path: string) => ({
+			kind: 'block' as const,
+			block: createFileChangeBlock({ id, path, verb: 'Created', original: '', modified: 'x\n', additions: 1, deletions: 0 }),
+		});
+		const messages = [{ kind: 'agent', id: 't1', segments: [block('a', '/work/app/src/a.ts'), block('p', '/Users/me/.claude/plans/plan.md')] }];
+		const inProject = (path: string) => path.startsWith('/work/app/');
+		assert.deepStrictEqual(collectSessionFileChanges(messages, inProject).map(file => file.path), ['work/app/src/a.ts']);
+		assert.deepStrictEqual(collectLastTurnFileChanges(messages, inProject).map(file => file.path), ['work/app/src/a.ts']);
+	});
 });
+

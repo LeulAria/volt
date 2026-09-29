@@ -7413,12 +7413,12 @@ pre.volt-agent-searchable {
 
 /* Streamed reply text arrives light blue and fades to the normal text color (agentFreshText.ts). */
 .volt-agent-editor {
-	--volt-agent-fresh-text: #8fbcff;
+	--volt-agent-fresh-text: #c2dcff;
 }
 
 .monaco-workbench.vs .volt-agent-editor,
 .monaco-workbench.hc-light .volt-agent-editor {
-	--volt-agent-fresh-text: #1f6feb;
+	--volt-agent-fresh-text: #5b95e6;
 }
 
 .volt-agent-fresh-text {

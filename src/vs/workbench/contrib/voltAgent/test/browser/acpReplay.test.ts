@@ -79,7 +79,7 @@ suite('ACP replay', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function replay(updates: readonly Record<string, unknown>[]) {
+	function replay(updates: readonly Record<string, unknown>[], titles: string[] = []) {
 		const runtime = new ReplayRuntime();
 		const host: IAgentSessionHost = {
 			sessionId: 's1',
@@ -95,7 +95,7 @@ suite('ACP replay', () => {
 			{ rootFor: () => undefined } as unknown as IVoltSessionContextService,
 			{ getWorkspace: () => ({ folders: [] }) } as unknown as IWorkspaceContextService,
 			{ openSurface: () => undefined } as unknown as IAgentWorkspaceService,
-			{ get: () => undefined, setAttention: async () => { } } as unknown as IAgentHistoryService,
+			{ get: () => undefined, setAttention: async () => { }, setAgentTitle: async (_id: string, title: string) => { titles.push(title); } } as unknown as IAgentHistoryService,
 		));
 		const provider = new AcpAgentProvider('claude-code', 'Claude', 'claude', [], undefined as unknown as IVoltStdioService,
 			undefined as unknown as IWorkspaceContextService, undefined as unknown as IFileService, undefined as unknown as ILogService);
@@ -125,7 +125,9 @@ suite('ACP replay', () => {
 	});
 
 	test('a Cursor edit turn reads like the work it did', () => {
-		const reply = replay(CURSOR_EDIT_TURN);
+		const titles: string[] = [];
+		const reply = replay(CURSOR_EDIT_TURN, titles);
+		assert.deepStrictEqual(titles, ['Health Check Endpoint'], 'the chat takes the name the agent gave it');
 		const lines = describeSegments(reply.segments);
 		const transcript = lines.join('\n');
 		assert.deepStrictEqual(lines.filter(line => line.startsWith('file:')), ['file: Edited /work/Agent-Test/harness-server.mjs +5 -0'], transcript);

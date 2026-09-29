@@ -136,6 +136,7 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 	const order: string[] = [];
 	const turns = new Map<string, { user: IAgentUserEntry; assistant?: IAgentAssistantEntry }>();
 	let title: string | undefined;
+	let agentTitle: string | undefined;
 	let mode: string | undefined;
 	let model: string | undefined;
 	let worktreePath: string | undefined;
@@ -169,6 +170,9 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 				if (entry.title !== undefined) {
 					title = entry.title || undefined;
 				}
+				if (entry.agentTitle) {
+					agentTitle = entry.agentTitle;
+				}
 				if (entry.mode !== undefined) {
 					mode = entry.mode;
 				}
@@ -191,17 +195,18 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 			folded.push({ id, user: turn.user, assistant: turn.assistant });
 		}
 	}
-	return { header, turns: folded, title, mode, model, worktreePath, worktreeBranch };
+	return { header, turns: folded, title, ...(agentTitle ? { agentTitle } : {}), mode, model, worktreePath, worktreeBranch };
 }
 
 /** Records needed to reproduce a transcript without superseded entries. */
 export function compactRecords(transcript: IAgentSessionTranscript): AgentHistoryRecord[] {
 	const records: AgentHistoryRecord[] = [transcript.header];
-	if (transcript.title !== undefined || transcript.mode !== undefined || transcript.model !== undefined || transcript.worktreePath || transcript.worktreeBranch) {
+	if (transcript.title !== undefined || transcript.agentTitle || transcript.mode !== undefined || transcript.model !== undefined || transcript.worktreePath || transcript.worktreeBranch) {
 		records.push({
 			type: 'meta',
 			at: transcript.header.createdAt,
 			title: transcript.title,
+			...(transcript.agentTitle ? { agentTitle: transcript.agentTitle } : {}),
 			mode: transcript.mode,
 			model: transcript.model,
 			...(transcript.worktreePath ? { worktreePath: transcript.worktreePath } : {}),
@@ -287,7 +292,7 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 	);
 	return {
 		id: transcript.header.id,
-		title: custom || derived || previous?.title || '',
+		title: custom || transcript.agentTitle?.trim() || derived || previous?.title || '',
 		customTitle: !!custom,
 		createdAt: transcript.header.createdAt,
 		updatedAt,

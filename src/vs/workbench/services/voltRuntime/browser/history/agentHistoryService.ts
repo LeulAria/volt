@@ -218,7 +218,7 @@ class SessionHandle implements IAgentSessionHandle {
 		this.append({ type: 'truncate', at: Date.now(), from: fromTurn });
 	}
 
-	setMeta(meta: { title?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string }): void {
+	setMeta(meta: { title?: string; agentTitle?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string }): void {
 		this.append({ type: 'meta', at: Date.now(), ...meta });
 	}
 
@@ -741,6 +741,17 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		await handle.load();
 		handle.setMeta({ title: title?.trim() ?? '' });
 		await handle.flush();
+	}
+
+	async setAgentTitle(id: string, title: string): Promise<void> {
+		const text = title.trim();
+		const meta = this.sessions.get(id);
+		if (!meta || !text || meta.customTitle) {
+			return;
+		}
+		const handle = this.open(id);
+		await handle.load();
+		handle.setMeta({ agentTitle: text });
 	}
 
 	async delete(id: string): Promise<void> {

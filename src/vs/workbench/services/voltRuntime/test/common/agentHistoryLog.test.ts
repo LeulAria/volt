@@ -152,6 +152,17 @@ suite('Volt agent history log', () => {
 		assert.strictEqual(derived.worktreeBranch, 'volt/abcd1234');
 	});
 
+	test('the agent\'s name for a chat shows until the user renames it', () => {
+		const user = { type: 'user' as const, turn: 't1', at: 1, text: 'Add a GET /api/health endpoint to harness-server.mjs', message: null };
+		const named = foldTranscript(header, [user, { type: 'meta', at: 2, agentTitle: 'Health Check Endpoint' }]);
+		assert.strictEqual(deriveMeta(named).title, 'Health Check Endpoint');
+		assert.strictEqual(deriveMeta(named).customTitle, false);
+		const kept = foldTranscript(header, compactRecords(named).filter(record => record.type !== 'header'));
+		assert.strictEqual(deriveMeta(kept).title, 'Health Check Endpoint', 'compaction keeps it');
+		const renamed = foldTranscript(header, [user, { type: 'meta', at: 2, agentTitle: 'Health Check Endpoint' }, { type: 'meta', at: 3, title: 'Mine' }]);
+		assert.strictEqual(deriveMeta(renamed).title, 'Mine');
+	});
+
 	test('compaction keeps only effective records', () => {
 		const transcript = foldTranscript(header, [
 			{ type: 'meta', at: 0, title: 'Named' },

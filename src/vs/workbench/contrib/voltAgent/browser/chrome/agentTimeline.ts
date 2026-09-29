@@ -55,10 +55,8 @@ function classifyAssistantParagraph(para: string): 'thought' | 'reply' {
 	if (extractLocalPreviewUrl(para) || looksLikeAnswerForm(para)) {
 		return 'reply';
 	}
+	// A long paragraph is still the answer; only harness chatter that leaked into the text is hidden.
 	if (isProcessNarration(para)) {
-		return 'thought';
-	}
-	if (para.length > 280 && !looksLikeAnswerForm(para)) {
 		return 'thought';
 	}
 	return 'reply';

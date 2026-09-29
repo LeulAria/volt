@@ -88,6 +88,8 @@ export interface IAgentMetaEntry {
 	readonly type: 'meta';
 	readonly at: number;
 	readonly title?: string;
+	/** Name the agent gave the chat (ACP `session_info_update`). A user rename still wins. */
+	readonly agentTitle?: string;
 	readonly mode?: string;
 	readonly model?: string;
 	/** Checkout created for a New Worktree chat. Absent when the chat runs on the open branch. */
@@ -109,6 +111,7 @@ export interface IAgentSessionTranscript {
 	readonly header: IAgentSessionHeader;
 	readonly turns: readonly IAgentSessionTurn[];
 	readonly title?: string;
+	readonly agentTitle?: string;
 	readonly mode?: string;
 	readonly model?: string;
 	readonly worktreePath?: string;
@@ -200,7 +203,7 @@ export interface IAgentSessionHandle {
 	appendUser(turn: string, text: string, message: unknown): void;
 	appendAssistant(entry: IAgentSessionAppendAssistant): void;
 	truncate(fromTurn: string): void;
-	setMeta(meta: { title?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string }): void;
+	setMeta(meta: { title?: string; agentTitle?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string }): void;
 	saveDraft(draft: Omit<IAgentSessionDraft, 'updatedAt'> | undefined): void;
 
 	/** Durability barrier: every accepted append is on disk when this resolves. */
@@ -245,6 +248,8 @@ export interface IAgentHistoryService {
 	/** Recorded by the session controller from harness events (`access.ask`, `clarify`). */
 	setAttention(id: string, attention: AgentSessionAttention | undefined): Promise<void>;
 	rename(id: string, title: string | undefined): Promise<void>;
+	/** The agent named the chat. Shown unless the user renamed it. */
+	setAgentTitle(id: string, title: string): Promise<void>;
 	delete(id: string): Promise<void>;
 
 	/** Store binary content once and return a stable content-addressed reference. */
