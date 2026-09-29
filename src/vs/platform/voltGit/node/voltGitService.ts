@@ -3,16 +3,21 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { spawn } from 'child_process';
+import { ChildProcess, spawn } from 'child_process';
 import { copyFile, mkdir, rm, stat } from 'fs/promises';
 import { tmpdir } from 'os';
 import { SequencerByKey, timeout } from '../../../base/common/async.js';
 import { VSBuffer } from '../../../base/common/buffer.js';
-import { dirname, join, resolve } from '../../../base/common/path.js';
+import { Emitter } from '../../../base/common/event.js';
+import { Disposable } from '../../../base/common/lifecycle.js';
+import { dirname, isAbsolute, join, resolve } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
 import {
 	IVoltGitApplyResult,
+	IVoltGitBranches,
+	IVoltGitCloneProgress,
+	IVoltGitCloneRequest,
 	IVoltGitDiffEntry,
 	IVoltGitRef,
 	IVoltGitRepo,
@@ -20,6 +25,7 @@ import {
 	IVoltGitSnapshot,
 	IVoltGitSnapshotRequest,
 	VoltGitChangeKind,
+	VoltGitClonePhase,
 	VoltGitError,
 } from '../common/voltGit.js';
 
@@ -55,17 +61,148 @@ interface IGitOutput {
 	readonly stderr: string;
 }
 
-export class VoltGitService implements IVoltGitService {
+export class VoltGitService extends Disposable implements IVoltGitService {
 
 	declare readonly _serviceBrand: undefined;
 
+	private readonly _onDidCloneProgress = this._register(new Emitter<IVoltGitCloneProgress>());
+	readonly onDidCloneProgress = this._onDidCloneProgress.event;
+
 	private readonly queue = new SequencerByKey<string>();
+	private readonly clones = new Map<string, ChildProcess>();
 	private baseEnv: Promise<NodeJS.ProcessEnv> | undefined;
 
 	constructor(
 		private readonly resolveEnv: () => Promise<NodeJS.ProcessEnv>,
 		private readonly logService?: ILogService,
-	) { }
+	) {
+		super();
+	}
+
+	async clone(request: IVoltGitCloneRequest): Promise<void> {
+		if (!isAbsolute(request.dest)) {
+			throw new VoltGitError(['clone'], null, `Destination must be an absolute path: ${request.dest}`);
+		}
+		if (!isSafeCloneUrl(request.url)) {
+			throw new VoltGitError(['clone'], null, `Refusing to clone from ${request.url}`);
+		}
+		await mkdir(dirname(request.dest), { recursive: true });
+		const extra: Record<string, string> = {};
+		if (request.authHeader) {
+			// Through the environment so the token is neither on the command line nor in .git/config.
+			extra.GIT_CONFIG_COUNT = '1';
+			extra.GIT_CONFIG_KEY_0 = `http.${request.authHost ?? 'https://github.com/'}.extraheader`;
+			extra.GIT_CONFIG_VALUE_0 = request.authHeader;
+		}
+		const env = await this.env(extra);
+		if (!env.GIT_SSH_COMMAND) {
+			// Keys from the agent still work; a passphrase prompt fails fast instead of hanging.
+			env.GIT_SSH_COMMAND = 'ssh -o BatchMode=yes';
+		}
+		const args = ['clone', '--progress', ...(request.ref ? ['--branch', request.ref] : []), ...(request.recursive ? ['--recurse-submodules'] : []), '--', request.url, request.dest];
+		const emit = (phase: VoltGitClonePhase, percent: number, message?: string) => this._onDidCloneProgress.fire({ jobId: request.jobId, phase, percent, message });
+		emit('starting', 0);
+		await new Promise<void>((resolvePromise, reject) => {
+			const child = spawn('git', ['--no-pager', ...args], { cwd: dirname(request.dest), env, windowsHide: true });
+			this.clones.set(request.jobId, child);
+			let stderr = '';
+			let pending = '';
+			let last = 0;
+			child.stderr.on('data', (chunk: Buffer) => {
+				const text = chunk.toString('utf8');
+				stderr = (stderr + text).slice(-8000);
+				pending += text;
+				const lines = pending.split(/[\r\n]/);
+				pending = lines.pop() ?? '';
+				const now = Date.now();
+				for (const line of lines.reverse()) {
+					const progress = parseCloneProgress(line);
+					if (progress) {
+						if (now - last > 80 || progress.percent >= 100) {
+							last = now;
+							emit(progress.phase, progress.percent, line.trim());
+						}
+						break;
+					}
+				}
+			});
+			child.stdout.resume();
+			child.on('error', err => {
+				this.clones.delete(request.jobId);
+				reject(new VoltGitError(args, null, err.message));
+			});
+			child.on('close', (code, signal) => {
+				const cancelled = this.clones.get(request.jobId) !== child;
+				this.clones.delete(request.jobId);
+				if (cancelled || signal) {
+					reject(new VoltGitError(args, code, 'Clone cancelled'));
+				} else if (code !== 0) {
+					reject(new VoltGitError(args, code, cleanCloneError(stderr)));
+				} else {
+					emit('done', 100);
+					resolvePromise();
+				}
+			});
+		});
+	}
+
+	async cancelClone(jobId: string): Promise<void> {
+		const child = this.clones.get(jobId);
+		if (child) {
+			// Dropped first so close knows this was a cancel; git removes the half-made folder itself.
+			this.clones.delete(jobId);
+			child.kill('SIGTERM');
+		}
+	}
+
+	async listBranches(request: { readonly repoRoot: string }): Promise<IVoltGitBranches> {
+		const [head, refs] = await Promise.all([
+			this.run({ cwd: request.repoRoot, args: ['symbolic-ref', '-q', '--short', 'HEAD'], okCodes: [0, 1] }),
+			this.run({ cwd: request.repoRoot, args: ['for-each-ref', '--sort=-committerdate', '--format=%(refname)', 'refs/heads', 'refs/remotes', 'refs/tags'] }),
+		]);
+		const local: string[] = [];
+		const remote: string[] = [];
+		const tags: string[] = [];
+		for (const ref of refs.stdout.toString('utf8').split('\n')) {
+			if (ref.startsWith('refs/heads/')) {
+				local.push(ref.slice('refs/heads/'.length));
+			} else if (ref.startsWith('refs/remotes/') && !ref.endsWith('/HEAD')) {
+				remote.push(ref.slice('refs/remotes/'.length));
+			} else if (ref.startsWith('refs/tags/')) {
+				tags.push(ref.slice('refs/tags/'.length));
+			}
+		}
+		const branch = head.exitCode === 0 ? head.stdout.toString('utf8').trim() || undefined : undefined;
+		let detached: string | undefined;
+		if (!branch) {
+			const sha = await this.run({ cwd: request.repoRoot, args: ['rev-parse', '--short', 'HEAD'], okCodes: [0, 128] });
+			detached = sha.exitCode === 0 ? sha.stdout.toString('utf8').trim() : undefined;
+		}
+		return { head: branch, detached, local, remote, tags };
+	}
+
+	checkout(request: { readonly repoRoot: string; readonly ref: string; readonly kind: 'local' | 'remote' | 'tag' }): Promise<void> {
+		return this.queue.queue(request.repoRoot, async () => {
+			let args: string[];
+			if (request.kind === 'tag') {
+				args = ['switch', '--detach', `refs/tags/${request.ref}`];
+			} else if (request.kind === 'remote') {
+				const local = request.ref.slice(request.ref.indexOf('/') + 1);
+				const exists = await this.run({ cwd: request.repoRoot, args: ['show-ref', '--verify', '-q', `refs/heads/${local}`], okCodes: [0, 1] });
+				args = exists.exitCode === 0 ? ['switch', local] : ['switch', '--track', request.ref];
+			} else {
+				args = ['switch', request.ref];
+			}
+			await this.runOnIndex({ cwd: request.repoRoot, args });
+		});
+	}
+
+	createBranch(request: { readonly repoRoot: string; readonly name: string }): Promise<void> {
+		return this.queue.queue(request.repoRoot, async () => {
+			await this.run({ cwd: request.repoRoot, args: ['check-ref-format', '--branch', request.name] });
+			await this.run({ cwd: request.repoRoot, args: ['switch', '-c', request.name] });
+		});
+	}
 
 	async resolveRepo(folder: string): Promise<IVoltGitRepo | undefined> {
 		const out = await this.run({ cwd: folder, args: ['rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'], okCodes: [0, 128] });
@@ -398,4 +535,48 @@ export function parseDiffSummary(output: string): IVoltGitDiffEntry[] {
 		const count = counts.get(path) ?? { additions: 0, deletions: 0, binary: false };
 		return { ...entry, ...count };
 	});
+}
+
+const CLONE_PHASES: readonly { readonly pattern: RegExp; readonly phase: VoltGitClonePhase; readonly from: number; readonly to: number }[] = [
+	{ pattern: /Counting objects:\s+(\d+)%/, phase: 'counting', from: 0, to: 5 },
+	{ pattern: /Compressing objects:\s+(\d+)%/, phase: 'compressing', from: 5, to: 10 },
+	{ pattern: /Receiving objects:\s+(\d+)%/, phase: 'receiving', from: 10, to: 80 },
+	{ pattern: /Resolving deltas:\s+(\d+)%/, phase: 'resolving', from: 80, to: 92 },
+	{ pattern: /Updating files:\s+(\d+)%/, phase: 'checkout', from: 92, to: 100 },
+];
+
+/** Maps one line of `git clone --progress` output to overall progress. */
+export function parseCloneProgress(line: string): { readonly phase: VoltGitClonePhase; readonly percent: number } | undefined {
+	for (const { pattern, phase, from, to } of CLONE_PHASES) {
+		const match = pattern.exec(line);
+		if (match) {
+			const local = Math.min(100, Number(match[1]));
+			return { phase, percent: Math.round(from + (to - from) * local / 100) };
+		}
+	}
+	if (/Enumerating objects|Cloning into/.test(line)) {
+		return { phase: 'counting', percent: 0 };
+	}
+	return undefined;
+}
+
+/**
+ * URLs git may clone from. Blocks transports that run commands (`ext::`), option injection,
+ * and control characters.
+ */
+export function isSafeCloneUrl(url: string): boolean {
+	if (!url || url.startsWith('-') || /[\u0000-\u001f\u007f]/.test(url)) {
+		return false;
+	}
+	if (/^[a-z][a-z0-9+.-]*::/i.test(url)) {
+		return false;
+	}
+	return /^(https?|ssh|git):\/\//i.test(url) || /^[\w.-]+@[\w.-]+:/.test(url) || url.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(url) || /^file:\/\//i.test(url);
+}
+
+/** The useful part of a failed clone's stderr: git's fatal/error lines, without progress noise. */
+function cleanCloneError(stderr: string): string {
+	const lines = stderr.split(/[\r\n]+/).map(line => line.trim()).filter(line => line && !parseCloneProgress(line));
+	const important = lines.filter(line => /^(fatal|error|remote: (error|fatal))/i.test(line));
+	return (important.length ? important : lines).slice(-4).join('\n');
 }

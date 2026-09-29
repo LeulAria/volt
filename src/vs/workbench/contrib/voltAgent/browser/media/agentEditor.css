@@ -2943,7 +2943,8 @@ pre.volt-agent-searchable {
 .volt-agent-editor:not(:has(.volt-agent-turn)):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-composer-chips,
 .volt-agent-editor:not(:has(.volt-agent-turn)):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-composer-stack,
 .volt-agent-editor:not(:has(.volt-agent-turn)):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-plus-menu,
-.volt-agent-editor:not(:has(.volt-agent-turn)):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-landing-chrome {
+.volt-agent-editor:not(:has(.volt-agent-turn)):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-landing-chrome,
+.volt-agent-editor:not(:has(.volt-agent-turn)):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-clone-banner {
 	max-width: 560px;
 }
 
@@ -4550,29 +4551,27 @@ pre.volt-agent-searchable {
 	flex-shrink: 0;
 }
 
-.volt-agent-landing-pick .run-icon {
-	display: none;
+.volt-agent-landing-pick .trigger-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	width: 14px;
 	height: 14px;
 	flex-shrink: 0;
-	align-items: center;
-	justify-content: center;
 }
 
-.volt-agent-landing-pick.worktree .run-icon {
-	display: inline-flex;
-}
-
-.volt-agent-landing-pick .run-icon svg {
-	display: block;
+.volt-agent-landing-pick .trigger-icon .codicon {
+	font-size: 13px;
 }
 
 .volt-agent-landing-pick.empty {
 	opacity: 0.7;
 }
 
-.volt-agent-landing-pick:hover {
+.volt-agent-landing-pick:hover,
+.volt-agent-landing-pick.open {
 	color: var(--vscode-foreground);
+	background: var(--vscode-toolbar-hoverBackground);
 }
 
 .volt-agent-landing-pick:focus,
@@ -7441,4 +7440,55 @@ pre.volt-agent-searchable {
 
 .monaco-workbench.reduce-motion .volt-agent-fresh-text {
 	animation: none;
+}
+
+/* Clone in progress: shown above the composer until the project's files are there. */
+.volt-agent-clone-banner {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	max-width: 760px;
+	margin: 0 auto 8px;
+	padding: 6px 10px;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 14%, transparent));
+	border-radius: 8px;
+	background: var(--vscode-editorWidget-background);
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-agent-clone-banner.hidden {
+	display: none;
+}
+
+.volt-agent-clone-banner.error {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-agent-clone-banner .icon {
+	display: inline-flex;
+	flex-shrink: 0;
+}
+
+.volt-agent-clone-banner .codicon-modifier-spin {
+	animation: codicon-spin 1.25s steps(30) infinite;
+}
+
+.volt-agent-clone-banner .text {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-clone-banner .action {
+	border: 0;
+	background: transparent;
+	color: var(--vscode-textLink-foreground);
+	font: inherit;
+	cursor: pointer;
+	padding: 0 4px;
 }

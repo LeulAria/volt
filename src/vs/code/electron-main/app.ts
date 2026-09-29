@@ -125,6 +125,8 @@ import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../platform/voltS
 import { VoltStdioMainService } from '../../platform/voltStdio/electron-main/voltStdioMainService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../platform/voltGit/common/voltGit.js';
 import { VoltGitMainService } from '../../platform/voltGit/electron-main/voltGitMainService.js';
+import { IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME } from '../../platform/voltFsBrowse/common/voltFsBrowse.js';
+import { VoltFsBrowseService } from '../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import ErrorTelemetry from '../../platform/telemetry/electron-main/errorTelemetry.js';
 
 /**
@@ -1050,6 +1052,9 @@ export class CodeApplication extends Disposable {
 		// Volt agent change capture
 		services.set(IVoltGitService, new SyncDescriptor(VoltGitMainService, undefined, false /* proxied to other processes */));
 
+		// Volt in-app folder picker
+		services.set(IVoltFsBrowseService, new SyncDescriptor(VoltFsBrowseService, undefined, false /* proxied to other processes */));
+
 		// Webview Manager
 		services.set(IWebviewManagerService, new SyncDescriptor(WebviewMainService));
 
@@ -1213,6 +1218,10 @@ export class CodeApplication extends Disposable {
 		// Volt agent change capture
 		const voltGitChannel = ProxyChannel.fromService(accessor.get(IVoltGitService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_GIT_CHANNEL_NAME, voltGitChannel);
+
+		// Volt in-app folder picker
+		const voltFsBrowseChannel = ProxyChannel.fromService(accessor.get(IVoltFsBrowseService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_FS_BROWSE_CHANNEL_NAME, voltFsBrowseChannel);
 
 		// Workspaces
 		const workspacesChannel = ProxyChannel.fromService(accessor.get(IWorkspacesService), disposables);

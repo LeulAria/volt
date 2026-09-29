@@ -190,6 +190,19 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 		return record;
 	}
 
+	unregisterProject(id: string): void {
+		this.absorbProjects();
+		if (!this.projectMap.delete(id)) {
+			return;
+		}
+		// Written without absorbing again, which would bring the stored copy right back.
+		this.writeProjects();
+		if (this.activeId === id) {
+			this.selectProject(undefined);
+		}
+		this._onDidChangeProjects.fire();
+	}
+
 	selectProject(id: string | undefined): void {
 		const next = id && this.projectMap.has(id) ? id : undefined;
 		if (this.activeId === next) {
@@ -236,6 +249,10 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 
 	private persistProjects(): void {
 		this.absorbProjects();
+		this.writeProjects();
+	}
+
+	private writeProjects(): void {
 		const stored: IStoredProject[] = [...this.projectMap.values()].map(project => ({
 			id: project.id,
 			uri: project.root.toString(),

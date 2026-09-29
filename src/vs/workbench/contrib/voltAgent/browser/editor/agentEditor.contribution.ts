@@ -35,6 +35,7 @@ import { getMultiSelectedResources, IExplorerService } from '../../../files/brow
 import { ExplorerFolderContext } from '../../../files/common/files.js';
 import { GroupDirection, GroupsOrder, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorResolverService, RegisteredEditorPriority } from '../../../../services/editor/common/editorResolverService.js';
+import { VoltProjectCommands } from '../../../voltProjects/common/projects.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
@@ -546,27 +547,19 @@ registerAction2(class MaximizeChatAction extends Action2 {
 	}
 });
 
+/** Kept for callers of the old id; Add Project replaced the git.clone quick pick. */
 registerAction2(class AddRepositoryAction extends Action2 {
 	constructor() {
 		super({
 			id: 'workbench.action.addRepository',
 			title: localize2('voltAgent.addRepository', "Add Repository"),
 			category: Categories.View,
-			f1: true,
-			keybinding: {
-				primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyA,
-				weight: KeybindingWeight.WorkbenchContrib + 50,
-			},
+			f1: false,
 		});
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
-		const commandService = accessor.get(ICommandService);
-		try {
-			await commandService.executeCommand('git.clone');
-		} catch {
-			await commandService.executeCommand('workbench.action.addRootFolder');
-		}
+		await accessor.get(ICommandService).executeCommand(VoltProjectCommands.addProject);
 	}
 });
 

@@ -10,13 +10,13 @@ import { tmpdir } from 'os';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { isVoltGitError, VOLT_SNAPSHOT_REF_PREFIX } from '../../common/voltGit.js';
-import { parseDiffSummary, VoltGitService } from '../../node/voltGitService.js';
+import { IVoltGitCloneProgress, isVoltGitError, VOLT_SNAPSHOT_REF_PREFIX } from '../../common/voltGit.js';
+import { isSafeCloneUrl, parseCloneProgress, parseDiffSummary, VoltGitService } from '../../node/voltGitService.js';
 
 suite('VoltGitService on real repos', function () {
 
 	this.timeout(30_000);
-	ensureNoDisposablesAreLeakedInTestSuite();
+	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
 
 	let root: string;
 	let repo: string;
@@ -28,7 +28,7 @@ suite('VoltGitService on real repos', function () {
 		repo = join(root, 'repo');
 		await mkdir(repo);
 		privateIndex = join(root, 'index', 'session.idx');
-		service = new VoltGitService(async () => process.env);
+		service = disposables.add(new VoltGitService(async () => process.env));
 		git(repo, 'init', '-q', '-b', 'main');
 		git(repo, 'config', 'user.email', 'test@volt.local');
 		git(repo, 'config', 'user.name', 'Volt Test');
@@ -212,6 +212,98 @@ suite('VoltGitService on real repos', function () {
 
 		await assert.rejects(() => service.readBlob({ repoRoot: repo, sha: '0123456789012345678901234567890123456789' }), isVoltGitError);
 		await assert.rejects(() => service.diffSummary({ repoRoot: repo, from: 'nope', to: 'HEAD' }), (err: Error) => isVoltGitError(err) && /exit 128/.test(err.message));
+	});
+});
+
+suite('VoltGitService clone and branches', function () {
+
+	this.timeout(30_000);
+	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
+
+	let root: string;
+	let origin: string;
+	let service: VoltGitService;
+
+	setup(async () => {
+		root = await mkdtemp(join(tmpdir(), 'volt-clone-'));
+		origin = join(root, 'origin');
+		await mkdir(origin);
+		service = disposables.add(new VoltGitService(async () => process.env));
+		git(origin, 'init', '-q', '-b', 'main');
+		git(origin, 'config', 'user.email', 'test@volt.local');
+		git(origin, 'config', 'user.name', 'Volt Test');
+		git(origin, 'config', 'commit.gpgsign', 'false');
+		await writeFile(join(origin, 'README.md'), '# origin\n');
+		git(origin, 'add', '-A');
+		git(origin, 'commit', '-q', '-m', 'init');
+		git(origin, 'branch', 'feature');
+		git(origin, 'tag', 'v1');
+	});
+
+	teardown(async () => {
+		await rm(root, { recursive: true, force: true });
+	});
+
+	test('clones with progress into a new nested folder, then lists and switches branches', async () => {
+		const progress: IVoltGitCloneProgress[] = [];
+		disposables.add(service.onDidCloneProgress(e => progress.push(e)));
+		const dest = join(root, 'code', 'nested', 'copy');
+		await service.clone({ jobId: 'j1', url: `file://${origin}`, dest });
+		assert.strictEqual(await readFile(join(dest, 'README.md'), 'utf8'), '# origin\n');
+		assert.strictEqual(progress[0].phase, 'starting');
+		assert.deepStrictEqual(progress.at(-1), { jobId: 'j1', phase: 'done', percent: 100, message: undefined });
+
+		const branches = await service.listBranches({ repoRoot: dest });
+		assert.strictEqual(branches.head, 'main');
+		assert.deepStrictEqual(branches.local, ['main']);
+		assert.deepStrictEqual([...branches.remote].sort(), ['origin/feature', 'origin/main']);
+		assert.deepStrictEqual(branches.tags, ['v1']);
+
+		await service.checkout({ repoRoot: dest, ref: 'origin/feature', kind: 'remote' });
+		assert.strictEqual((await service.listBranches({ repoRoot: dest })).head, 'feature', 'remote pick creates a tracking branch');
+		await service.checkout({ repoRoot: dest, ref: 'main', kind: 'local' });
+		await service.createBranch({ repoRoot: dest, name: 'feat/pickers' });
+		assert.strictEqual((await service.listBranches({ repoRoot: dest })).head, 'feat/pickers');
+		await assert.rejects(() => service.createBranch({ repoRoot: dest, name: 'bad name' }), isVoltGitError);
+		await service.checkout({ repoRoot: dest, ref: 'v1', kind: 'tag' });
+		const detached = await service.listBranches({ repoRoot: dest });
+		assert.strictEqual(detached.head, undefined);
+		assert.match(detached.detached ?? '', /^[0-9a-f]{7,}$/);
+	});
+
+	test('fails loudly and refuses unsafe URLs', async () => {
+		await assert.rejects(() => service.clone({ jobId: 'j2', url: join(root, 'nope'), dest: join(root, 'x') }), (err: Error) => isVoltGitError(err) && /exit 128/.test(err.message));
+		await assert.rejects(() => service.clone({ jobId: 'j3', url: 'ext::sh -c touch% /tmp/x', dest: join(root, 'y') }), isVoltGitError);
+		await assert.rejects(() => service.clone({ jobId: 'j4', url: origin, dest: 'relative/path' }), isVoltGitError);
+	});
+
+	test('cancel stops the clone', async () => {
+		const dest = join(root, 'cancelled');
+		const pending = service.clone({ jobId: 'j5', url: `file://${origin}`, dest });
+		await service.cancelClone('j5');
+		await pending.then(() => undefined, err => assert.ok(isVoltGitError(err)));
+	});
+});
+
+suite('Clone helpers', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('maps git progress lines to overall percent', () => {
+		assert.deepStrictEqual(parseCloneProgress('Receiving objects:  50% (5/10), 1.00 MiB | 2.00 MiB/s'), { phase: 'receiving', percent: 45 });
+		assert.deepStrictEqual(parseCloneProgress('remote: Counting objects: 100% (10/10), done.'), { phase: 'counting', percent: 5 });
+		assert.deepStrictEqual(parseCloneProgress('Resolving deltas: 100% (3/3), done.'), { phase: 'resolving', percent: 92 });
+		assert.deepStrictEqual(parseCloneProgress('Updating files:  10% (1/10)'), { phase: 'checkout', percent: 93 });
+		assert.strictEqual(parseCloneProgress('warning: redirecting to https://x'), undefined);
+	});
+
+	test('allows normal URLs and blocks command transports and options', () => {
+		for (const url of ['https://github.com/a/b.git', 'git@github.com:a/b.git', 'ssh://git@h/a/b', 'file:///tmp/r', '/tmp/r']) {
+			assert.ok(isSafeCloneUrl(url), url);
+		}
+		for (const url of ['ext::sh -c x', '--upload-pack=x', 'fd::17', 'https://x/\u0000', '']) {
+			assert.ok(!isSafeCloneUrl(url), url);
+		}
 	});
 });
 

@@ -43,6 +43,8 @@ export interface IVoltSessionContextService {
 	getProject(id: string): IVoltProjectRecord | undefined;
 	/** Register the folder immediately. Does not open a workbench. */
 	registerProject(root: URI, displayName?: string): IVoltProjectRecord;
+	/** Forgets a project (a cancelled clone). Chats bound to it keep their saved folder. */
+	unregisterProject(id: string): void;
 	selectProject(id: string | undefined): void;
 	bindingFor(sessionId: string): IVoltSessionBinding | undefined;
 	/**

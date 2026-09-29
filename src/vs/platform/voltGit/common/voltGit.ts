@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { VSBuffer } from '../../../base/common/buffer.js';
+import { Event } from '../../../base/common/event.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
 
 export const IVoltGitService = createDecorator<IVoltGitService>('voltGitService');
@@ -70,6 +71,43 @@ export interface IVoltGitApplyResult {
 	readonly stderr: string;
 }
 
+export interface IVoltGitCloneRequest {
+	/** Chosen by the caller, so it can cancel and match progress events. */
+	readonly jobId: string;
+	readonly url: string;
+	/** Absolute path of the folder to create. Its parent is created when missing. */
+	readonly dest: string;
+	readonly ref?: string;
+	readonly recursive?: boolean;
+	/** `http.extraheader` value for this clone only (a GitHub token). Passed through the environment, never written to config. */
+	readonly authHeader?: string;
+	/** Host the header applies to, e.g. `https://github.com/`. */
+	readonly authHost?: string;
+}
+
+export type VoltGitClonePhase = 'starting' | 'counting' | 'compressing' | 'receiving' | 'resolving' | 'checkout' | 'done';
+
+export interface IVoltGitCloneProgress {
+	readonly jobId: string;
+	readonly phase: VoltGitClonePhase;
+	/** Overall progress, 0-100, across every phase. */
+	readonly percent: number;
+	/** git's own line, e.g. "Receiving objects: 42% (420/1000), 1.2 MiB | 3 MiB/s". */
+	readonly message?: string;
+}
+
+export interface IVoltGitBranches {
+	/** The checked-out branch; undefined when HEAD is detached or the repo has no commits. */
+	readonly head?: string;
+	/** Short sha when HEAD is detached. */
+	readonly detached?: string;
+	/** Most recently committed first. */
+	readonly local: readonly string[];
+	/** `origin/main` style names. */
+	readonly remote: readonly string[];
+	readonly tags: readonly string[];
+}
+
 export interface IVoltGitRef {
 	readonly ref: string;
 	readonly commit: string;
@@ -82,6 +120,7 @@ export interface IVoltGitRef {
  */
 export interface IVoltGitService {
 	readonly _serviceBrand: undefined;
+	readonly onDidCloneProgress: Event<IVoltGitCloneProgress>;
 	/** Undefined when `folder` is not inside a git work tree. */
 	resolveRepo(folder: string): Promise<IVoltGitRepo | undefined>;
 	/** Captures the work tree (tracked, untracked, uncommitted; honoring .gitignore) as a commit. The user's index is never written. */
@@ -106,6 +145,14 @@ export interface IVoltGitService {
 	 * stages the result; conflicts come back in the result instead of throwing.
 	 */
 	applyPatch(request: { readonly repoRoot: string; readonly from: string; readonly to: string; readonly paths?: readonly string[]; readonly reverse?: boolean; readonly index: boolean }): Promise<IVoltGitApplyResult>;
+	/** `git clone --progress`. Never prompts; rejects on failure or cancel. */
+	clone(request: IVoltGitCloneRequest): Promise<void>;
+	cancelClone(jobId: string): Promise<void>;
+	listBranches(request: { readonly repoRoot: string }): Promise<IVoltGitBranches>;
+	/** Switches to a local branch, a remote branch (creating the tracking branch), or a tag (detached). Refuses to overwrite local changes. */
+	checkout(request: { readonly repoRoot: string; readonly ref: string; readonly kind: 'local' | 'remote' | 'tag' }): Promise<void>;
+	/** Creates `name` from HEAD and switches to it. */
+	createBranch(request: { readonly repoRoot: string; readonly name: string }): Promise<void>;
 }
 
 /**

@@ -9,6 +9,7 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
 import { disposableTimeout } from '../../../../../base/common/async.js';
@@ -50,6 +51,7 @@ import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/ru
 import { AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { agentRunOnStorageKey, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { IVoltProject, IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
 import { createAccessIcon } from '../chrome/accessIcons.js';
 import { mountAgentQuickOpenActions } from '../chrome/agentViewSidebars.js';
 import { agentMessagePlainText, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
@@ -453,6 +455,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly suggestListeners = this._register(new DisposableStore());
 	private sendKind: 'mic' | 'send' = 'mic';
 	private submitting = false;
+	private cloneBanner: HTMLElement | undefined;
+	private waitingForClone: string | undefined;
 	private promptQueue: { id: string; text: string; display?: IAgentPromptDisplay }[] = [];
 	private readonly _onDidChangeQueue = this._register(new Emitter<void>());
 	readonly onDidChangeQueue: Event<void> = this._onDidChangeQueue.event;
@@ -566,6 +570,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@IAgentSessionChangesService private readonly sessionChanges: IAgentSessionChangesService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 	) {
 		super(AgentEditor.ID, group, telemetryService, themeService, storageService);
 		this.markdownRenderer = this.instantiationService.createInstance(MarkdownRenderer, {});
@@ -582,7 +587,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this._register(this.sessionContext.onDidChangeActiveProject(() => {
 			this.renderSuggestChips();
 			this.updateSendButton();
+			this.renderCloneBanner();
 		}));
+		this._register(this.voltProjects.onDidChange(() => this.renderCloneBanner()));
 		this._register(this.sessionContext.onDidChangeProjects(() => {
 			this.renderSuggestChips();
 			this.updateSendButton();
@@ -689,6 +696,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		append(this.composerEl, this.composerQueue.element);
 		const landingChrome = this._register(this.instantiationService.createInstance(AgentLandingChrome));
 		append(this.composerEl, landingChrome.element);
+		this.cloneBanner = append(this.composerEl, $('.volt-agent-clone-banner.hidden'));
+		this.cloneBanner.setAttribute('role', 'status');
+		this.renderCloneBanner();
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
 		this.monacoHost = append(this.inputBox, $('.volt-agent-monaco.show-file-icons'));
 		this.placeholderEl = append(this.monacoHost, $('.volt-agent-placeholder'));
@@ -3544,9 +3554,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.editingUserIndex !== undefined && agentText) {
 			this.cancelUserEdit(false);
 		}
-		if (this.isStreaming()) {
+		const cloning = this.cloningProject();
+		if (this.isStreaming() || cloning) {
 			if (agentText) {
 				this.enqueuePrompt(agentText, display);
+			}
+			if (cloning) {
+				// The prompt runs as soon as the files are there.
+				this.waitForClone(cloning.id);
 			}
 			return;
 		}
@@ -3662,7 +3677,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private drainPromptQueue(): void {
-		if (this.isStreaming()) {
+		if (this.isStreaming() || this.cloningProject()) {
 			this.updateSendButton();
 			return;
 		}
@@ -3984,6 +3999,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.persistInputState();
 		this.surfaceHost.present(input.sessionId);
 		await super.setInput(input, options, context, token);
+		// One pane shows every agent tab: the banner follows the tab's project.
+		this.renderCloneBanner();
 		try {
 			await input.ensureLoaded();
 		} catch (err) {
@@ -4243,6 +4260,72 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.inputModel.dispose();
 		}
 		super.dispose();
+	}
+
+	/** The project this agent runs in: its bound project, else the active one. */
+	private boundProjectId(): string | undefined {
+		const input = this.input instanceof AgentEditorInput ? this.input : undefined;
+		return (input ? this.sessionContext.bindingFor(input.sessionId)?.projectId : undefined) ?? this.sessionContext.activeProject?.id;
+	}
+
+	private cloningProject(): IVoltProject | undefined {
+		const id = this.boundProjectId();
+		const project = id ? this.voltProjects.get(id) : undefined;
+		return project?.state.kind === 'cloning' ? project : undefined;
+	}
+
+	private waitForClone(projectId: string): void {
+		if (this.waitingForClone === projectId) {
+			return;
+		}
+		this.waitingForClone = projectId;
+		void this.voltProjects.whenReady(projectId).then(ready => {
+			this.waitingForClone = undefined;
+			if (this._store.isDisposed) {
+				return;
+			}
+			this.renderCloneBanner();
+			if (ready) {
+				this.drainPromptQueue();
+			} else {
+				this.updateSendButton();
+			}
+		});
+	}
+
+	/** "Cloning volt… 42%" above the composer while the project's files arrive. */
+	private renderCloneBanner(): void {
+		const banner = this.cloneBanner;
+		if (!banner) {
+			return;
+		}
+		const id = this.boundProjectId();
+		const project = id ? this.voltProjects.get(id) : undefined;
+		const state = project?.state;
+		banner.replaceChildren();
+		banner.classList.toggle('hidden', !project || !state || state.kind === 'ready');
+		banner.classList.toggle('error', state?.kind === 'error');
+		if (!project || !state || state.kind === 'ready') {
+			return;
+		}
+		const icon = append(banner, $('span.icon'));
+		icon.appendChild(renderIcon(state.kind === 'cloning' ? ThemeIcon.modify(Codicon.loading, 'spin') : Codicon.warning));
+		const text = append(banner, $('span.text'));
+		const action = append(banner, $('button.action')) as HTMLButtonElement;
+		action.type = 'button';
+		if (state.kind === 'cloning') {
+			text.textContent = this.promptQueue.length
+				? localize('voltAgent.cloningQueued', "Cloning {0}... {1}% · your prompt runs when it finishes", project.name, state.percent)
+				: localize('voltAgent.cloning', "Cloning {0}... {1}%", project.name, state.percent);
+			text.title = state.message ?? '';
+			action.textContent = localize('voltAgent.cancelClone', "Cancel");
+			action.onclick = () => void this.commandService.executeCommand(VoltProjectCommands.cancelClone, project.id);
+		} else {
+			text.textContent = localize('voltAgent.cloneFailedBanner', "Could not clone {0}: {1}", project.name, state.message);
+			text.title = state.message;
+			action.textContent = localize('voltAgent.retryClone', "Retry");
+			action.onclick = () => void this.commandService.executeCommand(VoltProjectCommands.retryClone, project.id);
+		}
 	}
 
 	private get sessionKey(): string {

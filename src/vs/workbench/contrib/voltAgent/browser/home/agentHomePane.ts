@@ -14,11 +14,13 @@ import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename } from '../../../../../base/common/resources.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
+import { showAgentProjectMenu } from './agentHomeWorkspaceActions.js';
+import { IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
@@ -47,8 +49,6 @@ import {
 	sessionPrimaryStatus,
 } from './agentHomeFilter.js';
 import { showAgentHomeFilterMenu } from './agentHomeFilterMenu.js';
-import { AgentHomeWorkspaceActions } from './agentHomeWorkspaceActions.js';
-import { showAgentHomeWorkspaceMenu } from './agentHomeWorkspaceMenu.js';
 import {
 	AGENT_HOME_GROUP_EXPAND_ALL,
 	AgentHomeActionId,
@@ -275,7 +275,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			template.elementDisposables.add(addDisposableListener(template.add, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();
-				void this.host.addProject();
+				void this.host.addProject(template.add);
 			}));
 		}
 	}
@@ -285,7 +285,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.container.classList.toggle('current', project.current);
 		template.container.classList.toggle('is-collapsible', collapsible);
 		template.glyph.appendChild(project.multi ? createHomeFoldersIcon() : createHomeFolderIcon());
-		template.name.textContent = project.label;
+		const status = project.folder ? this.host.projectStatus(project.folder.uri) : undefined;
+		template.name.textContent = status ? `${project.label} · ${status}` : project.label;
 		this.renderAdd(template, { type: 'folder', project });
 	}
 
@@ -455,7 +456,6 @@ export class AgentHomePane extends Disposable {
 	private readonly refreshFrame = this._register(new MutableDisposable());
 	/** Recently opened folders, read once and again only when that list changes. */
 	private recents: Promise<readonly (IRecentFolder | IRecentWorkspace)[]> | undefined;
-	private readonly workspaceActions: AgentHomeWorkspaceActions;
 	private refreshSeq = 0;
 	private viewState: IAgentHomeViewState;
 
@@ -463,7 +463,6 @@ export class AgentHomePane extends Disposable {
 		parent: HTMLElement,
 		@ICommandService private readonly commandService: ICommandService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
-		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 		@IFileService fileService: IFileService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IKeybindingService keybindingService: IKeybindingService,
@@ -475,10 +474,11 @@ export class AgentHomePane extends Disposable {
 		@IAgentWorkspaceService private readonly agentWorkspace: IAgentWorkspaceService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IStorageService private readonly storageService: IStorageService,
+		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 	) {
 		super();
+		this._register(this.voltProjects.onDidChange(() => this.scheduleRefresh()));
 		this.repoResolver = new AgentRepoResolver(fileService);
-		this.workspaceActions = this.instantiationService.createInstance(AgentHomeWorkspaceActions);
 		this.viewState = this.readViewState();
 		this.element = append(parent, $('.volt-agent-home'));
 		this.keepSingleHome(parent);
@@ -604,19 +604,19 @@ export class AgentHomePane extends Disposable {
 		this.tree.domFocus();
 	}
 
-	async addProject(): Promise<void> {
-		const picked = await this.fileDialogService.showOpenDialog({
-			canSelectFiles: false,
-			canSelectFolders: true,
-			canSelectMany: false,
-			title: localize('voltAgent.home.newProject', "New Project"),
-			openLabel: localize('voltAgent.home.addProject', "Add"),
-		});
-		const folder = picked?.[0];
-		if (!folder) {
-			return;
+	/** Opens the Add Project menu (This PC, Git URL, GitHub) under `anchor`. Never a native dialog. */
+	async addProject(anchor?: HTMLElement): Promise<void> {
+		await this.commandService.executeCommand(VoltProjectCommands.addProject, { anchor });
+	}
+
+	/** "Cloning 42%" or "Clone failed" for a project row, while that applies. */
+	projectStatus(uri: URI): string | undefined {
+		const project = this.voltProjects.getByUri(uri);
+		switch (project?.state.kind) {
+			case 'cloning': return localize('voltAgent.home.cloning', "Cloning {0}%", project.state.percent);
+			case 'error': return localize('voltAgent.home.cloneFailed', "Clone failed");
+			default: return undefined;
 		}
-		await this.openFolder({ uri: folder, name: basename(folder), current: false, workspace: false });
 	}
 
 	async startChat(start: AgentChatStart): Promise<void> {
@@ -677,15 +677,7 @@ export class AgentHomePane extends Disposable {
 
 	/** Open Workspace on the project header: recents, folders on this Mac, clone, new folder. A second click closes it. */
 	openWorkspaceMenu(anchor: HTMLElement): void {
-		if (anchor.classList.contains('open')) {
-			this.contextViewService.hideContextView();
-			return;
-		}
-		void this.workspaceActions.menuHost().then(host => {
-			if (!this._store.isDisposed && anchor.isConnected) {
-				showAgentHomeWorkspaceMenu(this.contextViewService, anchor, host);
-			}
-		});
+		void showAgentProjectMenu(this.instantiationService, anchor, this.voltSessionContext.activeProject?.root);
 	}
 
 	/** Where a session lives, as far as the row can tell: repository or folder name, branch, initials. */

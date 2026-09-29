@@ -11,6 +11,7 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { toErrorMessage } from '../../../../../base/common/errorMessage.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
+import { isEqual } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
@@ -30,14 +31,18 @@ import {
 export interface IAgentHomeWorkspaceMenuHost {
 	/** Local folders, most recent first. */
 	readonly entries: readonly IAgentHomeWorkspaceEntry[];
+	/** The project the menu was opened from; its rows get a check. */
+	readonly current?: URI;
 	/** Where new, cloned and scratch folders are made, as a path label. */
 	location(): string;
 	/** Asks for another location and keeps it for next time. */
 	changeLocation(): Promise<void>;
 	/** One folder opens as its project; several open one new chat across all of them. */
-	openFolders(folders: readonly URI[]): Promise<void>;
-	/** The system folder picker. */
-	browse(multiple: boolean): Promise<void>;
+	openFolders(folders: readonly URI[], current?: URI): Promise<void>;
+	/** Volt's in-app folder picker (never the system dialog). */
+	browse(): Promise<void>;
+	/** The Add Project dialog on its GitHub tab: your repositories, searchable. */
+	browseGitHub(): Promise<void>;
 	startFromScratch(): Promise<void>;
 	/** Resolves with a message when the folder could not be made. */
 	createFolder(name: string): Promise<string | undefined>;
@@ -95,6 +100,8 @@ interface IRowOptions {
 	/** Present on multi-select rows: whether the box is ticked. */
 	readonly checked?: boolean;
 	readonly submenu?: FlyoutKind;
+	/** The project the menu was opened from: a trailing check. */
+	readonly current?: boolean;
 	readonly onClick?: () => void;
 	readonly onHover?: () => void;
 }
@@ -173,6 +180,7 @@ class AgentHomeWorkspaceMenu extends Disposable {
 					label: entry.name,
 					description: entry.path,
 					icon: createHomeFolderIcon(),
+					current: this.isCurrent(entry.uri),
 					onClick: () => this.open([entry.uri]),
 					onHover: closeHover,
 				});
@@ -187,6 +195,7 @@ class AgentHomeWorkspaceMenu extends Disposable {
 				this.row(this.body, store, {
 					label: entry.name,
 					icon: createHomeFolderIcon(),
+					current: this.isCurrent(entry.uri),
 					onClick: () => this.open([entry.uri]),
 					onHover: closeHover,
 				});
@@ -388,6 +397,7 @@ class AgentHomeWorkspaceMenu extends Disposable {
 					label: entry.path,
 					icon: createHomeFolderIcon(),
 					checked: this.multiple ? this.selected.has(key) : undefined,
+					current: !this.multiple && this.isCurrent(entry.uri),
 					onClick: () => this.multiple ? toggleEntry(entry) : this.open([entry.uri]),
 				});
 				row.dataset.key = key;
@@ -420,8 +430,7 @@ class AgentHomeWorkspaceMenu extends Disposable {
 			label: localize('voltAgent.workspace.openFolder', "Open Folder"),
 			icon: Codicon.folderOpened,
 			onClick: () => {
-				const multiple = this.multiple;
-				this.run(() => this.host.browse(multiple));
+				this.run(() => this.host.browse());
 			},
 		});
 	}
@@ -432,10 +441,15 @@ class AgentHomeWorkspaceMenu extends Disposable {
 		this.row(this.flyout, store, {
 			label: localize('voltAgent.workspace.openFolderEllipsis', "Open Folder..."),
 			icon: Codicon.folderOpened,
-			onClick: () => this.run(() => this.host.browse(false)),
+			onClick: () => this.run(() => this.host.browse()),
 		});
 		this.separator(this.flyout);
 		this.heading(this.flyout, localize('voltAgent.workspace.cloneFrom', "Clone Repository"));
+		this.row(this.flyout, store, {
+			label: localize('voltAgent.workspace.browseGitHub', "Your GitHub repositories..."),
+			icon: Codicon.github,
+			onClick: () => this.run(() => this.host.browseGitHub()),
+		});
 		for (const provider of AGENT_CLONE_PROVIDERS) {
 			this.row(this.flyout, store, {
 				label: cloneProviderLabel(provider),
@@ -642,9 +656,13 @@ class AgentHomeWorkspaceMenu extends Disposable {
 
 	//#region Pieces
 
+	private isCurrent(uri: URI): boolean {
+		return !!this.host.current && isEqual(uri, this.host.current);
+	}
+
 	private open(folders: readonly URI[]): void {
 		if (folders.length) {
-			this.run(() => this.host.openFolders(folders));
+			this.run(() => this.host.openFolders(folders, this.host.current));
 		}
 	}
 
@@ -680,6 +698,11 @@ class AgentHomeWorkspaceMenu extends Disposable {
 			append(row, $('span.description')).textContent = options.description;
 		}
 		const trailing = append(row, $('span.trailing'));
+		if (options.current) {
+			row.classList.add('current');
+			row.setAttribute('aria-current', 'true');
+			trailing.appendChild(renderIcon(Codicon.check));
+		}
 		if (options.submenu && options.submenu !== 'newFolder') {
 			trailing.appendChild(renderIcon(Codicon.chevronRight));
 		}

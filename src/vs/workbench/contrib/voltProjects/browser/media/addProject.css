@@ -1,0 +1,738 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* ---- Modal ------------------------------------------------------------------------------ */
+
+/* The dim layer holds nothing that scrolls; the panel is opaque and paint-contained, so the see-through agent window never smears behind it. No backdrop-filter. */
+.volt-modal-backdrop {
+	position: absolute;
+	inset: 0;
+	z-index: 2540;
+	background: rgba(0, 0, 0, 0.32);
+}
+
+.volt-modal {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	z-index: 2541;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	background: var(--vscode-quickInput-background, var(--vscode-editorWidget-background));
+	color: var(--vscode-foreground);
+	border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border, transparent));
+	border-radius: 12px;
+	box-shadow: 0 16px 48px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	isolation: isolate;
+	contain: paint;
+	overflow: hidden;
+	outline: none;
+	font-size: 13px;
+}
+
+.volt-modal-header {
+	display: flex;
+	align-items: flex-start;
+	padding: 16px 12px 14px 20px;
+	flex-shrink: 0;
+}
+
+.volt-modal-titles {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-modal-title {
+	font-size: 15px;
+	font-weight: 500;
+}
+
+.volt-modal-subtitle {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-modal-close {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+}
+
+.volt-modal-close:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+.volt-modal-body {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+}
+
+/* ---- Tabs ------------------------------------------------------------------------------- */
+
+.volt-add-tabs {
+	display: flex;
+	gap: 4px;
+	padding: 0 18px 12px;
+	border-bottom: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+	flex-shrink: 0;
+}
+
+.volt-add-tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 12px;
+	border: 1px solid transparent;
+	border-radius: 7px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	cursor: pointer;
+}
+
+.volt-add-tab:hover {
+	color: var(--vscode-foreground);
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-add-tab.selected {
+	color: var(--vscode-foreground);
+	background: var(--vscode-list-hoverBackground);
+	border-color: var(--vscode-widget-border, transparent);
+}
+
+.volt-add-panes {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+}
+
+.volt-add-pane-host {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+}
+
+.volt-add-pane-host.hidden,
+.volt-add-form.hidden,
+.volt-add-picker.hidden,
+.volt-folder-new.hidden {
+	display: none !important;
+}
+
+.volt-add-browser,
+.volt-add-picker-browser {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+}
+
+.volt-add-footer {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 52px;
+	padding: 0 16px;
+	border-top: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+	flex-shrink: 0;
+}
+
+.volt-add-footer .monaco-button {
+	width: auto;
+	min-width: 72px;
+	padding: 4px 14px;
+	border-radius: 6px;
+}
+
+.volt-add-footer-target,
+.volt-add-footer-hint {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	text-align: right;
+	color: var(--vscode-descriptionForeground);
+	direction: rtl;
+}
+
+.volt-add-footer-hint {
+	direction: ltr;
+	text-align: left;
+}
+
+.volt-add-check {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+/* ---- Folder browser --------------------------------------------------------------------- */
+
+.volt-folder-browser {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+}
+
+.volt-folder-rail {
+	width: 176px;
+	flex-shrink: 0;
+	padding: 10px 8px;
+	box-sizing: border-box;
+	overflow-y: auto;
+	border-right: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+.volt-folder-rail-title {
+	padding: 12px 8px 4px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-folder-rail-title:first-child {
+	padding-top: 2px;
+}
+
+.volt-folder-rail-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	height: 28px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-folder-rail-item .label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-folder-rail-item .codicon {
+	color: var(--vscode-descriptionForeground);
+	flex-shrink: 0;
+}
+
+.volt-folder-rail-item:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.volt-folder-rail-item.selected {
+	background: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.volt-folder-main {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+	padding: 10px 12px 0;
+	box-sizing: border-box;
+}
+
+.volt-folder-top {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 26px;
+	margin-bottom: 6px;
+}
+
+.volt-folder-crumbs {
+	display: flex;
+	align-items: center;
+	flex: 1;
+	min-width: 0;
+	overflow-x: auto;
+	scrollbar-width: none;
+	white-space: nowrap;
+}
+
+.volt-folder-crumbs::-webkit-scrollbar {
+	display: none;
+}
+
+.volt-folder-crumb {
+	height: 22px;
+	padding: 0 5px;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	cursor: pointer;
+	flex-shrink: 0;
+}
+
+.volt-folder-crumb:hover,
+.volt-folder-crumb.current {
+	color: var(--vscode-foreground);
+}
+
+.volt-folder-crumb:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-folder-crumb-sep {
+	font-size: 11px;
+	opacity: 0.5;
+	flex-shrink: 0;
+}
+
+.volt-folder-tool {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	flex-shrink: 0;
+}
+
+.volt-folder-tool:hover {
+	color: var(--vscode-foreground);
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-folder-input {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+	flex-shrink: 0;
+}
+
+.volt-folder-input .monaco-inputbox {
+	flex: 1;
+	min-width: 0;
+	border-radius: 6px;
+}
+
+.volt-folder-input .monaco-inputbox .input {
+	padding: 6px 8px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+}
+
+.volt-folder-mode:empty {
+	display: none;
+}
+
+.volt-folder-mode {
+	padding: 2px 8px;
+	border-radius: 10px;
+	background: var(--vscode-badge-background);
+	color: var(--vscode-badge-foreground);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.volt-folder-hint {
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.volt-folder-browser.searching .volt-folder-hint,
+.volt-folder-browser.searching .volt-folder-top {
+	opacity: 0.4;
+}
+
+.volt-folder-new {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+	padding-left: 8px;
+}
+
+.volt-folder-new .monaco-inputbox {
+	flex: 1;
+}
+
+.volt-folder-list {
+	flex: 1;
+	min-height: 0;
+}
+
+.volt-folder-list .monaco-list:focus,
+.volt-github-list .monaco-list:focus {
+	outline: none !important;
+}
+
+.volt-folder-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 30px;
+	padding: 0 8px;
+	border-radius: 6px;
+	box-sizing: border-box;
+	cursor: default;
+}
+
+.volt-folder-list .monaco-list-row.focused .volt-folder-row,
+.volt-github-list .monaco-list-row.focused .volt-github-row {
+	background: var(--vscode-list-activeSelectionBackground);
+	color: var(--vscode-list-activeSelectionForeground);
+}
+
+.volt-folder-list .monaco-list-row:hover:not(.focused) .volt-folder-row:not(.message),
+.volt-github-list .monaco-list-row:hover:not(.focused) .volt-github-row:not(.message) {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.volt-folder-list .monaco-list-row.focused,
+.volt-folder-list .monaco-list-row:hover,
+.volt-github-list .monaco-list-row.focused,
+.volt-github-list .monaco-list-row:hover {
+	background: transparent !important;
+}
+
+.volt-folder-icon {
+	display: inline-flex;
+	width: 16px;
+	justify-content: center;
+	flex-shrink: 0;
+	color: var(--vscode-symbolIcon-folderForeground, var(--vscode-icon-foreground));
+}
+
+.volt-folder-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-folder-name .highlight,
+.volt-github-name .highlight {
+	color: var(--vscode-list-highlightForeground);
+	font-weight: 600;
+}
+
+.volt-folder-location {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	direction: rtl;
+	text-align: left;
+}
+
+.volt-folder-badges {
+	display: inline-flex;
+	gap: 4px;
+	margin-left: auto;
+	flex-shrink: 0;
+}
+
+.volt-folder-badge {
+	padding: 0 6px;
+	border-radius: 4px;
+	line-height: 17px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 18%, transparent));
+}
+
+.volt-folder-badge.added {
+	color: var(--vscode-badge-foreground);
+	background: var(--vscode-badge-background);
+	border-color: transparent;
+}
+
+.volt-folder-time {
+	width: 72px;
+	flex-shrink: 0;
+	text-align: right;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-folder-row.up .volt-folder-icon {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-folder-row.message {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-folder-row.message.error {
+	color: var(--vscode-errorForeground);
+}
+
+/* ---- Git URL ---------------------------------------------------------------------------- */
+
+.volt-add-pane {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+}
+
+.volt-add-form {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	flex: 1;
+	padding: 20px 20px 0;
+	min-height: 0;
+}
+
+.volt-add-form .volt-add-footer {
+	margin: auto -20px 0;
+}
+
+.volt-add-picker {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+}
+
+.volt-add-field {
+	display: grid;
+	grid-template-columns: 120px 1fr;
+	align-items: center;
+	gap: 12px;
+}
+
+.volt-add-label {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-add-control .monaco-inputbox,
+.volt-add-name .monaco-inputbox {
+	border-radius: 6px;
+}
+
+.volt-add-control .monaco-inputbox .input,
+.volt-add-name .monaco-inputbox .input {
+	padding: 6px 8px;
+}
+
+.volt-add-destination {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.volt-add-parent {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 60%;
+	height: 30px;
+	padding: 0 10px;
+	border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent));
+	border-radius: 6px;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font: inherit;
+	cursor: pointer;
+}
+
+.volt-add-parent .label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+}
+
+.volt-add-parent .change {
+	color: var(--vscode-textLink-foreground);
+	white-space: nowrap;
+}
+
+.volt-add-slash {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-add-name {
+	flex: 1;
+	min-width: 80px;
+}
+
+.volt-add-destination-status {
+	margin: -6px 0 0 132px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	min-height: 16px;
+}
+
+.volt-add-destination-status .path {
+	font-family: var(--monaco-monospace-font);
+	margin-right: 8px;
+}
+
+.volt-add-destination-status.ok .status {
+	color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+
+.volt-add-destination-status.warn .status {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-add-link {
+	color: var(--vscode-textLink-foreground);
+	cursor: pointer;
+}
+
+.volt-add-options {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-left: 132px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-add-error {
+	margin-left: 132px;
+	color: var(--vscode-errorForeground);
+	min-height: 16px;
+	white-space: pre-wrap;
+}
+
+/* ---- GitHub ----------------------------------------------------------------------------- */
+
+.volt-github-account {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 14px 20px 6px;
+	color: var(--vscode-descriptionForeground);
+	flex-shrink: 0;
+}
+
+.volt-github-account .monaco-button {
+	width: auto;
+	margin-left: auto;
+	padding: 4px 12px;
+	border-radius: 6px;
+}
+
+.volt-github-search {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 6px 20px 8px;
+	padding: 0 8px;
+	border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent));
+	border-radius: 6px;
+	background: var(--vscode-input-background);
+	flex-shrink: 0;
+}
+
+.volt-github-search .monaco-inputbox {
+	flex: 1;
+}
+
+.volt-github-search .monaco-inputbox .input {
+	padding: 6px 0;
+}
+
+.volt-github-list {
+	flex: 1;
+	min-height: 0;
+	margin: 0 12px 12px;
+}
+
+.volt-github-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 34px;
+	padding: 0 8px;
+	border-radius: 6px;
+	box-sizing: border-box;
+	cursor: pointer;
+}
+
+.volt-github-icon {
+	display: inline-flex;
+	width: 16px;
+	justify-content: center;
+	flex-shrink: 0;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-github-text {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.volt-github-name {
+	flex-shrink: 0;
+	max-width: 60%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-github-description {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-github-meta {
+	flex-shrink: 0;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.volt-github-row.message {
+	color: var(--vscode-descriptionForeground);
+	cursor: default;
+}
+
+.volt-github-row.search-all .volt-github-name {
+	max-width: none;
+	color: var(--vscode-textLink-foreground);
+}

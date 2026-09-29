@@ -8,12 +8,11 @@ import { hash } from '../../../../../base/common/hash.js';
 import { untildify } from '../../../../../base/common/labels.js';
 import { isAbsolute } from '../../../../../base/common/path.js';
 import { isWindows } from '../../../../../base/common/platform.js';
-import { joinPath } from '../../../../../base/common/resources.js';
+import { isEqual, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
-import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
@@ -27,12 +26,16 @@ import { IAgentHistoryService } from '../../../../services/voltRuntime/common/hi
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { activateAgentProject, newAgentChat } from '../workspace/agentPanels.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
-import { agentHomeWorkspaceEntries, cloneFolderName, freeFolderName, gitErrorSummary, IAgentHomeWorkspaceEntry } from './agentHomeWorkspace.js';
-import { IAgentHomeWorkspaceMenuHost } from './agentHomeWorkspaceMenu.js';
+import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IVoltProjectsService } from '../../../voltProjects/common/projects.js';
+import { IVoltFolderPickerService } from '../../../voltProjects/browser/folderPickerService.js';
+import { IProjectCloneService } from '../../../voltProjects/browser/projectCloneService.js';
+import { AddProjectDialog } from '../../../voltProjects/browser/ui/addProjectView.js';
+import { agentHomeWorkspaceEntries, cloneFolderName, freeFolderName, IAgentHomeWorkspaceEntry } from './agentHomeWorkspace.js';
+import { IAgentHomeWorkspaceMenuHost, showAgentHomeWorkspaceMenu } from './agentHomeWorkspaceMenu.js';
 
 /** Parent folder for clones, New Folder and Start from scratch, once the user picks one. */
 const LOCATION_STORAGE_KEY = 'volt.agent.home.projectsLocation';
-const CLONE_TIMEOUT_MS = 10 * 60_000;
 const INIT_TIMEOUT_MS = 30_000;
 /** Folder name for Start from scratch; a number follows when it is taken. */
 const SCRATCH_FOLDER_NAME = 'new-project';
@@ -42,7 +45,6 @@ export class AgentHomeWorkspaceActions {
 
 	constructor(
 		@IConfigurationService private readonly configurationService: IConfigurationService,
-		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 		@IFileService private readonly fileService: IFileService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@ILabelService private readonly labelService: ILabelService,
@@ -55,17 +57,22 @@ export class AgentHomeWorkspaceActions {
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentWorkspaceService private readonly agentWorkspace: IAgentWorkspaceService,
+		@IVoltFolderPickerService private readonly folderPicker: IVoltFolderPickerService,
+		@IProjectCloneService private readonly cloneService: IProjectCloneService,
+		@IVoltProjectsService private readonly projects: IVoltProjectsService,
 	) { }
 
-	/** The menu's host, with the folder list read now. */
-	async menuHost(): Promise<IAgentHomeWorkspaceMenuHost> {
+	/** The menu's host, with the folder list read now. `current` is the project the caller shows, checked in the menu. */
+	async menuHost(current?: URI): Promise<IAgentHomeWorkspaceMenuHost> {
 		const entries = await this.entries();
 		return {
 			entries,
+			current,
 			location: () => this.labelService.getUriLabel(this.locationUri()),
 			changeLocation: () => this.changeLocation(),
 			openFolders: folders => this.openFolders(folders),
-			browse: multiple => this.browse(multiple),
+			browse: () => this.browse(),
+			browseGitHub: () => this.instantiationService.createInstance(AddProjectDialog).show('github'),
 			startFromScratch: () => this.startFromScratch(),
 			createFolder: name => this.createFolder(name),
 			clone: url => this.clone(url),
@@ -107,17 +114,14 @@ export class AgentHomeWorkspaceActions {
 	}
 
 	private async changeLocation(): Promise<void> {
-		const picked = await this.fileDialogService.showOpenDialog({
-			canSelectFiles: false,
-			canSelectFolders: true,
-			canSelectMany: false,
-			defaultUri: this.locationUri(),
+		const picked = await this.folderPicker.pickFolder({
 			title: localize('voltAgent.workspace.chooseLocation', "Choose where new projects go"),
-			openLabel: localize('voltAgent.workspace.choose', "Choose"),
+			subtitle: localize('voltAgent.workspace.chooseLocationSubtitle', "Clones, new folders and scratch projects are created here"),
+			acceptLabel: localize('voltAgent.workspace.choose', "Choose"),
+			initialPath: this.locationUri().fsPath,
 		});
-		const folder = picked?.[0];
-		if (folder) {
-			this.storageService.store(LOCATION_STORAGE_KEY, folder.toString(), StorageScope.APPLICATION, StorageTarget.USER);
+		if (picked) {
+			this.storageService.store(LOCATION_STORAGE_KEY, URI.file(picked).toString(), StorageScope.APPLICATION, StorageTarget.USER);
 		}
 	}
 
@@ -126,9 +130,9 @@ export class AgentHomeWorkspaceActions {
 	 * chat that records all of them, listed as a single multi-folder row; it
 	 * runs in the first folder, like a chat from a multi-root workspace.
 	 */
-	async openFolders(folders: readonly URI[]): Promise<void> {
+	async openFolders(folders: readonly URI[], current?: URI): Promise<void> {
 		const [first] = folders;
-		if (!first) {
+		if (!first || (folders.length === 1 && current && isEqual(first, current))) {
 			return;
 		}
 		void this.workspacesService.addRecentlyOpened(folders.map(folderUri => ({ folderUri })));
@@ -161,19 +165,9 @@ export class AgentHomeWorkspaceActions {
 		});
 	}
 
-	private async browse(multiple: boolean): Promise<void> {
-		const picked = await this.fileDialogService.showOpenDialog({
-			canSelectFiles: false,
-			canSelectFolders: true,
-			canSelectMany: multiple,
-			title: multiple
-				? localize('voltAgent.workspace.openFoldersTitle', "Open Folders")
-				: localize('voltAgent.workspace.openFolderTitle', "Open Folder"),
-			openLabel: localize('voltAgent.workspace.open', "Open"),
-		});
-		if (picked?.length) {
-			await this.openFolders(picked);
-		}
+	/** Volt's in-app folder picker (This PC); it adds the folder and opens a chat in it. */
+	private async browse(): Promise<void> {
+		await this.instantiationService.createInstance(AddProjectDialog).show('thisPC');
 	}
 
 	/** An empty git repository in the projects location, open in a new chat. */
@@ -205,32 +199,24 @@ export class AgentHomeWorkspaceActions {
 		return undefined;
 	}
 
-	/** Clones into a free folder under the projects location, then opens it. */
+	/**
+	 * Clones into a free folder under the projects location. The project opens at once while git
+	 * runs in the background, with progress on the project and prompts held until the files land.
+	 */
 	private async clone(url: string): Promise<string | undefined> {
 		const name = cloneFolderName(url);
 		if (!name) {
 			return localize('voltAgent.workspace.noRepoName', "Could not tell the repository name from this URL.");
 		}
 		const parent = this.locationUri();
-		let target: URI;
 		try {
-			if (!await this.fileService.exists(parent)) {
-				await this.fileService.createFolder(parent);
-			}
-			target = joinPath(parent, await freeFolderName(name, candidate => this.fileService.exists(joinPath(parent, candidate))));
+			const free = await freeFolderName(name, candidate => this.fileService.exists(joinPath(parent, candidate)));
+			const project = await this.cloneService.clone({ url, parent: parent.fsPath, name: free, source: /github\.com[/:]/i.test(url) ? 'github' : 'git' });
+			await this.projects.open(project.id);
+			return undefined;
 		} catch (err) {
 			return toErrorMessage(err);
 		}
-		const result = await this.git(parent.fsPath, ['clone', '--', url, target.fsPath], CLONE_TIMEOUT_MS);
-		if (result.exitCode !== 0) {
-			// The folder name was free, so anything left there is this clone's partial checkout.
-			await this.fileService.del(target, { recursive: true }).catch(() => undefined);
-			return result.timedOut
-				? localize('voltAgent.workspace.cloneTimeout', "Cloning took too long and was stopped.")
-				: gitErrorSummary(result.stderr) ?? localize('voltAgent.workspace.cloneFailed', "git clone failed.");
-		}
-		await this.openFolders([target]);
-		return undefined;
 	}
 
 	private async git(cwd: string, args: readonly string[], timeoutMs: number): Promise<{ readonly exitCode: number | null; readonly stderr: string; readonly timedOut: boolean }> {
@@ -256,4 +242,22 @@ function shellQuote(arg: string): string {
 		return arg;
 	}
 	return isWindows ? `"${arg.replace(/"/g, '""')}"` : `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The project menu (Recents, On This Mac, Start from scratch, Use Existing, New Folder) under
+ * `anchor`, shared by the sidebar header, the agent tab's project picker and Add Project.
+ * A second click on the same anchor closes it.
+ */
+export async function showAgentProjectMenu(instantiationService: IInstantiationService, anchor: HTMLElement, current?: URI): Promise<void> {
+	const contextViewService = instantiationService.invokeFunction(accessor => accessor.get(IContextViewService));
+	if (anchor.classList.contains('open')) {
+		contextViewService.hideContextView();
+		return;
+	}
+	const actions = instantiationService.createInstance(AgentHomeWorkspaceActions);
+	const host = await actions.menuHost(current);
+	if (anchor.isConnected) {
+		showAgentHomeWorkspaceMenu(contextViewService, anchor, host);
+	}
 }

@@ -1,0 +1,233 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Cursor-style anchored dropdown. Opaque surfaces: it floats over the see-through agent window. */
+.volt-menu-host {
+	position: relative;
+	margin-top: 4px;
+}
+
+.volt-menu-flyout {
+	position: absolute;
+	z-index: 1;
+}
+
+.volt-menu {
+	display: flex;
+	flex-direction: column;
+	max-width: calc(100vw - 16px);
+	box-sizing: border-box;
+	padding: 0;
+	background: var(--vscode-editorWidget-background);
+	color: var(--vscode-foreground);
+	border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border, transparent));
+	border-radius: 8px;
+	box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	font-size: 13px;
+	line-height: normal;
+	outline: none;
+	overflow: hidden;
+}
+
+.volt-menu-search {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 38px;
+	padding: 0 12px;
+	border-bottom: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+	flex-shrink: 0;
+}
+
+.volt-menu-search .volt-menu-search-icon {
+	font-size: 14px;
+	color: var(--vscode-descriptionForeground);
+	flex-shrink: 0;
+}
+
+.volt-menu-search .monaco-inputbox,
+.volt-menu-search .monaco-inputbox.synthetic-focus,
+.volt-menu-search .monaco-inputbox .input:focus {
+	flex: 1;
+	min-width: 0;
+	border: none !important;
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+.volt-menu-search .monaco-inputbox .input {
+	padding: 4px 0;
+	font-size: 13px;
+}
+
+.volt-menu-list {
+	flex-shrink: 1;
+	min-height: 0;
+	margin: 4px 0;
+}
+
+.volt-menu-list .monaco-list:focus,
+.volt-menu-list .monaco-list-row:focus {
+	outline: none !important;
+}
+
+.volt-menu-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 28px;
+	margin: 0 4px;
+	padding: 0 8px;
+	border-radius: 5px;
+	box-sizing: border-box;
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.volt-menu-list .monaco-list-row.focused .volt-menu-row,
+.volt-menu-row.flyout-open,
+.volt-menu-list .monaco-list-row:has(.flyout-open) .volt-menu-row,
+.volt-menu-footer .volt-menu-row.active {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.volt-menu-row.disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.volt-menu-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	flex-shrink: 0;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-menu-icon.empty {
+	display: none;
+}
+
+.volt-menu-icon .codicon {
+	font-size: 15px;
+}
+
+.volt-menu-icon svg {
+	display: block;
+}
+
+.volt-menu-label {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-menu-label .highlight {
+	color: var(--vscode-list-highlightForeground);
+	font-weight: 600;
+}
+
+.volt-menu-description {
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 55%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	direction: rtl;
+}
+
+.volt-menu-spacer {
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+.volt-menu-keybinding {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	flex-shrink: 0;
+}
+
+.volt-menu-trailing {
+	display: inline-flex;
+	flex-shrink: 0;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-menu-row.checked .volt-menu-trailing {
+	color: var(--vscode-foreground);
+}
+
+.volt-menu-trailing .codicon {
+	font-size: 14px;
+}
+
+.volt-menu-header {
+	display: flex;
+	align-items: flex-end;
+	gap: 4px;
+	height: 28px;
+	padding: 0 12px 6px;
+	box-sizing: border-box;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	cursor: default;
+}
+
+.volt-menu-header.collapsible {
+	cursor: pointer;
+}
+
+.volt-menu-header .chevron {
+	font-size: 12px;
+}
+
+.volt-menu-separator {
+	height: 1px;
+	margin: 4px 0;
+	background: var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+}
+
+.volt-menu-message {
+	display: flex;
+	align-items: center;
+	height: 28px;
+	padding: 0 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-menu-footer {
+	padding: 4px 0;
+	border-top: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+	flex-shrink: 0;
+}
+
+.volt-menu-list + .volt-menu-footer {
+	margin-top: -4px;
+}
+
+.volt-menu-footer.hidden {
+	display: none;
+}
+
+.volt-menu-footer .volt-menu-row.editing {
+	height: auto;
+	padding: 2px 0;
+	cursor: default;
+	overflow: visible;
+}
+
+.volt-menu-footer .volt-menu-row.editing .monaco-inputbox {
+	flex: 1;
+}
+
+.volt-menu .codicon-modifier-spin {
+	animation: codicon-spin 1.25s steps(30) infinite;
+}
