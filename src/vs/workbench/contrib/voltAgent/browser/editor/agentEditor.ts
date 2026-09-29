@@ -492,6 +492,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	/** The last exchange (user turn and reply) owns its own listeners so it can be redrawn alone. */
 	// eslint-disable-next-line local/code-no-potentially-unsafe-disposables -- replaced when a thread is stashed
 	private tailListeners = new DisposableStore();
+	/** clearInput ran and no setInput has followed yet. */
+	private clearTeardownPending = false;
 	/** The chat whose turns are in `threadInner`. */
 	private threadInput: AgentEditorInput | undefined;
 	/** Least recently shown first. */
@@ -3978,6 +3980,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	override async setInput(input: AgentEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
+		this.clearTeardownPending = false;
 		this.persistInputState();
 		this.surfaceHost.present(input.sessionId);
 		await super.setInput(input, options, context, token);
@@ -4007,9 +4010,24 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	override clearInput(): void {
 		this.persistInputState();
-		this.surfaceHost.present(undefined);
-		this.setComposerZoomed(false);
+		const input = this.input;
+		if (input instanceof AgentEditorInput) {
+			// The chat being left forgets its composer zoom and height, as it always has.
+			input.composerZoomed = false;
+			input.composerHeight = undefined;
+		}
 		super.clearInput();
+		// Switching chats calls setInput straight after this. Hiding the tools and resetting the
+		// composer first would lay the pane out twice, so only a pane left empty gets the teardown.
+		this.clearTeardownPending = true;
+		queueMicrotask(() => {
+			if (!this.clearTeardownPending || this._store.isDisposed) {
+				return;
+			}
+			this.clearTeardownPending = false;
+			this.surfaceHost.present(undefined);
+			this.setComposerZoomed(false);
+		});
 	}
 
 	override layout(dimension: Dimension): void {
