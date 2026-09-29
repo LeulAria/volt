@@ -10,22 +10,19 @@ import { SplitStage } from "./splitEditor";
 const SLIDE_MS = 10000;
 
 const AGENT = {
-  title: "First ever agent + IDE view.",
-  muted: "One window.",
+  title: "Agent + IDE.",
   body: "Volt integrates the agent and the IDE into one. Highly inspired by Cursor, Volt is an open-source agentic development environment.",
 } as const;
 
 const SLIDES = [
   {
     id: "editor",
-    title: "Chat and code, side by side.",
-    muted: "Watch every edit land.",
+    title: "Watch every edit land.",
     body: "Open any file next to the conversation. Edits stream into the editor as the agent writes them, marked in the gutter until you keep them.",
   },
   {
     id: "browser",
-    title: "Point at it.",
-    muted: "Say what should change.",
+    title: "Say what should change.",
     body: "Click any element in your running app and leave a comment. The agent gets the element, its source location, and your note, then edits the code while the page updates.",
   },
 ] as const;
@@ -58,8 +55,6 @@ export function Demos() {
         <div className={cn("relative max-w-2xl", HEADING_INSET)}>
           <h2 className="text-balance text-[32px] font-semibold leading-[1.05] tracking-[-0.03em] text-white sm:text-[44px] md:text-[52px]">
             {AGENT.title}
-            <br />
-            <span className="text-white/40">{AGENT.muted}</span>
           </h2>
           <p className="mt-6 max-w-xl text-pretty text-[15px] leading-[1.65] text-white/50 md:text-[17px]">
             {AGENT.body}
@@ -131,8 +126,6 @@ function DemoCarousel() {
           >
             <h2 className="text-balance text-[32px] font-semibold leading-[1.05] tracking-[-0.03em] text-white sm:text-[44px] md:text-[52px]">
               {slide.title}
-              <br />
-              <span className="text-white/40">{slide.muted}</span>
             </h2>
             <p className="mt-6 max-w-xl text-pretty text-[15px] leading-[1.65] text-white/50 md:text-[17px]">
               {slide.body}

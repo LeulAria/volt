@@ -62,9 +62,9 @@ export function FeatureBento() {
         body="Models, Git, terminal, and background agents live in the same window as your chats, so every step from idea to pushed commit stays in one place."
       />
 
-      <div className="mt-14 grid grid-cols-1 gap-4 md:mt-20 md:grid-cols-6">
+      <div className="mt-14 grid grid-cols-1 gap-4 md:mt-20 md:grid-cols-2 lg:grid-cols-6">
         <Card
-          className="md:col-span-4"
+          className="md:col-span-2 lg:col-span-4"
           fig="3.1"
           title="Every frontier model, one picker."
           body="Switch between Claude, GPT, Gemini, Grok, or a local model mid-conversation. Tune effort, context, and speed per chat."
@@ -72,7 +72,7 @@ export function FeatureBento() {
           <ModelPickerArt />
         </Card>
         <Card
-          className="md:col-span-2"
+          className="lg:col-span-2"
           fig="3.2"
           title="Git, handled."
           body="Volt stages, writes the commit message, and pushes. You review."
@@ -80,7 +80,7 @@ export function FeatureBento() {
           <GitArt />
         </Card>
         <Card
-          className="md:col-span-2"
+          className="lg:col-span-2"
           fig="3.3"
           title="Review every change."
           body="Agent edits land as diffs. Keep or undo them hunk by hunk."
@@ -88,7 +88,7 @@ export function FeatureBento() {
           <ReviewArt />
         </Card>
         <Card
-          className="md:col-span-2"
+          className="lg:col-span-2"
           fig="3.4"
           title="Agents in parallel."
           body="Each task gets its own worktree, so runs never step on each other."
@@ -96,7 +96,7 @@ export function FeatureBento() {
           <ParallelArt />
         </Card>
         <Card
-          className="md:col-span-2"
+          className="lg:col-span-2"
           fig="3.5"
           title="Automations."
           body="Schedule agents to triage issues, bump deps, or write the changelog."
@@ -139,10 +139,10 @@ function Card({
         onPointerMove={onMove}
         className="bento-card group relative flex h-full min-h-[420px] flex-col overflow-hidden rounded-[22px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.01))] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-colors duration-300 hover:border-white/[0.14]"
       >
-        <span className="absolute top-10 right-10 z-10 font-mono text-[10px] tracking-[0.14em] text-white/25 uppercase sm:top-12 sm:right-12 md:top-14 md:right-14">
+        <span className="absolute top-7 right-6 z-10 font-mono text-[10px] tracking-[0.14em] text-white/25 uppercase sm:top-10 sm:right-10 lg:top-12 lg:right-12">
           fig. {fig}
         </span>
-        <div className="relative z-10 px-10 pt-10 pb-0 sm:px-12 sm:pt-12 md:px-14 md:pt-14">
+        <div className="relative z-10 px-6 pt-7 pb-0 pr-20 sm:px-10 sm:pt-10 sm:pr-24 lg:px-12 lg:pt-12">
           <h3 className="text-[17px] font-semibold tracking-[-0.01em] text-white">
             {title}
           </h3>
@@ -245,7 +245,7 @@ function ModelPickerArt() {
   return (
     <div
       ref={ref}
-      className="relative flex h-[380px] w-full justify-end gap-3 overflow-hidden px-10 sm:px-12 md:px-14"
+      className="relative flex h-[380px] w-full justify-end gap-3 overflow-hidden px-6 sm:px-10 lg:px-12"
     >
       {/* both panels run off the card's bottom edge, so the card clips them rather than a fade */}
       <div className="mt-14 hidden w-[190px] shrink-0 self-start rounded-t-[12px] border border-b-0 border-white/10 bg-[#232323] py-1.5 text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:block">
@@ -390,7 +390,10 @@ function GitArt() {
   const pushed = t >= 4900;
 
   return (
-    <div ref={ref} className="w-full px-10 pb-10 sm:px-12 sm:pb-12 md:px-14 md:pb-14">
+    <div
+      ref={ref}
+      className="w-full px-6 pb-6 sm:px-10 sm:pb-10 lg:px-12 lg:pb-12"
+    >
       <CommitGraph pushed={pushed} />
       <div className="rounded-[14px] border border-white/10 bg-[#161616] p-3 text-[12.5px] shadow-[0_20px_40px_rgba(0,0,0,0.4)]">
         <div className="mb-2.5 flex items-center gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/40">
@@ -554,7 +557,10 @@ function ReviewArt() {
   const done = kept === HUNKS.length;
 
   return (
-    <div ref={ref} className="w-full px-10 pb-10 sm:px-12 sm:pb-12 md:px-14 md:pb-14">
+    <div
+      ref={ref}
+      className="w-full px-6 pb-6 sm:px-10 sm:pb-10 lg:px-12 lg:pb-12"
+    >
       <div className="overflow-hidden rounded-[14px] border border-white/10 bg-[#111] shadow-[0_20px_40px_rgba(0,0,0,0.4)]">
         <div className="flex h-9 items-center gap-2 border-b border-white/[0.07] px-3 text-[11.5px]">
           <span className="min-w-0 flex-1 truncate font-mono text-white/75">
@@ -707,7 +713,10 @@ const LANES = [
 function ParallelArt() {
   const { ref, t } = useLoopClock(8000, 7000);
   return (
-    <div ref={ref} className="flex w-full flex-col gap-2 px-10 pb-10 sm:px-12 sm:pb-12 md:px-14 md:pb-14">
+    <div
+      ref={ref}
+      className="flex w-full flex-col gap-2 px-6 pb-6 sm:px-10 sm:pb-10 lg:px-12 lg:pb-12"
+    >
       {LANES.map((lane) => {
         const p = span(t, lane.start, lane.dur);
         const finished = p >= 1;
@@ -761,7 +770,10 @@ function AutomationsArt() {
   const { ref, t } = useLoopClock(6000, 5000);
   const firing = t > 1600 && t < 3600;
   return (
-    <div ref={ref} className="w-full px-10 pb-10 sm:px-12 sm:pb-12 md:px-14 md:pb-14">
+    <div
+      ref={ref}
+      className="w-full px-6 pb-6 sm:px-10 sm:pb-10 lg:px-12 lg:pb-12"
+    >
       <div className="overflow-hidden rounded-[14px] border border-white/10 bg-[#161616]">
         {JOBS.map((job, i) => (
           <div

@@ -124,28 +124,47 @@ html:has(body[data-scroll-locked]) {
   animation: cap-orbit 60s linear infinite;
 }
 
-@keyframes cap-orbit {
+/* cap-spin: the queue drawing's running turn. cap-ping: the MCP hub handing off a call.
+   cap-pulse: the flagged command at full access. */
+.cap-spin {
+  transform-box: view-box;
+  transform-origin: 120px 148px;
+  animation: cap-orbit 1.1s linear infinite;
+}
+
+.cap-ping {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: cap-ping 1.5s cubic-bezier(0.2, 0.7, 0.3, 1) infinite;
+}
+
+@keyframes cap-ping {
+  from {
+    transform: scale(1);
+    opacity: 0.7;
+  }
   to {
-    transform: rotate(360deg);
+    transform: scale(1.45);
+    opacity: 0;
   }
 }
 
-/* Provider ticker (models.tsx): the list renders twice, so sliding by half loops seamlessly. */
-.ticker {
-  animation: ticker var(--ticker-speed, 60s) linear infinite;
+.cap-pulse {
+  animation: cap-pulse 1.2s ease-in-out infinite alternate;
 }
 
-.ticker[data-reverse] {
-  animation-direction: reverse;
-}
-
-.ticker-row:hover .ticker {
-  animation-play-state: paused;
-}
-
-@keyframes ticker {
+@keyframes cap-pulse {
+  from {
+    stroke-opacity: 1;
+  }
   to {
-    transform: translateX(-50%);
+    stroke-opacity: 0.35;
+  }
+}
+
+@keyframes cap-orbit {
+  to {
+    transform: rotate(360deg);
   }
 }
 
@@ -188,7 +207,9 @@ html:has(body[data-scroll-locked]) {
   }
   .shimmer-text,
   .cap-orbit,
-  .ticker,
+  .cap-spin,
+  .cap-ping,
+  .cap-pulse,
   .demo-progress {
     animation: none;
   }

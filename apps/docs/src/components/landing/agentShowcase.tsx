@@ -29,12 +29,13 @@ import { BrandIcon } from "./brandIcons";
 import {
   EASE_OUT,
   Spinner,
-  WINDOW_FRAME,
   span,
   TrafficLights,
   useElementWidth,
   useLoopClock,
+  WINDOW_FRAME,
 } from "./primitives";
+import { SunsetScene } from "./sunsetScene";
 
 /* ------------------------------------------------------------------ */
 /* Script                                                              */
@@ -281,7 +282,18 @@ export function AgentStage({
                 exit={{ opacity: 0, scale: 0.99 }}
                 transition={{ duration: 0.5, ease: EASE_OUT }}
               >
-                <AgentWindow compact={compact} />
+                <SunsetScene className="absolute inset-x-0 top-[-22%] h-[138%] w-full" />
+                <div
+                  className={cn(
+                    "absolute overflow-hidden rounded-[14px] shadow-[0_28px_70px_-24px_rgba(0,0,0,0.65)]",
+                    compact
+                      ? "top-[9%] right-[5%] bottom-[7%] left-[5%]"
+                      : // same margins as the window in the editor-mode screenshot
+                        "top-[5.7%] right-[4%] bottom-[6.5%] left-[4%]",
+                  )}
+                >
+                  <AgentWindow compact={compact} />
+                </div>
               </motion.div>
             ) : (
               <motion.div

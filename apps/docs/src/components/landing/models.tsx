@@ -1,6 +1,6 @@
-import { type CSSProperties, type ReactNode, useRef } from "react";
+import { type ReactNode, useRef } from "react";
 import { cn } from "@/lib/cn";
-import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
+import { gsap, REDUCED, ScrollTrigger, useGSAP } from "@/lib/gsap";
 import { COLUMN } from "./geometry";
 import { SectionHeading } from "./primitives";
 import { PROVIDER_ICONS, type ProviderIconId } from "./providerIcons";
@@ -44,6 +44,45 @@ export function Models() {
       const root = ref.current;
       if (!root) return;
       gsap.matchMedia().add(`not ${REDUCED}`, () => {
+        // Each row loops by sliding half its width (the list renders twice). Scrolling kicks
+        // the rows forward in proportion to scroll speed, then they ease back to cruising.
+        const loops = gsap.utils
+          .toArray<HTMLElement>("[data-ticker]", root)
+          .map((list) => {
+            const reverse = list.dataset.reverse !== undefined;
+            return gsap.fromTo(
+              list,
+              { xPercent: reverse ? -50 : 0 },
+              {
+                xPercent: reverse ? 0 : -50,
+                duration: Number(list.dataset.speed),
+                ease: "none",
+                repeat: -1,
+              },
+            );
+          });
+        const cruise = (boost: number, duration: number) => {
+          for (const loop of loops) {
+            gsap.to(loop, { timeScale: boost, duration, overwrite: true });
+          }
+        };
+        let settle: gsap.core.Tween | undefined;
+        ScrollTrigger.create({
+          trigger: root,
+          start: "top bottom",
+          end: "bottom top",
+          onUpdate: (self) => {
+            const boost = gsap.utils.clamp(
+              1,
+              7,
+              1 + Math.abs(self.getVelocity()) / 350,
+            );
+            cruise(boost, 0.25);
+            settle?.kill();
+            settle = gsap.delayedCall(0.2, () => cruise(1, 1.4));
+          },
+        });
+
         gsap.from(root.querySelectorAll(".ticker-row"), {
           autoAlpha: 0,
           x: (i) => (i % 2 ? -60 : 60),
@@ -98,9 +137,10 @@ function Ticker({
     <div className="ticker-row relative z-10 -mt-px overflow-hidden border-y border-white/[0.07] bg-[#0a0d0c]">
       <div className="[mask-image:linear-gradient(90deg,transparent,#000_10%,#000_90%,transparent)]">
         <ul
-          className="ticker flex w-max"
+          data-ticker
+          data-speed={speed}
           data-reverse={reverse || undefined}
-          style={{ "--ticker-speed": `${speed}s` } as CSSProperties}
+          className="flex w-max will-change-transform"
         >
           {loop.map((p, i) => (
             <Item

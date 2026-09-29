@@ -221,7 +221,7 @@ function Home() {
                       </div>
                     </div>
 
-                    <div className="hidden w-full min-w-0 md:block">
+                    <div className="hidden w-full min-w-0 lg:block">
                       <ComposerPrompt />
                     </div>
                   </div>
