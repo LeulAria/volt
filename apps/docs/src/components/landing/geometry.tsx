@@ -1,10 +1,4 @@
-import {
-  type CSSProperties,
-  type ReactNode,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useRef } from "react";
 import { cn } from "@/lib/cn";
 import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
 
@@ -32,80 +26,16 @@ export function Cross({ className }: { className?: string }) {
   );
 }
 
-type GuideGap = { top: number; bottom: number };
-
-function GuideSegment({
-  className,
-  style,
-}: {
-  className?: string;
-  style?: CSSProperties;
-}) {
+/** Vertical hairlines on the column's content edges, behind everything in `main`. */
+export function Guides() {
   return (
     <div
-      className={cn("absolute inset-x-0 overflow-hidden", className)}
-      style={style}
+      aria-hidden
+      className="pointer-events-none absolute inset-0 z-0 hidden md:block"
     >
       <div className={cn(COLUMN, "h-full")}>
         <div className="h-full border-x border-white/[0.06]" />
       </div>
-    </div>
-  );
-}
-
-/**
- * Vertical hairlines on the column's content edges, behind content in `main`.
- * Interrupted across `#features` (the bento) so the cards stay clear; resume from
- * the bento's bottom edge through the rest of the page.
- */
-export function Guides() {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const [gap, setGap] = useState<GuideGap | null>(null);
-
-  useEffect(() => {
-    const root = rootRef.current;
-    const parent = root?.parentElement;
-    if (!root || !parent) return;
-
-    const update = () => {
-      const features = document.getElementById("features");
-      if (!features) {
-        setGap(null);
-        return;
-      }
-      const parentTop = parent.getBoundingClientRect().top;
-      const rect = features.getBoundingClientRect();
-      setGap({
-        top: Math.max(0, rect.top - parentTop),
-        bottom: Math.max(0, rect.bottom - parentTop),
-      });
-    };
-
-    update();
-
-    const ro = new ResizeObserver(update);
-    ro.observe(parent);
-    const features = document.getElementById("features");
-    if (features) ro.observe(features);
-    window.addEventListener("resize", update);
-
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", update);
-    };
-  }, []);
-
-  return (
-    <div
-      ref={rootRef}
-      aria-hidden
-      className="pointer-events-none absolute inset-0 z-0 hidden md:block"
-    >
-      <GuideSegment
-        className="top-0"
-        style={gap ? { height: gap.top } : { bottom: 0 }}
-      />
-      {gap ? <GuideSegment style={{ top: gap.bottom, bottom: 0 }} /> : null}
     </div>
   );
 }

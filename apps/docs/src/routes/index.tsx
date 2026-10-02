@@ -2,20 +2,21 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { ComposerPrompt } from "@/components/composerPrompt";
 import { DynamicText } from "@/components/dynamicText";
-import { ClosingCta, SiteFooter } from "@/components/landing/closing";
 import { Capabilities } from "@/components/landing/capabilities";
-import { Demos } from "@/components/landing/demos";
+import { ClosingCta, SiteFooter } from "@/components/landing/closing";
 import { FeatureBento } from "@/components/landing/featureBento";
+import { Guides, SectionRule } from "@/components/landing/geometry";
+import { HeroGeometry } from "@/components/landing/heroGeometry";
 import {
   DownloadButtons,
   focusRing,
   GithubMarkIcon,
   InstallCommand,
 } from "@/components/landing/install";
-import { Guides, SectionRule } from "@/components/landing/geometry";
-import { HeroGeometry } from "@/components/landing/heroGeometry";
+import { Manifesto } from "@/components/landing/manifesto";
 import { Models } from "@/components/landing/models";
 import { PoweredBy } from "@/components/landing/poweredBy";
+import { Tour } from "@/components/landing/tour";
 import { WaveField } from "@/components/waveField";
 import { gsap, REDUCED, SplitText, useGSAP } from "@/lib/gsap";
 import { homeRouteLinks, homeRouteMeta } from "@/lib/seo";
@@ -92,6 +93,10 @@ function Home() {
       ref={root}
       className="home-page relative min-h-dvh overflow-x-clip bg-[#0a0d0c] font-sans text-white antialiased"
     >
+      <div
+        aria-hidden
+        className="scroll-progress pointer-events-none fixed inset-x-0 top-0 z-50 h-px bg-[#ff8a5a]"
+      />
       <section className="home-shell relative min-h-dvh md:h-[100vh] md:overflow-hidden">
         <div className="home-grain" aria-hidden />
         <WaveField />
@@ -246,7 +251,8 @@ function Home() {
       <main className="relative">
         <Guides />
         <SectionRule />
-        <Demos />
+        <Manifesto />
+        <Tour />
         <SectionRule className="mt-24 md:mt-32" />
         <FeatureBento />
         <SectionRule className="mt-24 md:mt-32" />

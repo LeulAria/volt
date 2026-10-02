@@ -168,23 +168,7 @@ html:has(body[data-scroll-locked]) {
   }
 }
 
-/* Pointer-following spotlight on feature cards. */
-.bento-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.4s ease;
-  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 0%), rgba(255, 138, 90, 0.09), transparent 60%);
-}
-
-.bento-card:hover::before {
-  opacity: 1;
-}
-
-/* Demo carousel: the active pip fills for exactly one slide. */
+/* Feature index: the active row's rule fills for exactly one turn. */
 .demo-progress {
   transform-origin: left center;
   animation-name: demo-progress;
@@ -240,3 +224,63 @@ html:has(body[data-scroll-locked]) {
   padding-bottom: 0.08em;
   margin-bottom: -0.08em;
 }
+
+/* Capability drawings are flat hairlines: strokes stay 1px however the drawing scales. */
+.cap-art :is(path, line, circle, rect, ellipse, polyline) {
+  vector-effect: non-scaling-stroke;
+}
+
+/* Tour backdrop: the landscape rises out of the page and sinks back into it. */
+.tour-backdrop {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 34%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 34%, #000 82%, transparent 100%);
+}
+
+/* Powered-by stack: hovering a label (or, for the middle plane, the carried-over list) lifts
+   that plane out of the stack and brightens its edge. */
+.plane-lift {
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.plane-face {
+  transition: border-color 0.5s ease;
+}
+
+.stack-section:has([data-label='0']:hover) [data-plane='0'] .plane-lift,
+.stack-section:has([data-label='1']:hover, [data-carried]:hover) [data-plane='1'] .plane-lift,
+.stack-section:has([data-label='2']:hover) [data-plane='2'] .plane-lift {
+  transform: translateZ(22px);
+}
+
+.stack-section:has([data-label='0']:hover) [data-plane='0'] .plane-face,
+.stack-section:has([data-label='1']:hover, [data-carried]:hover) [data-plane='1'] .plane-face {
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.stack-section:has([data-label='2']:hover) [data-plane='2'] .plane-face {
+  border-color: #ff8a5a;
+}
+
+[data-label]:hover .label-line {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+/* Reading progress: a hairline across the top that fills as the page scrolls. */
+.scroll-progress {
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+
+@supports (animation-timeline: scroll()) {
+  .scroll-progress {
+    animation: scroll-progress linear both;
+    animation-timeline: scroll(root block);
+  }
+}
+
+@keyframes scroll-progress {
+  to {
+    transform: scaleX(1);
+  }
+}
+

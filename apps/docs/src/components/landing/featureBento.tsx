@@ -4,46 +4,114 @@ import {
   ChevronRight,
   Clock3,
   GitBranch,
+  Plus,
   Search,
   Settings,
   Star,
 } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
-import { type PointerEvent, type ReactNode, useRef } from "react";
+import {
+  AnimatePresence,
+  motion,
+  useInView,
+  useReducedMotion,
+} from "motion/react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
-import { gsap, REDUCED, ScrollTrigger, useGSAP } from "@/lib/gsap";
 import { BrandIcon, type BrandId, brandLabel } from "./brandIcons";
 import { COLUMN } from "./geometry";
-import { SectionHeading, Spinner, span, useLoopClock } from "./primitives";
+import {
+  EASE_OUT,
+  HEADING_INSET,
+  Reveal,
+  SectionHeading,
+  Spinner,
+  span,
+  useLoopClock,
+} from "./primitives";
 
+const FEATURES: {
+  id: string;
+  title: string;
+  body: string;
+  Art: () => ReactNode;
+  /** Widest the art may grow on the stage. */
+  width: string;
+}[] = [
+  {
+    id: "models",
+    title: "Every frontier model, one picker.",
+    body: "Switch between Claude, GPT, Gemini, Grok, or a local model mid-conversation. Tune effort, context, and speed per chat.",
+    Art: ModelPickerArt,
+    width: "max-w-[560px]",
+  },
+  {
+    id: "git",
+    title: "Git, handled.",
+    body: "Volt stages, writes the commit message, and pushes. You review.",
+    Art: GitArt,
+    width: "max-w-[440px]",
+  },
+  {
+    id: "review",
+    title: "Review every change.",
+    body: "Agent edits land as diffs. Keep or undo them hunk by hunk.",
+    Art: ReviewArt,
+    width: "max-w-[460px]",
+  },
+  {
+    id: "parallel",
+    title: "Agents in parallel.",
+    body: "Each task gets its own worktree, so runs never step on each other.",
+    Art: ParallelArt,
+    width: "max-w-[440px]",
+  },
+  {
+    id: "automations",
+    title: "Automations.",
+    body: "Schedule agents to triage issues, bump deps, or write the changelog.",
+    Art: AutomationsArt,
+    width: "max-w-[440px]",
+  },
+];
+
+/** How long each feature holds the stage before the index moves on. */
+const ADVANCE_MS = 7000;
+
+/**
+ * A feature index: big titles down the left, the live panel for the active one on the right.
+ * The active row's rule fills over its turn and then hands off to the next row; hovering or
+ * focusing the index holds the current one.
+ */
 export function FeatureBento() {
   const ref = useRef<HTMLElement>(null);
+  const reduce = useReducedMotion();
+  const inView = useInView(ref, { margin: "-15%" });
+  const [active, setActive] = useState(0);
+  const [held, setHeld] = useState(false);
+  const feature = FEATURES[active];
+  const running = inView && !held;
 
-  // cards rise in small batches as the grid scrolls up, like plates being laid down
-  useGSAP(
-    () => {
-      gsap.matchMedia().add(`not ${REDUCED}`, () => {
-        const cards = gsap.utils.toArray<HTMLElement>(
-          "[data-card]",
-          ref.current,
-        );
-        gsap.set(cards, { autoAlpha: 0, y: 64 });
-        ScrollTrigger.batch(cards, {
-          start: "top 90%",
-          once: true,
-          onEnter: (batch) =>
-            gsap.to(batch, {
-              autoAlpha: 1,
-              y: 0,
-              stagger: 0.12,
-              duration: 1.4,
-              overwrite: true,
-            }),
-        });
-      });
-    },
-    { scope: ref },
-  );
+  // pointer over, or focus inside, the index holds the current feature
+  const grid = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = grid.current;
+    if (!el) return;
+    const hold = () => setHeld(true);
+    const release = () => setHeld(false);
+    const blur = (event: FocusEvent) => {
+      if (!el.contains(event.relatedTarget as Node | null)) release();
+    };
+    el.addEventListener("pointerenter", hold);
+    el.addEventListener("pointerleave", release);
+    el.addEventListener("focusin", hold);
+    el.addEventListener("focusout", blur);
+    return () => {
+      el.removeEventListener("pointerenter", hold);
+      el.removeEventListener("pointerleave", release);
+      el.removeEventListener("focusin", hold);
+      el.removeEventListener("focusout", blur);
+    };
+  }, []);
 
   return (
     <section
@@ -62,99 +130,118 @@ export function FeatureBento() {
         body="Models, Git, terminal, and background agents live in the same window as your chats, so every step from idea to pushed commit stays in one place."
       />
 
-      <div className="mt-14 grid grid-cols-1 gap-4 md:mt-20 md:grid-cols-2 lg:grid-cols-6">
-        <Card
-          className="md:col-span-2 lg:col-span-4"
-          fig="3.1"
-          title="Every frontier model, one picker."
-          body="Switch between Claude, GPT, Gemini, Grok, or a local model mid-conversation. Tune effort, context, and speed per chat."
-        >
-          <ModelPickerArt />
-        </Card>
-        <Card
-          className="lg:col-span-2"
-          fig="3.2"
-          title="Git, handled."
-          body="Volt stages, writes the commit message, and pushes. You review."
-        >
-          <GitArt />
-        </Card>
-        <Card
-          className="lg:col-span-2"
-          fig="3.3"
-          title="Review every change."
-          body="Agent edits land as diffs. Keep or undo them hunk by hunk."
-        >
-          <ReviewArt />
-        </Card>
-        <Card
-          className="lg:col-span-2"
-          fig="3.4"
-          title="Agents in parallel."
-          body="Each task gets its own worktree, so runs never step on each other."
-        >
-          <ParallelArt />
-        </Card>
-        <Card
-          className="lg:col-span-2"
-          fig="3.5"
-          title="Automations."
-          body="Schedule agents to triage issues, bump deps, or write the changelog."
-        >
-          <AutomationsArt />
-        </Card>
-      </div>
+      <Reveal className="mt-14 md:mt-20">
+        <div ref={grid} className="grid gap-10 lg:grid-cols-12 lg:gap-12">
+          <div
+            role="tablist"
+            aria-orientation="vertical"
+            aria-label="Features"
+            className={cn(
+              "border-b border-white/[0.08] lg:col-span-5",
+              HEADING_INSET,
+            )}
+          >
+            {FEATURES.map((f, i) => {
+              const on = i === active;
+              return (
+                <div
+                  key={f.id}
+                  className="relative border-t border-white/[0.08]"
+                >
+                  {on && !reduce ? (
+                    <span
+                      key={`fill-${active}`}
+                      aria-hidden
+                      onAnimationEnd={() =>
+                        setActive((i + 1) % FEATURES.length)
+                      }
+                      className="demo-progress absolute -top-px left-0 h-px w-full bg-[#ff8a5a]"
+                      style={{
+                        animationDuration: `${ADVANCE_MS}ms`,
+                        animationPlayState: running ? "running" : "paused",
+                      }}
+                    />
+                  ) : null}
+                  <button
+                    type="button"
+                    role="tab"
+                    id={`feature-tab-${f.id}`}
+                    aria-selected={on}
+                    aria-controls="feature-stage"
+                    onClick={() => setActive(i)}
+                    className="group flex w-full items-center justify-between gap-6 rounded-[3px] py-5 text-left outline-none focus-visible:ring-1 focus-visible:ring-white/40 md:py-6"
+                  >
+                    <span
+                      className={cn(
+                        "text-[21px] font-medium leading-tight tracking-[-0.025em] transition-colors duration-500 md:text-[26px]",
+                        on
+                          ? "text-white"
+                          : "text-white/30 group-hover:text-white/65",
+                      )}
+                    >
+                      {f.title}
+                    </span>
+                    <Plus
+                      aria-hidden
+                      strokeWidth={1.25}
+                      className={cn(
+                        "size-4 shrink-0 transition-[transform,color] duration-500",
+                        on
+                          ? "rotate-45 text-[#ff8a5a]"
+                          : "text-white/30 group-hover:text-white/60",
+                      )}
+                    />
+                  </button>
+                  <motion.div
+                    initial={false}
+                    animate={{
+                      height: on ? "auto" : 0,
+                      opacity: on ? 1 : 0,
+                    }}
+                    transition={{ duration: reduce ? 0 : 0.5, ease: EASE_OUT }}
+                    className="overflow-hidden"
+                  >
+                    <p className="max-w-md pb-6 text-pretty text-[15px] leading-relaxed text-white/50">
+                      {f.body}
+                    </p>
+                    {/* no side stage below lg, so the panel opens under its row */}
+                    {on ? (
+                      <div
+                        className={cn("mx-auto w-full pb-8 lg:hidden", f.width)}
+                      >
+                        <f.Art />
+                      </div>
+                    ) : null}
+                  </motion.div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div
+            id="feature-stage"
+            role="tabpanel"
+            aria-labelledby={`feature-tab-${feature.id}`}
+            className="relative hidden min-h-[520px] lg:col-span-7 lg:block"
+          >
+            <AnimatePresence initial={false}>
+              <motion.div
+                key={feature.id}
+                className="absolute inset-0 flex items-center justify-center"
+                initial={{ opacity: 0, y: 28, filter: "blur(6px)" }}
+                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                exit={{ opacity: 0, y: -20, filter: "blur(4px)" }}
+                transition={{ duration: reduce ? 0 : 0.6, ease: EASE_OUT }}
+              >
+                <div className={cn("w-full", feature.width)}>
+                  <feature.Art />
+                </div>
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </div>
+      </Reveal>
     </section>
-  );
-}
-
-function Card({
-  title,
-  body,
-  children,
-  className,
-  fig,
-}: {
-  title: string;
-  body: string;
-  children: ReactNode;
-  className?: string;
-  fig: string;
-}) {
-  function onMove(event: PointerEvent<HTMLDivElement>) {
-    const rect = event.currentTarget.getBoundingClientRect();
-    event.currentTarget.style.setProperty(
-      "--mx",
-      `${event.clientX - rect.left}px`,
-    );
-    event.currentTarget.style.setProperty(
-      "--my",
-      `${event.clientY - rect.top}px`,
-    );
-  }
-
-  return (
-    <div data-card className={className}>
-      <div
-        onPointerMove={onMove}
-        className="bento-card group relative flex h-full min-h-[420px] flex-col overflow-hidden rounded-[22px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.01))] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-colors duration-300 hover:border-white/[0.14]"
-      >
-        <span className="absolute top-7 right-6 z-10 font-mono text-[10px] tracking-[0.14em] text-white/25 uppercase sm:top-10 sm:right-10 lg:top-12 lg:right-12">
-          fig. {fig}
-        </span>
-        <div className="relative z-10 px-6 pt-7 pb-0 pr-20 sm:px-10 sm:pt-10 sm:pr-24 lg:px-12 lg:pt-12">
-          <h3 className="text-[17px] font-semibold tracking-[-0.01em] text-white">
-            {title}
-          </h3>
-          <p className="mt-1.5 max-w-md text-pretty text-[14px] leading-relaxed text-white/45">
-            {body}
-          </p>
-        </div>
-        <div className="relative mt-6 flex min-h-0 flex-1 items-end">
-          {children}
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -245,10 +332,9 @@ function ModelPickerArt() {
   return (
     <div
       ref={ref}
-      className="relative flex h-[380px] w-full justify-end gap-3 overflow-hidden px-6 sm:px-10 lg:px-12"
+      className="relative flex h-[380px] w-full justify-center gap-3"
     >
-      {/* both panels run off the card's bottom edge, so the card clips them rather than a fade */}
-      <div className="mt-14 hidden w-[190px] shrink-0 self-start rounded-t-[12px] border border-b-0 border-white/10 bg-[#232323] py-1.5 text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:block">
+      <div className="mt-14 hidden w-[190px] shrink-0 self-start rounded-[12px] border border-white/10 bg-[#232323] py-1.5 text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:block">
         <MenuLabel>Options</MenuLabel>
         <div className="flex h-8 items-center px-3 text-white/90">
           Fast
@@ -279,7 +365,7 @@ function ModelPickerArt() {
         ))}
       </div>
 
-      <div className="h-full w-[300px] shrink-0 overflow-hidden rounded-t-[12px] border border-b-0 border-white/10 bg-[#232323] text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:w-[330px]">
+      <div className="h-full w-[300px] shrink-0 overflow-hidden rounded-[12px] border border-white/10 bg-[#232323] text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:w-[330px]">
         <div className="flex h-11 items-center gap-2 border-b border-white/[0.07] px-3.5 text-white/35">
           <Search className="size-3.5" />
           Search models...
@@ -390,10 +476,7 @@ function GitArt() {
   const pushed = t >= 4900;
 
   return (
-    <div
-      ref={ref}
-      className="w-full px-6 pb-6 sm:px-10 sm:pb-10 lg:px-12 lg:pb-12"
-    >
+    <div ref={ref} className="w-full">
       <CommitGraph pushed={pushed} />
       <div className="rounded-[14px] border border-white/10 bg-[#161616] p-3 text-[12.5px] shadow-[0_20px_40px_rgba(0,0,0,0.4)]">
         <div className="mb-2.5 flex items-center gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/40">
@@ -557,10 +640,7 @@ function ReviewArt() {
   const done = kept === HUNKS.length;
 
   return (
-    <div
-      ref={ref}
-      className="w-full px-6 pb-6 sm:px-10 sm:pb-10 lg:px-12 lg:pb-12"
-    >
+    <div ref={ref} className="w-full">
       <div className="overflow-hidden rounded-[14px] border border-white/10 bg-[#111] shadow-[0_20px_40px_rgba(0,0,0,0.4)]">
         <div className="flex h-9 items-center gap-2 border-b border-white/[0.07] px-3 text-[11.5px]">
           <span className="min-w-0 flex-1 truncate font-mono text-white/75">
@@ -713,10 +793,7 @@ const LANES = [
 function ParallelArt() {
   const { ref, t } = useLoopClock(8000, 7000);
   return (
-    <div
-      ref={ref}
-      className="flex w-full flex-col gap-2 px-6 pb-6 sm:px-10 sm:pb-10 lg:px-12 lg:pb-12"
-    >
+    <div ref={ref} className="flex w-full flex-col gap-2">
       {LANES.map((lane) => {
         const p = span(t, lane.start, lane.dur);
         const finished = p >= 1;
@@ -770,10 +847,7 @@ function AutomationsArt() {
   const { ref, t } = useLoopClock(6000, 5000);
   const firing = t > 1600 && t < 3600;
   return (
-    <div
-      ref={ref}
-      className="w-full px-6 pb-6 sm:px-10 sm:pb-10 lg:px-12 lg:pb-12"
-    >
+    <div ref={ref} className="w-full">
       <div className="overflow-hidden rounded-[14px] border border-white/10 bg-[#161616]">
         {JOBS.map((job, i) => (
           <div

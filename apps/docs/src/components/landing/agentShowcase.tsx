@@ -194,130 +194,72 @@ const DONE: Chat[] = [
 ];
 
 /* ------------------------------------------------------------------ */
-/* Section                                                             */
+/* Stages                                                              */
 /* ------------------------------------------------------------------ */
 
-export type Mode = "agent" | "editor";
-
-export function ModeSwitch({
-  mode,
-  onMode,
-}: {
-  mode: Mode;
-  onMode: (mode: Mode) => void;
-}) {
-  return (
-    <div
-      role="tablist"
-      aria-label="Workspace mode"
-      className="relative inline-flex rounded-full border border-white/10 bg-white/[0.04] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
-    >
-      {(["agent", "editor"] as const).map((id) => (
-        <button
-          key={id}
-          type="button"
-          role="tab"
-          aria-selected={mode === id}
-          onClick={() => onMode(id)}
-          className={cn(
-            "relative z-10 h-8 rounded-full px-4 text-[13px] font-medium capitalize transition-colors duration-200",
-            mode === id ? "text-black" : "text-white/55 hover:text-white/85",
-          )}
-        >
-          {mode === id ? (
-            <motion.span
-              layoutId="mode-pill"
-              className="absolute inset-0 -z-10 rounded-full bg-white"
-              transition={{ type: "spring", stiffness: 500, damping: 38 }}
-            />
-          ) : null}
-          {id}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 /** The window is laid out at a fixed design size and scaled, so it reads like a screenshot. */
-const FULL = { w: 1056, h: 716 };
+const FULL = { w: 1056, h: 664 };
 /** Phones get a chat-only frame at a narrower design width so text stays legible. */
-const COMPACT = { w: 584, h: 820 };
+const COMPACT = { w: 584, h: 780 };
 
-export function AgentStage({
-  mode,
-  plain = false,
-}: {
-  mode: Mode;
-  /** Drop border and drop shadow — used when this stage is a full-width section, not a framed card. */
-  plain?: boolean;
-}) {
-  const { ref: boxRef, width } = useElementWidth<HTMLDivElement>();
+/**
+ * The agent layout, drawn as the window itself. The wallpaper sits behind it and only shows
+ * through the translucent sidebar, the way macOS vibrancy does in the real app.
+ */
+export function AgentStage() {
+  const { ref, width } = useElementWidth<HTMLDivElement>();
   const compact = width > 0 && width < 640;
   const design = compact ? COMPACT : FULL;
   const scale = width / design.w;
 
   return (
-    <div className="relative">
+    <div
+      ref={ref}
+      className={WINDOW_FRAME}
+      style={{ aspectRatio: `${design.w} / ${design.h}` }}
+    >
       <div
-        ref={boxRef}
-        className={cn(WINDOW_FRAME, plain && "border-0 shadow-none")}
-        style={{ aspectRatio: `${design.w} / ${design.h}` }}
+        className="absolute top-0 left-0 origin-top-left transition-opacity duration-500"
+        style={{
+          width: design.w,
+          height: design.h,
+          transform: `scale(${scale || 1})`,
+          opacity: scale ? 1 : 0,
+        }}
       >
-        <div
-          className="absolute top-0 left-0 origin-top-left transition-opacity duration-500"
-          style={{
-            width: design.w,
-            height: design.h,
-            transform: `scale(${scale || 1})`,
-            opacity: scale ? 1 : 0,
-          }}
-        >
-          <AnimatePresence initial={false} mode="popLayout">
-            {mode === "agent" ? (
-              <motion.div
-                key="agent"
-                className="absolute inset-0"
-                initial={{ opacity: 0, scale: 1.02 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.99 }}
-                transition={{ duration: 0.5, ease: EASE_OUT }}
-              >
-                <SunsetScene className="absolute inset-x-0 top-[-22%] h-[138%] w-full" />
-                <div
-                  className={cn(
-                    "absolute overflow-hidden rounded-[14px] shadow-[0_28px_70px_-24px_rgba(0,0,0,0.65)]",
-                    compact
-                      ? "top-[9%] right-[5%] bottom-[7%] left-[5%]"
-                      : // same margins as the window in the editor-mode screenshot
-                        "top-[5.7%] right-[4%] bottom-[6.5%] left-[4%]",
-                  )}
-                >
-                  <AgentWindow compact={compact} />
-                </div>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="editor"
-                className="absolute inset-0 bg-[#1b2a3a]"
-                initial={{ opacity: 0, scale: 1.02 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.99 }}
-                transition={{ duration: 0.5, ease: EASE_OUT }}
-              >
-                <img
-                  src="/volt-ide.jpg"
-                  alt="Volt editor mode with file explorer, welcome shortcuts, and the agent chat docked on the right"
-                  width={2000}
-                  height={1348}
-                  loading="lazy"
-                  decoding="async"
-                  className="size-full object-cover"
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
+        <SunsetScene className="absolute inset-0 size-full" />
+        <div className="absolute inset-0">
+          <AgentWindow compact={compact} />
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Where the window sits inside volt-ide.jpg, which also shows the desktop around it. */
+const SHOT = { w: 2000, h: 1348, x: 82, y: 79, cw: 1824, ch: 1177 };
+
+/** The editor layout: a real screenshot, cropped to just the window. */
+export function EditorStage() {
+  return (
+    <div
+      className={WINDOW_FRAME}
+      style={{ aspectRatio: `${SHOT.cw} / ${SHOT.ch}` }}
+    >
+      <img
+        src="/volt-ide.jpg"
+        alt="Volt editor layout with the file explorer, welcome shortcuts, and the agent chat docked on the right"
+        width={SHOT.w}
+        height={SHOT.h}
+        loading="lazy"
+        decoding="async"
+        className="absolute max-w-none"
+        style={{
+          width: `${(SHOT.w / SHOT.cw) * 100}%`,
+          left: `${(-SHOT.x / SHOT.cw) * 100}%`,
+          top: `${(-SHOT.y / SHOT.ch) * 100}%`,
+        }}
+      />
     </div>
   );
 }

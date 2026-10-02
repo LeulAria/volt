@@ -1,4 +1,4 @@
-import { type ReactNode, type RefObject, useId, useRef } from "react";
+import { type ReactNode, type RefObject, useRef } from "react";
 import { cn } from "@/lib/cn";
 import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
 import { COLUMN } from "./geometry";
@@ -128,13 +128,14 @@ export function Capabilities() {
 /* ------------------------------------------------------------------ */
 /* Drawings                                                            */
 /*                                                                     */
-/* Each one is 240×180 on the same construction: a faded dot grid,     */
-/* guide rings, hairline strokes in currentColor, and one orange       */
-/* accent with a soft glow. Motion runs off a loop clock while the     */
-/* cell is on screen, so every drawing tells its feature as a story.   */
+/* Each one is 240×180, flat, with no backdrop: 1px hairlines in       */
+/* currentColor and one orange accent. Strokes don't scale with the    */
+/* drawing (see .cap-art), so every line stays exactly 1px. Motion     */
+/* runs off a loop clock while the cell is on screen.                  */
 /* ------------------------------------------------------------------ */
 
 const ACCENT = "#ff8a5a";
+const BG = "#0a0d0c";
 const GOOD = "#3ecf8e";
 const CX = 120;
 const CY = 90;
@@ -146,22 +147,11 @@ const polar = (cx: number, cy: number, r: number, deg: number) => {
   return [f1(cx + Math.cos(a) * r), f1(cy + Math.sin(a) * r)] as const;
 };
 
-/** Per-drawing ids for gradients, masks, and filters. */
-function useIds() {
-  const base = useId().replace(/[^a-zA-Z0-9_-]/g, "");
-  return (name: string) => `${base}-${name}`;
-}
-type Ids = ReturnType<typeof useIds>;
-
 function Art({
   clockRef,
-  ids,
-  rings = [44, 78],
   children,
 }: {
   clockRef: RefObject<HTMLDivElement | null>;
-  ids: Ids;
-  rings?: number[];
   children: ReactNode;
 }) {
   return (
@@ -174,86 +164,16 @@ function Art({
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden
-        className="mx-auto h-full w-auto max-w-full overflow-visible"
+        className="cap-art mx-auto h-full w-auto max-w-full overflow-visible"
       >
-        <defs>
-          <pattern
-            id={ids("dots")}
-            width={8}
-            height={8}
-            patternUnits="userSpaceOnUse"
-          >
-            <circle
-              cx={1}
-              cy={1}
-              r={0.6}
-              fill="currentColor"
-              fillOpacity={0.28}
-              stroke="none"
-            />
-          </pattern>
-          <radialGradient id={ids("fade")}>
-            <stop offset={0} stopColor="#fff" />
-            <stop offset={1} stopColor="#fff" stopOpacity={0} />
-          </radialGradient>
-          <mask id={ids("vignette")}>
-            <rect width={240} height={180} fill={`url(#${ids("fade")})`} />
-          </mask>
-          <radialGradient id={ids("glow")}>
-            <stop offset={0} stopColor={ACCENT} stopOpacity={0.45} />
-            <stop offset={1} stopColor={ACCENT} stopOpacity={0} />
-          </radialGradient>
-          <radialGradient id={ids("light")}>
-            <stop offset={0} stopColor="#fff" stopOpacity={0.09} />
-            <stop offset={1} stopColor="#fff" stopOpacity={0} />
-          </radialGradient>
-          <linearGradient id={ids("node")} x1={0} y1={0} x2={0} y2={1}>
-            <stop offset={0} stopColor="#1b201e" />
-            <stop offset={1} stopColor="#0c0f0e" />
-          </linearGradient>
-          <linearGradient id={ids("heat")} x1={0} y1={0} x2={1} y2={0}>
-            <stop offset={0} stopColor="#fff" stopOpacity={0.55} />
-            <stop offset={1} stopColor={ACCENT} />
-          </linearGradient>
-          <filter
-            id={ids("blur")}
-            x="-100%"
-            y="-100%"
-            width="300%"
-            height="300%"
-          >
-            <feGaussianBlur stdDeviation={3} />
-          </filter>
-        </defs>
-
-        {/* construction: dot grid, soft centre light, guide rings, crosshair */}
-        <rect
-          width={240}
-          height={180}
-          fill={`url(#${ids("dots")})`}
-          stroke="none"
-          mask={`url(#${ids("vignette")})`}
-        />
-        <circle
-          cx={CX}
-          cy={CY}
-          r={70}
-          fill={`url(#${ids("light")})`}
-          stroke="none"
-        />
-        {rings.map((r) => (
-          <circle key={r} data-ink cx={CX} cy={CY} r={r} strokeOpacity={0.08} />
-        ))}
-        <path data-ink d={`M${CX} 4V176M22 ${CY}H218`} strokeOpacity={0.06} />
         {children}
       </svg>
     </div>
   );
 }
 
-/** Rounded node with the shared gradient fill; lit nodes get an accent ring and glow. */
+/** Flat rounded node: page-coloured fill so lines stop at its edge; lit nodes take the accent. */
 function Node({
-  ids,
   x,
   y,
   w = 26,
@@ -262,7 +182,6 @@ function Node({
   lit,
   children,
 }: {
-  ids: Ids;
   x: number;
   y: number;
   w?: number;
@@ -273,22 +192,13 @@ function Node({
 }) {
   return (
     <g data-pop>
-      <circle
-        cx={x}
-        cy={y}
-        r={Math.max(w, h) * 0.95}
-        fill={`url(#${ids("glow")})`}
-        stroke="none"
-        className="transition-opacity duration-500"
-        opacity={lit ? 1 : 0}
-      />
       <rect
         x={x - w / 2}
         y={y - h / 2}
         width={w}
         height={h}
         rx={r}
-        fill={`url(#${ids("node")})`}
+        fill={BG}
         stroke={lit ? ACCENT : "currentColor"}
         strokeOpacity={lit ? 1 : 0.3}
         className="transition-[stroke,stroke-opacity] duration-500"
@@ -297,7 +207,6 @@ function Node({
         transform={`translate(${x - 6} ${y - 6})`}
         stroke={lit ? ACCENT : "currentColor"}
         strokeOpacity={lit ? 1 : 0.85}
-        strokeWidth={1.15}
         className="transition-[stroke] duration-500"
       >
         {children}
@@ -397,12 +306,11 @@ const MODES: { name: string; glyph: ReactNode }[] = [
 ];
 
 function ModesArt() {
-  const ids = useIds();
   const { ref, t } = useLoopClock(MODES.length * 1800, 0);
   const active = Math.floor(t / 1800) % MODES.length;
   const R = 62;
   return (
-    <Art clockRef={ref} ids={ids} rings={[40, 84]}>
+    <Art clockRef={ref}>
       <circle
         data-fade
         cx={CX}
@@ -429,7 +337,7 @@ function ModesArt() {
               strokeOpacity={lit ? 0.9 : 0.18}
               className="transition-[stroke,stroke-opacity] duration-500"
             />
-            <Node ids={ids} x={x} y={y} r={13} lit={lit}>
+            <Node x={x} y={y} r={13} lit={lit}>
               {m.glyph}
             </Node>
           </g>
@@ -443,22 +351,13 @@ function ModesArt() {
           width={44}
           height={22}
           rx={11}
-          fill={`url(#${ids("node")})`}
+          fill={BG}
           strokeOpacity={0.4}
         />
         <path d={`M${CX - 13} ${CY}h14`} strokeOpacity={0.35} />
-        <circle
-          cx={CX + 11}
-          cy={CY}
-          r={5.5}
-          fill="currentColor"
-          stroke="none"
-          fillOpacity={0.9}
-        />
+        <circle cx={CX + 11} cy={CY} r={5.5} strokeOpacity={0.9} />
         <path
           d={`M${CX + 11} ${CY + 2.4}v-4.6M${CX + 9} ${CY - 0.2} ${CX + 11} ${CY - 2.2} ${CX + 13} ${CY - 0.2}`}
-          stroke="#0c0f0e"
-          strokeWidth={1.3}
         />
       </g>
       <Text x={CX} y={CY + 23} color={ACCENT}>
@@ -474,7 +373,6 @@ const LEVELS = ["Supervised", "Edits", "Auto", "Full"];
 const LEVEL_DEG = [210, 250, 290, 330];
 
 function AccessArt() {
-  const ids = useIds();
   const { ref, t } = useLoopClock(LEVELS.length * 2000, 2 * 2000);
   const level = Math.floor(t / 2000) % LEVELS.length;
   const from = LEVEL_DEG[(level + LEVELS.length - 1) % LEVELS.length];
@@ -489,18 +387,14 @@ function AccessArt() {
   const [ex, ey] = polar(px, py, R, 345);
   const full = level === LEVELS.length - 1;
   return (
-    <Art clockRef={ref} ids={ids} rings={[84]}>
+    <Art clockRef={ref}>
       {/* track and the lit part of it */}
       <path
         data-ink
         d={`M${ax} ${ay}A${R} ${R} 0 0 1 ${ex} ${ey}`}
         strokeOpacity={0.16}
       />
-      <path
-        d={`M${ax} ${ay}A${R} ${R} 0 0 1 ${bx} ${by}`}
-        stroke={`url(#${ids("heat")})`}
-        strokeWidth={1.6}
-      />
+      <path d={`M${ax} ${ay}A${R} ${R} 0 0 1 ${bx} ${by}`} stroke={ACCENT} />
       {LEVELS.map((name, i) => {
         const [dx, dy] = polar(px, py, R, LEVEL_DEG[i]);
         const [lx, ly] = polar(px, py, R + 12, LEVEL_DEG[i]);
@@ -512,7 +406,7 @@ function AccessArt() {
               cx={dx}
               cy={dy}
               r={2.6}
-              fill={on ? (i === 3 ? ACCENT : "currentColor") : "#0c0f0e"}
+              fill={on ? (i === 3 ? ACCENT : "currentColor") : BG}
               strokeOpacity={0.5}
             />
             <Text
@@ -545,13 +439,7 @@ function AccessArt() {
         stroke="none"
       />
       <g data-pop>
-        <circle
-          cx={px}
-          cy={py}
-          r={16}
-          fill={`url(#${ids("node")})`}
-          strokeOpacity={0.35}
-        />
+        <circle cx={px} cy={py} r={16} fill={BG} strokeOpacity={0.35} />
         <path
           d={`M${px} ${py - 8}l6 2.4v4c0 3.8-2.5 6.3-6 7.6-3.5-1.3-6-3.8-6-7.6v-4z`}
           strokeOpacity={0.9}
@@ -573,7 +461,7 @@ function AccessArt() {
           width={80}
           height={17}
           rx={8.5}
-          fill="#0c0f0e"
+          fill={BG}
           stroke={ACCENT}
           className="cap-pulse"
         />
@@ -636,11 +524,10 @@ const TOOLS: {
 ];
 
 function McpArt() {
-  const ids = useIds();
   const { ref, t } = useLoopClock(4 * 1500, 0);
   const busy = Math.floor(t / 1500) % TOOLS.length;
   return (
-    <Art clockRef={ref} ids={ids} rings={[58]}>
+    <Art clockRef={ref}>
       {TOOLS.map((tool, i) => (
         <g key={tool.name}>
           <path
@@ -672,7 +559,7 @@ function McpArt() {
               />
             </circle>
           ))}
-          <Node ids={ids} x={tool.x} y={tool.y} lit={i === busy}>
+          <Node x={tool.x} y={tool.y} lit={i === busy}>
             {tool.glyph}
           </Node>
           <Text x={tool.x} y={tool.y + 24} tone={i === busy ? 0.9 : 0.4}>
@@ -690,7 +577,7 @@ function McpArt() {
         stroke={ACCENT}
         className="cap-ping"
       />
-      <Node ids={ids} x={CX} y={CY} w={40} h={40} r={12} lit>
+      <Node x={CX} y={CY} w={40} h={40} r={12} lit>
         {GLYPH.plug}
       </Node>
     </Art>
@@ -712,7 +599,6 @@ const PREVIEW = [
 ];
 
 function MentionArt() {
-  const ids = useIds();
   const { ref, t } = useLoopClock(7200, 4600);
   const typed = t >= 500;
   const open = t >= 900 && t < 3500;
@@ -721,7 +607,7 @@ function MentionArt() {
   const chip = t >= 3500;
   const popY = open ? 0 : 6;
   return (
-    <Art clockRef={ref} ids={ids} rings={[]}>
+    <Art clockRef={ref}>
       {/* popover with the file list, and the preview of the highlighted file */}
       <g
         className="transition-[opacity,transform] duration-300"
@@ -734,7 +620,7 @@ function MentionArt() {
           width={114}
           height={88}
           rx={10}
-          fill="#0e1110"
+          fill={BG}
           strokeOpacity={0.3}
         />
         <rect
@@ -750,7 +636,7 @@ function MentionArt() {
         />
         {FILES.map((file, i) => (
           <g key={file.name} transform={`translate(0 ${i * 26})`}>
-            <g transform="translate(40 38)" strokeOpacity={0.8} strokeWidth={1}>
+            <g transform="translate(40 38)" strokeOpacity={0.8}>
               {GLYPH.doc}
             </g>
             <text
@@ -784,7 +670,7 @@ function MentionArt() {
           width={66}
           height={88}
           rx={10}
-          fill="#0e1110"
+          fill={BG}
           strokeOpacity={0.3}
         />
         {PREVIEW[row].map((w, i) => (
@@ -812,7 +698,7 @@ function MentionArt() {
           width={186}
           height={30}
           rx={15}
-          fill={`url(#${ids("node")})`}
+          fill={BG}
           strokeOpacity={0.35}
         />
         {chip ? (
@@ -875,19 +761,8 @@ function MentionArt() {
             />
           </>
         )}
-        <circle
-          cx={201}
-          cy={141}
-          r={9}
-          fill="currentColor"
-          fillOpacity={0.9}
-          stroke="none"
-        />
-        <path
-          d="M201 145v-8M197.6 140.4 201 137l3.4 3.4"
-          stroke="#0c0f0e"
-          strokeWidth={1.4}
-        />
+        <circle cx={201} cy={141} r={9} strokeOpacity={0.9} />
+        <path d="M201 145v-8M197.6 140.4 201 137l3.4 3.4" />
       </g>
     </Art>
   );
@@ -906,14 +781,13 @@ const CYCLE = 2800;
 const SLOT_Y = [106, 76, 46, 16];
 
 function QueueArt() {
-  const ids = useIds();
   const { ref, t } = useLoopClock(CYCLE * FOLLOW_UPS.length, 0);
   const k = Math.floor(t / CYCLE);
   const p = (t % CYCLE) / CYCLE;
   const shift = ease(Math.min(1, Math.max(0, (p - 0.55) / 0.3)));
   const done = p > 0.38 && p < 0.62;
   return (
-    <Art clockRef={ref} ids={ids} rings={[]}>
+    <Art clockRef={ref}>
       <line data-ink x1={CX} y1={8} x2={CX} y2={172} strokeOpacity={0.1} />
       {[0, 1, 2, 3].map((j) => {
         const text = FOLLOW_UPS[(k + j) % FOLLOW_UPS.length];
@@ -936,7 +810,7 @@ function QueueArt() {
               width={144}
               height={20}
               rx={10}
-              fill={`url(#${ids("node")})`}
+              fill={BG}
               stroke={j === 0 ? ACCENT : "currentColor"}
               strokeOpacity={j === 0 ? 0.8 : 0.3 - j * 0.05}
             />
@@ -964,26 +838,15 @@ function QueueArt() {
       })}
       {/* the running turn: a spinner, then a check as it finishes */}
       <g data-pop>
-        <circle
-          cx={CX}
-          cy={148}
-          r={16}
-          fill={`url(#${ids("node")})`}
-          strokeOpacity={0.35}
-        />
+        <circle cx={CX} cy={148} r={16} fill={BG} strokeOpacity={0.35} />
         {done ? (
-          <path
-            d={`m${CX - 5} 148 3.4 3.4 6.8-7`}
-            stroke={GOOD}
-            strokeWidth={1.5}
-          />
+          <path d={`m${CX - 5} 148 3.4 3.4 6.8-7`} stroke={GOOD} />
         ) : (
           <>
             <circle cx={CX} cy={148} r={7} strokeOpacity={0.15} />
             <path
               d={`M${CX} 141a7 7 0 0 1 7 7`}
               stroke={ACCENT}
-              strokeWidth={1.5}
               className="cap-spin"
             />
           </>
@@ -1004,7 +867,6 @@ function QueueArt() {
 const TICKS = 48;
 
 function ContextArt() {
-  const ids = useIds();
   const { ref, t } = useLoopClock(7600, 5600);
   const grow = ease(Math.min(1, Math.max(0, (t - 300) / 5000)));
   const fading = t > 6800 ? (t - 6800) / 800 : 0;
@@ -1018,7 +880,7 @@ function ContextArt() {
   const large = sweep * (pct / 100) > 180 ? 1 : 0;
   const parts = [0.18, 0.46, 0.36];
   return (
-    <Art clockRef={ref} ids={ids} rings={[]}>
+    <Art clockRef={ref}>
       <g opacity={1 - fading}>
         {Array.from({ length: TICKS + 1 }, (_, i) => {
           const at = i / TICKS;
@@ -1047,15 +909,7 @@ function ContextArt() {
         />
         <path
           d={`M${sx} ${sy}A${R} ${R} 0 ${large} 1 ${ex} ${ey}`}
-          stroke={`url(#${ids("heat")})`}
-          strokeWidth={2}
-        />
-        <circle
-          cx={ex}
-          cy={ey}
-          r={6}
-          fill={`url(#${ids("glow")})`}
-          stroke="none"
+          stroke={ACCENT}
         />
         <circle cx={ex} cy={ey} r={2.6} fill={ACCENT} stroke="none" />
         <text

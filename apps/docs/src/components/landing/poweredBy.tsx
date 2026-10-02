@@ -1,133 +1,298 @@
-import { Blocks, Bug, Keyboard, Palette } from "lucide-react";
-import { type ReactNode, useRef } from "react";
+import {
+  Blocks,
+  Bot,
+  Bug,
+  GitBranch,
+  Globe,
+  Keyboard,
+  type LucideIcon,
+  MessageSquare,
+  Palette,
+} from "lucide-react";
+import { type CSSProperties, type ReactNode, useRef } from "react";
 import { BOLT_H, BOLT_PATH, BOLT_W } from "@/lib/boltGeometry";
 import { cn } from "@/lib/cn";
 import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
 import { COLUMN } from "./geometry";
 import { SectionHeading } from "./primitives";
 
-const CARRIED: { icon: ReactNode; title: string; body: string }[] = [
+const ACCENT = "#ff8a5a";
+
+const CARRIED: { icon: LucideIcon; title: string; body: string }[] = [
   {
-    icon: <Blocks className="size-[18px]" strokeWidth={1.5} />,
+    icon: Blocks,
     title: "Extensions",
     body: "Install from Open VSX, or side-load any .vsix.",
   },
   {
-    icon: <Palette className="size-[18px]" strokeWidth={1.5} />,
+    icon: Palette,
     title: "Themes & icons",
     body: "Every color theme and icon pack you already use.",
   },
   {
-    icon: <Keyboard className="size-[18px]" strokeWidth={1.5} />,
+    icon: Keyboard,
     title: "Keybindings",
     body: "Your shortcuts, settings, and snippets carry over.",
   },
   {
-    icon: <Bug className="size-[18px]" strokeWidth={1.5} />,
+    icon: Bug,
     title: "Language tooling",
     body: "Language servers, debuggers, and tasks just work.",
   },
 ];
 
+/** Bottom to top. `k` is the plane's height in the stack, in multiples of the gap. */
+const LAYERS: {
+  k: number;
+  name: string;
+  caption: string;
+  accent?: boolean;
+}[] = [
+  { k: -1, name: "VS Code", caption: "Open-source core" },
+  { k: 0, name: "Your setup", caption: "Carried over" },
+  { k: 1, name: "Volt", caption: "Agent layer — new", accent: true },
+];
+
+/** Plane edge in px, and half its diagonal (how far a corner reaches from the centre). */
+const PLANE = 260;
+const REACH = 184;
+/** sin of the stage's X tilt: how much one px of lift moves a plane up the screen. */
+const LIFT_Y = Math.sin((58 * Math.PI) / 180);
+
 export function PoweredBy() {
   const ref = useRef<HTMLElement>(null);
 
-  // the two marks slide in from either side and settle next to each other
+  // the stack starts pressed flat and pulls apart as it scrolls up the screen
   useGSAP(
     () => {
       gsap.matchMedia().add(`not ${REDUCED}`, () => {
-        const root = ref.current;
-        if (!root) return;
-        gsap
-          .timeline({
+        const diagram = ref.current?.querySelector("[data-stack]");
+        if (!diagram) return;
+        gsap.fromTo(
+          diagram,
+          { "--gap": "8px" },
+          {
+            "--gap": "138px",
+            ease: "none",
             scrollTrigger: {
-              trigger: root.querySelector("[data-pair]"),
-              start: "top 80%",
-              once: true,
+              trigger: diagram,
+              start: "top 90%",
+              end: "center 45%",
+              scrub: 0.8,
             },
-            defaults: { duration: 1.3, ease: "expo.out" },
-          })
-          .from("[data-mark='left']", { x: -40, autoAlpha: 0 })
-          .from("[data-mark='right']", { x: 40, autoAlpha: 0 }, "<")
-          .from(
-            "[data-carried]",
-            { y: 18, autoAlpha: 0, stagger: 0.08, duration: 1.1 },
-            0.5,
-          );
+          },
+        );
       });
     },
     { scope: ref },
   );
 
   return (
-    <section ref={ref} className={cn(COLUMN, "relative pt-24 md:pt-32")}>
-      <SectionHeading
-        align="center"
-        title="Powered by VS Code."
-        body="Volt is built on the open-source VS Code core. The editor, extensions, and muscle memory you rely on come along; the agent layer is what's new."
-      />
+    <section
+      ref={ref}
+      className={cn(COLUMN, "stack-section relative pt-24 md:pt-32")}
+    >
+      <div className="grid gap-12 lg:grid-cols-12 lg:items-center lg:gap-8">
+        <div className="lg:col-span-5">
+          <SectionHeading
+            title="Powered by VS Code."
+            body="Volt is built on the open-source VS Code core. The editor, extensions, and muscle memory you rely on come along; the agent layer is what's new."
+          />
+          <ul className="mt-10 border-b border-white/[0.08] pl-4 sm:pl-6 md:pl-8">
+            {CARRIED.map(({ icon: Icon, title, body }) => (
+              <li
+                key={title}
+                data-carried
+                className="group flex gap-4 border-t border-white/[0.08] py-4"
+              >
+                <Icon
+                  aria-hidden
+                  strokeWidth={1.25}
+                  className="mt-0.5 size-[18px] shrink-0 text-white/45 transition-colors duration-300 group-hover:text-white"
+                />
+                <div>
+                  <div className="text-[14.5px] font-medium text-white">
+                    {title}
+                  </div>
+                  <p className="mt-1 text-[13.5px] leading-relaxed text-white/45">
+                    {body}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
 
-      <div
-        data-pair
-        className="flex items-start justify-center gap-20 py-10 sm:gap-36 md:py-14"
-      >
-        <Mark side="left" label="VS Code" caption="Open-source core">
-          <VsCodeMark className="size-14 sm:size-[76px]" />
-        </Mark>
-        <Mark side="right" label="Volt" caption="Agent workspace">
-          <svg
-            viewBox={`0 0 ${BOLT_W} ${BOLT_H}`}
-            aria-hidden
-            className="h-16 w-auto sm:h-[88px]"
-          >
-            <path d={BOLT_PATH} fill="#fff" fillRule="evenodd" />
-          </svg>
-        </Mark>
-      </div>
-
-      <ul className="grid grid-cols-1 gap-px border border-white/[0.08] bg-white/[0.08] sm:grid-cols-2 md:grid-cols-4">
-        {CARRIED.map((item) => (
-          <li
-            key={item.title}
-            data-carried
-            className="flex flex-col gap-4 bg-[#0a0d0c] px-6 py-8 md:px-7"
-          >
-            <span className="text-white/60">{item.icon}</span>
-            <div>
-              <div className="text-[14.5px] font-medium text-white">
-                {item.title}
-              </div>
-              <p className="mt-1.5 text-[13.5px] leading-relaxed text-white/45">
-                {item.body}
-              </p>
+        <div
+          data-stack
+          aria-hidden
+          className="relative hidden h-[620px] [--gap:138px] md:block lg:col-span-7"
+        >
+          {/* the planes, in one tilted 3D stage */}
+          <div className="absolute top-1/2 left-[38%] [perspective:1800px]">
+            <div
+              className="relative [transform-style:preserve-3d]"
+              style={{ transform: "rotateX(58deg) rotateZ(-42deg)" }}
+            >
+              {LAYERS.map((layer, i) => (
+                <Plane key={layer.name} index={i} k={layer.k}>
+                  <PlaneBody index={i} />
+                </Plane>
+              ))}
             </div>
-          </li>
-        ))}
-      </ul>
+          </div>
+
+          {/* flat labels that ride along with their planes */}
+          {LAYERS.map((layer, i) => (
+            <div
+              key={layer.name}
+              data-label={i}
+              className="absolute top-1/2 flex items-center gap-4"
+              style={{
+                left: `calc(38% + ${REACH + 14}px)`,
+                transform: `translateY(calc(-50% - var(--gap) * ${layer.k * LIFT_Y}))`,
+              }}
+            >
+              <span className="label-line h-px w-10 bg-white/20 transition-colors duration-300" />
+              <span className="whitespace-nowrap">
+                <span className="block text-[14px] font-medium text-white">
+                  {layer.name}
+                </span>
+                <span
+                  className="mt-0.5 block font-mono text-[10px] tracking-[0.14em] uppercase"
+                  style={{
+                    color: layer.accent ? ACCENT : "rgba(255,255,255,0.35)",
+                  }}
+                >
+                  {layer.caption}
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
     </section>
   );
 }
 
-function Mark({
-  side,
-  label,
-  caption,
+/** Dashed posts at a plane's corners, reaching down to the plane beneath it. */
+const POSTS: CSSProperties[] = [
+  { left: 18, top: 18 },
+  { left: PLANE - 18, top: 18 },
+  { left: 18, top: PLANE - 18 },
+  { left: PLANE - 18, top: PLANE - 18 },
+];
+
+/** One plane of the stack. Hover lifts are CSS (see `.stack-section` in app.css). */
+function Plane({
+  index,
+  k,
   children,
 }: {
-  side: "left" | "right";
-  label: string;
-  caption: string;
+  index: number;
+  k: number;
   children: ReactNode;
 }) {
   return (
-    <div data-mark={side} className="flex flex-col items-center gap-6">
-      <div className="grid h-16 place-items-center sm:h-[84px]">{children}</div>
-      <div className="text-center">
-        <div className="text-[15px] font-medium text-white">{label}</div>
-        <div className="mt-1 font-mono text-[10px] tracking-[0.14em] text-white/35 uppercase">
-          {caption}
-        </div>
+    <div
+      data-plane={index}
+      className="absolute [transform-style:preserve-3d]"
+      style={{
+        width: PLANE,
+        height: PLANE,
+        left: -PLANE / 2,
+        top: -PLANE / 2,
+        transform: `translateZ(calc(var(--gap) * ${k}))`,
+      }}
+    >
+      <div className="plane-lift absolute inset-0 [transform-style:preserve-3d]">
+        {k > -1
+          ? POSTS.map((pos) => (
+              <span
+                key={`${pos.left}-${pos.top}`}
+                className="absolute w-px origin-top bg-[repeating-linear-gradient(180deg,rgba(255,255,255,0.35)_0_3px,transparent_3px_7px)]"
+                style={{
+                  ...pos,
+                  height: "var(--gap)",
+                  // hang the post below the plane: rotate it out of the plane, pointing down the stack
+                  transform: "rotateX(-90deg)",
+                }}
+              />
+            ))
+          : null}
+        {children}
       </div>
+    </div>
+  );
+}
+
+const TILES: { icon: LucideIcon; label: string }[][] = [
+  [],
+  [
+    { icon: Blocks, label: "Extensions" },
+    { icon: Palette, label: "Themes" },
+    { icon: Keyboard, label: "Keys" },
+    { icon: Bug, label: "Debug" },
+  ],
+  [
+    { icon: MessageSquare, label: "Chats" },
+    { icon: Bot, label: "Agents" },
+    { icon: GitBranch, label: "Git" },
+    { icon: Globe, label: "Browser" },
+  ],
+];
+
+/** What's drawn on each plane: the core's mark, the carried-over setup, and the agent layer. */
+function PlaneBody({ index }: { index: number }) {
+  const top = index === 2;
+  return (
+    <div
+      className={cn(
+        "plane-face absolute inset-0 rounded-[26px] border bg-[#0b0e0d]",
+        top ? "border-[#ff8a5a]/60" : "border-white/15",
+      )}
+    >
+      <div className="absolute inset-0 rounded-[26px] bg-[radial-gradient(circle,rgba(255,255,255,0.12)_0.7px,transparent_1px)] [background-size:13px_13px]" />
+      {index === 0 ? (
+        // the plane's lower-left quarter is the part left showing under the stack
+        <div className="absolute top-[58%] left-[16%]">
+          <VsCodeMark className="size-12 opacity-70" />
+        </div>
+      ) : (
+        <div className="absolute inset-7 grid grid-cols-2 gap-3">
+          {TILES[index].map(({ icon: Icon, label }) => (
+            <div
+              key={label}
+              className={cn(
+                "flex flex-col justify-between rounded-[14px] border bg-[#0b0e0d] p-3",
+                top ? "border-[#ff8a5a]/30" : "border-white/12",
+              )}
+            >
+              <Icon
+                strokeWidth={1.25}
+                className="size-5"
+                style={{ color: top ? ACCENT : "rgba(255,255,255,0.7)" }}
+              />
+              <span className="text-[11px] font-medium text-white/70">
+                {label}
+              </span>
+            </div>
+          ))}
+          {top ? (
+            <div className="pointer-events-none absolute inset-0 grid place-items-center">
+              <span className="grid size-11 place-items-center rounded-full border border-[#ff8a5a]/60 bg-[#0b0e0d]">
+                <svg
+                  viewBox={`0 0 ${BOLT_W} ${BOLT_H}`}
+                  className="h-5 w-auto"
+                  aria-hidden
+                >
+                  <path d={BOLT_PATH} fill={ACCENT} fillRule="evenodd" />
+                </svg>
+              </span>
+            </div>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }

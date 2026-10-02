@@ -77,18 +77,6 @@ function forest(
   return trees.join(" ");
 }
 
-function clouds(seed: number, count: number, yMin: number, ySpan: number) {
-  const r = rng(seed);
-  return Array.from({ length: count }, () => {
-    const x = r() * W;
-    const y = yMin + r() * ySpan;
-    const w = 120 + r() * 380;
-    const h = 6 + r() * 16;
-    // lens-shaped wisp, heavier on the underside like a lit stratus band
-    return `M${f(x - w / 2)} ${f(y)} Q${f(x - w / 6)} ${f(y - h)} ${f(x + w / 2)} ${f(y - h * 0.2)} Q${f(x)} ${f(y + h * 0.9)} ${f(x - w / 2)} ${f(y)} Z`;
-  }).join(" ");
-}
-
 function stars(seed: number, count: number) {
   const r = rng(seed);
   return Array.from({ length: count }, () => ({
@@ -107,14 +95,12 @@ const SCENE = {
   far: ridge(4, 640, 90, 10),
   mid: ridge(9, 720, 70, 14),
   near: ridge(21, 820, 40, 6),
-  cloudsHigh: clouds(3, 18, 60, 220),
-  cloudsLow: clouds(8, 14, 330, 180),
   forestBack: forest(17, 70, hills, 70, 90),
   forestFront: forest(31, 26, shore, 160, 220),
   stars: stars(5, 60),
 };
 
-/** Stylised dusk landscape (sky, clouds, ridges, pines) — a nod to the app's wallpaper. */
+/** Stylised dusk landscape (sky, stars, ridges, pines) — a nod to the app's wallpaper. */
 export const SunsetScene = memo(function SunsetScene({
   className,
 }: {
@@ -129,11 +115,11 @@ export const SunsetScene = memo(function SunsetScene({
     >
       <defs>
         <linearGradient id="ss-sky" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#1b0f2e" />
-          <stop offset="0.28" stopColor="#4a1638" />
-          <stop offset="0.5" stopColor="#9b2542" />
-          <stop offset="0.64" stopColor="#e2553d" />
-          <stop offset="0.72" stopColor="#f59a5b" />
+          <stop offset="0" stopColor="#0d0b14" />
+          <stop offset="0.3" stopColor="#24122a" />
+          <stop offset="0.5" stopColor="#5c1c36" />
+          <stop offset="0.62" stopColor="#b8403a" />
+          <stop offset="0.7" stopColor="#f08a52" />
         </linearGradient>
         <radialGradient id="ss-sun" cx="0.5" cy="0.5" r="0.5">
           <stop offset="0" stopColor="#fff1c9" />
@@ -153,6 +139,12 @@ export const SunsetScene = memo(function SunsetScene({
           <stop offset="0" stopColor="#5e2150" />
           <stop offset="1" stopColor="#32133c" />
         </linearGradient>
+        <linearGradient id="ss-dawn" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#3a1a3c" />
+          <stop offset="0.35" stopColor="#a33a4f" />
+          <stop offset="0.62" stopColor="#ff9a5c" />
+          <stop offset="0.75" stopColor="#ffc890" />
+        </linearGradient>
         <linearGradient id="ss-haze" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#ff7a55" stopOpacity="0" />
           <stop offset="1" stopColor="#ff7a55" stopOpacity="0.28" />
@@ -160,39 +152,32 @@ export const SunsetScene = memo(function SunsetScene({
       </defs>
 
       <rect width={W} height={H} fill="url(#ss-sky)" />
-      {SCENE.stars.map((s) => (
-        <circle
-          key={`${s.x}-${s.y}`}
-          cx={s.x}
-          cy={s.y}
-          r={s.r}
-          fill="#ffe9e0"
-          opacity={s.o}
-        />
-      ))}
-      <path d={SCENE.cloudsHigh} fill="#2a1030" opacity="0.55" />
-      <path
-        d={SCENE.cloudsHigh}
-        fill="#ff6a5a"
-        opacity="0.28"
-        transform="translate(0 6)"
-      />
-      <circle cx="1120" cy="610" r="340" fill="url(#ss-glow)" />
-      <circle cx="1120" cy="610" r="78" fill="url(#ss-sun)" />
-      <path d={SCENE.cloudsLow} fill="#ff8a6a" opacity="0.4" />
-      <path
-        d={SCENE.cloudsLow}
-        fill="#4b1737"
-        opacity="0.5"
-        transform="translate(40 10)"
-      />
+      {/* `data-*` hooks let the demo tour scrub a sunrise: the dawn sky fades in, stars
+          fade out, the sun climbs, and the ridges drift apart for depth. */}
+      <rect data-dawn width={W} height={H} fill="url(#ss-dawn)" opacity={0} />
+      <g data-stars>
+        {SCENE.stars.map((s) => (
+          <circle
+            key={`${s.x}-${s.y}`}
+            cx={s.x}
+            cy={s.y}
+            r={s.r}
+            fill="#ffe9e0"
+            opacity={s.o}
+          />
+        ))}
+      </g>
+      <g data-sun>
+        <circle cx="1390" cy="610" r="360" fill="url(#ss-glow)" />
+        <circle cx="1390" cy="610" r="70" fill="url(#ss-sun)" />
+      </g>
 
-      <path d={SCENE.far} fill="url(#ss-far)" />
+      <path data-depth="1" d={SCENE.far} fill="url(#ss-far)" />
       <rect y="560" width={W} height="160" fill="url(#ss-haze)" />
-      <path d={SCENE.mid} fill="url(#ss-mid)" />
-      <path d={SCENE.near} fill="#26102f" />
-      <path d={SCENE.forestBack} fill="#1d0c27" />
-      <path d={SCENE.forestFront} fill="#10061a" />
+      <path data-depth="2" d={SCENE.mid} fill="url(#ss-mid)" />
+      <path data-depth="3" d={SCENE.near} fill="#26102f" />
+      <path data-depth="4" d={SCENE.forestBack} fill="#1d0c27" />
+      <path data-depth="5" d={SCENE.forestFront} fill="#10061a" />
     </svg>
   );
 });
