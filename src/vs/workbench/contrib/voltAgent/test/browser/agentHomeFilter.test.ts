@@ -42,15 +42,15 @@ suite('Agent home filter model', () => {
 
 	test('defaults match the screenshot defaults', () => {
 		const state = defaultAgentHomeViewState();
-		assert.strictEqual(state.grouping, 'workspace');
+		assert.strictEqual(state.grouping, 'status', 'the sidebar groups by status by default');
 		assert.strictEqual(state.chatOrder, 'updated');
 		assert.strictEqual(state.groupOrder, 'manual');
-		assert.deepStrictEqual([...state.show], ['updated', 'environment', 'pr']);
+		assert.deepStrictEqual([...state.show], ['status', 'updated', 'environment', 'pr', 'branch', 'model']);
 		assert.deepStrictEqual([...state.status].sort(), ['done', 'draft', 'needsAttention', 'working'].sort());
 		assert.ok(state.pr.has('none'));
 		assert.ok(state.environment.has('cloud') && state.environment.has('local'));
 		assert.strictEqual(state.archived, 'hide');
-		assert.strictEqual(groupingLabel(state.grouping), 'Workspace');
+		assert.strictEqual(groupingLabel(state.grouping), 'Status');
 	});
 
 	test('round-trips through storage json', () => {
@@ -123,5 +123,27 @@ suite('Agent home filter model', () => {
 		assert.strictEqual(updatedBucketId(new Date(2026, 8, 1, 12).getTime(), now), 'month');
 		assert.strictEqual(updatedBucketId(new Date(2026, 6, 1).getTime(), now), 'older');
 		assert.strictEqual(updatedBucketId(0, now), 'older');
+	});
+
+	test('a stored view from before the status line gets it switched on once', () => {
+		const old = reviveAgentHomeViewState({ ...serializeAgentHomeViewState(defaultAgentHomeViewState()), show: ['updated'], showRevision: undefined });
+		assert.deepStrictEqual([...old.show], ['updated', 'status', 'branch', 'model']);
+		const off = reviveAgentHomeViewState(serializeAgentHomeViewState({ ...defaultAgentHomeViewState(), show: new Set(['updated' as const]) }));
+		assert.deepStrictEqual([...off.show], ['updated'], 'turning it off sticks');
+	});
+
+	test('a stored view from before the second line gets branch and model once, and keeps its grouping', () => {
+		const stored = reviveAgentHomeViewState({ ...serializeAgentHomeViewState(defaultAgentHomeViewState()), grouping: 'workspace', show: ['status', 'updated', 'pr'], showRevision: 2 });
+		assert.deepStrictEqual([...stored.show], ['status', 'updated', 'pr', 'branch', 'model']);
+		assert.strictEqual(stored.grouping, 'workspace', 'a grouping the user picked is not reset');
+		const off = reviveAgentHomeViewState(serializeAgentHomeViewState({ ...defaultAgentHomeViewState(), show: new Set(['status' as const]) }));
+		assert.deepStrictEqual([...off.show], ['status'], 'turning the second line off sticks');
+		assert.ok(reviveAgentHomeViewState({ show: ['model', 'bogus'] }).show.has('model'));
+	});
+
+	test('a thread back from snooze sorts by when it woke', () => {
+		const older = session({ id: 'old', updatedAt: 100 });
+		const woken = session({ id: 'woken', updatedAt: 10, wokeAt: 500 });
+		assert.deepStrictEqual(sortSessionsForHome([older, woken], 'updated').map(s => s.id), ['woken', 'old']);
 	});
 });

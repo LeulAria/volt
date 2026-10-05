@@ -95,6 +95,6 @@ export class NullVoltGitService implements IVoltGitService {
 	async clone(): Promise<void> { return this.unavailable(); }
 	async cancelClone(): Promise<void> { }
 	async createBranch(): Promise<void> { return this.unavailable(); }
-	async listBranches(): Promise<IVoltGitBranches> { return { local: [], remote: [], tags: [] }; }
+	async listBranches(): Promise<IVoltGitBranches> { return { local: [], remote: [], tags: [], refs: [] }; }
 	async checkout(): Promise<void> { return this.unavailable(); }
 }

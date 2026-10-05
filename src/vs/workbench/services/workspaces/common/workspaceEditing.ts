@@ -38,6 +38,12 @@ export interface IWorkspaceEditingService {
 	enterWorkspace(path: URI): Promise<void>;
 
 	/**
+	 * Volt: moves this window onto the folder without reloading it. Resolves to whether the
+	 * window is now on that folder. Desktop only.
+	 */
+	enterFolder?(folderUri: URI): Promise<boolean>;
+
+	/**
 	 * Creates a new workspace with the provided folders and opens it. if path is provided
 	 * the workspace will be saved into that location.
 	 */

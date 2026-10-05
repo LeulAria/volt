@@ -253,9 +253,23 @@ export function collectAcpToolDiffs(update: Record<string, unknown>): { path: st
 		if (!path || newText === undefined) {
 			continue;
 		}
-		out.push({ path, oldText: typeof rec.oldText === 'string' ? rec.oldText : null, newText });
+		out.push({ path, ...normalizeCreatedFileDiff(typeof rec.oldText === 'string' ? rec.oldText : null, newText) });
 	}
 	return out;
+}
+
+const CREATED_FILE_HEADER = /^-{2,3} \/dev\/null\s*$/;
+const NEW_FILE_HEADER = /^\+{2,3} b\/[^\n]*(?:\n|$)/;
+
+/**
+ * cursor-agent sends a new file as `oldText: "-- /dev/null"` and a `newText` led by
+ * "++ b/<path>": unified-diff headers that lost a character, not file content.
+ */
+export function normalizeCreatedFileDiff(oldText: string | null, newText: string): { oldText: string | null; newText: string } {
+	if (oldText !== null && CREATED_FILE_HEADER.test(oldText)) {
+		return { oldText: null, newText: newText.replace(NEW_FILE_HEADER, '') };
+	}
+	return { oldText, newText };
 }
 
 export interface IAcpSessionMode {

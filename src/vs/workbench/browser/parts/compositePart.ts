@@ -362,6 +362,16 @@ export abstract class CompositePart<T extends Composite> extends Part {
 		return this.lastActiveCompositeId;
 	}
 
+	/** Volt: points "last active" back at a composite after another was open only for a while. */
+	protected setLastActiveCompositeId(id: string): void {
+		this.lastActiveCompositeId = id;
+		if (id !== this.defaultCompositeId) {
+			this.storageService.store(this.activeCompositeSettingsKey, id, StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		} else {
+			this.storageService.remove(this.activeCompositeSettingsKey, StorageScope.WORKSPACE);
+		}
+	}
+
 	protected hideActiveComposite(): Composite | undefined {
 		if (!this.activeComposite) {
 			return undefined; // Nothing to do

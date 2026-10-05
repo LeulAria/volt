@@ -7,7 +7,7 @@ import { AddFirstParameterToFunctions } from '../../../base/common/types.js';
 import { URI } from '../../../base/common/uri.js';
 import { IBackupMainService } from '../../backup/electron-main/backup.js';
 import { IWindowsMainService } from '../../windows/electron-main/windows.js';
-import { IEnterWorkspaceResult, IRecent, IRecentlyOpened, IWorkspaceFolderCreationData, IWorkspacesService } from '../common/workspaces.js';
+import { IEnterFolderResult, IEnterWorkspaceResult, IRecent, IRecentlyOpened, IWorkspaceFolderCreationData, IWorkspacesService } from '../common/workspaces.js';
 import { IWorkspaceIdentifier } from '../../workspace/common/workspace.js';
 import { IWorkspacesHistoryMainService } from './workspacesHistoryMainService.js';
 import { IWorkspacesManagementMainService } from './workspacesManagementMainService.js';
@@ -33,6 +33,15 @@ export class WorkspacesMainService implements AddFirstParameterToFunctions<IWork
 		const window = this.windowsMainService.getWindowById(windowId);
 		if (window) {
 			return this.workspacesManagementMainService.enterWorkspace(window, this.windowsMainService.getWindows(), path);
+		}
+
+		return undefined;
+	}
+
+	async enterFolder(windowId: number, folderUri: URI): Promise<IEnterFolderResult | undefined> {
+		const window = this.windowsMainService.getWindowById(windowId);
+		if (window) {
+			return this.workspacesManagementMainService.enterFolder(window, this.windowsMainService.getWindows(), folderUri);
 		}
 
 		return undefined;

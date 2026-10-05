@@ -178,6 +178,9 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 	private viewVisibleContextKey: IContextKey<boolean>;
 
 	private setTreeInputPromise: Promise<void> | undefined;
+	private readonly folderViewStates = new Map<string, IAsyncDataTreeViewState>();
+	private treeInputKey: string | undefined;
+	private treeInputRequest = 0;
 	private horizontalScrolling: boolean | undefined;
 
 	private dragHandler!: DelayedDragHandler;
@@ -242,6 +245,9 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 	}
 
 	get name(): string {
+		if (this.explorerService.scopedFolder) {
+			return this.explorerService.roots[0].name;
+		}
 		return this.labelService.getWorkspaceLabel(this.contextService.getWorkspace());
 	}
 
@@ -283,6 +289,7 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 		};
 
 		this._register(this.contextService.onDidChangeWorkspaceName(setHeader));
+		this._register(this.explorerService.onDidChangeRoots(setHeader));
 		this._register(this.labelService.onDidChangeFormatters(setHeader));
 		setHeader();
 	}
@@ -593,9 +600,9 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 	}
 
 	private setContextKeys(stat: ExplorerItem | null | undefined): void {
-		const folders = this.contextService.getWorkspace().folders;
-		const resource = stat ? stat.resource : folders[folders.length - 1].uri;
-		stat = stat || this.explorerService.findClosest(resource);
+		const roots = this.explorerService.roots;
+		const resource = stat ? stat.resource : roots[roots.length - 1]?.resource;
+		stat = stat || (resource ? this.explorerService.findClosest(resource) : undefined);
 		this.resourceContext.set(resource);
 		this.folderContext.set(!!stat && stat.isDirectory);
 		this.readonlyContext.set(!!stat && !!stat.isReadonly);
@@ -717,6 +724,7 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 	}
 
 	async setTreeInput(): Promise<void> {
+		const request = ++this.treeInputRequest;
 		if (!this.isBodyVisible()) {
 			return Promise.resolve(undefined);
 		}
@@ -725,6 +733,9 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 		if (this.setTreeInputPromise) {
 			await this.setTreeInputPromise;
 		}
+		if (request !== this.treeInputRequest || !this.isBodyVisible()) {
+			return;
+		}
 
 		const initialInputSetup = !this.tree.getInput();
 		if (initialInputSetup) {
@@ -732,14 +743,25 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 		}
 		const roots = this.explorerService.roots;
 		let input: ExplorerItem | ExplorerItem[] = roots[0];
-		if (this.contextService.getWorkbenchState() !== WorkbenchState.FOLDER || roots[0].error) {
+		if ((!this.explorerService.scopedFolder && this.contextService.getWorkbenchState() !== WorkbenchState.FOLDER) || !roots[0] || roots[0].error) {
 			// Display roots only when multi folder workspace
 			input = roots;
 		}
 
 		let viewState: IAsyncDataTreeViewState | undefined;
+		const inputKey = roots.map(root => root.resource.toString()).join('\n');
 		if (this.tree && this.tree.getInput()) {
 			viewState = this.tree.getViewState();
+			if (this.treeInputKey !== undefined) {
+				this.folderViewStates.delete(this.treeInputKey);
+				this.folderViewStates.set(this.treeInputKey, viewState);
+				if (this.folderViewStates.size > 20) {
+					this.folderViewStates.delete(this.folderViewStates.keys().next().value!);
+				}
+				if (inputKey !== this.treeInputKey) {
+					viewState = this.folderViewStates.get(inputKey);
+				}
+			}
 		} else {
 			const rawViewState = this.storageService.get(ExplorerView.TREE_VIEW_STATE_STORAGE_KEY, StorageScope.WORKSPACE);
 			if (rawViewState) {
@@ -748,6 +770,7 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 		}
 
 		const previousInput = this.tree.getInput();
+		this.treeInputKey = inputKey;
 		const promise = this.setTreeInputPromise = this.tree.setInput(input, viewState).then(async () => {
 			if (Array.isArray(input)) {
 				if (!viewState || previousInput instanceof ExplorerItem) {

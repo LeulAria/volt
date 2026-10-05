@@ -144,7 +144,7 @@ export class ExplorerDataSource implements IAsyncDataSource<ExplorerItem | Explo
 			, e => {
 
 				if (element instanceof ExplorerItem && element.isRoot) {
-					if (this.contextService.getWorkbenchState() === WorkbenchState.FOLDER) {
+					if (this.explorerService.scopedFolder || this.contextService.getWorkbenchState() === WorkbenchState.FOLDER) {
 						// Single folder create a dummy explorer item to show error
 						const placeholder = new ExplorerItem(element.resource, this.fileService, this.configService, this.filesConfigService, undefined, undefined, false);
 						placeholder.error = e;
@@ -1216,7 +1216,7 @@ export class FilesRenderer implements ICompressibleTreeRenderer<ExplorerItem, Fu
 			depth++;
 		}
 
-		if (this.contextService.getWorkbenchState() === WorkbenchState.WORKSPACE) {
+		if (!this.explorerService.scopedFolder && this.contextService.getWorkbenchState() === WorkbenchState.WORKSPACE) {
 			depth = depth + 1;
 		}
 
@@ -1261,6 +1261,7 @@ export class FilesFilter implements ITreeFilter<ExplorerItem, FuzzyScore> {
 		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
 		@IFileService private readonly fileService: IFileService
 	) {
+		this.toDispose.push(this.explorerService.onDidChangeRoots(() => this.updateConfiguration()));
 		this.toDispose.push(this.contextService.onDidChangeWorkspaceFolders(() => this.updateConfiguration()));
 		this.toDispose.push(this.configurationService.onDidChangeConfiguration((e) => {
 			if (e.affectsConfiguration('files.exclude') || e.affectsConfiguration('explorer.excludeGitIgnore')) {
@@ -1322,7 +1323,8 @@ export class FilesFilter implements ITreeFilter<ExplorerItem, FuzzyScore> {
 	private updateConfiguration(): void {
 		let shouldFire = false;
 		let updatedGitIgnoreSetting = false;
-		this.contextService.getWorkspace().folders.forEach(folder => {
+		this.explorerService.roots.forEach(root => {
+			const folder = { uri: root.resource };
 			const configuration = this.configurationService.getValue<IFilesConfiguration>({ resource: folder.uri });
 			const excludesConfig: glob.IExpression = configuration?.files?.exclude || Object.create(null);
 			const parseIgnoreFile: boolean = configuration.explorer.excludeGitIgnore;

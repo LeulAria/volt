@@ -3,7 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-/* Cursor-style anchored dropdown. Opaque surfaces: it floats over the see-through agent window. */
+/*
+ * Cursor-style anchored dropdown, drawn like the Open Workspace menu (agentHomePane.css):
+ * full-width rows flush with the border, no padding above or below the list, flat separators.
+ * Opaque surfaces: it floats over the see-through agent window.
+ */
 .volt-menu-host {
 	position: relative;
 	margin-top: 4px;
@@ -20,24 +24,42 @@
 	max-width: calc(100vw - 16px);
 	box-sizing: border-box;
 	padding: 0;
-	background: var(--vscode-editorWidget-background);
-	color: var(--vscode-foreground);
-	border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border, transparent));
+	background: var(--vscode-editor-background, #1e1e1e);
+	color: var(--vscode-menu-foreground, var(--vscode-foreground));
+	/* A ring, not a border: the list's scroll layer squares off a CSS border at the corners. */
+	border: none;
 	border-radius: 8px;
-	box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	box-shadow:
+		0 0 0 1px var(--vscode-widget-border, rgba(255, 255, 255, 0.1)),
+		0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
 	font-size: 13px;
+	font-weight: 300;
 	line-height: normal;
 	outline: none;
 	overflow: hidden;
+}
+
+.monaco-workbench.vs .volt-menu,
+.monaco-workbench.hc-light .volt-menu {
+	box-shadow:
+		0 0 0 1px var(--vscode-widget-border, rgba(0, 0, 0, 0.1)),
+		0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.16));
+}
+
+.monaco-workbench.hc-black .volt-menu,
+.monaco-workbench.hc-light .volt-menu {
+	box-shadow:
+		0 0 0 1px var(--vscode-contrastBorder),
+		0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
 }
 
 .volt-menu-search {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	height: 38px;
+	height: 36px;
 	padding: 0 12px;
-	border-bottom: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+	border-bottom: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-menu-border, rgba(128, 128, 128, 0.35)));
 	flex-shrink: 0;
 }
 
@@ -62,10 +84,14 @@
 	font-size: 13px;
 }
 
+.volt-menu-search .monaco-inputbox .input::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+	opacity: 1;
+}
+
 .volt-menu-list {
 	flex-shrink: 1;
 	min-height: 0;
-	margin: 4px 0;
 }
 
 .volt-menu-list .monaco-list:focus,
@@ -73,14 +99,19 @@
 	outline: none !important;
 }
 
+/* A menu without a search field focuses the list itself; the menu's ring is its only edge. */
+.volt-menu-list .monaco-list:focus::before,
+.volt-menu-list .monaco-list:focus-within::before {
+	content: none !important;
+	outline: none !important;
+}
+
 .volt-menu-row {
 	display: flex;
 	align-items: center;
-	gap: 10px;
-	height: 28px;
-	margin: 0 4px;
-	padding: 0 8px;
-	border-radius: 5px;
+	gap: 8px;
+	height: 30px;
+	padding: 0 10px;
 	box-sizing: border-box;
 	cursor: pointer;
 	white-space: nowrap;
@@ -91,7 +122,8 @@
 .volt-menu-row.flyout-open,
 .volt-menu-list .monaco-list-row:has(.flyout-open) .volt-menu-row,
 .volt-menu-footer .volt-menu-row.active {
-	background: var(--vscode-list-hoverBackground);
+	background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)));
+	color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
 }
 
 .volt-menu-row.disabled {
@@ -106,7 +138,7 @@
 	width: 16px;
 	height: 16px;
 	flex-shrink: 0;
-	color: var(--vscode-descriptionForeground);
+	opacity: 0.85;
 }
 
 .volt-menu-icon.empty {
@@ -114,7 +146,7 @@
 }
 
 .volt-menu-icon .codicon {
-	font-size: 15px;
+	font-size: 16px;
 }
 
 .volt-menu-icon svg {
@@ -144,25 +176,80 @@
 	direction: rtl;
 }
 
+.volt-menu-stats {
+	display: inline-flex;
+	gap: 4px;
+	flex-shrink: 0;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-menu-stats .add {
+	color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+}
+
+.volt-menu-stats .del {
+	color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+}
+
+/* Gives way long before the label, so a branch name stays readable next to its commit. */
+.volt-menu-detail {
+	flex: 1 1000 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 12px;
+	opacity: 0.55;
+}
+
+/* A label line over a muted subtitle, as Cursor's turn and branch pickers. */
+.volt-menu-row.two-line {
+	height: 46px;
+}
+
+.volt-menu-text {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 2px;
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.volt-menu-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-menu-subtitle {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 12px;
+	opacity: 0.55;
+}
+
 .volt-menu-spacer {
 	flex: 1 1 0;
 	min-width: 0;
 }
 
 .volt-menu-keybinding {
-	color: var(--vscode-descriptionForeground);
 	font-size: 12px;
 	flex-shrink: 0;
+	opacity: 0.55;
 }
 
 .volt-menu-trailing {
 	display: inline-flex;
 	flex-shrink: 0;
-	color: var(--vscode-descriptionForeground);
+	opacity: 0.7;
 }
 
 .volt-menu-row.checked .volt-menu-trailing {
-	color: var(--vscode-foreground);
+	opacity: 1;
 }
 
 .volt-menu-trailing .codicon {
@@ -173,11 +260,12 @@
 	display: flex;
 	align-items: flex-end;
 	gap: 4px;
-	height: 28px;
-	padding: 0 12px 6px;
+	height: 22px;
+	padding: 0 10px 2px;
 	box-sizing: border-box;
-	color: var(--vscode-descriptionForeground);
 	font-size: 12px;
+	font-weight: 400;
+	opacity: 0.55;
 	cursor: default;
 }
 
@@ -191,41 +279,33 @@
 
 .volt-menu-separator {
 	height: 1px;
-	margin: 4px 0;
-	background: var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+	background: var(--vscode-menu-separatorBackground, var(--vscode-menu-border, rgba(128, 128, 128, 0.35)));
 }
 
 .volt-menu-message {
 	display: flex;
 	align-items: center;
-	height: 28px;
-	padding: 0 12px;
-	color: var(--vscode-descriptionForeground);
+	height: 30px;
+	padding: 0 10px;
+	font-size: 12px;
+	opacity: 0.55;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-menu-message.error {
+	color: var(--vscode-errorForeground);
+	opacity: 1;
 }
 
 .volt-menu-footer {
-	padding: 4px 0;
-	border-top: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+	border-top: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-menu-border, rgba(128, 128, 128, 0.35)));
 	flex-shrink: 0;
-}
-
-.volt-menu-list + .volt-menu-footer {
-	margin-top: -4px;
 }
 
 .volt-menu-footer.hidden {
 	display: none;
-}
-
-.volt-menu-footer .volt-menu-row.editing {
-	height: auto;
-	padding: 2px 0;
-	cursor: default;
-	overflow: visible;
-}
-
-.volt-menu-footer .volt-menu-row.editing .monaco-inputbox {
-	flex: 1;
 }
 
 .volt-menu .codicon-modifier-spin {

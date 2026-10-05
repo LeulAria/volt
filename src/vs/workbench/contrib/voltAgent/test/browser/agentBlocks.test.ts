@@ -4,8 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { describeHostToolActivity } from '../../browser/blocks/agentHostToolActivity.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { AgentSegment, appendProviderNotice, applyExploreInputToActivity, applyExploreResultToActivity, applyFileTargetToActivity, classifyToolActivity, collectBlocks, createToolBlock, describeExploreActivity, IAgentActivityItem, isExploreItemClickable, isExploreTool, isFileChangeTool, isShellTool, parseExploreResultFiles, parseFileTarget, splitActivityLabel, splitMarkdownToBlocks, workCountsForSegments } from '../../browser/blocks/agentBlocks.js';
+import { AgentSegment, appendProviderNotice, applyExploreInputToActivity, applyExploreResultToActivity, applyFileTargetToActivity, classifyToolActivity, collectBlocks, createToolBlock, describeExploreActivity, IAgentActivityItem, isExploreItemClickable, isExploreTool, isFileChangeTool, isShellTool, parseExploreResultFiles, parseFileTarget, firstCommandName, isPlanTool, parsePlanToolInput, splitActivityLabel, splitMarkdownToBlocks, workCountsForSegments } from '../../browser/blocks/agentBlocks.js';
 
 suite('Agent explore tool cards', () => {
 
@@ -88,6 +89,21 @@ suite('Adaptive answer blocks', () => {
 	test('keeps mermaid fences as mermaid blocks', () => {
 		const blocks = splitMarkdownToBlocks('```mermaid\ngraph TD\n  A[Start] --> B[Done]\n```', 's0');
 		assert.strictEqual(blocks[0].type, 'mermaid');
+	});
+
+	test('a fence a line introduces as a file is that file', () => {
+		const pathOf = (markdown: string) => {
+			const code = splitMarkdownToBlocks(markdown, 's0').find(block => block.type === 'code');
+			return code?.type === 'code' ? code.path : 'no code block';
+		};
+		assert.strictEqual(pathOf('**Task 1 — Grok 4.7 created src/array.js:**\n\n```js\nexport function sum() {}\n```'), 'src/array.js');
+		assert.strictEqual(pathOf('Here is `index.html`:\n\n```html\n<h1>Hi</h1>\n```'), 'index.html');
+		assert.strictEqual(pathOf('I updated config.json:\n\n```json\n{}\n```'), 'config.json');
+		assert.strictEqual(pathOf('```src/app.ts\nlet a = 1;\n```'), 'src/app.ts');
+		assert.strictEqual(pathOf('Run it with Node.js:\n\n```sh\nnode app.js\n```'), undefined, 'a product name is not a file');
+		assert.strictEqual(pathOf('For example, e.g:\n\n```js\n1\n```'), undefined);
+		assert.strictEqual(pathOf('See src/app.ts for details.\n\n```js\n1\n```'), undefined, 'the path must introduce the fence');
+		assert.strictEqual(pathOf('```12:20:src/app.ts\nlet a = 1;\n```'), undefined, 'citations keep their own header');
 	});
 });
 
@@ -201,6 +217,25 @@ suite('Agent explore activity details', () => {
 		assert.strictEqual(isExploreItemClickable(item), true);
 	});
 
+	test('read contents are not additional explored files', () => {
+		const item: IAgentActivityItem = { kind: 'read', label: 'Read', path: '/repo/web/index.html', files: ['/repo/web/index.html'] };
+		applyExploreResultToActivity(item, [{ type: 'content', content: { type: 'text', text: '<title>Pulse Notes</title>\n<link href="/styles.css">\n</head>\n/this/is/source/content.js' } }]);
+		assert.deepStrictEqual(item.files, ['/repo/web/index.html']);
+		assert.strictEqual(item.path, '/repo/web/index.html');
+	});
+
+	test('read results retain explicit locations and file lists without parsing their contents', () => {
+		const item: IAgentActivityItem = { kind: 'read', label: 'Read File' };
+		applyExploreResultToActivity(item, {
+			path: '/repo/My File.ts',
+			locations: [{ path: '/repo/other.ts', line: 3 }],
+			files: ['/repo/third.ts'],
+			content: 'import "./unread.ts";\nhttps://example.com/docs',
+		});
+		assert.deepStrictEqual(item.files, ['/repo/My File.ts', '/repo/other.ts', '/repo/third.ts']);
+		assert.strictEqual(item.path, '/repo/My File.ts');
+	});
+
 	test('keeps grep hits when a later input update has no files', () => {
 		const item: IAgentActivityItem = { kind: 'search', label: 'grep', toolName: 'grep', toolTitle: 'grep' };
 		applyExploreInputToActivity(item, 'grep', 'grep', JSON.stringify({
@@ -240,5 +275,28 @@ suite('Agent explore activity details', () => {
 		assert.strictEqual(item.label, 'Grepped');
 		assert.strictEqual(item.detail, 'CodeEditorWidget in chat');
 		assert.deepStrictEqual(item.files, ['src/vs/workbench/contrib/chat/browser/chatWidget.ts']);
+	});
+	test('the running program is named whole, even from a quoted path', () => {
+		assert.strictEqual(firstCommandName('"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --screenshot=a.png x.html'), 'Google Chrome');
+		assert.strictEqual(firstCommandName('/usr/bin/python3 - << PY'), 'python3');
+		assert.strictEqual(firstCommandName('PORT=4310 ./scripts/start.sh'), 'scripts/start.sh');
+		assert.strictEqual(firstCommandName('npm test'), 'npm');
+	});
+	test('cursor-agent\'s plan tool is a plan, not an edit to a file called "Create Plan"', () => {
+		const input = JSON.stringify({ _toolName: 'createPlan', name: 'Persist todos', plan: '# Persist todos\n\n1. Add a store' });
+		assert.strictEqual(isPlanTool('Edit File', 'Create Plan'), true);
+		assert.strictEqual(isPlanTool('edit', 'Edit `src/a.ts`', input), true);
+		assert.strictEqual(isPlanTool('edit', 'Edit `src/plan.ts`', '{"path":"src/plan.ts"}'), false);
+		assert.deepStrictEqual(parsePlanToolInput(input), { name: 'Persist todos', plan: '# Persist todos\n\n1. Add a store' });
+	});
+});
+
+suite('Agent host tool rows', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('design and debugging host tools read like the browser actions', () => {
+		assert.deepStrictEqual(describeHostToolActivity('mcp__volt__browser_compare_image', undefined, '{"reference_path":"design/home.png"}'), { tool: 'browser_compare_image', label: 'Compared with design', detail: 'design/home.png' });
+		assert.deepStrictEqual(describeHostToolActivity('mcp__volt__browser_network', undefined, '{}'), { tool: 'browser_network', label: 'Read network' });
+		assert.deepStrictEqual(describeHostToolActivity('mcp__volt__image_inspect', undefined, '{"path":"/tmp/shot.png"}'), { tool: 'image_inspect', label: 'Inspected image', detail: '/tmp/shot.png' });
 	});
 });

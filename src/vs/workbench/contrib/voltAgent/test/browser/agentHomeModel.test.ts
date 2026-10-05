@@ -19,8 +19,19 @@ import {
 	IAgentHomeFolder,
 	IAgentHomeNode,
 	latestSessionForFolder,
+	IAgentOpenDraft,
+	isBlankNewChat,
+	isTwoLineView,
+	sessionSecondLine,
+	agentSnoozeAfter,
+	agentSnoozeAt,
+	agentSnoozePresets,
 	sessionMetaParts,
+	sessionShowsStatusBadge,
+	sessionStatusBadge,
+	sessionsWithOpenDrafts,
 	uniqueHomeFolders,
+	unsentDraftForFolder,
 } from '../../browser/home/agentHomeModel.js';
 import { IAgentRepoInfo } from '../../browser/home/agentRepoInfo.js';
 
@@ -54,7 +65,8 @@ function view(extra: Partial<{
 	const base = defaultAgentHomeViewState();
 	return {
 		...base,
-		grouping: extra.grouping ?? base.grouping,
+		// The tree tests were written for project grouping; the sidebar now opens on Status.
+		grouping: extra.grouping ?? 'workspace',
 		chatOrder: extra.chatOrder ?? base.chatOrder,
 		groupOrder: extra.groupOrder ?? base.groupOrder,
 		show: extra.show ? new Set(extra.show) : base.show,
@@ -81,6 +93,21 @@ function projectLabels(node: IAgentHomeNode): string[] {
 
 function sessionIds(node: IAgentHomeNode | undefined): string[] {
 	return (node?.children ?? []).map(child => child.element.type === 'session' ? child.element.session.id : child.element.type);
+}
+
+/** Ids of every agent tab in a tree, depth first. */
+function allSessionIds(nodes: readonly IAgentHomeNode[]): string[] {
+	const out: string[] = [];
+	const walk = (list: readonly IAgentHomeNode[]) => {
+		for (const node of list) {
+			if (node.element.type === 'session') {
+				out.push(node.element.session.id);
+			}
+			walk(node.children ?? []);
+		}
+	};
+	walk(nodes);
+	return out;
 }
 
 function headers(tree: readonly IAgentHomeNode[]): string[] {
@@ -116,6 +143,21 @@ suite('Agent home list model', () => {
 		])?.id, 'new');
 	});
 
+	test('New Agent finds the newest chat holding only unsent text, never the one on screen', () => {
+		const volt = folder('/tmp/volt', { current: true });
+		const sessions = [
+			session('sent', { workspaceFolder: '/tmp/volt', updatedAt: 50, hasDraft: true }),
+			session('archived', { workspaceFolder: '/tmp/volt', updatedAt: 40, turnCount: 0, hasDraft: true, archived: true }),
+			session('elsewhere', { workspaceFolder: '/tmp/app', updatedAt: 30, turnCount: 0, hasDraft: true }),
+			session('newer', { workspaceFolder: '/tmp/volt', updatedAt: 20, turnCount: 0, hasDraft: true }),
+			session('older', { workspaceFolder: '/tmp/volt', updatedAt: 10, turnCount: 0, hasDraft: true }),
+			session('blank', { workspaceFolder: '/tmp/volt', updatedAt: 60, turnCount: 0 }),
+		];
+		assert.strictEqual(unsentDraftForFolder(volt, sessions)?.id, 'newer');
+		assert.strictEqual(unsentDraftForFolder(volt, sessions, 'newer')?.id, 'older', 'the chat on screen is skipped');
+		assert.strictEqual(unsentDraftForFolder(folder('/tmp/other'), sessions), undefined);
+	});
+
 	test('starts with one Workspaces section that carries the filter', () => {
 		const tree = buildAgentHomeTree([folder('/tmp/app'), folder('/tmp/volt', { current: true })], [session('chat', { workspaceFolder: '/tmp/volt' })], view());
 		assert.deepStrictEqual(tree.map(node => node.element.type), ['section']);
@@ -137,6 +179,28 @@ suite('Agent home list model', () => {
 		assert.ok(first?.type === 'session' && first.nested);
 	});
 
+	test('lists a side chat right under the chat it was opened in, even when it is newer', () => {
+		const tree = buildAgentHomeTree([folder('/tmp/volt', { current: true })], [
+			session('parent', { workspaceFolder: '/tmp/volt', updatedAt: 10 }),
+			session('other', { workspaceFolder: '/tmp/volt', updatedAt: 15 }),
+			session('side', { workspaceFolder: '/tmp/volt', updatedAt: 30, parentId: 'parent' }),
+		], view());
+		const project = section(tree).children?.[0];
+		assert.deepStrictEqual(sessionIds(project), ['other', 'parent', 'side']);
+		const side = project?.children?.[2].element;
+		assert.ok(side?.type === 'session' && side.sideDepth === 1 && side.nested);
+	});
+
+	test('lists a side chat on its own when its chat is not listed', () => {
+		const tree = buildAgentHomeTree([folder('/tmp/volt', { current: true })], [
+			session('side', { workspaceFolder: '/tmp/volt', parentId: 'gone' }),
+			session('a', { workspaceFolder: '/tmp/volt', parentId: 'b' }),
+			session('b', { workspaceFolder: '/tmp/volt', parentId: 'a' }),
+		], view());
+		const ids = sessionIds(section(tree).children?.[0]).sort();
+		assert.deepStrictEqual(ids, ['a', 'b', 'side']);
+	});
+
 	test('lists sessions whose folder the sidebar does not know', () => {
 		const tree = buildAgentHomeTree([], [session('lost', { workspaceFolder: '/tmp/elsewhere' })], view());
 		assert.deepStrictEqual(projectLabels(section(tree)), ['elsewhere']);
@@ -155,7 +219,23 @@ suite('Agent home list model', () => {
 		assert.deepStrictEqual(groups.map(node => node.element.type === 'group' ? node.element.id : ''), ['settled', 'snooze']);
 		assert.deepStrictEqual(sessionIds(groups[0]), ['done']);
 		assert.deepStrictEqual(sessionIds(groups[1]), ['both']);
-		assert.ok(groups.every(node => node.collapsed));
+		assert.deepStrictEqual(groups.map(node => node.collapsed), [true, false], 'Snoozed stays open so its countdowns show');
+	});
+
+	test('Status grouping lists Settled and Snooze as headers after Done, only when used', () => {
+		const buckets = (tree: readonly IAgentHomeNode[]) => tree.flatMap(node => node.element.type === 'bucket' ? [node.element.id] : []);
+		const done = session('done', { status: 'done', turnCount: 1 });
+		assert.deepStrictEqual(buckets(buildAgentHomeTree([], [done], view({ grouping: 'status' }))), ['done']);
+		const tree = buildAgentHomeTree([], [
+			done,
+			session('parked', { status: 'done', turnCount: 1, settled: true }),
+			session('later', { status: 'done', turnCount: 1, snoozed: true }),
+		], view({ grouping: 'status' }));
+		assert.deepStrictEqual(buckets(tree), ['done', 'settled', 'snooze']);
+		assert.ok(!tree.some(node => node.element.type === 'group'));
+		const settled = tree.find(node => node.element.type === 'bucket' && node.element.id === 'settled')!;
+		assert.deepStrictEqual(sessionIds(settled), ['parked']);
+		assert.ok(settled.element.type === 'bucket' && settled.element.add);
 	});
 
 	test('drops duplicate rows for the same folder', () => {
@@ -329,6 +409,87 @@ suite('Agent home list model', () => {
 		assert.deepStrictEqual(projectLabels(onlyWorkspaces), ['app']);
 	});
 
+	test('open new chats show under their workspace as drafts until the first send', () => {
+		const volt = folder('/tmp/volt', { current: true });
+		const app = folder('/tmp/app');
+		const sent = session('sent', { workspaceFolder: '/tmp/volt', updatedAt: 10 });
+		const open: IAgentOpenDraft[] = [
+			{ id: 'blank', createdAt: 40, workspaceId: 'w', workspaceLabel: 'volt', workspaceFolder: '/tmp/volt' },
+			{ id: 'second', createdAt: 30, workspaceId: 'w', workspaceLabel: 'volt', workspaceFolder: '/tmp/volt' },
+			{ id: 'elsewhere', createdAt: 35, workspaceId: 'w', workspaceLabel: 'app', workspaceFolder: '/tmp/app' },
+		];
+		const listed = sessionsWithOpenDrafts([sent], open);
+		const tree = buildAgentHomeTree([volt, app], listed, view());
+		const projects = section(tree).children ?? [];
+		assert.deepStrictEqual(projectLabels(section(tree)), ['volt', 'app']);
+		assert.deepStrictEqual(sessionIds(projects[0]), ['blank', 'second', 'sent']);
+		assert.deepStrictEqual(sessionIds(projects[1]), ['elsewhere']);
+		const blank = listed.find(item => item.id === 'blank');
+		assert.ok(blank);
+		assert.strictEqual(blank.turnCount, 0);
+		assert.strictEqual(blank.title, '');
+		assert.deepStrictEqual(sessionMetaParts(blank, { workspace: 'volt' }, view(), 1_000), [], 'the badge says Draft');
+		assert.deepStrictEqual(sessionMetaParts(blank, { workspace: 'volt' }, view({ show: ['environment', 'pr'] }), 1_000), ['Draft']);
+
+		// Saved unsent text is already a row. The open editor must not add a second one.
+		const typed = session('blank', { title: 'Hello', workspaceFolder: '/tmp/volt', turnCount: 0, hasDraft: true, updatedAt: 40 });
+		const once = sessionsWithOpenDrafts([typed, sent], open);
+		assert.strictEqual(once.filter(item => item.id === 'blank').length, 1);
+		assert.strictEqual(once.find(item => item.id === 'blank')?.title, 'Hello');
+		assert.deepStrictEqual(sessionMetaParts(typed, {}, view({ show: ['updated'] }), 1_000), ['Draft']);
+
+		// The first send keeps one row and the age replaces Draft.
+		const sentBlank = session('blank', { title: 'Hello', workspaceFolder: '/tmp/volt', turnCount: 1, updatedAt: 1_000 - 5_000 });
+		const after = sessionsWithOpenDrafts([sentBlank, sent], open);
+		assert.strictEqual(after.filter(item => item.id === 'blank').length, 1);
+		assert.strictEqual(after.find(item => item.id === 'blank')?.turnCount, 1);
+		assert.deepStrictEqual(sessionMetaParts(sentBlank, {}, view({ show: ['updated'] }), 1_000), ['5s']);
+
+		// A follow-up that has not been sent is still the chat, not a new draft.
+		const followUp = session('follow', { turnCount: 3, hasDraft: true, updatedAt: 1_000 - 5_000 });
+		assert.deepStrictEqual(sessionMetaParts(followUp, {}, view({ show: ['updated'] }), 1_000), ['5s']);
+
+		// Hiding drafts in the status filter hides the unsent row with the rest.
+		const hidden = buildAgentHomeTree([volt], listed, view({ status: ['done'] }));
+		assert.deepStrictEqual(sessionIds(section(hidden).children?.[0]), ['sent']);
+	});
+
+	test('a new chat with no text is blank, and typed text keeps it', () => {
+		const empty = { messages: 0, draft: '', mentions: 0, queued: 0 };
+		assert.strictEqual(isBlankNewChat(empty, undefined), true);
+		assert.strictEqual(isBlankNewChat(empty, { turnCount: 0, hasDraft: false }), true);
+		assert.strictEqual(isBlankNewChat({ ...empty, draft: '  hello' }, undefined), false);
+		assert.strictEqual(isBlankNewChat({ ...empty, mentions: 1 }, undefined), false);
+		assert.strictEqual(isBlankNewChat({ ...empty, queued: 1 }, undefined), false);
+		assert.strictEqual(isBlankNewChat({ ...empty, messages: 1 }, undefined), false);
+		assert.strictEqual(isBlankNewChat(empty, { turnCount: 0, hasDraft: true }), false);
+		assert.strictEqual(isBlankNewChat(empty, { turnCount: 2 }), false);
+	});
+
+	test('two-line tabs: branch (worktree first), else the project, and the model; the Show menu turns parts off', () => {
+		const full = view();
+		assert.ok(isTwoLineView(full));
+		assert.ok(!isTwoLineView(view({ show: ['status', 'updated'] })), 'with nothing for the second line, tabs stay one line');
+		assert.ok(isTwoLineView(view({ show: ['pr'] })));
+
+		const worktree = session('w', { worktreeBranch: 'volt/abc12345', model: 'Opus 4.5' });
+		assert.deepStrictEqual(sessionSecondLine(worktree, { workspace: 'volt', branch: 'main' }, full), { branch: 'volt/abc12345', model: 'Opus 4.5' });
+		assert.deepStrictEqual(sessionSecondLine(session('s'), { workspace: 'volt', branch: 'feature/x' }, full, 'Grok 4.7 High'), { branch: 'feature/x', model: 'Grok 4.7 High' });
+		assert.deepStrictEqual(sessionSecondLine(session('s'), { workspace: 'notes' }, full), { place: 'notes' }, 'a folder outside git names its project');
+		assert.deepStrictEqual(sessionSecondLine(worktree, { workspace: 'volt' }, view({ show: ['pr'] })), { place: 'volt' }, 'branch and model can be hidden');
+	});
+
+	test('the PR filter reads each chat\'s linked pull requests', () => {
+		const folder = { uri: URI.file('/p'), name: 'p', current: true, workspace: false };
+		const sessions = [session('withPr', { workspaceFolder: '/p' }), session('merged', { workspaceFolder: '/p' }), session('plain', { workspaceFolder: '/p' })];
+		const prTags = new Map([['withPr', 'open' as const], ['merged', 'merged' as const]]);
+		const ids = (pr: Iterable<'draft' | 'open' | 'merged' | 'closed' | 'none'>) => allSessionIds(buildAgentHomeTree([folder], sessions, view({ pr }), { prTags }));
+		assert.deepStrictEqual(ids(['open']), ['withPr']);
+		assert.deepStrictEqual(ids(['none']), ['plain']);
+		assert.deepStrictEqual(ids(['merged', 'none']).sort(), ['merged', 'plain']);
+		assert.deepStrictEqual(allSessionIds(buildAgentHomeTree([folder], sessions, view({ pr: ['open'] }))), [], 'without pull request data every chat is "No PR"');
+	});
+
 	test('show toggles control session meta parts', () => {
 		const chat = session('chat', { workspaceFolder: '/tmp/volt', updatedAt: 1_000_000 - 5_000 });
 		const context = { workspace: 'volt', branch: 'main' };
@@ -336,5 +497,62 @@ suite('Agent home list model', () => {
 		assert.deepStrictEqual(sessionMetaParts(chat, context, view({ show: ['workspace', 'branch', 'updated'] }), 1_000_000), ['volt', 'main', '5s']);
 		assert.deepStrictEqual(sessionMetaParts(chat, context, view({ show: ['environment', 'pr'] }), 1_000_000), [], 'local and no-PR are not called out');
 		assert.strictEqual(sessionMetaParts(chat, context, view({ show: ['machine'] }), 1_000_000).length, 1);
+	});
+
+	test('status badge: input, working time, woke, done, draft, limited, failed; none when stopped or idle; only for inbox tabs', () => {
+		const now = 10 * 60_000;
+		assert.deepStrictEqual(sessionStatusBadge(session('w', { status: 'running', lastPromptAt: now - 2 * 60_000 }), now), { kind: 'working', label: 'Working 2m' });
+		assert.deepStrictEqual(sessionStatusBadge(session('d', { status: 'done' }), now), { kind: 'done', label: 'Done' });
+		assert.deepStrictEqual(sessionStatusBadge(session('n', { status: 'idle', turnCount: 0 }), now), { kind: 'draft', label: 'Draft' });
+		assert.strictEqual(sessionStatusBadge(session('i', { status: 'idle', turnCount: 2 }), now), undefined);
+		assert.strictEqual(sessionStatusBadge(session('c', { status: 'cancelled' }), now), undefined);
+		assert.deepStrictEqual(sessionStatusBadge(session('l', { status: 'error', summary: 'Usage limit reached · resets 3:20 AM' }), now), { kind: 'limited', label: 'Limited' });
+		assert.deepStrictEqual(sessionStatusBadge(session('f', { status: 'error', summary: 'Connection reset' }), now), { kind: 'failed', label: 'Failed' });
+		assert.deepStrictEqual(sessionStatusBadge(session('a', { status: 'running', attention: 'approval' }), now), { kind: 'input', label: 'Input' });
+		assert.deepStrictEqual(sessionStatusBadge(session('q', { status: 'running', attention: 'question' }), now), { kind: 'input', label: 'Input' });
+		// Back from a timed snooze: Woke, until a new run says Working or the chat asks for something.
+		assert.deepStrictEqual(sessionStatusBadge(session('z', { status: 'done', wokeAt: now - 60_000 }), now), { kind: 'woke', label: 'Woke' });
+		assert.strictEqual(sessionStatusBadge(session('z', { status: 'running', wokeAt: now - 60_000, lastPromptAt: now - 60_000 }), now)?.kind, 'working');
+		assert.strictEqual(sessionStatusBadge(session('z', { status: 'done', wokeAt: now - 60_000, attention: 'question' }), now)?.kind, 'input');
+
+		assert.ok(sessionShowsStatusBadge(session('x'), view()));
+		assert.ok(!sessionShowsStatusBadge(session('x'), view({ show: ['updated'] })));
+		assert.ok(!sessionShowsStatusBadge(session('x', { settled: true }), view()));
+		assert.ok(!sessionShowsStatusBadge(session('x', { snoozed: true }), view()));
+	});
+
+	test('a snoozed tab counts down to its return', () => {
+		const snoozed = session('s', { snoozed: true, snoozedUntil: 1_000 + 2 * 3_600_000, updatedAt: 1 });
+		assert.deepStrictEqual(sessionMetaParts(snoozed, {}, view({ show: ['updated'] }), 1_000), ['2h']);
+		const freshTwoHours = session('s', { snoozed: true, snoozedUntil: 1_000 + 2 * 3_600_000 - 1_000 });
+		assert.deepStrictEqual(sessionMetaParts(freshTwoHours, {}, view({ show: ['updated'] }), 1_000), ['2h'], 'a second in, it still reads 2h');
+		const almostDone = session('s', { snoozed: true, snoozedUntil: 1_000 + 20_000 });
+		assert.deepStrictEqual(sessionMetaParts(almostDone, {}, view({ show: ['updated'] }), 1_000), ['1m']);
+		assert.deepStrictEqual(sessionMetaParts(session('s', { snoozed: true }), {}, view({ show: ['updated'] }), 1_000), []);
+	});
+
+	test('snooze presets, durations and date picks', () => {
+		const morning = new Date(2026, 9, 4, 9, 55).getTime();
+		const presets = agentSnoozePresets(morning);
+		assert.deepStrictEqual(presets.map(preset => preset.id), ['hour', 'threeHours', 'evening', 'tomorrow']);
+		assert.strictEqual(presets[2].until, new Date(2026, 9, 4, 18, 0).getTime());
+		assert.strictEqual(presets[3].until, new Date(2026, 9, 5, 9, 0).getTime());
+		// Within an hour of the evening, This evening is no longer offered.
+		assert.ok(!agentSnoozePresets(new Date(2026, 9, 4, 17, 30).getTime()).some(preset => preset.id === 'evening'));
+
+		assert.strictEqual(agentSnoozeAfter(0, 2, 'hours'), 7_200_000);
+		assert.strictEqual(agentSnoozeAfter(0, 0, 'hours'), undefined);
+		assert.strictEqual(agentSnoozeAfter(0, 1.5, 'hours'), undefined, 'whole numbers only');
+		assert.strictEqual(agentSnoozeAfter(0, Number.NaN, 'days'), undefined);
+		// Days are calendar days: 9:00 stays 9:00 whatever the clock does in between.
+		const nine = new Date(2026, 2, 7, 9, 0).getTime();
+		assert.strictEqual(agentSnoozeAfter(nine, 2, 'days'), new Date(2026, 2, 9, 9, 0).getTime());
+		assert.strictEqual(agentSnoozeAfter(nine, 1, 'weeks'), new Date(2026, 2, 14, 9, 0).getTime());
+
+		const today = new Date(2026, 9, 4).getTime();
+		assert.strictEqual(agentSnoozeAt(morning, today, 10 * 60 + 55), new Date(2026, 9, 4, 10, 55).getTime());
+		assert.strictEqual(agentSnoozeAt(morning, today, 9 * 60), undefined, 'the past is not a snooze');
+		assert.strictEqual(agentSnoozeAt(morning, Number.NaN, 600), undefined);
+		assert.strictEqual(agentSnoozeAt(morning, today, 24 * 60), undefined);
 	});
 });

@@ -236,6 +236,18 @@ function createAgentHeaderCheckIcon(parent: HTMLElement): SVGElement {
 	return svg;
 }
 
+function createAgentHeaderSeparatorIcon(parent: HTMLElement): SVGElement {
+	const svg = createHeaderSvg(parent.ownerDocument, 14);
+	const path = parent.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+	path.setAttribute('d', 'M15.256 3.04243C15.6453 3.18399 15.8461 3.61434 15.7046 4.00364L9.7046 20.504C9.56304 20.8933 9.13271 21.0942 8.74342 20.9526C8.35414 20.811 8.15331 20.3807 8.29487 19.9914L14.2948 3.49099C14.4364 3.1017 14.8667 2.90087 15.256 3.04243Z');
+	path.setAttribute('fill', 'currentColor');
+	path.setAttribute('fill-rule', 'evenodd');
+	path.setAttribute('clip-rule', 'evenodd');
+	svg.appendChild(path);
+	parent.appendChild(svg);
+	return svg;
+}
+
 function createAgentHeaderLaptopIcon(parent: HTMLElement): SVGElement {
 	const svg = createHeaderSvg(parent.ownerDocument, 14);
 	const path = parent.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -248,7 +260,7 @@ function createAgentHeaderLaptopIcon(parent: HTMLElement): SVGElement {
 
 /**
  * Primary title bar in agent layout.
- * Open sidebar: short tab title. Hover shows the project, its branch when there is one, and the folder,
+ * Open sidebar: project name / short tab title. Hover shows the project, its branch when there is one, and the folder,
  * with a button that copies the absolute folder path.
  * Closed sidebar: the same title, plus search, and New Agent unless that screen is already open.
  */
@@ -262,6 +274,8 @@ class AgentTitlebarHeaderContribution extends Disposable {
 	private readonly searchButton: HTMLButtonElement;
 	private readonly newAgentButton: HTMLButtonElement;
 	private readonly titleCluster: HTMLElement;
+	private readonly projectLabel: HTMLElement;
+	private readonly projectSeparator: HTMLElement;
 	private readonly titleLabel: HTMLElement;
 	private readonly hover: HTMLElement;
 	private readonly editorListeners = this._register(new DisposableStore());
@@ -302,6 +316,9 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		createAgentHeaderPlusIcon(this.newAgentButton);
 
 		this.titleCluster = append(this.element, $('.volt-agent-primary-header-title'));
+		this.projectLabel = append(this.titleCluster, $('span.volt-agent-primary-header-project'));
+		this.projectSeparator = append(this.titleCluster, $('span.volt-agent-primary-header-separator'));
+		createAgentHeaderSeparatorIcon(this.projectSeparator);
 		this.titleLabel = append(this.titleCluster, $('span.volt-agent-primary-header-label'));
 		const laptop = append(this.titleCluster, $('span.volt-agent-primary-header-laptop'));
 		createAgentHeaderLaptopIcon(laptop);
@@ -414,7 +431,8 @@ class AgentTitlebarHeaderContribution extends Disposable {
 
 	/** The chat in the main editor area. A tab focused in the chat's tools does not retitle the bar. */
 	private mainEditor(): EditorInput | undefined {
-		return this.editorGroupsService.mainPart.activeGroup.activeEditor ?? undefined;
+		// No group yet while the workbench restores; the header renders again once there is one.
+		return this.editorGroupsService.mainPart.activeGroup?.activeEditor ?? undefined;
 	}
 
 	private sidebarClosed(): boolean {
@@ -487,8 +505,13 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		const short = shortTabTitle(full);
 		this.titleCluster.hidden = short.length === 0;
 		this.titleLabel.textContent = short;
+		const folder = this.folderUri();
+		const project = folder ? this.projectName(folder) : '';
+		this.projectLabel.textContent = project;
+		this.projectLabel.hidden = !project;
+		this.projectSeparator.hidden = !project;
 		if (short.length > 0) {
-			this.titleCluster.setAttribute('aria-label', full);
+			this.titleCluster.setAttribute('aria-label', project ? `${project} / ${full}` : full);
 		} else {
 			this.titleCluster.removeAttribute('aria-label');
 		}

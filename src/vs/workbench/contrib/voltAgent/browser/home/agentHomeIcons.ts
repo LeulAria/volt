@@ -198,3 +198,56 @@ export function createHomeGitLabIcon(): HTMLElement {
 export function createHomeBitbucketIcon(): HTMLElement {
 	return createHomeStrokeIcon('bitbucket', AGENT_HOME_BITBUCKET_ICON_PATHS, '1.25');
 }
+
+const STATUS_RING = 'M21 12a9 9 0 1 1 -18 0a9 9 0 0 1 18 0';
+
+/** Alarm clock: face, hands, the two bells on top and the feet. */
+const STATUS_ALARM_PATHS = [
+	'M20 13a8 8 0 1 1 -16 0a8 8 0 0 1 16 0',
+	'M12 9v4l2 2',
+	'M5 3L2 6',
+	'M22 6l-3 -3',
+	'M6.38 18.7L4 21',
+	'M17.64 18.67L20 21',
+];
+
+/** Speech bubble with a question mark, tail at the bottom left. */
+const STATUS_INPUT_PATHS = [
+	'M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719',
+	'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3',
+	'M12 17h.01',
+];
+
+/** Pencil writing over an open ring. */
+const STATUS_DRAFT_PATHS = [
+	'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3z',
+	'M16 5l3 3',
+	'M9 7.07a7 7 0 0 0 1 13.93a7 7 0 0 0 6.929 -6',
+];
+
+/** Ring with an exclamation mark: usage limit and failure share it, the color tells them apart. */
+const STATUS_ALERT_PATHS = [STATUS_RING, 'M12 7.5v5.5', 'M12 16.5v.01'];
+
+/** Glyph in an agent tab's status badge. Working spins a broken ring (agentHomePane.css). */
+export function createHomeStatusBadgeIcon(kind: 'input' | 'working' | 'woke' | 'done' | 'draft' | 'limited' | 'failed'): HTMLElement {
+	switch (kind) {
+		case 'input':
+			return createHomeStrokeIcon('status-input', STATUS_INPUT_PATHS, '2');
+		case 'woke':
+			return createHomeStrokeIcon('status-woke', STATUS_ALARM_PATHS, '2');
+		case 'working':
+			return createHomeStrokeIcon('status-working', AGENT_HOME_STATUS_ICON_PATHS, '2');
+		case 'done':
+			return createHomeStrokeIcon('status-done', [STATUS_RING, 'M8.5 12.5l2.5 2.5l4.5 -5'], '2');
+		case 'draft':
+			return createHomeStrokeIcon('status-draft', STATUS_DRAFT_PATHS, '2');
+		case 'limited':
+			return createHomeStrokeIcon('status-limited', STATUS_ALERT_PATHS, '2');
+		case 'failed':
+			return createHomeStrokeIcon('status-failed', STATUS_ALERT_PATHS, '2');
+		default: {
+			const unexpected: never = kind;
+			return unexpected;
+		}
+	}
+}

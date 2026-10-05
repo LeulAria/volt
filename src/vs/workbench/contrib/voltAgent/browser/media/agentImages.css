@@ -1,0 +1,1076 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Attached images: the square previews above the composer text and in sent prompts. */
+.volt-agent-image-strip {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 10px 12px 2px;
+}
+
+.volt-agent-image-strip.hidden {
+	display: none;
+}
+
+.volt-agent-input-box.follow-up .volt-agent-image-strip {
+	padding: 10px 10px 2px;
+}
+
+.volt-agent-input-box.editing .volt-agent-image-strip,
+.volt-agent-edit-slot .volt-agent-image-strip {
+	flex: none;
+	padding: 0 0 6px;
+}
+
+.volt-agent-image-strip.in-message {
+	padding: 2px 0 0;
+}
+
+.volt-agent-image-tile {
+	position: relative;
+	flex: none;
+	width: 56px;
+	height: 56px;
+	padding: 0;
+	margin: 0;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 10px;
+	background: rgba(255, 255, 255, 0.04);
+	overflow: hidden;
+	cursor: zoom-in;
+	transition: border-color 120ms ease;
+}
+
+.volt-agent-image-tile:hover {
+	border-color: rgba(255, 255, 255, 0.3);
+}
+
+.volt-agent-image-tile:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.monaco-workbench.vs .volt-agent-image-tile,
+.monaco-workbench.hc-light .volt-agent-image-tile {
+	border-color: rgba(0, 0, 0, 0.12);
+	background: rgba(0, 0, 0, 0.04);
+}
+
+.monaco-workbench.vs .volt-agent-image-tile:hover,
+.monaco-workbench.hc-light .volt-agent-image-tile:hover {
+	border-color: rgba(0, 0, 0, 0.28);
+}
+
+.volt-agent-image-tile-img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	pointer-events: none;
+}
+
+/* No alt text or broken-image glyph while the preview is still being made. */
+.volt-agent-image-tile-img:not([src]) {
+	visibility: hidden;
+}
+
+/* A video tile: play mark and length over the still. */
+.volt-agent-image-tile-badge {
+	position: absolute;
+	left: 4px;
+	bottom: 4px;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 1px 5px 1px 3px;
+	border-radius: 6px;
+	background: rgba(0, 0, 0, 0.66);
+	color: #ffffff;
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 14px;
+	font-variant-numeric: tabular-nums;
+	pointer-events: none;
+}
+
+.volt-agent-image-tile-badge .codicon {
+	font-size: 10px;
+}
+
+.volt-agent-image-tile.video {
+	background: #111111;
+}
+
+.volt-agent-image-tile-remove {
+	position: absolute;
+	top: 3px;
+	right: 3px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: rgba(0, 0, 0, 0.72);
+	color: #ffffff;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+
+.volt-agent-image-tile:hover .volt-agent-image-tile-remove,
+.volt-agent-image-tile:focus-visible .volt-agent-image-tile-remove {
+	opacity: 1;
+}
+
+.volt-agent-image-tile-remove:hover {
+	background: rgba(0, 0, 0, 0.9);
+}
+
+.volt-agent-image-tile-remove .codicon {
+	font-size: 11px;
+}
+
+/* The image or video chip in the text: a tiny copy of the picture (a still of the video) instead of a file icon, then the size. */
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.video:not(.file-icon):not(.folder-icon)::before {
+	content: '\ead9';
+}
+
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.volt-agent-mention-thumb:is(.image, .video)::before {
+	content: '' !important;
+	border-radius: 3px;
+	background-color: rgba(128, 128, 128, 0.3) !important;
+	background-image: var(--volt-image-thumb, none) !important;
+	background-size: cover !important;
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.monaco-workbench.vs :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.volt-agent-mention-thumb:is(.image, .video)::before,
+.monaco-workbench.hc-light :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.volt-agent-mention-thumb:is(.image, .video)::before {
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+
+/* Hovering the chip in the composer dims the picture under an X that removes it. */
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.volt-agent-mention-thumb.hovered:is(.image, .video)::before {
+	content: '\ea76' !important;
+	font-family: 'codicon' !important;
+	font-size: 12px !important;
+	line-height: 14px !important;
+	color: #ffffff !important;
+	background-image: linear-gradient(rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.6)), var(--volt-image-thumb, none) !important;
+	background-size: cover !important;
+}
+
+/* Boxed like the name beside it (20px, centered) so the two share a baseline. */
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-size {
+	display: inline-block;
+	height: 20px;
+	line-height: 20px;
+	vertical-align: middle;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-agent-inline-mention .volt-agent-mention-size {
+	margin-left: 4px;
+}
+
+/* The image dialog. The dim layer has nothing that scrolls; the zoomed image scrolls inside the solid dialog. */
+.volt-agent-image-viewer-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 2600;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 32px;
+	box-sizing: border-box;
+	background: rgba(0, 0, 0, 0.55);
+	outline: none;
+	animation: volt-agent-image-viewer-fade 120ms ease-out;
+}
+
+@keyframes volt-agent-image-viewer-fade {
+	from {
+		opacity: 0;
+	}
+}
+
+.volt-agent-image-viewer {
+	--volt-image-viewer-fg: rgba(240, 240, 241, 0.92);
+	--volt-image-viewer-muted: rgba(240, 240, 241, 0.6);
+	--volt-image-viewer-hover: rgba(255, 255, 255, 0.08);
+	--volt-image-viewer-line: rgba(255, 255, 255, 0.07);
+	--volt-image-viewer-accent: #0a84ff;
+	display: flex;
+	flex-direction: column;
+	width: min(1180px, 100%);
+	height: min(840px, 100%);
+	border-radius: 12px;
+	background: #1b1b1b;
+	color: var(--volt-image-viewer-fg);
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 60px rgba(0, 0, 0, 0.5);
+	font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+	font-size: 13px;
+	overflow: hidden;
+}
+
+.monaco-workbench.vs .volt-agent-image-viewer,
+.monaco-workbench.hc-light .volt-agent-image-viewer,
+.vs .volt-agent-image-viewer {
+	--volt-image-viewer-fg: rgba(20, 20, 20, 0.92);
+	--volt-image-viewer-muted: rgba(20, 20, 20, 0.55);
+	--volt-image-viewer-hover: rgba(0, 0, 0, 0.06);
+	--volt-image-viewer-line: rgba(0, 0, 0, 0.08);
+	background: #ffffff;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 24px 60px rgba(0, 0, 0, 0.2);
+}
+
+.volt-agent-image-viewer-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 48px;
+	padding: 8px 12px;
+	box-sizing: border-box;
+	border-bottom: 1px solid var(--volt-image-viewer-line);
+}
+
+/* Title and actions share the free space so the markup tools stay centered. */
+.volt-agent-image-viewer-title-row,
+.volt-agent-image-viewer-actions {
+	flex: 1 1 0;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.volt-agent-image-viewer-actions {
+	justify-content: flex-end;
+}
+
+.volt-agent-image-viewer-title {
+	min-width: 0;
+	margin-left: 4px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 14px;
+	font-weight: 500;
+}
+
+.volt-agent-image-viewer-tools {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+/* The markup tools: one pill of round buttons (4px inset + 28px buttons = 36px, centered in the 48px head). */
+.volt-agent-image-tool-group {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 36px;
+	padding: 4px;
+	box-sizing: border-box;
+	border-radius: 999px;
+	background: var(--volt-image-viewer-hover);
+	box-shadow: inset 0 0 0 1px var(--volt-image-viewer-line);
+}
+
+.volt-agent-image-tool-group.hidden {
+	display: none;
+}
+
+.volt-agent-image-tool-history {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.volt-agent-image-tool-set {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.volt-agent-image-tool-set.hidden {
+	display: none;
+}
+
+.volt-agent-image-tool-sep {
+	flex: none;
+	width: 1px;
+	height: 16px;
+	margin: 0 4px;
+	background: var(--volt-image-viewer-line);
+}
+
+.volt-agent-image-viewer-btn,
+.volt-agent-image-tool {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	margin: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--volt-image-viewer-muted);
+	cursor: pointer;
+}
+
+/* Markup tools are round to match their pill. */
+.volt-agent-image-tool {
+	border-radius: 50%;
+	transition: background-color 120ms ease, color 120ms ease;
+}
+
+.volt-agent-image-viewer-btn:hover:not(:disabled),
+.volt-agent-image-tool:hover:not(:disabled) {
+	background: var(--volt-image-viewer-hover);
+	color: var(--volt-image-viewer-fg);
+}
+
+.volt-agent-image-viewer-btn:disabled,
+.volt-agent-image-tool:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.volt-agent-image-viewer-btn:focus-visible,
+.volt-agent-image-tool:focus-visible,
+.volt-agent-image-viewer-zoom:focus-visible,
+.volt-agent-image-viewer-done:focus-visible,
+.volt-agent-image-cropbar-btn:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+/* The active tool keeps the same icon color as the rest; only a fill marks it. */
+.volt-agent-image-tool.active {
+	background: rgba(255, 255, 255, 0.14);
+}
+
+.monaco-workbench.vs .volt-agent-image-tool.active,
+.monaco-workbench.hc-light .volt-agent-image-tool.active {
+	background: rgba(0, 0, 0, 0.1);
+}
+
+.volt-agent-image-tool .volt-agent-svg-icon,
+.volt-agent-image-tool .volt-agent-svg-icon svg {
+	display: block;
+	width: 18px;
+	height: 18px;
+}
+
+.volt-agent-image-viewer-btn .codicon,
+.volt-agent-image-tool .codicon {
+	font-size: 16px;
+}
+
+/* The text size and weight menus show their current value. */
+.volt-agent-image-tool.labeled {
+	width: auto;
+	gap: 6px;
+	padding: 0 8px;
+	border-radius: 14px;
+	font-family: inherit;
+	font-size: 12px;
+	line-height: 1;
+	white-space: nowrap;
+}
+
+.volt-agent-image-tool.labeled .volt-agent-svg-icon,
+.volt-agent-image-tool.labeled .volt-agent-svg-icon svg {
+	width: 16px;
+	height: 16px;
+}
+
+/* Fixed label widths keep the pill from shifting as the size or weight changes. */
+.volt-agent-image-tool-label.size {
+	min-width: 2ch;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-image-tool-label.weight {
+	min-width: 62px;
+	text-align: left;
+}
+
+.volt-agent-image-tool.labeled .image-tool-chevron,
+.volt-agent-image-tool.labeled .image-tool-chevron svg {
+	width: 12px;
+	height: 12px;
+	opacity: 0.7;
+}
+
+.volt-agent-image-dropdown {
+	position: relative;
+	display: flex;
+}
+
+.volt-agent-image-dropdown.hidden {
+	display: none;
+}
+
+.volt-agent-image-color-dot {
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--swatch, #ff453a);
+	box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.35);
+}
+
+.monaco-workbench.vs .volt-agent-image-color-dot,
+.monaco-workbench.hc-light .volt-agent-image-color-dot {
+	box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.2);
+}
+
+.volt-agent-image-popup {
+	position: absolute;
+	top: calc(100% + 8px);
+	left: 50%;
+	z-index: 1;
+	border-radius: 12px;
+	background: #262626;
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 10px 30px rgba(0, 0, 0, 0.45);
+	transform: translateX(-50%);
+}
+
+.monaco-workbench.vs .volt-agent-image-popup,
+.monaco-workbench.hc-light .volt-agent-image-popup {
+	background: #ffffff;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+
+.volt-agent-image-popup.hidden {
+	display: none;
+}
+
+.volt-agent-image-palette {
+	display: grid;
+	grid-template-columns: repeat(4, 20px);
+	gap: 8px;
+	padding: 10px;
+}
+
+/* A rounded bar as thick as the stroke, in the toolbar button and in each menu row. */
+.volt-agent-image-stroke-line {
+	flex: none;
+	width: 16px;
+	height: var(--stroke, 2.5px);
+	border-radius: 999px;
+	background: currentColor;
+}
+
+.volt-agent-image-strokes,
+.volt-agent-image-text-weights {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 6px;
+}
+
+.volt-agent-image-text-weights {
+	min-width: 148px;
+}
+
+/* A choice in the stroke or text style menu. */
+.volt-agent-image-menu-item {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	height: 26px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--volt-image-viewer-muted);
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.volt-agent-image-menu-item:hover {
+	background: var(--volt-image-viewer-hover);
+	color: var(--volt-image-viewer-fg);
+}
+
+.volt-agent-image-menu-item.active {
+	background: color-mix(in srgb, var(--volt-image-viewer-accent) 22%, transparent);
+	color: color-mix(in srgb, var(--volt-image-viewer-accent) 70%, #ffffff);
+}
+
+.monaco-workbench.vs .volt-agent-image-menu-item.active,
+.monaco-workbench.hc-light .volt-agent-image-menu-item.active {
+	color: var(--volt-image-viewer-accent);
+}
+
+.volt-agent-image-menu-item:focus-visible,
+.volt-agent-image-swatch:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-agent-image-stroke {
+	width: 76px;
+}
+
+.volt-agent-image-stroke .volt-agent-image-stroke-line {
+	width: 52px;
+}
+
+/* Sizes are a Word-style list of numbers; weights are a list, each set in its own weight with its value. */
+.volt-agent-image-text-sizes {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	width: 72px;
+	max-height: 264px;
+	padding: 6px;
+	box-sizing: border-box;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: thin;
+}
+
+.volt-agent-image-text-size {
+	justify-content: flex-start;
+	padding: 0 10px;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-image-text-weight {
+	justify-content: space-between;
+	gap: 12px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+.volt-agent-image-text-weight-value {
+	font-weight: 400;
+	font-variant-numeric: tabular-nums;
+	opacity: 0.55;
+}
+
+.volt-agent-image-swatch {
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: var(--swatch);
+	box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.45);
+	cursor: pointer;
+}
+
+.volt-agent-image-swatch.active {
+	box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.45), 0 0 0 2px #262626, 0 0 0 4px var(--volt-image-viewer-accent);
+}
+
+.monaco-workbench.vs .volt-agent-image-swatch.active,
+.monaco-workbench.hc-light .volt-agent-image-swatch.active {
+	box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.45), 0 0 0 2px #ffffff, 0 0 0 4px var(--volt-image-viewer-accent);
+}
+
+.volt-agent-image-viewer-zoom {
+	min-width: 48px;
+	height: 28px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--volt-image-viewer-muted);
+	font: inherit;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	cursor: pointer;
+}
+
+.volt-agent-image-viewer-zoom:hover {
+	background: var(--volt-image-viewer-hover);
+	color: var(--volt-image-viewer-fg);
+}
+
+/* Done in the image and video dialogs: white (black on the light theme), 8px corners. */
+.volt-agent-image-viewer-done {
+	height: 28px;
+	margin-left: 6px;
+	padding: 0 14px;
+	border: 0;
+	border-radius: 8px;
+	background: #ffffff;
+	color: #111111;
+	font: inherit;
+	font-weight: 400;
+	cursor: pointer;
+	transition: background-color 120ms ease;
+}
+
+.volt-agent-image-viewer-done:hover:not(:disabled) {
+	background: rgba(255, 255, 255, 0.86);
+}
+
+.volt-agent-image-viewer-done:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.monaco-workbench.vs .volt-agent-image-viewer-done,
+.monaco-workbench.hc-light .volt-agent-image-viewer-done {
+	background: #111111;
+	color: #ffffff;
+}
+
+.monaco-workbench.vs .volt-agent-image-viewer-done:hover:not(:disabled),
+.monaco-workbench.hc-light .volt-agent-image-viewer-done:hover:not(:disabled) {
+	background: rgba(17, 17, 17, 0.82);
+}
+
+/* Flex with an auto margin centers a small image and still scrolls a large one from its top-left corner. */
+.volt-agent-image-viewer-stage {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	padding: 24px;
+	box-sizing: border-box;
+	overflow: auto;
+	background: #141414;
+}
+
+.monaco-workbench.vs .volt-agent-image-viewer-stage,
+.monaco-workbench.hc-light .volt-agent-image-viewer-stage {
+	background: #f2f2f2;
+}
+
+.volt-agent-image-viewer-surface {
+	position: relative;
+	flex: none;
+	margin: auto;
+	/* A checkerboard shows through transparent pixels. */
+	background-color: #2a2a2a;
+	background-image: conic-gradient(#333333 25%, #2a2a2a 0 50%, #333333 0 75%, #2a2a2a 0);
+	background-size: 16px 16px;
+	box-shadow: 0 6px 28px rgba(0, 0, 0, 0.4);
+}
+
+.monaco-workbench.vs .volt-agent-image-viewer-surface,
+.monaco-workbench.hc-light .volt-agent-image-viewer-surface {
+	background-color: #ffffff;
+	background-image: conic-gradient(#ececec 25%, #ffffff 0 50%, #ececec 0 75%, #ffffff 0);
+	box-shadow: 0 6px 28px rgba(0, 0, 0, 0.14);
+}
+
+.volt-agent-image-viewer-canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+	touch-action: none;
+}
+
+.volt-agent-image-viewer-surface[data-tool='arrow'] .volt-agent-image-viewer-canvas,
+.volt-agent-image-viewer-surface[data-tool='rect'] .volt-agent-image-viewer-canvas,
+.volt-agent-image-viewer-surface[data-tool='pen'] .volt-agent-image-viewer-canvas,
+.volt-agent-image-viewer-surface[data-tool='crop'] .volt-agent-image-viewer-canvas {
+	cursor: crosshair;
+}
+
+.volt-agent-image-viewer-surface[data-tool='text'] .volt-agent-image-viewer-canvas {
+	cursor: text;
+}
+
+.volt-agent-image-viewer-surface[data-tool='select'].over-shape .volt-agent-image-viewer-canvas {
+	cursor: move;
+}
+
+.volt-agent-image-text-input {
+	position: absolute;
+	box-sizing: content-box;
+	min-width: 40px;
+	margin: 0;
+	padding: 0 2px;
+	border: 0;
+	border-radius: 2px;
+	outline: 1px dashed rgba(255, 255, 255, 0.75);
+	background: rgba(0, 0, 0, 0.25);
+	resize: none;
+	overflow: hidden;
+	white-space: pre;
+	caret-color: currentColor;
+	text-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+}
+
+.volt-agent-image-viewer-error {
+	padding: 40px;
+	color: var(--volt-image-viewer-muted);
+}
+
+.volt-agent-image-viewer-error.hidden {
+	display: none;
+}
+
+.volt-agent-image-viewer-cropbar {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	border-top: 1px solid var(--volt-image-viewer-line);
+}
+
+.volt-agent-image-viewer-cropbar.hidden {
+	display: none;
+}
+
+.volt-agent-image-cropbar-hint {
+	flex: 1;
+	min-width: 0;
+	color: var(--volt-image-viewer-muted);
+	font-size: 12px;
+}
+
+.volt-agent-image-cropbar-btn {
+	height: 28px;
+	padding: 0 14px;
+	border: 0;
+	border-radius: 7px;
+	background: var(--volt-image-viewer-hover);
+	color: var(--volt-image-viewer-fg);
+	font: inherit;
+	cursor: pointer;
+}
+
+.volt-agent-image-cropbar-btn.primary {
+	background: var(--volt-image-viewer-accent);
+	color: #ffffff;
+	font-weight: 500;
+}
+
+.volt-agent-image-cropbar-btn:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+/* The video dialog: player, then a trim timeline as in a video editor (yellow handles keep a part). */
+.volt-agent-video-stage {
+	position: relative;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	overflow: hidden;
+	background: #0b0b0b;
+}
+
+.monaco-workbench.vs .volt-agent-video-stage,
+.monaco-workbench.hc-light .volt-agent-video-stage {
+	background: #0b0b0b;
+}
+
+.volt-agent-video-player {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	background: #000000;
+	cursor: pointer;
+}
+
+.volt-agent-video-player.hidden {
+	display: none;
+}
+
+.volt-agent-video-busy {
+	position: absolute;
+	left: 50%;
+	bottom: 20px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 12px 10px 16px;
+	border-radius: 10px;
+	background: #1f1f1f;
+	color: #ffffff;
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 10px 30px rgba(0, 0, 0, 0.5);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	transform: translateX(-50%);
+}
+
+.volt-agent-video-busy.hidden {
+	display: none;
+}
+
+.volt-agent-video-busy-track {
+	width: 160px;
+	height: 4px;
+	border-radius: 2px;
+	background: rgba(255, 255, 255, 0.18);
+	overflow: hidden;
+}
+
+.volt-agent-video-busy-bar {
+	display: block;
+	width: 0;
+	height: 100%;
+	background: #ffd60a;
+}
+
+.volt-agent-video-busy .volt-agent-image-cropbar-btn {
+	background: rgba(255, 255, 255, 0.1);
+	color: #ffffff;
+}
+
+.volt-agent-video-controls {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 10px 16px 18px;
+	border-top: 1px solid var(--volt-image-viewer-line);
+}
+
+.volt-agent-video-viewer.failed .volt-agent-video-controls {
+	display: none;
+}
+
+.volt-agent-video-viewer.trimming .volt-agent-video-controls,
+.volt-agent-video-viewer.trimming .volt-agent-image-viewer-actions {
+	opacity: 0.5;
+	pointer-events: none;
+}
+
+.volt-agent-video-controls-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+
+.volt-agent-video-time,
+.volt-agent-video-range {
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.volt-agent-video-time {
+	margin: 0 6px 0 2px;
+	color: var(--volt-image-viewer-muted);
+}
+
+.volt-agent-video-spacer {
+	flex: 1;
+}
+
+.volt-agent-video-range {
+	margin-right: 8px;
+	color: var(--volt-image-viewer-fg);
+}
+
+.volt-agent-image-viewer-btn.flash {
+	background: rgba(48, 209, 88, 0.18);
+	color: #30d158;
+}
+
+.volt-agent-video-timeline {
+	position: relative;
+	height: 52px;
+	/* Room for the handles, which sit outside the kept part. */
+	margin: 0 12px;
+	touch-action: none;
+	user-select: none;
+	cursor: pointer;
+}
+
+.volt-agent-video-filmstrip {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	border-radius: 6px;
+	background: #000000;
+	overflow: hidden;
+}
+
+.volt-agent-video-film-frame {
+	display: block;
+	flex: 1 1 0;
+	min-width: 0;
+	height: 100%;
+	object-fit: cover;
+	pointer-events: none;
+}
+
+.volt-agent-video-film-frame:not([src]) {
+	visibility: hidden;
+}
+
+.volt-agent-video-shade {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	background: rgba(0, 0, 0, 0.62);
+	pointer-events: none;
+}
+
+.volt-agent-video-shade.start {
+	left: 0;
+	border-radius: 6px 0 0 6px;
+}
+
+.volt-agent-video-shade.end {
+	right: 0;
+	border-radius: 0 6px 6px 0;
+}
+
+.volt-agent-video-selection {
+	position: absolute;
+	top: -3px;
+	bottom: -3px;
+	z-index: 1;
+	box-sizing: border-box;
+	border-top: 3px solid #ffd60a;
+	border-bottom: 3px solid #ffd60a;
+}
+
+.volt-agent-video-viewer.trimmed .volt-agent-video-selection {
+	cursor: grab;
+}
+
+.volt-agent-video-timeline.dragging.move,
+.volt-agent-video-timeline.dragging.move .volt-agent-video-selection {
+	cursor: grabbing;
+}
+
+.volt-agent-video-handle {
+	position: absolute;
+	top: -3px;
+	bottom: -3px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 12px;
+	background: #ffd60a;
+	cursor: ew-resize;
+}
+
+.volt-agent-video-handle.start {
+	left: -12px;
+	border-radius: 6px 0 0 6px;
+}
+
+.volt-agent-video-handle.end {
+	right: -12px;
+	border-radius: 0 6px 6px 0;
+}
+
+.volt-agent-video-handle::after {
+	content: '';
+	width: 2px;
+	height: 16px;
+	border-radius: 1px;
+	background: rgba(0, 0, 0, 0.55);
+}
+
+.volt-agent-video-playhead {
+	position: absolute;
+	top: -7px;
+	bottom: -7px;
+	z-index: 3;
+	width: 2px;
+	margin-left: -1px;
+	border-radius: 1px;
+	background: #ffffff;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+	cursor: ew-resize;
+}
+
+.volt-agent-video-playhead::before {
+	content: '';
+	position: absolute;
+	top: -4px;
+	left: 50%;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	background: #ffffff;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+	transform: translateX(-50%);
+}
+
+/* A wider grab area than the 2px line. */
+.volt-agent-video-playhead::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -6px;
+	right: -6px;
+}
+
+/* Deleted parts: hatched in red over the filmstrip; click one to bring it back. */
+/* Above the selection, so a deleted part inside it can still be clicked back. */
+.volt-agent-video-removed-layer {
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	pointer-events: none;
+}
+
+.volt-agent-video-removed {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	box-sizing: border-box;
+	border-left: 1px solid #ff453a;
+	border-right: 1px solid #ff453a;
+	background: repeating-linear-gradient(-45deg, rgba(255, 69, 58, 0.55) 0 4px, rgba(0, 0, 0, 0.72) 4px 9px);
+	pointer-events: auto;
+	cursor: pointer;
+}
+
+.volt-agent-video-removed:hover {
+	background: repeating-linear-gradient(-45deg, rgba(255, 69, 58, 0.35) 0 4px, rgba(0, 0, 0, 0.5) 4px 9px);
+}
+
+.volt-agent-video-delete {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-right: 6px;
+	padding: 0 12px 0 10px;
+}
+
+.volt-agent-video-delete .volt-agent-svg-icon,
+.volt-agent-video-delete .volt-agent-svg-icon svg {
+	display: block;
+	width: 15px;
+	height: 15px;
+}
+
+.volt-agent-video-delete:not(:disabled):hover {
+	background: rgba(255, 69, 58, 0.18);
+	color: #ff6961;
+}
+
+/* Sent prompts: a player with a scrubber, no trim. */
+.volt-agent-video-viewer:not(.editable) .volt-agent-video-removed-layer,
+.volt-agent-video-viewer:not(.editable) .volt-agent-video-selection,
+.volt-agent-video-viewer:not(.editable) .volt-agent-video-shade,
+.volt-agent-video-viewer:not(.editable) .volt-agent-video-range {
+	display: none;
+}

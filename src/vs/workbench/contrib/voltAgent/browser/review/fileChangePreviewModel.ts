@@ -7,6 +7,7 @@ import { basename } from '../../../../../base/common/path.js';
 import { splitLines } from '../../../../../base/common/strings.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { linesDiffComputers } from '../../../../../editor/common/diff/linesDiffComputers.js';
+import { normalizeCreatedFileDiff } from '../../../../services/voltRuntime/common/acpToolInput.js';
 
 /** Show the whole change when added+removed lines stay under this. */
 export const FILE_CHANGE_PREVIEW_FULL_LIMIT = 12;
@@ -133,6 +134,142 @@ export function computeFileChangePreview(source: IFileChangePreviewSource, optio
 		truncated,
 		expandable: truncated || previewCanExpand(source, lines),
 	};
+}
+
+/**
+ * Added and removed line counts, without building a preview. Stats run on every streaming update
+ * (the session change list, the transcript), where the editor diff's character pass is far too slow
+ * for a rewritten file: this trims the shared ends and counts the rest with a line-only Myers pass.
+ */
+export function computeChangeStats(source: IFileChangePreviewSource): { additions: number; deletions: number } {
+	if (source.additions !== undefined || source.deletions !== undefined) {
+		return { additions: source.additions ?? 0, deletions: source.deletions ?? 0 };
+	}
+	if (source.lines?.length) {
+		return {
+			additions: source.lines.filter(line => line.kind === 'insert').length,
+			deletions: source.lines.filter(line => line.kind === 'delete').length,
+		};
+	}
+	if (source.unifiedDiff) {
+		return parseUnifiedDiff(source.unifiedDiff).reduce((sum, hunk) => ({ additions: sum.additions + hunk.additions, deletions: sum.deletions + hunk.deletions }), { additions: 0, deletions: 0 });
+	}
+	if (source.original !== undefined || source.modified !== undefined) {
+		return lineChangeStats(source.original ?? '', source.modified ?? '');
+	}
+	return { additions: 0, deletions: 0 };
+}
+
+/** Beyond this many edits the counts are close enough to "everything between the shared ends changed". */
+const LINE_STATS_MAX_EDITS = 2000;
+
+export function lineChangeStats(original: string, modified: string): { additions: number; deletions: number } {
+	const a = toLines(original);
+	const b = toLines(modified);
+	let start = 0;
+	while (start < a.length && start < b.length && a[start] === b[start]) {
+		start++;
+	}
+	let endA = a.length;
+	let endB = b.length;
+	while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+		endA--;
+		endB--;
+	}
+	const n = endA - start;
+	const m = endB - start;
+	if (!n || !m) {
+		return { additions: m, deletions: n };
+	}
+	const ids = new Map<string, number>();
+	const idOf = (line: string) => {
+		let id = ids.get(line);
+		if (id === undefined) {
+			id = ids.size;
+			ids.set(line, id);
+		}
+		return id;
+	};
+	const left = Int32Array.from(a.slice(start, endA), idOf);
+	const right = Int32Array.from(b.slice(start, endB), idOf);
+	const edits = myersEditDistance(left, right, LINE_STATS_MAX_EDITS);
+	if (edits === undefined) {
+		return { additions: m, deletions: n };
+	}
+	const common = (n + m - edits) / 2;
+	return { additions: m - common, deletions: n - common };
+}
+
+/** Insert/delete edit distance (Myers 1986, greedy forward pass), or undefined past `limit` edits. */
+function myersEditDistance(a: Int32Array, b: Int32Array, limit: number): number | undefined {
+	const n = a.length;
+	const m = b.length;
+	const max = Math.min(n + m, limit);
+	const offset = max + 1;
+	const v = new Int32Array(2 * max + 3);
+	for (let d = 0; d <= max; d++) {
+		for (let k = -d; k <= d; k += 2) {
+			let x = k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1]) ? v[offset + k + 1] : v[offset + k - 1] + 1;
+			let y = x - k;
+			while (x < n && y < m && a[x] === b[y]) {
+				x++;
+				y++;
+			}
+			v[offset + k] = x;
+			if (x >= n && y >= m) {
+				return d;
+			}
+		}
+	}
+	return undefined;
+}
+
+export interface IFileEditStep {
+	readonly original?: string;
+	readonly modified?: string;
+	/** The step wrote the whole file: empty before it when it comes first, replaced wholesale later. */
+	readonly created?: boolean;
+}
+
+/**
+ * The whole file before and after a run of edits to it, when the edits can be replayed: each
+ * step either rewrites the whole text (its original is the text so far) or replaces a snippet
+ * that occurs exactly once. Agents that send snippets for a file whose start is unknown return
+ * undefined; their per-edit stats are the best there is.
+ */
+export function netFileEdit(steps: readonly IFileEditStep[]): { original: string; modified: string } | undefined {
+	const first = steps[0];
+	if (!first) {
+		return undefined;
+	}
+	const original = first.created ? '' : first.original;
+	if (original === undefined) {
+		return undefined;
+	}
+	let text = original;
+	for (const step of steps) {
+		if (step.modified === undefined) {
+			return undefined;
+		}
+		if (step.created) {
+			text = step.modified;
+			continue;
+		}
+		const before = step.original;
+		if (before === undefined) {
+			return undefined;
+		}
+		if (before === text) {
+			text = step.modified;
+			continue;
+		}
+		const at = before ? text.indexOf(before) : -1;
+		if (at < 0 || text.indexOf(before, at + 1) >= 0) {
+			return undefined;
+		}
+		text = text.slice(0, at) + step.modified + text.slice(at + before.length);
+	}
+	return { original, modified: text };
 }
 
 export function selectPreviewLines(
@@ -655,8 +792,17 @@ function collectFileChange(value: unknown, acc: {
 	const type = typeof o.type === 'string' ? o.type.toLowerCase() : '';
 	if (type === 'diff' || ORIGINAL_KEYS.some(key => typeof o[key] === 'string') || MODIFIED_KEYS.some(key => typeof o[key] === 'string')) {
 		acc.path ??= pickString(o, PATH_KEYS);
-		acc.original ??= pickString(o, ORIGINAL_KEYS);
-		acc.modified ??= pickString(o, [...MODIFIED_KEYS, 'content']);
+		const original = pickString(o, ORIGINAL_KEYS);
+		const modified = pickString(o, [...MODIFIED_KEYS, 'content']);
+		const created = modified !== undefined ? normalizeCreatedFileDiff(original ?? null, modified) : undefined;
+		if (created && created.oldText === null && original !== undefined) {
+			// A new file: nothing before it, and its content without the diff header.
+			acc.original ??= '';
+			acc.modified ??= created.newText;
+		} else {
+			acc.original ??= original;
+			acc.modified ??= modified;
+		}
 		acc.unifiedDiff ??= pickString(o, DIFF_KEYS);
 		if (typeof o.additions === 'number') {
 			acc.additions = o.additions;

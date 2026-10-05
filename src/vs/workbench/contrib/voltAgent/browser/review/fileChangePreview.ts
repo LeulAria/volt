@@ -102,6 +102,11 @@ export class FileChangePreview extends Disposable {
 	private originalLineNumbers: number[] = [];
 	private modifiedLineNumbers: number[] = [];
 	private prefixLineCount = 0;
+	/**
+	 * A created file: the new side ends on a helper blank line (hidden, by line number per side)
+	 * that lines up with the empty old side, so the diff is a pure insertion.
+	 */
+	private helperLines: { readonly original?: number; readonly modified?: number } = {};
 	private readonly previewId = generateUuid();
 
 	constructor(
@@ -460,8 +465,17 @@ export class FileChangePreview extends Disposable {
 		this.prefixLineCount = seed.prefixLines.length;
 		this.languageService.requestRichLanguageFeatures(seed.language);
 		const language = this.languageService.createById(seed.language);
+		// An empty original is still one (empty) line to the diff editor, which then draws a deleted
+		// blank row above a new file. A blank last line on the new side lines up with it instead.
+		const created = !original && !!modified;
 		const wrappedOriginal = wrapPreviewDocument(original, seed.prefixLines);
-		const wrappedModified = wrapPreviewDocument(modified, seed.prefixLines);
+		const wrappedModified = wrapPreviewDocument(modified, seed.prefixLines) + (created ? '\n' : '');
+		const lineCount = (text: string) => text.split('\n').length;
+		// Its own line only: an empty old side with a prefix is just the (already hidden) prefix.
+		this.helperLines = created ? {
+			...(lineCount(wrappedOriginal) > this.prefixLineCount ? { original: lineCount(wrappedOriginal) } : {}),
+			modified: lineCount(wrappedModified),
+		} : {};
 		const originalUri = this.previewModelUri('original');
 		const modifiedUri = this.previewModelUri('modified');
 		const canReuse = !!this.originalModel && !!this.modifiedModel
@@ -478,6 +492,9 @@ export class FileChangePreview extends Disposable {
 			}
 		} else {
 			this.disposeModels();
+			// disposeModels() resets the prefix count set above; a card first drawn before its
+			// language loaded (seeded with a `<script>` prefix) then showed that prefix line.
+			this.prefixLineCount = seed.prefixLines.length;
 			this.originalModel = this.modelService.createModel(wrappedOriginal, language, originalUri, false);
 			this.modifiedModel = this.modelService.createModel(wrappedModified, language, modifiedUri, false);
 		}
@@ -492,14 +509,10 @@ export class FileChangePreview extends Disposable {
 		if (!editor) {
 			return;
 		}
-		if (this.prefixLineCount <= 0) {
-			editor.getOriginalEditor().setHiddenAreas([], 'volt-file-preview', true);
-			editor.getModifiedEditor().setHiddenAreas([], 'volt-file-preview', true);
-			return;
-		}
-		const hidden = [new Range(1, 1, this.prefixLineCount, 1)];
-		editor.getOriginalEditor().setHiddenAreas(hidden, 'volt-file-preview', true);
-		editor.getModifiedEditor().setHiddenAreas(hidden, 'volt-file-preview', true);
+		const prefix = this.prefixLineCount > 0 ? [new Range(1, 1, this.prefixLineCount, 1)] : [];
+		const helper = (line: number | undefined) => line ? [new Range(line, 1, line, 1)] : [];
+		editor.getOriginalEditor().setHiddenAreas([...prefix, ...helper(this.helperLines.original)], 'volt-file-preview', true);
+		editor.getModifiedEditor().setHiddenAreas([...prefix, ...helper(this.helperLines.modified)], 'volt-file-preview', true);
 	}
 
 	private previewModelUri(side: 'original' | 'modified'): URI {

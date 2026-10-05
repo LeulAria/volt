@@ -11,8 +11,12 @@ import {
 	defaultOverhead,
 	estimateTokensFromText,
 	filterContextModels,
+	CONTEXT_CATEGORY_COLORS,
+	CONTEXT_POPOVER_CATEGORY_ORDER,
+	formatContextFullLabel,
 	formatContextPercent,
 	formatContextTokens,
+	formatContextWindowLabel,
 	groupContextModels,
 	occupancyFromUsage,
 	overheadFromCustomizations,
@@ -39,6 +43,8 @@ suite('Agent context usage', () => {
 		assert.strictEqual(formatContextPercent(0), '0%');
 		assert.strictEqual(formatContextPercent(7.2), '7.2%');
 		assert.strictEqual(formatContextPercent(73.4), '73%');
+		assert.strictEqual(formatContextFullLabel(28), '28% Full');
+		assert.strictEqual(formatContextWindowLabel(71_600, 256_000), '~71.6K / 256K Tokens');
 	});
 
 	test('resolves the live window from catalog options', () => {
@@ -278,10 +284,200 @@ suite('Agent context usage', () => {
 		assert.strictEqual(filterContextModels(models, 'local').length, 2);
 	});
 
-	test('sizes customization overhead from file bytes', () => {
+	test('orders popover rows and keeps their swatch colors', () => {
+		const snapshot = buildContextUsageSnapshot({
+			messages: [
+				{ kind: 'user', text: 'hello' },
+				{ kind: 'agent', text: 'hi', tokensUsed: 80_000, tokensWindow: 256_000 },
+			],
+			draft: '',
+			modelWindow: 256_000,
+			nativeAgent: true,
+			overhead: {
+				system: 2_600,
+				tools: 5_300,
+				rules: 3_200,
+				skills: 8_200,
+				mcp: 5_300,
+				subagents: 1_900,
+				ruleCount: 2,
+				skillCount: 4,
+				mcpCount: 1,
+				subagentCount: 1,
+			},
+			models: [{ ref: 'a', name: 'Opus', family: 'anthropic', window: 256_000, active: true }],
+		});
+
+		const ids = snapshot.items.map(item => item.id).filter(id => (CONTEXT_POPOVER_CATEGORY_ORDER as readonly string[]).includes(id));
+		const expected = CONTEXT_POPOVER_CATEGORY_ORDER.filter(id => id !== 'summarized');
+		assert.deepStrictEqual(ids, [...expected]);
+		for (const item of snapshot.items) {
+			assert.strictEqual(item.color, CONTEXT_CATEGORY_COLORS[item.id]);
+		}
+		assert.strictEqual(CONTEXT_CATEGORY_COLORS.summarized, '#fb6b84');
+		assert.strictEqual(CONTEXT_CATEGORY_COLORS.conversation, '#e07d77');
+		assert.strictEqual(CONTEXT_CATEGORY_COLORS.rules, '#3fa365');
+	});
+
+	test('streaming text after the last usage snapshot grows occupancy', () => {
+		const overhead = {
+			system: 100,
+			tools: 100,
+			rules: 0,
+			skills: 0,
+			mcp: 0,
+			subagents: 0,
+			ruleCount: 0,
+			skillCount: 0,
+			mcpCount: 0,
+			subagentCount: 0,
+		};
+		const settled = buildContextUsageSnapshot({
+			messages: [
+				{ kind: 'user', text: 'hello' },
+				{ kind: 'agent', text: 'done', tokensUsed: 10_000, tokensWindow: 200_000 },
+			],
+			draft: '',
+			modelWindow: 200_000,
+			nativeAgent: false,
+			overhead,
+			models: [],
+		});
+		const streaming = buildContextUsageSnapshot({
+			messages: [
+				{ kind: 'user', text: 'hello' },
+				{ kind: 'agent', text: 'done', tokensUsed: 10_000, tokensWindow: 200_000 },
+				{ kind: 'user', text: 'a'.repeat(4_000) },
+				{ kind: 'agent', text: 'b'.repeat(4_000), activity: { streaming: true } },
+			],
+			draft: '',
+			modelWindow: 200_000,
+			nativeAgent: false,
+			overhead,
+			models: [],
+		});
+
+		assert.ok(streaming.used > settled.used + 1_500);
+		assert.strictEqual(streaming.items.reduce((sum, item) => sum + item.tokens, 0), streaming.used);
+		assert.strictEqual(streaming.estimated, true);
+	});
+
+	test('a prompt-only usage snapshot still counts the streaming reply', () => {
+		const snapshot = buildContextUsageSnapshot({
+			messages: [
+				{ kind: 'agent', text: 'b'.repeat(4_000), tokensUsed: 12_000, tokensIn: 10_000, tokensCache: 2_000, activity: { streaming: true } },
+			],
+			draft: '',
+			modelWindow: 200_000,
+			nativeAgent: true,
+			overhead: {
+				system: 0,
+				tools: 0,
+				rules: 0,
+				skills: 0,
+				mcp: 0,
+				subagents: 0,
+				ruleCount: 0,
+				skillCount: 0,
+				mcpCount: 0,
+				subagentCount: 0,
+			},
+			models: [],
+		});
+
+		assert.ok(snapshot.used > 12_000);
+		assert.ok(snapshot.used < 14_000);
+		assert.strictEqual(snapshot.items.reduce((sum, item) => sum + item.tokens, 0), snapshot.used);
+	});
+
+	test('a finished prompt-only used value still includes the reported reply', () => {
+		assert.strictEqual(occupancyFromUsage({ tokensUsed: 12_000, tokensIn: 10_000, tokensCache: 2_000, tokensOut: 800 }), 12_800);
+		const snapshot = buildContextUsageSnapshot({
+			messages: [
+				{ kind: 'agent', text: 'b'.repeat(3_200), tokensUsed: 12_000, tokensIn: 10_000, tokensCache: 2_000, tokensOut: 800 },
+			],
+			draft: '',
+			modelWindow: 200_000,
+			nativeAgent: true,
+			overhead: {
+				system: 0,
+				tools: 0,
+				rules: 0,
+				skills: 0,
+				mcp: 0,
+				subagents: 0,
+				ruleCount: 0,
+				skillCount: 0,
+				mcpCount: 0,
+				subagentCount: 0,
+			},
+			models: [],
+		});
+
+		assert.strictEqual(snapshot.used, 12_800);
+		assert.strictEqual(snapshot.estimated, false);
+		assert.strictEqual(snapshot.items.reduce((sum, item) => sum + item.tokens, 0), snapshot.used);
+	});
+
+	test('reported completion is not added twice while the reply is still streaming', () => {
+		const snapshot = buildContextUsageSnapshot({
+			messages: [
+				{ kind: 'agent', text: 'b'.repeat(4_000), tokensUsed: 12_000, tokensIn: 10_000, tokensCache: 2_000, tokensOut: 500, activity: { streaming: true } },
+			],
+			draft: '',
+			modelWindow: 200_000,
+			nativeAgent: true,
+			overhead: {
+				system: 0,
+				tools: 0,
+				rules: 0,
+				skills: 0,
+				mcp: 0,
+				subagents: 0,
+				ruleCount: 0,
+				skillCount: 0,
+				mcpCount: 0,
+				subagentCount: 0,
+			},
+			models: [],
+		});
+
+		assert.ok(snapshot.used >= 12_500);
+		assert.ok(snapshot.used < 14_000);
+		assert.strictEqual(snapshot.items.reduce((sum, item) => sum + item.tokens, 0), snapshot.used);
+	});
+
+	test('an occupancy total without an input split is not counted twice while streaming', () => {
+		const snapshot = buildContextUsageSnapshot({
+			messages: [
+				{ kind: 'agent', text: 'b'.repeat(8_000), tokensUsed: 20_000, activity: { streaming: true } },
+			],
+			draft: '',
+			modelWindow: 200_000,
+			nativeAgent: true,
+			overhead: {
+				system: 0,
+				tools: 0,
+				rules: 0,
+				skills: 0,
+				mcp: 0,
+				subagents: 0,
+				ruleCount: 0,
+				skillCount: 0,
+				mcpCount: 0,
+				subagentCount: 0,
+			},
+			models: [],
+		});
+
+		assert.strictEqual(snapshot.used, 20_000);
+		assert.strictEqual(snapshot.estimated, false);
+	});
+
+	test('sizes rules from file bytes, and skills by their catalog entry only', () => {
 		const items: IAgentCustomization[] = [
 			{ kind: 'rule', scope: 'workspace', name: 'style', description: '', resource: URI.file('/r.md'), source: 'repo', bytes: 1_600 },
-			{ kind: 'skill', scope: 'workspace', name: 'ship', description: '', resource: URI.file('/s.md'), source: 'repo', bytes: 3_200 },
+			{ kind: 'skill', scope: 'workspace', name: 'ship', description: 'Release the app', resource: URI.file('/s.md'), source: 'repo', bytes: 320_000 },
 			{ kind: 'mcp', scope: 'workspace', name: 'github', description: '', resource: URI.file('/m.json'), source: 'repo' },
 		];
 		const overhead = overheadFromCustomizations(items, [], false);
@@ -289,7 +485,7 @@ suite('Agent context usage', () => {
 		assert.strictEqual(overhead.skillCount, 1);
 		assert.strictEqual(overhead.mcpCount, 1);
 		assert.strictEqual(overhead.rules, 400);
-		assert.strictEqual(overhead.skills, 800);
+		assert.strictEqual(overhead.skills, Math.round(('ship'.length + 'Release the app'.length + 80) / 4));
 		assert.ok(overhead.mcp > 0);
 	});
 });

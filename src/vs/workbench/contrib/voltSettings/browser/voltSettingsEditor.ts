@@ -4,18 +4,25 @@
  *--------------------------------------------------------------------------------------------*/
 
 import './media/voltSettings.css';
-import { $, addDisposableListener, append, Dimension } from '../../../../base/browser/dom.js';
+import '../../voltAgent/browser/media/agentEditor.css';
+import { $, addDisposableListener, append, Dimension, getWindow, scheduleAtNextAnimationFrame } from '../../../../base/browser/dom.js';
 import { Button } from '../../../../base/browser/ui/button/button.js';
 import { InputBox } from '../../../../base/browser/ui/inputbox/inputBox.js';
 import { ISelectOptionItem, SelectBox } from '../../../../base/browser/ui/selectBox/selectBox.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { DomScrollableElement } from '../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { fromNow } from '../../../../base/common/date.js';
-import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
+import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
 import { localize } from '../../../../nls.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { defaultButtonStyles, getInputBoxStyle, getSelectBoxStyles } from '../../../../platform/theme/browser/defaultStyles.js';
@@ -23,6 +30,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../common/editor.js';
 import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
+import { IWorkbenchLayoutService } from '../../../services/layout/browser/layoutService.js';
 import { settingsSelectBackground, settingsSelectBorder, settingsSelectForeground, settingsSelectListBorder, settingsTextInputBackground, settingsTextInputBorder, settingsTextInputForeground } from '../../preferences/common/settingsEditorColorRegistry.js';
 import { ACCESS_MODE_OPTIONS, VoltAccessMode } from '../../../services/voltRuntime/common/access/accessModes.js';
 import { IPermissionRule } from '../../../services/voltRuntime/common/access/accessTypes.js';
@@ -32,26 +40,24 @@ import { IVoltCatalogItem, IVoltProviderStatus } from '../../../services/voltRun
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
 import { IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
 import { createBrandIcon } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_PROMPT_HISTORY_SETTING } from '../../voltAgent/common/agentComposerSettings.js';
+import { AgentModelPicker } from '../../voltAgent/browser/picker/agentModelPicker.js';
+import { appendSettingsBlock, SettingsStickyHeads } from './settingsStickyHeads.js';
 import { VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
 
-type SettingsSection = 'common' | 'providers' | 'models' | 'agents' | 'acp' | 'modes' | 'tab' | 'security';
+type SettingsSection = 'general' | 'common' | 'providers' | 'models' | 'agents' | 'acp' | 'modes' | 'composer' | 'tab' | 'security';
 
-const SECTIONS: { id: SettingsSection; label: string }[] = [
-	{ id: 'common', label: localize('voltSettings.common', "Commonly Used") },
-	{ id: 'providers', label: localize('voltSettings.providers', "Providers") },
-	{ id: 'models', label: localize('voltSettings.models', "Models") },
-	{ id: 'agents', label: localize('voltSettings.agents', "Agents") },
-	{ id: 'acp', label: localize('voltSettings.acp', "ACP") },
-	{ id: 'modes', label: localize('voltSettings.modes', "Modes") },
-	{ id: 'tab', label: localize('voltSettings.tab', "Tab & Prediction") },
-	{ id: 'security', label: localize('voltSettings.security', "Security") },
-];
-
-const TOC_GROUPS: { label?: string; sections: SettingsSection[] }[] = [
-	{ sections: ['common'] },
-	{ label: localize('voltSettings.group.connections', "Connections"), sections: ['providers', 'models', 'agents', 'acp'] },
-	{ label: localize('voltSettings.group.agent', "Agent"), sections: ['modes', 'tab'] },
-	{ sections: ['security'] },
+const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon }[] = [
+	{ id: 'general', label: localize('voltSettings.general', "General"), icon: Codicon.settingsGear },
+	{ id: 'common', label: localize('voltSettings.common', "Commonly Used"), icon: Codicon.starEmpty },
+	{ id: 'providers', label: localize('voltSettings.providers', "Providers"), icon: Codicon.plug },
+	{ id: 'models', label: localize('voltSettings.models', "Models"), icon: Codicon.symbolClass },
+	{ id: 'agents', label: localize('voltSettings.agents', "Agents"), icon: Codicon.robot },
+	{ id: 'acp', label: localize('voltSettings.acp', "ACP"), icon: Codicon.server },
+	{ id: 'modes', label: localize('voltSettings.modes', "Modes"), icon: Codicon.sparkle },
+	{ id: 'composer', label: localize('voltSettings.composer', "Composer"), icon: Codicon.commentDiscussion },
+	{ id: 'tab', label: localize('voltSettings.tab', "Tab & Prediction"), icon: Codicon.keyboard },
+	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield },
 ];
 
 const MODEL_PROVIDERS: ISelectOptionItem[] = [
@@ -110,11 +116,25 @@ export class VoltSettingsEditor extends EditorPane {
 
 	private container!: HTMLElement;
 	private content!: HTMLElement;
+	/** Where the page being rendered appends: the body of its last titled block. */
+	private block: HTMLElement | undefined;
+	/** Bumped on every render, so a late async result never lands on a newer page. */
+	private renderGeneration = 0;
+	/**
+	 * Set while a model picker menu is open. Its picks change the catalog, and a re-render then
+	 * would remove the button the menu hangs from, so the page waits for the menu to close.
+	 */
+	private pickerOpen = false;
+	private renderDeferred = false;
+	private contentScroll!: DomScrollableElement;
+	private stickyHeads!: SettingsStickyHeads;
 	private toc!: HTMLElement;
+	private tocScroll!: DomScrollableElement;
 	private search = '';
-	private section: SettingsSection = 'providers';
+	private section: SettingsSection = 'general';
 	private readonly expandedProviders = new Set<string>();
 	private readonly renderStore = this._register(new DisposableStore());
+	private readonly scrollSync = this._register(new MutableDisposable());
 
 	constructor(
 		group: IEditorGroup,
@@ -124,8 +144,16 @@ export class VoltSettingsEditor extends EditorPane {
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IVoltPredictionService private readonly prediction: IVoltPredictionService,
+		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) {
 		super(VoltSettingsEditor.ID, group, telemetryService, themeService, storageService);
+		this._register(this.configurationService.onDidChangeConfiguration(e => {
+			if (this.section === 'composer' && (e.affectsConfiguration(AGENT_PROMPT_HISTORY_SETTING) || e.affectsConfiguration(AGENT_NEW_CHAT_DRAFT_SETTING))) {
+				this.renderContent();
+			}
+		}));
 		this._register(this.runtime.onDidChangeCatalog(() => this.renderContent()));
 		this._register(this.runtime.onDidChangeProfiles(() => this.renderContent()));
 		this._register(this.runtime.onDidChangeProviderStatus(() => this.renderContent()));
@@ -134,41 +162,94 @@ export class VoltSettingsEditor extends EditorPane {
 
 	protected override createEditor(parent: HTMLElement): void {
 		this.container = append(parent, $('.volt-settings'));
+		this._register(toDisposable(() => {
+			this.container.remove();
+			this.layoutService.mainContainer.classList.remove('volt-settings-open');
+		}));
 
 		const sidebar = append(this.container, $('.volt-settings-sidebar'));
+		const back = append(sidebar, $('button.volt-settings-back')) as HTMLButtonElement;
+		back.type = 'button';
+		back.appendChild(renderIcon(Codicon.arrowLeft));
+		append(back, $('span')).textContent = localize('voltSettings.back', "Back");
+		this._register(addDisposableListener(back, 'click', () => this.close()));
+
 		const searchHost = append(sidebar, $('.volt-settings-search'));
 		append(searchHost, $('span.volt-settings-search-icon')).appendChild(renderIcon(Codicon.search));
 		const search = this._register(new InputBox(searchHost, this.contextViewService, {
-			placeholder: localize('voltSettings.search', "Search settings"),
-			ariaLabel: localize('voltSettings.search', "Search settings"),
+			placeholder: localize('voltSettings.search', "Search Settings"),
+			ariaLabel: localize('voltSettings.search', "Search Settings"),
 			inputBoxStyles: this.inputBoxStyles(),
 		}));
 		this._register(search.onDidChange(value => {
 			this.search = value;
+			this.applyNavFilter();
 			this.renderContent();
 		}));
 
-		this.toc = append(sidebar, $('.volt-settings-toc'));
-		const labels = new Map(SECTIONS.map(section => [section.id, section.label]));
-		for (const group of TOC_GROUPS) {
-			const wrap = append(this.toc, $('.volt-settings-toc-group'));
-			if (group.label) {
-				append(wrap, $('.volt-settings-toc-label')).textContent = group.label;
+		this.toc = $('.volt-settings-toc');
+		this.tocScroll = this._register(new DomScrollableElement(this.toc, {
+			className: 'volt-settings-toc-scroll',
+			horizontal: ScrollbarVisibility.Hidden,
+			vertical: ScrollbarVisibility.Auto,
+			useShadows: false,
+		}));
+		append(sidebar, this.tocScroll.getDomNode());
+		for (const section of SECTIONS) {
+			const item = append(this.toc, $('button.volt-settings-toc-item')) as HTMLButtonElement;
+			item.type = 'button';
+			append(item, $('span.volt-settings-toc-icon')).appendChild(renderIcon(section.icon));
+			append(item, $('span.volt-settings-toc-text')).textContent = section.label;
+			item.dataset.section = section.id;
+			if (section.id === this.section) {
+				item.classList.add('active');
 			}
-			for (const id of group.sections) {
-				const item = append(wrap, $('button.volt-settings-toc-item')) as HTMLButtonElement;
-				item.textContent = labels.get(id) ?? id;
-				item.dataset.section = id;
-				if (id === this.section) {
-					item.classList.add('active');
-				}
-				this._register(addDisposableListener(item, 'click', () => this.setSection(id)));
-			}
+			this._register(addDisposableListener(item, 'click', () => this.setSection(section.id)));
 		}
 
-		const scroll = append(this.container, $('.volt-settings-content'));
+		const scroll = $('.volt-settings-content');
 		this.content = append(scroll, $('.volt-settings-content-inner'));
+		this.contentScroll = this._register(new DomScrollableElement(scroll, {
+			className: 'volt-settings-content-scroll',
+			horizontal: ScrollbarVisibility.Hidden,
+			vertical: ScrollbarVisibility.Auto,
+			useShadows: false,
+		}));
+		append(this.container, this.contentScroll.getDomNode());
+		this.stickyHeads = this._register(new SettingsStickyHeads(scroll, this.content));
+		this._register(this.contentScroll.onScroll(() => this.stickyHeads.sync()));
 		this.renderContent();
+	}
+
+	private close(): void {
+		const input = this.input;
+		if (input) {
+			void this.group.closeEditor(input);
+		}
+	}
+
+	protected override setEditorVisible(visible: boolean): void {
+		if (!this.container) {
+			return;
+		}
+		if (visible) {
+			this.container.classList.add('volt-settings-overlay');
+			this.layoutService.mainContainer.classList.add('volt-settings-open');
+			this.layoutService.mainContainer.appendChild(this.container);
+			this.scheduleScrollSync();
+			return;
+		}
+		this.container.classList.remove('volt-settings-overlay');
+		this.layoutService.mainContainer.classList.remove('volt-settings-open');
+		this.container.remove();
+	}
+
+	private applyNavFilter(): void {
+		const needle = this.search.trim().toLowerCase();
+		for (const child of this.toc.querySelectorAll<HTMLElement>('.volt-settings-toc-item')) {
+			const label = child.querySelector('.volt-settings-toc-text')?.textContent?.toLowerCase() ?? '';
+			child.hidden = needle.length > 0 && !label.includes(needle);
+		}
 	}
 
 	private setSection(section: SettingsSection): void {
@@ -176,13 +257,24 @@ export class VoltSettingsEditor extends EditorPane {
 		for (const child of this.toc.querySelectorAll('.volt-settings-toc-item')) {
 			child.classList.toggle('active', (child as HTMLElement).dataset.section === section);
 		}
+		this.contentScroll.setScrollPosition({ scrollTop: 0 });
 		this.renderContent();
 	}
 
 	private renderContent(): void {
+		if (this.pickerOpen) {
+			this.renderDeferred = true;
+			return;
+		}
+		this.renderDeferred = false;
 		this.renderStore.clear();
 		this.content.replaceChildren();
+		this.block = undefined;
+		this.renderGeneration++;
 		switch (this.section) {
+			case 'general':
+				this.renderGeneral();
+				break;
 			case 'providers':
 				this.renderProviders();
 				break;
@@ -196,6 +288,9 @@ export class VoltSettingsEditor extends EditorPane {
 			case 'modes':
 				this.renderModes();
 				break;
+			case 'composer':
+				this.renderComposer();
+				break;
 			case 'tab':
 				this.renderTab();
 				break;
@@ -205,20 +300,46 @@ export class VoltSettingsEditor extends EditorPane {
 			default:
 				this.renderCommon();
 		}
+		this.scheduleScrollSync();
 	}
 
-	private pageHead(title: string, lead?: string): HTMLElement {
-		const head = append(this.content, $('.volt-settings-page-head'));
-		const titleRow = append(head, $('.volt-settings-page-title'));
-		append(titleRow, $('h2')).textContent = title;
-		if (lead) {
-			append(head, $('.volt-settings-lead')).textContent = lead;
+	private scheduleScrollSync(): void {
+		this.contentScroll?.scanDomNode();
+		this.tocScroll?.scanDomNode();
+		if (!this.container?.isConnected) {
+			return;
 		}
-		return titleRow;
+		this.scrollSync.value = scheduleAtNextAnimationFrame(getWindow(this.container), () => {
+			this.contentScroll.scanDomNode();
+			this.tocScroll.scanDomNode();
+			this.stickyHeads.sync();
+		});
+	}
+
+	private get target(): HTMLElement {
+		return this.block ?? this.content;
+	}
+
+	/** The page title; it sticks to the top while the page scrolls under it. Returns the title row. */
+	private pageHead(title: string, lead?: string): HTMLElement {
+		const { head, body } = appendSettingsBlock(this.content, 'volt-settings-page-title');
+		append(head, $('h2')).textContent = title;
+		this.block = body;
+		if (lead) {
+			append(body, $('.volt-settings-lead')).textContent = lead;
+		}
+		return head;
+	}
+
+	/** A section title; it sticks like the page title until the next one pushes it out. */
+	private sectionLabel(label: string): void {
+		const { head, body } = appendSettingsBlock(this.content, 'volt-settings-section-label');
+		append(head, $('span')).textContent = label;
+		this.block = body;
 	}
 
 	private settingsGroup(): HTMLElement {
-		return append(this.content, $('.volt-settings-group'));
+		return append(this.target, $('.volt-settings-group'));
 	}
 
 	private settingRow(parent: HTMLElement, title: string, desc: string | undefined, renderControl?: (host: HTMLElement) => void): HTMLElement {
@@ -254,19 +375,75 @@ export class VoltSettingsEditor extends EditorPane {
 	}
 
 	private empty(text: string): void {
-		append(this.content, $('.volt-settings-empty')).textContent = text;
+		append(this.target, $('.volt-settings-empty')).textContent = text;
+	}
+
+	private renderGeneral(): void {
+		this.pageHead(
+			localize('voltSettings.general', "General"),
+			localize('voltSettings.generalLead', "App-wide choices that apply to every chat."),
+		);
+		this.sectionLabel(localize('voltSettings.textGeneration', "Text generation"));
+		this.settingRow(
+			this.settingsGroup(),
+			localize('voltSettings.textGenerationModel', "Text generation model"),
+			localize('voltSettings.textGenerationModelDesc', "Used for chat titles and other generated text. Follow chat runs each one on the model the chat uses."),
+			host => this.textGenerationPicker(host),
+		);
+	}
+
+	/** The composer's model picker, bound to the text generation slot instead of the composer's model. */
+	private textGenerationPicker(host: HTMLElement): void {
+		const button = append(host, $('button.volt-agent-model.volt-settings-model')) as HTMLButtonElement;
+		button.type = 'button';
+		button.setAttribute('aria-haspopup', 'dialog');
+		button.setAttribute('aria-label', localize('voltSettings.textGenerationModel', "Text generation model"));
+		const picker = this.renderStore.add(this.instantiationService.createInstance(AgentModelPicker, {
+			binding: {
+				get: () => this.runtime.getTaskModels().title,
+				set: ref => void this.runtime.setTaskModel('title', ref),
+				autoLabel: localize('voltSettings.followChat', "Follow chat"),
+				autoDescription: localize('voltSettings.followChatDesc', "Use the model the chat runs on"),
+			},
+			position: AnchorPosition.BELOW,
+			alignment: AnchorAlignment.RIGHT,
+			onDidChange: () => render(),
+		}));
+		const render = () => {
+			button.replaceChildren();
+			picker.renderTrigger(button);
+			button.appendChild(renderIcon(Codicon.chevronDown));
+		};
+		render();
+		this.renderStore.add(addDisposableListener(button, 'click', () => {
+			this.pickerOpen = true;
+			picker.show(button, () => {
+				if (!this.pickerOpen) {
+					return;
+				}
+				this.pickerOpen = false;
+				if (this.renderDeferred) {
+					this.renderContent();
+				} else {
+					button.focus();
+				}
+			});
+		}));
 	}
 
 	private renderCommon(): void {
 		this.pageHead(
 			localize('voltSettings.common', "Commonly Used"),
-			localize('voltSettings.commonLead', "Connect models and ACP agents here. Choose Agent, Plan, Ask, and the model for each chat from the composer under the input."),
+			localize('voltSettings.commonLead', "The connections and choices you reach for most."),
 		);
 		this.renderProfileList(undefined);
 	}
 
 	private renderProviders(): void {
-		const head = this.pageHead(localize('voltSettings.providers', "Providers"));
+		const head = this.pageHead(
+			localize('voltSettings.providers', "Providers"),
+			localize('voltSettings.providersLead', "Installed connections and whether each one is ready."),
+		);
 		const actions = append(head, $('.volt-settings-page-actions'));
 		const lastCheck = this.runtime.getLastProviderCheck();
 		append(actions, $('span.volt-settings-checked')).textContent = lastCheck
@@ -299,7 +476,7 @@ export class VoltSettingsEditor extends EditorPane {
 			this.empty(localize('voltSettings.noProviders', "No providers yet. Add a model or ACP agent connection to get started."));
 			return;
 		}
-		const list = append(this.content, $('.volt-settings-list'));
+		const list = append(this.target, $('.volt-settings-list'));
 		for (const status of statuses) {
 			this.providerRow(list, status);
 		}
@@ -379,16 +556,19 @@ export class VoltSettingsEditor extends EditorPane {
 	}
 
 	private renderModels(): void {
-		this.pageHead(localize('voltSettings.models', "Models"));
+		this.pageHead(
+			localize('voltSettings.models', "Models"),
+			localize('voltSettings.modelsLead', "Choose which models appear in the model picker."),
+		);
 		this.renderConnectionForm('model');
-		append(this.content, $('.volt-settings-section-label')).textContent = localize('voltSettings.modelList', "Enabled models");
+		this.sectionLabel(localize('voltSettings.modelList', "Enabled models"));
 		const needle = this.search.trim().toLowerCase();
 		const models = this.runtime.listCatalog().filter(item => item.kind === 'model' && (!needle || item.label.toLowerCase().includes(needle) || item.qualifier?.toLowerCase().includes(needle)));
 		if (!models.length) {
 			this.empty(localize('voltSettings.noModels', "Add an OpenAI, Anthropic, OpenRouter, Gemini, or Ollama connection to list models."));
 			return;
 		}
-		const list = append(this.content, $('.volt-settings-list'));
+		const list = append(this.target, $('.volt-settings-list'));
 		for (const model of models) {
 			this.modelRow(list, model);
 		}
@@ -397,18 +577,21 @@ export class VoltSettingsEditor extends EditorPane {
 	private renderAgents(): void {
 		this.pageHead(
 			this.section === 'acp' ? localize('voltSettings.acp', "ACP") : localize('voltSettings.agents', "Agents"),
-			localize('voltSettings.acpIntro', "Agent Client Protocol connections. Cursor ACP is P0. Pick the agent from the composer when you chat."),
+			this.section === 'acp'
+				? localize('voltSettings.acpIntro', "Agent Client Protocol connections you can pick from the composer.")
+				: localize('voltSettings.agentsLead', "Connect an agent and pick it from the composer."),
 		);
 		this.renderConnectionForm('agent');
+		const generation = this.renderGeneration;
 		void this.runtime.detectAgents().then(results => {
-			if (this.section !== 'agents' && this.section !== 'acp') {
+			if (generation !== this.renderGeneration) {
 				return;
 			}
 			if (!results.length) {
 				return;
 			}
-			append(this.content, $('.volt-settings-section-label')).textContent = localize('voltSettings.detectedAgents', "Detected agents");
-			const list = append(this.content, $('.volt-settings-list'));
+			this.sectionLabel(localize('voltSettings.detectedAgents', "Detected agents"));
+			const list = append(this.target, $('.volt-settings-list'));
 			for (const result of results) {
 				const card = append(list, $('.volt-settings-card'));
 				const meta = append(card, $('.volt-settings-card-copy'));
@@ -423,8 +606,8 @@ export class VoltSettingsEditor extends EditorPane {
 		});
 		const agents = this.runtime.listCatalog().filter(i => i.kind === 'agent');
 		if (agents.length) {
-			append(this.content, $('.volt-settings-section-label')).textContent = localize('voltSettings.connectedAgents', "Connected");
-			const list = append(this.content, $('.volt-settings-list'));
+			this.sectionLabel(localize('voltSettings.connectedAgents', "Connected"));
+			const list = append(this.target, $('.volt-settings-list'));
 			for (const item of agents) {
 				this.modelRow(list, item);
 			}
@@ -434,9 +617,9 @@ export class VoltSettingsEditor extends EditorPane {
 	private renderModes(): void {
 		this.pageHead(
 			localize('voltSettings.modes', "Modes"),
-			localize('voltSettings.modesLead', "Modes change what the agent is allowed to do. The model is selected in the agent composer, not here."),
+			localize('voltSettings.modesLead', "What the agent is allowed to do."),
 		);
-		const list = append(this.content, $('.volt-settings-list'));
+		const list = append(this.target, $('.volt-settings-list'));
 		for (const mode of VOLT_MODES) {
 			const policy = modePolicy(mode);
 			const info = MODE_COPY[mode];
@@ -451,6 +634,34 @@ export class VoltSettingsEditor extends EditorPane {
 		}
 	}
 
+	private renderComposer(): void {
+		this.pageHead(
+			localize('voltSettings.composer', "Composer"),
+			localize('voltSettings.composerLead', "How the agent prompt box behaves."),
+		);
+		const group = this.settingsGroup();
+		this.settingSwitch(
+			group,
+			AGENT_PROMPT_HISTORY_SETTING,
+			localize('voltSettings.promptHistory', "Load previous prompts with Arrow Up"),
+			localize('voltSettings.promptHistoryDesc', "Arrow Up in an empty composer brings back what you sent before, newest first. Arrow Down goes back to newer ones, then to the text you were typing."),
+		);
+		this.settingSwitch(
+			group,
+			AGENT_NEW_CHAT_DRAFT_SETTING,
+			localize('voltSettings.restoreDraft', "Keep unsent text for a new chat"),
+			localize('voltSettings.restoreDraftDesc', "If a new chat was left with text you never sent, New Agent opens it again with the text still in the composer."),
+		);
+	}
+
+	/** A row whose switch flips a boolean setting; the page re-renders when the setting changes. */
+	private settingSwitch(parent: HTMLElement, key: string, title: string, desc: string): void {
+		const on = this.configurationService.getValue<boolean>(key) !== false;
+		this.settingRow(parent, title, desc, host => this.switch(host, on, title, () => {
+			void this.configurationService.updateValue(key, !on);
+		}));
+	}
+
 	private policyPill(parent: HTMLElement, label: string, allowed: boolean): void {
 		const pill = append(parent, $(`span.volt-settings-pill.${allowed ? 'on' : 'off'}`));
 		pill.textContent = label;
@@ -459,7 +670,7 @@ export class VoltSettingsEditor extends EditorPane {
 	private renderTab(): void {
 		this.pageHead(
 			localize('voltSettings.tab', "Tab & Prediction"),
-			localize('voltSettings.tabLead', "Tab ghost text uses the model selected in the composer - including Cursor ACP agents - or a dedicated Tab model you pin here."),
+			localize('voltSettings.tabLead', "Ghost text as you type, from the composer model or one you pin."),
 		);
 		const settings = this.prediction.getSettings();
 		const group = this.settingsGroup();
@@ -540,7 +751,7 @@ export class VoltSettingsEditor extends EditorPane {
 	private renderSecurity(): void {
 		this.pageHead(
 			localize('voltSettings.security', "Security"),
-			localize('voltSettings.securityLead', "VOLT owns execution authority. Access presets are policy, not a UI-only toggle."),
+			localize('voltSettings.securityLead', "Where keys are stored and what the agent is allowed to run."),
 		);
 
 		const basics = this.settingsGroup();
@@ -570,16 +781,16 @@ export class VoltSettingsEditor extends EditorPane {
 			},
 		);
 
-		append(this.content, $('.volt-settings-section-label')).textContent = localize('voltSettings.projectRules', "Project rules");
-		append(this.content, $('.volt-settings-section-hint')).textContent = localize('voltSettings.projectRulesDesc', "Explicit deny rules still win under Full access. Format: action resource effect.");
+		this.sectionLabel(localize('voltSettings.projectRules', "Project rules"));
+		append(this.target, $('.volt-settings-section-hint')).textContent = localize('voltSettings.projectRulesDesc', "Explicit deny rules still win under Full access. Format: action resource effect.");
 		this.renderRuleEditor();
 
-		append(this.content, $('.volt-settings-section-label')).textContent = localize('voltSettings.savedApprovals', "Saved approvals");
+		this.sectionLabel(localize('voltSettings.savedApprovals', "Saved approvals"));
 		const saved = this.runtime.listSavedApprovals();
 		if (!saved.length) {
 			this.empty(localize('voltSettings.noSavedApprovals', "No always-allow rules yet."));
 		} else {
-			const list = append(this.content, $('.volt-settings-list'));
+			const list = append(this.target, $('.volt-settings-list'));
 			saved.forEach((rule, index) => {
 				const row = append(list, $('.volt-settings-card'));
 				append(append(row, $('.volt-settings-card-copy')), $('div.title')).textContent = `${rule.action} ${rule.resource} -> ${rule.effect}`;
@@ -589,12 +800,12 @@ export class VoltSettingsEditor extends EditorPane {
 			});
 		}
 
-		append(this.content, $('.volt-settings-section-label')).textContent = localize('voltSettings.recentDecisions', "Recent decisions");
+		this.sectionLabel(localize('voltSettings.recentDecisions', "Recent decisions"));
 		const receipts = this.runtime.listReceipts().slice(-12).reverse();
 		if (!receipts.length) {
 			this.empty(localize('voltSettings.noReceipts', "No access decisions recorded in this session."));
 		} else {
-			const list = append(this.content, $('.volt-settings-list'));
+			const list = append(this.target, $('.volt-settings-list'));
 			for (const receipt of receipts) {
 				const row = append(list, $('.volt-settings-card'));
 				const copy = append(row, $('.volt-settings-card-copy'));
@@ -612,7 +823,7 @@ export class VoltSettingsEditor extends EditorPane {
 
 	private renderRuleEditor(): void {
 		const rules = this.runtime.listProjectRules();
-		const form = append(this.content, $('.volt-settings-form'));
+		const form = append(this.target, $('.volt-settings-form'));
 		append(form, $('label.volt-settings-form-title')).textContent = localize('voltSettings.addRuleTitle', "Add a rule");
 		const action = this.labeledInput(form, localize('voltSettings.ruleAction', "Action"), 'shell');
 		const resource = this.labeledInput(form, localize('voltSettings.ruleResource', "Resource"), 'git push --force*');
@@ -635,7 +846,7 @@ export class VoltSettingsEditor extends EditorPane {
 			void this.runtime.setProjectRules(next);
 		}));
 		if (rules.length) {
-			const list = append(this.content, $('.volt-settings-list'));
+			const list = append(this.target, $('.volt-settings-list'));
 			for (const [index, rule] of rules.entries()) {
 				const row = append(list, $('.volt-settings-card'));
 				append(append(row, $('.volt-settings-card-copy')), $('div.title')).textContent = `${rule.action} ${rule.resource} -> ${rule.effect}`;
@@ -654,15 +865,15 @@ export class VoltSettingsEditor extends EditorPane {
 			this.empty(localize('voltSettings.noConnections', "No connections yet. Add one under Models or Agents."));
 			return;
 		}
-		append(this.content, $('.volt-settings-section-label')).textContent = localize('voltSettings.connections', "Connections");
-		const list = append(this.content, $('.volt-settings-list'));
+		this.sectionLabel(localize('voltSettings.connections', "Connections"));
+		const list = append(this.target, $('.volt-settings-list'));
 		for (const item of items) {
 			this.modelRow(list, item);
 		}
 	}
 
 	private renderConnectionForm(kind: VoltProviderKind): void {
-		const form = append(this.content, $('.volt-settings-form'));
+		const form = append(this.target, $('.volt-settings-form'));
 		append(form, $('label.volt-settings-form-title')).textContent = kind === 'model'
 			? localize('voltSettings.addModel', "Add model connection")
 			: localize('voltSettings.addAgent', "Add ACP agent");
@@ -826,7 +1037,7 @@ export class VoltSettingsEditor extends EditorPane {
 		this.renderContent();
 	}
 
-	override layout(dimension: Dimension): void {
-		this.container.style.height = `${dimension.height}px`;
+	override layout(_dimension: Dimension): void {
+		this.scheduleScrollSync();
 	}
 }

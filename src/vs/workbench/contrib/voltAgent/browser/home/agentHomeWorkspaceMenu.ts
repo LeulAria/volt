@@ -630,7 +630,7 @@ class AgentHomeWorkspaceMenu extends Disposable {
 		}
 	}
 
-	/** Beside the main list, level with its row, pulled back inside the window. */
+	/** Beside the main list, level with its row, kept inside the window. */
 	private placeFlyout(): void {
 		if (this.flyout.classList.contains('hidden')) {
 			return;
@@ -642,9 +642,16 @@ class AgentHomeWorkspaceMenu extends Disposable {
 		const width = this.flyout.offsetWidth;
 		const height = this.flyout.offsetHeight;
 		const margin = 8;
+		// Right of the list, else left of it; with no room on either side, inside the window over the list.
 		const right = this.menu.offsetWidth + 4;
-		const left = box.left + right + width > win.innerWidth - margin ? -(width + 4) : right;
-		let top = row ? row.offsetTop - 5 : 0;
+		let left = right;
+		if (box.left + right + width > win.innerWidth - margin) {
+			left = box.left - width - 4 >= margin
+				? -(width + 4)
+				: Math.max(margin, win.innerWidth - margin - width) - box.left;
+		}
+		// Less the flyout's border, so its first row lines up with this one.
+		let top = row ? row.offsetTop - 1 : 0;
 		top = Math.min(top, win.innerHeight - margin - box.top - height);
 		top = Math.max(top, margin - box.top);
 		this.flyout.style.position = 'absolute';

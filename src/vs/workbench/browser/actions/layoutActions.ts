@@ -37,7 +37,7 @@ import { IPreferencesService } from '../../services/preferences/common/preferenc
 import { QuickInputAlignmentContextKey } from '../../../platform/quickinput/browser/quickInput.js';
 import { IEditorGroupsService } from '../../services/editor/common/editorGroupsService.js';
 import { applyAgentStatusbarShift } from '../parts/titlebar/agentLayoutChrome.js';
-import { getLayoutMode, openAgentSidebar, storeAgentLeftSidebarHidden } from '../parts/titlebar/layoutModeSwitch.js';
+import { getLayoutMode, isAgentDrawerMode, isAgentSidebarShowing, openAgentSidebar, storeAgentLeftSidebarHidden } from '../parts/titlebar/layoutModeSwitch.js';
 
 // Register Icons
 const menubarIcon = registerIcon('menuBar', Codicon.layoutMenubar, localize('menuBarIcon', "Represents the menu bar"));
@@ -327,15 +327,19 @@ export class ToggleSidebarVisibilityAction extends Action2 {
 		const isCurrentlyVisible = layoutService.isVisible(Parts.SIDEBAR_PART);
 
 		if (getLayoutMode(layoutService) === 'agent') {
-			const visible = layoutService.isVisible(Parts.AUXILIARYBAR_PART);
-			const width = visible ? layoutService.getSize(Parts.AUXILIARYBAR_PART).width : 0;
-			const showing = visible && width >= 180;
+			const showing = isAgentSidebarShowing(layoutService);
+			// A drawer opens and closes for now; it leaves the saved choice for the column alone.
+			const drawer = isAgentDrawerMode(layoutService);
 			if (showing) {
-				storeAgentLeftSidebarHidden(storageService, true);
+				if (!drawer) {
+					storeAgentLeftSidebarHidden(storageService, true);
+				}
 				layoutService.setPartHidden(true, Parts.AUXILIARYBAR_PART);
 				applyAgentStatusbarShift(layoutService.mainContainer, 0, layoutService.getSize(Parts.TITLEBAR_PART).height);
 			} else {
-				storeAgentLeftSidebarHidden(storageService, false);
+				if (!drawer) {
+					storeAgentLeftSidebarHidden(storageService, false);
+				}
 				void openAgentSidebar(accessor.get(IConfigurationService), layoutService, accessor.get(IPaneCompositePartService));
 			}
 			alert(showing

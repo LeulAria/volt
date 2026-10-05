@@ -41,6 +41,8 @@ export interface IContextPackInput {
 	readonly remaining?: { readonly steps?: number; readonly tools?: number; readonly timeMs?: number };
 	/** How the user asked to be answered. Overrides the generic chat framing when set. */
 	readonly shape?: IRequestShape;
+	/** Multitask: names of the connected models a subagent can run on (`delegate_task`'s `model`). */
+	readonly taskModels?: readonly string[];
 }
 
 export interface IEnvironmentFacts {
@@ -189,12 +191,47 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.intent.wantsPreview && input.runPlan) {
 		parts.push(`[Volt] ${formatRunPlanSection(input.runPlan)}`);
 	}
+	if (input.intent.matchesDesign && allowWrites) {
+		parts.push(`[Volt] ${DESIGN_LOOP}`);
+	}
+	if (input.intent.broadChange && allowWrites) {
+		parts.push(`[Volt] ${CALLER_VISIBLE_CHANGES}`);
+	}
+	if (input.intent.mentionsTests && allowWrites) {
+		parts.push(`[Volt] ${TEST_INTEGRITY}`);
+	}
 	const contract = modeContract(input.mode);
 	if (contract) {
 		parts.push(`[Volt mode: ${input.mode}] ${contract}`);
 	}
-	return parts.length ? parts.join('\n') : undefined;
+	if (input.mode === 'multitask' && input.taskModels?.length) {
+		// Haiku found list_models behind Claude Code's tool search, ran it as a shell command, and
+		// then told the user only Claude models were available.
+		parts.push(`[Volt] Models a subagent can run on (pass one as delegate_task's \`model\`; any of them, not only your own family): ${input.taskModels.join(', ')}.`);
+	}
+	// Benchmarks caught agents running `rg` over the home folder and reading other tools'
+	// transcripts to chase a missing script. Keep them in the project unless asked.
+	parts.push(`[Volt] ${WORKSPACE_SCOPE}`);
+	return parts.join('\n');
 }
+
+/**
+ * Benchmarks: given a design image, agents spent most of the run decoding the PNG byte by byte
+ * before writing any markup. Cursor's agent converges by rendering its page at the image's size
+ * and comparing; this says so up front.
+ */
+export const DESIGN_LOOP = 'Building from a reference image: read it with image_inspect (exact sizes, colours, blocks, text bands; crops for small text) instead of decoding it with scripts, then write the page early. Check it with browser_compare_image on the reference (it renders the page at the image\'s size and lists the regions that differ and why); fix the largest differences first. Two or three compare rounds are usually enough.';
+
+/** A "make it production ready" run quietly started rejecting requests without a JSON content type. */
+export const CALLER_VISIBLE_CHANGES = 'This is an open-ended change. When you alter behaviour existing callers rely on (status codes, required headers or fields, response shapes, defaults), name each such change in your summary.';
+
+/**
+ * Benchmark: given two contradictory tests, Cursor's agent and Volt's both made `isEven` inspect its
+ * caller's stack to pass both. A passing suite is not the goal; correct code is.
+ */
+export const TEST_INTEGRITY = 'Make tests pass by fixing the code. Never special-case tests (checking callers, stack traces, test names or env), weaken or delete assertions, or edit tests you were told not to touch. If tests contradict each other or the request, stop and explain instead of forcing a pass.';
+
+export const WORKSPACE_SCOPE = 'Keep project exploration inside this workspace. You may read a skill or instruction file explicitly supplied by the user or listed by your configured skills, including its referenced resources, even when it lives outside the workspace. Do not search the home folder, sibling projects, or other tools\' private data and chat history unless the user asks; if something the user mentions is missing, say so instead of hunting for it elsewhere.';
 
 /**
  * What a Volt mode asks of an agent that runs its own loop. Plan and Ask are also enforced by
@@ -210,7 +247,7 @@ function modeContract(mode: VoltMode): string | undefined {
 		case 'debug':
 			return 'Debug: reproduce the problem first, find the root cause from evidence (a failing run, logs, the code path), fix it, then run the reproduction again to show it is gone.';
 		case 'multitask':
-			return 'Multitask: split independent parts of the work across parallel subagents when you can, then combine their results.';
+			return 'Multitask: split the work into independent parts and run them in parallel as Volt subagents with the delegate_task tool of the volt MCP server, a tool call and never a shell command (one task per part, each with a complete brief, on the model from list_models that suits it; the default shared isolation so their edits land in this checkout; "worktree" only when two parts would edit the same files, and then merge their branches afterwards). Do what is left yourself while they run. Their reports arrive as messages; check what matters, then combine them into one answer.';
 		default:
 			return undefined;
 	}

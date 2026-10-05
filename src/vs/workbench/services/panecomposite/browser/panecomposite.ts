@@ -5,12 +5,23 @@
 
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { Event } from '../../../../base/common/event.js';
+import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { PaneCompositeDescriptor } from '../../../browser/panecomposite.js';
 import { IProgressIndicator } from '../../../../platform/progress/common/progress.js';
 import { IPaneComposite } from '../../../common/panecomposite.js';
 import { ViewContainerLocation } from '../../../common/views.js';
 
 export const IPaneCompositePartService = createDecorator<IPaneCompositePartService>('paneCompositePartService');
+
+/**
+ * Volt: a hidden pane composite part shown inside another element for a while. Disposing it
+ * puts the part back where the workbench keeps it.
+ */
+export interface ILentPaneCompositePart extends IDisposable {
+	/** Fires when the part goes back by itself, because the workbench shows it again. */
+	readonly onDidReturn: Event<void>;
+	layout(width: number, height: number): void;
+}
 
 export interface IPaneCompositePartService {
 
@@ -68,4 +79,11 @@ export interface IPaneCompositePartService {
 	 * Return the last active viewlet id.
 	 */
 	getLastActivePaneCompositeId(viewContainerLocation: ViewContainerLocation): string;
+
+	/**
+	 * Volt: moves the part at the given location into `host`, with the given view container open
+	 * in it: the same part and view container instances, not copies. Only while the workbench
+	 * keeps that part hidden; undefined otherwise.
+	 */
+	lendPaneComposite(id: string, viewContainerLocation: ViewContainerLocation, host: HTMLElement): ILentPaneCompositePart | undefined;
 }

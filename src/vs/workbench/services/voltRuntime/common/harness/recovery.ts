@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { ILoopDetectorOptions, LoopDetector } from './doomLoop.js';
 import { VoltLane } from './lanes.js';
 import { IReplanRequest } from './plan.js';
 import { ErrorClass, IProgressReport, isRetryable } from './progress.js';
@@ -308,7 +309,15 @@ function firstError(report: IProgressReport): string {
  * rather than describing the desired outcome.
  */
 function nudgeFor(error: ErrorClass | undefined, report: IProgressReport): string {
-	const detail = firstError(report);
+	return errorGuidance(error, firstError(report))
+		?? `The last step failed: ${firstError(report) || report.reason}. Say in one line what you think went wrong, then take a different action.`;
+}
+
+/**
+ * Class-specific advice for a failure, `undefined` for an unclassified one. Shared by the recovery
+ * ladder and the loop detector's repeated-error nudge.
+ */
+export function errorGuidance(error: ErrorClass | undefined, detail: string): string | undefined {
 	switch (error) {
 		case 'not-found':
 			return `That path or symbol does not exist: ${detail}. Do not guess another name - search for it first, then act on a path you have seen in a result.`;
@@ -327,8 +336,16 @@ function nudgeFor(error: ErrorClass | undefined, report: IProgressReport): strin
 		case 'transient':
 			return `A temporary failure: ${detail}. Retry once; if it fails the same way, do it another way.`;
 		default:
-			return `The last step failed: ${detail || report.reason}. Say in one line what you think went wrong, then take a different action.`;
+			return undefined;
 	}
+}
+
+/**
+ * The loop detector both engines should use: `LoopDetector` with the recovery ladder's error
+ * advice in its repeated-error nudge.
+ */
+export function createLoopDetector(options: ILoopDetectorOptions = {}): LoopDetector {
+	return new LoopDetector({ guidance: errorGuidance, ...options });
 }
 
 function switchGuidance(report: IProgressReport): string {

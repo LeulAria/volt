@@ -18,6 +18,8 @@ export interface IVoltModalOptions {
 	readonly width?: number;
 	readonly height?: number;
 	readonly className?: string;
+	/** No title bar or close button: the body fills the panel, and the title is only its label. */
+	readonly headless?: boolean;
 	/** Builds the body. The returned disposable is released when the modal closes. */
 	readonly render: (body: HTMLElement, close: () => void) => IDisposable;
 	readonly onDidClose?: () => void;
@@ -47,16 +49,19 @@ export function showVoltModal(layoutService: ILayoutService, options: IVoltModal
 	panel.style.width = `min(${options.width ?? 760}px, calc(100% - 32px))`;
 	panel.style.height = `min(${options.height ?? 520}px, calc(100% - 48px))`;
 
-	const header = append(panel, $('.volt-modal-header'));
-	const titles = append(header, $('.volt-modal-titles'));
-	append(titles, $('.volt-modal-title')).textContent = options.title;
-	if (options.subtitle) {
-		append(titles, $('.volt-modal-subtitle')).textContent = options.subtitle;
+	let closeButton: HTMLButtonElement | undefined;
+	if (!options.headless) {
+		const header = append(panel, $('.volt-modal-header'));
+		const titles = append(header, $('.volt-modal-titles'));
+		append(titles, $('.volt-modal-title')).textContent = options.title;
+		if (options.subtitle) {
+			append(titles, $('.volt-modal-subtitle')).textContent = options.subtitle;
+		}
+		closeButton = append(header, $('button.volt-modal-close')) as HTMLButtonElement;
+		closeButton.type = 'button';
+		closeButton.setAttribute('aria-label', localize('voltModal.close', "Close"));
+		closeButton.appendChild(renderIcon(Codicon.close));
 	}
-	const closeButton = append(header, $('button.volt-modal-close')) as HTMLButtonElement;
-	closeButton.type = 'button';
-	closeButton.setAttribute('aria-label', localize('voltModal.close', "Close"));
-	closeButton.appendChild(renderIcon(Codicon.close));
 	const body = append(panel, $('.volt-modal-body'));
 
 	let closed = false;
@@ -80,10 +85,12 @@ export function showVoltModal(layoutService: ILayoutService, options: IVoltModal
 		EventHelper.stop(e, true);
 		close();
 	}));
-	store.add(addDisposableListener(closeButton, 'click', e => {
-		EventHelper.stop(e, true);
-		close();
-	}));
+	if (closeButton) {
+		store.add(addDisposableListener(closeButton, 'click', e => {
+			EventHelper.stop(e, true);
+			close();
+		}));
+	}
 	store.add(addDisposableListener(panel, 'keydown', e => {
 		const event = new StandardKeyboardEvent(e);
 		if (event.keyCode === KeyCode.Escape && !e.defaultPrevented) {

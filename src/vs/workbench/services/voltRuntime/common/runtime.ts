@@ -5,6 +5,7 @@
 
 import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
+import { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { VoltAccessMode } from './access/accessModes.js';
 import { AccessDecisionScope, IAccessRequest, IExecutionReceipt, IPermissionRule, PermissionEffect } from './access/accessTypes.js';
@@ -16,6 +17,8 @@ import { IProviderProfile, IProviderProfileDraft } from './profiles.js';
 import { IVoltSendRequest, IVoltSession } from './session.js';
 import { IVoltModelAccess } from './models/modelAccess.js';
 import type { IHumanAction } from './harness/humanLoop.js';
+import type { IAgentQuestionRequest, IAgentQuestionResponse } from './questions.js';
+import type { IRunMetrics } from './harness/runMetrics.js';
 
 export const IAgentRuntimeService = createDecorator<IAgentRuntimeService>('agentRuntimeService');
 
@@ -28,6 +31,17 @@ export interface IVoltTaskModels {
 	explore?: string;
 	/** Dedicated Tab-prediction model. Falls back to the active composer model (D21). */
 	tab?: string;
+	/** Model for chat titles and other generated text. Falls back to the chat's own model. */
+	title?: string;
+}
+
+/** An MCP server from the project or user config, and how its connection is doing. */
+export interface IVoltMcpServerStatus {
+	readonly name: string;
+	/** Configured in the project (`.cursor/mcp.json`, ...) or in the home folder. */
+	readonly scope: 'project' | 'user';
+	/** `idle`: configured but not started yet (servers start with the first run that needs tools). */
+	readonly state: 'idle' | 'connecting' | 'ready' | 'error';
 }
 
 export interface IAgentRuntimeService extends IVoltModelAccess {
@@ -50,6 +64,20 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	/** Restore the checkout a chat already created, so a reload does not fall through to the open folder. */
 	rememberWorktree(sessionId: string, path: string | undefined, branch: string | undefined): void;
 	send(sessionId: string, request: IVoltSendRequest): Promise<string>;
+	/** A run that takes messages between steps is live in this chat (native loop, or an ACP agent with steering). */
+	canSteer(sessionId: string): boolean;
+	/** The chat's live agent advertised the slash command `/name` (e.g. `compact`). */
+	supportsCommand(sessionId: string, name: string): boolean;
+	/**
+	 * Sends `text` into the live native run, which reads it before its next step. Not a user turn:
+	 * `truncateSession` does not count it. False (nothing sent) when no native run is live.
+	 */
+	steer(sessionId: string, text: string): boolean;
+	/**
+	 * Like `steer`, for any agent that takes messages mid-turn: the native loop's inbox, or an ACP
+	 * agent's `_session/steering` (Claude, Codex). Resolves false when nothing took it.
+	 */
+	steerAsync(sessionId: string, text: string): Promise<boolean>;
 	cancel(sessionId: string): Promise<void>;
 	pause(sessionId: string): Promise<void>;
 	resume(sessionId: string): Promise<void>;
@@ -57,6 +85,8 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	redirect(sessionId: string, text: string): Promise<string>;
 	applyHuman(sessionId: string, action: IHumanAction): Promise<void>;
 	onEvent(sessionId: string, listener: (e: IVoltEventEnvelope) => void): IDisposable;
+	/** The chat a session id belongs to: itself, or the chat that adopted a warm spare agent running under that alias. */
+	chatFor(sessionId: string): string;
 	/** Every event from every session, after its own listeners ran. */
 	readonly onDidEmit: Event<IVoltEventEnvelope>;
 
@@ -87,10 +117,32 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	getAccessMode(): VoltAccessMode;
 	setAccessMode(mode: VoltAccessMode): Promise<void>;
 	respondToAccessRequest(requestId: string, effect: Extract<PermissionEffect, 'allow' | 'deny'>, scope?: AccessDecisionScope, pattern?: string): void;
+	/** Questions an agent is waiting on in this chat, oldest first. */
+	getPendingQuestions(sessionId: string): readonly IAgentQuestionRequest[];
+	/** False when no agent is still waiting for these answers (its turn ended); send them as a message instead. */
+	respondToQuestions(requestId: string, response: IAgentQuestionResponse): boolean;
+	/** Fires with the session id when its pending questions change. */
+	readonly onDidChangeQuestions: Event<string>;
 	listPendingAccessRequests(sessionId?: string): IAccessRequest[];
 	listReceipts(sessionId?: string): IExecutionReceipt[];
 	listProjectRules(): IPermissionRule[];
 	setProjectRules(rules: IPermissionRule[]): Promise<void>;
 	listSavedApprovals(): IPermissionRule[];
 	revokeSavedApproval(index: number): Promise<void>;
+
+	/**
+	 * Timings and meters of recent finished runs, newest last (send to prepared, agent ready,
+	 * prompt, first event, first text, end; tools, retries, stalls, loops, compactions).
+	 */
+	getRunMetrics(sessionId?: string): readonly IRunMetrics[];
+
+	/** MCP servers configured for the project and the user, with their connection state. */
+	listMcpServers(root: URI | undefined): Promise<readonly IVoltMcpServerStatus[]>;
+
+	/**
+	 * One small tool-less call for generated text (commit messages, pull request descriptions):
+	 * the text generation model when one is set in Settings, else the chat's model, else the first
+	 * enabled one. Undefined when no model answered.
+	 */
+	generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number }): Promise<string | undefined>;
 }

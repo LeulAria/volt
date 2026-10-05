@@ -16,6 +16,7 @@ import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../comm
 import { IPathService } from '../../../path/common/pathService.js';
 import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import {
+	AgentWorktreeTarget,
 	IAgentWorktreeService,
 	ICreatedAgentWorktree,
 	IGitRunResult,
@@ -42,12 +43,13 @@ export class AgentWorktreeService implements IAgentWorktreeService {
 		@ILogService private readonly logService: ILogService,
 	) { }
 
-	async create(repoRoot: string): Promise<ICreatedAgentWorktree> {
+	async create(repoRoot: string, target?: AgentWorktreeTarget): Promise<ICreatedAgentWorktree> {
 		return createAgentWorktree({
 			run: (cwd, args) => this.git(cwd, args),
 			files: this.files(),
 			repoRoot,
 			worktreesRoot: this.worktreesRoot(),
+			target,
 		});
 	}
 

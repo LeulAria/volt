@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-body:has(.monaco-workbench.volt-layout-agent) {
+/* A class on <html>, not body:has(): a :has() on the root restyles the window whenever a list adds a row. */
+html.volt-layout-agent-window body {
 	background: transparent !important;
 }

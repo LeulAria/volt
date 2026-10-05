@@ -13,6 +13,7 @@ import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IRequestService } from '../../../../../platform/request/common/request.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IMcpToolInfo, mcpResultContent, McpServerConfig, mcpToolName, normalizeMcpSchema, parseMcpConfig } from '../../common/harness/mcpConfig.js';
+import { IVoltMcpServerStatus } from '../../common/runtime.js';
 import { IToolResult, IVoltTool } from '../../common/tools/tool.js';
 import { AcpJsonRpcClient } from '../agents/acpJsonRpc.js';
 
@@ -40,6 +41,8 @@ interface IMcpConnection {
 export class McpHost extends Disposable {
 
 	private readonly connections = new Map<string, { readonly started: number; readonly value: Promise<IMcpConnection | undefined> }>();
+	/** Settled connection attempts, by the same key as {@link connections}. */
+	private readonly settled = new Map<string, IMcpConnection | undefined>();
 
 	constructor(
 		private readonly fileService: IFileService,
@@ -70,25 +73,44 @@ export class McpHost extends Disposable {
 		return tools.sort((a, b) => a.name.localeCompare(b.name)).slice(0, MAX_TOOLS);
 	}
 
+	/** Every configured server and its connection state. Starts nothing. */
+	async servers(root: URI | undefined, home: URI | undefined): Promise<IVoltMcpServerStatus[]> {
+		const entries = await this.configEntries(root, home);
+		return entries.map(({ config, scope }) => {
+			const key = JSON.stringify(config);
+			if (!this.connections.has(key)) {
+				return { name: config.name, scope, state: 'idle' as const };
+			}
+			if (!this.settled.has(key)) {
+				return { name: config.name, scope, state: 'connecting' as const };
+			}
+			return { name: config.name, scope, state: this.settled.get(key)?.alive ? 'ready' as const : 'error' as const };
+		});
+	}
+
 	private async configs(root: URI | undefined, home: URI | undefined): Promise<McpServerConfig[]> {
+		return (await this.configEntries(root, home)).map(entry => entry.config);
+	}
+
+	private async configEntries(root: URI | undefined, home: URI | undefined): Promise<{ readonly config: McpServerConfig; readonly scope: 'project' | 'user' }[]> {
 		const variables: Record<string, string> = {
 			...(root ? { workspaceFolder: root.fsPath, workspaceRoot: root.fsPath } : {}),
 			...(home ? { userHome: home.fsPath, HOME: home.fsPath } : {}),
 		};
 		const files = [
-			...(root ? WORKSPACE_CONFIGS.map(path => joinPath(root, path)) : []),
-			...(home ? HOME_CONFIGS.map(path => joinPath(home, path)) : []),
+			...(root ? WORKSPACE_CONFIGS.map(path => ({ file: joinPath(root, path), scope: 'project' as const })) : []),
+			...(home ? HOME_CONFIGS.map(path => ({ file: joinPath(home, path), scope: 'user' as const })) : []),
 		];
-		const texts = await Promise.all(files.map(file => this.fileService.readFile(file).then(content => content.value.toString(), () => undefined)));
-		const byName = new Map<string, McpServerConfig>();
-		for (const text of texts) {
+		const texts = await Promise.all(files.map(({ file }) => this.fileService.readFile(file).then(content => content.value.toString(), () => undefined)));
+		const byName = new Map<string, { readonly config: McpServerConfig; readonly scope: 'project' | 'user' }>();
+		texts.forEach((text, index) => {
 			for (const server of text ? parseMcpConfig(text, variables) : []) {
 				// Volt's own host server is already a native tool.
 				if (!byName.has(server.name) && server.name !== 'volt') {
-					byName.set(server.name, server);
+					byName.set(server.name, { config: server, scope: files[index].scope });
 				}
 			}
-		}
+		});
 		return [...byName.values()];
 	}
 
@@ -104,6 +126,7 @@ export class McpHost extends Disposable {
 					return undefined;
 				}
 				this.connections.delete(key);
+				this.settled.delete(key);
 				return this.connection(config, root);
 			});
 		}
@@ -111,6 +134,10 @@ export class McpHost extends Disposable {
 			.catch(err => {
 				this.logService.warn(`[volt mcp] ${config.name} is unavailable`, err);
 				return undefined;
+			})
+			.then(connection => {
+				this.settled.set(key, connection);
+				return connection;
 			});
 		this.connections.set(key, { started: Date.now(), value });
 		return value;
@@ -238,6 +265,7 @@ export class McpHost extends Disposable {
 			void entry.value.then(connection => connection?.dispose());
 		}
 		this.connections.clear();
+		this.settled.clear();
 	}
 }
 

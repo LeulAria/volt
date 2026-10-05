@@ -4,23 +4,24 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/browserEditor.css';
-import { $, addDisposableListener, append, Dimension, getWindow } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, Dimension, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { toAction } from '../../../../../base/common/actions.js';
-import { timeout } from '../../../../../base/common/async.js';
+import { IAction, Separator, toAction } from '../../../../../base/common/actions.js';
+import { disposableTimeout, timeout } from '../../../../../base/common/async.js';
 import { encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { Emitter, Event as BaseEvent } from '../../../../../base/common/event.js';
-import { Disposable, DisposableMap, DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableMap, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IContextMenuService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IContextMenuService, IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { createDecorator, IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -28,10 +29,10 @@ import { IOpenerService } from '../../../../../platform/opener/common/opener.js'
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
+import { IVoltBrowserService, VOLT_BROWSER_PARTITION } from '../../../../../platform/voltBrowser/common/voltBrowser.js';
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
-import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { IAgentMention, browserMentionColor, cloneDisplayMentions } from '../composer/agentMentions.js';
 import { BrowserCommentCard } from './browserCommentCard.js';
@@ -39,8 +40,11 @@ import { BrowserAgentComposer } from './browserComposer.js';
 import { commentPreviewText } from './browserComments.js';
 import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
+import { BrowserDeviceMode } from './browserDevices.js';
 import { BrowserAgentDock } from './browserDock.js';
-import { DEFAULT_BROWSER_URL, VoltBrowserEditorInput } from './browserEditorInput.js';
+import { BROWSER_PRESENT_EVENT, BROWSER_PRESENTATION_EVENT, BrowserPresentation, DEFAULT_BROWSER_URL, VoltBrowserEditorInput } from './browserEditorInput.js';
+import { BrowserAppearance, IBrowserHistoryEntry, isRememberedUrl, IVoltBrowserHistory, shortBrowserUrl } from './browserHistory.js';
+import { BrowserMenuEntry, showBrowserMenu } from './browserMenu.js';
 import { sanitizeBrowserUrl } from './localPreview.js';
 
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -115,10 +119,69 @@ interface IVoltWebview extends HTMLElement {
 	goBack(): void;
 	goForward(): void;
 	reload(): void;
+	reloadIgnoringCache?(): void;
 	loadURL?(url: string): void;
 	capturePage?(): Promise<IVoltNativeImage>;
 	executeJavaScript?(code: string, userGesture?: boolean): Promise<unknown>;
 	setUserAgent?(userAgent: string): void;
+	sendInputEvent?(event: IVoltInputEvent): void;
+	insertText?(text: string): Promise<void>;
+	isLoading?(): boolean;
+	stop?(): void;
+	openDevTools?(): void;
+	closeDevTools?(): void;
+	isDevToolsOpened?(): boolean;
+	inspectElement?(x: number, y: number): void;
+	setZoomFactor?(factor: number): void;
+	getWebContentsId?(): number;
+	cut?(): void;
+	copy?(): void;
+	paste?(): void;
+	selectAll?(): void;
+}
+
+/** What Electron's `context-menu` event reports about the spot the user right-clicked in the page. */
+interface IPageContextParams {
+	readonly x: number;
+	readonly y: number;
+	readonly linkURL?: string;
+	readonly srcURL?: string;
+	readonly mediaType?: string;
+	readonly selectionText?: string;
+	readonly isEditable?: boolean;
+	readonly editFlags?: { readonly canCut?: boolean; readonly canCopy?: boolean; readonly canPaste?: boolean; readonly canSelectAll?: boolean };
+}
+
+const ZOOM_LEVELS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+
+/** The page's colors at its top (`theme-color`, else its background) and at its bottom (its background). */
+const SCREEN_COLOR_SCRIPT = `(() => {
+	const visible = color => color && color !== 'transparent' && !/rgba\\([^)]*,\\s*0\\)$/.test(color);
+	const body = document.body ? getComputedStyle(document.body).backgroundColor : '';
+	const root = getComputedStyle(document.documentElement).backgroundColor;
+	const background = visible(body) ? body : visible(root) ? root : '#ffffff';
+	const meta = document.querySelector('meta[name="theme-color"]');
+	return { top: (meta && meta.getAttribute('content')) || background, bottom: background };
+})()`;
+
+/** Electron's `InputEvent` for `<webview>.sendInputEvent`: trusted input, like a real user. */
+export interface IVoltInputEvent {
+	type: 'mouseDown' | 'mouseUp' | 'mouseMove' | 'mouseWheel' | 'keyDown' | 'keyUp' | 'char';
+	x?: number;
+	y?: number;
+	button?: 'left' | 'right' | 'middle';
+	clickCount?: number;
+	keyCode?: string;
+	modifiers?: string[];
+	deltaX?: number;
+	deltaY?: number;
+}
+
+export interface IVoltConsoleMessage {
+	readonly level: 'verbose' | 'info' | 'warning' | 'error';
+	readonly message: string;
+	readonly source?: string;
+	readonly line?: number;
 }
 
 interface IBrowserHit {
@@ -133,6 +196,15 @@ interface IBrowserHit {
 	y: number;
 	w: number;
 	h: number;
+}
+
+/** A row under the address bar: a page from history, or a web search for what was typed. */
+interface IBrowserSuggestion {
+	readonly url: string;
+	readonly title: string;
+	readonly detail: string;
+	readonly favicon?: string;
+	readonly search?: boolean;
 }
 
 interface IBrowserSelection {
@@ -169,11 +241,16 @@ export function normalizeBrowserUrl(value: string): string {
 	if (!trimmed) {
 		return DEFAULT_BROWSER_URL;
 	}
+	// Before the scheme check: `localhost:3000` would read as a `localhost:` scheme.
+	if (/^localhost(:\d+)?(\/|$)/i.test(trimmed) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/|$)/.test(trimmed)) {
+		return `http://${trimmed.split(/[\s\]>]/)[0]}`;
+	}
 	if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
 		return sanitizeBrowserUrl(trimmed) ?? trimmed.split(/[\s\]>]/)[0] ?? trimmed;
 	}
-	if (/^localhost(:\d+)?(\/|$)/i.test(trimmed) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/|$)/.test(trimmed)) {
-		return `http://${trimmed.split(/[\s\]>]/)[0]}`;
+	// Words, or a single word with no dot, are a search, as in any browser's address bar.
+	if (/\s/.test(trimmed) || !/[.:/]/.test(trimmed)) {
+		return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
 	}
 	return `https://${trimmed.split(/[\s\]>]/)[0]}`;
 }
@@ -200,6 +277,23 @@ function browserUrlNeedsRewrite(raw: string, clean: string): boolean {
  * out of the DOM restarts its page. So the view sits in one layer per editor part
  * (`browserViewLayer`) and is laid over whichever pane shows the tab.
  */
+const CONNECTION_REFUSED = -102;
+/** About 30 seconds: long enough for a dev server to come up, short enough to give up on a wrong port. */
+const LOCAL_SERVER_RETRIES = 40;
+const LOCAL_SERVER_RETRY_MS = 750;
+
+/** `host:port` when the URL points at this machine. */
+export function localServerHost(url: string): string | undefined {
+	try {
+		const parsed = new URL(url);
+		const host = parsed.hostname.replace(/^\[|\]$/g, '');
+		const local = host === 'localhost' || host === '0.0.0.0' || host === '::1' || /^127(?:\.\d{1,3}){3}$/.test(host);
+		return local && /^https?:$/.test(parsed.protocol) ? parsed.host : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export class VoltBrowserView extends Disposable {
 
 	readonly element: HTMLElement;
@@ -215,9 +309,32 @@ export class VoltBrowserView extends Disposable {
 	private container!: HTMLElement;
 	private backButton!: HTMLButtonElement;
 	private forwardButton!: HTMLButtonElement;
+	private reloadButton!: HTMLButtonElement;
+	private starButton!: HTMLButtonElement;
+	private urlWrap!: HTMLElement;
 	private urlInput!: HTMLInputElement;
+	private urlDisplay!: HTMLElement;
+	/** The address the bar shows when the user is not editing it. */
+	private address = '';
+	private suggestEl!: HTMLElement;
+	private suggestions: readonly IBrowserSuggestion[] = [];
+	private suggestIndex = -1;
 	private designButton!: HTMLButtonElement;
+	private responsiveButton!: HTMLButtonElement;
+	private devtoolsButton!: HTMLButtonElement;
 	private moreButton!: HTMLButtonElement;
+	private bookmarkBar!: HTMLElement;
+	private startPage!: HTMLElement;
+	private startInput!: HTMLInputElement;
+	private startRecents!: HTMLElement;
+	private toastEl!: HTMLElement;
+	private toastHandle: number | undefined;
+	private deviceMode!: BrowserDeviceMode;
+	private loading = false;
+	private zoomFactor = 1;
+	private userAgent = BROWSER_USER_AGENT;
+	private devtoolsOpen = false;
+	private presentation: BrowserPresentation | undefined;
 	private stage!: HTMLElement;
 	private overlay!: HTMLElement;
 	private hoverBox!: HTMLElement;
@@ -236,6 +353,11 @@ export class VoltBrowserView extends Disposable {
 	private guestReady = false;
 	private guestIdle = false;
 	private pendingUrl: string | undefined;
+	/** The main frame failed: the load that finishes next is Chromium's error page. */
+	private loadFailed = false;
+	/** A local server the agent is still starting: its address is tried again until it answers. */
+	private readonly loadRetry = this._register(new MutableDisposable());
+	private loadRetries = 0;
 	private designMode = false;
 	private hoverHit: IBrowserHit | undefined;
 	private selection: IBrowserSelection | undefined;
@@ -243,6 +365,12 @@ export class VoltBrowserView extends Disposable {
 	private drawing: { startX: number; startY: number; currentX: number; currentY: number } | undefined;
 	private probeHandle: number | undefined;
 	private lastProbe = '';
+	private agentLock: HTMLElement | undefined;
+	private readonly consoleMessages: IVoltConsoleMessage[] = [];
+	private consoleSeen = 0;
+	private readonly _onDidTakeControl = this._register(new Emitter<void>());
+	/** The user clicked "Take control" on the page the agent was driving. */
+	readonly onDidTakeControl: BaseEvent<void> = this._onDidTakeControl.event;
 
 	constructor(
 		private readonly input: VoltBrowserEditorInput,
@@ -250,15 +378,20 @@ export class VoltBrowserView extends Disposable {
 		@IContextMenuService private readonly contextMenuService: IContextMenuService,
 		@IOpenerService private readonly openerService: IOpenerService,
 		@IClipboardService private readonly clipboardService: IClipboardService,
-		@IEditorService private readonly editorService: IEditorService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IHostService private readonly hostService: IHostService,
+		@IContextViewService private readonly contextViewService: IContextViewService,
+		@IVoltBrowserHistory private readonly history: IVoltBrowserHistory,
 	) {
 		super();
 		this.element = $('.volt-browser-view.parked');
 		this._register(addDisposableListener(this.element, 'pointerdown', () => this._onDidFocus.fire(), true));
 		this._register(addDisposableListener(this.element, 'focusin', () => this._onDidFocus.fire()));
+		this._register(addDisposableListener(this.element, BROWSER_PRESENTATION_EVENT, e => {
+			const detail = (e as CustomEvent<{ mode: BrowserPresentation }>).detail;
+			this.setPresentation(detail?.mode);
+		}));
 		try {
 			this.createBrowserChrome(this.element);
 		} catch (err) {
@@ -268,9 +401,20 @@ export class VoltBrowserView extends Disposable {
 			this.errorEl.textContent = err instanceof Error ? err.message : String(err);
 			return;
 		}
+		this._register(this.history.onDidChange(() => {
+			this.syncStar();
+			this.renderBookmarkBar();
+			if (!this.startPage.classList.contains('hidden')) {
+				this.renderStartRecents();
+			}
+		}));
 		try {
-			// The webview starts loading once `show` puts the view in the DOM.
-			this.navigate(input.url || DEFAULT_BROWSER_URL);
+			// A new tab opens on the start page; the webview starts loading once `show` puts the view in the DOM.
+			if (input.url) {
+				this.navigate(input.url);
+			} else {
+				this.showStartPage();
+			}
 		} catch (err) {
 			this.showError(err instanceof Error ? err.message : localize('voltBrowser.loadFailed', "This page could not be loaded."));
 		}
@@ -288,6 +432,9 @@ export class VoltBrowserView extends Disposable {
 		this.layer = layer;
 		this.owner = slot;
 		this.element.classList.remove('parked');
+		// A tab opened while its tools area floats or spans the window takes that presentation at once.
+		const area = slot.closest('.volt-agent-tools-area');
+		this.setPresentation(area?.classList.contains('fullscreen') ? 'fullscreen' : area?.classList.contains('floating') ? 'floating' : area ? 'split' : undefined);
 		this.layoutOver(slot);
 	}
 
@@ -363,20 +510,42 @@ export class VoltBrowserView extends Disposable {
 
 		this.backButton = this.navButton(toolbar, Codicon.arrowLeft, localize('voltBrowser.back', "Back"), () => this.callGuest(() => this.webview?.goBack()));
 		this.forwardButton = this.navButton(toolbar, Codicon.arrowRight, localize('voltBrowser.forward', "Forward"), () => this.callGuest(() => this.webview?.goForward()));
-		this.navButton(toolbar, Codicon.refresh, localize('voltBrowser.reload', "Reload"), () => this.callGuest(() => this.webview?.reload()));
+		this.reloadButton = this.navButton(toolbar, Codicon.refresh, localize('voltBrowser.reload', "Reload"), () => {
+			if (this.loading) {
+				this.callGuest(() => this.webview?.stop?.());
+			} else {
+				this.callGuest(() => this.webview?.reload());
+			}
+		});
+		this.reloadButton.classList.add('reload');
+		append(this.reloadButton, $('span.volt-browser-spinner'));
+		this.starButton = this.navButton(toolbar, createAriaIcon(ARIA_ICONS.star), localize('voltBrowser.bookmark', "Bookmark This Page"), () => this.toggleBookmark());
+		this.starButton.classList.add('star');
 
-		this.urlInput = append(toolbar, $('input.volt-browser-url')) as HTMLInputElement;
+		this.urlWrap = append(toolbar, $('.volt-browser-url-wrap'));
+		this.urlInput = append(this.urlWrap, $('input.volt-browser-url')) as HTMLInputElement;
 		this.urlInput.type = 'text';
 		this.urlInput.spellcheck = false;
-		this.urlInput.placeholder = DEFAULT_BROWSER_URL;
+		this.urlInput.placeholder = localize('voltBrowser.urlPlaceholder', "Search or enter URL");
+		this.urlInput.setAttribute('aria-autocomplete', 'list');
+		this.urlDisplay = append(this.urlWrap, $('.volt-browser-url-display'));
+		this.urlDisplay.setAttribute('aria-hidden', 'true');
 
 		const actions = append(toolbar, $('.volt-browser-actions'));
 		this.designButton = this.actionButton(actions, 'design', localize('voltBrowser.design', "Design"), () => this.setDesignMode(!this.designMode));
 		setAgentTooltip(this.designButton, localize('voltBrowser.designMode', "Design Mode"), formatAgentTooltipShortcut({ meta: true, shift: true, key: 'D' }));
-		this.actionButton(actions, 'clear', localize('voltBrowser.clearSelection', "Clear selection"), () => this.clearSelection(true))
-			.appendChild(createMinusIcon());
+		this.responsiveButton = this.actionButton(actions, 'responsive', localize('voltBrowser.responsive', "Responsive Design Mode"), () => this.toggleResponsive());
+		this.responsiveButton.appendChild(createAriaIcon(ARIA_ICONS.smartphone));
+		this.devtoolsButton = this.actionButton(actions, 'devtools', localize('voltBrowser.devtools', "Toggle Developer Tools"), () => this.toggleDevTools());
+		this.devtoolsButton.appendChild(createAriaIcon(ARIA_ICONS.terminal));
 		this.moreButton = this.actionButton(actions, 'more', localize('voltBrowser.more', "More"), () => this.showMoreMenu());
 		this.moreButton.appendChild(createDotsIcon());
+		const floatButton = this.actionButton(actions, 'float', localize('voltBrowser.float', "Float Preview over Chat"), () => this.requestPresentation('floating'));
+		floatButton.appendChild(createAriaIcon(ARIA_ICONS.pictureInPicture));
+
+		this.bookmarkBar = append(this.container, $('.volt-browser-bookmarks.hidden'));
+		this.suggestEl = append(this.container, $('.volt-browser-suggest.hidden'));
+		this.suggestEl.setAttribute('role', 'listbox');
 
 		this.stage = append(this.container, $('.volt-browser-stage'));
 		this.errorEl = append(this.stage, $('.volt-browser-error.hidden'));
@@ -390,22 +559,24 @@ export class VoltBrowserView extends Disposable {
 		this.hintTextEl.textContent = localize('voltBrowser.designHint', "Click to select, drag to draw");
 		this.promptEl = append(this.overlay, $('.volt-browser-prompt.hidden'));
 		this.buildPrompt();
-		this.dock = this._register(this.instantiationService.createInstance(BrowserAgentDock));
-		append(this.container, this.dock.element);
-
-		this._register(addDisposableListener(this.urlInput, 'keydown', e => {
-			if (e.key === 'Enter') {
-				e.preventDefault();
-				this.navigate(this.urlInput.value);
-				return;
-			}
-			const event = new StandardKeyboardEvent(e);
-			if (event.equals(KeyMod.CtrlCmd | KeyCode.KeyL)) {
-				e.preventDefault();
-				e.stopPropagation();
-				void this.commandService.executeCommand(OPEN_AGENT_SIDE_PANEL_COMMAND_ID);
-			}
+		this.buildStartPage();
+		this.toastEl = append(this.stage, $('.volt-browser-toast.hidden'));
+		this.toastEl.setAttribute('role', 'status');
+		this.deviceMode = this._register(this.instantiationService.createInstance(BrowserDeviceMode, this.stage, {
+			page: () => this.webview,
+			onDidLayout: () => this.onViewportLayout(),
+			setUserAgent: userAgent => this.applyUserAgent(userAgent),
+			onDidDisable: () => this.syncResponsiveButton(),
 		}));
+		this.dock = this._register(this.instantiationService.createInstance(BrowserAgentDock));
+		this.dock.setChatResolver(() => this.ownerSession());
+		append(this.container, this.dock.element);
+		// The stage changes size without the view moving (bookmark bar, floating chrome): lay the page out again.
+		const stageObserver = new (getWindow(this.container).ResizeObserver)(() => this.layout());
+		stageObserver.observe(this.stage);
+		this._register({ dispose: () => stageObserver.disconnect() });
+
+		this.wireAddressBar();
 		this._register(addDisposableListener(this.overlay, 'pointerdown', e => this.onDesignPointerDown(e)));
 		this._register(addDisposableListener(this.overlay, 'pointermove', e => this.onDesignPointerMove(e)));
 		this._register(addDisposableListener(this.overlay, 'pointerup', e => this.onDesignPointerUp(e)));
@@ -442,12 +613,16 @@ export class VoltBrowserView extends Disposable {
 
 		this.syncNavButtons();
 		this.syncDesignChrome();
+		this.syncStar();
+		this.renderBookmarkBar();
 	}
 
-	private navButton(parent: HTMLElement, icon: typeof Codicon.arrowLeft, title: string, onClick: () => void): HTMLButtonElement {
+	private navButton(parent: HTMLElement, icon: ThemeIcon | HTMLElement, title: string, onClick: () => void): HTMLButtonElement {
 		const button = append(parent, $('button.volt-browser-nav')) as HTMLButtonElement;
+		button.type = 'button';
 		setAgentTooltip(button, title);
-		button.appendChild(renderIcon(icon));
+		// Elements have a string `id` too, so `ThemeIcon.isThemeIcon` cannot tell them apart.
+		button.appendChild(isHTMLElement(icon) ? icon : renderIcon(icon));
 		this._register(addDisposableListener(button, 'click', onClick));
 		return button;
 	}
@@ -463,6 +638,277 @@ export class VoltBrowserView extends Disposable {
 		}));
 		return button;
 	}
+
+	//#region Address bar
+
+	private wireAddressBar(): void {
+		// Suggestions open on a click or on typing; the tab taking focus (switching to it) only selects the address.
+		this._register(addDisposableListener(this.urlInput, 'focus', () => {
+			this.urlWrap.classList.add('editing');
+			this.syncAddressDisplay();
+			this.urlInput.select();
+		}));
+		this._register(addDisposableListener(this.urlInput, 'blur', () => {
+			this.urlWrap.classList.remove('editing');
+			this.hideSuggestions();
+			// Leaving the bar without going anywhere puts the page's address back.
+			this.urlInput.value = this.address;
+			this.urlInput.scrollLeft = 0;
+			this.syncAddressDisplay();
+		}));
+		// The first click selects the whole address, as browsers do; later clicks place the caret.
+		this._register(addDisposableListener(this.urlInput, 'mousedown', e => {
+			if (!this.editingAddress() && e.button === 0) {
+				e.preventDefault();
+				this.urlInput.focus();
+				this.showSuggestions(false);
+			}
+		}));
+		this._register(addDisposableListener(this.urlInput, 'input', () => this.showSuggestions(true)));
+		// Mouse-down on a suggestion would blur the bar before the click lands.
+		this._register(addDisposableListener(this.suggestEl, 'mousedown', e => e.preventDefault()));
+		this._register(addDisposableListener(this.urlInput, 'keydown', e => {
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				const picked = this.suggestions[this.suggestIndex];
+				const target = picked ? picked.url : this.urlInput.value;
+				this.hideSuggestions();
+				this.urlInput.blur();
+				this.navigate(target);
+				return;
+			}
+			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				if (!this.suggestions.length) {
+					return;
+				}
+				e.preventDefault();
+				const step = e.key === 'ArrowDown' ? 1 : -1;
+				const count = this.suggestions.length;
+				this.suggestIndex = this.suggestIndex < 0 && step < 0 ? count - 1 : (this.suggestIndex + step + count) % count;
+				this.renderSuggestions();
+				return;
+			}
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				e.stopPropagation();
+				if (!this.suggestEl.classList.contains('hidden')) {
+					this.hideSuggestions();
+					return;
+				}
+				this.urlInput.value = this.address;
+				this.urlInput.blur();
+				return;
+			}
+			const event = new StandardKeyboardEvent(e);
+			if (event.equals(KeyMod.CtrlCmd | KeyCode.KeyL)) {
+				e.preventDefault();
+				e.stopPropagation();
+				void this.commandService.executeCommand(OPEN_AGENT_SIDE_PANEL_COMMAND_ID);
+			}
+		}));
+	}
+
+	/** Shows `url` in the bar: the scheme dimmed, the rest bright, as Cursor draws it. */
+	private setAddress(url: string): void {
+		this.address = url ? displayBrowserUrl(url) : '';
+		if (!this.editingAddress()) {
+			this.urlInput.value = this.address;
+		}
+		this.syncAddressDisplay();
+	}
+
+	/**
+	 * The user is in the address field. Not `document.activeElement`: that stays on the field
+	 * while the whole window is in the background, and the field must show the page then.
+	 */
+	private editingAddress(): boolean {
+		return this.urlWrap.classList.contains('editing');
+	}
+
+	private syncAddressDisplay(): void {
+		const value = this.editingAddress() ? '' : this.address;
+		this.urlWrap.classList.toggle('formatted', !!value);
+		this.urlDisplay.replaceChildren();
+		if (!value) {
+			return;
+		}
+		const match = value.match(/^([a-z][a-z0-9+.-]*:\/\/)(.*)$/i);
+		append(this.urlDisplay, $('span.volt-browser-url-scheme')).textContent = match ? match[1] : '';
+		append(this.urlDisplay, $('span.volt-browser-url-rest')).textContent = match ? match[2] : value;
+	}
+
+	private showSuggestions(typed: boolean): void {
+		const query = this.urlInput.value.trim();
+		const searching = typed && !!query;
+		const pages: readonly IBrowserHistoryEntry[] = searching
+			? this.history.search(query, 6)
+			: this.history.search(this.address ? shortBrowserUrl(this.address) : '', this.address ? 1 : 6);
+		const rows: IBrowserSuggestion[] = pages.map(page => ({ url: page.url, title: page.title, detail: page.url, favicon: page.favicon }));
+		if (searching && normalizeBrowserUrl(query).startsWith('https://www.google.com/search?')) {
+			rows.unshift({
+				url: normalizeBrowserUrl(query),
+				title: query,
+				detail: localize('voltBrowser.searchGoogle', "Search Google"),
+				search: true,
+			});
+		}
+		this.suggestions = rows;
+		this.suggestIndex = searching && rows[0]?.search ? 0 : -1;
+		this.renderSuggestions();
+	}
+
+	private renderSuggestions(): void {
+		this.suggestEl.replaceChildren();
+		const open = this.suggestions.length > 0 && this.editingAddress();
+		this.suggestEl.classList.toggle('hidden', !open);
+		if (!open) {
+			return;
+		}
+		// Under the address field, as wide as it.
+		const bar = this.urlWrap.getBoundingClientRect();
+		const box = this.container.getBoundingClientRect();
+		this.suggestEl.style.left = `${Math.round(bar.left - box.left)}px`;
+		this.suggestEl.style.top = `${Math.round(bar.bottom - box.top + 6)}px`;
+		this.suggestEl.style.width = `${Math.round(Math.max(260, bar.width))}px`;
+		this.suggestions.forEach((suggestion, index) => {
+			const row = append(this.suggestEl, $('.volt-browser-suggest-row'));
+			row.setAttribute('role', 'option');
+			row.classList.toggle('active', index === this.suggestIndex);
+			row.setAttribute('aria-selected', String(index === this.suggestIndex));
+			row.appendChild(suggestion.search ? createAriaIcon(ARIA_ICONS.search, 'suggest-icon') : faviconElement(suggestion.favicon));
+			const text = append(row, $('.volt-browser-suggest-text'));
+			append(text, $('span.volt-browser-suggest-title')).textContent = suggestion.title;
+			append(text, $(`span.volt-browser-suggest-detail${suggestion.search ? '.search' : ''}`)).textContent = suggestion.detail;
+			this._register(addDisposableListener(row, 'click', () => {
+				this.hideSuggestions();
+				this.urlInput.blur();
+				this.navigate(suggestion.url);
+			}));
+		});
+	}
+
+	private hideSuggestions(): void {
+		this.suggestions = [];
+		this.suggestIndex = -1;
+		this.suggestEl.classList.add('hidden');
+		this.suggestEl.replaceChildren();
+	}
+
+	private syncLoading(loading: boolean): void {
+		this.loading = loading;
+		this.container.classList.toggle('loading', loading);
+		setAgentTooltip(this.reloadButton, loading ? localize('voltBrowser.stop', "Stop") : localize('voltBrowser.reload', "Reload"));
+	}
+
+	private syncStar(): void {
+		const url = this.input.url;
+		const remembered = isRememberedUrl(url);
+		const marked = remembered && this.history.isBookmarked(url);
+		this.starButton.disabled = !remembered;
+		this.starButton.classList.toggle('active', marked);
+		setAgentTooltip(this.starButton, marked ? localize('voltBrowser.unbookmark', "Remove Bookmark") : localize('voltBrowser.bookmark', "Bookmark This Page"));
+	}
+
+	private toggleBookmark(): void {
+		const url = this.input.url;
+		if (!isRememberedUrl(url)) {
+			return;
+		}
+		const added = this.history.toggleBookmark(url, this.input.getName(), this.input.favicon);
+		this.showToast(added ? localize('voltBrowser.bookmarked', "Bookmarked") : localize('voltBrowser.bookmarkRemoved', "Bookmark removed"));
+	}
+
+	private renderBookmarkBar(): void {
+		const show = this.history.showBookmarkBar;
+		this.bookmarkBar.classList.toggle('hidden', !show);
+		this.bookmarkBar.replaceChildren();
+		if (!show) {
+			return;
+		}
+		const bookmarks = this.history.bookmarks;
+		if (!bookmarks.length) {
+			append(this.bookmarkBar, $('span.volt-browser-bookmarks-empty')).textContent = localize('voltBrowser.bookmarksEmpty', "Bookmark pages with the star to keep them here");
+			return;
+		}
+		for (const bookmark of bookmarks) {
+			const chip = append(this.bookmarkBar, $('button.volt-browser-bookmark')) as HTMLButtonElement;
+			chip.type = 'button';
+			chip.appendChild(faviconElement(bookmark.favicon));
+			append(chip, $('span.volt-browser-bookmark-title')).textContent = bookmark.title;
+			setAgentTooltip(chip, bookmark.url);
+			this._register(addDisposableListener(chip, 'click', () => this.navigate(bookmark.url)));
+			this._register(addDisposableListener(chip, 'contextmenu', e => {
+				e.preventDefault();
+				this.contextMenuService.showContextMenu({
+					getAnchor: () => ({ x: e.clientX, y: e.clientY }),
+					getActions: () => [
+						toAction({ id: 'volt.browser.bookmark.open', label: localize('voltBrowser.open', "Open"), run: () => this.navigate(bookmark.url) }),
+						toAction({ id: 'volt.browser.bookmark.newTab', label: localize('voltBrowser.openNewTab', "Open in New Tab"), run: () => this.openInNewTab(bookmark.url) }),
+						new Separator(),
+						toAction({ id: 'volt.browser.bookmark.remove', label: localize('voltBrowser.removeBookmark', "Remove Bookmark"), run: () => this.history.removeBookmark(bookmark.url) }),
+					],
+				});
+			}));
+		}
+	}
+
+	//#endregion
+
+	//#region Start page
+
+	/** What a new tab shows instead of loading a site: a search field and the pages visited last. */
+	private buildStartPage(): void {
+		this.startPage = append(this.stage, $('.volt-browser-start.hidden'));
+		const column = append(this.startPage, $('.volt-browser-start-column'));
+		const field = append(column, $('.volt-browser-start-field'));
+		field.appendChild(createAriaIcon(ARIA_ICONS.search, 'start-search'));
+		this.startInput = append(field, $('input.volt-browser-start-input')) as HTMLInputElement;
+		this.startInput.type = 'text';
+		this.startInput.spellcheck = false;
+		this.startInput.placeholder = localize('voltBrowser.startPlaceholder', "Search or enter URL...");
+		this._register(addDisposableListener(this.startInput, 'keydown', e => {
+			if (e.key === 'Enter' && this.startInput.value.trim()) {
+				e.preventDefault();
+				const value = this.startInput.value;
+				this.startInput.value = '';
+				this.navigate(value);
+			}
+		}));
+		this.startRecents = append(column, $('.volt-browser-start-recents'));
+	}
+
+	private showStartPage(): void {
+		this.startPage.classList.remove('hidden');
+		this.container.classList.add('start-page');
+		this.renderStartRecents();
+		this.setAddress('');
+		this.syncStar();
+		this.syncNavButtons();
+	}
+
+	private hideStartPage(): void {
+		this.startPage.classList.add('hidden');
+		this.container.classList.remove('start-page');
+	}
+
+	private renderStartRecents(): void {
+		this.startRecents.replaceChildren();
+		const recents = this.history.recents(8);
+		if (!recents.length) {
+			return;
+		}
+		append(this.startRecents, $('.volt-browser-start-heading')).textContent = localize('voltBrowser.recents', "Recents");
+		for (const page of recents) {
+			const row = append(this.startRecents, $('button.volt-browser-start-row')) as HTMLButtonElement;
+			row.type = 'button';
+			row.appendChild(faviconElement(page.favicon));
+			append(row, $('span.volt-browser-start-url')).textContent = shortBrowserUrl(page.url);
+			setAgentTooltip(row, page.title);
+			this._register(addDisposableListener(row, 'click', () => this.navigate(page.url)));
+		}
+	}
+
+	//#endregion
 
 	private buildPrompt(): void {
 		this.composer = this._register(this.instantiationService.createInstance(BrowserAgentComposer, {
@@ -483,9 +929,9 @@ export class VoltBrowserView extends Disposable {
 		const webview = this.container.ownerDocument.createElement('webview') as IVoltWebview;
 		webview.className = 'volt-browser-frame';
 		webview.setAttribute('allowpopups', 'true');
-		webview.setAttribute('partition', 'persist:volt-browser');
+		webview.setAttribute('partition', VOLT_BROWSER_PARTITION);
 		webview.setAttribute('webpreferences', 'allowRunningInsecureContent, javascript=yes');
-		webview.setAttribute('useragent', BROWSER_USER_AGENT);
+		webview.setAttribute('useragent', this.userAgent);
 		webview.setAttribute('src', 'about:blank');
 
 		const on = (type: string, listener: (e: Event) => void) => {
@@ -495,6 +941,7 @@ export class VoltBrowserView extends Disposable {
 			const firstReady = !this.guestReady;
 			this.guestReady = true;
 			this.syncNavButtons();
+			this.applyPageSettings();
 			if (!firstReady) {
 				// Moving the editor (split, drag to another group) detaches the webview, and Electron
 				// restarts the guest from its `src` (about:blank). Load the tab's page again.
@@ -512,29 +959,99 @@ export class VoltBrowserView extends Disposable {
 		});
 		on('did-start-loading', () => {
 			this.guestIdle = false;
+			this.syncLoading(true);
 		});
-		on('did-navigate', e => this.syncFromGuest((e as Event & { url?: string }).url));
-		on('did-navigate-in-page', e => this.syncFromGuest((e as Event & { url?: string }).url));
+		on('did-navigate', e => {
+			this.consoleMessages.length = 0;
+			this.consoleSeen = 0;
+			const url = (e as Event & { url?: string }).url;
+			// A new document: its icon arrives with `page-favicon-updated`.
+			this.browserInput().setFavicon(undefined);
+			this.syncFromGuest(url);
+			if (url) {
+				this.history.visit(url);
+			}
+		});
+		on('console-message', e => {
+			const msg = e as Event & { level?: number; message?: string; sourceId?: string; line?: number };
+			const level = msg.level === 3 ? 'error' : msg.level === 2 ? 'warning' : msg.level === 0 ? 'verbose' : 'info';
+			this.consoleMessages.push({ level, message: String(msg.message ?? '').slice(0, 2000), source: msg.sourceId, line: msg.line });
+			if (this.consoleMessages.length > 300) {
+				this.consoleMessages.splice(0, this.consoleMessages.length - 300);
+				this.consoleSeen = Math.min(this.consoleSeen, this.consoleMessages.length);
+			}
+		});
+		on('did-navigate-in-page', e => {
+			const page = e as Event & { url?: string; isMainFrame?: boolean };
+			this.syncFromGuest(page.url);
+			if (page.url && page.isMainFrame !== false) {
+				this.history.visit(page.url, this.browserInput().getName());
+			}
+		});
 		on('page-title-updated', e => {
 			const title = (e as Event & { title?: string }).title;
 			if (title) {
 				this.browserInput()?.setTitle(title);
+				this.history.describe(this.browserInput().url, { title });
 			}
 		});
+		on('page-favicon-updated', e => {
+			const favicons = (e as Event & { favicons?: string[] }).favicons ?? [];
+			const favicon = favicons.find(icon => /^(https?:|data:image\/)/i.test(icon));
+			if (!favicon) {
+				return;
+			}
+			// Chromium also reports a guessed `/favicon.ico` that may not exist; only a loaded icon replaces the globe.
+			const page = this.browserInput().url;
+			const probe = new (getWindow(this.container).Image)();
+			probe.referrerPolicy = 'no-referrer';
+			probe.onload = () => {
+				if (this.browserInput().url === page && probe.naturalWidth > 0) {
+					this.browserInput().setFavicon(favicon);
+					this.history.describe(page, { favicon });
+				}
+			};
+			probe.src = favicon;
+		});
+		on('did-change-theme-color', () => void this.syncScreenColor());
+		on('context-menu', e => this.showPageContextMenu((e as Event & { params?: IPageContextParams }).params));
+		on('devtools-opened', () => this.syncDevTools(true));
+		on('devtools-closed', () => this.syncDevTools(false));
 		on('did-stop-loading', () => {
 			this.guestIdle = true;
+			this.syncLoading(false);
 			this.syncFromGuest();
+			void this.syncScreenColor();
 		});
 		on('did-fail-load', e => {
-			const fail = e as Event & { isMainFrame?: boolean; errorCode?: number; errorDescription?: string };
+			const fail = e as Event & { isMainFrame?: boolean; errorCode?: number; errorDescription?: string; validatedURL?: string };
 			if (fail.isMainFrame === false || fail.errorCode === -3) {
 				return;
 			}
+			this.loadFailed = true;
+			// The agent opens its preview as it starts the server, often before it listens
+			// (ERR_CONNECTION_REFUSED): keep trying the local address for a while.
+			const host = fail.validatedURL ? localServerHost(fail.validatedURL) : undefined;
+			if (fail.errorCode === CONNECTION_REFUSED && host && this.loadRetries < LOCAL_SERVER_RETRIES) {
+				this.loadRetries++;
+				const url = fail.validatedURL!;
+				this.showError(localize('voltBrowser.waitingForServer', "Waiting for {0} to start...", host));
+				this.loadRetry.value = disposableTimeout(() => this.loadGuest(url), LOCAL_SERVER_RETRY_MS);
+				return;
+			}
+			this.loadRetries = 0;
 			this.showError(fail.errorDescription || localize('voltBrowser.loadFailed', "This page could not be loaded."));
+			this.syncLoading(false);
 			this.syncNavButtons();
 		});
 		on('did-finish-load', () => {
 			this.guestIdle = true;
+			// Chromium finishes loading its own (blank) error page after a failure: keep the reason up.
+			if (this.loadFailed) {
+				this.loadFailed = false;
+				return;
+			}
+			this.loadRetries = 0;
 			this.hideError();
 		});
 		on('new-window', e => {
@@ -667,10 +1184,24 @@ export class VoltBrowserView extends Disposable {
 		if (input) {
 			input.url = url;
 		}
-		this.urlInput.value = displayBrowserUrl(url);
+		this.loadRetry.clear();
+		this.loadRetries = 0;
 		this.hideError();
 		this.closeDraft();
 		this.clearComments();
+		if (!url) {
+			// An empty address is the start page. A page already loaded makes way for it.
+			if (this.webview && this.guestReady) {
+				this.loadGuest('about:blank');
+			}
+			input.setFavicon(undefined);
+			input.setTitle('');
+			this.showStartPage();
+			return;
+		}
+		this.hideStartPage();
+		this.setAddress(url);
+		this.syncStar();
 		this.pendingUrl = url;
 		this.ensureWebview(url);
 		if (this.guestReady) {
@@ -697,7 +1228,8 @@ export class VoltBrowserView extends Disposable {
 				this.navigate(clean);
 				return;
 			}
-			this.urlInput.value = displayBrowserUrl(clean);
+			this.setAddress(clean);
+			this.hideStartPage();
 			const input = this.browserInput();
 			if (input) {
 				input.url = clean;
@@ -715,6 +1247,7 @@ export class VoltBrowserView extends Disposable {
 					input.setTitle(title || localize('voltBrowser.tab', "Browser"));
 				}
 			}
+			this.syncStar();
 		}
 		this.syncNavButtons();
 	}
@@ -781,32 +1314,365 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	private showMoreMenu(): void {
-		const url = this.urlInput.value || DEFAULT_BROWSER_URL;
-		this.contextMenuService.showContextMenu({
-			getAnchor: () => this.moreButton,
-			getActions: () => [
-				toAction({ id: 'volt.browser.reload', label: localize('voltBrowser.reload', "Reload"), run: () => this.callGuest(() => this.webview?.reload()) }),
-				toAction({
-					id: 'volt.browser.copyUrl',
-					label: localize('voltBrowser.copyUrl', "Copy URL"),
-					run: () => this.clipboardService.writeText(url),
-				}),
-				toAction({
-					id: 'volt.browser.openExternal',
-					label: localize('voltBrowser.openExternal', "Open in System Browser"),
-					run: () => this.openerService.open(URI.parse(url), { openExternal: true }),
-				}),
-				toAction({
-					id: 'volt.browser.new',
-					label: localize('voltBrowser.new', "New Browser"),
-					run: async () => {
-						const next = this.instantiationService.createInstance(VoltBrowserEditorInput, VoltBrowserEditorInput.getNewEditorUri());
-						await this.editorService.openEditor(next, { pinned: true }, this.editorGroupsService.mainPart.activeGroup);
-					},
-				}),
-			],
+		const url = this.input.url;
+		const hasPage = isRememberedUrl(url) && !!this.webview;
+		const appearance = this.history.appearance;
+		const choice = (id: BrowserAppearance, label: string) => ({
+			id,
+			label,
+			checked: appearance === id,
+			run: () => {
+				this.history.appearance = id;
+				void this.applyAppearance();
+			},
+		});
+		const entries: BrowserMenuEntry[] = [
+			{ kind: 'item', label: localize('voltBrowser.menu.screenshot', "Take Screenshot"), disabled: !hasPage, run: () => void this.takeScreenshot() },
+			{ kind: 'separator' },
+			{ kind: 'item', label: localize('voltBrowser.menu.hardReload', "Hard Reload"), disabled: !hasPage, run: () => this.callGuest(() => this.webview?.reloadIgnoringCache?.()) },
+			{ kind: 'item', label: localize('voltBrowser.menu.copyUrl', "Copy Current URL"), disabled: !url, run: () => void this.clipboardService.writeText(url) },
+			{ kind: 'item', label: localize('voltBrowser.menu.openExternal', "Open in System Browser"), disabled: !url, run: () => void this.openerService.open(URI.parse(url), { openExternal: true }) },
+			{ kind: 'item', label: localize('voltBrowser.menu.devtools', "Open DevTools"), disabled: !hasPage, run: () => this.openDevTools() },
+			{ kind: 'item', label: localize('voltBrowser.menu.window', "Open Separate Preview Window"), run: () => void this.openInWindow() },
+			{ kind: 'toggle', label: localize('voltBrowser.menu.deviceToolbar', "Show Device Toolbar"), checked: this.deviceMode.active, run: () => this.toggleResponsive() },
+			{
+				kind: 'submenu',
+				label: localize('voltBrowser.menu.appearance', "Appearance"),
+				choices: [
+					choice('system', localize('voltBrowser.menu.system', "System")),
+					choice('light', localize('voltBrowser.menu.light', "Light")),
+					choice('dark', localize('voltBrowser.menu.dark', "Dark")),
+				],
+			},
+			{
+				kind: 'zoom',
+				level: () => this.zoomFactor,
+				zoomIn: () => this.stepZoom(1),
+				zoomOut: () => this.stepZoom(-1),
+				reset: () => this.setZoom(1),
+			},
+			{ kind: 'separator' },
+			{ kind: 'toggle', label: localize('voltBrowser.menu.bookmarkBar', "Show Bookmark Bar"), checked: this.history.showBookmarkBar, run: show => { this.history.showBookmarkBar = show; } },
+			{ kind: 'separator' },
+			{ kind: 'header', label: localize('voltBrowser.menu.profile', "Profile: Default") },
+			{ kind: 'item', label: localize('voltBrowser.menu.clearHistory', "Clear Browsing History"), run: () => this.clearHistory() },
+			{ kind: 'item', label: localize('voltBrowser.menu.clearCookies', "Clear Cookies"), run: () => void this.clearData('cookies') },
+			{ kind: 'item', label: localize('voltBrowser.menu.clearCache', "Clear Cache"), run: () => void this.clearData('cache') },
+		];
+		showBrowserMenu(this.contextViewService, this.moreButton, entries);
+	}
+
+	//#region Page tools: DevTools, zoom, appearance, device mode, screenshots
+
+	private toggleResponsive(): void {
+		this.deviceMode.toggle();
+		this.syncResponsiveButton();
+	}
+
+	private syncResponsiveButton(): void {
+		const on = this.deviceMode.active;
+		this.responsiveButton.classList.toggle('active', on);
+		setAgentTooltip(this.responsiveButton, on ? localize('voltBrowser.responsiveExit', "Exit Responsive Design Mode") : localize('voltBrowser.responsive', "Responsive Design Mode"));
+	}
+
+	private onViewportLayout(): void {
+		this.syncResponsiveButton();
+		if (this.selection) {
+			this.positionPrompt();
+		}
+		for (const pin of this.comments) {
+			this.placeComment(pin);
+		}
+	}
+
+	/** Device presets send their own user agent; the page reloads so the site serves that version. */
+	private applyUserAgent(userAgent: string | undefined): void {
+		const next = userAgent ?? BROWSER_USER_AGENT;
+		if (next === this.userAgent) {
+			return;
+		}
+		this.userAgent = next;
+		const webview = this.webview;
+		if (!webview) {
+			return;
+		}
+		if (!this.guestReady) {
+			webview.setAttribute('useragent', next);
+			return;
+		}
+		this.callGuest(() => {
+			webview.setUserAgent?.(next);
+			if (isRememberedUrl(this.input.url)) {
+				webview.reload();
+			}
 		});
 	}
+
+	private toggleDevTools(): void {
+		if (this.devtoolsOpen) {
+			this.callGuest(() => this.webview?.closeDevTools?.());
+		} else {
+			this.openDevTools();
+		}
+	}
+
+	private openDevTools(): void {
+		if (!this.webview || !this.guestReady) {
+			this.showToast(localize('voltBrowser.devtoolsNoPage', "Open a page to inspect it"));
+			return;
+		}
+		this.callGuest(() => this.webview?.openDevTools?.());
+	}
+
+	private syncDevTools(open: boolean): void {
+		this.devtoolsOpen = open;
+		this.devtoolsButton.classList.toggle('active', open);
+		setAgentTooltip(this.devtoolsButton, open ? localize('voltBrowser.devtoolsClose', "Close Developer Tools") : localize('voltBrowser.devtools', "Toggle Developer Tools"));
+	}
+
+	/** Right-click in the page: link, image and text actions, and Inspect Element. */
+	private showPageContextMenu(params: IPageContextParams | undefined): void {
+		const webview = this.webview;
+		if (!webview || !params) {
+			return;
+		}
+		// Electron reports the spot in the window's coordinates; Inspect Element wants the page's.
+		const frame = webview.getBoundingClientRect();
+		const scale = this.deviceMode.scale || 1;
+		const anchor = { x: params.x, y: params.y };
+		const pageX = Math.round((params.x - frame.left) / scale);
+		const pageY = Math.round((params.y - frame.top) / scale);
+		const actions: IAction[] = [];
+		const group = (items: IAction[]) => {
+			if (!items.length) {
+				return;
+			}
+			if (actions.length) {
+				actions.push(new Separator());
+			}
+			actions.push(...items);
+		};
+		const link = params.linkURL;
+		if (link) {
+			group([
+				toAction({ id: 'volt.browser.link.open', label: localize('voltBrowser.ctx.openLink', "Open Link"), run: () => this.navigate(link) }),
+				toAction({ id: 'volt.browser.link.newTab', label: localize('voltBrowser.ctx.openLinkTab', "Open Link in New Tab"), run: () => this.openInNewTab(link) }),
+				toAction({ id: 'volt.browser.link.external', label: localize('voltBrowser.ctx.openLinkExternal', "Open Link in System Browser"), run: () => this.openerService.open(URI.parse(link), { openExternal: true }) }),
+				toAction({ id: 'volt.browser.link.copy', label: localize('voltBrowser.ctx.copyLink', "Copy Link Address"), run: () => this.clipboardService.writeText(link) }),
+			]);
+		}
+		const image = params.mediaType === 'image' ? params.srcURL : undefined;
+		if (image) {
+			group([
+				toAction({ id: 'volt.browser.image.newTab', label: localize('voltBrowser.ctx.openImage', "Open Image in New Tab"), run: () => this.openInNewTab(image) }),
+				toAction({ id: 'volt.browser.image.copy', label: localize('voltBrowser.ctx.copyImage', "Copy Image Address"), run: () => this.clipboardService.writeText(image) }),
+			]);
+		}
+		const flags = params.editFlags ?? {};
+		const selection = params.selectionText?.trim();
+		if (params.isEditable) {
+			group([
+				toAction({ id: 'volt.browser.cut', label: localize('voltBrowser.ctx.cut', "Cut"), enabled: flags.canCut !== false, run: () => this.callGuest(() => this.webview?.cut?.()) }),
+				toAction({ id: 'volt.browser.copy', label: localize('voltBrowser.ctx.copy', "Copy"), enabled: flags.canCopy !== false, run: () => this.callGuest(() => this.webview?.copy?.()) }),
+				toAction({ id: 'volt.browser.paste', label: localize('voltBrowser.ctx.paste', "Paste"), enabled: flags.canPaste !== false, run: () => this.callGuest(() => this.webview?.paste?.()) }),
+				toAction({ id: 'volt.browser.selectAll', label: localize('voltBrowser.ctx.selectAll', "Select All"), run: () => this.callGuest(() => this.webview?.selectAll?.()) }),
+			]);
+		} else if (selection) {
+			const short = selection.length > 32 ? `${selection.slice(0, 31)}…` : selection;
+			group([
+				toAction({ id: 'volt.browser.copy', label: localize('voltBrowser.ctx.copy', "Copy"), run: () => this.callGuest(() => this.webview?.copy?.()) }),
+				toAction({ id: 'volt.browser.search', label: localize('voltBrowser.ctx.search', "Search Google for \u201c{0}\u201d", short), run: () => this.openInNewTab(normalizeBrowserUrl(`${selection} `)) }),
+			]);
+		}
+		if (!link && !image && !selection && !params.isEditable) {
+			let canBack = false;
+			let canForward = false;
+			try {
+				canBack = !!webview.canGoBack?.();
+				canForward = !!webview.canGoForward?.();
+			} catch {
+				// The page is still attaching.
+			}
+			group([
+				toAction({ id: 'volt.browser.back', label: localize('voltBrowser.back', "Back"), enabled: canBack, run: () => this.callGuest(() => this.webview?.goBack()) }),
+				toAction({ id: 'volt.browser.forward', label: localize('voltBrowser.forward', "Forward"), enabled: canForward, run: () => this.callGuest(() => this.webview?.goForward()) }),
+				toAction({ id: 'volt.browser.reload', label: localize('voltBrowser.reload', "Reload"), run: () => this.callGuest(() => this.webview?.reload()) }),
+			]);
+		}
+		group([
+			toAction({ id: 'volt.browser.inspect', label: localize('voltBrowser.ctx.inspect', "Inspect Element"), run: () => this.callGuest(() => this.webview?.inspectElement?.(pageX, pageY)) }),
+		]);
+		this.contextMenuService.showContextMenu({ getAnchor: () => anchor, getActions: () => actions });
+	}
+
+	/** A new browser tab beside this one, in the same group. */
+	private openInNewTab(url: string): void {
+		const group = this.editorGroupsService.groups.find(candidate => candidate.contains(this.input)) ?? this.editorGroupsService.activeGroup;
+		const next = this.instantiationService.createInstance(VoltBrowserEditorInput, VoltBrowserEditorInput.getNewEditorUri());
+		next.url = normalizeBrowserUrl(url);
+		try {
+			next.setTitle(new URL(next.url).hostname);
+		} catch {
+			// keeps "Browser"
+		}
+		void group.openEditor(next, { pinned: true });
+	}
+
+	/** Moves this tab into its own window. The page reloads once there. */
+	private async openInWindow(): Promise<void> {
+		const source = this.editorGroupsService.groups.find(candidate => candidate.contains(this.input));
+		const part = await this.editorGroupsService.createAuxiliaryEditorPart();
+		if (source) {
+			source.moveEditor(this.input, part.activeGroup);
+		} else {
+			await part.activeGroup.openEditor(this.input, { pinned: true });
+		}
+	}
+
+	private stepZoom(direction: 1 | -1): void {
+		const current = this.zoomFactor;
+		const next = direction > 0
+			? ZOOM_LEVELS.find(level => level > current + 0.001) ?? ZOOM_LEVELS[ZOOM_LEVELS.length - 1]
+			: [...ZOOM_LEVELS].reverse().find(level => level < current - 0.001) ?? ZOOM_LEVELS[0];
+		this.setZoom(next);
+	}
+
+	private setZoom(factor: number): void {
+		this.zoomFactor = factor;
+		this.callGuest(() => this.webview?.setZoomFactor?.(factor));
+	}
+
+	/** Zoom and appearance are the page's own; a new document starts without them. */
+	private applyPageSettings(): void {
+		if (this.zoomFactor !== 1) {
+			this.callGuest(() => this.webview?.setZoomFactor?.(this.zoomFactor));
+		}
+		void this.applyAppearance();
+	}
+
+	private async applyAppearance(): Promise<void> {
+		const webview = this.webview;
+		if (!webview || !this.guestReady) {
+			return;
+		}
+		const scheme = this.history.appearance;
+		let id: number | undefined;
+		try {
+			id = webview.getWebContentsId?.();
+		} catch {
+			id = undefined;
+		}
+		const service = this.browserService();
+		if (id !== undefined && service) {
+			try {
+				if (await service.setColorScheme(id, scheme)) {
+					return;
+				}
+			} catch {
+				// An app started before this feature has no handler; the page hint below still applies.
+			}
+		}
+		// Without the DevTools protocol only the page's own controls and scrollbars follow.
+		await this.runGuest(`document.documentElement.style.colorScheme = ${JSON.stringify(scheme === 'system' ? '' : scheme)}`);
+	}
+
+	private browserService(): IVoltBrowserService | undefined {
+		try {
+			return this.instantiationService.invokeFunction(accessor => accessor.get(IVoltBrowserService));
+		} catch {
+			return undefined;
+		}
+	}
+
+	private clearHistory(): void {
+		this.history.clear();
+		this.showToast(localize('voltBrowser.historyCleared', "Browsing history cleared"));
+	}
+
+	private async clearData(kind: 'cookies' | 'cache'): Promise<void> {
+		const service = this.browserService();
+		try {
+			if (!service) {
+				throw new Error('unavailable');
+			}
+			await service.clearData(kind);
+			if (kind === 'cache') {
+				this.callGuest(() => this.webview?.reloadIgnoringCache?.());
+			}
+			this.showToast(kind === 'cookies' ? localize('voltBrowser.cookiesCleared', "Cookies cleared") : localize('voltBrowser.cacheCleared', "Cache cleared"));
+		} catch {
+			this.showToast(localize('voltBrowser.clearNeedsRestart', "Restart Volt to clear browser data"));
+		}
+	}
+
+	private async takeScreenshot(): Promise<void> {
+		const image = await this.captureSnapshot();
+		if (!image) {
+			this.showToast(localize('voltBrowser.screenshotFailed', "Could not capture the page"));
+			return;
+		}
+		try {
+			const blob = await (await fetch(image)).blob();
+			const win = getWindow(this.container) as Window & typeof globalThis;
+			await win.navigator.clipboard.write([new win.ClipboardItem({ [blob.type || 'image/png']: blob })]);
+			this.showToast(localize('voltBrowser.screenshotCopied', "Screenshot copied to clipboard"));
+		} catch {
+			this.showToast(localize('voltBrowser.screenshotCopyFailed', "Could not copy the screenshot"));
+		}
+	}
+
+	/** The page's top color, for a device frame's status bar. */
+	private async syncScreenColor(): Promise<void> {
+		if (!this.deviceMode.device) {
+			return;
+		}
+		const colors = await this.runGuest<{ top?: string; bottom?: string }>(SCREEN_COLOR_SCRIPT);
+		if (colors?.top) {
+			this.deviceMode.setScreenColor(colors.top, colors.bottom);
+		}
+	}
+
+	private showToast(message: string): void {
+		const win = getWindow(this.container);
+		this.toastEl.textContent = message;
+		this.toastEl.classList.remove('hidden');
+		if (this.toastHandle !== undefined) {
+			win.clearTimeout(this.toastHandle);
+		}
+		this.toastHandle = win.setTimeout(() => {
+			this.toastHandle = undefined;
+			this.toastEl.classList.add('hidden');
+		}, 1800);
+	}
+
+	//#endregion
+
+	//#region Presentation in the agent window
+
+	/** Asks the tools area holding this tab to float it over the chat, span the window, or dock it again. */
+	private requestPresentation(mode: BrowserPresentation): void {
+		this.element.dispatchEvent(new CustomEvent(BROWSER_PRESENT_EVENT, { bubbles: true, detail: { mode } }));
+	}
+
+	private setPresentation(mode: BrowserPresentation | undefined): void {
+		if (this.presentation === mode) {
+			return;
+		}
+		this.presentation = mode;
+		this.container.classList.toggle('presentation-floating', mode === 'floating');
+		this.container.classList.toggle('presentation-fullscreen', mode === 'fullscreen');
+		// The dock is the chat's composer only across the window; elsewhere the chat is right there.
+		this.dock?.setChatMode(mode === 'fullscreen');
+		this.hideSuggestions();
+		this.layout();
+	}
+
+	/** The chat whose tools area holds this tab, if any. */
+	private ownerSession(): string | undefined {
+		return this.element.closest<HTMLElement>('.volt-agent-tools-part')?.dataset.sessionId;
+	}
+
+	//#endregion
 
 	private onDesignPointerDown(e: PointerEvent): void {
 		if (!this.designMode || this.eventOnPrompt(e)) {
@@ -1322,7 +2188,204 @@ export class VoltBrowserView extends Disposable {
 		box.classList.remove('hidden');
 	}
 
+	//#region Agent automation (the `browser_*` host tools)
+
+	/** Waits for the page to attach and finish loading. False when it never became ready (or the wait was cancelled). */
+	async automationReady(timeoutMs = 15000, token: CancellationToken = CancellationToken.None): Promise<boolean> {
+		const started = Date.now();
+		while (!this.guestReady || !this.webview || !this.guestIdle) {
+			if (token.isCancellationRequested) {
+				return false;
+			}
+			if (Date.now() - started >= timeoutMs) {
+				return !!this.webview && this.guestReady;
+			}
+			await timeout(50);
+		}
+		return true;
+	}
+
+	/** After an input: give the page a beat to react, and if that started a navigation, wait it out. */
+	async settle(timeoutMs = 10000, token: CancellationToken = CancellationToken.None): Promise<void> {
+		await timeout(60);
+		let loading = false;
+		try {
+			loading = !!this.webview?.isLoading?.();
+		} catch {
+			loading = false;
+		}
+		if (loading || !this.guestIdle) {
+			await this.automationReady(timeoutMs, token);
+		}
+		// One frame for the page's own rAF-driven updates (animations, React commits).
+		await timeout(40);
+	}
+
+	async navigateForAgent(url: string, timeoutMs = 20000, token: CancellationToken = CancellationToken.None): Promise<boolean> {
+		this.navigate(url);
+		this.guestIdle = false;
+		await timeout(30);
+		return this.automationReady(timeoutMs, token);
+	}
+
+	/** `reload-fresh` skips the HTTP cache, so a page re-renders from files the agent just edited. */
+	async historyForAgent(action: 'back' | 'reload' | 'reload-fresh', token: CancellationToken = CancellationToken.None): Promise<void> {
+		this.guestIdle = false;
+		this.callGuest(() => {
+			const webview = this.webview;
+			if (action === 'back') {
+				webview?.goBack();
+			} else if (action === 'reload-fresh' && typeof webview?.reloadIgnoringCache === 'function') {
+				webview.reloadIgnoringCache();
+			} else {
+				webview?.reload();
+			}
+		});
+		await timeout(30);
+		await this.automationReady(15000, token);
+	}
+
+	/** The page the tab shows (what the address bar says). */
+	get pageUrl(): string {
+		return this.input.url;
+	}
+
+	async runScript<T>(code: string): Promise<T | undefined> {
+		const webview = this.webview;
+		if (!webview?.executeJavaScript || !this.guestReady) {
+			return undefined;
+		}
+		return await webview.executeJavaScript(code) as T;
+	}
+
+	canSendInput(): boolean {
+		return typeof this.webview?.sendInputEvent === 'function';
+	}
+
+	sendInput(event: IVoltInputEvent): void {
+		this.callGuest(() => this.webview?.sendInputEvent?.(event));
+	}
+
+	async insertText(text: string): Promise<boolean> {
+		const webview = this.webview;
+		if (!webview?.insertText || !this.guestReady) {
+			return false;
+		}
+		await webview.insertText(text);
+		return true;
+	}
+
+	/** Keyboard input goes to the focused web contents, so the page takes focus while the agent types. */
+	focusPage(): void {
+		this.callGuest(() => this.webview?.focus());
+	}
+
+	/** A width x height viewport centered in the stage (responsive design mode), to test layouts; undefined fills the pane. */
+	setViewport(size: { width: number; height: number } | undefined): void {
+		if (size) {
+			this.deviceMode.enable(size);
+		} else {
+			this.deviceMode.disable();
+		}
+		this.syncResponsiveButton();
+	}
+
+	getViewport(): { width: number; height: number } | undefined {
+		return this.deviceMode.size;
+	}
+
+	/** Every console line since the page loaded, without marking any as seen. */
+	peekConsole(): readonly IVoltConsoleMessage[] {
+		return this.consoleMessages.slice();
+	}
+
+	/** Console lines since the last call (`sinceLast`) or since the page loaded. */
+	takeConsole(sinceLast: boolean): IVoltConsoleMessage[] {
+		const from = sinceLast ? this.consoleSeen : 0;
+		this.consoleSeen = this.consoleMessages.length;
+		return this.consoleMessages.slice(from);
+	}
+
+	/** Where a page point sits in the stage, for the click ripple. */
+	private pagePointInStage(x: number, y: number): { x: number; y: number } {
+		const frame = this.webview?.getBoundingClientRect();
+		const stage = this.stage.getBoundingClientRect();
+		const scale = this.deviceMode.scale;
+		return { x: (frame ? frame.left - stage.left : 0) + x * scale, y: (frame ? frame.top - stage.top : 0) + y * scale };
+	}
+
+	/** A short ring where the agent clicked, so the user can follow the test. */
+	showAgentClick(x: number, y: number): void {
+		if (!this.stage) {
+			return;
+		}
+		const point = this.pagePointInStage(x, y);
+		const ring = append(this.stage, $('.volt-browser-agent-click'));
+		ring.style.left = `${point.x}px`;
+		ring.style.top = `${point.y}px`;
+		const win = getWindow(this.stage);
+		win.setTimeout(() => ring.remove(), 600);
+	}
+
+	get agentLocked(): boolean {
+		return !!this.agentLock;
+	}
+
+	/**
+	 * While the agent drives the page the view is locked: a clear layer over the page takes the
+	 * pointer, and a "Take control" pill follows it. Clicking the pill hands the page back.
+	 */
+	setAgentLock(locked: boolean): void {
+		if (locked === !!this.agentLock || !this.stage) {
+			return;
+		}
+		this.container.classList.toggle('agent-locked', locked);
+		if (!locked) {
+			this.agentLock?.remove();
+			this.agentLock = undefined;
+			return;
+		}
+		const lock = append(this.stage, $('.volt-browser-agent-lock'));
+		lock.setAttribute('aria-label', localize('voltBrowser.agentLocked', "The agent is using this browser"));
+		const pill = append(lock, $('button.volt-browser-take-control')) as HTMLButtonElement;
+		pill.type = 'button';
+		pill.appendChild(createPointerIcon());
+		append(pill, $('span')).textContent = localize('voltBrowser.takeControl', "Take control");
+		const place = (e: PointerEvent) => {
+			const box = lock.getBoundingClientRect();
+			const width = pill.offsetWidth || 120;
+			const height = pill.offsetHeight || 36;
+			const left = Math.min(Math.max(8, e.clientX - box.left - width / 2), box.width - width - 8);
+			const top = Math.min(Math.max(8, e.clientY - box.top - height / 2), box.height - height - 8);
+			pill.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+			lock.classList.add('hovering');
+		};
+		const store = new DisposableStore();
+		store.add(addDisposableListener(lock, 'pointermove', place));
+		store.add(addDisposableListener(lock, 'pointerenter', place));
+		store.add(addDisposableListener(lock, 'pointerleave', () => lock.classList.remove('hovering')));
+		store.add(addDisposableListener(lock, 'pointerdown', e => {
+			e.preventDefault();
+			e.stopPropagation();
+		}));
+		store.add(addDisposableListener(pill, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.setAgentLock(false);
+			this._onDidTakeControl.fire();
+		}));
+		const remove = lock.remove.bind(lock);
+		lock.remove = () => {
+			store.dispose();
+			remove();
+		};
+		this.agentLock = lock;
+	}
+
+	//#endregion
+
 	private layout(): void {
+		this.deviceMode?.layout();
 		if (this.selection) {
 			this.positionPrompt();
 		}
@@ -1532,9 +2595,27 @@ const DESIGN_SELECTOR_PATHS = [
 
 /** Official Aria / Lucide path data. */
 const ARIA_ICONS = {
-	squareMinus: {
-		rects: [{ x: '3', y: '3', width: '18', height: '18', rx: '2' }],
-		paths: ['M8 12h8'],
+	star: {
+		paths: ['M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z'],
+	},
+	smartphone: {
+		rects: [{ x: '6', y: '2', width: '12', height: '20', rx: '2.5' }],
+		paths: ['M11 18.5h2'],
+	},
+	terminal: {
+		paths: ['m4 17 6-6-6-6', 'M12 19h8'],
+	},
+	pictureInPicture: {
+		paths: ['M21 9V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4'],
+		rects: [{ x: '12', y: '13', width: '10', height: '7', rx: '1.5' }],
+	},
+	search: {
+		circles: [{ cx: '11', cy: '11', r: '7.5' }],
+		paths: ['m20.5 20.5-4.2-4.2'],
+	},
+	globe: {
+		circles: [{ cx: '12', cy: '12', r: '9.5' }],
+		paths: ['M12 2.5a14 14 0 0 0 0 19 14 14 0 0 0 0-19', 'M2.5 12h19'],
 	},
 	ellipsis: {
 		circles: [
@@ -1622,6 +2703,37 @@ function createDesignSelectorIcon(): HTMLElement {
 	return el;
 }
 
-function createMinusIcon(): HTMLElement { return createAriaIcon(ARIA_ICONS.squareMinus); }
+function createPointerIcon(): HTMLElement {
+	const el = $('span.volt-browser-take-control-icon');
+	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('viewBox', '0 0 16 16');
+	svg.setAttribute('width', '14');
+	svg.setAttribute('height', '14');
+	svg.setAttribute('aria-hidden', 'true');
+	const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+	path.setAttribute('d', 'M3.5 2.5l9 4.2-3.9 1.2-1.3 3.9z');
+	path.setAttribute('fill', 'none');
+	path.setAttribute('stroke', 'currentColor');
+	path.setAttribute('stroke-width', '1.3');
+	path.setAttribute('stroke-linejoin', 'round');
+	svg.appendChild(path);
+	el.appendChild(svg);
+	return el;
+}
+
 function createDotsIcon(): HTMLElement { return createAriaIcon(ARIA_ICONS.ellipsis); }
 function createCloseIcon(): HTMLElement { return createAriaIcon(ARIA_ICONS.x, 'close'); }
+
+/** A page's icon, or a globe while it has none (or it fails to load). */
+function faviconElement(favicon: string | undefined): HTMLElement {
+	if (!favicon) {
+		return createAriaIcon(ARIA_ICONS.globe, 'favicon');
+	}
+	const holder = $('span.volt-browser-icon.favicon');
+	const image = append(holder, $('img')) as HTMLImageElement;
+	image.alt = '';
+	image.referrerPolicy = 'no-referrer';
+	image.src = favicon;
+	image.addEventListener('error', () => holder.replaceWith(createAriaIcon(ARIA_ICONS.globe, 'favicon')), { once: true });
+	return holder;
+}

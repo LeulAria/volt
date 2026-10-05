@@ -6,6 +6,7 @@
 import type { ToolResultView } from '../deepseek/protocol.js';
 import type { CapabilityGroup } from '../harness/lanes.js';
 import type { ToolKind } from '../harness/workLog.js';
+import type { VoltMode } from '../modes.js';
 
 export interface IToolSchema {
 	readonly name: string;
@@ -41,6 +42,10 @@ export interface IToolContext {
 	readonly emit?: (event: { type: string;[key: string]: unknown }) => void;
 	/** The call being run, so a long tool can report progress against its own card. */
 	readonly callId?: string;
+	/** The Volt chat the run belongs to; chat-scoped tools (the in-app browser) need it. */
+	readonly sessionId?: string;
+	/** The run's mode, for tools that act differently in read-only modes. */
+	readonly mode?: VoltMode;
 }
 
 export interface IVoltTool {

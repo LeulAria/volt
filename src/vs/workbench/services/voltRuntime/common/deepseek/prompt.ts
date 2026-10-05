@@ -21,13 +21,16 @@ export interface IDeepseekToolRef {
 /**
  * Mode policy is the only filter. Question-shaped text still sees web, read, and (in agent mode) shell.
  * `request_capabilities` is omitted: the model is not asked to beg for tools. Git tools are
- * read-only, so read-only modes keep them.
+ * read-only, so read-only modes keep them. `create_plan` exists only in Plan mode, like Cursor's.
  */
 export function selectDeepseekTools<T extends IDeepseekToolRef>(tools: readonly T[], mode: VoltMode): T[] {
 	const policy = modePolicy(mode);
 	return tools.filter(tool => {
 		if (tool.name === 'request_capabilities') {
 			return false;
+		}
+		if (tool.name === 'create_plan') {
+			return mode === 'plan';
 		}
 		if (tool.group === 'meta') {
 			return true;
@@ -93,8 +96,12 @@ export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 	}
 	work.push(
 		'- When something fails, read the error and fix the cause. Do not repeat an identical call. If you are blocked, say exactly what is blocking you.',
-		'- Ask only when a missing decision would change the result; otherwise choose sensibly and say what you chose.',
+		`- Ask only when a missing decision would change the result${has('ask_question') ? ' (use ask_question with short options)' : ''}; otherwise choose sensibly and say what you chose.`,
 	);
+	if (policy.allowWrites) {
+		// Benchmark: given contradictory tests, agents made `isEven` sniff the calling test.
+		work.push('- Make tests pass by fixing the code. Never detect the test, caller, stack, or environment, special-case test inputs, weaken or delete assertions, or edit tests you were told not to touch. If tests or requirements contradict each other, stop and explain.');
+	}
 	if (has('web_search')) {
 		work.push('- When a fact is current or outside the workspace (versions, APIs, error messages, prices), look it up before you answer.');
 	}
@@ -117,7 +124,7 @@ export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 		'# How you answer',
 		'- Lead with the answer. Be concise and direct; no preamble, no narration of each tool call.',
 		'- Use Markdown. Put file paths, commands, and identifiers in backticks; put code in fenced blocks with a language.',
-		'- Name the files you actually used or changed. After a change, end with a short summary of what changed and how you verified it.',
+		'- Name the files you actually used or changed. After a change, end with a short summary of what changed and how you verified it; say plainly what you did not verify or could not do.',
 		'- Do not add a plan the user did not ask to see.',
 	].join('\n'));
 
@@ -127,7 +134,9 @@ export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 			mode.push('Read-only: answer the question. Do not modify files or run commands.');
 			break;
 		case 'plan':
-			mode.push('Read-only: investigate, then give a concrete implementation plan (files, steps, risks, how to verify). Do not modify files.');
+			mode.push(has('create_plan')
+				? 'Read-only: investigate, then call create_plan with a concrete plan (files, steps, risks, how to verify) and stop; the user reviews it and presses Build. Do not modify files.'
+				: 'Read-only: investigate, then give a concrete implementation plan (files, steps, risks, how to verify). Do not modify files.');
 			break;
 		case 'debug':
 			mode.push('Reproduce the problem, find the root cause with evidence, fix it, and verify the fix.');

@@ -292,8 +292,8 @@ function renderFlyout(
 			});
 			return;
 		case 'show': {
-			const first: AgentHomeShowField[] = ['updated', 'environment', 'pr'];
-			const second: AgentHomeShowField[] = ['workspace', 'branch', 'machine'];
+			const first: AgentHomeShowField[] = ['status', 'updated', 'environment', 'pr'];
+			const second: AgentHomeShowField[] = ['workspace', 'branch', 'model', 'machine'];
 			for (const field of first) {
 				appendCheckRow(flyout, {
 					label: showLabel(field),
@@ -516,12 +516,14 @@ function prOptions(): { readonly id: AgentHomePrFilter; readonly label: string; 
 
 function showLabel(field: AgentHomeShowField): string {
 	switch (field) {
+		case 'status': return localize('voltAgent.home.filter.statusLine', "Status");
 		case 'updated': return localize('voltAgent.home.filter.updated', "Updated");
 		case 'environment': return localize('voltAgent.home.filter.environment', "Environment");
 		case 'pr': return localize('voltAgent.home.filter.pr', "PR");
 		case 'workspace': return localize('voltAgent.home.filter.workspace', "Workspace");
 		case 'branch': return localize('voltAgent.home.filter.branch', "Branch");
 		case 'machine': return localize('voltAgent.home.filter.machine', "Machine");
+		case 'model': return localize('voltAgent.home.filter.model', "Model");
 		default: {
 			const unexpected: never = field;
 			return unexpected;
@@ -531,12 +533,14 @@ function showLabel(field: AgentHomeShowField): string {
 
 function showIcon(field: AgentHomeShowField): ThemeIcon {
 	switch (field) {
+		case 'status': return Codicon.pulse;
 		case 'updated': return Codicon.clock;
 		case 'environment': return Codicon.cloud;
-		case 'pr': return Codicon.gitMerge;
+		case 'pr': return Codicon.gitPullRequest;
 		case 'workspace': return Codicon.folder;
 		case 'branch': return Codicon.gitBranch;
 		case 'machine': return Codicon.deviceDesktop;
+		case 'model': return Codicon.sparkle;
 		default: {
 			const unexpected: never = field;
 			return unexpected;

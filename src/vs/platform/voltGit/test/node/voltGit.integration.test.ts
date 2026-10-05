@@ -5,8 +5,8 @@
 
 import assert from 'assert';
 import { spawnSync } from 'child_process';
-import { mkdtemp, readFile, rm, unlink, writeFile, rename, mkdir } from 'fs/promises';
-import { tmpdir } from 'os';
+import { mkdtemp, readFile, rm, unlink, writeFile, rename, mkdir, stat } from 'fs/promises';
+import { homedir, tmpdir } from 'os';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
@@ -215,6 +215,211 @@ suite('VoltGitService on real repos', function () {
 	});
 });
 
+suite('VoltGitService checkpoints: limits, restore, private repos', function () {
+
+	this.timeout(30_000);
+	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
+
+	let root: string;
+	let repo: string;
+	let privateIndex: string;
+	let service: VoltGitService;
+	let n = 0;
+
+	setup(async () => {
+		root = await mkdtemp(join(tmpdir(), 'volt-ckpt-'));
+		repo = join(root, 'repo');
+		await mkdir(repo);
+		privateIndex = join(root, 'index', 'snap.idx');
+		service = disposables.add(new VoltGitService(async () => process.env, undefined, { shadowRoot: join(root, 'shadows') }));
+		git(repo, 'init', '-q', '-b', 'main');
+		git(repo, 'config', 'user.email', 'test@volt.local');
+		git(repo, 'config', 'user.name', 'Volt Test');
+		git(repo, 'config', 'commit.gpgsign', 'false');
+		await writeFile(join(repo, 'a.txt'), 'one\ntwo\nthree\nfour\nfive\nsix\n');
+		await writeFile(join(repo, 'b.txt'), 'bee\n');
+		await writeFile(join(repo, '.gitignore'), 'ignored/\n');
+		git(repo, 'add', '-A');
+		git(repo, 'commit', '-q', '-m', 'init');
+	});
+
+	teardown(async () => {
+		await rm(root, { recursive: true, force: true });
+	});
+
+	function snap(options: { workTree?: string; repoRoot?: string; indexFile?: string; maxFileBytes?: number; maxNewFiles?: number } = {}) {
+		return service.snapshot({ repoRoot: options.repoRoot ?? repo, workTree: options.workTree, indexFile: options.indexFile ?? privateIndex, ref: `${VOLT_SNAPSHOT_REF_PREFIX}t/${++n}`, message: `snap ${n}`, maxFileBytes: options.maxFileBytes, maxNewFiles: options.maxNewFiles });
+	}
+
+	test('restores modified, created, deleted and shell-changed files, leaving ignored files and the user index alone', async () => {
+		await mkdir(join(repo, 'ignored'));
+		await writeFile(join(repo, 'ignored', 'cache.txt'), 'before\n');
+		await writeFile(join(repo, 'untracked.txt'), 'mine\n');
+		const pre = await snap();
+		const indexBefore = await readFile(join(repo, '.git', 'index'));
+
+		// The agent edits, creates (in a new folder), deletes; a "shell" command rewrites another file.
+		await writeFile(join(repo, 'a.txt'), 'one\ntwo\nTHREE\nfour\nfive\nsix\n');
+		await mkdir(join(repo, 'src', 'deep'), { recursive: true });
+		await writeFile(join(repo, 'src', 'deep', 'new.txt'), 'fresh\n');
+		await unlink(join(repo, 'b.txt'));
+		await writeFile(join(repo, 'untracked.txt'), 'sed rewrote this\n');
+		await writeFile(join(repo, 'ignored', 'cache.txt'), 'after\n');
+		const post = await snap();
+
+		const preview = await service.restore({ repoRoot: repo, steps: [{ before: pre.commit, after: post.commit }], dryRun: true });
+		assert.strictEqual(preview.applied, false);
+		assert.deepStrictEqual(preview.entries.map(e => [e.path, e.action, e.outcome]).sort(), [
+			['a.txt', 'write', 'restored'],
+			['b.txt', 'create', 'restored'],
+			['src/deep/new.txt', 'delete', 'restored'],
+			['untracked.txt', 'write', 'restored'],
+		]);
+		assert.strictEqual(await readFile(join(repo, 'a.txt'), 'utf8'), 'one\ntwo\nTHREE\nfour\nfive\nsix\n', 'a dry run writes nothing');
+
+		const result = await service.restore({ repoRoot: repo, steps: [{ before: pre.commit, after: post.commit }] });
+		assert.strictEqual(result.applied, true);
+		assert.deepStrictEqual(result.conflicts, []);
+		assert.strictEqual(await readFile(join(repo, 'a.txt'), 'utf8'), 'one\ntwo\nthree\nfour\nfive\nsix\n');
+		assert.strictEqual(await readFile(join(repo, 'b.txt'), 'utf8'), 'bee\n');
+		assert.strictEqual(await readFile(join(repo, 'untracked.txt'), 'utf8'), 'mine\n');
+		await assert.rejects(() => stat(join(repo, 'src')), 'the folder the agent created goes too');
+		assert.strictEqual(await readFile(join(repo, 'ignored', 'cache.txt'), 'utf8'), 'after\n', 'ignored files are never touched');
+		assert.deepStrictEqual(await readFile(join(repo, '.git', 'index')), indexBefore, 'user index is byte-identical');
+	});
+
+	test('keeps edits made after the agent when they merge, and reports overlapping ones as conflicts', async () => {
+		const pre = await snap();
+		await writeFile(join(repo, 'a.txt'), 'one\nAGENT\nthree\nfour\nfive\nsix\n');
+		await writeFile(join(repo, 'b.txt'), 'bee agent\n');
+		const post = await snap();
+		// The user edits far from the agent's change in a.txt, and on top of it in b.txt.
+		await writeFile(join(repo, 'a.txt'), 'one\nAGENT\nthree\nfour\nfive\nsix (user)\n');
+		await writeFile(join(repo, 'b.txt'), 'bee agent and user\n');
+
+		const result = await service.restore({ repoRoot: repo, steps: [{ before: pre.commit, after: post.commit }] });
+		const byPath = new Map(result.entries.map(e => [e.path, e]));
+		assert.deepStrictEqual([byPath.get('a.txt')?.outcome, byPath.get('a.txt')?.editedSince], ['merged', true]);
+		assert.strictEqual(await readFile(join(repo, 'a.txt'), 'utf8'), 'one\ntwo\nthree\nfour\nfive\nsix (user)\n', 'the agent change is gone, the user edit stays');
+		assert.deepStrictEqual(result.conflicts, ['b.txt']);
+		assert.strictEqual(await readFile(join(repo, 'b.txt'), 'utf8'), 'bee agent and user\n', 'a conflicted file is left alone');
+
+		const forced = await service.restore({ repoRoot: repo, steps: [{ before: pre.commit, after: post.commit }], paths: ['b.txt'], overwrite: true });
+		assert.deepStrictEqual(forced.entries.map(e => [e.path, e.outcome]), [['b.txt', 'restored']]);
+		assert.strictEqual(await readFile(join(repo, 'b.txt'), 'utf8'), 'bee\n');
+	});
+
+	test('walks back several turns, keeping a user edit made between them, and undoes the restore', async () => {
+		const pre1 = await snap();
+		await writeFile(join(repo, 'a.txt'), 'one (agent 1)\ntwo\nthree\nfour\nfive\nsix\n');
+		await writeFile(join(repo, 'made.txt'), 'turn 1\n');
+		const post1 = await snap();
+		await writeFile(join(repo, 'a.txt'), 'one (agent 1)\ntwo\nthree\nfour\nfive\nsix (user between turns)\n');
+		const pre2 = await snap();
+		await writeFile(join(repo, 'a.txt'), 'one (agent 1)\ntwo\nthree (agent 2)\nfour\nfive\nsix (user between turns)\n');
+		const post2 = await snap();
+
+		const steps = [{ before: pre2.commit, after: post2.commit }, { before: pre1.commit, after: post1.commit }];
+		const restoreBefore = await snap();
+		const result = await service.restore({ repoRoot: repo, steps });
+		assert.deepStrictEqual(result.conflicts, []);
+		assert.strictEqual(await readFile(join(repo, 'a.txt'), 'utf8'), 'one\ntwo\nthree\nfour\nfive\nsix (user between turns)\n');
+		await assert.rejects(() => stat(join(repo, 'made.txt')));
+
+		const restoreAfter = await snap();
+		const redo = await service.restore({ repoRoot: repo, steps: [{ before: restoreBefore.commit, after: restoreAfter.commit }] });
+		assert.deepStrictEqual(redo.conflicts, []);
+		assert.strictEqual(await readFile(join(repo, 'a.txt'), 'utf8'), 'one (agent 1)\ntwo\nthree (agent 2)\nfour\nfive\nsix (user between turns)\n');
+		assert.strictEqual(await readFile(join(repo, 'made.txt'), 'utf8'), 'turn 1\n');
+	});
+
+	test('restores binary files and the executable bit', async function () {
+		if (process.platform === 'win32') {
+			this.skip();
+		}
+		await writeFile(join(repo, 'img.bin'), Buffer.from([0, 1, 2, 3]));
+		const pre = await snap();
+		await writeFile(join(repo, 'img.bin'), Buffer.from([9, 0, 9]));
+		git(repo, 'update-index', '--chmod=+x', 'b.txt');
+		spawnSync('chmod', ['+x', join(repo, 'b.txt')]);
+		const post = await snap();
+		await writeFile(join(repo, 'img.bin'), Buffer.from([7, 0, 7]));
+		const conflict = await service.restore({ repoRoot: repo, steps: [{ before: pre.commit, after: post.commit }], paths: ['img.bin'] });
+		assert.deepStrictEqual(conflict.entries.map(e => [e.outcome, e.binary]), [['conflict', true]], 'a binary changed since the agent is not merged');
+		await writeFile(join(repo, 'img.bin'), Buffer.from([9, 0, 9]));
+		await service.restore({ repoRoot: repo, steps: [{ before: pre.commit, after: post.commit }] });
+		assert.deepStrictEqual([...await readFile(join(repo, 'img.bin'))], [0, 1, 2, 3]);
+		assert.strictEqual((await stat(join(repo, 'b.txt'))).mode & 0o111, 0, 'mode-only change undone');
+	});
+
+	test('leaves out big untracked files for good, dependency folders, and files over the count limit', async () => {
+		await writeFile(join(repo, 'big.dat'), Buffer.alloc(2048, 1));
+		await mkdir(join(repo, 'node_modules', 'left-pad'), { recursive: true });
+		await writeFile(join(repo, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1;\n');
+		await writeFile(join(repo, 'small.txt'), 'small\n');
+		const first = await snap({ maxFileBytes: 1024 });
+		assert.strictEqual(first.skipped, 1);
+		const files = git(repo, 'ls-tree', '-r', '--name-only', first.commit).trim().split('\n');
+		assert.deepStrictEqual(files.sort(), ['.gitignore', 'a.txt', 'b.txt', 'small.txt']);
+
+		// It shrinks: still left out, so restoring never deletes a file a snapshot did not have.
+		await writeFile(join(repo, 'big.dat'), 'tiny\n');
+		const second = await snap({ maxFileBytes: 1024 });
+		assert.ok(!git(repo, 'ls-tree', '-r', '--name-only', second.commit).includes('big.dat'));
+
+		for (let i = 0; i < 3; i++) {
+			await writeFile(join(repo, `many-${i}.txt`), `${i}\n`);
+		}
+		const capped = await snap({ maxNewFiles: 2 });
+		assert.strictEqual(capped.skipped, 1);
+		assert.strictEqual(git(repo, 'ls-tree', '-r', '--name-only', capped.commit).split('\n').filter(f => f.startsWith('many-')).length, 2);
+	});
+
+	test('reuses an unchanged snapshot instead of writing a new commit', async () => {
+		const first = await snap();
+		const again = await service.snapshot({ repoRoot: repo, indexFile: privateIndex, ref: `${VOLT_SNAPSHOT_REF_PREFIX}t/reuse`, message: 'again', reuse: first });
+		assert.deepStrictEqual(again, first);
+		assert.deepStrictEqual(await service.listRefs({ repoRoot: repo, prefix: `${VOLT_SNAPSHOT_REF_PREFIX}t/reuse` }), [], 'the ref is not written');
+	});
+
+	test('reads blobs as checked out, with line-ending attributes applied', async () => {
+		await writeFile(join(repo, '.gitattributes'), '*.crlf text eol=crlf\n');
+		await writeFile(join(repo, 'x.crlf'), 'a\r\nb\r\n');
+		const shot = await snap();
+		const blob = git(repo, 'rev-parse', `${shot.commit}:x.crlf`).trim();
+		assert.strictEqual((await service.readBlob({ repoRoot: repo, sha: blob })).toString(), 'a\nb\n', 'stored normalized');
+		assert.strictEqual((await service.readBlob({ repoRoot: repo, sha: blob, path: 'x.crlf' })).toString(), 'a\r\nb\r\n', 'read back as on disk');
+	});
+
+	test('folders outside git get a private repo; nothing is written into them', async () => {
+		const plain = join(root, 'plain');
+		await mkdir(plain);
+		await writeFile(join(plain, 'notes.md'), 'v1\n');
+		const resolved = await service.resolveSnapshotRepo(plain);
+		assert.ok(resolved?.shadow);
+		assert.strictEqual(await service.resolveRepo(plain), undefined, 'still not a git folder to everyone else');
+		assert.strictEqual(await service.resolveSnapshotRepo(homedir()), undefined, 'never the home folder');
+
+		const shot = (name: string) => service.snapshot({ repoRoot: resolved.repoRoot, workTree: resolved.workTree, indexFile: resolved.indexFile, ref: `${VOLT_SNAPSHOT_REF_PREFIX}p/${name}`, message: name });
+		const pre = await shot('pre');
+		await writeFile(join(plain, 'notes.md'), 'v2\n');
+		await writeFile(join(plain, 'added.md'), 'new\n');
+		const post = await shot('post');
+		const diff = await service.diffSummary({ repoRoot: resolved.repoRoot, from: pre.commit, to: post.commit });
+		assert.deepStrictEqual(diff.map(e => [e.path, e.kind]).sort(), [['added.md', 'added'], ['notes.md', 'modified']]);
+		await service.restore({ repoRoot: resolved.repoRoot, steps: [{ before: pre.commit, after: post.commit }] });
+		assert.strictEqual(await readFile(join(plain, 'notes.md'), 'utf8'), 'v1\n');
+		await assert.rejects(() => stat(join(plain, 'added.md')));
+		await assert.rejects(() => stat(join(plain, '.git')), 'no .git in the folder');
+
+		// A second service (an app restart) finds the same private repo and its refs.
+		const restarted = disposables.add(new VoltGitService(async () => process.env, undefined, { shadowRoot: join(root, 'shadows') }));
+		const again = await restarted.resolveSnapshotRepo(plain);
+		assert.strictEqual(again?.gitDir, resolved.gitDir);
+		assert.strictEqual((await restarted.listRefs({ repoRoot: plain, prefix: `${VOLT_SNAPSHOT_REF_PREFIX}p/` })).length, 2);
+	});
+});
+
 suite('VoltGitService clone and branches', function () {
 
 	this.timeout(30_000);
@@ -255,9 +460,17 @@ suite('VoltGitService clone and branches', function () {
 
 		const branches = await service.listBranches({ repoRoot: dest });
 		assert.strictEqual(branches.head, 'main');
+		assert.strictEqual(branches.unborn, false);
 		assert.deepStrictEqual(branches.local, ['main']);
 		assert.deepStrictEqual([...branches.remote].sort(), ['origin/feature', 'origin/main']);
 		assert.deepStrictEqual(branches.tags, ['v1']);
+		const main = branches.refs.find(ref => ref.ref === 'refs/heads/main');
+		assert.strictEqual(main?.kind, 'local');
+		assert.ok(main.subject && main.author && main.date > 0, 'refs carry their latest commit');
+		assert.strictEqual(main.ahead, undefined, 'a branch in step with its upstream has no counts');
+		git(dest, '-c', 'user.email=test@volt.local', '-c', 'user.name=Volt Test', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'local only');
+		const ahead = (await service.listBranches({ repoRoot: dest })).refs.find(ref => ref.ref === 'refs/heads/main');
+		assert.deepStrictEqual([ahead?.ahead, ahead?.behind], [1, 0], 'a local commit puts the branch ahead of origin');
 
 		await service.checkout({ repoRoot: dest, ref: 'origin/feature', kind: 'remote' });
 		assert.strictEqual((await service.listBranches({ repoRoot: dest })).head, 'feature', 'remote pick creates a tracking branch');
@@ -265,10 +478,26 @@ suite('VoltGitService clone and branches', function () {
 		await service.createBranch({ repoRoot: dest, name: 'feat/pickers' });
 		assert.strictEqual((await service.listBranches({ repoRoot: dest })).head, 'feat/pickers');
 		await assert.rejects(() => service.createBranch({ repoRoot: dest, name: 'bad name' }), isVoltGitError);
+		await service.createBranch({ repoRoot: dest, name: 'from-feature', from: 'refs/remotes/origin/feature' });
+		assert.strictEqual((await service.listBranches({ repoRoot: dest })).head, 'from-feature');
+		await service.checkout({ repoRoot: dest, ref: 'refs/heads/main', kind: 'detached' });
+		assert.strictEqual((await service.listBranches({ repoRoot: dest })).head, undefined, 'detached checkout leaves no branch');
 		await service.checkout({ repoRoot: dest, ref: 'v1', kind: 'tag' });
 		const detached = await service.listBranches({ repoRoot: dest });
 		assert.strictEqual(detached.head, undefined);
 		assert.match(detached.detached ?? '', /^[0-9a-f]{7,}$/);
+	});
+
+	test('a freshly initialized repo names its branch but has no commits on it', async () => {
+		const fresh = join(root, 'fresh');
+		await mkdir(fresh);
+		git(fresh, 'init', '-q', '-b', 'main');
+		const branches = await service.listBranches({ repoRoot: fresh });
+		assert.strictEqual(branches.head, 'main');
+		assert.strictEqual(branches.unborn, true);
+		assert.deepStrictEqual(branches.refs, []);
+		await service.createBranch({ repoRoot: fresh, name: 'start' });
+		assert.deepStrictEqual(await service.listBranches({ repoRoot: fresh }).then(b => [b.head, b.unborn]), ['start', true], 'a new branch before the first commit is still empty');
 	});
 
 	test('fails loudly and refuses unsafe URLs', async () => {

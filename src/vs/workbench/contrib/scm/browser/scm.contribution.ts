@@ -147,6 +147,8 @@ viewsRegistry.registerViews([{
 	ctorDescriptor: new SyncDescriptor(SCMHistoryViewPane),
 	canToggleVisibility: true,
 	canMoveView: true,
+	// Only Changes starts open.
+	collapsed: true,
 	weight: 40,
 	order: 2,
 	when: ContextKeyExpr.and(

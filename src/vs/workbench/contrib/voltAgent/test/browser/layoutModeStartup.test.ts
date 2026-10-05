@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { stampLayoutModeChrome } from '../../../../browser/parts/titlebar/agentLayoutChrome.js';
-import { agentStartupSidebarWidth, readStoredLayoutModeValue } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
+import { agentNeedsSidebarDrawer, agentStartupSidebarWidth, readStoredLayoutModeValue } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { isAgentPartsSplash } from '../../../../../platform/theme/common/themeService.js';
 
 suite('Layout mode startup', () => {
@@ -31,6 +31,19 @@ suite('Layout mode startup', () => {
 
 	test('uses zero width when the agent list is hidden', () => {
 		assert.strictEqual(agentStartupSidebarWidth(360, true, { min: 180, max: 420, fallback: 290 }), 0);
+	});
+
+	test('the list is a drawer only when the chat (and the tools) would not fit beside it', () => {
+		// Chat alone needs 480 beside the 290 list.
+		assert.strictEqual(agentNeedsSidebarDrawer(1000, 290, false), false);
+		assert.strictEqual(agentNeedsSidebarDrawer(770, 290, false), false);
+		assert.strictEqual(agentNeedsSidebarDrawer(769, 290, false), true);
+		// With the tools open, chat and tools need 880 beside it.
+		assert.strictEqual(agentNeedsSidebarDrawer(1000, 290, true), true);
+		assert.strictEqual(agentNeedsSidebarDrawer(1170, 290, true), false);
+		assert.strictEqual(agentNeedsSidebarDrawer(1169, 290, true), true);
+		// A window with no size yet never counts as narrow.
+		assert.strictEqual(agentNeedsSidebarDrawer(0, 290, true), false);
 	});
 
 	test('stamps agent chrome before the first paint', () => {

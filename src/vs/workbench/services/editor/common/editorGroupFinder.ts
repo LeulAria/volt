@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { EditorActivation } from '../../../../platform/editor/common/editor.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
@@ -10,6 +11,21 @@ import { EditorInputWithOptions, isEditorInputWithOptions, IUntypedEditorInput, 
 import { EditorInput } from '../../../common/editor/editorInput.js';
 import { IEditorGroup, GroupsOrder, preferredSideBySideGroupDirection, IEditorGroupsService } from './editorGroupsService.js';
 import { AUX_WINDOW_GROUP, AUX_WINDOW_GROUP_TYPE, PreferredGroup, SIDE_GROUP } from './editorService.js';
+
+export type EditorGroupRouter = (editor: EditorInputWithOptions | IUntypedEditorInput, preferredGroup: PreferredGroup | undefined) => IEditorGroup | undefined;
+
+const groupRouters = new WeakMap<IEditorGroupsService, Set<EditorGroupRouter>>();
+
+/** Route editor opens into an embedded editor area before resolving editors or creating side groups. */
+export function registerEditorGroupRouter(editorGroupsService: IEditorGroupsService, router: EditorGroupRouter): IDisposable {
+	let routers = groupRouters.get(editorGroupsService);
+	if (!routers) {
+		routers = new Set();
+		groupRouters.set(editorGroupsService, routers);
+	}
+	routers.add(router);
+	return toDisposable(() => routers.delete(router));
+}
 
 /**
  * Finds the target `IEditorGroup` given the instructions provided
@@ -62,6 +78,13 @@ function handleGroupActivation(group: IEditorGroup, editor: EditorInputWithOptio
 }
 
 function doFindGroup(input: EditorInputWithOptions | IUntypedEditorInput, preferredGroup: PreferredGroup | undefined, editorGroupService: IEditorGroupsService, configurationService: IConfigurationService): Promise<IEditorGroup> | IEditorGroup {
+	for (const router of groupRouters.get(editorGroupService) ?? []) {
+		const routedGroup = router(input, preferredGroup);
+		if (routedGroup) {
+			return routedGroup;
+		}
+	}
+
 	let group: Promise<IEditorGroup> | IEditorGroup | undefined;
 	const editor = isEditorInputWithOptions(input) ? input.editor : input;
 	const options = input.options;

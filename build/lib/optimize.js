@@ -202,7 +202,13 @@ function minifyTask(src, sourceMapBaseUrl) {
             }).then(res => {
                 const jsOrCSSFile = res.outputFiles.find(f => /\.(js|css)$/.test(f.path));
                 const sourceMapFile = res.outputFiles.find(f => /\.(js|css)\.map$/.test(f.path));
-                const contents = Buffer.from(jsOrCSSFile.contents);
+                let contents = Buffer.from(jsOrCSSFile.contents);
+                if (process.env.VOLT_BUILD_IGNORE_TYPE_ERRORS) {
+                    // Lenient Volt build: escape what esbuild leaves raw (regex literals). \uXXXX means the same in JS regexes,
+                    // strings and identifiers; CSS spells it \XXXX followed by a space.
+                    const css = jsOrCSSFile.path.endsWith('.css');
+                    contents = Buffer.from(contents.toString().replace(/[^\x00-\xFF]/g, ch => css ? `\\${ch.charCodeAt(0).toString(16)} ` : `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`));
+                }
                 const unicodeMatch = contents.toString().match(/[^\x00-\xFF]+/g);
                 if (unicodeMatch) {
                     cb(new Error(`Found non-ascii character ${unicodeMatch[0]} in the minified output of ${f.path}. Non-ASCII characters in the output can cause performance problems when loading. Please review if you have introduced a regular expression that esbuild is not automatically converting and convert it to using unicode escape sequences.`));

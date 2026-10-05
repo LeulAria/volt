@@ -11,7 +11,7 @@ import { ISearchService } from '../../../search/common/search.js';
 import { FileLedger } from '../../common/harness/fileLedger.js';
 import { IVoltHostToolService } from '../../common/hostTools.js';
 import { IVoltTool } from '../../common/tools/tool.js';
-import { createBrowserTool } from './browserTool.js';
+import { createBrowserTools } from './browserTool.js';
 import { createCodeTools, ICodeIntelHost } from './codeTools.js';
 import { createFileTools, IToolDocuments } from './fileTools.js';
 import { createGitTools } from './gitTools.js';
@@ -56,7 +56,7 @@ export function createBuiltinTools(services: IBuiltinToolServices): IVoltTool[] 
 		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog }),
 		...createGitTools(services.stdio, services.root),
 		...createWebTools(services.requestService),
-		createBrowserTool(services.hostTools),
+		...createBrowserTools(services.hostTools),
 		...createMetaTools(services.meta),
 	];
 }

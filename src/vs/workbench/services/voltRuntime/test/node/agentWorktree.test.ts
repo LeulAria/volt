@@ -57,6 +57,61 @@ suite('Agent worktrees on git', () => {
 			await rm(repo, { recursive: true, force: true });
 		}
 	});
+
+	test('uses the branch picked for the worktree, as VS Code\'s Create Worktree does', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'volt-pick-'));
+		const origin = join(root, 'origin');
+		const repo = join(root, 'repo');
+		const worktreesRoot = join(root, 'wt');
+		try {
+			await mkdir(origin);
+			await git(origin, ['init', '-b', 'main']);
+			await git(origin, ['config', 'user.email', 'test@volt.local']);
+			await git(origin, ['config', 'user.name', 'Volt Test']);
+			await writeFile(join(origin, 'README'), 'hello\n');
+			await git(origin, ['add', 'README']);
+			await git(origin, ['commit', '-m', 'init']);
+			await git(origin, ['branch', 'remote-only']);
+			await git(root, ['clone', '-q', origin, repo]);
+			await git(repo, ['branch', 'feature']);
+			await git(repo, ['tag', 'v1']);
+			const create = (target: Parameters<typeof createAgentWorktree>[0]['target']) => createAgentWorktree({ run: git, files: files(), repoRoot: repo, worktreesRoot, target });
+			const branchIn = async (path: string) => (await git(path, ['branch', '--show-current'])).stdout.trim();
+
+			const feature = await create({ kind: 'branch', name: 'feature' });
+			assert.strictEqual(await branchIn(feature.path), 'feature', 'a free branch is checked out as it is');
+
+			const main = await create({ kind: 'branch', name: 'main' });
+			assert.match(await branchIn(main.path), /^volt\/[0-9a-f]{8}$/, 'the checked-out branch gets a fresh branch from it');
+
+			const tracked = await create({ kind: 'remote', name: 'origin/remote-only' });
+			assert.strictEqual(await branchIn(tracked.path), 'remote-only');
+			assert.strictEqual((await git(repo, ['rev-parse', '--abbrev-ref', 'remote-only@{upstream}'])).stdout.trim(), 'origin/remote-only');
+
+			const named = await create({ kind: 'new', name: 'feat/x', from: 'refs/tags/v1' });
+			assert.strictEqual(await branchIn(named.path), 'feat/x');
+			await assert.rejects(() => create({ kind: 'new', name: 'feat/x' }), (err: unknown) => err instanceof AgentWorktreeError && /already exists/.test(err.message));
+
+			assert.strictEqual(await branchIn(repo), 'main', 'the user\'s checkout never moves');
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test('says a repo with no commits needs one, not that it is not a repo', async () => {
+		const repo = await mkdtemp(join(tmpdir(), 'volt-unborn-'));
+		const worktreesRoot = await mkdtemp(join(tmpdir(), 'volt-wt-'));
+		try {
+			await git(repo, ['init', '-b', 'main']);
+			const noCommits = (err: unknown) => err instanceof AgentWorktreeError && /no commits yet/.test(err.message);
+			await assert.rejects(() => createAgentWorktree({ run: git, files: files(), repoRoot: repo, worktreesRoot }), noCommits);
+			await assert.rejects(() => createAgentWorktree({ run: git, files: files(), repoRoot: repo, worktreesRoot, target: { kind: 'new', name: 'feat' } }), noCommits);
+			assert.strictEqual((await git(repo, ['worktree', 'list', '--porcelain'])).stdout.split('\n').filter(line => line.startsWith('worktree ')).length, 1);
+		} finally {
+			await rm(worktreesRoot, { recursive: true, force: true });
+			await rm(repo, { recursive: true, force: true });
+		}
+	});
 });
 
 function files(): IWorktreeFiles {

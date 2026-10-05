@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { createFileChangeBlock, createTerminalBlock } from '../../browser/blocks/agentBlocks.js';
-import { buildThreadParts, fileChangeGroupTitle, isProcessNarration, looksLikeAnswerForm, partitionAssistantText, STATUS_ROTATE_MS, streamingActivityLines, visibleReplyParts } from '../../browser/chrome/agentTimeline.js';
+import { buildThreadParts, classifySupervisionNotice, createdPlanPrompt, failureTitle, fileChangeGroupTitle, formatElapsed, isProcessNarration, looksLikeAnswerForm, partitionAssistantText, runEndTray, STATUS_ROTATE_MS, streamingActivityLines, supervisionActions, todoChecklist, visibleReplyParts } from '../../browser/chrome/agentTimeline.js';
 
 suite('Agent timeline', () => {
 
@@ -184,7 +184,7 @@ suite('Agent timeline', () => {
 		assert.ok(parts.some(part => part.kind === 'block' && part.block.type === 'terminal'));
 	});
 
-	test('groups multiple file edits into an expandable changes summary', () => {
+	test('groups file edits and commands into one changes summary, each file once', () => {
 		const parts = buildThreadParts([
 			{
 				kind: 'block',
@@ -221,10 +221,11 @@ suite('Agent timeline', () => {
 		]);
 		const group = parts.find(part => part.kind === 'changes');
 		assert.ok(group && group.kind === 'changes');
-		assert.strictEqual(group.files.length, 2);
+		// Both edits hit the same file: it is listed once, with both edits' lines counted.
+		assert.strictEqual(group.files.length, 1);
 		assert.strictEqual(group.commands.length, 1);
-		assert.ok(group.additions >= 1);
-		assert.ok(/Editing 2 files/.test(fileChangeGroupTitle(group.files.length, group.commands.length, group.additions, group.deletions)));
+		assert.ok(group.additions >= 4);
+		assert.ok(/Editing 1 file/.test(fileChangeGroupTitle(group.files.length, group.commands.length, group.additions, group.deletions)));
 		assert.ok(/ran 1 command/.test(fileChangeGroupTitle(group.files.length, group.commands.length, group.additions, group.deletions)));
 	});
 
@@ -303,5 +304,98 @@ suite('Agent timeline', () => {
 		assert.strictEqual(live.rotate, false);
 		const masked = streamingActivityLines('Thinking', limit, [], 1_000, 1_000);
 		assert.strictEqual(masked.phrase, 'Thinking');
+	});
+});
+
+suite('Agent run state', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('reads supervisor findings from runtime notices', () => {
+		assert.strictEqual(classifySupervisionNotice('The same tools were called three times in a row with the same arguments. Stopping so this does not spin.'), 'loop');
+		assert.strictEqual(classifySupervisionNotice('Agent looping detected: the same edit failed 3 times'), 'loop');
+		assert.strictEqual(classifySupervisionNotice('No response from the agent for 60 s'), 'stall');
+		assert.strictEqual(classifySupervisionNotice('Paused at the step limit for one run.'), 'budget');
+		assert.strictEqual(classifySupervisionNotice('Taking longer than expected\nA tool has been running for 10 min without reporting back.'), 'stall');
+		assert.strictEqual(classifySupervisionNotice('Run budget\nThis run has used 80% of its tool calls (500).'), 'budget');
+		assert.strictEqual(classifySupervisionNotice('Agent looping detected\nThe agent was running npm test 3 times with the same error.'), 'loop');
+		assert.strictEqual(classifySupervisionNotice('The agent has been quiet for 6 min. Interrupting it and asking it to continue.'), 'stall');
+		assert.strictEqual(classifySupervisionNotice('Possible test special-casing'), undefined);
+		assert.strictEqual(classifySupervisionNotice('Context window 80% full'), undefined);
+		assert.strictEqual(classifySupervisionNotice('Usage limit reached for Claude Opus'), undefined);
+	});
+
+	test('a failed newest turn offers Try again, and Resume once it did something', () => {
+		const failed = { outcome: 'failed' as const, failure: { message: 'socket hang up', retryable: true }, runId: 'run-9', segments: [] };
+		assert.deepStrictEqual(runEndTray(failed, true), {
+			kind: 'failed',
+			title: 'Connection failed',
+			detail: 'socket hang up',
+			requestId: 'run-9',
+			canRetry: true,
+			canResume: false,
+			canContinueDifferently: false,
+		});
+		const progressed = { ...failed, segments: [{ kind: 'activity' as const, item: { kind: 'read' as const, label: 'Read', detail: 'a.ts' } }] };
+		assert.strictEqual(runEndTray(progressed, true)?.canResume, true);
+		assert.strictEqual(runEndTray(progressed, false)?.canRetry, false, 'older turns only show the error');
+		assert.strictEqual(runEndTray({ ...failed, failure: { message: 'Invalid API key', retryable: false } }, true)?.canRetry, false);
+		assert.strictEqual(runEndTray({ outcome: 'failed' as const }, true)?.detail, 'Something went wrong. Please try again.');
+	});
+
+	test('a loop or budget stop is never a dead end', () => {
+		const loop = runEndTray({ outcome: 'failed', failure: { message: 'Stopped: the agent kept looping after Volt asked it to change approach.', retryable: false }, text: 'tried' }, true)!;
+		assert.deepStrictEqual([loop.title, loop.cause, loop.canContinueDifferently, loop.canRetry, loop.canResume], ['Agent looping detected', 'loop', true, true, false]);
+		const budget = runEndTray({ outcome: 'failed', failure: { message: 'Paused at the step limit for one run (150 model calls). Send "continue" to keep going from here.', retryable: false } }, true)!;
+		assert.deepStrictEqual([budget.title, budget.cause, budget.canResume, budget.canContinueDifferently], ['Paused at a limit', 'budget', true, false]);
+	});
+
+	test('stopped and interrupted turns get a marker; finished and running turns none', () => {
+		assert.strictEqual(runEndTray({ cancelled: true, outcome: 'stopped', text: 'half' }, true)?.title, 'Stopped');
+		assert.strictEqual(runEndTray({ cancelled: true, outcome: 'stopped', text: 'half' }, true)?.canResume, true);
+		assert.strictEqual(runEndTray({ cancelled: true, activity: { status: 'Interrupted' } }, true)?.kind, 'interrupted');
+		assert.strictEqual(runEndTray({ outcome: 'done', text: 'ok' }, true), undefined);
+		assert.strictEqual(runEndTray({ outcome: 'failed', activity: { streaming: true } }, true), undefined);
+	});
+
+	test('supervisor trays act only while they matter', () => {
+		assert.deepStrictEqual(supervisionActions('loop', { running: true, isLast: true, failed: false }), ['continueDifferently', 'stop']);
+		assert.deepStrictEqual(supervisionActions('loop', { running: false, isLast: true, failed: false }), ['continueDifferently']);
+		assert.deepStrictEqual(supervisionActions('loop', { running: false, isLast: true, failed: true }), [], 'the error tray owns the actions');
+		assert.deepStrictEqual(supervisionActions('stall', { running: true, isLast: true, failed: false }), ['resume', 'stop']);
+		assert.deepStrictEqual(supervisionActions('budget', { running: false, isLast: true, failed: false }), ['continue']);
+		assert.deepStrictEqual(supervisionActions('loop', { running: false, isLast: false, failed: false }), []);
+	});
+
+	test('a failure title names the cause', () => {
+		assert.strictEqual(failureTitle('The agent stopped responding after 9 minutes'), 'Agent stopped responding');
+		assert.strictEqual(failureTitle('Doom loop: identical tool batch repeated'), 'Agent looping detected');
+		assert.strictEqual(failureTitle('Provider returned 400'), 'Something went wrong');
+	});
+
+	test('to-dos read as a checklist, then as Cursor\'s completed summary', () => {
+		const steps = [
+			{ label: 'Fix DELETE', state: 'done' as const },
+			{ label: 'Add 404 test', state: 'current' as const },
+			{ label: 'Run tests', state: 'pending' as const },
+		];
+		const live = todoChecklist(steps, true)!;
+		assert.strictEqual(live.title, '1 of 3 To-dos');
+		assert.strictEqual(live.current, 'Add 404 test');
+		assert.strictEqual(todoChecklist(steps.map(step => ({ ...step, state: 'done' as const })), false)?.title, '3 of 3 To-dos Completed');
+		assert.strictEqual(todoChecklist([], true), undefined);
+	});
+
+	test('elapsed time keeps a steady width', () => {
+		assert.strictEqual(formatElapsed(4_200), '4s');
+		assert.strictEqual(formatElapsed(65_000), '1m 05s');
+		assert.strictEqual(formatElapsed(3_725_000), '1h 02m');
+	});
+
+	test('Build sends the plan itself, and the bubble only says Build', () => {
+		const prompt = createdPlanPrompt({ name: 'Fix DELETE todos', markdown: '1. Parse the id as a number\n2. Add a test' });
+		assert.strictEqual(prompt.display, 'Build "Fix DELETE todos"');
+		assert.ok(prompt.text.startsWith('Fix DELETE todos\n\nImplement the plan as specified'));
+		assert.ok(prompt.text.includes('<plan>\n1. Parse the id as a number\n2. Add a test\n</plan>'));
+		assert.strictEqual(createdPlanPrompt({ markdown: '' }).display, 'Build the plan');
 	});
 });

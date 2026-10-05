@@ -5,8 +5,9 @@
 
 import { runWhenWindowIdle } from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
-import { Disposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { EditorsOrder } from '../../../../common/editor.js';
@@ -15,10 +16,12 @@ import { GroupsOrder, IEditorGroup, IEditorGroupsService, IEditorPart } from '..
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { getLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { IVoltProjectRecord, IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { getLayoutMode, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
-import { latestSessionForFolder } from '../home/agentHomeModel.js';
+import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
+import { AGENT_NEW_CHAT_DRAFT_SETTING } from '../../common/agentComposerSettings.js';
+import { agentPanelTabsMode, isBlankNewChat, latestSessionForFolder, unsentDraftForFolder } from '../home/agentHomeModel.js';
 import { AgentChatStart, attachSessionToProject, resolveSessionProject } from './agentShell.js';
 import { IAgentWorkspaceService } from './agentWorkspace.js';
 
@@ -93,6 +96,8 @@ class AgentPanelsContribution extends Disposable {
 
 	private historyReady = false;
 	private bindGeneration = 0;
+	/** The chat the main panel was showing, so a blank one can be dropped on the way out. */
+	private lastMainAgent: AgentEditorInput | undefined;
 	private readonly preloadIdle = this._register(new MutableDisposable());
 
 	constructor(
@@ -149,16 +154,49 @@ class AgentPanelsContribution extends Disposable {
 			return;
 		}
 		// Only the main panel picks the chat; a side chat focused in the tools does not.
-		const active = this.editorGroupsService.mainPart.activeGroup.activeEditor;
+		const active = this.editorGroupsService.mainPart.activeGroup?.activeEditor;
+		const previous = this.lastMainAgent;
+		if (active instanceof AgentEditorInput) {
+			this.lastMainAgent = active;
+		}
+		// Nothing typed and nothing sent: leaving the new chat removes it.
+		if (previous && previous !== active && !previous.isDisposed() && this.isAbandonedBlank(previous)) {
+			this.closeEditor(previous);
+		}
 		if (!(active instanceof AgentEditorInput)) {
 			return;
 		}
 		this.workspaceService.activate(active.sessionId);
 		this.bindSession(active.sessionId);
+		// Opening a chat that woke from its snooze is seeing it; the sidebar drops "Woke".
+		if (this.history.get(active.sessionId)?.wokeAt !== undefined) {
+			void this.history.clearWoke(active.sessionId);
+		}
 		for (const group of this.editorGroupsService.mainPart.groups) {
 			const release = agentPanelsToRelease(group.getEditors(EditorsOrder.MOST_RECENTLY_ACTIVE));
 			if (release.length) {
 				void group.closeEditors(release, { preserveFocus: true });
+			}
+		}
+	}
+
+	/** A new chat still waiting for its first word. Typed text keeps the sidebar row. */
+	private isAbandonedBlank(editor: AgentEditorInput): boolean {
+		return isBlankNewChat({
+			messages: editor.messages.length,
+			draft: editor.draft,
+			mentions: editor.draftMentions.length,
+			queued: editor.promptQueue.length,
+		}, this.history.get(editor.sessionId));
+	}
+
+	private closeEditor(editor: AgentEditorInput): void {
+		for (const part of this.editorGroupsService.parts) {
+			for (const group of part.groups) {
+				if (group.editors.includes(editor)) {
+					void group.closeEditor(editor, { preserveFocus: true });
+					return;
+				}
 			}
 		}
 	}
@@ -211,7 +249,10 @@ export async function activateAgentProject(
 	attachSessionToProject(sessionContext, workspace, history, input.sessionId, project);
 }
 
-/** Start a new chat bound to this project. The previous chat stays in the sidebar. */
+/**
+ * Start a new chat bound to this project. The previous chat stays in the sidebar. With
+ * `reopenDraft`, a chat in the project left with only unsent text opens instead (when the setting allows).
+ */
 export async function newAgentChat(
 	sessionContext: IVoltSessionContextService,
 	workspace: IAgentWorkspaceService,
@@ -220,12 +261,33 @@ export async function newAgentChat(
 	instantiation: IInstantiationService,
 	root: URI,
 	name: string,
+	reopenDraft = false,
 ): Promise<AgentEditorInput> {
 	const project = sessionContext.registerProject(root, name);
 	sessionContext.selectProject(project.id);
-	const input = await openAgentPanel(editorGroups, instantiation, undefined);
+	const draft = reopenDraft ? unsentDraftChat(history, editorGroups, instantiation, project) : undefined;
+	const input = await openAgentPanel(editorGroups, instantiation, draft);
 	attachSessionToProject(sessionContext, workspace, history, input.sessionId, project);
 	return input;
+}
+
+/** The project's chat holding only unsent text, other than the one on screen, if the setting is on. */
+function unsentDraftChat(
+	history: IAgentHistoryService,
+	editorGroups: IEditorGroupsService,
+	instantiation: IInstantiationService,
+	project: IVoltProjectRecord,
+): string | undefined {
+	const enabled = instantiation.invokeFunction(accessor => accessor.get(IConfigurationService).getValue<boolean>(AGENT_NEW_CHAT_DRAFT_SETTING)) !== false;
+	if (!enabled) {
+		return undefined;
+	}
+	const showing = findAgentPanelGroup(editorGroups.mainPart).activeEditor;
+	return unsentDraftForFolder(
+		{ uri: project.root, name: project.displayName, current: true, workspace: false },
+		history.list({ includeArchived: false }),
+		showing instanceof AgentEditorInput ? showing.sessionId : undefined,
+	)?.id;
 }
 
 /**
@@ -242,11 +304,12 @@ export async function startAgentChat(
 ): Promise<void> {
 	switch (start.kind) {
 		case 'folder':
-			await newAgentChat(sessionContext, workspace, history, editorGroups, instantiation, start.root, start.name);
+			await newAgentChat(sessionContext, workspace, history, editorGroups, instantiation, start.root, start.name, true);
 			return;
 		case 'active': {
 			const project = sessionContext.activeProject;
-			const input = await openAgentPanel(editorGroups, instantiation, undefined);
+			const draft = project ? unsentDraftChat(history, editorGroups, instantiation, project) : undefined;
+			const input = await openAgentPanel(editorGroups, instantiation, draft);
 			if (project) {
 				attachSessionToProject(sessionContext, workspace, history, input.sessionId, project);
 			}
@@ -264,3 +327,56 @@ export async function startAgentChat(
 }
 
 registerWorkbenchContribution2(AgentPanelsContribution.ID, AgentPanelsContribution, WorkbenchPhase.AfterRestored);
+
+/**
+ * The main panel is one agent, never a tab strip, whether or not the agent list is open. A file,
+ * browser or changes editor opened there gets a single title so it can still be told apart and closed.
+ * Tabs belong to the tools beside the chat.
+ */
+class AgentPanelTabsContribution extends Disposable {
+
+	static readonly ID = 'workbench.contrib.voltAgentPanelTabs';
+
+	private readonly override = this._register(new MutableDisposable<IDisposable>());
+	private mode: 'none' | 'single' | undefined;
+
+	constructor(
+		@IEditorService private readonly editorService: IEditorService,
+		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
+		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+	) {
+		super();
+		this._register(this.editorService.onDidEditorsChange(() => this.sync()));
+		this._register(onDidChangeLayoutMode(() => this.sync()));
+		this.sync();
+	}
+
+	private sync(): void {
+		const root = this.layoutService.mainContainer;
+		if (getLayoutMode(this.layoutService) !== 'agent') {
+			this.mode = undefined;
+			this.override.clear();
+			root.classList.remove('volt-single-agent');
+			return;
+		}
+		// Only an editor on screen needs a title. A file left behind in a background group would
+		// otherwise bring the chat's own tab row back under the titlebar, which already names it.
+		// Usage needs none either: the titlebar names it and holds its controls.
+		let nonAgentEditors = 0;
+		for (const group of this.editorGroupsService.mainPart.groups) {
+			if (group.activeEditor && !(group.activeEditor instanceof AgentEditorInput) && !(group.activeEditor instanceof AgentUsageEditorInput)) {
+				nonAgentEditors++;
+			}
+		}
+		const mode = agentPanelTabsMode(nonAgentEditors);
+		root.classList.toggle('volt-single-agent', mode === 'none');
+		// Re-applying the same option would relayout every editor group for nothing.
+		if (mode !== this.mode) {
+			this.mode = mode;
+			this.override.value = this.editorGroupsService.mainPart.enforcePartOptions({ showTabs: mode });
+		}
+	}
+}
+
+// Before the editors restore, so the first frame never shows the saved chats as tabs.
+registerWorkbenchContribution2(AgentPanelTabsContribution.ID, AgentPanelTabsContribution, WorkbenchPhase.BlockRestore);

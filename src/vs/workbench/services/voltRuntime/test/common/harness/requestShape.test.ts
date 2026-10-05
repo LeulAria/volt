@@ -59,11 +59,28 @@ suite('Volt request shape', () => {
 		assert.ok(/Do not modify the workspace/.test(reading));
 	});
 
+	test('product nouns and file names in a coding task are not research', () => {
+		assert.strictEqual(detectRequestShape('Build design/pricing.png as a static page. It should match the reference image closely.', { referencesWorkspace: true, coding: true }).lookup, false);
+		assert.strictEqual(detectRequestShape('add a weather widget to src/home.tsx', { referencesWorkspace: true, coding: true }).lookup, false);
+		assert.strictEqual(detectRequestShape('upgrade react in this repo to the latest version', { referencesWorkspace: true, coding: true }).lookup, true);
+		assert.strictEqual(detectRequestShape('how much is a nissan kicks in the UAE').lookup, true);
+	});
+
 	test('a workspace list is not a web lookup', () => {
 		const shape = detectRequestShape('list all files in src', { referencesWorkspace: true, coding: false });
 		assert.strictEqual(shape.form, 'list');
 		assert.strictEqual(shape.enumerate, true);
 		assert.strictEqual(shape.lookup, false);
+	});
+
+	test('maths with "each" or a table is worked out, not researched', () => {
+		const shape = detectRequestShape('Answer without running code: (a) the exact value of 1^3 + 2^3 + ... + 100^3; (b) the exact roots of 3x^2 - 7x + 2 = 0. Show each derivation briefly and put the final answers in a table.');
+		assert.strictEqual(shape.form, 'table');
+		assert.strictEqual(shape.lookup, false);
+		assert.strictEqual(needsResearch(shape), false);
+		assert.strictEqual(detectRequestShape('What is the probability that two random points on a circle are closer than 1?').lookup, false);
+		// An explicit lookup still wins.
+		assert.strictEqual(detectRequestShape('Solve this and cite the official docs for each formula').lookup, true);
 	});
 
 	test('matches the asked form, not a paragraph', () => {

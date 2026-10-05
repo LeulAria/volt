@@ -25,6 +25,12 @@ export interface IIntent {
 	readonly wantsWeb: boolean;
 	/** The request references the workspace (paths, mentions, "this repo"). */
 	readonly referencesWorkspace: boolean;
+	/** Build a UI from a reference image (a design file or an attached screenshot). */
+	readonly matchesDesign?: boolean;
+	/** An open-ended change ("make it production ready", "harden", "refactor") that can alter what callers see. */
+	readonly broadChange?: boolean;
+	/** The request is about making tests pass or keeping them green. */
+	readonly mentionsTests?: boolean;
 	/** How they asked to be answered - form, completeness, lookup. Every lane reads this. */
 	readonly shape: IRequestShape;
 }
@@ -34,7 +40,18 @@ export interface IIntentContext {
 	readonly hasWorkspace?: boolean;
 	/** Later turns in a coding conversation stay in the coding lanes. */
 	readonly priorLane?: VoltLane;
+	/** Attached files and images, by path or name. */
+	readonly attachments?: readonly string[];
 }
+
+const BROAD_CHANGE = /\b(?:production[- ]ready|prod[- ]ready|harden|robust(?:ness)?|best practices|clean ?up|refactor|moderni[sz]e|overhaul|rearchitect|rewrite)\b/i;
+
+const TESTS_REF = /\b(?:tests?|specs?|test suite|npm test|pytest|jest|vitest|mocha|unit tests?|failing|passing)\b/i;
+
+const IMAGE_FILE = /\.(?:png|jpe?g|webp|gif|avif)\b/i;
+
+/** Building or matching a UI, as opposed to describing or editing an image. */
+const DESIGN_VERB = /\b(?:build|implement|recreate|replicate|reproduce|clone|match|copy|code up|turn .{0,30} into|make (?:it|this|a page|the page) (?:look|match))/i;
 
 const CODING_VERBS = /\b(fix|add|implement|refactor|rename|create|update|remove|delete|write|build|migrate|install|run|test|debug|deploy|change|make|edit|move|replace|convert|generate|set ?up|configure|wire|hook up|extract|inline|split|merge|clean ?up|optimi[sz]e|speed up|improve|rewrite|port|upgrade|bump|revert|patch|scaffold|bootstrap|integrate|connect|enable|disable|introduce|drop|swap|style|restyle|redesign|polish|animate|center|align|resize|format|lint|type-?check|compile|bundle|ship|release|publish)\b/i;
 
@@ -62,7 +79,11 @@ const MENTION_RE = /(^|\s)@[\w./-]+/;
 
 const WORKSPACE_REF = /\b(this|the|our|my) (repo|repository|code ?base|project|app|application|file|function|class|component|module|package|service|folder|directory|workspace|test|tests|branch|pr|pull request)\b|\bin (here|the code)\b/i;
 
-const PREVIEW_INTENT = /\b(run|start|launch|serve|spin up|boot|preview|open|show|see|view|look at|check|test)\b[^.?!]{0,40}\b(app|site|website|page|server|project|dev|frontend|front-end|ui|it|this|the (thing|result|game|demo)|in (the |a )?browser|locally|on localhost)\b|\b(dev server|localhost|live preview|hot reload|in the browser|show me (the|what|how it looks))\b|\bmake it (run|work)\b|\bcan i see\b|\blet'?s see it\b/i;
+/**
+ * The user wants to see the running thing. Pronouns ("it", "this") only count after a visual
+ * verb ("show me it", "open this"): "check it with a simulation" or "run this repo's tests" is not a preview.
+ */
+const PREVIEW_INTENT = /\b(?:preview|open|show|see|view|look at)\b[^.?!]{0,40}\b(?:app|site|website|page|server|project|frontend|front-end|ui|it|this|the (?:thing|result|game|demo)|in (?:the |a )?browser|locally|on localhost)\b|\b(?:run|start|launch|serve|spin up|boot)\b[^.?!]{0,30}\b(?:app|site|website|page|(?:dev |web |http )?server|frontend|front-end|ui|game|demo|locally|on localhost|in (?:the |a )?browser)\b|\b(?:check|test)\b[^.?!]{0,30}\b(?:in (?:the |a )?browser|on localhost|the (?:ui|page|site|website|frontend))\b|\b(?:dev server|localhost|live preview|hot reload|in the browser|show me (?:the|what|how it looks))\b|\bmake it (?:run|work)\b|\bcan i see\b|\blet'?s see it\b/i;
 
 const CODE_FENCE = /```/;
 
@@ -106,6 +127,16 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	const wantsPreview = hasWorkspace && PREVIEW_INTENT.test(raw) && !(questionShape && !codingVerb && !referencesWorkspace);
 	if (wantsPreview) { signals.push('preview'); }
 
+	const matchesDesign = hasWorkspace && mode !== 'ask' && DESIGN_VERB.test(raw)
+		&& (IMAGE_FILE.test(raw) || (context.attachments ?? []).some(name => IMAGE_FILE.test(name)));
+	if (matchesDesign) { signals.push('design-reference'); }
+
+	const broadChange = hasWorkspace && mode !== 'ask' && mode !== 'plan' && BROAD_CHANGE.test(raw);
+	if (broadChange) { signals.push('broad-change'); }
+
+	const mentionsTests = hasWorkspace && mode !== 'ask' && mode !== 'plan' && TESTS_REF.test(raw);
+	if (mentionsTests) { signals.push('tests'); }
+
 	let lane: VoltLane;
 
 	if (slashMission || mode === 'multitask') {
@@ -135,7 +166,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		// Statements with no coding verb and no workspace anchor ("thanks", "nissan kicks uae price")
 		lane = 'chat';
 		signals.push('no-coding-signal');
-	} else if (isFast(raw, { codingVerb, sentences, words, hasPath, conjunctions, bullets })) {
+	} else if (!wantsPreview && !mentionsTests && isFast(raw, { codingVerb, sentences, words, hasPath, conjunctions, bullets })) {
 		lane = 'fast';
 	} else {
 		lane = 'agent';
@@ -169,6 +200,9 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		wantsPreview,
 		wantsWeb,
 		referencesWorkspace,
+		...(matchesDesign ? { matchesDesign } : {}),
+		...(broadChange ? { broadChange } : {}),
+		...(mentionsTests ? { mentionsTests } : {}),
 		shape,
 	};
 }

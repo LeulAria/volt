@@ -42,6 +42,18 @@ const HANDLED_UPDATES = new Set([
 
 const LIMIT_FAMILY = /\b(spend limit|usage limit|rate limit|quota|session limit|hit your)\b/i;
 
+/** Text that says a usage, rate or spend limit stopped the run. */
+export function isUsageLimitText(text: string | undefined): boolean {
+	return !!text && LIMIT_FAMILY.test(text);
+}
+
+const SIGN_IN_RE = /\b(sign in|log in|authenticate|authentication|oauth)\b/i;
+
+/** A provider notice that means the user has to sign in before the agent can continue. */
+export function isSignInNotice(title: string, description?: string): boolean {
+	return SIGN_IN_RE.test(`${title}\n${description ?? ''}`);
+}
+
 const MACHINE_TOKEN = /^(?:internal error|error_during_execution|error_max_budget_usd|error_max_turns|error_max_structured_output_retries|provider_error|unknown)\.?$/i;
 
 const ERROR_KIND_LABEL: Record<string, string> = {

@@ -27,6 +27,7 @@ import { ILifecycleMainService } from '../../lifecycle/electron-main/lifecycleMa
 import { ILogService } from '../../log/common/log.js';
 import { IProductService } from '../../product/common/productService.js';
 import { IIPCObjectUrl, IProtocolMainService } from '../../protocol/electron-main/protocol.js';
+import { ICSSDevelopmentService } from '../../cssDev/node/cssDevService.js';
 import { resolveMarketplaceHeaders } from '../../externalServices/common/marketplace.js';
 import { IApplicationStorageMainService, IStorageMainService } from '../../storage/electron-main/storageMainService.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
@@ -719,7 +720,8 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 		@IProtocolMainService protocolMainService: IProtocolMainService,
 		@IWindowsMainService private readonly windowsMainService: IWindowsMainService,
 		@IStateService stateService: IStateService,
-		@IInstantiationService instantiationService: IInstantiationService
+		@IInstantiationService instantiationService: IInstantiationService,
+		@ICSSDevelopmentService private readonly cssDevelopmentService: ICSSDevelopmentService
 	) {
 		super(configurationService, stateService, environmentMainService, logService);
 
@@ -728,7 +730,7 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 		//#region create browser window
 		{
-			this.configObjectUrl = this._register(protocolMainService.createIPCObjectUrl<INativeWindowConfiguration>());
+			this.configObjectUrl = this._register(protocolMainService.createIPCObjectUrl<INativeWindowConfiguration>(configuration => this.refreshDevCssModules(configuration)));
 
 			// Load window state
 			const [state, hasMultipleDisplays] = this.restoreWindowState(config.state);
@@ -1411,6 +1413,24 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 		// Update in config object URL for usage in renderer
 		this.configObjectUrl.update(configuration);
+	}
+
+	/**
+	 * Dev CSS is loaded through an import map built from `configuration.cssModules`.
+	 * That list is captured when the window is created. Cmd+R and a crashed renderer
+	 * call `webContents.reload()`, which fetches this same object again, so a CSS
+	 * file added while the app is running is missing from the map and the browser
+	 * rejects it as a script (`text/css`). Rescan on every fetch.
+	 */
+	private async refreshDevCssModules(configuration: INativeWindowConfiguration | undefined): Promise<void> {
+		if (!configuration || !this.cssDevelopmentService.isEnabled) {
+			return;
+		}
+		try {
+			configuration.cssModules = await this.cssDevelopmentService.getCssModules();
+		} catch (error) {
+			this.logService.error('[CSS_DEV] Failed to refresh CSS modules', error);
+		}
 	}
 
 	async reload(cli?: NativeParsedArgs): Promise<void> {

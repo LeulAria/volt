@@ -291,18 +291,13 @@ export class GitUrlPane extends Disposable {
 		this.pickerStore.clear();
 		this.form.classList.add('hidden');
 		this.pickerHost.classList.remove('hidden');
-		const browserHost = append(this.pickerHost, $('.volt-add-picker-browser'));
-		const browser = this.pickerStore.add(this.instantiationService.createInstance(FolderBrowser, browserHost, {
+		const browser = this.pickerStore.add(this.instantiationService.createInstance(FolderBrowser, this.pickerHost, {
 			...this.host.folderOptions,
 			initialPath: this.parent,
+			acceptLabel: localize('voltProjects.useFolder', "Clone Here"),
+			escapeLabel: localize('voltProjects.back', "Back"),
 			onAccept: path => choose(path),
 		}));
-		const footer = append(this.pickerHost, $('.volt-add-footer'));
-		const target = append(footer, $('span.volt-add-footer-target'));
-		const back = this.pickerStore.add(new Button(footer, { ...defaultButtonStyles, secondary: true }));
-		back.label = localize('voltProjects.back', "Back");
-		const use = this.pickerStore.add(new Button(footer, defaultButtonStyles));
-		use.label = localize('voltProjects.useFolder', "Clone Here");
 		const close = () => {
 			this.pickerStore.clear();
 			this.pickerHost.textContent = '';
@@ -314,17 +309,6 @@ export class GitUrlPane extends Disposable {
 			this.setParent(path);
 			close();
 		};
-		this.pickerStore.add(browser.onDidChangeTarget(path => {
-			target.textContent = path ? `\u200e${tildify(path, this.host.home())}/${sanitizeFolderName(this.nameInput.value)}\u200e` : '';
-			use.enabled = !!path;
-		}));
-		this.pickerStore.add(back.onDidClick(close));
-		this.pickerStore.add(use.onDidClick(() => {
-			const path = browser.target ?? browser.currentFolder;
-			if (path) {
-				choose(path);
-			}
-		}));
 		this.pickerStore.add(addDisposableListener(this.pickerHost, 'keydown', e => {
 			if (new StandardKeyboardEvent(e).equals(KeyCode.Escape) && !e.defaultPrevented) {
 				EventHelper.stop(e, true);

@@ -162,6 +162,16 @@ export function toOpenAiMessages(messages: readonly IModelMessage[], options: IO
 			});
 			continue;
 		}
+		if (message.role === 'user' && options.vision && message.images?.length) {
+			out.push({
+				role: 'user',
+				content: [
+					{ type: 'text', text: message.content },
+					...message.images.map(image => ({ type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } })),
+				],
+			});
+			continue;
+		}
 		out.push({ role: message.role, content: message.content });
 	}
 	flushImages();
@@ -231,7 +241,15 @@ export function toAnthropicMessages(messages: readonly IModelMessage[], options:
 			}
 			continue;
 		}
-		if (message.content.trim()) {
+		if (message.images?.length) {
+			out.push({
+				role: 'user',
+				content: [
+					...(message.content.trim() ? [{ type: 'text', text: message.content }] : []),
+					...message.images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } })),
+				],
+			});
+		} else if (message.content.trim()) {
 			out.push({ role: 'user', content: message.content });
 		}
 	}
@@ -372,8 +390,9 @@ export function toGeminiContents(messages: readonly IModelMessage[], options: IG
 			}
 			continue;
 		}
-		if (message.content.trim()) {
-			out.push({ role: 'user', parts: [{ text: message.content }] });
+		const imageParts = (message.images ?? []).map(image => ({ inlineData: { mimeType: image.mediaType, data: image.data } }));
+		if (message.content.trim() || imageParts.length) {
+			out.push({ role: 'user', parts: [...(message.content.trim() ? [{ text: message.content }] : []), ...imageParts] });
 		}
 	}
 	return out;

@@ -96,7 +96,7 @@ const SCENE = {
   mid: ridge(9, 720, 70, 14),
   near: ridge(21, 820, 40, 6),
   forestBack: forest(17, 70, hills, 70, 90),
-  forestFront: forest(31, 26, shore, 160, 220),
+  forestFront: forest(31, 22, shore, 90, 130),
   stars: stars(5, 60),
 };
 

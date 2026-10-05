@@ -6,7 +6,9 @@
 import { $, addDisposableListener, append, EventHelper, getWindow } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { fromNow } from '../../../../../base/common/date.js';
 import { isMacintosh } from '../../../../../base/common/platform.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { autorun } from '../../../../../base/common/observable.js';
 import { isEqual } from '../../../../../base/common/resources.js';
@@ -15,23 +17,38 @@ import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService, Verbosity } from '../../../../../platform/label/common/label.js';
-import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
-import { IVoltGitBranches, IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltGitBranches, IVoltGitBranchRef, IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
-import { AgentRunOn, agentRunOnStorageKey, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { AgentRunOn, agentRunOnStorageKey, AgentWorktreeTarget, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
-import { IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
+import { IVoltProjectsService } from '../../../voltProjects/common/projects.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
+import { IVoltMenuItem, IVoltMenuPrompt, IVoltSubmenu, showVoltMenu } from '../ui/menu/voltMenu.js';
+import { INIT_TIMEOUT_MS, runGit, showAgentProjectMenu } from './agentHomeWorkspaceActions.js';
 import { landingWorkspaceName } from './agentLandingModel.js';
 
 type BranchPick =
 	| { readonly kind: 'ref'; readonly name: string; readonly ref: 'local' | 'remote' | 'tag' }
-	| { readonly kind: 'create' }
-	| { readonly kind: 'init' };
+	| { readonly kind: 'detached'; readonly ref: string }
+	| { readonly kind: 'init' }
+	/** Rows that open a flyout or a prompt; never picked. */
+	| { readonly kind: 'none' };
+
+const NO_PICK: BranchPick = { kind: 'none' };
+/** What `git check-ref-format --branch` refuses, checked while typing. */
+export const BAD_BRANCH_NAME = /^-|\.\.|[\s~^:?*[\\]|@\{|\/$|\.lock$|^\/|\/\//;
+
+export interface IAgentBranchState {
+	readonly name?: string;
+	readonly detached?: string;
+	readonly unborn?: boolean;
+}
 
 const THIS_MACHINE = isMacintosh ? localize('voltAgent.env.thisMac', "This Mac") : localize('voltAgent.env.thisPC', "This PC");
 
@@ -52,14 +69,24 @@ export class AgentLandingChrome extends Disposable {
 	private readonly envLabel: HTMLElement;
 	private readonly envIcon: HTMLElement;
 	private readonly repositoryWatch = this._register(new MutableDisposable());
-	private branch: { readonly name?: string; readonly detached?: string } = {};
+	/** `unborn`: the branch has no commits yet, as right after `git init`. */
+	private branch: { readonly name?: string; readonly detached?: string; readonly unborn?: boolean } = {};
 	private repository: ISCMRepository | undefined;
 	private runOn: AgentRunOn = 'same-branch';
+	/** In Worktree mode: the branch the new checkout uses. None means a fresh branch from the current one. */
+	private worktreeTarget: AgentWorktreeTarget | undefined;
 	private branchRequest = 0;
 	private lastProjectState: string | undefined;
 
+	private readonly _onDidChangeBranch = this._register(new Emitter<void>());
+	/** The project's checked-out branch changed. */
+	readonly onDidChangeBranch: Event<void> = this._onDidChangeBranch.event;
+
 	constructor(
+		/** Loads a picked folder into this new chat. */
+		private readonly openProject: (folder: URI) => Promise<void>,
 		@ICommandService private readonly commandService: ICommandService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IStorageService private readonly storageService: IStorageService,
 		@ILabelService private readonly labelService: ILabelService,
@@ -70,6 +97,7 @@ export class AgentLandingChrome extends Disposable {
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IVoltProjectsService private readonly projects: IVoltProjectsService,
 		@IVoltGitService private readonly gitService: IVoltGitService,
+		@IVoltStdioService private readonly stdio: IVoltStdioService,
 	) {
 		super();
 		this.element = $('.volt-agent-landing-chrome');
@@ -140,7 +168,21 @@ export class AgentLandingChrome extends Disposable {
 		}));
 	}
 
+	/** The branch a new worktree should use, when Run on is Worktree and one was picked. */
+	getWorktreeTarget(): AgentWorktreeTarget | undefined {
+		return this.runOn === 'worktree' ? this.worktreeTarget : undefined;
+	}
+
+	/** A new chat starts from the current branch again. */
+	resetWorktreeTarget(): void {
+		if (this.worktreeTarget) {
+			this.worktreeTarget = undefined;
+			this.renderEnvironment();
+		}
+	}
+
 	private onProjectChanged(): void {
+		this.worktreeTarget = undefined;
 		this.renderProject();
 		this.renderEnvironment();
 		this.bindRepository();
@@ -148,7 +190,7 @@ export class AgentLandingChrome extends Disposable {
 
 	// ---- Project ------------------------------------------------------------------------
 
-	private projectRoot(): URI | undefined {
+	projectRoot(): URI | undefined {
 		return this.sessionContext.activeProject?.root ?? this.workspaceContextService.getWorkspace().folders[0]?.uri;
 	}
 
@@ -179,9 +221,9 @@ export class AgentLandingChrome extends Disposable {
 			: localize('voltAgent.chooseProject', "Choose a project"));
 	}
 
-	/** The same menu as Add Project, as in Cursor: pick a project, or add one from This PC, Git or GitHub. */
+	/** The sidebar's project menu, as in Cursor; a single folder loads into this new chat. */
 	private async openProjectMenu(): Promise<void> {
-		await this.commandService.executeCommand(VoltProjectCommands.addProject, { anchor: this.projectButton, current: this.projectRoot() });
+		await showAgentProjectMenu(this.instantiationService, this.projectButton, this.projectRoot(), this.openProject);
 	}
 
 	// ---- Branch -------------------------------------------------------------------------
@@ -213,13 +255,15 @@ export class AgentLandingChrome extends Disposable {
 		this.repositoryWatch.value = autorun(reader => {
 			const ref = repository.provider.historyProvider.read(reader)?.historyItemRef.read(reader);
 			const name = ref?.name?.replace(/^refs\/heads\//, '');
-			this.branch = name ? { name } : ref?.revision ? { detached: ref.revision.slice(0, 7) } : {};
+			this.branch = name ? { name, unborn: !ref?.revision } : ref?.revision ? { detached: ref.revision.slice(0, 7) } : {};
 			this.renderBranch();
 			this.renderEnvironment();
+			this._onDidChangeBranch.fire();
 		});
 	}
 
-	private async refreshBranch(): Promise<void> {
+	/** Reads the project's branch again, as after a checkout the SCM view does not see. */
+	async refreshBranch(): Promise<void> {
 		const root = this.projectRoot();
 		const request = ++this.branchRequest;
 		if (!root || root.scheme !== 'file') {
@@ -229,10 +273,16 @@ export class AgentLandingChrome extends Disposable {
 			if (request !== this.branchRequest) {
 				return;
 			}
-			this.branch = branches ? { name: branches.head, detached: branches.detached } : {};
+			this.branch = branches ? { name: branches.head, detached: branches.detached, unborn: branches.unborn } : {};
 		}
 		this.renderBranch();
 		this.renderEnvironment();
+		this._onDidChangeBranch.fire();
+	}
+
+	/** The project checkout's branch, ignoring any branch picked for a new worktree. */
+	getBranch(): IAgentBranchState {
+		return this.branch;
 	}
 
 	private hasRepository(): boolean {
@@ -240,76 +290,206 @@ export class AgentLandingChrome extends Disposable {
 	}
 
 	private renderBranch(): void {
-		const { name, detached } = this.branch;
-		this.branchLabel.textContent = name ?? (detached ? localize('voltAgent.detached', "{0} (detached)", detached) : localize('voltAgent.noBranch', "No branch"));
+		const target = this.getWorktreeTarget();
+		if (target) {
+			this.branchLabel.textContent = target.name;
+			this.branchButton.classList.remove('empty');
+			setAgentTooltip(this.branchButton, target.kind === 'new'
+				? localize('voltAgent.worktreeNewBranch', "The worktree gets a new branch: {0}", target.name)
+				: localize('voltAgent.worktreeBranch', "The worktree checks out {0}", target.name));
+			return;
+		}
+		const { name, detached, unborn } = this.branch;
+		this.branchLabel.textContent = name
+			? unborn ? localize('voltAgent.unbornBranch', "{0} (no commits)", name) : name
+			: detached ? localize('voltAgent.detached', "{0} (detached)", detached) : localize('voltAgent.noBranch', "No branch");
 		this.branchButton.classList.toggle('empty', !name && !detached);
 		setAgentTooltip(this.branchButton, name
-			? localize('voltAgent.switchBranch', "Branch: {0}", name)
+			? unborn ? localize('voltAgent.unbornBranchTooltip', "Branch: {0}. It has no commits yet.", name) : localize('voltAgent.switchBranch', "Branch: {0}", name)
 			: detached ? localize('voltAgent.detachedTooltip', "Detached at {0}", detached) : localize('voltAgent.noRepository', "No git repository"));
 	}
 
-	private async loadBranches(): Promise<IVoltGitBranches | undefined> {
-		const repository = this.repository;
-		const history = repository?.provider.historyProvider.get();
-		if (history) {
-			const refs = await history.provideHistoryItemRefs().catch(() => undefined);
-			if (refs) {
-				const local: string[] = [];
-				const remote: string[] = [];
-				const tags: string[] = [];
-				for (const ref of refs) {
-					if (ref.id.startsWith('refs/heads/')) {
-						local.push(ref.name);
-					} else if (ref.id.startsWith('refs/remotes/') && !ref.id.endsWith('/HEAD')) {
-						remote.push(ref.name);
-					} else if (ref.id.startsWith('refs/tags/')) {
-						tags.push(ref.name);
-					}
-				}
-				return { head: this.branch.name, detached: this.branch.detached, local, remote, tags };
-			}
-		}
-		const root = this.projectRoot();
-		return root?.scheme === 'file' ? this.gitService.listBranches({ repoRoot: root.fsPath }).catch(() => undefined) : undefined;
+	/** Run on is Worktree, but a worktree starts from a commit and this repo has none yet. */
+	worktreeNeedsCommit(): boolean {
+		// A picked branch, tag or ref has a commit of its own; only HEAD is empty.
+		const target = this.worktreeTarget;
+		return this.runOn === 'worktree' && !!this.branch.unborn && (!target || (target.kind === 'new' && !target.from));
 	}
 
+	/**
+	 * Before a new chat's first send, when {@link worktreeNeedsCommit}: looks again, as a commit
+	 * may have been made in a terminal since, then says why the send waits.
+	 */
+	async confirmWorktreeReady(): Promise<boolean> {
+		if (this.worktreeNeedsCommit() && !this.repository) {
+			await this.refreshBranch();
+		}
+		if (!this.worktreeNeedsCommit()) {
+			return true;
+		}
+		this.notificationService.prompt(Severity.Warning, localize('voltAgent.worktreeNeedsCommit', "This repository has no commits yet. Make a first commit to use a worktree."), [{
+			label: localize('voltAgent.runOnMachine', "Run on {0}", THIS_MACHINE),
+			run: () => this.setRunOn('same-branch'),
+		}]);
+		return false;
+	}
+
+	/** Volt's git (with each ref's latest commit), else the SCM view's refs for a project it cannot reach. */
+	private async loadBranches(): Promise<IVoltGitBranches | undefined> {
+		const root = this.projectRoot();
+		if (root?.scheme === 'file') {
+			const branches = await this.gitService.listBranches({ repoRoot: root.fsPath }).catch(() => undefined);
+			if (branches && (branches.head || branches.detached || branches.refs.length)) {
+				return branches;
+			}
+		}
+		const refs = await this.repository?.provider.historyProvider.get()?.provideHistoryItemRefs().catch(() => undefined);
+		if (!refs) {
+			return undefined;
+		}
+		const all: IVoltGitBranchRef[] = [];
+		for (const ref of refs) {
+			const kind = ref.id.startsWith('refs/heads/') ? 'local'
+				: ref.id.startsWith('refs/remotes/') && !ref.id.endsWith('/HEAD') ? 'remote'
+					: ref.id.startsWith('refs/tags/') ? 'tag' : undefined;
+			if (kind) {
+				all.push({ kind, name: ref.name, ref: ref.id, subject: '', author: '', date: 0 });
+			}
+		}
+		const names = (kind: IVoltGitBranchRef['kind']) => all.filter(ref => ref.kind === kind).map(ref => ref.name);
+		return { head: this.branch.name, unborn: this.branch.unborn, detached: this.branch.detached, local: names('local'), remote: names('remote'), tags: names('tag'), refs: all };
+	}
+
+	/**
+	 * VS Code's branch picker (the status bar's Checkout to...) in the Open Workspace menu's
+	 * look: create a branch, create one from a ref, check out detached, then every branch,
+	 * remote branch and tag with its latest commit.
+	 */
 	private openBranchMenu(): void {
 		const root = this.projectRoot();
+		const repoRoot = root?.scheme === 'file' ? root.fsPath : undefined;
+		// With Run on Worktree, picks choose the worktree's branch and leave this checkout alone.
+		const worktree = this.runOn === 'worktree';
 		showVoltMenu<BranchPick>(this.contextViewService, {
 			anchor: this.branchButton,
 			ariaLabel: localize('voltAgent.branchMenu', "Branches"),
-			search: { placeholder: localize('voltAgent.searchBranches', "Search branches...") },
-			width: 260,
+			search: {
+				placeholder: worktree
+					? localize('voltAgent.searchWorktreeBranches', "Select a branch for the worktree")
+					: localize('voltAgent.searchBranches', "Select a branch or tag to checkout"),
+			},
+			width: 380,
 			sections: async () => {
 				const branches = await this.loadBranches();
 				if (!branches || (!branches.head && !branches.detached && !branches.local.length)) {
 					return [{ id: 'none', items: [{ id: 'init', label: localize('voltAgent.initRepository', "Initialize Repository"), icon: Codicon.repo, tooltip: localize('voltAgent.noRepository', "No git repository"), data: { kind: 'init' } }] }];
 				}
 				const current = branches.head;
-				const item = (name: string, ref: 'local' | 'remote' | 'tag', checked = false): IVoltMenuItem<BranchPick> => ({ id: `${ref}:${name}`, label: name, checked, tooltip: name, data: { kind: 'ref', name, ref } });
-				const head: IVoltMenuItem<BranchPick>[] = current
-					? [item(current, 'local', true)]
-					: branches.detached ? [{ id: 'detached', label: localize('voltAgent.detached', "{0} (detached)", branches.detached), checked: true, disabled: true, data: { kind: 'ref', name: branches.detached, ref: 'tag' } }] : [];
-				// Cursor lists local branches; remote branches and tags join in once you search.
+				const target = worktree ? this.worktreeTarget : undefined;
+				const existing = new Set(branches.local);
+				const ofKind = (kind: IVoltGitBranchRef['kind']) => branches.refs.filter(ref => ref.kind === kind);
+				// The checked-out branch first, then the rest by latest commit.
+				const local = [...ofKind('local')].sort((a, b) => Number(b.name === current) - Number(a.name === current));
+				const isPicked = (ref: IVoltGitBranchRef) => target
+					? target.kind !== 'new' && target.name === ref.name && (target.kind === 'branch' ? ref.kind === 'local' : target.kind === ref.kind)
+					: ref.kind === 'local' && ref.name === current;
+				const checkout = (ref: IVoltGitBranchRef) => refItem(ref, { kind: 'ref', name: ref.name, ref: ref.kind }, isPicked(ref));
+				const newTarget: IVoltMenuItem<BranchPick>[] = target?.kind === 'new'
+					? [{ id: 'new-target', label: target.name, icon: Codicon.gitBranch, detail: localize('voltAgent.worktreeNewBranchDetail', "new branch for the worktree"), checked: true, data: NO_PICK }]
+					: [];
+				const hasRefs = branches.refs.length > 0;
+				const actions: IVoltMenuItem<BranchPick>[] = repoRoot ? [
+					// Before the first commit a new branch has nothing to start from, except in this checkout.
+					worktree && branches.unborn ? {
+						id: 'needsCommit',
+						label: localize('voltAgent.worktreeNeedsCommitShort', "Make a first commit to use a worktree"),
+						icon: Codicon.warning,
+						alwaysShow: true,
+						disabled: true,
+						data: NO_PICK,
+					} : {
+						id: 'create',
+						label: localize('voltAgent.createBranch', "Create new branch..."),
+						icon: Codicon.add,
+						alwaysShow: true,
+						prompt: this.branchPrompt(repoRoot, existing, worktree),
+						data: NO_PICK,
+					},
+					...hasRefs ? [{
+						id: 'createFrom',
+						label: localize('voltAgent.createBranchFrom', "Create new branch from..."),
+						icon: Codicon.add,
+						submenu: refMenu(branches.refs, localize('voltAgent.createBranchFromPlaceholder', "Select a ref to create the branch from"), ref => refItem(ref, NO_PICK, false, this.branchPrompt(repoRoot, existing, worktree, ref))),
+						data: NO_PICK,
+					} satisfies IVoltMenuItem<BranchPick>] : [],
+					// A worktree needs a branch; detached checkouts stay a This Mac thing.
+					...worktree || !hasRefs ? [] : [{
+						id: 'detached',
+						label: localize('voltAgent.checkoutDetached', "Checkout detached..."),
+						icon: Codicon.debugDisconnect,
+						submenu: refMenu(branches.refs, localize('voltAgent.checkoutDetachedPlaceholder', "Select a ref to checkout in detached mode"), ref => refItem(ref, { kind: 'detached', ref: ref.ref })),
+						data: NO_PICK,
+					} satisfies IVoltMenuItem<BranchPick>],
+				] : [];
+				const head: IVoltMenuItem<BranchPick>[] = !current && branches.detached
+					? [{ id: 'detached-head', label: localize('voltAgent.detached', "{0} (detached)", branches.detached), icon: Codicon.gitCommit, checked: !target, disabled: true, data: NO_PICK }]
+					// A branch with no commits has no ref, so it is not among the rest.
+					: current && branches.unborn
+						? [{ id: 'unborn-head', label: current, icon: Codicon.gitBranch, detail: localize('voltAgent.noCommitsYet', "no commits yet"), checked: !target, disabled: true, data: NO_PICK }]
+						: [];
 				return [
-					{ id: 'local', items: [...head, ...branches.local.filter(name => name !== current).map(name => item(name, 'local'))] },
-					{ id: 'remote', title: localize('voltAgent.remoteBranches', "Remote"), searchOnly: true, items: branches.remote.map(name => item(name, 'remote')) },
-					{ id: 'tags', title: localize('voltAgent.tags', "Tags"), searchOnly: true, items: branches.tags.map(name => item(name, 'tag')) },
+					{ id: 'actions', items: actions },
+					{ id: 'local', title: localize('voltAgent.branches', "Branches"), items: [...newTarget, ...head, ...local.map(checkout)] },
+					{ id: 'remote', title: localize('voltAgent.remoteBranches', "Remote branches"), items: ofKind('remote').map(checkout) },
+					{ id: 'tags', title: localize('voltAgent.tags', "Tags"), items: ofKind('tag').map(checkout) },
 				];
 			},
-			footer: root ? [{ id: 'create', label: localize('voltAgent.createBranch', "Create new branch..."), icon: Codicon.add, data: { kind: 'create' } }] : [],
-			inlineInput: root ? {
-				itemId: 'create',
-				placeholder: localize('voltAgent.branchName', "Branch name, then Enter"),
-				validate: value => /^-|\.\.|[\s~^:?*[\\]|@\{|\/$|\.lock$|^\/|\/\//.test(value) ? localize('voltAgent.badBranchName', "Not a valid branch name") : undefined,
-				onSubmit: async name => {
-					await this.gitService.createBranch({ repoRoot: root.fsPath, name });
-					await this.afterCheckout();
-				},
-			} : undefined,
 			emptyMessage: localize('voltAgent.noBranches', "No matching branches"),
 			onPick: item => this.pickBranch(item.data),
 		});
+	}
+
+	/**
+	 * Asked in the menu's search field, as VS Code asks after Create new branch. For a worktree
+	 * the name is kept for the first send, which makes the branch along with the checkout.
+	 */
+	private branchPrompt(repoRoot: string, existing: ReadonlySet<string>, worktree: boolean, from?: IVoltGitBranchRef): IVoltMenuPrompt {
+		return {
+			placeholder: from
+				? localize('voltAgent.branchNameFrom', "Branch name (from {0})", from.name)
+				: localize('voltAgent.branchName', "Branch name"),
+			hint: worktree
+				? from
+					? localize('voltAgent.worktreeBranchFromHint', "Press Enter to give the worktree a new branch from {0}", from.name)
+					: localize('voltAgent.worktreeBranchHint', "Press Enter to give the worktree a new branch")
+				: from
+					? localize('voltAgent.branchFromHint', "Press Enter to create the branch from {0} and switch to it", from.name)
+					: localize('voltAgent.branchHint', "Press Enter to create the branch and switch to it"),
+			useQuery: !from,
+			validate: value => BAD_BRANCH_NAME.test(value)
+				? localize('voltAgent.badBranchName', "Not a valid branch name")
+				: existing.has(value) ? localize('voltAgent.branchExists', "A branch named {0} already exists", value) : undefined,
+			onSubmit: async name => {
+				if (worktree) {
+					this.worktreeTarget = { kind: 'new', name, from: from?.ref };
+					this.renderEnvironment();
+					return;
+				}
+				await this.gitService.createBranch({ repoRoot, name, from: from?.ref });
+				await this.afterCheckout();
+			},
+		};
+	}
+
+	/** Worktree mode: remember the branch for the first send. The current branch means the default. */
+	private pickWorktreeBranch(pick: BranchPick): void {
+		if (pick.kind !== 'ref') {
+			return;
+		}
+		this.worktreeTarget = pick.ref === 'local'
+			? pick.name === this.branch.name ? undefined : { kind: 'branch', name: pick.name }
+			: { kind: pick.ref, name: pick.name };
+		this.renderEnvironment();
 	}
 
 	private async pickBranch(pick: BranchPick): Promise<void> {
@@ -319,7 +499,24 @@ export class AgentLandingChrome extends Disposable {
 		}
 		try {
 			if (pick.kind === 'init') {
-				await this.commandService.executeCommand('git.init');
+				// The agent window has no git extension, so git runs in the user's shell, as Start from scratch does.
+				const result = await runGit(this.stdio, root.fsPath, ['init'], INIT_TIMEOUT_MS);
+				if (result.exitCode !== 0) {
+					throw new Error(result.timedOut
+						? localize('voltAgent.initTimedOut', "git init did not finish in time")
+						: result.stderr.trim() || localize('voltAgent.initFailed', "git init failed"));
+				}
+				this.repository = undefined;
+				await this.refreshBranch();
+				return;
+			}
+			if (this.runOn === 'worktree') {
+				this.pickWorktreeBranch(pick);
+				return;
+			}
+			if (pick.kind === 'detached') {
+				await this.gitService.checkout({ repoRoot: root.fsPath, ref: pick.ref, kind: 'detached' });
+				await this.afterCheckout();
 				return;
 			}
 			if (pick.kind !== 'ref' || (pick.ref === 'local' && pick.name === this.branch.name)) {
@@ -348,17 +545,24 @@ export class AgentLandingChrome extends Disposable {
 	private renderEnvironment(): void {
 		this.runOn = normalizeAgentRunOn(this.storageService.get(agentRunOnStorageKey(this.sessionContext.activeProject?.id), StorageScope.APPLICATION));
 		const worktree = this.runOn === 'worktree';
+		const blocked = this.worktreeNeedsCommit();
 		this.envLabel.textContent = worktree ? localize('voltAgent.env.worktree', "Worktree") : THIS_MACHINE;
-		this.envIcon.replaceChildren(renderIcon(worktree ? Codicon.repoForked : Codicon.deviceDesktop));
+		this.envIcon.replaceChildren(renderIcon(blocked ? Codicon.warning : worktree ? Codicon.repoForked : Codicon.deviceDesktop));
 		this.envButton.classList.toggle('worktree', worktree);
-		setAgentTooltip(this.envButton, worktree
-			? localize('voltAgent.env.worktreeTooltip', "Runs in a new worktree, so your checkout is untouched")
-			: localize('voltAgent.env.localTooltip', "Runs in your checkout"));
+		this.envButton.classList.toggle('blocked', blocked);
+		setAgentTooltip(this.envButton, blocked
+			? localize('voltAgent.worktreeNeedsCommit', "This repository has no commits yet. Make a first commit to use a worktree.")
+			: worktree
+				? localize('voltAgent.env.worktreeTooltip', "Runs in a new worktree, so your checkout is untouched")
+				: localize('voltAgent.env.localTooltip', "Runs in your checkout"));
+		// The branch button shows the worktree's branch only in Worktree mode.
+		this.renderBranch();
 	}
 
 	/** "Run on", as in Cursor: this machine, or a new worktree. */
 	private openEnvironmentMenu(): void {
 		const repo = this.hasRepository();
+		const unborn = !!this.branch.unborn;
 		showVoltMenu<AgentRunOn>(this.contextViewService, {
 			anchor: this.envButton,
 			ariaLabel: localize('voltAgent.env.runOn', "Run on"),
@@ -372,16 +576,53 @@ export class AgentLandingChrome extends Disposable {
 						label: localize('voltAgent.env.newWorktree', "New Worktree"),
 						icon: Codicon.add,
 						checked: this.runOn === 'worktree',
-						disabled: !repo,
-						tooltip: repo ? localize('voltAgent.env.worktreeDescription', "An isolated copy of the repo; review the changes to apply them") : localize('voltAgent.env.needsGit', "Needs a git repository"),
+						disabled: !repo || unborn,
+						tooltip: !repo
+							? localize('voltAgent.env.needsGit', "Needs a git repository")
+							: unborn
+								? localize('voltAgent.env.needsCommit', "Needs a first commit")
+								: localize('voltAgent.env.worktreeDescription', "An isolated copy of the repo; review the changes to apply them"),
 						data: 'worktree',
 					}],
 				},
 			],
-			onPick: item => {
-				this.storageService.store(agentRunOnStorageKey(this.sessionContext.activeProject?.id), item.data, StorageScope.APPLICATION, StorageTarget.USER);
-				this.renderEnvironment();
-			},
+			onPick: item => this.setRunOn(item.data),
 		});
 	}
+
+	private setRunOn(runOn: AgentRunOn): void {
+		this.storageService.store(agentRunOnStorageKey(this.sessionContext.activeProject?.id), runOn, StorageScope.APPLICATION, StorageTarget.USER);
+		this.renderEnvironment();
+	}
+}
+
+/** A branch, remote branch or tag: its name, then its latest commit's subject and age, as in VS Code. */
+function refItem(ref: IVoltGitBranchRef, data: BranchPick, checked = false, prompt?: IVoltMenuPrompt): IVoltMenuItem<BranchPick> {
+	const commit = [ref.author, ref.subject].filter(Boolean).join(' \u2022 ');
+	return {
+		id: `${ref.kind}:${ref.name}`,
+		label: ref.name,
+		icon: ref.kind === 'remote' ? Codicon.cloud : ref.kind === 'tag' ? Codicon.tag : Codicon.gitBranch,
+		detail: ref.subject || undefined,
+		keybinding: ref.date ? fromNow(ref.date, true, true) : undefined,
+		tooltip: commit ? `${ref.name}\n${commit}` : ref.name,
+		checked,
+		prompt,
+		data,
+	};
+}
+
+/** Every ref, grouped like the main list, for Create new branch from and Checkout detached. */
+function refMenu(refs: readonly IVoltGitBranchRef[], placeholder: string, item: (ref: IVoltGitBranchRef) => IVoltMenuItem<BranchPick>): IVoltSubmenu<BranchPick> {
+	const group = (id: string, title: string, kind: IVoltGitBranchRef['kind']) => ({ id, title, items: refs.filter(ref => ref.kind === kind).map(item) });
+	return {
+		search: { placeholder },
+		width: 380,
+		emptyMessage: localize('voltAgent.noRefs', "No matching refs"),
+		sections: [
+			group('local', localize('voltAgent.branches', "Branches"), 'local'),
+			group('remote', localize('voltAgent.remoteBranches', "Remote branches"), 'remote'),
+			group('tags', localize('voltAgent.tags', "Tags"), 'tag'),
+		],
+	};
 }

@@ -117,4 +117,8 @@ suite('ACP tool input', () => {
 		assert.strictEqual(acpModeForVoltMode('debug', cursor), undefined);
 		assert.strictEqual(acpModeForVoltMode('plan', [{ id: 'default' }]), undefined);
 	});
+	test('a file cursor-agent creates arrives with diff headers in place of content', () => {
+		const update = { content: [{ type: 'diff', path: '/repo/hello.txt', oldText: '-- /dev/null', newText: '++ b//repo/hello.txt\nalpha\nbeta' }] };
+		assert.deepStrictEqual(collectAcpToolDiffs(update), [{ path: '/repo/hello.txt', oldText: null, newText: 'alpha\nbeta' }]);
+	});
 });

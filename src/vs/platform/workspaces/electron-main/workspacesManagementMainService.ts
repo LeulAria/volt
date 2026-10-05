@@ -22,9 +22,9 @@ import { ILogService } from '../../log/common/log.js';
 import { IUserDataProfilesMainService } from '../../userDataProfile/electron-main/userDataProfile.js';
 import { ICodeWindow } from '../../window/electron-main/window.js';
 import { findWindowOnWorkspaceOrFolder } from '../../windows/electron-main/windowsFinder.js';
-import { isWorkspaceIdentifier, IWorkspaceIdentifier, IResolvedWorkspace, hasWorkspaceFileExtension, UNTITLED_WORKSPACE_NAME, isUntitledWorkspace } from '../../workspace/common/workspace.js';
-import { getStoredWorkspaceFolder, IEnterWorkspaceResult, isStoredWorkspaceFolder, IStoredWorkspace, IStoredWorkspaceFolder, IUntitledWorkspaceInfo, IWorkspaceFolderCreationData, toWorkspaceFolders } from '../common/workspaces.js';
-import { getWorkspaceIdentifier } from '../node/workspaces.js';
+import { isWorkspaceIdentifier, ISingleFolderWorkspaceIdentifier, IWorkspaceIdentifier, IResolvedWorkspace, hasWorkspaceFileExtension, UNTITLED_WORKSPACE_NAME, isUntitledWorkspace } from '../../workspace/common/workspace.js';
+import { getStoredWorkspaceFolder, IEnterFolderResult, IEnterWorkspaceResult, isStoredWorkspaceFolder, IStoredWorkspace, IStoredWorkspaceFolder, IUntitledWorkspaceInfo, IWorkspaceFolderCreationData, toWorkspaceFolders } from '../common/workspaces.js';
+import { getSingleFolderWorkspaceIdentifier, getWorkspaceIdentifier } from '../node/workspaces.js';
 
 export const IWorkspacesManagementMainService = createDecorator<IWorkspacesManagementMainService>('workspacesManagementMainService');
 
@@ -41,6 +41,7 @@ export interface IWorkspacesManagementMainService {
 	readonly onDidEnterWorkspace: Event<IWorkspaceEnteredEvent>;
 
 	enterWorkspace(intoWindow: ICodeWindow, openedWindows: ICodeWindow[], path: URI): Promise<IEnterWorkspaceResult | undefined>;
+	enterFolder(intoWindow: ICodeWindow, openedWindows: ICodeWindow[], folderUri: URI): Promise<IEnterFolderResult | undefined>;
 
 	createUntitledWorkspace(folders?: IWorkspaceFolderCreationData[], remoteAuthority?: string): Promise<IWorkspaceIdentifier>;
 
@@ -263,6 +264,49 @@ export class WorkspacesManagementMainService extends Disposable implements IWork
 		this._onDidEnterWorkspace.fire({ window, workspace: result.workspace });
 
 		return result;
+	}
+
+	/**
+	 * Volt: the folder version of {@link enterWorkspace}. The window keeps running and is
+	 * from now on opened on this folder, also for backups, restore and reload.
+	 */
+	async enterFolder(window: ICodeWindow, windows: ICodeWindow[], folderUri: URI): Promise<IEnterFolderResult | undefined> {
+		if (!window?.win || !window.isReady || !window.config) {
+			return undefined;
+		}
+		if (findWindowOnWorkspaceOrFolder(windows.filter(other => other !== window), folderUri)) {
+			return undefined; // another window has it open; that window is the place for it
+		}
+
+		let workspace: ISingleFolderWorkspaceIdentifier | undefined;
+		if (folderUri.scheme === Schemas.file) {
+			try {
+				workspace = getSingleFolderWorkspaceIdentifier(folderUri, await fs.promises.stat(originalFSPath(folderUri)));
+			} catch (error) {
+				this.logService.error(error);
+				return undefined;
+			}
+		} else {
+			workspace = getSingleFolderWorkspaceIdentifier(folderUri);
+		}
+		if (!workspace) {
+			return undefined;
+		}
+
+		let backupPath: string | undefined;
+		if (!window.config.extensionDevelopmentPath) {
+			backupPath = this.backupMainService.registerFolderBackup({ folderUri, remoteAuthority: window.remoteAuthority });
+		}
+
+		// if the window was opened on an untitled workspace, delete it.
+		if (isWorkspaceIdentifier(window.openedWorkspace) && this.isUntitledWorkspace(window.openedWorkspace)) {
+			await this.deleteUntitledWorkspace(window.openedWorkspace);
+		}
+
+		window.config.workspace = workspace;
+		window.config.backupPath = backupPath;
+
+		return { workspace, backupPath };
 	}
 
 	private async isValidTargetWorkspacePath(window: ICodeWindow, windows: ICodeWindow[], workspacePath?: URI): Promise<boolean> {

@@ -9,6 +9,7 @@ import type { VoltLane } from './harness/lanes.js';
 import type { TaskPhase } from './harness/lifecycle.js';
 import type { ToolKind } from './harness/workLog.js';
 import { VoltMode } from './modes.js';
+import type { IAgentAnsweredQuestion, IAgentQuestionRequest, IAgentQuestionResponse } from './questions.js';
 
 /** DeepSeek tool card. The editor picks a Volt block from this instead of the tool name. */
 export type IVoltToolCard = 'generic' | 'terminal' | 'diff' | 'search' | 'read' | 'web';
@@ -73,6 +74,12 @@ export type IVoltEvent =
 	| { type: 'access.ask'; request: IAccessRequest }
 	| { type: 'access.resolved'; requestId: string; effect: 'allow' | 'deny'; scope: 'once' | 'always' }
 	| { type: 'access.blocked'; request: IAccessRequest; policySource: string }
+	/** The agent asked multiple-choice questions; the tray above the composer answers them. */
+	| { type: 'question.ask'; request: IAgentQuestionRequest }
+	/** `answers` is what the transcript's Answers card lists (empty when skipped or dismissed). */
+	| { type: 'question.resolved'; requestId: string; outcome: IAgentQuestionResponse['outcome']; answers: readonly IAgentAnsweredQuestion[]; note?: string }
+	/** One of Volt's own MCP tools ran for this chat; its full result, which some agents do not echo back. */
+	| { type: 'host.tool'; name: string; args: Record<string, unknown>; text?: string; image?: string; error?: string }
 	/**
 	 * `input` is uncached prompt tokens, `cache` is prompt tokens read from the provider cache,
 	 * and `cacheWrite` is prompt tokens written to it. `used` is the whole prompt the model saw.
@@ -100,7 +107,18 @@ export type IVoltEvent =
 	| { type: 'proof'; covered: number; total: number; ok: boolean }
 	| { type: 'scheduler'; queued: number; running: number }
 	| { type: 'eval'; score: number; successRate: number; steps: number; tokens: number; hints: readonly string[] }
-	| { type: 'title'; text: string };
+	| { type: 'title'; text: string }
+	/**
+	 * The agent's harness started its own subagent (Claude/Codex native subagent sessions, Cursor's Task).
+	 * `childId` is the harness's id for it (child session id, else the Task call id); `parentToolCallId`
+	 * ties it to the spawning tool row when known.
+	 */
+	| { type: 'subagent.spawned'; childId: string; parentToolCallId?: string; title: string; prompt?: string; kind?: string; model?: string; source: 'claude' | 'codex' | 'cursor' | 'acp' }
+	/** Something a harness subagent did (a tool call, text), kept out of the parent's own steps. */
+	| { type: 'subagent.event'; childId: string; event: IVoltEvent }
+	/** Facts that arrive later (Cursor names the model at the end; Claude resolves it after the spawn), or its current step. */
+	| { type: 'subagent.update'; childId: string; title?: string; model?: string; activity?: string; parentToolCallId?: string }
+	| { type: 'subagent.completed'; childId: string; status: 'completed' | 'failed' | 'cancelled'; result?: string; error?: string; durationMs?: number };
 
 export interface IVoltEventEnvelope {
 	seq: number;
@@ -115,5 +133,8 @@ export interface IVoltEventEnvelope {
 }
 
 export function isLiveOnlyEvent(event: IVoltEvent): boolean {
+	if (event.type === 'subagent.event') {
+		return isLiveOnlyEvent(event.event);
+	}
 	return event.type === 'text.delta' || event.type === 'reasoning.delta' || event.type === 'tool.input.delta' || event.type === 'tool.progress';
 }

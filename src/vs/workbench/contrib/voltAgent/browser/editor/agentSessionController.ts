@@ -14,13 +14,15 @@ import { runStatusLine } from '../../../../services/voltRuntime/common/harness/w
 import { AgentSessionAttention, AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { appendProviderNotice, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IFileChangeBlock, isExploreTool, isFileChangeTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments } from '../blocks/agentBlocks.js';
+import { appendProviderNotice, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IFileChangeBlock, IPlanBlock, isExploreTool, isFileChangeTool, isPlanTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments } from '../blocks/agentBlocks.js';
+import { sameHostToolArgs } from '../blocks/agentHostToolActivity.js';
+import { classifySupervisionNotice } from '../chrome/agentTimeline.js';
 import { agentMessagePlainText } from '../context/agentContextUsage.js';
 import { extractToolImage } from '../preview/browserSnapshot.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
-import { computeFileChangePreview, fileChangeVerb, parseToolFileChange } from '../review/fileChangePreviewModel.js';
+import { computeChangeStats, fileChangeVerb, parseToolFileChange } from '../review/fileChangePreviewModel.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
-import type { IAgentActivity, IAgentAssistantMessage, IAgentMessage } from './agentEditor.js';
+import type { IAgentActivity, IAgentAssistantMessage, IAgentMessage, IAgentPromptDisplay, IAgentUserMessage } from './agentEditor.js';
 
 /**
  * How often a streaming reply is snapshotted into history. Each snapshot rewrites the session log,
@@ -35,16 +37,39 @@ export interface IAgentSessionHost {
 	contextUsed?: number;
 	contextWindow?: number;
 	recordAssistant(message: IAgentAssistantMessage, final: boolean, status: AgentSessionStatus, plainText: string): void;
+	recordUser?(message: IAgentUserMessage): void;
+	recordMode?(mode: string): void;
+}
+
+/** One turn the orchestrator starts: what the transcript shows and what the model reads. */
+export interface IAgentTurnSpec {
+	readonly turnId: string;
+	/** Model-facing text. */
+	readonly text: string;
+	readonly display?: IAgentPromptDisplay;
+	/** Composer mode label ("Agent", "Plan", ...). */
+	readonly mode: string;
+	readonly origin?: IAgentUserMessage['origin'];
+	readonly taskIds?: readonly string[];
+	readonly handoff?: IAgentUserMessage['handoff'];
 }
 
 export interface IAgentSessionChange {
-	readonly kind: 'render' | 'usage' | 'runEnd';
+	/** `turnStart`: a turn's messages were added (by this panel or by the orchestrator in the background). */
+	readonly kind: 'render' | 'usage' | 'runEnd' | 'turnStart';
+	readonly turnId?: string;
 	readonly aborted?: boolean;
+	/** The run ended in an error: queued prompts wait for the user instead of going to a failing provider. */
+	readonly failed?: boolean;
 }
 
-export function completeStreamingBlocks(message: IAgentAssistantMessage): void {
+/** Closes a reply's open cards. `stopped`: the user stopped the turn, so running calls read "Stopped". */
+export function completeStreamingBlocks(message: IAgentAssistantMessage, stopped = false): void {
 	for (const segment of message.segments ?? []) {
 		if (segment.kind === 'block' && segment.block.status === 'streaming') {
+			if (stopped && segment.block.type === 'tool') {
+				segment.block.stopped = true;
+			}
 			segment.block.status = segment.block.type === 'approval' ? 'error' : 'complete';
 		}
 	}
@@ -88,8 +113,16 @@ export class AgentSessionController extends Disposable {
 	/** Raw streamed arguments per call, for native providers that send true deltas. */
 	private readonly rawInputs = new Map<string, string>();
 	private readonly rawParsedAt = new Map<string, number>();
-	/** A run finished with queued prompts waiting; the next panel to show this session sends them. */
-	private pendingDrain = false;
+	/**
+	 * Calls that started and have not ended, with the live line each one set. When the last one
+	 * ends the line goes back to the model's own "Thinking", so a quiet model after a tool can
+	 * read "Taking longer than expected".
+	 */
+	private readonly runningCalls = new Map<string, string>();
+	/** The message the run's last text came from: text from another message starts a new paragraph. */
+	private lastTextId: string | undefined;
+	/** The run reported real context occupancy (`used`); its end-of-turn totals are not occupancy. */
+	private runReportedUsed = false;
 
 	constructor(
 		private host: IAgentSessionHost,
@@ -131,10 +164,88 @@ export class AgentSessionController extends Disposable {
 		this.skipRunEvents = true;
 	}
 
-	consumePendingDrain(): boolean {
-		const pending = this.pendingDrain;
-		this.pendingDrain = false;
-		return pending;
+	/**
+	 * Adds a turn to the transcript: the user message (or a notification / brief card) and the
+	 * streaming reply the run's events land in, and records the prompt before the model is asked.
+	 * Views redraw on `turnStart`; nothing here needs a panel.
+	 */
+	beginTurn(spec: IAgentTurnSpec): IAgentAssistantMessage {
+		const existing = this.host.messages.findIndex(message => message.kind === 'user' && message.id === spec.turnId);
+		if (existing >= 0) {
+			// A retried start of the same turn reuses its messages.
+			const reply = this.host.messages[existing + 1];
+			if (reply?.kind === 'agent') {
+				return reply;
+			}
+		}
+		this.cancelPartialRecord();
+		const user: IAgentUserMessage = {
+			kind: 'user',
+			id: spec.turnId,
+			text: spec.display?.text.trim() || spec.text,
+			agentText: spec.display ? spec.text : undefined,
+			mentions: spec.display?.mentions,
+			mode: spec.mode,
+			...(spec.origin ? { origin: spec.origin } : {}),
+			...(spec.taskIds?.length ? { taskIds: [...spec.taskIds] } : {}),
+			...(spec.handoff ? { handoff: spec.handoff } : {}),
+		};
+		const reply: IAgentAssistantMessage = {
+			kind: 'agent',
+			id: spec.turnId,
+			title: '',
+			steps: [],
+			segments: [],
+			blockState: {},
+			startedAt: Date.now(),
+			activity: {
+				status: localize('voltAgent.thinking', "Thinking"),
+				expanded: false,
+				streaming: true,
+				items: [],
+			},
+		};
+		this.host.messages.push(user, reply);
+		// The prompt is durable before the model is asked.
+		this.host.recordUser?.(user);
+		this.host.recordMode?.(spec.mode);
+		this.fire({ kind: 'turnStart', turnId: spec.turnId });
+		return reply;
+	}
+
+	/** The turn never reached the runtime (it failed or was stopped while starting): close its reply. */
+	endUnstartedTurn(turnId: string, failure: string | undefined): void {
+		const reply = this.host.messages.find((message): message is IAgentAssistantMessage => message.kind === 'agent' && message.id === turnId);
+		if (!reply?.activity?.streaming) {
+			return;
+		}
+		reply.activity.streaming = false;
+		completeStreamingBlocks(reply, !failure);
+		reply.endedAt = Date.now();
+		reply.durationMs = reply.endedAt - (reply.startedAt ?? reply.endedAt);
+		if (failure) {
+			reply.outcome = 'failed';
+			reply.failure = { message: failure };
+		} else {
+			reply.cancelled = true;
+			reply.outcome = 'stopped';
+			reply.activity.status = localize('voltAgent.cancelled', "Cancelled");
+		}
+		this.host.recordAssistant(reply, true, failure ? 'error' : 'cancelled', agentMessagePlainText(reply));
+		this.fire({ kind: 'runEnd', aborted: !failure, failed: !!failure });
+		this._onDidBecomeIdle.fire();
+	}
+
+	/** A message steered into the running turn: the reply shows where it landed. False when nothing runs. */
+	recordSteer(text: string): boolean {
+		const reply = this.host.messages.at(-1);
+		if (reply?.kind !== 'agent' || !reply.activity?.streaming) {
+			return false;
+		}
+		(reply.steers ??= []).push({ text, at: reply.segments.length });
+		this.host.recordAssistant(reply, false, 'running', agentMessagePlainText(reply));
+		this.fire({ kind: 'render' });
+		return true;
 	}
 
 	private fire(change: IAgentSessionChange): void {
@@ -170,6 +281,28 @@ export class AgentSessionController extends Disposable {
 		}
 	}
 
+	/**
+	 * Some agents (Cursor) report a Volt MCP call as `{ success: true }`, so the page state the
+	 * host returned is attached here, to the newest row for the same tool and arguments.
+	 */
+	private attachHostToolResult(last: IAgentAssistantMessage, event: Extract<IVoltEventEnvelope['event'], { type: 'host.tool' }>): void {
+		const rows = (last.segments ?? [])
+			.filter((segment): segment is Extract<AgentSegment, { kind: 'activity' }> => segment.kind === 'activity')
+			.map(segment => segment.item)
+			.filter(item => item.browserTool === event.name && item.result === undefined && item.error === undefined);
+		const item = rows.reverse().find(row => !row.hostArgs || sameHostToolArgs(row.hostArgs, event.args)) ?? rows[0];
+		if (!item) {
+			return;
+		}
+		item.result = event.text ?? '';
+		if (event.error) {
+			item.error = event.error;
+		}
+		if (event.image) {
+			item.image = event.image;
+		}
+	}
+
 	/** Opens in the session that produced it, so a background run never takes over the visible chat. */
 	private openPreview(url: string): void {
 		const clean = sanitizeBrowserUrl(url) ?? extractLocalPreviewUrl(url) ?? extractHttpUrl(url) ?? url;
@@ -183,7 +316,8 @@ export class AgentSessionController extends Disposable {
 		} catch {
 			// keep fallback
 		}
-		this.agentWorkspace.openSurface(this.host.sessionId, { kind: 'browser', url: clean, title }, true);
+		// The agent's preview floats over the chat unless the chat already has tools open beside it.
+		this.agentWorkspace.openSurface(this.host.sessionId, { kind: 'browser', url: clean, title, floating: true }, true);
 	}
 
 	private applyUsage(event: Extract<IVoltEventEnvelope['event'], { type: 'usage' }>, last?: IAgentAssistantMessage): void {
@@ -192,9 +326,13 @@ export class AgentSessionController extends Disposable {
 		const cache = event.cache !== undefined && Number.isFinite(event.cache) ? Math.max(0, event.cache) : 0;
 		// Prefer provider/ACP `used`. Otherwise input+output+cache is one turn total
 		// so the composer meter matches the Input / Output / Cached chips.
-		const measured = event.used !== undefined && Number.isFinite(event.used) && event.used >= 0
+		const reported = event.used !== undefined && Number.isFinite(event.used) && event.used >= 0;
+		this.runReportedUsed ||= reported;
+		// Claude's end-of-turn usage sums cache reads over every model call of the turn (175k for a
+		// 28k context): once the run reported `used`, totals like that only fill the chips.
+		const measured = reported
 			? event.used
-			: (prompt + completion + cache > 0 ? prompt + completion + cache : undefined);
+			: (!this.runReportedUsed && prompt + completion + cache > 0 ? prompt + completion + cache : undefined);
 		if (measured !== undefined) {
 			this.host.contextUsed = measured;
 			if (last) {
@@ -309,7 +447,7 @@ export class AgentSessionController extends Disposable {
 		activity.status = event.title || event.name;
 	}
 
-	private replaceCallBlock(last: IAgentAssistantMessage, callId: string, block: ITerminalBlock | IFileChangeBlock | IToolBlock): void {
+	private replaceCallBlock(last: IAgentAssistantMessage, callId: string, block: ITerminalBlock | IFileChangeBlock | IToolBlock | IPlanBlock): void {
 		let replaced = false;
 		for (let i = 0; i < last.segments.length; i++) {
 			const segment = last.segments[i];
@@ -330,9 +468,20 @@ export class AgentSessionController extends Disposable {
 		if (!text) {
 			return;
 		}
-		appendProviderNotice(message.segments, { severity, title: text, description });
+		// A run supervisor's finding (loop, stall, budget) becomes a tray with actions, not a red line.
+		const supervision = classifySupervisionNotice(`${text}\n${description ?? ''}`);
+		appendProviderNotice(message.segments, { severity, title: text, description, ...(supervision ? { supervision } : {}) });
 		activity.status = text;
 		activity.statusPinned = true;
+	}
+
+	/** A call ended: the live line falls back to the newest call still running, else to the model. */
+	private settleCall(activity: IAgentActivity, callId: string): void {
+		if (!this.runningCalls.delete(callId) || activity.statusPinned) {
+			return;
+		}
+		const running = [...this.runningCalls.values()];
+		activity.status = running.at(-1) ?? localize('voltAgent.thinking', "Thinking");
 	}
 
 	private apply(envelope: IVoltEventEnvelope): void {
@@ -365,6 +514,7 @@ export class AgentSessionController extends Disposable {
 			items: [],
 		};
 		last.activity = activity;
+		activity.lastEventAt = Date.now();
 		last.segments ??= [];
 		last.blockState ??= {};
 
@@ -372,6 +522,12 @@ export class AgentSessionController extends Disposable {
 			case 'run.start':
 				this.rawInputs.clear();
 				this.rawParsedAt.clear();
+				this.runningCalls.clear();
+				this.lastTextId = undefined;
+				this.runReportedUsed = false;
+				last.runId = envelope.runId;
+				last.outcome = undefined;
+				last.failure = undefined;
 				activity.streaming = true;
 				activity.status = localize('voltAgent.thinking', "Thinking");
 				this.runWantsPreview = false;
@@ -420,16 +576,33 @@ export class AgentSessionController extends Disposable {
 				activity.thinkingText = (activity.thinkingText ?? '') + (event.delta ?? '');
 				appendThoughtDelta(last.segments, event.delta ?? '');
 				break;
-			case 'text.delta':
-				last.text = (last.text ?? '') + (event.delta ?? '');
-				appendTextDelta(last.segments, event.delta ?? '');
+			case 'text.delta': {
+				// Claude speaks again after a subagent reports, with no tool between: without a break
+				// "…to finish..." and "Both subagents completed" ran together into one line.
+				const tail = last.segments.at(-1);
+				let delta = event.delta ?? '';
+				if (this.lastTextId !== undefined && event.id !== this.lastTextId && tail?.kind === 'text' && tail.text.trim() && !tail.text.endsWith('\n\n')) {
+					delta = (tail.text.endsWith('\n') ? '\n' : '\n\n') + delta;
+				}
+				this.lastTextId = event.id;
+				last.text = (last.text ?? '') + delta;
+				appendTextDelta(last.segments, delta);
 				activity.statusPinned = false;
 				activity.status = localize('voltAgent.writing', "Writing");
 				break;
+			}
 			case 'tool.start': {
 				activity.statusPinned = false;
-				if (event.card) {
+				if (isTodoTool(event.name, event.title, event.input)) {
+					// The list itself arrives as a plan update and is drawn as "Added 4 to-dos" rows.
+					activity.status = localize('voltAgent.todo.updating', "Updating to-dos");
+					this.runningCalls.set(event.callId, activity.status);
+					break;
+				}
+				// The native create_plan tool is presented as a generic card; it is drawn as the plan card.
+				if (event.card && !isPlanTool(event.name, event.title, event.input)) {
 					this.applyPresentedTool(last, event, activity);
+					this.runningCalls.set(event.callId, activity.status);
 					break;
 				}
 				const kind = event.kind;
@@ -447,10 +620,13 @@ export class AgentSessionController extends Disposable {
 						: localize('voltAgent.runningTerminal', "Running command");
 				} else {
 					const fileChange = isFileChangeTool(event.name, event.title, kind);
-					if (!fileChange) {
+					// A plan tool is drawn as the plan card below, not as an extra step row.
+					if (!fileChange && !isPlanTool(event.name, event.title, event.input)) {
 						const described = describeExploreActivity(event.name, event.title, event.input);
 						const item: IAgentActivityItem = {
-							kind: classifyToolActivity(event.name, event.title, kind),
+							kind: described.kind ?? classifyToolActivity(event.name, event.title, kind),
+							...(described.browserTool ? { browserTool: described.browserTool, hostArgs: described.hostArgs } : {}),
+							...(described.hidden ? { hidden: true } : {}),
 							label: described.label,
 							detail: described.detail,
 							path: described.path,
@@ -486,6 +662,13 @@ export class AgentSessionController extends Disposable {
 						}),
 					});
 					this.maybeOpenLocalPreview(parsed.command, 700);
+				} else if (isPlanTool(event.name, event.title, event.input)) {
+					const parsedPlan = parsePlanToolInput(event.input);
+					last.segments.push({
+						kind: 'block',
+						block: createPlanBlock({ id, callId: event.callId, input: event.input, name: parsedPlan.name, markdown: parsedPlan.plan ?? '' }),
+					});
+					activity.status = localize('voltAgent.planning', "Planning");
 				} else if (isFileChangeTool(event.name, event.title, kind)) {
 					last.segments.push({
 						kind: 'block',
@@ -506,6 +689,7 @@ export class AgentSessionController extends Disposable {
 				if (!explore) {
 					last.blockState[id] = { expanded: false };
 				}
+				this.runningCalls.set(event.callId, activity.status);
 				break;
 			}
 			case 'tool.input.delta': {
@@ -550,7 +734,17 @@ export class AgentSessionController extends Disposable {
 						block.input = block.input ? (block.input.includes(event.delta) ? block.input : block.input + event.delta) : event.delta;
 					} else if (block?.type === 'file') {
 						block.input = mergeToolInput(block.input, event.delta);
-						this.mergeFileChange(block, block.input);
+						if (isPlanTool('', undefined, block.input)) {
+							// The plan tool announces itself as an edit until its input arrives.
+							this.replaceCallBlock(last, block.callId ?? event.callId, this.planFromInput(block.id, block.callId ?? event.callId, block.input));
+						} else {
+							this.mergeFileChange(block, block.input);
+						}
+					} else if (block?.type === 'plan') {
+						block.input = mergeToolInput(block.input, event.delta);
+						const parsedPlan = parsePlanToolInput(block.input);
+						block.name = parsedPlan.name ?? block.name;
+						block.markdown = parsedPlan.plan ?? block.markdown;
 					}
 					const item = this.findActivityByCallId(last, event.callId);
 					if (item) {
@@ -590,6 +784,8 @@ export class AgentSessionController extends Disposable {
 				} else if (block?.type === 'tool') {
 					block.output = event.output || output;
 					block.status = event.error ? 'error' : 'complete';
+				} else if (block?.type === 'plan') {
+					block.status = event.error ? 'error' : 'complete';
 				} else if (block?.type === 'file') {
 					block.output = event.output || output;
 					block.status = event.error ? 'error' : 'complete';
@@ -606,15 +802,23 @@ export class AgentSessionController extends Disposable {
 						item.view = event.view;
 					}
 				}
+				this.settleCall(activity, event.callId);
 				break;
 			}
-			case 'plan':
+			case 'plan': {
+				const previous = last.steps;
 				last.title = localize('voltAgent.planTitle', "Plan");
 				last.steps = event.entries.map(entry => ({
 					label: entry.content,
 					state: entry.status === 'completed' ? 'done' : entry.status === 'in_progress' ? 'current' : 'pending',
 				}));
+				// Cursor writes to-do changes into the timeline: "Added 4 to-dos", "Completed 2 of 6 Fix the bug".
+				const todo = describeTodoUpdate(previous, last.steps);
+				if (todo) {
+					last.segments.push({ kind: 'activity', item: { kind: 'note', label: todo.label, ...(todo.detail ? { detail: todo.detail } : {}) } });
+				}
 				break;
+			}
 			case 'file.change': {
 				const path = event.uri.path || event.uri.fsPath;
 				if (!findFileBlockByPath(last.segments, path)) {
@@ -650,6 +854,35 @@ export class AgentSessionController extends Disposable {
 				this.setAttention('approval');
 				break;
 			}
+			case 'question.ask':
+				activity.status = localize('voltAgent.waitingAnswer', "Waiting for your answers");
+				activity.statusPinned = true;
+				this.setAttention('question');
+				break;
+			case 'question.resolved': {
+				activity.statusPinned = false;
+				if (event.outcome === 'answered' && event.answers.length) {
+					last.segments.push({
+						kind: 'block',
+						block: {
+							type: 'answers',
+							id: `answers-${event.requestId}`,
+							status: 'complete',
+							requestId: event.requestId,
+							outcome: event.outcome,
+							items: event.answers.map(item => ({ question: item.question, answer: item.answer })),
+							...(event.note ? { note: event.note } : {}),
+						},
+					});
+				}
+				if (this.history.get(this.host.sessionId)?.attention === 'question') {
+					this.setAttention(undefined);
+				}
+				break;
+			}
+			case 'host.tool':
+				this.attachHostToolResult(last, event);
+				break;
 			case 'access.resolved': {
 				for (const segment of last.segments) {
 					if (segment.kind === 'block' && segment.block.type === 'approval' && segment.block.requestId === event.requestId) {
@@ -698,6 +931,44 @@ export class AgentSessionController extends Disposable {
 				}
 				break;
 			}
+			case 'subagent.spawned': {
+				// Native subagents arrive without a Task call in the parent's stream: draw one row for them.
+				if (!findBlockByCallId(last.segments, event.childId) && !(event.parentToolCallId && findBlockByCallId(last.segments, event.parentToolCallId))) {
+					last.segments.push({
+						kind: 'block',
+						block: createToolBlock({
+							id: `tool-${event.childId}`,
+							callId: event.childId,
+							name: 'Task',
+							title: event.title,
+							input: JSON.stringify({ description: event.title, ...(event.prompt ? { prompt: event.prompt } : {}), ...(event.kind ? { subagent_type: event.kind } : {}) }),
+						}),
+					});
+				}
+				activity.status = localize('voltAgent.subagentStarted', "Started {0}", event.title);
+				break;
+			}
+			case 'subagent.update': {
+				const block = findBlockByCallId(last.segments, event.childId) ?? (event.parentToolCallId ? findBlockByCallId(last.segments, event.parentToolCallId) : undefined);
+				if (block?.type === 'tool' && event.activity) {
+					block.output = (block.output ? block.output.split('\n') : []).concat(event.activity).slice(-6).join('\n');
+				}
+				break;
+			}
+			case 'subagent.event':
+				// The child's own steps belong to its row (and its own chat), not to this reply's steps.
+				break;
+			case 'subagent.completed': {
+				const block = findBlockByCallId(last.segments, event.childId);
+				if (block?.type === 'tool' && block.status === 'streaming') {
+					block.status = event.status === 'failed' ? 'error' : 'complete';
+					block.stopped = event.status === 'cancelled';
+					if (event.result) {
+						block.output = event.result;
+					}
+				}
+				break;
+			}
 			case 'notice':
 				this.showProviderNotice(last, activity, event.severity, event.title, event.description);
 				break;
@@ -706,12 +977,15 @@ export class AgentSessionController extends Disposable {
 				activity.items.push({ kind: 'note', label: event.message });
 				break;
 			case 'error':
+				last.failure = { message: event.message, ...(event.retryable !== undefined ? { retryable: event.retryable } : {}) };
 				this.showProviderNotice(last, activity, 'error', event.message);
 				break;
 			case 'run.end':
 				activity.streaming = false;
 				activity.expanded = false;
+				this.runningCalls.clear();
 				last.cancelled = last.cancelled || event.reason === 'abort';
+				last.outcome = last.cancelled ? 'stopped' : event.reason === 'fail' ? 'failed' : 'done';
 				last.endedAt = Date.now();
 				last.startedAt ??= last.endedAt;
 				last.durationMs = Math.max(0, last.endedAt - last.startedAt);
@@ -723,11 +997,11 @@ export class AgentSessionController extends Disposable {
 				activity.status = last.cancelled
 					? localize('voltAgent.cancelled', "Cancelled")
 					: runStatusLine(workCountsForSegments(last.segments), last.durationMs);
-				completeStreamingBlocks(last);
+				completeStreamingBlocks(last, last.cancelled);
 				this.cancelPartialRecord();
 				this.host.recordAssistant(last, true, last.cancelled ? 'cancelled' : event.reason === 'fail' ? 'error' : 'done', agentMessagePlainText(last));
-				this.pendingDrain = event.reason !== 'abort';
-				this.fire({ kind: 'runEnd', aborted: event.reason === 'abort' });
+				// The orchestrator sends the next queued prompt; after an error its queue waits for the user.
+				this.fire({ kind: 'runEnd', aborted: last.cancelled, failed: last.outcome === 'failed' });
 				this._onDidBecomeIdle.fire();
 				return;
 		}
@@ -764,6 +1038,12 @@ export class AgentSessionController extends Disposable {
 		}
 		if (block?.type === 'tool') {
 			block.input = raw;
+		} else if (block?.type === 'plan') {
+			// Native create_plan streams its arguments; the card fills in once they parse.
+			block.input = raw;
+			const parsedPlan = parsePlanToolInput(raw);
+			block.name = parsedPlan.name ?? block.name;
+			block.markdown = parsedPlan.plan ?? block.markdown;
 		} else if (block?.type === 'file') {
 			block.input = raw;
 			const parsedAt = this.rawParsedAt.get(callId) ?? 0;
@@ -814,6 +1094,11 @@ export class AgentSessionController extends Disposable {
 		return message.activity?.items.find(item => item.callId === callId);
 	}
 
+	private planFromInput(id: string, callId: string, input: string | undefined): IPlanBlock {
+		const parsed = parsePlanToolInput(input);
+		return createPlanBlock({ id, callId, input, name: parsed.name, markdown: parsed.plan ?? '' });
+	}
+
 	private createFileChangeFromTool(id: string, callId: string, name: string, title: string | undefined, input?: string): IFileChangeBlock {
 		const parsed = parseToolFileChange({ name, title, input });
 		const target = parseFileTarget(input, title, name, parsed?.path);
@@ -843,9 +1128,9 @@ export class AgentSessionController extends Disposable {
 		block.original = diff.oldText ?? '';
 		block.modified = diff.newText;
 		block.unifiedDiff = undefined;
-		const preview = computeFileChangePreview({ original: block.original, modified: block.modified });
-		block.additions = preview.additions;
-		block.deletions = preview.deletions;
+		const stats = computeChangeStats({ original: block.original, modified: block.modified });
+		block.additions = stats.additions;
+		block.deletions = stats.deletions;
 		block.verb = diff.oldText === null ? 'Created' : fileChangeVerb(block.verb, block.path, block.path);
 	}
 
@@ -889,4 +1174,36 @@ export class AgentSessionController extends Disposable {
 		}
 		item.image = image;
 	}
+}
+
+/** The timeline line for a to-do list change, or undefined when nothing worth a row changed. */
+export function describeTodoUpdate(previous: readonly { label: string; state: string }[], next: readonly { label: string; state: string }[]): { label: string; detail?: string } | undefined {
+	if (!next.length) {
+		return undefined;
+	}
+	if (!previous.length) {
+		return { label: next.length === 1 ? localize('voltAgent.todo.addedOne', "Added 1 to-do") : localize('voltAgent.todo.added', "Added {0} to-dos", next.length) };
+	}
+	const wasDone = new Set(previous.filter(step => step.state === 'done').map(step => step.label));
+	const finished = next.filter(step => step.state === 'done' && !wasDone.has(step.label));
+	const done = next.filter(step => step.state === 'done').length;
+	if (finished.length === 1) {
+		return { label: localize('voltAgent.todo.completedOf', "Completed {0} of {1}", done, next.length), detail: finished[0].label };
+	}
+	if (finished.length > 1) {
+		return { label: localize('voltAgent.todo.completedMany', "Completed {0} of {1} to-dos", done, next.length) };
+	}
+	const known = new Set(previous.map(step => step.label));
+	const added = next.filter(step => !known.has(step.label)).length;
+	if (added) {
+		return { label: added === 1 ? localize('voltAgent.todo.addedOne', "Added 1 to-do") : localize('voltAgent.todo.added', "Added {0} to-dos", added) };
+	}
+	return undefined;
+}
+
+/** Agents' to-do tools (Cursor's updateTodos, Claude's TodoWrite): drawn from the plan they publish. */
+export function isTodoTool(name: string | undefined, title: string | undefined, input: string | undefined): boolean {
+	return /^(todo_?write|update_?todos|todowrite|manage_?todo_?list)$/i.test(name ?? '')
+		|| /^update todos\b/i.test(title ?? '')
+		|| /"_toolName"\s*:\s*"updateTodos"/.test(input ?? '');
 }

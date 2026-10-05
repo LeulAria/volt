@@ -11,6 +11,7 @@ import { createMetaElement } from '../../base/browser/dom.js';
 import { isSafari, isStandalone } from '../../base/browser/browser.js';
 import { selectionBackground } from '../../platform/theme/common/colorRegistry.js';
 import { mainWindow } from '../../base/browser/window.js';
+import { FontMeasurements } from '../../editor/browser/config/fontMeasurements.js';
 
 registerThemingParticipant((theme, collector) => {
 
@@ -60,3 +61,12 @@ registerThemingParticipant((theme, collector) => {
 		collector.addRule(`body { background-color: ${workbenchBackground}; }`);
 	}
 });
+
+// The bundled Geist Mono only loads once something renders with it, which is
+// after the editor has measured (and cached) the fallback font's metrics.
+// Load it up front and re-measure so editors and the terminal pick it up.
+mainWindow.document.fonts.load('12px "Geist Mono"').then(fonts => {
+	if (fonts.length) {
+		FontMeasurements.clearAllFontInfos();
+	}
+}, () => { /* ignore */ });

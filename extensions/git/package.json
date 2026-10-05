@@ -67,6 +67,69 @@
   "contributes": {
     "commands": [
       {
+        "command": "git.volt.refreshCommits",
+        "title": "%command.volt.refresh%",
+        "category": "Git",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "git.volt.refreshStashes",
+        "title": "%command.volt.refresh%",
+        "category": "Git",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "git.volt.loadMoreCommits",
+        "title": "%command.volt.loadMoreCommits%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.openFileChange",
+        "title": "%command.volt.openChanges%",
+        "category": "Git",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "git.volt.openCommitChanges",
+        "title": "%command.volt.openChanges%",
+        "category": "Git",
+        "icon": "$(diff-multiple)"
+      },
+      {
+        "command": "git.volt.copyCommitId",
+        "title": "%command.volt.copyCommitId%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.copyCommitMessage",
+        "title": "%command.volt.copyCommitMessage%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.openStashChanges",
+        "title": "%command.volt.openChanges%",
+        "category": "Git",
+        "icon": "$(diff-multiple)"
+      },
+      {
+        "command": "git.volt.stashApply",
+        "title": "%command.volt.stashApply%",
+        "category": "Git",
+        "icon": "$(git-stash-apply)"
+      },
+      {
+        "command": "git.volt.stashPop",
+        "title": "%command.volt.stashPop%",
+        "category": "Git",
+        "icon": "$(git-stash-pop)"
+      },
+      {
+        "command": "git.volt.stashDrop",
+        "title": "%command.volt.stashDrop%",
+        "category": "Git",
+        "icon": "$(trash)"
+      },
+      {
         "command": "git.continueInLocalClone",
         "title": "%command.continueInLocalClone%",
         "category": "Git",
@@ -776,6 +839,7 @@
         "command": "git.stashIncludeUntracked",
         "title": "%command.stashIncludeUntracked%",
         "category": "Git",
+        "icon": "$(git-stash)",
         "enablement": "!operationInProgress"
       },
       {
@@ -788,6 +852,7 @@
         "command": "git.stashStaged",
         "title": "%command.stashStaged%",
         "category": "Git",
+        "icon": "$(git-stash)",
         "enablement": "!operationInProgress && gitVersion2.35"
       },
       {
@@ -1029,7 +1094,125 @@
       }
     ],
     "menus": {
+      "view/title": [
+        {
+          "command": "git.volt.refreshCommits",
+          "when": "view == git.volt.commits",
+          "group": "navigation"
+        },
+        {
+          "command": "git.volt.refreshStashes",
+          "when": "view == git.volt.stashes",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "git.volt.openCommitChanges",
+          "when": "view == git.volt.commits && viewItem == voltGitCommit",
+          "group": "inline"
+        },
+        {
+          "command": "git.volt.openCommitChanges",
+          "when": "view == git.volt.commits && viewItem == voltGitCommit",
+          "group": "1_open@1"
+        },
+        {
+          "command": "git.volt.copyCommitId",
+          "when": "view == git.volt.commits && viewItem == voltGitCommit",
+          "group": "9_copy@1"
+        },
+        {
+          "command": "git.volt.copyCommitMessage",
+          "when": "view == git.volt.commits && viewItem == voltGitCommit",
+          "group": "9_copy@2"
+        },
+        {
+          "command": "git.volt.stashApply",
+          "when": "view == git.volt.stashes && viewItem == voltGitStash",
+          "group": "inline@1"
+        },
+        {
+          "command": "git.volt.stashPop",
+          "when": "view == git.volt.stashes && viewItem == voltGitStash",
+          "group": "inline@2"
+        },
+        {
+          "command": "git.volt.stashDrop",
+          "when": "view == git.volt.stashes && viewItem == voltGitStash",
+          "group": "inline@3"
+        },
+        {
+          "command": "git.volt.openStashChanges",
+          "when": "view == git.volt.stashes && viewItem == voltGitStash",
+          "group": "1_open@1"
+        },
+        {
+          "command": "git.volt.stashApply",
+          "when": "view == git.volt.stashes && viewItem == voltGitStash",
+          "group": "2_stash@1"
+        },
+        {
+          "command": "git.volt.stashPop",
+          "when": "view == git.volt.stashes && viewItem == voltGitStash",
+          "group": "2_stash@2"
+        },
+        {
+          "command": "git.volt.stashDrop",
+          "when": "view == git.volt.stashes && viewItem == voltGitStash",
+          "group": "2_stash@3"
+        },
+        {
+          "command": "git.volt.openFileChange",
+          "when": "viewItem == voltGitFile",
+          "group": "inline"
+        }
+      ],
       "commandPalette": [
+        {
+          "command": "git.volt.refreshCommits",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.refreshStashes",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.loadMoreCommits",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.openFileChange",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.openCommitChanges",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.copyCommitId",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.copyCommitMessage",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.openStashChanges",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.stashApply",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.stashPop",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.stashDrop",
+          "when": "false"
+        },
         {
           "command": "git.continueInLocalClone",
           "when": "false"
@@ -1752,6 +1935,16 @@
           "command": "git.viewStagedChanges",
           "when": "scmProvider == git && scmResourceGroup == index && config.multiDiffEditor.experimental.enabled",
           "group": "inline@1"
+        },
+        {
+          "command": "git.stashIncludeUntracked",
+          "when": "scmProvider == git && (scmResourceGroup == workingTree || scmResourceGroup == untracked)",
+          "group": "inline@0"
+        },
+        {
+          "command": "git.stashStaged",
+          "when": "scmProvider == git && scmResourceGroup == index && gitVersion2.35",
+          "group": "inline@0"
         },
         {
           "command": "git.viewChanges",
@@ -3614,6 +3807,22 @@
       "[git-rebase]": {
         "workbench.editor.restoreViewState": false
       }
+    },
+    "views": {
+      "scm": [
+        {
+          "id": "git.volt.commits",
+          "name": "%view.volt.commits%",
+          "visibility": "collapsed",
+          "when": "config.git.enabled && !git.missing && gitOpenRepositoryCount != 0"
+        },
+        {
+          "id": "git.volt.stashes",
+          "name": "%view.volt.stashes%",
+          "visibility": "collapsed",
+          "when": "config.git.enabled && !git.missing && gitOpenRepositoryCount != 0"
+        }
+      ]
     },
     "viewsWelcome": [
       {

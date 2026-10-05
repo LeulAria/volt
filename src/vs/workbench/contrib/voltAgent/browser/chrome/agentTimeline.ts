@@ -6,8 +6,10 @@
 import { localize } from '../../../../../nls.js';
 import { extractLocalPreviewUrl } from '../preview/localPreview.js';
 import { isSnapshotActivity } from '../preview/browserSnapshot.js';
-import { AgentSegment, IAgentActivityItem, IFileChangeBlock, ITerminalBlock, isExploreTool, splitMarkdownToBlocks } from '../blocks/agentBlocks.js';
-import { computeFileChangePreview, formatChangeStats } from '../review/fileChangePreviewModel.js';
+import { ACP_STALL_NOTICE_TITLE } from '../../../../services/voltRuntime/common/harness/acpStall.js';
+import { BUDGET_NOTICE_TITLE, LOOP_NOTICE_TITLE } from '../../../../services/voltRuntime/common/harness/supervisor.js';
+import { AgentSegment, IAgentActivityItem, IFileChangeBlock, ITerminalBlock, isExploreTool, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
+import { computeChangeStats, formatChangeStats, netFileEdit } from '../review/fileChangePreviewModel.js';
 
 export type ThreadPart =
 	| { kind: 'group'; id: string; title: string; items: IAgentActivityItem[]; thinking?: string }
@@ -77,7 +79,9 @@ export function looksLikeAnswerForm(text: string): boolean {
 export function visibleReplyParts(parts: readonly ThreadPart[], streaming = false): ThreadPart[] {
 	const visible: ThreadPart[] = [];
 	for (const part of parts) {
-		if (part.kind === 'group') {
+		// Explore chrome goes, but the agent's browser test stays as one collapsed line (Cursor's
+		// "Explored 6 browser actions"): it is how the user checks what was verified, row by row.
+		if (part.kind === 'group' && !(!streaming && part.items.some(item => item.browserTool))) {
 			continue;
 		}
 		if (part.kind === 'block' && part.block.type === 'tool') {
@@ -157,15 +161,16 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 		if (!work.length) {
 			return;
 		}
-		const files = work.filter((block): block is IFileChangeBlock => block.type === 'file');
+		// Several edits to one file read as that file once, with the edits' stats summed (Cursor).
+		const files = mergeFileBlocks(work.filter((block): block is IFileChangeBlock => block.type === 'file'));
 		const commands = work.filter((block): block is ITerminalBlock => block.type === 'terminal');
 		if (files.length && (files.length > 1 || commands.length > 0)) {
 			let additions = 0;
 			let deletions = 0;
 			for (const file of files) {
-				const preview = computeFileChangePreview(fileChangeSource(file));
-				additions += preview.additions;
-				deletions += preview.deletions;
+				const stats = computeChangeStats(fileChangeSource(file));
+				additions += stats.additions;
+				deletions += stats.deletions;
 			}
 			parts.push({
 				kind: 'changes',
@@ -176,7 +181,7 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 				deletions,
 			});
 		} else {
-			for (const block of work) {
+			for (const block of [...files, ...commands]) {
 				parts.push({ kind: 'block', block });
 			}
 		}
@@ -214,8 +219,12 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 			continue;
 		}
 		if (segment.kind === 'activity') {
+			if (segment.item.hidden) {
+				continue;
+			}
 			flushReply();
-			if (isSnapshotActivity(segment.item)) {
+			// An in-app browser screenshot stays a row among the browser actions, as in Cursor.
+			if (!segment.item.browserTool && isSnapshotActivity(segment.item)) {
 				flushWork();
 				flushGroup();
 				parts.push({ kind: 'snapshot', id: `snapshot-${groupIndex++}`, item: segment.item });
@@ -297,7 +306,7 @@ export const STATUS_ROTATE_MS = 2200;
 export const STATUS_SWAP_MS = 420;
 
 const THINKING_PHRASE = localize('voltAgent.thinking', "Thinking");
-const PLANNING_PHRASE = localize('voltAgent.planningNext', "Planning next moves");
+export const PLANNING_PHRASE = localize('voltAgent.planningNext', "Planning next moves");
 
 export interface IStreamingActivityLines {
 	/** Work summary, such as "Exploring 4 files, 3 searches". Omitted when it would repeat the live phrase. */
@@ -506,6 +515,60 @@ export function fileChangeGroupTitle(files: number, commands: number, additions:
 	return counts ? `${joined} ${counts}` : joined;
 }
 
+/** One block per file: repeated edits to a path fold into the first, with added and removed lines summed. */
+export function mergeFileBlocks(files: readonly IFileChangeBlock[]): IFileChangeBlock[] {
+	const byPath = new Map<string, IFileChangeBlock[]>();
+	for (const file of files) {
+		const list = byPath.get(file.path);
+		if (list) {
+			list.push(file);
+		} else {
+			byPath.set(file.path, [file]);
+		}
+	}
+	return [...byPath.values()].map(list => {
+		if (list.length === 1) {
+			return list[0];
+		}
+		let additions = 0;
+		let deletions = 0;
+		for (const file of list) {
+			const stats = computeChangeStats(fileChangeSource(file));
+			additions += stats.additions;
+			deletions += stats.deletions;
+		}
+		const first = list[0];
+		const last = list[list.length - 1];
+		const diffs = list.map(file => file.unifiedDiff).filter((diff): diff is string => !!diff);
+		// When the edits replay into whole files, the card shows the net change (a new file is +N, never -1 for its rewrites).
+		const net = netFileEdit(list.map(file => ({ original: file.original, modified: file.modified, created: file.verb === 'Created' })));
+		return {
+			...first,
+			id: `${first.id}-merged`,
+			verb: first.verb === 'Created' ? 'Created' : last.verb,
+			original: net ? net.original : first.original,
+			modified: net ? net.modified : undefined,
+			unifiedDiff: net ? undefined : diffs.length === list.length ? diffs.join('\n') : first.unifiedDiff,
+			additions: net ? undefined : additions,
+			deletions: net ? undefined : deletions,
+			status: list.some(file => file.status === 'streaming') ? 'streaming' : list.some(file => file.status === 'error') ? 'error' : 'complete',
+		};
+	});
+}
+
+export interface ITurnFileChange {
+	readonly path: string;
+	readonly verb: IFileChangeBlock['verb'];
+	readonly additions: number;
+	readonly deletions: number;
+}
+
+/** Every file a reply changed, once each with its summed stats: the end-of-turn "N Files Changed" card. */
+export function turnFileChanges(segments: readonly AgentSegment[] | undefined): ITurnFileChange[] {
+	const files = (segments ?? []).flatMap(segment => segment.kind === 'block' && segment.block.type === 'file' ? [segment.block] : []);
+	return mergeFileBlocks(files).map(file => ({ path: file.path, verb: file.verb, ...computeChangeStats(fileChangeSource(file)) }));
+}
+
 export function fileChangeSource(block: IFileChangeBlock) {
 	return {
 		path: block.path,
@@ -527,3 +590,231 @@ function joinText(left: string, right: string): string {
 	}
 	return `${left}${left.endsWith('\n') || right.startsWith('\n') ? '' : '\n'}${right}`;
 }
+
+//#region Run state (DOM-free; the editor draws these)
+
+const LOOP_RE = /\b(?:doom[\s-]?loop|looping|loop detected|stuck in a (?:loop|repeating)|repeating (?:the same|itself)|same tools? (?:were |was )?called|called the same tools?|identical tool batch|repeated (?:the same|identical) (?:call|calls|edit|edits|error|errors|step|steps|tool|tools))\b/i;
+const STALL_RE = /\b(?:stopped responding|not responding|no (?:response|output|activity|progress|updates?)\b[^.\n]{0,40}?\b(?:for|in|since)|stall(?:ed|ing)?|went quiet|has been quiet|idle for|silent for)\b/i;
+const BUDGET_RE = /\b(?:step limit|tool[- ]call (?:limit|budget)|budget|time limit|token limit|turn limit|wall[- ]clock)\b/i;
+const CONNECTION_RE = /\b(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|network|fetch failed|connection (?:reset|closed|refused|lost|failed|error)|disconnected)\b/i;
+
+/**
+ * A run supervisor's finding, read from a notice or error the runtime emitted: the agent loops,
+ * went quiet, or stopped at a budget. Undefined for ordinary provider status.
+ */
+export function classifySupervisionNotice(text: string): SupervisionKind | undefined {
+	// The runtime's own titles first (ACP supervisor and idle watchdog), then its wording.
+	const title = text.split('\n', 1)[0].trim();
+	if (title === LOOP_NOTICE_TITLE) {
+		return 'loop';
+	}
+	if (title === ACP_STALL_NOTICE_TITLE) {
+		return 'stall';
+	}
+	if (title === BUDGET_NOTICE_TITLE) {
+		return 'budget';
+	}
+	if (LOOP_RE.test(text)) {
+		return 'loop';
+	}
+	if (STALL_RE.test(text)) {
+		return 'stall';
+	}
+	if (BUDGET_RE.test(text)) {
+		return 'budget';
+	}
+	return undefined;
+}
+
+/** The parts of a finished reply the run-state helpers read. */
+export interface IRunStateMessage {
+	readonly cancelled?: boolean;
+	readonly outcome?: 'done' | 'failed' | 'stopped';
+	readonly failure?: { readonly message: string; readonly retryable?: boolean };
+	readonly runId?: string;
+	readonly text?: string;
+	readonly segments?: readonly AgentSegment[];
+	readonly activity?: { readonly streaming?: boolean; readonly status?: string };
+}
+
+/** The reply did something worth continuing: wrote text, ran a tool, or edited a file. */
+export function turnMadeProgress(message: Pick<IRunStateMessage, 'text' | 'segments'>): boolean {
+	if ((message.text ?? '').trim()) {
+		return true;
+	}
+	return (message.segments ?? []).some(segment =>
+		segment.kind === 'activity'
+		|| (segment.kind === 'text' && !!segment.text.trim())
+		|| (segment.kind === 'block' && (segment.block.type === 'file' || segment.block.type === 'terminal' || segment.block.type === 'tool')));
+}
+
+export type RunEndKind = 'failed' | 'stopped' | 'interrupted';
+
+export interface IRunEndTray {
+	readonly kind: RunEndKind;
+	readonly title: string;
+	/** The exact error text, when the run failed with one. */
+	readonly detail?: string;
+	/** Shown as "Request ID: ..." with a Copy Request ID action, as Cursor's error tray does. */
+	readonly requestId?: string;
+	/** Resend the same prompt in place ("Try again"). Only on the newest turn. */
+	readonly canRetry: boolean;
+	/** Continue from what the turn already did ("Resume"). Only on the newest turn that made progress. */
+	readonly canResume: boolean;
+	/** What a supervisor saw, when the run failed because of it (a loop, a stall, a budget). */
+	readonly cause?: SupervisionKind;
+	/** A loop stop: offer "Continue differently" instead of leaving a dead end like Cursor's tray. */
+	readonly canContinueDifferently: boolean;
+}
+
+/**
+ * What a turn that did not finish shows at its end: a "Stopped" marker after the user's Stop,
+ * "Interrupted" after a reload cut it off, or an error tray with the exact message, the run id,
+ * and Try again / Resume. Undefined for turns that finished normally or are still running.
+ */
+export function runEndTray(message: IRunStateMessage, isLast: boolean): IRunEndTray | undefined {
+	if (message.activity?.streaming) {
+		return undefined;
+	}
+	const progress = turnMadeProgress(message);
+	if (message.outcome === 'failed') {
+		const detail = message.failure?.message.trim() || undefined;
+		const cause = detail ? classifySupervisionNotice(detail) : undefined;
+		// A supervisor's stop is final for that run, not for the task: the user can still go on.
+		const retryable = message.failure?.retryable !== false || cause === 'loop' || cause === 'budget';
+		return {
+			kind: 'failed',
+			title: failureTitle(detail),
+			detail: detail ?? localize('voltAgent.run.genericFailure', "Something went wrong. Please try again."),
+			requestId: message.runId,
+			canRetry: isLast && retryable,
+			canResume: isLast && retryable && (progress || cause === 'budget') && cause !== 'loop',
+			...(cause ? { cause } : {}),
+			canContinueDifferently: isLast && cause === 'loop',
+		};
+	}
+	if (message.cancelled || message.outcome === 'stopped') {
+		const interrupted = message.outcome !== 'stopped' && message.activity?.status === localize('voltAgent.interrupted', "Interrupted");
+		return {
+			kind: interrupted ? 'interrupted' : 'stopped',
+			title: interrupted ? localize('voltAgent.run.interrupted', "Interrupted") : localize('voltAgent.run.stopped', "Stopped"),
+			canRetry: isLast,
+			canResume: isLast && progress,
+			canContinueDifferently: false,
+		};
+	}
+	return undefined;
+}
+
+/** A short heading for a run error; the exact text goes under it. */
+export function failureTitle(message: string | undefined): string {
+	const text = message ?? '';
+	const kind = classifySupervisionNotice(text);
+	if (kind === 'loop') {
+		return localize('voltAgent.run.loopTitle', "Agent looping detected");
+	}
+	if (kind === 'stall') {
+		return localize('voltAgent.run.stallTitle', "Agent stopped responding");
+	}
+	if (kind === 'budget') {
+		return localize('voltAgent.run.budgetTitle', "Paused at a limit");
+	}
+	if (CONNECTION_RE.test(text)) {
+		return localize('voltAgent.run.connectionTitle', "Connection failed");
+	}
+	return localize('voltAgent.run.errorTitle', "Something went wrong");
+}
+
+export type SupervisionAction = 'continueDifferently' | 'resume' | 'continue' | 'stop';
+
+/**
+ * The buttons on a supervisor tray. Cursor's "Agent Looping Detected" is a dead end; here the
+ * user can steer the agent onto a different approach or stop it. Older turns get no actions,
+ * and a failed turn leaves them to its error tray.
+ */
+export function supervisionActions(kind: SupervisionKind, state: { readonly running: boolean; readonly isLast: boolean; readonly failed: boolean }): SupervisionAction[] {
+	if (!state.isLast) {
+		return [];
+	}
+	if (state.running) {
+		switch (kind) {
+			case 'loop': return ['continueDifferently', 'stop'];
+			case 'stall': return ['resume', 'stop'];
+			case 'budget': return [];
+		}
+	}
+	if (state.failed) {
+		return [];
+	}
+	switch (kind) {
+		case 'loop': return ['continueDifferently'];
+		case 'stall': return ['resume'];
+		case 'budget': return ['continue'];
+	}
+}
+
+/** The heading of a supervisor tray. */
+export function supervisionTitle(kind: SupervisionKind): string {
+	switch (kind) {
+		case 'loop': return localize('voltAgent.supervision.loop', "Agent looping detected");
+		case 'stall': return localize('voltAgent.supervision.stall', "Taking longer than expected");
+		case 'budget': return localize('voltAgent.supervision.budget', "Run budget");
+	}
+}
+
+export interface ITodoChecklist {
+	readonly items: readonly { readonly label: string; readonly state: 'done' | 'current' | 'pending' }[];
+	readonly done: number;
+	readonly total: number;
+	/** The to-do in progress, else the first one still open. */
+	readonly current?: string;
+	/** "2 of 5" while running; Cursor's "3 of 3 To-dos Completed" once the turn ends. */
+	readonly title: string;
+}
+
+/** The checklist under a turn, from the agent's plan / to-do updates. Undefined without to-dos. */
+export function todoChecklist(steps: readonly { readonly label: string; readonly state: 'done' | 'current' | 'pending' }[] | undefined, live: boolean): ITodoChecklist | undefined {
+	const items = (steps ?? []).filter(step => step.label.trim());
+	if (!items.length) {
+		return undefined;
+	}
+	const done = items.filter(step => step.state === 'done').length;
+	const current = (items.find(step => step.state === 'current') ?? items.find(step => step.state === 'pending'))?.label;
+	const title = live
+		? localize('voltAgent.todos.progress', "{0} of {1} To-dos", done, items.length)
+		: localize('voltAgent.todos.completed', "{0} of {1} To-dos Completed", done, items.length);
+	return { items, done, total: items.length, current: done === items.length ? undefined : current, title };
+}
+
+/** "42s", "3m 05s", "1h 02m": a live turn's elapsed time, steady width so it does not jitter. */
+export function formatElapsed(ms: number): string {
+	const total = Math.max(0, Math.floor(ms / 1000));
+	const h = Math.floor(total / 3600);
+	const m = Math.floor((total % 3600) / 60);
+	const s = total % 60;
+	if (h) {
+		return `${h}h ${String(m).padStart(2, '0')}m`;
+	}
+	if (m) {
+		return `${m}m ${String(s).padStart(2, '0')}s`;
+	}
+	return `${s}s`;
+}
+
+/**
+ * Build for a plan the agent wrote with its plan tool. Cursor attaches the plan file to a canned
+ * "Implement the plan as specified" prompt; the plan text goes along here too, so the agent builds
+ * what the user read (and edited), not a guess from its name. The bubble shows only "Build ...".
+ */
+export function createdPlanPrompt(plan: { readonly name?: string; readonly markdown: string }): { readonly text: string; readonly display: string } {
+	const name = plan.name?.trim();
+	const body = plan.markdown.trim();
+	const instructions = localize('voltAgent.plan.buildInstructions', "Implement the plan as specified, it is included below for your reference. Do NOT edit the plan file itself. Track the work as to-dos, marking each one in progress as you start it, and don't stop until you have completed all of them.");
+	const text = [name, instructions, body ? `<plan>\n${body}\n</plan>` : ''].filter(Boolean).join('\n\n');
+	const display = name
+		? localize('voltAgent.plan.buildNamedDisplay', "Build \"{0}\"", name)
+		: localize('voltAgent.plan.buildDisplay', "Build the plan");
+	return { text, display };
+}
+
+//#endregion

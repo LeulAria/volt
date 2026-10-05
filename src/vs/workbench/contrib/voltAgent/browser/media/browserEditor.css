@@ -48,6 +48,20 @@
 	position: relative;
 }
 
+/*
+ * The tab favicon is a URI image (`.monaco-icon-label-iconpath`): a 16px box with the
+ * tree-row `margin-top: 2px`, so it sits on the top of the 35px tab. The title and the
+ * close button are centered in that tab. Center the image with them. The globe fallback
+ * is a `::before` icon already stretched to the tab height, so leave it alone. That
+ * fallback also keeps a 6px gap (`padding-right` on `::before`); the URI image has none,
+ * so a loaded favicon sits flush against the title.
+ */
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .monaco-icon-label-iconpath {
+	align-self: center;
+	margin-top: 0;
+	margin-right: 6px;
+}
+
 .volt-browser-toolbar {
 	display: flex;
 	align-items: center;
@@ -116,6 +130,7 @@
 
 .volt-browser-url {
 	flex: 1 1 auto;
+	width: 100%;
 	min-width: 0;
 	height: 28px;
 	padding: 0 12px;
@@ -495,23 +510,23 @@ webview.volt-browser-frame {
 /* Compact follow-up composer: same pill as the agent window, no + / toolbar. */
 .volt-agent-input-box.follow-up.volt-browser-agent-composer,
 .volt-agent-input-box.follow-up:not(.multiline).volt-browser-agent-composer {
-	--volt-composer-bg: #222222;
-	--vscode-editor-background: #222222;
-	--vscode-editorGutter-background: #222222;
+	--volt-composer-bg: rgba(34, 34, 34, 0.78);
+	--vscode-editor-background: transparent;
+	--vscode-editorGutter-background: transparent;
 	--volt-mode-send-bg: #f4f4f5;
 	--volt-mode-send-fg: #111;
 	width: 100%;
 	max-width: none;
 	margin: 0;
-	background: #222222;
+	background: rgba(34, 34, 34, 0.78);
 }
 
 .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock,
 .volt-agent-input-box.follow-up:not(.multiline).volt-browser-agent-composer.dock {
-	--volt-composer-bg: #222222 !important;
-	--vscode-editor-background: #222222 !important;
-	--vscode-editorGutter-background: #222222 !important;
-	background: #222222 !important;
+	--volt-composer-bg: rgba(34, 34, 34, 0.78) !important;
+	--vscode-editor-background: transparent !important;
+	--vscode-editorGutter-background: transparent !important;
+	background: rgba(34, 34, 34, 0.78) !important;
 	border: 0;
 	box-shadow: none;
 	backdrop-filter: none;
@@ -520,15 +535,15 @@ webview.volt-browser-frame {
 
 .monaco-workbench.vs .volt-agent-input-box.follow-up.volt-browser-agent-composer,
 .monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer {
-	background: #ececec;
+	background: rgba(236, 236, 236, 0.82);
 }
 
 .monaco-workbench.vs .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock,
 .monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock {
-	--volt-composer-bg: #ececec !important;
-	--vscode-editor-background: #ececec !important;
-	--vscode-editorGutter-background: #ececec !important;
-	background: #ececec !important;
+	--volt-composer-bg: rgba(236, 236, 236, 0.82) !important;
+	--vscode-editor-background: transparent !important;
+	--vscode-editorGutter-background: transparent !important;
+	background: rgba(236, 236, 236, 0.82) !important;
 }
 
 .volt-browser-agent-composer .volt-agent-monaco {
@@ -750,8 +765,8 @@ webview.volt-browser-frame {
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .inputarea.ime-input,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .view-zones,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock .volt-agent-monaco {
-	background: #222222 !important;
-	background-color: #222222 !important;
+	background: transparent !important;
+	background-color: transparent !important;
 }
 
 .monaco-workbench.vs .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco,
@@ -762,8 +777,8 @@ webview.volt-browser-frame {
 .monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor,
 .monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor-background,
 .monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer .volt-agent-monaco .monaco-editor .monaco-editor-background {
-	background: #ececec !important;
-	background-color: #ececec !important;
+	background: transparent !important;
+	background-color: transparent !important;
 }
 
 .volt-agent-input-box.follow-up.volt-browser-agent-composer .monaco-editor .focused .selected-text {
@@ -807,7 +822,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 }
 
 .volt-browser-dock {
-	--volt-composer-bg: #222222;
+	--volt-composer-bg: rgba(34, 34, 34, 0.78);
 	--volt-dock-ease: cubic-bezier(0.22, 1, 0.36, 1);
 	--volt-dock-max: 650px;
 	position: absolute;
@@ -824,7 +839,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 
 .monaco-workbench.vs .volt-browser-dock,
 .monaco-workbench.hc-light .volt-browser-dock {
-	--volt-composer-bg: #ececec;
+	--volt-composer-bg: rgba(236, 236, 236, 0.82);
 }
 
 .volt-browser-dock.blocked {
@@ -877,13 +892,14 @@ the background paints a solid square) and keep the glyph in the accent. */
 	position: relative;
 	width: 156px;
 	height: 10px;
-	border: 1px solid rgba(255, 255, 255, 0.2);
+	border: 1px solid rgba(255, 255, 255, 0.45);
 	border-radius: 999px;
-	background: rgba(52, 52, 52, 0.62);
+	/* Light grey glass: a pale tint with a bright top edge, readable over dark and light pages. */
+	background: linear-gradient(180deg, rgba(236, 236, 236, 0.7), rgba(196, 196, 196, 0.6));
 	overflow: hidden;
 	cursor: pointer;
 	transform-origin: bottom center;
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 2px 6px rgba(0, 0, 0, 0.28);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 2px 8px rgba(0, 0, 0, 0.22);
 	transition:
 		width 480ms var(--volt-dock-ease),
 		height 480ms var(--volt-dock-ease),
@@ -896,21 +912,24 @@ the background paints a solid square) and keep the glyph in the accent. */
 
 .monaco-workbench.vs .volt-browser-dock-shell,
 .monaco-workbench.hc-light .volt-browser-dock-shell {
-	background: rgba(245, 245, 245, 0.62);
-	border-color: rgba(0, 0, 0, 0.12);
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 2px 6px rgba(0, 0, 0, 0.12);
+	background: linear-gradient(180deg, rgba(214, 214, 214, 0.75), rgba(184, 184, 184, 0.65));
+	border-color: rgba(255, 255, 255, 0.6);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 2px 8px rgba(0, 0, 0, 0.14);
 }
 
-.volt-browser-dock.mode-hover .volt-browser-dock-shell {
-	background: rgba(40, 40, 40, 0.74);
-	border-color: rgba(255, 255, 255, 0.2);
+.volt-browser-dock.mode-hover .volt-browser-dock-shell,
+.volt-browser-dock.mode-activity .volt-browser-dock-shell {
+	background: rgba(34, 34, 34, 0.88);
+	border-color: rgba(255, 255, 255, 0.16);
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 3px 10px rgba(0, 0, 0, 0.3);
 	cursor: pointer;
 }
 
 .monaco-workbench.vs .volt-browser-dock.mode-hover .volt-browser-dock-shell,
-.monaco-workbench.hc-light .volt-browser-dock.mode-hover .volt-browser-dock-shell {
-	background: rgba(255, 255, 255, 0.78);
+.monaco-workbench.hc-light .volt-browser-dock.mode-hover .volt-browser-dock-shell,
+.monaco-workbench.vs .volt-browser-dock.mode-activity .volt-browser-dock-shell,
+.monaco-workbench.hc-light .volt-browser-dock.mode-activity .volt-browser-dock-shell {
+	background: rgba(255, 255, 255, 0.9);
 	border-color: rgba(0, 0, 0, 0.12);
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 3px 10px rgba(0, 0, 0, 0.12);
 }
@@ -976,6 +995,53 @@ the background paints a solid square) and keep the glyph in the accent. */
 	pointer-events: auto;
 }
 
+.volt-browser-dock-activity {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 14px 0 12px;
+	color: #a8a8a8;
+	font-size: 13px;
+	font-weight: 300;
+	line-height: 1;
+	white-space: nowrap;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 220ms var(--volt-dock-ease);
+}
+
+.monaco-workbench.vs .volt-browser-dock-activity,
+.monaco-workbench.hc-light .volt-browser-dock-activity {
+	color: #6f6f6f;
+}
+
+.volt-browser-dock.mode-activity .volt-browser-dock-activity {
+	opacity: 1;
+	transition-delay: 120ms;
+}
+
+.volt-browser-dock-activity .volt-browser-dock-dots {
+	display: grid;
+}
+
+.volt-browser-dock-activity-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-browser-dock-activity-more {
+	flex: 0 0 auto;
+	margin-left: -2px;
+	color: #7a7a7a;
+}
+
+.volt-browser-dock-activity-more.hidden {
+	display: none;
+}
+
 .volt-browser-dock-label-text {
 	min-width: 0;
 	overflow: hidden;
@@ -1033,7 +1099,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 	pointer-events: auto;
 }
 
-.volt-browser-dock-chip {
+.volt-browser-dock .volt-browser-dock-chip {
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
@@ -1041,8 +1107,9 @@ the background paints a solid square) and keep the glyph in the accent. */
 	padding: 0 12px 0 10px;
 	border: 1px solid rgba(255, 255, 255, 0.12);
 	border-radius: 999px;
-	background: var(--volt-composer-bg, #222222);
-	color: #9a9a9a;
+	/* 85% opaque, so the page under the dock doesn't read through the chip text. */
+	background: rgba(34, 34, 34, 0.85);
+	color: #ffffff;
 	font: inherit;
 	font-size: 13px;
 	font-weight: 300;
@@ -1054,21 +1121,17 @@ the background paints a solid square) and keep the glyph in the accent. */
 	transform: none;
 }
 
-.monaco-workbench.vs .volt-browser-dock-chip,
-.monaco-workbench.hc-light .volt-browser-dock-chip {
-	color: #8a8a8a;
+.monaco-workbench.vs .volt-browser-dock .volt-browser-dock-chip,
+.monaco-workbench.hc-light .volt-browser-dock .volt-browser-dock-chip {
+	background: rgba(236, 236, 236, 0.85);
+	color: #1f1f1f;
 	border: 1px solid rgba(0, 0, 0, 0.12);
 	box-shadow: none;
 }
 
 .volt-browser-dock-chip-label {
 	font-weight: 300;
-	color: #9a9a9a;
-}
-
-.monaco-workbench.vs .volt-browser-dock-chip-label,
-.monaco-workbench.hc-light .volt-browser-dock-chip-label {
-	color: #8a8a8a;
+	color: inherit;
 }
 
 .volt-browser-dock-dots {
@@ -1148,34 +1211,6 @@ the background paints a solid square) and keep the glyph in the accent. */
 	height: 0;
 	margin: 0;
 	overflow: hidden;
-}
-
-.volt-browser-dock-composer .volt-agent-plus-menu,
-.volt-browser-dock-composer .volt-agent-plus-menu.volt-browser-plus-menu {
-	--volt-plus-menu-bg: #222222;
-	position: relative;
-	left: auto;
-	right: auto;
-	bottom: auto;
-	width: 100%;
-	max-width: none;
-	margin: 0;
-	transform: none;
-	z-index: 2;
-	pointer-events: auto;
-	background: var(--volt-plus-menu-bg);
-	border: 1px solid rgba(255, 255, 255, 0.1);
-	box-shadow: none;
-}
-
-.monaco-workbench.vs .volt-browser-dock-composer .volt-agent-plus-menu,
-.monaco-workbench.hc-light .volt-browser-dock-composer .volt-agent-plus-menu,
-.monaco-workbench.vs .volt-browser-dock-composer .volt-agent-plus-menu.volt-browser-plus-menu,
-.monaco-workbench.hc-light .volt-browser-dock-composer .volt-agent-plus-menu.volt-browser-plus-menu {
-	--volt-plus-menu-bg: #ececec;
-	background: var(--volt-plus-menu-bg);
-	border: 1px solid rgba(0, 0, 0, 0.1);
-	box-shadow: none;
 }
 
 .volt-browser-dock.mode-expanded .volt-browser-dock-label {
@@ -1662,4 +1697,1294 @@ the background paints a solid square) and keep the glyph in the accent. */
 /* While a tab or file is dragged, the page lets the pointer through to the editor drop zones. */
 .volt-browser-editor.drag-passthrough webview.volt-browser-frame {
 	pointer-events: none !important;
+}
+
+/*
+ * The agent drives the page: a clear layer takes the pointer (inside the opaque stage, so the
+ * see-through window is safe) and Cursor's white "Take control" pill follows it.
+ */
+.volt-browser-agent-lock {
+	position: absolute;
+	inset: 0;
+	z-index: 6;
+	cursor: default;
+}
+
+.volt-browser-take-control {
+	position: absolute;
+	left: 0;
+	top: 0;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 36px;
+	padding: 8px 14px;
+	box-sizing: border-box;
+	border: 0;
+	border-radius: 9999px;
+	background: rgb(244, 244, 245);
+	color: rgb(36, 36, 36);
+	font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+	font-size: 13px;
+	line-height: 18px;
+	white-space: nowrap;
+	box-shadow: 0 3px 8px rgba(0, 0, 0, 0.14), 0 14px 32px rgba(0, 0, 0, 0.18);
+	cursor: pointer;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 120ms ease;
+	will-change: transform;
+}
+
+.volt-browser-agent-lock.hovering .volt-browser-take-control {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.volt-browser-take-control:hover {
+	background: #ffffff;
+}
+
+.volt-browser-take-control-icon {
+	display: inline-flex;
+}
+
+/* Where the agent just clicked. */
+.volt-browser-agent-click {
+	position: absolute;
+	z-index: 7;
+	width: 28px;
+	height: 28px;
+	margin: -14px 0 0 -14px;
+	border-radius: 50%;
+	border: 2px solid rgba(64, 156, 255, 0.95);
+	background: rgba(64, 156, 255, 0.18);
+	pointer-events: none;
+	animation: volt-browser-agent-click 560ms ease-out forwards;
+}
+
+@keyframes volt-browser-agent-click {
+	from {
+		transform: scale(0.4);
+		opacity: 1;
+	}
+	to {
+		transform: scale(1.5);
+		opacity: 0;
+	}
+}
+
+
+/*
+ * Cursor's browser chrome: a dimmed scheme in the address bar, a star, a spinner in place of
+ * reload while loading, Responsive / DevTools / More / Float actions, and an optional bookmark bar.
+ */
+.volt-browser-nav .volt-browser-icon svg,
+.volt-browser-action.responsive svg,
+.volt-browser-action.devtools svg,
+.volt-browser-action.float svg {
+	stroke-width: 1.6;
+}
+
+.volt-browser-nav.star.active {
+	color: #f5c451;
+}
+
+.volt-browser-nav.star.active svg {
+	fill: currentColor;
+}
+
+.volt-browser-spinner {
+	display: none;
+	width: 12px;
+	height: 12px;
+	box-sizing: border-box;
+	border: 1.5px solid currentColor;
+	border-right-color: transparent;
+	border-radius: 50%;
+	animation: volt-browser-spin 800ms linear infinite;
+}
+
+.volt-browser-editor.loading .volt-browser-nav.reload .codicon {
+	display: none;
+}
+
+.volt-browser-editor.loading .volt-browser-nav.reload .volt-browser-spinner {
+	display: block;
+}
+
+@keyframes volt-browser-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.volt-browser-url-wrap {
+	position: relative;
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 28px;
+	display: flex;
+}
+
+/* Not editing: the field's own text hides under a copy with the scheme dimmed. */
+.volt-browser-url-wrap.formatted input.volt-browser-url {
+	color: transparent;
+}
+
+.volt-browser-url-display {
+	display: none;
+	position: absolute;
+	inset: 0;
+	padding: 0 12px;
+	align-items: center;
+	overflow: hidden;
+	white-space: pre;
+	text-overflow: ellipsis;
+	font-size: 13px;
+	pointer-events: none;
+	color: var(--vscode-foreground);
+}
+
+.volt-browser-url-wrap.formatted .volt-browser-url-display {
+	display: flex;
+}
+
+.volt-browser-url-scheme {
+	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
+}
+
+.volt-browser-url-rest {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-browser-actions .volt-browser-action.active {
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+}
+
+.monaco-workbench.vs .volt-browser-actions .volt-browser-action.active,
+.monaco-workbench.hc-light .volt-browser-actions .volt-browser-action.active {
+	background: rgba(0, 0, 0, 0.08);
+	color: #000;
+}
+
+.volt-browser-action.more.open {
+	background: rgba(255, 255, 255, 0.1);
+}
+
+/* Float over the chat only makes sense beside a chat. */
+.volt-browser-action.float {
+	display: none;
+}
+
+.volt-agent-tools-area .volt-browser-action.float {
+	display: inline-flex;
+}
+
+.volt-browser-editor.start-page .volt-browser-action.design,
+.volt-browser-editor.start-page .volt-browser-action.devtools {
+	opacity: 0.4;
+	pointer-events: none;
+}
+
+.volt-browser-bookmarks {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	flex: 0 0 auto;
+	height: 30px;
+	padding: 0 8px;
+	overflow: hidden;
+	box-sizing: border-box;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.monaco-workbench.vs .volt-browser-bookmarks,
+.monaco-workbench.hc-light .volt-browser-bookmarks {
+	border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+.volt-browser-bookmark {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 180px;
+	height: 24px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	flex-shrink: 0;
+}
+
+.volt-browser-bookmark:hover {
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.monaco-workbench.vs .volt-browser-bookmark:hover,
+.monaco-workbench.hc-light .volt-browser-bookmark:hover {
+	background: rgba(0, 0, 0, 0.06);
+}
+
+.volt-browser-bookmark-title {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-browser-bookmarks-empty {
+	padding: 0 6px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+}
+
+.volt-browser-icon.favicon {
+	flex-shrink: 0;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-browser-icon.favicon img {
+	display: block;
+	width: 16px;
+	height: 16px;
+	object-fit: contain;
+	border-radius: 3px;
+}
+
+.volt-browser-icon.favicon svg {
+	stroke-width: 1.4;
+}
+
+/* Address suggestions: history matches with their title and address, under the field. */
+.volt-browser-suggest {
+	position: absolute;
+	z-index: 20;
+	display: flex;
+	flex-direction: column;
+	padding: 4px;
+	box-sizing: border-box;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 10px;
+	background: var(--vscode-editor-background, #1e1e1e);
+	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.monaco-workbench.vs .volt-browser-suggest,
+.monaco-workbench.hc-light .volt-browser-suggest {
+	border-color: rgba(0, 0, 0, 0.1);
+	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+
+.volt-browser-suggest-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 44px;
+	padding: 4px 12px;
+	border-radius: 7px;
+	cursor: pointer;
+}
+
+.volt-browser-suggest-row:hover,
+.volt-browser-suggest-row.active {
+	background: rgba(255, 255, 255, 0.07);
+}
+
+.monaco-workbench.vs .volt-browser-suggest-row:hover,
+.monaco-workbench.vs .volt-browser-suggest-row.active,
+.monaco-workbench.hc-light .volt-browser-suggest-row:hover,
+.monaco-workbench.hc-light .volt-browser-suggest-row.active {
+	background: rgba(0, 0, 0, 0.05);
+}
+
+.volt-browser-suggest-row .volt-browser-icon.suggest-icon {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-browser-suggest-text {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.volt-browser-suggest-title,
+.volt-browser-suggest-detail {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-browser-suggest-title {
+	font-size: 13px;
+	color: var(--vscode-foreground);
+}
+
+.volt-browser-suggest-detail {
+	font-size: 12px;
+	color: #4f9dff;
+}
+
+.volt-browser-suggest-detail.search {
+	color: var(--vscode-descriptionForeground);
+}
+
+/* A new tab: search or type an address, or pick a recent page. */
+.volt-browser-start {
+	position: absolute;
+	inset: 0;
+	z-index: 4;
+	display: flex;
+	justify-content: center;
+	overflow-y: auto;
+	background: var(--vscode-editor-background);
+}
+
+.volt-browser-start-column {
+	width: min(560px, calc(100% - 48px));
+	padding: 76px 0 40px;
+}
+
+.volt-browser-start-field {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 38px;
+	padding: 0 16px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-browser-start-field:focus-within {
+	border-color: rgba(255, 255, 255, 0.22);
+}
+
+.monaco-workbench.vs .volt-browser-start-field,
+.monaco-workbench.hc-light .volt-browser-start-field {
+	border-color: rgba(0, 0, 0, 0.12);
+}
+
+.volt-browser-start-field svg {
+	stroke-width: 1.6;
+}
+
+.monaco-workbench input.volt-browser-start-input,
+.monaco-workbench input.volt-browser-start-input:focus {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	padding: 0;
+	border: 0 !important;
+	outline: none !important;
+	box-shadow: none !important;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 13px;
+}
+
+.volt-browser-start-input::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
+.volt-browser-start-heading {
+	margin: 34px 0 10px 6px;
+	font-size: 13px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-browser-start-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	height: 32px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-browser-start-row:hover {
+	background: rgba(255, 255, 255, 0.06);
+}
+
+.monaco-workbench.vs .volt-browser-start-row:hover,
+.monaco-workbench.hc-light .volt-browser-start-row:hover {
+	background: rgba(0, 0, 0, 0.05);
+}
+
+.volt-browser-start-url {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-browser-toast {
+	position: absolute;
+	left: 50%;
+	top: 14px;
+	z-index: 12;
+	transform: translateX(-50%);
+	padding: 6px 12px;
+	border-radius: 999px;
+	background: #2a2a2a;
+	color: #f2f2f2;
+	font-size: 12px;
+	white-space: nowrap;
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+	pointer-events: none;
+}
+
+/* The ⋯ menu (browserMenu.ts): opaque, rounded, with switches, a flyout and a zoom stepper. */
+.volt-browser-menu-host {
+	position: relative;
+	margin-top: 6px;
+}
+
+.volt-browser-menu {
+	display: flex;
+	flex-direction: column;
+	min-width: 248px;
+	padding: 5px;
+	box-sizing: border-box;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 12px;
+	background: var(--vscode-editor-background, #1e1e1e);
+	color: var(--vscode-foreground);
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+	font-size: 13px;
+}
+
+.monaco-workbench.vs .volt-browser-menu,
+.monaco-workbench.hc-light .volt-browser-menu {
+	border-color: rgba(0, 0, 0, 0.1);
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+}
+
+.volt-browser-menu-flyout {
+	position: absolute;
+	min-width: 150px;
+}
+
+.volt-browser-menu-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-height: 30px;
+	padding: 0 10px;
+	box-sizing: border-box;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	outline: none;
+}
+
+.volt-browser-menu-row:hover:not(:disabled):not(.zoom),
+.volt-browser-menu-row:focus-visible,
+.volt-browser-menu-row.open {
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.monaco-workbench.vs .volt-browser-menu-row:hover:not(:disabled):not(.zoom),
+.monaco-workbench.vs .volt-browser-menu-row:focus-visible,
+.monaco-workbench.vs .volt-browser-menu-row.open,
+.monaco-workbench.hc-light .volt-browser-menu-row:hover:not(:disabled):not(.zoom),
+.monaco-workbench.hc-light .volt-browser-menu-row.open {
+	background: rgba(0, 0, 0, 0.06);
+}
+
+.volt-browser-menu-row:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.volt-browser-menu-row.zoom {
+	cursor: default;
+}
+
+.volt-browser-menu-label {
+	flex: 1;
+	white-space: nowrap;
+}
+
+.volt-browser-menu-keybinding {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.volt-browser-menu-trailing {
+	display: inline-flex;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-browser-menu-separator {
+	height: 1px;
+	margin: 5px 6px;
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.monaco-workbench.vs .volt-browser-menu-separator,
+.monaco-workbench.hc-light .volt-browser-menu-separator {
+	background: rgba(0, 0, 0, 0.08);
+}
+
+.volt-browser-menu-header {
+	padding: 6px 10px 4px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-browser-menu-switch {
+	position: relative;
+	flex-shrink: 0;
+	width: 32px;
+	height: 18px;
+	border-radius: 9px;
+	background: rgba(255, 255, 255, 0.18);
+	transition: background-color 140ms ease;
+}
+
+.monaco-workbench.vs .volt-browser-menu-switch,
+.monaco-workbench.hc-light .volt-browser-menu-switch {
+	background: rgba(0, 0, 0, 0.15);
+}
+
+.volt-browser-menu-switch::after {
+	content: '';
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+	transition: transform 140ms ease;
+}
+
+.volt-browser-menu-switch.on {
+	background: #0a84ff;
+}
+
+.volt-browser-menu-switch.on::after {
+	transform: translateX(14px);
+}
+
+.volt-browser-menu-zoom {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-browser-menu-zoom-value {
+	min-width: 42px;
+	text-align: center;
+	color: var(--vscode-descriptionForeground);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-browser-menu-zoom-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 24px;
+	padding: 0;
+	border: 1px solid rgba(255, 255, 255, 0.14);
+	border-radius: 7px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.volt-browser-menu-zoom-button.reset {
+	border-color: transparent;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-browser-menu-zoom-button:hover,
+.volt-browser-menu-zoom-button:focus-visible {
+	background: rgba(255, 255, 255, 0.08);
+	outline: none;
+}
+
+.monaco-workbench.vs .volt-browser-menu-zoom-button,
+.monaco-workbench.hc-light .volt-browser-menu-zoom-button {
+	border-color: rgba(0, 0, 0, 0.14);
+}
+
+/* In the agent window the composer dock appears only across the window; beside a chat it would repeat it. */
+.volt-agent-tools-area .volt-browser-editor:not(.presentation-fullscreen) .volt-browser-dock {
+	display: none;
+}
+
+/* Floating over the chat: just the page. */
+.volt-browser-editor.presentation-floating .volt-browser-toolbar,
+.volt-browser-editor.presentation-floating .volt-browser-bookmarks,
+.volt-browser-editor.presentation-floating .volt-browser-suggest {
+	display: none;
+}
+
+/* Responsive design mode (browserDevices.ts): the page at a viewport size, centered and scaled to fit. */
+.volt-browser-stage.device-mode {
+	background: #101010;
+}
+
+.monaco-workbench.vs .volt-browser-stage.device-mode,
+.monaco-workbench.hc-light .volt-browser-stage.device-mode {
+	background: #e9e9eb;
+}
+
+.volt-browser-stage.device-mode webview.volt-browser-frame {
+	inset: auto;
+	transform-origin: 0 0;
+}
+
+.volt-browser-device-outline {
+	position: absolute;
+	z-index: 2;
+	box-sizing: border-box;
+	pointer-events: none;
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14), 0 10px 40px rgba(0, 0, 0, 0.45);
+}
+
+.monaco-workbench.vs .volt-browser-device-outline,
+.monaco-workbench.hc-light .volt-browser-device-outline {
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.14), 0 10px 40px rgba(0, 0, 0, 0.12);
+}
+
+.volt-browser-device-handle {
+	position: absolute;
+	z-index: 8;
+	box-sizing: border-box;
+	touch-action: none;
+}
+
+.volt-browser-device-handle::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	margin: auto;
+	opacity: 0.55;
+	transition: opacity 120ms ease;
+}
+
+.volt-browser-device-handle:hover::before {
+	opacity: 1;
+}
+
+.volt-browser-device-handle.e,
+.volt-browser-device-handle.w {
+	width: 12px;
+	height: 48px;
+	margin-top: -24px;
+	cursor: ew-resize;
+}
+
+.volt-browser-device-handle.e {
+	margin-left: 3px;
+}
+
+.volt-browser-device-handle.w {
+	margin-left: -15px;
+}
+
+.volt-browser-device-handle.e::before,
+.volt-browser-device-handle.w::before {
+	width: 5px;
+	height: 26px;
+	border-left: 1.5px solid #9a9a9a;
+	border-right: 1.5px solid #9a9a9a;
+	box-sizing: border-box;
+}
+
+.volt-browser-device-handle.n,
+.volt-browser-device-handle.s {
+	width: 48px;
+	height: 12px;
+	margin-left: -24px;
+	cursor: ns-resize;
+}
+
+.volt-browser-device-handle.s {
+	margin-top: 3px;
+}
+
+.volt-browser-device-handle.n {
+	margin-top: -15px;
+}
+
+.volt-browser-device-handle.n::before,
+.volt-browser-device-handle.s::before {
+	width: 26px;
+	height: 5px;
+	border-top: 1.5px solid #9a9a9a;
+	border-bottom: 1.5px solid #9a9a9a;
+	box-sizing: border-box;
+}
+
+.volt-browser-device-handle.ne,
+.volt-browser-device-handle.nw,
+.volt-browser-device-handle.se,
+.volt-browser-device-handle.sw {
+	width: 14px;
+	height: 14px;
+}
+
+.volt-browser-device-handle.se {
+	margin: 2px 0 0 2px;
+	cursor: nwse-resize;
+}
+
+.volt-browser-device-handle.nw {
+	margin: -16px 0 0 -16px;
+	cursor: nwse-resize;
+}
+
+.volt-browser-device-handle.ne {
+	margin: -16px 0 0 2px;
+	cursor: nesw-resize;
+}
+
+.volt-browser-device-handle.sw {
+	margin: 2px 0 0 -16px;
+	cursor: nesw-resize;
+}
+
+.volt-browser-device-handle.se::before,
+.volt-browser-device-handle.nw::before,
+.volt-browser-device-handle.ne::before,
+.volt-browser-device-handle.sw::before {
+	width: 9px;
+	height: 9px;
+	border-color: #9a9a9a;
+	border-style: solid;
+	border-width: 0;
+}
+
+.volt-browser-device-handle.se::before {
+	border-right-width: 2px;
+	border-bottom-width: 2px;
+	border-bottom-right-radius: 3px;
+}
+
+.volt-browser-device-handle.sw::before {
+	border-left-width: 2px;
+	border-bottom-width: 2px;
+	border-bottom-left-radius: 3px;
+}
+
+.volt-browser-device-handle.ne::before {
+	border-right-width: 2px;
+	border-top-width: 2px;
+	border-top-right-radius: 3px;
+}
+
+.volt-browser-device-handle.nw::before {
+	border-left-width: 2px;
+	border-top-width: 2px;
+	border-top-left-radius: 3px;
+}
+
+/* The page takes the pointer as it passes over it; while a handle is dragged it must not. */
+.volt-browser-editor.device-resizing webview.volt-browser-frame,
+.volt-agent-tools-area.float-dragging webview.volt-browser-frame {
+	pointer-events: none !important;
+}
+
+.volt-browser-editor.device-resizing {
+	user-select: none;
+}
+
+/* Cursor's device toolbar: Responsive ⌄ | 412 × 915 ⟲ | Fit ⌄, under the viewport. */
+.volt-browser-devicebar {
+	position: absolute;
+	left: 50%;
+	bottom: 34px;
+	z-index: 8;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 34px;
+	padding: 0 5px;
+	box-sizing: border-box;
+	transform: translateX(-50%);
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 999px;
+	background: #1d1d1d;
+	color: #dcdcdc;
+	font-size: 13px;
+	white-space: nowrap;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.volt-agent-tools-area .volt-browser-editor:not(.presentation-fullscreen) .volt-browser-devicebar {
+	bottom: 16px;
+}
+
+.volt-browser-editor.presentation-fullscreen .volt-browser-devicebar {
+	bottom: 104px;
+}
+
+.monaco-workbench.vs .volt-browser-devicebar,
+.monaco-workbench.hc-light .volt-browser-devicebar {
+	border-color: rgba(0, 0, 0, 0.12);
+	background: #fff;
+	color: #222;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.volt-browser-devicebar-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 26px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 999px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.volt-browser-devicebar-button.icon {
+	width: 28px;
+	padding: 0;
+	justify-content: center;
+}
+
+.volt-browser-devicebar-button:hover,
+.volt-browser-devicebar-button.open {
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.monaco-workbench.vs .volt-browser-devicebar-button:hover,
+.monaco-workbench.vs .volt-browser-devicebar-button.open,
+.monaco-workbench.hc-light .volt-browser-devicebar-button:hover {
+	background: rgba(0, 0, 0, 0.06);
+}
+
+.volt-browser-devicebar-button .codicon {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-browser-devicebar-sep {
+	width: 1px;
+	height: 16px;
+	margin: 0 4px;
+	background: rgba(255, 255, 255, 0.12);
+}
+
+.monaco-workbench.vs .volt-browser-devicebar-sep,
+.monaco-workbench.hc-light .volt-browser-devicebar-sep {
+	background: rgba(0, 0, 0, 0.12);
+}
+
+.volt-browser-devicebar-times {
+	color: var(--vscode-descriptionForeground);
+	padding: 0 1px;
+}
+
+.monaco-workbench input.volt-browser-devicebar-dimension,
+.monaco-workbench input.volt-browser-devicebar-dimension:focus {
+	width: 46px;
+	height: 26px;
+	padding: 0;
+	border: 0 !important;
+	border-radius: 6px;
+	outline: none !important;
+	box-shadow: none !important;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+
+.monaco-workbench input.volt-browser-devicebar-dimension:hover,
+.monaco-workbench input.volt-browser-devicebar-dimension:focus {
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.monaco-workbench.vs input.volt-browser-devicebar-dimension:hover,
+.monaco-workbench.vs input.volt-browser-devicebar-dimension:focus {
+	background: rgba(0, 0, 0, 0.06);
+}
+
+/*
+ * Device frames: drawn portrait at 1:1 CSS px and scaled with the page (landscape turns the whole
+ * frame). The page is the screen: the frame lies under it, its status bar above the page and its
+ * home bar below, both in the page's own top color.
+ */
+.volt-device-frame {
+	--volt-device-finish: #2c2c2e;
+	--volt-device-screen: #ffffff;
+	--volt-device-ink: #000000;
+	position: absolute;
+	left: 0;
+	top: 0;
+	z-index: 0;
+	transform-origin: 0 0;
+	pointer-events: none;
+	font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+}
+
+.volt-device-body {
+	position: absolute;
+	inset: 0;
+	border-radius: var(--volt-device-radius);
+	background: #060606;
+	box-shadow:
+		inset 0 0 0 1px rgba(255, 255, 255, 0.07),
+		0 0 0 2px var(--volt-device-finish),
+		0 0 0 3px color-mix(in srgb, var(--volt-device-finish) 60%, #000),
+		0 0 0 3.5px rgba(255, 255, 255, 0.1),
+		0 30px 80px rgba(0, 0, 0, 0.55),
+		0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.volt-device-display {
+	position: absolute;
+	overflow: hidden;
+	border-radius: var(--volt-device-display-radius);
+	background: var(--volt-device-screen);
+}
+
+.volt-device-status {
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	display: flex;
+	align-items: center;
+	padding: 4px 22px 0 28px;
+	box-sizing: border-box;
+	color: var(--volt-device-ink);
+	font-size: 16px;
+	font-weight: 600;
+	letter-spacing: -0.2px;
+}
+
+.volt-device-status-lead,
+.volt-device-status-icons {
+	display: flex;
+	flex: 1;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+}
+
+.volt-device-status-gap {
+	flex: 0 0 132px;
+}
+
+.shape-notch .volt-device-status-gap {
+	flex-basis: 168px;
+}
+
+.volt-device-status svg {
+	display: block;
+	flex-shrink: 0;
+}
+
+.volt-device-date,
+.volt-device-battery-text {
+	font-weight: 500;
+}
+
+/* iPhone SE: a thin status bar, time in the middle. */
+.shape-home .volt-device-status {
+	padding: 0 6px;
+	font-size: 12px;
+}
+
+.shape-home .volt-device-status-lead {
+	order: 2;
+	flex: 1;
+}
+
+.shape-home .volt-device-status-gap {
+	display: none;
+}
+
+.shape-home .volt-device-status-icons {
+	order: 3;
+	flex: 0 0 auto;
+	transform: scale(0.8);
+	transform-origin: right center;
+}
+
+/* Android: time at the left, icons at the right, the camera hole between. */
+.os-android .volt-device-status {
+	padding: 2px 20px 0;
+	font-family: Roboto, 'Google Sans', system-ui, sans-serif;
+	font-size: 14px;
+	font-weight: 500;
+}
+
+.os-android .volt-device-status-lead {
+	flex: 0 0 auto;
+}
+
+.os-android .volt-device-status-gap {
+	flex: 1;
+}
+
+.os-android .volt-device-status-icons {
+	flex: 0 0 auto;
+	gap: 5px;
+}
+
+/* Tablets: a slim bar with the date beside the clock. */
+.shape-tablet .volt-device-status,
+.shape-tabletHome .volt-device-status {
+	padding: 0 18px;
+	font-size: 12px;
+}
+
+.shape-tablet .volt-device-status-lead,
+.shape-tabletHome .volt-device-status-lead {
+	flex: 0 0 auto;
+	gap: 6px;
+}
+
+.shape-tablet .volt-device-status-gap,
+.shape-tabletHome .volt-device-status-gap {
+	flex: 1;
+}
+
+.shape-tablet .volt-device-status-icons,
+.shape-tabletHome .volt-device-status-icons {
+	flex: 0 0 auto;
+}
+
+.volt-device-home {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: var(--volt-device-home-screen, var(--volt-device-screen));
+	display: flex;
+	align-items: flex-end;
+	justify-content: center;
+	padding-bottom: 8px;
+	box-sizing: border-box;
+}
+
+.volt-device-home-indicator {
+	width: 36%;
+	max-width: 140px;
+	height: 5px;
+	border-radius: 3px;
+	background: var(--volt-device-home-ink, var(--volt-device-ink));
+	opacity: 0.85;
+}
+
+.os-android .volt-device-home {
+	padding-bottom: 9px;
+}
+
+.os-android .volt-device-home-indicator {
+	width: 26%;
+	height: 4px;
+	opacity: 0.6;
+}
+
+.shape-tablet .volt-device-home-indicator {
+	width: 30%;
+	max-width: 320px;
+}
+
+.volt-device-island {
+	position: absolute;
+	top: 11px;
+	left: 50%;
+	width: 124px;
+	height: 36px;
+	margin-left: -62px;
+	border-radius: 20px;
+	background: #000;
+}
+
+.volt-device-island::after {
+	content: '';
+	position: absolute;
+	top: 12px;
+	right: 22px;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	background: radial-gradient(circle at 35% 35%, #2b3448 0, #0d1018 55%, #000 70%);
+}
+
+.volt-device-notch {
+	position: absolute;
+	top: 0;
+	left: 50%;
+	width: 162px;
+	height: 31px;
+	margin-left: -81px;
+	border-radius: 0 0 20px 20px;
+	background: #000;
+}
+
+.volt-device-notch::before,
+.volt-device-notch::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	width: 8px;
+	height: 8px;
+}
+
+.volt-device-notch::before {
+	left: -8px;
+	background: radial-gradient(circle at 0 100%, transparent 7.5px, #000 8px);
+}
+
+.volt-device-notch::after {
+	right: -8px;
+	background: radial-gradient(circle at 100% 100%, transparent 7.5px, #000 8px);
+}
+
+.volt-device-punch {
+	position: absolute;
+	top: 9px;
+	left: 50%;
+	width: 13px;
+	height: 13px;
+	margin-left: -6.5px;
+	border-radius: 50%;
+	background: radial-gradient(circle at 38% 38%, #2c3340 0, #07090c 60%);
+	box-shadow: 0 0 0 1.5px #000;
+}
+
+.volt-device-earpiece-row,
+.volt-device-chin {
+	position: absolute;
+	left: 0;
+	right: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 14px;
+}
+
+.volt-device-earpiece-row {
+	top: 0;
+}
+
+.volt-device-chin {
+	bottom: 0;
+}
+
+.volt-device-speaker {
+	width: 46px;
+	height: 5px;
+	border-radius: 3px;
+	background: #1a1a1a;
+	box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.volt-device-camera {
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	background: radial-gradient(circle at 38% 38%, #2a3242 0, #07090c 65%);
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.shape-tablet .volt-device-camera,
+.shape-slate .volt-device-camera {
+	width: 7px;
+	height: 7px;
+}
+
+.volt-device-home-button {
+	width: 50px;
+	height: 50px;
+	box-sizing: border-box;
+	border-radius: 50%;
+	border: 2px solid rgba(255, 255, 255, 0.13);
+	background: radial-gradient(circle, #0c0c0c 0, #050505 70%);
+}
+
+.shape-tabletHome .volt-device-home-button {
+	width: 46px;
+	height: 46px;
+}
+
+.volt-device-button {
+	position: absolute;
+	background: var(--volt-device-finish);
+	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.volt-device-button.left {
+	left: -6px;
+	width: 3px;
+	border-radius: 2px 0 0 2px;
+}
+
+.volt-device-button.right {
+	right: -6px;
+	width: 3px;
+	border-radius: 0 2px 2px 0;
+}
+
+.volt-device-button.top {
+	top: -6px;
+	height: 3px;
+	border-radius: 2px 2px 0 0;
+}
+
+/* Nest Hub: a light fabric speaker base under a white-framed screen. */
+.shape-display .volt-device-body {
+	background: #f4f2ee;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 30px 70px rgba(0, 0, 0, 0.45);
+}
+
+.shape-display .volt-device-display {
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+
+.volt-device-stand {
+	position: absolute;
+	left: 14%;
+	right: 14%;
+	bottom: -56px;
+	height: 56px;
+	border-radius: 0 0 26px 26px;
+	background: linear-gradient(#dcd9d2, #c8c3ba);
+	clip-path: polygon(5% 0, 95% 0, 100% 100%, 0 100%);
+	z-index: -1;
+}
+
+/* On its side the status bar and home bar have nothing to show; the cameras stay where they are. */
+.volt-device-frame.landscape .volt-device-status > *,
+.volt-device-frame.landscape .volt-device-home {
+	visibility: hidden;
 }

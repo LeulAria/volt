@@ -150,6 +150,95 @@
 	padding: 0;
 }
 
+.volt-agent-home-footer {
+	flex: none;
+	display: flex;
+	align-items: center;
+	height: 44px;
+	padding: 0 10px 6px 12px;
+	box-sizing: border-box;
+}
+
+.volt-agent-home-settings {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	opacity: 0.8;
+	cursor: pointer;
+}
+
+.volt-agent-home-settings:hover,
+.volt-agent-home-settings:focus-visible {
+	opacity: 1;
+	background: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
+}
+
+.volt-agent-home-settings .codicon {
+	font-size: 16px;
+}
+
+.volt-agent-home-footer {
+	gap: 2px;
+}
+
+.volt-agent-home-settings .volt-usage-icon {
+	display: inline-flex;
+}
+
+/* Back appears only while the Usage page is active; it takes the row and the usage icon steps aside. */
+.volt-agent-home-back {
+	display: none;
+	flex: 1;
+	min-width: 0;
+	align-items: center;
+	gap: 8px;
+	height: 32px;
+	margin: 0 6px 0 -2px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	color: inherit;
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+	transition: background-color 140ms ease;
+}
+
+.volt-agent-home-back:hover,
+.volt-agent-home-back:focus-visible {
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	outline: none;
+}
+
+.volt-agent-home-back .codicon {
+	font-size: 14px;
+	opacity: 0.85;
+}
+
+.volt-agent-home-footer.usage-open .volt-agent-home-back {
+	display: flex;
+	animation: volt-agent-home-back-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.volt-agent-home-footer.usage-open .volt-agent-home-usage {
+	display: none;
+}
+
+@keyframes volt-agent-home-back-in {
+	from { opacity: 0; transform: translateX(-6px); }
+	to { opacity: 1; transform: none; }
+}
+
 /* Home list only: default monaco scrollbar is 10px; rest at 6px, grow on hover.
  * Gutter stays at hover width so thumb growth does not shift row text. */
 .volt-agent-home-tree .monaco-scrollable-element > .scrollbar.vertical {
@@ -221,15 +310,15 @@
 
 .volt-agent-home-tree .monaco-list,
 .volt-agent-home-tree .monaco-list:focus,
-.monaco-workbench.volt-layout-agent .part.sidebar .monaco-list,
-.monaco-workbench.volt-layout-agent .part.sidebar .monaco-list:focus,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .monaco-list,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .monaco-list:focus,
 .monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-list,
 .monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-list:focus {
 	outline: none !important;
 }
 
 .monaco-workbench .volt-agent-home-tree .monaco-list:not(.element-focused):focus::before,
-.monaco-workbench.volt-layout-agent .part.sidebar .monaco-list:not(.element-focused):focus::before,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .monaco-list:not(.element-focused):focus::before,
 .monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-list:not(.element-focused):focus::before {
 	content: none !important;
 	outline: none !important;
@@ -251,19 +340,28 @@
 	box-shadow: none !important;
 }
 
+/* No solid row fills: the sidebar is see-through. Hover and list selection paint nothing; the open chat
+ * gets a faint tint from the active editor (.active-chat), so clicking elsewhere in the sidebar keeps it. */
+.volt-agent-home-tree .monaco-list-row,
+.volt-agent-home-tree .monaco-list-row:hover,
 .volt-agent-home-tree .monaco-list-row.selected,
-.volt-agent-home-tree .monaco-list-row.focused {
-	background: var(--vscode-list-inactiveSelectionBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)) !important;
-}
-
+.volt-agent-home-tree .monaco-list-row.focused,
 .volt-agent-home-tree .monaco-list:focus .monaco-list-row.selected,
 .volt-agent-home-tree .monaco-list:focus .monaco-list-row.focused {
-	background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-inactiveSelectionBackground, color-mix(in srgb, var(--vscode-foreground) 12%, transparent))) !important;
+	background: none !important;
+}
+
+.volt-agent-home-tree .monaco-list .monaco-list-row:has(.volt-agent-home-row.active-chat) {
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent) !important;
+}
+
+.volt-agent-home-tree .monaco-list-row .volt-agent-home-row.active-chat > .name {
+	color: var(--vscode-foreground) !important;
 }
 
 .volt-agent-home-row {
 	/* Per-level step for nested rows (a chat under a project). Folders stay at level 0. */
-	--volt-home-indent: 12px;
+	--volt-home-indent: 6px;
 	display: flex;
 	align-items: center;
 	gap: 8px;
@@ -482,12 +580,10 @@
 	50% { opacity: 0.45; }
 }
 
-.volt-agent-home-tree .monaco-list-row:hover:not(.selected):not(.focused) {
-	background: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 8%, transparent)) !important;
-}
-
-.volt-agent-home-tree .monaco-list-row:has(.volt-agent-home-row.current):not(.selected):not(.focused) {
-	background: var(--vscode-list-inactiveSelectionBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)) !important;
+.volt-agent-home-tree .monaco-list-row:hover .volt-agent-home-row.is-folder > .name,
+.volt-agent-home-tree .monaco-list-row:hover .volt-agent-home-row.is-bucket > .name,
+.volt-agent-home-tree .monaco-list-row:hover .volt-agent-home-row.is-session > .name {
+	color: var(--vscode-foreground);
 }
 
 /* Hide the tree twistie; folder/bucket disclosure lives in the shared icon slot. */
@@ -606,20 +702,124 @@
 	opacity: 0.55;
 }
 
-/* Pin / archive appear on hover, before the age, like the reference sidebar. */
-.volt-agent-home-row > .actions {
+/* Two-line agent tabs: title, age and status on the first line; branch, pull request and model under
+ * the title on the second. The first line keeps the one-line layout; the second wraps below it. */
+.volt-agent-home-row > .sub {
 	display: none;
+}
+
+.volt-agent-home-row.is-session.two-line {
+	flex-wrap: wrap;
+	align-content: center;
+	row-gap: 3px;
+}
+
+.volt-agent-home-row.is-session.two-line > .icon,
+.volt-agent-home-row.is-session.two-line > .name,
+.volt-agent-home-row.is-session.two-line > .meta,
+.volt-agent-home-row.is-session.two-line > .status-badge {
+	height: 18px;
+	line-height: 18px;
+}
+
+.volt-agent-home-row.is-session.two-line > .sub {
+	display: flex;
 	align-items: center;
-	gap: 2px;
+	gap: 6px;
+	order: 99;
+	flex-basis: 100%;
+	min-width: 0;
+	height: 16px;
+	/* Under the title: past the 16px glyph and the 8px gap. */
+	padding-left: 24px;
+	box-sizing: border-box;
+	font-size: 11.5px;
+	line-height: 16px;
+	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+	overflow: hidden;
+}
+
+.volt-agent-home-row.is-session.two-line > .sub > .sub-branch {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	min-width: 0;
+	max-width: 60%;
+	overflow: hidden;
+}
+
+.volt-agent-home-row.is-session.two-line > .sub > .sub-branch:empty,
+.volt-agent-home-row.is-session.two-line > .sub > .sub-pr:empty {
+	display: none;
+}
+
+.volt-agent-home-row.is-session.two-line > .sub .codicon {
+	flex: none;
+	font-size: 12px;
+	opacity: 0.8;
+}
+
+.volt-agent-home-row.is-session.two-line > .sub .sub-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-home-row.is-session.two-line > .sub > .sub-pr {
+	display: inline-flex;
 	flex: none;
 }
 
-.monaco-list-row:hover .volt-agent-home-row.is-session > .actions,
-.monaco-list-row.focused .volt-agent-home-row.is-session > .actions,
-.monaco-list-row.selected .volt-agent-home-row.is-session > .actions {
+.volt-agent-home-row.is-session.two-line > .sub > .sub-spacer {
+	flex: 1;
+	min-width: 4px;
+}
+
+.volt-agent-home-row.is-session.two-line > .sub > .sub-model {
+	flex: none;
+	max-width: 45%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	opacity: 0.9;
+}
+
+.volt-agent-home-row.is-session.two-line.active-chat > .sub {
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+}
+
+/* The hover actions sit on the first line. */
+.volt-agent-home-row.is-session.two-line > .actions {
+	top: 14px;
+}
+
+/* Snooze / Settle float over the row's right end on hover, so the badge, age and title never move.
+ * No fill (the sidebar is see-through): where they would cover the title, the title fades out instead
+ * (--volt-home-name-cover, set on hover in agentHomePane.ts). */
+.volt-agent-home-row.is-session {
+	position: relative;
+}
+
+.volt-agent-home-row > .actions {
+	display: none;
+	position: absolute;
+	top: 50%;
+	right: 8px;
+	transform: translateY(-50%);
+	align-items: center;
+	gap: 2px;
+}
+
+.monaco-list-row:hover .volt-agent-home-row.is-session.actions-cover-name > .name {
+	mask-image: linear-gradient(to right, #000 calc(100% - var(--volt-home-name-cover) - 16px), transparent calc(100% - var(--volt-home-name-cover)));
+}
+
+.monaco-list-row:hover .volt-agent-home-row.is-session > .actions {
 	display: flex;
 }
 
+/* Each button is a chip, so it reads over the faded title; hover brightens it. */
 .volt-agent-home-row > .actions > .row-action {
 	display: flex;
 	align-items: center;
@@ -629,14 +829,14 @@
 	padding: 0;
 	border: 0;
 	border-radius: 4px;
-	background: transparent;
+	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	color: inherit;
 	cursor: pointer;
-	opacity: 0.7;
+	opacity: 0.75;
 }
 
 .volt-agent-home-row > .actions > .row-action:hover {
-	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+	background: var(--vscode-toolbar-activeBackground, color-mix(in srgb, var(--vscode-foreground) 16%, transparent));
 	opacity: 1;
 }
 
@@ -827,7 +1027,7 @@
 
 .volt-agent-home-filter-sep {
 	height: 1px;
-	margin: 4px 0;
+	margin: 0;
 	background: var(--vscode-menu-separatorBackground, var(--vscode-menu-border, rgba(128, 128, 128, 0.35)));
 }
 
@@ -840,8 +1040,10 @@
 	-webkit-app-region: no-drag;
 }
 
-html:has(.monaco-workbench.volt-layout-agent),
-html:has(.monaco-workbench.volt-layout-agent) body {
+/* Classes, not `:has()`, on the grid and the document throughout: a :has() there restyles the whole
+ * window whenever a list anywhere adds a row (every scroll). Set by layout.ts and agentLayoutChrome.ts. */
+html.volt-layout-agent-window,
+html.volt-layout-agent-window body {
 	background: transparent !important;
 	background-color: transparent !important;
 }
@@ -849,7 +1051,7 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 .monaco-workbench.volt-layout-agent {
 	--volt-agent-window-bg-base: var(--vscode-sideBar-background, var(--vscode-titleBar-activeBackground, #141414));
 	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 90%, transparent);
-	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000) 48%, transparent);
+	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000) 55%, transparent);
 	--volt-agent-chat-bg: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
 	--volt-agent-titlebar-height: 35px;
 	background: transparent !important;
@@ -874,7 +1076,7 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 }
 
 .monaco-workbench.volt-layout-agent .part.titlebar,
-.monaco-workbench.volt-layout-agent .split-view-view:has(> .part.titlebar) {
+.monaco-workbench.volt-layout-agent .split-view-view.volt-grid-titlebar {
 	border: none !important;
 	box-shadow: none !important;
 	filter: none !important;
@@ -882,7 +1084,7 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 }
 
 /* The row under the title bar draws its own separator. That reads as a shadow under the primary top bar. */
-.monaco-workbench.volt-layout-agent .split-view-view:has(> .part.titlebar) + .split-view-view::before,
+.monaco-workbench.volt-layout-agent .split-view-view.volt-grid-titlebar + .split-view-view::before,
 .monaco-workbench.volt-layout-agent .part.editor .monaco-scrollable-element > .shadow,
 .monaco-workbench.volt-layout-agent .part.panel .monaco-scrollable-element > .shadow.top {
 	content: none !important;
@@ -891,8 +1093,13 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	background: none !important;
 }
 
+/* Quick input nudges right of window center, a quarter of the left sidebar. */
+.monaco-workbench.volt-layout-agent .quick-input-widget {
+	margin-left: calc(var(--volt-agent-sidebar-width, 0px) / 4);
+}
+
 /* Left sidebar is edge-to-edge; the titlebar fills only the remaining width. */
-.monaco-workbench.volt-layout-agent .monaco-grid-view .split-view-view:has(> .part.titlebar) {
+.monaco-workbench.volt-layout-agent .monaco-grid-view .split-view-view.volt-grid-titlebar {
 	left: var(--volt-agent-sidebar-width, 0px) !important;
 	right: 0 !important;
 	width: auto !important;
@@ -997,7 +1204,7 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	-webkit-app-region: no-drag !important;
 }
 
-.monaco-workbench.volt-layout-agent:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .monaco-grid-view > .monaco-split-view2 > .monaco-scrollable-element > .split-view-container > .split-view-view:has(.part.auxiliarybar),
+.monaco-workbench.volt-layout-agent:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .monaco-grid-view > .monaco-split-view2 > .monaco-scrollable-element > .split-view-container > .split-view-view.volt-grid-has-auxiliarybar,
 .monaco-workbench.volt-layout-agent:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .monaco-grid-branch-node,
 .monaco-workbench.volt-layout-agent:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .monaco-grid-branch-node > .monaco-split-view2,
 .monaco-workbench.volt-layout-agent:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .monaco-grid-branch-node > .monaco-split-view2 > .monaco-scrollable-element,
@@ -1005,22 +1212,69 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	overflow: visible !important;
 }
 
-/* Full-height left list only while it is open. */
-.monaco-workbench.volt-layout-agent:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .monaco-grid-view .split-view-view:has(> .part.auxiliarybar) {
-	top: calc(-1 * var(--volt-agent-titlebar-height, 35px)) !important;
-	height: calc(100% + var(--volt-agent-titlebar-height, 35px)) !important;
+/* Full-height left list only while it is open. It also rises over a banner under the title bar. */
+.monaco-workbench.volt-layout-agent:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .monaco-grid-view .split-view-view.volt-grid-auxiliarybar {
+	top: calc(-1 * (var(--volt-agent-titlebar-height, 35px) + var(--volt-agent-banner-height, 0px))) !important;
+	height: calc(100% + var(--volt-agent-titlebar-height, 35px) + var(--volt-agent-banner-height, 0px)) !important;
 	z-index: 20;
 }
 
 .monaco-workbench.volt-layout-agent:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .monaco-grid-branch-node > .monaco-split-view2.horizontal > .sash-container {
-	top: calc(-1 * var(--volt-agent-titlebar-height, 35px)) !important;
-	height: calc(100% + var(--volt-agent-titlebar-height, 35px)) !important;
+	top: calc(-1 * (var(--volt-agent-titlebar-height, 35px) + var(--volt-agent-banner-height, 0px))) !important;
+	height: calc(100% + var(--volt-agent-titlebar-height, 35px) + var(--volt-agent-banner-height, 0px)) !important;
+}
+
+/* The banner's text starts where the chat does, not under the list. */
+.monaco-workbench.volt-layout-agent:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.banner {
+	padding-left: var(--volt-agent-sidebar-width, 0px);
+}
+
+/* The theme's banner tint is translucent; over the see-through window it washes out when the
+ * window loses focus and the vibrancy behind it turns light. Lay it over an opaque base. */
+.monaco-workbench.volt-layout-agent .part.banner {
+	background: linear-gradient(var(--vscode-banner-background), var(--vscode-banner-background)), var(--vscode-editor-background);
+}
+
+/* Drawer: the window is too narrow for the list beside the chat (see agentNeedsSidebarDrawer), so the
+ * list floats over it instead. The grid keeps the view hidden, so the chat never gives up room; this
+ * shows the hidden view fixed at the left. It is opaque and the scrim sits under it: the window is
+ * see-through elsewhere, and text from the chat must not show through the list. No backdrop-filter. */
+.monaco-workbench.volt-layout-agent.volt-agent-drawer-open {
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000);
+}
+
+.monaco-workbench.volt-layout-agent.volt-agent-drawer-mode.volt-agent-drawer-open:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .monaco-grid-view .split-view-view.volt-grid-auxiliarybar {
+	display: block !important;
+	position: fixed !important;
+	top: 0 !important;
+	left: 0 !important;
+	bottom: 0 !important;
+	width: 260px !important;
+	height: 100% !important;
+	z-index: 100 !important;
+	overflow: hidden !important;
+	background: var(--volt-agent-sidebar-bg);
+	box-shadow: 8px 0 24px rgba(0, 0, 0, 0.35);
+	border-radius: var(--volt-agent-window-radius, 0);
+}
+
+.monaco-workbench.volt-layout-agent.volt-agent-drawer-open .part.auxiliarybar {
+	width: 100%;
+	height: 100%;
+}
+
+.volt-agent-drawer-scrim {
+	position: fixed;
+	inset: 0;
+	z-index: 90;
+	background: rgba(0, 0, 0, 0.32);
+	-webkit-app-region: no-drag;
 }
 
 /* Closed list: drop only the list view, never the editor row that also contains it. */
-.monaco-workbench.volt-layout-agent.noauxiliarybar .monaco-grid-view .split-view-view:has(> .part.auxiliarybar),
-.monaco-workbench.volt-layout-agent.volt-agent-left-collapsed .monaco-grid-view .split-view-view:has(> .part.auxiliarybar),
-.monaco-workbench.volt-layout-agent[style*="--volt-agent-sidebar-width: 0"] .monaco-grid-view .split-view-view:has(> .part.auxiliarybar) {
+.monaco-workbench.volt-layout-agent.noauxiliarybar .monaco-grid-view .split-view-view.volt-grid-auxiliarybar,
+.monaco-workbench.volt-layout-agent.volt-agent-left-collapsed .monaco-grid-view .split-view-view.volt-grid-auxiliarybar,
+.monaco-workbench.volt-layout-agent[style*="--volt-agent-sidebar-width: 0"] .monaco-grid-view .split-view-view.volt-grid-auxiliarybar {
 	display: none !important;
 	pointer-events: none !important;
 	-webkit-app-region: no-drag !important;
@@ -1029,8 +1283,8 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	height: 100% !important;
 }
 
-.monaco-workbench.volt-layout-agent.noauxiliarybar .monaco-grid-view > .monaco-split-view2 > .monaco-scrollable-element > .split-view-container > .split-view-view:has(.part.auxiliarybar),
-.monaco-workbench.volt-layout-agent.volt-agent-left-collapsed .monaco-grid-view > .monaco-split-view2 > .monaco-scrollable-element > .split-view-container > .split-view-view:has(.part.auxiliarybar),
+.monaco-workbench.volt-layout-agent.noauxiliarybar .monaco-grid-view > .monaco-split-view2 > .monaco-scrollable-element > .split-view-container > .split-view-view.volt-grid-has-auxiliarybar,
+.monaco-workbench.volt-layout-agent.volt-agent-left-collapsed .monaco-grid-view > .monaco-split-view2 > .monaco-scrollable-element > .split-view-container > .split-view-view.volt-grid-has-auxiliarybar,
 .monaco-workbench.volt-layout-agent.noauxiliarybar .monaco-grid-branch-node,
 .monaco-workbench.volt-layout-agent.volt-agent-left-collapsed .monaco-grid-branch-node {
 	z-index: 0 !important;
@@ -1073,6 +1327,14 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	display: none !important;
 }
 
+/* Closed sidebar: the title-bar glyph matches the smaller open-sidebar icon. */
+.monaco-workbench.volt-layout-agent .part.titlebar .volt-sidebar-toggle::before {
+	width: 14px !important;
+	height: 14px !important;
+	-webkit-mask-size: 14px 14px !important;
+	mask-size: 14px 14px !important;
+}
+
 /* Open agent sidebar: the toggle lives in the sidebar header, not the primary title bar. */
 .monaco-workbench.volt-layout-agent:not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.titlebar > .titlebar-container > .titlebar-left > .action-toolbar-container.left {
 	display: none !important;
@@ -1091,16 +1353,17 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle {
 	position: absolute;
-	top: calc((var(--volt-agent-titlebar-height, 35px) - 22px) / 2);
+	top: calc((var(--volt-agent-titlebar-height, 35px) - 20px) / 2);
 	left: 8px;
 	z-index: 20;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 22px;
-	height: 22px;
+	box-sizing: border-box;
+	width: 20px;
+	height: 20px;
 	margin: 0;
-	padding: 0;
+	padding: 3px;
 	border: 0;
 	border-radius: 5px;
 	background: transparent;
@@ -1129,8 +1392,8 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle svg {
 	display: block;
-	width: 16px;
-	height: 16px;
+	width: 14px;
+	height: 14px;
 	fill: none;
 	color: inherit;
 	pointer-events: none;
@@ -1146,12 +1409,94 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	display: none !important;
 }
 
+/* Back / forward, at the right of the open sidebar header. */
+.part.auxiliarybar > .volt-agent-nav {
+	display: none;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-agent-nav {
+	position: absolute;
+	top: 0;
+	right: 8px;
+	z-index: 21;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: var(--volt-agent-titlebar-height, 35px);
+	-webkit-app-region: no-drag;
+	pointer-events: auto;
+}
+
+/* Same controls sit in the title bar once the sidebar is closed. */
+.volt-agent-nav-titlebar {
+	display: none !important;
+}
+
+.monaco-workbench.volt-layout-agent.noauxiliarybar .titlebar-left > .volt-agent-nav-titlebar,
+.monaco-workbench.volt-layout-agent.volt-agent-left-collapsed .titlebar-left > .volt-agent-nav-titlebar {
+	display: inline-flex !important;
+	align-items: center;
+	gap: 2px;
+	height: var(--volt-agent-titlebar-height, 35px);
+	margin-left: 2px;
+	-webkit-app-region: no-drag;
+	pointer-events: auto;
+}
+
+.volt-agent-nav-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	width: 20px;
+	height: 20px;
+	margin: 0;
+	padding: 3px;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-titleBar-activeForeground, var(--vscode-foreground));
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.volt-agent-nav-button svg {
+	display: block;
+	width: 14px;
+	height: 14px;
+	pointer-events: none;
+}
+
+.volt-agent-nav-button:hover {
+	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+.volt-agent-nav-button:focus {
+	outline: none;
+}
+
+.volt-agent-nav-button:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-agent-nav-button.is-disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.volt-agent-nav-button.is-disabled:hover {
+	background: transparent;
+}
+
 .monaco-workbench.volt-layout-agent.mac:not(.web) .part.auxiliarybar::after {
 	content: '';
 	position: absolute;
 	top: 0;
 	left: 108px;
-	right: 0;
+	/* Stop before the history arrows. This drag box swallows clicks on controls over it, even no-drag.
+	 * 58px matches agentSidebarNavDragClearance() until that contribution sets the variable. */
+	right: var(--volt-agent-nav-drag-clearance, 58px);
 	height: var(--volt-agent-titlebar-height, 35px);
 	z-index: 2;
 	-webkit-app-region: drag;
@@ -1176,9 +1521,9 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	box-shadow: none !important;
 }
 
-.monaco-workbench.volt-layout-agent .part.sidebar,
-.monaco-workbench.volt-layout-agent .part.sidebar.left,
-.monaco-workbench.volt-layout-agent .part.sidebar.right,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part),
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part).left,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part).right,
 .monaco-workbench.volt-layout-agent .part.activitybar,
 .monaco-workbench.volt-layout-agent .activitybar.left,
 .monaco-workbench.volt-layout-agent .activitybar.right,
@@ -1187,23 +1532,23 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	background-color: var(--volt-agent-sidebar-bg) !important;
 }
 
-.monaco-workbench.volt-layout-agent .part.sidebar {
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) {
 	border-right: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35)) !important;
 }
 
-.monaco-workbench.volt-layout-agent .part.sidebar > .title,
-.monaco-workbench.volt-layout-agent .part.sidebar .pane-header {
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) > .title,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .pane-header {
 	display: none !important;
 	height: 0 !important;
 	min-height: 0 !important;
 	border: none !important;
 }
 
-.monaco-workbench.volt-layout-agent .part.sidebar > .content,
-.monaco-workbench.volt-layout-agent .part.sidebar .monaco-pane-view,
-.monaco-workbench.volt-layout-agent .part.sidebar .split-view-view,
-.monaco-workbench.volt-layout-agent .part.sidebar .pane,
-.monaco-workbench.volt-layout-agent .part.sidebar .pane-body {
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) > .content,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .monaco-pane-view,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .split-view-view,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .pane,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .pane-body {
 	height: 100% !important;
 }
 
@@ -1276,13 +1621,13 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 .monaco-workbench.volt-layout-agent .part.editor .monaco-editor .monaco-editor-background,
 .monaco-workbench.volt-layout-agent .part.editor .monaco-editor .margin,
 .monaco-workbench.volt-layout-agent .part.editor .monaco-editor .inputarea.ime-input,
-.monaco-workbench.volt-layout-agent .part.sidebar > .content,
-.monaco-workbench.volt-layout-agent .part.sidebar .monaco-pane-view,
-.monaco-workbench.volt-layout-agent .part.sidebar .pane,
-.monaco-workbench.volt-layout-agent .part.sidebar .pane-header,
-.monaco-workbench.volt-layout-agent .part.sidebar .pane-body,
-.monaco-workbench.volt-layout-agent .part.sidebar .monaco-list,
-.monaco-workbench.volt-layout-agent .part.sidebar .monaco-list-rows,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) > .content,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .monaco-pane-view,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .pane,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .pane-header,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .pane-body,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .monaco-list,
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .monaco-list-rows,
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .content,
 .monaco-workbench.volt-layout-agent .part.auxiliarybar .monaco-pane-view,
 .monaco-workbench.volt-layout-agent .part.auxiliarybar .split-view-view,
@@ -1310,20 +1655,6 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	background-color: transparent !important;
 }
 
-/* Pinned sent cards need an opaque top. The window surface is 90% and would let text show through the 10px padding. */
-.monaco-workbench.volt-layout-agent .volt-agent-turn.user.stuck {
-	background-color: transparent !important;
-	background-image: linear-gradient(var(--volt-agent-window-bg-base), var(--volt-agent-window-bg-base)) !important;
-	background-size: min(760px, calc(100% - 40px)) 100% !important;
-	background-repeat: no-repeat !important;
-	background-position: top center !important;
-}
-
-.monaco-workbench.volt-layout-agent .volt-agent-turn.user.stuck::before {
-	background: var(--volt-agent-window-bg-base) !important;
-	background-color: var(--volt-agent-window-bg-base) !important;
-}
-
 .monaco-workbench.volt-layout-agent .volt-agent-composer {
 	background: transparent !important;
 	background-color: transparent !important;
@@ -1333,11 +1664,6 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	background: linear-gradient(to bottom, var(--volt-agent-window-bg) 0%, transparent 100%) !important;
 }
 
-.monaco-workbench.volt-layout-agent .volt-agent-thread-fade.bottom {
-	/* Match the editor/composer pane fill (--volt-agent-window-bg), not the darker sidebar mix. */
-	background: linear-gradient(to top, var(--volt-agent-window-bg) 0%, color-mix(in srgb, var(--volt-agent-window-bg) 35%, transparent) 55%, transparent 100%) !important;
-}
-
 .monaco-workbench:not(.volt-layout-agent) .part.sidebar.left,
 .monaco-workbench:not(.volt-layout-agent) .part.sidebar.right {
 	border-color: var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35)) !important;
@@ -1345,11 +1671,12 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 	background-color: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background))) !important;
 }
 
-.monaco-workbench .part.sidebar.left {
+/* Not a part lent into the agent tools: the place it is lent to draws its edge. */
+.monaco-workbench .part.sidebar.left:not(.volt-lent-part) {
 	border-right: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35)) !important;
 }
 
-.monaco-workbench .part.sidebar.right {
+.monaco-workbench .part.sidebar.right:not(.volt-lent-part) {
 	border-left: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35)) !important;
 }
 
@@ -1370,4 +1697,171 @@ html:has(.monaco-workbench.volt-layout-agent) body {
 .monaco-workbench:not(.volt-layout-agent) .activitybar.right {
 	background: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-activityBar-background))) !important;
 	background-color: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-activityBar-background))) !important;
+}
+
+/* Hover actions that do not apply to a tab's shelf (snooze on Snoozed, Settle off the inbox). */
+.volt-agent-home-row > .actions > .row-action.hidden {
+	display: none;
+}
+
+/* Settle: a text button, check then label. */
+.volt-agent-home-row > .actions > .row-action.settle {
+	width: auto;
+	gap: 4px;
+	padding: 0 6px 0 4px;
+	font-size: 12px;
+}
+
+.volt-agent-home-row > .actions > .row-action.settle > .label {
+	line-height: 20px;
+}
+
+/* Status badge after the age: one empty span on every row; only active agent tabs that are not idle fill it. */
+.volt-agent-home-row > .status-badge:empty {
+	display: none;
+}
+
+.volt-agent-home-row > .status-badge {
+	display: flex;
+	flex: none;
+	align-items: center;
+	align-self: center;
+	gap: 4px;
+	max-width: 50%;
+	height: 16px;
+	font-size: 12px;
+	line-height: 16px;
+	white-space: nowrap;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+/* Icon and label take the badge color; both sit on the row's center line. */
+.volt-agent-home-row > .status-badge > .status-label {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: inherit;
+}
+
+.volt-agent-home-row > .status-badge > .status-icon {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+}
+
+.volt-agent-home-row > .status-badge > .status-icon .volt-agent-svg-icon,
+.volt-agent-home-row > .status-badge > .status-icon svg {
+	display: block;
+	color: inherit;
+	width: 14px;
+	height: 14px;
+}
+
+.volt-agent-home-row > .status-badge > .status-icon .codicon {
+	font-size: 13px;
+	color: inherit !important;
+}
+
+/* No age (a draft's badge says Draft): drop the slot and its gap. */
+.volt-agent-home-row.is-session > .meta:empty {
+	display: none;
+}
+
+/* Under the hover actions the badge and age keep their space, so nothing shifts. */
+.monaco-list-row:hover .volt-agent-home-row.is-session > .status-badge,
+.monaco-list-row:hover .volt-agent-home-row.is-session > .meta {
+	visibility: hidden;
+}
+
+.volt-agent-home-row > .status-badge.kind-input {
+	color: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 50%, var(--vscode-charts-purple, #b180d7));
+}
+
+.volt-agent-home-row > .status-badge.kind-done {
+	color: var(--vscode-charts-green, #3fb950);
+}
+
+.volt-agent-home-row > .status-badge.kind-working {
+	color: var(--vscode-charts-blue, #3794ff);
+}
+
+.volt-agent-home-row > .status-badge.kind-working .status-icon svg {
+	animation: volt-agent-home-spin 2.4s linear infinite;
+}
+
+@keyframes volt-agent-home-spin {
+	to { transform: rotate(360deg); }
+}
+
+/* Warning, not charts-orange: some themes leave charts-orange a faint tint. */
+.volt-agent-home-row > .status-badge.kind-woke,
+.volt-agent-home-row > .status-badge.kind-limited,
+.volt-agent-home-row > .status-badge.kind-interrupted {
+	color: var(--vscode-editorWarning-foreground, #f0a020);
+}
+
+.volt-agent-home-row > .status-badge.kind-failed {
+	color: var(--vscode-errorForeground, #f14c4c);
+}
+
+/* Settled / Snoozed headers: a sentence-case label, a rule across the row, the fold chevron last. */
+.volt-agent-home-row.is-group.group-settled,
+.volt-agent-home-row.is-group.group-snooze {
+	font-size: 12px;
+	font-weight: 500;
+	text-transform: none;
+	letter-spacing: 0;
+	opacity: 1;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+.volt-agent-home-row.is-group.group-snooze {
+	color: var(--vscode-charts-blue, #3794ff);
+}
+
+.volt-agent-home-row.is-group.group-settled > .name,
+.volt-agent-home-row.is-group.group-snooze > .name {
+	flex: none;
+	order: 0;
+}
+
+.volt-agent-home-row.is-group.group-settled::after,
+.volt-agent-home-row.is-group.group-snooze::after {
+	content: '';
+	flex: 1;
+	order: 1;
+	height: 1px;
+	background: currentColor;
+	opacity: 0.25;
+}
+
+.volt-agent-home-row.is-group.group-settled > .icon,
+.volt-agent-home-row.is-group.group-snooze > .icon {
+	order: 2;
+}
+
+.volt-agent-home-row.is-group.group-settled > .meta,
+.volt-agent-home-row.is-group.group-snooze > .meta {
+	display: none;
+}
+
+/* Snoozed tabs sit back until hovered; the countdown is blue, and hover swaps it for the bell. */
+.volt-agent-home-row.is-session.shelf-snooze > .name,
+.volt-agent-home-row.is-session.shelf-snooze > .icon {
+	opacity: 0.5;
+}
+
+.monaco-list-row:hover .volt-agent-home-row.is-session.shelf-snooze > .name,
+.monaco-list-row:hover .volt-agent-home-row.is-session.shelf-snooze > .icon,
+.monaco-list-row.selected .volt-agent-home-row.is-session.shelf-snooze > .name,
+.monaco-list-row.selected .volt-agent-home-row.is-session.shelf-snooze > .icon {
+	opacity: 1;
+}
+
+.volt-agent-home-row.is-session.shelf-snooze > .meta {
+	color: var(--vscode-charts-blue, #3794ff);
+	opacity: 1;
 }

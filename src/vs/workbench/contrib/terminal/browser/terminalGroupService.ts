@@ -27,6 +27,8 @@ export class TerminalGroupService extends Disposable implements ITerminalGroupSe
 
 	groups: ITerminalGroup[] = [];
 	activeGroupIndex: number = -1;
+	private _parkedGroups: ITerminalGroup[] = [];
+	get parkedGroups(): readonly ITerminalGroup[] { return this._parkedGroups; }
 	get instances(): ITerminalInstance[] {
 		return this.groups.reduce((p, c) => p.concat(c.terminalInstances), [] as ITerminalInstance[]);
 	}
@@ -113,6 +115,10 @@ export class TerminalGroupService extends Disposable implements ITerminalGroupSe
 	}
 
 	setActiveInstance(instance: ITerminalInstance) {
+		const parked = this._parkedGroups.find(group => group.terminalInstances.includes(instance));
+		if (parked) {
+			this.setParkedGroups(new Set(this._parkedGroups.filter(group => group !== parked)), parked);
+		}
 		this.setActiveInstanceByIndex(this._getIndexFromId(instance.instanceId));
 	}
 
@@ -207,7 +213,39 @@ export class TerminalGroupService extends Disposable implements ITerminalGroupSe
 		return getInstanceFromResource(this.instances, resource);
 	}
 
+	setParkedGroups(parked: ReadonlySet<ITerminalGroup>, active?: ITerminalGroup): void {
+		const all = [...this.groups, ...this._parkedGroups];
+		const visible = all.filter(group => !parked.has(group));
+		const nextParked = all.filter(group => parked.has(group));
+		const previousActive = this.activeGroup;
+		const target = active && visible.includes(active) ? active
+			: previousActive && visible.includes(previousActive) ? previousActive
+				: visible.at(-1);
+		const groupsChanged = visible.length !== this.groups.length || visible.some((group, index) => group !== this.groups[index]);
+		this.groups = visible;
+		this._parkedGroups = nextParked;
+		for (const group of nextParked) {
+			group.setVisible(false);
+		}
+		this.activeGroupIndex = target ? visible.indexOf(target) : -1;
+		if (groupsChanged) {
+			this._onDidChangeInstances.fire();
+			this._onDidChangeGroups.fire();
+		}
+		if (this.activeGroup !== previousActive) {
+			this._onDidChangeActiveGroup.fire(this.activeGroup);
+			this._onDidChangeActiveInstance.fire(this.activeInstance);
+		}
+		this.updateVisibility();
+	}
+
 	private _removeGroup(group: ITerminalGroup) {
+		const parkedIndex = this._parkedGroups.indexOf(group);
+		if (parkedIndex !== -1) {
+			this._parkedGroups.splice(parkedIndex, 1);
+			this._onDidChangeGroups.fire();
+			return;
+		}
 		// Get the index of the group and remove it from the list
 		const activeGroup = this.activeGroup;
 		const wasActiveGroup = group === activeGroup;
@@ -490,7 +528,8 @@ export class TerminalGroupService extends Disposable implements ITerminalGroupSe
 	}
 
 	getGroupForInstance(instance: ITerminalInstance): ITerminalGroup | undefined {
-		return this.groups.find(group => group.terminalInstances.includes(instance));
+		return this.groups.find(group => group.terminalInstances.includes(instance))
+			?? this._parkedGroups.find(group => group.terminalInstances.includes(instance));
 	}
 
 	getGroupLabels(): string[] {

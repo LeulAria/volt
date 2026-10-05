@@ -332,6 +332,12 @@ export interface ITerminalService extends ITerminalInstanceHost {
 	createTerminal(options?: ICreateTerminalOptions): Promise<ITerminalInstance>;
 
 	/**
+	 * Volt: where a new terminal starts when neither the caller nor `terminal.integrated.cwd`
+	 * picked a folder. The agent layout points this at the open chat's folder.
+	 */
+	setDefaultCwdProvider(provider: (() => URI | undefined) | undefined): void;
+
+	/**
 	 * Creates and focuses a terminal.
 	 * @param options The options to create the terminal with, when not specified the default
 	 * profile will be used at the default target.
@@ -524,6 +530,8 @@ export interface ITerminalGroupService extends ITerminalInstanceHost {
 	/** Gets all _terminal view_ instances, ie. instances contained within terminal groups. */
 	readonly instances: readonly ITerminalInstance[];
 	readonly groups: readonly ITerminalGroup[];
+	/** Volt: groups taken out of the panel by {@link setParkedGroups}. Their terminals keep running. */
+	readonly parkedGroups: readonly ITerminalGroup[];
 	activeGroup: ITerminalGroup | undefined;
 	readonly activeGroupIndex: number;
 	/**
@@ -542,6 +550,12 @@ export interface ITerminalGroupService extends ITerminalInstanceHost {
 	createGroup(shellLaunchConfig?: IShellLaunchConfig): ITerminalGroup;
 	createGroup(instance?: ITerminalInstance): ITerminalGroup;
 	getGroupForInstance(instance: ITerminalInstance): ITerminalGroup | undefined;
+	/**
+	 * Volt: shows only the groups outside `parked`. Parked groups leave the tabs and the panel
+	 * without being disposed; a smaller set brings them back in their old order. `active`
+	 * picks the group to show, else the current one stays when it is still shown.
+	 */
+	setParkedGroups(parked: ReadonlySet<ITerminalGroup>, active?: ITerminalGroup): void;
 
 	/**
 	 * Moves a terminal instance's group to the target instance group's position.

@@ -2166,6 +2166,19 @@ export class Repository implements Disposable {
 		return await this.run(Operation.Stash, () => this.repository.showStash(index));
 	}
 
+	/**
+	 * Volt: the stash list as a read-only operation. `getStashes` runs as a Stash operation,
+	 * which is what views listen to for stash changes, so a view reading with it refreshes forever.
+	 */
+	async readStashes(): Promise<Stash[]> {
+		return this.run(Operation.Show, () => this.repository.getStashes());
+	}
+
+	/** Volt: a stash's files as a read-only operation, for the same reason as `readStashes`. */
+	async readStashFiles(index: number): Promise<Change[] | undefined> {
+		return this.run(Operation.Show, () => this.repository.showStash(index));
+	}
+
 	async getCommitTemplate(): Promise<string> {
 		return await this.run(Operation.GetCommitTemplate, async () => this.repository.getCommitTemplate());
 	}

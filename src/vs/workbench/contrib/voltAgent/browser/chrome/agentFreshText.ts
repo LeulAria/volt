@@ -8,6 +8,8 @@ export const FRESH_TEXT_FADE_MS = 1100;
 
 export const FRESH_TEXT_CLASS = 'volt-agent-fresh-text';
 
+const FRESH_TEXT_SKIP = 'code, a, blockquote, .katex, .volt-agent-path-pill';
+
 interface IChunk {
 	readonly start: number;
 	readonly end: number;
@@ -75,7 +77,10 @@ function wrapFreshText(roots: readonly HTMLElement[], chunks: readonly IChunk[],
 		const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
 		for (let node = walker.nextNode(); node; node = walker.nextNode()) {
 			const length = node.nodeValue?.length ?? 0;
-			nodes.push({ node: node as Text, start: offset });
+			// Chips (inline code, file paths), links, quotes and math render as they are; only prose fades in.
+			if (!node.parentElement?.closest(FRESH_TEXT_SKIP)) {
+				nodes.push({ node: node as Text, start: offset });
+			}
 			offset += length;
 		}
 	}

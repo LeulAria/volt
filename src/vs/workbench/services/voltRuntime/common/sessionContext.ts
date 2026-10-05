@@ -52,6 +52,11 @@ export interface IVoltSessionContextService {
 	 * An existing binding is left as-is so a visible project cannot steal a run.
 	 */
 	bindSession(sessionId: string, projectId: string): IVoltSessionBinding | undefined;
+	/**
+	 * Move a chat that has never sent a prompt to the project its composer shows.
+	 * Only for unstarted chats: a chat that ran keeps its project for good.
+	 */
+	rebindUnstartedSession(sessionId: string, projectId: string): IVoltSessionBinding | undefined;
 	rootFor(sessionId: string): URI | undefined;
 }
 

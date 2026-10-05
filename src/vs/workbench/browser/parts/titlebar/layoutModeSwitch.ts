@@ -42,6 +42,9 @@ export const AGENT_RIGHT_DOCK_EXPANDED_WIDTH = 0;
 
 const onDidChangeLayoutModeEmitter = new Emitter<LayoutMode>();
 export const onDidChangeLayoutMode = onDidChangeLayoutModeEmitter.event;
+/** Fires before the parts move, so views can hold off resizing until the switch settles. */
+const onWillChangeLayoutModeEmitter = new Emitter<LayoutMode>();
+export const onWillChangeLayoutMode = onWillChangeLayoutModeEmitter.event;
 
 export function isAgentLeftSidebarHidden(storageService: IStorageService): boolean {
 	return storageService.getBoolean(AGENT_LEFT_SIDEBAR_HIDDEN_KEY, StorageScope.PROFILE, false);
@@ -68,6 +71,20 @@ export function getLayoutMode(layoutService: IWorkbenchLayoutService): LayoutMod
 	return layoutService.getSideBarPosition() === Position.RIGHT ? 'agent' : 'ide';
 }
 
+/** The list floats over the chat (a narrow window) instead of taking a column. */
+export function isAgentDrawerMode(layoutService: IWorkbenchLayoutService): boolean {
+	return layoutService.mainContainer.classList.contains('volt-agent-drawer-mode');
+}
+
+/** Whether the agent list is on screen, as a column or as the open drawer. */
+export function isAgentSidebarShowing(layoutService: IWorkbenchLayoutService): boolean {
+	if (isAgentDrawerMode(layoutService)) {
+		return layoutService.mainContainer.classList.contains('volt-agent-drawer-open');
+	}
+	const visible = layoutService.isVisible(Parts.AUXILIARYBAR_PART);
+	return visible && layoutService.getSize(Parts.AUXILIARYBAR_PART).width >= AGENT_SIDEBAR_MIN_WIDTH;
+}
+
 /** Show the part that hosts the agent list. */
 export function revealAgentSidePanel(layoutService: IWorkbenchLayoutService): void {
 	layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
@@ -87,7 +104,7 @@ export async function openAgentSidebar(
 	}
 	await paneCompositeService.openPaneComposite(AGENT_SIDE_PANEL_ID, ViewContainerLocation.AuxiliaryBar, true);
 	const size = layoutService.getSize(Parts.AUXILIARYBAR_PART);
-	if (size.width < AGENT_SIDEBAR_MIN_WIDTH) {
+	if (size.width < AGENT_SIDEBAR_MIN_WIDTH && !isAgentDrawerMode(layoutService)) {
 		layoutService.setSize(Parts.AUXILIARYBAR_PART, {
 			width: AGENT_LIST_WIDTH,
 			height: size.height,
@@ -101,6 +118,7 @@ export async function setLayoutMode(
 	mode: LayoutMode,
 	storageService: IStorageService,
 ): Promise<void> {
+	onWillChangeLayoutModeEmitter.fire(mode);
 	storageService.store(LAYOUT_MODE_STORAGE_KEY, mode, StorageScope.PROFILE, StorageTarget.USER);
 	const location = mode === 'agent' ? 'right' : 'left';
 	if (configurationService.getValue<string>(SIDEBAR_LOCATION_KEY) !== location) {
@@ -129,7 +147,10 @@ export function applyLayoutModeChrome(
 ): void {
 	const agent = getLayoutMode(layoutService) === 'agent';
 	const root = layoutService.mainContainer;
-	const hideLeftSidebar = agent && !!storageService && isAgentLeftSidebarHidden(storageService);
+	// A drawer is closed unless it is showing now; the saved choice is for the column.
+	const hideLeftSidebar = agent && (isAgentDrawerMode(layoutService)
+		? !root.classList.contains('volt-agent-drawer-open')
+		: !!storageService && isAgentLeftSidebarHidden(storageService));
 	let changed = false;
 	if (hidePartIfNeeded(layoutService, Parts.ACTIVITYBAR_PART, agent)) {
 		changed = true;
@@ -144,7 +165,7 @@ export function applyLayoutModeChrome(
 	if (hidePartIfNeeded(layoutService, Parts.STATUSBAR_PART, agent || statusBarHiddenByUser)) {
 		changed = true;
 	}
-	if (agent && !hideLeftSidebar && layoutService.isVisible(Parts.AUXILIARYBAR_PART)) {
+	if (agent && !hideLeftSidebar && !isAgentDrawerMode(layoutService) && layoutService.isVisible(Parts.AUXILIARYBAR_PART)) {
 		const size = layoutService.getSize(Parts.AUXILIARYBAR_PART);
 		if (size.width < AGENT_SIDEBAR_MIN_WIDTH) {
 			layoutService.setSize(Parts.AUXILIARYBAR_PART, {
@@ -155,7 +176,7 @@ export function applyLayoutModeChrome(
 		}
 	}
 	const sidebarWidth = agent && !hideLeftSidebar && layoutService.isVisible(Parts.AUXILIARYBAR_PART)
-		? layoutService.getSize(Parts.AUXILIARYBAR_PART).width
+		? isAgentDrawerMode(layoutService) ? AGENT_LIST_WIDTH : layoutService.getSize(Parts.AUXILIARYBAR_PART).width
 		: 0;
 	const titlebarHeight = layoutService.getSize(Parts.TITLEBAR_PART).height;
 	stampLayoutModeChrome(root, agent, sidebarWidth, titlebarHeight > 0 ? titlebarHeight : undefined);

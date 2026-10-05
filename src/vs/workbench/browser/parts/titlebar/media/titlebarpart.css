@@ -71,9 +71,9 @@
 	z-index: 1;
 }
 
-/* Empty space in the left column must not be a native drag region. Electron swallows hover and click for the whole box, including no-drag children, once this column stretches from the traffic lights to the command center. The strip still moves the window via the drag region behind it. */
+/* The left column stretches from the traffic lights to the command center, so it must take no region of its own. As drag, Electron swallows hover and click for the whole box, including no-drag children. As no-drag, Electron cuts the whole box out of the drag region behind it, so the empty strip stops moving the window. Only its controls opt out below. Use initial, not none: Chromium stores an explicit none as no-drag. */
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left {
-	-webkit-app-region: no-drag;
+	-webkit-app-region: initial;
 	pointer-events: none;
 }
 

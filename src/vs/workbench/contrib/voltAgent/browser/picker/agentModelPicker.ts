@@ -33,6 +33,9 @@ import { filterPickerModels, sortProviderGroups, MODEL_FAVORITES_STORAGE_KEY, pa
 export type { IModelOption, IProviderGroup } from './agentModelPickerModel.js';
 export { PICKER_FAVORITES_TAB } from './agentModelPickerModel.js';
 
+/** Whether the last pick was Auto; the concrete model and its options are kept by the runtime. */
+const MODEL_AUTO_STORAGE_KEY = 'volt.agent.modelAuto';
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 function svgEl(doc: Document, name: string, attrs: Record<string, string>): SVGElement {
@@ -87,6 +90,23 @@ function editSectionHint(sectionId: 'options' | 'context' | 'effort' | 'custom')
 
 export interface IAgentModelPickerHost {
 	onDidChange?: () => void;
+	/**
+	 * Keeps the pick in a slot of its own (a Settings choice) instead of the composer's model.
+	 * The Auto row clears the slot, which means "follow the chat's model".
+	 */
+	readonly binding?: {
+		get(): string | undefined;
+		set(ref: string | undefined): void;
+		readonly autoLabel: string;
+		readonly autoDescription: string;
+	};
+	/** Where the menu opens against its button. The composer opens it above. */
+	readonly position?: AnchorPosition;
+	/**
+	 * Which button edge the menu lines up with. A right-aligned button grows to the left as its
+	 * label changes, so its menu should hang from the right edge to stay put.
+	 */
+	readonly alignment?: AnchorAlignment;
 }
 
 export function catalogToOption(item: IVoltCatalogItem): IModelOption {
@@ -140,6 +160,7 @@ export class AgentModelPicker extends Disposable {
 	) {
 		super();
 		this.favorites = new Set(parseFavoriteRefs(this.storageService.get(MODEL_FAVORITES_STORAGE_KEY, StorageScope.PROFILE)));
+		this.modelAuto = !this.host.binding && this.storageService.getBoolean(MODEL_AUTO_STORAGE_KEY, StorageScope.APPLICATION, false);
 		this.syncCatalog();
 		this._register(this.runtime.onDidChangeCatalog(() => {
 			this.syncCatalog();
@@ -160,6 +181,12 @@ export class AgentModelPicker extends Disposable {
 			.filter(item => item.enabled)
 			.map(catalogToOption)
 			.filter(option => option.name.trim().toLowerCase() !== 'auto');
+		const binding = this.host.binding;
+		if (binding) {
+			this.currentModel = binding.get() ?? '';
+			this.modelAuto = !this.currentModel;
+			return;
+		}
 		const persisted = this.runtime.getActiveCatalogRef();
 		if (persisted && this.catalog.some(item => item.ref === persisted)) {
 			this.currentModel = persisted;
@@ -167,7 +194,9 @@ export class AgentModelPicker extends Disposable {
 		if (!this.currentModel || !this.catalog.some(item => item.ref === this.currentModel)) {
 			this.currentModel = this.catalog[0]?.ref ?? '';
 		}
-		if (this.currentModel && this.currentModel !== persisted) {
+		// A saved pick that is missing (catalog still loading, CLI not answered yet) stays saved,
+		// so a new window lands on it once it shows up instead of on the first model.
+		if (this.currentModel && !persisted) {
 			void this.runtime.setActiveCatalogRef(this.currentModel);
 		}
 	}
@@ -228,7 +257,7 @@ export class AgentModelPicker extends Disposable {
 		}
 		const label = append(button, $('span.volt-agent-model-label'));
 		if (this.modelAuto) {
-			label.textContent = localize('voltAgent.auto', "Auto");
+			label.textContent = this.host.binding?.autoLabel ?? localize('voltAgent.auto', "Auto");
 		} else if (selected) {
 			label.textContent = splitModelDisplayName(selected.name).name;
 		} else {
@@ -269,8 +298,8 @@ export class AgentModelPicker extends Disposable {
 
 		this.contextViewService.showContextView({
 			getAnchor: () => anchor,
-			anchorAlignment: AnchorAlignment.LEFT,
-			anchorPosition: AnchorPosition.ABOVE,
+			anchorAlignment: this.host.alignment ?? AnchorAlignment.LEFT,
+			anchorPosition: this.host.position ?? AnchorPosition.ABOVE,
 			canRelayout: true,
 			onDOMEvent: (e: Event) => {
 				if (e.type !== 'click' || !(e.target instanceof Node)) {
@@ -285,6 +314,10 @@ export class AgentModelPicker extends Disposable {
 			render: container => {
 				const store = new DisposableStore();
 				const menu = append(container, $('.volt-agent-dropdown.models.picker'));
+				// The context view drops its own frame for the picker (agentEditor.css).
+				const view = container.closest('.context-view');
+				view?.classList.add('volt-agent-models-picker-view');
+				store.add(toDisposable(() => view?.classList.remove('volt-agent-models-picker-view')));
 				menu.setAttribute('role', 'dialog');
 				menu.setAttribute('aria-label', localize('voltAgent.modelPickerAria', "Select a model"));
 				const panel = append(menu, $('.volt-agent-picker-panel'));
@@ -333,6 +366,7 @@ export class AgentModelPicker extends Disposable {
 				const listContext = {
 					selectedRef: this.currentModel,
 					modelAuto: this.modelAuto,
+					auto: this.host.binding && { label: this.host.binding.autoLabel, description: this.host.binding.autoDescription },
 					favorites: this.favorites,
 					subtitle: (model: IModelOption) => this.modelSubtitle(model),
 					rowLabel: (model: IModelOption) => this.modelRowLabel(model),
@@ -589,7 +623,7 @@ export class AgentModelPicker extends Disposable {
 						return;
 					}
 					if (row.kind === 'auto') {
-						this.modelAuto = true;
+						this.setModelAuto(true);
 						this.host.onDidChange?.();
 					} else {
 						this.selectModel(row.model);
@@ -718,12 +752,41 @@ export class AgentModelPicker extends Disposable {
 		return sortProviderGroups([...groups.values()]);
 	}
 
+	/** Selects a catalog model by ref (an agent handed the chat to it). False when it is not in the catalog. */
+	selectRef(ref: string): boolean {
+		const model = this.catalog.find(option => option.ref === ref);
+		if (!model) {
+			return false;
+		}
+		if (model.ref !== this.currentModel || this.modelAuto) {
+			this.selectModel(model);
+		}
+		return true;
+	}
+
 	private selectModel(model: IModelOption): void {
 		this.currentModel = model.ref;
-		this.modelAuto = false;
+		this.setModelAuto(false);
 		this.pickerProviderId = model.family;
-		void this.runtime.setActiveCatalogRef(model.ref);
+		if (this.host.binding) {
+			this.host.binding.set(model.ref);
+		} else {
+			void this.runtime.setActiveCatalogRef(model.ref);
+		}
 		this.host.onDidChange?.();
+	}
+
+	/** Remembered like the picked model, so the next agent tab (in any window) starts on Auto too. */
+	private setModelAuto(auto: boolean): void {
+		this.modelAuto = auto;
+		if (this.host.binding) {
+			if (auto) {
+				this.currentModel = '';
+				this.host.binding.set(undefined);
+			}
+			return;
+		}
+		this.storageService.store(MODEL_AUTO_STORAGE_KEY, auto, StorageScope.APPLICATION, StorageTarget.USER);
 	}
 
 	private toggleFavorite(ref: string): void {
@@ -774,6 +837,15 @@ export class AgentModelPicker extends Disposable {
 		panel.setAttribute('role', 'menu');
 		panel.setAttribute('aria-label', localize('voltAgent.modelOptions', "Model options"));
 		const sections = modelEditSections(model.optionDescriptors);
+		// Changing an option picks the model too. Select first: the options write resyncs the
+		// catalog, which would otherwise snap back to the previously active model.
+		const apply = (id: string, value: string | boolean) => {
+			const tab = this.pickerProviderId;
+			this.selectModel(model);
+			this.pickerProviderId = tab;
+			void this.runtime.setModelOptions(model.ref, { ...this.runtime.getModelOptions(model.ref), [id]: value });
+			onChange();
+		};
 		for (const section of sections) {
 			const block = append(panel, $('.volt-agent-picker-section'));
 			const heading = append(block, $('div.volt-agent-picker-section-label'));
@@ -797,11 +869,7 @@ export class AgentModelPicker extends Disposable {
 					toggle.setAttribute('aria-checked', String(on));
 					toggle.setAttribute('aria-label', descriptor.label);
 					append(toggle, $('span.volt-agent-switch-thumb'));
-					const setOn = (next: boolean) => {
-						void this.runtime.setModelOptions(model.ref, { ...this.runtime.getModelOptions(model.ref), [descriptor.id]: next });
-						this.host.onDidChange?.();
-						onChange();
-					};
+					const setOn = (next: boolean) => apply(descriptor.id, next);
 					store.add(addDisposableListener(toggle, 'click', e => {
 						e.preventDefault();
 						e.stopPropagation();
@@ -831,9 +899,7 @@ export class AgentModelPicker extends Disposable {
 					store.add(addDisposableListener(row, 'click', e => {
 						e.preventDefault();
 						e.stopPropagation();
-						void this.runtime.setModelOptions(model.ref, { ...this.runtime.getModelOptions(model.ref), [descriptor.id]: choice.value });
-						this.host.onDidChange?.();
-						onChange();
+						apply(descriptor.id, choice.value);
 					}));
 				}
 			}

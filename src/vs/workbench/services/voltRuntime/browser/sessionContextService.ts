@@ -8,6 +8,7 @@ import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.j
 import { URI } from '../../../../base/common/uri.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { IWorkspaceContextService, WorkbenchState } from '../../../../platform/workspace/common/workspace.js';
 import { IAgentSessionWorkspace } from '../common/history/agentHistory.js';
 import {
 	canonicalProjectRoot,
@@ -110,12 +111,12 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 
 	constructor(
 		@IStorageService private readonly storageService: IStorageService,
+		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService,
 	) {
 		super();
 		this.projectMap = reviveProjects(this.readJson(PROJECTS_KEY));
 		this.bindings = reviveBindings(this.readJson(BINDINGS_KEY), this.projectMap);
-		const active = this.storageService.get(ACTIVE_KEY, StorageScope.APPLICATION, '');
-		this.activeId = active && this.projectMap.has(active) ? active : undefined;
+		this.activeId = this.initialActiveProject(workspaceContextService);
 		// Every window keeps its own copy. Another window's additions are merged in, never dropped.
 		const listeners = this._register(new DisposableStore());
 		this._register(this.storageService.onDidChangeValue(StorageScope.APPLICATION, PROJECTS_KEY, listeners)(e => {
@@ -128,6 +129,26 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 				this.absorbBindings();
 			}
 		}));
+	}
+
+	/**
+	 * Each window remembers its own project. A window opened on a folder starts on that
+	 * folder, so a new chat never runs in a project the window was not opened for.
+	 * Empty windows start on the project used last anywhere.
+	 */
+	private initialActiveProject(workspaceContextService: IWorkspaceContextService): string | undefined {
+		const own = this.storageService.get(ACTIVE_KEY, StorageScope.WORKSPACE, '');
+		if (own && this.projectMap.has(own)) {
+			return own;
+		}
+		const folders = workspaceContextService.getWorkbenchState() === WorkbenchState.FOLDER ? workspaceContextService.getWorkspace().folders : [];
+		if (!own && folders.length === 1) {
+			const project = this.registerProject(folders[0].uri, folders[0].name);
+			this.storageService.store(ACTIVE_KEY, project.id, StorageScope.WORKSPACE, StorageTarget.MACHINE);
+			return project.id;
+		}
+		const last = this.storageService.get(ACTIVE_KEY, StorageScope.APPLICATION, '');
+		return last && this.projectMap.has(last) ? last : undefined;
 	}
 
 	/** Adds projects another window registered. Returns whether anything was new. */
@@ -211,8 +232,10 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 		this.activeId = next;
 		if (next) {
 			this.storageService.store(ACTIVE_KEY, next, StorageScope.APPLICATION, StorageTarget.USER);
+			this.storageService.store(ACTIVE_KEY, next, StorageScope.WORKSPACE, StorageTarget.MACHINE);
 		} else {
 			this.storageService.remove(ACTIVE_KEY, StorageScope.APPLICATION);
+			this.storageService.remove(ACTIVE_KEY, StorageScope.WORKSPACE);
 		}
 		this._onDidChangeActiveProject.fire(next);
 	}
@@ -240,6 +263,17 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 		}
 		this.bindings.set(sessionId, projectId);
 		this.persistBindings();
+		return this.bindingFor(sessionId);
+	}
+
+	rebindUnstartedSession(sessionId: string, projectId: string): IVoltSessionBinding | undefined {
+		if (!sessionId || !this.projectMap.has(projectId)) {
+			return undefined;
+		}
+		if (this.bindings.get(sessionId) !== projectId) {
+			this.bindings.set(sessionId, projectId);
+			this.persistBindings();
+		}
 		return this.bindingFor(sessionId);
 	}
 

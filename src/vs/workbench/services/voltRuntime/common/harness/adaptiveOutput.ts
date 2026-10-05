@@ -27,23 +27,24 @@ export interface OutputCard {
 	readonly meta?: string;
 }
 
-const FENCE_OPEN_RE = /^(`{3,}|~{3,})([A-Za-z0-9_+-]*)(?:\s+(.*))?$/;
+/** Any info string without backticks (CommonMark), including Cursor's code citations: ```12:40:src/app.ts */
+const FENCE_OPEN_RE = /^(`{3,}|~{3,})\s*([^\s`]*)(?:\s+([^`]*))?$/;
 const TABLE_LINE_RE = /^\s*\|.+\|\s*$/;
 const TABLE_SEP_RE = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
 /**
  * Split assistant text into presentation views. Later views win over surrounding prose:
  * a ranking list becomes a table even when the model wrote it as `1. Name - 123`.
  */
-export function presentOutput(text: string): OutputView[] {
+export function presentOutput(text: string, options?: { readonly tables?: boolean }): OutputView[] {
 	try {
-		return layoutOutput(text);
+		return layoutOutput(text, options?.tables !== false);
 	} catch {
 		const markdown = text.trim();
 		return markdown ? [{ kind: 'text', markdown }] : [];
 	}
 }
 
-function layoutOutput(text: string): OutputView[] {
+function layoutOutput(text: string, tables: boolean): OutputView[] {
 	const lines = text.replace(/\r\n/g, '\n').split('\n');
 	const views: OutputView[] = [];
 	let markdown: string[] = [];
@@ -81,7 +82,7 @@ function layoutOutput(text: string): OutputView[] {
 			continue;
 		}
 
-		if (TABLE_LINE_RE.test(lines[i]) && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1])) {
+		if (tables && TABLE_LINE_RE.test(lines[i]) && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1])) {
 			flushMarkdown();
 			const tableLines = [lines[i], lines[i + 1]];
 			i += 2;

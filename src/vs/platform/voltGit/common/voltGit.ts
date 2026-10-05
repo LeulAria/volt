@@ -40,11 +40,100 @@ export interface IVoltGitSnapshotRequest {
 	/** Only re-scan these repo-relative paths. Ignored until the private index is warm. */
 	readonly paths?: readonly string[];
 	readonly timeoutMs?: number;
+	/**
+	 * When the captured tree equals this snapshot's tree, return it as is: no commit is written
+	 * and the ref is left alone.
+	 */
+	readonly reuse?: IVoltGitSnapshot;
+	/** Untracked files larger than this are left out. Default {@link VOLT_SNAPSHOT_LIMITS}. */
+	readonly maxFileBytes?: number;
+	/** At most this many untracked files are added per snapshot; the rest are left out. */
+	readonly maxNewFiles?: number;
+	/** At most this many bytes of untracked files are added per snapshot. */
+	readonly maxNewBytes?: number;
 }
+
+/**
+ * Untracked files a snapshot leaves out, so a stray build folder or a video in the project never
+ * floods the object database. A left-out path stays out of every later snapshot of the same
+ * private index (even once it shrinks), so a restore never deletes or rewrites a file that no
+ * snapshot knew. Tracked files are always captured.
+ */
+export const VOLT_SNAPSHOT_LIMITS = {
+	maxFileBytes: 10 * 1024 * 1024,
+	maxNewFiles: 5_000,
+	maxNewBytes: 200 * 1024 * 1024,
+	/** Untracked folders with these names are never captured (dependency and cache folders). */
+	heavyFolders: ['node_modules', 'bower_components', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox', '.next', '.nuxt', '.svelte-kit', '.turbo', '.parcel-cache', '.gradle', '.dart_tool', 'Pods', '.terraform', '.cache'] as readonly string[],
+};
 
 export interface IVoltGitSnapshot {
 	readonly commit: string;
 	readonly tree: string;
+	/** Untracked files this snapshot left out for size or count (see {@link VOLT_SNAPSHOT_LIMITS}). */
+	readonly skipped?: number;
+}
+
+/** Where agent snapshots of a folder live. */
+export interface IVoltGitSnapshotRepo extends IVoltGitRepo {
+	/** The folder snapshots capture and restores write to. */
+	readonly workTree: string;
+	/** Volt's private index for this work tree (a stat cache; never the user's index). */
+	readonly indexFile: string;
+	/**
+	 * The folder is not a git work tree: snapshots go to a private repo under Volt's data folder.
+	 * Nothing is written into the folder itself.
+	 */
+	readonly shadow: boolean;
+	/**
+	 * The folder asked for, relative to the work tree (`src/app/`, '' for the top), as git reports
+	 * it. Maps repo paths onto the folder's own path when it is reached through a symlink.
+	 */
+	readonly folderPrefix: string;
+}
+
+/** One stretch of agent work to undo: paths that differ between the two snapshots go back from `after` to `before`. */
+export interface IVoltGitRestoreStep {
+	readonly before: string;
+	readonly after: string;
+}
+
+export interface IVoltGitRestoreRequest {
+	/** `repoRoot` of a {@link IVoltGitSnapshotRepo}. */
+	readonly repoRoot: string;
+	readonly workTree?: string;
+	/** Newest first. A path touched by several steps is walked back through each in turn. */
+	readonly steps: readonly IVoltGitRestoreStep[];
+	/** Only these repo-relative paths. */
+	readonly paths?: readonly string[];
+	/** Work out what would happen without writing anything. */
+	readonly dryRun?: boolean;
+	/** Where a file changed after the agent and the change can't be merged, write the snapshot's version anyway. */
+	readonly overwrite?: boolean;
+	readonly timeoutMs?: number;
+}
+
+/**
+ * `restored`: the file goes back to the snapshot. `merged`: it goes back, keeping edits made after
+ * the agent that don't overlap. `conflict`: edits made after the agent overlap (or the file is
+ * binary), so it is left alone. `unchanged`: it already matches.
+ */
+export type VoltGitRestoreOutcome = 'restored' | 'merged' | 'conflict' | 'unchanged';
+
+export interface IVoltGitRestoreEntry {
+	readonly path: string;
+	readonly action: 'write' | 'create' | 'delete' | 'none';
+	readonly outcome: VoltGitRestoreOutcome;
+	readonly binary: boolean;
+	/** The file on disk no longer matches what the agent left: someone edited it since. */
+	readonly editedSince: boolean;
+}
+
+export interface IVoltGitRestoreResult {
+	readonly entries: readonly IVoltGitRestoreEntry[];
+	readonly conflicts: readonly string[];
+	/** False for a dry run. */
+	readonly applied: boolean;
 }
 
 export type VoltGitChangeKind = 'added' | 'modified' | 'deleted' | 'renamed';
@@ -96,9 +185,27 @@ export interface IVoltGitCloneProgress {
 	readonly message?: string;
 }
 
+/** A branch or tag with its latest commit, for pickers. */
+export interface IVoltGitBranchRef {
+	readonly kind: 'local' | 'remote' | 'tag';
+	/** `main`, `origin/main`, `v1`. */
+	readonly name: string;
+	/** The full ref, e.g. `refs/remotes/origin/main`. */
+	readonly ref: string;
+	readonly subject: string;
+	readonly author: string;
+	/** Commit (or tag) time in ms since the epoch; 0 when unknown. */
+	readonly date: number;
+	/** A local branch out of step with its upstream: commits only it has, and only the upstream has. */
+	readonly ahead?: number;
+	readonly behind?: number;
+}
+
 export interface IVoltGitBranches {
-	/** The checked-out branch; undefined when HEAD is detached or the repo has no commits. */
+	/** The checked-out branch; undefined when HEAD is detached. */
 	readonly head?: string;
+	/** `head` has no commits yet, as right after `git init`: nothing to branch or check out from. */
+	readonly unborn?: boolean;
 	/** Short sha when HEAD is detached. */
 	readonly detached?: string;
 	/** Most recently committed first. */
@@ -106,6 +213,8 @@ export interface IVoltGitBranches {
 	/** `origin/main` style names. */
 	readonly remote: readonly string[];
 	readonly tags: readonly string[];
+	/** Every branch and tag above with its latest commit, most recent first. */
+	readonly refs: readonly IVoltGitBranchRef[];
 }
 
 export interface IVoltGitRef {
@@ -127,9 +236,10 @@ export interface IVoltGitService {
 	snapshot(request: IVoltGitSnapshotRequest): Promise<IVoltGitSnapshot>;
 	/** The tree of the user's staging area right now. Reads a copy, so the real index stays byte-identical. */
 	writeIndexTree(request: { readonly repoRoot: string }): Promise<string>;
-	/** `git diff --raw --numstat -M` between two commits or trees. */
-	diffSummary(request: { readonly repoRoot: string; readonly from: string; readonly to: string; readonly paths?: readonly string[] }): Promise<IVoltGitDiffEntry[]>;
-	readBlob(request: { readonly repoRoot: string; readonly sha: string }): Promise<VSBuffer>;
+	/** `git diff --raw --numstat -M` between two commits or trees. `renames: false` reports a rename as a delete and an add. */
+	diffSummary(request: { readonly repoRoot: string; readonly from: string; readonly to: string; readonly paths?: readonly string[]; readonly renames?: boolean }): Promise<IVoltGitDiffEntry[]>;
+	/** With `path`, the blob comes back as it would be checked out there (smudge filters and line endings applied). */
+	readBlob(request: { readonly repoRoot: string; readonly sha: string; readonly path?: string }): Promise<VSBuffer>;
 	/** Writes `content` as a blob. With `path`, that path's clean filters (eol, LFS) apply first. */
 	writeBlob(request: { readonly repoRoot: string; readonly content: VSBuffer; readonly path?: string }): Promise<string>;
 	/** Stages `blob` at `path` without touching the file on disk; null removes the entry. Mode defaults to the current entry's, else 100644. */
@@ -149,10 +259,27 @@ export interface IVoltGitService {
 	clone(request: IVoltGitCloneRequest): Promise<void>;
 	cancelClone(jobId: string): Promise<void>;
 	listBranches(request: { readonly repoRoot: string }): Promise<IVoltGitBranches>;
-	/** Switches to a local branch, a remote branch (creating the tracking branch), or a tag (detached). Refuses to overwrite local changes. */
-	checkout(request: { readonly repoRoot: string; readonly ref: string; readonly kind: 'local' | 'remote' | 'tag' }): Promise<void>;
-	/** Creates `name` from HEAD and switches to it. */
-	createBranch(request: { readonly repoRoot: string; readonly name: string }): Promise<void>;
+	/**
+	 * Switches to a local branch, a remote branch (creating the tracking branch), a tag (detached),
+	 * or any ref detached. Refuses to overwrite local changes.
+	 */
+	checkout(request: { readonly repoRoot: string; readonly ref: string; readonly kind: 'local' | 'remote' | 'tag' | 'detached' }): Promise<void>;
+	/** Creates `name` from `from` (default HEAD) and switches to it. */
+	createBranch(request: { readonly repoRoot: string; readonly name: string; readonly from?: string }): Promise<void>;
+	/**
+	 * The repo that keeps agent snapshots of `folder`: its own repo, or for a folder outside git a
+	 * private repo in Volt's data folder. Undefined when snapshots aren't possible there (git
+	 * missing, the home folder, a file system root).
+	 *
+	 * Optional so web and remote fallbacks can leave it out; the desktop service implements it.
+	 */
+	resolveSnapshotRepo?(folder: string): Promise<IVoltGitSnapshotRepo | undefined>;
+	/**
+	 * Undoes agent work on disk, path by path, without touching the user's index. Edits made after
+	 * the agent are kept when they merge cleanly and reported as conflicts otherwise. Optional for
+	 * the same reason as {@link resolveSnapshotRepo}.
+	 */
+	restore?(request: IVoltGitRestoreRequest): Promise<IVoltGitRestoreResult>;
 }
 
 /**

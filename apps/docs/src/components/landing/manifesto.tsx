@@ -2,7 +2,6 @@ import { useRef } from "react";
 import { cn } from "@/lib/cn";
 import { gsap, REDUCED, SplitText, useGSAP } from "@/lib/gsap";
 import { COLUMN } from "./geometry";
-import { HEADING_INSET } from "./primitives";
 
 /** One large statement that lights up word by word as it scrolls through the viewport. */
 export function Manifesto() {
@@ -44,8 +43,7 @@ export function Manifesto() {
       <p
         data-manifesto
         className={cn(
-          HEADING_INSET,
-          "max-w-[1080px] text-pretty text-[28px] font-medium leading-[1.16] tracking-[-0.03em] text-white sm:text-[40px] md:text-[52px]",
+          "mx-auto max-w-[1080px] text-balance text-center relative text-[22px] font-semibold leading-[1.2] tracking-[-0.03em] text-white sm:text-[30px] md:text-[40px]",
         )}
       >
         Volt is an open-source workspace where agents do the typing and you keep

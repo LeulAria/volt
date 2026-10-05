@@ -28,6 +28,9 @@ export class ExplorerModel implements IDisposable {
 	private _roots!: ExplorerItem[];
 	private _listener: IDisposable;
 	private readonly _onDidChangeRoots = new Emitter<void>();
+	private readonly folderCache = new Map<string, ExplorerItem>();
+	private scopedRoot: ExplorerItem | undefined;
+	private readonly createRoot: (resource: URI, name?: string) => ExplorerItem;
 
 	constructor(
 		private readonly contextService: IWorkspaceContextService,
@@ -36,8 +39,9 @@ export class ExplorerModel implements IDisposable {
 		configService: IConfigurationService,
 		filesConfigService: IFilesConfigurationService,
 	) {
+		this.createRoot = (resource, name) => new ExplorerItem(resource, fileService, configService, filesConfigService, undefined, true, false, false, false, name);
 		const setRoots = () => this._roots = this.contextService.getWorkspace().folders
-			.map(folder => new ExplorerItem(folder.uri, fileService, configService, filesConfigService, undefined, true, false, false, false, folder.name));
+			.map(folder => this.createRoot(folder.uri, folder.name));
 		setRoots();
 
 		this._listener = this.contextService.onDidChangeWorkspaceFolders(() => {
@@ -47,7 +51,28 @@ export class ExplorerModel implements IDisposable {
 	}
 
 	get roots(): ExplorerItem[] {
-		return this._roots;
+		return this.scopedRoot ? [this.scopedRoot] : this._roots;
+	}
+
+	/** Browse a chat's folder without replacing the window's workspace or restarting extensions. */
+	setFolder(folder: URI | undefined): void {
+		if (this.uriIdentityService.extUri.isEqual(folder, this.scopedRoot?.resource)) {
+			return;
+		}
+		if (folder) {
+			const key = this.uriIdentityService.extUri.getComparisonKey(folder);
+			const root = this.folderCache.get(key) ?? this.createRoot(folder);
+			this.folderCache.delete(key);
+			this.folderCache.set(key, root);
+			this.scopedRoot = root;
+			// Keep recently browsed trees, not every project ever opened in this window.
+			if (this.folderCache.size > 10) {
+				this.folderCache.delete(this.folderCache.keys().next().value!);
+			}
+		} else {
+			this.scopedRoot = undefined;
+		}
+		this._onDidChangeRoots.fire();
 	}
 
 	get onDidChangeRoots(): Event<void> {
@@ -69,6 +94,9 @@ export class ExplorerModel implements IDisposable {
 	 * Will return undefined in case the FileStat does not exist.
 	 */
 	findClosest(resource: URI): ExplorerItem | null {
+		if (this.scopedRoot) {
+			return this.scopedRoot.find(resource);
+		}
 		const folder = this.contextService.getWorkspaceFolder(resource);
 		if (folder) {
 			const root = this.roots.find(r => this.uriIdentityService.extUri.isEqual(r.resource, folder.uri));
@@ -82,6 +110,8 @@ export class ExplorerModel implements IDisposable {
 
 	dispose(): void {
 		dispose(this._listener);
+		this._onDidChangeRoots.dispose();
+		this.folderCache.clear();
 	}
 }
 

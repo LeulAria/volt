@@ -3,8 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { acpRpcErrorMessage } from '../../common/acpNotices.js';
 
@@ -16,6 +17,21 @@ interface IPending {
 export interface IAcpNotification {
 	method: string;
 	params: unknown;
+}
+
+export interface IAcpRequestOptions {
+	/** Bounds requests that must answer promptly (setup). A prompt turn has its own watchdog. */
+	readonly timeoutMs?: number;
+	/** Gives up on the reply: the pending request rejects with {@link AcpRequestAbandonedError} and a late answer is ignored. */
+	readonly token?: CancellationToken;
+}
+
+/** The caller stopped waiting for this reply (a stalled or superseded `session/prompt`); the agent was not told. */
+export class AcpRequestAbandonedError extends Error {
+	constructor(method: string) {
+		super(`Stopped waiting for ${method}.`);
+		this.name = 'AcpRequestAbandonedError';
+	}
 }
 
 export interface IAcpIncomingRequest {
@@ -65,21 +81,70 @@ export class AcpJsonRpcClient extends Disposable {
 		this._register(this.onRequest(handler));
 	}
 
+	/** Listens for the client's lifetime (released with the client). */
+	handleNotifications(handler: (note: IAcpNotification) => void): void {
+		this._register(this.onNotification(handler));
+	}
+
 	whenDead(handler: (err: Error) => void): void {
 		this._register(this.onDead(handler));
 	}
 
-	async request<T>(method: string, params?: unknown): Promise<T> {
+	/** A number is `timeoutMs`, kept for the setup calls that predate {@link IAcpRequestOptions}. */
+	async request<T>(method: string, params?: unknown, options?: number | IAcpRequestOptions): Promise<T> {
+		const { timeoutMs, token } = typeof options === 'number' ? { timeoutMs: options, token: undefined } : options ?? {};
 		const id = this.nextId++;
 		const payload = { jsonrpc: '2.0', id, method, params };
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let abandon: IDisposable | undefined;
+		const settle = () => {
+			clearTimeout(timer);
+			abandon?.dispose();
+		};
 		const result = new Promise<T>((resolve, reject) => {
 			this.pending.set(id, {
-				resolve: value => resolve(value as T),
-				reject,
+				resolve: value => {
+					settle();
+					resolve(value as T);
+				},
+				reject: err => {
+					settle();
+					reject(err);
+				},
 			});
+			if (timeoutMs !== undefined) {
+				timer = setTimeout(() => {
+					if (this.pending.delete(id)) {
+						settle();
+						reject(new Error(`The agent did not answer ${method} within ${Math.round(timeoutMs / 1000)}s.`));
+					}
+				}, timeoutMs);
+			}
+			if (token) {
+				const giveUp = () => {
+					if (this.pending.delete(id)) {
+						settle();
+						reject(new AcpRequestAbandonedError(method));
+					}
+				};
+				if (token.isCancellationRequested) {
+					giveUp();
+				} else {
+					abandon = token.onCancellationRequested(giveUp);
+				}
+			}
 		});
+		if (!this.pending.has(id)) {
+			// Abandoned before it was written: never send it.
+			return result;
+		}
 		await this.writeLine(payload);
 		return result;
+	}
+
+	/** Requests still waiting for the agent's reply. */
+	get pendingCount(): number {
+		return this.pending.size;
 	}
 
 	async notify(method: string, params?: unknown): Promise<void> {

@@ -746,6 +746,10 @@ export class TestPaneCompositeService extends Disposable implements IPaneComposi
 		throw new Error('Method not implemented.');
 	}
 
+	lendPaneComposite(): undefined {
+		return undefined;
+	}
+
 	getPartByLocation(viewContainerLocation: ViewContainerLocation): IPaneCompositePart {
 		return assertReturnsDefined(this.parts.get(viewContainerLocation));
 	}
@@ -1885,6 +1889,7 @@ export class TestTerminalGroupService implements ITerminalGroupService {
 	activeInstance: ITerminalInstance | undefined;
 	instances: readonly ITerminalInstance[] = [];
 	groups: readonly ITerminalGroup[] = [];
+	parkedGroups: readonly ITerminalGroup[] = [];
 	activeGroup: ITerminalGroup | undefined;
 	activeGroupIndex: number = 0;
 	lastAccessedMenu: 'inline-tab' | 'tab-list' = 'inline-tab';
@@ -1900,6 +1905,7 @@ export class TestTerminalGroupService implements ITerminalGroupService {
 	onDidChangeInstances = Event.None;
 	createGroup(instance?: any): ITerminalGroup { throw new Error('Method not implemented.'); }
 	getGroupForInstance(instance: ITerminalInstance): ITerminalGroup | undefined { throw new Error('Method not implemented.'); }
+	setParkedGroups(parked: ReadonlySet<ITerminalGroup>, active?: ITerminalGroup): void { throw new Error('Method not implemented.'); }
 	moveGroup(source: ITerminalInstance | ITerminalInstance[], target: ITerminalInstance): void { throw new Error('Method not implemented.'); }
 	moveGroupToEnd(source: ITerminalInstance | ITerminalInstance[]): void { throw new Error('Method not implemented.'); }
 	moveInstance(source: ITerminalInstance, target: ITerminalInstance, side: 'before' | 'after'): void { throw new Error('Method not implemented.'); }

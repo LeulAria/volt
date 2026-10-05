@@ -122,11 +122,19 @@ import { NativeMcpDiscoveryHelperService } from '../../platform/mcp/node/nativeM
 import { IWebContentExtractorService } from '../../platform/webContentExtractor/common/webContentExtractor.js';
 import { NativeWebContentExtractorService } from '../../platform/webContentExtractor/electron-main/webContentExtractorService.js';
 import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../platform/voltStdio/common/voltStdio.js';
-import { VoltStdioMainService } from '../../platform/voltStdio/electron-main/voltStdioMainService.js';
+import { createVoltStdioChannel, VoltStdioMainService } from '../../platform/voltStdio/electron-main/voltStdioMainService.js';
+import { IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../platform/voltHostMcp/common/voltHostMcp.js';
+import { VoltHostMcpMainService } from '../../platform/voltHostMcp/electron-main/voltHostMcpMainService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../platform/voltGit/common/voltGit.js';
 import { VoltGitMainService } from '../../platform/voltGit/electron-main/voltGitMainService.js';
+import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../platform/voltPullRequests/common/voltPullRequests.js';
+import { VoltPullRequestMainService } from '../../platform/voltPullRequests/electron-main/voltPullRequestMainService.js';
+import { IVoltUsageService, VOLT_USAGE_CHANNEL_NAME } from '../../platform/voltUsage/common/voltUsage.js';
+import { VoltUsageMainService } from '../../platform/voltUsage/electron-main/voltUsageMainService.js';
 import { IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME } from '../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../platform/voltFsBrowse/node/voltFsBrowseService.js';
+import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME } from '../../platform/voltBrowser/common/voltBrowser.js';
+import { VoltBrowserMainService } from '../../platform/voltBrowser/electron-main/voltBrowserMainService.js';
 import ErrorTelemetry from '../../platform/telemetry/electron-main/errorTelemetry.js';
 
 /**
@@ -1049,11 +1057,21 @@ export class CodeApplication extends Disposable {
 		// Volt ACP stdio
 		services.set(IVoltStdioService, new SyncDescriptor(VoltStdioMainService, undefined, false /* proxied to other processes */));
 
+		// Volt host MCP (questions and in-app browser tools for launched agents)
+		services.set(IVoltHostMcpService, new SyncDescriptor(VoltHostMcpMainService, undefined, false /* proxied to other processes */));
+
 		// Volt agent change capture
 		services.set(IVoltGitService, new SyncDescriptor(VoltGitMainService, undefined, false /* proxied to other processes */));
+		services.set(IVoltPullRequestService, new SyncDescriptor(VoltPullRequestMainService, undefined, false /* proxied to other processes */));
+
+		// Volt usage and limits
+		services.set(IVoltUsageService, new SyncDescriptor(VoltUsageMainService, undefined, true));
 
 		// Volt in-app folder picker
 		services.set(IVoltFsBrowseService, new SyncDescriptor(VoltFsBrowseService, undefined, false /* proxied to other processes */));
+
+		// Volt in-app browser (session data, color scheme emulation)
+		services.set(IVoltBrowserService, new SyncDescriptor(VoltBrowserMainService, undefined, false /* proxied to other processes */));
 
 		// Webview Manager
 		services.set(IWebviewManagerService, new SyncDescriptor(WebviewMainService));
@@ -1212,16 +1230,30 @@ export class CodeApplication extends Disposable {
 		mainProcessElectronServer.registerChannel('webContentExtractor', webContentExtractorChannel);
 
 		// Volt ACP stdio
-		const voltStdioChannel = ProxyChannel.fromService(accessor.get(IVoltStdioService), disposables);
+		const voltStdioChannel = createVoltStdioChannel(accessor.get(IVoltStdioService) as VoltStdioMainService, disposables);
 		mainProcessElectronServer.registerChannel(VOLT_STDIO_CHANNEL_NAME, voltStdioChannel);
+
+		// Volt host MCP
+		const voltHostMcpChannel = ProxyChannel.fromService(accessor.get(IVoltHostMcpService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_HOST_MCP_CHANNEL_NAME, voltHostMcpChannel);
 
 		// Volt agent change capture
 		const voltGitChannel = ProxyChannel.fromService(accessor.get(IVoltGitService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_GIT_CHANNEL_NAME, voltGitChannel);
+		const voltPullRequestChannel = ProxyChannel.fromService(accessor.get(IVoltPullRequestService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_PULL_REQUEST_CHANNEL_NAME, voltPullRequestChannel);
+
+		// Volt usage and limits
+		const voltUsageChannel = ProxyChannel.fromService(accessor.get(IVoltUsageService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_USAGE_CHANNEL_NAME, voltUsageChannel);
 
 		// Volt in-app folder picker
 		const voltFsBrowseChannel = ProxyChannel.fromService(accessor.get(IVoltFsBrowseService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_FS_BROWSE_CHANNEL_NAME, voltFsBrowseChannel);
+
+		// Volt in-app browser
+		const voltBrowserChannel = ProxyChannel.fromService(accessor.get(IVoltBrowserService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_BROWSER_CHANNEL_NAME, voltBrowserChannel);
 
 		// Workspaces
 		const workspacesChannel = ProxyChannel.fromService(accessor.get(IWorkspacesService), disposables);

@@ -3,9 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { localize } from '../../../../../nls.js';
 import { IVoltEvent } from '../events.js';
-import { recordToolBatch, IDoomLoopState } from '../harness/doomLoop.js';
+import { ILoopDetectorOptions, LoopDetector, LoopSignal, LoopVerdict } from '../harness/doomLoop.js';
 import { INativeLoopMessage } from '../harness/nativeLoop.js';
+import { toLoopStep } from '../harness/progress.js';
+import { createLoopDetector } from '../harness/recovery.js';
 import { describeArgIssues, isUnparsedArgs, normalizeArgs, validateArgs } from '../harness/toolPolicy.js';
 import { ProviderError, providerRetryDelay } from '../providerError.js';
 import type { IModelAssistantPart } from '../providers.js';
@@ -17,7 +20,25 @@ import { presentCall, presentResult, toolEndFromView, toolStartFromView } from '
 export interface IDeepseekStreamOptions {
 	/** Raised after a turn was cut off at the output limit. */
 	readonly maxOutputTokens?: number;
+	/**
+	 * Aborted when the loop gives up on this stream (it stalled, or the reply started repeating
+	 * itself). Hosts should tear the request down when it fires.
+	 */
+	readonly signal?: AbortSignal;
 }
+
+/**
+ * How long one model stream may stay silent, in ms; 0 turns a limit off. There is deliberately no
+ * latency budget: the first chunk may take minutes (large prompts, silent reasoning, a local model
+ * loading), so `firstChunkMs` only catches a dead connection. Once data flows, `idleMs` of silence
+ * means the stream stalled.
+ */
+export interface IDeepseekStreamTimeouts {
+	readonly firstChunkMs?: number;
+	readonly idleMs?: number;
+}
+
+export const DEEPSEEK_STREAM_TIMEOUTS = { firstChunkMs: 600_000, idleMs: 120_000 } as const;
 
 export interface IDeepseekHost {
 	stream(messages: readonly INativeLoopMessage[], token: { isCancellationRequested: boolean }, options?: IDeepseekStreamOptions): AsyncIterable<StreamChunk>;
@@ -33,6 +54,8 @@ export interface IDeepseekHost {
 	readonly contextWindow?: number;
 	/** Largest output the model accepts; used after a cut-off turn. */
 	readonly maxOutputTokens?: number;
+	/** Stream watchdog. Defaults to `DEEPSEEK_STREAM_TIMEOUTS`. */
+	readonly streamTimeouts?: IDeepseekStreamTimeouts;
 	/** Before each model call. Compaction happens here, in place, at a single boundary. */
 	prepareTurn?(messages: INativeLoopMessage[], step: number): Promise<void>;
 	/** The provider said the prompt no longer fits. Returns true when the transcript shrank. */
@@ -44,18 +67,60 @@ export interface IDeepseekHost {
 	reviewCompletion?(input: { readonly attempt: number; readonly assistant: string }): Promise<string | undefined>;
 }
 
+/** What one step did, handed to the controller after its tools ran (or when the model wants to stop). */
+export interface IDeepseekStep {
+	readonly step: number;
+	readonly calls: readonly IToolCall[];
+	readonly results: readonly IToolResult[];
+	/** Assistant text of this step. */
+	readonly assistant: string;
+	/** No tool calls, or a successful `finish`: the model claims the work is done. */
+	readonly wantsToFinish: boolean;
+	/** What Volt's loop detector made of this step. A `warn` is already being sent to the model. */
+	readonly loop: LoopVerdict;
+}
+
+export type DeepseekDirective =
+	| { readonly kind: 'continue' }
+	/** Send this as a user message before the next model call. On a finishing step, it sends the model back to work. */
+	| { readonly kind: 'inject'; readonly message: string }
+	/** End the run. `outcome` defaults to `done`. */
+	| { readonly kind: 'stop'; readonly reason: string; readonly outcome?: 'done' | 'fail' };
+
+/**
+ * The harness's hook into the live loop (the idea of `ILoopController` from the old native loop).
+ * Called once per step; a controller that throws is ignored, never fatal.
+ */
+export interface IDeepseekLoopController {
+	afterStep(step: IDeepseekStep): DeepseekDirective | Promise<DeepseekDirective>;
+}
+
 export interface IDeepseekLoopInput {
 	messages: INativeLoopMessage[];
 	token: { isCancellationRequested: boolean };
 	budget?: { readonly maxToolCalls: number; readonly maxModelCalls: number };
 	isPaused?: () => boolean;
 	claimInbox?: () => readonly string[];
+	/** Consulted after Volt's own loop detector on every step. */
+	controller?: IDeepseekLoopController;
+	/** Loop detector settings (the user's request is filled in from the transcript); `false` turns it off. */
+	loopDetection?: ILoopDetectorOptions | false;
+}
+
+/** Why a run ended before the model finished. */
+export interface IDeepseekStop {
+	readonly by: 'loop' | 'controller';
+	readonly reason: string;
+	readonly signal?: LoopSignal;
+	/** Steps that make up the loop. */
+	readonly evidence?: readonly number[];
 }
 
 export interface IDeepseekLoopResult {
 	readonly outcome: 'done' | 'abort' | 'fail' | 'budget';
 	readonly assistant: string;
 	readonly messages: INativeLoopMessage[];
+	readonly stopped?: IDeepseekStop;
 }
 
 interface IOpenBlock {
@@ -69,34 +134,66 @@ interface IOpenBlock {
 
 const MAX_STREAM_RETRIES = 3;
 const MAX_LENGTH_RECOVERIES = 2;
+const MAX_STALL_RECOVERIES = 2;
 const MAX_COMPLETION_REVIEWS = 2;
 const FALLBACK_MAX_OUTPUT = 128_000;
+/** Streamed text is checked for runaway repetition each time it grows by this much. */
+const TEXT_CHECK_CHARS = 1_024;
 const TRUNCATED_TOOL = 'Tool call was truncated at the output limit before its arguments were complete. It was not executed.';
 const INTERRUPTED_TOOL = 'Tool call was interrupted before it was dispatched.';
-const DOOM_ASK = 'You called the same tools with the same arguments three times. That is a doom loop. Try a different approach, or finish and say what is blocking you. Do not repeat those calls.';
+const STALL_HINT = 'Your last response was cut off because the model stream stalled. Continue exactly where you left off, without repeating what you already wrote. Tool calls in that response did not run; make them again if you still need them.';
+const NO_LOOP: LoopVerdict = { kind: 'ok' };
+const CONTINUE: DeepseekDirective = { kind: 'continue' };
 
 /**
- * DeepSeek turn loop: stream, present, approve, execute, repeat.
+ * DeepSeek turn loop: stream, present, approve, execute, supervise, repeat.
  *
  * Fast paths: live chunks are emitted as they arrive; a read-only call whose arguments are
  * complete starts while the model is still writing; approvals are decided together; each card
  * completes when its own call does. Reliability: a failed stream is retried before anything was
- * shown, an overflowing prompt is compacted once, and a cut-off turn continues with a larger
- * output limit. The model decides when the turn is over; the host may send it back once or twice.
+ * shown, a stalled stream is abandoned and continued, an overflowing prompt is compacted once, and
+ * a cut-off turn continues with a larger output limit. Supervision: the loop detector nudges a
+ * looping model once per pattern and stops the run if it keeps going; a host controller sees every
+ * step. The model decides when the turn is over; the host may send it back once or twice.
  */
 export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopInput): Promise<IDeepseekLoopResult> {
 	const messages = input.messages;
 	const budget = input.budget ?? DEEPSEEK_BUDGET;
+	const detector = input.loopDetection === false ? undefined : createLoopDetector({ request: latestRequest(messages), ...input.loopDetection });
 	let toolCalls = 0;
 	let modelCalls = 0;
 	let lastAssistant = '';
-	let doom: IDoomLoopState = { repeats: 0 };
-	let doomAsked = false;
 	let lengthStreak = 0;
 	let maxOutputTokens: number | undefined;
 	let streamRetries = 0;
+	let stallRecoveries = 0;
 	let overflowRecovered = false;
 	let reviews = 0;
+	let gateInjections = 0;
+
+	const stopped = (stop: IDeepseekStop, outcome: 'done' | 'fail'): IDeepseekLoopResult => ({ outcome, assistant: lastAssistant, messages, stopped: stop });
+
+	/** The model wants to stop: completion review, then the controller, may send it back (bounded). */
+	const finishing = async (step: Omit<IDeepseekStep, 'wantsToFinish' | 'loop'>): Promise<IDeepseekLoopResult | 'continue' | undefined> => {
+		const directive = await consult(host, input.controller, { ...step, wantsToFinish: true, loop: NO_LOOP });
+		if (directive.kind === 'stop') {
+			return controllerStop(host, directive, stopped);
+		}
+		const nudge = await review(host, reviews, lastAssistant);
+		const sendBack = directive.kind === 'inject' && gateInjections < MAX_COMPLETION_REVIEWS ? directive.message : undefined;
+		if (nudge) {
+			reviews++;
+		}
+		if (sendBack) {
+			gateInjections++;
+		}
+		const back = [nudge, sendBack].filter((text): text is string => !!text);
+		if (back.length) {
+			messages.push({ role: 'user', content: back.join('\n\n') });
+			return 'continue';
+		}
+		return undefined;
+	};
 
 	while (!input.token.isCancellationRequested) {
 		while (input.isPaused?.() && !input.token.isCancellationRequested) {
@@ -120,13 +217,47 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 		modelCalls++;
 		host.emit({ type: 'step.start', step: modelCalls });
 		const eager = new EagerDispatch(host, input.token);
-		const streamed = await readChunks(host, messages, input.token, { maxOutputTokens }, call => eager.offer(call), eager);
+		const streamed = await readChunks(host, messages, input.token, { maxOutputTokens }, call => eager.offer(call), eager, detector);
 		host.emit({ type: 'step.end', step: modelCalls });
 
 		if (streamed.kind === 'abort') {
 			await eager.settle();
 			lastAssistant = streamed.assistant || lastAssistant;
 			return { outcome: 'abort', assistant: lastAssistant, messages };
+		}
+		if (streamed.kind === 'runaway') {
+			await eager.settle();
+			const verdict = streamed.verdict;
+			const kept = streamed.channel === 'text' && verdict.text
+				? streamed.assistant.slice(0, verdict.text.start + verdict.text.unit.length).trimEnd()
+				: streamed.assistant.trimEnd();
+			if (kept) {
+				lastAssistant = kept;
+				messages.push({ role: 'assistant', content: kept });
+			}
+			if (verdict.kind === 'stop') {
+				host.emit({ type: 'error', message: loopStopMessage(verdict), retryable: false });
+				return stopped({ by: 'loop', reason: verdict.reason, signal: verdict.signal, evidence: [modelCalls] }, 'fail');
+			}
+			host.emit(loopNotice(verdict));
+			messages.push({ role: 'user', content: verdict.nudge });
+			continue;
+		}
+		if (streamed.kind === 'stalled') {
+			await eager.settle();
+			if (stallRecoveries >= MAX_STALL_RECOVERIES) {
+				host.emit({ type: 'error', message: localize('volt.loop.stalled', "The model stopped sending data for {0}s, again. Send \"continue\" to retry.", streamed.seconds), retryable: true });
+				return { outcome: 'fail', assistant: lastAssistant, messages };
+			}
+			stallRecoveries++;
+			lastAssistant = streamed.assistant || lastAssistant;
+			const parts = streamed.parts.filter(part => part.type === 'text');
+			if (streamed.assistant || parts.length) {
+				messages.push({ role: 'assistant', content: streamed.assistant, ...(parts.length ? { parts } : {}) });
+			}
+			messages.push({ role: 'user', content: STALL_HINT });
+			host.emit({ type: 'retry', attempt: stallRecoveries + 1, delayMs: 0, message: localize('volt.loop.stalledRetry', "The model stopped sending data for {0}s. Continuing from where it left off.", streamed.seconds) });
+			continue;
 		}
 		if (streamed.kind === 'error') {
 			await eager.settle();
@@ -175,41 +306,11 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 			if (streamed.assistant || streamed.parts.length) {
 				messages.push({ role: 'assistant', content: streamed.assistant, ...(streamed.parts.length ? { parts: streamed.parts } : {}) });
 			}
-			const nudge = await review(host, reviews, lastAssistant);
-			if (nudge) {
-				reviews++;
-				messages.push({ role: 'user', content: nudge });
+			const gate = await finishing({ step: modelCalls, calls: [], results: [], assistant: streamed.assistant });
+			if (gate === 'continue') {
 				continue;
 			}
-			return { outcome: 'done', assistant: lastAssistant, messages };
-		}
-
-		const doomCheck = recordToolBatch(doom, calls);
-		doom = doomCheck.state;
-		if (doomCheck.looping) {
-			await eager.settle();
-			host.emit({
-				type: 'error',
-				message: doomAsked
-					? 'The same tools were called three times in a row with the same arguments. Stopping so this does not spin.'
-					: 'The same tools were called three times in a row with the same arguments. Trying a different approach.',
-				retryable: !doomAsked,
-			});
-			messages.push({ role: 'assistant', content: streamed.assistant, toolCalls: calls, ...(streamed.parts.length ? { parts: streamed.parts } : {}) });
-			for (const call of calls) {
-				const denied = errorResult(call, host.tool(call.name), 'Blocked: identical tool batch repeated three times (doom loop). Do not retry these exact calls.');
-				if (!eager.has(call.id)) {
-					host.emit(toolEndFromView(denied, { card: 'generic', title: call.name }));
-				}
-				messages.push({ role: 'tool', content: denied.text, callId: call.id, name: call.name, isError: true });
-			}
-			if (doomAsked) {
-				return { outcome: 'fail', assistant: lastAssistant, messages };
-			}
-			doomAsked = true;
-			doom = { repeats: 0 };
-			messages.push({ role: 'user', content: DOOM_ASK });
-			continue;
+			return gate ?? { outcome: 'done', assistant: lastAssistant, messages };
 		}
 
 		messages.push({ role: 'assistant', content: streamed.assistant, toolCalls: calls, ...(streamed.parts.length ? { parts: streamed.parts } : {}) });
@@ -233,11 +334,12 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 		}
 		const finished = outcome.results.find(result => result?.name === 'finish' && !result.isError);
 		if (finished) {
-			const nudge = await review(host, reviews, lastAssistant);
-			if (nudge) {
-				reviews++;
-				messages.push({ role: 'user', content: nudge });
+			const gate = await finishing({ step: modelCalls, calls, results: outcome.results, assistant: streamed.assistant });
+			if (gate === 'continue') {
 				continue;
+			}
+			if (gate) {
+				return gate;
 			}
 			if (!lastAssistant.trim()) {
 				const summary = finishSummary(finished.text);
@@ -246,8 +348,99 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 			}
 			return { outcome: 'done', assistant: lastAssistant, messages };
 		}
+
+		const verdict = detector?.observe(toLoopStep(modelCalls, calls, outcome.results, streamed.assistant)) ?? NO_LOOP;
+		if (verdict.kind === 'stop') {
+			host.emit({ type: 'error', message: loopStopMessage(verdict), retryable: false });
+			return stopped({ by: 'loop', reason: verdict.reason, signal: verdict.signal, evidence: verdict.evidence }, 'fail');
+		}
+		const directive = await consult(host, input.controller, { step: modelCalls, calls, results: outcome.results, assistant: streamed.assistant, wantsToFinish: false, loop: verdict });
+		if (directive.kind === 'stop') {
+			return controllerStop(host, directive, stopped);
+		}
+		const notes: string[] = [];
+		if (verdict.kind === 'warn') {
+			host.emit(loopNotice(verdict));
+			notes.push(verdict.nudge);
+		}
+		if (directive.kind === 'inject' && directive.message.trim()) {
+			notes.push(directive.message);
+		}
+		if (notes.length) {
+			messages.push({ role: 'user', content: notes.join('\n\n') });
+		}
 	}
 	return { outcome: 'abort', assistant: lastAssistant, messages };
+}
+
+/** The user's latest typed turn: the loop detector lets repetition it asks for through. */
+function latestRequest(messages: readonly INativeLoopMessage[]): string {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message.role === 'user' && message.turn) {
+			return message.content;
+		}
+	}
+	return [...messages].reverse().find(message => message.role === 'user')?.content ?? '';
+}
+
+/** A controller that throws must not take the run down with it. */
+async function consult(host: IDeepseekHost, controller: IDeepseekLoopController | undefined, step: IDeepseekStep): Promise<DeepseekDirective> {
+	if (!controller) {
+		return CONTINUE;
+	}
+	try {
+		return await controller.afterStep(step);
+	} catch (error) {
+		host.emit({ type: 'notice', severity: 'warning', title: localize('volt.loop.controllerFailed', "A run check failed and was skipped."), description: errorText(error) });
+		return CONTINUE;
+	}
+}
+
+function controllerStop(host: IDeepseekHost, directive: Extract<DeepseekDirective, { kind: 'stop' }>, stopped: (stop: IDeepseekStop, outcome: 'done' | 'fail') => IDeepseekLoopResult): IDeepseekLoopResult {
+	const outcome = directive.outcome ?? 'done';
+	if (directive.reason.trim()) {
+		host.emit(outcome === 'fail'
+			? { type: 'error', message: directive.reason, retryable: false }
+			: { type: 'notice', severity: 'warning', title: directive.reason });
+	}
+	return stopped({ by: 'controller', reason: directive.reason }, outcome);
+}
+
+function loopNotice(verdict: Extract<LoopVerdict, { kind: 'warn' }>): IVoltEvent {
+	return {
+		type: 'notice',
+		severity: 'warning',
+		title: verdict.signal === 'runaway'
+			? localize('volt.loop.runawayTitle', "The reply started repeating itself, so Volt cut it off and asked the agent to continue")
+			: localize('volt.loop.warnTitle', "The agent seems to be looping; Volt asked it to change approach"),
+		description: describeLoop(verdict),
+	};
+}
+
+function loopStopMessage(verdict: Extract<LoopVerdict, { kind: 'stop' }>): string {
+	return localize('volt.loop.stopped', "Stopped: the agent kept looping after Volt asked it to change approach. {0}", describeLoop(verdict));
+}
+
+/** What repeated, for people, with the steps it happened in. */
+function describeLoop(verdict: Exclude<LoopVerdict, { kind: 'ok' }>): string {
+	const steps = verdict.evidence.join(', ');
+	switch (verdict.signal) {
+		case 'repeat':
+			return localize('volt.loop.repeat', "{0} ran {1} times with the same result (steps {2}).", verdict.subject, verdict.count, steps);
+		case 'near-repeat':
+			return localize('volt.loop.nearRepeat', "{0} was called {1} times with nearly identical arguments and the same result (steps {2}).", verdict.subject, verdict.count, steps);
+		case 'oscillation':
+			return localize('volt.loop.oscillation', "{0} was changed back and forth (steps {1}).", verdict.subject, steps);
+		case 'repeated-error':
+			return localize('volt.loop.repeatedError', "The same error came back {0} times (steps {1}): {2}", verdict.count, steps, verdict.subject);
+		case 'no-progress':
+			return localize('volt.loop.noProgress', "{0} steps in a row produced nothing new (steps {1}).", verdict.count, steps);
+		case 'text-repeat':
+			return localize('volt.loop.textRepeat', "The agent wrote the same message {0} times (steps {1}).", verdict.count, steps);
+		case 'runaway':
+			return localize('volt.loop.runaway', "The reply repeated \"{0}\" {1} times.", verdict.subject, verdict.count);
+	}
 }
 
 async function review(host: IDeepseekHost, reviews: number, assistant: string): Promise<string | undefined> {
@@ -421,7 +614,13 @@ function emitEnd(host: IDeepseekHost, call: IToolCall, result: IToolResult): voi
 type ReadResult =
 	| { kind: 'ok'; finish: 'stop' | 'tool_calls' | 'length' | 'error'; assistant: string; calls: IToolCall[]; parts: IModelAssistantPart[]; truncatedTool?: string }
 	| { kind: 'abort'; assistant: string }
-	| { kind: 'error'; error: unknown; visible: boolean };
+	| { kind: 'error'; error: unknown; visible: boolean }
+	/** Output had already been shown when the stream went silent. */
+	| { kind: 'stalled'; assistant: string; parts: IModelAssistantPart[]; seconds: number }
+	/** The reply or its reasoning started repeating itself; the stream was cut. */
+	| { kind: 'runaway'; assistant: string; channel: 'text' | 'reasoning'; verdict: Exclude<LoopVerdict, { kind: 'ok' }> };
+
+const STALLED = Symbol('stalled');
 
 async function readChunks(
 	host: IDeepseekHost,
@@ -430,20 +629,79 @@ async function readChunks(
 	options: IDeepseekStreamOptions,
 	onToolReady: (call: IToolCall) => void,
 	eager: EagerDispatch,
+	detector: LoopDetector | undefined,
 ): Promise<ReadResult> {
 	const blocks = new Map<number, IOpenBlock>();
 	const parts = new Map<number, IModelAssistantPart>();
 	let assistant = '';
+	let reasoning = '';
+	let checkedText = 0;
+	let checkedReasoning = 0;
 	let visible = false;
 	let finish: 'stop' | 'tool_calls' | 'length' | 'error' | 'aborted' = 'stop';
+	const firstChunkMs = host.streamTimeouts?.firstChunkMs ?? DEEPSEEK_STREAM_TIMEOUTS.firstChunkMs;
+	const idleMs = host.streamTimeouts?.idleMs ?? DEEPSEEK_STREAM_TIMEOUTS.idleMs;
+	const abort = new AbortController();
+	const iterator = host.stream(messages, token, { ...options, signal: abort.signal })[Symbol.asyncIterator]();
+	let completed = false;
+	let received = false;
+	let graceMs = 0;
+	const orderedParts = () => [...parts.entries()].sort((a, b) => a[0] - b[0]).map(entry => entry[1]);
+	/** Cuts the stream on a runaway repetition; `undefined` while the text looks fine. */
+	const runaway = (final: boolean): ReadResult | undefined => {
+		if (!detector) {
+			return undefined;
+		}
+		for (const channel of ['text', 'reasoning'] as const) {
+			const text = channel === 'text' ? assistant : reasoning;
+			const checked = channel === 'text' ? checkedText : checkedReasoning;
+			if (text.length - checked < TEXT_CHECK_CHARS && !(final && text.length > checked)) {
+				continue;
+			}
+			if (channel === 'text') {
+				checkedText = text.length;
+			} else {
+				checkedReasoning = text.length;
+			}
+			const verdict = detector.checkText(text);
+			if (verdict.kind !== 'ok') {
+				abort.abort();
+				closeOpenCalls(host, blocks, INTERRUPTED_TOOL, eager);
+				return { kind: 'runaway', assistant, channel, verdict };
+			}
+		}
+		return undefined;
+	};
 	try {
-		for await (const chunk of host.stream(messages, token, options)) {
+		while (true) {
+			const limit = received ? idleMs : firstChunkMs;
+			const next = await nextWithin(iterator, limit > 0 ? limit + graceMs : 0);
+			if (next === STALLED) {
+				abort.abort();
+				closeOpenCalls(host, blocks, INTERRUPTED_TOOL, eager);
+				const seconds = Math.round((limit + graceMs) / 1000);
+				return visible
+					? { kind: 'stalled', assistant, parts: orderedParts(), seconds }
+					: { kind: 'error', error: new ProviderError(`The model sent no data for ${seconds}s; the stream timed out.`), visible: false };
+			}
+			if (next.done) {
+				completed = true;
+				break;
+			}
+			const chunk = next.value;
+			received = true;
+			graceMs = 0;
 			if (token.isCancellationRequested) {
 				closeOpenCalls(host, blocks, INTERRUPTED_TOOL, eager);
 				return { kind: 'abort', assistant };
 			}
 			if (chunk.type === 'event') {
 				host.emit(chunk.event);
+				if (chunk.event.type === 'retry') {
+					// The provider waits, then opens a new request: its first chunk gets the full allowance.
+					received = false;
+					graceMs = chunk.event.delayMs;
+				}
 				continue;
 			}
 			if (chunk.type === 'usage') {
@@ -467,8 +725,17 @@ async function readChunks(
 					assistant += event.delta;
 					visible = true;
 				}
+				if (event.type === 'reasoning.delta' && event.delta) {
+					reasoning += event.delta;
+				}
 				if (event.type === 'tool.start' || event.type === 'tool.input.delta') {
 					visible = true;
+				}
+			}
+			if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
+				const cut = runaway(false);
+				if (cut) {
+					return cut;
 				}
 			}
 			if (chunk.type === 'finish') {
@@ -499,25 +766,56 @@ async function readChunks(
 			}
 		}
 	} catch (error) {
+		completed = true;
 		closeOpenCalls(host, blocks, INTERRUPTED_TOOL, eager);
 		return { kind: 'error', error, visible };
+	} finally {
+		if (!completed) {
+			// Abandoned mid-stream: let the generator clean up once its pending read settles.
+			void Promise.resolve().then(() => iterator.return?.()).catch(() => undefined);
+		}
 	}
 	if (finish === 'aborted' || token.isCancellationRequested) {
 		closeOpenCalls(host, blocks, INTERRUPTED_TOOL, eager);
 		return { kind: 'abort', assistant };
 	}
-	const orderedParts = [...parts.entries()].sort((a, b) => a[0] - b[0]).map(entry => entry[1]);
 	const calls = callsFromBlocks(blocks);
 	if (finish === 'length') {
+		// A degenerate reply runs into the output limit; continuing it would only repeat more.
+		const cut = runaway(true);
+		if (cut) {
+			return cut;
+		}
 		const truncated = [...blocks.values()].find(block => block.kind === 'tool-call' && block.id && !eager.has(block.id));
 		closeOpenCalls(host, blocks, TRUNCATED_TOOL, eager);
-		return { kind: 'ok', finish: 'length', assistant, calls: [], parts: orderedParts, truncatedTool: truncated?.name };
+		return { kind: 'ok', finish: 'length', assistant, calls: [], parts: orderedParts(), truncatedTool: truncated?.name };
 	}
 	if (finish === 'error') {
 		closeOpenCalls(host, blocks, 'The model stream failed before this tool could run.', eager);
-		return { kind: 'ok', finish: 'error', assistant, calls: [], parts: orderedParts };
+		return { kind: 'ok', finish: 'error', assistant, calls: [], parts: orderedParts() };
 	}
-	return { kind: 'ok', finish: calls.length ? 'tool_calls' : 'stop', assistant, calls, parts: orderedParts };
+	return { kind: 'ok', finish: calls.length ? 'tool_calls' : 'stop', assistant, calls, parts: orderedParts() };
+}
+
+/** The next chunk, or `STALLED` when none arrives within `ms` (0 waits forever). */
+function nextWithin<T>(iterator: AsyncIterator<T>, ms: number): Promise<IteratorResult<T> | typeof STALLED> {
+	const next = iterator.next();
+	if (ms <= 0) {
+		return next;
+	}
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			next.catch(() => undefined);
+			resolve(STALLED);
+		}, ms);
+		next.then(value => {
+			clearTimeout(timer);
+			resolve(value);
+		}, error => {
+			clearTimeout(timer);
+			reject(error);
+		});
+	});
 }
 
 function eventsFromChunk(chunk: StreamChunk, blocks: Map<number, IOpenBlock>): IVoltEvent[] {

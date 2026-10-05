@@ -18,7 +18,7 @@ import { IWorkspaceBackupInfo, IFolderBackupInfo } from '../../backup/common/bac
 import { createDecorator } from '../../instantiation/common/instantiation.js';
 import { ILogService } from '../../log/common/log.js';
 import { getRemoteAuthority } from '../../remote/common/remoteHosts.js';
-import { IBaseWorkspace, IRawFileWorkspaceFolder, IRawUriWorkspaceFolder, IWorkspaceIdentifier, WorkspaceFolder } from '../../workspace/common/workspace.js';
+import { IBaseWorkspace, IRawFileWorkspaceFolder, IRawUriWorkspaceFolder, ISingleFolderWorkspaceIdentifier, IWorkspaceIdentifier, WorkspaceFolder } from '../../workspace/common/workspace.js';
 
 export const IWorkspacesService = createDecorator<IWorkspacesService>('workspacesService');
 
@@ -31,6 +31,8 @@ export interface IWorkspacesService {
 	createUntitledWorkspace(folders?: IWorkspaceFolderCreationData[], remoteAuthority?: string): Promise<IWorkspaceIdentifier>;
 	deleteUntitledWorkspace(workspace: IWorkspaceIdentifier): Promise<void>;
 	getWorkspaceIdentifier(workspaceUri: URI): Promise<IWorkspaceIdentifier>;
+	/** Volt: moves this window onto another folder without reloading it. Desktop only. */
+	enterFolder?(folderUri: URI): Promise<IEnterFolderResult | undefined>;
 
 	// Workspaces History
 	readonly onDidChangeRecentlyOpened: Event<void>;
@@ -120,6 +122,11 @@ export interface IUntitledWorkspaceInfo {
 
 export interface IEnterWorkspaceResult {
 	readonly workspace: IWorkspaceIdentifier;
+	readonly backupPath?: string;
+}
+
+export interface IEnterFolderResult {
+	readonly workspace: ISingleFolderWorkspaceIdentifier;
 	readonly backupPath?: string;
 }
 

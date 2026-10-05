@@ -3,7 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { URI } from '../../../../../base/common/uri.js';
 import { IVoltEvent, IVoltEventEnvelope, isLiveOnlyEvent } from '../events.js';
+import type { IRunMetrics } from './runMetrics.js';
 import { VoltLane } from './lanes.js';
 import { TaskPhase } from './lifecycle.js';
 
@@ -166,4 +168,102 @@ function apply(state: MutableRun, item: IStoredEnvelope): void {
 		default:
 			break;
 	}
+}
+
+// --- persisted trace ---------------------------------------------------------------------------
+
+/**
+ * One line of a session's trace file. Events are the durable envelopes; live-only deltas are
+ * folded away, except streamed text, which is kept as one `text.end` per text block so a trace
+ * still says what the agent answered. `metrics` closes each run with its timings.
+ */
+export type ITraceRecord =
+	| { readonly kind: 'event'; readonly seq: number; readonly runId: string; readonly ts: number; readonly event: IVoltEvent }
+	| { readonly kind: 'metrics'; readonly runId: string; readonly ts: number; readonly metrics: IRunMetrics };
+
+/** Folds a live envelope stream into trace records. One recorder per session. */
+export class TraceRecorder {
+
+	/** Streamed text per `runId\0blockId`, until its block ends. */
+	private readonly text = new Map<string, { readonly runId: string; readonly id: string; value: string; readonly ts: number }>();
+
+	push(envelope: IVoltEventEnvelope): ITraceRecord[] {
+		const event = envelope.event;
+		const out: ITraceRecord[] = [];
+		if (event.type === 'text.delta') {
+			if (event.delta) {
+				const key = `${envelope.runId}\0${event.id}`;
+				const open = this.text.get(key);
+				if (open) {
+					open.value += event.delta;
+				} else {
+					this.text.set(key, { runId: envelope.runId, id: event.id, value: event.delta, ts: envelope.timestamp });
+				}
+			}
+			return out;
+		}
+		if (event.type === 'text.end') {
+			const key = `${envelope.runId}\0${event.id}`;
+			const open = this.text.get(key);
+			this.text.delete(key);
+			const value = `${open?.value ?? ''}${event.delta ?? ''}`;
+			out.push({ kind: 'event', seq: envelope.seq, runId: envelope.runId, ts: envelope.timestamp, event: { type: 'text.end', id: event.id, ...(value ? { delta: value } : {}) } });
+			return out;
+		}
+		if (isLiveOnlyEvent(event)) {
+			return out;
+		}
+		if (event.type === 'run.end') {
+			// Providers that never close their text blocks still leave their answer in the trace.
+			out.push(...this.flush(envelope.runId, envelope.seq));
+		}
+		out.push({ kind: 'event', seq: envelope.seq, runId: envelope.runId, ts: envelope.timestamp, event });
+		return out;
+	}
+
+	/** Open text blocks of `runId` as `text.end` records. */
+	flush(runId: string, seq: number): ITraceRecord[] {
+		const out: ITraceRecord[] = [];
+		for (const [key, open] of this.text) {
+			if (open.runId === runId) {
+				this.text.delete(key);
+				out.push({ kind: 'event', seq, runId, ts: open.ts, event: { type: 'text.end', id: open.id, delta: open.value } });
+			}
+		}
+		return out;
+	}
+}
+
+export function encodeTraceRecord(record: ITraceRecord): string {
+	// `URI.toJSON` runs before a replacer sees the value, so look at the holder's original.
+	return JSON.stringify(record, function (this: Record<string, unknown>, key: string, value: unknown) {
+		const raw = key ? this[key] : value;
+		return URI.isUri(raw) ? raw.toString() : value;
+	});
+}
+
+/** Records from a trace file; unreadable lines are skipped. URIs come back as strings. */
+export function decodeTrace(text: string): ITraceRecord[] {
+	const out: ITraceRecord[] = [];
+	for (const line of text.split('\n')) {
+		if (!line.trim()) {
+			continue;
+		}
+		try {
+			const record = JSON.parse(line) as ITraceRecord;
+			if (record && (record.kind === 'event' || record.kind === 'metrics')) {
+				out.push(record);
+			}
+		} catch {
+			// A torn last line after a crash.
+		}
+	}
+	return out;
+}
+
+/** The trace's events as stored envelopes, for `reduceRun` / `replay`. */
+export function traceEnvelopes(records: readonly ITraceRecord[], sessionId: string, runId?: string): IStoredEnvelope[] {
+	return records.flatMap(record => record.kind === 'event' && (!runId || record.runId === runId)
+		? [{ seq: record.seq, runId: record.runId, sessionId, timestamp: record.ts, event: record.event }]
+		: []);
 }

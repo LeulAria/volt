@@ -4,40 +4,44 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentChangesEditor.css';
-import { $, addDisposableListener, append, Dimension } from '../../../../../base/browser/dom.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Action } from '../../../../../base/common/actions.js';
+import { $, append, Dimension, getWindow } from '../../../../../base/browser/dom.js';
+import { PixelRatio } from '../../../../../base/browser/pixelRatio.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { Emitter } from '../../../../../base/common/event.js';
-import { DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { Schemas } from '../../../../../base/common/network.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
+import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { derived, IObservable, observableFromEvent } from '../../../../../base/common/observable.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
-import { MultiDiffEditorWidget } from '../../../../../editor/browser/widget/multiDiffEditor/multiDiffEditorWidget.js';
-import { IResourceLabel, IWorkbenchUIElementFactory } from '../../../../../editor/browser/widget/multiDiffEditor/workbenchUIElementFactory.js';
+import { IDiffEditorOptions, IEditorOptions as ICodeEditorOptions } from '../../../../../editor/common/config/editorOptions.js';
+import { EditorZoom } from '../../../../../editor/common/config/editorZoom.js';
+import { BareFontInfo } from '../../../../../editor/common/config/fontInfo.js';
+import { FontMeasurements } from '../../../../../editor/browser/config/fontMeasurements.js';
 import { localize } from '../../../../../nls.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IContextMenuService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IStorageService, StorageScope } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
-import { ResourceLabel } from '../../../../browser/labels.js';
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../../../../common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { GroupsOrder, IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
-import { COPY_PATH_COMMAND_ID } from '../../../files/browser/fileConstants.js';
+import { ILentPaneCompositePart, IPaneCompositePartService } from '../../../../services/panecomposite/browser/panecomposite.js';
+import { IViewDescriptorService } from '../../../../common/views.js';
+import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
+import { IMultiDiffEditorHeader, IMultiDiffEditorLook, setMultiDiffEditorLookProvider } from '../../../multiDiffEditor/browser/multiDiffEditor.js';
 import { MultiDiffEditorInput } from '../../../multiDiffEditor/browser/multiDiffEditorInput.js';
+import { VIEWLET_ID as SCM_VIEWLET_ID } from '../../../scm/common/scm.js';
 import { AGENT_EDITOR_ID } from '../editor/agentEditorInput.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { AgentChangesScope, IAgentSessionChangeStats } from './agentSessionChanges.js';
-import { getAgentChangesSourceUri, IAgentSessionChangesService } from './agentSessionChangesService.js';
-import { IAgentEditsService } from './agentEditsService.js';
+import { AgentChangesScope, IAgentChangesTurn } from './agentSessionChanges.js';
+import { getAgentChangesSourceUri, parseAgentChangesSourceUri } from './agentSessionChangesService.js';
+import { AgentChangesHeader, AgentChangesHeaderTarget, getAgentCommitDiffTarget } from './agentChangesHeader.js';
+import { AgentScmRepositoryFocus } from './agentScmRepository.js';
+import { setAgentChangesSession } from './agentTurnsView.js';
 
 export const AGENT_CHANGES_EDITOR_ID = 'workbench.editor.voltAgentChanges';
 export const AGENT_CHANGES_INPUT_ID = 'workbench.input.voltAgentChanges';
@@ -45,9 +49,120 @@ export const OPEN_AGENT_CHANGES_COMMAND_ID = 'workbench.action.voltAgent.openCha
 
 const ChangesIcon = registerIcon('volt-agent-changes-editor-label-icon', Codicon.diffMultiple, localize('voltAgentChangesIcon', 'Icon of the agent changes review tab.'));
 
-const SCOPE_ORDER: AgentChangesScope[] = ['pending', 'lastTurn', 'uncommitted', 'staged', 'unstaged'];
+/** Characters the line number column holds, as Better Hub's 40px column at 11px. */
+const LINE_NUMBER_CHARS = 6;
 
-export function agentChangesScopeLabel(scope: AgentChangesScope): string {
+const SPLIT_DIFF_KEY = 'voltAgent.changes.splitDiff';
+
+/**
+ * Better Hub's diff in Monaco: one column of line numbers, a column of +/- signs, no gutter
+ * menu, no overview ruler. Inline unless the user picks Split (and the pane is wide enough).
+ * Inline, agentChangesEditor.css lays the original editor's numbers over that column, so a
+ * deleted line shows its old number where the other lines show theirs.
+ */
+function reviewDiffOptions(split: boolean): IDiffEditorOptions {
+	return {
+		renderSideBySide: split,
+		useInlineViewWhenSpaceIsLimited: true,
+		// Split stays split down to a narrow pane: each side still gets ~175px.
+		renderSideBySideInlineBreakpoint: 350,
+		renderIndicators: true,
+		renderMarginRevertIcon: false,
+		renderGutterMenu: false,
+		glyphMargin: false,
+		folding: false,
+		lineNumbersMinChars: LINE_NUMBER_CHARS,
+		lineDecorationsWidth: 24,
+		renderLineHighlight: 'none',
+		renderLineHighlightOnlyWhenFocus: false,
+		overviewRulerLanes: 0,
+		overviewRulerBorder: false,
+		hideCursorInOverviewRuler: true,
+	};
+}
+
+/**
+ * The diff's line height and line number column width, computed as Monaco does: the CSS draws
+ * the column's divider and hunk bars to match, and hides the empty line a created file is
+ * diffed against.
+ */
+function applyReviewDiffMetrics(element: HTMLElement, configurationService: IConfigurationService): void {
+	const settings = configurationService.getValue<ICodeEditorOptions>('editor');
+	const targetWindow = getWindow(element);
+	const fontInfo = FontMeasurements.readFontInfo(targetWindow, BareFontInfo.createFromRawSettings(settings ?? {}, PixelRatio.getInstance(targetWindow).value));
+	element.style.setProperty('--volt-changes-line-height', `${fontInfo.lineHeight}px`);
+	element.style.setProperty('--volt-changes-gutter-width', `${Math.round(LINE_NUMBER_CHARS * fontInfo.maxDigitWidth)}px`);
+}
+
+/** Scope the review's diff CSS (agentChangesEditor.css) to another editor. */
+const REVIEW_DIFF_CLASSES = ['volt-agent-review-diff', 'volt-agent-changes-widget'];
+
+/**
+ * The Changes review's diff style on a multi-diff editor in the agent window's tools, such as
+ * git's "Open Changes": the review's options, its CSS (scoped by these classes) and its columns.
+ */
+class AgentReviewDiffLook extends Disposable implements IMultiDiffEditorLook {
+
+	readonly diffEditorOptions: IObservable<IDiffEditorOptions>;
+
+	constructor(
+		container: HTMLElement,
+		@IStorageService storage: IStorageService,
+		@IConfigurationService configurationService: IConfigurationService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
+	) {
+		super();
+		container.classList.add(...REVIEW_DIFF_CLASSES);
+		this._register(toDisposable(() => {
+			container.classList.remove(...REVIEW_DIFF_CLASSES);
+			container.style.removeProperty('--volt-changes-line-height');
+			container.style.removeProperty('--volt-changes-gutter-width');
+		}));
+		// Split or unified as the Changes tab's layout button last set it.
+		const split = observableFromEvent(
+			this,
+			storage.onDidChangeValue(StorageScope.PROFILE, SPLIT_DIFF_KEY, this._store),
+			() => storage.getBoolean(SPLIT_DIFF_KEY, StorageScope.PROFILE, false),
+		);
+		this.diffEditorOptions = derived(this, reader => reviewDiffOptions(split.read(reader)));
+		const metrics = () => applyReviewDiffMetrics(container, configurationService);
+		metrics();
+		this._register(configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('editor')) {
+				metrics();
+			}
+		}));
+		this._register(EditorZoom.onDidChangeZoomLevel(metrics));
+	}
+
+	/** A chat's changes (and commits picked from their header) get the scope, branch and Commit & Push bar. */
+	createHeader(input: MultiDiffEditorInput, group: IEditorGroup): IMultiDiffEditorHeader | undefined {
+		const source = input.resource && parseAgentChangesSourceUri(input.resource);
+		const target: AgentChangesHeaderTarget | undefined = source
+			? { kind: 'scope', sessionId: source.sessionId, scope: source.scope }
+			: getAgentCommitDiffTarget(input);
+		return target && this.instantiationService.createInstance(AgentChangesHeader, input, group, target);
+	}
+}
+
+
+/** Multi-diff editors in the agent window's tools take the review's diff style. */
+export class AgentReviewDiffLookContribution extends Disposable {
+
+	static readonly ID = 'workbench.contrib.voltAgentReviewDiffLook';
+
+	constructor(@IInstantiationService instantiationService: IInstantiationService) {
+		super();
+		this._register(setMultiDiffEditorLookProvider((container, current) => {
+			if (!container.closest('.volt-agent-tools-part')) {
+				return undefined;
+			}
+			return current ?? instantiationService.createInstance(AgentReviewDiffLook, container);
+		}));
+	}
+}
+
+export function agentChangesScopeLabel(scope: AgentChangesScope, turn?: IAgentChangesTurn): string {
 	switch (scope) {
 		case 'pending':
 			return localize('voltAgent.changes.pending', "Pending Changes");
@@ -57,9 +172,41 @@ export function agentChangesScopeLabel(scope: AgentChangesScope): string {
 			return localize('voltAgent.changes.staged', "Staged");
 		case 'unstaged':
 			return localize('voltAgent.changes.unstaged', "Unstaged");
-		default:
+		case 'uncommitted':
 			return localize('voltAgent.changes.uncommitted', "Uncommitted");
+		default:
+			return turn
+				? localize('voltAgent.changes.turnNumber', "Turn {0}", turn.number)
+				: localize('voltAgent.changes.turn', "Turn");
 	}
+}
+
+/**
+ * Marks `host` `all-panes-collapsed` while every view of the side bar lent into it is collapsed, for
+ * the headers-at-the-bottom layout in agentChangesEditor.css. Stands in for
+ * `.monaco-pane-view:not(:has(.pane.expanded))`, which restyled the whole side bar whenever one of
+ * its lists added a row (every scroll).
+ */
+export function trackLentPanesCollapsed(paneCompositeService: IPaneCompositePartService, viewDescriptorService: IViewDescriptorService, id: string, host: HTMLElement): IDisposable {
+	const store = new DisposableStore();
+	const container = viewDescriptorService.getViewContainerById(id);
+	const location = container ? viewDescriptorService.getViewContainerLocation(container) : null;
+	const composite = location !== null ? paneCompositeService.getActivePaneComposite(location) : undefined;
+	const views = composite?.getId() === id ? composite.getViewPaneContainer() : undefined;
+	const sync = () => {
+		const collapsed = !!views && views.views.length > 0
+			&& views.views.every(view => !((view as { isExpanded?(): boolean }).isExpanded?.() ?? view.isBodyVisible()));
+		host.classList.toggle('all-panes-collapsed', collapsed);
+	};
+	if (views) {
+		store.add(views.onDidAddViews(sync));
+		store.add(views.onDidRemoveViews(sync));
+		// Fires as a view expands or collapses (its body shows or hides).
+		store.add(views.onDidChangeViewVisibility(sync));
+	}
+	sync();
+	store.add(toDisposable(() => host.classList.remove('all-panes-collapsed')));
+	return store;
 }
 
 export async function openAgentChanges(
@@ -81,6 +228,33 @@ export async function openAgentChanges(
 		.find(group => group.activeEditorPane?.getId() !== AGENT_EDITOR_ID)
 		?? editorGroupsService.activeGroup;
 	await editorService.openEditor(input, { pinned: true, revealIfOpened: true }, target);
+}
+
+/**
+ * Opens one scope of a chat's changes (its last turn, its pending edits) as a diff in `group`; in
+ * the agent window's tools it takes the review's look (AgentReviewDiffLook).
+ */
+export async function openAgentChangesDiff(
+	instantiationService: IInstantiationService,
+	group: IEditorGroup,
+	sessionId: string,
+	scope: AgentChangesScope,
+	preserveFocus?: boolean,
+): Promise<void> {
+	const input = MultiDiffEditorInput.fromResourceMultiDiffEditorInput({
+		multiDiffSource: getAgentChangesSourceUri(sessionId, scope),
+		label: agentChangesScopeLabel(scope),
+	}, instantiationService);
+	await group.openEditor(input, { pinned: true, preserveFocus });
+}
+
+/** `editor` is a diff of `sessionId`'s changes: a scope, or a commit picked from its header. */
+export function isAgentChangesDiffFor(editor: EditorInput | undefined, sessionId: string): boolean {
+	if (!(editor instanceof MultiDiffEditorInput)) {
+		return false;
+	}
+	const source = editor.resource && parseAgentChangesSourceUri(editor.resource);
+	return (source?.sessionId ?? getAgentCommitDiffTarget(editor)?.sessionId) === sessionId;
 }
 
 export class AgentChangesEditorInput extends EditorInput {
@@ -119,8 +293,9 @@ export class AgentChangesEditorInput extends EditorInput {
 		return AgentChangesEditorInput.EditorID;
 	}
 
+	/** The tab is always "Changes"; the scope picker inside the editor names the scope. */
 	override getName(): string {
-		return agentChangesScopeLabel(this._scope);
+		return localize('voltAgent.changes.tab', "Changes");
 	}
 
 	override getIcon(): ThemeIcon {
@@ -169,344 +344,123 @@ export class AgentChangesEditorInputSerializer implements IEditorSerializer {
 	}
 }
 
+/**
+ * The Changes tab: the workbench's Source Control side bar, moved in (see borrowScmView), with the
+ * chat's repository shown alone and the chat's turns in Agent Turns. A scope of the chat's changes
+ * (its last turn, its pending edits) opens as a diff instead: {@link openAgentChangesDiff}.
+ */
 export class AgentChangesEditor extends EditorPane {
 
 	static readonly ID = AGENT_CHANGES_EDITOR_ID;
 
 	private container!: HTMLElement;
-	private headerEl!: HTMLElement;
-	private allTab!: HTMLButtonElement;
-	private pendingTab!: HTMLButtonElement;
-	private pendingActions!: HTMLElement;
-	private scopeButton!: HTMLButtonElement;
-	private scopeStatsEl!: HTMLElement;
-	private scopeLabelEl!: HTMLElement;
-	private commitButton!: HTMLButtonElement;
-	private bodyEl!: HTMLElement;
-	private emptyEl!: HTMLElement;
-	private widgetHost!: HTMLElement;
-	private widget!: MultiDiffEditorWidget;
-	private readonly multiInput = this._register(new MutableDisposable<MultiDiffEditorInput>());
-	private readonly inputStore = this._register(new DisposableStore());
-	private readonly emptyStore = this._register(new DisposableStore());
+	private scmHost!: HTMLElement;
+	/** The workbench's own Source Control side bar, moved in here while the Changes tab shows it. */
+	private readonly scmPanel = this._register(new MutableDisposable<ILentPaneCompositePart>());
+	private readonly scmPanesCollapsed = this._register(new MutableDisposable());
+	/** Shows the chat's repository in the view once git has opened it. */
+	private readonly scmRepository: AgentScmRepositoryFocus;
 	private dimension: Dimension | undefined;
-	private refreshGen = 0;
 
 	constructor(
 		group: IEditorGroup,
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IThemeService themeService: IThemeService,
-		@IStorageService storageService: IStorageService,
-		@IInstantiationService private readonly instantiationService: IInstantiationService,
-		@IAgentSessionChangesService private readonly changesService: IAgentSessionChangesService,
-		@ICommandService private readonly commandService: ICommandService,
-		@IContextMenuService private readonly contextMenuService: IContextMenuService,
-		@IAgentEditsService private readonly edits: IAgentEditsService,
+		@IStorageService storage: IStorageService,
+		@IInstantiationService instantiationService: IInstantiationService,
+		@IViewDescriptorService private readonly viewDescriptorService: IViewDescriptorService,
+		@IPaneCompositePartService private readonly paneCompositeService: IPaneCompositePartService,
+		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 	) {
-		super(AgentChangesEditor.ID, group, telemetryService, themeService, storageService);
+		super(AgentChangesEditor.ID, group, telemetryService, themeService, storage);
+		this.scmRepository = this._register(instantiationService.createInstance(AgentScmRepositoryFocus));
 	}
 
 	protected createEditor(parent: HTMLElement): void {
 		this.container = append(parent, $('.volt-agent-changes-editor'));
-		this.headerEl = append(this.container, $('.volt-agent-changes-header'));
-		const tabs = append(this.headerEl, $('.volt-agent-changes-tabs'));
-		this.allTab = append(tabs, $('button.volt-agent-changes-tab')) as HTMLButtonElement;
-		this.allTab.type = 'button';
-		this.allTab.textContent = localize('voltAgent.changes.all', "All Changes");
-		this.pendingTab = append(tabs, $('button.volt-agent-changes-tab')) as HTMLButtonElement;
-		this.pendingTab.type = 'button';
-		this._register(addDisposableListener(this.allTab, 'click', () => this.setScope('uncommitted')));
-		this._register(addDisposableListener(this.pendingTab, 'click', () => this.setScope('pending')));
-		this.scopeButton = append(this.headerEl, $('button.volt-agent-changes-scope')) as HTMLButtonElement;
-		this.scopeButton.type = 'button';
-		this.scopeStatsEl = append(this.scopeButton, $('span.volt-agent-changes-scope-stats'));
-		this.scopeLabelEl = append(this.scopeButton, $('span.volt-agent-changes-scope-label'));
-		append(this.scopeButton, renderIcon(Codicon.chevronDown)).classList.add('volt-agent-changes-scope-chevron');
-		this.pendingActions = append(this.headerEl, $('.volt-agent-changes-pending-actions'));
-		const undoAll = append(this.pendingActions, $('button.volt-agent-changes-action')) as HTMLButtonElement;
-		undoAll.type = 'button';
-		undoAll.textContent = localize('voltAgent.changes.undoAll', "Undo All");
-		const keepAll = append(this.pendingActions, $('button.volt-agent-changes-action')) as HTMLButtonElement;
-		keepAll.type = 'button';
-		keepAll.textContent = localize('voltAgent.changes.keepAll', "Keep All");
-		this._register(addDisposableListener(undoAll, 'click', () => {
-			const input = this.input;
-			if (input instanceof AgentChangesEditorInput) {
-				void this.edits.undoAll(input.sessionId);
+		this.scmHost = append(this.container, $('.volt-agent-changes-scm'));
+		const unavailable = append(this.scmHost, $('.volt-agent-changes-scm-unavailable'));
+		unavailable.textContent = localize('voltAgent.changes.scmUnavailable', "Source Control is open in another part of the window.");
+		// Back in agent layout the side bar is hidden again, so the tab can take it back.
+		this._register(this.layoutService.onDidChangePartVisibility(() => {
+			if (!this.scmPanel.value) {
+				this.borrowScmView();
+				this.layoutScm();
 			}
 		}));
-		this._register(addDisposableListener(keepAll, 'click', () => {
-			const input = this.input;
-			if (input instanceof AgentChangesEditorInput) {
-				void this.edits.keepAll(input.sessionId);
-			}
-		}));
-		this.commitButton = append(this.headerEl, $('button.volt-agent-changes-commit')) as HTMLButtonElement;
-		this.commitButton.type = 'button';
-		append(this.commitButton, $('span')).textContent = localize('voltAgent.commitAndPush', "Commit & Push");
-		this._register(addDisposableListener(this.scopeButton, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			this.showScopeMenu();
-		}));
-		this._register(addDisposableListener(this.commitButton, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			this.showCommitMenu();
-		}));
+	}
 
-		this.bodyEl = append(this.container, $('.volt-agent-changes-body'));
-		this.emptyEl = append(this.bodyEl, $('.volt-agent-changes-empty'));
-		this.widgetHost = append(this.bodyEl, $('.volt-agent-changes-widget'));
-		this.widget = this._register(this.instantiationService.createInstance(
-			MultiDiffEditorWidget,
-			this.widgetHost,
-			this.instantiationService.createInstance(AgentChangesResourceLabelFactory),
-		));
-		this._register(this.widget.onDidChangeActiveControl(() => this.applyActiveEditorChrome()));
+	/**
+	 * Moves the Source Control side bar in: the same part, view container and views the IDE layout
+	 * shows (title, toolbars, commit box, every view), not copies. Agent layout keeps that part
+	 * hidden, so it can sit here; it goes back when the tab hides or the workbench shows it again.
+	 */
+	private borrowScmView(): void {
+		if (this.scmPanel.value || !this.isVisible()) {
+			return;
+		}
+		const container = this.viewDescriptorService.getViewContainerById(SCM_VIEWLET_ID);
+		const location = container ? this.viewDescriptorService.getViewContainerLocation(container) : null;
+		const lent = location !== null ? this.paneCompositeService.lendPaneComposite(SCM_VIEWLET_ID, location, this.scmHost) : undefined;
+		this.scmHost.classList.toggle('unavailable', !lent);
+		if (!lent) {
+			return;
+		}
+		this.scmPanel.value = lent;
+		this.scmPanesCollapsed.value = trackLentPanesCollapsed(this.paneCompositeService, this.viewDescriptorService, SCM_VIEWLET_ID, this.scmHost);
+		Event.once(lent.onDidReturn)(() => {
+			if (this.scmPanel.value === lent) {
+				this.scmPanesCollapsed.clear();
+				this.scmPanel.clear();
+				// Shown by the workbench again: say where it is.
+				this.borrowScmView();
+			}
+		});
+	}
+
+	protected override setEditorVisible(visible: boolean): void {
+		super.setEditorVisible(visible);
+		if (visible) {
+			this.borrowScmView();
+			if (this.input instanceof AgentChangesEditorInput) {
+				setAgentChangesSession(this.input.sessionId);
+				this.showScmRepository(this.input);
+			}
+			this.layoutScm();
+		} else {
+			this.scmPanesCollapsed.clear();
+			this.scmPanel.clear();
+			setAgentChangesSession(undefined);
+		}
 	}
 
 	override async setInput(input: AgentChangesEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
-		this.bindInput(input);
-		await this.refreshWidget(input);
-		if (token.isCancellationRequested) {
-			return;
+		if (this.isVisible()) {
+			setAgentChangesSession(input.sessionId);
+			this.showScmRepository(input);
 		}
-		this.renderHeader(input);
-		this.renderEmpty(input);
-		this.layoutWidget();
+	}
+
+	private showScmRepository(input: AgentChangesEditorInput): void {
+		void this.scmRepository.show(input.sessionId, () => this.input === input && this.isVisible());
 	}
 
 	override clearInput(): void {
-		this.inputStore.clear();
-		this.multiInput.clear();
-		this.widget.setViewModel(undefined);
+		this.scmRepository.clear();
+		setAgentChangesSession(undefined);
 		super.clearInput();
 	}
 
 	override layout(dimension: Dimension): void {
 		this.dimension = dimension;
 		this.container.style.height = `${dimension.height}px`;
-		this.layoutWidget();
+		this.layoutScm();
 	}
 
-	private bindInput(input: AgentChangesEditorInput): void {
-		this.inputStore.clear();
-		this.inputStore.add(input.onDidChangeScope(() => void this.onScopeChanged(input)));
-		this.inputStore.add(this.changesService.onDidChange(sessionId => {
-			if (sessionId && sessionId !== input.sessionId) {
-				return;
-			}
-			this.renderHeader(input);
-			this.renderEmpty(input);
-		}));
-	}
-
-	private async onScopeChanged(input: AgentChangesEditorInput): Promise<void> {
-		await this.refreshWidget(input);
-		this.renderHeader(input);
-		this.renderEmpty(input);
-		this.layoutWidget();
-	}
-
-	private async refreshWidget(input: AgentChangesEditorInput): Promise<void> {
-		const gen = ++this.refreshGen;
-		const next = MultiDiffEditorInput.fromResourceMultiDiffEditorInput({
-			multiDiffSource: getAgentChangesSourceUri(input.sessionId, input.scope),
-			label: agentChangesScopeLabel(input.scope),
-			isTransient: true,
-		}, this.instantiationService);
-		const viewModel = await next.getViewModel();
-		if (gen !== this.refreshGen) {
-			next.dispose();
-			return;
+	private layoutScm(): void {
+		if (this.dimension) {
+			this.scmPanel.value?.layout(this.dimension.width, this.dimension.height);
 		}
-		this.multiInput.value = next;
-		this.widget.setViewModel(viewModel);
-		this.applyActiveEditorChrome();
-	}
-
-	private applyActiveEditorChrome(): void {
-		const control = this.widget.getActiveControl();
-		if (!control) {
-			return;
-		}
-		const chrome = { renderLineHighlight: 'none' as const, renderLineHighlightOnlyWhenFocus: false };
-		control.updateOptions(chrome);
-		control.getOriginalEditor().updateOptions(chrome);
-		control.getModifiedEditor().updateOptions(chrome);
-	}
-
-	private setScope(scope: AgentChangesScope): void {
-		const input = this.input;
-		if (input instanceof AgentChangesEditorInput) {
-			input.setScope(scope);
-		}
-	}
-
-	private renderHeader(input: AgentChangesEditorInput): void {
-		const pending = this.changesService.getStats(input.sessionId, 'pending').files;
-		this.pendingTab.textContent = pending === 1
-			? localize('voltAgent.changes.onePending', "1 Pending Change")
-			: localize('voltAgent.changes.pendingCount', "{0} Pending Changes", pending);
-		this.pendingTab.classList.toggle('hidden', pending === 0 && input.scope !== 'pending');
-		this.allTab.classList.toggle('active', input.scope === 'uncommitted');
-		this.pendingTab.classList.toggle('active', input.scope === 'pending');
-		this.pendingActions.classList.toggle('hidden', input.scope !== 'pending' || pending === 0);
-		const stats = this.changesService.getStats(input.sessionId, input.scope);
-		this.scopeStatsEl.replaceChildren();
-		if (stats.additions > 0) {
-			append(this.scopeStatsEl, $('span.add')).textContent = `+${stats.additions}`;
-		}
-		if (stats.deletions > 0) {
-			append(this.scopeStatsEl, $('span.del')).textContent = `-${stats.deletions}`;
-		}
-		this.scopeStatsEl.classList.toggle('hidden', stats.additions <= 0 && stats.deletions <= 0);
-		this.scopeLabelEl.textContent = stats.files > 0 && (stats.additions > 0 || stats.deletions > 0)
-			? ''
-			: agentChangesScopeLabel(input.scope);
-		this.scopeButton.setAttribute('aria-label', agentChangesScopeLabel(input.scope));
-	}
-
-	private renderEmpty(input: AgentChangesEditorInput): void {
-		const stats = this.changesService.getStats(input.sessionId, input.scope);
-		const empty = stats.files === 0;
-		this.emptyEl.classList.toggle('hidden', !empty);
-		this.widgetHost.classList.toggle('hidden', empty);
-		if (!empty) {
-			this.emptyStore.clear();
-			return;
-		}
-		this.emptyStore.clear();
-		this.emptyEl.replaceChildren();
-		const title = append(this.emptyEl, $('.volt-agent-changes-empty-title'));
-		title.textContent = localize('voltAgent.changes.noneInScope', "No {0} changes", agentChangesScopeLabel(input.scope).toLowerCase());
-		const overview = this.changesService.getOverview(input.sessionId);
-		const rows: Array<{ scope: AgentChangesScope; label: string; stats: IAgentSessionChangeStats; icon: ThemeIcon }> = [
-			{ scope: 'pending', label: localize('voltAgent.changes.pending', "Pending Changes"), stats: this.changesService.getStats(input.sessionId, 'pending'), icon: Codicon.diffMultiple },
-			{ scope: 'uncommitted', label: localize('voltAgent.changes.filesChanged', "Files Changed"), stats: overview.filesChanged, icon: Codicon.file },
-			{ scope: 'lastTurn', label: localize('voltAgent.changes.lastTurn', "Last Agent Turn"), stats: overview.lastTurn, icon: Codicon.history },
-			{ scope: 'unstaged', label: localize('voltAgent.changes.unstaged', "Unstaged"), stats: overview.unstaged, icon: Codicon.diff },
-			{ scope: 'staged', label: localize('voltAgent.changes.staged', "Staged"), stats: overview.staged, icon: Codicon.gitCommit },
-		];
-		const list = append(this.emptyEl, $('.volt-agent-changes-empty-list'));
-		for (const row of rows) {
-			if (row.scope === input.scope || (row.stats.files <= 0 && row.stats.additions <= 0 && row.stats.deletions <= 0)) {
-				continue;
-			}
-			const button = append(list, $('button.volt-agent-changes-empty-row')) as HTMLButtonElement;
-			button.type = 'button';
-			append(button, renderIcon(row.icon)).classList.add('volt-agent-changes-empty-icon');
-			append(button, $('span.volt-agent-changes-empty-row-label')).textContent = row.stats.files && row.scope === 'uncommitted'
-				? localize('voltAgent.changes.filesChangedCount', "{0} Files Changed", row.stats.files)
-				: row.label;
-			const stat = append(button, $('span.volt-agent-changes-empty-row-stats'));
-			if (row.stats.additions > 0) {
-				append(stat, $('span.add')).textContent = `+${row.stats.additions}`;
-			}
-			if (row.stats.deletions > 0) {
-				append(stat, $('span.del')).textContent = `-${row.stats.deletions}`;
-			}
-			this.emptyStore.add(addDisposableListener(button, 'click', () => input.setScope(row.scope)));
-		}
-	}
-
-	private layoutWidget(): void {
-		if (!this.dimension) {
-			return;
-		}
-		const height = Math.max(0, this.dimension.height - this.headerEl.offsetHeight);
-		this.bodyEl.style.height = `${height}px`;
-		this.widget.layout(new Dimension(this.dimension.width, height));
-	}
-
-	private showScopeMenu(): void {
-		const input = this.input;
-		if (!(input instanceof AgentChangesEditorInput)) {
-			return;
-		}
-		this.contextMenuService.showContextMenu({
-			getAnchor: () => this.scopeButton,
-			getActions: () => SCOPE_ORDER.map(scope => {
-				const stats = this.changesService.getStats(input.sessionId, scope);
-				const label = formatScopeAction(scope, stats);
-				return new Action(`volt.agent.changes.scope.${scope}`, label, input.scope === scope ? 'checked' : undefined, true, () => {
-					input.setScope(scope);
-				});
-			}),
-		});
-	}
-
-	private showCommitMenu(): void {
-		this.contextMenuService.showContextMenu({
-			getAnchor: () => this.commitButton,
-			getActions: () => [
-				new Action('volt.agent.commit', localize('voltAgent.commit', "Commit"), undefined, true, () => this.commandService.executeCommand('git.commitAll')),
-				new Action('volt.agent.commitPush', localize('voltAgent.commitAndPush', "Commit & Push"), undefined, true, async () => {
-					await this.commandService.executeCommand('git.commitAll');
-					await this.commandService.executeCommand('git.push');
-				}),
-				new Action('volt.agent.push', localize('voltAgent.push', "Push"), undefined, true, () => this.commandService.executeCommand('git.push')),
-			],
-		});
-	}
-}
-
-function formatScopeAction(scope: AgentChangesScope, stats: IAgentSessionChangeStats): string {
-	const label = agentChangesScopeLabel(scope);
-	const parts: string[] = [];
-	if (stats.additions > 0) {
-		parts.push(`+${stats.additions}`);
-	}
-	if (stats.deletions > 0) {
-		parts.push(`-${stats.deletions}`);
-	}
-	return parts.length ? `${label}  ${parts.join(' ')}` : label;
-}
-
-class AgentChangesResourceLabelFactory implements IWorkbenchUIElementFactory {
-
-	constructor(
-		@IInstantiationService private readonly instantiationService: IInstantiationService,
-		@ICommandService private readonly commandService: ICommandService,
-	) { }
-
-	createResourceLabel(element: HTMLElement): IResourceLabel {
-		const label = this.instantiationService.createInstance(ResourceLabel, element, {});
-		let currentUri: URI | undefined;
-		element.classList.add('volt-agent-changes-file-label');
-		setAgentTooltip(element, localize('voltAgent.copyPath', "Copy Path"));
-		const fileUri = () => currentUri?.scheme === Schemas.voltAgentSnapshot
-			? URI.file(currentUri.path)
-			: currentUri;
-		element.addEventListener('click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			if (!currentUri) {
-				return;
-			}
-			void this.commandService.executeCommand('multiDiffEditor.goToFile', fileUri() ?? currentUri);
-		});
-		element.addEventListener('contextmenu', event => {
-			event.preventDefault();
-			event.stopPropagation();
-			const uri = fileUri();
-			if (uri) {
-				void this.commandService.executeCommand(COPY_PATH_COMMAND_ID, uri);
-			}
-		});
-		return {
-			setUri: (uri, options = {}) => {
-				currentUri = uri;
-				if (!uri) {
-					label.element.clear();
-					element.removeAttribute('title');
-					return;
-				}
-				label.element.setFile(uri, { strikethrough: options.strikethrough });
-			},
-			dispose: () => label.dispose(),
-		};
 	}
 }

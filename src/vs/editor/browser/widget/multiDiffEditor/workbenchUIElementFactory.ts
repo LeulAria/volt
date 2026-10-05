@@ -4,7 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IDisposable } from '../../../../base/common/lifecycle.js';
+import { IObservable } from '../../../../base/common/observable.js';
 import { URI } from '../../../../base/common/uri.js';
+import { IDiffEditorOptions } from '../../../common/config/editorOptions.js';
 
 /**
  * This solves the problem that the editor layer cannot depend on the workbench layer.
@@ -14,6 +16,8 @@ import { URI } from '../../../../base/common/uri.js';
  */
 export interface IWorkbenchUIElementFactory {
 	createResourceLabel?(element: HTMLElement): IResourceLabel;
+	/** Volt: options over every file's own, for a host that draws its diffs its own way. */
+	readonly diffEditorOptions?: IObservable<IDiffEditorOptions | undefined>;
 }
 
 export interface IResourceLabel extends IDisposable {

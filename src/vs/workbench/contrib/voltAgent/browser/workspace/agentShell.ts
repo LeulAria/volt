@@ -51,15 +51,6 @@ export function agentComposerCanSend(
 	return agentSessionHasProject(sessionContext, sessionId, session);
 }
 
-/** Show the "Select project" suggest chip only when the agent was opened without a project. */
-export function agentComposerNeedsProjectChip(
-	sessionContext: IVoltSessionContextService,
-	sessionId: string,
-	session?: { readonly workspaceFolder?: string } | undefined,
-): boolean {
-	return !agentSessionHasProject(sessionContext, sessionId, session);
-}
-
 /** A hydration result applies only while its selection is still the latest one. */
 export function isCurrentActivation(generation: number, current: number): boolean {
 	return generation === current;
@@ -104,6 +95,27 @@ export function attachSessionToProject(
 		history.pinSessionWorkspace(sessionId, workspaceForProject(target));
 	}
 	workspace.bindProject(sessionId, bindingFromProject(target));
+}
+
+/**
+ * A chat that has not sent anything runs where its composer says. A chat restored from
+ * before the window switched projects would otherwise run in the old folder.
+ */
+export function adoptProjectForUnstartedSession(
+	sessionContext: IVoltSessionContextService,
+	workspace: IAgentWorkspaceService,
+	history: IAgentHistoryService,
+	sessionId: string,
+	project: IVoltProjectRecord,
+): void {
+	if (sessionContext.bindingFor(sessionId)?.projectId === project.id) {
+		return;
+	}
+	if (!sessionContext.rebindUnstartedSession(sessionId, project.id)) {
+		return;
+	}
+	history.pinSessionWorkspace(sessionId, workspaceForProject(project));
+	workspace.bindProject(sessionId, bindingFromProject(project));
 }
 
 export function resolveSessionProject(

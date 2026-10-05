@@ -1,4 +1,8 @@
-import math
+import math, random, sys
+
+# `python3 volt-icon.py` writes the release icon; `--beta` writes the early-access
+# galaxy variant (same bolt and gravity-well grid, deep-space background).
+BETA = "--beta" in sys.argv
 def squircle(cx, cy, r, n=5.0, steps=720):
     pts=[]
     for i in range(steps):
@@ -36,36 +40,153 @@ def rounded(V,R):
 glyph=rounded(V,R)+f" M{512+hr:.1f},512 A{hr:.1f},{hr:.1f} 0 1 0 {512-hr:.1f},512 A{hr:.1f},{hr:.1f} 0 1 0 {512+hr:.1f},512 Z"
 body=squircle(512,512,412)
 
+# Gravity-well grid: straight blueprint lines bent inward toward the bolt's core,
+# like spacetime around a mass. r' = r * (1 - pull * e^(-(r/reach)^2)).
+def warped_grid(step=103, pull=0.5, reach=310):
+    def bend(x, y):
+        dx, dy = x-512, y-512; r = math.hypot(dx, dy)
+        f = 1-pull*math.exp(-(r/reach)**2)
+        return 512+dx*f, 512+dy*f
+    d = ""
+    for k in range(-8, 9):
+        a = 512+k*step
+        for horizontal in (False, True):
+            pts = [bend(t, a) if horizontal else bend(a, t) for t in range(-300, 1325, 6)]
+            d += "M"+" L".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    return d
+grid = warped_grid()
+
+# Beta starfield: seeded so every run draws the same sky.
+def starfield(count=170, seed=7):
+    rng = random.Random(seed); out = []
+    for _ in range(count):
+        x, y = rng.uniform(100, 924), rng.uniform(100, 924)
+        r = rng.choice([1.2, 1.4, 1.7, 2.0, 2.4, 3.2]) if rng.random() > 0.08 else rng.uniform(3.6, 4.6)
+        out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r:.1f}" fill="#fff" opacity="{rng.uniform(0.25, 0.95):.2f}"/>')
+    # a few bright stars with a soft halo
+    for x, y in [(236, 262), (790, 300), (300, 770), (760, 820), (850, 610)]:
+        out.append(f'<circle cx="{x}" cy="{y}" r="16" fill="url(#starHalo)"/><circle cx="{x}" cy="{y}" r="3.6" fill="#fff"/>')
+    return "\n  ".join(out)
+
+# Beta nebula: soft colour clouds, each an ellipse whose radial gradient fades to nothing
+# (a big blur filter leaves hard tile edges in Chromium's renderer).
+NEBULA = [  # cx, cy, rx, ry, rotation, colour, opacity
+    (300, 300, 420, 290, -30, "#6A2BD8", 0.5),
+    (760, 740, 440, 270, -30, "#C0307F", 0.34),
+    (700, 260, 320, 230, 0, "#1F4FD6", 0.45),
+    (290, 760, 320, 210, 0, "#2A6BE0", 0.28),
+    (512, 512, 700, 170, -35, "#9A6BFF", 0.2),
+]
+def nebula():
+    defs, shapes = [], []
+    for i, (cx, cy, rx, ry, rot, col, op) in enumerate(NEBULA):
+        defs.append(f'<radialGradient id="neb{i}"><stop offset="0" stop-color="{col}" stop-opacity="{op}"/>'
+                    f'<stop offset="0.45" stop-color="{col}" stop-opacity="{op*0.55:.3f}"/>'
+                    f'<stop offset="1" stop-color="{col}" stop-opacity="0"/></radialGradient>')
+        shapes.append(f'<ellipse cx="{cx}" cy="{cy}" rx="{rx}" ry="{ry}" fill="url(#neb{i})" transform="rotate({rot} {cx} {cy})"/>')
+    return "<defs>"+"".join(defs)+"</defs>\n  "+"\n  ".join(shapes)
+
+# The foot of the body sinks into shade: nested unblurred strokes stack into a soft
+# inner edge (a blurred stroke tiles into hard-edged bands in Chromium).
+rim_shade = "".join(f'<path d="{body}" fill="none" stroke="url(#rimShade)" stroke-width="{w}" opacity="0.2"/>'
+                    for w in range(10, 91, 10))
+
+if BETA:
+    background = f'''<path d="{body}" fill="url(#bodyFill)"/>
+  {nebula()}
+  {starfield()}
+  <path d="{grid}" fill="none" stroke="#fff" stroke-width="2.5" stroke-linejoin="round" mask="url(#gridMask)"/>'''
+    pal = dict(top="#1A1048", mid="#0D0A2C", low="#07061C", foot="#030210", well="#000000", well2="#05031A",
+               grid0="0.14", grid1="0.08", shade="#020110", shadow="#05021A", bevel="#9C93C9", glyphFoot="#E3DDF7")
+else:
+    background = f'''<path d="{body}" fill="url(#bodyFill)"/>
+  <path d="{grid}" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round" mask="url(#gridMask)"/>'''
+    pal = dict(top="#3A9BF2", mid="#1B58D4", low="#0F37A3", foot="#061653", well="#030B30", well2="#040F3D",
+               grid0="0.26", grid1="0.13", shade="#061A5E", shadow="#04154F", bevel="#7E9CCF", glyphFoot="#D9E6FA")
+
 svg=f'''<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
 <defs>
-  <!-- glass rim: light catches the top-left and bottom-right edges -->
-  <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="#fff" stop-opacity="0.85"/>
-    <stop offset="0.25" stop-color="#fff" stop-opacity="0.14"/>
-    <stop offset="0.75" stop-color="#fff" stop-opacity="0.08"/>
-    <stop offset="1" stop-color="#fff" stop-opacity="0.55"/>
+  <!-- body: electric blue (release) or deep space (beta), darkening toward the foot -->
+  <linearGradient id="bodyFill" x1="0.3" y1="0" x2="0.7" y2="1">
+    <stop offset="0" stop-color="{pal['top']}"/>
+    <stop offset="0.45" stop-color="{pal['mid']}"/>
+    <stop offset="0.75" stop-color="{pal['low']}"/>
+    <stop offset="1" stop-color="{pal['foot']}"/>
   </linearGradient>
-  <linearGradient id="rimSoft" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="#fff" stop-opacity="0.22"/>
-    <stop offset="0.35" stop-color="#fff" stop-opacity="0"/>
-    <stop offset="0.65" stop-color="#fff" stop-opacity="0"/>
-    <stop offset="1" stop-color="#fff" stop-opacity="0.14"/>
+  <!-- the gravity well: shade deepening toward the bolt's core -->
+  <radialGradient id="glow" cx="0.5" cy="0.5" r="0.42">
+    <stop offset="0" stop-color="{pal['well']}" stop-opacity="0.75"/>
+    <stop offset="0.55" stop-color="{pal['well2']}" stop-opacity="0.28"/>
+    <stop offset="1" stop-color="{pal['well2']}" stop-opacity="0"/>
+  </radialGradient>
+  <!-- blueprint grid, pulled into the bolt's gravity well -->
+  <linearGradient id="gridFade" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#fff" stop-opacity="{pal['grid0']}"/>
+    <stop offset="1" stop-color="#fff" stop-opacity="{pal['grid1']}"/>
+  </linearGradient>
+  <mask id="gridMask"><rect width="1024" height="1024" fill="url(#gridFade)"/></mask>
+  <!-- glass rim: light catches the top edge, the foot sinks into shade -->
+  <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#fff" stop-opacity="0.75"/>
+    <stop offset="0.18" stop-color="#fff" stop-opacity="0.12"/>
+    <stop offset="0.8" stop-color="#fff" stop-opacity="0.04"/>
+    <stop offset="1" stop-color="#fff" stop-opacity="0.3"/>
+  </linearGradient>
+  <linearGradient id="rimShade" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0.55" stop-color="#0A2A8A" stop-opacity="0"/>
+    <stop offset="1" stop-color="{pal['shade']}" stop-opacity="0.6"/>
+  </linearGradient>
+  <!-- the bolt: white porcelain, cooling slightly toward its foot -->
+  <linearGradient id="glyphFill" x1="0.35" y1="0" x2="0.65" y2="1">
+    <stop offset="0" stop-color="#FFFFFF"/>
+    <stop offset="0.55" stop-color="#F6F9FF"/>
+    <stop offset="1" stop-color="{pal['glyphFoot']}"/>
   </linearGradient>
   <filter id="iconShadow" x="-20%" y="-20%" width="140%" height="140%">
     <feGaussianBlur in="SourceAlpha" stdDeviation="14"/><feOffset dy="12"/>
     <feComponentTransfer><feFuncA type="linear" slope="0.32"/></feComponentTransfer>
     <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
   </filter>
-  <filter id="blur"><feGaussianBlur stdDeviation="8"/></filter>
+  <!-- bolt lifts off the body: a wide soft shadow plus a tight contact shadow -->
+  <filter id="glyphShadow" x="-30%" y="-30%" width="160%" height="160%">
+    <feGaussianBlur in="SourceAlpha" stdDeviation="14" result="b1"/>
+    <feOffset in="b1" dy="10" result="o1"/>
+    <feFlood flood-color="{pal['shadow']}" flood-opacity="0.24"/>
+    <feComposite in2="o1" operator="in" result="s1"/>
+    <feGaussianBlur in="SourceAlpha" stdDeviation="5" result="b2"/>
+    <feOffset in="b2" dy="3" result="o2"/>
+    <feFlood flood-color="{pal['shadow']}" flood-opacity="0.18"/>
+    <feComposite in2="o2" operator="in" result="s2"/>
+    <feMerge><feMergeNode in="s1"/><feMergeNode in="s2"/></feMerge>
+  </filter>
+  <!-- bevel: a lit top edge and a cool shaded bottom edge inside the bolt -->
+  <filter id="glyphBevel" x="-10%" y="-10%" width="120%" height="120%">
+    <feOffset in="SourceAlpha" dy="7" result="down"/>
+    <feComposite in="SourceAlpha" in2="down" operator="out" result="topEdge"/>
+    <feGaussianBlur in="topEdge" stdDeviation="2.5" result="topSoft"/>
+    <feFlood flood-color="#FFFFFF" flood-opacity="1"/>
+    <feComposite in2="topSoft" operator="in" result="hi"/>
+    <feOffset in="SourceAlpha" dy="-9" result="up"/>
+    <feComposite in="SourceAlpha" in2="up" operator="out" result="botEdge"/>
+    <feGaussianBlur in="botEdge" stdDeviation="5" result="botSoft"/>
+    <feFlood flood-color="{pal['bevel']}" flood-opacity="0.55"/>
+    <feComposite in2="botSoft" operator="in" result="lo"/>
+    <feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="lo"/><feMergeNode in="hi"/></feMerge>
+    <feComposite in2="SourceAlpha" operator="in"/>
+  </filter>
+  <filter id="blur" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="8"/></filter>
+  <radialGradient id="starHalo"><stop offset="0" stop-color="#CFE0FF" stop-opacity="0.7"/><stop offset="1" stop-color="#CFE0FF" stop-opacity="0"/></radialGradient>
   <clipPath id="bodyClip"><path d="{body}"/></clipPath>
 </defs>
 <path d="{body}" fill="#000" filter="url(#iconShadow)"/>
 <g clip-path="url(#bodyClip)">
-  <path d="{body}" fill="none" stroke="url(#rimSoft)" stroke-width="40" filter="url(#blur)"/>
-  <path d="{body}" fill="none" stroke="url(#rim)" stroke-width="7"/>
+  {background}
+  <path d="{body}" fill="url(#glow)"/>
+  {rim_shade}
+  <path d="{body}" fill="none" stroke="url(#rim)" stroke-width="6"/>
+  <path d="{glyph}" fill-rule="evenodd" fill="#000" filter="url(#glyphShadow)"/>
 </g>
-<path d="{glyph}" fill-rule="evenodd" fill="#fff"/>
+<path d="{glyph}" fill-rule="evenodd" fill="url(#glyphFill)" filter="url(#glyphBevel)"/>
 </svg>'''
-open("volt.svg","w").write(svg)
-open("volt.html","w").write('<html><body style="margin:0;background:transparent">'+svg+'</body></html>')
+open("volt-icon-beta.svg" if BETA else "volt-icon.svg","w").write(svg)
 print("C",C,"k",k)

@@ -15,6 +15,21 @@
 	background-color: var(--vscode-sideBar-background) !important;
 }
 
+/*
+ * Glass rim without `backdrop-filter` (it breaks the see-through window): a 1px see-through rim,
+ * a top highlight, and the usual drop shadow. !important beats the inline widget border and shadow.
+ * High contrast themes keep their contrast border.
+ */
+.monaco-workbench.vs-dark .quick-input-widget {
+	border: 1px solid rgba(255, 255, 255, 0.14) !important;
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 8px 2px var(--vscode-widget-shadow) !important;
+}
+
+.monaco-workbench.vs .quick-input-widget {
+	border: 1px solid rgba(0, 0, 0, 0.12) !important;
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 0 8px 2px var(--vscode-widget-shadow) !important;
+}
+
 .quick-input-titlebar {
 	cursor: grab;
 	display: flex;

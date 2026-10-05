@@ -7,6 +7,7 @@
 require('events').EventEmitter.defaultMaxListeners = 100;
 
 const gulp = require('gulp');
+const fs = require('fs');
 const path = require('path');
 const nodeUtil = require('util');
 const es = require('event-stream');
@@ -185,7 +186,7 @@ const tasks = compilations.map(function (tsconfigFile) {
 	gulp.task(compileTask);
 	gulp.task(watchTask);
 
-	return { transpileTask, compileTask, watchTask, compileBuildTask };
+	return { name, out, transpileTask, compileTask, watchTask, compileBuildTask };
 });
 
 const transpileExtensionsTask = task.define('transpile-extensions', task.parallel(...tasks.map(t => t.transpileTask)));
@@ -215,6 +216,23 @@ exports.watchExtensionMedia = watchExtensionMedia;
 const compileExtensionMediaBuildTask = task.define('compile-extension-media-build', () => ext.buildExtensionMedia(false, '.build/extensions'));
 gulp.task(compileExtensionMediaBuildTask);
 exports.compileExtensionMediaBuildTask = compileExtensionMediaBuildTask;
+
+//#endregion
+
+//#region Volt dev launch
+
+// `make start` only runs watch-client, which never compiles built-in extensions. Without
+// their out/, TypeScript, JSON, CSS, git... are skipped at activation and the editor loses
+// Go to References, Format Document and the other language features. Compile the missing ones.
+const testOnlyExtensions = /^(vscode-api-tests|vscode-colorize-tests|vscode-colorize-perf-tests|vscode-test-resolver|vscode-selfhost-.*)$/;
+const compileMissingExtensionsTask = task.define('compile-missing-extensions', () => {
+	const missing = tasks.filter(t => !testOnlyExtensions.test(t.name) && !fs.existsSync(path.join(root, t.out)));
+	if (missing.length === 0) {
+		return Promise.resolve();
+	}
+	return task.parallel(compileExtensionMediaTask, ...missing.map(t => t.compileTask))();
+});
+gulp.task(compileMissingExtensionsTask);
 
 //#endregion
 

@@ -3,14 +3,16 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { isSubagentToolName } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
 import { sameProviderNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import type { IVoltToolView } from '../../../../services/voltRuntime/common/events.js';
 import { presentOutput, type OutputView } from '../../../../services/voltRuntime/common/harness/adaptiveOutput.js';
+import { describeHostToolActivity, hostToolCall } from './agentHostToolActivity.js';
 import type { IWorkCounts, ToolKind } from '../../../../services/voltRuntime/common/harness/workLog.js';
 
 export type AgentBlockStatus = 'streaming' | 'complete' | 'error';
 
-export type AgentBlockType = 'markdown' | 'code' | 'terminal' | 'table' | 'list' | 'cards' | 'chart' | 'mermaid' | 'tool' | 'file' | 'error' | 'approval';
+export type AgentBlockType = 'markdown' | 'code' | 'terminal' | 'table' | 'list' | 'cards' | 'chart' | 'mermaid' | 'tool' | 'file' | 'error' | 'approval' | 'answers' | 'plan';
 
 export interface IAgentBaseBlock {
 	readonly id: string;
@@ -27,6 +29,8 @@ export interface ICodeBlock extends IAgentBaseBlock {
 	readonly type: 'code';
 	language?: string;
 	code: string;
+	/** The file this code is ("Grok created src/array.js:" above it): drawn as a file card. */
+	path?: string;
 }
 
 export interface ITerminalBlock extends IAgentBaseBlock {
@@ -79,6 +83,8 @@ export interface IToolBlock extends IAgentBaseBlock {
 	input?: string;
 	output?: string;
 	expanded: boolean;
+	/** The turn was stopped while this call ran (a sub-agent reads "Stopped", not "Completed"). */
+	stopped?: boolean;
 }
 
 export type FileChangeVerb = 'Edited' | 'Created' | 'Deleted';
@@ -117,7 +123,51 @@ export interface IApprovalBlock extends IAgentBaseBlock {
 	policySource?: string;
 }
 
+/** The user's answers to an agent's questions, as Cursor's "Answers" card shows them. */
+export interface IAnswersBlock extends IAgentBaseBlock {
+	readonly type: 'answers';
+	requestId: string;
+	outcome: 'answered' | 'skipped' | 'cancelled';
+	items: { question: string; answer: string }[];
+	note?: string;
+}
+
+/** A plan an agent wrote for approval (cursor-agent's createPlan): the plan itself, then Build. */
+export interface IPlanBlock extends IAgentBaseBlock {
+	readonly type: 'plan';
+	callId?: string;
+	name?: string;
+	markdown: string;
+	input?: string;
+}
+
+export function createPlanBlock(partial: Omit<IPlanBlock, 'type' | 'status'> & { status?: AgentBlockStatus }): IPlanBlock {
+	return { type: 'plan', status: 'streaming', ...partial };
+}
+
+/** cursor-agent's plan tool: `Create Plan` with `{ name, plan, todos }` input. */
+export function isPlanTool(name: string, title?: string, input?: string): boolean {
+	return /^create[ _-]?plan$/i.test(name.trim()) || /^create[ _-]?plan$/i.test((title ?? '').trim()) || /"_toolName"\s*:\s*"createPlan"/.test(input ?? '');
+}
+
+export function parsePlanToolInput(input: string | undefined): { name?: string; plan?: string } {
+	if (!input) {
+		return {};
+	}
+	try {
+		const parsed = JSON.parse(input) as { name?: unknown; plan?: unknown };
+		return {
+			...(typeof parsed.name === 'string' ? { name: parsed.name } : {}),
+			...(typeof parsed.plan === 'string' ? { plan: parsed.plan } : {}),
+		};
+	} catch {
+		return {};
+	}
+}
+
 export type AgentBlock =
+	| IPlanBlock
+	| IAnswersBlock
 	| IMarkdownBlock
 	| ICodeBlock
 	| ITerminalBlock
@@ -167,6 +217,15 @@ export interface IAgentActivityItem {
 	toolTitle?: string;
 	/** DeepSeek completed card. Drawn under the activity row. */
 	view?: IVoltToolView;
+	/** One of Volt's in-app browser tools (`browser_click`): the row opens the action's detail. */
+	browserTool?: string;
+	/** Arguments of a Volt host tool call, matched against the host's own record of it. */
+	hostArgs?: Record<string, unknown>;
+	/** What the host tool returned (action and page state), shown in the row's detail. */
+	result?: string;
+	error?: string;
+	/** Not drawn: Volt's question tool shows as the tray and the Answers card instead. */
+	hidden?: boolean;
 }
 
 export type AgentSegment =
@@ -175,10 +234,17 @@ export type AgentSegment =
 	| { kind: 'activity'; item: IAgentActivityItem }
 	/** Model reasoning. Timestamps are set for streamed reasoning, so the UI can say how long it thought. */
 	| { kind: 'thought'; text: string; startedAt?: number; updatedAt?: number }
-	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string };
+	/**
+	 * Provider or harness status. `supervision` marks a run supervisor's finding (a loop, a stall,
+	 * a budget stop): the transcript draws it as a tray with actions instead of a plain line.
+	 */
+	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind };
+
+/** What a run supervisor reported: the agent repeats itself, went quiet, or hit a step/time/token budget. */
+export type SupervisionKind = 'loop' | 'stall' | 'budget';
 
 /** Keep one visible provider status line. A later, more specific limit message replaces the shorter one. */
-export function appendProviderNotice(segments: AgentSegment[], notice: { severity: 'info' | 'warning' | 'error'; title: string; description?: string }): void {
+export function appendProviderNotice(segments: AgentSegment[], notice: { severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind }): void {
 	const title = notice.title.trim();
 	if (!title) {
 		return;
@@ -198,9 +264,12 @@ export function appendProviderNotice(segments: AgentSegment[], notice: { severit
 			segment.severity = notice.severity;
 			segment.description = description;
 		}
+		if (notice.supervision) {
+			segment.supervision = notice.supervision;
+		}
 		return;
 	}
-	segments.push({ kind: 'notice', severity: notice.severity, title, ...(description ? { description } : {}) });
+	segments.push({ kind: 'notice', severity: notice.severity, title, ...(description ? { description } : {}), ...(notice.supervision ? { supervision: notice.supervision } : {}) });
 }
 
 /**
@@ -239,7 +308,6 @@ export function workCountsForSegments(segments: readonly AgentSegment[]): IWorkC
 
 const SIZE_RE = /^\d+(\.\d+)?\s*(B|KB|MB|GB|TB|KiB|MiB|GiB|K|M|G)\s*$/i;
 const SHELL_START_RE = /^(sudo\s+)?(ls|cd|pwd|find|grep|rg|cat|head|tail|git|npm|npx|pnpm|yarn|bun|make|echo|curl|wget|python3?|node|cargo|go|docker|kubectl|chmod|chown|rm|mv|cp|mkdir|touch|which|export|source|bash|zsh|sh|for|if)\b/;
-const TERMINAL_LANGS = new Set(['bash', 'sh', 'shell', 'zsh', 'fish', 'terminal', 'console', 'powershell', 'ps1', 'cmd', 'bat']);
 
 export function isShellTool(name: string, title?: string, input?: string, kind?: ToolKind): boolean {
 	if (kind === 'execute') {
@@ -346,9 +414,22 @@ export function parseShellToolInput(value: unknown): { command: string; cwd?: st
 	}
 }
 
+/**
+ * The program a command runs, for "Running …": quoted paths stay whole, an absolute path shows
+ * its file name, and a macOS app binary shows the app (`"/Applications/Google Chrome.app/…"` → Google Chrome).
+ */
 export function firstCommandName(command: string): string {
-	const word = stripPrompt(command).split(/[\s;|&]+/).find(part => part && !part.includes('=') && !part.startsWith('-')) ?? '';
-	return word.replace(/^\.\//, '');
+	const tokens = stripPrompt(command).match(/"[^"]*"|'[^']*'|[^\s;|&]+/g) ?? [];
+	const word = tokens.find(part => part && !part.startsWith('-') && (/^["']/.test(part) || !part.includes('='))) ?? '';
+	const program = word.replace(/^(["'])([\s\S]*)\1$/, '$2');
+	const app = /\/([^/]+)\.app\/Contents\/MacOS\//.exec(program);
+	if (app) {
+		return app[1];
+	}
+	if (program.startsWith('/') || program.startsWith('~/')) {
+		return program.slice(program.lastIndexOf('/') + 1);
+	}
+	return program.replace(/^\.\//, '');
 }
 
 export function humanTerminalTitle(title: string | undefined, command: string): string {
@@ -620,13 +701,13 @@ export function createFileChangeBlock(partial: Omit<IFileChangeBlock, 'type' | '
 	};
 }
 
-export function findBlockByCallId(segments: AgentSegment[], callId: string): ITerminalBlock | IToolBlock | IFileChangeBlock | undefined {
+export function findBlockByCallId(segments: AgentSegment[], callId: string): ITerminalBlock | IToolBlock | IFileChangeBlock | IPlanBlock | undefined {
 	for (const segment of segments) {
 		if (segment.kind !== 'block') {
 			continue;
 		}
 		const block = segment.block;
-		if ((block.type === 'terminal' || block.type === 'tool' || block.type === 'file') && block.callId === callId) {
+		if ((block.type === 'terminal' || block.type === 'tool' || block.type === 'file' || block.type === 'plan') && block.callId === callId) {
 			return block;
 		}
 	}
@@ -674,10 +755,52 @@ export function splitMarkdownToBlocks(text: string, idPrefix: string): AgentBloc
 	const markdownId = () => `${idPrefix}-md-${markdownIndex++}`;
 	const specialId = () => `${idPrefix}-x-${specialIndex++}`;
 
-	for (const view of presentOutput(text)) {
+	// Tables stay in the Markdown flow so cells keep inline code, links and math, as Cursor draws them.
+	for (const view of presentOutput(text, { tables: false })) {
 		blocks.push(...blocksFromOutputView(view, markdownId, specialId));
 	}
+	attachCodePaths(blocks);
 	return blocks;
+}
+
+/** `src/app.ts`, `index.html`, `Dockerfile.dev`: a relative or absolute path whose name has a letter extension. */
+const FILE_PATH = /^(?:\.{0,2}\/)?(?:[\w@.+-]+\/)*[\w@+-][\w@.+-]*\.[A-Za-z][A-Za-z0-9]{0,7}$/;
+/** Words that say the line names a file, so a bare name like `index.html` counts ("Node.js:" alone does not). */
+const FILE_WORDS = /\b(?:file|creat(?:e|ed|es)|add(?:s|ed)?|wr(?:ote|ite|itten)|updat(?:e|ed|es)|edit(?:s|ed)?|modifi(?:ed|es)|chang(?:e|ed|es)|sav(?:e|ed)|contents?|new)\b/i;
+
+/**
+ * A fence that shows a whole file gets that file's path, from its info string (```src/a.js) or
+ * from the line that introduces it ("Task 1 created `src/array.js`:"). Cited
+ * snippets (```12:40:path) keep their own header.
+ */
+export function attachCodePaths(blocks: AgentBlock[]): void {
+	for (let i = 0; i < blocks.length; i++) {
+		const block = blocks[i];
+		const info = block.type === 'code' ? (block.language ?? '').trim() : '';
+		if (block.type !== 'code' || block.path || /^\d+:\d+:/.test(info)) {
+			continue;
+		}
+		const previous = blocks[i - 1];
+		const path = info.split(/\s+/).find(part => FILE_PATH.test(part))
+			?? (previous?.type === 'markdown' ? introducedPath(previous.content) : undefined);
+		if (path) {
+			block.path = path;
+		}
+	}
+}
+
+/** The path a paragraph's last line ends on, followed by a colon: "…created src/array.js:". */
+function introducedPath(markdown: string): string | undefined {
+	const last = markdown.trimEnd().split('\n').at(-1) ?? '';
+	const match = /(`?)([^\s`*_]+)\1[*_]*:[*_]*$/.exec(last.trim());
+	if (!match) {
+		return undefined;
+	}
+	const candidate = match[2].replace(/^[("'[]+|[)"'\]]+$/g, '');
+	if (!FILE_PATH.test(candidate) || /^(?:e\.g|i\.e|etc)\.?$/i.test(candidate)) {
+		return undefined;
+	}
+	return candidate.includes('/') || match[1] === '`' || FILE_WORDS.test(last) ? candidate : undefined;
 }
 
 function blocksFromOutputView(view: OutputView, markdownId: () => string, specialId: () => string): AgentBlock[] {
@@ -933,6 +1056,10 @@ export function blocksPlainText(blocks: AgentBlock[]): string {
 				return block.message;
 			case 'approval':
 				return [block.action, block.resource, block.reason].filter(Boolean).join('\n');
+			case 'answers':
+				return block.items.map(item => `${item.question}\n${item.answer}`).concat(block.note ? [block.note] : []).join('\n');
+			case 'plan':
+				return [block.name, block.markdown].filter(Boolean).join('\n\n');
 		}
 	}).filter(Boolean).join('\n\n');
 }
@@ -974,6 +1101,31 @@ export function truncateMiddle(text: string, max = 44): string {
 
 export function isPathLike(value: string): boolean {
 	return /[\/\\]/.test(value) || /^\.[\w.]/.test(value) || /\.\w{1,8}$/.test(value);
+}
+
+const FILE_EXTENSIONS = new Set([
+	'js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx', 'json', 'jsonc', 'md', 'mdx', 'txt', 'css', 'scss', 'less', 'html', 'htm', 'vue', 'svelte',
+	'py', 'rb', 'go', 'rs', 'java', 'kt', 'swift', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'php', 'lua', 'dart', 'scala', 'ex', 'exs', 'erl', 'clj',
+	'sh', 'bash', 'zsh', 'fish', 'ps1', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf', 'env', 'lock', 'sql', 'graphql', 'gql', 'proto', 'xml', 'svg',
+	'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'pdf', 'csv', 'tsv', 'log', 'wasm', 'gradle', 'tf', 'hcl', 'prisma', 'astro', 'ipynb',
+]);
+const BARE_FILE_NAMES = new Set(['Makefile', 'Dockerfile', 'LICENSE', 'README', 'Procfile', 'Gemfile', 'Rakefile', 'CODEOWNERS']);
+
+/**
+ * Stricter than {@link isPathLike}: a single token that names a file, as Cursor colours only
+ * real paths. `DELETE /todos/:id` and `Array.prototype.sort` are code, `src/stats.js:12` a file.
+ */
+export function isLikelyFilePath(value: string): boolean {
+	const text = value.trim().replace(/(?::\d+(?:[-:]\d+)?|#L\d+(?:-L?\d+)?)$/, '');
+	if (!text || /\s/.test(text) || /^[a-z]+:\/\//i.test(text)) {
+		return false;
+	}
+	const name = text.split(/[\/\\]/).pop() ?? text;
+	if (BARE_FILE_NAMES.has(name) || /^\.[\w-]+(rc|ignore)$/.test(name) || name === '.env') {
+		return true;
+	}
+	const ext = /\.([A-Za-z0-9]{1,10})$/.exec(name)?.[1]?.toLowerCase();
+	return !!ext && FILE_EXTENSIONS.has(ext) && /^[\w@.~\/\\-]+$/.test(text);
 }
 
 /** A table cell is a file when it is one path token. A slash inside a sentence is not. */
@@ -1058,6 +1210,10 @@ const MUTATING_TOOL_RE = /\b(edit|edited|write|wrote|create|created|delete|delet
 
 /** Read/search/browser tools belong in the activity trail, not as response-body pills. */
 export function isExploreTool(name: string, title?: string, kind?: ToolKind): boolean {
+	// Claude reports its Task (subagent) calls as `think`: they are subagents, not exploration.
+	if (isSubagentToolName(name, title)) {
+		return false;
+	}
 	if (kind === 'read' || kind === 'search' || kind === 'fetch' || kind === 'browser' || kind === 'think') {
 		return true;
 	}
@@ -1126,6 +1282,11 @@ export function applyFileTargetToActivity(item: IAgentActivityItem, target: IAge
 export interface IExploreActivity {
 	label: string;
 	detail?: string;
+	/** Set for Volt host tools, whose kind the first "MCP: tool" call could not tell. */
+	kind?: AgentActivityKind;
+	browserTool?: string;
+	hostArgs?: Record<string, unknown>;
+	hidden?: boolean;
 	path?: string;
 	startLine?: number;
 	endLine?: number;
@@ -1137,6 +1298,17 @@ const GENERIC_TOOL_TITLE_RE = /^(find|grep|rg|glob|search|read(\s+file)?|list(\s
 const DETAIL_MAX = 56;
 
 export function describeExploreActivity(name: string, title: string | undefined, input?: string): IExploreActivity {
+	const host = describeHostToolActivity(name, title, input);
+	if (host) {
+		return {
+			label: host.label,
+			detail: host.detail,
+			kind: host.hidden ? 'note' : 'browser',
+			browserTool: host.hidden ? undefined : host.tool,
+			hostArgs: hostToolCall(name, title, input)?.args,
+			hidden: host.hidden,
+		};
+	}
 	const kind = classifyToolActivity(name, title);
 	const args = parseExploreArgs(input);
 	const filePath = args.path && looksLikeFilePath(args.path) ? args.path : undefined;
@@ -1144,6 +1316,15 @@ export function describeExploreActivity(name: string, title: string | undefined,
 	const haystack = `${name} ${title ?? ''}`.toLowerCase();
 	const grepTool = /\bgrep/.test(haystack);
 	const findTool = /\b(find|glob)\b/.test(haystack) && !grepTool;
+
+	if (/\bweb[\s_-]?search\b|\bsearch[\s_-]?web\b/.test(haystack)) {
+		const query = args.query || args.pattern || stripToolPrefix(title);
+		return { label: 'Searched web', detail: query ? truncateExploreDetail(query) : undefined };
+	}
+	if (/\bweb[\s_-]?fetch\b|\bfetch[\s_-]?url\b/.test(haystack)) {
+		const url = (args.path && /^https?:/i.test(args.path) ? args.path : undefined) || /https?:\/\/\S+/.exec(`${title ?? ''} ${input ?? ''}`)?.[0];
+		return { label: 'Fetched', detail: url ? truncateExploreDetail(url.replace(/^https?:\/\//, '').replace(/["'}]+$/, '')) : undefined };
+	}
 
 	if (kind === 'read' && (filePath || args.path) && !args.pattern && !args.glob && !args.query) {
 		const file = basenamePath(filePath || args.path!);
@@ -1243,6 +1424,12 @@ export function applyExploreInputToActivity(item: IAgentActivityItem, name: stri
 	item.endLine = described.endLine ?? item.endLine;
 	item.files = files;
 	item.input = input;
+	if (described.kind) {
+		item.kind = described.kind;
+		item.browserTool = described.browserTool;
+		item.hostArgs = described.hostArgs;
+		item.hidden = described.hidden;
+	}
 	return changed;
 }
 
@@ -1250,7 +1437,9 @@ export function applyExploreResultToActivity(item: IAgentActivityItem, result: u
 	if (input) {
 		applyExploreInputToActivity(item, item.toolName ?? item.label, item.toolTitle, input);
 	}
-	const files = mergeActivityFiles(item.files, parseExploreResultFiles(result));
+	// Read output is source text, not a list of files the agent explored. Paths inside
+	// HTML, imports and URLs must not become clickable entries or inflate file counts.
+	const files = mergeActivityFiles(item.files, parseExploreResultFiles(result, item.kind !== 'read'));
 	if (files?.length) {
 		item.files = files;
 	}
@@ -1264,7 +1453,7 @@ export function applyExploreResultToActivity(item: IAgentActivityItem, result: u
 	return true;
 }
 
-export function parseExploreResultFiles(result: unknown): string[] {
+export function parseExploreResultFiles(result: unknown, includeText = true): string[] {
 	const files: string[] = [];
 	const seen = new Set<string>();
 	const add = (value?: string) => {
@@ -1278,11 +1467,14 @@ export function parseExploreResultFiles(result: unknown): string[] {
 		seen.add(path);
 		files.push(path);
 	};
-	collectExploreResultPaths(result, add);
+	collectExploreResultPaths(result, add, 0, includeText);
 	return files;
 }
 
 export function isExploreItemClickable(item: IAgentActivityItem): boolean {
+	if (item.browserTool) {
+		return !!(item.result || item.error || item.image);
+	}
 	if (item.kind === 'thought' || item.kind === 'wait' || item.kind === 'note') {
 		return false;
 	}
@@ -1337,11 +1529,14 @@ function parseExploreArgs(input?: string): {
 	};
 }
 
-function collectExploreResultPaths(value: unknown, add: (path: string) => void, depth = 0): void {
+function collectExploreResultPaths(value: unknown, add: (path: string) => void, depth = 0, includeText = true): void {
 	if (depth > 6 || value === null || value === undefined) {
 		return;
 	}
 	if (typeof value === 'string') {
+		if (!includeText) {
+			return;
+		}
 		for (const line of value.split('\n')) {
 			const trimmed = line.trim();
 			if (!trimmed) {
@@ -1356,7 +1551,7 @@ function collectExploreResultPaths(value: unknown, add: (path: string) => void, 
 	}
 	if (Array.isArray(value)) {
 		for (const item of value) {
-			collectExploreResultPaths(item, add, depth + 1);
+			collectExploreResultPaths(item, add, depth + 1, includeText);
 		}
 		return;
 	}
@@ -1372,10 +1567,10 @@ function collectExploreResultPaths(value: unknown, add: (path: string) => void, 
 		collectExploreResultPaths(rec.locations, add, depth + 1);
 	}
 	if (rec.content !== undefined) {
-		collectExploreResultPaths(rec.content, add, depth + 1);
+		collectExploreResultPaths(rec.content, add, depth + 1, includeText);
 	}
 	if (typeof rec.text === 'string') {
-		collectExploreResultPaths(rec.text, add, depth + 1);
+		collectExploreResultPaths(rec.text, add, depth + 1, includeText);
 	}
 	if (Array.isArray(rec.files)) {
 		collectExploreResultPaths(rec.files, add, depth + 1);
@@ -1425,7 +1620,8 @@ function scopeLabel(path?: string): string | undefined {
 		return undefined;
 	}
 	const clean = path.replace(/[\\/]+$/, '').trim();
-	if (!clean || clean === '.' || clean === './') {
+	// Globs and half-streamed JSON are not folders; absolute paths are the workspace itself (Cursor leaves those out).
+	if (!clean || clean === '.' || clean === './' || /[*?{}"'\[\]]/.test(clean) || /^(\/|[A-Za-z]:[\\/])/.test(clean)) {
 		return undefined;
 	}
 	return clean.split(/[\\/]/).pop() || clean;
@@ -1440,6 +1636,11 @@ function formatLineRange(start?: number, end?: number): string {
 		return '';
 	}
 	return ` L${start}${end && end !== start ? `-${end}` : ''}`;
+}
+
+function stripToolPrefix(title: string | undefined): string | undefined {
+	const text = title?.replace(/^[\w\s]+?:\s*/, '').trim();
+	return text && !/^web\s*search$/i.test(text) ? text : undefined;
 }
 
 function joinScope(detail: string, scope?: string): string {
@@ -1536,24 +1737,10 @@ function capitalizeActivity(value: string): string {
 	return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
+/** A fence in the reply is code the agent wrote, shell included: Cursor draws it as a code card, not a terminal run. */
 function blockFromFence(id: string, language: string | undefined, code: string, closed: boolean): AgentBlock {
 	const status: AgentBlockStatus = closed ? 'complete' : 'streaming';
-	if (isTerminalLanguage(language) || looksLikeShell(code)) {
-		const split = splitCommandAndOutput(code);
-		return createTerminalBlock({
-			id,
-			status,
-			title: humanTerminalTitle(undefined, split.command),
-			command: split.command,
-			output: split.output,
-			expanded: false,
-		});
-	}
 	return { id, type: 'code', status, language, code };
-}
-
-function isTerminalLanguage(language: string | undefined): boolean {
-	return !!language && TERMINAL_LANGS.has(language.toLowerCase());
 }
 
 function splitCommandAndOutput(code: string): { command: string; output: string } {

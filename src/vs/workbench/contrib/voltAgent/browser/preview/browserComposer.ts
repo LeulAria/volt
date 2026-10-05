@@ -8,7 +8,7 @@ import { $, addDisposableListener, append, getWindow, isHTMLElement, scheduleAtN
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
-import { Disposable, DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
@@ -24,7 +24,10 @@ import { localize } from '../../../../../nls.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { AgentComposerLists } from '../composer/agentComposerLists.js';
 import { AgentMentionController, IAgentDisplayMention, IAgentMention } from '../composer/agentMentions.js';
-import { createModeIcon, createStrokeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
+import { showAgentPlusMenu } from '../composer/agentPlusMenu.js';
+import { IVoltMenuHandle } from '../ui/menu/voltMenu.js';
+import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
+import { createModeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
 import { AgentModelPicker } from '../picker/agentModelPicker.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { normalizeVoltMode } from '../../../../services/voltRuntime/common/modes.js';
@@ -43,22 +46,6 @@ export interface IBrowserComposerCallbacks {
 	onStop?(): void;
 	onKeepExpanded?(): void;
 	dock?: boolean;
-}
-
-function createPaperclipIcon(): HTMLElement {
-	return createStrokeIcon('paperclip', ['M16 6v9.5a3.5 3.5 0 0 1-7 0V6a2.5 2.5 0 0 1 5 0v9']);
-}
-
-function createCubeIcon(): HTMLElement {
-	return createStrokeIcon('cube', ['M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3Z', 'M12 12l8-4.5M12 12v9M12 12L4 7.5']);
-}
-
-function createPlugIcon(): HTMLElement {
-	return createStrokeIcon('plug', ['M9 2v4M15 2v4M7 6h10v5a5 5 0 0 1-10 0V6Z', 'M12 16v6']);
-}
-
-function createChevronRightIcon(): HTMLElement {
-	return createStrokeIcon('chevron-right', ['m9 6 6 6-6 6']);
 }
 
 const PLUS_MODES: { id: string; label: string; icon: ModeIconId; description: string }[] = [
@@ -187,9 +174,7 @@ export class BrowserAgentComposer extends Disposable {
 	private sendKind: 'mic' | 'send' | 'stop' = 'mic';
 	private working = false;
 	private currentMode = 'Agent';
-	private plusMenuOpen = false;
-	private plusMenuEl: HTMLElement | undefined;
-	private readonly plusMenuStore = this._register(new DisposableStore());
+	private plusMenu: IVoltMenuHandle | undefined;
 
 	constructor(
 		private readonly callbacks: IBrowserComposerCallbacks,
@@ -197,6 +182,7 @@ export class BrowserAgentComposer extends Disposable {
 		@IModelService private readonly modelService: IModelService,
 		@ITextResourceConfigurationService private readonly textResourceConfigurationService: ITextResourceConfigurationService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IContextViewService private readonly contextViewService: IContextViewService,
 	) {
 		super();
 		this.element = $('.volt-agent-input-box.follow-up.volt-browser-agent-composer.empty');
@@ -434,15 +420,12 @@ export class BrowserAgentComposer extends Disposable {
 	}
 
 	hidePlusMenu(): void {
-		this.plusMenuStore.clear();
-		this.plusMenuEl?.remove();
-		this.plusMenuEl = undefined;
-		this.plusMenuOpen = false;
-		this.layout();
+		this.plusMenu?.dispose();
+		this.plusMenu = undefined;
 	}
 
 	isPlusMenuOpen(): boolean {
-		return this.plusMenuOpen;
+		return !!this.plusMenu;
 	}
 
 	focus(): void {
@@ -490,133 +473,39 @@ export class BrowserAgentComposer extends Disposable {
 	}
 
 	private showPlusMenu(): void {
-		if (this.plusMenuOpen) {
+		if (this.plusMenu) {
 			this.hidePlusMenu();
 			return;
 		}
 		this.callbacks.onKeepExpanded?.();
-		this.plusMenuStore.clear();
-		this.plusMenuEl?.remove();
-		this.plusMenuOpen = true;
-		const menu = $('.volt-agent-plus-menu.volt-browser-plus-menu');
-		this.plusMenuEl = menu;
-		const host = this.element.parentElement ?? this.element;
-		if (host === this.element) {
-			this.element.insertBefore(menu, this.element.firstChild);
-		} else {
-			host.insertBefore(menu, this.element);
-		}
-		const search = append(menu, $('input.volt-agent-plus-search')) as HTMLInputElement;
-		search.type = 'text';
-		search.placeholder = localize('voltAgent.plusSearch', "Search skills, context, chats...");
-		const list = append(menu, $('.volt-agent-plus-list'));
-		const itemsStore = this.plusMenuStore.add(new DisposableStore());
-
-		const renderItems = (query: string) => {
-			itemsStore.clear();
-			list.replaceChildren();
-			const q = query.trim().toLowerCase();
-			const modes = PLUS_MODES.filter(option =>
-				!q
-				|| option.label.toLowerCase().includes(q)
-				|| option.description.toLowerCase().includes(q)
-			);
-			for (const option of modes) {
-				const item = append(list, $('button.volt-agent-dropdown-item.plus-mode')) as HTMLButtonElement;
-				if (option.id === this.currentMode) {
-					item.classList.add('active');
-				}
-				item.appendChild(createModeIcon(option.icon));
-				append(item, $('span.label')).textContent = option.label;
-				append(item, $('span.desc')).textContent = option.description;
-				itemsStore.add(addDisposableListener(item, 'click', e => {
-					e.preventDefault();
-					e.stopPropagation();
-					this.setComposerMode(option.id);
-					this.hidePlusMenu();
-					this.editor?.focus();
-				}));
-			}
-			const actions = ([
-				{ id: 'files' as const, label: localize('voltAgent.plusFiles', "Files"), keys: ['files', 'file', 'attach'] },
-				{ id: 'model' as const, label: localize('voltAgent.plusModel', "Model"), keys: ['model'] },
-				{ id: 'mcp' as const, label: localize('voltAgent.plusMcp', "MCP"), keys: ['mcp'] },
-			]).filter(action =>
-				!q
-				|| action.label.toLowerCase().includes(q)
-				|| action.keys.some(key => key.includes(q) || q.includes(key))
-			);
-			if (modes.length && actions.length) {
-				append(list, $('.volt-agent-dropdown-sep'));
-			}
-			for (const action of actions) {
-				const item = append(list, $('button.volt-agent-dropdown-item.plus-action')) as HTMLButtonElement;
-				item.appendChild(action.id === 'files'
-					? createPaperclipIcon()
-					: action.id === 'model'
-						? createCubeIcon()
-						: createPlugIcon());
-				append(item, $('span.label')).textContent = action.label;
-				if (action.id === 'model') {
-					const selected = this.modelPicker.selectedModel();
-					const name = this.modelPicker.modelAuto
-						? localize('voltAgent.auto', "Auto")
-						: selected
-							? selected.name
-							: '';
-					if (name) {
-						append(item, $('span.desc')).textContent = name;
-					}
-				}
-				if (action.id === 'mcp') {
-					const meta = append(item, $('span.meta'));
-					meta.appendChild(createChevronRightIcon());
-				}
-				itemsStore.add(addDisposableListener(item, 'click', e => {
-					e.preventDefault();
-					e.stopPropagation();
-					this.hidePlusMenu();
-					if (action.id === 'files') {
-						this.mentionController?.openFilePicker();
-						this.editor?.focus();
-						return;
-					}
-					if (action.id === 'model') {
-						scheduleAtNextAnimationFrame(getWindow(this.modelButton), () => this.modelPicker.show(this.modelButton, () => this.editor?.focus()));
-						return;
-					}
-					void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
-				}));
-			}
-		};
-
-		renderItems('');
-		this.plusMenuStore.add(addDisposableListener(search, 'input', () => renderItems(search.value)));
-		this.plusMenuStore.add(addDisposableListener(getWindow(menu).document, 'mousedown', e => {
-			if (!(e.target instanceof Node)) {
-				return;
-			}
-			if (menu.contains(e.target) || this.plusButton?.contains(e.target) || this.modeChip?.contains(e.target)) {
-				return;
-			}
-			this.hidePlusMenu();
-		}, true));
-		this.plusMenuStore.add(addDisposableListener(getWindow(menu), 'keydown', e => {
-			if (e.key === 'Escape') {
-				e.preventDefault();
-				this.hidePlusMenu();
+		const selected = this.modelPicker.selectedModel();
+		const handle: IVoltMenuHandle = showAgentPlusMenu(this.contextViewService, {
+			anchor: this.element,
+			modes: PLUS_MODES,
+			currentMode: this.currentMode,
+			actions: ['files', 'model', 'mcp'],
+			modelName: this.modelPicker.modelAuto ? localize('voltAgent.auto', "Auto") : selected?.name,
+			onMode: id => {
+				this.setComposerMode(id);
 				this.editor?.focus();
-			}
-		}));
-		this.plusMenuStore.add(toDisposable(() => {
-			menu.remove();
-			if (this.plusMenuEl === menu) {
-				this.plusMenuEl = undefined;
-				this.plusMenuOpen = false;
-			}
-		}));
-		this.layout();
-		scheduleAtNextAnimationFrame(getWindow(menu), () => search.focus());
+			},
+			onAction: action => {
+				if (action === 'files') {
+					this.mentionController?.openFilePicker();
+					this.editor?.focus();
+				} else if (action === 'model') {
+					scheduleAtNextAnimationFrame(getWindow(this.modelButton), () => this.modelPicker.show(this.modelButton, () => this.editor?.focus()));
+				} else {
+					void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
+				}
+			},
+			onHide: () => {
+				if (this.plusMenu === handle) {
+					this.plusMenu = undefined;
+				}
+			},
+		});
+		this.plusMenu = handle;
 	}
 
 	private submit(): void {
@@ -646,6 +535,7 @@ export class BrowserAgentComposer extends Disposable {
 		this.mentionController.onDidHoverMention = mention => this.callbacks.onHoverMention?.(mention);
 		this.mentionController.onDidRemoveMention = mention => this.callbacks.onRemoveMention?.(mention);
 		this.mentionController.bindDropTarget(this.element);
+		this.mentionController.setHost({ anchor: this.element });
 		this._register(this.editor.onDidFocusEditorText(() => this.element.classList.add('focused')));
 		this._register(this.editor.onDidBlurEditorText(() => {
 			this.element.classList.remove('focused');
@@ -662,6 +552,10 @@ export class BrowserAgentComposer extends Disposable {
 			}
 		}));
 		this._register(this.editor.onKeyDown(e => {
+			// The @ panel already used this key.
+			if (e.browserEvent.defaultPrevented) {
+				return;
+			}
 			if (e.keyCode === KeyCode.Enter && e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && this.composerLists?.tryHandleEnter()) {
 				e.preventDefault();
 				e.stopPropagation();

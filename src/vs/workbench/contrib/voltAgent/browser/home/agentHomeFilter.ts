@@ -11,7 +11,7 @@ import type { IAgentHomeFolder } from './agentHomeModel.js';
 export type AgentHomeGrouping = 'repository' | 'workspace' | 'updated' | 'status' | 'environment';
 export type AgentHomeChatOrder = 'updated' | 'status';
 export type AgentHomeGroupOrder = 'updated' | 'manual';
-export type AgentHomeShowField = 'updated' | 'environment' | 'pr' | 'workspace' | 'branch' | 'machine';
+export type AgentHomeShowField = 'status' | 'updated' | 'environment' | 'pr' | 'workspace' | 'branch' | 'machine' | 'model';
 export type AgentHomeStatusFilter = 'needsAttention' | 'unread' | 'working' | 'draft' | 'done';
 export type AgentHomePrFilter = 'draft' | 'open' | 'merged' | 'closed' | 'none';
 export type AgentHomeEnvironmentFilter = 'cloud' | 'local';
@@ -40,11 +40,15 @@ export interface IAgentHomeViewStateJson {
 	readonly environment: readonly AgentHomeEnvironmentFilter[];
 	readonly source: readonly AgentHomeSourceFilter[];
 	readonly archived: AgentHomeArchivedFilter;
+	/** Show fields this state knows about; a field added later starts on for stored states. */
+	readonly showRevision?: number;
 }
 
 export const AGENT_HOME_VIEW_STORAGE_KEY = 'volt.agent.home.view';
 
-export const DEFAULT_AGENT_HOME_SHOW: readonly AgentHomeShowField[] = ['updated', 'environment', 'pr'];
+export const DEFAULT_AGENT_HOME_SHOW: readonly AgentHomeShowField[] = ['status', 'updated', 'environment', 'pr', 'branch', 'model'];
+/** Bumped when a Show field is added. Revision 2 added the status line; 3 the second line (branch, model). */
+const AGENT_HOME_SHOW_REVISION = 3;
 export const DEFAULT_AGENT_HOME_STATUS: readonly AgentHomeStatusFilter[] = ['needsAttention', 'working', 'draft', 'done'];
 export const DEFAULT_AGENT_HOME_PR: readonly AgentHomePrFilter[] = ['draft', 'open', 'merged', 'closed', 'none'];
 export const DEFAULT_AGENT_HOME_ENVIRONMENT: readonly AgentHomeEnvironmentFilter[] = ['cloud', 'local'];
@@ -52,7 +56,7 @@ export const DEFAULT_AGENT_HOME_SOURCE: readonly AgentHomeSourceFilter[] = ['fol
 
 export function defaultAgentHomeViewState(): IAgentHomeViewState {
 	return {
-		grouping: 'workspace',
+		grouping: 'status',
 		chatOrder: 'updated',
 		groupOrder: 'manual',
 		show: new Set(DEFAULT_AGENT_HOME_SHOW),
@@ -75,6 +79,7 @@ export function serializeAgentHomeViewState(state: IAgentHomeViewState): IAgentH
 		environment: [...state.environment],
 		source: [...state.source],
 		archived: state.archived,
+		showRevision: AGENT_HOME_SHOW_REVISION,
 	};
 }
 
@@ -88,7 +93,7 @@ export function reviveAgentHomeViewState(raw: unknown): IAgentHomeViewState {
 		grouping: isGrouping(value.grouping) ? value.grouping : defaults.grouping,
 		chatOrder: isChatOrder(value.chatOrder) ? value.chatOrder : defaults.chatOrder,
 		groupOrder: isGroupOrder(value.groupOrder) ? value.groupOrder : defaults.groupOrder,
-		show: reviveSet(value.show, isShowField, defaults.show),
+		show: reviveShow(value),
 		status: reviveSet(value.status, isStatusFilter, defaults.status),
 		pr: reviveSet(value.pr, isPrFilter, defaults.pr),
 		environment: reviveSet(value.environment, isEnvironmentFilter, defaults.environment),
@@ -186,12 +191,9 @@ export function sessionStatusTags(session: IAgentSessionMeta): readonly AgentHom
 	return tags;
 }
 
-/**
- * VOLT has no PR metadata yet. Every session is treated as "No PR" so the
- * filter still changes the list when that option is unchecked.
- */
-export function sessionPrTag(_session: IAgentSessionMeta): AgentHomePrFilter {
-	return 'none';
+/** What a session's linked pull requests add up to (see agentPullRequests.ts sessionPrFilterTag), or "No PR". */
+export function sessionPrTag(_session: IAgentSessionMeta, tags?: ReadonlyMap<string, AgentHomePrFilter>): AgentHomePrFilter {
+	return tags?.get(_session.id) ?? 'none';
 }
 
 /**
@@ -241,14 +243,14 @@ export function sessionSourceTag(session: IAgentSessionMeta, workspaceFileIds: R
 	return sessionFolders(session).length > 1 || workspaceFileIds.has(session.workspaceId) ? 'workspaceFile' : 'folder';
 }
 
-export function sessionPassesHomeFilters(session: IAgentSessionMeta, state: IAgentHomeViewState, workspaceFileIds?: ReadonlySet<string>): boolean {
+export function sessionPassesHomeFilters(session: IAgentSessionMeta, state: IAgentHomeViewState, workspaceFileIds?: ReadonlySet<string>, prTags?: ReadonlyMap<string, AgentHomePrFilter>): boolean {
 	if (session.archived && state.archived !== 'show') {
 		return false;
 	}
 	if (!sessionStatusTags(session).some(tag => state.status.has(tag))) {
 		return false;
 	}
-	if (!state.pr.has(sessionPrTag(session))) {
+	if (!state.pr.has(sessionPrTag(session, prTags))) {
 		return false;
 	}
 	if (!state.environment.has(sessionEnvironmentTag(session))) {
@@ -271,8 +273,11 @@ export function sortSessionsForHome(sessions: readonly IAgentSessionMeta[], orde
 	}
 }
 
+/** When the session last came to the user's attention: its last change, or the end of its snooze. */
 export function sessionStamp(session: IAgentSessionMeta): number {
-	return session.updatedAt || session.createdAt;
+	// A thread back from snooze returns to the top of the inbox, the way snoozed mail does.
+	const changed = session.updatedAt || session.createdAt;
+	return session.wokeAt === undefined ? changed : Math.max(changed, session.wokeAt);
 }
 
 export const STATUS_BUCKET_ORDER: readonly AgentHomeSessionStatus[] = ['needsAttention', 'working', 'draft', 'done'];
@@ -344,6 +349,19 @@ function sameSet<T>(actual: ReadonlySet<T>, expected: readonly T[]): boolean {
 	return expected.every(item => actual.has(item));
 }
 
+function reviveShow(value: Partial<IAgentHomeViewStateJson>): Set<AgentHomeShowField> {
+	const show = reviveSet(value.show, isShowField, new Set(DEFAULT_AGENT_HOME_SHOW));
+	const revision = Array.isArray(value.show) ? value.showRevision ?? 1 : AGENT_HOME_SHOW_REVISION;
+	if (revision < 2) {
+		show.add('status');
+	}
+	if (revision < 3) {
+		show.add('branch');
+		show.add('model');
+	}
+	return show;
+}
+
 function reviveSet<T>(raw: readonly T[] | undefined, guard: (value: unknown) => value is T, fallback: ReadonlySet<T>): Set<T> {
 	if (!Array.isArray(raw)) {
 		return new Set(fallback);
@@ -365,7 +383,7 @@ function isGroupOrder(value: unknown): value is AgentHomeGroupOrder {
 }
 
 function isShowField(value: unknown): value is AgentHomeShowField {
-	return value === 'updated' || value === 'environment' || value === 'pr' || value === 'workspace' || value === 'branch' || value === 'machine';
+	return value === 'status' || value === 'updated' || value === 'environment' || value === 'pr' || value === 'workspace' || value === 'branch' || value === 'machine' || value === 'model';
 }
 
 function isStatusFilter(value: unknown): value is AgentHomeStatusFilter {

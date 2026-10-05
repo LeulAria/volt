@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildAcpLead, buildSystemPrompt } from '../../../common/harness/contextPack.js';
+import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, DESIGN_LOOP, TEST_INTEGRITY, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
 import { classifyIntent } from '../../../common/harness/intent.js';
 
 suite('Volt context pack', () => {
@@ -70,15 +70,41 @@ suite('Volt context pack', () => {
 		assert.ok(!/Do not modify the workspace/.test(lead));
 	});
 
-	test('ordinary coding requests send no ACP lead and no preview hint', () => {
+	test('multitask names the models a subagent can run on, across harnesses', () => {
+		const intent = classifyIntent('create src/array.js on Grok and src/date.js on GPT-6-Astra in parallel', 'multitask');
+		const lead = buildAcpLead({ mode: 'multitask', intent, taskModels: ['Haiku 4.5', 'Grok 4.7 High Fast', 'GPT-6-Astra'] });
+		assert.ok(lead?.includes('Haiku 4.5, Grok 4.7 High Fast, GPT-6-Astra'));
+		assert.ok(/never a shell command/.test(lead!));
+		assert.ok(!buildAcpLead({ mode: 'agent', intent, taskModels: ['Haiku 4.5'] })?.includes('Haiku 4.5'), 'only multitask lists them');
+	});
+
+	test('ordinary coding requests send only the workspace scope line, no preview hint', () => {
 		const intent = classifyIntent('add pagination to the users table and make sure the tests pass', 'agent');
-		assert.strictEqual(buildAcpLead({ mode: 'agent', intent, runPlan: { kind: 'static', start: 'python3 -m http.server 8080' } }), undefined);
+		assert.strictEqual(buildAcpLead({ mode: 'agent', intent, runPlan: { kind: 'static', start: 'python3 -m http.server 8080' } }), `[Volt] ${TEST_INTEGRITY}\n[Volt] ${WORKSPACE_SCOPE}`);
 		const prompt = buildSystemPrompt({
 			mode: 'agent',
 			intent,
 			runPlan: { kind: 'static', start: 'python3 -m http.server 8080' },
 		});
 		assert.ok(!/http\.server/.test(prompt));
+	});
+
+	test('building from a design image adds the render-and-compare loop, except in read-only modes', () => {
+		const prompt = 'Build design/pricing.png as a static page: index.html with plain HTML and CSS. It should match the image closely.';
+		assert.strictEqual(buildAcpLead({ mode: 'agent', intent: classifyIntent(prompt, 'agent') }), `[Volt] ${DESIGN_LOOP}\n[Volt] ${WORKSPACE_SCOPE}`);
+		assert.ok(!buildAcpLead({ mode: 'plan', intent: classifyIntent(prompt, 'plan') })?.includes(DESIGN_LOOP));
+	});
+
+	test('an open-ended change asks for caller-visible changes to be named; a specific one does not', () => {
+		assert.ok(buildAcpLead({ mode: 'agent', intent: classifyIntent('Make the todos API production ready.', 'agent') })?.includes(CALLER_VISIBLE_CHANGES));
+		assert.ok(!buildAcpLead({ mode: 'agent', intent: classifyIntent('add a GET /health route to src/server.js', 'agent') })?.includes(CALLER_VISIBLE_CHANGES));
+		assert.ok(!buildAcpLead({ mode: 'plan', intent: classifyIntent('Make the todos API production ready.', 'plan') })?.includes(CALLER_VISIBLE_CHANGES));
+	});
+
+	test('test-related work forbids gaming the suite; other work and read-only modes do not carry the line', () => {
+		assert.ok(buildAcpLead({ mode: 'agent', intent: classifyIntent("npm test is failing. Make every test pass. Don't edit anything under test/.", 'agent') })?.includes(TEST_INTEGRITY));
+		assert.ok(!buildAcpLead({ mode: 'agent', intent: classifyIntent('rename foo to bar in src/utils.ts', 'agent') })?.includes(TEST_INTEGRITY));
+		assert.ok(!buildAcpLead({ mode: 'ask', intent: classifyIntent('why are the tests failing?', 'ask') })?.includes(TEST_INTEGRITY));
 	});
 
 	test('plan mode is read-only even in the agent lane', () => {

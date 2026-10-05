@@ -107,4 +107,13 @@ suite('Adaptive output presentation', () => {
 			assert.deepStrictEqual([...views[0].values], [40, 35, 25]);
 		}
 	});
+	test('Cursor code citations open a fence like any language does', () => {
+		const text = 'In `src/server.js`:\n\n```30:30:src/server.js\nconst values = parse();\n```\n\nThe bug:\n\n```10:13:src/stats.js\nexport function median(values) {\n```\n\nFix:\n\n```js\nsort((a, b) => a - b);\n```';
+		const code = presentOutput(text).filter(view => view.kind === 'code');
+		assert.deepStrictEqual(code.map(view => view.kind === 'code' ? [view.language, view.code] : []), [
+			['30:30:src/server.js', 'const values = parse();'],
+			['10:13:src/stats.js', 'export function median(values) {'],
+			['js', 'sort((a, b) => a - b);'],
+		]);
+	});
 });

@@ -10,7 +10,8 @@ import { IStorageService } from '../../../../../platform/storage/common/storage.
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { IEditorPartsView } from '../../../../browser/parts/editor/editor.js';
-import { EditorPart } from '../../../../browser/parts/editor/editorPart.js';
+import { EditorPart, IEditorPartUIState } from '../../../../browser/parts/editor/editorPart.js';
+import { withFreeGroupIds } from '../workspace/agentToolsEditorPart.js';
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 
@@ -33,5 +34,9 @@ export class SidebarEditorPart extends EditorPart {
 		@IContextKeyService contextKeyService: IContextKeyService
 	) {
 		super(editorPartsView, SidebarEditorPart.ID, '', mainWindow.vscodeWindowId, instantiationService, themeService, configurationService, storageService, layoutService, hostService, contextKeyService);
+	}
+
+	protected override loadState(): IEditorPartUIState | undefined {
+		return withFreeGroupIds(super.loadState(), id => !!this.editorPartsView.getGroup(id));
 	}
 }

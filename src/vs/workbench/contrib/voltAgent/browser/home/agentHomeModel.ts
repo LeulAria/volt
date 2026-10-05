@@ -8,9 +8,13 @@ import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { isUsageLimitText } from '../../../../services/voltRuntime/common/acpNotices.js';
+import { combineDayAndTime, MINUTES_PER_DAY } from '../ui/dateTime/voltDateTime.js';
+import dayjs from '../ui/vendor/dayjs.js';
 import {
 	AgentHomeEnvironmentFilter,
 	AgentHomeGrouping,
+	AgentHomePrFilter,
 	AgentHomeSessionStatus,
 	AgentHomeUpdatedBucket,
 	anyHomeFilterActive,
@@ -64,8 +68,11 @@ export type AgentHomeElement =
 	| { readonly type: 'folder'; readonly project: IAgentHomeProject }
 	| { readonly type: 'bucket'; readonly id: string; readonly label: string; readonly filter?: boolean; readonly add?: boolean }
 	| { readonly type: 'group'; readonly id: AgentHomeGroupId }
-	/** `nested` sessions sit under their project; the others list the project by its initials. */
-	| { readonly type: 'session'; readonly session: IAgentSessionMeta; readonly folderKey: string; readonly nested: boolean }
+	/**
+	 * `nested` sessions sit under their project; the others list the project by its initials.
+	 * `sideDepth` is set on a side chat, listed right under the chat it was opened in.
+	 */
+	| { readonly type: 'session'; readonly session: IAgentSessionMeta; readonly folderKey: string; readonly nested: boolean; readonly sideDepth?: number }
 	| { readonly type: 'more'; readonly groupKey: string; readonly hidden: number; readonly nested: boolean }
 	| { readonly type: 'empty'; readonly key: string; readonly filtered: boolean };
 
@@ -81,6 +88,8 @@ export interface IAgentHomeTreeOptions {
 	readonly repos?: ReadonlyMap<string, IAgentRepoInfo>;
 	/** Rows shown per group, by group key; groups start at {@link AGENT_HOME_GROUP_LIMIT}. */
 	readonly limits?: ReadonlyMap<string, number>;
+	/** What each session's linked pull requests add up to, for the PR filter. Absent: "No PR". */
+	readonly prTags?: ReadonlyMap<string, AgentHomePrFilter>;
 }
 
 /** Agent tabs shown in a group before a "Show more" row. */
@@ -91,6 +100,9 @@ export const AGENT_HOME_WEEK_LIMIT = 7;
 export const AGENT_HOME_GROUP_EXPAND_ALL = Number.MAX_SAFE_INTEGER;
 
 export type AgentHomeSessionShelf = 'active' | 'settled' | 'snooze';
+
+/** Shelves below the active list, in display order. */
+export const AGENT_HOME_SHELVES: readonly AgentHomeGroupId[] = ['settled', 'snooze'];
 
 /** Where a session lives in the agent home list. Snooze wins over settled. */
 export function sessionHomeShelf(session: IAgentSessionMeta): AgentHomeSessionShelf {
@@ -104,7 +116,32 @@ export function sessionHomeShelf(session: IAgentSessionMeta): AgentHomeSessionSh
 }
 
 export function compactSessionAge(updatedAt: number, now: number): string {
-	const seconds = Math.max(0, Math.round((now - updatedAt) / 1000));
+	return compactDuration(now - updatedAt);
+}
+
+/**
+ * Time left on a snooze: whole minutes rounded up, then the nearest hour, day or week, so a
+ * fresh 2 hour snooze reads "2h" rather than "1h" a second after it starts.
+ */
+export function compactCountdown(ms: number): string {
+	const minutes = Math.max(1, Math.ceil(ms / 60_000));
+	if (minutes < 60) {
+		return `${minutes}m`;
+	}
+	const hours = Math.round(minutes / 60);
+	if (hours < 24) {
+		return `${hours}h`;
+	}
+	const days = Math.round(hours / 24);
+	if (days < 7) {
+		return `${days}d`;
+	}
+	return `${Math.round(days / 7)}w`;
+}
+
+/** "45s", "12m", "3h", "2d", "1w": the age slot of a row. */
+export function compactDuration(ms: number): string {
+	const seconds = Math.max(0, Math.round(ms / 1000));
 	if (seconds < 60) {
 		return `${Math.max(1, seconds)}s`;
 	}
@@ -142,6 +179,84 @@ export function sessionsForFolder(folder: IAgentHomeFolder, sessions: readonly I
 
 export function latestSessionForFolder(folder: IAgentHomeFolder, sessions: readonly IAgentSessionMeta[]): IAgentSessionMeta | undefined {
 	return sessionsForFolder(folder, sessions)[0];
+}
+
+/**
+ * The folder's newest chat that holds only text never sent. A new chat reopens it rather than
+ * starting another empty one; `exceptId` (the chat on screen) never counts, so New still gives a blank chat there.
+ */
+export function unsentDraftForFolder(folder: IAgentHomeFolder, sessions: readonly IAgentSessionMeta[], exceptId?: string): IAgentSessionMeta | undefined {
+	return sessionsForFolder(folder, sessions).find(session => session.turnCount === 0 && session.hasDraft && !session.archived && session.id !== exceptId);
+}
+
+/**
+ * A new chat open in the window that history does not list yet.
+ * Nothing has been sent, and there is no saved unsent text, so the row lives
+ * only as long as that editor does.
+ */
+export interface IAgentOpenDraft {
+	readonly id: string;
+	/** Newest open chat first when several new chats are open. */
+	readonly createdAt: number;
+	readonly title?: string;
+	readonly workspaceId: string;
+	readonly workspaceLabel: string;
+	readonly workspaceFolder?: string;
+	readonly workspaceFolders?: readonly string[];
+	/** Set when the new chat is a side chat in another chat's tools. */
+	readonly parentId?: string;
+}
+
+/**
+ * Adds open new chats to the sidebar list. A session history already lists
+ * (saved unsent text, or the chat after its first send) keeps that record,
+ * so the draft row becomes the real chat instead of sitting beside it.
+ */
+export function sessionsWithOpenDrafts(sessions: readonly IAgentSessionMeta[], openDrafts: readonly IAgentOpenDraft[]): IAgentSessionMeta[] {
+	if (!openDrafts.length) {
+		return sessions as IAgentSessionMeta[];
+	}
+	const listed = new Set(sessions.map(session => session.id));
+	const extras: IAgentSessionMeta[] = [];
+	for (const draft of openDrafts) {
+		if (!draft.id || listed.has(draft.id)) {
+			continue;
+		}
+		listed.add(draft.id);
+		const folders = draft.workspaceFolders?.filter(folder => folder.length > 0);
+		extras.push({
+			id: draft.id,
+			title: draft.title?.trim() ?? '',
+			createdAt: draft.createdAt,
+			updatedAt: draft.createdAt,
+			workspaceId: draft.workspaceId,
+			workspaceLabel: draft.workspaceLabel,
+			workspaceFolder: draft.workspaceFolder || folders?.[0],
+			workspaceFolders: folders && folders.length > 1 ? folders : undefined,
+			turnCount: 0,
+			preview: '',
+			status: 'idle',
+			parentId: draft.parentId,
+		});
+	}
+	return extras.length ? [...extras, ...sessions] : sessions as IAgentSessionMeta[];
+}
+
+/**
+ * A new chat with nothing sent and nothing typed. Leaving it throws the row
+ * away. Typed text, a mention, or a queued prompt keeps it as a draft.
+ */
+export function isBlankNewChat(
+	chat: { readonly messages: number; readonly draft: string; readonly mentions: number; readonly queued: number },
+	saved: { readonly turnCount: number; readonly hasDraft?: boolean } | undefined,
+): boolean {
+	if (chat.messages > 0 || chat.mentions > 0 || chat.queued > 0 || chat.draft.trim().length > 0) {
+		return false;
+	}
+	if (saved && (saved.turnCount > 0 || saved.hasDraft)) {
+		return false;
+	}
+	return true;
 }
 
 export function homeFolderKey(folder: IAgentHomeFolder): string {
@@ -195,7 +310,7 @@ export function buildAgentHomeTree(
 	const now = options.now ?? Date.now();
 	const unique = uniqueHomeFolders(folders);
 	const workspaceFileIds = new Set(unique.flatMap(folder => folder.workspace && folder.workspaceId ? [folder.workspaceId] : []));
-	const visible = sessions.filter(session => sessionPassesHomeFilters(session, view, workspaceFileIds));
+	const { roots: visible, sideChats } = splitSideChats(sessions.filter(session => sessionPassesHomeFilters(session, view, workspaceFileIds, options.prTags)));
 	const active = visible.filter(session => sessionHomeShelf(session) === 'active');
 	const pinned = sortSessionsForHome(active.filter(session => session.pinned), view.chatOrder);
 	const unpinned = active.filter(session => !session.pinned);
@@ -206,8 +321,19 @@ export function buildAgentHomeTree(
 	if (pinned.length) {
 		body.push(bucketNode('pinned', localize('voltAgent.home.pinned', "Pinned"), pinned, options.limits, { add: flat }));
 	}
+	const shelved = (shelf: Exclude<AgentHomeSessionShelf, 'active'>) => sortSessionsForHome(visible.filter(session => sessionHomeShelf(session) === shelf), view.chatOrder);
+	// Status grouping lists Settled and Snooze as status headers after Done; elsewhere they fold at the bottom.
+	const shelvesAsBuckets = view.grouping === 'status';
 	if (flat) {
 		body.push(...flatBucketNodes(view.grouping, sortSessionsForHome(unpinned, view.chatOrder), now, options.limits));
+		if (shelvesAsBuckets) {
+			for (const shelf of AGENT_HOME_SHELVES) {
+				const members = shelved(shelf);
+				if (members.length) {
+					body.push(bucketNode(shelf, agentHomeGroupLabel(shelf), members, options.limits, { add: true }));
+				}
+			}
+		}
 		if (!body.length) {
 			body.push({
 				element: { type: 'section', key: 'agents', filter: true },
@@ -234,18 +360,78 @@ export function buildAgentHomeTree(
 	/* Top nav (New Chat … Customize) lives outside the tree so it can pin while this body scrolls. */
 	const tree: IAgentHomeNode[] = [...body];
 
-	for (const shelf of ['settled', 'snooze'] as const) {
-		const shelved = sortSessionsForHome(visible.filter(session => sessionHomeShelf(session) === shelf), view.chatOrder);
-		if (shelved.length) {
-			tree.push({
-				element: { type: 'group', id: shelf },
-				collapsed: true,
-				children: shelved.map(session => ({ element: { type: 'session' as const, session, folderKey: `group:${shelf}`, nested: false } })),
-			});
+	if (!shelvesAsBuckets) {
+		for (const shelf of AGENT_HOME_SHELVES) {
+			const members = shelved(shelf);
+			if (members.length) {
+				tree.push({
+					element: { type: 'group', id: shelf },
+					// Snoozed tabs come back on their own, so the countdown stays in view.
+					collapsed: shelf !== 'snooze',
+					children: members.map(session => ({ element: { type: 'session' as const, session, folderKey: `group:${shelf}`, nested: false } })),
+				});
+			}
 		}
 	}
 
-	return tree;
+	return sideChats.size ? withSideChats(tree, sideChats) : tree;
+}
+
+/**
+ * Side chats whose chat is listed too go under that chat instead of in the list. One whose chat
+ * is filtered out, archived or gone stays a row of its own.
+ */
+export function splitSideChats(sessions: readonly IAgentSessionMeta[]): { roots: IAgentSessionMeta[]; sideChats: Map<string, IAgentSessionMeta[]> } {
+	const byId = new Map(sessions.map(session => [session.id, session]));
+	const listedUnder = (session: IAgentSessionMeta): boolean => {
+		// Parents that point at each other would hide every one of them, so a loop lists them all as rows.
+		const seen = new Set<string>([session.id]);
+		let parentId = session.parentId;
+		while (parentId && byId.has(parentId)) {
+			if (seen.has(parentId)) {
+				return false;
+			}
+			seen.add(parentId);
+			parentId = byId.get(parentId)?.parentId;
+		}
+		return seen.size > 1;
+	};
+	const roots: IAgentSessionMeta[] = [];
+	const sideChats = new Map<string, IAgentSessionMeta[]>();
+	for (const session of sessions) {
+		if (session.parentId && listedUnder(session)) {
+			const siblings = sideChats.get(session.parentId) ?? [];
+			siblings.push(session);
+			sideChats.set(session.parentId, siblings);
+		} else {
+			roots.push(session);
+		}
+	}
+	return { roots, sideChats };
+}
+
+/** Puts each chat's side chats right below its row, oldest first, the way they were opened. */
+function withSideChats(nodes: readonly IAgentHomeNode[], sideChats: ReadonlyMap<string, readonly IAgentSessionMeta[]>): IAgentHomeNode[] {
+	const result: IAgentHomeNode[] = [];
+	const appendSideChats = (parent: Extract<AgentHomeElement, { type: 'session' }>, depth: number) => {
+		const children = [...sideChats.get(parent.session.id) ?? []].sort((a, b) => a.createdAt - b.createdAt);
+		for (const session of children) {
+			const element: Extract<AgentHomeElement, { type: 'session' }> = { type: 'session', session, folderKey: parent.folderKey, nested: parent.nested, sideDepth: depth };
+			result.push({ element });
+			appendSideChats(element, depth + 1);
+		}
+	};
+	for (const node of nodes) {
+		if (node.children) {
+			result.push({ ...node, children: withSideChats(node.children, sideChats) });
+			continue;
+		}
+		result.push(node);
+		if (node.element.type === 'session') {
+			appendSideChats(node.element, 1);
+		}
+	}
+	return result;
 }
 
 interface IBucketNodeOptions {
@@ -522,10 +708,50 @@ export function sessionMetaParts(session: IAgentSessionMeta, context: IAgentHome
 		parts.push(environmentLabel(environment));
 	}
 	// PR metadata is not recorded yet, so there is never a PR to show.
-	if (view.show.has('updated')) {
+	// A snoozed tab counts down to its return instead of up from its last change.
+	if (session.snoozed) {
+		if (session.snoozedUntil !== undefined) {
+			parts.push(compactCountdown(session.snoozedUntil - now));
+		}
+		return parts;
+	}
+	// Nothing sent yet: the age slot says Draft, unless the badge already does. The first message drops it for the usual age.
+	if (session.turnCount === 0) {
+		if (!sessionShowsStatusBadge(session, view)) {
+			parts.push(localize('voltAgent.home.draft', "Draft"));
+		}
+	} else if (view.show.has('updated')) {
 		parts.push(compactSessionAge(sessionStamp(session), now));
 	}
 	return parts;
+}
+
+/** Agent tabs take two lines while the Show menu puts anything on the second (branch, PR, model). */
+export function isTwoLineView(view: IAgentHomeViewState): boolean {
+	return view.show.has('branch') || view.show.has('pr') || view.show.has('model');
+}
+
+export interface IAgentHomeSecondLine {
+	/** The chat's branch: its worktree's, else the checkout's. */
+	readonly branch?: string;
+	/** Where it lives when there is no branch to show (a folder outside git). */
+	readonly place?: string;
+	readonly model?: string;
+}
+
+/**
+ * The second line of an agent tab: the branch on the left (the PR badge follows it), the model it
+ * last ran on at the right. A chat with no branch names its project instead, so the line still
+ * says where the chat works.
+ */
+export function sessionSecondLine(session: IAgentSessionMeta, context: IAgentHomeSessionContext, view: IAgentHomeViewState, modelLabel?: string): IAgentHomeSecondLine {
+	const branch = view.show.has('branch') ? (session.worktreeBranch || context.branch) : undefined;
+	const model = view.show.has('model') ? (modelLabel || session.model) : undefined;
+	return {
+		...(branch ? { branch } : {}),
+		...(!branch && context.workspace ? { place: context.workspace } : {}),
+		...(model ? { model } : {}),
+	};
 }
 
 export function agentHomeGroupLabel(id: AgentHomeGroupId): string {
@@ -533,7 +759,7 @@ export function agentHomeGroupLabel(id: AgentHomeGroupId): string {
 		case 'settled':
 			return localize('voltAgent.home.settled', "Settled");
 		case 'snooze':
-			return localize('voltAgent.home.snooze', "Snooze");
+			return localize('voltAgent.home.snoozed', "Snoozed");
 		default: {
 			const unexpected: never = id;
 			return unexpected;
@@ -572,4 +798,119 @@ export function agentHomeAddStart(element: AgentHomeElement):
 			return unexpected;
 		}
 	}
+}
+
+export type AgentHomeStatusBadgeKind = 'input' | 'working' | 'woke' | 'done' | 'draft' | 'limited' | 'failed' | 'interrupted';
+
+export interface IAgentHomeStatusBadge {
+	readonly kind: AgentHomeStatusBadgeKind;
+	readonly label: string;
+}
+
+/** Active tabs carry a status badge after their age; Settled and Snoozed tabs do not. */
+export function sessionShowsStatusBadge(session: IAgentSessionMeta, view: IAgentHomeViewState): boolean {
+	return view.show.has('status') && sessionHomeShelf(session) === 'active';
+}
+
+/** The badge after an agent tab's age: "Input", "Working 2m", "Woke", "Done", "Draft", "Limited", "Failed". Stopped and idle tabs have none. */
+export function sessionStatusBadge(session: IAgentSessionMeta, now: number): IAgentHomeStatusBadge | undefined {
+	switch (session.attention) {
+		case 'approval':
+		case 'question':
+			return { kind: 'input', label: localize('voltAgent.home.badge.input', "Input") };
+		case undefined: break;
+		default: {
+			const unexpected: never = session.attention;
+			return unexpected;
+		}
+	}
+	// Back from a timed snooze and not opened yet. A run that started since says Working instead.
+	if (session.wokeAt !== undefined && session.status !== 'running') {
+		return { kind: 'woke', label: localize('voltAgent.home.badge.woke', "Woke") };
+	}
+	switch (session.status) {
+		case 'running':
+			return {
+				kind: 'working',
+				label: session.lastPromptAt
+					? localize('voltAgent.home.badge.workingFor', "Working {0}", compactDuration(now - session.lastPromptAt))
+					: localize('voltAgent.home.badge.working', "Working"),
+			};
+		case 'error':
+			return isUsageLimitText(session.summary)
+				? { kind: 'limited', label: localize('voltAgent.home.badge.limited', "Limited") }
+				: { kind: 'failed', label: localize('voltAgent.home.badge.failed', "Failed") };
+		case 'interrupted':
+			return { kind: 'interrupted', label: localize('voltAgent.home.badge.interrupted', "Interrupted") };
+		case 'done':
+			return { kind: 'done', label: localize('voltAgent.home.badge.done', "Done") };
+		case 'idle':
+			return session.turnCount === 0 ? { kind: 'draft', label: localize('voltAgent.home.badge.draft', "Draft") } : undefined;
+		case 'cancelled':
+			return undefined;
+		default: {
+			const unexpected: never = session.status;
+			return unexpected;
+		}
+	}
+}
+
+export type AgentSnoozePresetId = 'hour' | 'threeHours' | 'evening' | 'tomorrow';
+
+export interface IAgentSnoozePreset {
+	readonly id: AgentSnoozePresetId;
+	readonly label: string;
+	/** When the tab comes back, ms since epoch. */
+	readonly until: number;
+}
+
+/** Hour this evening starts; "This evening" is offered until an hour before it. */
+const SNOOZE_EVENING_HOUR = 18;
+const SNOOZE_MORNING_HOUR = 9;
+
+/** The snooze menu's quick picks, in local time. */
+export function agentSnoozePresets(now: number): IAgentSnoozePreset[] {
+	const hour = 3_600_000;
+	const presets: IAgentSnoozePreset[] = [
+		{ id: 'hour', label: localize('voltAgent.snooze.hour', "In 1 hour"), until: now + hour },
+		{ id: 'threeHours', label: localize('voltAgent.snooze.threeHours', "In 3 hours"), until: now + 3 * hour },
+	];
+	const evening = new Date(now);
+	evening.setHours(SNOOZE_EVENING_HOUR, 0, 0, 0);
+	if (evening.getTime() - now >= hour) {
+		presets.push({ id: 'evening', label: localize('voltAgent.snooze.evening', "This evening"), until: evening.getTime() });
+	}
+	const tomorrow = new Date(now);
+	tomorrow.setDate(tomorrow.getDate() + 1);
+	tomorrow.setHours(SNOOZE_MORNING_HOUR, 0, 0, 0);
+	presets.push({ id: 'tomorrow', label: localize('voltAgent.snooze.tomorrow', "Tomorrow"), until: tomorrow.getTime() });
+	return presets;
+}
+
+export type AgentSnoozeUnit = 'minutes' | 'hours' | 'days' | 'weeks';
+
+export const AGENT_SNOOZE_UNITS: readonly AgentSnoozeUnit[] = ['minutes', 'hours', 'days', 'weeks'];
+
+const SNOOZE_UNIT: Record<AgentSnoozeUnit, 'minute' | 'hour' | 'day' | 'week'> = {
+	minutes: 'minute',
+	hours: 'hour',
+	days: 'day',
+	weeks: 'week',
+};
+
+/**
+ * End of a "Snooze for N units" pick; undefined unless N is a whole number from 1 up. Days and weeks
+ * are calendar days, so "1 day" at 9:00 comes back at 9:00 across a DST change.
+ */
+export function agentSnoozeAfter(now: number, amount: number, unit: AgentSnoozeUnit): number | undefined {
+	return Number.isInteger(amount) && amount > 0 ? dayjs(now).add(amount, SNOOZE_UNIT[unit]).valueOf() : undefined;
+}
+
+/** End of a "Date and time" pick: `minutes` after midnight on `day`, local time. Undefined once that moment has passed. */
+export function agentSnoozeAt(now: number, day: number, minutes: number): number | undefined {
+	if (!Number.isFinite(day) || !Number.isInteger(minutes) || minutes < 0 || minutes >= MINUTES_PER_DAY) {
+		return undefined;
+	}
+	const at = combineDayAndTime(day, minutes);
+	return at > now ? at : undefined;
 }

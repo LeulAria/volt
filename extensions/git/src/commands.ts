@@ -1270,7 +1270,9 @@ export class CommandCenter {
 			path = result[0].fsPath;
 		}
 
-		await this.model.openRepository(path, true);
+		// An explicit path opens even outside the workspace folders: Volt's agent chats run in
+		// projects that are not workspace folders.
+		await this.model.openRepository(path, true, true);
 	}
 
 	@command('git.reopenClosedRepositories', { repository: false })

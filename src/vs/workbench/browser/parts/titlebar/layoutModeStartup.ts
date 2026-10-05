@@ -6,10 +6,26 @@
 export const LAYOUT_MODE_STORAGE_KEY = 'volt.layoutMode';
 export const AGENT_LEFT_SIDEBAR_HIDDEN_KEY = 'volt.agent.leftSidebar.hidden';
 export const SIDEBAR_LOCATION_KEY = 'workbench.sideBar.location';
-export const AGENT_LIST_WIDTH = 290;
+export const AGENT_LIST_WIDTH = 260;
 export const AGENT_SIDEBAR_MIN_WIDTH = 180;
 
+/** Fired on the workbench root when a chat's tools open or close, so the layout can re-weigh the list. */
+export const AGENT_TOOLS_VISIBILITY_EVENT = 'volt-agent-tools-visibility';
+
+/** Room the chat needs beside the list, and with the tools open beside it too. */
+export const AGENT_DRAWER_CHAT_MIN_WIDTH = 480;
+export const AGENT_DRAWER_CHAT_AND_TOOLS_MIN_WIDTH = 880;
+
 export type LayoutMode = 'agent' | 'ide';
+
+/**
+ * The agent list floats over the chat as a drawer when the window cannot fit it beside the
+ * chat (and the tools, when open). With room it stays a column on the left.
+ */
+export function agentNeedsSidebarDrawer(containerWidth: number, listWidth: number, toolsOpen: boolean): boolean {
+	const needed = toolsOpen ? AGENT_DRAWER_CHAT_AND_TOOLS_MIN_WIDTH : AGENT_DRAWER_CHAT_MIN_WIDTH;
+	return containerWidth > 0 && containerWidth - listWidth < needed;
+}
 
 /** Storage wins. With no stored mode, a right-hand primary sidebar is the agent window. */
 export function readStoredLayoutModeValue(stored: string, sidebarOnRight: boolean): LayoutMode {

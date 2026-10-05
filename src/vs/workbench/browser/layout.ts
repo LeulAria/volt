@@ -45,7 +45,7 @@ import { IBannerService } from '../services/banner/browser/bannerService.js';
 import { IPaneCompositePartService } from '../services/panecomposite/browser/panecomposite.js';
 import { AuxiliaryBarPart } from './parts/auxiliarybar/auxiliaryBarPart.js';
 import { stampLayoutModeChrome } from './parts/titlebar/agentLayoutChrome.js';
-import { AGENT_LEFT_SIDEBAR_HIDDEN_KEY, agentStartupSidebarWidth, LAYOUT_MODE_STORAGE_KEY, readStoredLayoutModeValue } from './parts/titlebar/layoutModeStartup.js';
+import { AGENT_LEFT_SIDEBAR_HIDDEN_KEY, AGENT_TOOLS_VISIBILITY_EVENT, agentNeedsSidebarDrawer, agentStartupSidebarWidth, LAYOUT_MODE_STORAGE_KEY, readStoredLayoutModeValue } from './parts/titlebar/layoutModeStartup.js';
 import { ITelemetryService } from '../../platform/telemetry/common/telemetry.js';
 import { IAuxiliaryWindowService } from '../services/auxiliaryWindow/browser/auxiliaryWindowService.js';
 import { CodeWindow, mainWindow } from '../../base/browser/window.js';
@@ -271,6 +271,14 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	private sideBarPartView!: ISerializableView;
 	private panelPartView!: ISerializableView;
 	private auxiliaryBarPartView!: ISerializableView;
+
+	/** Agent layout in a window too narrow for the list beside the chat: the list is a drawer. */
+	private agentDrawerMode = false;
+	private agentDrawerScrim: HTMLElement | undefined;
+	/** The list's width as a column, kept while it is a drawer so it comes back as it was. */
+	private agentColumnWidth: number | undefined;
+	private agentColumnRestore: number | undefined;
+	private readonly agentDrawerOpenStore = this._register(new DisposableStore());
 	private editorPartView!: ISerializableView;
 	private statusBarPartView!: ISerializableView;
 
@@ -338,6 +346,12 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	}
 
 	private registerLayoutListeners(): void {
+		this._register(addDisposableListener(this.mainContainer, AGENT_TOOLS_VISIBILITY_EVENT, () => {
+			if (this.initialized && this.updateAgentDrawerMode()) {
+				this.layout();
+			}
+		}));
+
 
 		// Restore editor if hidden and an editor is to show
 		const showEditorIfHidden = () => {
@@ -470,6 +484,11 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 
 	private handleContainerDidLayout(container: HTMLElement, dimension: IDimension): void {
 		if (container === this.mainContainer) {
+			// The layout mode or the tools can change without a resize, e.g. while a window restores.
+			if (this.initialized && this.updateAgentDrawerMode()) {
+				this.layout();
+				return;
+			}
 			this._onDidLayoutMainContainer.fire(dimension);
 		}
 
@@ -825,6 +844,23 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		const next = `${height}px`;
 		if (this.mainContainer.style.getPropertyValue('--volt-agent-titlebar-height') !== next) {
 			this.mainContainer.style.setProperty('--volt-agent-titlebar-height', next);
+		}
+	}
+
+	/**
+	 * The agent layout runs its left list up over the title bar. A banner below the title bar
+	 * (restricted mode, updates) sits in between, so the list rises by its height too and the
+	 * banner's text starts after the list.
+	 */
+	private syncAgentBannerInset(): void {
+		if (!this.bannerPartView || !this.mainContainer.classList.contains('volt-layout-agent')) {
+			this.mainContainer.style.removeProperty('--volt-agent-banner-height');
+			return;
+		}
+		const visible = this.initialized && this.workbenchGrid.isViewVisible(this.bannerPartView) && !this.shouldShowBannerFirst();
+		const next = `${visible ? Math.round(this.bannerPartView.minimumHeight) : 0}px`;
+		if (this.mainContainer.style.getPropertyValue('--volt-agent-banner-height') !== next) {
+			this.mainContainer.style.setProperty('--volt-agent-banner-height', next);
 		}
 	}
 
@@ -1693,9 +1729,12 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			this.stateModel.setInitializationValue(LayoutStateKeys.PANEL_SIZE, panelSize as number);
 
 			// Auxiliary Bar Size
-			const auxiliaryBarSize = this.stateModel.getRuntimeValue(LayoutStateKeys.AUXILIARYBAR_HIDDEN)
-				? this.workbenchGrid.getViewCachedVisibleSize(this.auxiliaryBarPartView)
-				: this.workbenchGrid.getViewSize(this.auxiliaryBarPartView).width;
+			// A drawer has no column, so its width is the one kept from the column, not the grid's empty view.
+			const auxiliaryBarSize = this.agentDrawerMode
+				? this.agentColumnWidth ?? this.stateModel.getInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE)
+				: this.stateModel.getRuntimeValue(LayoutStateKeys.AUXILIARYBAR_HIDDEN)
+					? this.workbenchGrid.getViewCachedVisibleSize(this.auxiliaryBarPartView)
+					: this.workbenchGrid.getViewSize(this.auxiliaryBarPartView).width;
 			this.stateModel.setInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE, auxiliaryBarSize as number);
 
 			this.stateModel.save(true, true);
@@ -1711,6 +1750,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	layout(): void {
 		if (!this.disposed) {
 			this.syncPrimedAgentTitlebar();
+			this.syncAgentBannerInset();
 			this._mainContainerDimension = getClientArea(this.state.runtime.mainWindowFullscreen ?
 				mainWindow.document.body : 	// in fullscreen mode, make sure to use <body> element because
 				this.parent,				// in that case the workbench will span the entire site
@@ -1718,15 +1758,60 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			);
 			this.logService.trace(`Layout#layout, height: ${this._mainContainerDimension.height}, width: ${this._mainContainerDimension.width}`);
 
+			this.updateAgentDrawerMode();
+
 			size(this.mainContainer, this._mainContainerDimension.width, this._mainContainerDimension.height);
 
 			// Layout the grid widget
 			this.workbenchGrid.layout(this._mainContainerDimension.width, this._mainContainerDimension.height);
+			this.stampAgentGridWrappers();
+			if (this.agentColumnRestore !== undefined) {
+				const width = this.agentColumnRestore;
+				this.agentColumnRestore = undefined;
+				if (!this.agentDrawerMode && this.isVisible(Parts.AUXILIARYBAR_PART)) {
+					this.workbenchGrid.resizeView(this.auxiliaryBarPartView, { width, height: this.workbenchGrid.getViewSize(this.auxiliaryBarPartView).height });
+				}
+			}
 			this.initialized = true;
 
 			// Emit as event
 			this.handleContainerDidLayout(this.mainContainer, this._mainContainerDimension);
 		}
+	}
+
+	/**
+	 * Volt: marks the grid's wrapper around the title bar (`volt-grid-titlebar`), around the agent list
+	 * (`volt-grid-auxiliarybar`), and every wrapper holding the agent list (`volt-grid-has-auxiliarybar`),
+	 * for the agent layout's CSS. Classes instead of `.split-view-view:has(> .part.titlebar)`: a :has()
+	 * on the grid restyled the window whenever a list anywhere added a row. Views can move to new
+	 * wrappers, so stale marks are cleared.
+	 */
+	private stampAgentGridWrappers(): void {
+		const mark = (part: HTMLElement | undefined, own: string, holds?: string) => {
+			const wrapper = part?.parentElement?.classList.contains('split-view-view') ? part.parentElement : undefined;
+			for (const stale of this.mainContainer.querySelectorAll<HTMLElement>(`.split-view-view.${own}`)) {
+				if (stale !== wrapper) {
+					stale.classList.remove(own);
+				}
+			}
+			// toggle(…, true): add() rewrites the attribute (and restyles) even when the class is there.
+			wrapper?.classList.toggle(own, true);
+			if (!holds) {
+				return;
+			}
+			for (const stale of this.mainContainer.querySelectorAll<HTMLElement>(`.split-view-view.${holds}`)) {
+				if (!part || !stale.contains(part)) {
+					stale.classList.remove(holds);
+				}
+			}
+			for (let node: HTMLElement | null | undefined = wrapper; node && node !== this.mainContainer; node = node.parentElement) {
+				if (node.classList.contains('split-view-view')) {
+					node.classList.toggle(holds, true);
+				}
+			}
+		};
+		mark(this.titleBarPartView?.element, 'volt-grid-titlebar');
+		mark(this.auxiliaryBarPartView?.element, 'volt-grid-auxiliarybar', 'volt-grid-has-auxiliarybar');
 	}
 
 	isMainEditorLayoutCentered(): boolean {
@@ -1855,6 +1940,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 
 	private setBannerHidden(hidden: boolean): void {
 		this.workbenchGrid.setViewVisible(this.bannerPartView, !hidden);
+		this.syncAgentBannerInset();
 	}
 
 	private setEditorHidden(hidden: boolean): void {
@@ -1893,6 +1979,12 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	}
 
 	private setSideBarHidden(hidden: boolean): void {
+		// Agent layout docks the primary side bar on the right, where Source Control, Explorer and
+		// the like open as an empty column: it stays closed until the window is back in IDE layout.
+		if (!hidden && this.getSideBarPosition() === Position.RIGHT) {
+			return;
+		}
+
 		if (!hidden && this.setAuxiliaryBarMaximized(false) && this.isVisible(Parts.SIDEBAR_PART)) {
 			return; // return: leaving maximised auxiliary bar made this part visible
 		}
@@ -2262,9 +2354,77 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			}
 		}
 
-		// Propagate to grid
-		this.workbenchGrid.setViewVisible(this.auxiliaryBarPartView, !hidden);
+		// Propagate to grid. A drawer floats over the window, so it never takes room from the chat.
+		this.workbenchGrid.setViewVisible(this.auxiliaryBarPartView, !hidden && !this.agentDrawerMode);
+		if (this.agentDrawerMode) {
+			this.setAgentDrawerOpen(!hidden);
+		}
 	}
+
+	//#region Agent sidebar drawer
+
+	private updateAgentDrawerMode(): boolean {
+		const root = this.mainContainer;
+		const agent = root.classList.contains('volt-layout-agent');
+		const toolsOpen = !!root.querySelector(':scope > .volt-agent-tools-area:not(.hidden):not(.floating)');
+		const drawer = agent && agentNeedsSidebarDrawer(this._mainContainerDimension.width, AuxiliaryBarPart.AGENT_DEFAULT_WIDTH, toolsOpen);
+		if (drawer === this.agentDrawerMode) {
+			return false;
+		}
+		this.agentDrawerMode = drawer;
+		root.classList.toggle('volt-agent-drawer-mode', drawer);
+		if (drawer) {
+			// Closed until asked for. The saved choice comes back when there is room again.
+			if (this.isVisible(Parts.AUXILIARYBAR_PART)) {
+				// Before the first layout the grid has not sized the view; the saved width is the one to keep.
+				const width = this.initialized
+					? this.workbenchGrid.getViewSize(this.auxiliaryBarPartView).width
+					: this.stateModel.getInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE);
+				this.agentColumnWidth = width >= AuxiliaryBarPart.AGENT_MIN_WIDTH ? width : undefined;
+			}
+			this.setAuxiliaryBarHidden(true, true);
+		} else {
+			this.setAgentDrawerOpen(false);
+			if (agent) {
+				const hidden = this.storageService.getBoolean(AGENT_LEFT_SIDEBAR_HIDDEN_KEY, StorageScope.PROFILE, false);
+				this.setAuxiliaryBarHidden(hidden, true);
+				// A view hidden from the start has only its minimum to come back to; the grid takes the
+				// width once it has been laid out at the new window size.
+				this.agentColumnRestore = hidden ? undefined : this.agentColumnWidth ?? AuxiliaryBarPart.AGENT_DEFAULT_WIDTH;
+			}
+		}
+		return true;
+	}
+
+	private setAgentDrawerOpen(open: boolean): void {
+		const root = this.mainContainer;
+		if (root.classList.contains('volt-agent-drawer-open') === open) {
+			return;
+		}
+		root.classList.toggle('volt-agent-drawer-open', open);
+		this.agentDrawerOpenStore.clear();
+		if (open) {
+			const scrim = this.agentDrawerScrim ??= root.appendChild(root.ownerDocument.createElement('div'));
+			scrim.className = 'volt-agent-drawer-scrim';
+			const close = () => this.setAuxiliaryBarHidden(true);
+			this.agentDrawerOpenStore.add(addDisposableListener(scrim, EventType.MOUSE_DOWN, close));
+			this.agentDrawerOpenStore.add(addDisposableListener(root, EventType.KEY_DOWN, e => {
+				if (e.key === 'Escape') {
+					close();
+				}
+			}));
+			// Picking a chat, or a folder, is the way out.
+			this.agentDrawerOpenStore.add(this.mainPartEditorService.onDidActiveEditorChange(close));
+			const height = this._mainContainerDimension.height - Math.max(0, this.getSize(Parts.TITLEBAR_PART).height);
+			this.auxiliaryBarPartView.layout(AuxiliaryBarPart.AGENT_DEFAULT_WIDTH, Math.max(0, height), 0, 0);
+		} else {
+			this.agentDrawerScrim?.remove();
+			this.agentDrawerScrim = undefined;
+		}
+		this._onDidChangePartVisibility.fire();
+	}
+
+	//#endregion
 
 	setPartHidden(hidden: boolean, part: Parts): void {
 		switch (part) {
@@ -2804,7 +2964,7 @@ const LayoutStateKeys = {
 
 	// Part Sizing
 	SIDEBAR_SIZE: new InitializationStateKey<number>('sideBar.size', StorageScope.PROFILE, StorageTarget.MACHINE, 300),
-	AUXILIARYBAR_SIZE: new InitializationStateKey<number>('auxiliaryBar.size', StorageScope.PROFILE, StorageTarget.MACHINE, 290),
+	AUXILIARYBAR_SIZE: new InitializationStateKey<number>('auxiliaryBar.size', StorageScope.PROFILE, StorageTarget.MACHINE, 400),
 	PANEL_SIZE: new InitializationStateKey<number>('panel.size', StorageScope.PROFILE, StorageTarget.MACHINE, 300),
 
 	// Part State
@@ -2947,7 +3107,7 @@ class LayoutStateModel extends Disposable {
 		const mainContainerDimension = configuration.mainContainerDimension;
 		LayoutStateKeys.SIDEBAR_SIZE.defaultValue = Math.min(300, mainContainerDimension.width / 4);
 		LayoutStateKeys.SIDEBAR_HIDDEN.defaultValue = workbenchState === WorkbenchState.EMPTY;
-		LayoutStateKeys.AUXILIARYBAR_SIZE.defaultValue = Math.min(290, mainContainerDimension.width / 4);
+		LayoutStateKeys.AUXILIARYBAR_SIZE.defaultValue = Math.min(400, mainContainerDimension.width / 3);
 		LayoutStateKeys.AUXILIARYBAR_HIDDEN.defaultValue = (() => {
 			if (isWeb && !this.environmentService.remoteAuthority) {
 				return true; // TODO@bpasero remove this condition once Chat web support lands
@@ -3023,7 +3183,7 @@ class LayoutStateModel extends Disposable {
 		// Restrict auxiliary bar size in case of small window dimensions
 		if (this.isNew[StorageScope.WORKSPACE] && configuration.mainContainerDimension.width <= DEFAULT_WORKSPACE_WINDOW_DIMENSIONS.width) {
 			this.setInitializationValue(LayoutStateKeys.SIDEBAR_SIZE, Math.min(300, configuration.mainContainerDimension.width / 4));
-			this.setInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE, Math.min(290, configuration.mainContainerDimension.width / 4));
+			this.setInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE, Math.min(400, configuration.mainContainerDimension.width / 3));
 		}
 	}
 

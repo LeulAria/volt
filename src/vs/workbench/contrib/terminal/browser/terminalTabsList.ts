@@ -126,12 +126,16 @@ export class TerminalTabList extends WorkbenchList<ITerminalInstance> {
 			this._terminalService.onDidChangeConnectionState(() => this.refresh()),
 			this._themeService.onDidColorThemeChange(() => this.refresh()),
 			this._terminalGroupService.onDidChangeActiveInstance(e => {
+				// Volt: refresh first. Parking groups (setParkedGroups) changes the instances and the
+				// active one together, and selecting in the old list throws "Invalid index".
+				this.refresh();
 				if (e) {
 					const i = this._terminalGroupService.instances.indexOf(e);
-					this.setSelection([i]);
-					this.reveal(i);
+					if (i >= 0 && i < this.length) {
+						this.setSelection([i]);
+						this.reveal(i);
+					}
 				}
-				this.refresh();
 			}),
 			this._storageService.onDidChangeValue(StorageScope.APPLICATION, TerminalStorageKeys.TabsShowDetailed, this.disposables)(() => this.refresh()),
 		];

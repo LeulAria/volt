@@ -51,7 +51,7 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 	static readonly viewContainersWorkspaceStateKey = 'workbench.auxiliarybar.viewContainersWorkspaceState';
 
 	static readonly AGENT_MIN_WIDTH = 180;
-	static readonly AGENT_DEFAULT_WIDTH = 290;
+	static readonly AGENT_DEFAULT_WIDTH = 260;
 	static readonly AGENT_MAX_RATIO = 0.35;
 
 	override readonly minimumHeight: number = 0;
@@ -62,7 +62,7 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 	}
 
 	override get minimumWidth(): number {
-		return this.isAgentLayout ? AuxiliaryBarPart.AGENT_MIN_WIDTH : 300;
+		return this.isAgentLayout ? AuxiliaryBarPart.AGENT_MIN_WIDTH : 360;
 	}
 
 	override get maximumWidth(): number {
@@ -313,7 +313,9 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 			return;
 		}
 		const visible = this.layoutService.isVisible(Parts.AUXILIARYBAR_PART);
-		const width = visible ? this.layoutService.getSize(Parts.AUXILIARYBAR_PART).width : 0;
+		// An open drawer has no column of its own in the grid.
+		const drawerOpen = this.layoutService.mainContainer.classList.contains('volt-agent-drawer-open');
+		const width = visible ? (drawerOpen ? AuxiliaryBarPart.AGENT_DEFAULT_WIDTH : this.layoutService.getSize(Parts.AUXILIARYBAR_PART).width) : 0;
 		this.syncAgentSidebarChrome(true, width);
 	}
 

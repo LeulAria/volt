@@ -8,6 +8,8 @@ import { isWindows } from '../../../../../base/common/platform.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { antigravityModelsToInfo, parseAntigravityModelLines } from '../../common/models/antigravityModels.js';
 import { parseOpenCodeModelLines } from '../../common/models/harnessCatalog.js';
+import { isSignInNotice } from '../../common/acpNotices.js';
+import { providerFamily } from '../providers/providerBrands.js';
 import { IDetectResult, IModelInfo } from '../../common/providers.js';
 
 /** A separate ACP server for a CLI that has no ACP mode of its own. It drives the CLI with the same login. */
@@ -301,6 +303,54 @@ export async function listOpenCodeModels(stdio: IVoltStdioService, command = 'op
 
 export function cliAgentDefinition(providerId: string): ICliAgentDefinition | undefined {
 	return CLI_AGENT_DEFINITIONS.find(def => def.id === providerId);
+}
+
+/**
+ * Commands that actually start a sign-in. `claude login` is a prompt, not a command;
+ * Claude Code's login is `claude auth login`.
+ */
+const CLI_LOGIN_COMMANDS: Record<string, string> = {
+	'claude-code': 'claude auth login',
+	codex: 'codex login',
+	'cursor-acp': 'cursor-agent login',
+	opencode: 'opencode auth login',
+};
+
+export interface ICliLogin {
+	readonly providerId: string;
+	readonly label: string;
+	readonly command: string;
+}
+
+/** Login for a sign-in notice. The named CLI wins; otherwise the chat's current provider. */
+export function cliLoginForNotice(title: string, description: string | undefined, providerId: string | undefined): ICliLogin | undefined {
+	if (!isSignInNotice(title, description)) {
+		return undefined;
+	}
+	const text = `${title}\n${description ?? ''}`;
+	const named = CLI_AGENT_DEFINITIONS.find(def => mentionsCli(text, def));
+	const def = named ?? cliAgentForProvider(providerId);
+	const command = def ? CLI_LOGIN_COMMANDS[def.id] : undefined;
+	if (!def || !command) {
+		return undefined;
+	}
+	return { providerId: def.id, label: def.label, command };
+}
+
+function mentionsCli(text: string, def: ICliAgentDefinition): boolean {
+	const tokens = [def.label, ...def.commands.filter(command => command !== 'agent')];
+	return tokens.some(token => new RegExp(`\\b${escapeRegExp(token)}\\b`, 'i').test(text));
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function cliAgentForProvider(providerId: string | undefined): ICliAgentDefinition | undefined {
+	if (!providerId) {
+		return undefined;
+	}
+	return cliAgentDefinition(providerId) ?? CLI_AGENT_DEFINITIONS.find(def => providerFamily(def.id) === providerFamily(providerId));
 }
 
 /** Pulls a semver-ish token out of `--version` output, which is rarely just the number. */

@@ -8,8 +8,8 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 2px;
-	height: 24px;
-	padding: 2px;
+	height: 30px;
+	padding: 3px;
 	box-sizing: border-box;
 	border: 1px solid rgba(255, 255, 255, 0.08);
 	border-radius: 5px;
@@ -31,8 +31,8 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 5px;
-	height: 20px;
-	padding: 0 7px;
+	height: 22px;
+	padding: 0 8px;
 	box-sizing: border-box;
 	border: 0;
 	border-radius: 5px;
@@ -98,24 +98,26 @@
 	position: relative;
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
+	gap: 4px;
 	width: 100%;
-	max-width: 350px;
+	max-width: 420px;
 	margin: 8px 12px;
-	padding: 10px 12px 8px 40px;
+	padding: 10px 8px 8px 14px;
 	box-sizing: border-box;
+	/* Same surface as the browser comment composer; opaque, it sits over the editor. */
 	border: 1px solid rgba(255, 255, 255, 0.1);
-	border-radius: 3px;
-	background: #1c1c1c;
-	box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
+	border-radius: 5px;
+	background: #222;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 	color: var(--vscode-foreground);
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif;
 }
 
 .monaco-workbench.vs .volt-inline-comment,
 .monaco-workbench.hc-light .volt-inline-comment {
-	background: #f4f4f4;
+	background: #ececec;
 	border-color: rgba(0, 0, 0, 0.1);
-	box-shadow: 0 10px 24px rgba(0, 0, 0, 0.1);
+	box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
 }
 
 .volt-inline-comment-thread {
@@ -220,30 +222,25 @@
 	gap: 8px;
 }
 
-.volt-inline-comment-input {
+.volt-inline-comment .volt-inline-comment-input {
 	flex: 1;
 	min-height: 22px;
 	max-height: 120px;
+	margin: 0;
 	resize: none;
-	border: 0;
-	outline: none;
-	box-shadow: none;
+	border: 0 !important;
+	border-radius: 0;
+	outline: none !important;
+	box-shadow: none !important;
 	appearance: none;
 	-webkit-appearance: none;
-	background: transparent;
+	background: transparent !important;
 	color: var(--vscode-input-foreground, var(--vscode-foreground));
 	font-family: inherit;
-	font-size: 14px;
+	font-size: 13px;
 	font-weight: 300;
 	line-height: 22px;
 	padding: 2px 0;
-}
-
-.volt-inline-comment-input:focus,
-.volt-inline-comment-input:focus-visible {
-	border: 0;
-	outline: none;
-	box-shadow: none;
 }
 
 .volt-inline-comment-input::placeholder {
@@ -252,8 +249,8 @@
 
 .volt-inline-comment-close {
 	position: absolute;
-	top: 10px;
-	right: 10px;
+	top: 8px;
+	right: 8px;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -273,42 +270,70 @@
 	padding-right: 28px;
 }
 
+.volt-inline-comment-close .codicon {
+	font-size: 14px;
+}
+
 .volt-inline-comment-close:hover {
 	background: rgba(255, 255, 255, 0.08);
+}
+
+.monaco-workbench.vs .volt-inline-comment-close:hover,
+.monaco-workbench.hc-light .volt-inline-comment-close:hover {
+	background: rgba(0, 0, 0, 0.06);
 }
 
 .volt-inline-comment-toolbar {
 	display: flex;
 	align-items: center;
-	justify-content: flex-end;
+	justify-content: space-between;
 	gap: 8px;
+	/* Mode picker lines up with the text above, like the model picker in the browser composer. */
+	margin-left: -8px;
 }
 
 .volt-inline-comment-mode {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
-	height: 22px;
-	padding: 0 6px;
+	height: 26px;
+	padding: 0 8px;
 	border: none;
 	border-radius: 5px;
 	background: transparent;
-	color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
-	font-size: 12px;
+	color: #c8c8c8;
+	font-family: inherit;
+	font-size: 13px;
+	font-weight: 300;
+	line-height: 1;
 	cursor: pointer;
 }
 
+.volt-inline-comment-mode .codicon {
+	font-size: 12px;
+}
+
 .volt-inline-comment-mode:hover {
-	background: rgba(255, 255, 255, 0.06);
-	color: var(--vscode-foreground);
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.monaco-workbench.vs .volt-inline-comment-mode,
+.monaco-workbench.hc-light .volt-inline-comment-mode {
+	color: #444;
+}
+
+.monaco-workbench.vs .volt-inline-comment-mode:hover,
+.monaco-workbench.hc-light .volt-inline-comment-mode:hover {
+	background: rgba(0, 0, 0, 0.06);
 }
 
 .volt-inline-comment-submit {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 26px;
-	height: 26px;
+	flex-shrink: 0;
+	width: 28px;
+	height: 28px;
 	border: none;
 	border-radius: 50%;
 	background: #f4f4f5;

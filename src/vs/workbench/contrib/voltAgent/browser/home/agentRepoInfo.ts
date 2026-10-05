@@ -154,7 +154,7 @@ export function repoDisplayName(repo: IAgentRepoInfo, selfOwner: string | undefi
 }
 
 /** Full `owner/name` for the hover card. */
-export function repoSlug(repo: IAgentRepoInfo): string {
+export function repoSlug(repo: Pick<IAgentRepoInfo, 'name' | 'owner'>): string {
 	return repo.owner ? `${repo.owner}/${repo.name}` : repo.name;
 }
 

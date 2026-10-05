@@ -1,0 +1,259 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Snooze quick picks: the return time sits right, muted, in tabular figures. */
+.volt-agent-snooze-menu .volt-menu-keybinding {
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0.02em;
+}
+
+/* Custom snooze dialog. The card is opaque and nothing under the layer scrolls with it
+ * (volt-transparent-window skill, rule 3); never backdrop-filter. */
+.volt-agent-snooze-layer {
+	position: fixed;
+	inset: 0;
+	z-index: 2600;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+	box-sizing: border-box;
+}
+
+.volt-agent-snooze-backdrop {
+	position: absolute;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.5);
+	animation: volt-agent-snooze-fade 140ms ease both;
+}
+
+.volt-agent-snooze-dialog {
+	/* Every edge in the dialog uses the menus' hairline (voltMenu.css), not a brighter foreground mix. */
+	--volt-dt-line: var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: min(400px, 100%);
+	box-sizing: border-box;
+	border-radius: 16px;
+	border: none;
+	background: var(--vscode-quickInput-background, var(--vscode-editorWidget-background, #1e1e1e));
+	color: var(--vscode-foreground);
+	box-shadow:
+		0 0 0 1px var(--volt-dt-line),
+		0 24px 64px rgba(0, 0, 0, 0.5),
+		0 2px 8px rgba(0, 0, 0, 0.3);
+	outline: none;
+	animation: volt-agent-snooze-in 160ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+.monaco-workbench.vs .volt-agent-snooze-dialog,
+.monaco-workbench.hc-light .volt-agent-snooze-dialog {
+	--volt-dt-line: var(--vscode-widget-border, rgba(0, 0, 0, 0.1));
+}
+
+.monaco-workbench.hc-black .volt-agent-snooze-dialog,
+.monaco-workbench.hc-light .volt-agent-snooze-dialog {
+	--volt-dt-line: var(--vscode-contrastBorder);
+}
+
+@keyframes volt-agent-snooze-fade {
+	from { opacity: 0; }
+}
+
+@keyframes volt-agent-snooze-in {
+	from { opacity: 0; transform: scale(0.97); }
+}
+
+.volt-agent-snooze-body {
+	display: flex;
+	flex-direction: column;
+	padding: 22px 24px 20px;
+}
+
+.volt-agent-snooze-title {
+	margin: 0;
+	font-size: 17px;
+	font-weight: 600;
+	line-height: 24px;
+}
+
+.volt-agent-snooze-subtitle {
+	margin: 4px 0 16px;
+	font-size: 12.5px;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+.volt-agent-snooze-close {
+	position: absolute;
+	top: 14px;
+	right: 14px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	opacity: 0.6;
+	cursor: pointer;
+}
+
+.volt-agent-snooze-close:hover {
+	opacity: 1;
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+/* Date and time | Duration: the Usage page's pill switch (voltSegmented.css), full width. */
+.volt-agent-snooze-tabs {
+	margin-bottom: 16px;
+}
+
+.volt-agent-snooze-fields {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 12px;
+}
+
+.volt-agent-snooze-fields.hidden {
+	display: none;
+}
+
+.volt-agent-snooze-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+
+.volt-agent-snooze-label {
+	font-size: 12.5px;
+	font-weight: 500;
+}
+
+.volt-agent-snooze-stepper {
+	height: 34px;
+	box-sizing: border-box;
+	border-radius: 8px;
+	border: 1px solid var(--volt-dt-line);
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+	color: var(--vscode-foreground);
+	font-size: 13px;
+}
+
+/* Only while typing the amount; − and + leave the edge alone. */
+.volt-agent-snooze-stepper:has(.volt-agent-snooze-amount:focus) {
+	border-color: var(--vscode-focusBorder);
+}
+
+.monaco-workbench .volt-agent-snooze-amount:focus,
+.monaco-workbench .volt-agent-snooze-step:focus:not(:focus-visible) {
+	outline: none !important;
+}
+
+.volt-agent-snooze-stepper {
+	display: grid;
+	grid-template-columns: 32px 1fr 32px;
+	align-items: center;
+}
+
+.volt-agent-snooze-step {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.volt-agent-snooze-step:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.volt-agent-snooze-amount {
+	width: 100%;
+	min-width: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: center;
+	outline: none;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-snooze-amount.invalid {
+	color: var(--vscode-errorForeground, #f14c4c);
+}
+
+/* When the thread comes back, or why it cannot. */
+.volt-agent-snooze-preview {
+	min-height: 18px;
+	margin-top: 14px;
+	font-size: 12.5px;
+	line-height: 18px;
+	color: color-mix(in srgb, var(--vscode-foreground) 60%, transparent);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-snooze-preview.error {
+	color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.volt-agent-snooze-footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: 10px;
+	padding: 14px 24px 16px;
+	border-top: 1px solid var(--volt-dt-line);
+}
+
+.volt-agent-snooze-button {
+	height: 32px;
+	padding: 0 14px;
+	border-radius: 8px;
+	border: 1px solid var(--volt-dt-line);
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.volt-agent-snooze-button:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-agent-snooze-button.primary {
+	border-color: transparent;
+	background: var(--vscode-button-background, #4f6ff0);
+	color: var(--vscode-button-foreground, #fff);
+}
+
+.volt-agent-snooze-button.primary:hover {
+	background: var(--vscode-button-hoverBackground, #5d7cf5);
+}
+
+.monaco-workbench .volt-agent-snooze-button:focus:not(:focus-visible),
+.monaco-workbench .volt-agent-snooze-close:focus:not(:focus-visible) {
+	outline: none !important;
+}
+
+.volt-agent-snooze-button:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+/* The thumb is mixed from the surface under it: here the dialog card. */
+.volt-agent-snooze-tabs .volt-segmented {
+	--volt-segmented-plate: var(--vscode-quickInput-background, var(--vscode-editorWidget-background, #1e1e1e));
+}

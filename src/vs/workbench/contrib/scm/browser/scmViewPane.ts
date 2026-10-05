@@ -1345,7 +1345,9 @@ registerAction2(class extends Action2 {
 					ChatContextKeys.Setup.hidden.negate(),
 					ChatContextKeys.Setup.disabled.negate(),
 					ChatContextKeys.Setup.installed.negate(),
-					ContextKeyExpr.equals('scmProvider', 'git')
+					ContextKeyExpr.equals('scmProvider', 'git'),
+					// Volt writes commit messages itself (volt.scm.generateCommitMessage).
+					ContextKeyExpr.not('voltCommitMessages')
 				)
 			}
 		});

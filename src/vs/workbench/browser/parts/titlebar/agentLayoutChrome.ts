@@ -27,6 +27,9 @@ export function stampLayoutModeChrome(root: HTMLElement, agent: boolean, sidebar
 		root.dataset.voltLayoutMode = mode;
 	}
 	root.classList.toggle('volt-layout-agent', agent);
+	// For the document's own background. A class, not `html:has(.volt-layout-agent)`: a :has() on the
+	// root restyles the whole window whenever a list anywhere adds a row.
+	root.ownerDocument.documentElement.classList.toggle('volt-layout-agent-window', agent);
 	const sidebarOpen = agent && sidebarWidth > 0;
 	root.classList.toggle('volt-primary-sidebar-toggle-in-titlebar', agentPrimarySidebarToggleInTitlebar(agent, sidebarOpen));
 	if (!agent) {

@@ -15,6 +15,7 @@ import { IVoltEvent, IVoltEventEnvelope } from '../../../../services/voltRuntime
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { RunSupervisor } from '../../../../services/voltRuntime/common/harness/supervisor.js';
 import type { AgentSegment } from '../../browser/blocks/agentBlocks.js';
 import type { IAgentAssistantMessage, IAgentMessage } from '../../browser/editor/agentEditor.js';
 import { AgentSessionController, IAgentSessionHost } from '../../browser/editor/agentSessionController.js';
@@ -144,5 +145,14 @@ suite('ACP replay', () => {
 			assert.strictEqual(kinds.at(-1), 'markdown', kinds.join(', '));
 		}
 	});
-});
 
+	test('the run supervisor stays silent on real edit turns', () => {
+		const provider = new AcpAgentProvider('cursor-acp', 'Cursor', 'cursor-agent', [], undefined as unknown as IVoltStdioService,
+			undefined as unknown as IWorkspaceContextService, undefined as unknown as IFileService, undefined as unknown as ILogService);
+		for (const turn of [CLAUDE_EDIT_TURN, CURSOR_EDIT_TURN]) {
+			const supervisor = new RunSupervisor({ startedAt: 0 });
+			const directives = turn.flatMap(update => mapUpdate(provider, update)).flatMap(event => supervisor.observe(event, 1_000));
+			assert.deepStrictEqual(directives, []);
+		}
+	});
+});

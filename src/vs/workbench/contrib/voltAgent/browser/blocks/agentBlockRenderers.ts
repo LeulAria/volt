@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import '../media/agentMarkdown.css';
 import { $, addDisposableListener, append, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
@@ -12,12 +13,18 @@ import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownR
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { localize } from '../../../../../nls.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { URI } from '../../../../../base/common/uri.js';
+import { ILanguageService } from '../../../../../editor/common/languages/language.js';
+import { IModelService } from '../../../../../editor/common/services/model.js';
+import { getIconClasses } from '../../../../../editor/common/services/getIconClasses.js';
+import { FileKind } from '../../../../../platform/files/common/files.js';
 import { createAgentScrollable } from '../editor/agentScrollable.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import {
 	AgentBlock,
 	classifyTableCell,
-	IApprovalBlock,
+	IAnswersBlock,
+	IApprovalBlock, IPlanBlock,
 	ICardsBlock,
 	IChartBlock,
 	ICodeBlock,
@@ -29,12 +36,15 @@ import {
 	ITerminalBlock,
 	IToolBlock,
 	humanTerminalTitle,
+	isLikelyFilePath,
 	isPathLike,
 	parseFileTarget,
 	stripCellMarkup,
 	terminalCommandLabels,
 } from './agentBlocks.js';
 import { renderMermaidDiagram } from './agentMermaid.js';
+import { highlight, ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
+import { agentMarkdownRenderOptions, decorateAgentMarkdown, normalizeMathDelimiters } from './agentMarkdown.js';
 import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../preview/localPreview.js';
 import { AccessDecisionScope } from '../../../../services/voltRuntime/common/access/accessTypes.js';
 import { FileChangePreview } from '../review/fileChangePreview.js';
@@ -57,8 +67,14 @@ export interface IBlockRenderContext {
 	readonly onAccessDecision?: (requestId: string, effect: 'allow' | 'deny', scope: AccessDecisionScope, pattern?: string) => void;
 	/** The user approved the agent's plan: later turns should run as Agent, not Plan. */
 	readonly onBuildPlan?: () => void;
+	/** Build a plan the agent wrote with its plan tool: switch to Agent and ask for it. */
+	readonly onBuildCreatedPlan?: (plan: IPlanBlock) => void;
 	/** When false, a still-running command must not keep the streaming shimmer. */
 	readonly streaming?: boolean;
+	/** Highlights code cards. Without it they render as plain text. */
+	readonly languageService?: ILanguageService;
+	/** Opens a Mermaid diagram larger. */
+	readonly onExpandDiagram?: (svg: SVGSVGElement, source: string) => void;
 }
 
 export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IBlockRenderContext): void {
@@ -67,7 +83,7 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 			renderMarkdownBlock(parent, block, ctx);
 			return;
 		case 'code':
-			renderCodeBlock(parent, block);
+			renderCodeBlock(parent, block, ctx);
 			return;
 		case 'terminal':
 			renderTerminalBlock(parent, block, ctx);
@@ -85,7 +101,7 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 			renderChartBlock(parent, block);
 			return;
 		case 'mermaid':
-			renderMermaidDiagram(parent, block.source);
+			renderMermaidDiagram(parent, block.source, { ...codeCardOptions(ctx), onExpand: ctx.onExpandDiagram });
 			return;
 		case 'tool':
 			renderToolBlock(parent, block, ctx);
@@ -98,11 +114,74 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 			return;
 		case 'approval':
 			renderApprovalBlock(parent, block, ctx);
+			return;
+		case 'answers':
+			renderAnswersBlock(parent, block);
+			return;
+		case 'plan':
+			renderPlanBlock(parent, block, ctx);
 	}
 }
 
+/** cursor-agent's plan, as the plan card Cursor shows: title, the plan, Build. */
+function renderPlanBlock(parent: HTMLElement, block: IPlanBlock, ctx: IBlockRenderContext): void {
+	const wrap = append(parent, $('.volt-agent-block.approval.question.plan'));
+	append(wrap, $('.volt-agent-approval-title')).textContent = block.name
+		? localize('voltAgent.plan.named', "Plan: {0}", block.name)
+		: localize('voltAgent.plan.title', "Plan");
+	const body = append(wrap, $('.volt-agent-approval-plan'));
+	if (block.markdown) {
+		renderMarkdownInto(body, block.markdown, ctx);
+	} else {
+		body.textContent = localize('voltAgent.plan.writing', "Writing the plan…");
+	}
+	if (block.status !== 'complete' || !ctx.onBuildCreatedPlan) {
+		return;
+	}
+	const actions = append(wrap, $('.volt-agent-approval-actions'));
+	const build = append(actions, $('button.volt-agent-approval-btn.primary')) as HTMLButtonElement;
+	build.textContent = localize('voltAgent.plan.build', "Build");
+	ctx.store.add(addDisposableListener(build, 'click', e => {
+		e.preventDefault();
+		ctx.onBuildCreatedPlan?.(block);
+	}));
+}
+
+/** Cursor's "Answers" card: each question in muted text over the user's answer, with hairlines between. */
+function renderAnswersBlock(parent: HTMLElement, block: IAnswersBlock): void {
+	const card = append(parent, $('.volt-agent-answers'));
+	const header = append(card, $('.volt-agent-answers-header'));
+	append(header, $('span.volt-agent-answers-icon')).appendChild(renderIcon(Codicon.commentDiscussion));
+	append(header, $('span.volt-agent-answers-title')).textContent = localize('voltAgent.answers', "Answers");
+	const body = append(card, $('.volt-agent-answers-body'));
+	const pairs = [...block.items];
+	if (block.note) {
+		pairs.push({ question: localize('voltAgent.answers.details', "Additional details"), answer: block.note });
+	}
+	pairs.forEach((pair, index) => {
+		if (index) {
+			append(body, $('.volt-agent-answers-rule'));
+		}
+		const row = append(body, $('.volt-agent-answers-pair'));
+		append(row, $('.volt-agent-answers-question.volt-agent-searchable')).textContent = pair.question;
+		append(row, $('.volt-agent-answers-answer.volt-agent-searchable')).textContent = pair.answer;
+	});
+}
+
+function codeCardOptions(ctx: IBlockRenderContext): ICodeCardOptions {
+	return {
+		store: ctx.store,
+		languageService: ctx.languageService,
+		onCopyText: ctx.onCopyText,
+		onDidChangeSize: ctx.onScroll,
+		onOpenPath: ctx.onOpenPath,
+		fileIconClasses: path => ctx.instantiationService.invokeFunction(accessor => getIconClasses(accessor.get(IModelService), accessor.get(ILanguageService), URI.file(path), FileKind.FILE)),
+	};
+}
+
 export function renderMarkdownInto(parent: HTMLElement, text: string, ctx: IBlockRenderContext, extraClass?: string): void {
-	const result = ctx.markdownRenderer.render(new MarkdownString(linkifyPreviewUrls(text)), {
+	const result = ctx.markdownRenderer.render(new MarkdownString(linkifyPreviewUrls(normalizeMathDelimiters(text))), {
+		...agentMarkdownRenderOptions(getWindow(parent), { ...codeCardOptions(ctx), onExpandDiagram: ctx.onExpandDiagram }),
 		fillInIncompleteTokens: true,
 		asyncRenderCallback: ctx.onScroll,
 		actionHandler: link => {
@@ -117,6 +196,7 @@ export function renderMarkdownInto(parent: HTMLElement, text: string, ctx: IBloc
 		result.element.classList.add(extraClass);
 	}
 	decorateMarkdownPills(result.element, ctx);
+	decorateAgentMarkdown(result.element, ctx.store);
 	wrapMarkdownTables(result.element, ctx);
 	parent.appendChild(result.element);
 	ctx.store.add(result);
@@ -127,14 +207,25 @@ function renderMarkdownBlock(parent: HTMLElement, block: IMarkdownBlock, ctx: IB
 	renderMarkdownInto(wrap, block.content, ctx);
 }
 
-function renderCodeBlock(parent: HTMLElement, block: ICodeBlock): void {
+function renderCodeBlock(parent: HTMLElement, block: ICodeBlock, ctx: IBlockRenderContext): void {
 	const wrap = append(parent, $('.volt-agent-block.code'));
-	if (block.language) {
-		const lang = append(wrap, $('span.volt-agent-code-lang.volt-agent-searchable'));
-		lang.textContent = block.language;
+	// A whole file the reply shows ("Grok created src/array.js:") reads as that file, the way an
+	// edit is drawn. Streaming fences stay code cards: the file card is a diff editor per frame.
+	if (block.path && block.status !== 'streaming') {
+		wrap.classList.add('file');
+		renderFileChangeBlock(wrap, {
+			id: block.id,
+			type: 'file',
+			status: block.status,
+			path: block.path,
+			verb: 'Created',
+			original: '',
+			modified: block.code.replace(/\n$/, '') + '\n',
+			expanded: true,
+		}, ctx, 'card');
+		return;
 	}
-	const pre = append(wrap, $('pre.volt-agent-searchable'));
-	pre.textContent = block.code;
+	renderCodeCard(wrap, block.language, block.code, codeCardOptions(ctx));
 }
 
 function isExpanded(block: { id: string; expanded?: boolean }, ctx: IBlockRenderContext): boolean {
@@ -237,6 +328,8 @@ function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IB
 		return;
 	}
 
+	// For the bar's corners (agentEditor.css): a :has(.volt-agent-term-body) on the block restyled it as output streamed in.
+	wrap.classList.add('has-term-body');
 	const body = append(wrap, $('.volt-agent-term-body'));
 	const clip = append(body, $('.volt-agent-term-output-clip'));
 	const content = $('.volt-agent-term-output-scroll');
@@ -250,9 +343,10 @@ function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IB
 		const out = append(content, $('pre.volt-agent-term-output.volt-agent-searchable'));
 		out.textContent = block.output.replace(/[\r\n]+$/, '');
 	}
+	// Terminal output never scrolls on its own: collapsed shows the tail, expanded shows all of it.
 	scanOutput.current = attachContainedScroll(clip, content, ctx, scroll => {
 		pinCollapsedTerminalTail(wrap, clip, content, scroll);
-	});
+	}, false);
 }
 
 function renderToolBlock(parent: HTMLElement, block: IToolBlock, ctx: IBlockRenderContext): void {
@@ -393,7 +487,7 @@ function renderTableBlock(parent: HTMLElement, block: ITableBlock, ctx: IBlockRe
 			}
 		}
 	}
-	balanceTableColumns(table);
+	balanceTableColumns(table as HTMLTableElement);
 	attachTableCopyControls(wrap, ctx);
 }
 
@@ -467,38 +561,63 @@ function renderApprovalBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IB
 	if (block.decision) {
 		wrap.classList.add(block.decision);
 	}
-	const title = append(wrap, $('.volt-agent-approval-title'));
-	title.textContent = block.blocked
-		? localize('voltAgent.access.blocked', "Blocked")
-		: actionTitle(block.action);
-	const resource = append(wrap, $('pre.volt-agent-approval-resource.volt-agent-searchable'));
-	resource.textContent = block.resource;
-	const meta = append(wrap, $('.volt-agent-approval-meta'));
-	append(meta, $('span.risk')).textContent = localize('voltAgent.access.risk', "Risk {0}", block.risk);
-	if (block.reason || block.policySource) {
-		append(meta, $('span.reason')).textContent = block.reason || block.policySource || '';
+	const isCommand = block.action === 'shell' || block.action === 'git';
+	// Cursor's ACP titles wrap the command in backticks (`node --test`).
+	const unquote = (text: string) => text.trim().replace(/^`+([^`][\s\S]*?)`+$/, '$1').trim();
+	const resource = isCommand ? unquote(block.resource) : block.resource.trim();
+	const reason = block.reason?.trim() && !block.blocked && unquote(block.reason) !== resource ? block.reason.trim() : undefined;
+	if (isCommand && resource) {
+		// A command waiting to run reads as the terminal it will run in, highlighted, with
+		// Skip / Always Run / Run under it.
+		wrap.classList.add('command');
+		renderTerminalBlock(wrap, { id: `${block.id}-command`, type: 'terminal', status: 'complete', command: resource, output: '', expanded: true }, ctx);
+		if (block.blocked) {
+			append(wrap, $('.volt-approval-reason')).textContent = localize('voltAgent.access.blockedCommand', "Blocked");
+		} else if (reason) {
+			append(wrap, $('.volt-approval-reason')).textContent = reason;
+		}
+	} else {
+		// Cursor's approval card: one "Edit: src/a.ts" line, then Skip / Always Allow / Allow.
+		// A long or multi-line resource moves into a mono block below instead of repeating in the line.
+		const body = append(wrap, $('.volt-approval-body'));
+		const line = append(body, $('.volt-approval-line'));
+		const action = append(line, $('span.volt-approval-action'));
+		const verb = block.blocked ? localize('voltAgent.access.blockedColon', "Blocked:") : approvalVerb(block.action);
+		const expanded = resource.includes('\n') || resource.length > 72;
+		const inline = expanded ? reason : resource;
+		action.textContent = inline ? verb : verb.replace(/:\s*$/, '');
+		if (inline) {
+			const detail = append(line, $('span.volt-approval-detail.volt-agent-searchable'));
+			detail.textContent = inline.split('\n')[0];
+			setAgentTooltip(detail, inline);
+		}
+		if (expanded) {
+			append(body, $('pre.volt-approval-resource.volt-agent-searchable')).textContent = resource;
+		} else if (reason) {
+			append(body, $('.volt-approval-reason')).textContent = reason;
+		}
 	}
+	const footer = append(wrap, $('.volt-approval-footer'));
 	if (block.blocked) {
-		append(wrap, $('.volt-agent-approval-status')).textContent = localize(
-			'voltAgent.access.blockedBy',
-			"Blocked by {0}",
-			block.policySource ?? 'policy',
-		);
+		append(footer, $('span.volt-approval-status')).textContent = localize('voltAgent.access.blockedBy', "Blocked by {0}", block.policySource ?? 'policy');
 		return;
 	}
 	if (block.decision) {
-		append(wrap, $('.volt-agent-approval-status')).textContent = block.decision === 'allow'
+		append(footer, $('span.volt-approval-status')).textContent = block.decision === 'allow'
 			? localize('voltAgent.access.allowed', "Allowed {0}", block.scope === 'always' ? localize('voltAgent.access.always', "always") : localize('voltAgent.access.once', "once"))
 			: localize('voltAgent.access.denied', "Denied");
 		return;
 	}
-	const actions = append(wrap, $('.volt-agent-approval-actions'));
-	const once = append(actions, $('button.volt-agent-approval-btn')) as HTMLButtonElement;
-	once.textContent = localize('voltAgent.access.allowOnce', "Allow once");
-	const always = append(actions, $('button.volt-agent-approval-btn')) as HTMLButtonElement;
-	always.textContent = localize('voltAgent.access.allowAlways', "Always allow {0}", block.pattern || block.resource);
-	const deny = append(actions, $('button.volt-agent-approval-btn.deny')) as HTMLButtonElement;
-	deny.textContent = localize('voltAgent.access.deny', "Deny");
+	const shell = isCommand;
+	const skip = append(footer, $('button.volt-approval-btn.text')) as HTMLButtonElement;
+	skip.textContent = localize('voltAgent.access.skip', "Skip");
+	const always = append(footer, $('button.volt-approval-btn.secondary')) as HTMLButtonElement;
+	always.textContent = shell ? localize('voltAgent.access.alwaysRun', "Always Run") : localize('voltAgent.access.alwaysAllowShort', "Always Allow");
+	setAgentTooltip(always, localize('voltAgent.access.allowAlways', "Always allow {0}", block.pattern || block.resource));
+	const once = append(footer, $('button.volt-approval-btn.primary')) as HTMLButtonElement;
+	append(once, $('span')).textContent = shell ? localize('voltAgent.access.run', "Run") : localize('voltAgent.access.allow', "Allow");
+	// allow-any-unicode-next-line
+	append(once, $('span.volt-approval-kbd')).textContent = '⏎';
 	const decide = (effect: 'allow' | 'deny', scope: AccessDecisionScope) => {
 		ctx.onAccessDecision?.(block.requestId, effect, scope, block.pattern);
 	};
@@ -510,10 +629,34 @@ function renderApprovalBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IB
 		e.preventDefault();
 		decide('allow', 'always');
 	}));
-	ctx.store.add(addDisposableListener(deny, 'click', e => {
+	ctx.store.add(addDisposableListener(skip, 'click', e => {
 		e.preventDefault();
 		decide('deny', 'once');
 	}));
+	// Enter runs it, as in Cursor, while focus is in the card.
+	wrap.tabIndex = -1;
+	ctx.store.add(addDisposableListener(wrap, 'keydown', e => {
+		if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+			e.preventDefault();
+			decide('allow', 'once');
+		}
+	}));
+}
+
+function approvalVerb(action: string): string {
+	switch (action) {
+		case 'edit':
+			return localize('voltAgent.access.editColon', "Edit:");
+		case 'read':
+			return localize('voltAgent.access.readColon', "Read:");
+		case 'shell':
+		case 'git':
+			return localize('voltAgent.access.runColon', "Run command:");
+		case 'mcp':
+			return localize('voltAgent.access.mcpColon', "Use tool:");
+		default:
+			return localize('voltAgent.access.permissionColon', "Allow:");
+	}
 }
 
 /**
@@ -553,22 +696,6 @@ function renderQuestionBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IB
 		e.preventDefault();
 		ctx.onAccessDecision?.(block.requestId, 'deny', 'once');
 	}));
-}
-
-function actionTitle(action: string): string {
-	switch (action) {
-		case 'edit':
-			return localize('voltAgent.access.edit', "Edit");
-		case 'read':
-			return localize('voltAgent.access.read', "Read");
-		case 'shell':
-		case 'git':
-			return localize('voltAgent.access.run', "Run command");
-		case 'mcp':
-			return localize('voltAgent.access.mcp', "MCP tool");
-		default:
-			return localize('voltAgent.access.action', "Permission");
-	}
 }
 
 function wrapMarkdownTables(root: HTMLElement, ctx: IBlockRenderContext): void {
@@ -709,8 +836,8 @@ function attachTableCopyControls(wrap: HTMLElement, ctx: IBlockRenderContext): v
 	const trigger = append(actions, $('button.volt-agent-table-copy-trigger')) as HTMLButtonElement;
 	trigger.type = 'button';
 	trigger.setAttribute('aria-haspopup', 'menu');
-	trigger.title = localize('voltAgent.tableCopyMenu', "Copy Table");
-	trigger.setAttribute('aria-label', trigger.title);
+	// The visible label says it; a title would show "Copy Table" a second time on hover.
+	trigger.setAttribute('aria-label', localize('voltAgent.tableCopyMenu', "Copy Table"));
 	const iconSlot = append(trigger, $('span.volt-agent-table-copy-icon'));
 	iconSlot.appendChild(createTableCopyIcon(10, 12, 'copy-table'));
 	append(trigger, $('span.volt-agent-table-copy-label')).textContent = localize('voltAgent.tableCopyTable', "Copy Table");
@@ -863,18 +990,19 @@ function pinCollapsedTerminalTail(wrap: HTMLElement, clip: HTMLElement, content:
 	}
 }
 
-function attachContainedScroll(wrap: HTMLElement, content: HTMLElement, ctx: IBlockRenderContext, afterScan?: (scroll: { setScrollPosition(update: { scrollTop: number }): void }) => void): () => void {
+function attachContainedScroll(wrap: HTMLElement, content: HTMLElement, ctx: IBlockRenderContext, afterScan?: (scroll: { setScrollPosition(update: { scrollTop: number }): void }) => void, userScrollable = true): () => void {
 	if (wrap.querySelector('.monaco-scrollable-element')) {
 		return () => { };
 	}
 	const scroll = createAgentScrollable(content, {
-		horizontal: ScrollbarVisibility.Auto,
-		vertical: ScrollbarVisibility.Auto,
+		horizontal: userScrollable ? ScrollbarVisibility.Auto : ScrollbarVisibility.Hidden,
+		vertical: userScrollable ? ScrollbarVisibility.Auto : ScrollbarVisibility.Hidden,
 		horizontalScrollbarSize: 10,
 		verticalScrollbarSize: 10,
-		handleMouseWheel: true,
+		// Not scrollable: the wheel scrolls the thread, never the block under the pointer.
+		handleMouseWheel: userScrollable,
 		alwaysConsumeMouseWheel: false,
-		consumeMouseWheelIfScrollbarIsNeeded: true,
+		consumeMouseWheelIfScrollbarIsNeeded: userScrollable,
 	});
 	wrap.appendChild(scroll.getDomNode());
 	ctx.store.add(scroll);
@@ -908,10 +1036,12 @@ function decorateMarkdownPills(root: HTMLElement, ctx: IBlockRenderContext): voi
 			bindUrlOpen(code, url, ctx);
 			continue;
 		}
-		if (isPathLike(text) || text.length > 18) {
+		if (isLikelyFilePath(text)) {
 			code.classList.add('volt-agent-path-pill');
 			bindPathOpen(code, parseFileTarget(text), ctx);
+			continue;
 		}
+		highlightInlineCode(code, text, ctx);
 	}
 	for (const link of root.querySelectorAll('a')) {
 		if (link.querySelector('code')) {
@@ -919,20 +1049,60 @@ function decorateMarkdownPills(root: HTMLElement, ctx: IBlockRenderContext): voi
 		}
 		const text = (link.textContent ?? '').trim();
 		const href = link.getAttribute('data-href') || link.getAttribute('href') || '';
-		const url = extractHttpUrl(text) || extractHttpUrl(href);
+		const url = extractHttpUrl(href) || extractHttpUrl(text);
 		if (url) {
-			link.classList.add('volt-agent-path-pill');
-			if (text !== url && /https?:\/\//i.test(text)) {
-				link.textContent = url;
-			}
 			bindUrlOpen(link, url, ctx);
 			continue;
 		}
 		if (isPathLike(text) || isPathLike(href)) {
-			link.classList.add('volt-agent-path-pill');
+			link.classList.add('volt-agent-path-link');
 			bindPathOpen(link, parseFileTarget(text) ?? parseFileTarget(href), ctx);
 		}
 	}
+}
+
+/**
+ * The language inline code reads as, from its shape alone: `</body>` is HTML, `a => a.b` script,
+ * `npm test` shell. Words, names and ids stay plain.
+ */
+export function guessInlineCodeLanguage(text: string): string | undefined {
+	const code = text.trim();
+	if (code.length < 2 || code.length > 240 || code.includes('\n')) {
+		return undefined;
+	}
+	if (/^<\/?[A-Za-z][\w-]*(\s[^<>]*)?\/?>/.test(code) || /<\/[A-Za-z][\w-]*>$/.test(code)) {
+		return 'html';
+	}
+	if (/^(\{[\s\S]*\}|\[[\s\S]*\])$/.test(code) && /["\d:]/.test(code)) {
+		return 'json';
+	}
+	if (/^[.#]?[\w-]+(\s*[>+~]?\s*[.#]?[\w-]+)*\s*\{[^{}]*\}$/.test(code) || /^[a-z-]+:\s*[^;]+;$/.test(code)) {
+		return 'css';
+	}
+	if (/^(npm|npx|pnpm|yarn|bun|git|cd|ls|cat|echo|mkdir|rm|cp|mv|curl|node|python3?|pip3?|brew|make|sleep|grep|chmod|export|sudo)\s/.test(code)) {
+		return 'shellscript';
+	}
+	if (/=>|===|!==|&&|\|\||\b(const|let|var|function|return|import|export|await|async|new|class|interface|typeof)\b|\w\([^()]*\)|\w\.\w+\(/.test(code)) {
+		return 'typescript';
+	}
+	return undefined;
+}
+
+/** Colours inline code that reads as code, with the editor theme's token colours. */
+function highlightInlineCode(code: HTMLElement, text: string, ctx: IBlockRenderContext): void {
+	const language = ctx.languageService && guessInlineCodeLanguage(text);
+	if (!language) {
+		return;
+	}
+	code.classList.add('volt-agent-inline-highlight');
+	highlight(ctx.languageService!, language, text).then(lines => {
+		// The reply may have re-rendered or the chip changed while the tokenizer loaded.
+		if (code.textContent !== text) {
+			return;
+		}
+		// The cache keeps its nodes for the next render, so this chip gets copies.
+		code.replaceChildren(...lines.flat().map(node => node.cloneNode(true)));
+	}, () => { /* no tokenizer: stays plain */ });
 }
 
 function bindUrlOpen(el: HTMLElement, url: string, ctx: IBlockRenderContext): void {
@@ -953,7 +1123,10 @@ function bindPathOpen(el: HTMLElement, target: ReturnType<typeof parseFileTarget
 		return;
 	}
 	el.classList.add('clickable');
-	setAgentTooltip(el, target.path);
+	// A chip already shows its path; only a link with other words names where it goes.
+	if (!(el.textContent ?? '').includes(target.path)) {
+		setAgentTooltip(el, target.path);
+	}
 	ctx.store.add(addDisposableListener(el, 'click', e => {
 		e.preventDefault();
 		e.stopPropagation();
@@ -977,7 +1150,7 @@ const SHELL_KEYWORDS = new Set([
 
 type ShellTokenKind = 'cmd' | 'builtin' | 'kw' | 'flag' | 'str' | 'var' | 'op' | 'num' | 'text';
 
-function appendHighlightedShell(parent: HTMLElement, command: string): void {
+export function appendHighlightedShell(parent: HTMLElement, command: string): void {
 	const doc = parent.ownerDocument;
 	for (const token of tokenizeShell(command)) {
 		if (token.kind === 'text') {

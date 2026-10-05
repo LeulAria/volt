@@ -26,10 +26,12 @@ export class DefaultDocumentColorProvider implements DocumentColorProvider {
 		const colorFromInfo: IColor = colorInfo.color;
 		const alpha = colorFromInfo.alpha;
 		const color = new Color(new RGBA(Math.round(255 * colorFromInfo.red), Math.round(255 * colorFromInfo.green), Math.round(255 * colorFromInfo.blue), alpha));
+		// Opaque colors keep the short forms: #rrggbb, not #rrggbbff.
+		const hasAlpha = alpha < 1;
 
-		const rgb = alpha ? Color.Format.CSS.formatRGBA(color) : Color.Format.CSS.formatRGB(color);
-		const hsl = alpha ? Color.Format.CSS.formatHSLA(color) : Color.Format.CSS.formatHSL(color);
-		const hex = alpha ? Color.Format.CSS.formatHexA(color) : Color.Format.CSS.formatHex(color);
+		const rgb = hasAlpha ? Color.Format.CSS.formatRGBA(color) : Color.Format.CSS.formatRGB(color);
+		const hsl = hasAlpha ? Color.Format.CSS.formatHSLA(color) : Color.Format.CSS.formatHSL(color);
+		const hex = hasAlpha ? Color.Format.CSS.formatHexA(color) : Color.Format.CSS.formatHex(color);
 
 		const colorPresentations: IColorPresentation[] = [];
 		colorPresentations.push({ label: rgb, textEdit: { range: range, text: rgb } });

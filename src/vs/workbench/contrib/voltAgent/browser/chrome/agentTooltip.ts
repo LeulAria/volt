@@ -6,7 +6,7 @@
 import { $, addDisposableListener, append, getWindow } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, IDisposable, markAsSingleton, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { isMacintosh } from '../../../../../base/common/platform.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 
@@ -315,7 +315,8 @@ function ensureTooltipDelegate(doc: Document): ITooltipDelegate {
 	if (delegate) {
 		return delegate;
 	}
-	delegate = { tooltip: new AgentTooltip(), current: undefined };
+	// One delegate per document for the window's lifetime.
+	delegate = { tooltip: markAsSingleton(new AgentTooltip()), current: undefined };
 	tooltipDelegates.set(doc, delegate);
 	const show = (target: HTMLElement) => {
 		const rows = tooltipRowsFor(target);

@@ -55,6 +55,23 @@ export function budgetFromLane(lane: ILaneBudget, extras: Partial<IResourceBudge
 	};
 }
 
+/** No ceiling on any meter except the ones given. ACP turns have no lane, so they start here. */
+export function unlimitedBudget(extras: Partial<IResourceBudget> = {}): IResourceBudget {
+	return {
+		tokens: extras.tokens ?? UNLIMITED,
+		timeMs: extras.timeMs ?? UNLIMITED,
+		cost: extras.cost ?? UNLIMITED,
+		steps: extras.steps ?? UNLIMITED,
+		tools: extras.tools ?? UNLIMITED,
+		parallel: extras.parallel ?? UNLIMITED,
+	};
+}
+
+/** True when the meter has a real ceiling (not the unlimited sentinel). */
+export function isBounded(budget: IResourceBudget, meter: BudgetMeter): boolean {
+	return budget[meter === 'time' ? 'timeMs' : meter] !== UNLIMITED;
+}
+
 export function tightenBudget(left: IResourceBudget, right: Partial<IResourceBudget>): IResourceBudget {
 	return {
 		tokens: Math.min(left.tokens, right.tokens ?? left.tokens),

@@ -20,6 +20,7 @@ import {
 	guessPreviewLanguage,
 	previewTokenizerSeed,
 	parseToolFileChange,
+	lineChangeStats,
 	parseUnifiedDiff,
 } from '../../browser/review/fileChangePreviewModel.js';
 
@@ -365,5 +366,17 @@ suite('FileChangePreview', () => {
 	test('preferred style wins over the surface default', () => {
 		assert.strictEqual(chooseFileChangeDiffStyle({ surface: 'browser', preferred: 'accordion' }), 'accordion');
 		assert.strictEqual(chooseFileChangeDiffStyle({ surface: 'sidebar', preferred: 'card' }), 'card');
+	});
+	test('line stats match the full diff without its character pass', () => {
+		const body = Array.from({ length: 400 }, (_, i) => `line ${i}`).join('\n');
+		assert.deepStrictEqual(lineChangeStats('', body), { additions: 400, deletions: 0 });
+		assert.deepStrictEqual(lineChangeStats(body, body.replace('line 7\n', 'line 7\nnew a\nnew b\n')), { additions: 2, deletions: 0 });
+		assert.deepStrictEqual(lineChangeStats('a\nb\nc\n', 'a\nx\nc\n'), { additions: 1, deletions: 1 });
+		assert.deepStrictEqual(lineChangeStats('a\nb\nc', 'c\nb\na'), computeFileChangePreview({ original: 'a\nb\nc', modified: 'c\nb\na' }) && { additions: 2, deletions: 2 });
+		const started = Date.now();
+		const big = Array.from({ length: 5000 }, (_, i) => `row ${i} ${i % 7}`).join('\n');
+		lineChangeStats('-- header', big);
+		lineChangeStats(big, big.split('\n').reverse().join('\n'));
+		assert.ok(Date.now() - started < 1500, 'stays cheap on large rewrites');
 	});
 });

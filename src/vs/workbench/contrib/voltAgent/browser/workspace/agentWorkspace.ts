@@ -47,6 +47,14 @@ export interface IAgentWorkspaceLayout {
 	/** Share of the main panel used by the conversation, between 0.25 and 0.75. */
 	readonly splitRatio?: number;
 	readonly activeSurfaceId?: string;
+	/** The bottom panel as this chat left it: open or not, and which view it showed. */
+	readonly panel?: IAgentPanelState;
+}
+
+export interface IAgentPanelState {
+	readonly visible: boolean;
+	/** View container id, such as the terminal or problems. */
+	readonly container?: string;
 }
 
 export interface IAgentFileSurface {
@@ -71,6 +79,8 @@ export interface IAgentBrowserSurface {
 	readonly id: string;
 	readonly url: string;
 	readonly title?: string;
+	/** Opened by the agent: floats over the chat when no tools are open beside it. Not saved. */
+	readonly floating?: boolean;
 }
 
 export interface IAgentChangesSurface {
@@ -93,7 +103,7 @@ export type IAgentSurface = IAgentFileSurface | IAgentTerminalSurface | IAgentBr
 export type IAgentSurfaceDraft =
 	| { readonly kind: 'file'; readonly resource: string; readonly title?: string }
 	| { readonly kind: 'terminal'; readonly title?: string; readonly cwd?: string; readonly terminalInstanceId?: number }
-	| { readonly kind: 'browser'; readonly url: string; readonly title?: string }
+	| { readonly kind: 'browser'; readonly url: string; readonly title?: string; readonly floating?: boolean }
 	| { readonly kind: 'changes'; readonly title?: string }
 	| { readonly kind: 'chat'; readonly sessionId: string; readonly title?: string };
 
@@ -221,7 +231,9 @@ export function createSurface(draft: IAgentSurfaceDraft, id = generateUuid()): I
 				? { kind: 'terminal', id, title: draft.title, cwd: draft.cwd }
 				: { kind: 'terminal', id, title: draft.title, cwd: draft.cwd, terminalInstanceId: draft.terminalInstanceId };
 		case 'browser':
-			return { kind: 'browser', id, url: draft.url, title: draft.title };
+			return draft.floating
+				? { kind: 'browser', id, url: draft.url, title: draft.title, floating: true }
+				: { kind: 'browser', id, url: draft.url, title: draft.title };
 		case 'changes':
 			return { kind: 'changes', id, title: draft.title };
 		case 'chat':
@@ -249,6 +261,9 @@ function sameSurface(existing: IAgentSurface, incoming: IAgentSurface): boolean 
 	}
 	if (existing.kind === 'changes' && incoming.kind === 'changes') {
 		return true;
+	}
+	if (existing.kind === 'chat' && incoming.kind === 'chat') {
+		return existing.sessionId === incoming.sessionId;
 	}
 	return false;
 }

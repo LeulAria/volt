@@ -73,7 +73,7 @@
 .volt-file-preview-verb {
 	flex-shrink: 0;
 	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
-	font-weight: 400;
+	font-weight: 300;
 }
 
 .volt-file-preview-icon {

@@ -112,6 +112,36 @@
 	letter-spacing: 0;
 }
 
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-project {
+	flex-shrink: 0;
+	max-width: 160px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	font-weight: 400;
+	line-height: 18px;
+	opacity: 0.6;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-separator {
+	display: inline-flex;
+	flex-shrink: 0;
+	margin: 0 -3px;
+	opacity: 0.4;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-separator svg {
+	display: block;
+	width: 14px;
+	height: 14px;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-project[hidden],
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-separator[hidden] {
+	display: none;
+}
+
 .monaco-workbench.volt-layout-agent .volt-agent-primary-header-laptop {
 	display: inline-flex;
 	flex-shrink: 0;

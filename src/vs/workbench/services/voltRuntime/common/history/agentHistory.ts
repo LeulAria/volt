@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../../base/common/event.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 
 /**
@@ -45,6 +46,10 @@ export interface IAgentSessionHeader {
 	readonly id: string;
 	readonly createdAt: number;
 	readonly workspace: IAgentSessionWorkspace;
+	/** The chat this one was opened beside as a side chat. */
+	readonly parentId?: string;
+	/** The chat runs a task its parent delegated (a subagent), not a side chat the user opened. */
+	readonly subagent?: boolean;
 }
 
 /** A user prompt that opens a turn. */
@@ -151,6 +156,15 @@ export interface IAgentSessionMeta {
 	readonly settled?: boolean;
 	/** Session parked out of the active Workspaces list into Snooze. */
 	readonly snoozed?: boolean;
+	/** When a snoozed session returns to the list. Absent: snoozed until the user wakes it. */
+	readonly snoozedUntil?: number;
+	/**
+	 * When a timed snooze ran out and put the session back in the list. Shown as "Woke" until the
+	 * user opens the chat, sends it a prompt, or parks it again.
+	 */
+	readonly wokeAt?: number;
+	/** When the latest prompt was sent; a running session has been working since then. */
+	readonly lastPromptAt?: number;
 	readonly hasDraft?: boolean;
 	/** A reply finished while the chat was not on screen. */
 	readonly unread?: boolean;
@@ -160,6 +174,10 @@ export interface IAgentSessionMeta {
 	readonly model?: string;
 	readonly worktreePath?: string;
 	readonly worktreeBranch?: string;
+	/** Side chat: the chat whose tools it was opened in. Listed under that chat. */
+	readonly parentId?: string;
+	/** A subagent's chat: reached from its parent, never listed in the sidebar. */
+	readonly subagent?: boolean;
 }
 
 export interface IAgentHistoryIndex {
@@ -238,12 +256,21 @@ export interface IAgentHistoryService {
 	 * A log that already exists keeps the folder stored in its header.
 	 */
 	pinSessionWorkspace(id: string, workspace: IAgentSessionWorkspace): void;
+	/** The workspace {@link pinSessionWorkspace} stored for a chat that has not been saved yet. */
+	pinnedWorkspace(id: string): IAgentSessionWorkspace | undefined;
+	/** Records `id` as a side chat of `parentId`, in the log header once it is written. */
+	pinSessionParent(id: string, parentId: string, options?: { readonly subagent?: boolean }): void;
+	/** The parent {@link pinSessionParent} or the stored log gives a side chat. */
+	sessionParent(id: string): string | undefined;
 
 	setPinned(id: string, pinned: boolean): Promise<void>;
 	setArchived(id: string, archived: boolean): Promise<void>;
 	setSettled(id: string, settled: boolean): Promise<void>;
-	setSnoozed(id: string, snoozed: boolean): Promise<void>;
+	/** `until` is when the session comes back on its own; the service wakes it then. */
+	setSnoozed(id: string, snoozed: boolean, until?: number): Promise<void>;
 	setUnread(id: string, unread: boolean): Promise<void>;
+	/** The user has seen a session that woke from its snooze; it drops the "Woke" mark. */
+	clearWoke(id: string): Promise<void>;
 	markAllRead(): Promise<void>;
 	/** Recorded by the session controller from harness events (`access.ask`, `clarify`). */
 	setAttention(id: string, attention: AgentSessionAttention | undefined): Promise<void>;
@@ -255,6 +282,8 @@ export interface IAgentHistoryService {
 	/** Store binary content once and return a stable content-addressed reference. */
 	putAttachment(bytes: Uint8Array, mime: string): Promise<string>;
 	getAttachment(ref: string): Promise<{ bytes: Uint8Array; mime: string } | undefined>;
+	/** The file behind a reference, so an agent's tools can read it from disk. */
+	attachmentResource(ref: string): URI | undefined;
 
 	/** Flush every open handle (used on shutdown). */
 	flushAll(): Promise<void>;

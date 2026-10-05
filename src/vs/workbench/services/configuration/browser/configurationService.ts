@@ -548,8 +548,10 @@ export class WorkspaceService extends Disposable implements IWorkbenchConfigurat
 		let previousState: WorkbenchState | undefined;
 		let previousWorkspacePath: string | undefined;
 		let previousFolders: WorkspaceFolder[] = [];
+		let previousId: string | undefined;
 
 		if (hasWorkspaceBefore) {
+			previousId = this.workspace.id;
 			previousState = this.getWorkbenchState();
 			previousWorkspacePath = this.workspace.configuration ? this.workspace.configuration.fsPath : undefined;
 			previousFolders = this.workspace.folders;
@@ -568,7 +570,8 @@ export class WorkspaceService extends Disposable implements IWorkbenchConfigurat
 			}
 
 			const newWorkspacePath = this.workspace.configuration ? this.workspace.configuration.fsPath : undefined;
-			if (previousWorkspacePath && newWorkspacePath !== previousWorkspacePath || newState !== previousState) {
+			// Volt: a window can move from one folder to another, which changes only the id.
+			if (previousWorkspacePath && newWorkspacePath !== previousWorkspacePath || newState !== previousState || previousId !== this.workspace.id) {
 				this._onDidChangeWorkspaceName.fire();
 			}
 

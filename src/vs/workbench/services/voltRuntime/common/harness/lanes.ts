@@ -75,7 +75,7 @@ const LANES: Record<VoltLane, ILaneDefinition> = {
 		checkpoints: true,
 		verify: false,
 		synthesize: true,
-		framing: 'This is a small, well-scoped change. Make it directly: inspect only what you need, edit, and stop. No plans, no summaries of unrelated code. If it turns out to be larger than it looks, call request_capabilities.',
+		framing: 'This is a small, well-scoped change. Inspect only what you need, make the edit, and review the result. Keep verification proportional to the change and honor checks required by the user or project instructions. No plans, no summaries of unrelated code. If it turns out to be larger than it looks, call request_capabilities.',
 	},
 	agent: {
 		lane: 'agent',

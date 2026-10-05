@@ -19,6 +19,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { GitTimelineProvider } from './timelineProvider';
+import { VoltGitViews } from './voltViews';
 import { registerAPICommands } from './api/api1';
 import { TerminalEnvironmentManager, TerminalShellExecutionManager } from './terminal';
 import { createIPCServer, IPCServer } from './ipc/ipcServer';
@@ -115,6 +116,7 @@ async function createModel(context: ExtensionContext, logger: LogOutputChannel, 
 		new GitDecorations(model),
 		new GitBlameController(model),
 		new GitTimelineProvider(model, cc),
+		new VoltGitViews(model),
 		new GitEditSessionIdentityProvider(model),
 		new TerminalShellExecutionManager(model, logger)
 	);

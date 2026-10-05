@@ -11,12 +11,10 @@
 
 .volt-agent-home-workspace-menu {
 	width: 280px;
-	padding-bottom: 4px;
 }
 
 .volt-agent-home-workspace-flyout {
 	width: 340px;
-	padding-bottom: 4px;
 }
 
 .volt-agent-home-workspace-flyout.form {
@@ -27,7 +25,7 @@
 	display: block;
 	width: 100%;
 	height: 36px;
-	margin: 0 0 4px;
+	margin: 0;
 	padding: 0 12px;
 	border: 0;
 	border-bottom: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-menu-border, rgba(128, 128, 128, 0.35)));
@@ -44,6 +42,16 @@
 .volt-agent-home-workspace-flyout input::placeholder {
 	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
 	opacity: 1;
+}
+
+/*
+ * No focus ring on the search fields, form fields or rows: the workbench's
+ * `.monaco-workbench input[type="text"]:focus` outline doubled the search
+ * field's bottom border. Rows show focus with their background instead.
+ */
+.monaco-workbench .volt-agent-home-filter-menu-host input[type="text"]:focus,
+.monaco-workbench .volt-agent-home-filter-menu-host button:focus {
+	outline: none;
 }
 
 /* Rows */

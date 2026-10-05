@@ -48,11 +48,20 @@ const ENUMERATE = /\b(?:each|every(?: single)?|all (?:of )?(?:the )?\w+|complete
 const DEPTH = /\b(?:detailed|breakdown|trim[- ]level|full(?:y)?|complete|comprehensive|side[- ]by[- ]side|compare|versus|\bvs\.?\b)\b/i;
 
 /** Facts that are wrong if guessed from training data. Not product- or country-specific. */
-const LOOKUP = /\b(?:price|prices|pricing|cost|costs|how much|latest|news|today|current|currently|official|release date|released|version of|docs? for|documentation|search (the )?web|look ?up|google|weather|stock|exchange rate|population|capital of|who (?:is|was)|when (?:did|was|is)|specs?|specifications|review(?:s)? of|api reference|changelog|from the docs)\b/i;
+const LOOKUP = /\b(?:latest|news|today|current|currently|official|release date|released|version of|docs? for|documentation|search (the )?web|look ?up|google|exchange rate|capital of|who (?:is|was)|when (?:did|was|is)|review(?:s)? of|api reference|changelog|from the docs)\b/i;
 
-const CITE = /\b(?:cite|citation|sources?|references?|with links|official (?:docs?|documentation|api|spec|site)|from the (?:docs|documentation|spec|rfc))\b/i;
+/** World facts that double as product nouns: "how much is X" is a lookup, "build a pricing page" is not. */
+const WORLD_FACT = /\b(?:price|prices|pricing|cost|costs|how much|weather|stock|population|specs?|specifications)\b/i;
+
+const CITE = /\b(?:cite|citations?|sources?|with (?:links|references)|(?:add|include|list) (?:the )?references|official (?:docs?|documentation|api|spec|site)|from the (?:docs|documentation|spec|rfc))\b/i;
+
+/** File paths, URLs and code say nothing about whether the user wants research ("design/pricing.png"). */
+const NOT_PROSE = /```[\s\S]*?(?:```|$)|`[^`\n]*`|https?:\/\/\S+|(?:^|[\s"'(])(?:\.{0,2}\/|~\/)?[\w.-]+(?:\/[\w.-]+)+|\b[\w-]+\.(?:png|jpe?g|webp|gif|svg|ts|tsx|js|jsx|mjs|css|html|json|md|py)\b/gi;
 
 const URL_RE = /https?:\/\/\S+/i;
+
+/** Work the model does itself (maths, derivations, proofs): "each step" or "in a table" is not a reason to search the web. */
+const SELF_CONTAINED = /\b(?:compute|calculate|solve|derive|derivations?|prove|proofs?|integrals?|integrate|derivatives?|sum of|roots? of|equations?|probability|simplify|evaluate|exact value|closed[- ]form|theorem|without (?:running|using) (?:code|tools))\b|[\u222b\u2211]|\\frac|\^\d/i;
 
 export function detectRequestShape(text: string, hints: IRequestShapeHints = {}): IRequestShape {
 	const raw = text.trim();
@@ -65,10 +74,12 @@ export function detectRequestShape(text: string, hints: IRequestShapeHints = {})
 				: CODE.test(raw)
 					? 'code'
 					: 'prose';
-	const enumerate = ENUMERATE.test(raw);
-	const cite = CITE.test(raw);
-	const worldFact = !hints.referencesWorkspace && !hints.coding;
-	const lookup = URL_RE.test(raw) || LOOKUP.test(raw) || cite || (enumerate && worldFact);
+	const prose = raw.replace(NOT_PROSE, ' ');
+	const enumerate = ENUMERATE.test(prose);
+	const cite = CITE.test(prose);
+	const worldFact = !hints.referencesWorkspace && !hints.coding && !SELF_CONTAINED.test(raw);
+	const workspaceCoding = !!hints.referencesWorkspace && !!hints.coding;
+	const lookup = URL_RE.test(raw) || LOOKUP.test(prose) || (WORLD_FACT.test(prose) && !workspaceCoding) || cite || (enumerate && worldFact);
 	const depth: AnswerDepth = enumerate || form === 'table' || form === 'list' || DEPTH.test(raw)
 		? 'full'
 		: 'brief';

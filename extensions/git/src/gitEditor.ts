@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import * as path from 'path';
-import { CancellationToken, DocumentLink, DocumentLinkProvider, l10n, Range, TabInputText, TextDocument, Uri, window, workspace } from 'vscode';
+import { CancellationToken, commands, DocumentLink, DocumentLinkProvider, l10n, Range, TabInputText, TextDocument, Uri, window, workspace } from 'vscode';
 import { IIPCHandler, IIPCServer } from './ipc/ipcServer';
 import { ITerminalEnvironmentProvider } from './terminal';
 import { EmptyDisposable, IDisposable } from './util';
@@ -37,6 +37,14 @@ export class GitEditor implements IIPCHandler, ITerminalEnvironmentProvider {
 	async handle({ commitMessagePath }: GitEditorRequest): Promise<any> {
 		if (commitMessagePath) {
 			const uri = Uri.file(commitMessagePath);
+
+			// Volt: in the agent layout the message opens as a new tab in the chat's right panel. The
+			// command returns once that tab closes, and false when no chat took it.
+			const openedInAgentTools = await commands.executeCommand<boolean>('_volt.agentTools.editUntilClosed', uri).then(opened => opened === true, () => false);
+			if (openedInAgentTools) {
+				return true;
+			}
+
 			const doc = await workspace.openTextDocument(uri);
 			await window.showTextDocument(doc, { preview: false });
 

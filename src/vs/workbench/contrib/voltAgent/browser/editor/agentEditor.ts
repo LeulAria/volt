@@ -23,6 +23,10 @@ import { IKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
 import { EditorExtensionsRegistry } from '../../../../../editor/browser/editorExtensions.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
+import { preloadMarkdownExtras } from '../blocks/agentMarkdown.js';
+import { buildTranscriptRows, hasSignInNotice, ITranscriptSteer, TranscriptRow, withoutFailureNotice } from '../chrome/agentTranscript.js';
+import { fallbackSubagentView, ITranscriptHost, renderTranscript, tickElapsed } from '../chrome/agentTranscriptView.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { DropIntoEditorController } from '../../../../../editor/contrib/dropOrPasteInto/browser/dropIntoEditorController.js';
 import { EDITOR_FONT_DEFAULTS, IEditorOptions as ICodeEditorOptions } from '../../../../../editor/common/config/editorOptions.js';
@@ -32,22 +36,33 @@ import { IModelService } from '../../../../../editor/common/services/model.js';
 import { ITextResourceConfigurationService } from '../../../../../editor/common/services/textResourceConfiguration.js';
 import { deepClone } from '../../../../../base/common/objects.js';
 import { isObject } from '../../../../../base/common/types.js';
+import { DataTransfers } from '../../../../../base/browser/dnd.js';
+import { Mimes } from '../../../../../base/common/mime.js';
 import { localize } from '../../../../../nls.js';
+import { CodeDataTransfers } from '../../../../../platform/dnd/browser/dnd.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
-import { IStorageService, StorageScope } from '../../../../../platform/storage/common/storage.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ACCESS_MODE_OPTIONS, accessModeOption } from '../../../../services/voltRuntime/common/access/accessModes.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { IAgentOrchestratorService, IOrchPrompt, IOrchQueueItem, OrchDelivery } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { IAgentPromptHostOptions, stashTurnDisplay } from '../orchestration/agentTurnHost.js';
+import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
+import { agentRow, dockModel, formatElapsed as formatOrchElapsed } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
+import { createReportStackIcon, isLiveSubagentState, renderCursorSubagentRow, renderSubagentAvatar, subagentView, tickSubagentClocks } from '../chrome/agentSubagents.js';
+import type { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
+import { type IAgentQuestionResponse, questionResponseText } from '../../../../services/voltRuntime/common/questions.js';
 import { AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { agentRunOnStorageKey, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
@@ -55,11 +70,11 @@ import { IVoltProject, IVoltProjectsService, VoltProjectCommands } from '../../.
 import { createAccessIcon } from '../chrome/accessIcons.js';
 import { mountAgentQuickOpenActions } from '../chrome/agentViewSidebars.js';
 import { agentMessagePlainText, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
-import { AgentContextUsageView } from '../context/agentContextUsageView.js';
+import { AgentContextUsageView, type IAgentCompactState, type IAgentStatusBranch } from '../context/agentContextUsageView.js';
 import { AgentModelPicker, type IModelOption } from '../picker/agentModelPicker.js';
-import { providerFamilyLabel } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { cliLoginForNotice } from '../../../../services/voltRuntime/browser/agents/cliAgents.js';
+import { createBrandIcon, providerFamilyLabel } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
-import { Orientation, Sash } from '../../../../../base/browser/ui/sash/sash.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -75,29 +90,55 @@ import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actio
 import { getSimpleCodeEditorWidgetOptions } from '../../../codeEditor/browser/simpleEditorOptions.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { completeStreamingBlocks } from './agentSessionController.js';
-import { AgentSurfaceHost } from '../workspace/agentSurfaceHost.js';
-import { AgentComposerChips } from '../composer/agentComposerChips.js';
-import { AgentPendingChanges } from '../composer/agentPendingChanges.js';
+import { AgentSurfaceHost, agentSideChatParents, revealAgentSideChat } from '../workspace/agentSurfaceHost.js';
+import { openAgentPanel } from '../workspace/agentPanels.js';
+import { AgentComposerChips, shouldOfferScrollToBottom } from '../composer/agentComposerChips.js';
+import { AgentPendingChanges, MINI_FILE_DIFF_VIEWER_ENABLED } from '../composer/agentPendingChanges.js';
 import { FRESH_TEXT_CLASS, FreshTextTracker } from '../chrome/agentFreshText.js';
 import { IAgentPendingFile } from '../review/agentEditsService.js';
 import { AgentComposerLists } from '../composer/agentComposerLists.js';
-import { AgentComposerQueue } from '../composer/agentComposerQueue.js';
+import { AgentPromptHistoryNavigator, IAgentPromptHistoryEntry, readStoredPrompts, rememberPrompt } from '../composer/agentPromptHistory.js';
+import { AGENT_PROMPT_HISTORY_SETTING } from '../../common/agentComposerSettings.js';
+import { AgentComposerQueue, IAgentComposerQueueState, QueuePause } from '../composer/agentComposerQueue.js';
+import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
+import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
+import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
+import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
-import { agentComposerCanSend, agentComposerNeedsProjectChip } from '../workspace/agentShell.js';
+import { adoptProjectForUnstartedSession, agentComposerCanSend, attachSessionToProject } from '../workspace/agentShell.js';
+import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
+import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { AgentThreadView } from './agentThreadView.js';
 import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
+import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { createModeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
-import { AgentMentionController, IAgentDisplayMention, browserMentionColor, cloneDisplayMentions, mentionIconClasses } from '../composer/agentMentions.js';
+import { showAgentPlusMenu } from '../composer/agentPlusMenu.js';
+import { IVoltMenuHandle } from '../ui/menu/voltMenu.js';
+import { AgentMentionController, IAgentDisplayMention, IAgentImageAttachment, IAgentMentionHost, browserMentionColor, cloneDisplayMentions, imageAttachmentsFromMentions, mentionIconClasses, videoDetail } from '../composer/agentMentions.js';
+import { AgentImageStrip, formatImageSize, IAgentImageStripItem, imageThumbClass } from '../composer/agentImageAttachments.js';
+import { AgentImageViewer, showAgentImageViewer } from '../composer/agentImageViewer.js';
+import { VIDEO_EXTENSIONS } from '../composer/agentVideoAttachments.js';
+import { AgentVideoViewer, showAgentVideoViewer } from '../composer/agentVideoViewer.js';
 import { MentionCodePreview } from '../composer/mentionCodePreview.js';
 import { appendAgentScrollableList } from './agentScrollable.js';
 import { dayjs } from '../chrome/dayjs.js';
-import { createTableCopyIcon, flashCopyIconSuccess, renderAgentBlock, renderFileChangesPart, renderMarkdownInto, IBlockRenderContext } from '../blocks/agentBlockRenderers.js';
-import { AgentSegment, IAgentActivityItem, isExploreItemClickable } from '../blocks/agentBlocks.js';
-import { buildThreadParts, STATUS_ROTATE_MS, STATUS_SWAP_MS, streamingActivityLines, ThreadPart, visibleReplyParts } from '../chrome/agentTimeline.js';
+import { createTableCopyIcon, flashCopyIconSuccess, renderAgentBlock, IBlockRenderContext } from '../blocks/agentBlockRenderers.js';
+import { AgentSegment, IAgentActivityItem, IPlanBlock, SupervisionKind } from '../blocks/agentBlocks.js';
+import { createdPlanPrompt, IRunEndTray, ITurnFileChange, PLANNING_PHRASE, runEndTray, STATUS_ROTATE_MS, STATUS_SWAP_MS, streamingActivityLines, SupervisionAction, supervisionActions, supervisionTitle, todoChecklist, turnFileChanges } from '../chrome/agentTimeline.js';
+import { AgentTurnFilesTree } from './agentTurnFilesTree.js';
+import { DEFAULT_LABELS_CONTAINER, ResourceLabels } from '../../../../browser/labels.js';
 import { chooseFileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
+
+/** The Compact context chip shows once only this much of the window is left: 2%. */
+const COMPACT_CHIP_PERCENT = 98;
+
+/** A prompt the user sent opens an exchange (its card pins); a subagent report stays in the one above. */
+function startsExchange(message: IAgentMessage): boolean {
+	return message.kind === 'user' && message.origin !== 'notification';
+}
 
 function createSvgIcon(viewBox: string, pathD: string, extraClass?: string, stroke = false, strokeWidth = '1.5'): HTMLElement {
 	const el = extraClass ? $(`span.volt-agent-svg-icon.${extraClass}`) : $('span.volt-agent-svg-icon');
@@ -195,26 +236,6 @@ function createOpenNewAgentIcon(): HTMLElement {
 	]);
 }
 
-function createPaperclipIcon(): HTMLElement {
-	return createStrokeIcon('paperclip', [
-		'M16 6v9.5a3.5 3.5 0 0 1-7 0V6a2.5 2.5 0 0 1 5 0v9',
-	]);
-}
-
-function createCubeIcon(): HTMLElement {
-	return createStrokeIcon('cube', [
-		'M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3Z',
-		'M12 12l8-4.5M12 12v9M12 12L4 7.5',
-	]);
-}
-
-function createPlugIcon(): HTMLElement {
-	return createStrokeIcon('plug', [
-		'M9 2v4M15 2v4M7 6h10v5a5 5 0 0 1-10 0V6Z',
-		'M12 16v6',
-	]);
-}
-
 function createMicIcon(): HTMLElement {
 	const el = $('span.volt-agent-svg-icon.mic');
 	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -247,10 +268,6 @@ function createChevronIcon(): HTMLElement {
 		'M8 6.5a.47.47 0 0 1-.35-.15l-4.5-4.5c-.2-.2-.2-.51 0-.71s.51-.2.71 0l4.15 4.15l4.14-4.14c.2-.2.51-.2.71 0s.2.51 0 .71l-4.5 4.5c-.1.1-.23.15-.35.15Z',
 		'chevron'
 	);
-}
-
-function createChevronRightIcon(): HTMLElement {
-	return createSvgIcon('0 0 24 24', 'm9 18 6-6-6-6', 'chevron-right', true, '2');
 }
 
 function createExpandIcon(restored: boolean): HTMLElement {
@@ -333,6 +350,17 @@ export interface IAgentUserMessage {
 	chips?: string[];
 	mentions?: IAgentDisplayMention[];
 	promptExpanded?: boolean;
+	/** The mode the prompt ran in, so Try again repeats it even after the composer's mode changed. */
+	mode?: string;
+	/**
+	 * Not typed by the user: `notification` is Volt waking the chat with its subagents' reports,
+	 * `brief` is the task another chat delegated to this one. Drawn as a card, not a bubble.
+	 */
+	origin?: 'notification' | 'brief';
+	/** `notification`: the subagent tasks whose reports it carries. */
+	taskIds?: string[];
+	/** The chat moved to another model before this turn: drawn as a "Context handoff" divider above it. */
+	handoff?: { fromLabel?: string; toLabel: string; at: number; by: 'agent' | 'user'; reason?: string };
 }
 
 export interface IAgentPromptDisplay {
@@ -356,6 +384,33 @@ export interface IAgentDockState {
 	endedAt?: number;
 	durationMs?: number;
 	turns: IAgentDockTurn[];
+	/** While streaming: the step the agent is on ("Explored available tools") and how many came before it in its group. */
+	activity?: { text: string; more: number };
+}
+
+/**
+ * The browser dock's collapsed pill: the live step from the transcript ("Explored available
+ * tools +2"), or the run's status when it is pinned ("Waiting for approval") or no step shows yet.
+ */
+function dockActivity(message: IAgentAssistantMessage, status: string): { text: string; more: number } {
+	if (message.activity?.statusPinned) {
+		return { text: status, more: 0 };
+	}
+	const rows = buildTranscriptRows(message.segments, message.text, true, message.steers);
+	for (let i = rows.length - 1; i >= 0; i--) {
+		const row = rows[i];
+		if (row.kind === 'steps' && row.steps.length) {
+			const step = row.steps[row.steps.length - 1];
+			return { text: [step.action, step.detail].filter(Boolean).join(' '), more: row.steps.length - 1 };
+		}
+		if (row.kind === 'thought') {
+			return { text: [row.step.action, row.step.detail].filter(Boolean).join(' '), more: 0 };
+		}
+		if (row.kind === 'markdown' && i === rows.length - 1) {
+			break;
+		}
+	}
+	return { text: status, more: 0 };
 }
 
 export interface IAgentActivity {
@@ -367,6 +422,8 @@ export interface IAgentActivity {
 	items: IAgentActivityItem[];
 	thinkingText?: string;
 	shimmerStartedAt?: number;
+	/** When the run last reported anything; a long silence reads "Taking longer than expected". */
+	lastEventAt?: number;
 }
 
 export interface IAgentAssistantMessage {
@@ -388,7 +445,37 @@ export interface IAgentAssistantMessage {
 	tokensWindow?: number;
 	cancelled?: boolean;
 	activity?: IAgentActivity;
+	/** The runtime run that produced this reply; Cursor's error tray calls it the request id. */
+	runId?: string;
+	/** How the run ended. Undefined while running and for replies recorded before it existed. */
+	outcome?: 'done' | 'failed' | 'stopped';
+	/** The run's last error, shown verbatim in the failed turn's tray. */
+	failure?: { message: string; retryable?: boolean };
+	/** Messages the user steered the running agent with, and where in the reply they landed. */
+	steers?: ITranscriptSteer[];
 }
+
+/** A prompt waiting behind the running turn. It keeps the mode it was queued in. */
+interface IQueuedAgentPrompt {
+	id: string;
+	text: string;
+	display?: IAgentPromptDisplay;
+	mode?: string;
+}
+
+/** Cursor's checkpoint dialogs remember "Don't ask again" per kind. */
+const RESTORE_CHECKPOINT_NO_CONFIRM_KEY = 'voltAgent.checkpoint.restoreNoConfirm';
+/** The end-of-turn "N Files Changed" card lists files as a tree instead of flat. */
+const TURN_FILES_TREE_KEY = 'voltAgent.turnFiles.tree';
+const REVERT_ON_EDIT_ALWAYS_KEY = 'voltAgent.checkpoint.revertOnEditAlways';
+
+/** Checkpoint commands registered by the checkpoint service; the UI hides itself while they are missing. */
+const CHECKPOINT_RESTORE_COMMAND = 'voltAgent.checkpoint.restore';
+const CHECKPOINT_HAS_CHANGES_COMMAND = 'voltAgent.checkpoint.hasChangesSince';
+const CHECKPOINT_REDO_COMMAND = 'voltAgent.checkpoint.redo';
+
+/** A chat that stays open this long gets its agent started, so the first send skips the cold start. */
+const PREWARM_ON_OPEN_MS = 400;
 
 export type IAgentMessage = IAgentUserMessage | IAgentAssistantMessage;
 
@@ -399,6 +486,32 @@ interface IModeOption {
 	keybinding?: string;
 	description?: string;
 }
+
+/** Least time between two streaming redraws of the live exchange. */
+const STREAM_FRAME_MS = 50;
+
+/** Model silence (no tool running) after which the live line says the turn is taking longer than expected, as Cursor does. */
+const SLOW_TURN_MS = 90_000;
+
+/** Supervisor tray buttons. Cursor's looping tray has none; these give the user a way forward. */
+const SUPERVISION_ACTION_LABELS: Record<SupervisionAction, { readonly label: () => string; readonly tooltip: () => string }> = {
+	continueDifferently: {
+		label: () => localize('voltAgent.continueDifferently', "Continue differently"),
+		tooltip: () => localize('voltAgent.continueDifferently.hint', "Tell the agent to stop repeating itself and try another way"),
+	},
+	resume: {
+		label: () => localize('voltAgent.resume', "Resume"),
+		tooltip: () => localize('voltAgent.resume.stallHint', "Stop the quiet turn and ask the agent to continue"),
+	},
+	continue: {
+		label: () => localize('voltAgent.continue', "Continue"),
+		tooltip: () => localize('voltAgent.continue.hint', "Keep going from where the run paused"),
+	},
+	stop: {
+		label: () => localize('voltAgent.stop', "Stop"),
+		tooltip: () => localize('voltAgent.stop.hint', "Stop the agent"),
+	},
+};
 
 const MODE_OPTIONS: IModeOption[] = [
 	{ id: 'Agent', label: 'Agent', icon: 'agent' },
@@ -427,6 +540,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private container!: HTMLElement;
 	private editorMainEl!: HTMLElement;
 	private threadView!: AgentThreadView;
+	private turnNav!: AgentTurnNav;
 	private threadEl!: HTMLElement;
 	private threadInner!: HTMLElement;
 	private threadScroll!: DomScrollableElement;
@@ -449,6 +563,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private sendButton!: HTMLButtonElement;
 	private suggestEl!: HTMLElement;
 	private composerQueue!: AgentComposerQueue;
+	private questionTray!: AgentQuestionTray;
 	private composerChips!: AgentComposerChips;
 	private pendingChanges!: AgentPendingChanges;
 	private readonly freshText = new FreshTextTracker();
@@ -457,7 +572,23 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private submitting = false;
 	private cloneBanner: HTMLElement | undefined;
 	private waitingForClone: string | undefined;
-	private promptQueue: { id: string; text: string; display?: IAgentPromptDisplay }[] = [];
+	/** Prompts reach the orchestrator in the order they were sent, even when freezing one takes longer. */
+	private submitChain: Promise<unknown> = Promise.resolve();
+	private subagentBar!: HTMLElement;
+	private readonly subagentBarStore = this._register(new DisposableStore());
+	private subagentBarKey = '';
+	/** The agent handoff the composer's model already followed. */
+	private followedHandoffAt: number | undefined;
+	private displayCodec: AgentHistoryCodec | undefined;
+	/** A queued prompt loaded into the composer for editing, and the draft it replaced. */
+	private queueEdit: { readonly id: string; readonly stash: { readonly text: string; readonly mentions: IAgentDisplayMention[] } } | undefined;
+	/** Arrow Up/Down through earlier prompts. */
+	private readonly promptHistory = new AgentPromptHistoryNavigator();
+	/** The checkpoint the user just restored; its message offers "Redo checkpoint" until the next send. */
+	private restoredCheckpoint: { readonly turnId: string } | undefined;
+	private prewarmTimer: IDisposable | undefined;
+	/** An edited prompt is waiting on the "Revert files to this message?" dialog. */
+	private committingEdit = false;
 	private readonly _onDidChangeQueue = this._register(new Emitter<void>());
 	readonly onDidChangeQueue: Event<void> = this._onDidChangeQueue.event;
 
@@ -473,19 +604,23 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private get currentModel(): string { return this.modelPicker.currentModel; }
 	private get modelAuto(): boolean { return this.modelPicker.modelAuto; }
 	private get catalog(): IModelOption[] { return this.modelPicker.catalog; }
-	private plusMenuOpen = false;
-	private plusMenuEl: HTMLElement | undefined;
-	private readonly plusMenuStore = this._register(new DisposableStore());
+	private plusMenu: IVoltMenuHandle | undefined;
 	private eventDisposable: IDisposable | undefined;
 	private renderHandle: number | undefined;
+	/** The pane width at the last layout; a prompt's clamp is measured once per width. */
+	private layoutWidth = 0;
+	private readonly promptClamps = new WeakMap<IAgentUserMessage, { readonly width: number; readonly text: string; readonly multiline: boolean; readonly clamped: boolean }>();
+	/** A streaming redraw waiting out {@link STREAM_FRAME_MS} since the last one. */
+	private renderDelay: IDisposable | undefined;
+	/** Redraws a quiet, non-rotating live line when it should start reading "Taking longer than expected". */
+	private slowTurnTimer: IDisposable | undefined;
+	private lastTailRenderAt = 0;
 	private findWidget!: AgentFindWidget;
 	private findMatches: HTMLElement[] = [];
 	private currentFindIndex = 0;
 	private composerZoomed = false;
 	private composerHeight: number | undefined;
 	private inputLayoutInProgress = false;
-	private resizeStartHeight = 0;
-	private sash!: Sash;
 	private sessionTokensUsed: number | undefined;
 	private sessionTokensWindow: number | undefined;
 	private toolbarLayoutHandle: number | undefined;
@@ -516,6 +651,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private clockTimer: IDisposable | undefined;
 	private statusRotateTimer: IDisposable | undefined;
 	private readonly statusMotion = new Map<string, { text: string; from?: string; started?: number }>();
+	/** Replies that streamed in this editor: their "Worked for" fold starts open, as Cursor's does right after a run. */
+	private readonly liveTurns = new WeakSet<IAgentAssistantMessage>();
 	private editingUserIndex: number | undefined;
 	private suppressEditDismiss = false;
 	private suppressStartEdit = false;
@@ -538,9 +675,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly editEditorDisposables = this._register(new DisposableStore());
 	private openedPreviewUrl: string | undefined;
 	private surfaceHost!: AgentSurfaceHost;
+	private landingChrome: AgentLandingChrome | undefined;
 	private restoringChat = false;
 	private chatSaveTimer: number | undefined;
 	private snapshotOverlay: HTMLElement | undefined;
+	/** Redraws each "N Files Changed" card on screen, after the list / tree toggle. */
+	private readonly turnFilesCards = new Set<() => void>();
+	private readonly turnFileLabels: ResourceLabels;
 	private readonly snapshotStore = this._register(new DisposableStore());
 	private readonly _onDidChangeDock = this._register(new Emitter<void>());
 	readonly onDidChangeDock: Event<void> = this._onDidChangeDock.event;
@@ -561,6 +702,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@IClipboardService private readonly clipboardService: IClipboardService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IFileService private readonly fileService: IFileService,
@@ -571,9 +713,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
+		@IDialogService private readonly dialogService: IDialogService,
+		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 	) {
 		super(AgentEditor.ID, group, telemetryService, themeService, storageService);
 		this.markdownRenderer = this.instantiationService.createInstance(MarkdownRenderer, {});
+		this.turnFileLabels = this._register(this.instantiationService.createInstance(ResourceLabels, DEFAULT_LABELS_CONTAINER));
+		// KaTeX and the diagram renderer load lazily; once math is ready, redraw replies written before it.
+		void preloadMarkdownExtras(mainWindow).then(() => {
+			if (this.container?.isConnected) {
+				this.renderThread(this.stickToBottom);
+			}
+		});
 		this.mentionPreview = this._register(this.instantiationService.createInstance(MentionCodePreview));
 		this.modelPicker = this._register(this.instantiationService.createInstance(AgentModelPicker, {
 			onDidChange: () => {
@@ -597,6 +748,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	protected override createEditor(parent: HTMLElement): void {
+		parent.classList.add('volt-agent-editor-instance');
 		this.container = append(parent, $('.volt-agent-editor'));
 		this.container.dataset.mode = normalizeVoltMode(this.currentMode);
 		// Until the first chat's history is read the thread is empty, which lays out the
@@ -628,10 +780,25 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				void this.mentionController?.handleExternalDrop(e);
 			}
 		}));
+		this.bindAttachDrop();
 		this.threadView = this._register(new AgentThreadView());
 		this.threadEl = this.threadView.element;
 		this.threadInner = this.threadView.inner;
+		// `has-turns` stands in for `.volt-agent-editor:has(.volt-agent-turn)`: a :has() on the chat restyles
+		// all of it whenever the transcript adds a node, which made scrolling and streaming slow.
+		// Exchanges are the thread's children and each gets its turn as it is added.
+		const syncHasTurns = () => this.container.classList.toggle('has-turns', !!this.threadInner.querySelector('.volt-agent-turn'));
+		const turnsObserver = new MutationObserver(syncHasTurns);
+		turnsObserver.observe(this.threadInner, { childList: true });
+		this._register(toDisposable(() => turnsObserver.disconnect()));
+		syncHasTurns();
 		this.threadScroll = this.threadView.scroll;
+		this.turnNav = this._register(new AgentTurnNav(this.threadView));
+		this._register(new AgentThreadSelectionActions(this.threadEl, {
+			isVisible: () => this.isVisible(),
+			onAddToChat: text => this.addChatSelection(text, this.sessionKey),
+			onAddToSideChat: text => void this.addChatSelectionToSideChat(text),
+		}));
 		this.editorMainEl = append(this.container, $('.volt-agent-editor-main'));
 		this.surfaceHost = this._register(this.instantiationService.createInstance(AgentSurfaceHost, this.container, this.editorMainEl));
 		append(this.editorMainEl, this.threadEl);
@@ -643,7 +810,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.applyCodeFont();
 		this._register(this.threadScroll.onScroll(e => {
 			if (!this.threadScrollFrozen && !this.applyingEditPin) {
-				this.stickToBottom = e.scrollTop + e.height >= e.scrollHeight - 32;
+				// The reply grew under a reader at the end: the follow scroll lands next. Until then this is
+				// not a scroll up, or the arrow blinks in and out with every streamed line.
+				const grewAtEnd = this.stickToBottom && !e.scrollTopChanged && e.scrollHeightChanged;
+				this.stickToBottom = grewAtEnd || e.scrollTop + e.height >= e.scrollHeight - 32;
+				// Empty chats and a reader already at the end get no jump-back arrow.
+				this.composerChips?.setScrolledUp(!grewAtEnd && shouldOfferScrollToBottom(this.messages.length > 0, e.scrollHeight - (e.scrollTop + e.height)));
 				if (!this.restoringChat) {
 					this.scheduleChatSave();
 				}
@@ -677,28 +849,94 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 		}, true));
 		this.composerEl = append(this.editorMainEl, $('.volt-agent-composer'));
-		this.composerChips = this._register(this.instantiationService.createInstance(AgentComposerChips, {
-			onChangesClick: () => void this.openSessionChanges(),
-			onTerminalClick: () => this.surfaceHost.openTerminal(),
-		}));
-		append(this.composerEl, this.composerChips.element);
-		this.pendingChanges = this._register(this.instantiationService.createInstance(AgentPendingChanges, {
-			onOpenFile: file => this.openPendingFile(file),
-			onReview: () => this.surfaceHost.openChanges('pending'),
-		}));
-		append(this.composerEl, this.pendingChanges.element);
 		this.composerQueue = this._register(this.instantiationService.createInstance(AgentComposerQueue, {
 			onRemove: id => this.removeQueuedPrompt(id),
 			onClear: () => this.clearPromptQueue(),
 			onMultitask: () => this.setMode('Multitask'),
 			onReorder: ids => this.reorderQueuedPrompts(ids),
+			onEdit: id => this.editQueuedPrompt(id),
+			onSendNow: id => this.sendQueuedNow(id),
+			onResume: () => this.resumeQueue(),
+			onCancelEdit: () => this.cancelQueueEdit(),
+			onOpenAgent: view => this.openSubagent(view.key),
+			onStopAgent: view => void this.orchestrator.dispatch({ type: 'task.cancel', taskId: view.key, reason: 'The user stopped it.' }),
+			onStopAllAgents: () => this.stopAllSubagents(),
 		}));
-		append(this.composerEl, this.composerQueue.element);
-		const landingChrome = this._register(this.instantiationService.createInstance(AgentLandingChrome));
-		append(this.composerEl, landingChrome.element);
+		// The dock beside a follow-up chat lists its finished agents while it is open; the card above
+		// the composer then shows only the working ones. The dock puts its state on this chat as classes.
+		const syncAgentsInDock = () => {
+			const classes = this.container.classList;
+			this.composerQueue?.setAgentsInDock(classes.contains('follow-up') && classes.contains('has-quick-open') && classes.contains('quick-open-expanded')
+				&& !classes.contains('quick-open-user-hidden') && !classes.contains('has-surfaces'));
+		};
+		const dockObserver = new MutationObserver(syncAgentsInDock);
+		dockObserver.observe(this.container, { attributes: true, attributeFilter: ['class'] });
+		this._register(toDisposable(() => dockObserver.disconnect()));
+		syncAgentsInDock();
+		this._register(this.orchestrator.onDidChange(change => {
+			if (change.threads.includes(this.sessionKey)) {
+				this.followAgentHandoff();
+				this.syncQueueStack();
+				this.updateSendButton();
+				// Subagent rows and report cards read live task state.
+				if (change.tasks.length) {
+					this.scheduleThreadRender();
+				}
+			}
+		}));
+		// "Open parent" shows only while the parent chat has no tab.
+		this._register(this.editorService.onDidEditorsChange(() => this.renderSubagentBar()));
+		this.composerChips = this._register(this.instantiationService.createInstance(AgentComposerChips, {
+			onChangesClick: () => void this.openSessionChanges(),
+			onTerminalClick: () => this.surfaceHost.openTerminal(),
+			onScrollToBottom: () => this.scrollThreadToEnd(),
+			onCompactClick: () => this.compactContext(),
+			onStatusClick: () => this.scrollThreadToEnd(),
+		}));
+		append(this.composerEl, this.composerChips.element);
+		// The same run status chip the browser's dock shows ("Waiting for approval", "Worked 2m").
+		this._register(this.onDidChangeDock(() => this.syncStatusChip()));
+		this.pendingChanges = this._register(this.instantiationService.createInstance(AgentPendingChanges, {
+			onOpenFile: file => this.openPendingFile(file),
+			onReview: () => this.surfaceHost.openChanges('pending'),
+		}));
+		if (MINI_FILE_DIFF_VIEWER_ENABLED) {
+			append(this.composerEl, this.pendingChanges.element);
+		}
+		this.landingChrome = this._register(this.instantiationService.createInstance(AgentLandingChrome, (folder: URI) => this.openLandingProject(folder)));
+		append(this.composerEl, this.landingChrome.element);
+		this.questionTray = this._register(new AgentQuestionTray({
+			onSubmit: (requestId, response) => this.answerQuestions(requestId, response),
+			onLayout: () => this.layoutInputEditor(),
+		}));
+		append(this.composerEl, this.questionTray.element);
+		this._register(this.runtime.onDidChangeQuestions(sessionId => {
+			if (sessionId === this.sessionKey) {
+				this.syncQuestionTray();
+			}
+		}));
+		// While the agent waits on questions, a letter typed into the empty composer picks that option.
+		this._register(addDisposableListener(getWindow(this.container), 'keydown', e => {
+			if (!this.questionTray.active || this.inputModel?.getValue() || !this.isVisible()) {
+				return;
+			}
+			const target = e.target as HTMLElement | null;
+			const doc = this.container.ownerDocument;
+			if (target && target !== doc.body && !this.monacoHost.contains(target)) {
+				return;
+			}
+			if (this.questionTray.handleKey(e)) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
+		}, true));
 		this.cloneBanner = append(this.composerEl, $('.volt-agent-clone-banner.hidden'));
 		this.cloneBanner.setAttribute('role', 'status');
 		this.renderCloneBanner();
+		// A subagent's chat says whose it is and how it is doing, above everything else on the composer.
+		this.subagentBar = append(this.composerEl, $('.volt-agent-subagent-bar.hidden'));
+		// Subagents and queued prompts sit right on top of the text area, under the chips (Cursor).
+		append(this.composerEl, this.composerQueue.element);
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
 		this.monacoHost = append(this.inputBox, $('.volt-agent-monaco.show-file-icons'));
 		this.placeholderEl = append(this.monacoHost, $('.volt-agent-placeholder'));
@@ -767,26 +1005,28 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 		this.contextUsageView = this._register(this.instantiationService.createInstance(AgentContextUsageView, {
 			getUsageInput: () => this.contextUsageInput(),
-			getPanelAnchor: () => ({ parent: this.composerEl, before: this.inputBox }),
+			// Above the Changes / Commit & Push chips, which stay on the composer.
+			getPanelAnchor: () => ({ parent: this.composerEl, before: this.composerChips.element }),
+			getBranch: () => this.statusBranch(),
 			onWillOpenPanel: () => this.hidePlusMenu(),
+			getCompactState: () => this.compactState(),
+			compact: () => this.compactContext(),
+			// Nearly out of room: offer Compact context as a chip beside Changes.
+			onDidRefresh: percent => {
+				const state = percent >= COMPACT_CHIP_PERCENT ? this.compactState() : undefined;
+				this.composerChips?.setCompactOffered(!!state && !state.blockedReason);
+			},
 		}));
 		append(this.composerEl, this.contextUsageView.element);
+		this._register(this.landingChrome.onDidChangeBranch(() => this.contextUsageView.refreshBranch()));
+		// The first send in Worktree mode makes the checkout just before the run starts.
+		this._register(this.runtime.onDidEmit(e => {
+			if (e.sessionId === this.sessionKey && (e.event.type === 'run.start' || e.event.type === 'notice')) {
+				this.contextUsageView.refreshBranch();
+			}
+		}));
 		this.suggestEl = append(this.composerEl, $('.volt-agent-suggest'));
 		this.renderSuggestChips();
-
-		this.sash = this._register(new Sash(this.editorMainEl, {
-			getHorizontalSashTop: () => this.composerEl.offsetTop + this.inputBox.offsetTop,
-			getHorizontalSashWidth: () => this.editorMainEl.clientWidth,
-		}, { orientation: Orientation.HORIZONTAL, size: 3 }));
-		this._register(this.sash.onDidStart(() => {
-			this.resizeStartHeight = this.composerEl.offsetHeight;
-		}));
-		this._register(this.sash.onDidChange(e => {
-			this.applyComposerHeight(this.resizeStartHeight + (e.startY - e.currentY));
-		}));
-		this._register(this.sash.onDidReset(() => {
-			this.setComposerZoomed(false);
-		}));
 
 		this.bindRuntimeSession();
 		this.renderThread(true);
@@ -1141,7 +1381,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.container.classList.remove('resized');
 			this.updateComposerEditorOptions();
 			this.layoutInputEditor();
-			this.sash?.layout();
 		}
 		const input = this.input;
 		if (input instanceof AgentEditorInput) {
@@ -1176,7 +1415,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.updateComposerEditorOptions();
 		this.layoutInputEditor();
-		this.sash?.layout();
 	}
 
 	private showAgentLineNumbers(): boolean {
@@ -1295,8 +1533,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		input.composerZoomed = this.composerZoomed;
 		input.composerHeight = this.composerHeight;
-		input.promptQueue = this.promptQueue;
-		input.queueExpanded = this.promptQueue.length > 0;
+		input.queueExpanded = this.queuedItems.length > 0;
 		input.scheduleDraftSave();
 	}
 
@@ -1308,17 +1545,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.sessionTokensUsed = input.contextUsed;
 		this.sessionTokensWindow = input.contextWindow;
 		this.editingUserIndex = undefined;
+		this.queueEdit = undefined;
+		this.promptHistory.reset();
+		this.restoredCheckpoint = undefined;
 		this.clearEditComposer();
 		const chat = this.surfaceHost.chatView(input.sessionId);
 		const followTail = chat.followTail !== false;
 		this.stickToBottom = followTail;
 		this.restoringChat = true;
-		if (input.restoredMode && input.restoredMode !== this.currentMode) {
-			const option = MODE_OPTIONS.find(item => item.id.toLowerCase() === input.restoredMode!.toLowerCase());
-			if (option) {
-				this.currentMode = option.id;
-				this.updateModeButton();
-			}
+		// A chat keeps its own mode; a new one starts in Agent, as Cursor's do, not in the last chat's Debug or Plan.
+		const savedMode = input.chosenMode ?? input.restoredMode;
+		const mode = (savedMode && MODE_OPTIONS.find(item => item.id.toLowerCase() === savedMode.toLowerCase())?.id) || MODE_OPTIONS[0].id;
+		if (mode !== this.currentMode) {
+			this.currentMode = mode;
+			this.updateModeButton();
+			this.updateInputPlaceholder();
+			this.composerQueue?.setMode(mode);
 		}
 		this.syncComposerPlacement();
 		const stashed = this.adoptStashedThread(input);
@@ -1341,10 +1583,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.mentionController?.restoreMentions(input.draftMentions);
 		this.setComposerZoomed(input.composerZoomed);
-		if (!input.composerZoomed) {
-			this.applyComposerHeight(input.composerHeight);
-		}
-		this.promptQueue = Array.isArray(input.promptQueue) ? input.promptQueue.slice() as typeof this.promptQueue : [];
+		this.migrateDraftQueue(input);
 		this.syncQueueStack();
 		this.updateSendButton();
 		input.setHasUnsavedContent(!!input.draft.trim());
@@ -1353,6 +1592,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private inputPlaceholderText(): string {
+		if (this.questionTray?.active) {
+			return localize('voltAgent.questionDetailsPlaceholder', "Add more optional details...");
+		}
+		if (this.queueEdit) {
+			return localize('voltAgent.queue.editingPlaceholder', "Editing queued message...");
+		}
 		if (this.currentMode === 'Plan') {
 			return localize('voltAgent.planPlaceholder', "Plan changes");
 		}
@@ -1460,173 +1705,101 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private hidePlusMenu(): void {
-		this.plusMenuStore.clear();
-		this.plusMenuEl?.remove();
-		this.plusMenuEl = undefined;
-		this.plusMenuOpen = false;
+		this.plusMenu?.dispose();
+		this.plusMenu = undefined;
 	}
 
 	private showPlusMenu(source: 'main' | 'edit' = 'main'): void {
-		if (this.plusMenuOpen) {
+		if (this.plusMenu) {
 			this.hidePlusMenu();
 			return;
 		}
 		this.tooltip.hide();
 		this.contextUsageView?.hidePanel();
-		this.plusMenuStore.clear();
-		this.plusMenuEl?.remove();
-		this.plusMenuOpen = true;
-		const menu = $('.volt-agent-plus-menu');
-		this.plusMenuEl = menu;
-		if (source === 'edit' && this.editComposerEl && this.editInputBox) {
-			this.editComposerEl.insertBefore(menu, this.editInputBox);
-		} else {
-			this.composerEl.insertBefore(menu, this.inputBox);
-		}
-		const search = append(menu, $('input.volt-agent-plus-search')) as HTMLInputElement;
-		search.type = 'text';
-		search.placeholder = localize('voltAgent.plusSearch', "Search skills, context, chats...");
-		const list = append(menu, $('.volt-agent-plus-list'));
-		const itemsStore = this.plusMenuStore.add(new DisposableStore());
-
-		const selectableModes = MODE_OPTIONS.filter(option => option.id !== 'Agent');
-		const renderItems = (query: string) => {
-			itemsStore.clear();
-			list.replaceChildren();
-			const q = query.trim().toLowerCase();
-			const modes = selectableModes.filter(option =>
-				!q
-				|| option.label.toLowerCase().includes(q)
-				|| (option.description ?? '').toLowerCase().includes(q)
-			);
-			for (const option of modes) {
-				const item = append(list, $('button.volt-agent-dropdown-item.plus-mode')) as HTMLButtonElement;
-				if (option.id === this.currentMode) {
-					item.classList.add('active');
-				}
-				item.appendChild(createModeIcon(option.icon));
-				append(item, $('span.label')).textContent = option.label;
-				if (option.description) {
-					append(item, $('span.desc')).textContent = option.description;
-				}
-				itemsStore.add(addDisposableListener(item, 'click', e => {
-					e.preventDefault();
-					e.stopPropagation();
-					this.setMode(option.id);
-					this.hidePlusMenu();
-				}));
-			}
-
-			const actions = ([
-				{ id: 'files' as const, label: localize('voltAgent.plusFiles', "Files"), keys: ['files', 'file', 'attach'] },
-				{ id: 'openFile' as const, label: localize('voltAgent.plusOpenFile', "Open File"), keys: ['open', 'file', 'editor'] },
-				{ id: 'terminal' as const, label: localize('voltAgent.plusTerminal', "Terminal"), keys: ['terminal', 'shell'] },
-				{ id: 'browser' as const, label: localize('voltAgent.plusBrowser', "Browser"), keys: ['browser', 'preview'] },
-				{ id: 'model' as const, label: localize('voltAgent.plusModel', "Model"), keys: ['model'] },
-				{ id: 'mcp' as const, label: localize('voltAgent.plusMcp', "MCP"), keys: ['mcp'] },
-			]).filter(action =>
-				!q
-				|| action.label.toLowerCase().includes(q)
-				|| action.keys.some(key => key.includes(q) || q.includes(key))
-			);
-
-			if (modes.length && actions.length) {
-				append(list, $('.volt-agent-dropdown-sep'));
-			}
-
-			for (const action of actions) {
-				const item = append(list, $('button.volt-agent-dropdown-item.plus-action')) as HTMLButtonElement;
-				item.appendChild(action.id === 'files'
-					? createPaperclipIcon()
-					: action.id === 'model'
-						? createCubeIcon()
-						: action.id === 'mcp'
-							? createPlugIcon()
-							: renderIcon(action.id === 'terminal' ? Codicon.terminal : action.id === 'browser' ? Codicon.globe : Codicon.file));
-				append(item, $('span.label')).textContent = action.label;
-				if (action.id === 'model') {
-					const selected = this.selectedModel();
-					const name = this.modelAuto
-						? localize('voltAgent.auto', "Auto")
-						: selected
-							? [this.modelPicker.modelProviderLabel(selected), selected.name].filter(Boolean).join(' ')
-							: '';
-					if (name) {
-						append(item, $('span.desc')).textContent = name;
-					}
-				}
-				if (action.id === 'mcp') {
-					const meta = append(item, $('span.meta'));
-					meta.appendChild(createChevronRightIcon());
-				}
-				itemsStore.add(addDisposableListener(item, 'click', e => {
-					e.preventDefault();
-					e.stopPropagation();
-					this.hidePlusMenu();
-					if (action.id === 'files') {
-						if (source === 'edit') {
+		const edit = source === 'edit' && !!this.editInputBox;
+		const anchor = edit && this.editInputBox ? this.editInputBox : this.inputBox;
+		const focusComposer = () => edit ? this.editEditor?.focus() : this.inputEditor?.focus();
+		const selected = this.selectedModel();
+		const handle: IVoltMenuHandle = showAgentPlusMenu(this.contextViewService, {
+			anchor,
+			modes: MODE_OPTIONS.filter(option => option.id !== 'Agent'),
+			currentMode: this.currentMode,
+			actions: ['files', 'image', 'video', 'openFile', 'terminal', 'browser', 'model', 'mcp'],
+			modelName: this.modelAuto
+				? localize('voltAgent.auto', "Auto")
+				: selected
+					? [this.modelPicker.modelProviderLabel(selected), selected.name].filter(Boolean).join(' ') || undefined
+					: undefined,
+			onMode: id => {
+				this.setMode(id);
+				focusComposer();
+			},
+			onAction: action => {
+				switch (action) {
+					case 'files':
+						if (edit) {
 							this.ensureEditComposer();
 							this.editMentionController?.openFilePicker();
-							this.editEditor?.focus();
 						} else {
 							this.ensureInputEditor();
 							this.mentionController?.openFilePicker();
-							this.inputEditor?.focus();
 						}
+						focusComposer();
 						return;
-					}
-					if (action.id === 'openFile') {
+					case 'image':
+					case 'video':
+						void this.pickMedia(edit, action);
+						return;
+					case 'openFile':
 						void this.surfaceHost.openFileFromDialog();
 						return;
-					}
-					if (action.id === 'terminal') {
+					case 'terminal':
 						this.surfaceHost.openTerminal();
 						return;
-					}
-					if (action.id === 'browser') {
+					case 'browser':
 						this.surfaceHost.openBrowser();
 						return;
-					}
-					if (action.id === 'model') {
-						const anchor = source === 'edit' && this.editModelButton ? this.editModelButton : this.plusButton;
-						scheduleAtNextAnimationFrame(getWindow(anchor), () => this.showModelDropdown(source === 'edit' ? this.editModelButton : this.modelButton));
+					case 'model':
+						scheduleAtNextAnimationFrame(getWindow(anchor), () => this.showModelDropdown(edit ? this.editModelButton : this.modelButton));
 						return;
-					}
-					void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
-				}));
-			}
-		};
-
-		renderItems('');
-		this.plusMenuStore.add(addDisposableListener(search, 'input', () => renderItems(search.value)));
-		this.plusMenuStore.add(addDisposableListener(getWindow(menu).document, 'mousedown', e => {
-			if (!(e.target instanceof Node)) {
-				return;
-			}
-			if (menu.contains(e.target) || this.plusButton.contains(e.target) || this.modeButton.contains(e.target) || this.editPlusButton?.contains(e.target)) {
-				return;
-			}
-			this.hidePlusMenu();
-		}, true));
-		this.plusMenuStore.add(addDisposableListener(getWindow(menu), 'keydown', e => {
-			if (e.key === 'Escape') {
-				e.preventDefault();
-				this.hidePlusMenu();
-				if (source === 'edit') {
-					this.editEditor?.focus();
-				} else {
-					this.inputEditor?.focus();
+					case 'mcp':
+						void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
+						return;
 				}
-			}
-		}));
-		this.plusMenuStore.add(toDisposable(() => {
-			menu.remove();
-			if (this.plusMenuEl === menu) {
-				this.plusMenuEl = undefined;
-				this.plusMenuOpen = false;
-			}
-		}));
-		scheduleAtNextAnimationFrame(getWindow(menu), () => search.focus());
+			},
+			onHide: () => {
+				if (this.plusMenu === handle) {
+					this.plusMenu = undefined;
+				}
+			},
+		});
+		this.plusMenu = handle;
+	}
+
+	/** "+" › Image / Video: pick files from disk and attach them at the cursor. */
+	private async pickMedia(edit: boolean, kind: 'image' | 'video'): Promise<void> {
+		const resources = await this.fileDialogService.showOpenDialog({
+			title: kind === 'video' ? localize('voltAgent.pickVideosTitle', "Attach Videos") : localize('voltAgent.pickImagesTitle', "Attach Images"),
+			canSelectFiles: true,
+			canSelectFolders: false,
+			canSelectMany: true,
+			defaultUri: this.sessionContext.activeProject?.root ?? await this.fileDialogService.defaultFilePath(),
+			filters: [kind === 'video'
+				? { name: localize('voltAgent.videoFilter', "Videos"), extensions: [...VIDEO_EXTENSIONS] }
+				: { name: localize('voltAgent.imageFilter', "Images"), extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }],
+		});
+		if (!resources?.length) {
+			return;
+		}
+		if (edit) {
+			this.ensureEditComposer();
+			await this.editMentionController?.addMediaFiles(resources);
+			this.editEditor?.focus();
+		} else {
+			this.ensureInputEditor();
+			await this.mentionController?.addMediaFiles(resources);
+			this.inputEditor?.focus();
+		}
 	}
 
 	private renderSuggestChips(): void {
@@ -1641,7 +1814,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		const chips = agentEmptyComposerChips({
 			mode: this.currentMode,
-			needsProject: this.composerNeedsProject(),
 		});
 		for (const chipSpec of chips) {
 			const chip = append(this.suggestEl, $('button.volt-agent-suggest-chip')) as HTMLButtonElement;
@@ -1659,10 +1831,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					case 'multitask':
 						this.setMode('Multitask');
 						return;
-					case 'selectProject':
-					case 'cloud':
-						// Placeholder: action TBD.
-						return;
 					default: {
 						const unexpected: never = chipSpec.id;
 						return unexpected;
@@ -1670,11 +1838,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				}
 			}));
 		}
-	}
-
-	/** No project binding and no saved folder: Send/Enter off and Select project chip on. */
-	private composerNeedsProject(): boolean {
-		return agentComposerNeedsProjectChip(this.sessionContext, this.sessionKey, this.history.get(this.sessionKey));
 	}
 
 	private composerCanSend(): boolean {
@@ -1712,7 +1875,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 			const icon = append(chip, $('span.volt-agent-mention-icon'));
 			icon.classList.add(mention.kind);
-			const iconClasses = mentionIconClasses(mention, this.modelService, this.languageService);
+			const iconClasses = mention.kind === 'image' && mention.image
+				? ['volt-agent-mention-thumb', imageThumbClass(mention.image.bytes, mention.image.mime)]
+				: mention.kind === 'video' && mention.video?.poster
+					? ['volt-agent-mention-thumb', imageThumbClass(mention.video.poster, 'image/jpeg')]
+					: mentionIconClasses(mention, this.modelService, this.languageService);
 			if (iconClasses.length) {
 				icon.classList.add(...iconClasses);
 			}
@@ -1725,6 +1892,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				pill.classList.add(`c${mention.accent ?? 0}`);
 			}
 			this.setSearchableText(pill, mention.label);
+			if (mention.kind === 'image' && mention.image) {
+				append(chip, $('span.volt-agent-mention-size')).textContent = formatImageSize(mention.image.bytes.byteLength);
+			} else if (mention.kind === 'video' && mention.video) {
+				append(chip, $('span.volt-agent-mention-size')).textContent = videoDetail(mention.video);
+			}
 			if (mention.resource && mention.range) {
 				chip.setAttribute('data-preview', 'true');
 				const comment = mentions.reduce((value, item) => value.split(item.label).join(''), text).replace(/\s+/g, ' ').trim();
@@ -1739,6 +1911,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					e.stopPropagation();
 					void this.mentionPreview?.reveal(mention);
 				}));
+			} else if ((mention.kind === 'image' && mention.image) || (mention.kind === 'video' && mention.video)) {
+				const mediaIndex = userMessageMedia(message).indexOf(mention);
+				chip.setAttribute('data-open', 'true');
+				this.threadListeners.add(addDisposableListener(chip, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					this.openMessageMedia(message, mediaIndex);
+				}));
+			} else if (mention.resource && (mention.kind === 'file' || mention.kind === 'image')) {
+				const resource = URI.revive(mention.resource);
+				chip.setAttribute('data-open', 'true');
+				this.threadListeners.add(addDisposableListener(chip, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					this.surfaceHost.openFile(resource);
+				}));
 			}
 			cursor = index + mention.label.length;
 		}
@@ -1747,6 +1935,39 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		} else if (cursor === 0) {
 			this.setSearchableText(parent, text);
 		}
+	}
+
+	/** A sent prompt's images and videos, large and read-only. */
+	private openMessageMedia(message: IAgentUserMessage, mediaIndex: number): void {
+		const target = userMessageMedia(message)[mediaIndex];
+		const video = target?.kind === 'video' ? target.video : undefined;
+		if (target && video) {
+			const videos = userMessageMedia(message).filter(mention => mention.kind === 'video');
+			showAgentVideoViewer(options => this.instantiationService.createInstance(AgentVideoViewer, options), {
+				anchor: this.container,
+				title: localize('voltAgent.attachedVideoTitle', "Attached video {0}", videos.indexOf(target) + 1),
+				name: target.label,
+				mime: video.mime,
+				bytes: video.bytes,
+				path: video.path,
+			});
+			return;
+		}
+		const images = userMessageMedia(message).filter(mention => mention.kind === 'image');
+		const index = target ? images.indexOf(target) : -1;
+		if (index < 0) {
+			return;
+		}
+		showAgentImageViewer(options => this.instantiationService.createInstance(AgentImageViewer, options), {
+			anchor: this.container,
+			index,
+			images: images.map((mention, i) => ({
+				name: mention.label,
+				title: localize('voltAgent.attachedImageTitle', "Attached image {0}", i + 1),
+				bytes: mention.image!.bytes,
+				mime: mention.image!.mime,
+			})),
+		});
 	}
 
 	private blockRenderContext(message: IAgentAssistantMessage): IBlockRenderContext {
@@ -1767,12 +1988,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onCopyText: text => void this.clipboardService.writeText(text),
 			onAccessDecision: (requestId, effect, scope, pattern) => this.runtime.respondToAccessRequest(requestId, effect, scope, pattern),
 			onBuildPlan: () => this.setMode('Agent'),
+			onBuildCreatedPlan: plan => this.buildCreatedPlan(plan),
 			streaming: !!message.activity?.streaming,
+			languageService: this.languageService,
+			onExpandDiagram: svg => this.showDiagramPreview(svg),
 		};
 	}
 
 	private flashTableCopyButton(anchor: HTMLElement): void {
-		const slot = anchor.querySelector('.volt-agent-table-copy-icon');
+		const slot = anchor.querySelector<HTMLElement>('.volt-agent-table-copy-icon');
 		if (!slot) {
 			return;
 		}
@@ -1928,6 +2152,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.clearEditComposer();
 			this.sessionTokensUsed = undefined;
 			this.sessionTokensWindow = undefined;
+			this.turnNav.setTurns([]);
+			this.composerChips?.setScrolledUp(false);
 			this.syncComposerPlacement();
 			this.refreshContextUsage();
 			this.updateInputPlaceholder();
@@ -1939,7 +2165,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const tailFrom = this.lastExchangeStart();
 		let exchange: HTMLElement | undefined;
 		for (const [index, message] of this.messages.entries()) {
-			if (message.kind === 'user' || !exchange) {
+			if (startsExchange(message) || !exchange) {
 				if (index === tailFrom) {
 					this.renderingTail = true;
 				}
@@ -1957,6 +2183,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** Layout and bookkeeping once `threadInner` holds the whole thread, freshly built or taken back from the stash. */
 	private finishThreadRender(scrollToEnd: boolean): void {
+		this.turnNav.setTurns(this.navTurns());
 		this.syncComposerPlacement();
 		this.syncThreadScroll(scrollToEnd);
 		scheduleAtNextAnimationFrame(getWindow(this.threadInner), () => {
@@ -1980,23 +2207,122 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (message.kind === 'user') {
 			if (this.editingUserIndex === index) {
 				turn.classList.add('editing');
-				append(turn, $('.volt-agent-edit-slot'));
+				this.renderRedoCheckpoint(append(turn, $('.volt-agent-edit-slot')), message);
+			} else if (message.origin === 'notification') {
+				if (message.handoff) {
+					this.renderHandoffDivider(turn, message.handoff);
+				}
+				this.renderNotificationTurn(turn, message);
 			} else {
+				if (message.handoff) {
+					this.renderHandoffDivider(turn, message.handoff);
+				}
+				if (message.origin === 'brief') {
+					this.renderSubagentOfPill(turn);
+				}
 				this.renderUserTurn(turn, message, index);
-			}
-			const next = this.messages[index + 1];
-			if (next?.kind === 'agent' && this.editingUserIndex !== index) {
-				this.renderWorkedMeta(exchange, next);
 			}
 		} else {
 			this.renderAgentTurn(turn, message);
 		}
 	}
 
+	/**
+	 * Volt woke this chat with its subagents' reports: a quiet system row listing them (each opens
+	 * its chat), not a bubble the user did not write.
+	 */
+	private renderNotificationTurn(turn: HTMLElement, message: IAgentUserMessage): void {
+		turn.classList.add('notification');
+		const row = append(turn, $('.volt-agent-notification-row'));
+		const tasks = (message.taskIds ?? []).map(id => this.orchestrator.getTask(id)).filter((task): task is NonNullable<typeof task> => !!task);
+		if (!tasks.length) {
+			const head = append(row, $('.volt-agent-notification-head'));
+			// A watched pull request woke the chat: its icon, and a click opens it.
+			const prUrl = /^\[Volt\] (?:Update on|Volt stopped watching) pull request #\d+ \((https?:\/\/[^\s)]+)\)/.exec(message.agentText ?? '')?.[1];
+			head.appendChild(renderIcon(prUrl ? Codicon.gitPullRequest : Codicon.layers));
+			append(head, $('span.volt-agent-notification-text')).textContent = message.text;
+			if (prUrl) {
+				head.classList.add('pull-request');
+				setAgentTooltip(head, localize('voltAgent.notification.openPr', "Open the pull request"));
+				this.threadListeners.add(addDisposableListener(head, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					void this.commandService.executeCommand(OPEN_PULL_REQUEST_COMMAND_ID, prUrl, this.sessionKey);
+				}));
+			}
+			return;
+		}
+		const list = append(row, $('.volt-agent-notification-list'));
+		const now = Date.now();
+		for (const task of tasks) {
+			renderCursorSubagentRow(list, subagentView(agentRow(task), ref => this.providerOf(ref)), {
+				store: this.threadListeners,
+				now,
+				tooltip: this.tooltip,
+				// A report: the stack icon, no heading; a click opens the subagent's chat.
+				mark: () => createReportStackIcon(list),
+				onOpen: view => this.openSubagent(view.key),
+			});
+		}
+	}
+
+	/** "⇄ Context handoff · Claude Opus 5.5 → GPT-6": the chat moved to another model before this turn. */
+	private renderHandoffDivider(turn: HTMLElement, handoff: NonNullable<IAgentUserMessage['handoff']>): void {
+		const divider = append(turn, $('.volt-agent-handoff'));
+		const pill = append(divider, $('span.volt-agent-handoff-pill'));
+		pill.appendChild(renderIcon(Codicon.arrowSwap));
+		append(pill, $('span.label')).textContent = localize('voltAgent.handoff', "Context handoff");
+		if (handoff.fromLabel) {
+			append(pill, $('span.from')).textContent = handoff.fromLabel;
+			pill.appendChild(renderIcon(Codicon.arrowRight));
+		}
+		append(pill, $('span.to')).textContent = handoff.toLabel;
+		setAgentTooltip(pill, handoff.by === 'agent'
+			? (handoff.reason ? localize('voltAgent.handoff.agentReason', "The agent handed the chat over: {0}", handoff.reason) : localize('voltAgent.handoff.agent', "The agent handed the chat over with a brief"))
+			: localize('voltAgent.handoff.user', "You switched models; the conversation so far went with it"));
+	}
+
+	/** The top of a subagent's chat: whose subagent it is, a click away from the parent. */
+	private renderSubagentOfPill(turn: HTMLElement): void {
+		const thread = this.orchestrator.getThread(this.sessionKey);
+		const parentId = thread?.parentId ?? this.history.sessionParent(this.sessionKey);
+		if (!parentId) {
+			return;
+		}
+		const parentTitle = this.history.get(parentId)?.title ?? this.orchestrator.getThread(parentId)?.title ?? localize('voltAgent.subagentOf.untitled', "its parent chat");
+		const divider = append(turn, $('.volt-agent-subagent-of'));
+		const pill = append(divider, $('span.volt-agent-subagent-of-pill'));
+		pill.appendChild(renderIcon(Codicon.hubot));
+		append(pill, $('span.label')).textContent = localize('voltAgent.subagentOf', "Subagent of");
+		append(pill, $('span.parent')).textContent = `· ${parentTitle}`;
+	}
+
+	/** The sent messages for the left rail; each reply is read only when its card opens. */
+	private navTurns(): IAgentTurnNavTurn[] {
+		const turns: IAgentTurnNavTurn[] = [];
+		for (const [index, message] of this.messages.entries()) {
+			if (message.kind !== 'user') {
+				continue;
+			}
+			const next = this.messages[index + 1];
+			turns.push({
+				prompt: message.text.replace(/\s+/g, ' ').trim() || (message.chips ?? []).join(', '),
+				reply: () => {
+					if (next?.kind !== 'agent') {
+						return undefined;
+					}
+					const markdown = next.segments.flatMap(segment => segment.kind === 'text' ? [segment.text] : []).join('\n\n') || next.text || '';
+					return turnNavPreview(markdown) || undefined;
+				},
+			});
+		}
+		return turns;
+	}
+
 	/** Index of the message that starts the last exchange. */
 	private lastExchangeStart(): number {
 		for (let i = this.messages.length - 1; i >= 0; i--) {
-			if (this.messages[i].kind === 'user') {
+			if (startsExchange(this.messages[i])) {
 				return i;
 			}
 		}
@@ -2062,8 +2388,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			tailExchange: this.tailExchange,
 			tailFrom: this.tailFrom,
 			renderedCount: this.renderedCount,
-			// A redraw still queued for the next frame means the nodes are behind the messages.
-			stale: this.renderHandle !== undefined,
+			// A redraw still queued means the nodes are behind the messages.
+			stale: this.renderHandle !== undefined || !!this.renderDelay,
 			watch: new DisposableStore(),
 		};
 		entry.watch.add(input.controller.onDidChange(() => entry.stale = true));
@@ -2121,8 +2447,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.sessionChanges.setSessionTranscript(this.sessionKey, this.messages);
 	}
 
+	/** The chat's changes as a diff tab; its header switches scope and opens Source Control. */
 	openSessionChanges(): Promise<void> {
-		this.surfaceHost.openChanges();
+		this.surfaceHost.openChanges('uncommitted');
 		return Promise.resolve();
 	}
 
@@ -2156,28 +2483,46 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		const clip = append(bubble, $('.volt-agent-user-clip'));
 		const main = append(clip, $('.volt-agent-user-main'));
+		const media = userMessageMedia(message);
+		if (media.length) {
+			const strip = this.threadListeners.add(new AgentImageStrip({ onOpen: i => this.openMessageMedia(message, i) }, 'in-message'));
+			main.appendChild(strip.element);
+			strip.update(media.map((mention, i): IAgentImageStripItem => mention.video
+				? { key: `${i}`, name: mention.label, bytes: mention.video.poster, mime: 'image/jpeg', size: mention.video.size, video: { duration: mention.video.duration } }
+				: { key: `${i}`, name: mention.label, bytes: mention.image!.bytes, mime: mention.image!.mime, size: mention.image!.bytes.byteLength }));
+		}
 		const text = append(main, $('.volt-agent-text'));
 		this.renderUserMessageText(text, message);
-		const syncUserPromptClamp = () => {
-			if (text.scrollHeight > 28) {
+		const applyClamp = (multiline: boolean, clamped: boolean) => {
+			if (multiline) {
 				bubble.classList.add('multiline');
 			}
+			bubble.classList.toggle('clamped', clamped);
+			// Only while part of the prompt is hidden; a prompt shown whole has nothing more to show.
+			setAgentTooltip(bubble, clamped && !editable ? localize('voltAgent.showFullPrompt', "Show full prompt") : undefined);
+		};
+		const syncUserPromptClamp = () => {
 			if (message.promptExpanded) {
+				if (text.scrollHeight > 28) {
+					bubble.classList.add('multiline');
+				}
 				bubble.classList.remove('clamped');
 				bubble.classList.add('prompt-expanded');
+				setAgentTooltip(bubble, undefined);
 				return;
 			}
-			const limit = 22 * 4;
-			if (text.scrollHeight > limit + 1) {
-				bubble.classList.add('clamped');
-				if (!editable) {
-					setAgentTooltip(bubble, localize('voltAgent.showFullPrompt', "Show full prompt"));
-				}
-			} else {
-				bubble.classList.remove('clamped');
-			}
+			const height = text.scrollHeight;
+			const measured = { width: this.layoutWidth, text: message.text, multiline: height > 28, clamped: height > 22 * 4 + 1 };
+			this.promptClamps.set(message, measured);
+			applyClamp(measured.multiline, measured.clamped);
 		};
-		this.threadListeners.add(scheduleAtNextAnimationFrame(getWindow(text), syncUserPromptClamp));
+		// The live exchange redraws the prompt many times a second; measure it once per width.
+		const known = this.promptClamps.get(message);
+		if (!message.promptExpanded && known && known.width === this.layoutWidth && known.text === message.text) {
+			applyClamp(known.multiline, known.clamped);
+		} else {
+			this.threadListeners.add(scheduleAtNextAnimationFrame(getWindow(text), syncUserPromptClamp));
+		}
 		if (message.chips?.length) {
 			const chipRow = append(main, $('.volt-agent-chips'));
 			for (const chip of message.chips) {
@@ -2195,16 +2540,136 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.threadListeners.add(addDisposableListener(stop, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();
-				this.stopAgent();
+				this.stopAndEditPrompt();
+			}));
+		} else if (message.id && !this.isStreaming() && hasCommand(CHECKPOINT_RESTORE_COMMAND)) {
+			const turnId = message.id;
+			const restore = append(bubble, $('button.volt-agent-user-restore')) as HTMLButtonElement;
+			restore.type = 'button';
+			restore.setAttribute('aria-label', localize('voltAgent.restoreCheckpoint', "Restore Checkpoint"));
+			setAgentTooltip(restore, localize('voltAgent.restoreCheckpoint', "Restore Checkpoint"));
+			restore.appendChild(renderIcon(Codicon.discard));
+			this.threadListeners.add(addDisposableListener(restore, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				void this.restoreCheckpoint(turnId);
 			}));
 		}
+	}
+
+	/**
+	 * Cursor's restore icon on a sent message: after "Discard all changes up to this checkpoint?"
+	 * the files go back to how they were before that message, and the message opens for editing.
+	 * "Redo checkpoint" under it undoes the restore until the next send.
+	 */
+	private async restoreCheckpoint(turnId: string): Promise<void> {
+		if (this.isStreaming()) {
+			return;
+		}
+		if (!this.storageService.getBoolean(RESTORE_CHECKPOINT_NO_CONFIRM_KEY, StorageScope.APPLICATION, false)) {
+			const { confirmed, checkboxChecked } = await this.dialogService.confirm({
+				message: localize('voltAgent.restoreCheckpoint.title', "Discard all changes up to this checkpoint?"),
+				detail: localize('voltAgent.restoreCheckpoint.detail', "You can always undo this later."),
+				primaryButton: localize({ key: 'voltAgent.restoreCheckpoint.continue', comment: ['&& denotes a mnemonic'] }, "&&Continue"),
+				checkbox: { label: localize('voltAgent.dontAskAgain', "Don't ask again") },
+			});
+			if (!confirmed) {
+				return;
+			}
+			if (checkboxChecked) {
+				this.storageService.store(RESTORE_CHECKPOINT_NO_CONFIRM_KEY, true, StorageScope.APPLICATION, StorageTarget.USER);
+			}
+		}
+		const sessionId = this.sessionKey;
+		const restored = await this.commandService.executeCommand<boolean>(CHECKPOINT_RESTORE_COMMAND, { sessionId, turnId, userTurn: this.userTurnOf(turnId) }).catch(err => {
+			this.logService.warn('[volt agent] restore checkpoint failed', err);
+			return false;
+		});
+		if (restored === false || this.sessionKey !== sessionId) {
+			return;
+		}
+		this.restoredCheckpoint = { turnId };
+		const index = this.messages.findIndex(message => message.kind === 'user' && message.id === turnId);
+		if (index >= 0) {
+			this.startUserEdit(index);
+		}
+	}
+
+	/** "Redo checkpoint" under a message whose checkpoint was just restored. */
+	private renderRedoCheckpoint(slot: HTMLElement, message: IAgentUserMessage): void {
+		if (!message.id || this.restoredCheckpoint?.turnId !== message.id || !hasCommand(CHECKPOINT_REDO_COMMAND)) {
+			return;
+		}
+		const redo = append(slot, $('button.volt-agent-redo-checkpoint')) as HTMLButtonElement;
+		redo.type = 'button';
+		redo.textContent = localize('voltAgent.redoCheckpoint', "Redo checkpoint");
+		setAgentTooltip(redo, localize('voltAgent.redoCheckpoint.hint', "Restore edits to the latest checkpoint"));
+		this.threadListeners.add(addDisposableListener(redo, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			const sessionId = this.sessionKey;
+			void this.commandService.executeCommand<boolean>(CHECKPOINT_REDO_COMMAND, { sessionId }).then(done => {
+				if (done !== false && this.sessionKey === sessionId) {
+					this.restoredCheckpoint = undefined;
+					this.cancelUserEdit();
+				}
+			}, err => this.logService.warn('[volt agent] redo checkpoint failed', err));
+		}));
+	}
+
+	/**
+	 * Cursor's "Revert files to this message?" before an earlier prompt is resubmitted: later turns
+	 * are removed, and their file changes can be reverted to match or kept. Asked only when the
+	 * checkpoint service says the files differ. Resolves false when the user cancels.
+	 */
+	private async confirmRevertForEdit(turnId: string | undefined): Promise<boolean> {
+		if (!turnId || this.restoredCheckpoint?.turnId === turnId || !hasCommand(CHECKPOINT_RESTORE_COMMAND) || !hasCommand(CHECKPOINT_HAS_CHANGES_COMMAND)) {
+			return true;
+		}
+		const sessionId = this.sessionKey;
+		const userTurn = this.userTurnOf(turnId);
+		const changed = await this.commandService.executeCommand<boolean>(CHECKPOINT_HAS_CHANGES_COMMAND, { sessionId, turnId, userTurn }).catch(() => false);
+		if (!changed) {
+			return true;
+		}
+		let revert = this.storageService.getBoolean(REVERT_ON_EDIT_ALWAYS_KEY, StorageScope.APPLICATION, false);
+		if (!revert) {
+			const { result, checkboxChecked } = await this.dialogService.prompt<'revert' | 'keep' | 'cancel'>({
+				message: localize('voltAgent.revertOnEdit.title', "Revert files to this message?"),
+				detail: localize('voltAgent.revertOnEdit.detail', "Later messages in this chat will be removed. File changes after this message can be reverted so they match, or kept as they are."),
+				buttons: [
+					{ label: localize({ key: 'voltAgent.revertOnEdit.revert', comment: ['&& denotes a mnemonic'] }, "&&Revert Files"), run: () => 'revert' },
+					{ label: localize({ key: 'voltAgent.revertOnEdit.keep', comment: ['&& denotes a mnemonic'] }, "&&Keep Files"), run: () => 'keep' },
+				],
+				cancelButton: { label: localize('voltAgent.revertOnEdit.cancel', "Cancel"), run: () => 'cancel' },
+				checkbox: { label: localize('voltAgent.revertOnEdit.always', "Always revert") },
+			});
+			if (result === 'cancel') {
+				return false;
+			}
+			revert = result === 'revert';
+			if (revert && checkboxChecked) {
+				this.storageService.store(REVERT_ON_EDIT_ALWAYS_KEY, true, StorageScope.APPLICATION, StorageTarget.USER);
+			}
+		}
+		if (revert) {
+			if (this.isStreaming()) {
+				// The files must not change under the restore.
+				if (this.input instanceof AgentEditorInput) {
+					this.input.controller.skipCurrentRun();
+				}
+				this.stopAgent();
+			}
+			await this.commandService.executeCommand<boolean>(CHECKPOINT_RESTORE_COMMAND, { sessionId, turnId, userTurn }).catch(err => this.logService.warn('[volt agent] revert files failed', err));
+		}
+		return true;
 	}
 
 	private onUserMessageClick(e: MouseEvent): void {
 		if (this.suppressStartEdit || this.editingUserIndex !== undefined || !isHTMLElement(e.target)) {
 			return;
 		}
-		if (e.target.closest('.volt-agent-edit-slot') || e.target.closest('.volt-agent-user-stop')) {
+		if (e.target.closest('.volt-agent-edit-slot') || e.target.closest('.volt-agent-user-stop') || e.target.closest('.volt-agent-user-restore') || e.target.closest('.volt-agent-image-tile')) {
 			return;
 		}
 		const turn = e.target.closest('.volt-agent-turn.user');
@@ -2221,10 +2686,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		if (!this.canEditUser(index)) {
 			const bubble = turn.querySelector('.volt-agent-bubble');
-			if (bubble?.classList.contains('clamped')) {
+			if (isHTMLElement(bubble) && bubble.classList.contains('clamped')) {
 				message.promptExpanded = true;
 				bubble.classList.remove('clamped');
 				bubble.classList.add('prompt-expanded');
+				setAgentTooltip(bubble, undefined);
 			}
 			return;
 		}
@@ -2265,7 +2731,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private canEditUser(index: number): boolean {
 		const message = this.messages[index];
-		return !!message && message.kind === 'user';
+		// A subagent's chat is the parent's task: only the parent sends into it.
+		return !!message && message.kind === 'user' && !this.isSubagentChat();
 	}
 
 	private canResendCancelledUser(index: number): boolean {
@@ -2278,7 +2745,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		const message = this.messages[index];
-		if (!message || message.kind !== 'user') {
+		if (!message || message.kind !== 'user' || !this.canEditUser(index)) {
 			return;
 		}
 		if (this.editingUserIndex !== undefined) {
@@ -2308,7 +2775,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		turn.replaceChildren();
 		turn.classList.add('editing');
 		turn.classList.remove('editable', 'cancelled', 'running');
-		append(turn, $('.volt-agent-edit-slot'));
+		this.renderRedoCheckpoint(append(turn, $('.volt-agent-edit-slot')), message);
 		this.syncComposerPlacement();
 		this.layoutEditEditor();
 		this.applyEditAnchor(turn);
@@ -2382,9 +2849,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
-	private commitUserEdit(value: string, display?: IAgentPromptDisplay): void {
+	private async commitUserEdit(value: string, display?: IAgentPromptDisplay): Promise<void> {
 		const index = this.editingUserIndex;
-		if (index === undefined) {
+		if (index === undefined || this.committingEdit) {
+			return;
+		}
+		const edited = this.messages[index];
+		this.committingEdit = true;
+		let proceed: boolean;
+		try {
+			proceed = await this.confirmRevertForEdit(edited?.kind === 'user' ? edited.id : undefined);
+		} finally {
+			this.committingEdit = false;
+		}
+		if (!proceed || this.editingUserIndex !== index || this.messages[index] !== edited) {
 			return;
 		}
 		if (this.isStreaming()) {
@@ -2402,7 +2880,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.runtime.truncateSession(this.sessionKey, this.messages.filter(message => message.kind === 'user').length);
 		this.syncComposerPlacement();
-		this.dispatchPrompt(value, display);
+		this.dispatchPrompt(value, display, removed?.kind === 'user' ? removed.mode ?? this.currentMode : this.currentMode);
 	}
 
 	/** Keep the composer in the chat column so empty chats stay centered and threads pin it to the bottom. */
@@ -2421,7 +2899,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.container.classList.toggle('editing-user', editing);
 		if (editing && slot && this.editComposerEl) {
 			if (this.editComposerEl.parentElement !== slot) {
-				slot.appendChild(this.editComposerEl);
+				// First in the slot: "Redo checkpoint" sits under the composer.
+				slot.insertBefore(this.editComposerEl, slot.firstChild);
 			}
 			return;
 		}
@@ -2494,8 +2973,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.editEditorDisposables.add(toDisposable(() => this.editModel?.dispose()));
 		this.editEditor.setModel(this.editModel);
 		this.editMentionController = this.editEditorDisposables.add(this.instantiationService.createInstance(AgentMentionController, this.editEditor));
+		this.editMentionController.setHost(this.mentionHost(this.editInputBox));
 		this.editLists = this.editEditorDisposables.add(new AgentComposerLists(this.editEditor));
-		this.editMentionController.bindDropTarget(this.editInputBox);
+		this.editMentionController.bindImageStrip(this.editInputBox, this.editMonacoHost);
+		this.editEditorDisposables.add(this.editMentionController.onDidChangeMedia(() => this.layoutEditEditor()));
 		const editWindow = getWindow(this.editMonacoHost);
 		const editResize = new editWindow.ResizeObserver(() => this.layoutEditEditor());
 		editResize.observe(this.editMonacoHost);
@@ -2508,6 +2989,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 		}));
 		this.editEditorDisposables.add(this.editEditor.onKeyDown(e => {
+			// The @ panel already used this key (picked a row, closed itself on Escape).
+			if (e.browserEvent.defaultPrevented) {
+				return;
+			}
 			if (isUnmodifiedEnter(e)) {
 				if (e.shiftKey) {
 					if (this.editLists?.tryHandleEnter()) {
@@ -2550,6 +3035,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.editMentionController?.isMenuOpen || this.editingUserIndex === undefined) {
 			return;
 		}
+		const media = this.editMentionController?.whenMediaReady();
+		if (media) {
+			void media.finally(() => this.sendUserEdit());
+			return;
+		}
 		const displayText = this.editModel?.getValue() ?? '';
 		const mentions = this.editMentionController?.displayMentions() ?? [];
 		const agentText = (this.editMentionController?.serialize() || displayText).trim();
@@ -2557,7 +3047,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		const display = mentions.length ? { text: displayText, mentions } : undefined;
-		this.commitUserEdit(agentText, display);
+		void this.commitUserEdit(agentText, display);
 	}
 
 	private layoutEditEditor(): void {
@@ -2694,6 +3184,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (scrollToEnd || this.stickToBottom) {
 			this.threadScroll.setScrollPosition({ scrollTop: scrollHeight });
 			this.stickToBottom = true;
+			this.composerChips?.setScrolledUp(false);
 		}
 		this.threadView.syncStuckTurns();
 	}
@@ -2705,50 +3196,34 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private renderAgentTurn(turn: HTMLElement, message: IAgentAssistantMessage): void {
 		const streaming = !!message.activity?.streaming;
-		const parts = visibleReplyParts(buildThreadParts(message.segments, message.text, streaming), streaming);
 		const body = append(turn, $('.volt-agent-thread-body'));
 		const ctx = this.blockRenderContext(message);
-		const lastGroup = [...parts].reverse().find(part => part.kind === 'group');
-		const replies: HTMLElement[] = [];
-		for (const part of parts) {
-			if (part.kind === 'group') {
-				this.renderActivityGroup(body, message, part, streaming && part === lastGroup);
-			} else if (part.kind === 'snapshot') {
-				this.renderSnapshotPart(body, message, part.item, streaming && !part.item.image);
-			} else if (part.kind === 'notice') {
-				this.renderProviderNotice(body, part);
-			} else if (part.kind === 'markdown') {
-				const reply = append(body, $('.volt-agent-reply'));
-				renderMarkdownInto(reply, part.content, ctx);
-				replies.push(reply);
-			} else if (part.kind === 'changes') {
-				renderFileChangesPart(body, part, ctx, streaming);
-			} else {
-				renderAgentBlock(body, part.block, ctx);
-			}
+		// A finished turn lists its files once, in the end card (Cursor's "1 File Changed"), not per edit.
+		const changedFiles = streaming ? [] : turnFileChanges(message.segments);
+		if (streaming) {
+			this.liveTurns.add(message);
+		}
+		const built = buildTranscriptRows(message.segments, message.text, streaming, message.steers);
+		// A failed turn shows its error once, in the tray at its end.
+		const rows = !streaming && message.outcome === 'failed' ? withoutFailureNotice(built, message.failure?.message) : built;
+		const replies = renderTranscript(body, rows, this.transcriptHost(message, ctx), {
+			streaming,
+			status: streaming ? this.liveStatusPhrase(message) : undefined,
+			workedMs: !streaming && message.startedAt && message.endedAt ? message.endedAt - message.startedAt : undefined,
+			workedOpenByDefault: this.liveTurns.has(message),
+			statusKey: String(message.startedAt ?? message.id ?? 'live'),
+			todos: todoChecklist(message.steps, streaming),
+			elapsedSince: streaming ? message.startedAt : undefined,
+		});
+		if (streaming) {
+			// Ticks the live elapsed time while the model is quiet between redraws.
+			this.ensureClock();
 		}
 		this.freshText.apply(message, replies, streaming);
-		if (message.title) {
-			const title = append(body, $('.volt-agent-plan-title'));
-			this.setSearchableText(title, message.title);
-		}
-		if (message.steps.length) {
-			const list = append(body, $('ul.volt-agent-steps'));
-			for (const step of message.steps) {
-				const item = append(list, $('li'));
-				const marker = append(item, $('span.volt-agent-step-marker'));
-				if (step.state === 'done') {
-					item.classList.add('done');
-					// allow-any-unicode-next-line
-					marker.textContent = '✓';
-				} else if (step.state === 'current') {
-					marker.textContent = '->';
-				} else {
-					// allow-any-unicode-next-line
-					marker.textContent = '○';
-				}
-				this.setSearchableText(item, step.label);
-			}
+		const tray = runEndTray(message, message === this.messages.at(-1));
+		// A login failure already has the sign-in card (and its login button). The generic tray repeats it.
+		if (tray && !(tray.kind === 'failed' && hasSignInNotice(rows))) {
+			this.renderRunEndTray(body, message, tray);
 		}
 		if (message.changes?.length) {
 			const changes = append(body, $('.volt-agent-changes'));
@@ -2760,7 +3235,76 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		if (!streaming) {
 			this.renderAgentFooter(turn, message);
+			if (changedFiles.length) {
+				this.renderTurnFilesCard(turn, changedFiles);
+			}
 		}
+	}
+
+	/** The live tail's phrase: the current action, or "Thinking" / "Planning next moves" in turn while the model is quiet. */
+	private liveStatusPhrase(message: IAgentAssistantMessage): string {
+		const activity = message.activity;
+		if (activity) {
+			activity.shimmerStartedAt ??= Date.now();
+		}
+		const anchor = activity?.shimmerStartedAt ?? Date.now();
+		const now = Date.now();
+		const lines = streamingActivityLines('', activity?.status, activity?.items ?? [], now, anchor, activity?.statusPinned === true);
+		if (lines.rotate) {
+			this.armStatusRotation(anchor);
+		} else {
+			this.statusRotateTimer?.dispose();
+			this.statusRotateTimer = undefined;
+		}
+		// Only a quiet model, never a running tool: a long build or test keeps its own line.
+		const quietFor = now - (activity?.lastEventAt ?? message.startedAt ?? now);
+		const modelQuiet = lines.rotate || lines.phrase === PLANNING_PHRASE;
+		if (modelQuiet && quietFor >= SLOW_TURN_MS) {
+			return localize('voltAgent.takingLonger', "Taking longer than expected\u2026");
+		}
+		this.slowTurnTimer?.dispose();
+		this.slowTurnTimer = modelQuiet && !lines.rotate
+			? disposableTimeout(() => this.renderThread(this.stickToBottom), SLOW_TURN_MS - quietFor + 50)
+			: undefined;
+		return lines.phrase;
+	}
+
+	private transcriptHost(message: IAgentAssistantMessage, ctx: IBlockRenderContext): ITranscriptHost {
+		return {
+			store: this.threadListeners,
+			ctx,
+			isExpanded: id => message.blockState[`tr:${id}`]?.expanded,
+			setExpanded: (id, expanded) => {
+				message.blockState[`tr:${id}`] = { expanded };
+				this.renderThread(this.stickToBottom);
+			},
+			openFile: (path, startLine, endLine) => void this.openWorkspaceFile(path, startLine, endLine),
+			openStepItem: item => {
+				if (item.browserTool) {
+					showHostToolDetail(this.container, item, ctx, url => this.surfaceHost.openBrowser(url, undefined, true));
+				} else if (item.image) {
+					this.showSnapshotPreview(item);
+				} else if (item.path) {
+					void this.openWorkspaceFile(item.path, item.startLine, item.endLine);
+				}
+			},
+			renderStatus: (parent, key, text) => this.renderLiveStatus(parent, message, key, text),
+			renderBlock: (parent, block) => renderAgentBlock(parent, block, ctx),
+			renderNotice: (parent, row) => this.renderProviderNotice(parent, row, message),
+			setSearchableText: (el, text) => this.setSearchableText(el, text),
+			bindSearchHits: (el, files) => this.threadListeners.add(this.exploreHitsTooltip.bind(el, () => files.map(path => ({
+				label: basename(path),
+				detail: tooltipDir(path),
+				onClick: () => void this.openWorkspaceFile(path),
+			})), { variant: 'files', placement: 'below' })),
+			subagentView: (tool, live) => {
+				const task = this.orchestrator.taskForToolCall(this.sessionKey, tool.callId);
+				return task ? subagentView(agentRow(task), ref => this.providerOf(ref)) : fallbackSubagentView(tool, live);
+			},
+			openSubagent: view => this.openSubagent(view.key),
+			stopSubagent: view => void this.orchestrator.dispatch({ type: 'task.cancel', taskId: view.key, reason: 'The user stopped it.' }),
+			subagentTooltip: this.tooltip,
+		};
 	}
 
 	private renderLiveStatus(parent: HTMLElement, message: IAgentAssistantMessage, key: string, text: string): void {
@@ -2824,7 +3368,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}, wait);
 	}
 
-	private renderProviderNotice(parent: HTMLElement, part: Extract<ThreadPart, { kind: 'notice' }>): void {
+	private renderProviderNotice(parent: HTMLElement, part: Extract<TranscriptRow, { kind: 'notice' }>, message: IAgentAssistantMessage): void {
+		if (part.supervision && !message.blockState[`tr:dismiss:${part.id}`]?.expanded) {
+			this.renderSupervisionTray(parent, part, part.supervision, message);
+			return;
+		}
 		const notice = append(parent, $(`.volt-agent-provider-notice.severity-${part.severity}`));
 		const title = append(notice, $('div.volt-agent-provider-notice-title'));
 		this.setSearchableText(title, part.title);
@@ -2832,225 +3380,227 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			const detail = append(notice, $('div.volt-agent-provider-notice-detail'));
 			this.setSearchableText(detail, part.description);
 		}
+		this.renderLoginChip(parent, part);
 	}
 
-	private renderActivityGroup(parent: HTMLElement, message: IAgentAssistantMessage, part: Extract<ThreadPart, { kind: 'group' }>, streaming: boolean): void {
-		const section = append(parent, $('.volt-agent-activity'));
-		if (streaming) {
-			section.classList.add('live');
-			const activity = message.activity;
-			if (activity) {
-				activity.shimmerStartedAt ??= Date.now();
-			}
-			const anchor = activity?.shimmerStartedAt ?? Date.now();
-			const lines = streamingActivityLines(part.title, activity?.status, part.items, Date.now(), anchor, activity?.statusPinned === true);
-			const keyBase = String(message.startedAt ?? message.id ?? 'live');
-			if (lines.summary) {
-				this.renderStatusLine(section, `${keyBase}:summary`, lines.summary, anchor, false);
-			}
-			this.renderStatusLine(section, `${keyBase}:phrase`, lines.phrase, anchor, true);
-			if (lines.rotate) {
-				this.armStatusRotation(anchor);
-			} else {
-				this.statusRotateTimer?.dispose();
-				this.statusRotateTimer = undefined;
-			}
+	/** White pill under a sign-in card. Click opens a terminal and runs that CLI's login. */
+	private renderLoginChip(parent: HTMLElement, part: Extract<TranscriptRow, { kind: 'notice' }>): void {
+		const login = cliLoginForNotice(part.title, part.description, this.activeProviderId());
+		if (!login) {
 			return;
 		}
-
-		const hasCard = part.items.some(item => !!item.view);
-		const expanded = message.blockState[part.id]?.expanded ?? hasCard;
-		const toggle = append(section, $('button.volt-agent-activity-toggle')) as HTMLButtonElement;
-		toggle.classList.toggle('expanded', expanded);
-		const label = append(toggle, $('span.volt-agent-activity-label'));
-		this.setSearchableText(label, part.title);
-		const chevron = append(toggle, $('span.volt-agent-activity-chevron'));
-		chevron.appendChild(renderIcon(expanded ? Codicon.chevronDown : Codicon.chevronRight));
-		this.threadListeners.add(addDisposableListener(toggle, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			message.blockState[part.id] = { expanded: !expanded };
-			this.renderThread(this.stickToBottom);
-		}));
-
-		if (!expanded) {
-			return;
-		}
-
-		const body = append(section, $('.volt-agent-activity-body'));
-		const ctx = this.blockRenderContext(message);
-		for (const [index, item] of part.items.entries()) {
-			if (item.kind === 'thought') {
-				this.renderThoughtItem(body, message, part.id, index, item, ctx);
-				continue;
-			}
-			const clickable = isExploreItemClickable(item);
-			const row = append(body, $(`.volt-agent-activity-item.${item.kind}${clickable ? '.clickable' : ''}`));
-			const host = clickable
-				? append(row, $(`button.${item.image ? 'volt-agent-snapshot-link' : 'volt-agent-file-link'}`)) as HTMLButtonElement
-				: row;
-			const action = append(host, $('span.action'));
-			action.textContent = item.label;
-			if (item.detail) {
-				const detail = append(host, $('span.detail.volt-agent-searchable'));
-				detail.textContent = item.detail;
-			}
-			if (item.kind === 'search' && item.files?.length) {
-				this.threadListeners.add(this.exploreHitsTooltip.bind(host, () => item.files!.map(path => ({
-					label: basename(path),
-					detail: tooltipDir(path),
-					onClick: () => void this.openWorkspaceFile(path),
-				})), { variant: 'files', placement: 'below' }));
-			} else {
-				const tip = [item.label, item.detail].filter(Boolean).join(' ') || item.path;
-				if (tip) {
-					setAgentTooltip(host, tip);
-				}
-			}
-			if (item.view) {
-				this.renderToolView(body, item.view);
-			}
-			if (!clickable) {
-				continue;
-			}
-			this.threadListeners.add(addDisposableListener(host, 'click', e => {
-				e.preventDefault();
-				e.stopPropagation();
-				if (item.image) {
-					this.showSnapshotPreview(item);
-					return;
-				}
-				if (item.path) {
-					void this.openWorkspaceFile(item.path, item.startLine, item.endLine);
-				}
-			}));
-		}
-	}
-
-	private renderToolView(parent: HTMLElement, view: IAgentActivityItem['view']): void {
-		if (!view) {
-			return;
-		}
-		const card = append(parent, $(`.volt-agent-card.${view.card}`));
-		if (view.card === 'read') {
-			const head = append(card, $('div.volt-agent-card-head'));
-			head.textContent = `${basename(view.path)}  ${view.lines.length ? `${view.lines[0].number}-${view.lines.at(-1)?.number}` : ''}`.trim();
-			this.threadListeners.add(addDisposableListener(head, 'click', () => void this.openWorkspaceFile(view.path, view.lines[0]?.number)));
-			const body = append(card, $('div.volt-agent-card-code'));
-			for (const line of view.lines.slice(0, 12)) {
-				const row = append(body, $('div.volt-agent-card-line'));
-				append(row, $('span.num')).textContent = String(line.number);
-				append(row, $('span.txt')).textContent = line.text;
-			}
-			if (view.totalLines > view.lines.length) {
-				append(card, $('div.volt-agent-card-more')).textContent = `${view.totalLines} lines`;
-			}
-			return;
-		}
-		if (view.card === 'search' && view.shape === 'matches') {
-			const shown = view.files.slice(0, 4);
-			for (const file of shown) {
-				const head = append(card, $('button.volt-agent-card-head'));
-				head.textContent = file.path;
-				this.threadListeners.add(addDisposableListener(head, 'click', () => void this.openWorkspaceFile(file.path, file.matches[0]?.lineNumber)));
-				for (const match of file.matches.slice(0, 4)) {
-					const row = append(card, $('div.volt-agent-card-line'));
-					append(row, $('span.num')).textContent = String(match.lineNumber);
-					append(row, $('span.txt')).textContent = match.line;
-				}
-			}
-			if (view.total > shown.reduce((sum, file) => sum + file.matches.length, 0)) {
-				append(card, $('div.volt-agent-card-more')).textContent = `${view.total} matches`;
-			}
-			return;
-		}
-		if (view.card === 'search' && view.shape === 'paths') {
-			for (const path of view.paths.slice(0, 8)) {
-				const head = append(card, $('button.volt-agent-card-head'));
-				head.textContent = path;
-				this.threadListeners.add(addDisposableListener(head, 'click', () => void this.openWorkspaceFile(path)));
-			}
-			if (view.total > 8) {
-				append(card, $('div.volt-agent-card-more')).textContent = `${view.total} files`;
-			}
-			return;
-		}
-		if (view.card === 'web' && view.kind === 'search') {
-			for (const source of view.sources.slice(0, 6)) {
-				const link = append(card, $('button.volt-agent-card-link'));
-				link.textContent = source.title || source.url;
-				this.threadListeners.add(addDisposableListener(link, 'click', () => {
-					this.surfaceHost.openBrowser(source.url, source.title, true);
-				}));
-			}
-			return;
-		}
-		if (view.card === 'web' && view.kind === 'fetch') {
-			const link = append(card, $('button.volt-agent-card-link'));
-			link.textContent = view.statusCode === 200 ? view.url : `${view.statusCode}  ${view.url}`;
-			this.threadListeners.add(addDisposableListener(link, 'click', () => {
-				this.surfaceHost.openBrowser(view.url, undefined, true);
-			}));
-		}
-	}
-
-	private renderThoughtItem(
-		parent: HTMLElement,
-		message: IAgentAssistantMessage,
-		groupId: string,
-		index: number,
-		item: IAgentActivityItem,
-		ctx: IBlockRenderContext,
-	): void {
-		const thoughtId = `${groupId}-thought-${index}`;
-		const expandable = !!item.text?.trim();
-		const expanded = expandable && (message.blockState[thoughtId]?.expanded ?? false);
-		const row = append(parent, $('.volt-agent-activity-item.thought'));
-		if (!expandable) {
-			const action = append(row, $('span.action'));
-			action.textContent = item.label;
-			return;
-		}
-		const toggle = append(row, $('button.volt-agent-thought-toggle')) as HTMLButtonElement;
-		toggle.classList.toggle('expanded', expanded);
-		append(toggle, $('span.action')).textContent = item.label;
-		const chevron = append(toggle, $('span.volt-agent-activity-chevron'));
-		chevron.appendChild(renderIcon(expanded ? Codicon.chevronDown : Codicon.chevronRight));
-		this.threadListeners.add(addDisposableListener(toggle, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			message.blockState[thoughtId] = { expanded: !expanded };
-			this.renderThread(this.stickToBottom);
-		}));
-		if (expanded && item.text) {
-			const bubble = append(row, $('.volt-agent-thought-body.volt-agent-thinking-text'));
-			renderMarkdownInto(bubble, item.text, ctx);
-		}
-	}
-
-	private renderSnapshotPart(parent: HTMLElement, message: IAgentAssistantMessage, item: IAgentActivityItem, streaming: boolean): void {
-		const section = append(parent, $('.volt-agent-snapshot'));
-		if (streaming && !item.image) {
-			this.renderLiveStatus(section, message, 'snapshot', localize('voltAgent.takingSnapshot', "Taking a screenshot snapshot."));
-			return;
-		}
-		const button = append(section, $('button.volt-agent-snapshot-link')) as HTMLButtonElement;
-		this.setSearchableText(button, item.label || localize('voltAgent.tookSnapshot', "Took snapshot"));
-		if (!item.image) {
-			button.disabled = true;
-			return;
-		}
+		const button = append(parent, $('button.volt-agent-login-chip')) as HTMLButtonElement;
+		button.type = 'button';
+		button.appendChild(createBrandIcon(login.providerId, 16));
+		const label = localize('voltAgent.cliLogin', "{0} login", login.label);
+		this.setSearchableText(button, label);
+		setAgentTooltip(button, localize('voltAgent.cliLogin.hint', "Open a terminal and run {0}", login.command));
 		this.threadListeners.add(addDisposableListener(button, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
-			this.showSnapshotPreview(item);
+			this.surfaceHost?.runLogin(login.command);
 		}));
+	}
+
+	private activeProviderId(): string | undefined {
+		return this.runtime.listCatalog().find(item => item.ref === this.currentModel)?.providerId;
+	}
+
+	/**
+	 * A run supervisor's finding as a tray: what it saw, in the runtime's words, and what the user
+	 * can do about it while it still matters (Continue differently, Resume, Continue, Stop).
+	 */
+	private renderSupervisionTray(parent: HTMLElement, part: Extract<TranscriptRow, { kind: 'notice' }>, kind: SupervisionKind, message: IAgentAssistantMessage): void {
+		const isLast = message === this.messages.at(-1);
+		const running = isLast && !!message.activity?.streaming;
+		const tray = append(parent, $(`.volt-agent-run-tray.supervision.kind-${kind}`));
+		tray.setAttribute('role', 'status');
+		const head = append(tray, $('.volt-agent-run-tray-head'));
+		const icon = append(head, $('span.volt-agent-run-tray-icon'));
+		icon.appendChild(renderIcon(kind === 'loop' ? Codicon.sync : kind === 'stall' ? Codicon.watch : Codicon.debugPause));
+		const heading = supervisionTitle(kind);
+		this.setSearchableText(append(head, $('span.volt-agent-run-tray-title')), heading);
+		const dismiss = append(head, $('button.volt-agent-run-tray-dismiss')) as HTMLButtonElement;
+		dismiss.type = 'button';
+		dismiss.setAttribute('aria-label', localize('voltAgent.tray.dismiss', "Dismiss"));
+		setAgentTooltip(dismiss, localize('voltAgent.tray.dismiss', "Dismiss"));
+		dismiss.appendChild(renderIcon(Codicon.close));
+		this.threadListeners.add(addDisposableListener(dismiss, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			message.blockState[`tr:dismiss:${part.id}`] = { expanded: true };
+			this.renderThread(this.stickToBottom);
+		}));
+		const detail = append(tray, $('.volt-agent-run-tray-detail'));
+		// The runtime's own words; its title is dropped when it only repeats the heading ("Agent looping detected").
+		this.setSearchableText(detail, [part.title.trim() === heading ? undefined : part.title, part.description].filter(Boolean).join('\n'));
+		const actions = supervisionActions(kind, { running, isLast, failed: message.outcome === 'failed' });
+		if (!actions.length) {
+			return;
+		}
+		const row = append(tray, $('.volt-agent-run-tray-actions'));
+		for (const action of actions) {
+			const spec = SUPERVISION_ACTION_LABELS[action];
+			this.appendTrayButton(row, spec.label(), spec.tooltip(), action === 'stop' ? 'secondary' : 'primary', () => this.runSupervisionAction(action, message));
+		}
+	}
+
+	private runSupervisionAction(action: SupervisionAction, message: IAgentAssistantMessage): void {
+		switch (action) {
+			case 'stop':
+				this.stopAgent();
+				return;
+			case 'continueDifferently':
+				this.continueTurn(
+					localize('voltAgent.continueDifferently.prompt', "You are repeating the same steps without making progress. Stop repeating them. Say in one sentence why the last attempts did not work, then take a different approach. If something outside your control blocks you, say what it is and stop."),
+					localize('voltAgent.continueDifferently.display', "Continue with a different approach"));
+				return;
+			case 'resume':
+				this.continueTurn(this.resumePrompt(message), localize('voltAgent.resume.display', "Resume"));
+				return;
+			case 'continue':
+				this.continueTurn(localize('voltAgent.continue.prompt', "Continue from where you paused."), localize('voltAgent.continue.display', "Continue"));
+				return;
+		}
+	}
+
+	/**
+	 * The end of a turn that did not finish. Failed: Cursor's error tray (title, the exact error,
+	 * "Request ID: ...", Copy Request ID) plus Try again and Resume on the newest turn. Stopped or
+	 * interrupted: a quiet marker with the same two actions.
+	 */
+	private renderRunEndTray(parent: HTMLElement, message: IAgentAssistantMessage, tray: IRunEndTray): void {
+		if (tray.kind !== 'failed') {
+			const marker = append(parent, $(`.volt-agent-run-marker.${tray.kind}`));
+			const icon = append(marker, $('span.volt-agent-run-marker-icon'));
+			icon.appendChild(renderIcon(tray.kind === 'stopped' ? Codicon.debugStop : Codicon.debugDisconnect));
+			this.setSearchableText(append(marker, $('span.volt-agent-run-marker-label')), tray.title);
+			if (tray.canResume) {
+				this.appendTrayButton(marker, localize('voltAgent.resume', "Resume"), localize('voltAgent.resume.hint', "Continue from what this turn already did"), 'text', () => this.continueTurn(this.resumePrompt(message), localize('voltAgent.resume.display', "Resume")));
+			}
+			if (tray.canRetry) {
+				this.appendTrayButton(marker, localize('voltAgent.tryAgain', "Try again"), localize('voltAgent.tryAgain.hint', "Send this prompt again"), 'text', () => this.retryLastTurn());
+			}
+			return;
+		}
+		const card = append(parent, $('.volt-agent-run-tray.failed'));
+		card.setAttribute('role', 'alert');
+		const head = append(card, $('.volt-agent-run-tray-head'));
+		this.setSearchableText(append(head, $('span.volt-agent-run-tray-title')), tray.title);
+		const detail = append(card, $('.volt-agent-run-tray-detail'));
+		this.setSearchableText(detail, tray.detail ?? '');
+		if (tray.requestId) {
+			const id = append(card, $('.volt-agent-run-tray-request'));
+			this.setSearchableText(id, localize('voltAgent.requestId', "Request ID: {0}", tray.requestId));
+		}
+		const row = append(card, $('.volt-agent-run-tray-actions'));
+		if (tray.requestId) {
+			const requestId = tray.requestId;
+			const copy = this.appendTrayButton(row, localize('voltAgent.copyRequestId', "Copy Request ID"), localize('voltAgent.copyRequestId.hint', "Copy the run id for a bug report"), 'text', () => {
+				void this.clipboardService.writeText(requestId).then(() => {
+					copy.textContent = localize('voltAgent.copied', "Copied");
+					this.threadListeners.add(disposableTimeout(() => {
+						if (copy.isConnected) {
+							copy.textContent = localize('voltAgent.copyRequestId', "Copy Request ID");
+						}
+					}, 1500));
+				});
+			});
+		}
+		if (tray.canRetry) {
+			this.appendTrayButton(row, localize('voltAgent.tryAgain', "Try again"), localize('voltAgent.tryAgain.hint', "Send this prompt again"), tray.canResume || tray.canContinueDifferently ? 'secondary' : 'primary', () => this.retryLastTurn());
+		}
+		if (tray.canContinueDifferently) {
+			const spec = SUPERVISION_ACTION_LABELS.continueDifferently;
+			this.appendTrayButton(row, spec.label(), spec.tooltip(), 'primary', () => this.runSupervisionAction('continueDifferently', message));
+		}
+		if (tray.canResume && tray.cause === 'budget') {
+			const spec = SUPERVISION_ACTION_LABELS.continue;
+			this.appendTrayButton(row, spec.label(), spec.tooltip(), 'primary', () => this.runSupervisionAction('continue', message));
+		} else if (tray.canResume) {
+			this.appendTrayButton(row, localize('voltAgent.resume', "Resume"), localize('voltAgent.resume.hint', "Continue from what this turn already did"), 'primary', () => this.continueTurn(this.resumePrompt(message), localize('voltAgent.resume.display', "Resume")));
+		}
+	}
+
+	private appendTrayButton(parent: HTMLElement, label: string, tooltip: string, variant: 'primary' | 'secondary' | 'text', run: () => void): HTMLButtonElement {
+		const button = append(parent, $(`button.volt-agent-run-tray-btn.${variant}`)) as HTMLButtonElement;
+		button.type = 'button';
+		button.textContent = label;
+		setAgentTooltip(button, tooltip);
+		this.threadListeners.add(addDisposableListener(button, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			run();
+		}));
+		return button;
+	}
+
+	private resumePrompt(message: IAgentAssistantMessage): string {
+		const failure = message.outcome === 'failed' ? message.failure?.message.trim() : undefined;
+		return failure
+			? localize('voltAgent.resume.promptFailed', "Continue where you left off. The previous turn ended with this error: {0}. Do not redo work that is already done.", failure)
+			: localize('voltAgent.resume.prompt', "Continue where you left off. The previous turn stopped before it finished. Do not redo work that is already done.");
+	}
+
+	/**
+	 * Sends a follow-up the user chose from a tray. While the agent runs it steers it (native) or
+	 * stops it and goes first (ACP); otherwise it is the next turn.
+	 */
+	private continueTurn(agentText: string, displayText: string): void {
+		const item: IQueuedAgentPrompt = { id: this.nextQueueId(), text: agentText, display: { text: displayText }, mode: this.currentMode };
+		if (this.editingUserIndex !== undefined) {
+			this.cancelUserEdit(false);
+		}
+		this.deliverNow(item);
+	}
+
+	/** Cursor's "Try again": the newest prompt runs again in place of the turn that failed or stopped. */
+	private retryLastTurn(): void {
+		if (this.isStreaming()) {
+			return;
+		}
+		const index = this.messages.findLastIndex(message => message.kind === 'user');
+		const user = this.messages[index];
+		if (user?.kind !== 'user') {
+			return;
+		}
+		if (this.editingUserIndex !== undefined) {
+			this.cancelUserEdit(false);
+		}
+		const value = (user.agentText ?? user.text).trim();
+		if (!value) {
+			return;
+		}
+		const display = user.mentions?.length || user.agentText ? { text: user.text, mentions: user.mentions } : undefined;
+		this.messages.splice(index);
+		if (this.input instanceof AgentEditorInput) {
+			this.input.recordTruncate(user);
+		}
+		this.runtime.truncateSession(this.sessionKey, this.messages.filter(message => message.kind === 'user').length);
+		this.dispatchPrompt(value, display, user.mode ?? this.currentMode);
 	}
 
 	private showSnapshotPreview(item: IAgentActivityItem): void {
 		if (!item.image) {
 			return;
 		}
+		const label = item.label || localize('voltAgent.tookSnapshot', "Took snapshot");
+		const img = $('img.volt-agent-snapshot-image') as HTMLImageElement;
+		img.src = item.image;
+		img.alt = label;
+		this.showPreviewOverlay(label, img);
+	}
+
+	/** Cursor's "Expand diagram": the same dialog as screenshots, with the diagram drawn larger. */
+	private showDiagramPreview(svg: SVGSVGElement): void {
+		const holder = $('.volt-agent-snapshot-diagram');
+		svg.removeAttribute('width');
+		svg.removeAttribute('height');
+		holder.appendChild(svg);
+		this.showPreviewOverlay(localize('voltAgent.diagram', "Diagram"), holder);
+	}
+
+	private showPreviewOverlay(label: string, content: HTMLElement): void {
 		this.dismissSnapshotPreview();
 		const win = getWindow(this.container);
 		const overlay = append(win.document.body, $('.volt-agent-snapshot-overlay'));
@@ -3060,14 +3610,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const dialog = append(overlay, $('.volt-agent-snapshot-dialog'));
 		const head = append(dialog, $('.volt-agent-snapshot-head'));
 		const title = append(head, $('span.volt-agent-snapshot-title'));
-		title.textContent = item.label || localize('voltAgent.tookSnapshot', "Took snapshot");
+		title.textContent = label;
 		const close = append(head, $('button.volt-agent-snapshot-close')) as HTMLButtonElement;
 		close.type = 'button';
 		close.setAttribute('aria-label', localize('voltAgent.closeSnapshot', "Close"));
 		close.appendChild(renderIcon(Codicon.close));
-		const img = append(dialog, $('img.volt-agent-snapshot-image')) as HTMLImageElement;
-		img.src = item.image;
-		img.alt = title.textContent;
+		dialog.appendChild(content);
 		const dismiss = () => this.dismissSnapshotPreview();
 		this.snapshotStore.add(addDisposableListener(close, 'click', e => {
 			e.preventDefault();
@@ -3095,20 +3643,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.snapshotOverlay = undefined;
 	}
 
-	private renderWorkedMeta(turn: HTMLElement, message: IAgentAssistantMessage): void {
-		if (!message.startedAt) {
-			return;
-		}
-		const ended = message.endedAt ?? (message.activity?.streaming ? Date.now() : message.startedAt);
-		const line = append(turn, $('div.volt-agent-worked'));
-		line.dataset.startedAt = String(message.startedAt);
-		if (message.endedAt) {
-			line.dataset.endedAt = String(message.endedAt);
-		}
-		this.fillWorkedLine(line, ended - message.startedAt);
-		this.ensureClock();
-	}
-
 	private fillWorkedLine(line: HTMLElement, ms: number): void {
 		let duration = line.querySelector<HTMLElement>('.volt-agent-worked-duration');
 		if (!duration) {
@@ -3116,6 +3650,55 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		duration.textContent = formatWorkedDuration(ms);
 		line.querySelector('.volt-agent-token-chip')?.remove();
+	}
+
+	private renderTurnFilesCard(parent: HTMLElement, files: readonly ITurnFileChange[]): void {
+		// show-file-icons: the file icon theme only draws inside it.
+		const card = append(parent, $('.volt-agent-turn-files.show-file-icons'));
+		const header = append(card, $('.volt-agent-turn-files-header'));
+		append(header, $('span.volt-agent-turn-files-title')).textContent = files.length === 1
+			? localize('voltAgent.oneFileChanged', "1 File Changed")
+			: localize('voltAgent.filesChanged', "{0} Files Changed", files.length);
+		const viewToggle = append(header, $('button.volt-agent-turn-files-view')) as HTMLButtonElement;
+		viewToggle.type = 'button';
+		const review = append(header, $('button.volt-agent-turn-files-review')) as HTMLButtonElement;
+		review.type = 'button';
+		review.textContent = localize('voltAgent.review', "Review");
+		this.threadListeners.add(addDisposableListener(review, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.surfaceHost.openChanges('lastTurn');
+		}));
+		const rows = this.threadListeners.add(this.instantiationService.createInstance(
+			AgentTurnFilesTree,
+			append(card, $('.volt-agent-turn-files-rows')),
+			this.turnFileLabels,
+			(path: string) => void this.openWorkspaceFile(path),
+		));
+		const render = () => {
+			const tree = this.storageService.getBoolean(TURN_FILES_TREE_KEY, StorageScope.APPLICATION, false);
+			const label = tree
+				? localize('voltAgent.turnFiles.viewList', "View as List")
+				: localize('voltAgent.turnFiles.viewTree', "View as Tree");
+			viewToggle.replaceChildren(renderIcon(tree ? Codicon.listFlat : Codicon.listTree));
+			viewToggle.setAttribute('aria-label', label);
+			viewToggle.setAttribute('aria-pressed', String(tree));
+			setAgentTooltip(viewToggle, label);
+			rows.setFiles(files, tree);
+		};
+		// Every card follows the same choice, so a toggle redraws the others too.
+		this.turnFilesCards.add(render);
+		this.threadListeners.add(toDisposable(() => this.turnFilesCards.delete(render)));
+		this.threadListeners.add(addDisposableListener(viewToggle, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			const tree = !this.storageService.getBoolean(TURN_FILES_TREE_KEY, StorageScope.APPLICATION, false);
+			this.storageService.store(TURN_FILES_TREE_KEY, tree, StorageScope.APPLICATION, StorageTarget.USER);
+			for (const redraw of this.turnFilesCards) {
+				redraw();
+			}
+		}));
+		render();
 	}
 
 	private renderAgentFooter(turn: HTMLElement, message: IAgentAssistantMessage): void {
@@ -3179,6 +3762,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!this.threadInner) {
 			return;
 		}
+		tickElapsed(this.threadInner);
 		for (const el of this.threadInner.querySelectorAll<HTMLElement>('.volt-agent-worked')) {
 			const started = Number(el.dataset.startedAt);
 			if (!Number.isFinite(started)) {
@@ -3208,6 +3792,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		this.surfaceHost.openFile(resource, startLine ? { startLine, endLine } : undefined);
+	}
+
+	/** @ mentions search the chat's project and open clicked files as tools tabs. */
+	private mentionHost(anchor: HTMLElement): IAgentMentionHost {
+		return {
+			anchor,
+			root: () => this.surfaceHost.executionRoot(),
+			openResource: (resource, range) => this.surfaceHost.openFile(resource, range ? { startLine: range.startLineNumber, endLine: range.endLineNumber } : undefined),
+			sessionId: () => this.sessionKey,
+		};
 	}
 
 	private async resolveWorkspaceFile(path: string): Promise<URI | undefined> {
@@ -3282,6 +3876,38 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.inputEditor?.focus();
 	}
 
+	/**
+	 * The new agent's project picker: a chat keeps the project it was bound to, so the folder
+	 * gets a new chat in this panel, with what was typed so far, and the unsent one closes.
+	 */
+	private async openLandingProject(folder: URI): Promise<void> {
+		const previous = this.input;
+		if (!(previous instanceof AgentEditorInput)) {
+			return;
+		}
+		const group = this.group;
+		const text = this.inputModel?.getValue() ?? '';
+		const mentions = cloneDisplayMentions(this.mentionController?.displayMentions() ?? []);
+		const [workspace, labelService] = this.instantiationService.invokeFunction(accessor => [accessor.get(IAgentWorkspaceService), accessor.get(ILabelService)] as const);
+		const project = this.sessionContext.registerProject(folder, labelService.getUriBasenameLabel(folder));
+		this.sessionContext.selectProject(project.id);
+		const next = this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri());
+		next.draft = text;
+		next.draftMentions = mentions;
+		next.setHasUnsavedContent(!!text.trim() || mentions.length > 0);
+		next.scheduleDraftSave();
+		const pane = await group.openEditor(next, { pinned: true });
+		attachSessionToProject(this.sessionContext, workspace, this.history, next.sessionId, project);
+		if (pane instanceof AgentEditor) {
+			pane.prefillDraft(text, mentions);
+		}
+		if (!previous.isDisposed() && !previous.messages.length && previous !== next) {
+			// The draft moved to the new chat; closing must not ask to save it.
+			await previous.revert(group.id);
+			await group.closeEditor(previous, { preserveFocus: true });
+		}
+	}
+
 	private async openEditInNewAgent(): Promise<void> {
 		if (this.editingUserIndex === undefined) {
 			return;
@@ -3317,11 +3943,28 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	getPromptQueue(): readonly { id: string; text: string; display?: IAgentPromptDisplay }[] {
-		return this.promptQueue;
+		return this.queuedItems.map(item => ({ id: item.id, text: item.prompt.text, display: { text: queuedPreview(item) } }));
 	}
 
 	stopRun(): void {
+		this.stopAndEditPrompt();
+	}
+
+	/** A user's Stop hands the prompt back for editing, as Cursor turns it into a composer again. */
+	private stopAndEditPrompt(): void {
+		const wasStreaming = this.isStreaming();
+		if (this.queuedItems.length) {
+			this.interruptAndDrain();
+			return;
+		}
 		this.stopAgent();
+		if (!wasStreaming) {
+			return;
+		}
+		const index = this.messages.findLastIndex(message => message.kind === 'user');
+		if (index >= 0) {
+			getWindow(this.container).requestAnimationFrame(() => this.startUserEdit(index));
+		}
 	}
 
 	isEditingUser(): boolean {
@@ -3343,6 +3986,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	layoutThread(): void {
 		this.syncThreadScroll(this.stickToBottom);
+	}
+
+	private syncStatusChip(): void {
+		const state = this.getDockState();
+		this.composerChips?.setStatus({ label: state.status, working: state.streaming });
 	}
 
 	getDockState(): IAgentDockState {
@@ -3369,6 +4017,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			endedAt,
 			durationMs,
 			turns: this.messages.length ? [{ kind: 'user', text: '' }] : [],
+			activity: streaming && lastAgent ? dockActivity(lastAgent, status) : undefined,
 		};
 	}
 
@@ -3399,6 +4048,21 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.send();
 	}
 
+	/** Text selected in a chat transcript (this one or another), added as a quoted chip. */
+	addChatSelection(text: string, agentId: string): void {
+		this.ensureInputEditor();
+		this.mentionController?.addChatSelectionMention(text, agentId);
+		this.inputEditor?.focus();
+	}
+
+	private async addChatSelectionToSideChat(text: string): Promise<void> {
+		const agentId = this.sessionKey;
+		const pane = await this.surfaceHost.openSideChat();
+		if (pane instanceof AgentEditor) {
+			pane.addChatSelection(text, agentId);
+		}
+	}
+
 	async addResourceMentions(resources: readonly URI[]): Promise<void> {
 		this.ensureInputEditor();
 		await this.mentionController?.addResourceMentions(resources);
@@ -3427,14 +4091,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.inputModel = this.modelService.createModel('', null, modelUri, true);
 		this.inputEditor.setModel(this.inputModel);
 		this.mentionController = this.editorDisposables.add(this.instantiationService.createInstance(AgentMentionController, this.inputEditor));
+		this.mentionController.setHost(this.mentionHost(this.inputBox));
 		this.composerLists = this.editorDisposables.add(new AgentComposerLists(this.inputEditor));
-		this.mentionController.bindDropTarget(this.container);
-		this.mentionController.bindDropTarget(this.inputBox);
+		this.mentionController.bindImageStrip(this.inputBox, this.monacoHost);
+		this.editorDisposables.add(this.mentionController.onDidChangeMedia(() => {
+			this.layoutInputEditor();
+			this.updateSendButton();
+		}));
 
 		this.editorDisposables.add(this.inputEditor.onDidFocusEditorText(() => {
 			this.inputBox.classList.add('focused');
 			// Focus means a message is coming: start a CLI agent now so the first send skips its cold start.
-			this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode);
+			this.prewarmAgent();
 		}));
 		this.editorDisposables.add(this.inputEditor.onDidBlurEditorText(() => this.inputBox.classList.remove('focused')));
 		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
@@ -3450,6 +4118,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 		}));
 		this.editorDisposables.add(this.inputEditor.onKeyDown(e => {
+			// The @ panel already used this key (picked a row, moved the selection).
+			if (e.browserEvent.defaultPrevented) {
+				return;
+			}
 			if (isUnmodifiedEnter(e)) {
 				if (e.shiftKey) {
 					if (this.composerLists?.tryHandleEnter()) {
@@ -3499,22 +4171,91 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				}
 				return;
 			}
+			if ((e.keyCode === KeyCode.UpArrow || e.keyCode === KeyCode.DownArrow) && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+				const recalled = this.promptToRecall(e.keyCode === KeyCode.UpArrow);
+				if (recalled) {
+					// Consume the key before the text changes: setting it re-delivers the key to later listeners.
+					e.preventDefault();
+					e.stopPropagation();
+					this.setComposerContent(recalled.text, recalled.mentions);
+				}
+				return;
+			}
 			if (e.keyCode === KeyCode.Escape && this.editingUserIndex !== undefined) {
 				e.preventDefault();
 				e.stopPropagation();
 				this.cancelUserEdit();
 				return;
 			}
+			if (e.keyCode === KeyCode.Escape && this.queueEdit) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.cancelQueueEdit();
+				return;
+			}
 			if (e.keyCode === KeyCode.Enter && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				e.preventDefault();
 				e.stopPropagation();
 				if (this.composerCanSend()) {
-					this.send();
+					// Enter queues behind a running agent; Cmd+Enter sends now (steers or interrupts it).
+					this.sendComposerNow();
 				}
 			}
 		}));
 		this.updateComposerEditorOptions();
 		this.updateInputPlaceholder();
+	}
+
+	/**
+	 * The prompt Arrow Up/Down puts in the composer, or undefined to let the key move the caret. Up
+	 * starts from an empty composer or the very start of the text; while a recalled prompt is untouched,
+	 * Up on its first line goes older and Down on its last line goes newer, then back to the draft.
+	 */
+	private promptToRecall(up: boolean): IAgentPromptHistoryEntry | undefined {
+		const editor = this.inputEditor;
+		const model = this.inputModel;
+		if (!editor || !model || this.queueEdit || this.mentionController?.isMenuOpen || !this.promptHistoryEnabled()) {
+			return undefined;
+		}
+		const selection = editor.getSelection();
+		if (!selection?.isEmpty()) {
+			return undefined;
+		}
+		const text = model.getValue();
+		const browsing = this.promptHistory.isBrowsing(text);
+		if (!up) {
+			return browsing && selection.startLineNumber === model.getLineCount() ? this.promptHistory.newer(text) : undefined;
+		}
+		if (selection.startLineNumber !== 1 || !(browsing || !text || selection.startColumn === 1)) {
+			return undefined;
+		}
+		return this.promptHistory.older(
+			{ text, mentions: cloneDisplayMentions(this.mentionController?.displayMentions() ?? []) },
+			() => this.promptHistoryEntries(),
+		);
+	}
+
+	/** This chat's prompts, newest first, then prompts sent from other chats. */
+	private promptHistoryEntries(): IAgentPromptHistoryEntry[] {
+		const own: IAgentPromptHistoryEntry[] = [];
+		for (let i = this.messages.length - 1; i >= 0; i--) {
+			const message = this.messages[i];
+			if (message.kind === 'user') {
+				own.push({ text: message.text, mentions: message.mentions });
+			}
+		}
+		return [...own, ...readStoredPrompts(this.storageService)];
+	}
+
+	private promptHistoryEnabled(): boolean {
+		return this.configurationService.getValue<boolean>(AGENT_PROMPT_HISTORY_SETTING) !== false;
+	}
+
+	private rememberSentPrompt(agentText: string, display: IAgentPromptDisplay | undefined): void {
+		this.promptHistory.reset();
+		if (this.promptHistoryEnabled()) {
+			rememberPrompt(this.storageService, { text: display?.text.trim() || agentText, mentions: display?.mentions });
+		}
 	}
 
 	submitComposer(): void {
@@ -3535,7 +4276,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private send(): void {
-		if (this.submitting || !this.composerCanSend()) {
+		if (this.questionTray?.active) {
+			// Enter answers the question on screen; the composer text rides along as extra details.
+			this.questionTray.advance();
+			return;
+		}
+		if (this.submitting || !this.composerCanSend() || this.isSubagentChat()) {
+			return;
+		}
+		// A video just attached is still being cut into stills; send once they are ready.
+		const media = this.mentionController?.whenMediaReady();
+		if (media) {
+			this.submitting = true;
+			void media.finally(() => {
+				this.submitting = false;
+				this.send();
+			});
 			return;
 		}
 		this.submitting = true;
@@ -3546,106 +4302,404 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
-	private doSend(): void {
+	/** What the composer holds: the text the agent reads, and what the bubble shows. */
+	private readComposer(): { agentText: string; display: IAgentPromptDisplay | undefined } {
 		const displayText = this.inputModel?.getValue() ?? '';
 		const mentions = this.mentionController?.displayMentions() ?? [];
 		const agentText = (this.mentionController?.serialize() || displayText).trim();
-		const display = mentions.length ? { text: displayText, mentions } : undefined;
+		return { agentText, display: mentions.length ? { text: displayText, mentions } : undefined };
+	}
+
+	private doSend(): void {
+		const { agentText, display } = this.readComposer();
+		if (this.queueEdit) {
+			// The composer holds a queued prompt being edited: Enter saves it back into the queue.
+			if (agentText) {
+				this.commitQueueEdit(agentText, display);
+			} else {
+				this.cancelQueueEdit();
+			}
+			return;
+		}
 		if (this.editingUserIndex !== undefined && agentText) {
 			this.cancelUserEdit(false);
 		}
+		if (agentText) {
+			this.rememberSentPrompt(agentText, display);
+		}
 		const cloning = this.cloningProject();
 		if (this.isStreaming() || cloning) {
-			if (agentText) {
-				this.enqueuePrompt(agentText, display);
-			}
 			if (cloning) {
 				// The prompt runs as soon as the files are there.
+				void this.orchestrator.dispatch({ type: 'thread.block', threadId: this.sessionKey, reason: 'cloning' });
 				this.waitForClone(cloning.id);
+			}
+			if (agentText) {
+				this.enqueuePrompt(agentText, display);
 			}
 			return;
 		}
 		if (!agentText) {
 			return;
 		}
+		if (!this.messages.length && this.landingChrome?.worktreeNeedsCommit()) {
+			// The first send would fail to make the worktree: the prompt stays in the composer.
+			void this.landingChrome.confirmWorktreeReady().then(ready => {
+				if (ready) {
+					this.send();
+				}
+			});
+			return;
+		}
+		if (!this.messages.length) {
+			this.adoptVisibleProject();
+		}
 		this._onDidComposerSend.fire();
 		this.dispatchPrompt(agentText, display);
 	}
 
-	private enqueuePrompt(text: string, display?: IAgentPromptDisplay): void {
-		this.promptQueue.push({ id: `q-${Date.now()}-${this.promptQueue.length}`, text, display });
-		if (this.inputModel && !this.inputModel.isDisposed()) {
-			this.inputModel.setValue('');
+	/**
+	 * Cmd+Enter while the agent runs: Cursor's "Steer" when the agent takes messages between steps
+	 * (native models read them from their inbox without stopping), else "Send now", which stops the
+	 * agent and sends this prompt first. Idle, it is a normal send.
+	 */
+	private sendComposerNow(): void {
+		if (!this.isStreaming() || this.queueEdit || this.questionTray?.active || this.cloningProject()) {
+			this.send();
+			return;
+		}
+		const { agentText, display } = this.readComposer();
+		if (!agentText) {
+			return;
+		}
+		if (this.editingUserIndex !== undefined) {
+			this.cancelUserEdit(false);
+		}
+		this.rememberSentPrompt(agentText, display);
+		this.clearComposer();
+		this.updateSendButton();
+		this.deliverNow({ id: this.nextQueueId(), text: agentText, display, mode: this.currentMode });
+	}
+
+	/** The first prompt runs in the project the composer shows, not one a restored chat was bound to before. */
+	private adoptVisibleProject(): void {
+		const project = this.sessionContext.activeProject;
+		if (!project || !(this.input instanceof AgentEditorInput) || this.input.messages.length) {
+			return;
+		}
+		const [workspace] = this.instantiationService.invokeFunction(accessor => [accessor.get(IAgentWorkspaceService)] as const);
+		adoptProjectForUnstartedSession(this.sessionContext, workspace, this.history, this.input.sessionId, project);
+	}
+
+	/** Sends `text` as the next user message, or queues it behind the running turn. */
+	private enqueueOrSendText(text: string, display?: IAgentPromptDisplay): void {
+		if (this.isStreaming() || this.cloningProject()) {
+			this.enqueuePrompt(text, display, false);
+			return;
+		}
+		this.dispatchPrompt(text, display);
+	}
+
+	/** Build on a plan card: Agent mode, with the plan's text in the prompt (Cursor attaches the plan file). */
+	private buildCreatedPlan(plan: IPlanBlock): void {
+		this.setMode('Agent');
+		const prompt = createdPlanPrompt(plan);
+		this.enqueueOrSendText(prompt.text, { text: prompt.display });
+	}
+
+	private nextQueueId(): string {
+		return `q-${Date.now()}-${generateUuid().slice(0, 8)}`;
+	}
+
+	/** `fromComposer`: the text came from the composer, which is cleared and keeps focus. */
+	private enqueuePrompt(text: string, display?: IAgentPromptDisplay, fromComposer = true): void {
+		this.submitToOrchestrator(text, display, this.currentMode, 'queue');
+		if (fromComposer) {
+			this.clearComposer();
 		}
 		this.updateInputPlaceholder();
 		this.updateSendButton();
 		this.syncQueueStack();
 		this.persistInputState();
-		this.inputEditor?.focus();
+		if (fromComposer) {
+			this.inputEditor?.focus();
+		}
 	}
 
-	private dispatchPrompt(value: string, display?: IAgentPromptDisplay): void {
+	/** The run request for a prompt: the chosen model and options, the checkout, and the prompt's images. */
+	private sendRequest(value: string, display: IAgentPromptDisplay | undefined, mode: string): IVoltSendRequest & { readonly images?: readonly IAgentImageAttachment[] } {
+		const runOn = normalizeAgentRunOn(this.storageService.get(agentRunOnStorageKey(this.sessionContext.activeProject?.id), StorageScope.APPLICATION));
+		const images = imageAttachmentsFromMentions(display?.mentions);
+		return {
+			text: value,
+			mode: normalizeVoltMode(mode) as VoltMode,
+			providerRef: this.modelAuto ? undefined : (this.currentModel || undefined),
+			options: this.modelAuto || !this.currentModel ? undefined : this.runtime.getModelOptions(this.currentModel),
+			runOn,
+			worktreeTarget: runOn === 'worktree' ? this.landingChrome?.getWorktreeTarget() : undefined,
+			...(images.length ? { images } : {}),
+		};
+	}
+
+	/**
+	 * Sends a prompt as the chat's next turn. The orchestrator owns the turn from here: it starts it
+	 * now, or queues it behind the running one, and the session controller adds the messages when
+	 * the turn starts (`turnStart`), whether or not this panel still shows the chat.
+	 * `mode`: the mode the prompt was written in (a queued or retried prompt), else the composer's.
+	 */
+	private dispatchPrompt(value: string, display?: IAgentPromptDisplay, mode = this.currentMode): void {
 		this.thinkingStore.clear();
-		const turn = generateUuid();
-		const userMessage: IAgentUserMessage = {
-			kind: 'user',
-			id: turn,
-			text: display?.text.trim() || value,
-			agentText: display ? value : undefined,
-			mentions: display?.mentions,
-		};
-		this.messages.push(userMessage);
-		const reply: IAgentAssistantMessage = {
-			kind: 'agent',
-			id: turn,
-			title: '',
-			steps: [],
-			segments: [],
-			blockState: {},
-			startedAt: Date.now(),
-			activity: {
-				status: localize('voltAgent.thinking', "Thinking"),
-				expanded: false,
-				streaming: true,
-				items: [],
-			},
-		};
-		this.messages.push(reply);
-		this._onDidChangeDock.fire();
+		this.restoredCheckpoint = undefined;
 		this.clearComposer();
 		this.updateSendButton();
 		this.stickToBottom = true;
-		this.renderThread(true);
-		this.scrollThreadToEnd();
 		this.inputEditor?.focus();
+		this.submitToOrchestrator(value, display, mode, 'auto');
+	}
 
-		const input = this.input instanceof AgentEditorInput ? this.input : undefined;
-		if (input) {
-			// The prompt is durable before the model is asked.
-			input.recordUser(userMessage);
-			input.recordMode(normalizeVoltMode(this.currentMode));
+	/** Whether the chat's agent offers `/compact`, and why it cannot run right now. */
+	private compactState(): IAgentCompactState | undefined {
+		if (!this.runtime.supportsCommand(this.sessionKey, 'compact') || this.isSubagentChat()) {
+			return undefined;
 		}
+		return this.isStreaming() || this.cloningProject()
+			? { blockedReason: localize('voltAgent.compactBusy', "Compacting is unavailable while the agent is working") }
+			: {};
+	}
 
+	/** Runs the agent's own `/compact` as the next turn. Unlike a send, the composer draft stays. */
+	private compactContext(): void {
+		const state = this.compactState();
+		if (!state || state.blockedReason) {
+			return;
+		}
+		this.composerChips?.setCompactOffered(false);
+		this.thinkingStore.clear();
+		this.restoredCheckpoint = undefined;
+		this.stickToBottom = true;
+		this.submitToOrchestrator('/compact', undefined, this.currentMode, 'auto');
+	}
+
+	/** Hands a prompt to the orchestrator with the composer's model, options and checkout choice. */
+	private submitToOrchestrator(value: string, display: IAgentPromptDisplay | undefined, mode: string, delivery: OrchDelivery, turnId = generateUuid()): void {
+		const input = this.input instanceof AgentEditorInput ? this.input : undefined;
+		const threadId = this.sessionKey;
+		input?.recordMode(normalizeVoltMode(this.currentMode));
+		stashTurnDisplay(turnId, display);
+		const request = this.sendRequest(value, display, mode);
+		const host: IAgentPromptHostOptions = {
+			...(request.runOn ? { runOn: request.runOn } : {}),
+			...(request.worktreeTarget ? { worktreeTarget: request.worktreeTarget } : {}),
+		};
+		const frozen = this.freezeDisplay(display);
+		this.submitChain = this.submitChain.then(async () => {
+			const prompt: IOrchPrompt = {
+				text: value,
+				...(display ? { display: await frozen } : {}),
+				mode,
+				...(request.providerRef ? { modelRef: request.providerRef } : {}),
+				...(request.options ? { options: request.options } : {}),
+				...(Object.keys(host).length ? { host } : {}),
+			};
+			const result = await this.orchestrator.submit(threadId, prompt, delivery, turnId);
+			if (result.outcome === 'rejected') {
+				this.logService.warn(`[volt agent] the orchestrator did not take the prompt: ${result.reason ?? 'rejected'}`);
+			}
+		}).catch(err => this.logService.warn('[volt agent] sending the prompt failed', err));
+	}
+
+	/** The display as history stores it (attachments by reference), so a queued prompt survives a restart. */
+	private freezeDisplay(display: IAgentPromptDisplay | undefined): Promise<unknown> {
+		if (!display) {
+			return Promise.resolve(undefined);
+		}
+		this.displayCodec ??= new AgentHistoryCodec(this.history);
+		return this.displayCodec.freezeMentions(display.mentions).then(mentions => ({ text: display.text, ...(mentions?.length ? { mentions } : {}) }), () => ({ text: display.text }));
+	}
+
+	/** A queued prompt's display with live mentions, for editing it in the composer. */
+	private async thawQueuedDisplay(item: IOrchQueueItem): Promise<IAgentPromptDisplay | undefined> {
+		const stored = item.prompt.display as { text?: unknown; mentions?: unknown } | undefined;
+		if (!stored || typeof stored.text !== 'string') {
+			return undefined;
+		}
+		this.displayCodec ??= new AgentHistoryCodec(this.history);
+		const mentions = await this.displayCodec.thawMentions(stored.mentions).catch(() => undefined);
+		return { text: stored.text, ...(mentions?.length ? { mentions } : {}) };
+	}
+
+	/** Prompts queued before the orchestrator owned queues (saved with the draft) move into it once. */
+	private migrateDraftQueue(input: AgentEditorInput): void {
+		const legacy = Array.isArray(input.promptQueue) ? input.promptQueue.slice() : [];
+		if (!legacy.length) {
+			return;
+		}
+		input.promptQueue = [];
+		input.scheduleDraftSave();
+		for (const item of legacy) {
+			this.submitToOrchestrator(item.text, item.display, item.mode ?? this.currentMode, 'queue', item.id);
+		}
+	}
+
+	/**
+	 * In a subagent's chat: "<model> · Working 5m 31s · Runs on its own · Open parent" (T3). It keeps
+	 * the composer: a message here is another round of the task, and its report goes to the parent.
+	 */
+	private renderSubagentBar(): void {
+		if (!this.subagentBar) {
+			return;
+		}
+		const thread = this.orchestrator.getThread(this.sessionKey);
+		// Read only: no composer, no edits. Its rounds come from the parent.
+		this.container.classList.toggle('subagent-chat', !!thread?.taskId);
+		const task = thread?.taskId ? this.orchestrator.getTask(thread.taskId) : undefined;
+		const parentOpen = !!thread?.parentId && this.isChatOpen(thread.parentId);
+		const key = task ? JSON.stringify([this.sessionKey, task.state, task.modelLabel, task.startedAt, task.endedAt, task.waitingOn, parentOpen]) : '';
+		if (key === this.subagentBarKey) {
+			return;
+		}
+		this.subagentBarKey = key;
+		this.subagentBarStore.clear();
+		this.subagentBar.classList.toggle('hidden', !task);
+		this.subagentBar.replaceChildren();
+		if (!task || !thread?.parentId) {
+			return;
+		}
+		const view = subagentView(agentRow(task), ref => this.providerOf(ref));
+		renderSubagentAvatar(this.subagentBar, view, 22);
+		append(this.subagentBar, $('span.model')).textContent = view.modelLabel ?? localize('voltAgent.subagentBar.model', "Subagent");
+		const state = append(this.subagentBar, $(`span.state.state-${view.state}`));
+		state.textContent = view.stateLabel;
+		const clock = append(this.subagentBar, $('span.volt-subagent-clock'));
+		if (view.startedAt !== undefined) {
+			clock.dataset.startedAt = String(view.startedAt);
+			if (view.endedAt !== undefined) {
+				clock.dataset.endedAt = String(view.endedAt);
+			}
+			clock.textContent = formatOrchElapsed((view.endedAt ?? Date.now()) - view.startedAt);
+		}
+		append(this.subagentBar, $('span.spacer'));
+		append(this.subagentBar, $('span.note')).textContent = isLiveSubagentState(view.state)
+			? localize('voltAgent.subagentBar.own', "Runs on its own")
+			: localize('voltAgent.subagentBar.reported', "Reported to its parent");
+		// Nested in the parent's right panel, or the parent has a tab already: nothing to open.
+		if (!parentOpen) {
+			const parentId = thread.parentId;
+			const open = append(this.subagentBar, $('button.open-parent')) as HTMLButtonElement;
+			open.type = 'button';
+			open.appendChild(renderIcon(Codicon.arrowUp));
+			append(open, $('span')).textContent = localize('voltAgent.subagentBar.openParent', "Open parent");
+			this.subagentBarStore.add(addDisposableListener(open, 'click', () => void openAgentPanel(this.editorGroupsService, this.instantiationService, parentId)));
+		}
+		tickSubagentClocks(this.subagentBar, this.subagentBarStore);
+	}
+
+	/** A chat with a tab in the main panel, or the chat whose right panel holds this one. */
+	private isChatOpen(sessionId: string): boolean {
+		if (agentSideChatParents().get(this.sessionKey) === sessionId && this.container.closest('.volt-agent-tools-area')) {
+			return true;
+		}
+		return this.editorGroupsService.mainPart.groups.some(group => group.editors.some(editor => editor instanceof AgentEditorInput && editor.sessionId === sessionId));
+	}
+
+	/** An agent handed this chat to another model: the composer follows, so the next prompt goes there too. */
+	private followAgentHandoff(): void {
+		const thread = this.orchestrator.getThread(this.sessionKey);
+		const latest = thread?.handoffs.at(-1);
+		if (!latest || latest.by !== 'agent' || this.followedHandoffAt === latest.at) {
+			return;
+		}
+		this.followedHandoffAt = latest.at;
+		if (this.modelPicker.selectRef(latest.to)) {
+			this.updateModelButton();
+		}
+	}
+
+	private syncHostedChrome(): void {
+		if (this.container?.closest('.volt-agent-tools-area')) {
+			this.setBrowserHosted(!this.isSubagentChat());
+		}
+	}
+
+	/** This chat runs a task another chat delegated. */
+	private isSubagentChat(): boolean {
+		return !!this.orchestrator.getThread(this.sessionKey)?.taskId;
+	}
+
+	/** The harness behind a catalog ref, for its mark on a subagent's avatar. */
+	private providerOf(modelRef: string | undefined): string | undefined {
+		const ref = modelRef ?? this.orchestrator.getThread(this.sessionKey)?.modelRef;
+		return ref ? this.runtime.listCatalog().find(item => item.ref === ref)?.providerId : undefined;
+	}
+
+	/** A subagent's chat opens in this chat's right panel, as a tab, streaming as it works. */
+	private openSubagent(taskId: string): void {
+		const task = this.orchestrator.getTask(taskId);
+		if (!task?.childId) {
+			return;
+		}
+		if (!revealAgentSideChat(this.sessionKey, task.childId)) {
+			void openAgentPanel(this.editorGroupsService, this.instantiationService, task.childId);
+		}
+	}
+
+	private stopAllSubagents(): void {
+		for (const task of this.orchestrator.tasksOf(this.sessionKey)) {
+			if (task.source === 'volt' && (task.state === 'queued' || task.state === 'running' || task.state === 'waiting')) {
+				void this.orchestrator.dispatch({ type: 'task.cancel', taskId: task.id, reason: 'The user stopped all subagents.' });
+			}
+		}
+	}
+
+	private get queuedItems(): readonly IOrchQueueItem[] {
+		return this.orchestrator.getThread(this.sessionKey)?.queue ?? [];
+	}
+
+	/** The 0-based position of a user message among the user messages: the checkpoint fallback key. */
+	private userTurnOf(turnId: string): number | undefined {
+		let ordinal = 0;
+		for (const message of this.messages) {
+			if (message.kind !== 'user') {
+				continue;
+			}
+			if (message.id === turnId) {
+				return ordinal;
+			}
+			ordinal++;
+		}
+		return undefined;
+	}
+
+	/**
+	 * Hands a message to the running agent now: an agent that reads messages between steps takes
+	 * it without stopping (the reply shows where it landed); any other is stopped and the prompt
+	 * goes first. Idle, it is a normal send. The orchestrator decides which.
+	 */
+	private deliverNow(item: IQueuedAgentPrompt): void {
+		if (!this.isStreaming()) {
+			this.dispatchPrompt(item.text, item.display, item.mode);
+			return;
+		}
+		this.submitToOrchestrator(item.text, item.display, item.mode ?? this.currentMode, 'now', item.id);
+	}
+
+	/** The running agent reads messages between steps (the native loop's inbox, or a run the orchestrator marked steerable). */
+	private canSteer(): boolean {
+		const thread = this.orchestrator.getThread(this.sessionKey);
+		if (thread?.active?.steerable && thread.active.phase === 'running') {
+			return true;
+		}
 		const session = this.runtime.getOrCreateSession(this.sessionKey);
-		void this.runtime.send(session.sessionId, {
-			text: value,
-			mode: normalizeVoltMode(this.currentMode) as VoltMode,
-			providerRef: this.modelAuto ? undefined : (this.currentModel || undefined),
-			options: this.modelAuto || !this.currentModel ? undefined : this.runtime.getModelOptions(this.currentModel),
-			runOn: normalizeAgentRunOn(this.storageService.get(agentRunOnStorageKey(this.sessionContext.activeProject?.id), StorageScope.APPLICATION)),
-		}).catch(err => {
-			reply.activity!.streaming = false;
-			completeStreamingBlocks(reply);
-			reply.endedAt = Date.now();
-			reply.durationMs = reply.endedAt - (reply.startedAt ?? reply.endedAt);
-			const errorText = err instanceof Error ? err.message : String(err);
-			reply.text = errorText;
-			reply.segments.push({ kind: 'text', text: errorText });
-			this.renderThread(true);
-			this.updateSendButton();
-			this.recordReply(reply, true, 'error');
-			this.drainPromptQueue();
-		});
+		const run = session.activeRun;
+		if (!run || (run.status !== 'running' && run.status !== 'waiting')) {
+			return false;
+		}
+		return this.runtime.canSteer(this.sessionKey);
+	}
+
+	/** Stops the agent; the orchestrator sends the head of the queue once the stop has landed. */
+	private interruptAndDrain(): void {
+		this.stopAgent();
 	}
 
 	/** Snapshot a reply into durable history; partial snapshots are throttled by the input. */
@@ -3660,35 +4714,154 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const last = this.messages.at(-1);
 		if (last?.kind === 'agent' && last.activity?.streaming) {
 			last.cancelled = true;
+			last.outcome = 'stopped';
 			last.activity.streaming = false;
 			last.activity.expanded = false;
 			last.activity.status = localize('voltAgent.cancelled', "Cancelled");
 			last.endedAt = Date.now();
 			last.startedAt ??= last.endedAt;
 			last.durationMs = Math.max(0, last.endedAt - last.startedAt);
-			completeStreamingBlocks(last);
+			completeStreamingBlocks(last, true);
 			this.updateSendButton();
 			this.renderThread(this.stickToBottom);
 			this._onDidChangeDock.fire();
 			this.recordReply(last, true, 'cancelled');
 		}
-		const session = this.runtime.getOrCreateSession(this.sessionKey);
-		void this.runtime.cancel(session.sessionId);
+		// Stopping a turn stops the subagents it started, as a harness's own subagents stop with it.
+		void this.orchestrator.cancel(this.sessionKey, { cascade: 'turn' });
 	}
 
+	/**
+	 * Lets the queue run again after it paused (an error, a restart). The orchestrator drains
+	 * queues on its own otherwise: after every turn, whether or not a panel shows the chat.
+	 */
 	private drainPromptQueue(): void {
-		if (this.isStreaming() || this.cloningProject()) {
-			this.updateSendButton();
+		if (this.orchestrator.getThread(this.sessionKey)?.pause) {
+			void this.orchestrator.dispatch({ type: 'queue.resume', threadId: this.sessionKey });
+		}
+		this.syncQueueStack();
+		this.updateSendButton();
+	}
+
+	/** Why queued prompts wait for the user while nothing runs. */
+	private queuePause(): QueuePause | undefined {
+		if (this.isStreaming()) {
+			return undefined;
+		}
+		const thread = this.orchestrator.getThread(this.sessionKey);
+		// Prompts, or subagent reports, are waiting on the user.
+		const waiting = this.queuedItems.length || this.orchestrator.tasksOf(this.sessionKey).some(task => task.delivery === 'pending');
+		if (!waiting) {
+			return undefined;
+		}
+		const pause = thread?.pause;
+		return pause === 'failed' ? 'failed' : pause === 'interrupted' ? 'interrupted' : pause === 'wakeups' ? 'wakeups' : pause ? 'stopped' : undefined;
+	}
+
+	private queueState(): IAgentComposerQueueState {
+		const running = this.isStreaming();
+		return {
+			paused: running ? undefined : this.queuePause(),
+			editingId: this.queueEdit?.id,
+			running,
+			steer: running && this.canSteer(),
+		};
+	}
+
+	private resumeQueue(): void {
+		this.drainPromptQueue();
+	}
+
+	private sendQueuedNow(id: string): void {
+		if (!this.queuedItems.some(item => item.id === id) || this.queueEdit?.id === id) {
 			return;
 		}
-		const next = this.promptQueue.shift();
+		void this.orchestrator.dispatch({ type: 'queue.sendNow', threadId: this.sessionKey, itemId: id, canSteer: this.canSteer() });
+	}
+
+	/** Cursor's "Edit queued message": the prompt moves into the composer; Enter puts it back changed. */
+	private editQueuedPrompt(id: string): void {
+		const item = this.queuedItems.find(queued => queued.id === id);
+		if (!item) {
+			return;
+		}
+		this.ensureInputEditor();
+		if (this.editingUserIndex !== undefined) {
+			this.cancelUserEdit(false);
+		}
+		const stash = this.queueEdit?.stash ?? {
+			text: this.inputModel?.getValue() ?? '',
+			mentions: cloneDisplayMentions(this.mentionController?.displayMentions() ?? []),
+		};
+		const previous = this.queueEdit;
+		this.queueEdit = { id, stash };
+		const threadId = this.sessionKey;
+		if (previous && previous.id !== id) {
+			void this.orchestrator.dispatch({ type: 'queue.hold', threadId, itemId: previous.id, held: false });
+		}
+		// Held: the orchestrator skips it while it is open here.
+		void this.orchestrator.dispatch({ type: 'queue.hold', threadId, itemId: id, held: true });
+		void this.thawQueuedDisplay(item).then(display => {
+			if (this.queueEdit?.id !== id) {
+				return;
+			}
+			this.setComposerContent(display?.text ?? item.prompt.text, display?.mentions);
+			this.syncQueueStack();
+			this.inputEditor?.focus();
+		});
+	}
+
+	private commitQueueEdit(agentText: string, display: IAgentPromptDisplay | undefined): void {
+		const edit = this.queueEdit;
+		if (!edit) {
+			return;
+		}
+		this.queueEdit = undefined;
+		const threadId = this.sessionKey;
+		const item = this.queuedItems.find(queued => queued.id === edit.id);
+		if (item) {
+			stashTurnDisplay(item.id, display);
+			const frozen = this.freezeDisplay(display);
+			this.submitChain = this.submitChain.then(async () => {
+				const prompt: IOrchPrompt = { ...item.prompt, text: agentText, display: display ? await frozen : undefined };
+				await this.orchestrator.dispatch({ type: 'queue.update', threadId, itemId: item.id, prompt });
+			}).catch(err => this.logService.warn('[volt agent] updating the queued prompt failed', err));
+		} else {
+			// It was sent or removed while being edited: keep the new text as a queued prompt.
+			this.submitToOrchestrator(agentText, display, this.currentMode, 'queue');
+		}
+		this.setComposerContent(edit.stash.text, edit.stash.mentions);
 		this.syncQueueStack();
 		this.persistInputState();
-		if (next) {
-			this.dispatchPrompt(next.text, next.display);
+	}
+
+	private cancelQueueEdit(): void {
+		const edit = this.queueEdit;
+		if (!edit) {
 			return;
 		}
+		this.queueEdit = undefined;
+		void this.orchestrator.dispatch({ type: 'queue.hold', threadId: this.sessionKey, itemId: edit.id, held: false });
+		this.setComposerContent(edit.stash.text, edit.stash.mentions);
+		this.syncQueueStack();
+	}
+
+	private setComposerContent(text: string, mentions: readonly IAgentDisplayMention[] | undefined): void {
+		this.ensureInputEditor();
+		if (!this.inputModel || this.inputModel.isDisposed()) {
+			return;
+		}
+		this.mentionController?.clear();
+		this.inputModel.setValue(text);
+		if (mentions?.length) {
+			this.mentionController?.restoreMentions(mentions);
+		}
+		const lastLine = this.inputModel.getLineCount();
+		this.inputEditor?.setPosition({ lineNumber: lastLine, column: this.inputModel.getLineMaxColumn(lastLine) });
+		this.syncUnsavedState();
+		this.updateInputPlaceholder();
 		this.updateSendButton();
+		this.layoutInputEditor();
 	}
 
 	private hasDraft(): boolean {
@@ -3696,6 +4869,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private updateSendButton(): void {
+		this.composerQueue?.setState(this.queueState());
 		const canSend = this.composerCanSend();
 		const kind: 'mic' | 'send' = this.isFollowUpComposer() || this.hasDraft() ? 'send' : 'mic';
 		this.sendButton.disabled = !canSend;
@@ -3716,45 +4890,65 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	removeQueuedPrompt(id: string): void {
-		this.promptQueue = this.promptQueue.filter(queued => queued.id !== id);
-		this.syncQueueStack();
-		this.persistInputState();
+		if (this.queueEdit?.id === id) {
+			this.cancelQueueEdit();
+		}
+		void this.orchestrator.dispatch({ type: 'queue.remove', threadId: this.sessionKey, itemId: id });
 	}
 
 	reorderQueuedPrompts(ids: readonly string[]): void {
-		const map = new Map(this.promptQueue.map(item => [item.id, item]));
-		const next: typeof this.promptQueue = [];
-		for (const id of ids) {
-			const item = map.get(id);
-			if (item) {
-				next.push(item);
-				map.delete(id);
-			}
-		}
-		for (const leftover of map.values()) {
-			next.push(leftover);
-		}
-		this.promptQueue = next;
-		this.syncQueueStack();
-		this.persistInputState();
+		void this.orchestrator.dispatch({ type: 'queue.reorder', threadId: this.sessionKey, ids });
 	}
 
 	clearPromptQueue(): void {
-		this.promptQueue = [];
-		this.syncQueueStack();
-		this.persistInputState();
+		this.cancelQueueEdit();
+		void this.orchestrator.dispatch({ type: 'queue.clear', threadId: this.sessionKey });
+	}
+
+	/** The agent's oldest open questions for this chat, docked above the composer. */
+	private syncQuestionTray(): void {
+		if (!this.questionTray) {
+			return;
+		}
+		const wasActive = this.questionTray.active;
+		this.questionTray.setRequest(this.runtime.getPendingQuestions(this.sessionKey)[0]);
+		if (wasActive !== this.questionTray.active) {
+			this.updateInputPlaceholder();
+			if (this.questionTray.active) {
+				this.inputEditor?.focus();
+			}
+		}
+	}
+
+	private answerQuestions(requestId: string, response: IAgentQuestionResponse): void {
+		const note = (this.mentionController?.serialize() || this.inputModel?.getValue() || '').trim();
+		if (note) {
+			this.clearComposer();
+		}
+		const request = this.runtime.getPendingQuestions(this.sessionKey).find(item => item.id === requestId);
+		const answered = note ? { ...response, note } : response;
+		if (!this.runtime.respondToQuestions(requestId, answered) && request && answered.outcome !== 'cancelled') {
+			// The agent stopped waiting (its turn ended): the answers go to it as the next message.
+			this.enqueueOrSendText(questionResponseText(request, answered));
+		}
 	}
 
 	private syncQueueStack(): void {
+		this.syncQuestionTray();
 		if (!this.composerQueue) {
 			return;
 		}
 		this.composerQueue.setMode(this.currentMode);
-		this.composerQueue.setQueue(this.promptQueue.map(item => ({
+		this.composerQueue.setQueue(this.queuedItems.map(item => ({
 			id: item.id,
-			text: item.text,
-			preview: item.display?.text ?? item.text,
+			text: item.prompt.text,
+			preview: queuedPreview(item),
 		})));
+		this.renderSubagentBar();
+		const dock = dockModel(this.orchestrator.getState(), this.sessionKey);
+		this.composerQueue.setAgents({ views: dock.agents.map(row => subagentView(row, ref => this.providerOf(ref))), conflicts: dock.conflicts });
+		this.composerQueue.setState(this.queueState());
+		this.updateInputPlaceholder();
 		this._onDidChangeQueue.fire();
 	}
 
@@ -3780,9 +4974,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.layoutInputEditor();
 	}
 
+	/** A turn is live: its reply streams, or the orchestrator is starting one for this chat. */
 	private isStreaming(): boolean {
 		const last = this.messages.at(-1);
-		return last?.kind === 'agent' && !!last.activity?.streaming;
+		if (last?.kind === 'agent' && !!last.activity?.streaming) {
+			return true;
+		}
+		const active = this.orchestrator.getThread(this.sessionKey)?.active;
+		return !!active && active.phase === 'dispatching';
 	}
 
 	/**
@@ -3811,21 +5010,34 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				case 'render':
 					this.scheduleThreadRender();
 					break;
+				case 'turnStart':
+					// A turn this panel sent, or one the orchestrator started (queue, subagent report).
+					this._onDidChangeDock.fire();
+					this.stickToBottom = true;
+					this.renderThread(true);
+					this.scrollThreadToEnd();
+					this.updateSendButton();
+					this.syncQueueStack();
+					break;
 				case 'runEnd':
+					// The orchestrator sends the next queued prompt itself; after an error the queue waits.
 					this.scheduleThreadRender();
-					if (change.aborted) {
-						this.updateSendButton();
-					} else {
-						controller.consumePendingDrain();
-						this.drainPromptQueue();
-					}
+					this.updateSendButton();
+					this.syncQueueStack();
 					break;
 			}
 		});
-		// A run that ended while another chat was showing leaves its queue for now.
-		if (controller.consumePendingDrain() && !this.isStreaming()) {
-			this.drainPromptQueue();
-		}
+		void this.orchestrator.ensureThreadLoaded(input.sessionId).then(() => {
+			if (this.input === input) {
+				this.syncHostedChrome();
+				this.syncQueueStack();
+				this.updateSendButton();
+				// Rows of finished turns read their subagents from the chat's loaded orchestration.
+				if (this.orchestrator.tasksOf(input.sessionId).length || this.orchestrator.getThread(input.sessionId)?.parentId) {
+					this.renderThread(this.stickToBottom);
+				}
+			}
+		});
 	}
 
 	private async openLocalPreview(url: string, force = false): Promise<void> {
@@ -3844,17 +5056,78 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.surfaceHost.openBrowser(url, title, true);
 	}
 
+	/**
+	 * Streaming redraws rebuild the live exchange and force a layout, so they run at most every
+	 * {@link STREAM_FRAME_MS} instead of every frame: tokens arrive in bursts, and 20 redraws a
+	 * second read as smooth while costing a third of the work.
+	 */
 	private scheduleThreadRender(): void {
-		if (this.renderHandle !== undefined) {
+		if (this.renderHandle !== undefined || this.renderDelay) {
 			return;
 		}
 		const win = getWindow(this.threadInner);
-		this.renderHandle = win.requestAnimationFrame(() => {
-			this.renderHandle = undefined;
-			this.persistInputState();
-			this.renderThreadTail(this.stickToBottom);
-			this._onDidChangeDock.fire();
-		});
+		const frame = () => {
+			this.renderHandle = win.requestAnimationFrame(() => {
+				this.renderHandle = undefined;
+				this.lastTailRenderAt = Date.now();
+				this.persistInputState();
+				this.renderThreadTail(this.stickToBottom);
+				this._onDidChangeDock.fire();
+			});
+		};
+		const wait = this.isStreaming() ? STREAM_FRAME_MS - (Date.now() - this.lastTailRenderAt) : 0;
+		if (wait <= 0) {
+			frame();
+			return;
+		}
+		this.renderDelay = disposableTimeout(() => {
+			this.renderDelay = undefined;
+			frame();
+		}, wait);
+	}
+
+	/**
+	 * Dragging files over the chat dims it under "Drop files to attach". The layer takes the drop
+	 * (so the composer's own editor never sees it) and gives it to the composer being written in.
+	 * Other drags (terminals, text) pass through to the tools drop zones.
+	 */
+	private bindAttachDrop(): void {
+		const overlay = append(this.container, $('.volt-agent-drop-overlay'));
+		const pill = append(overlay, $('.volt-agent-drop-overlay-pill'));
+		pill.appendChild(createStrokeIcon('paperclip', ['M16 6v9.5a3.5 3.5 0 0 1-7 0V6a2.5 2.5 0 0 1 5 0v9']));
+		append(pill, $('span')).textContent = localize('voltAgent.dropToAttach', "Drop files to attach");
+		const show = (on: boolean) => this.container.classList.toggle('drop-target', on);
+		const hover = (e: DragEvent) => {
+			if (!isAttachDrag(e)) {
+				return;
+			}
+			e.preventDefault();
+			e.stopPropagation();
+			if (e.dataTransfer) {
+				e.dataTransfer.dropEffect = 'copy';
+			}
+			show(true);
+		};
+		this._register(new DragAndDropObserver(this.container, {
+			onDragEnter: hover,
+			onDragOver: hover,
+			onDragLeave: () => show(false),
+			onDragEnd: () => show(false),
+			onDrop: e => {
+				show(false);
+				if (!isAttachDrag(e)) {
+					return;
+				}
+				e.preventDefault();
+				e.stopPropagation();
+				if (this.editingUserIndex !== undefined && this.editMentionController) {
+					void this.editMentionController.handleExternalDrop(e);
+					return;
+				}
+				this.ensureInputEditor();
+				void this.mentionController?.handleExternalDrop(e);
+			},
+		}));
 	}
 
 	private blockWorkbenchFileDrop(e: DragEvent): void {
@@ -3910,6 +5183,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.inputBox.classList.toggle('follow-up', followUp);
 		this.container.classList.toggle('follow-up', followUp);
 		this.inputBox.classList.toggle('multiline', followUp && multiline);
+		// For the composer's own rules, without a :has() on it (typing would restyle the whole composer).
+		this.composerEl.classList.toggle('follow-up', followUp);
+		this.composerEl.classList.toggle('follow-up-single-line', followUp && !multiline);
 		this.placeModelButton(followUp && !multiline);
 		if (wasFollowUp !== followUp) {
 			this.renderSuggestChips();
@@ -3966,7 +5242,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		// The compact pill holds a single line. Measuring in the pill layout keeps
 		// the decision stable: text that wraps there grows into the full composer,
 		// and deleting back to one line returns to the pill.
-		if (!hasNewline) {
+		// Images sit above the text, so they need the full composer.
+		if (!hasNewline && !this.mentionController?.hasMedia) {
 			this.syncFollowUpComposer(false);
 			const compact = measure();
 			if (compact.rawHeight <= lineHeight * 1.5) {
@@ -3996,8 +5273,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	override async setInput(input: AgentEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		this.clearTeardownPending = false;
+		// The dock beside the chat finds the chat it sits in by this.
+		this.container.dataset.sessionId = input.sessionId;
+		// A queued prompt open for editing goes back untouched; the composer keeps the chat's own draft.
+		this.cancelQueueEdit();
 		this.persistInputState();
 		this.surfaceHost.present(input.sessionId);
+		if (this.input !== input) {
+			this.landingChrome?.resetWorktreeTarget();
+		}
 		await super.setInput(input, options, context, token);
 		// One pane shows every agent tab: the banner follows the tab's project.
 		this.renderCloneBanner();
@@ -4014,18 +5298,43 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.restoreInputState(input);
 		this.container.classList.remove('restoring');
 		this.composerChips.setSessionId(this.sessionKey);
+		this.syncStatusChip();
 		this.pendingChanges.setSessionId(this.sessionKey);
 		this.publishSessionChanges();
 		this.bindRuntimeSession();
+		this.contextUsageView.refreshBranch();
 		this.renderSuggestChips();
 		this.updateSendButton();
 		this.layoutInputEditor();
 		if (!options?.preserveFocus) {
 			this.inputEditor?.focus();
 		}
+		this.schedulePrewarm();
+	}
+
+	/**
+	 * Opening a chat starts its CLI agent shortly after, not only when the composer is focused, so a
+	 * send from a driver or a quick click skips the cold start (spawn, initialize, session/new).
+	 * No-op for native models; the runtime caps idle agents.
+	 */
+	private schedulePrewarm(): void {
+		this.prewarmTimer?.dispose();
+		this.prewarmTimer = disposableTimeout(() => {
+			this.prewarmTimer = undefined;
+			if (this.isVisible() && !this.isStreaming() && this.composerCanSend()) {
+				this.prewarmAgent();
+			}
+		}, PREWARM_ON_OPEN_MS);
+	}
+
+	private prewarmAgent(): void {
+		this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode);
 	}
 
 	override clearInput(): void {
+		this.cancelQueueEdit();
+		this.prewarmTimer?.dispose();
+		this.prewarmTimer = undefined;
 		this.persistInputState();
 		const input = this.input;
 		if (input instanceof AgentEditorInput) {
@@ -4048,15 +5357,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	override layout(dimension: Dimension): void {
-		// A side chat opened in another chat's tools uses the compact chat chrome.
-		if (this.container.closest('.volt-agent-tools-area')) {
-			this.setBrowserHosted(true);
-		}
+		// A side chat opened in another chat's tools uses the compact chat chrome; a subagent's chat
+		// keeps its transcript there, since it is opened to watch the subagent work.
+		this.syncHostedChrome();
 		this.container.style.height = `${dimension.height}px`;
+		this.layoutWidth = dimension.width;
 		this.surfaceHost.layout(dimension);
 		this.layoutInputEditor();
 		this.syncThreadScroll();
-		this.sash?.layout();
 		this.findWidget?.layout(dimension.width);
 	}
 
@@ -4255,6 +5563,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.eventDisposable?.dispose();
 		this.clockTimer?.dispose();
 		this.statusRotateTimer?.dispose();
+		this.renderDelay?.dispose();
+		this.slowTurnTimer?.dispose();
+		this.prewarmTimer?.dispose();
 		this.dismissSnapshotPreview();
 		if (this.inputModel && !this.inputModel.isDisposed()) {
 			this.inputModel.dispose();
@@ -4279,17 +5590,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		this.waitingForClone = projectId;
+		const threadId = this.sessionKey;
 		void this.voltProjects.whenReady(projectId).then(ready => {
 			this.waitingForClone = undefined;
+			if (!ready) {
+				// The files never came: what was queued waits for the user instead of failing at once.
+				void this.orchestrator.dispatch({ type: 'queue.pause', threadId, reason: 'stopped' });
+			}
+			void this.orchestrator.dispatch({ type: 'thread.block', threadId, reason: undefined });
 			if (this._store.isDisposed) {
 				return;
 			}
 			this.renderCloneBanner();
-			if (ready) {
-				this.drainPromptQueue();
-			} else {
-				this.updateSendButton();
-			}
+			this.updateSendButton();
 		});
 	}
 
@@ -4314,7 +5627,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const action = append(banner, $('button.action')) as HTMLButtonElement;
 		action.type = 'button';
 		if (state.kind === 'cloning') {
-			text.textContent = this.promptQueue.length
+			text.textContent = this.queuedItems.length
 				? localize('voltAgent.cloningQueued', "Cloning {0}... {1}% · your prompt runs when it finishes", project.name, state.percent)
 				: localize('voltAgent.cloning', "Cloning {0}... {1}%", project.name, state.percent);
 			text.title = state.message ?? '';
@@ -4328,10 +5641,44 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
+	/** The chat's own worktree once it has one, else the project's checkout. */
+	private statusBranch(): IAgentStatusBranch {
+		const session = this.runtime.getOrCreateSession(this.sessionKey);
+		if (session.worktreePath) {
+			return { name: session.worktreeBranch, worktree: true, path: session.worktreePath };
+		}
+		const branch = this.landingChrome?.getBranch() ?? {};
+		return { name: branch.name, detached: branch.detached, worktree: false };
+	}
+
 	private get sessionKey(): string {
 		const path = (this.input as AgentEditorInput | undefined)?.resource.path ?? String(getWindow(this.container).vscodeWindowId);
 		return path.replace(/\//g, '') || 'agent';
 	}
+}
+
+const ATTACH_DRAG_TYPES: readonly string[] = [DataTransfers.FILES, DataTransfers.RESOURCES, CodeDataTransfers.EDITORS, CodeDataTransfers.FILES, Mimes.uriList];
+
+/** Files from the OS, or files and tabs dragged inside the app; not text. */
+function isAttachDrag(e: DragEvent): boolean {
+	const types = e.dataTransfer?.types ?? [];
+	return ATTACH_DRAG_TYPES.some(type => types.includes(type));
+}
+
+/** The pasted, dropped and picked images and videos of a sent prompt, in text order. */
+function userMessageMedia(message: IAgentUserMessage): IAgentDisplayMention[] {
+	return message.mentions?.filter(mention => (mention.kind === 'image' && !!mention.image?.bytes.byteLength) || (mention.kind === 'video' && !!mention.video)) ?? [];
+}
+
+/** What the queue row shows: the text the user typed, not the agent-facing serialization. */
+function queuedPreview(item: IOrchQueueItem): string {
+	const display = item.prompt.display as { text?: unknown } | undefined;
+	return typeof display?.text === 'string' && display.text.trim() ? display.text : item.prompt.text;
+}
+
+/** The checkpoint service registers its commands when it loads; until then the checkpoint UI stays hidden. */
+function hasCommand(id: string): boolean {
+	return !!CommandsRegistry.getCommand(id);
 }
 
 function tooltipDir(path: string): string | undefined {

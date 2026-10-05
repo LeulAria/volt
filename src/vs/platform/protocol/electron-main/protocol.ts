@@ -34,8 +34,12 @@ export interface IProtocolMainService {
 	/**
 	 * Allows to make an object accessible to a renderer
 	 * via `ipcRenderer.invoke(resource.toString())`.
+	 *
+	 * `onWillRead` runs on each renderer fetch, before the object is returned.
+	 * It receives the object that will be sent, which may not be the last
+	 * object associated with the window yet.
 	 */
-	createIPCObjectUrl<T>(): IIPCObjectUrl<T>;
+	createIPCObjectUrl<T>(onWillRead?: (obj: T | undefined) => Promise<void>): IIPCObjectUrl<T>;
 
 	/**
 	 * Adds a path as root to the list of allowed

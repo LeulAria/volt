@@ -37,6 +37,13 @@ const ITEMS: { title: string; body: string; art: ReactNode }[] = [
   },
 ];
 
+/** Pastel washes (each colour at 20% alpha) (sky, butter, blush) behind each drawing, one per cell. */
+const WASH = [
+  "radial-gradient(70% 80% at 8% 0%, rgba(181,220,238,0.2) 0%, transparent 62%), radial-gradient(55% 60% at 38% 35%, rgba(246,227,161,0.2) 0%, transparent 70%), radial-gradient(80% 90% at 100% 20%, rgba(244,195,211,0.2) 0%, transparent 65%)",
+  "radial-gradient(70% 80% at 100% 0%, rgba(201,217,242,0.2) 0%, transparent 62%), radial-gradient(60% 65% at 20% 40%, rgba(247,214,196,0.2) 0%, transparent 68%), radial-gradient(80% 90% at 90% 100%, rgba(233,196,227,0.2) 0%, transparent 65%)",
+  "radial-gradient(70% 80% at 0% 10%, rgba(191,227,218,0.2) 0%, transparent 62%), radial-gradient(55% 60% at 55% 30%, rgba(245,230,168,0.2) 0%, transparent 70%), radial-gradient(80% 90% at 100% 60%, rgba(245,198,207,0.2) 0%, transparent 65%)",
+];
+
 export function Capabilities() {
   const ref = useRef<HTMLElement>(null);
 
@@ -87,24 +94,34 @@ export function Capabilities() {
   return (
     <section ref={ref} className={cn(COLUMN, "relative pt-24 md:pt-32")}>
       <SectionHeading
-        title={
-          <>
-            Everything an agent needs.
-            <br />
-            <span className="text-white/40">Nothing it shouldn't do.</span>
-          </>
-        }
+        title={"Everything an agent needs."}
         body="Modes, permissions, tools, and context are first-class in Volt, so you decide how much rope each chat gets."
       />
-      <ul className="mt-14 grid grid-cols-1 gap-px border border-white/[0.08] bg-white/[0.08] sm:grid-cols-2 md:mt-20 lg:grid-cols-3">
-        {ITEMS.map((item) => (
+      <ul className="mt-14 grid grid-cols-1 gap-px border-y border-white/[0.08] border-x border-x-transparent bg-clip-padding max-md:border-x-white/[0.08] bg-white/[0.08] sm:grid-cols-2 md:mt-20 lg:grid-cols-3">
+        {ITEMS.map((item, i) => (
           <li
             key={item.title}
             data-cap
             className="group flex flex-col bg-[#0a0d0c] px-7 pt-10 pb-9 md:px-9"
           >
-            <div className="flex h-[180px] items-center justify-center text-white/75 transition-colors duration-500 group-hover:text-white sm:h-[190px]">
-              {item.art}
+            <div
+              className="relative flex h-[210px] items-center justify-center overflow-hidden rounded-xl px-4 py-5 text-white/80 sm:h-[220px]"
+              style={{ backgroundColor: "#0d1011" }}
+            >
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0"
+                style={{ backgroundImage: WASH[i % WASH.length] }}
+              />
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 backdrop-blur-2xl"
+              />
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-[#0a0d0c]/70 to-transparent"
+              />
+              <div className="relative h-full w-full">{item.art}</div>
             </div>
             <h3
               data-copy
@@ -135,7 +152,7 @@ export function Capabilities() {
 /* ------------------------------------------------------------------ */
 
 const ACCENT = "#ff8a5a";
-const BG = "#0a0d0c";
+const BG = "#0d1011";
 const GOOD = "#3ecf8e";
 const CX = 120;
 const CY = 90;

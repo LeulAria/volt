@@ -242,9 +242,79 @@ const TILES: { icon: LucideIcon; label: string }[][] = [
   ],
 ];
 
+const SERIAL = ["VLT-00 / CORE", "VLT-01 / USER", "VLT-02 / AGENT"];
+
+/** A ring of hairline ticks, drawn around a point (hub, mark) like a bezel. */
+function Bezel({
+  size,
+  n,
+  color,
+  className,
+}: {
+  size: number;
+  n: number;
+  color: string;
+  className?: string;
+}) {
+  const c = size / 2;
+  return (
+    <svg
+      viewBox={`0 0 ${size} ${size}`}
+      width={size}
+      height={size}
+      fill="none"
+      stroke={color}
+      strokeWidth={1}
+      aria-hidden
+      className={className}
+    >
+      <circle cx={c} cy={c} r={c - 0.5} strokeOpacity={0.7} />
+      <circle cx={c} cy={c} r={c - 8} strokeOpacity={0.35} />
+      {Array.from({ length: n }, (_, i) => {
+        const a = (i / n) * Math.PI * 2;
+        const long = i % 6 === 0;
+        const r1 = c - 0.5;
+        const r2 = c - (long ? 6.5 : 3.5);
+        return (
+          <line
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed bezel ticks
+            key={i}
+            x1={c + Math.cos(a) * r1}
+            y1={c + Math.sin(a) * r1}
+            x2={c + Math.cos(a) * r2}
+            y2={c + Math.sin(a) * r2}
+            strokeOpacity={long ? 0.9 : 0.5}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+/** A panel screw: ring plus a slot, one pixel throughout. */
+function Screw({ className, color }: { className?: string; color: string }) {
+  return (
+    <svg
+      viewBox="0 0 8 8"
+      width={8}
+      height={8}
+      fill="none"
+      stroke={color}
+      strokeWidth={1}
+      aria-hidden
+      className={cn("absolute", className)}
+    >
+      <circle cx={4} cy={4} r={3.5} />
+      <path d="M2.2 5.8 5.8 2.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** What's drawn on each plane: the core's mark, the carried-over setup, and the agent layer. */
 function PlaneBody({ index }: { index: number }) {
   const top = index === 2;
+  const ink = top ? "rgba(255,138,90,0.55)" : "rgba(255,255,255,0.3)";
+  const hair = top ? "border-[#ff8a5a]/20" : "border-white/[0.09]";
   return (
     <div
       className={cn(
@@ -253,33 +323,110 @@ function PlaneBody({ index }: { index: number }) {
       )}
     >
       <div className="absolute inset-0 rounded-[26px] bg-[radial-gradient(circle,rgba(255,255,255,0.12)_0.7px,transparent_1px)] [background-size:13px_13px]" />
+
+      {/* hull: a second inner seam, scale ticks along two edges, screws at the corners */}
+      <div className={cn("absolute inset-[6px] rounded-[21px] border", hair)} />
+      <div
+        className="absolute top-[11px] right-9 left-9 h-[3px]"
+        style={{
+          backgroundImage: `repeating-linear-gradient(90deg, ${ink} 0 1px, transparent 1px 8px)`,
+        }}
+      />
+      <div
+        className="absolute top-9 bottom-9 left-[11px] w-[3px]"
+        style={{
+          backgroundImage: `repeating-linear-gradient(180deg, ${ink} 0 1px, transparent 1px 8px)`,
+        }}
+      />
+      <div
+        className="absolute right-9 bottom-[11px] left-9 h-[3px]"
+        style={{
+          backgroundImage: `repeating-linear-gradient(90deg, ${ink} 0 1px, transparent 1px 16px)`,
+        }}
+      />
+      <Screw color={ink} className="top-[9px] left-[9px]" />
+      <Screw color={ink} className="top-[9px] right-[9px]" />
+      <Screw color={ink} className="right-[9px] bottom-[9px]" />
+      <Screw color={ink} className="bottom-[9px] left-[9px]" />
+      <span
+        className="absolute bottom-[17px] left-9 font-mono text-[6px] tracking-[0.2em]"
+        style={{ color: ink }}
+      >
+        {SERIAL[index]}
+      </span>
+
       {index === 0 ? (
-        // the plane's lower-left quarter is the part left showing under the stack
-        <div className="absolute top-[58%] left-[16%]">
-          <VsCodeMark className="size-12 opacity-70" />
-        </div>
+        // the core's mark sits dead centre on its plane
+        <>
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
+            <Bezel size={96} n={36} color="rgba(255,255,255,0.4)" />
+          </div>
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
+            <VsCodeMark className="size-12 opacity-70" />
+          </div>
+        </>
       ) : (
         <div className="absolute inset-7 grid grid-cols-2 gap-3">
-          {TILES[index].map(({ icon: Icon, label }) => (
+          {TILES[index].map(({ icon: Icon, label }, n) => (
             <div
               key={label}
               className={cn(
-                "flex flex-col justify-between rounded-[14px] border bg-[#0b0e0d] p-3",
+                "relative flex flex-col justify-between rounded-[14px] border bg-[#0b0e0d] p-3",
                 top ? "border-[#ff8a5a]/30" : "border-white/12",
               )}
             >
+              {/* inner seam, a rivet pair, and a bay number */}
+              <div
+                className={cn(
+                  "absolute inset-[3px] rounded-[11px] border",
+                  hair,
+                )}
+              />
+              <span
+                className="absolute top-[7px] right-[8px] size-[3px] rounded-full"
+                style={{ backgroundColor: ink }}
+              />
+              <span
+                className="absolute top-[7px] right-[15px] size-[3px] rounded-full"
+                style={{ backgroundColor: ink }}
+              />
+              <span
+                className="absolute right-[9px] bottom-[7px] font-mono text-[5.5px] tracking-[0.12em]"
+                style={{ color: ink }}
+              >
+                {String(n + 1).padStart(2, "0")}
+              </span>
               <Icon
-                strokeWidth={1.25}
-                className="size-5"
+                strokeWidth={1}
+                absoluteStrokeWidth
+                className="relative size-5"
                 style={{ color: top ? ACCENT : "rgba(255,255,255,0.7)" }}
               />
-              <span className="text-[11px] font-medium text-white/70">
+              <span className="relative text-[11px] font-medium text-white/70">
                 {label}
               </span>
             </div>
           ))}
           {top ? (
             <div className="pointer-events-none absolute inset-0 grid place-items-center">
+              {/* the hub reads as an engine: bezel ring, spokes out to the bays, bolt at the core */}
+              <svg
+                viewBox="-60 -60 120 120"
+                className="absolute size-[120px]"
+                fill="none"
+                stroke="rgba(255,138,90,0.28)"
+                strokeWidth={1}
+                aria-hidden
+              >
+                <path d="M-60 0H-34M34 0H60M0-60V-34M0 34V60" />
+                <circle r={44} strokeDasharray="1 4" />
+              </svg>
+              <Bezel
+                size={64}
+                n={48}
+                color="rgba(255,138,90,0.7)"
+                className="absolute"
+              />
               <span className="grid size-11 place-items-center rounded-full border border-[#ff8a5a]/60 bg-[#0b0e0d]">
                 <svg
                   viewBox={`0 0 ${BOLT_W} ${BOLT_H}`}

@@ -11,19 +11,20 @@ NODE_VERSION ?= 22.19.0
 WATCH_PID := .build/volt-watch.pid
 WATCH_LOG := .build/volt-watch.log
 
-.PHONY: help start run watch reload stop restart
+.PHONY: help start run watch extensions reload stop restart
 
 help:
 	@echo "make start    - start file watcher + launch Volt"
 	@echo "make run      - same as start (hot reload on save)"
 	@echo "make watch    - recompile src/ into out/ on save"
+	@echo "make extensions - compile built-in extensions that have no out/ yet"
 	@echo "make reload   - relaunch Volt, keep the watcher"
 	@echo "make stop     - stop Volt and the watcher"
 	@echo "make restart  - stop everything, then start"
 	@echo
 	@echo "Save a file: gulp recompiles, then Volt reloads the window."
 
-start run: watch
+start run: watch extensions
 	@set -e; \
 	. "$(NVM_DIR)/nvm.sh"; \
 	nvm use $(NODE_VERSION); \
@@ -57,6 +58,15 @@ watch:
 		fi; \
 		tail -n 8 "$(WATCH_LOG)" || true; \
 	fi
+
+# Built-in extensions (TypeScript, JSON, CSS, git...) provide Go to References,
+# Format Document and the other language features. watch-client does not build them.
+extensions:
+	@set -e; \
+	. "$(NVM_DIR)/nvm.sh"; \
+	nvm use $(NODE_VERSION) >/dev/null; \
+	unset ELECTRON_RUN_AS_NODE CXXFLAGS npm_config_cxxflags; \
+	node ./node_modules/gulp/bin/gulp.js compile-missing-extensions
 
 reload:
 	@pkill -9 -f "VOLT.app" >/dev/null 2>&1 || true; \

@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ALL_CAPABILITY_GROUPS, CapabilityGroup } from '../../common/harness/lanes.js';
+import { AgentQuestionDraft, IAgentQuestionResponse, parseQuestionDraft, questionResponseText } from '../../common/questions.js';
 import { asRecord, pickString } from '../../common/tools/args.js';
 import { IToolContext, IToolResult, IVoltTool } from '../../common/tools/tool.js';
 import { objectSchema } from './schema.js';
@@ -22,7 +23,16 @@ export interface IMetaToolHost {
 	loadSkill?(name: string): Promise<string | undefined>;
 	/** Runs a read-only sub-agent and returns its final report. */
 	runSubagent?(request: ISubagentRequest, ctx: IToolContext): Promise<{ readonly text: string; readonly isError?: boolean }>;
+	/** Shows the questions in the chat's question tray and resolves with the user's answers. */
+	askQuestion?(draft: AgentQuestionDraft, ctx: IToolContext): Promise<IAgentQuestionResponse>;
 }
+
+/** The plan tool. The editor draws a call to it as a plan card with Build (`isPlanTool`). */
+export const CREATE_PLAN_TOOL_NAME = 'create_plan';
+export const NATIVE_ASK_QUESTION_TOOL_NAME = 'ask_question';
+
+/** A person may take a while to answer; the tool runtime's default of 10 minutes is too short. */
+const QUESTION_TIMEOUT_MS = 24 * 60 * 60_000;
 
 export function createMetaTools(host: IMetaToolHost): IVoltTool[] {
 	const tools: IVoltTool[] = [
@@ -87,7 +97,60 @@ export function createMetaTools(host: IMetaToolHost): IVoltTool[] {
 			}, ['summary']),
 			execute: async args => runFinish(args),
 		},
+		{
+			name: CREATE_PLAN_TOOL_NAME,
+			group: 'meta',
+			kind: 'think',
+			parallelSafe: true,
+			snippet: 'create_plan - hand the user an implementation plan to review and build',
+			description: [
+				'Present an implementation plan for the user to review. The editor shows it as a plan card with a Build button.',
+				'Use once, after investigating, when you are asked to plan. Then stop: do not implement until the user builds it.',
+			].join(' '),
+			schema: objectSchema({
+				name: { type: 'string', description: 'Short title, e.g. "Add dark mode toggle"' },
+				plan: { type: 'string', description: 'The plan in Markdown: approach, files to change, steps, risks, how to verify' },
+				todos: { type: 'array', items: { type: 'string' }, description: 'Concrete implementation steps, in order' },
+			}, ['name', 'plan']),
+			execute: async args => runCreatePlan(args),
+		},
 	];
+	if (host.askQuestion) {
+		const ask = host.askQuestion.bind(host);
+		tools.push({
+			name: NATIVE_ASK_QUESTION_TOOL_NAME,
+			group: 'meta',
+			kind: 'think',
+			parallelSafe: false,
+			snippet: 'ask_question - ask the user multiple-choice questions and wait for the answers',
+			description: [
+				'Ask the user one or more multiple-choice questions and wait for the answers. Use it when a decision only the user can make',
+				'(requirements, preferences, trade-offs) would change the result, instead of writing the options into your reply.',
+				'Keep options short and mutually exclusive. Every question automatically gets a free-text "Other" choice; do not add one.',
+			].join(' '),
+			schema: objectSchema({
+				title: { type: 'string', description: 'Optional short heading for the questions' },
+				questions: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							id: { type: 'string' },
+							prompt: { type: 'string', description: 'The question' },
+							options: {
+								type: 'array',
+								items: { type: 'object', properties: { id: { type: 'string' }, label: { type: 'string' } }, required: ['id', 'label'] },
+							},
+							allow_multiple: { type: 'boolean', description: 'True when several options may be picked' },
+						},
+						required: ['id', 'prompt', 'options'],
+					},
+				},
+			}, ['questions']),
+			timeoutMs: QUESTION_TIMEOUT_MS,
+			execute: async (args, ctx) => runAskQuestion(ask, args, ctx),
+		});
+	}
 	if (host.loadSkill) {
 		const load = host.loadSkill.bind(host);
 		tools.push({
@@ -184,6 +247,39 @@ function runTodo(args: unknown, ctx: IToolContext): IToolResult {
 		name: 'todo',
 		kind: 'think',
 		text: entries.length ? `Task list updated (${done}/${entries.length} done).` : 'Task list cleared.',
+	};
+}
+
+async function runAskQuestion(ask: NonNullable<IMetaToolHost['askQuestion']>, args: unknown, ctx: IToolContext): Promise<IToolResult> {
+	const draft = parseQuestionDraft(args);
+	if (!draft) {
+		return { callId: '', name: NATIVE_ASK_QUESTION_TOOL_NAME, kind: 'think', text: 'ask_question needs a non-empty `questions` array, each with `id`, `prompt` and `options` ({ id, label }).', isError: true };
+	}
+	if (ctx.signal.aborted) {
+		return { callId: '', name: NATIVE_ASK_QUESTION_TOOL_NAME, kind: 'think', text: 'Cancelled.', isError: true };
+	}
+	// Stop must not leave the tool waiting on a tray nobody will answer.
+	const cancelled = new Promise<IAgentQuestionResponse>(resolve => ctx.signal.addEventListener('abort', () => resolve({ outcome: 'cancelled', answers: [] }), { once: true }));
+	try {
+		const response = await Promise.race([ask(draft, ctx), cancelled]);
+		return { callId: '', name: NATIVE_ASK_QUESTION_TOOL_NAME, kind: 'think', text: questionResponseText(draft, response) };
+	} catch (err) {
+		return { callId: '', name: NATIVE_ASK_QUESTION_TOOL_NAME, kind: 'think', text: err instanceof Error ? err.message : String(err), isError: true };
+	}
+}
+
+function runCreatePlan(args: unknown): IToolResult {
+	const name = pickString(args, 'name', 'title')?.trim() ?? '';
+	const plan = pickString(args, 'plan', 'markdown')?.trim() ?? '';
+	if (!plan) {
+		return { callId: '', name: CREATE_PLAN_TOOL_NAME, kind: 'think', text: 'plan is required: the plan in Markdown.', isError: true };
+	}
+	const todos = stringList(asRecord(args).todos);
+	return {
+		callId: '',
+		name: CREATE_PLAN_TOOL_NAME,
+		kind: 'think',
+		text: `Plan${name ? ` "${name}"` : ''} is ready for review${todos.length ? ` (${todos.length} steps)` : ''}. Stop here: the user will press Build or ask for changes. Do not start implementing.`,
 	};
 }
 

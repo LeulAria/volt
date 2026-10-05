@@ -266,6 +266,14 @@ suite('Volt agent history log', () => {
 		assert.strictEqual(question.attention, 'question');
 	});
 
+	test('a woken session keeps Woke through its log until the next prompt', () => {
+		const woken = meta({ id: 'w', status: 'done', wokeAt: 5 });
+		const transcript = foldTranscript(header, [{ type: 'user', turn: 't1', at: 1, text: 'q', message: null }, { type: 'agent', turn: 't1', at: 2, final: true, status: 'done', text: 'a', message: null }]);
+		assert.strictEqual(deriveMeta(transcript, woken).wokeAt, 5);
+		const prompted = metaAfterEntry(woken, { type: 'user', turn: 't2', at: 6, text: 'again', message: null });
+		assert.strictEqual(prompted.wokeAt, undefined);
+	});
+
 	test('restart drops approvals that died with their run', () => {
 		const settled = settleIndexAfterRestart({
 			version: 1,

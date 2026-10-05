@@ -184,6 +184,17 @@ export class RemoteStorageService extends AbstractStorageService {
 		this.workspaceStorage = this.createWorkspaceStorage(toWorkspace);
 		await this.workspaceStorage.init();
 
+		// Volt: carry the data over when asked to. A window that moves to another folder without
+		// reloading keeps running with its state, so the new storage must hold that state and not
+		// whatever the folder stored the last time it was open.
+		if (preserveData) {
+			const workspaceStorage = this.workspaceStorage;
+			await Promise.all([
+				...[...workspaceStorage.items.keys()].filter(key => !oldItems.has(key)).map(key => workspaceStorage.delete(key)),
+				...[...oldItems].map(([key, value]) => workspaceStorage.set(key, value)),
+			]);
+		}
+
 		// Handle data switch and eventing
 		this.switchData(oldItems, this.workspaceStorage, StorageScope.WORKSPACE);
 	}

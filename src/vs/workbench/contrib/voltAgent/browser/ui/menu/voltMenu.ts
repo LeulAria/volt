@@ -4,12 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import './voltMenu.css';
-import { $, addDisposableListener, append, clearNode, EventHelper, getWindow, isHTMLElement, scheduleAtNextAnimationFrame } from '../../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, clearNode, EventHelper, getDomNodePagePosition, getWindow, isHTMLElement, scheduleAtNextAnimationFrame } from '../../../../../../base/browser/dom.js';
 import { StandardKeyboardEvent } from '../../../../../../base/browser/keyboardEvent.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../../../base/browser/ui/contextview/contextview.js';
 import { HighlightedLabel } from '../../../../../../base/browser/ui/highlightedlabel/highlightedLabel.js';
 import { renderIcon } from '../../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { InputBox, MessageType } from '../../../../../../base/browser/ui/inputbox/inputBox.js';
+import { InputBox } from '../../../../../../base/browser/ui/inputbox/inputBox.js';
 import { IListRenderer, IListVirtualDelegate } from '../../../../../../base/browser/ui/list/list.js';
 import { List } from '../../../../../../base/browser/ui/list/listWidget.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../../base/common/cancellation.js';
@@ -25,8 +25,14 @@ import { defaultInputBoxStyles, getListStyles } from '../../../../../../platform
 export interface IVoltMenuItem<T> {
 	readonly id: string;
 	readonly label: string;
-	/** Muted text after the label, e.g. a path. */
+	/** Muted text after the label, e.g. a path. Ellipsized at the start. */
 	readonly description?: string;
+	/** Muted text after the label, e.g. a commit subject. Ellipsized at the end, never searched. */
+	readonly detail?: string;
+	/** Muted second line under the label, e.g. a turn's prompt. Makes the row taller. */
+	readonly subtitle?: string;
+	/** Line counts after the label, green and red as in a diff. Zero counts are left out. */
+	readonly stats?: { readonly additions: number; readonly deletions: number };
 	readonly icon?: ThemeIcon | (() => HTMLElement);
 	/** Spins the icon (clone in progress). */
 	readonly busy?: boolean;
@@ -41,6 +47,10 @@ export interface IVoltMenuItem<T> {
 	readonly keywords?: string;
 	/** Opens a flyout beside the row on hover, → or Enter. */
 	readonly submenu?: IVoltSubmenu<T>;
+	/** Picking it turns the root menu's search field into this prompt instead of closing. */
+	readonly prompt?: IVoltMenuPrompt;
+	/** Stays listed while searching, whatever the query. */
+	readonly alwaysShow?: boolean;
 	readonly data: T;
 }
 
@@ -57,11 +67,18 @@ export interface IVoltMenuSection<T> {
 	readonly emptyMessage?: string;
 }
 
-export interface IVoltMenuInlineInput {
-	/** The footer item that turns into this input when picked. */
-	readonly itemId: string;
+/**
+ * A value asked for in the search field, as VS Code's quick input does after "Create new
+ * branch...": Enter submits, Escape goes back to the list.
+ */
+export interface IVoltMenuPrompt {
 	readonly placeholder: string;
+	/** Shown under the field while the value is valid. */
+	readonly hint?: string;
+	/** Start from what was typed in the search. */
+	readonly useQuery?: boolean;
 	readonly validate?: (value: string) => string | undefined;
+	/** A rejection's message is shown and the menu stays open; otherwise the menu closes. */
 	readonly onSubmit: (value: string) => Promise<void>;
 }
 
@@ -70,7 +87,7 @@ export type VoltMenuSections<T> = readonly IVoltMenuSection<T>[] | ((query: stri
 export interface IVoltMenuSearch {
 	readonly placeholder: string;
 	readonly ariaLabel?: string;
-	/** Show the magnifier in front of the field. Defaults to true. */
+	/** Show the magnifier in front of the field. Defaults to false, like the other menus. */
 	readonly icon?: boolean;
 	/** The sections function filters by the query; otherwise sections load once and filter locally. */
 	readonly remote?: boolean;
@@ -90,7 +107,8 @@ export interface IVoltMenuOptions<T> extends IVoltSubmenu<T> {
 	/** Preferred side; flips when there is no room. */
 	readonly position?: 'below' | 'above';
 	readonly align?: 'left' | 'right';
-	readonly inlineInput?: IVoltMenuInlineInput;
+	/** Space between the menu and the anchor, on whichever side the menu lands. */
+	readonly gap?: number;
 	readonly className?: string;
 	readonly ariaLabel: string;
 	readonly onPick: (item: IVoltMenuItem<T>) => void | Promise<void>;
@@ -106,11 +124,12 @@ type Row<T> =
 	| { readonly kind: 'header'; readonly id: string; readonly title: string; readonly collapsible: boolean; readonly collapsed: boolean }
 	| { readonly kind: 'item'; readonly id: string; readonly item: IVoltMenuItem<T>; readonly matches?: IMatch[] }
 	| { readonly kind: 'separator'; readonly id: string }
-	| { readonly kind: 'message'; readonly id: string; readonly text: string };
+	| { readonly kind: 'message'; readonly id: string; readonly text: string; readonly error?: boolean };
 
-const ROW_HEIGHT = 28;
-const HEADER_HEIGHT = 28;
-const SEPARATOR_HEIGHT = 9;
+const ROW_HEIGHT = 30;
+const TWO_LINE_ROW_HEIGHT = 46;
+const HEADER_HEIGHT = 22;
+const SEPARATOR_HEIGHT = 1;
 const MAX_LIST_HEIGHT = 360;
 const ASYNC_DEBOUNCE_MS = 80;
 /** Long enough to cross into a flyout diagonally without it closing. */
@@ -138,21 +157,27 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 		}
 	};
 	contextViewService.showContextView({
-		getAnchor: () => options.anchor,
+		getAnchor: () => {
+			if (options.gap === undefined) {
+				return options.anchor;
+			}
+			// Grow the anchor by the gap so the menu keeps its distance whichever side it lands on.
+			const page = getDomNodePagePosition(options.anchor);
+			return { x: page.left, y: page.top - options.gap, width: page.width, height: page.height + options.gap * 2 };
+		},
 		anchorAlignment: options.align === 'right' ? AnchorAlignment.RIGHT : AnchorAlignment.LEFT,
 		anchorPosition: options.position === 'above' ? AnchorPosition.ABOVE : AnchorPosition.BELOW,
 		canRelayout: true,
-		onDOMEvent: (e: Event) => {
-			if (e.type !== 'click' || !(e.target instanceof Node)) {
-				return;
-			}
-			if (contextViewService.getContextViewElement().contains(e.target) || options.anchor.contains(e.target)) {
-				return;
-			}
-			hide();
-		},
 		render: container => {
 			const store = new DisposableStore();
+			// The context view only reports events inside itself, so watch the page for a press
+			// anywhere else. The trigger toggles the menu on its own click.
+			store.add(addDisposableListener(getWindow(options.anchor).document, 'mousedown', e => {
+				if (!(e.target instanceof Node) || contextViewService.getContextViewElement().contains(e.target) || options.anchor.contains(e.target)) {
+					return;
+				}
+				hide();
+			}, true));
 			options.anchor.classList.add('open');
 			options.anchor.setAttribute('aria-expanded', 'true');
 			openMenu = { anchor: options.anchor, hide };
@@ -164,12 +189,14 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 				}
 			}));
 			const host = append(container, $('.volt-menu-host'));
+			if (options.gap !== undefined) {
+				host.style.marginTop = '0';
+			}
 			store.add(toDisposable(() => host.remove()));
 			widget = store.add(new VoltMenuWidget<T>(host, options, {
 				hide,
 				relayout: () => contextViewService.layout(),
 				pick: item => options.onPick(item),
-				inlineInput: options.inlineInput,
 				className: options.className,
 				ariaLabel: options.ariaLabel,
 			}));
@@ -191,11 +218,14 @@ interface IWidgetContext<T> {
 	readonly hide: () => void;
 	readonly relayout: () => void;
 	readonly pick: (item: IVoltMenuItem<T>) => void | Promise<void>;
-	readonly inlineInput?: IVoltMenuInlineInput;
 	readonly className?: string;
 	readonly ariaLabel: string;
 	/** Set on flyouts: closes this flyout and returns focus to the parent row. */
 	readonly back?: () => void;
+	/** Set on flyouts: the root menu asks for a prompt's value in its own search field. */
+	readonly prompt?: (prompt: IVoltMenuPrompt) => void;
+	/** Set on hover-opened flyouts: no row is highlighted until the pointer or keyboard enters. */
+	readonly idle?: boolean;
 }
 
 class VoltMenuWidget<T> extends Disposable {
@@ -207,7 +237,6 @@ class VoltMenuWidget<T> extends Disposable {
 	private readonly footerHost: HTMLElement;
 	private readonly footerRows: { readonly item: IVoltMenuItem<T>; readonly element: HTMLElement }[] = [];
 	private readonly expanded = new Set<string>();
-	private readonly inlineStore = this._register(new DisposableStore());
 	private readonly flyout = this._register(new MutableDisposable<DisposableStore>());
 	private flyoutWidget: VoltMenuWidget<T> | undefined;
 	private flyoutItem: IVoltMenuItem<T> | undefined;
@@ -216,9 +245,11 @@ class VoltMenuWidget<T> extends Disposable {
 	private sections: readonly IVoltMenuSection<T>[] = [];
 	/** Navigable positions: list rows first, then footer rows. */
 	private active = -1;
+	private idle: boolean;
 	private loadCts: CancellationTokenSource | undefined;
 	private loadTimer: ReturnType<typeof setTimeout> | undefined;
 	private busy = false;
+	private prompting: { readonly prompt: IVoltMenuPrompt; error?: string; submitting: boolean } | undefined;
 
 	constructor(
 		private readonly host: HTMLElement,
@@ -226,6 +257,7 @@ class VoltMenuWidget<T> extends Disposable {
 		private readonly context: IWidgetContext<T>,
 	) {
 		super();
+		this.idle = !!context.idle;
 		this.root = append(host, $('.volt-menu'));
 		if (context.className) {
 			this.root.classList.add(...context.className.split(' '));
@@ -247,7 +279,7 @@ class VoltMenuWidget<T> extends Disposable {
 
 		if (options.search) {
 			const searchRow = append(this.root, $('.volt-menu-search'));
-			if (options.search.icon !== false) {
+			if (options.search.icon) {
 				searchRow.appendChild(renderIcon(Codicon.search)).classList.add('volt-menu-search-icon');
 			}
 			this.input = this._register(new InputBox(searchRow, undefined, {
@@ -259,6 +291,11 @@ class VoltMenuWidget<T> extends Disposable {
 			this.input.inputElement.setAttribute('role', 'combobox');
 			this.input.inputElement.setAttribute('aria-expanded', 'true');
 			this._register(this.input.onDidChange(() => {
+				if (this.prompting) {
+					this.prompting.error = undefined;
+					this.renderPrompt();
+					return;
+				}
 				this.closeFlyout();
 				if (options.search?.remote) {
 					this.load();
@@ -302,8 +339,17 @@ class VoltMenuWidget<T> extends Disposable {
 			listInactiveFocusOutline: 'transparent',
 			listFocusAndSelectionOutline: 'transparent',
 		}));
-		this._register(this.list.onMouseOver(e => {
-			if (e.index !== undefined && this.isNavigable(e.index)) {
+		// Rows that move under a still pointer (typing filters the list) also fire mouse events;
+		// only a pointer that moved picks the active row, so the search keeps its best match.
+		let pointer: string | undefined;
+		this._register(this.list.onMouseMove(e => {
+			const point = `${e.browserEvent.clientX},${e.browserEvent.clientY}`;
+			if (point === pointer) {
+				return;
+			}
+			pointer = point;
+			if (e.index !== undefined && e.index !== this.active && this.isNavigable(e.index)) {
+				this.idle = false;
 				this.setActive(e.index, false);
 				this.hoverFlyout();
 			}
@@ -332,6 +378,12 @@ class VoltMenuWidget<T> extends Disposable {
 	}
 
 	focus(): void {
+		if (this.idle) {
+			this.idle = false;
+			if (this.active < 0) {
+				this.setActive(this.firstNavigable(), true);
+			}
+		}
 		(this.input?.inputElement ?? this.root).focus();
 	}
 
@@ -387,6 +439,11 @@ class VoltMenuWidget<T> extends Disposable {
 	}
 
 	private render(): void {
+		if (this.prompting) {
+			// Sections that finish loading while a prompt is up wait for it to end.
+			this.renderPrompt();
+			return;
+		}
 		const query = this.query;
 		const filterLocally = !this.options.search?.remote;
 		const rows: Row<T>[] = [];
@@ -397,6 +454,10 @@ class VoltMenuWidget<T> extends Disposable {
 			const items: Row<T>[] = [];
 			for (const item of section.items) {
 				if (!query || !filterLocally) {
+					items.push({ kind: 'item', id: `${section.id}:${item.id}`, item });
+					continue;
+				}
+				if (item.alwaysShow) {
 					items.push({ kind: 'item', id: `${section.id}:${item.id}`, item });
 					continue;
 				}
@@ -435,21 +496,29 @@ class VoltMenuWidget<T> extends Disposable {
 			rows.push({ kind: 'message', id: 'empty', text });
 		}
 		const previous = this.active >= 0 && this.active < this.rows.length ? this.rows[this.active]?.id : undefined;
+		this.showRows(rows);
+		// Keep the same row active across refreshes; otherwise start on the checked row or the first one.
+		let next = previous && !query ? rows.findIndex(row => row.id === previous && row.kind === 'item') : -1;
+		if (next < 0 && !query && !this.idle) {
+			next = rows.findIndex(row => row.kind === 'item' && row.item.checked);
+		}
+		if (next < 0 && query) {
+			// Enter should take the best match, not an action that is always listed.
+			next = rows.findIndex((row, index) => row.kind === 'item' && !row.item.alwaysShow && this.isNavigable(index));
+		}
+		if (next < 0 && !this.idle) {
+			next = this.firstNavigable();
+		}
+		this.setActive(next, true);
+		scheduleAtNextAnimationFrame(getWindow(this.root), () => this.context.relayout());
+	}
+
+	private showRows(rows: Row<T>[]): void {
 		this.rows = rows;
 		this.list.splice(0, this.list.length, rows);
 		const height = Math.min(MAX_LIST_HEIGHT, rows.reduce((sum, row) => sum + rowHeight(row), 0));
 		this.listHost.style.height = `${height}px`;
 		this.list.layout(height);
-		// Keep the same row active across refreshes; otherwise start on the checked row or the first one.
-		let next = previous && !query ? rows.findIndex(row => row.id === previous && row.kind === 'item') : -1;
-		if (next < 0 && !query) {
-			next = rows.findIndex(row => row.kind === 'item' && row.item.checked);
-		}
-		if (next < 0) {
-			next = this.firstNavigable();
-		}
-		this.setActive(next, true);
-		scheduleAtNextAnimationFrame(getWindow(this.root), () => this.context.relayout());
 	}
 
 	private renderFooter(): void {
@@ -548,10 +617,21 @@ class VoltMenuWidget<T> extends Disposable {
 
 	private onKeyDown(e: KeyboardEvent): void {
 		// Keys typed in a flyout are the flyout's.
-		if (this.root.classList.contains('inline-editing') || !this.root.contains(e.target as Node)) {
+		if (!this.root.contains(e.target as Node)) {
 			return;
 		}
 		const event = new StandardKeyboardEvent(e);
+		if (this.prompting) {
+			if (event.keyCode === KeyCode.Enter) {
+				void this.submitPrompt();
+			} else if (event.keyCode === KeyCode.Escape) {
+				this.endPrompt();
+			} else {
+				return;
+			}
+			EventHelper.stop(e, true);
+			return;
+		}
 		switch (event.keyCode) {
 			case KeyCode.DownArrow:
 				this.move(1);
@@ -631,8 +711,12 @@ class VoltMenuWidget<T> extends Disposable {
 			this.openFlyout(item, true);
 			return;
 		}
-		if (this.context.inlineInput?.itemId === item.id) {
-			this.startInlineInput(item, this.context.inlineInput);
+		if (item.prompt) {
+			if (this.context.prompt) {
+				this.context.prompt(item.prompt);
+			} else {
+				this.startPrompt(item.prompt);
+			}
 			return;
 		}
 		this.context.hide();
@@ -687,9 +771,14 @@ class VoltMenuWidget<T> extends Disposable {
 			relayout: () => this.placeFlyout(host, row),
 			pick: this.context.pick,
 			ariaLabel: item.label,
+			idle: !focus,
 			back: () => {
 				this.closeFlyout();
 				this.focus();
+			},
+			prompt: prompt => {
+				this.closeFlyout();
+				this.startPrompt(prompt);
 			},
 		}));
 		this.flyoutWidget = widget;
@@ -710,7 +799,7 @@ class VoltMenuWidget<T> extends Disposable {
 		this.flyout.clear();
 	}
 
-	/** Beside the row, overlapping this menu slightly; flipped to the left when the window is too narrow. */
+	/** Beside the row, overlapping this menu slightly; flipped to the left, or over the menu, when the window is too narrow. */
 	private placeFlyout(host: HTMLElement, row: HTMLElement): void {
 		const hostRect = this.host.getBoundingClientRect();
 		const menuRect = this.root.getBoundingClientRect();
@@ -719,63 +808,86 @@ class VoltMenuWidget<T> extends Disposable {
 		const width = isHTMLElement(menu) ? menu.offsetWidth : 0;
 		const height = isHTMLElement(menu) ? menu.offsetHeight : 0;
 		const win = getWindow(this.root);
+		// Right of the menu, else left of it; with no room on either side, inside the window over the menu.
 		const right = menuRect.right - 4;
-		const left = right + width > win.innerWidth - 8 ? menuRect.left - width + 4 : right;
-		const top = Math.max(8, Math.min(rowRect.top - 5, win.innerHeight - height - 8));
+		let left = right;
+		if (right + width > win.innerWidth - 8) {
+			left = menuRect.left - width + 4 >= 8 ? menuRect.left - width + 4 : Math.max(8, win.innerWidth - 8 - width);
+		}
+		const top = Math.max(8, Math.min(rowRect.top - 1, win.innerHeight - height - 8));
 		host.style.left = `${left - hostRect.left}px`;
 		host.style.top = `${top - hostRect.top}px`;
 	}
 
-	// ---- Inline input ---------------------------------------------------------------------
+	// ---- Prompt ---------------------------------------------------------------------------
 
-	private startInlineInput(item: IVoltMenuItem<T>, inline: IVoltMenuInlineInput): void {
-		const row = this.footerRows.find(footer => footer.item === item)?.element;
-		if (!row) {
+	private startPrompt(prompt: IVoltMenuPrompt): void {
+		const input = this.input;
+		if (!input) {
 			return;
 		}
-		this.inlineStore.clear();
-		this.root.classList.add('inline-editing');
-		row.classList.add('editing');
-		clearNode(row);
-		const input = this.inlineStore.add(new InputBox(row, undefined, {
-			placeholder: inline.placeholder,
-			ariaLabel: inline.placeholder,
-			tooltip: '',
-			inputBoxStyles: defaultInputBoxStyles,
-			validationOptions: {
-				validation: value => {
-					const error = value.trim() ? inline.validate?.(value.trim()) : undefined;
-					return error ? { content: error, type: MessageType.ERROR } : null;
-				},
-			},
-		}));
-		const stop = () => {
-			this.inlineStore.clear();
-			this.root.classList.remove('inline-editing');
-			this.renderFooter();
-			this.focus();
-		};
-		this.inlineStore.add(addDisposableListener(input.inputElement, 'keydown', async e => {
-			const event = new StandardKeyboardEvent(e);
-			if (event.keyCode === KeyCode.Escape) {
-				EventHelper.stop(e, true);
-				stop();
-			} else if (event.keyCode === KeyCode.Enter) {
-				EventHelper.stop(e, true);
-				const value = input.value.trim();
-				if (!value || !input.validate()) {
-					return;
-				}
-				try {
-					await inline.onSubmit(value);
-					this.context.hide();
-				} catch (err) {
-					input.showMessage({ content: err instanceof Error ? err.message : String(err), type: MessageType.ERROR });
-				}
-			}
-		}));
+		this.closeFlyout();
+		const initial = prompt.useQuery ? this.query : '';
+		this.prompting = { prompt, submitting: false };
+		this.root.classList.add('prompting');
+		this.footerHost.classList.add('hidden');
+		input.setPlaceHolder(prompt.placeholder);
+		input.inputElement.setAttribute('aria-label', prompt.placeholder);
+		input.value = initial;
+		this.renderPrompt();
 		input.focus();
-		this.context.relayout();
+	}
+
+	private renderPrompt(): void {
+		const prompting = this.prompting;
+		if (!prompting) {
+			return;
+		}
+		const value = this.input?.value.trim() ?? '';
+		const problem = prompting.error ?? (value ? prompting.prompt.validate?.(value) : undefined);
+		const text = problem
+			?? (prompting.submitting ? localize('voltMenu.working', "Working...") : undefined)
+			?? prompting.prompt.hint
+			?? localize('voltMenu.promptHint', "Press Enter to confirm or Escape to cancel");
+		this.showRows([{ kind: 'message', id: 'prompt', text, error: !!problem }]);
+		this.setActive(-1, false);
+		scheduleAtNextAnimationFrame(getWindow(this.root), () => this.context.relayout());
+	}
+
+	private async submitPrompt(): Promise<void> {
+		const prompting = this.prompting;
+		const value = this.input?.value.trim() ?? '';
+		if (!prompting || prompting.submitting || !value || prompting.prompt.validate?.(value)) {
+			return;
+		}
+		prompting.submitting = true;
+		this.renderPrompt();
+		try {
+			await prompting.prompt.onSubmit(value);
+		} catch (err) {
+			if (this.prompting === prompting) {
+				prompting.submitting = false;
+				prompting.error = err instanceof Error ? err.message : String(err);
+				this.renderPrompt();
+			}
+			return;
+		}
+		this.context.hide();
+	}
+
+	private endPrompt(): void {
+		const input = this.input;
+		if (!this.prompting || !input) {
+			return;
+		}
+		this.prompting = undefined;
+		this.root.classList.remove('prompting');
+		this.footerHost.classList.toggle('hidden', !this.footerRows.length);
+		const placeholder = this.options.search?.placeholder ?? '';
+		input.setPlaceHolder(placeholder);
+		input.inputElement.setAttribute('aria-label', this.options.search?.ariaLabel ?? placeholder);
+		input.value = '';
+		this.render();
 	}
 }
 
@@ -783,6 +895,7 @@ function rowHeight<T>(row: Row<T>): number {
 	switch (row.kind) {
 		case 'header': return HEADER_HEIGHT;
 		case 'separator': return SEPARATOR_HEIGHT;
+		case 'item': return row.item.subtitle ? TWO_LINE_ROW_HEIGHT : ROW_HEIGHT;
 		default: return ROW_HEIGHT;
 	}
 }
@@ -827,13 +940,33 @@ function renderItem<T>(host: HTMLElement, item: IVoltMenuItem<T>, matches: IMatc
 	} else {
 		icon.classList.add('empty');
 	}
-	const label = new HighlightedLabel(append(host, $('span.volt-menu-label')));
+	host.classList.toggle('two-line', !!item.subtitle);
+	// Two-line rows stack the label line over the subtitle; one-line rows lay it out in the row.
+	const text = item.subtitle ? append(host, $('span.volt-menu-text')) : undefined;
+	const line = text ? append(text, $('span.volt-menu-line')) : host;
+	const label = new HighlightedLabel(append(line, $('span.volt-menu-label')));
 	label.set(item.label, matches);
 	if (item.description) {
 		// Marked left-to-right so a path keeps its slashes in place while it ellipsizes on the left.
-		append(host, $('span.volt-menu-description')).textContent = `\u200e${item.description}\u200e`;
+		append(line, $('span.volt-menu-description')).textContent = `\u200e${item.description}\u200e`;
 	}
-	append(host, $('span.volt-menu-spacer'));
+	if (item.stats && (item.stats.additions > 0 || item.stats.deletions > 0)) {
+		const stats = append(line, $('span.volt-menu-stats'));
+		if (item.stats.additions > 0) {
+			append(stats, $('span.add')).textContent = `+${item.stats.additions}`;
+		}
+		if (item.stats.deletions > 0) {
+			append(stats, $('span.del')).textContent = `-${item.stats.deletions}`;
+		}
+	}
+	if (item.detail) {
+		append(line, $('span.volt-menu-detail')).textContent = item.detail;
+	}
+	if (text) {
+		append(text, $('span.volt-menu-subtitle')).textContent = item.subtitle!;
+	} else {
+		append(host, $('span.volt-menu-spacer'));
+	}
 	if (item.keybinding) {
 		append(host, $('span.volt-menu-keybinding')).textContent = item.keybinding;
 	}
@@ -887,6 +1020,8 @@ class MessageRenderer<T> implements IListRenderer<Row<T>, HTMLElement> {
 
 	renderElement(row: Row<T>, _index: number, element: HTMLElement): void {
 		element.textContent = row.kind === 'message' ? row.text : '';
+		element.title = element.textContent;
+		element.classList.toggle('error', row.kind === 'message' && !!row.error);
 	}
 
 	disposeTemplate(): void { }

@@ -47,6 +47,7 @@ import { IBaseActionViewItemOptions } from '../../../../base/browser/ui/actionba
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
 import { IManagedHoverTooltipMarkdownString } from '../../../../base/browser/ui/hover/hover.js';
 import { applyDragImage } from '../../../../base/browser/ui/dnd/dnd.js';
+import { Ellipsis, isHighSurrogate } from '../../../../base/common/strings.js';
 
 export class EditorCommandsContextActionRunner extends ActionRunner {
 
@@ -72,6 +73,25 @@ export class EditorCommandsContextActionRunner extends ActionRunner {
 
 		return super.run(action, mergedContext);
 	}
+}
+
+/** Volt: the most characters a tab's text shows. The tab's hover has the full title. */
+export const MAX_TAB_LABEL_LENGTH = 40;
+
+/** Volt: cuts `value` to `max` characters, the last of them an ellipsis. */
+export function limitTabLabel(value: string, max = MAX_TAB_LABEL_LENGTH): string {
+	if (value.length <= max) {
+		return value;
+	}
+	if (max < 2) {
+		return '';
+	}
+	let end = max - 1;
+	// Keep a surrogate pair (an emoji) whole.
+	if (isHighSurrogate(value.charCodeAt(end - 1))) {
+		end--;
+	}
+	return `${value.slice(0, end).trimEnd()}${Ellipsis}`;
 }
 
 export interface IEditorTabsControl extends IDisposable {

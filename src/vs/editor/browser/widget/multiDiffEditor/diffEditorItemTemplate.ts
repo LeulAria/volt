@@ -204,9 +204,11 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 
 	public setData(data: TemplateData | undefined): void {
 		this._data = data;
+		const hostOptions = this._workbenchUIElementFactory.diffEditorOptions;
 		function updateOptions(options: IDiffEditorOptions): IDiffEditorOptions {
 			return {
 				...options,
+				...hostOptions?.get(),
 				scrollBeyondLastLine: false,
 				hideUnchangedRegions: {
 					enabled: true,
@@ -255,6 +257,10 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			this._elements.status.classList.toggle('deleted', isDeleted);
 			this._elements.status.classList.toggle('added', isAdded);
 			this._elements.status.innerText = flag;
+			// Volt: the entry carries its status too, so styles need no `.multiDiffEntry:has(.status…)`,
+			// which restyled the whole diff editor whenever it scrolled.
+			this._elements.root.classList.toggle('status-added', isAdded);
+			this._elements.root.classList.toggle('status-deleted', isDeleted);
 
 			this._resourceLabel2?.setUri(isRenamed ? data.viewModel.originalUri : undefined, { strikethrough: true });
 
@@ -266,6 +272,16 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 		if (value.onOptionsDidChange) {
 			this._dataStore.add(value.onOptionsDidChange(() => {
 				this.editor.updateOptions(updateOptions(value.options ?? {}));
+			}));
+		}
+		if (hostOptions) {
+			let first = true;
+			this._dataStore.add(autorun(reader => {
+				hostOptions.read(reader);
+				if (!first) {
+					this.editor.updateOptions(updateOptions(value.options ?? {}));
+				}
+				first = false;
 			}));
 		}
 		data.viewModel.isAlive.recomputeInitiallyAndOnChange(this._dataStore, value => {

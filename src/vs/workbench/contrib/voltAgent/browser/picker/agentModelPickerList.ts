@@ -75,6 +75,8 @@ export function pickerListHeight(count: number): number {
 export interface IModelPickerListHost {
 	selectedRef: string;
 	modelAuto: boolean;
+	/** Overrides the Auto row's copy, for pickers where Auto means "no pinned model". */
+	auto?: { readonly label: string; readonly description: string };
 	favorites: ReadonlySet<string>;
 	subtitle(model: IModelOption): string | undefined;
 	rowLabel(model: IModelOption): string;
@@ -151,8 +153,8 @@ export class ModelPickerListRenderer implements IListRenderer<IModelPickerRow, I
 			return;
 		}
 		if (row.kind === 'auto') {
-			template.label.textContent = localize('voltAgent.auto', "Auto");
-			template.desc.textContent = localize('voltAgent.autoDesc', "Let Volt pick a model");
+			template.label.textContent = this.host.auto?.label ?? localize('voltAgent.auto', "Auto");
+			template.desc.textContent = this.host.auto?.description ?? localize('voltAgent.autoDesc', "Let Volt pick a model");
 			template.check.appendChild(createAutoSparkIcon());
 			return;
 		}

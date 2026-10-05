@@ -113,8 +113,9 @@
 	box-shadow: none;
 }
 
-.monaco-editor .volt-agent-edit-button:hover {
-	background-color: var(--vscode-toolbar-hoverBackground);
+/* The hover colour is translucent: tint over the opaque background instead of replacing it. */
+.monaco-editor .volt-agent-edit-button:not(.keep):hover {
+	background-image: linear-gradient(var(--vscode-toolbar-hoverBackground), var(--vscode-toolbar-hoverBackground));
 }
 
 .monaco-editor .volt-agent-edit-hunk .volt-agent-edit-button.keep {
@@ -148,12 +149,12 @@
 /* Pending changes above the composer: "2 Files · Undo All · Keep All · Review". */
 .volt-agent-pending-card {
 	width: 100%;
-	max-width: 760px;
+	max-width: 728px;
 	margin: 0 auto 6px;
 	box-sizing: border-box;
 	padding: 4px 6px 6px;
 	border-radius: 12px;
-	background: #222222;
+	background: rgba(34, 34, 34, 0.8);
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	color: var(--vscode-foreground);
 	font-size: 13px;
@@ -161,7 +162,7 @@
 
 .monaco-workbench.vs .volt-agent-pending-card,
 .monaco-workbench.hc-light .volt-agent-pending-card {
-	background: #ececec;
+	background: rgba(236, 236, 236, 0.8);
 	border-color: rgba(0, 0, 0, 0.1);
 }
 
@@ -199,6 +200,40 @@
 	color: var(--vscode-foreground);
 }
 
+/* Same button as the agent header's search: 22px square, hover fill, 16px icon. */
+.volt-agent-pending-view-toggle {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 22px;
+	height: 22px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.volt-agent-pending-view-toggle:hover {
+	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+.volt-agent-pending-view-toggle:focus {
+	outline: none;
+}
+
+.volt-agent-pending-view-toggle:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-agent-pending-view-toggle .codicon {
+	font-size: 16px;
+}
+
 .volt-agent-pending-actions {
 	display: flex;
 	align-items: center;
@@ -214,6 +249,7 @@
 	background: none;
 	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
 	font: inherit;
+	font-weight: 300;
 	cursor: pointer;
 }
 
@@ -242,48 +278,49 @@
 }
 
 .volt-agent-pending-list {
-	display: flex;
-	flex-direction: column;
-	max-height: 168px;
-	overflow-y: auto;
+	display: block;
+}
+
+.volt-agent-pending-list[hidden],
+.volt-agent-pending-widget[hidden] {
+	display: none;
+}
+
+.volt-agent-pending-widget .monaco-list-row {
+	border-radius: 6px;
+	cursor: pointer;
 }
 
 .volt-agent-pending-row {
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	height: 26px;
+	height: 100%;
 	padding: 0 6px;
-	border-radius: 6px;
-	cursor: pointer;
-	outline: none;
+	box-sizing: border-box;
+	min-width: 0;
 }
 
-.volt-agent-pending-row:hover,
-.volt-agent-pending-row:focus-visible {
-	background-color: var(--vscode-list-hoverBackground);
+.volt-agent-pending-widget.tree .volt-agent-pending-row {
+	padding-left: 0;
 }
 
-.volt-agent-pending-icon {
-	display: inline-flex;
-	flex: 0 0 16px;
-	width: 16px;
-	height: 22px;
+.volt-agent-pending-row > .monaco-icon-label {
+	display: flex;
 	align-items: center;
+	flex: 0 1 auto;
+	min-width: 0;
+	height: 100%;
+	line-height: 26px;
 }
 
-.volt-agent-pending-icon::before {
-	background-size: 16px;
+.volt-agent-pending-row > .monaco-icon-label::before {
+	height: 26px;
 	background-position: center;
-	background-repeat: no-repeat;
-	width: 16px;
-	height: 22px;
 }
 
-.volt-agent-pending-name {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+.volt-agent-pending-row [hidden] {
+	display: none !important;
 }
 
 .volt-agent-pending-kind {
@@ -311,8 +348,8 @@
 	margin-left: auto;
 }
 
-.volt-agent-pending-row:hover .volt-agent-pending-row-actions,
-.volt-agent-pending-row:focus-within .volt-agent-pending-row-actions {
+.monaco-list-row:hover .volt-agent-pending-row-actions,
+.monaco-list-row.focused .volt-agent-pending-row-actions {
 	display: flex;
 }
 

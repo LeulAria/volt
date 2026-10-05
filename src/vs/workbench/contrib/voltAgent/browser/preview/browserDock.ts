@@ -11,11 +11,12 @@ import { Disposable, DisposableStore, MutableDisposable } from '../../../../../b
 import { localize } from '../../../../../nls.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
+import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { revealAgentSidePanel } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import '../media/agentEditor.css';
-import { AgentComposerChips } from '../composer/agentComposerChips.js';
+import { AgentComposerChips, createThinkingDots, paintThinkingDots, THINKING_DOTS_SPEED } from '../composer/agentComposerChips.js';
 import { AgentComposerQueue } from '../composer/agentComposerQueue.js';
 import { AgentEditor, IAgentDockState, IAgentPromptDisplay } from '../editor/agentEditor.js';
 import { AGENT_SIDE_PANEL_VIEW_ID, AgentEditorInput } from '../editor/agentEditorInput.js';
@@ -24,6 +25,16 @@ import { AgentThreadView } from '../editor/agentThreadView.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { BrowserAgentComposer } from './browserComposer.js';
 
+/**
+ * idle: a thin glass bar. activity: unfocused while the agent works, the live step ("Explored
+ * available tools +2"). hover: "Message Volt ⌘L". expanded: the composer and its chips.
+ */
+type DockMode = 'idle' | 'activity' | 'hover' | 'expanded' | 'chip';
+
+/** The activity pill's padding (12 + 14), dots and gap (13 + 8), and border, around its text. */
+const ACTIVITY_CHROME_PX = 12 + 14 + 13 + 8 + 2;
+const ACTIVITY_MAX_PX = 420;
+
 export class BrowserAgentDock extends Disposable {
 
 	readonly element: HTMLElement;
@@ -31,6 +42,12 @@ export class BrowserAgentDock extends Disposable {
 	private readonly clusterEl: HTMLElement;
 	private readonly shellEl: HTMLElement;
 	private readonly labelEl: HTMLButtonElement;
+	private readonly activityEl: HTMLElement;
+	private readonly activityTextEl: HTMLElement;
+	private readonly activityMoreEl: HTMLElement;
+	private readonly activityDots: HTMLElement[];
+	private activityDotsTimer: number | undefined;
+	private activityDotsStep = 0;
 	private readonly chips: AgentComposerChips;
 	private readonly composerHost: HTMLElement;
 	private readonly floatEl: HTMLElement;
@@ -47,13 +64,18 @@ export class BrowserAgentDock extends Disposable {
 	private hovered = false;
 	private pendingWork = false;
 	private browserOwned = false;
-	private mode: 'idle' | 'hover' | 'expanded' | 'chip' = 'idle';
+	private mode: DockMode = 'idle';
+	/** The chat whose tools hold this browser, when there is one: prompts go to it, not to a hidden chat. */
+	private chatResolver: (() => string | undefined) | undefined;
+	/** Bound to that chat: its thread is only borrowed while the float is open. */
+	private external = false;
 
 	constructor(
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IViewsService private readonly viewsService: IViewsService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
+		@IEditorService private readonly editorService: IEditorService,
 	) {
 		super();
 		this.element = $('.volt-browser-dock');
@@ -87,6 +109,13 @@ export class BrowserAgentDock extends Disposable {
 		this.labelEl.type = 'button';
 		append(this.labelEl, $('span.volt-browser-dock-label-text')).textContent = localize('voltBrowser.messageAgent', "Message Volt");
 		append(this.labelEl, $('span.volt-browser-dock-label-kb')).textContent = formatAgentTooltipShortcut({ meta: true, key: 'L' });
+		this.activityEl = append(this.shellEl, $('.volt-browser-dock-activity'));
+		this.activityEl.setAttribute('aria-live', 'polite');
+		const activityDots = createThinkingDots();
+		this.activityDots = activityDots.cells;
+		append(this.activityEl, activityDots.root);
+		this.activityTextEl = append(this.activityEl, $('span.volt-browser-dock-activity-text'));
+		this.activityMoreEl = append(this.activityEl, $('span.volt-browser-dock-activity-more'));
 		this.composerHost = append(this.shellEl, $('.volt-browser-dock-composer'));
 		this.composer = this._register(instantiationService.createInstance(BrowserAgentComposer, {
 			dock: true,
@@ -127,7 +156,7 @@ export class BrowserAgentDock extends Disposable {
 			},
 			onReorder: ids => this.reorderQueued(ids),
 		}));
-		this.hitEl.insertBefore(this.composerQueue.element, this.clusterEl);
+		this.hitEl.insertBefore(this.composerQueue.element, this.chips.element);
 		append(this.composerHost, this.composer.element);
 
 		this._register(addDisposableListener(this.shellEl, 'click', e => {
@@ -169,6 +198,9 @@ export class BrowserAgentDock extends Disposable {
 				return;
 			}
 			if (this.mode === 'expanded') {
+				// Hand the size back to CSS so the pill tracks the dock row (and the chips above it)
+				// when the browser is resized while the composer stays open.
+				this.shellEl.style.width = '100%';
 				this.shellEl.style.height = 'auto';
 				this.composer.layout();
 			}
@@ -190,6 +222,46 @@ export class BrowserAgentDock extends Disposable {
 		this.syncVisibility();
 	}
 
+	setChatResolver(resolver: () => string | undefined): void {
+		this.chatResolver = resolver;
+	}
+
+	/**
+	 * Across the window (full screen) the dock stands in for the chat's composer, so it shows the
+	 * chat's state at once; on leaving, a thread borrowed into the float goes back to the chat.
+	 */
+	setChatMode(on: boolean): void {
+		this.element.classList.toggle('chat-mode', on);
+		if (on) {
+			const editor = this.chatEditor();
+			if (editor) {
+				this.bindAgent(editor);
+				this.external = true;
+			}
+			this.sync();
+			return;
+		}
+		if (this.external) {
+			this.setFloatOpen(false);
+			this.restoreThread();
+		}
+		this.dismissToIdle();
+	}
+
+	/** The open chat that owns this browser's tools area. */
+	private chatEditor(): AgentEditor | undefined {
+		const sessionId = this.chatResolver?.();
+		if (!sessionId) {
+			return undefined;
+		}
+		for (const pane of this.editorService.visibleEditorPanes) {
+			if (pane instanceof AgentEditor && pane.sessionId === sessionId) {
+				return pane;
+			}
+		}
+		return undefined;
+	}
+
 	setBlocked(blocked: boolean): void {
 		this.element.classList.toggle('blocked', blocked);
 		if (blocked) {
@@ -204,6 +276,9 @@ export class BrowserAgentDock extends Disposable {
 
 	layout(): void {
 		if (this.expanded) {
+			if (this.mode === 'expanded') {
+				this.shellEl.style.width = '100%';
+			}
 			this.composer.layout();
 		}
 	}
@@ -290,16 +365,12 @@ export class BrowserAgentDock extends Disposable {
 		this.setExpanded(false);
 	}
 
-	private isWorking(): boolean {
-		return this.pendingWork || !!this.dockState()?.streaming;
-	}
-
 	private hasQueued(): boolean {
 		return (this.agentEditor?.getPromptQueue().length ?? 0) > 0;
 	}
 
 	private shouldStayExpanded(): boolean {
-		return this.isWorking() || this.composer.hasDraft() || this.hasQueued();
+		return this.composer.hasDraft() || this.hasQueued();
 	}
 
 	private stopRun(): void {
@@ -329,7 +400,7 @@ export class BrowserAgentDock extends Disposable {
 		this.floatOpen = open;
 		if (open) {
 			this.renderFloat();
-		} else if (!this.browserOwned) {
+		} else if (!this.browserOwned || this.external) {
 			this.restoreThread();
 		}
 		this.sync();
@@ -356,7 +427,9 @@ export class BrowserAgentDock extends Disposable {
 			return;
 		}
 		this.bindAgent(editor);
-		this.parkThread();
+		if (!this.external) {
+			this.parkThread();
+		}
 		editor.setMode(this.composer.mode);
 		editor.submitPrompt(text, promptDisplay);
 		this.setFloatOpen(false);
@@ -391,9 +464,15 @@ export class BrowserAgentDock extends Disposable {
 	}
 
 	private async ensureBrowserAgent(): Promise<AgentEditor | undefined> {
-		if (this.agentEditor) {
+		const chat = this.chatEditor();
+		if (chat) {
+			this.external = true;
+			return chat;
+		}
+		if (this.agentEditor && !this.external) {
 			return this.agentEditor;
 		}
+		this.external = false;
 		const group = this.editorGroupsService.activeGroup;
 		if (!group) {
 			return undefined;
@@ -486,15 +565,22 @@ export class BrowserAgentDock extends Disposable {
 		}
 		const working = streaming || this.pendingWork;
 		const chipLabel = state?.status || (working ? localize('voltAgent.planningMoves', "Planning next moves") : '');
-		const showChip = !!chipLabel && (working || this.browserOwned || hasTurns);
-		if (streaming || this.pendingWork || this.browserOwned || showChip || this.shouldStayExpanded()) {
+		if (this.shouldStayExpanded()) {
 			this.expanded = true;
 		}
-		const mode: 'idle' | 'hover' | 'expanded' | 'chip' = this.expanded
+		// Unfocused it collapses, as Cursor's does: the live step while the agent works, else a glass bar.
+		const mode: DockMode = this.expanded
 			? 'expanded'
 			: this.hovered
 				? 'hover'
-				: 'idle';
+				: working
+					? 'activity'
+					: 'idle';
+		const activity = state?.activity;
+		this.activityTextEl.textContent = activity?.text || chipLabel;
+		this.activityMoreEl.textContent = activity && activity.more > 0 ? `+${activity.more}` : '';
+		this.activityMoreEl.classList.toggle('hidden', !activity || activity.more <= 0);
+		this.setActivityDots(mode === 'activity');
 
 		this.element.classList.toggle('working', working);
 		this.element.classList.toggle('float-open', this.floatOpen);
@@ -511,7 +597,28 @@ export class BrowserAgentDock extends Disposable {
 		this.morphTo(mode);
 	}
 
-	private morphTo(mode: 'idle' | 'hover' | 'expanded' | 'chip'): void {
+	private setActivityDots(on: boolean): void {
+		const win = getWindow(this.element);
+		if (!on) {
+			if (this.activityDotsTimer !== undefined) {
+				win.clearInterval(this.activityDotsTimer);
+				this.activityDotsTimer = undefined;
+			}
+			return;
+		}
+		if (this.activityDotsTimer !== undefined) {
+			return;
+		}
+		paintThinkingDots(this.activityDots, this.activityDotsStep);
+		this.activityDotsTimer = win.setInterval(() => paintThinkingDots(this.activityDots, ++this.activityDotsStep), THINKING_DOTS_SPEED);
+	}
+
+	private activityWidth(available: number): number {
+		const more = this.activityMoreEl.classList.contains('hidden') ? 0 : 6 + this.activityMoreEl.scrollWidth;
+		return Math.min(Math.ceil(ACTIVITY_CHROME_PX + this.activityTextEl.scrollWidth + more), ACTIVITY_MAX_PX, available);
+	}
+
+	private morphTo(mode: DockMode): void {
 		if (this.mode === mode && mode === 'expanded') {
 			return;
 		}
@@ -520,6 +627,7 @@ export class BrowserAgentDock extends Disposable {
 		this.mode = mode;
 		this.element.dataset.mode = mode;
 		this.element.classList.toggle('mode-idle', mode === 'idle');
+		this.element.classList.toggle('mode-activity', mode === 'activity');
 		this.element.classList.toggle('mode-hover', mode === 'hover');
 		this.element.classList.toggle('mode-expanded', mode === 'expanded');
 		this.element.classList.toggle('mode-chip', mode === 'chip');
@@ -531,14 +639,18 @@ export class BrowserAgentDock extends Disposable {
 		const available = Math.max(this.element.clientWidth - pad, 160);
 		const toWidth = mode === 'idle'
 			? 156
-			: mode === 'hover'
+			: mode === 'activity'
+				? this.activityWidth(available)
+				: mode === 'hover'
 				? 228
 				: mode === 'chip'
 					? 0
 					: Math.min(650, Math.round(available * 0.9));
 		const toHeight = mode === 'idle'
 			? 10
-			: mode === 'hover'
+			: mode === 'activity'
+				? 34
+				: mode === 'hover'
 				? 36
 				: mode === 'chip'
 					? 0
@@ -554,6 +666,7 @@ export class BrowserAgentDock extends Disposable {
 	}
 
 	override dispose(): void {
+		this.setActivityDots(false);
 		this.restoreThread();
 		super.dispose();
 	}

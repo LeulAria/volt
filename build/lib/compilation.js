@@ -143,7 +143,9 @@ function compileTask(src, out, build, options = {}) {
         if (os_1.default.totalmem() < 4_000_000_000) {
             throw new Error('compilation requires 4GB of RAM');
         }
-        const compile = createCompile(src, { build, emitError: true, transpileOnly: false, preserveEnglish: !!options.preserveEnglish });
+        // VOLT_BUILD_IGNORE_TYPE_ERRORS=1: report type errors but still package. Mangling needs a clean type check, so it is off too.
+        const ignoreTypeErrors = !!process.env.VOLT_BUILD_IGNORE_TYPE_ERRORS;
+        const compile = createCompile(src, { build, emitError: !ignoreTypeErrors, transpileOnly: false, preserveEnglish: !!options.preserveEnglish });
         const srcPipe = gulp_1.default.src(`${src}/**`, { base: `${src}` });
         const generator = new MonacoGenerator(false);
         if (src === 'src') {
@@ -151,7 +153,7 @@ function compileTask(src, out, build, options = {}) {
         }
         // mangle: TypeScript to TypeScript
         let mangleStream = event_stream_1.default.through();
-        if (build && !options.disableMangle) {
+        if (build && !options.disableMangle && !ignoreTypeErrors) {
             let ts2tsMangler = new index_1.Mangler(compile.projectPath, (...data) => (0, fancy_log_1.default)(ansi_colors_1.default.blue('[mangler]'), ...data), { mangleExports: true, manglePrivateFields: true });
             const newContentsByFileName = ts2tsMangler.computeNewFileContents(new Set(['saveState']));
             mangleStream = event_stream_1.default.through(async function write(data) {

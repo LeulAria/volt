@@ -9,9 +9,12 @@ import { homedir, tmpdir } from 'os';
 import { promisify } from 'util';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { basename, delimiter, join } from '../../../base/common/path.js';
-import { Disposable } from '../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore } from '../../../base/common/lifecycle.js';
+import { CancellationToken } from '../../../base/common/cancellation.js';
 import { generateUuid } from '../../../base/common/uuid.js';
+import { IServerChannel, ProxyChannel } from '../../../base/parts/ipc/common/ipc.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
+import { ILifecycleMainService } from '../../lifecycle/electron-main/lifecycleMainService.js';
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
@@ -41,22 +44,42 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 	/** Foreground commands and background jobs, by caller-chosen id. */
 	private readonly runs = new Map<string, ExecRun>();
 	private shellEnv: Promise<NodeJS.ProcessEnv> | undefined;
+	/**
+	 * The window (IPC context, `window:<id>`) that spawned each agent process. Its chats are the
+	 * only ones that can use or stop the process, so when that window reloads, loads another
+	 * folder, or closes, its agents go too. Without this every reload leaked an agent per chat.
+	 */
+	private readonly owners = new Map<string, string>();
 
 	constructor(
 		@ILogService private readonly logService: ILogService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@ILifecycleMainService lifecycleMainService: ILifecycleMainService,
 	) {
 		super();
+		this._register(lifecycleMainService.onWillLoadWindow(e => this.killOwnedBy(windowOwner(e.window.id))));
+		this._register(lifecycleMainService.onBeforeCloseWindow(window => this.killOwnedBy(windowOwner(window.id))));
+		this._register(lifecycleMainService.onWillShutdown(() => this.killAll()));
 	}
 
 	async spawn(options: IVoltStdioSpawnOptions): Promise<string> {
+		return this.spawnFor(undefined, options);
+	}
+
+	/** {@link spawn} on behalf of one window; see {@link owners}. */
+	async spawnFor(owner: string | undefined, options: IVoltStdioSpawnOptions): Promise<string> {
 		const id = generateUuid();
 		const child = spawn(options.command, options.args ?? [], {
 			cwd: options.cwd,
 			env: { ...await this.env(), ...options.env },
 			stdio: ['pipe', 'pipe', 'pipe'],
+			// Its own process group, so stopping it also stops the workers it starts.
+			detached: process.platform !== 'win32',
 		});
 		this.processes.set(id, child);
+		if (owner) {
+			this.owners.set(id, owner);
+		}
 		child.stdout.setEncoding('utf8');
 		child.stderr.setEncoding('utf8');
 		child.stdout.on('data', (data: string) => this._onData.fire({ id, data }));
@@ -68,6 +91,7 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 		child.on('close', code => {
 			const stderr = this.stderr.get(id);
 			this.processes.delete(id);
+			this.owners.delete(id);
 			this.stderr.delete(id);
 			this._onExit.fire({ id, code, ...(stderr ? { stderr } : {}) });
 		});
@@ -90,8 +114,28 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 		if (!child) {
 			return;
 		}
-		child.kill();
+		killTree(child);
 		this.processes.delete(id);
+		this.owners.delete(id);
+	}
+
+	private killOwnedBy(owner: string): void {
+		const ids = [...this.owners].filter(([, value]) => value === owner).map(([id]) => id);
+		if (ids.length) {
+			this.logService.info(`[volt-stdio] stopping ${ids.length} agent process(es) of ${owner}`);
+		}
+		for (const id of ids) {
+			void this.kill(id);
+		}
+	}
+
+	private killAll(): void {
+		for (const id of [...this.processes.keys()]) {
+			void this.kill(id);
+		}
+		for (const run of this.runs.values()) {
+			killTree(run.child);
+		}
 	}
 
 	async which(command: string): Promise<string | undefined> {
@@ -259,9 +303,10 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 
 	override dispose(): void {
 		for (const [id, child] of this.processes) {
-			child.kill();
+			killTree(child);
 			this.processes.delete(id);
 		}
+		this.owners.clear();
 		for (const run of this.runs.values()) {
 			killTree(run.child);
 		}
@@ -423,6 +468,29 @@ function shellFor(env: NodeJS.ProcessEnv): { file: string; args: (command: strin
 	}
 	const preferred = env.SHELL && /^(zsh|bash|sh|dash|ksh)$/.test(basename(env.SHELL)) ? env.SHELL : undefined;
 	return { file: preferred ?? (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash'), args: command => ['-c', command] };
+}
+
+function windowOwner(windowId: number): string {
+	return `window:${windowId}`;
+}
+
+/**
+ * The renderer-facing channel. Same as a proxied service, except `spawn` records which window
+ * asked (the IPC context), so that window's agents stop with it.
+ */
+export function createVoltStdioChannel(service: VoltStdioMainService, disposables: DisposableStore): IServerChannel<string> {
+	const proxied = ProxyChannel.fromService(service, disposables);
+	return {
+		call<T>(ctx: string, command: string, arg?: unknown, cancellationToken?: CancellationToken): Promise<T> {
+			if (command === 'spawn') {
+				return service.spawnFor(ctx, (arg as [IVoltStdioSpawnOptions])[0]) as Promise<unknown> as Promise<T>;
+			}
+			return proxied.call<T>(ctx, command, arg, cancellationToken);
+		},
+		listen<T>(ctx: string, event: string, arg?: unknown): Event<T> {
+			return proxied.listen<T>(ctx, event, arg);
+		},
+	};
 }
 
 /** SIGTERM to the whole process group, then SIGKILL after a grace period. */

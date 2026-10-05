@@ -4,6 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { $, append } from '../../../../../base/browser/dom.js';
+import { Codicon } from '../../../../../base/common/codicons.js';
+import { localize } from '../../../../../nls.js';
+import { createCodeCardShell, ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
+import { markupToFragment } from './agentMarkupDom.js';
+import type * as BeautifulMermaid from './vendor/beautifulMermaid.js';
 
 interface MermaidNode {
 	id: string;
@@ -19,18 +24,109 @@ interface MermaidEdge {
 
 const NODE_ID = /[A-Za-z][\w-]*/;
 
-export function renderMermaidDiagram(parent: HTMLElement, source: string): void {
-	const wrap = append(parent, $('.volt-agent-block.mermaid.volt-agent-mermaid'));
-	const doc = parent.ownerDocument;
-	const svg = renderFlowchart(doc, source) ?? renderPie(doc, source) ?? renderSequence(doc, source);
-	if (svg) {
-		wrap.appendChild(svg);
+export interface IMermaidOptions extends ICodeCardOptions {
+	/** Opens the diagram larger (Cursor's "Expand diagram"). */
+	readonly onExpand?: (svg: SVGSVGElement, source: string) => void;
+}
+
+/**
+ * The colours Cursor hands beautiful-mermaid, as CSS so a theme change recolours drawn
+ * diagrams: editor background, primary text, tertiary icon lines, cyan arrows, secondary
+ * text, a faint node fill and tertiary borders.
+ */
+const MERMAID_THEME: BeautifulMermaid.RenderOptions = {
+	bg: 'var(--volt-md-mermaid-bg)',
+	fg: 'var(--volt-md-mermaid-fg)',
+	line: 'var(--volt-md-mermaid-line)',
+	accent: 'var(--volt-md-mermaid-accent)',
+	muted: 'var(--volt-md-mermaid-muted)',
+	surface: 'var(--volt-md-mermaid-surface)',
+	border: 'var(--volt-md-mermaid-line)',
+	font: '-apple-system, BlinkMacSystemFont, \'Segoe UI\', sans-serif',
+	transparent: true,
+};
+
+let mermaidLib: typeof BeautifulMermaid | undefined;
+let mermaidLoad: Promise<typeof BeautifulMermaid> | undefined;
+const svgCache = new Map<string, string | null>();
+
+/** Starts loading the diagram renderer (1.5 MB) so the first diagram draws without a placeholder. */
+export function preloadMermaid(): Promise<unknown> {
+	mermaidLoad ??= import('./vendor/beautifulMermaid.js').then(lib => mermaidLib = lib);
+	return mermaidLoad.catch(() => undefined);
+}
+
+/** SVG markup for `source`, or `null` when the renderer cannot draw it. `undefined` means not loaded yet. */
+function mermaidMarkup(source: string): string | null | undefined {
+	const key = source.trim();
+	if (svgCache.has(key)) {
+		return svgCache.get(key)!;
+	}
+	if (!mermaidLib) {
+		return undefined;
+	}
+	let svg: string | null = null;
+	try {
+		// The library pulls a web font in with @import; system fonts render the same and stay offline.
+		svg = mermaidLib.renderMermaidSVG(key, MERMAID_THEME).replace(/@import url\([^)]*\);?/g, '');
+	} catch {
+		svg = null;
+	}
+	svgCache.set(key, svg);
+	if (svgCache.size > 100) {
+		const oldest = svgCache.keys().next().value;
+		if (oldest !== undefined) {
+			svgCache.delete(oldest);
+		}
+	}
+	return svg;
+}
+
+export function renderMermaidDiagram(parent: HTMLElement, source: string, options: IMermaidOptions): void {
+	const host = append(parent, $('.volt-agent-block.mermaid'));
+	draw(host, source, options);
+	if (mermaidMarkup(source) === undefined) {
+		preloadMermaid().then(() => {
+			if (host.isConnected) {
+				host.replaceChildren();
+				draw(host, source, options);
+				options.onDidChangeSize?.();
+			}
+		});
+	}
+}
+
+function draw(host: HTMLElement, source: string, options: IMermaidOptions): void {
+	const markup = mermaidMarkup(source);
+	const doc = host.ownerDocument;
+	let svg: SVGSVGElement | undefined;
+	if (markup) {
+		const fragment = markupToFragment(doc, markup, true);
+		const root = fragment.firstElementChild;
+		if (root && root.nodeName.toLowerCase() === 'svg') {
+			svg = root as SVGSVGElement;
+		}
+	}
+	svg ??= markup === undefined ? undefined : renderLegacyDiagram(doc, source);
+	if (!svg) {
+		// Not drawable (yet): show the source the way Cursor shows any other fence.
+		renderCodeCard(host, 'mermaid', source.trim(), options);
 		return;
 	}
-	const lang = append(wrap, $('span.volt-agent-code-lang.volt-agent-searchable'));
-	lang.textContent = 'mermaid';
-	const pre = append(wrap, $('pre.volt-agent-searchable'));
-	pre.textContent = source.trim();
+	const actions = options.onExpand ? [{
+		icon: Codicon.screenFull,
+		label: localize('voltAgent.mermaid.expand', "Expand diagram"),
+		run: () => options.onExpand?.(svg!.cloneNode(true) as SVGSVGElement, source),
+	}] : [];
+	const shell = createCodeCardShell(host, options, actions, source.trim());
+	shell.card.classList.add('mermaid');
+	const content = append(shell.scroll, $('.volt-md-mermaid-content'));
+	content.appendChild(svg);
+	svg.classList.add('volt-md-mermaid-svg');
+}
+
+function renderLegacyDiagram(doc: Document, source: string): SVGSVGElement | undefined {
+	return renderFlowchart(doc, source) ?? renderPie(doc, source) ?? renderSequence(doc, source);
 }
 
 function renderFlowchart(doc: Document, source: string): SVGSVGElement | undefined {
@@ -62,7 +158,7 @@ function renderFlowchart(doc: Document, source: string): SVGSVGElement | undefin
 			continue;
 		}
 		const edge = parseEdge(line);
-		if (edge) {
+		if (edge?.from && edge.to) {
 			ensure(edge.from.id, edge.from.label, edge.from.shape);
 			ensure(edge.to.id, edge.to.label, edge.to.shape);
 			edges.push({ from: edge.from.id, to: edge.to.id, label: edge.label });

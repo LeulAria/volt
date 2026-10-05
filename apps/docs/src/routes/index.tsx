@@ -16,7 +16,7 @@ import {
 import { Manifesto } from "@/components/landing/manifesto";
 import { Models } from "@/components/landing/models";
 import { PoweredBy } from "@/components/landing/poweredBy";
-import { Tour } from "@/components/landing/tour";
+import { ScrollRuler } from "@/components/landing/scrollRuler";
 import { WaveField } from "@/components/waveField";
 import { gsap, REDUCED, SplitText, useGSAP } from "@/lib/gsap";
 import { homeRouteLinks, homeRouteMeta } from "@/lib/seo";
@@ -248,17 +248,17 @@ function Home() {
         </div>
       </section>
 
+      <ScrollRuler />
       <main className="relative">
         <Guides />
         <SectionRule />
         <Manifesto />
-        <Tour />
+        <SectionRule className="mt-0" />
+        <PoweredBy />
         <SectionRule className="mt-24 md:mt-32" />
         <FeatureBento />
         <SectionRule className="mt-24 md:mt-32" />
         <Capabilities />
-        <SectionRule className="mt-0" />
-        <PoweredBy />
         <SectionRule className="mt-24 md:mt-32" />
         <Models />
         <SectionRule className="mt-24 md:mt-32" />

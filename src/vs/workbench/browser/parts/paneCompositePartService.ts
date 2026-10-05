@@ -14,9 +14,9 @@ import { PanelPart } from './panel/panelPart.js';
 import { SidebarPart } from './sidebar/sidebarPart.js';
 import { IPaneComposite } from '../../common/panecomposite.js';
 import { ViewContainerLocation, ViewContainerLocations } from '../../common/views.js';
-import { IPaneCompositePartService } from '../../services/panecomposite/browser/panecomposite.js';
+import { ILentPaneCompositePart, IPaneCompositePartService } from '../../services/panecomposite/browser/panecomposite.js';
 import { Disposable, DisposableStore } from '../../../base/common/lifecycle.js';
-import { IPaneCompositePart } from './paneCompositePart.js';
+import { AbstractPaneCompositePart, IPaneCompositePart } from './paneCompositePart.js';
 
 export class PaneCompositePartService extends Disposable implements IPaneCompositePartService {
 
@@ -83,6 +83,11 @@ export class PaneCompositePartService extends Disposable implements IPaneComposi
 
 	getLastActivePaneCompositeId(viewContainerLocation: ViewContainerLocation): string {
 		return this.getPartByLocation(viewContainerLocation).getLastActivePaneCompositeId();
+	}
+
+	lendPaneComposite(id: string, viewContainerLocation: ViewContainerLocation, host: HTMLElement): ILentPaneCompositePart | undefined {
+		const part = this.getPartByLocation(viewContainerLocation);
+		return part instanceof AbstractPaneCompositePart ? part.lendPaneComposite(id, host) : undefined;
 	}
 
 	private getPartByLocation(viewContainerLocation: ViewContainerLocation): IPaneCompositePart {

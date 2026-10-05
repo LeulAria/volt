@@ -239,6 +239,8 @@ export function shouldCompact(recordCount: number, effectiveCount: number, damag
 export function deriveTitle(text: string): string {
 	const firstLine = text
 		.replace(/<[^>\n]{1,80}>/g, ' ')
+		// Attachment chips: `[Image #1: a.png]`, `[Image #1 "a.png" is saved at: /path]`.
+		.replace(/\[(?:Image|Video|File)\b[^\]\n]*\]/g, ' ')
 		.split('\n')
 		.map(line => line.trim())
 		.find(line => line.length > 0) ?? '';
@@ -309,6 +311,9 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 		archived: previous?.archived,
 		settled: previous?.settled,
 		snoozed: previous?.snoozed,
+		snoozedUntil: previous?.snoozedUntil,
+		wokeAt: previous?.wokeAt,
+		lastPromptAt: last?.user.at,
 		hasDraft: previous?.hasDraft,
 		unread: previous?.unread,
 		attention: previous?.attention,
@@ -316,6 +321,8 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 		model: transcript.model ?? previous?.model,
 		worktreePath: transcript.worktreePath ?? previous?.worktreePath,
 		worktreeBranch: transcript.worktreeBranch ?? previous?.worktreeBranch,
+		parentId: transcript.header.parentId ?? previous?.parentId,
+		subagent: transcript.header.subagent || previous?.subagent || undefined,
 	};
 }
 
@@ -326,7 +333,7 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
  */
 export function metaAfterEntry(meta: IAgentSessionMeta, entry: AgentHistoryEntry): IAgentSessionMeta {
 	if (entry.type === 'user') {
-		return { ...meta, status: 'running', unread: undefined, attention: undefined };
+		return { ...meta, status: 'running', unread: undefined, attention: undefined, wokeAt: undefined };
 	}
 	if (entry.type === 'agent' && entry.final) {
 		return { ...meta, unread: true, attention: meta.attention === 'approval' ? undefined : meta.attention };
@@ -543,6 +550,11 @@ const MIME_EXTENSIONS: Record<string, string> = {
 	'image/webp': 'webp',
 	'image/bmp': 'bmp',
 	'image/svg+xml': 'svg',
+	'video/mp4': 'mp4',
+	'video/webm': 'webm',
+	'video/quicktime': 'mov',
+	'video/x-m4v': 'm4v',
+	'video/ogg': 'ogv',
 	'text/plain': 'txt',
 	'application/json': 'json',
 	'application/pdf': 'pdf',

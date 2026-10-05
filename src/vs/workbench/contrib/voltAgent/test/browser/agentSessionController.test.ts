@@ -114,13 +114,44 @@ suite('Agent session controller', () => {
 		assert.strictEqual(controller.isRunning, false);
 	});
 
-	test('a finished run leaves its queue for the next panel, once', () => {
-		const { runtime, controller, changes } = setup();
+	test('text from a new message of the same run starts a new paragraph', () => {
+		const { runtime, host } = setup();
 		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
+		runtime.emit({ type: 'text.delta', id: 'msg-a', delta: 'Waiting for subagent B' });
+		runtime.emit({ type: 'text.delta', id: 'msg-a', delta: ' to finish...' });
+		runtime.emit({ type: 'text.delta', id: 'msg-b', delta: 'Both subagents completed.' });
+		const reply = host.messages.at(-1) as IAgentAssistantMessage;
+		assert.strictEqual(reply.text, 'Waiting for subagent B to finish...\n\nBoth subagents completed.');
+		assert.deepStrictEqual(reply.segments.map(segment => segment.kind === 'text' ? segment.text : segment.kind), ['Waiting for subagent B to finish...\n\nBoth subagents completed.']);
+	});
+
+	test('a turn starts with no panel: its prompt is recorded first, then the run fills its reply', () => {
+		const { runtime, host, controller, changes } = setup();
+		const users: string[] = [];
+		host.recordUser = message => users.push(message.text);
 		runtime.emit({ type: 'run.end', runId: 'run-1', reason: 'done' });
-		assert.deepStrictEqual(changes.at(-1), { kind: 'runEnd', aborted: false });
-		assert.strictEqual(controller.consumePendingDrain(), true);
-		assert.strictEqual(controller.consumePendingDrain(), false);
+		const reply = controller.beginTurn({ turnId: 'turn-2', text: 'model text', display: { text: 'Check the build' }, mode: 'Agent' });
+		assert.deepStrictEqual(users, ['Check the build']);
+		assert.deepStrictEqual(changes.at(-1), { kind: 'turnStart', turnId: 'turn-2' });
+		const user = host.messages.at(-2);
+		assert.ok(user?.kind === 'user' && user.agentText === 'model text' && user.id === 'turn-2');
+		runtime.emit({ type: 'run.start', runId: 'run-2', mode: 'agent' }, 'run-2');
+		runtime.emit({ type: 'text.delta', id: 't', delta: 'Built.' }, 'run-2');
+		assert.strictEqual(reply.text, 'Built.');
+		assert.strictEqual(controller.beginTurn({ turnId: 'turn-2', text: 'model text', mode: 'Agent' }), reply, 'a retried start reuses its messages');
+	});
+
+	test('a subagent report arrives as a notification card, and a turn that never started is closed', () => {
+		const { host, controller, changes, records } = setup();
+		controller.beginTurn({ turnId: 'n1', text: '[Volt] Delegated task finished', display: { text: 'Task finished: README' }, mode: 'Agent', origin: 'notification', taskIds: ['t-1'] });
+		const user = host.messages.at(-2);
+		assert.ok(user?.kind === 'user' && user.origin === 'notification' && user.taskIds?.[0] === 't-1');
+		controller.endUnstartedTurn('n1', 'No model is connected');
+		const reply = host.messages.at(-1) as IAgentAssistantMessage;
+		assert.strictEqual(reply.outcome, 'failed');
+		assert.strictEqual(reply.activity?.streaming, false);
+		assert.deepStrictEqual(records.at(-1), { final: true, status: 'error' });
+		assert.deepStrictEqual(changes.at(-1), { kind: 'runEnd', aborted: false, failed: true });
 	});
 
 	test('usage lands on the host even when no panel is listening', () => {
@@ -143,6 +174,17 @@ suite('Agent session controller', () => {
 		assert.strictEqual(last.tokensCache, 16_800);
 	});
 
+	test('end-of-turn totals do not replace the occupancy the run reported', () => {
+		const { runtime, host } = setup();
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
+		runtime.emit({ type: 'usage', input: 0, output: 0, used: 27_930, size: 200_000 });
+		runtime.emit({ type: 'usage', input: 60, output: 1_623, cache: 175_841 });
+		assert.strictEqual(host.contextUsed, 27_930);
+		const last = host.messages.at(-1) as IAgentAssistantMessage;
+		assert.strictEqual(last.tokensUsed, 27_930);
+		assert.strictEqual(last.tokensCache, 175_841, 'the chips still show the turn totals');
+	});
+
 	test('events from another run are ignored', () => {
 		const { runtime, host } = setup();
 		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
@@ -157,5 +199,79 @@ suite('Agent session controller', () => {
 		controller.setHost(next);
 		runtime.emit({ type: 'text.delta', id: 't', delta: 'after' });
 		assert.strictEqual((next.messages.at(-1) as IAgentAssistantMessage).text, 'after');
+	});
+
+	test('the live line returns to the model after the last running tool ends', () => {
+		const { runtime, host } = setup();
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
+		runtime.emit({ type: 'tool.start', callId: 'a', name: 'grep', title: 'Search files', input: '{"pattern":"x"}', kind: 'search' });
+		runtime.emit({ type: 'tool.start', callId: 'b', name: 'shell', title: 'Run tests', input: '{"command":"npm test"}', kind: 'execute' });
+		const reply = host.messages.at(-1) as IAgentAssistantMessage;
+		const running = reply.activity!.status;
+		runtime.emit({ type: 'tool.end', callId: 'a', result: 'ok' });
+		assert.strictEqual(reply.activity!.status, running, 'the command is still running');
+		runtime.emit({ type: 'tool.end', callId: 'b', result: 'ok', exitCode: 0 });
+		assert.strictEqual(reply.activity!.status, 'Thinking', 'a quiet model after tools can read "Taking longer than expected"');
+	});
+
+	test('a failed run keeps the error and run id, and leaves the queue waiting', () => {
+		const { runtime, host, changes } = setup();
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
+		runtime.emit({ type: 'text.delta', id: 't', delta: 'Working on it.' });
+		runtime.emit({ type: 'error', message: 'Provider returned 529 overloaded', retryable: true });
+		runtime.emit({ type: 'run.end', runId: 'run-1', reason: 'fail' });
+		const reply = host.messages.at(-1) as IAgentAssistantMessage;
+		assert.strictEqual(reply.outcome, 'failed');
+		assert.deepStrictEqual(reply.failure, { message: 'Provider returned 529 overloaded', retryable: true });
+		assert.strictEqual(reply.runId, 'run-1');
+		assert.deepStrictEqual(changes.at(-1), { kind: 'runEnd', aborted: false, failed: true });
+	});
+
+	test('a stopped run marks running sub-agents stopped', () => {
+		const { runtime, host, changes } = setup();
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
+		runtime.emit({ type: 'tool.start', callId: 'sub', name: 'task', title: 'Task', input: '{"description":"Explore the API"}' });
+		runtime.emit({ type: 'tool.progress', callId: 'sub', status: 'Reading server.js' });
+		runtime.emit({ type: 'run.end', runId: 'run-1', reason: 'abort' });
+		const reply = host.messages.at(-1) as IAgentAssistantMessage;
+		assert.strictEqual(reply.outcome, 'stopped');
+		assert.strictEqual(reply.cancelled, true);
+		const block = reply.segments.find(segment => segment.kind === 'block' && segment.block.type === 'tool');
+		assert.ok(block?.kind === 'block' && block.block.type === 'tool' && block.block.stopped === true && block.block.status === 'complete');
+		assert.deepStrictEqual(changes.at(-1), { kind: 'runEnd', aborted: true, failed: false });
+	});
+
+	test('a loop finding becomes a supervisor tray, not a plain error line', () => {
+		const { runtime, host } = setup();
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
+		runtime.emit({ type: 'error', message: 'The same tools were called three times in a row with the same arguments. Trying a different approach.', retryable: true });
+		runtime.emit({ type: 'notice', severity: 'warning', title: 'Context window 80% full' });
+		const notices = (host.messages.at(-1) as IAgentAssistantMessage).segments.filter(segment => segment.kind === 'notice');
+		assert.deepStrictEqual(notices.map(notice => notice.kind === 'notice' ? notice.supervision : 'x'), ['loop', undefined]);
+	});
+
+	test('the native plan tool streams into a plan card', () => {
+		const { runtime, host } = setup();
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'plan' });
+		runtime.emit({ type: 'tool.start', callId: 'p', name: 'create_plan', title: 'create_plan', card: 'generic' });
+		runtime.emit({ type: 'tool.input.delta', callId: 'p', delta: '{"name":"Fix DELETE",', append: true });
+		runtime.emit({ type: 'tool.input.delta', callId: 'p', delta: '"plan":"1. Parse the id"}', append: true });
+		const reply = host.messages.at(-1) as IAgentAssistantMessage;
+		const blocks = reply.segments.flatMap(segment => segment.kind === 'block' ? [segment.block] : []);
+		assert.deepStrictEqual(blocks.map(block => block.type), ['plan']);
+		const plan = blocks[0];
+		assert.ok(plan.type === 'plan' && plan.name === 'Fix DELETE' && plan.markdown === '1. Parse the id');
+		assert.strictEqual(reply.segments.some(segment => segment.kind === 'activity'), false, 'no extra step row for the plan tool');
+	});
+
+	test('a new run clears the last run\'s outcome', () => {
+		const { runtime, host } = setup();
+		const reply = host.messages.at(-1) as IAgentAssistantMessage;
+		reply.outcome = 'failed';
+		reply.failure = { message: 'old' };
+		runtime.emit({ type: 'run.start', runId: 'run-2', mode: 'agent' }, 'run-2');
+		assert.strictEqual(reply.outcome, undefined);
+		assert.strictEqual(reply.failure, undefined);
+		assert.strictEqual(reply.runId, 'run-2');
 	});
 });

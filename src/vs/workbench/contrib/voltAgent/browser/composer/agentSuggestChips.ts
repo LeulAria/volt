@@ -5,7 +5,7 @@
 
 import { localize } from '../../../../../nls.js';
 
-export type AgentSuggestChipId = 'plan' | 'selectProject' | 'multitask' | 'cloud';
+export type AgentSuggestChipId = 'plan' | 'multitask';
 
 export interface IAgentSuggestChip {
 	readonly id: AgentSuggestChipId;
@@ -13,13 +13,9 @@ export interface IAgentSuggestChip {
 	readonly kb?: string;
 }
 
-/**
- * Empty-composer suggest chips. "Select project" is second when the agent
- * was opened without a repo/workspace; it is a placeholder (click is a no-op).
- */
+/** Empty-composer suggest chips; the project is picked from the picker above the composer. */
 export function agentEmptyComposerChips(options: {
 	readonly mode: string;
-	readonly needsProject: boolean;
 }): IAgentSuggestChip[] {
 	const chips: IAgentSuggestChip[] = [];
 	if (options.mode !== 'Plan') {
@@ -29,21 +25,11 @@ export function agentEmptyComposerChips(options: {
 			kb: localize('voltAgent.planKb', "⇧Tab"),
 		});
 	}
-	if (options.needsProject) {
-		chips.push({
-			id: 'selectProject',
-			label: localize('voltAgent.selectProject', "Select project"),
-		});
-	}
 	if (options.mode !== 'Multitask') {
 		chips.push({
 			id: 'multitask',
 			label: localize('voltAgent.multitaskChip', "Multitask"),
 		});
 	}
-	chips.push({
-		id: 'cloud',
-		label: localize('voltAgent.runInCloud', "Run in Cloud"),
-	});
 	return chips;
 }

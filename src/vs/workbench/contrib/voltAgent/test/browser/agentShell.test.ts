@@ -7,11 +7,13 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { InMemoryStorageService } from '../../../../../platform/storage/common/storage.js';
+import { Workspace } from '../../../../../platform/workspace/common/workspace.js';
+import { TestContextService } from '../../../../test/common/workbenchTestServices.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { VoltSessionContextService } from '../../../../services/voltRuntime/browser/sessionContextService.js';
 import {
 	agentComposerCanSend,
-	agentComposerNeedsProjectChip,
+	adoptProjectForUnstartedSession,
 	attachSessionToProject,
 	isCurrentActivation,
 	matchSessionProject,
@@ -22,6 +24,7 @@ import { AgentWorkspaceService } from '../../browser/workspace/agentWorkspace.js
 suite('Agent shell project matching', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
+	const emptyWindow = () => new TestContextService(new Workspace('empty', [], false, null, () => false));
 
 	test('a saved folder wins, and a chat with no folder is not attached to the visible project', () => {
 		assert.deepStrictEqual(matchSessionProject({ workspaceFolder: '/repo', workspaceLabel: 'Repo' }, false), {
@@ -35,7 +38,7 @@ suite('Agent shell project matching', () => {
 	});
 
 	test('binding a chat to another project does not move it', () => {
-		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService())));
+		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow()));
 		const workspace = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService())));
 		const pinned: string[] = [];
 		const history = { pinSessionWorkspace: (id: string) => { pinned.push(id); } } as unknown as IAgentHistoryService;
@@ -50,28 +53,41 @@ suite('Agent shell project matching', () => {
 		assert.deepStrictEqual(pinned, ['chat']);
 	});
 
+	test('an unstarted chat moves to the project its composer shows', () => {
+		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow()));
+		const workspace = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService())));
+		const pinned: string[] = [];
+		const history = { pinSessionWorkspace: (id: string, ws: { folders: string[] }) => { pinned.push(`${id}:${ws.folders[0]}`); } } as unknown as IAgentHistoryService;
+		const stale = context.registerProject(URI.file('/stale'), 'Stale');
+		const visible = context.registerProject(URI.file('/visible'), 'Visible');
+		attachSessionToProject(context, workspace, history, 'chat', stale);
+
+		adoptProjectForUnstartedSession(context, workspace, history, 'chat', visible);
+
+		assert.strictEqual(context.rootFor('chat')?.fsPath, visible.root.fsPath);
+		assert.strictEqual(workspace.get('chat')?.root, visible.root.toString());
+		assert.deepStrictEqual(pinned, [`chat:${stale.root.fsPath}`, `chat:${visible.root.fsPath}`]);
+	});
+
 	test('a foreground chat with no history uses the selected project', () => {
-		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService())));
+		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow()));
 		const selected = context.registerProject(URI.file('/repo'), 'Repo');
 		context.selectProject(selected.id);
 		assert.strictEqual(resolveSessionProject(context, undefined, true)?.id, selected.id);
 		assert.strictEqual(resolveSessionProject(context, { workspaceLabel: 'Repo' }, true), undefined);
 	});
 
-	test('no-project composer disables send and shows the project chip', () => {
-		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService())));
+	test('no-project composer disables send', () => {
+		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow()));
 		assert.strictEqual(agentComposerCanSend(context, 'new'), false);
-		assert.strictEqual(agentComposerNeedsProjectChip(context, 'new'), true);
 		const project = context.registerProject(URI.file('/repo'), 'Repo');
 		context.bindSession('bound', project.id);
 		assert.strictEqual(agentComposerCanSend(context, 'bound'), true);
-		assert.strictEqual(agentComposerNeedsProjectChip(context, 'bound'), false);
 		assert.strictEqual(agentComposerCanSend(context, 'saved', { workspaceFolder: '/repo' }), true);
-		assert.strictEqual(agentComposerNeedsProjectChip(context, 'saved', { workspaceFolder: '/repo' }), false);
 	});
 
 	test('New Chat uses the last project when one is selected, otherwise none', () => {
-		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService())));
+		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow()));
 		assert.strictEqual(context.activeProject, undefined, 'no last project');
 		const project = context.registerProject(URI.file('/repo'), 'Repo');
 		context.selectProject(project.id);

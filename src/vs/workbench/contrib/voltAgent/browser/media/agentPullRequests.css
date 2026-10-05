@@ -1,0 +1,1553 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Pull requests: the PR view (a tab in the chat's tools), the Pull Requests list, sidebar badges
+ * and the composer chip. Solid surfaces only, no backdrop-filter (volt-transparent-window). */
+
+.volt-pr-editor,
+.volt-pr-list-view {
+	--volt-pr-border: rgba(255, 255, 255, 0.08);
+	--volt-pr-surface: rgba(255, 255, 255, 0.03);
+	--volt-pr-surface-strong: rgba(255, 255, 255, 0.06);
+	--volt-pr-muted: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	--volt-pr-open: #3fb950;
+	--volt-pr-draft: #8b949e;
+	--volt-pr-merged: #a371f7;
+	--volt-pr-closed: #f85149;
+	--volt-pr-pending: #d29922;
+	--volt-pr-add: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+	--volt-pr-del: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+}
+
+.monaco-workbench.vs .volt-pr-editor,
+.monaco-workbench.hc-light .volt-pr-editor,
+.monaco-workbench.vs .volt-pr-list-view,
+.monaco-workbench.hc-light .volt-pr-list-view {
+	--volt-pr-border: rgba(0, 0, 0, 0.09);
+	--volt-pr-surface: rgba(0, 0, 0, 0.025);
+	--volt-pr-surface-strong: rgba(0, 0, 0, 0.05);
+	--volt-pr-open: #1a7f37;
+	--volt-pr-draft: #6e7781;
+	--volt-pr-merged: #8250df;
+	--volt-pr-closed: #cf222e;
+	--volt-pr-pending: #9a6700;
+}
+
+.volt-pr-editor {
+	position: relative;
+	overflow: hidden;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-foreground);
+	font-size: 13px;
+}
+
+.volt-pr-view {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	outline: none;
+}
+
+.volt-pr-view.busy .volt-pr-button,
+.volt-pr-view.busy .volt-pr-icon-button {
+	pointer-events: none;
+}
+
+/* Header: repository and number, actions, title, the merge sentence, tabs. */
+
+.volt-pr-header {
+	position: relative;
+	flex: none;
+	padding: 12px 20px 0;
+	border-bottom: 1px solid var(--volt-pr-border);
+	background: var(--vscode-editor-background);
+}
+
+.volt-pr-header-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 26px;
+}
+
+.volt-pr-spacer {
+	flex: 1;
+	min-width: 4px;
+}
+
+.volt-pr-repo,
+.volt-pr-number {
+	color: var(--volt-pr-muted);
+	text-decoration: none;
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.volt-pr-number {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+}
+
+.volt-pr-number .codicon {
+	font-size: 11px;
+}
+
+.volt-pr-repo:hover,
+.volt-pr-number:hover {
+	color: var(--vscode-textLink-foreground);
+}
+
+.volt-pr-title {
+	margin: 8px 0 6px;
+	font-size: 19px;
+	font-weight: 600;
+	line-height: 1.3;
+	letter-spacing: -0.01em;
+	overflow-wrap: anywhere;
+}
+
+.volt-pr-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 8px;
+	margin-bottom: 10px;
+	font-size: 12px;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-meta strong {
+	color: var(--vscode-foreground);
+	font-weight: 500;
+}
+
+.volt-pr-meta-text {
+	min-width: 0;
+	line-height: 22px;
+}
+
+.volt-pr-state-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 22px;
+	padding: 0 9px 0 7px;
+	border-radius: 999px;
+	color: #ffffff;
+	font-weight: 500;
+	font-size: 12px;
+}
+
+.volt-pr-state-pill .codicon {
+	font-size: 13px;
+	color: inherit;
+}
+
+.volt-pr-state-pill.state-open { background: var(--volt-pr-open); }
+.volt-pr-state-pill.state-draft { background: var(--volt-pr-draft); }
+.volt-pr-state-pill.state-merged { background: var(--volt-pr-merged); }
+.volt-pr-state-pill.state-closed { background: var(--volt-pr-closed); }
+
+.volt-pr-branch {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	max-width: 260px;
+	height: 20px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 5px;
+	background: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, transparent);
+	color: var(--vscode-textLink-foreground);
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	vertical-align: middle;
+	cursor: pointer;
+}
+
+.volt-pr-branch.behind {
+	background: color-mix(in srgb, var(--volt-pr-pending) 18%, transparent);
+	color: var(--volt-pr-pending);
+}
+
+.volt-pr-branch.picker {
+	height: 26px;
+	padding: 0 8px;
+	color: var(--vscode-foreground);
+	background: var(--volt-pr-surface-strong);
+}
+
+.volt-pr-meta-time {
+	margin-left: auto;
+}
+
+.volt-pr-tabs {
+	display: flex;
+	align-items: flex-end;
+	gap: 2px;
+	margin: 0 -8px;
+}
+
+.volt-pr-tab {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 34px;
+	padding: 0 10px;
+	border: 0;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.volt-pr-tab:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-tab.active {
+	color: var(--vscode-foreground);
+	font-weight: 500;
+}
+
+.volt-pr-tab.active::after {
+	content: '';
+	position: absolute;
+	left: 8px;
+	right: 8px;
+	bottom: -1px;
+	height: 2px;
+	border-radius: 2px;
+	background: var(--vscode-foreground);
+}
+
+.volt-pr-count {
+	min-width: 18px;
+	height: 18px;
+	padding: 0 5px;
+	border-radius: 999px;
+	background: var(--volt-pr-surface-strong);
+	color: var(--volt-pr-muted);
+	font-size: 11px;
+	line-height: 18px;
+	text-align: center;
+	box-sizing: border-box;
+	font-weight: 400;
+}
+
+.volt-pr-stats {
+	display: inline-flex;
+	gap: 6px;
+	font-size: 12px;
+	font-family: var(--monaco-monospace-font);
+	white-space: nowrap;
+}
+
+.volt-pr-tabs > .volt-pr-stats {
+	align-self: center;
+	padding-right: 8px;
+}
+
+.volt-pr-stats .add { color: var(--volt-pr-add); }
+.volt-pr-stats .del { color: var(--volt-pr-del); }
+
+.volt-pr-busy {
+	position: absolute;
+	right: 20px;
+	top: 44px;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 10px;
+	border-radius: 999px;
+	background: var(--vscode-editorWidget-background, #252526);
+	border: 1px solid var(--volt-pr-border);
+	font-size: 12px;
+	color: var(--vscode-foreground);
+	box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
+}
+
+/* Body */
+
+.volt-pr-body {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 16px 20px 40px;
+}
+
+.volt-pr-section {
+	margin-top: 22px;
+}
+
+.volt-pr-section-title {
+	margin-bottom: 8px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-card {
+	border: 1px solid var(--volt-pr-border);
+	border-radius: 10px;
+	background: var(--volt-pr-surface);
+	overflow: hidden;
+}
+
+.volt-pr-status-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 48px;
+	padding: 8px 12px;
+	box-sizing: border-box;
+}
+
+.volt-pr-status-row + .volt-pr-status-row {
+	border-top: 1px solid var(--volt-pr-border);
+}
+
+.volt-pr-status-text {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-pr-status-title {
+	font-weight: 500;
+}
+
+.volt-pr-status-detail {
+	margin-top: 2px;
+	font-size: 12px;
+	color: var(--volt-pr-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-banner {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 12px;
+	padding: 8px 12px;
+	border-radius: 8px;
+	font-size: 12px;
+	background: color-mix(in srgb, var(--volt-pr-pending) 12%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-banner .codicon {
+	color: var(--volt-pr-pending);
+}
+
+/* Icons by state */
+
+.volt-pr-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+}
+
+.volt-pr-icon .codicon {
+	font-size: 14px;
+}
+
+.volt-pr-status-row > .volt-pr-icon .codicon {
+	font-size: 16px;
+}
+
+.volt-pr-icon.state-open,
+.volt-pr-icon.check-success,
+.volt-pr-icon.review-approved,
+.volt-pr-icon.merge-clean,
+.volt-pr-icon.thread-resolved { color: var(--volt-pr-open); }
+.volt-pr-icon.state-draft,
+.volt-pr-icon.check-skipped,
+.volt-pr-icon.check-neutral,
+.volt-pr-icon.check-none,
+.volt-pr-icon.check-cancelled,
+.volt-pr-icon.review-none,
+.volt-pr-icon.review-commented,
+.volt-pr-icon.review-dismissed,
+.volt-pr-icon.merge-unknown,
+.volt-pr-icon.muted { color: var(--volt-pr-draft); }
+.volt-pr-icon.state-merged { color: var(--volt-pr-merged); }
+.volt-pr-icon.state-closed,
+.volt-pr-icon.check-failure,
+.volt-pr-icon.review-changes,
+.volt-pr-icon.review-changesRequested,
+.volt-pr-icon.merge-conflict { color: var(--volt-pr-closed); }
+.volt-pr-icon.check-pending,
+.volt-pr-icon.review-pending,
+.volt-pr-icon.merge-behind,
+.volt-pr-icon.merge-auto,
+.volt-pr-icon.thread-open { color: var(--volt-pr-pending); }
+.volt-pr-icon.watching { color: var(--vscode-textLink-foreground); }
+
+.volt-pr-icon.check-pending .codicon-circle-large-filled {
+	font-size: 9px;
+}
+
+/* Buttons */
+
+.volt-pr-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	flex: none;
+	height: 26px;
+	padding: 0 11px;
+	border: 1px solid transparent;
+	border-radius: 7px;
+	font: inherit;
+	font-size: 12px;
+	font-weight: 500;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-pr-button .codicon {
+	font-size: 13px;
+	color: inherit;
+}
+
+.volt-pr-button:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+/* White like Commit & Push in the Changes header; dark on light themes. */
+.volt-pr-button.primary {
+	background: #f3f3f3;
+	color: #171717;
+}
+
+.volt-pr-button.primary:hover:not(:disabled) {
+	background: #ffffff;
+}
+
+.monaco-workbench.vs .volt-pr-button.primary,
+.monaco-workbench.hc-light .volt-pr-button.primary {
+	background: #1a1a1a;
+	color: #f5f5f5;
+}
+
+.volt-pr-button.secondary {
+	border-color: var(--volt-pr-border);
+	background: var(--volt-pr-surface-strong);
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-button.secondary:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.volt-pr-button.ghost {
+	height: 22px;
+	padding: 0 7px;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font-weight: 400;
+}
+
+.volt-pr-button.ghost:hover:not(:disabled) {
+	background: var(--volt-pr-surface-strong);
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-split {
+	display: inline-flex;
+	align-items: stretch;
+}
+
+.volt-pr-split > .volt-pr-button {
+	border-top-right-radius: 0;
+	border-bottom-right-radius: 0;
+}
+
+.volt-pr-split > .volt-pr-icon-button.primary {
+	width: 24px;
+	height: 26px;
+	border-radius: 0 7px 7px 0;
+	border-left: 1px solid rgba(0, 0, 0, 0.18);
+	background: #f3f3f3;
+	color: #171717;
+}
+
+.volt-pr-split > .volt-pr-icon-button.primary:hover {
+	background: #ffffff;
+}
+
+.monaco-workbench.vs .volt-pr-split > .volt-pr-icon-button.primary,
+.monaco-workbench.hc-light .volt-pr-split > .volt-pr-icon-button.primary {
+	background: #1a1a1a;
+	color: #f5f5f5;
+	border-left-color: rgba(255, 255, 255, 0.2);
+}
+
+.volt-pr-icon-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 4px;
+	flex: none;
+	min-width: 24px;
+	height: 24px;
+	padding: 0 4px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-pr-icon-button:hover:not(:disabled) {
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-icon-button:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.volt-pr-icon-button .codicon {
+	font-size: 14px;
+	color: inherit;
+}
+
+.volt-pr-icon-button .chevron {
+	font-size: 11px;
+}
+
+.volt-pr-icon-button.text {
+	padding: 0 6px;
+}
+
+.volt-pr-link-button {
+	flex: none;
+	padding: 0 4px;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-textLink-foreground);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-pr-link-button:hover {
+	text-decoration: underline;
+}
+
+.volt-pr-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 24px;
+	padding: 0 9px;
+	border: 1px solid var(--volt-pr-border);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.volt-pr-pill:hover {
+	color: var(--vscode-foreground);
+	background: var(--volt-pr-surface-strong);
+}
+
+.volt-pr-pill .codicon {
+	font-size: 13px;
+	color: inherit;
+}
+
+.volt-pr-pill .chevron {
+	font-size: 11px;
+}
+
+.volt-pr-pill.watch.active {
+	border-color: color-mix(in srgb, var(--vscode-textLink-foreground) 45%, transparent);
+	color: var(--vscode-textLink-foreground);
+	background: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
+}
+
+/* People and labels */
+
+.volt-pr-people {
+	display: grid;
+	gap: 10px;
+}
+
+.volt-pr-people-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+}
+
+.volt-pr-people-label {
+	flex: none;
+	width: 72px;
+	padding-top: 3px;
+	font-size: 12px;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-people-list {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.volt-pr-person {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 24px;
+	padding: 0 8px 0 3px;
+	border-radius: 999px;
+	background: var(--volt-pr-surface-strong);
+	font-size: 12px;
+	box-shadow: inset 0 0 0 1px transparent;
+}
+
+.volt-pr-person .codicon {
+	font-size: 13px;
+	margin-left: 3px;
+}
+
+.volt-pr-person.review-approved { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--volt-pr-open) 70%, transparent); }
+.volt-pr-person.review-changesRequested { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--volt-pr-closed) 70%, transparent); }
+.volt-pr-person.review-requested { color: var(--volt-pr-muted); }
+
+.volt-pr-avatar {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	border-radius: 50%;
+	overflow: hidden;
+	background: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+	color: var(--vscode-foreground);
+	font-size: 10px;
+	font-weight: 600;
+}
+
+.volt-pr-avatar img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.volt-pr-label {
+	--volt-pr-label: #888888;
+	display: inline-flex;
+	align-items: center;
+	height: 22px;
+	padding: 0 9px;
+	border-radius: 999px;
+	border: 1px solid color-mix(in srgb, var(--volt-pr-label) 55%, transparent);
+	background: color-mix(in srgb, var(--volt-pr-label) 20%, transparent);
+	color: color-mix(in srgb, var(--volt-pr-label) 55%, var(--vscode-foreground));
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.volt-pr-color-dot {
+	display: inline-block;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+}
+
+.volt-pr-add .codicon {
+	font-size: 13px;
+}
+
+.muted,
+.volt-pr-view .muted {
+	color: var(--volt-pr-muted);
+}
+
+/* Markdown, comments, reviews, threads */
+
+.volt-pr-markdown {
+	font-size: 13px;
+	line-height: 1.55;
+	overflow-wrap: anywhere;
+}
+
+.volt-pr-markdown.muted {
+	font-style: italic;
+}
+
+.volt-pr-markdown img {
+	max-width: 100%;
+}
+
+.volt-pr-timeline {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.volt-pr-comment,
+.volt-pr-review,
+.volt-pr-thread {
+	border: 1px solid var(--volt-pr-border);
+	border-radius: 10px;
+	background: var(--volt-pr-surface);
+	overflow: hidden;
+}
+
+.volt-pr-comment {
+	padding: 10px 12px;
+}
+
+.volt-pr-thread .volt-pr-comment {
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	padding: 10px 12px 4px;
+}
+
+.volt-pr-comment.folded > .volt-pr-markdown {
+	display: none;
+}
+
+.volt-pr-comment-head {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	margin-bottom: 6px;
+	font-size: 12px;
+}
+
+.volt-pr-comment.folded > .volt-pr-comment-head {
+	margin-bottom: 0;
+}
+
+.volt-pr-comment-head strong {
+	font-weight: 600;
+}
+
+.volt-pr-time {
+	color: var(--volt-pr-muted);
+	text-decoration: none;
+	cursor: pointer;
+}
+
+.volt-pr-time:hover {
+	text-decoration: underline;
+}
+
+.volt-pr-review {
+	padding: 10px 12px;
+}
+
+.volt-pr-review.review-approved { border-color: color-mix(in srgb, var(--volt-pr-open) 40%, var(--volt-pr-border)); }
+.volt-pr-review.review-changesRequested { border-color: color-mix(in srgb, var(--volt-pr-closed) 40%, var(--volt-pr-border)); }
+
+.volt-pr-review .volt-pr-comment-head {
+	margin-bottom: 0;
+}
+
+.volt-pr-review .volt-pr-markdown {
+	margin-top: 8px;
+}
+
+.volt-pr-tag {
+	display: inline-flex;
+	align-items: center;
+	height: 18px;
+	padding: 0 6px;
+	border-radius: 999px;
+	border: 1px solid var(--volt-pr-border);
+	color: var(--volt-pr-muted);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.volt-pr-tag.changed {
+	color: var(--volt-pr-pending);
+	border-color: color-mix(in srgb, var(--volt-pr-pending) 40%, transparent);
+}
+
+.volt-pr-thread-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 36px;
+	padding: 4px 8px 4px 12px;
+	border-bottom: 1px solid var(--volt-pr-border);
+	background: var(--volt-pr-surface-strong);
+}
+
+.volt-pr-thread.folded .volt-pr-thread-head {
+	border-bottom: 0;
+	cursor: pointer;
+}
+
+.volt-pr-thread.folded .volt-pr-thread-body {
+	display: none;
+}
+
+.volt-pr-thread-file {
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-textLink-foreground);
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-pr-thread-file:hover {
+	text-decoration: underline;
+}
+
+.volt-pr-hunk {
+	margin: 0;
+	padding: 6px 0;
+	border-bottom: 1px solid var(--volt-pr-border);
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 18px;
+	overflow-x: auto;
+	background: var(--vscode-editor-background);
+}
+
+.volt-pr-hunk-line {
+	display: block;
+	padding: 0 12px;
+	white-space: pre;
+}
+
+.volt-pr-hunk-line.add {
+	background: color-mix(in srgb, var(--volt-pr-add) 14%, transparent);
+}
+
+.volt-pr-hunk-line.del {
+	background: color-mix(in srgb, var(--volt-pr-del) 14%, transparent);
+}
+
+.volt-pr-reply {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 8px 12px 12px;
+}
+
+.volt-pr-compose .volt-pr-reply {
+	padding: 0;
+}
+
+.volt-pr-reply-actions {
+	display: none;
+	justify-content: flex-end;
+}
+
+.volt-pr-reply.active .volt-pr-reply-actions {
+	display: flex;
+}
+
+.volt-pr-review-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.volt-pr-textarea,
+.volt-pr-input {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 7px 10px;
+	border: 1px solid var(--volt-pr-border);
+	border-radius: 8px;
+	background: var(--vscode-input-background, rgba(255, 255, 255, 0.04));
+	color: var(--vscode-input-foreground, var(--vscode-foreground));
+	font: inherit;
+	font-size: 13px;
+	line-height: 1.45;
+	outline: none;
+	resize: none;
+}
+
+.volt-pr-textarea:focus,
+.volt-pr-input:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-pr-textarea.tall {
+	min-height: 220px;
+	resize: vertical;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12.5px;
+}
+
+.volt-pr-textarea.shimmer {
+	background-image: linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--vscode-foreground) 6%, transparent) 50%, transparent 100%);
+	background-size: 200% 100%;
+	animation: volt-pr-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes volt-pr-shimmer {
+	from { background-position: 100% 0; }
+	to { background-position: -100% 0; }
+}
+
+/* Files, commits, checks */
+
+.volt-pr-files-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 10px;
+	font-size: 12px;
+}
+
+.volt-pr-progress {
+	width: 120px;
+	height: 6px;
+	border-radius: 999px;
+	background: var(--volt-pr-surface-strong);
+	overflow: hidden;
+}
+
+.volt-pr-progress-bar {
+	height: 100%;
+	border-radius: 999px;
+	background: var(--volt-pr-open);
+	transition: width 160ms ease;
+}
+
+.volt-pr-viewed-count {
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-files,
+.volt-pr-list {
+	border: 1px solid var(--volt-pr-border);
+	border-radius: 10px;
+	overflow: hidden;
+}
+
+.volt-pr-dir {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 12px;
+	background: var(--volt-pr-surface-strong);
+	color: var(--volt-pr-muted);
+	font-size: 12px;
+	font-family: var(--monaco-monospace-font);
+}
+
+.volt-pr-dir .codicon {
+	font-size: 13px;
+}
+
+.volt-pr-file,
+.volt-pr-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 34px;
+	padding: 0 12px;
+	border-top: 1px solid var(--volt-pr-border);
+	box-sizing: border-box;
+}
+
+.volt-pr-file:first-child,
+.volt-pr-row:first-child {
+	border-top: 0;
+}
+
+.volt-pr-file.nested {
+	padding-left: 22px;
+}
+
+.volt-pr-file:hover,
+.volt-pr-row:hover {
+	background: var(--volt-pr-surface);
+}
+
+.volt-pr-file.viewed .volt-pr-file-name {
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-check {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	cursor: pointer;
+}
+
+.volt-pr-file.viewed .volt-pr-check {
+	color: var(--volt-pr-open);
+}
+
+.volt-pr-check .codicon {
+	font-size: 15px;
+	color: inherit;
+}
+
+.volt-pr-change {
+	flex: none;
+	width: 14px;
+	font-size: 11px;
+	font-weight: 600;
+	text-align: center;
+	font-family: var(--monaco-monospace-font);
+}
+
+.volt-pr-change.change-added { color: var(--volt-pr-add); }
+.volt-pr-change.change-deleted { color: var(--volt-pr-del); }
+.volt-pr-change.change-modified,
+.volt-pr-change.change-changed { color: var(--volt-pr-pending); }
+.volt-pr-change.change-renamed,
+.volt-pr-change.change-copied { color: var(--volt-pr-merged); }
+
+.volt-pr-file-name {
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12.5px;
+	text-align: left;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-pr-file-name:hover:not(:disabled) {
+	text-decoration: underline;
+}
+
+.volt-pr-file-name:disabled {
+	cursor: default;
+}
+
+.volt-pr-renamed {
+	font-size: 11.5px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-row-title {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-row-detail {
+	min-width: 0;
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-row > .muted {
+	flex: none;
+	font-size: 12px;
+}
+
+.volt-pr-sha {
+	flex: none;
+	height: 20px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 5px;
+	background: var(--volt-pr-surface-strong);
+	color: var(--volt-pr-muted);
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+	cursor: pointer;
+}
+
+.volt-pr-sha:hover {
+	color: var(--vscode-foreground);
+}
+
+/* Loading and problems */
+
+.volt-pr-skeleton {
+	display: grid;
+	gap: 12px;
+	padding: 24px 20px;
+}
+
+.volt-pr-skeleton.compact {
+	padding: 12px;
+	gap: 9px;
+}
+
+.volt-pr-skeleton-line {
+	height: 12px;
+	border-radius: 6px;
+	background: linear-gradient(90deg, var(--volt-pr-surface-strong) 0%, color-mix(in srgb, var(--vscode-foreground) 10%, transparent) 50%, var(--volt-pr-surface-strong) 100%);
+	background-size: 200% 100%;
+	animation: volt-pr-shimmer 1.4s ease-in-out infinite;
+}
+
+.monaco-workbench.reduce-motion .volt-pr-skeleton-line,
+.monaco-workbench.reduce-motion .volt-pr-textarea.shimmer {
+	animation: none;
+}
+
+.volt-pr-problem {
+	margin: 24px 20px;
+	padding: 16px;
+	border: 1px solid var(--volt-pr-border);
+	border-radius: 10px;
+	background: var(--volt-pr-surface);
+}
+
+.volt-pr-body > .volt-pr-problem {
+	margin: 16px 0 0;
+}
+
+.volt-pr-problem.compact {
+	margin: 10px 12px;
+	padding: 12px;
+}
+
+.volt-pr-problem-title {
+	font-weight: 600;
+}
+
+.volt-pr-problem-detail {
+	margin-top: 4px;
+	font-size: 12px;
+	color: var(--volt-pr-muted);
+	overflow-wrap: anywhere;
+}
+
+.volt-pr-problem-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.volt-pr-problem-actions:empty {
+	display: none;
+}
+
+/* New pull request form */
+
+.volt-pr-create .volt-pr-header {
+	padding-bottom: 12px;
+}
+
+.volt-pr-create-branches {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.volt-pr-create-branches > .volt-pr-branch:not(.picker) {
+	height: 26px;
+	padding: 0 8px;
+	color: var(--vscode-foreground);
+	background: var(--volt-pr-surface-strong);
+	cursor: default;
+}
+
+.volt-pr-create-note {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 12px;
+	font-size: 12px;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-create-note.warning,
+.volt-pr-create-note.warning .codicon {
+	color: var(--volt-pr-pending);
+}
+
+.volt-pr-field {
+	margin-top: 16px;
+}
+
+.volt-pr-field-label {
+	display: block;
+	margin-bottom: 6px;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-input-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-pr-input-row .generate {
+	width: 32px;
+	height: 32px;
+	border: 1px solid var(--volt-pr-border);
+	border-radius: 8px;
+}
+
+.volt-pr-input-row .generate .codicon {
+	color: var(--vscode-textLink-foreground);
+}
+
+.volt-pr-create-actions {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-top: 14px;
+}
+
+.volt-pr-create-actions .volt-pr-button {
+	height: 30px;
+	padding: 0 14px;
+}
+
+.volt-pr-checkbox {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12.5px;
+	cursor: pointer;
+}
+
+/* The Pull Requests list (files sidebar tab) */
+
+.volt-pr-list-view {
+	display: flex;
+	flex-direction: column;
+	overflow: auto;
+	font-size: 13px;
+}
+
+.volt-pr-list-toolbar {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	min-height: 32px;
+	padding: 0 6px 0 12px;
+	background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+	border-bottom: 1px solid var(--volt-pr-border);
+}
+
+.volt-pr-list-repo {
+	min-width: 0;
+	color: var(--volt-pr-muted);
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-list-section {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 26px;
+	margin-top: 6px;
+	padding: 0 12px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-list-empty {
+	padding: 16px 12px;
+	color: var(--volt-pr-muted);
+	font-size: 12.5px;
+	line-height: 1.5;
+}
+
+.volt-pr-list-row {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 2px;
+	min-height: 46px;
+	margin: 0 6px;
+	padding: 4px 8px;
+	border-radius: 6px;
+	box-sizing: border-box;
+	cursor: pointer;
+	outline: none;
+}
+
+.volt-pr-list-row:hover,
+.volt-pr-list-row:focus-visible {
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+}
+
+.volt-pr-list-row:focus-visible {
+	box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
+}
+
+.volt-pr-list-row.busy {
+	opacity: 0.55;
+	pointer-events: none;
+}
+
+.volt-pr-list-line {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.volt-pr-list-line.sub {
+	padding-left: 20px;
+	font-size: 11.5px;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-list-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-list-age {
+	flex: none;
+	font-size: 11px;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-list-number {
+	flex: none;
+	font-family: var(--monaco-monospace-font);
+}
+
+.volt-pr-list-branch {
+	min-width: 0;
+	max-width: 45%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--monaco-monospace-font);
+}
+
+.volt-pr-list-line.sub .codicon {
+	font-size: 12px;
+}
+
+.volt-pr-list-threads {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	flex: none;
+}
+
+.volt-pr-list-reason {
+	flex: none;
+	margin-left: auto;
+	white-space: nowrap;
+}
+
+.volt-pr-list-reason.reason-bad { color: var(--volt-pr-closed); }
+.volt-pr-list-reason.reason-good { color: var(--volt-pr-open); }
+
+/* Shift held: quick actions float over the row's end. */
+.volt-pr-quick {
+	position: absolute;
+	right: 6px;
+	top: 50%;
+	transform: translateY(-50%);
+	display: none;
+	gap: 4px;
+	padding-left: 12px;
+	background: linear-gradient(90deg, transparent, var(--vscode-sideBar-background, var(--vscode-editor-background)) 12px);
+}
+
+.volt-pr-list-view.shift-held .volt-pr-list-row:hover .volt-pr-quick,
+.volt-pr-list-view.shift-held .volt-pr-list-row:focus-within .volt-pr-quick {
+	display: flex;
+}
+
+.volt-pr-quick-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 24px;
+	padding: 0 8px;
+	border: 1px solid var(--volt-pr-border);
+	border-radius: 6px;
+	background: var(--vscode-editorWidget-background, #252526);
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-pr-quick-button:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, var(--vscode-editorWidget-background, #252526));
+}
+
+.volt-pr-quick-button .codicon {
+	font-size: 13px;
+	color: inherit;
+}
+
+/* Sidebar badge on an agent tab: state glyph and #number. */
+.volt-agent-home-pr {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	flex: none;
+	height: 16px;
+	padding: 0 5px 0 3px;
+	border-radius: 999px;
+	font-size: 10.5px;
+	font-family: var(--monaco-monospace-font);
+	line-height: 16px;
+	cursor: pointer;
+	background: color-mix(in srgb, currentColor 13%, transparent);
+}
+
+.volt-agent-home-pr .codicon {
+	font-size: 11px !important;
+	opacity: 1 !important;
+	color: inherit !important;
+}
+
+.volt-agent-home-pr.state-open { color: #3fb950; }
+.volt-agent-home-pr.state-draft { color: #8b949e; }
+.volt-agent-home-pr.state-merged { color: #a371f7; }
+.volt-agent-home-pr.state-closed { color: #f85149; }
+
+.monaco-workbench.vs .volt-agent-home-pr.state-open,
+.monaco-workbench.hc-light .volt-agent-home-pr.state-open { color: #1a7f37; }
+.monaco-workbench.vs .volt-agent-home-pr.state-merged,
+.monaco-workbench.hc-light .volt-agent-home-pr.state-merged { color: #8250df; }
+.monaco-workbench.vs .volt-agent-home-pr.state-closed,
+.monaco-workbench.hc-light .volt-agent-home-pr.state-closed { color: #cf222e; }
+
+.volt-agent-home-pr .checks {
+	width: 5px;
+	height: 5px;
+	margin-left: 1px;
+	border-radius: 50%;
+}
+
+.volt-agent-home-pr .checks.check-success { background: #3fb950; }
+.volt-agent-home-pr .checks.check-failure { background: #f85149; }
+.volt-agent-home-pr .checks.check-pending { background: #d29922; }
+
+.volt-agent-home-pr .watch {
+	font-size: 10px !important;
+}
+
+/* Composer chip: the chat's pull request, or Create PR. */
+.volt-agent-composer-chip.pr .volt-agent-composer-chip-pr-icon {
+	display: inline-flex;
+	align-items: center;
+}
+
+.volt-agent-composer-chip.pr .volt-agent-composer-chip-pr-icon .codicon {
+	font-size: 14px;
+	color: inherit;
+}
+
+.volt-agent-composer-chip.pr.state-open .volt-agent-composer-chip-pr-icon { color: #3fb950; }
+.volt-agent-composer-chip.pr.state-draft .volt-agent-composer-chip-pr-icon { color: #8b949e; }
+.volt-agent-composer-chip.pr.state-merged .volt-agent-composer-chip-pr-icon { color: #a371f7; }
+.volt-agent-composer-chip.pr.state-closed .volt-agent-composer-chip-pr-icon { color: #f85149; }
+
+.volt-agent-composer-chip-pr-checks {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+}
+
+.volt-agent-composer-chip-pr-checks.hidden {
+	display: none;
+}
+
+.volt-agent-composer-chip-pr-checks.check-success { background: #3fb950; }
+.volt-agent-composer-chip-pr-checks.check-failure { background: #f85149; }
+.volt-agent-composer-chip-pr-checks.check-pending { background: #d29922; animation: volt-pr-pulse 1.4s ease-in-out infinite; }
+
+@keyframes volt-pr-pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.35; }
+}
+
+.monaco-workbench.reduce-motion .volt-agent-composer-chip-pr-checks.check-pending {
+	animation: none;
+}
+
+/* A watched pull request woke the chat: the notification row opens it. */
+.volt-agent-notification-head.pull-request {
+	cursor: pointer;
+}
+
+.volt-agent-notification-head.pull-request:hover .volt-agent-notification-text {
+	color: var(--vscode-foreground);
+	text-decoration: underline;
+}
+
+/* Codicons in the tools are tinted grey by a broader rule; state icons keep their state's color. */
+.volt-pr-icon .codicon,
+.volt-pr-state-pill .codicon,
+.volt-pr-check .codicon,
+.volt-pr-button .codicon,
+.volt-pr-pill .codicon,
+.volt-pr-quick-button .codicon,
+.volt-pr-icon-button .codicon {
+	color: inherit !important;
+}

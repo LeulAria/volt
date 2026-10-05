@@ -8,7 +8,7 @@ import { Emitter } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltExecResult, IVoltJobOutput, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../../platform/voltStdio/common/voltStdio.js';
-import { acpLaunchFor, cliAgentDefinition, runCli } from '../../browser/agents/cliAgents.js';
+import { acpLaunchFor, cliAgentDefinition, cliLoginForNotice, runCli } from '../../browser/agents/cliAgents.js';
 
 /** Emits the process output from inside spawn(), before the caller learns the id: the IPC race. */
 class FastStdio implements IVoltStdioService {
@@ -79,5 +79,20 @@ suite('runCli', () => {
 	test('custom commands and agents without an adapter are left alone', () => {
 		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('claude-code'), '/opt/my-acp', ['--x'], false), { command: '/opt/my-acp', args: ['--x'] });
 		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('cursor-acp'), 'cursor-agent', ['acp'], false), { command: 'cursor-agent', args: ['acp'] });
+	});
+
+	test('a sign-in notice names the CLI login, and other notices do not', () => {
+		assert.deepStrictEqual(cliLoginForNotice('Sign in to continue using Claude.', 'Failed to authenticate: OAuth session expired', 'codex'), {
+			providerId: 'claude-code',
+			label: 'Claude',
+			command: 'claude auth login',
+		});
+		assert.deepStrictEqual(cliLoginForNotice('Sign in to continue', 'OAuth session expired', 'codex'), {
+			providerId: 'codex',
+			label: 'Codex',
+			command: 'codex login',
+		});
+		assert.strictEqual(cliLoginForNotice('Usage limit reached', 'Try again later', 'claude-code'), undefined);
+		assert.strictEqual(cliLoginForNotice('Sign in to continue', undefined, 'antigravity'), undefined);
 	});
 });

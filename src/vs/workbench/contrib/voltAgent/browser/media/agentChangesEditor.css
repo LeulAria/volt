@@ -3,89 +3,34 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+/*
+ * The changes review, drawn like Cursor's: a header with the scope, branch and commit button,
+ * then one block per file (icon, name, line counts) over an inline diff with a single column of
+ * line numbers and a thin bar on each changed line. Colors come from the theme, as in the
+ * transcript's file previews (fileChangePreview.css).
+ */
+.volt-agent-changes-editor,
+.volt-agent-review-diff {
+	--volt-changes-add: var(--vscode-chat-linesAddedForeground, var(--vscode-gitDecoration-addedResourceForeground, #3fb950));
+	--volt-changes-del: var(--vscode-chat-linesRemovedForeground, var(--vscode-gitDecoration-deletedResourceForeground, #f85149));
+	--volt-changes-border: rgba(255, 255, 255, 0.08);
+	--volt-changes-bg: var(--vscode-editor-background);
+}
+
+/* .volt-agent-review-diff: another multi-diff editor in the review's style (git's "Open Changes" in the agent window's tools). */
 .volt-agent-changes-editor {
 	display: flex;
 	flex-direction: column;
 	height: 100%;
 	min-height: 0;
-	background: var(--vscode-editor-background);
+	background: var(--volt-changes-bg);
 }
 
-.volt-agent-changes-header {
-	display: flex;
-	align-items: center;
-	justify-content: flex-start;
-	gap: 8px;
-	flex: 0 0 auto;
-	height: 36px;
-	padding: 0 12px;
-	border-bottom: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
-}
-
-.volt-agent-changes-scope,
-.volt-agent-changes-commit {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	height: 26px;
-	padding: 0 10px;
-	border: none;
-	border-radius: 6px;
-	background: transparent;
-	color: var(--vscode-foreground);
-	font: inherit;
-	font-size: 13px;
-	cursor: pointer;
-}
-
-.volt-agent-changes-scope:hover,
-.volt-agent-changes-commit:hover {
-	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.08));
-}
-
-.volt-agent-changes-scope-stats {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	font-variant-numeric: tabular-nums;
-}
-
-.volt-agent-changes-scope-stats.hidden,
-.volt-agent-changes-empty.hidden,
-.volt-agent-changes-widget.hidden {
-	display: none;
-}
-
-.volt-agent-changes-scope-stats .add,
-.volt-agent-changes-empty-row-stats .add {
-	color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
-}
-
-.volt-agent-changes-scope-stats .del,
-.volt-agent-changes-empty-row-stats .del {
-	color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
-}
-
-.volt-agent-changes-scope-label {
-	opacity: 0.86;
-}
-
-.volt-agent-changes-scope-chevron {
-	opacity: 0.7;
-	font-size: 12px !important;
-}
-
-.volt-agent-changes-commit {
-	margin-left: auto;
-	border: 1px solid var(--vscode-button-border, rgba(255, 255, 255, 0.12));
-	border-radius: 999px;
-	background: var(--vscode-button-secondaryBackground, transparent);
-}
-
-.volt-agent-changes-body {
-	position: relative;
-	flex: 1 1 auto;
-	min-height: 0;
+.monaco-workbench.vs .volt-agent-changes-editor,
+.monaco-workbench.hc-light .volt-agent-changes-editor,
+.monaco-workbench.vs .volt-agent-review-diff,
+.monaco-workbench.hc-light .volt-agent-review-diff {
+	--volt-changes-border: rgba(0, 0, 0, 0.08);
 }
 
 .volt-agent-changes-widget {
@@ -93,137 +38,854 @@
 	min-height: 0;
 }
 
-.volt-agent-changes-empty {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	height: 100%;
-	padding: 24px;
-	box-sizing: border-box;
-	color: var(--vscode-descriptionForeground);
-}
-
-.volt-agent-changes-empty-title {
-	margin-bottom: 28px;
-	font-size: 16px;
-	color: var(--vscode-foreground);
-}
-
-.volt-agent-changes-empty-list {
-	display: flex;
-	flex-direction: column;
-	gap: 10px;
-	min-width: 320px;
-}
-
-.volt-agent-changes-empty-row {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	height: 28px;
-	padding: 0;
-	border: none;
-	background: transparent;
-	color: inherit;
-	font: inherit;
-	font-size: 13px;
-	cursor: pointer;
-	text-align: left;
-}
-
-.volt-agent-changes-empty-row:hover {
-	color: var(--vscode-foreground);
-}
-
-.volt-agent-changes-empty-icon {
-	opacity: 0.7;
-}
-
-.volt-agent-changes-empty-row-label {
+/* The workbench's Source Control side bar, moved into the Changes tab. */
+.volt-agent-changes-scm {
+	position: relative;
 	flex: 1 1 auto;
+	min-height: 0;
+	overflow: hidden;
 }
 
-.volt-agent-changes-empty-row-stats {
-	display: inline-flex;
-	gap: 8px;
-	font-variant-numeric: tabular-nums;
-}
-
-.volt-agent-changes-file-label {
-	cursor: pointer;
-}
-
-.volt-agent-changes-editor .multiDiffEntry .status.added {
-	color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
-}
-
-.volt-agent-changes-editor .monaco-action-bar .action-label[aria-label="New"] {
-	color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
-	font-size: 12px;
-	padding: 0 6px;
-}
-
-.volt-agent-changes-editor .monaco-editor .view-overlays .current-line,
-.volt-agent-changes-editor .monaco-editor .view-overlays .current-line-exact,
-.volt-agent-changes-editor .monaco-editor .view-overlays .current-line-both,
-.volt-agent-changes-editor .monaco-editor .margin-view-overlays .current-line,
-.volt-agent-changes-editor .monaco-editor .margin-view-overlays .current-line-margin,
-.volt-agent-changes-editor .monaco-editor .margin-view-overlays .current-line-exact-margin,
-.volt-agent-changes-editor .monaco-editor .margin-view-overlays .current-line-margin-both {
-	background: transparent !important;
-	background-color: transparent !important;
+/* The side bar part itself: it fills the tab, without the border it has beside the editor. */
+.monaco-workbench .volt-agent-changes-scm > .part.volt-lent-part {
+	width: 100%;
+	height: 100%;
 	border: none !important;
-	box-shadow: none !important;
+	/* One solid fill, the tab's own: the side bar's fills (title row, list rows) would layer over it. */
+	background: var(--volt-changes-bg) !important;
 }
 
-.volt-agent-changes-tabs {
+.monaco-workbench .volt-agent-changes-scm > .part.volt-lent-part > .title,
+.monaco-workbench .volt-agent-changes-scm > .part.volt-lent-part .pane-header,
+.monaco-workbench .volt-agent-changes-scm > .part.volt-lent-part .monaco-list .monaco-list-rows {
+	background: transparent !important;
+}
+
+/* Sticky rows cover the rows scrolling under them, so they keep a fill: the same one. */
+.monaco-workbench .volt-agent-changes-scm > .part.volt-lent-part .monaco-tree-sticky-container,
+.monaco-workbench .volt-agent-changes-scm > .part.volt-lent-part .monaco-tree-sticky-row {
+	background: var(--volt-changes-bg) !important;
+}
+
+.monaco-workbench .volt-agent-changes-scm > .part.volt-lent-part > .title > .title-label h2 {
+	font-weight: 600;
+}
+
+/* Every view collapsed: their headers sit at the bottom, where collapsed views sit under an open one. */
+.monaco-workbench .volt-agent-changes-scm.all-panes-collapsed > .part.volt-lent-part .monaco-pane-view > .monaco-split-view2 > .monaco-scrollable-element > .split-view-container {
 	display: flex;
-	align-items: center;
-	gap: 2px;
+	flex-direction: column;
+	justify-content: flex-end;
 }
 
-.volt-agent-changes-tab,
-.volt-agent-changes-action {
-	height: 26px;
-	padding: 0 10px;
-	border: none;
-	border-radius: 6px;
-	background: transparent;
-	color: var(--vscode-descriptionForeground);
-	font: inherit;
-	font-size: 13px;
-	white-space: nowrap;
-	cursor: pointer;
+.monaco-workbench .volt-agent-changes-scm.all-panes-collapsed > .part.volt-lent-part .monaco-pane-view > .monaco-split-view2 > .monaco-scrollable-element > .split-view-container > .split-view-view {
+	position: relative;
+	top: auto !important;
+	flex: none;
 }
 
-.volt-agent-changes-tab:hover,
-.volt-agent-changes-action:hover {
-	background: var(--vscode-toolbar-hoverBackground);
-	color: var(--vscode-foreground);
-}
-
-.volt-agent-changes-tab.active {
-	background: var(--vscode-toolbar-activeBackground, rgba(255, 255, 255, 0.1));
-	color: var(--vscode-foreground);
-}
-
-.volt-agent-changes-tab.hidden,
-.volt-agent-changes-pending-actions.hidden {
+.monaco-workbench .volt-agent-changes-scm.all-panes-collapsed > .part.volt-lent-part .monaco-pane-view > .monaco-split-view2 > .sash-container {
 	display: none;
 }
 
-.volt-agent-changes-pending-actions {
+/* Rows under a parent sat flush against its indent guide: a few pixels between the line and the icon. */
+.monaco-workbench .volt-agent-changes-scm > .part.volt-lent-part .monaco-list-row:not([aria-level="1"]) .monaco-tl-twistie:not(.collapsible) + .monaco-tl-contents {
+	padding-left: 6px;
+}
+
+.volt-agent-changes-scm-unavailable {
+	display: none;
+	padding: 24px;
+	text-align: center;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-changes-scm.unavailable > .volt-agent-changes-scm-unavailable {
+	display: block;
+}
+
+.volt-agent-files-repository-status {
+	display: none;
+	padding: 16px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-files-sidebar-body.repository-pending > :not(.volt-agent-files-repository-status) {
+	display: none !important;
+}
+
+.volt-agent-files-sidebar-body.repository-pending > .volt-agent-files-repository-status {
+	display: block;
+}
+
+
+/* ---- Header (agentChangesHeader.ts): scope menu, branch, Commit & Push ------------------- */
+
+.volt-agent-changes-header {
 	display: flex;
 	align-items: center;
-	gap: 2px;
+	gap: 4px;
+	box-sizing: border-box;
+	height: 40px;
+	padding: 0 10px 0 6px;
+	border-bottom: 1px solid var(--volt-changes-border);
+	background: var(--volt-changes-bg);
+	font-size: 13px;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-changes-scope,
+.volt-agent-changes-branch,
+.volt-agent-changes-commit {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	height: 26px;
+	padding: 0 8px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.volt-agent-changes-scope:hover,
+.volt-agent-changes-branch:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-agent-changes-scope-icon,
+.volt-agent-changes-scope-icon .codicon {
+	display: inline-flex;
+	flex: none;
+	font-size: 14px;
+}
+
+.volt-agent-changes-scope-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 280px;
+}
+
+.volt-agent-changes-scope-stats {
+	display: inline-flex;
+	gap: 6px;
+	flex: none;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-changes-scope-stats .add {
+	color: var(--volt-changes-add);
+}
+
+.volt-agent-changes-scope-stats .del {
+	color: var(--volt-changes-del);
+}
+
+.volt-agent-changes-branch {
+	flex: 0 1 auto;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-changes-branch-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-agent-changes-header .volt-agent-changes-chevron {
+	flex: none;
+	font-size: 12px !important;
+	opacity: 0.7;
+}
+
+.volt-agent-changes-scope-stats.hidden,
+.volt-agent-changes-branch.hidden {
+	display: none;
+}
+
+.volt-agent-changes-header-spacer {
+	flex: 1 1 auto;
+}
+
+.volt-agent-changes-commit {
+	flex: none;
+	gap: 5px;
+	height: 24px;
+	padding: 0 10px 0 8px;
+	border-radius: 8px;
+	font-size: 12px;
+	/* White, like the login chip; the theme's foreground can be tinted (blue-grey). */
+	background: #f3f3f3;
+	color: #171717;
+	font-weight: 400;
+}
+
+.volt-agent-changes-commit-icon {
+	flex: none;
+	width: 11px;
+	height: 11px;
+	/* The label's color, over any rule that dims icons. */
+	color: inherit;
+	stroke: currentColor;
+	opacity: 1;
+}
+
+.volt-agent-changes-commit:hover {
+	background: #ffffff;
+}
+
+.volt-agent-changes-commit:active {
+	background: #e8e8e8;
+}
+
+.monaco-workbench.vs .volt-agent-changes-commit,
+.monaco-workbench.hc-light .volt-agent-changes-commit {
+	background: #1a1a1a;
+	color: #f5f5f5;
+}
+
+.monaco-workbench.vs .volt-agent-changes-commit:hover,
+.monaco-workbench.hc-light .volt-agent-changes-commit:hover {
+	background: #2a2a2a;
+}
+
+/* ---- File blocks ----------------------------------------------------------------------- */
+
+.volt-agent-changes-widget .monaco-component.multiDiffEditor,
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .active {
+	--vscode-multiDiffEditor-background: var(--volt-changes-bg);
+	--vscode-multiDiffEditor-headerBackground: var(--volt-changes-bg);
+	--vscode-multiDiffEditor-border: var(--volt-changes-border);
+}
+
+/*
+ * The widget lays files out with a 40px header; this one is 40px too, border included. Its own
+ * rules are nested, hence the long selectors.
+ */
+.volt-agent-changes-editor .volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content,
+.volt-agent-review-diff.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content {
+	box-sizing: border-box;
+	height: 40px;
+	margin: 0;
+	padding: 0 6px 0 12px;
+	gap: 4px;
+	border-top: none;
+	border-bottom: 1px solid var(--volt-changes-border);
+	background: var(--volt-changes-bg);
+}
+
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .file-path {
+	flex: 0 1 auto;
+	align-items: center;
+}
+
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .file-path .title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font-size: 13px;
+	line-height: 22px;
+}
+
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .file-path .title:empty {
+	display: none;
+}
+
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .file-path .title .monaco-icon-label {
+	min-width: 0;
+}
+
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .file-path .title.original {
+	flex: 0 1 auto;
+	margin-left: 8px;
+	opacity: 0.6;
+}
+
+/* Cursor marks no status letter: the colors and the strikethrough say it. */
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .file-path .status {
+	display: none;
+}
+
+/* Clicking collapse leaves focus on it; no outline for a mouse click. */
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .collapse-button :focus:not(:focus-visible),
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .collapse-button:focus:not(:focus-visible) {
+	outline: none !important;
+}
+
+/* Collapse leads the row, before the file icon; the file's actions show on hover. */
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .collapse-button {
+	order: -1;
+	margin: 0 2px 0 -4px;
+}
+
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .collapse-button .codicon {
+	font-size: 14px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .actions {
+	order: 2;
+	margin-left: auto;
+	padding: 0;
+	opacity: 0;
+	transition: opacity 0.1s;
+}
+
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content:hover .actions,
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content:focus-within .actions {
+	opacity: 1;
+}
+
+.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .actions .action-item:has(> .action-label[aria-label="New"]) {
+	display: none;
+}
+
+/* ---- Diff, drawn like Better Hub's ---------------------------------------------------------
+ *
+ * Per line: a striped 4px bar, the line number column (old numbers on deleted lines) with a
+ * divider, a column of +/- signs, then the code. Changed lines get a faint tint of the theme's
+ * add and remove colors and numbers in that color, changed words a stronger tint with rounded
+ * corners. Unchanged stretches fold into blue hunk bars. --volt-changes-gutter-width and
+ * --volt-changes-line-height come from JS.
+ */
+.volt-agent-changes-editor,
+.volt-agent-review-diff {
+	--volt-changes-insert-bg: color-mix(in srgb, var(--volt-changes-add) 9%, transparent);
+	--volt-changes-delete-bg: color-mix(in srgb, var(--volt-changes-del) 11%, transparent);
+	--volt-changes-insert-word: color-mix(in srgb, var(--volt-changes-add) 20%, transparent);
+	--volt-changes-delete-word: color-mix(in srgb, var(--volt-changes-del) 20%, transparent);
+	/* 1px stripes: full color, then a faint one. */
+	--volt-changes-insert-bar: repeating-linear-gradient(to bottom, var(--volt-changes-add) 0 1px, color-mix(in srgb, var(--volt-changes-add) 18%, transparent) 1px 2px);
+	--volt-changes-delete-bar: repeating-linear-gradient(to bottom, var(--volt-changes-del) 0 1px, color-mix(in srgb, var(--volt-changes-del) 18%, transparent) 1px 2px);
+	--volt-changes-hunk: var(--vscode-textLink-foreground, #58a6ff);
+}
+
+.volt-agent-changes-widget .monaco-editor,
+.volt-agent-changes-widget .monaco-editor .margin,
+.volt-agent-changes-widget .monaco-editor .monaco-editor-background {
+	background-color: var(--volt-changes-bg);
+}
+
+.volt-agent-changes-widget .monaco-editor .view-overlays .current-line,
+.volt-agent-changes-widget .monaco-editor .view-overlays .current-line-exact,
+.volt-agent-changes-widget .monaco-editor .margin-view-overlays .current-line,
+.volt-agent-changes-widget .monaco-editor .margin-view-overlays .current-line-margin {
+	border: none;
+	background: transparent;
+}
+
+/* Line numbers: small and dim, tinted on changed lines. */
+.volt-agent-changes-widget .monaco-editor .margin-view-overlays .line-numbers {
+	box-sizing: border-box;
+	padding-right: 8px;
+	font-size: 11px;
+}
+
+.volt-agent-changes-widget .monaco-editor .margin-view-overlays .line-numbers.active-line-number {
+	color: var(--vscode-editorLineNumber-foreground);
+}
+
+.volt-agent-changes-widget .monaco-editor .margin-view-overlays > div:has(> .gutter-insert) > .line-numbers {
+	color: var(--volt-changes-add);
+}
+
+.volt-agent-changes-widget .monaco-editor .margin-view-overlays > div:has(> .gutter-delete) > .line-numbers {
+	color: var(--volt-changes-del);
+}
+
+/* The column's divider, through every line and the deleted lines between them. */
+.volt-agent-changes-widget .monaco-editor .margin::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: var(--volt-changes-gutter-width, 43px);
+	z-index: 11;
+	width: 1px;
+	background: var(--volt-changes-border);
+	pointer-events: none;
+}
+
+/* Tints. Monaco's own gutter colors fall back through a list of var()s, which leaves them transparent when the theme sets none. */
+.volt-agent-changes-widget .monaco-editor .line-insert,
+.volt-agent-changes-widget .monaco-editor .margin-view-overlays .gutter-insert,
+.volt-agent-changes-widget .monaco-editor .inline-added-margin-view-zone {
+	border: none;
+	background-color: var(--volt-changes-insert-bg);
+}
+
+.volt-agent-changes-widget .monaco-editor .line-delete,
+.volt-agent-changes-widget .monaco-editor .margin-view-overlays .gutter-delete,
+.volt-agent-changes-widget .monaco-editor .inline-deleted-margin-view-zone {
+	border: none;
+	background-color: var(--volt-changes-delete-bg);
+}
+
+.volt-agent-changes-widget .monaco-editor .char-insert,
+.volt-agent-changes-widget .monaco-editor .char-delete {
+	border: none;
+	border-radius: 2px;
+}
+
+.volt-agent-changes-widget .monaco-editor .char-insert {
+	background-color: var(--volt-changes-insert-word);
+}
+
+.volt-agent-changes-widget .monaco-editor .char-delete {
+	background-color: var(--volt-changes-delete-word);
+}
+
+/* A wholly added or deleted line also gets a whole-line word highlight (drawn full width): one tint is enough. */
+.volt-agent-changes-widget .monaco-editor .view-overlays .cdr.char-insert[style*="width:100%"],
+.volt-agent-changes-widget .monaco-editor .view-overlays .cdr.char-delete[style*="width:100%"] {
+	background: transparent;
+}
+
+/*
+ * Inline, deleted lines are drawn as text with the word highlight on each syntax token. Round
+ * only the ends of a highlighted run, and drop it where the whole line is highlighted.
+ */
+.volt-agent-changes-widget .monaco-editor .view-zones .char-delete {
+	border-radius: 0;
+}
+
+.volt-agent-changes-widget .monaco-editor .view-zones .char-delete:first-child,
+.volt-agent-changes-widget .monaco-editor .view-zones span:not(.char-delete) + .char-delete {
+	border-top-left-radius: 2px;
+	border-bottom-left-radius: 2px;
+}
+
+.volt-agent-changes-widget .monaco-editor .view-zones .char-delete:last-child,
+.volt-agent-changes-widget .monaco-editor .view-zones .char-delete:has(+ span:not(.char-delete)) {
+	border-top-right-radius: 2px;
+	border-bottom-right-radius: 2px;
+}
+
+.volt-agent-changes-widget .monaco-editor .view-zones .view-line:not(:has(span[class*="mtk"]:not(.char-delete))) .char-delete {
+	background: transparent;
+}
+
+/* The striped bar on the gutter's edge, over the tint. */
+.volt-agent-changes-widget .monaco-editor .margin-view-overlays .gutter-insert,
+.volt-agent-changes-widget .monaco-editor .margin-view-overlays .gutter-delete,
+.volt-agent-changes-widget .monaco-editor .inline-deleted-margin-view-zone {
+	background-size: 4px 100%;
+	background-repeat: no-repeat;
+}
+
+.volt-agent-changes-widget .monaco-editor .margin-view-overlays .gutter-insert {
+	background-image: var(--volt-changes-insert-bar);
+}
+
+.volt-agent-changes-widget .monaco-editor .margin-view-overlays .gutter-delete,
+.volt-agent-changes-widget .monaco-editor .inline-deleted-margin-view-zone {
+	background-image: var(--volt-changes-delete-bar);
+}
+
+.volt-agent-changes-widget .monaco-editor .inline-deleted-margin-view-zone {
+	box-sizing: border-box;
+	width: 100%;
+}
+
+.volt-agent-changes-widget .inline-deleted-margin-view-zone .lightbulb-glyph {
+	display: none;
+}
+
+/* The sign column: + and - in the code font, right after the divider. */
+.volt-agent-changes-widget .monaco-editor .insert-sign,
+.volt-agent-changes-widget .monaco-editor .delete-sign {
+	justify-content: center;
+	width: 20px !important;
+	font-family: var(--monaco-monospace-font) !important;
+	font-size: 12px !important;
+	opacity: 1 !important;
+}
+
+.volt-agent-changes-widget .monaco-editor .inline-deleted-margin-view-zone .delete-sign {
+	right: auto !important;
+	left: var(--volt-changes-gutter-width, 43px);
+}
+
+.volt-agent-changes-widget .monaco-editor .insert-sign {
+	color: color-mix(in srgb, var(--volt-changes-add) 50%, transparent);
+}
+
+.volt-agent-changes-widget .monaco-editor .delete-sign {
+	color: color-mix(in srgb, var(--volt-changes-del) 50%, transparent);
+}
+
+.volt-agent-changes-widget .monaco-editor .insert-sign::before {
+	content: '+';
+}
+
+.volt-agent-changes-widget .monaco-editor .delete-sign::before {
+	content: '-';
+}
+
+/* Folded unchanged lines: Better Hub's blue hunk bar, the unfold button in the number column. */
+.volt-agent-changes-widget .monaco-editor .diff-hidden-lines .center {
+	display: flex;
+	align-items: stretch;
+	height: 24px;
+	background: color-mix(in srgb, var(--volt-changes-hunk) 6%, var(--volt-changes-bg));
+	color: color-mix(in srgb, var(--volt-changes-hunk) 60%, transparent);
+	box-shadow: none;
+	/* The workbench's UI font, not the editor's monospace one. */
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, "Ubuntu", "Droid Sans", sans-serif;
+	font-size: 12px;
+}
+
+.volt-agent-changes-widget .monaco-editor .diff-hidden-lines .center > div:first-child {
+	width: var(--volt-changes-gutter-width, 43px) !important;
+	box-shadow: inset -1px 0 0 var(--volt-changes-border);
+}
+
+.volt-agent-changes-widget .monaco-editor .diff-hidden-lines .center > div:first-child .codicon {
+	font-size: 14px;
+	color: color-mix(in srgb, var(--volt-changes-hunk) 45%, transparent);
+}
+
+.volt-agent-changes-widget .monaco-editor .diff-hidden-lines .center > div:first-child a:hover .codicon {
+	color: var(--volt-changes-hunk) !important;
+}
+
+.volt-agent-changes-widget .monaco-editor .diff-hidden-lines .center > div:nth-child(2) {
+	justify-content: flex-start !important;
+	gap: 8px;
+	min-width: 0;
+	padding-left: 12px;
+	overflow: hidden;
+}
+
+.volt-agent-changes-widget .monaco-editor .diff-hidden-lines .center .breadcrumb-item {
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.7;
+}
+
+/*
+ * Inline, Monaco puts the original editor's line numbers in a column of their own. Lay that
+ * column over the modified editor's numbers instead, see-through, showing only the numbers of
+ * deleted lines: those sit beside the modified editor's deleted-lines zones, which have none.
+ */
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .editor.modified {
+	left: 0 !important;
+}
+
+/* Monaco sizes the modified editor to leave room for that column: take it back, so changed lines run to the edge. */
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .editor.modified,
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .modified-in-monaco-diff-editor,
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .modified-in-monaco-diff-editor > .overflow-guard {
+	width: 100% !important;
+}
+
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .modified-in-monaco-diff-editor > .overflow-guard > .editor-scrollable {
+	right: 0;
+	width: auto !important;
+}
+
+/* Line tints and deleted lines are as wide as the longest line; short files need them to reach the edge too. */
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .modified-in-monaco-diff-editor .view-overlays,
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .modified-in-monaco-diff-editor .view-zones {
+	min-width: 100vw;
+}
+
+/* The hunk bars are overlay widgets, sized like the editor. */
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .modified-in-monaco-diff-editor > .overflow-guard > .overlayWidgets {
+	width: 100% !important;
+}
+
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .editor.original {
+	z-index: 20;
+	pointer-events: none;
+}
+
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .original-in-monaco-diff-editor,
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .original-in-monaco-diff-editor .margin,
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .original-in-monaco-diff-editor .monaco-editor-background,
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .original-in-monaco-diff-editor .gutter-delete {
+	background: transparent;
+	background-color: transparent;
+	box-shadow: none;
+}
+
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .original-in-monaco-diff-editor .margin-view-overlays .line-numbers,
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .original-in-monaco-diff-editor .diff-hidden-lines-widget {
+	visibility: hidden;
+}
+
+.volt-agent-changes-widget .monaco-diff-editor:not(.side-by-side) .original-in-monaco-diff-editor .margin-view-overlays > div:has(> .gutter-delete) > .line-numbers {
+	visibility: visible;
+}
+
+/*
+ * A created file is diffed against an empty one, whose single empty line shows as deleted above
+ * the file: scroll that row up under the header. A deleted file likewise gains an empty added
+ * line at its end: leave that row blank.
+ */
+.volt-agent-changes-widget .multiDiffEntry.status-added .editorContainer {
+	margin-top: calc(-1 * var(--volt-changes-line-height, 0px));
+}
+
+.volt-agent-changes-widget .multiDiffEntry.status-added .editor.original {
+	opacity: 0;
+}
+
+.volt-agent-changes-widget .multiDiffEntry.status-deleted .modified-in-monaco-diff-editor .margin-view-overlays .line-numbers,
+.volt-agent-changes-widget .multiDiffEntry.status-deleted .modified-in-monaco-diff-editor .insert-sign {
+	visibility: hidden;
+}
+
+.volt-agent-changes-widget .multiDiffEntry.status-deleted .modified-in-monaco-diff-editor .line-insert,
+.volt-agent-changes-widget .multiDiffEntry.status-deleted .modified-in-monaco-diff-editor .gutter-insert {
+	background: transparent;
+	box-shadow: none;
+}
+
+/* ---- Agent Turns (a Source Control view while the Changes tab shows a chat) --------------- */
+
+.volt-agent-turns-row,
+.volt-agent-turns-file {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 100%;
+	min-width: 0;
+	padding-right: 12px;
+}
+
+.volt-agent-turns-icon {
+	flex-shrink: 0;
+	width: 16px;
+	height: 16px;
+	/* Branch-and-merge glyph, masked so it takes the theme's icon color. */
+	background-color: var(--vscode-icon-foreground);
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='5' cy='6' r='3'/%3E%3Cpath d='M5 9v6'/%3E%3Ccircle cx='5' cy='18' r='3'/%3E%3Cpath d='M12 3v18'/%3E%3Ccircle cx='19' cy='6' r='3'/%3E%3Cpath d='M16 15.7A9 9 0 0 0 19 9'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+}
+
+.volt-agent-turns-label {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* "Turn 3" after the prompt, like a stash's branch and time. */
+.volt-agent-turns-description {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 0.9em;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-turns-file-label {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+/* Open Changes and Undo show on hover, as a stash's apply, pop and drop do. */
+.volt-agent-turns-actions {
+	display: none;
+	flex-shrink: 0;
+}
+
+.monaco-list-row:hover .volt-agent-turns-actions,
+.monaco-list-row.focused .volt-agent-turns-actions,
+.monaco-list-row.selected .volt-agent-turns-actions {
+	display: block;
+}
+
+.volt-agent-turns-stats {
+	display: inline-flex;
+	flex-shrink: 0;
+	gap: 4px;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-turns-stats .add {
+	color: var(--volt-changes-add, var(--vscode-gitDecoration-addedResourceForeground));
+}
+
+.volt-agent-turns-stats .del {
+	color: var(--volt-changes-del, var(--vscode-gitDecoration-deletedResourceForeground));
+}
+
+
+/* ---- Files sidebar ---------------------------------------------------------------------- */
+
+/*
+ * The files sidebar at the right edge of a chat's tools (agentFilesSidebar.ts): icons for Files,
+ * Source Control and Search on top, the workbench's own side bar part lent in below. It paints no
+ * fill of its own: beside the chat the window's translucent fill shows through, as in the chat; in
+ * full screen the tools area's solid fill does (agentEditor.css). The lent part's own styles are above.
+ */
+.volt-agent-files-sidebar {
+	--volt-changes-bg: transparent;
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 15;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	border-left: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
+	background: transparent;
+}
+
+/* Sticky rows cover the rows scrolling under them, so they need a fill: the window's solid base is the closest. */
+.monaco-workbench .volt-agent-files-sidebar .volt-agent-changes-scm > .part.volt-lent-part .monaco-tree-sticky-container,
+.monaco-workbench .volt-agent-files-sidebar .volt-agent-changes-scm > .part.volt-lent-part .monaco-tree-sticky-row {
+	background: var(--volt-agent-window-bg-base, var(--vscode-editor-background)) !important;
+}
+
+.volt-agent-files-sidebar.hidden,
+.volt-agent-tools-parts.hidden {
+	display: none;
+}
+
+/* The whole tools area: the split line is its edge, and its own resize edge is not needed. */
+.volt-agent-files-sidebar.fills {
+	border-left: none;
+}
+
+.volt-agent-files-sidebar.fills > .volt-agent-files-sidebar-sash {
+	display: none;
+}
+
+/* The tabs' first row is in the title bar; the icons line up with it. Its empty space drags the
+ * window, as the title bar does; the buttons opt out. */
+.volt-agent-files-sidebar-header {
+	flex: 0 0 var(--volt-files-sidebar-header, 35px);
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0 8px;
+	box-sizing: border-box;
+	border-bottom: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
+	-webkit-app-region: drag;
+}
+
+.monaco-workbench .volt-agent-files-sidebar-tab {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	/* No focus ring or border: the workbench's button focus outline would frame the chosen icon. */
+	border: 0 !important;
+	outline: none !important;
+	box-shadow: none !important;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench .volt-agent-files-sidebar-tab:hover,
+.monaco-workbench .volt-agent-files-sidebar-tab:focus-visible {
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+}
+
+.monaco-workbench .volt-agent-files-sidebar-tab.active {
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+/* Sized by eye against the editor actions beside it. */
+.volt-agent-files-sidebar-tab > svg {
+	width: 16px;
+	height: 16px;
+}
+
+/* Hide sits at the far end of the row. */
+.monaco-workbench .volt-agent-files-sidebar-tab.hide {
 	margin-left: auto;
 }
 
-.volt-agent-changes-pending-actions:not(.hidden) + .volt-agent-changes-commit {
-	margin-left: 0;
+.volt-agent-files-sidebar-tab.hide > svg {
+	width: 14px;
+	height: 14px;
 }
 
-.volt-agent-changes-action {
+.volt-agent-files-sidebar-body {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: hidden;
+}
+
+/* The left edge drags to resize, like the split line between the chat and the tools. */
+.volt-agent-files-sidebar-sash {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -4px;
+	width: 7px;
+	z-index: 20;
+	cursor: col-resize;
+	-webkit-app-region: no-drag;
+}
+
+.volt-agent-files-sidebar-sash:hover::before,
+.volt-agent-files-sidebar-sash.active::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 2px;
+	width: 3px;
+	background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+}
+
+/* While resizing, a page or terminal under the pointer would take it. */
+.volt-agent-tools-area.files-sidebar-resizing .volt-agent-tools-parts {
+	pointer-events: none;
+}
+
+/* Show or hide the sidebar: at the end of the tools' first tab row, before Full Screen. */
+.monaco-workbench .volt-agent-tools-files-toggle {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	align-self: center;
+	box-sizing: border-box;
+	flex: 0 0 22px;
+	width: 22px;
+	height: 22px;
+	margin: 0 2px;
+	padding: 3px;
+	border: 0 !important;
+	outline: none !important;
+	box-shadow: none !important;
+	border-radius: 6px;
+	background: transparent;
 	color: var(--vscode-foreground);
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench .volt-agent-tools-files-toggle:hover,
+.monaco-workbench .volt-agent-tools-files-toggle:focus-visible {
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-agent-tools-files-toggle > svg {
+	width: 15px;
+	height: 15px;
+}
+
+.volt-agent-tools-files-toggle.active > svg path {
+	stroke-width: 2.4;
 }

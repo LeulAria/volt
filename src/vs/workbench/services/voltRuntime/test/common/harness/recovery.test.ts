@@ -6,7 +6,8 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import { ErrorClass, IClassifiedError, IProgressReport } from '../../../common/harness/progress.js';
-import { IRecoveryContext, needsRecovery, RecoveryController, RecoveryStrategy } from '../../../common/harness/recovery.js';
+import { loopCallRecord } from '../../../common/harness/doomLoop.js';
+import { createLoopDetector, errorGuidance, IRecoveryContext, needsRecovery, RecoveryController, RecoveryStrategy } from '../../../common/harness/recovery.js';
 
 suite('Volt recovery controller', () => {
 
@@ -145,6 +146,26 @@ suite('Volt recovery controller', () => {
 		assert.strictEqual(decision.strategy, 'ask');
 		assert.ok(/tell me/i.test(decision.reason));
 	});
+
+	test('error guidance is class-specific and silent for unknown failures', () => {
+		assert.ok(errorGuidance('not-found', 'x.ts')?.includes('search for it first'));
+		assert.ok(errorGuidance('assertion', 'expected 1')?.includes('before changing the test'));
+		assert.strictEqual(errorGuidance('unknown', 'boom'), undefined);
+		assert.strictEqual(errorGuidance(undefined, 'boom'), undefined);
+	});
+
+	test('the loop detector from createLoopDetector carries that guidance into its repeated-error nudge', () => {
+		const detector = createLoopDetector();
+		let verdict = detector.observe({ step: 0, calls: [] });
+		for (let step = 1; step <= 3; step++) {
+			verdict = detector.observe({
+				step, calls: [loopCallRecord({ tool: 'read_file', args: { path: `missing${step}.ts` }, ok: false, text: `ENOENT: no such file missing${step}.ts`, kind: 'read', errorClass: 'not-found' })],
+			});
+		}
+		assert.ok(verdict.kind === 'warn' && verdict.signal === 'repeated-error', JSON.stringify(verdict));
+		assert.ok(verdict.nudge.includes('search for it first'), verdict.nudge);
+	});
+
 });
 
 function context(value: IProgressReport): IRecoveryContext {

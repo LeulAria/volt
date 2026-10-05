@@ -139,6 +139,8 @@ export function mechanicalSummary(older: readonly INativeLoopMessage[], carry: I
  */
 export function applyCompaction(messages: readonly INativeLoopMessage[], boundary: number, summary: string): INativeLoopMessage[] {
 	const kept = messages.slice(boundary).map(stripReasoning);
+	// The prefix restarts here anyway, so this is the free moment to drop old pixels too.
+	pruneImages(kept, { ...DEFAULT_IMAGE_POLICY, pruneAt: DEFAULT_IMAGE_POLICY.keep });
 	const note = [
 		'<conversation_summary>',
 		'Earlier parts of this conversation were compacted. This summary replaces them; files and tool results from before it are no longer in view, so read files again if you need their current contents.',
@@ -172,4 +174,70 @@ function safeJson(value: unknown): string {
 	} catch {
 		return String(value);
 	}
+}
+
+// --- images ------------------------------------------------------------------------------------
+
+export interface IImagePolicy {
+	/** Newest images that always stay. */
+	readonly keep: number;
+	/** Prune only once more than this many images are in view, so the prompt prefix changes rarely. */
+	readonly pruneAt: number;
+	/** Base64 characters across all images; past this, the oldest go even below `pruneAt`. */
+	readonly maxChars: number;
+}
+
+/**
+ * Screenshots are the heaviest thing a browser loop puts in context (a 2x PNG is a few hundred
+ * thousand base64 characters) and only the latest few are worth looking at. Pruning rewrites old
+ * messages, which restarts the prompt cache from that point, so it runs in batches: nothing
+ * happens until there are `pruneAt` images (or `maxChars`), then it drops back to `keep`.
+ */
+export const DEFAULT_IMAGE_POLICY: IImagePolicy = { keep: 4, pruneAt: 10, maxChars: 6_000_000 };
+
+export const PRUNED_IMAGE_NOTE = '[An older image was here; it was removed to save context. Take a new screenshot if you need to see the current state.]';
+
+/** Drops pixels from older messages in place. Returns how many images were removed. */
+export function pruneImages(messages: INativeLoopMessage[], policy: IImagePolicy = DEFAULT_IMAGE_POLICY): number {
+	let count = 0;
+	let chars = 0;
+	for (const message of messages) {
+		for (const image of message.images ?? []) {
+			count++;
+			chars += image.data.length;
+		}
+	}
+	if (count <= policy.pruneAt && chars <= policy.maxChars) {
+		return 0;
+	}
+	// Walk newest first: keep up to `keep` images within the character budget.
+	let kept = 0;
+	let keptChars = 0;
+	let removed = 0;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (!message.images?.length) {
+			continue;
+		}
+		const survivors = message.images.filter(image => {
+			const fits = kept < policy.keep && keptChars + image.data.length <= policy.maxChars;
+			if (fits) {
+				kept++;
+				keptChars += image.data.length;
+			}
+			return fits;
+		});
+		const dropped = message.images.length - survivors.length;
+		if (!dropped) {
+			continue;
+		}
+		removed += dropped;
+		const { images: _images, ...rest } = message;
+		messages[i] = {
+			...rest,
+			...(survivors.length ? { images: survivors } : {}),
+			content: message.content ? `${message.content}\n${PRUNED_IMAGE_NOTE}` : PRUNED_IMAGE_NOTE,
+		};
+	}
+	return removed;
 }

@@ -15,6 +15,7 @@ import { Action2, MenuId, registerAction2 } from '../../../../../platform/action
 import { ContextKeyExpr, IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { EditorContextKeys } from '../../../../../editor/common/editorContextKeys.js';
 import { ICodeEditor, IOverlayWidget, isCodeEditor } from '../../../../../editor/browser/editorBrowser.js';
+import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
 import { EditorContributionInstantiation, registerEditorContribution } from '../../../../../editor/browser/editorExtensions.js';
 import { IEditorContribution } from '../../../../../editor/common/editorCommon.js';
 import { Position } from '../../../../../editor/common/core/position.js';
@@ -36,19 +37,26 @@ import { ExplorerFolderContext } from '../../../files/common/files.js';
 import { GroupDirection, GroupsOrder, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorResolverService, RegisteredEditorPriority } from '../../../../services/editor/common/editorResolverService.js';
 import { VoltProjectCommands } from '../../../voltProjects/common/projects.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { FIX_PR_SELECTION_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
-import { getLayoutMode, LayoutModeContext, openAgentSidebar, revealAgentSidePanel, storeAgentLeftSidebarHidden } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { getLayoutMode, isAgentDrawerMode, isAgentSidebarShowing, LayoutModeContext, openAgentSidebar, revealAgentSidePanel, storeAgentLeftSidebarHidden } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IPaneCompositePartService } from '../../../../services/panecomposite/browser/panecomposite.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import '../chrome/agentViewSidebars.js';
 import '../chrome/agentTitlebarHeader.js';
+import '../chrome/agentNav.contribution.js';
+import '../workspace/agentTerminalCwd.js';
+import '../workspace/agentIdeWorkspace.js';
+import '../workspace/agentTerminalScope.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
-import { AgentChangesEditor, AgentChangesEditorInput, AgentChangesEditorInputSerializer, AGENT_CHANGES_EDITOR_ID, OPEN_AGENT_CHANGES_COMMAND_ID, openAgentChanges } from '../review/agentChangesEditor.js';
+import { AgentChangesEditor, AgentChangesEditorInput, AgentChangesEditorInputSerializer, AgentReviewDiffLookContribution, AGENT_CHANGES_EDITOR_ID, OPEN_AGENT_CHANGES_COMMAND_ID, openAgentChanges } from '../review/agentChangesEditor.js';
 import '../review/agentChangesActions.js';
+import { AgentTurnsViewContribution } from '../review/agentTurnsView.js';
 import '../review/agentEditsEditor.js';
+import '../preview/browserAutomation.js';
 import { AgentBaselineContentProvider } from '../review/agentEditsService.js';
 import { AgentEditor } from './agentEditor.js';
 import { AgentChangesMultiDiffSourceResolver, AgentSnapshotContentProvider, parseAgentChangesSourceUri } from '../review/agentSessionChangesService.js';
@@ -278,6 +286,8 @@ class AgentChangesResolverContribution extends Disposable {
 }
 
 registerWorkbenchContribution2(AgentChangesResolverContribution.ID, AgentChangesResolverContribution, WorkbenchPhase.BlockStartup);
+registerWorkbenchContribution2(AgentReviewDiffLookContribution.ID, AgentReviewDiffLookContribution, WorkbenchPhase.BlockStartup);
+registerWorkbenchContribution2(AgentTurnsViewContribution.ID, AgentTurnsViewContribution, WorkbenchPhase.BlockStartup);
 
 /** Starts reading the chat index at startup, so restored chat tabs do not wait for it. */
 class AgentHistoryWarmupContribution {
@@ -571,16 +581,41 @@ const hasEditorSelection = ContextKeyExpr.and(
 	CONTEXT_IN_AGENT_INPUT.negate(),
 );
 
-async function addEditorSelectionToAgent(accessor: ServicesAccessor): Promise<boolean> {
-	const editorService = accessor.get(IEditorService);
-	const control = editorService.activeTextEditorControl;
-	if (!isCodeEditor(control)) {
+/**
+ * The editor a selection command acts on. Embedded editors (the diffs in Review / Last Agent Turn)
+ * are never the active text editor, so prefer the focused one.
+ */
+function selectionEditor(accessor: ServicesAccessor, editor?: ICodeEditor): ICodeEditor | undefined {
+	if (editor) {
+		return editor;
+	}
+	const focused = accessor.get(ICodeEditorService).getFocusedCodeEditor();
+	if (focused) {
+		return focused;
+	}
+	const control = accessor.get(IEditorService).activeTextEditorControl;
+	return isCodeEditor(control) ? control : undefined;
+}
+
+/** The diffs in the Changes tab: Add to Chat works there, inline Comment does not. */
+function isInChangesEditor(editor: ICodeEditor): boolean {
+	return !!editor.getDomNode()?.closest('.volt-agent-changes-editor');
+}
+
+async function addEditorSelectionToAgent(accessor: ServicesAccessor, editor?: ICodeEditor): Promise<boolean> {
+	const control = selectionEditor(accessor, editor);
+	if (!control) {
 		return false;
 	}
 	const model = control.getModel();
 	const selection = control.getSelection();
 	if (!model || !selection || selection.isEmpty() || model.uri.scheme === Schemas.voltAgent || model.uri.scheme === 'volt-agent-input') {
 		return false;
+	}
+	// Lines of a pull request's diff: the agent gets the pull request, file, lines and code, not a blob URI it cannot open.
+	if (model.uri.scheme === 'volt-agent-pr-blob' && CommandsRegistry.getCommand(FIX_PR_SELECTION_COMMAND_ID)) {
+		await accessor.get(ICommandService).executeCommand(FIX_PR_SELECTION_COMMAND_ID, model.uri, { startLineNumber: selection.startLineNumber, endLineNumber: selection.endLineNumber, endColumn: selection.endColumn });
+		return true;
 	}
 
 	const layoutService = accessor.get(IWorkbenchLayoutService);
@@ -622,8 +657,8 @@ registerAction2(class AddSelectionToAgentAction extends Action2 {
 		});
 	}
 
-	override async run(accessor: ServicesAccessor): Promise<void> {
-		await addEditorSelectionToAgent(accessor);
+	override async run(accessor: ServicesAccessor, editor?: ICodeEditor): Promise<void> {
+		await addEditorSelectionToAgent(accessor, isCodeEditor(editor) ? editor : undefined);
 	}
 });
 
@@ -646,9 +681,9 @@ registerAction2(class CommentSelectionAction extends Action2 {
 		});
 	}
 
-	override run(accessor: ServicesAccessor): void {
-		const control = accessor.get(IEditorService).activeTextEditorControl;
-		if (isCodeEditor(control)) {
+	override run(accessor: ServicesAccessor, editor?: ICodeEditor): void {
+		const control = selectionEditor(accessor, isCodeEditor(editor) ? editor : undefined);
+		if (control && !isInChangesEditor(control)) {
 			InlineCommentController.get(control)?.open();
 		}
 	}
@@ -813,6 +848,7 @@ registerAction2(class AddFileToNewAgentAction extends Action2 {
 
 class AddSelectionToChatWidget extends Disposable implements IOverlayWidget {
 	private readonly domNode: HTMLElement;
+	private readonly comment: HTMLElement;
 
 	constructor(
 		private readonly editor: ICodeEditor,
@@ -829,18 +865,18 @@ class AddSelectionToChatWidget extends Disposable implements IOverlayWidget {
 		if (addKey) {
 			append(add, $('span.volt-agent-selection-action-key')).textContent = addKey.getLabel() ?? '';
 		}
-		const comment = append(this.domNode, $('span.volt-agent-selection-action.volt-agent-comment'));
+		const comment = this.comment = append(this.domNode, $('span.volt-agent-selection-action.volt-agent-comment'));
 		comment.setAttribute('role', 'button');
 		append(comment, $('span.volt-agent-selection-action-label')).textContent = localize('voltAgent.comment', "Comment");
 		this._register(addDisposableListener(add, 'mousedown', e => {
 			e.preventDefault();
 			e.stopPropagation();
-			void commandService.executeCommand(ADD_SELECTION_TO_AGENT_COMMAND_ID);
+			void commandService.executeCommand(ADD_SELECTION_TO_AGENT_COMMAND_ID, this.editor);
 		}));
 		this._register(addDisposableListener(comment, 'mousedown', e => {
 			e.preventDefault();
 			e.stopPropagation();
-			void commandService.executeCommand(INLINE_COMMENT_COMMAND_ID);
+			void commandService.executeCommand(INLINE_COMMENT_COMMAND_ID, this.editor);
 		}));
 		this.editor.addOverlayWidget(this);
 		this._register(this.editor.onDidChangeCursorSelection(() => this.layout()));
@@ -891,6 +927,7 @@ class AddSelectionToChatWidget extends Disposable implements IOverlayWidget {
 			return;
 		}
 		this.domNode.style.visibility = 'visible';
+		this.comment.style.display = isInChangesEditor(this.editor) ? 'none' : '';
 		const top = visible.top + Math.max(0, (visible.height - this.domNode.offsetHeight) / 2);
 		this.domNode.style.left = `${Math.round(visible.left + 8)}px`;
 		this.domNode.style.top = `${Math.round(top)}px`;
@@ -952,15 +989,19 @@ registerAction2(class OpenAgentSidePanelAction extends Action2 {
 		const viewsService = accessor.get(IViewsService);
 		const storageService = accessor.get(IStorageService);
 		if (getLayoutMode(layoutService) === 'agent') {
-			const visible = layoutService.isVisible(Parts.AUXILIARYBAR_PART);
-			const width = visible ? layoutService.getSize(Parts.AUXILIARYBAR_PART).width : 0;
-			const showing = visible && width >= 180;
+			const showing = isAgentSidebarShowing(layoutService);
+			// A drawer opens and closes for now; it leaves the saved choice for the column alone.
+			const drawer = isAgentDrawerMode(layoutService);
 			if (showing) {
-				storeAgentLeftSidebarHidden(storageService, true);
+				if (!drawer) {
+					storeAgentLeftSidebarHidden(storageService, true);
+				}
 				layoutService.setPartHidden(true, Parts.AUXILIARYBAR_PART);
 				return;
 			}
-			storeAgentLeftSidebarHidden(storageService, false);
+			if (!drawer) {
+				storeAgentLeftSidebarHidden(storageService, false);
+			}
 			await openAgentSidebar(accessor.get(IConfigurationService), layoutService, accessor.get(IPaneCompositePartService));
 			return;
 		}

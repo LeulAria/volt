@@ -50,6 +50,7 @@ import {
 	parseAttachmentRef,
 	searchSessions,
 	settleIndexAfterRestart,
+	deriveStatus,
 	shouldCompact,
 	sortSessions,
 } from '../../common/history/agentHistoryLog.js';
@@ -66,6 +67,8 @@ const ATOMIC = { atomic: { postfix: '.tmp' } } as const;
 const APPEND_WINDOW_MS = 200;
 const INDEX_WINDOW_MS = 400;
 const DRAFT_WINDOW_MS = 600;
+/** Longest single wait for a snooze to end; setTimeout cannot count past ~24.8 days. */
+const SNOOZE_TIMER_MAX_MS = 86_400_000;
 
 function isNotFound(err: unknown): boolean {
 	return err instanceof FileOperationError && err.fileOperationResult === FileOperationResult.FILE_NOT_FOUND;
@@ -127,6 +130,8 @@ class SessionHandle implements IAgentSessionHandle {
 			id,
 			createdAt: service.get(id)?.createdAt ?? Date.now(),
 			workspace: service.pinnedWorkspace(id) ?? service.currentWorkspace,
+			...(service.sessionParent(id) ? { parentId: service.sessionParent(id) } : {}),
+			...(service.isSubagentSession(id) ? { subagent: true } : {}),
 		};
 	}
 
@@ -136,6 +141,13 @@ class SessionHandle implements IAgentSessionHandle {
 			return;
 		}
 		this.header = { ...this.header, workspace };
+	}
+
+	adoptParent(parentId: string, subagent: boolean): void {
+		if (this.materialized) {
+			return;
+		}
+		this.header = { ...this.header, parentId, ...(subagent ? { subagent: true } : {}) };
 	}
 
 	get meta(): IAgentSessionMeta | undefined {
@@ -405,10 +417,13 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 	private readonly onDisk = new Set<string>();
 	private readonly handles = new Map<string, SessionHandle>();
 	private readonly pinnedWorkspaces = new Map<string, IAgentSessionWorkspace>();
+	private readonly pinnedParents = new Map<string, string>();
+	private readonly pinnedSubagents = new Set<string>();
 	private readonly closing = new Map<string, Promise<void>>();
 	private readonly indexQueue = new WriteQueue();
 	private indexTimer: ReturnType<typeof setTimeout> | undefined;
 	private indexDirty = false;
+	private snoozeTimer: ReturnType<typeof setTimeout> | undefined;
 	private directoriesReady: Promise<void> | undefined;
 
 	private readonly _onDidChange = this._register(new Emitter<void>());
@@ -435,6 +450,9 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		this._register(toDisposable(() => {
 			if (this.indexTimer !== undefined) {
 				clearTimeout(this.indexTimer);
+			}
+			if (this.snoozeTimer !== undefined) {
+				clearTimeout(this.snoozeTimer);
 			}
 		}));
 	}
@@ -463,6 +481,9 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 			index = createEmptyIndex();
 			rebuilt = true;
 		}
+		// The index is written on a short debounce; a log is flushed as soon as a reply is final. A
+		// window that closed in between left the index saying "running" for a turn that finished.
+		const indexedRunning = index.sessions.filter(meta => meta.status === 'running').map(meta => meta.id);
 		index = settleIndexAfterRestart(index);
 		for (const meta of index.sessions) {
 			if (this.onDisk.has(meta.id) || meta.turnCount === 0) {
@@ -476,9 +497,14 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 			rebuilt = true;
 			await Promise.all(missing.map(id => this.rebuildMeta(id)));
 		}
+		const settledFromLogs = await Promise.all(indexedRunning.filter(id => this.onDisk.has(id)).map(id => this.statusFromLog(id)));
+		if (settledFromLogs.some(Boolean)) {
+			rebuilt = true;
+		}
 		if (rebuilt) {
 			this.scheduleIndexWrite();
 		}
+		this.scheduleSnoozeWake();
 		this._onDidChange.fire();
 	}
 
@@ -500,6 +526,26 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 				this.logService.warn('[agent history] failed to list sessions', err);
 			}
 			return [];
+		}
+	}
+
+	/** The log is the record: a session the index left "running" gets the status its last reply has. True when it changed. */
+	private async statusFromLog(id: string): Promise<boolean> {
+		try {
+			const meta = this.sessions.get(id);
+			const content = await this.fileService.readFile(this.logFileFor(id));
+			const decoded = decodeLog(content.value.buffer);
+			if (!meta || !decoded.header) {
+				return false;
+			}
+			const status = deriveStatus(foldTranscript(decoded.header, decoded.entries));
+			if (status === 'running' || status === meta.status) {
+				return false;
+			}
+			this.sessions.set(id, { ...meta, status });
+			return true;
+		} catch {
+			return false;
 		}
 	}
 
@@ -618,6 +664,32 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		return this.pinnedWorkspaces.get(id);
 	}
 
+	pinSessionParent(id: string, parentId: string, options?: { readonly subagent?: boolean }): void {
+		const safe = safeSessionId(id);
+		if (!safe || !parentId || parentId === safe) {
+			return;
+		}
+		this.pinnedParents.set(safe, parentId);
+		if (options?.subagent) {
+			this.pinnedSubagents.add(safe);
+		}
+		this.handles.get(safe)?.adoptParent(parentId, this.isSubagentSession(safe));
+		// A chat saved before it became a side chat keeps the link in the index.
+		const meta = this.sessions.get(safe);
+		if (meta && (!meta.parentId || (options?.subagent && !meta.subagent))) {
+			this.updateMeta({ ...meta, parentId: meta.parentId ?? parentId, ...(options?.subagent ? { subagent: true } : {}) });
+		}
+	}
+
+	/** @internal */
+	isSubagentSession(id: string): boolean {
+		return this.pinnedSubagents.has(id) || !!this.sessions.get(id)?.subagent;
+	}
+
+	sessionParent(id: string): string | undefined {
+		return this.pinnedParents.get(id) ?? this.sessions.get(id)?.parentId;
+	}
+
 	open(id: string): IAgentSessionHandle {
 		const safe = safeSessionId(id);
 		if (!safe) {
@@ -689,25 +761,66 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 			...meta,
 			settled: settled || undefined,
 			snoozed: settled ? undefined : meta.snoozed,
+			snoozedUntil: settled ? undefined : meta.snoozedUntil,
+			wokeAt: settled ? undefined : meta.wokeAt,
 		});
+		this.scheduleSnoozeWake();
 	}
 
-	async setSnoozed(id: string, snoozed: boolean): Promise<void> {
+	async setSnoozed(id: string, snoozed: boolean, until?: number): Promise<void> {
 		const meta = this.sessions.get(id);
-		if (!meta || !!meta.snoozed === snoozed) {
+		const snoozedUntil = snoozed ? until : undefined;
+		if (!meta || (!!meta.snoozed === snoozed && meta.snoozedUntil === snoozedUntil)) {
 			return;
 		}
 		this.updateMeta({
 			...meta,
 			snoozed: snoozed || undefined,
+			snoozedUntil,
 			settled: snoozed ? undefined : meta.settled,
+			// Snoozing again drops the last wake; waking by hand is not a timed wake.
+			wokeAt: undefined,
 		});
+		this.scheduleSnoozeWake();
+	}
+
+	/** Returns snoozed sessions whose time has come, then waits for the next one. */
+	private scheduleSnoozeWake(): void {
+		if (this.snoozeTimer !== undefined) {
+			clearTimeout(this.snoozeTimer);
+			this.snoozeTimer = undefined;
+		}
+		const now = Date.now();
+		let next = Number.POSITIVE_INFINITY;
+		for (const meta of this.sessions.values()) {
+			if (!meta.snoozed || meta.snoozedUntil === undefined) {
+				continue;
+			}
+			if (meta.snoozedUntil <= now) {
+				// Back in the list as something to look at again, marked as woken until it is opened.
+				this.updateMeta({ ...meta, snoozed: undefined, snoozedUntil: undefined, unread: true, wokeAt: meta.snoozedUntil });
+			} else {
+				next = Math.min(next, meta.snoozedUntil);
+			}
+		}
+		if (next !== Number.POSITIVE_INFINITY) {
+			// setTimeout overflows past ~24.8 days; wake up early and look again.
+			this.snoozeTimer = setTimeout(() => this.scheduleSnoozeWake(), Math.min(next - now, SNOOZE_TIMER_MAX_MS));
+		}
 	}
 
 	async setUnread(id: string, unread: boolean): Promise<void> {
 		const meta = this.sessions.get(id);
 		if (meta && !!meta.unread !== unread) {
 			this.updateMeta({ ...meta, unread: unread || undefined });
+		}
+	}
+
+	async clearWoke(id: string): Promise<void> {
+		const meta = this.sessions.get(id);
+		if (meta?.wokeAt !== undefined) {
+			// The row stays where waking put it: the chat you just opened does not jump down the list.
+			this.updateMeta({ ...meta, wokeAt: undefined, updatedAt: Math.max(meta.updatedAt, meta.wokeAt) });
 		}
 	}
 
@@ -789,6 +902,11 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 			await this.fileService.writeFile(target, VSBuffer.wrap(bytes), ATOMIC);
 		}
 		return attachmentRef(fileName);
+	}
+
+	attachmentResource(ref: string): URI | undefined {
+		const parsed = parseAttachmentRef(ref);
+		return parsed ? joinPath(this.attachmentsDir, parsed.fileName) : undefined;
 	}
 
 	async getAttachment(ref: string): Promise<{ bytes: Uint8Array; mime: string } | undefined> {

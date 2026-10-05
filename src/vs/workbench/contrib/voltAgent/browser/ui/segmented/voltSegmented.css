@@ -1,0 +1,102 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Pill switch with a sliding thumb (voltSegmented.ts): Usage's Limits / Cost / Tokens, Custom snooze's tabs. */
+.volt-segmented {
+	--volt-segmented-plate: var(--volt-usage-plate, var(--volt-agent-window-bg-base, var(--vscode-editor-background)));
+	--volt-segmented-muted: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	padding: 3px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--vscode-foreground) 5.5%, transparent);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	transition: opacity 240ms cubic-bezier(0.22, 1, 0.36, 1), transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.volt-segmented.hidden {
+	opacity: 0;
+	transform: translateX(8px);
+	pointer-events: none;
+}
+
+.volt-segmented-thumb {
+	position: absolute;
+	top: 3px;
+	bottom: 3px;
+	left: 0;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, var(--volt-segmented-plate));
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(0, 0, 0, 0.25), inset 0 0.5px 0 color-mix(in srgb, #fff 12%, transparent);
+	opacity: 0;
+}
+
+.vs .volt-segmented-thumb,
+.hc-light .volt-segmented-thumb {
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+}
+
+.volt-segmented-thumb.placed {
+	opacity: 1;
+}
+
+.volt-segmented-thumb.animate {
+	transition: transform 380ms cubic-bezier(0.32, 1.25, 0.5, 1), width 380ms cubic-bezier(0.32, 1.25, 0.5, 1);
+}
+
+.volt-segment {
+	position: relative;
+	z-index: 1;
+	height: 26px;
+	padding: 0 14px;
+	margin: 0;
+	border: 0;
+	border-radius: 999px;
+	background: transparent;
+	color: var(--volt-segmented-muted);
+	font: inherit;
+	font-size: 12.5px;
+	font-weight: 500;
+	white-space: nowrap;
+	cursor: pointer;
+	transition: color 180ms ease;
+}
+
+.volt-segment:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-segment.active {
+	color: var(--vscode-foreground);
+}
+
+.volt-segment:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-segmented.small .volt-segment {
+	height: 24px;
+	padding: 0 12px;
+	font-size: 12px;
+}
+
+/* Equal pills across the whole row. */
+.volt-segmented.fill {
+	display: flex;
+}
+
+.volt-segmented.fill .volt-segment {
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+/* No ring after a click. Prefixed to outrank the workbench's `[tabindex="0"]:focus` and
+ * `button:focus` rings (style.css), which otherwise win on load order. */
+.monaco-workbench .volt-segmented .volt-segment:focus:not(:focus-visible) {
+	outline: none;
+}

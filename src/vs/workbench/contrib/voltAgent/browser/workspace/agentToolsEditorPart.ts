@@ -11,7 +11,9 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { IStorageService, StorageScope } from '../../../../../platform/storage/common/storage.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IEditorPartsView } from '../../../../browser/parts/editor/editor.js';
-import { EditorPart } from '../../../../browser/parts/editor/editorPart.js';
+import { EditorPart, IEditorPartUIState } from '../../../../browser/parts/editor/editorPart.js';
+import { ISerializedNode } from '../../../../../base/browser/ui/grid/grid.js';
+import { GroupIdentifier } from '../../../../common/editor.js';
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 
@@ -42,6 +44,35 @@ export function hasSavedAgentTools(storageService: IStorageService, sessionId: s
 }
 
 /**
+ * An editor area that saves its grid on its own (a chat's tools, the agent side panel) can restore a
+ * group id that another area's group took meanwhile. Restoring it as saved would fail and lose every
+ * tab, so those groups come back under new ids.
+ */
+export function withFreeGroupIds(state: IEditorPartUIState | undefined, isTaken: (id: GroupIdentifier) => boolean): IEditorPartUIState | undefined {
+	if (!state?.serializedGrid) {
+		return state;
+	}
+	let clash = false;
+	const free = (node: ISerializedNode): ISerializedNode => {
+		if (node.type === 'branch') {
+			return { ...node, data: node.data.map(free) };
+		}
+		const group = node.data as { id?: unknown } | null;
+		if (group && typeof group.id === 'number' && isTaken(group.id)) {
+			clash = true;
+			const { id: _taken, ...rest } = group;
+			return { ...node, data: rest };
+		}
+		return node;
+	};
+	const root = free(state.serializedGrid.root);
+	if (!clash) {
+		return state;
+	}
+	return { serializedGrid: { ...state.serializedGrid, root }, activeGroup: -1, mostRecentActiveGroups: [] };
+}
+
+/**
  * The tools beside one agent chat: a real editor part, so tabs, the tab menu,
  * drag to reorder, and drag to split behave like the IDE's main editor area.
  * Its grid is saved under the chat's id.
@@ -60,6 +91,10 @@ export class AgentToolsEditorPart extends EditorPart {
 		@IContextKeyService contextKeyService: IContextKeyService,
 	) {
 		super(editorPartsView, agentToolsPartId(sessionId), localize('voltAgent.toolsGroupsLabel', "Tools"), mainWindow.vscodeWindowId, instantiationService, themeService, configurationService, storageService, layoutService, hostService, contextKeyService);
+	}
+
+	protected override loadState(): IEditorPartUIState | undefined {
+		return withFreeGroupIds(super.loadState(), id => !!this.editorPartsView.getGroup(id));
 	}
 
 	/** Write the grid now. Parts dropped from memory would otherwise lose it until the next global save. */

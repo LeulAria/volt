@@ -10,6 +10,19 @@ import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
 import { OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
 
 /** Speech bubble with two text lines. */
+/** The ± stroke the agent window uses for Changes (the window's tools list, the + menu). */
+export const CHANGES_ICON_PATH = 'M12 3v14m7-7H5m14 11H5';
+
+/** An icon's shapes on a 24 grid, as [tag, attributes]. */
+export type SvgIconShapes = readonly (readonly [string, Record<string, string | number>])[];
+
+/** Folder with a pin: Files in the right panel's tabs, the window's tools list and the + menu. */
+export const FILES_ICON_SHAPES: SvgIconShapes = [
+	['path', { d: 'M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z' }],
+	['circle', { cx: 12, cy: 13, r: 2 }],
+	['path', { d: 'M12 15v5' }],
+];
+
 export const SIDE_CHAT_ICON_PATH = 'M7 7H15M7 11H11M5 3H19C20.1046 3 21 3.89543 21 5V15C21 16.1046 20.1046 17 19 17H16L12.3536 20.6464C12.1583 20.8417 11.8417 20.8417 11.6464 20.6464L8 17H5C3.89543 17 3 16.1046 3 15V5C3 3.89543 3.89543 3 5 3Z';
 
 /** Right-rail / tab-bar + menu rows that open an agent surface. */
@@ -19,8 +32,8 @@ export interface IAgentSurfaceMenuItem {
 	readonly id: AgentSurfaceMenuActionId;
 	readonly label: string;
 	readonly icon: ThemeIcon;
-	/** Stroke path on a 24x24 box, drawn instead of `icon`. */
-	readonly svgPath?: string;
+	/** Stroke path or shapes on a 24x24 box, drawn instead of `icon`. */
+	readonly svgPath?: string | SvgIconShapes;
 	/** Existing command id used only to look up a keybinding label. */
 	readonly keybindingCommand?: string;
 }
@@ -34,10 +47,11 @@ export function shouldHideAgentQuickOpenRail(surfacePaneOpen: boolean): boolean 
 export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 	return [
 		{
+			// Opens the Explorer in the files sidebar; typing in the menu's box still finds a file.
 			id: 'file',
 			label: localize('voltAgent.surfaceMenu.file', "File"),
 			icon: Codicon.file,
-			keybindingCommand: 'workbench.action.quickOpen',
+			svgPath: FILES_ICON_SHAPES,
 		},
 		{
 			id: 'terminal',
@@ -55,6 +69,7 @@ export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 			id: 'changes',
 			label: localize('voltAgent.surfaceMenu.changes', "Changes"),
 			icon: Codicon.diff,
+			svgPath: CHANGES_ICON_PATH,
 			keybindingCommand: OPEN_AGENT_CHANGES_COMMAND_ID,
 		},
 		{
@@ -86,21 +101,25 @@ export function surfaceKindForMenuAction(id: AgentSurfaceMenuActionId): 'file' |
 	}
 }
 
-/** A 16px stroke glyph from a 24x24 path, colored by the text around it. */
-export function createSurfaceStrokeIcon(doc: Document, pathD: string): SVGElement {
+/** A 16px stroke glyph from a 24x24 path or shapes, colored by the text around it. */
+export function createSurfaceStrokeIcon(doc: Document, shape: string | SvgIconShapes): SVGElement {
 	const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
 	svg.classList.add('volt-agent-surface-stroke-icon');
 	svg.setAttribute('viewBox', '0 0 24 24');
 	svg.setAttribute('width', '16');
 	svg.setAttribute('height', '16');
 	svg.setAttribute('fill', 'none');
+	svg.setAttribute('stroke', 'currentColor');
+	svg.setAttribute('stroke-width', '1');
+	svg.setAttribute('stroke-linecap', 'round');
+	svg.setAttribute('stroke-linejoin', 'round');
 	svg.setAttribute('aria-hidden', 'true');
-	const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
-	path.setAttribute('d', pathD);
-	path.setAttribute('stroke', 'currentColor');
-	path.setAttribute('stroke-width', '1');
-	path.setAttribute('stroke-linecap', 'round');
-	path.setAttribute('stroke-linejoin', 'round');
-	svg.appendChild(path);
+	for (const [tag, attributes] of typeof shape === 'string' ? [['path', { d: shape }] as const] : shape) {
+		const element = doc.createElementNS('http://www.w3.org/2000/svg', tag);
+		for (const [name, value] of Object.entries(attributes)) {
+			element.setAttribute(name, String(value));
+		}
+		svg.appendChild(element);
+	}
 	return svg;
 }

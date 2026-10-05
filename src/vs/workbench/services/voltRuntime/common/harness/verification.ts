@@ -361,3 +361,267 @@ function completionReason(changed: number, gates: readonly IVerificationGate[], 
 function firstLine(text: string): string {
 	return (text.split('\n').find(line => line.trim()) ?? '').trim().slice(0, 160);
 }
+
+// --- regression gate ------------------------------------------------------------------------------
+
+/**
+ * One run of a project check, reduced to what the regression gate compares. Test names are
+ * collected from the common runners' output (node:test, TAP, Jest, Vitest, Mocha, pytest, go test,
+ * cargo test); `parsed` says whether any were found, because "no failing names" means nothing
+ * when the format was not understood.
+ */
+export interface ICheckReport {
+	readonly command: string;
+	/** Exit code 0 (or, when the exit code is unknown, at least one pass and no failures). */
+	readonly ok: boolean;
+	readonly exitCode: number | null;
+	readonly timedOut: boolean;
+	readonly failed: readonly string[];
+	readonly passed: readonly string[];
+	readonly counts?: { readonly pass: number; readonly fail: number };
+	readonly parsed: boolean;
+	readonly durationMs: number;
+	/** The end of the output, for the evidence the agent is shown. */
+	readonly tail: string;
+}
+
+const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+const DURATION_SUFFIX = /\s+\((?:\d+(?:\.\d+)?\s*(?:ms|s|m)|[\d.]+\s*sec)\)\s*$/i;
+const TAIL_CHARS = 3_000;
+const TAIL_LINES = 40;
+
+type LineRule = readonly [RegExp, 'pass' | 'fail', number];
+
+const NAME_RULES: readonly LineRule[] = [
+	// node:test spec reporter and Mocha (`✔ name (1ms)` / `✖ name`), Jest/Vitest (`✓` / `✕` / `×`).
+	[/^\s*[✔✓√]\s+(.+)$/, 'pass', 1],
+	[/^\s*[✖✕×✗]\s+(.+)$/, 'fail', 1],
+	// TAP (node --test in a pipe on older Node, tap, ava --tap).
+	[/^\s*ok \d+ - (.+?)(?:\s+#\s*(?:SKIP|TODO).*)?$/, 'pass', 1],
+	[/^\s*not ok \d+ - (.+?)(?:\s+#\s*(?:SKIP|TODO).*)?$/, 'fail', 1],
+	// Vitest / Jest file and test lines.
+	[/^\s*FAIL\s+(\S.*?\s>\s.+)$/, 'fail', 1],
+	// pytest.
+	[/^(?:FAILED|ERROR)\s+(\S+::\S+)/, 'fail', 1],
+	[/^(\S+::\S+)\s+PASSED\b/, 'pass', 1],
+	[/^(\S+::\S+)\s+FAILED\b/, 'fail', 1],
+	// go test.
+	[/^\s*--- PASS: (\S+)/, 'pass', 1],
+	[/^\s*--- FAIL: (\S+)/, 'fail', 1],
+	// cargo test.
+	[/^test (\S+) \.\.\. ok$/, 'pass', 1],
+	[/^test (\S+) \.\.\. FAILED$/, 'fail', 1],
+];
+
+/** Summary lines: the counts are only used when names are missing on one side. */
+const COUNT_RULES: readonly ((text: string) => { pass: number; fail: number } | undefined)[] = [
+	text => matchCounts(text, /^[ℹ#] pass (\d+)$/m, /^[ℹ#] fail (\d+)$/m),
+	text => matchCounts(text, /^Tests:.*?(\d+) passed/m, /^Tests:.*?(\d+) failed/m, true),
+	text => matchCounts(text, /^\s*Tests\s+.*?(\d+) passed/m, /^\s*Tests\s+.*?(\d+) failed/m, true),
+	text => matchCounts(text, /^\s*(\d+) passing\b/m, /^\s*(\d+) failing\b/m, true),
+	text => matchCounts(text, /=+ .*?(\d+) passed/m, /=+ .*?(\d+) failed/m, true),
+	text => matchCounts(text, /^test result: \w+\. (\d+) passed/m, /^test result: \w+\. \d+ passed; (\d+) failed/m),
+];
+
+function matchCounts(text: string, pass: RegExp, fail: RegExp, failOptional = false): { pass: number; fail: number } | undefined {
+	const passed = pass.exec(text);
+	const failed = fail.exec(text);
+	if (!passed && !failed) {
+		return undefined;
+	}
+	if (!failed && !failOptional) {
+		return undefined;
+	}
+	return { pass: passed ? Number(passed[1]) : 0, fail: failed ? Number(failed[1]) : 0 };
+}
+
+/** Reduces one check's output. `exitCode` null means the process did not report one. */
+export function parseCheckOutput(command: string, output: string, exitCode: number | null, durationMs = 0, timedOut = false): ICheckReport {
+	const text = output.replace(ANSI, '').replace(/\r\n?/g, '\n');
+	const failed = new Set<string>();
+	const passed = new Set<string>();
+	for (const raw of text.split('\n')) {
+		const line = raw.trimEnd();
+		if (!line || /^\s*[✖✕×✗]\s+failing tests:?$/i.test(line)) {
+			continue;
+		}
+		for (const [pattern, verdict, group] of NAME_RULES) {
+			const match = pattern.exec(line);
+			if (!match) {
+				continue;
+			}
+			const name = match[group].replace(DURATION_SUFFIX, '').trim();
+			if (name) {
+				(verdict === 'pass' ? passed : failed).add(name);
+			}
+			break;
+		}
+	}
+	// A test that failed once and is listed again in a summary is still one failure; a name
+	// reported both ways (a retried test) counts as failing.
+	for (const name of failed) {
+		passed.delete(name);
+	}
+	let counts: { pass: number; fail: number } | undefined;
+	for (const rule of COUNT_RULES) {
+		counts = rule(text);
+		if (counts) {
+			break;
+		}
+	}
+	const ok = !timedOut && (exitCode !== null ? exitCode === 0 : (counts ? counts.fail === 0 && counts.pass > 0 : passed.size > 0 && failed.size === 0));
+	return {
+		command,
+		ok,
+		exitCode,
+		timedOut,
+		failed: [...failed],
+		passed: [...passed],
+		...(counts ? { counts } : {}),
+		parsed: failed.size + passed.size > 0,
+		durationMs,
+		tail: outputTail(text),
+	};
+}
+
+function outputTail(text: string): string {
+	const lines = text.trimEnd().split('\n');
+	const tail = lines.slice(-TAIL_LINES).join('\n');
+	return tail.length > TAIL_CHARS ? tail.slice(-TAIL_CHARS) : tail;
+}
+
+export interface IRegressionVerdict {
+	readonly regressed: boolean;
+	/**
+	 * - `tests`: named tests fail now that did not fail before (including new tests that fail).
+	 * - `suite`: the check passed before and fails now, with no names to compare.
+	 * - `count`: both failed, but more tests fail now.
+	 * - `unknown`: no usable baseline, a timeout, or nothing comparable; never acted on.
+	 */
+	readonly kind: 'none' | 'tests' | 'suite' | 'count' | 'unknown';
+	readonly newFailures: readonly string[];
+	readonly detail?: string;
+}
+
+/**
+ * New failures caused by the run, never pre-existing ones: a test that already failed before the
+ * run started is the user's problem (or the task), not a regression to send the agent back for.
+ */
+export function regressionVerdict(before: ICheckReport | undefined, after: ICheckReport): IRegressionVerdict {
+	if (after.ok) {
+		return { regressed: false, kind: 'none', newFailures: [] };
+	}
+	if (!before || before.timedOut || after.timedOut) {
+		return { regressed: false, kind: 'unknown', newFailures: [] };
+	}
+	if (before.parsed && after.parsed && after.failed.length) {
+		const previously = new Set(before.failed);
+		const newFailures = after.failed.filter(name => !previously.has(name));
+		return newFailures.length
+			? { regressed: true, kind: 'tests', newFailures }
+			: { regressed: false, kind: 'none', newFailures: [] };
+	}
+	if (before.ok) {
+		return { regressed: true, kind: 'suite', newFailures: [], detail: `\`${after.command}\` passed before this change and fails now.` };
+	}
+	if (before.counts && after.counts && after.counts.fail > before.counts.fail) {
+		return { regressed: true, kind: 'count', newFailures: [], detail: `${after.counts.fail} tests fail now; ${before.counts.fail} failed before this change.` };
+	}
+	return { regressed: false, kind: 'unknown', newFailures: [] };
+}
+
+const MAX_LISTED_FAILURES = 15;
+
+export function formatRegressionNudge(verdict: IRegressionVerdict, after: ICheckReport): string {
+	const lines = ['[Volt check] Volt ran the project tests after your change.'];
+	if (verdict.kind === 'tests') {
+		lines.push(`These tests passed (or did not exist) before your change and fail now (\`${after.command}\`):`);
+		lines.push(...verdict.newFailures.slice(0, MAX_LISTED_FAILURES).map(name => `- ${name}`));
+		if (verdict.newFailures.length > MAX_LISTED_FAILURES) {
+			lines.push(`- ... and ${verdict.newFailures.length - MAX_LISTED_FAILURES} more`);
+		}
+	} else if (verdict.detail) {
+		lines.push(verdict.detail);
+	}
+	if (after.tail) {
+		lines.push('', 'End of the output:', '```', after.tail, '```');
+	}
+	lines.push('', 'Fix the cause in the code (do not weaken, skip or delete tests), run the tests again, then finish. Tests that were already failing before your change are not your concern unless the task was to fix them. If a failure is intended, say so and why in your final answer.');
+	return lines.join('\n');
+}
+
+export interface ITodoEntry {
+	readonly content: string;
+	readonly status: 'pending' | 'in_progress' | 'completed' | string;
+}
+
+/** To-dos the agent left open: what it said it would do and did not mark done. */
+export function openTodos(entries: readonly ITodoEntry[] | undefined): string[] {
+	return (entries ?? []).filter(entry => entry.status === 'pending' || entry.status === 'in_progress').map(entry => entry.content.trim()).filter(Boolean);
+}
+
+export function formatTodoNudge(open: readonly string[]): string {
+	return [
+		`[Volt check] You ended the turn with ${open.length} open to-do${open.length === 1 ? '' : 's'}:`,
+		...open.slice(0, MAX_LISTED_FAILURES).map(item => `- ${item}`),
+		'Continue with them now. If any is no longer needed, mark it done or say why in your final answer.',
+	].join('\n');
+}
+
+export interface IContinuationInput {
+	/** The mode allows edits; Ask and Plan are never continued. */
+	readonly writes: boolean;
+	readonly verdict?: IRegressionVerdict;
+	readonly after?: ICheckReport;
+	readonly todos?: readonly ITodoEntry[];
+	/** What this run was already sent back for; each reason fires at most once per run. */
+	readonly used: { readonly regression: boolean; readonly todos: boolean };
+}
+
+export interface IContinuation {
+	/** The message for the agent, or undefined to accept the answer. */
+	readonly message?: string;
+	/** The transcript notice that explains why the run goes on. */
+	readonly notice?: string;
+	readonly reasons: readonly ('regression' | 'todos')[];
+}
+
+/** Whether a run that wants to stop gets one more turn, and what it is told. Bounded: once per reason. */
+export function decideContinuation(input: IContinuationInput): IContinuation {
+	if (!input.writes) {
+		return { reasons: [] };
+	}
+	const parts: string[] = [];
+	const reasons: ('regression' | 'todos')[] = [];
+	const notices: string[] = [];
+	if (!input.used.regression && input.verdict?.regressed && input.after) {
+		parts.push(formatRegressionNudge(input.verdict, input.after));
+		reasons.push('regression');
+		const count = input.verdict.newFailures.length;
+		notices.push(count ? `${count} test${count === 1 ? '' : 's'} that passed before now fail${count === 1 ? 's' : ''}` : 'the tests passed before this change and fail now');
+	}
+	const open = openTodos(input.todos);
+	if (!input.used.todos && open.length) {
+		parts.push(formatTodoNudge(open));
+		reasons.push('todos');
+		notices.push(`${open.length} to-do${open.length === 1 ? ' is' : 's are'} still open`);
+	}
+	if (!parts.length) {
+		return { reasons: [] };
+	}
+	const summary = notices.join(' and ');
+	return { message: parts.join('\n\n'), notice: `${summary.charAt(0).toUpperCase()}${summary.slice(1)}; asking the agent to continue.`, reasons };
+}
+
+/** Commands that only look: running them during a baseline check cannot change its result. */
+const READ_ONLY_COMMAND = /^\s*(?:cd\s+\S+\s*(?:&&|;)\s*)?(?:ls|ll|cat|head|tail|less|wc|pwd|echo|printf|rg|grep|egrep|find|fd|tree|stat|file|which|type|env|printenv|date|whoami|uname|node\s+(?:-v|--version)|npm\s+(?:-v|--version|ls|list|view)|git\s+(?:status|diff|log|show|branch|rev-parse|ls-files|remote|config\s+--get))\b/;
+
+/** True when a shell command plausibly changes files (anything not known to only read). */
+export function mayMutateWorkspace(command: string): boolean {
+	return !READ_ONLY_COMMAND.test(command) || /(?:^|[^>])>{1,2}\s*\S|\|\s*tee\b|\bsed\s+-i\b/.test(command);
+}
+
+/** The same check command, ignoring spacing and case. */
+export function isSameCommand(a: string, b: string): boolean {
+	return normalizeCommand(a) === normalizeCommand(b);
+}

@@ -22,6 +22,11 @@ const OVERFLOW = /context.?length|context.?window|maximum context|too many token
 const TRANSIENT = /overloaded|rate.?limit|try again|temporar(?:y|ily)|timeout|timed out|econnreset|etimedout|socket hang up|eai_again|enotfound|429|502|503|529|unavailable/i;
 const ACP_DEAD = /ACP process exited|ACP process is not writable|ACP session is not running|ACP client disposed|EPIPE/i;
 const ACP_INTERNAL = /^internal error\.?$/i;
+/**
+ * A prompt that produced nothing at all: a fresh process may well do better, and no work is
+ * repeated. A turn that stalled midway ("The agent stopped responding") is deliberately not here:
+ * restarting it would redo work already on disk, so the user retries instead.
+ */
 const ACP_STALL = /ACP agent produced no activity/i;
 const PROVIDER_LIMIT = /\b(spend limit|usage limit|rate limit|quota|session limit)\b/i;
 

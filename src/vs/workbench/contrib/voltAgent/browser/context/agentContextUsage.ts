@@ -82,7 +82,7 @@ export interface IContextUsageMessage {
 	readonly title?: string;
 	readonly steps?: readonly { label: string }[];
 	readonly changes?: readonly string[];
-	readonly activity?: { thinkingText?: string };
+	readonly activity?: { thinkingText?: string; streaming?: boolean };
 	readonly segments?: AgentSegment[];
 	readonly tokensUsed?: number;
 	readonly tokensWindow?: number;
@@ -120,28 +120,41 @@ export interface IContextUsageSnapshot {
 	readonly fitsOn: number;
 }
 
+/** Swatch colors from the context popover, in display order. */
 export const CONTEXT_CATEGORY_COLORS: Record<ContextCategoryId, string> = {
-	system: '#8b8b8b',
-	tools: '#a78bfa',
-	rules: '#f59e0b',
-	skills: '#eab308',
-	mcp: '#38bdf8',
-	subagents: '#7dd3fc',
-	summarized: '#f472b6',
-	conversation: '#e11d48',
+	system: '#9a9a9a',
+	tools: '#9388f1',
+	rules: '#3fa365',
+	skills: '#f0b567',
+	mcp: '#b58ead',
+	subagents: '#7baeed',
+	summarized: '#fb6b84',
+	conversation: '#e07d77',
 	reply: '#4ade80',
 	draft: '#7dd3fc',
 	unaccounted: '#818cf8',
 };
+
+/** Category order in the popover. Later rows (reply, draft, unaccounted) follow when present. */
+export const CONTEXT_POPOVER_CATEGORY_ORDER: readonly ContextCategoryId[] = [
+	'system',
+	'tools',
+	'rules',
+	'skills',
+	'mcp',
+	'subagents',
+	'summarized',
+	'conversation',
+];
 
 const NATIVE_SYSTEM_TOKENS = 1_700;
 const CHAT_SYSTEM_TOKENS = 400;
 const NATIVE_TOOL_TOKENS = 14_000;
 const CHAT_TOOL_TOKENS = 800;
 const DEFAULT_RULE_TOKENS = 400;
-const DEFAULT_SKILL_TOKENS = 800;
 const DEFAULT_MCP_TOKENS = 1_200;
-const DEFAULT_SUBAGENT_TOKENS = 600;
+/** Path and markup around one skill or subagent entry in the catalog the model sees. */
+const CATALOG_ENTRY_CHARS = 80;
 
 export function estimateTokensFromText(text: string): number {
 	const trimmed = text.trim();
@@ -204,6 +217,16 @@ export function formatContextPercent(percent: number): string {
 	return `${Math.round(percent)}%`;
 }
 
+/** "28% Full" — the muted line under the popover title. */
+export function formatContextFullLabel(percent: number): string {
+	return `${formatContextPercent(percent)} Full`;
+}
+
+/** "~71.6K / 256K Tokens" — the right side of that same line. */
+export function formatContextWindowLabel(used: number, limit: number): string {
+	return `~${formatContextTokens(used)} / ${formatContextTokens(limit)} Tokens`;
+}
+
 function trimDecimal(value: number): string {
 	return value.toFixed(1).replace(/\.0$/, '');
 }
@@ -251,13 +274,16 @@ export function overheadFromCustomizations(
 			return sum + (bytes && bytes > 0 ? Math.max(1, Math.round(bytes / 4)) : fallback);
 		}, 0);
 	};
+	// Skills and subagents load on demand: only their name, description and path sit in context.
+	const catalogFor = (kind: AgentCustomizationKind) => byKind(kind)
+		.reduce((sum, item) => sum + Math.round((item.name.length + item.description.length + CATALOG_ENTRY_CHARS) / 4), 0);
 	return {
 		system: base.system,
 		tools: base.tools + hostToolTokens,
 		rules: tokensFor('rule', DEFAULT_RULE_TOKENS),
-		skills: tokensFor('skill', DEFAULT_SKILL_TOKENS),
+		skills: catalogFor('skill'),
 		mcp: tokensFor('mcp', DEFAULT_MCP_TOKENS),
-		subagents: tokensFor('subagent', DEFAULT_SUBAGENT_TOKENS),
+		subagents: catalogFor('subagent'),
 		ruleCount: byKind('rule').length,
 		skillCount: byKind('skill').length,
 		mcpCount: byKind('mcp').length,
@@ -281,13 +307,19 @@ export function lastUsageMessage(messages: readonly IContextUsageMessage[]): ICo
  * and Input/Output/Cached chips describe the same snapshot.
  */
 export function occupancyFromUsage(message: Pick<IContextUsageMessage, 'tokensUsed' | 'tokensIn' | 'tokensOut' | 'tokensCache'> | undefined, reportedUsed?: number): number | undefined {
-	const turn = (message?.tokensIn ?? 0) + (message?.tokensOut ?? 0) + (message?.tokensCache ?? 0);
+	const input = message?.tokensIn ?? 0;
+	const output = message?.tokensOut ?? 0;
+	const cache = message?.tokensCache ?? 0;
+	const turn = input + output + cache;
 	const preferred = (message?.tokensUsed && message.tokensUsed > 0)
 		? message.tokensUsed
 		: (reportedUsed && reportedUsed > 0 ? reportedUsed : undefined);
 	if (preferred !== undefined) {
-		// Partial `used` that ignored cache (input+output only). Prefer the turn total.
-		if (turn > preferred && (message?.tokensCache ?? 0) > preferred) {
+		// `used` sometimes drops cache (input+output only) or drops the completion
+		// (Anthropic reports used as input + cache). The turn total is the occupancy.
+		const inputSide = input + cache;
+		const missingOutput = output > 0 && preferred <= inputSide;
+		if (turn > preferred && (cache > preferred || missingOutput)) {
 			return turn;
 		}
 		return preferred;
@@ -333,17 +365,23 @@ export function buildContextUsageSnapshot(input: IContextUsageInput): IContextUs
 	let compacted = false;
 
 	if (hasLiveUsage && reportedUsed) {
-		used = reportedUsed + draft;
-		estimated = false;
+		// Usage events often land at the start or end of a turn. Text that arrived
+		// after that snapshot still has to move the meter while the reply streams.
+		const tail = unreportedTailTokens(input.messages);
+		const settledConversation = Math.max(0, conversation - Math.min(tail, conversation));
+		used = reportedUsed + draft + tail;
+		estimated = tail > 0;
 		const remaining = Math.max(0, reportedUsed - overheadTotal);
-		if (conversation > remaining) {
+		const conversationLabel = localize('voltAgent.contextConversation', "Conversation");
+		if (settledConversation > remaining) {
 			// Compacted: allocate only what still sits in the live occupancy.
 			// Do not paint overflow estimates into the bar. Those tokens are gone.
 			compacted = true;
-			allocateCompactedConversation(push, remaining, conversation);
+			allocateCompactedConversation(push, remaining, settledConversation);
+			addCategoryTokens(items, 'conversation', conversationLabel, tail);
 		} else {
-			push('conversation', localize('voltAgent.contextConversation', "Conversation"), conversation);
-			const leftover = remaining - conversation;
+			push('conversation', conversationLabel, settledConversation + tail);
+			const leftover = remaining - settledConversation;
 			push('unaccounted', localize('voltAgent.contextOverhead', "Prompt & tools"), leftover);
 		}
 	} else if (last && ((last.tokensIn ?? 0) > 0 || (last.tokensCache ?? 0) > 0)) {
@@ -442,6 +480,61 @@ export function groupContextModels(models: readonly IContextUsageModelRow[]): IC
 
 function conversationTokens(messages: readonly IContextUsageMessage[]): number {
 	return messages.reduce((total, message) => total + estimateMessageTokens(message), 0);
+}
+
+function messageHasUsage(message: IContextUsageMessage): boolean {
+	return message.kind === 'agent' && !!(message.tokensUsed || message.tokensWindow || message.tokensIn || message.tokensOut || message.tokensCache);
+}
+
+/**
+ * Tokens written after the latest usage snapshot. A streaming reply whose
+ * provider occupancy is prompt-only (input + cache, no output yet) counts too.
+ * An ACP `used` value with no input/output split already includes generated text.
+ */
+function unreportedTailTokens(messages: readonly IContextUsageMessage[]): number {
+	let lastUsage = -1;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messageHasUsage(messages[i])) {
+			lastUsage = i;
+			break;
+		}
+	}
+	let extra = 0;
+	for (let i = lastUsage + 1; i < messages.length; i++) {
+		extra += estimateMessageTokens(messages[i]);
+	}
+	if (lastUsage >= 0 && messages[lastUsage].activity?.streaming) {
+		extra += uncountedStreamingOutput(messages[lastUsage]);
+	}
+	return extra;
+}
+
+function uncountedStreamingOutput(message: IContextUsageMessage): number {
+	const estimated = estimateMessageTokens(message);
+	const reportedOut = message.tokensOut ?? 0;
+	const inputSide = (message.tokensIn ?? 0) + (message.tokensCache ?? 0);
+	const used = message.tokensUsed ?? 0;
+	// Completion already sits inside `used` (or will be added by occupancyFromUsage
+	// once tokensOut is set). Only the estimate past that completion is new.
+	if (reportedOut > 0) {
+		return Math.max(0, estimated - reportedOut);
+	}
+	if (used > inputSide) {
+		return 0;
+	}
+	return estimated;
+}
+
+function addCategoryTokens(items: IContextUsageCategory[], id: ContextCategoryId, label: string, tokens: number): void {
+	if (tokens <= 0) {
+		return;
+	}
+	const existing = items.find(item => item.id === id);
+	if (existing) {
+		(existing as { tokens: number }).tokens += tokens;
+		return;
+	}
+	items.push({ id, label, tokens, color: CONTEXT_CATEGORY_COLORS[id] });
 }
 
 function messageOccupancyText(message: IContextUsageMessage): string {

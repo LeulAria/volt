@@ -56,4 +56,25 @@ suite('DeepSeek native turn', () => {
 		assert.ok(!turn.toolNames.includes('shell'));
 		assert.ok(/Read-only/.test(turn.prompt));
 	});
+
+	test('write modes forbid gaming tests and ask for contradictions to be reported', () => {
+		const agent = nativeModelTurn({ text: 'make npm test pass', mode: 'agent', tools: [{ name: 'edit_file', group: 'edit' }, { name: 'shell', group: 'shell' }] });
+		assert.ok(/Never detect the test, caller, stack, or environment/.test(agent.prompt));
+		assert.ok(/weaken or delete assertions/.test(agent.prompt));
+		assert.ok(/contradict each other, stop and explain/.test(agent.prompt));
+		const ask = nativeModelTurn({ text: 'why does this fail', mode: 'ask', tools: [{ name: 'read_file', group: 'read' }] });
+		assert.ok(!/Never detect the test/.test(ask.prompt), 'read-only modes do not pay for the rule');
+	});
+
+	test('create_plan is offered only in plan mode, where the prompt asks for it', () => {
+		const tools = [{ name: 'read_file', group: 'read' as const }, { name: 'create_plan', group: 'meta' as const }, { name: 'ask_question', group: 'meta' as const }];
+		const plan = nativeModelTurn({ text: 'plan dark mode', mode: 'plan', tools });
+		assert.ok(plan.toolNames.includes('create_plan'));
+		assert.ok(/call create_plan .* and stop/.test(plan.prompt));
+		const agent = nativeModelTurn({ text: 'add dark mode', mode: 'agent', tools });
+		assert.ok(!agent.toolNames.includes('create_plan'));
+		assert.ok(agent.toolNames.includes('ask_question'));
+		assert.ok(/use ask_question/.test(agent.prompt));
+	});
+
 });

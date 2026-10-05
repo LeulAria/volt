@@ -1,0 +1,202 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Cursor's browser-action dialog: title, muted subtitle, action + page state, "Show more". */
+.volt-tool-detail-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 2600;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 48px 24px;
+	box-sizing: border-box;
+	background: rgba(0, 0, 0, 0.45);
+	outline: none;
+	animation: volt-tool-detail-fade 120ms ease-out;
+}
+
+@keyframes volt-tool-detail-fade {
+	from {
+		opacity: 0;
+	}
+}
+
+.volt-tool-detail {
+	display: flex;
+	flex-direction: column;
+	width: min(560px, 100%);
+	max-height: 100%;
+	border-radius: 12px;
+	background: #1b1b1b;
+	color: rgba(240, 240, 241, 0.96);
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 20px 50px rgba(0, 0, 0, 0.45);
+	font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+	font-size: 13px;
+	overflow: hidden;
+}
+
+.monaco-workbench.vs .volt-tool-detail,
+.monaco-workbench.hc-light .volt-tool-detail,
+.vs .volt-tool-detail {
+	background: #ffffff;
+	color: rgba(20, 20, 20, 0.94);
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 20px 50px rgba(0, 0, 0, 0.18);
+}
+
+.volt-tool-detail-head {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 16px 16px 8px;
+}
+
+.volt-tool-detail-titles {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.volt-tool-detail-title {
+	font-size: 15px;
+	line-height: 22px;
+}
+
+.volt-tool-detail-subtitle {
+	font-size: 13px;
+	line-height: 18px;
+	color: var(--vscode-descriptionForeground);
+	overflow-wrap: anywhere;
+}
+
+.volt-tool-detail-close {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+}
+
+.volt-tool-detail-close:hover {
+	background: rgba(255, 255, 255, 0.08);
+	color: inherit;
+}
+
+.volt-tool-detail-body {
+	position: relative;
+	min-height: 0;
+	padding: 0 16px 16px;
+	overflow: hidden;
+}
+
+.volt-tool-detail-body.clipped {
+	max-height: 300px;
+}
+
+.volt-tool-detail-body.clipped::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 72px;
+	background: linear-gradient(to bottom, transparent, #1b1b1b);
+	pointer-events: none;
+}
+
+.monaco-workbench.vs .volt-tool-detail-body.clipped::after {
+	background: linear-gradient(to bottom, transparent, #ffffff);
+}
+
+.volt-tool-detail-body.expanded {
+	overflow-y: auto;
+}
+
+.volt-tool-detail-content {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.volt-tool-detail-markdown {
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.volt-tool-detail-markdown h1,
+.volt-tool-detail-markdown h2,
+.volt-tool-detail-markdown h3 {
+	margin: 12px 0 6px;
+	font-size: 15px;
+	line-height: 22px;
+	font-weight: 600;
+}
+
+.volt-tool-detail-markdown > :first-child {
+	margin-top: 0;
+}
+
+.volt-tool-detail-markdown ul {
+	margin: 4px 0;
+	padding-left: 20px;
+}
+
+.volt-tool-detail-markdown li {
+	margin: 2px 0;
+	overflow-wrap: anywhere;
+}
+
+.volt-tool-detail-markdown pre {
+	margin: 6px 0 0;
+	padding: 10px 12px;
+	border-radius: 8px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	background: rgba(255, 255, 255, 0.02);
+	white-space: pre;
+	overflow-x: auto;
+	font-family: var(--volt-code-font, ui-monospace, Menlo, monospace);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.volt-tool-detail-image {
+	display: block;
+	max-width: 100%;
+	border-radius: 8px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.volt-tool-detail-error {
+	color: var(--vscode-errorForeground, #f48771);
+	overflow-wrap: anywhere;
+}
+
+.volt-tool-detail-more {
+	align-self: flex-start;
+	margin: -4px 16px 14px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-tool-detail-more:hover {
+	color: inherit;
+}
+
+.volt-tool-detail-more.hidden {
+	display: none;
+}

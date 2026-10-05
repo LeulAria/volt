@@ -90,7 +90,10 @@ export class TerminalService extends Disposable implements ITerminalService {
 	get restoredGroupCount(): number { return this._restoredGroupCount; }
 
 	get instances(): ITerminalInstance[] {
-		return this._terminalGroupService.instances.concat(this._terminalEditorService.instances).concat(this._backgroundedTerminalInstances);
+		return this._terminalGroupService.instances.concat(this._parkedInstances, this._terminalEditorService.instances, this._backgroundedTerminalInstances);
+	}
+	private get _parkedInstances(): ITerminalInstance[] {
+		return this._terminalGroupService.parkedGroups.flatMap(group => group.terminalInstances);
 	}
 	/** Gets all non-background terminals. */
 	get foregroundInstances(): ITerminalInstance[] {
@@ -105,6 +108,11 @@ export class TerminalService extends Disposable implements ITerminalService {
 	private _reconnectedTerminals: Map<string, ITerminalInstance[]> = new Map();
 	getReconnectedTerminals(reconnectionOwner: string): ITerminalInstance[] | undefined {
 		return this._reconnectedTerminals.get(reconnectionOwner);
+	}
+
+	private _defaultCwdProvider: (() => URI | undefined) | undefined;
+	setDefaultCwdProvider(provider: (() => URI | undefined) | undefined): void {
+		this._defaultCwdProvider = provider;
 	}
 
 	private _activeInstance: ITerminalInstance | undefined;
@@ -677,7 +685,7 @@ export class TerminalService extends Disposable implements ITerminalService {
 		// Don't touch processes if the shutdown was a result of reload as they will be reattached
 		const shouldPersistTerminals = this._terminalConfigurationService.config.enablePersistentSessions && e.reason === ShutdownReason.RELOAD;
 
-		for (const instance of [...this._terminalGroupService.instances, ...this._backgroundedTerminalInstances]) {
+		for (const instance of [...this._terminalGroupService.instances, ...this._parkedInstances, ...this._backgroundedTerminalInstances]) {
 			if (shouldPersistTerminals && instance.shouldPersist) {
 				instance.detachProcessAndDispose(TerminalExitReason.Shutdown);
 			} else {
@@ -700,7 +708,7 @@ export class TerminalService extends Disposable implements ITerminalService {
 		if (!this._terminalConfigurationService.config.enablePersistentSessions) {
 			return;
 		}
-		const tabs = this._terminalGroupService.groups.map(g => g.getLayoutInfo(g === this._terminalGroupService.activeGroup));
+		const tabs = [...this._terminalGroupService.groups, ...this._terminalGroupService.parkedGroups].map(g => g.getLayoutInfo(g === this._terminalGroupService.activeGroup));
 		const state: ITerminalsLayoutInfoById = { tabs };
 		this._primaryBackend?.setTerminalLayoutInfo(state);
 	}
@@ -1065,6 +1073,8 @@ export class TerminalService extends Disposable implements ITerminalService {
 					throw new Error('Cannot split without an active instance');
 				}
 				shellLaunchConfig.cwd = await getCwdForSplit(parent, this._workspaceContextService.getWorkspace().folders, this._commandService, this._terminalConfigurationService);
+			} else if (!this._terminalConfigurationService.config.cwd) {
+				shellLaunchConfig.cwd = this._defaultCwdProvider?.();
 			}
 		}
 	}

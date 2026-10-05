@@ -36,12 +36,15 @@ import { IAgentHomeWorkspaceMenuHost, showAgentHomeWorkspaceMenu } from './agent
 
 /** Parent folder for clones, New Folder and Start from scratch, once the user picks one. */
 const LOCATION_STORAGE_KEY = 'volt.agent.home.projectsLocation';
-const INIT_TIMEOUT_MS = 30_000;
+export const INIT_TIMEOUT_MS = 30_000;
 /** Folder name for Start from scratch; a number follows when it is taken. */
 const SCRATCH_FOLDER_NAME = 'new-project';
 
 /** What the Open Workspace menu does: open, clone and create local folders, then show them as projects. */
 export class AgentHomeWorkspaceActions {
+
+	/** Where one folder goes instead of its latest chat, e.g. into the new chat whose picker opened the menu. */
+	private openOne: ((folder: URI) => Promise<void>) | undefined;
 
 	constructor(
 		@IConfigurationService private readonly configurationService: IConfigurationService,
@@ -62,8 +65,12 @@ export class AgentHomeWorkspaceActions {
 		@IVoltProjectsService private readonly projects: IVoltProjectsService,
 	) { }
 
-	/** The menu's host, with the folder list read now. `current` is the project the caller shows, checked in the menu. */
-	async menuHost(current?: URI): Promise<IAgentHomeWorkspaceMenuHost> {
+	/**
+	 * The menu's host, with the folder list read now. `current` is the project the caller shows,
+	 * checked in the menu. `openOne` takes a single picked, created or scratch folder.
+	 */
+	async menuHost(current?: URI, openOne?: (folder: URI) => Promise<void>): Promise<IAgentHomeWorkspaceMenuHost> {
+		this.openOne = openOne;
 		const entries = await this.entries();
 		return {
 			entries,
@@ -136,6 +143,10 @@ export class AgentHomeWorkspaceActions {
 			return;
 		}
 		void this.workspacesService.addRecentlyOpened(folders.map(folderUri => ({ folderUri })));
+		if (folders.length === 1 && this.openOne) {
+			await this.openOne(first);
+			return;
+		}
 		if (folders.length === 1) {
 			await activateAgentProject(
 				this.sessionContext,
@@ -219,21 +230,32 @@ export class AgentHomeWorkspaceActions {
 		}
 	}
 
-	private async git(cwd: string, args: readonly string[], timeoutMs: number): Promise<{ readonly exitCode: number | null; readonly stderr: string; readonly timedOut: boolean }> {
-		try {
-			const result = await this.stdio.exec({
-				id: `git-${generateUuid().slice(0, 8)}`,
-				command: ['git', ...args].map(shellQuote).join(' '),
-				cwd,
-				// No terminal to answer a credential prompt; fail instead of waiting for the timeout.
-				env: { GIT_TERMINAL_PROMPT: '0' },
-				timeoutMs,
-				inlineChars: 20_000,
-			});
-			return { exitCode: result.exitCode, stderr: result.stderr, timedOut: result.timedOut };
-		} catch (err) {
-			return { exitCode: 1, stderr: toErrorMessage(err), timedOut: false };
-		}
+	private git(cwd: string, args: readonly string[], timeoutMs: number): Promise<IGitRun> {
+		return runGit(this.stdio, cwd, args, timeoutMs);
+	}
+}
+
+export interface IGitRun {
+	readonly exitCode: number | null;
+	readonly stderr: string;
+	readonly timedOut: boolean;
+}
+
+/** Runs git in the user's shell, with their environment, so it is the git they use in a terminal. */
+export async function runGit(stdio: IVoltStdioService, cwd: string, args: readonly string[], timeoutMs: number): Promise<IGitRun> {
+	try {
+		const result = await stdio.exec({
+			id: `git-${generateUuid().slice(0, 8)}`,
+			command: ['git', ...args].map(shellQuote).join(' '),
+			cwd,
+			// No terminal to answer a credential prompt; fail instead of waiting for the timeout.
+			env: { GIT_TERMINAL_PROMPT: '0' },
+			timeoutMs,
+			inlineChars: 20_000,
+		});
+		return { exitCode: result.exitCode, stderr: result.stderr, timedOut: result.timedOut };
+	} catch (err) {
+		return { exitCode: 1, stderr: toErrorMessage(err), timedOut: false };
 	}
 }
 
@@ -246,17 +268,18 @@ function shellQuote(arg: string): string {
 
 /**
  * The project menu (Recents, On This Mac, Start from scratch, Use Existing, New Folder) under
- * `anchor`, shared by the sidebar header, the agent tab's project picker and Add Project.
- * A second click on the same anchor closes it.
+ * `anchor`, shared by the sidebar header, the new agent's project picker and Add Project.
+ * Without `openOne`, a folder shows its latest chat (or a new one). A second click on the
+ * same anchor closes it.
  */
-export async function showAgentProjectMenu(instantiationService: IInstantiationService, anchor: HTMLElement, current?: URI): Promise<void> {
+export async function showAgentProjectMenu(instantiationService: IInstantiationService, anchor: HTMLElement, current?: URI, openOne?: (folder: URI) => Promise<void>): Promise<void> {
 	const contextViewService = instantiationService.invokeFunction(accessor => accessor.get(IContextViewService));
 	if (anchor.classList.contains('open')) {
 		contextViewService.hideContextView();
 		return;
 	}
 	const actions = instantiationService.createInstance(AgentHomeWorkspaceActions);
-	const host = await actions.menuHost(current);
+	const host = await actions.menuHost(current, openOne);
 	if (anchor.isConnected) {
 		showAgentHomeWorkspaceMenu(contextViewService, anchor, host);
 	}

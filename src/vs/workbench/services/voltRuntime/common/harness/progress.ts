@@ -5,7 +5,7 @@
 
 import { pickString } from '../tools/args.js';
 import { IToolCall, IToolResult } from '../tools/tool.js';
-import { IDoomLoopState, recordToolBatch, toolCallKey } from './doomLoop.js';
+import { errorShape, IDoomLoopState, ILoopStepRecord, loopCallRecord, recordToolBatch, salientLine, toolCallKey } from './doomLoop.js';
 
 /**
  * Progress intelligence. The doom-loop detector catches the pathological case - three identical
@@ -82,6 +82,35 @@ export function classifyError(tool: string, message: string): ErrorClass {
 /** Whether calling the exact same thing again could plausibly work. */
 export function isRetryable(kind: ErrorClass): boolean {
 	return kind === 'transient' || kind === 'conflict';
+}
+
+// --- loop records ----------------------------------------------------------------------------
+
+/**
+ * One native step as the loop detector sees it: each call paired with its result, errors
+ * classified. ACP callers can map their `tool_call` updates to `IToolCall` / `IToolResult` and use
+ * this too, or build records directly with `loopCallRecord`.
+ */
+export function toLoopStep(step: number, calls: readonly IToolCall[], results: readonly IToolResult[], text?: string): ILoopStepRecord {
+	const byId = new Map(results.map(result => [result.callId, result]));
+	return {
+		step,
+		calls: calls.flatMap(call => {
+			const result = byId.get(call.id);
+			if (!result) {
+				return [];
+			}
+			return [loopCallRecord({
+				tool: call.name,
+				args: call.args,
+				ok: !result.isError,
+				text: result.text,
+				kind: result.kind,
+				...(result.isError ? { errorClass: classifyError(call.name, result.text) } : {}),
+			})];
+		}),
+		...(text ? { text } : {}),
+	};
 }
 
 // --- observation -----------------------------------------------------------------------------
@@ -230,7 +259,8 @@ export class ProgressTracker {
 
 	private classify(observation: IStepObservation): IClassifiedError[] {
 		return observation.results.filter(result => result.isError).map(result => {
-			const message = firstLine(result.text);
+			// The salient line, not the first: a shell result starts with the echoed command.
+			const message = salientLine(result.text) || firstLine(result.text);
 			const kind = classifyError(result.name, result.text);
 			return {
 				callId: result.callId,
@@ -406,12 +436,7 @@ function resourceKey(call: IToolCall): string {
  * lets the recovery controller see that instead of three unrelated misses.
  */
 function errorSignature(tool: string, kind: ErrorClass, message: string): string {
-	const shape = message
-		.replace(/['"`][^'"`]*['"`]/g, '<s>')
-		.replace(/\S*\/\S*/g, '<p>')
-		.replace(/\b[\w-]+\.[a-z]{1,5}\b/gi, '<f>')
-		.replace(/\d+/g, '#');
-	return `${tool}\0${kind}\0${shape.slice(0, 120)}`;
+	return `${tool}\0${kind}\0${errorShape(message)}`;
 }
 
 function tokensOf(observation: IStepObservation): number {

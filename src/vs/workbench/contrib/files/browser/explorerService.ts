@@ -5,7 +5,7 @@
 
 import { Event } from '../../../../base/common/event.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { IFilesConfiguration, ISortOrderConfiguration, SortOrder, LexicographicOptions } from '../common/files.js';
 import { ExplorerItem, ExplorerModel } from '../common/explorerModel.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -26,6 +26,7 @@ import { IHostService } from '../../../services/host/browser/host.js';
 import { IExpression } from '../../../../base/common/glob.js';
 import { ResourceGlobMatcher } from '../../../common/resources.js';
 import { IFilesConfigurationService } from '../../../services/filesConfiguration/common/filesConfigurationService.js';
+import { onUnexpectedError } from '../../../../base/common/errors.js';
 
 export const UNDO_REDO_SOURCE = new UndoRedoSource();
 
@@ -43,6 +44,54 @@ export class ExplorerService implements IExplorerService {
 	private onFileChangesScheduler: RunOnceScheduler;
 	private fileChangeEvents: FileChangesEvent[] = [];
 	private revealExcludeMatcher: ResourceGlobMatcher;
+	private folderScope: object | undefined;
+	private readonly folderWatch = this.disposables.add(new MutableDisposable());
+	private _scopedFolder: URI | undefined;
+	get scopedFolder(): URI | undefined { return this._scopedFolder; }
+	get onDidChangeRoots(): Event<void> { return this.model.onDidChangeRoots; }
+
+	scopeToFolder(folder: URI): IDisposable {
+		const owner = this.folderScope = {};
+		if (!this.uriIdentityService.extUri.isEqual(folder, this._scopedFolder)) {
+			this._scopedFolder = folder;
+			const excludes = this.configurationService.getValue<Record<string, boolean>>('files.watcherExclude', { resource: folder });
+			this.folderWatch.value = this.fileService.watch(folder, { recursive: true, excludes: Object.keys(excludes ?? {}).filter(key => excludes[key]) });
+			this.model.setFolder(folder);
+		}
+		return toDisposable(() => {
+			if (this.folderScope === owner) {
+				this.folderScope = undefined;
+				this._scopedFolder = undefined;
+				this.folderWatch.clear();
+				this.model.setFolder(undefined);
+			}
+		});
+	}
+
+	private async refreshScopedRoot(root: ExplorerItem, owner: object): Promise<void> {
+		const resolveTo: URI[] = [];
+		const collect = (item: ExplorerItem) => {
+			if (item.isDirectoryResolved) {
+				resolveTo.push(item.resource);
+				item.children.forEach(collect);
+			}
+		};
+		collect(root);
+		try {
+			const stat = await this.fileService.resolve(root.resource, { resolveTo, resolveSingleChildDescendants: true, resolveMetadata: this.config.sortOrder === SortOrder.Modified });
+			if (this.folderScope !== owner || this.roots[0] !== root) {
+				return;
+			}
+			ExplorerItem.mergeLocalWithDisk(ExplorerItem.create(this.fileService, this.configurationService, this.filesConfigurationService, stat, undefined), root);
+			root.error = undefined;
+			await this.view?.refresh(true);
+		} catch (error) {
+			if (this.folderScope === owner && this.roots[0] === root) {
+				root.error = error;
+				await this.view?.setTreeInput();
+			}
+		}
+	}
 
 	constructor(
 		@IFileService private fileService: IFileService,
@@ -99,6 +148,7 @@ export class ExplorerService implements IExplorerService {
 			}
 
 		}, ExplorerService.EXPLORER_FILE_CHANGES_REACT_DELAY);
+		this.disposables.add(this.onFileChangesScheduler);
 
 		this.disposables.add(this.fileService.onDidFilesChange(e => {
 			this.fileChangeEvents.push(e);
@@ -126,7 +176,15 @@ export class ExplorerService implements IExplorerService {
 			}
 		}));
 		this.disposables.add(this.model.onDidChangeRoots(() => {
-			this.view?.setTreeInput();
+			const root = this.roots[0];
+			const owner = this.folderScope;
+			const cached = !!this._scopedFolder && root?.isDirectoryResolved;
+			void this.view?.setTreeInput().then(() => {
+				// Paint the cached tree first. Revalidate only if this is still the selected folder.
+				if (cached && owner && owner === this.folderScope && root === this.roots[0]) {
+					void this.refreshScopedRoot(root, owner).catch(onUnexpectedError);
+				}
+			}).catch(onUnexpectedError);
 		}));
 
 		// Refresh explorer when window gets focus to compensate for missing file events #126817
@@ -499,6 +557,7 @@ export class ExplorerService implements IExplorerService {
 	}
 
 	dispose(): void {
+		this.folderScope = undefined;
 		this.disposables.dispose();
 	}
 }

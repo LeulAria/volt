@@ -17,6 +17,10 @@ const require = createRequire(import.meta.url);
 const tsLoaderOptions = {
 	compilerOptions: {
 		'sourceMap': true,
+		// TypeScript 6 requires an explicit rootDir when outDir is set (TS5011). Webpack bundles the output,
+		// so its layout does not matter; the repo root holds every extension's sources.
+		'rootDir': path.resolve(import.meta.dirname, '..'),
+		'ignoreDeprecations': '6.0',
 	},
 	onlyCompileBundledFiles: true,
 };

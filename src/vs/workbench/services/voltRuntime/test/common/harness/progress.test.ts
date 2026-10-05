@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { classifyError, IStepObservation, isRetryable, ProgressTracker } from '../../../common/harness/progress.js';
+import { classifyError, IStepObservation, isRetryable, ProgressTracker, toLoopStep } from '../../../common/harness/progress.js';
 import { IToolCall, IToolResult } from '../../../common/tools/tool.js';
 
 suite('Volt progress intelligence', () => {
@@ -145,6 +145,26 @@ suite('Volt progress intelligence', () => {
 		assert.strictEqual(after.signals.novelty, 1);
 		assert.strictEqual(after.doomLoop, false);
 		assert.strictEqual(after.barrenSteps, 0);
+	});
+
+	test('loop records pair calls with results by id and classify failures', () => {
+		const record = toLoopStep(4, [call('a', 'read_file', { path: 'a.ts' }), call('b', 'shell', { command: 'npm test' }), call('c', 'grep', { pattern: 'x' })], [
+			{ callId: 'b', name: 'shell', kind: 'execute', text: '$ npm test\n1 failing\n  AssertionError: expected 1 to equal 2\n[exit 1 · 1.0s]', isError: true },
+			ok('a', 'read_file'),
+		], 'Checking.');
+		assert.strictEqual(record.step, 4);
+		assert.strictEqual(record.text, 'Checking.');
+		assert.deepStrictEqual(record.calls.map(item => item.tool), ['read_file', 'shell'], 'a call without a result is left out');
+		assert.strictEqual(record.calls[1].errorClass, 'assertion');
+		assert.strictEqual(record.calls[1].effect, 'exec');
+	});
+
+	test('a shell failure is classified by its error line, not the echoed command', () => {
+		const tracker = new ProgressTracker();
+		const failing = (id: string, n: number) => step(n, [call(id, 'shell', { command: 'npm test' })], [{ callId: id, name: 'shell', kind: 'execute', text: `$ npm test\nError: Cannot find module './x'\n[exit 1 · ${n}.0s]`, isError: true }]);
+		const first = tracker.observe(failing('s1', 1));
+		assert.strictEqual(first.errors[0].message, "Error: Cannot find module './x'");
+		assert.strictEqual(tracker.observe(failing('s2', 2)).errors[0].repeated, true);
 	});
 });
 

@@ -158,7 +158,7 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 
 	//#region IPC Object URLs
 
-	createIPCObjectUrl<T>(): IIPCObjectUrl<T> {
+	createIPCObjectUrl<T>(onWillRead?: (obj: T | undefined) => Promise<void>): IIPCObjectUrl<T> {
 		let obj: T | undefined = undefined;
 
 		// Create unique URI
@@ -169,7 +169,10 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 
 		// Install IPC handler
 		const channel = resource.toString();
-		const handler = async (): Promise<T | undefined> => obj;
+		const handler = async (): Promise<T | undefined> => {
+			await onWillRead?.(obj);
+			return obj;
+		};
 		validatedIpcMain.handle(channel, handler);
 
 		this.logService.trace(`IPC Object URL: Registered new channel ${channel}.`);

@@ -28,9 +28,26 @@
 .monaco-workbench.linux:lang(ja) { font-family: system-ui, "Ubuntu", "Droid Sans", "Source Han Sans J", "Source Han Sans JP", "Source Han Sans", sans-serif; }
 .monaco-workbench.linux:lang(ko) { font-family: system-ui, "Ubuntu", "Droid Sans", "Source Han Sans K", "Source Han Sans JR", "Source Han Sans", "UnDotum", "FBaekmuk Gulim", sans-serif; }
 
-.monaco-workbench.mac { --monaco-monospace-font: "SF Mono", Monaco, Menlo, Courier, monospace; }
-.monaco-workbench.windows { --monaco-monospace-font: Consolas, "Courier New", monospace; }
-.monaco-workbench.linux { --monaco-monospace-font: "Ubuntu Mono", "Liberation Mono", "DejaVu Sans Mono", "Courier New", monospace; }
+/* Geist Mono (SIL OFL 1.1, see fonts/geistMono/OFL.txt) is bundled as the default monospace font */
+@font-face {
+	font-family: "Geist Mono";
+	font-style: normal;
+	font-weight: 100 900;
+	font-display: block;
+	src: url("./fonts/geistMono/GeistMono-Variable.ttf") format("truetype");
+}
+
+@font-face {
+	font-family: "Geist Mono";
+	font-style: italic;
+	font-weight: 100 900;
+	font-display: block;
+	src: url("./fonts/geistMono/GeistMono-Italic-Variable.ttf") format("truetype");
+}
+
+.monaco-workbench.mac { --monaco-monospace-font: "Geist Mono", "SF Mono", Monaco, Menlo, Courier, monospace; }
+.monaco-workbench.windows { --monaco-monospace-font: "Geist Mono", Consolas, "Courier New", monospace; }
+.monaco-workbench.linux { --monaco-monospace-font: "Geist Mono", "Ubuntu Mono", "Liberation Mono", "DejaVu Sans Mono", "Courier New", monospace; }
 
 /* Global Styles */
 

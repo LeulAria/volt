@@ -29,6 +29,9 @@ import { defaultInputBoxStyles, defaultToggleStyles } from '../../../../../platf
 import { SIDE_BAR_BACKGROUND } from '../../../../common/theme.js';
 import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
+import { matchesPrQuery } from '../../common/agentPullRequests.js';
+import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { groupSessionsByDate, isDetailedHistoryGroup } from './agentHistoryGroups.js';
 import { createHistoryStatusIcon } from './agentHistoryIcons.js';
@@ -353,6 +356,7 @@ export class AgentHistoryList extends Disposable implements IHistoryRendererHost
 		@IDialogService private readonly dialogService: IDialogService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 	) {
 		super();
 		this.compact = !!options.compact;
@@ -435,6 +439,7 @@ export class AgentHistoryList extends Disposable implements IHistoryRendererHost
 
 		this.renderScheduler = this._register(new RunOnceScheduler(() => this.render(), 0));
 		this._register(this.history.onDidChange(() => this.renderScheduler.schedule()));
+		this._register(this.sessionContext.onDidChangeActiveProject(() => this.renderScheduler.schedule()));
 		void this.history.whenReady.then(() => this.renderScheduler.schedule());
 		const observer = new ResizeObserver(() => this.layout());
 		observer.observe(this.treeContainer);
@@ -446,8 +451,9 @@ export class AgentHistoryList extends Disposable implements IHistoryRendererHost
 		return this.allWorkspacesValue;
 	}
 
+	/** The project on screen; chats record their project as their workspace. */
 	get currentWorkspaceId(): string {
-		return this.history.currentWorkspace.id;
+		return this.sessionContext.activeProject?.id ?? this.history.currentWorkspace.id;
 	}
 
 	private renderSearch(): void {
@@ -670,12 +676,23 @@ export class AgentHistoryList extends Disposable implements IHistoryRendererHost
 
 	private sessions(): IAgentSessionMeta[] {
 		const options = {
-			workspaceId: this.allWorkspacesValue ? undefined : this.history.currentWorkspace.id,
+			workspaceId: this.allWorkspacesValue ? undefined : this.currentWorkspaceId,
 			matchCase: this.findInput?.getCaseSensitive(),
 			wholeWord: this.findInput?.getWholeWords(),
 			isRegex: this.findInput?.getRegex(),
 		};
-		return this.query ? this.history.search(this.query, options) : this.history.list(options);
+		if (!this.query) {
+			return this.history.list(options);
+		}
+		const found = this.history.search(this.query, options);
+		// "#12", "repo#12", a pull request URL, title or branch finds the chats it is linked to.
+		const pullRequests = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
+		if (!pullRequests) {
+			return found;
+		}
+		const ids = new Set(found.map(session => session.id));
+		const byPr = this.history.list(options).filter(session => !ids.has(session.id) && matchesPrQuery(pullRequests.links(session.id), this.query));
+		return byPr.length ? [...byPr, ...found] : found;
 	}
 
 	private render(): void {

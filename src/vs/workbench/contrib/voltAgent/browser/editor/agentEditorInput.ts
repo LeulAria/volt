@@ -57,10 +57,15 @@ const PARTIAL_SNAPSHOT_INTERVAL_MS = 3000;
  */
 const runningDetached = new Map<string, AgentEditorInput>();
 
+/** Inputs alive now, by chat: the newest one owns the chat's transcript and controller. */
+const liveInputs = new Map<string, AgentEditorInput>();
+
 export interface IAgentQueuedPrompt {
 	id: string;
 	text: string;
 	display?: IAgentPromptDisplay;
+	/** The mode the prompt was queued in; it runs in that mode, also after a reload. */
+	mode?: string;
 }
 
 /**
@@ -86,6 +91,8 @@ export class AgentEditorInput extends EditorInput {
 	contextWindow?: number;
 	/** Mode restored from history, applied by the editor on first show. */
 	restoredMode: string | undefined;
+	/** The mode picked in this chat, saved or not yet (a new chat has nothing to save until it is sent). */
+	chosenMode: string | undefined;
 
 	private readonly codec: AgentHistoryCodec;
 	private historyHandle: IAgentSessionHandle | undefined;
@@ -124,6 +131,7 @@ export class AgentEditorInput extends EditorInput {
 		} else {
 			this._controller = instantiationService.createInstance(AgentSessionController, this);
 		}
+		liveInputs.set(this.sessionId, this);
 		this.lastTitle = historyService.get(this.sessionId)?.title || undefined;
 		this._register(historyService.onDidChange(() => {
 			const title = historyService.get(this.sessionId)?.title || undefined;
@@ -138,6 +146,40 @@ export class AgentEditorInput extends EditorInput {
 		return this._controller;
 	}
 
+	/**
+	 * The input that owns a chat's transcript right now: the one a panel shows, one still recording
+	 * after its panel closed, or a new headless one. The orchestrator runs turns through it, so a
+	 * subagent's chat or a background queue works with no panel open; a panel that opens the chat
+	 * later takes the live transcript over.
+	 */
+	static acquire(sessionId: string, instantiationService: IInstantiationService): AgentEditorInput {
+		const live = liveInputs.get(sessionId);
+		if (live && !live.isDisposed()) {
+			return live;
+		}
+		const detached = runningDetached.get(sessionId);
+		if (detached) {
+			return detached;
+		}
+		const input = instantiationService.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(sessionId));
+		input.holdUntilIdle();
+		return input;
+	}
+
+	/** Headless: keep recording until the run ends, then let go (unless a panel adopted it first). */
+	private holdUntilIdle(): void {
+		this.detached = true;
+		runningDetached.set(this.sessionId, this);
+		const idle = this._controller.onDidBecomeIdle(() => {
+			idle.dispose();
+			if (runningDetached.get(this.sessionId) === this) {
+				runningDetached.delete(this.sessionId);
+			}
+			this.detached = false;
+			this.dispose();
+		});
+	}
+
 	/** Gives a reopened input the live transcript, history log, and controller of the run still going here. */
 	private handOver(next: AgentEditorInput): AgentSessionController {
 		this.adopted = true;
@@ -145,6 +187,7 @@ export class AgentEditorInput extends EditorInput {
 		next.contextUsed = this.contextUsed;
 		next.contextWindow = this.contextWindow;
 		next.restoredMode = this.restoredMode;
+		next.chosenMode = this.chosenMode;
 		next.historyHandle = this.historyHandle;
 		next.recordChain = this.recordChain;
 		next.lastPartialAt = this.lastPartialAt;
@@ -197,8 +240,11 @@ export class AgentEditorInput extends EditorInput {
 					if (assistant) {
 						assistant.id = turn.id;
 						messages.push(assistant);
-						if (turn.assistant.text) {
-							modelTranscript.push({ role: 'assistant', content: turn.assistant.text });
+						// What the model said, not the saved plain text: that one also lists tool rows and
+						// their raw input, which a model handed this chat read back as part of the reply.
+						const reply = assistant.text?.trim() || turn.assistant.text;
+						if (reply) {
+							modelTranscript.push({ role: 'assistant', content: reply });
 						}
 					}
 				}
@@ -226,11 +272,12 @@ export class AgentEditorInput extends EditorInput {
 			if (!raw || typeof raw !== 'object' || typeof (raw as { text?: unknown }).text !== 'string') {
 				continue;
 			}
-			const item = raw as { id?: string; text: string; display?: { text: string; mentions?: unknown } };
+			const item = raw as { id?: string; text: string; display?: { text: string; mentions?: unknown }; mode?: unknown };
 			queue.push({
 				id: typeof item.id === 'string' ? item.id : `q-${generateUuid()}`,
 				text: item.text,
 				display: item.display ? { text: item.display.text, mentions: await this.codec.thawMentions(item.display.mentions) } : undefined,
+				...(typeof item.mode === 'string' ? { mode: item.mode } : {}),
 			});
 		}
 		return queue;
@@ -285,6 +332,7 @@ export class AgentEditorInput extends EditorInput {
 	}
 
 	recordMode(mode: string): void {
+		this.chosenMode = mode;
 		if (this.restoredMode !== mode && (this.messages.length || this.historyService.has(this.sessionId))) {
 			this.restoredMode = mode;
 			const handle = this.history;
@@ -296,7 +344,7 @@ export class AgentEditorInput extends EditorInput {
 		if (!this.draft.trim() && !this.promptQueue.length) {
 			return '';
 		}
-		return JSON.stringify([this.draft, this.draftMentions.map(m => [m.kind, m.label, m.value]), this.promptQueue.map(item => [item.id, item.text])]);
+		return JSON.stringify([this.draft, this.draftMentions.map(m => [m.kind, m.label, m.value, m.image?.bytes.byteLength ?? m.video?.size]), this.promptQueue.map(item => [item.id, item.text, item.mode])]);
 	}
 
 	/** Debounced; persists the composer text, mentions and queued prompts. */
@@ -333,6 +381,7 @@ export class AgentEditorInput extends EditorInput {
 				id: item.id,
 				text: item.text,
 				display: item.display ? { text: item.display.text, mentions: await this.codec.freezeMentions(item.display.mentions) } : undefined,
+				...(item.mode ? { mode: item.mode } : {}),
 			}))),
 		]);
 		if (!this.isDisposed() || force) {
@@ -400,6 +449,9 @@ export class AgentEditorInput extends EditorInput {
 	}
 
 	override dispose(): void {
+		if (liveInputs.get(this.sessionId) === this) {
+			liveInputs.delete(this.sessionId);
+		}
 		if (this.detached) {
 			return;
 		}

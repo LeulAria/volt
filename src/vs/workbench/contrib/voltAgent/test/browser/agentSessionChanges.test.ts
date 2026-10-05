@@ -8,12 +8,15 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { createFileChangeBlock } from '../../browser/blocks/agentBlocks.js';
 import {
 	agentChangeKindFromVerb,
+	agentScopeTurnId,
+	agentTurnScope,
 	collectLastTurnFileChanges,
 	collectSessionFileChanges,
 	IAgentChangeTranscriptMessage,
 	normalizeAgentChangePath,
 	sumAgentChangeStats,
 } from '../../browser/review/agentSessionChanges.js';
+import { getAgentChangesSourceUri, parseAgentChangesSourceUri } from '../../browser/review/agentSessionChangesService.js';
 
 suite('Agent session changes', () => {
 
@@ -24,6 +27,16 @@ suite('Agent session changes', () => {
 		assert.strictEqual(agentChangeKindFromVerb('Created'), 'added');
 		assert.strictEqual(agentChangeKindFromVerb('Deleted'), 'deleted');
 		assert.strictEqual(agentChangeKindFromVerb('Edited'), 'modified');
+	});
+
+	test('a turn scope round-trips through the review source URI', () => {
+		const scope = agentTurnScope('a9fb-38f8');
+		assert.strictEqual(scope, 'turn:a9fb-38f8');
+		assert.strictEqual(agentScopeTurnId(scope), 'a9fb-38f8');
+		assert.strictEqual(agentScopeTurnId('lastTurn'), undefined);
+		assert.strictEqual(agentScopeTurnId('turn:'), undefined);
+		assert.deepStrictEqual(parseAgentChangesSourceUri(getAgentChangesSourceUri('agent-1', scope)), { sessionId: 'agent-1', scope });
+		assert.deepStrictEqual(parseAgentChangesSourceUri(getAgentChangesSourceUri('agent-1', 'staged')), { sessionId: 'agent-1', scope: 'staged' });
 	});
 
 	test('keeps the first original and last modified for a file', () => {
@@ -162,6 +175,31 @@ suite('Agent session changes', () => {
 		const inProject = (path: string) => path.startsWith('/work/app/');
 		assert.deepStrictEqual(collectSessionFileChanges(messages, inProject).map(file => file.path), ['work/app/src/a.ts']);
 		assert.deepStrictEqual(collectLastTurnFileChanges(messages, inProject).map(file => file.path), ['work/app/src/a.ts']);
+	});
+	test('a new file touched up afterwards counts its whole size, not the last edit', () => {
+		const body = Array.from({ length: 350 }, (_, i) => `line ${i}`).join('\n') + '\n';
+		const touched = body.replace('line 7\n', 'line 7\nextra a\nextra b\n');
+		const messages: IAgentChangeTranscriptMessage[] = [{
+			kind: 'agent',
+			id: 'turn',
+			segments: [
+				{ kind: 'block', block: createFileChangeBlock({ id: 'a', path: 'index.html', verb: 'Created', original: '', modified: body }) },
+				{ kind: 'block', block: createFileChangeBlock({ id: 'b', path: 'index.html', verb: 'Edited', original: body, modified: touched, additions: 2, deletions: 0 }) },
+			],
+		}];
+		assert.deepStrictEqual(sumAgentChangeStats(collectSessionFileChanges(messages)), { files: 1, additions: 352, deletions: 0 });
+	});
+
+	test('snippet edits replay onto the file when each snippet is unique', () => {
+		const messages: IAgentChangeTranscriptMessage[] = [{
+			kind: 'agent',
+			id: 'turn',
+			segments: [
+				{ kind: 'block', block: createFileChangeBlock({ id: 'a', path: 'a.ts', verb: 'Created', original: '', modified: 'const a = 1;\nconst b = 2;\n' }) },
+				{ kind: 'block', block: createFileChangeBlock({ id: 'b', path: 'a.ts', verb: 'Edited', original: 'const b = 2;', modified: 'const b = 3;', additions: 1, deletions: 1 }) },
+			],
+		}];
+		assert.deepStrictEqual(sumAgentChangeStats(collectSessionFileChanges(messages)), { files: 1, additions: 2, deletions: 0 });
 	});
 });
 

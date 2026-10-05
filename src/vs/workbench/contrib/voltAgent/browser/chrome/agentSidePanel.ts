@@ -30,19 +30,18 @@ import { GettingStartedInput } from '../../../welcomeGettingStarted/browser/gett
 import { IViewDescriptorService } from '../../../../common/views.js';
 import { GroupsOrder, IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
-import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
+import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { getLayoutMode, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
+import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { AgentEditor } from '../editor/agentEditor.js';
 import { AgentEditorInput, TOGGLE_AGENT_DRAWER_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { AgentHistoryDrawer } from '../history/agentHistoryDrawer.js';
 import { AgentHomePane } from '../home/agentHomePane.js';
-import { agentPanelTabsMode } from '../home/agentHomeModel.js';
 import { openAgentPanel } from '../workspace/agentPanels.js';
 import { setAgentTooltip } from './agentTooltip.js';
 import { SidebarEditorPart } from '../editor/sidebarEditorPart.js';
 
-const DRAWER_OPEN_KEY = 'volt.agent.drawer.open';
 const DRAWER_WIDTH_KEY = 'volt.agent.drawer.width';
 const DRAWER_MIN_WIDTH = 200;
 const DRAWER_MAX_WIDTH = 280;
@@ -67,7 +66,6 @@ export class AgentSidePanel extends ViewPane {
 	private collapsingGroups = false;
 	private readonly groupListeners = this._register(new DisposableStore());
 	private readonly partOptions = this._register(new MutableDisposable<IDisposable>());
-	private readonly centerTabs = this._register(new MutableDisposable<IDisposable>());
 	private readonly drawerDisposable = this._register(new MutableDisposable<AgentHistoryDrawer>());
 	private readonly drawerViewListener = this._register(new MutableDisposable());
 
@@ -148,10 +146,8 @@ export class AgentSidePanel extends ViewPane {
 		}));
 
 		this.applyDrawerWidth(this.storageService.getNumber(DRAWER_WIDTH_KEY, StorageScope.PROFILE, DRAWER_MAX_WIDTH));
+		// The drawer always starts closed; it only opens from its toggle.
 		this.createDrawerSash();
-		if (this.storageService.getBoolean(DRAWER_OPEN_KEY, StorageScope.PROFILE, false)) {
-			this.setDrawerOpen(true, false);
-		}
 
 		const editorPartsView = this.editorGroupsService as unknown as IEditorPartsView;
 		this.editorPart = this._register(this.instantiationService.createInstance(SidebarEditorPart, editorPartsView));
@@ -189,7 +185,6 @@ export class AgentSidePanel extends ViewPane {
 			}
 		}));
 		this._register(onDidChangeLayoutMode(() => this.syncLayoutMode()));
-		this._register(this.editorService.onDidEditorsChange(() => this.syncCenterTabs()));
 		this.syncLayoutMode();
 
 		void this.editorPart.whenRestored.then(() => {
@@ -244,25 +239,8 @@ export class AgentSidePanel extends ViewPane {
 			void this.seedDefaultAgent();
 		}
 		this.updateAuxiliaryBarClass(this.isBodyVisible());
-		this.syncCenterTabs();
 		this.syncAgentLayout();
 		this.layoutEditor();
-	}
-
-	private syncCenterTabs(): void {
-		const workbench = this.element.ownerDocument.querySelector('.monaco-workbench');
-		if (!this.isAgentLayout()) {
-			this.centerTabs.clear();
-			workbench?.classList.remove('volt-single-agent');
-			return;
-		}
-		let nonAgentEditors = 0;
-		for (const group of this.editorGroupsService.mainPart.groups) {
-			nonAgentEditors += group.editors.filter(editor => !(editor instanceof AgentEditorInput)).length;
-		}
-		const showTabs = agentPanelTabsMode(nonAgentEditors);
-		this.centerTabs.value = this.editorGroupsService.mainPart.enforcePartOptions({ showTabs });
-		workbench?.classList.toggle('volt-single-agent', showTabs === 'none');
 	}
 
 	private revealCenterEditors(): void {
@@ -322,7 +300,6 @@ export class AgentSidePanel extends ViewPane {
 		if (this.drawerSash) {
 			this.drawerSash.state = open ? SashState.Enabled : SashState.Disabled;
 		}
-		this.storageService.store(DRAWER_OPEN_KEY, open, StorageScope.PROFILE, StorageTarget.USER);
 		this.layoutEditor();
 		if (open) {
 			getWindow(this.bodyEl).requestAnimationFrame(() => this.drawer?.layout());
@@ -427,9 +404,18 @@ export class AgentSidePanel extends ViewPane {
 
 	/** Opens the Customize tab beside the agent sessions. */
 	async openCustomize(): Promise<void> {
+		await this.openPage(AgentCustomizeEditorInput);
+	}
+
+	/** Opens the Usage tab (cost, tokens, limits) beside the agent sessions. */
+	async openUsage(): Promise<void> {
+		await this.openPage(AgentUsageEditorInput);
+	}
+
+	private async openPage(ctor: typeof AgentCustomizeEditorInput | typeof AgentUsageEditorInput): Promise<void> {
 		if (this.isAgentLayout()) {
 			this.revealCenterEditors();
-			const input = this.instantiationService.createInstance(AgentCustomizeEditorInput);
+			const input = this.instantiationService.createInstance(ctor);
 			await this.editorService.openEditor(input, { pinned: true });
 			return;
 		}
@@ -438,8 +424,8 @@ export class AgentSidePanel extends ViewPane {
 		}
 		await this.editorPart.whenRestored;
 		const group = this.editorPart.activeGroup;
-		const existing = group.editors.find(editor => editor instanceof AgentCustomizeEditorInput);
-		const input = existing ?? this.instantiationService.createInstance(AgentCustomizeEditorInput);
+		const existing = group.editors.find(editor => editor instanceof ctor);
+		const input = existing ?? this.instantiationService.createInstance(ctor);
 		await group.openEditor(input, { pinned: true });
 		this.syncAgentLayout();
 		group.focus();
@@ -551,7 +537,6 @@ export class AgentSidePanel extends ViewPane {
 		if (welcome.length) {
 			await this.editorService.closeEditors(welcome);
 		}
-		this.syncCenterTabs();
 	}
 
 	/** The group with this id when it lives inside this panel. */
@@ -584,12 +569,24 @@ export class AgentSidePanel extends ViewPane {
 
 	private syncEmptyState(): void {
 		const empty = this.isEmpty();
-		if (empty && !this.isAgentLayout() && !this.drawerOpen) {
-			this.setDrawerOpen(true, false);
-		}
 		this.emptyEl.classList.toggle('hidden', !empty || this.drawerOpen);
 		this.element.classList.toggle('is-empty', empty);
 		this.bodyEl.classList.toggle('is-empty', empty);
+	}
+
+	/** Closing the last agent closes the sidebar that holds it; showing it again seeds a fresh agent. */
+	private hideWhenEmpty(): void {
+		if (this.isAgentLayout() || !this.isEmpty()) {
+			return;
+		}
+		const part = this.element.closest('.part.auxiliarybar') ? Parts.AUXILIARYBAR_PART
+			: this.element.closest('.part.sidebar') ? Parts.SIDEBAR_PART
+				: undefined;
+		if (!part) {
+			return;
+		}
+		this.didSeedDefault = false;
+		this.workbenchLayoutService.setPartHidden(true, part);
 	}
 
 	private syncAgentLayout(): void {
@@ -648,6 +645,10 @@ export class AgentSidePanel extends ViewPane {
 				this.syncAgentLayout();
 				if (e.kind === GroupModelChangeKind.EDITOR_ACTIVE || e.kind === GroupModelChangeKind.EDITOR_CLOSE) {
 					this.syncActiveSession();
+				}
+				if (e.kind === GroupModelChangeKind.EDITOR_CLOSE && e.editor && isSidebarEditor(e.editor)) {
+					// After the close settles, so a replace or move that reopens it first doesn't count.
+					queueMicrotask(() => this.hideWhenEmpty());
 				}
 			}));
 			this.groupListeners.add(group.onDidCloseEditor(() => this.syncAgentLayout()));
@@ -716,5 +717,5 @@ export class AgentSidePanel extends ViewPane {
 }
 
 function isSidebarEditor(editor: EditorInput): boolean {
-	return editor instanceof AgentEditorInput || editor instanceof AgentCustomizeEditorInput;
+	return editor instanceof AgentEditorInput || editor instanceof AgentCustomizeEditorInput || editor instanceof AgentUsageEditorInput;
 }

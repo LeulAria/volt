@@ -45,9 +45,12 @@ import {
 	TOGGLE_AGENT_DRAWER_COMMAND_ID,
 } from '../editor/agentEditorInput.js';
 import { AGENT_CUSTOMIZE_EDITOR_ID, AgentCustomizeEditor, AgentCustomizeEditorInput, AgentCustomizeEditorInputSerializer } from '../customize/agentCustomizeEditor.js';
+import { AGENT_USAGE_EDITOR_ID, AgentUsageEditor, AgentUsageEditorInput, AgentUsageEditorInputSerializer, OPEN_AGENT_USAGE_COMMAND_ID } from '../usage/agentUsageEditor.js';
 import { findEditorCommandsContext } from '../editor/agentEditorCommandsContext.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
 import { findAgentPanelGroup, openAgentPanel } from '../workspace/agentPanels.js';
+import { agentSideChatParents, liveAgentToolsPart, revealAgentSideChat } from '../workspace/agentSurfaceHost.js';
+import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
 
 const agentTitleActions = ContextKeyExpr.or(
@@ -247,8 +250,22 @@ registerAction2(class OpenAgentSessionAction extends Action2 {
 		if (typeof sessionId !== 'string' || !sessionId) {
 			return;
 		}
+		const history = accessor.get(IAgentHistoryService);
+		const workspace = accessor.get(IAgentWorkspaceService);
+		// A side chat lives in its chat's tools: open that chat and bring the side chat to the front there.
+		const parentId = agentSideChatParents().get(sessionId) ?? history.sessionParent(sessionId);
+		const parentExists = !!parentId && (!!liveAgentToolsPart(parentId) || history.has(parentId) || !!history.get(parentId));
 		const view = await showAgentSidePanel(accessor, false);
-		await view?.openSession(sessionId);
+		if (!parentId || !parentExists) {
+			await view?.openSession(sessionId);
+			return;
+		}
+		if (revealAgentSideChat(parentId, sessionId)) {
+			return;
+		}
+		// The chat is not on screen: its tools open the recorded side chat when the chat is shown.
+		workspace.openSurface(parentId, { kind: 'chat', sessionId }, true);
+		await view?.openSession(parentId);
 	}
 });
 
@@ -284,6 +301,42 @@ registerAction2(class OpenAgentCustomizeAction extends Action2 {
 			return;
 		}
 		const input = accessor.get(IInstantiationService).createInstance(AgentCustomizeEditorInput);
+		await accessor.get(IEditorService).openEditor(input, { pinned: true });
+	}
+});
+
+//#endregion
+
+//#region Usage tab
+
+Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
+	EditorPaneDescriptor.create(AgentUsageEditor, AGENT_USAGE_EDITOR_ID, localize('voltUsage.editorLabel', "Usage")),
+	[new SyncDescriptor(AgentUsageEditorInput)]
+);
+
+Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(
+	AgentUsageEditorInput.TypeID,
+	AgentUsageEditorInputSerializer
+);
+
+registerAction2(class OpenAgentUsageAction extends Action2 {
+	constructor() {
+		super({
+			id: OPEN_AGENT_USAGE_COMMAND_ID,
+			title: localize2('voltAgent.usage', "Show Agent Usage and Limits"),
+			category: Categories.View,
+			icon: Codicon.graph,
+			f1: true,
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const view = await showAgentSidePanel(accessor, false);
+		if (view) {
+			await view.openUsage();
+			return;
+		}
+		const input = accessor.get(IInstantiationService).createInstance(AgentUsageEditorInput);
 		await accessor.get(IEditorService).openEditor(input, { pinned: true });
 	}
 });

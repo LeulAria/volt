@@ -16,6 +16,7 @@ import { IStorageService } from '../../../../platform/storage/common/storage.js'
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { IWorkspaceContextService, WorkbenchState } from '../../../../platform/workspace/common/workspace.js';
+import { IExplorerService } from './files.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { IContextKeyService, IContextKey, ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
@@ -48,7 +49,8 @@ export class ExplorerViewletViewsContribution extends Disposable implements IWor
 
 	constructor(
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
-		@IProgressService progressService: IProgressService
+		@IProgressService progressService: IProgressService,
+		@IExplorerService private readonly explorerService: IExplorerService
 	) {
 		super();
 
@@ -57,6 +59,7 @@ export class ExplorerViewletViewsContribution extends Disposable implements IWor
 
 			this._register(workspaceContextService.onDidChangeWorkbenchState(() => this.registerViews()));
 			this._register(workspaceContextService.onDidChangeWorkspaceFolders(() => this.registerViews()));
+			this._register(this.explorerService.onDidChangeRoots(() => this.registerViews()));
 		});
 	}
 
@@ -78,7 +81,7 @@ export class ExplorerViewletViewsContribution extends Disposable implements IWor
 		const emptyViewDescriptor = this.createEmptyViewDescriptor();
 		const registeredEmptyViewDescriptor = viewDescriptors.find(v => v.id === emptyViewDescriptor.id);
 
-		if (this.workspaceContextService.getWorkbenchState() === WorkbenchState.EMPTY || this.workspaceContextService.getWorkspace().folders.length === 0) {
+		if (!this.explorerService.scopedFolder && (this.workspaceContextService.getWorkbenchState() === WorkbenchState.EMPTY || this.workspaceContextService.getWorkspace().folders.length === 0)) {
 			if (registeredExplorerViewDescriptor) {
 				viewDescriptorsToDeregister.push(registeredExplorerViewDescriptor);
 			}

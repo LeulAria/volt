@@ -1,0 +1,1171 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Transcript rows, measured against Cursor 3.20: 24px rows at 15/24, the verb in the
+ * tertiary tone (60%), details in the quaternary tone (36%), 14px between rows, 4px between
+ * the steps of an open group. Tokens come from agentMarkdown.css.
+ */
+
+.volt-agent-turn.agent .volt-agent-thread-body {
+	gap: 14px;
+}
+
+/* Collapsible rows */
+
+.volt-tr-group {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.volt-tr-header {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	width: 100%;
+	min-width: 0;
+	height: 24px;
+	padding: 0;
+	margin: 0;
+	border: 0;
+	background: none;
+	color: var(--volt-md-fg);
+	font: inherit;
+	font-size: 15px;
+	line-height: 24px;
+	font-weight: 400;
+	text-align: left;
+	white-space: nowrap;
+	overflow: hidden;
+	cursor: default;
+}
+
+button.volt-tr-header {
+	cursor: pointer;
+}
+
+button.volt-tr-header:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+	border-radius: 4px;
+}
+
+.volt-tr-action {
+	flex: none;
+	font-weight: 300;
+	color: var(--volt-md-fg-tertiary);
+	white-space: nowrap;
+	transition: color 0.1s ease-in-out;
+}
+
+.volt-tr-details {
+	min-width: 0;
+	color: var(--volt-md-fg-quaternary);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	transition: color 0.1s ease-in-out;
+}
+
+.volt-tr-details.tertiary {
+	color: var(--volt-md-fg-tertiary);
+}
+
+button.volt-tr-header:hover .volt-tr-action,
+.volt-tr-group.open > .volt-tr-header .volt-tr-action {
+	color: var(--volt-md-fg-secondary);
+}
+
+button.volt-tr-header:hover .volt-tr-details,
+.volt-tr-group.open > .volt-tr-header .volt-tr-details {
+	color: var(--volt-md-fg-tertiary);
+}
+
+.volt-tr-stats {
+	flex: none;
+	display: inline-flex;
+	gap: 4px;
+	margin-left: 4px;
+}
+
+.volt-tr-stats .add {
+	color: var(--volt-md-diff-added-fg);
+}
+
+.volt-tr-stats .del {
+	color: var(--volt-md-diff-removed-fg);
+}
+
+.volt-tr-exit {
+	flex: none;
+	margin-left: 6px;
+	color: color-mix(in srgb, var(--volt-md-diff-removed-fg) 80%, transparent);
+	font-size: 13px;
+}
+
+.volt-tr-chevron {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 12px;
+	height: 12px;
+	margin-left: 3px;
+	color: var(--volt-md-icon-tertiary);
+	opacity: 0;
+	transform: rotate(-90deg);
+	transition: transform 0.15s ease-in-out, color 0.1s ease-in-out, opacity 0.1s ease-in-out;
+}
+
+.volt-tr-chevron .codicon {
+	font-size: 12px;
+}
+
+button.volt-tr-header:hover .volt-tr-chevron,
+.volt-tr-group.open > .volt-tr-header .volt-tr-chevron {
+	opacity: 1;
+}
+
+.volt-tr-group.open > .volt-tr-header .volt-tr-chevron {
+	transform: none;
+}
+
+.volt-tr-body {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding-top: 4px;
+	min-width: 0;
+}
+
+/* Live verbs shimmer like the status line. */
+.volt-tr-action.shimmer,
+.volt-tr-subagent-status.shimmer {
+	background: linear-gradient(90deg,
+		var(--volt-md-fg-quaternary) 0%,
+		var(--volt-md-fg-quaternary) calc(var(--volt-shimmer, 0%) - 18%),
+		var(--volt-md-fg-secondary) var(--volt-shimmer, 0%),
+		var(--volt-md-fg-quaternary) calc(var(--volt-shimmer, 0%) + 18%),
+		var(--volt-md-fg-quaternary) 100%);
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+	animation: volt-tr-shimmer 1.6s linear infinite;
+}
+
+@keyframes volt-tr-shimmer {
+	from { background-position: 150% 0; }
+	to { background-position: -50% 0; }
+}
+
+.volt-tr-action.shimmer,
+.volt-tr-subagent-status.shimmer {
+	background-size: 200% 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-tr-action.shimmer,
+	.volt-tr-subagent-status.shimmer {
+		animation: none;
+		color: var(--volt-md-fg-tertiary);
+		background: none;
+	}
+}
+
+.volt-tr-tail {
+	min-height: 24px;
+	font-size: 15px;
+	line-height: 24px;
+}
+
+.volt-tr-tail .volt-agent-status-swap,
+.volt-tr-tail .volt-agent-activity-progress,
+.volt-tr-tail .volt-agent-activity-progress.shimmer,
+.volt-tr-tail .volt-agent-activity-progress .volt-agent-searchable {
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: 400;
+}
+
+/* Reasoning behind "Thought 6s": the reply's type at half strength, paragraphs 16px apart. */
+
+.volt-tr-thinking {
+	font-size: 15px;
+	line-height: 24px;
+	color: var(--volt-md-fg-tertiary);
+	opacity: 0.5;
+}
+
+.volt-tr-thinking .volt-agent-markdown p {
+	margin: 0 0 16px;
+}
+
+.volt-tr-thinking .volt-agent-markdown code {
+	color: inherit;
+}
+
+/* Command card */
+
+.volt-tr-terminal {
+	position: relative;
+	background: var(--volt-md-card-bg);
+	border: 1px solid var(--volt-md-stroke-faint);
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.volt-tr-terminal-menu {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	z-index: 1;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--volt-md-fg-tertiary);
+	cursor: pointer;
+}
+
+.volt-tr-terminal-menu:hover {
+	background: var(--volt-md-fill);
+	color: var(--volt-md-fg);
+}
+
+.volt-tr-terminal-menu .codicon {
+	font-size: 12px;
+}
+
+.volt-tr-terminal-scroll {
+	max-height: 200px;
+	overflow: hidden auto;
+	scrollbar-width: thin;
+}
+
+.volt-tr-terminal-command,
+.volt-tr-terminal-output {
+	display: block;
+	margin: 0;
+	background: none;
+	border-radius: 0;
+	font-family: var(--volt-md-mono);
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: var(--volt-md-weight);
+	color: var(--volt-md-fg-quaternary);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.volt-tr-terminal-command {
+	padding: 6px 32px 6px 10px;
+}
+
+.volt-tr-terminal-output {
+	padding: 0 10px 6px;
+}
+
+.volt-tr-terminal-command .prompt {
+	color: var(--volt-md-fg-quaternary);
+}
+
+.volt-tr-terminal-command .cmd,
+.volt-tr-terminal-command .builtin,
+.volt-tr-terminal-command .kw {
+	color: #efb080;
+}
+
+.volt-tr-terminal-command .flag,
+.volt-tr-terminal-command .num {
+	color: #d6d6dd;
+}
+
+.volt-tr-terminal-command .str {
+	color: #e394dc;
+}
+
+.volt-tr-terminal-command .var {
+	color: #87c3ff;
+}
+
+.volt-tr-terminal-command .op {
+	color: var(--volt-md-fg-tertiary);
+}
+
+.monaco-workbench.vs .volt-tr-terminal-command .cmd,
+.monaco-workbench.vs .volt-tr-terminal-command .builtin,
+.monaco-workbench.vs .volt-tr-terminal-command .kw {
+	color: #a0522d;
+}
+
+.monaco-workbench.vs .volt-tr-terminal-command .flag,
+.monaco-workbench.vs .volt-tr-terminal-command .num {
+	color: var(--volt-md-fg-secondary);
+}
+
+/* Edit diff */
+
+.volt-tr-diff {
+	margin-top: 0;
+	border: 1px solid var(--volt-md-stroke);
+	border-radius: 6px;
+	overflow: auto;
+	max-height: 480px;
+	background: var(--volt-md-card-bg);
+	font-family: var(--volt-md-mono);
+	font-size: 12px;
+	line-height: 20px;
+	font-weight: 400;
+}
+
+.volt-tr-diff-line {
+	display: flex;
+	min-width: max-content;
+	height: 20px;
+}
+
+.volt-tr-diff-line.insert {
+	background: var(--volt-md-diff-added);
+}
+
+.volt-tr-diff-line.delete {
+	background: var(--volt-md-diff-removed);
+}
+
+/* Striped like the Changes diff's bar: 1px of full color, then 1px faint. */
+.volt-tr-diff-strip {
+	flex: none;
+	width: 4px;
+}
+
+.volt-tr-diff-line.insert .volt-tr-diff-strip {
+	background: repeating-linear-gradient(to bottom, var(--volt-md-diff-added-fg) 0 1px, color-mix(in srgb, var(--volt-md-diff-added-fg) 18%, transparent) 1px 2px);
+}
+
+.volt-tr-diff-line.delete .volt-tr-diff-strip {
+	background: repeating-linear-gradient(to bottom, var(--volt-md-diff-removed-fg) 0 1px, color-mix(in srgb, var(--volt-md-diff-removed-fg) 18%, transparent) 1px 2px);
+}
+
+.volt-tr-diff-gutter {
+	flex: none;
+	display: flex;
+	width: 52px;
+	padding-right: 4px;
+	box-sizing: border-box;
+	font-size: 11px;
+}
+
+.volt-tr-diff-num {
+	flex: 1;
+	padding: 0 4px;
+	text-align: right;
+	color: var(--volt-md-fg-quaternary);
+}
+
+.volt-tr-diff-ind {
+	flex: none;
+	width: 14px;
+	text-align: center;
+	font-weight: 600;
+}
+
+.volt-tr-diff-line.insert .volt-tr-diff-num,
+.volt-tr-diff-line.insert .volt-tr-diff-ind {
+	color: var(--volt-md-diff-added-fg);
+}
+
+.volt-tr-diff-line.delete .volt-tr-diff-num,
+.volt-tr-diff-line.delete .volt-tr-diff-ind {
+	color: var(--volt-md-diff-removed-fg);
+}
+
+.volt-tr-diff-text {
+	flex: 1;
+	padding: 0 12px 0 8px;
+	white-space: pre;
+	color: var(--volt-md-fg);
+}
+
+.volt-tr-diff-gap {
+	height: 1px;
+	background: var(--volt-md-stroke);
+}
+
+.volt-tr-diff-empty {
+	padding: 6px 10px;
+	color: var(--volt-md-fg-quaternary);
+	font-family: inherit;
+}
+
+/* Subagents */
+
+.volt-tr-subagent {
+	display: flex;
+	gap: 8px;
+	align-items: flex-start;
+	min-width: 0;
+	font-size: 15px;
+	line-height: 24px;
+}
+
+.volt-tr-subagent-icon {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 24px;
+	color: var(--volt-md-fg-tertiary);
+}
+
+.volt-tr-subagent-icon .codicon {
+	font-size: 13px;
+}
+
+.volt-tr-subagent.live .volt-tr-subagent-icon .codicon {
+	animation: codicon-spin 1.5s steps(30) infinite;
+}
+
+.volt-tr-subagent-text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.volt-tr-subagent-head {
+	display: flex;
+	gap: 6px;
+	min-width: 0;
+	white-space: nowrap;
+}
+
+.volt-tr-subagent-title {
+	color: var(--volt-md-fg);
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-tr-subagent-type {
+	color: var(--volt-md-fg-quaternary);
+}
+
+.volt-tr-subagent-status {
+	color: var(--volt-md-fg-quaternary);
+}
+
+/* End-of-turn file card: solid card fill, 14px below the turn actions, Cursor's diff colours. */
+.volt-agent-turn.agent > .volt-agent-turn-files {
+	margin: 8px 0 0;
+	background: var(--volt-md-card-bg);
+}
+
+.volt-agent-turn-files-title {
+	color: var(--volt-md-fg-secondary);
+}
+
+.volt-agent-turn-files-review {
+	color: var(--volt-md-fg-tertiary);
+	opacity: 1;
+}
+
+.volt-agent-turn-files-row {
+	color: var(--volt-md-fg-secondary);
+}
+
+.volt-agent-turn-files-stats .add {
+	color: var(--volt-md-diff-added-fg);
+}
+
+.volt-agent-turn-files-stats .del {
+	color: var(--volt-md-diff-removed-fg);
+}
+
+/* Turn actions: 20px ghost buttons with 12px icons at the tertiary icon tone, then a 13px "2m ago". */
+.volt-agent-turn.agent > .volt-agent-footer {
+	gap: 4px;
+	margin-top: 8px;
+	min-height: 28px;
+	padding: 4px 0;
+	box-sizing: border-box;
+}
+
+.volt-agent-turn.agent > .volt-agent-footer .volt-agent-footer-btn {
+	width: 20px;
+	height: 20px;
+	color: var(--volt-md-icon-tertiary);
+}
+
+.volt-agent-turn.agent > .volt-agent-footer .volt-agent-footer-btn:hover {
+	color: var(--volt-md-fg);
+	background: var(--volt-md-fill);
+}
+
+.volt-agent-turn.agent > .volt-agent-footer .volt-agent-footer-btn .codicon {
+	font-size: 12px;
+}
+
+.volt-agent-turn.agent > .volt-agent-footer .volt-agent-footer-btn .volt-agent-svg-icon,
+.volt-agent-turn.agent > .volt-agent-footer .volt-agent-footer-btn .volt-agent-svg-icon svg {
+	width: 12px;
+	height: 12px;
+}
+
+.volt-agent-turn.agent > .volt-agent-footer .volt-agent-ago {
+	margin-left: 0;
+	padding-left: 2px;
+	font-size: 13px;
+	line-height: 18px;
+	letter-spacing: -0.08px;
+	color: var(--volt-md-fg-quaternary);
+}
+
+/* Approval card: one "Run command: npm test" line, then Skip, Always Run (secondary pill) and Run ⏎ (accent pill). */
+.volt-agent-block.approval:not(.question) {
+	display: flex;
+	flex-direction: column;
+	padding: 0;
+	gap: 0;
+	background: var(--volt-md-card-bg);
+	border: 1px solid var(--volt-md-stroke);
+	/* agentEditor.css also draws an inset ring on .approval; one border is enough. */
+	box-shadow: none;
+	border-radius: 12px;
+	overflow: hidden;
+	outline: none;
+	animation: volt-approval-in 0.16s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+/* Blocked or denied: tint the single border instead of the inset ring. */
+.volt-agent-block.approval:not(.question).blocked,
+.volt-agent-block.approval:not(.question).deny {
+	box-shadow: none;
+	border-color: color-mix(in srgb, var(--vscode-inputValidation-errorBorder, #f14c4c) 55%, transparent);
+}
+
+/* A command waiting to run: the terminal card is the card; Skip / Always Run / Run sit under it. */
+.volt-agent-block.approval:not(.question).command {
+	background: none;
+	border: 0;
+	border-radius: 0;
+	overflow: visible;
+}
+
+.volt-agent-block.approval.command > .volt-agent-block.terminal {
+	margin: 0;
+}
+
+.volt-agent-block.approval.command > .volt-approval-reason {
+	padding: 8px 2px 0;
+}
+
+.volt-agent-block.approval.command > .volt-approval-footer {
+	padding: 8px 0 0;
+}
+
+.volt-agent-block.approval:not(.question).command.blocked,
+.volt-agent-block.approval:not(.question).command.deny {
+	border-color: transparent;
+}
+
+.volt-agent-block.approval.command.blocked > .volt-agent-block.terminal,
+.volt-agent-block.approval.command.deny > .volt-agent-block.terminal {
+	border-color: color-mix(in srgb, var(--vscode-inputValidation-errorBorder, #f14c4c) 55%, transparent);
+}
+
+@keyframes volt-approval-in {
+	from { opacity: 0; transform: translateY(4px); }
+	to { opacity: 1; transform: none; }
+}
+
+.volt-approval-body {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 12px 0;
+	min-width: 0;
+}
+
+.volt-approval-line {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	font-size: 14px;
+	line-height: 22px;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.volt-approval-action {
+	flex: none;
+	color: var(--volt-md-fg-secondary);
+	font-weight: 500;
+}
+
+.volt-approval-detail {
+	min-width: 0;
+	color: var(--volt-md-fg-quaternary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-approval-resource {
+	margin: 0;
+	padding: 8px 10px;
+	max-height: 160px;
+	overflow: auto;
+	border-radius: 8px;
+	background: var(--volt-md-fill-faint);
+	border: 1px solid var(--volt-md-stroke-faint);
+	font-family: var(--volt-md-mono);
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--volt-md-fg-secondary);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.volt-approval-reason {
+	font-size: 13px;
+	line-height: 18px;
+	color: var(--volt-md-fg-tertiary);
+}
+
+.volt-approval-footer {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 6px;
+	padding: 10px 12px;
+}
+
+.volt-approval-status {
+	font-size: 13px;
+	line-height: 18px;
+	color: var(--volt-md-fg-tertiary);
+}
+
+.volt-approval-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 4px;
+	height: 24px;
+	padding: 0 10px;
+	border: 1px solid transparent;
+	border-radius: 9999px;
+	background: none;
+	font: inherit;
+	font-size: 13px;
+	line-height: 18px;
+	letter-spacing: -0.08px;
+	cursor: pointer;
+	transition: color 0.1s, background-color 0.1s, transform 0.05s;
+}
+
+.volt-approval-btn:active {
+	transform: scale(0.97);
+}
+
+.volt-approval-btn.text {
+	padding: 0 6px;
+	border-radius: 6px;
+	color: var(--volt-md-fg-tertiary);
+}
+
+.volt-approval-btn.text:hover {
+	color: var(--volt-md-fg);
+}
+
+.volt-approval-btn.secondary {
+	background: var(--volt-md-fill);
+	color: var(--volt-md-fg);
+}
+
+.volt-approval-btn.secondary:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+.volt-approval-btn.primary {
+	background: oklch(0.681 0.131 252.629);
+	color: oklch(0.226 0.013 264.284);
+}
+
+.volt-approval-btn.primary:hover {
+	background: color-mix(in srgb, #f0f0f0 10%, oklch(0.681 0.131 252.629));
+}
+
+.volt-approval-kbd {
+	font-size: 12px;
+	line-height: 16px;
+	opacity: 0.65;
+}
+
+/* Provider errors read as Cursor's error tray: title, explanation, quiet actions. */
+.volt-agent-provider-notice.severity-error {
+	margin-top: 10px;
+	padding: 8px 12px;
+	border-radius: 12px;
+	background: var(--volt-md-card-bg);
+	box-shadow: 0 0 8px 2px rgba(0, 0, 0, 0.06);
+	border: 1px solid var(--volt-md-stroke-faint);
+	white-space: normal;
+}
+
+.volt-agent-provider-notice.severity-error .volt-agent-provider-notice-title {
+	font-size: 13px;
+	line-height: 20px;
+	letter-spacing: -0.08px;
+	color: var(--volt-md-fg);
+}
+
+.volt-agent-provider-notice.severity-error .volt-agent-provider-notice-detail {
+	margin-top: 2px;
+	font-size: 13px;
+	line-height: 18px;
+	letter-spacing: -0.08px;
+	color: var(--volt-md-fg-secondary);
+	white-space: pre-wrap;
+}
+
+.volt-agent-login-chip {
+	align-self: flex-start;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0;
+	padding: 6px 12px 6px 10px;
+	appearance: none;
+	-webkit-appearance: none;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 999px;
+	background: #f3f3f3;
+	color: #171717;
+	font: inherit;
+	font-size: 13px;
+	font-weight: 500;
+	line-height: 16px;
+	letter-spacing: -0.15px;
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.volt-agent-login-chip:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.volt-agent-login-chip:hover {
+	background: #ffffff;
+}
+
+.volt-agent-login-chip:active {
+	background: #e8e8e8;
+}
+
+.volt-agent-login-chip .volt-brand-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 14px;
+	height: 14px;
+}
+
+.volt-agent-login-chip .volt-brand-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.monaco-workbench.vs .volt-agent-login-chip,
+.monaco-workbench.hc-light .volt-agent-login-chip {
+	background: #1a1a1a;
+	color: #f5f5f5;
+	border-color: transparent;
+}
+
+.monaco-workbench.vs .volt-agent-login-chip:hover,
+.monaco-workbench.hc-light .volt-agent-login-chip:hover {
+	background: #2a2a2a;
+}
+
+/* Live elapsed time after the tail phrase: "Running npm test · 42s". */
+
+.volt-tr-elapsed {
+	margin-left: 8px;
+	font-size: 13px;
+	color: var(--volt-md-fg-quaternary);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.volt-tr-elapsed::before {
+	content: '\00b7';
+	margin-right: 8px;
+}
+
+.volt-tr-tail {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+}
+
+.volt-tr-tail .volt-agent-status-swap {
+	flex: 0 1 auto;
+}
+
+.volt-tr-elapsed {
+	flex: none;
+}
+
+/* The agent's to-dos: open while the turn runs, folded to "3 of 3 To-dos Completed" after. */
+
+.volt-tr-todos-icon {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	margin-right: 2px;
+	color: var(--volt-md-icon-tertiary);
+}
+
+.volt-tr-todos-icon .codicon {
+	font-size: 13px;
+}
+
+.volt-tr-todo-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 0;
+	padding: 4px 0 0;
+	list-style: none;
+}
+
+.volt-tr-todo {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	min-width: 0;
+	font-size: 14px;
+	line-height: 22px;
+	color: var(--volt-md-fg-secondary);
+}
+
+.volt-tr-todo-mark {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 22px;
+	color: var(--volt-md-icon-tertiary);
+}
+
+.volt-tr-todo-mark .codicon {
+	font-size: 13px;
+}
+
+.volt-tr-todo.done .volt-tr-todo-mark {
+	color: var(--vscode-charts-green, #3fb950);
+}
+
+.volt-tr-todo.done .volt-tr-todo-label {
+	color: var(--volt-md-fg-quaternary);
+	text-decoration: line-through;
+}
+
+.volt-tr-todos.live .volt-tr-todo.current .volt-tr-todo-mark .codicon {
+	animation: codicon-spin 1.5s steps(30) infinite;
+}
+
+.volt-tr-todo-label {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.volt-tr-todo-label.shimmer {
+	background: linear-gradient(90deg,
+		var(--volt-md-fg-tertiary) 0%,
+		var(--volt-md-fg-tertiary) calc(var(--volt-shimmer, 0%) - 18%),
+		var(--volt-md-fg) var(--volt-shimmer, 0%),
+		var(--volt-md-fg-tertiary) calc(var(--volt-shimmer, 0%) + 18%),
+		var(--volt-md-fg-tertiary) 100%);
+	background-size: 200% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+	animation: volt-tr-shimmer 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-tr-todo-label.shimmer {
+		animation: none;
+		background: none;
+		color: var(--volt-md-fg);
+	}
+
+	.volt-tr-todos.live .volt-tr-todo.current .volt-tr-todo-mark .codicon {
+		animation: none;
+	}
+}
+
+/* A message the user steered the running agent with. */
+
+.volt-tr-steer {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	padding: 4px 10px;
+	border-left: 2px solid var(--volt-md-stroke);
+	font-size: 14px;
+	line-height: 22px;
+}
+
+.volt-tr-steer-label {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--volt-md-fg-tertiary);
+}
+
+.volt-tr-steer-label .codicon {
+	font-size: 12px;
+}
+
+.volt-tr-steer-text {
+	min-width: 0;
+	color: var(--volt-md-fg);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+/* Sub-agents: the step they are on, a fold with their recent steps or report. */
+
+button.volt-tr-subagent-head {
+	align-items: center;
+	padding: 0;
+	margin: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+button.volt-tr-subagent-head:hover .volt-tr-chevron,
+.volt-tr-subagent.open .volt-tr-chevron {
+	opacity: 1;
+}
+
+.volt-tr-subagent.open .volt-tr-chevron {
+	transform: none;
+}
+
+.volt-tr-subagent-status {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-md-fg-quaternary);
+}
+
+.volt-tr-subagent.stopped .volt-tr-subagent-status {
+	color: var(--volt-md-fg-tertiary);
+}
+
+.volt-tr-subagent-steps {
+	margin-left: 8px;
+	color: var(--volt-md-fg-quaternary);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-tr-subagent-output {
+	max-height: 200px;
+	margin: 4px 0 0;
+	padding: 8px 10px;
+	overflow: auto;
+	border-radius: 8px;
+	border: 1px solid var(--volt-md-stroke-faint);
+	background: var(--volt-md-card-bg);
+	font-family: var(--volt-md-mono);
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--volt-md-fg-secondary);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+/* Run trays: Cursor's error tray (title, exact error, request id, quiet actions), also used for supervisor findings. */
+
+.volt-agent-run-tray {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	padding: 8px 8px 8px 12px;
+	border-radius: 12px;
+	border: 1px solid var(--volt-md-stroke-faint);
+	background: var(--volt-md-card-bg);
+	box-shadow: 0 0 8px 2px rgba(0, 0, 0, 0.06);
+	font-size: 13px;
+	line-height: 18px;
+	letter-spacing: -0.08px;
+}
+
+.volt-agent-run-tray-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	min-height: 20px;
+}
+
+.volt-agent-run-tray-icon {
+	flex: none;
+	display: inline-flex;
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-agent-run-tray-icon .codicon {
+	font-size: 13px;
+}
+
+.volt-agent-run-tray.failed .volt-agent-run-tray-title {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-agent-run-tray-title {
+	flex: 1;
+	min-width: 0;
+	line-height: 20px;
+	color: var(--volt-md-fg);
+}
+
+.volt-agent-run-tray-dismiss {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: none;
+	color: var(--volt-md-fg-tertiary);
+	cursor: pointer;
+}
+
+.volt-agent-run-tray-dismiss:hover {
+	background: var(--volt-md-fill);
+	color: var(--volt-md-fg);
+}
+
+.volt-agent-run-tray-dismiss .codicon {
+	font-size: 12px;
+}
+
+.volt-agent-run-tray-detail,
+.volt-agent-run-tray-request {
+	color: var(--volt-md-fg-secondary);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	padding-right: 4px;
+}
+
+.volt-agent-run-tray-request {
+	color: var(--volt-md-fg-tertiary);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-run-tray-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 6px;
+	padding-top: 8px;
+}
+
+.volt-agent-run-tray-btn {
+	height: 22px;
+	padding: 0 8px;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	font: inherit;
+	font-size: 13px;
+	line-height: 20px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-agent-run-tray-btn:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-agent-run-tray-btn.primary {
+	background: oklch(0.681 0.131 252.629);
+	color: oklch(0.226 0.013 264.284);
+}
+
+.volt-agent-run-tray-btn.primary:hover {
+	background: color-mix(in srgb, #f0f0f0 10%, oklch(0.681 0.131 252.629));
+}
+
+.volt-agent-run-tray-btn.secondary {
+	background: var(--volt-md-fill);
+	color: var(--volt-md-fg);
+}
+
+.volt-agent-run-tray-btn.secondary:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+.volt-agent-run-tray-btn.text {
+	padding: 0 4px;
+	background: none;
+	color: var(--volt-md-fg-tertiary);
+}
+
+.volt-agent-run-tray-btn.text:hover {
+	color: var(--volt-md-fg);
+	background: var(--volt-md-fill);
+}
+
+/* "Stopped" / "Interrupted" at the end of a turn that did not finish. */
+
+.volt-agent-run-marker {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 24px;
+	font-size: 13px;
+	color: var(--volt-md-fg-tertiary);
+}
+
+.volt-agent-run-marker-icon {
+	display: inline-flex;
+	color: var(--volt-md-icon-tertiary);
+}
+
+.volt-agent-run-marker-icon .codicon {
+	font-size: 12px;
+}
+
+.volt-agent-run-marker-label {
+	margin-right: 4px;
+}

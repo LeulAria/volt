@@ -4,18 +4,18 @@
  *--------------------------------------------------------------------------------------------*/
 
 import './media/paneCompositePart.css';
-import { Event } from '../../../base/common/event.js';
+import { Emitter, Event } from '../../../base/common/event.js';
 import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
 import { IProgressIndicator } from '../../../platform/progress/common/progress.js';
 import { Extensions, PaneComposite, PaneCompositeDescriptor, PaneCompositeRegistry } from '../panecomposite.js';
 import { IPaneComposite } from '../../common/panecomposite.js';
 import { IViewDescriptorService, ViewContainerLocation } from '../../common/views.js';
-import { DisposableStore, MutableDisposable } from '../../../base/common/lifecycle.js';
+import { DisposableStore, MutableDisposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { IView } from '../../../base/browser/ui/grid/grid.js';
 import { IWorkbenchLayoutService, Parts } from '../../services/layout/browser/layoutService.js';
 import { CompositePart, ICompositeTitleLabel } from './compositePart.js';
 import { IPaneCompositeBarOptions, PaneCompositeBar } from './paneCompositeBar.js';
-import { Dimension, EventHelper, trackFocus, $, addDisposableListener, EventType, prepend, getWindow } from '../../../base/browser/dom.js';
+import { Dimension, EventHelper, trackFocus, $, addDisposableListener, EventType, prepend, getWindow, append } from '../../../base/browser/dom.js';
 import { Registry } from '../../../platform/registry/common/platform.js';
 import { INotificationService } from '../../../platform/notification/common/notification.js';
 import { IStorageService } from '../../../platform/storage/common/storage.js';
@@ -38,6 +38,7 @@ import { Composite } from '../composite.js';
 import { ViewsSubMenu } from './views/viewPaneContainer.js';
 import { getActionBarActions } from '../../../platform/actions/browser/menuEntryActionViewItem.js';
 import { IHoverService } from '../../../platform/hover/browser/hover.js';
+import { ILentPaneCompositePart } from '../../services/panecomposite/browser/panecomposite.js';
 import { HiddenItemStrategy, MenuWorkbenchToolBar } from '../../../platform/actions/browser/toolbar.js';
 import { DeferredPromise } from '../../../base/common/async.js';
 
@@ -132,6 +133,8 @@ export abstract class AbstractPaneCompositePart extends CompositePart<PaneCompos
 
 	private blockOpening: DeferredPromise<PaneComposite | undefined> | undefined = undefined;
 	protected contentDimension: Dimension | undefined;
+	/** Volt: set while the part sits in another element; the grid's layouts are ignored then. */
+	private lent: { layingOut: boolean } | undefined;
 
 	constructor(
 		readonly partId: Parts.PANEL_PART | Parts.AUXILIARYBAR_PART | Parts.SIDEBAR_PART,
@@ -591,12 +594,95 @@ export abstract class AbstractPaneCompositePart extends CompositePart<PaneCompos
 		this.hideActiveComposite();
 	}
 
+	/**
+	 * Volt: moves this part's title, toolbar and content into `host`, with the given composite
+	 * open, while the workbench keeps the part hidden. The agent window's Changes tab shows the
+	 * Source Control side bar this way. The part's own element stays in the workbench grid (the
+	 * grid finds its views by their place in the DOM); a stand-in with its classes holds the
+	 * contents. Giving it back restores what the part had open; the part also goes back by itself
+	 * if the workbench shows it again.
+	 */
+	lendPaneComposite(id: string, host: HTMLElement): ILentPaneCompositePart | undefined {
+		const element = this.element;
+		if (this.lent || !element || this.layoutService.isVisible(this.partId) || !this.getPaneComposite(id)) {
+			return undefined;
+		}
+
+		const lastActiveId = this.getLastActiveCompositeId();
+		const lent: { layingOut: boolean } = { layingOut: false };
+		this.lent = lent;
+		const store = new DisposableStore();
+		const onDidReturn = store.add(new Emitter<void>());
+
+		const standIn = append(host, $('div'));
+		standIn.append(...element.childNodes);
+		// The part keeps toggling classes on its own element ('empty' shows "Drag a view here").
+		const syncClasses = () => {
+			standIn.className = element.className;
+			standIn.classList.add('volt-lent-part');
+		};
+		syncClasses();
+		const classObserver = new MutationObserver(syncClasses);
+		classObserver.observe(element, { attributes: true, attributeFilter: ['class'] });
+		store.add(toDisposable(() => classObserver.disconnect()));
+		const focusTracker = store.add(trackFocus(standIn));
+		store.add(focusTracker.onDidFocus(() => this.paneFocusContextKey.set(true)));
+		store.add(focusTracker.onDidBlur(() => this.paneFocusContextKey.set(false)));
+		this.openComposite(id);
+
+		let returned = false;
+		const giveBack = () => {
+			if (returned) {
+				return;
+			}
+			returned = true;
+			this.lent = undefined;
+			if (standIn.contains(standIn.ownerDocument.activeElement)) {
+				this.paneFocusContextKey.set(false);
+			}
+			element.append(...standIn.childNodes);
+			standIn.remove();
+			if (this.layoutService.isVisible(this.partId)) {
+				// Shown again by the workbench: it shows what it had before.
+				if (this.getActiveComposite()?.getId() !== lastActiveId) {
+					this.openComposite(lastActiveId);
+				}
+			} else {
+				this.hideActiveComposite();
+				this.setLastActiveCompositeId(lastActiveId);
+			}
+			onDidReturn.fire();
+			store.dispose();
+		};
+		store.add(this.onDidVisibilityChange(visible => {
+			if (visible) {
+				giveBack();
+			}
+		}));
+
+		return {
+			onDidReturn: onDidReturn.event,
+			layout: (width, height) => {
+				if (returned) {
+					return;
+				}
+				lent.layingOut = true;
+				try {
+					this.layout(width, height, 0, 0);
+				} finally {
+					lent.layingOut = false;
+				}
+			},
+			dispose: giveBack,
+		};
+	}
+
 	protected focusCompositeBar(): void {
 		this.paneCompositeBar.value?.focus();
 	}
 
 	override layout(width: number, height: number, top: number, left: number): void {
-		if (!this.layoutService.isVisible(this.partId)) {
+		if (this.lent ? !this.lent.layingOut : !this.layoutService.isVisible(this.partId)) {
 			return;
 		}
 

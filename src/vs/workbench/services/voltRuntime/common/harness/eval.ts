@@ -5,6 +5,7 @@
 
 import { VoltLane } from './lanes.js';
 import { IOptimizerHint } from './observability.js';
+import { IRunMetrics } from './runMetrics.js';
 import { RunStrategy } from './strategy.js';
 
 /**
@@ -155,4 +156,45 @@ function clamp01(value: number): number {
 
 function round3(value: number): number {
 	return Math.round(value * 1_000) / 1_000;
+}
+
+export interface IRunEvalContext {
+	readonly lane: VoltLane;
+	/** The run changed files and a project check then failed where it passed before. */
+	readonly regression?: boolean;
+	/** The run ended with to-dos still open. */
+	readonly unfinished?: boolean;
+}
+
+/** The eval sample for a finished run, from the meters the runtime already keeps. */
+export function evalSampleFromMetrics(metrics: IRunMetrics, context: IRunEvalContext): IEvalSample {
+	const outcome = metrics.outcome ?? 'fail';
+	return {
+		lane: context.lane,
+		strategy: strategyForLane(context.lane, metrics.mode),
+		outcome,
+		complete: outcome === 'done' && !context.unfinished && !context.regression,
+		steps: metrics.steps || (metrics.tools.count ? 1 : 0),
+		tools: metrics.tools.count,
+		toolErrors: metrics.tools.errors,
+		tokens: metrics.tokens.input + metrics.tokens.output + metrics.tokens.cache,
+		durationMs: metrics.totalMs ?? 0,
+		recoveries: metrics.retries + metrics.continuations,
+		doom: metrics.loops > 0,
+		regression: !!context.regression,
+		stuck: metrics.stalls > 0 && outcome !== 'done',
+		confidence: outcome === 'done' ? (context.regression || context.unfinished ? 0.4 : 0.8) : 0.2,
+	};
+}
+
+function strategyForLane(lane: VoltLane, mode: string): RunStrategy {
+	if (mode === 'debug') {
+		return 'debug';
+	}
+	switch (lane) {
+		case 'chat': return 'answer';
+		case 'fast': return 'fast-edit';
+		case 'mission': return 'mission-contract';
+		default: return 'explore-implement-verify';
+	}
 }

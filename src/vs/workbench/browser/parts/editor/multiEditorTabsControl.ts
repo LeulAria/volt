@@ -19,7 +19,7 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { MenuId } from '../../../../platform/actions/common/actions.js';
-import { EditorCommandsContextActionRunner, EditorTabsControl } from './editorTabsControl.js';
+import { EditorCommandsContextActionRunner, EditorTabsControl, limitTabLabel, MAX_TAB_LABEL_LENGTH } from './editorTabsControl.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { IDisposable, dispose, DisposableStore, combinedDisposable, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { ScrollableElement } from '../../../../base/browser/ui/scrollbar/scrollableElement.js';
@@ -1617,9 +1617,10 @@ export class MultiEditorTabsControl extends EditorTabsControl {
 			forceLabel = true;
 			fileDecorationBadges = false; // not enough space when sticky tabs are compact
 		} else {
-			name = tabLabel.name;
+			// Volt: name and description together show at most MAX_TAB_LABEL_LENGTH characters.
+			name = tabLabel.name !== undefined ? limitTabLabel(tabLabel.name) : undefined;
 			namePrefix = options.showTabIndex ? `${this.toEditorIndex(tabIndex) + 1}: ` : undefined;
-			description = tabLabel.description || '';
+			description = limitTabLabel(tabLabel.description || '', MAX_TAB_LABEL_LENGTH - (name?.length ?? 0));
 		}
 
 		if (tabLabel.ariaLabel) {

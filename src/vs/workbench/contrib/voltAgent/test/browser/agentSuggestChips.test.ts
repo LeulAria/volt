@@ -11,17 +11,12 @@ suite('Agent empty composer suggest chips', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('Select project is second only for no-project agents', () => {
-		const withProject = agentEmptyComposerChips({ mode: 'Agent', needsProject: false }).map(chip => chip.id);
-		assert.deepStrictEqual(withProject, ['plan', 'multitask', 'cloud']);
-		const without = agentEmptyComposerChips({ mode: 'Agent', needsProject: true }).map(chip => chip.id);
-		assert.deepStrictEqual(without, ['plan', 'selectProject', 'multitask', 'cloud']);
-		assert.strictEqual(without[1], 'selectProject');
+	test('offers Plan and Multitask, never a project chip', () => {
+		assert.deepStrictEqual(agentEmptyComposerChips({ mode: 'Agent' }).map(chip => chip.id), ['plan', 'multitask']);
 	});
 
-	test('Select project click is a no-op placeholder chip', () => {
-		const chip = agentEmptyComposerChips({ mode: 'Agent', needsProject: true }).find(item => item.id === 'selectProject');
-		assert.ok(chip);
-		assert.strictEqual(chip.label, 'Select project');
+	test('hides the chip of the current mode', () => {
+		assert.deepStrictEqual(agentEmptyComposerChips({ mode: 'Plan' }).map(chip => chip.id), ['multitask']);
+		assert.deepStrictEqual(agentEmptyComposerChips({ mode: 'Multitask' }).map(chip => chip.id), ['plan']);
 	});
 });

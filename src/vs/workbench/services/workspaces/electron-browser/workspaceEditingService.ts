@@ -129,6 +129,36 @@ export class NativeWorkspaceEditingService extends AbstractWorkspaceEditingServi
 			this.extensionService.startExtensionHosts();
 		}
 	}
+
+	async enterFolder(folderUri: URI): Promise<boolean> {
+		if (!this.workspacesService.enterFolder || this.environmentService.remoteAuthority) {
+			return false;
+		}
+		const stopped = await this.extensionService.stopExtensionHosts(localize('restartExtensionHost.folder', "Opening a folder"));
+		if (!stopped) {
+			return false;
+		}
+
+		try {
+			const result = await this.workspacesService.enterFolder(folderUri);
+			if (!result) {
+				return false;
+			}
+
+			await this.configurationService.initialize(result.workspace);
+
+			// Carry the window's state over: chats, their tools and terminals live on in this window.
+			await this.storageService.switch(result.workspace, true /* preserve data */);
+
+			if (this.workingCopyBackupService instanceof WorkingCopyBackupService) {
+				const newBackupWorkspaceHome = result.backupPath ? URI.file(result.backupPath).with({ scheme: this.environmentService.userRoamingDataHome.scheme }) : undefined;
+				this.workingCopyBackupService.reinitialize(newBackupWorkspaceHome);
+			}
+			return true;
+		} finally {
+			this.extensionService.startExtensionHosts();
+		}
+	}
 }
 
 registerSingleton(IWorkspaceEditingService, NativeWorkspaceEditingService, InstantiationType.Delayed);

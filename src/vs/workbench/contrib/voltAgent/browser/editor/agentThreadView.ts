@@ -44,26 +44,25 @@ export class AgentThreadView extends Disposable {
 		this._register(this.scroll.onScroll(() => this.syncStuckTurns()));
 	}
 
-	/** Pins fade edges and marks the sent card that is stuck at the top. */
+	/** Pins fade edges and marks the sent card that is stuck at the top. Runs on every scroll. */
 	syncStuckTurns(): void {
 		const viewport = this.scroll.getDomNode();
 		if (!viewport.isConnected) {
 			return;
 		}
+		// Read everything first, then write: a class or style written between reads would make each
+		// following read lay the thread out again.
 		const pos = this.scroll.getScrollPosition();
 		const height = viewport.clientHeight;
 		const scrollHeight = Math.max(height, this.inner.scrollHeight);
-		const scrolled = pos.scrollTop > 1;
-		const atEnd = pos.scrollTop + height >= scrollHeight - 2;
-		this.element.classList.toggle('scrolled', scrolled);
-		this.element.classList.toggle('at-end', atEnd);
-
 		const viewportTop = this.inner.getBoundingClientRect().top;
 		const targetWindow = getWindow(this.inner);
-		for (const turn of this.inner.querySelectorAll<HTMLElement>('.volt-agent-turn.user')) {
+		const cards: { turn: HTMLElement; exchange: HTMLElement | null; stuck: boolean; bottom: number; replies: { reply: HTMLElement; top: number }[] }[] = [];
+		// Only prompts the user sent pin; a subagent report scrolls with the replies under them.
+		for (const turn of this.inner.querySelectorAll<HTMLElement>('.volt-agent-turn.user:not(.notification)')) {
 			const exchange = turn.parentElement;
 			if (!exchange) {
-				turn.classList.remove('stuck');
+				cards.push({ turn, exchange, stuck: false, bottom: 0, replies: [] });
 				continue;
 			}
 			const rect = turn.getBoundingClientRect();
@@ -75,8 +74,29 @@ export class AgentThreadView extends Disposable {
 			const marginTop = parseFloat(targetWindow.getComputedStyle(turn).marginTop) || 0;
 			const naturalTop = exchangeRect.top + marginTop;
 			const stuck = rect.top > naturalTop + 0.5 && exchangeRect.bottom > viewportTop;
-			turn.classList.toggle('stuck', stuck);
+			const replies = Array.from(exchange.querySelectorAll<HTMLElement>(':scope > .volt-agent-turn:not(.user), :scope > .volt-agent-turn.notification'), reply => ({ reply, top: stuck ? reply.getBoundingClientRect().top : 0 }));
+			cards.push({ turn, exchange, stuck, bottom: rect.bottom, replies });
 		}
+
+		this.element.classList.toggle('scrolled', pos.scrollTop > 1);
+		this.element.classList.toggle('at-end', pos.scrollTop + height >= scrollHeight - 2);
+		let anyStuck = false;
+		for (const { turn, exchange, stuck, bottom, replies } of cards) {
+			anyStuck ||= stuck;
+			turn.classList.toggle('stuck', stuck);
+			// Stands in for `:has(> .volt-agent-turn.user.stuck)` on the exchange (see agentEditor.css).
+			exchange?.classList.toggle('has-stuck-turn', stuck);
+			// Fade replies under the pinned card without painting a second window background.
+			for (const { reply, top } of replies) {
+				if (stuck) {
+					reply.style.setProperty('--volt-sticky-fade-end', `${bottom - top}px`);
+				} else {
+					reply.style.removeProperty('--volt-sticky-fade-end');
+				}
+			}
+		}
+		// Stands in for `.volt-agent-thread:has(.volt-agent-turn.user.stuck)`.
+		this.element.classList.toggle('has-stuck-turn', anyStuck);
 	}
 
 	rememberHome(): void {

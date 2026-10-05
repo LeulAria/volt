@@ -82,6 +82,13 @@ suite('Volt intent router', () => {
 		assert.ok(intent.groups.includes('shell'));
 	});
 
+	test('checking a result or running tests is not a preview', () => {
+		assert.strictEqual(classifyIntent('Then check it with a Monte Carlo simulation you write and run in this repo as scripts/sim.js', 'agent').wantsPreview, false);
+		assert.strictEqual(classifyIntent('run the tests in this repo and fix what fails', 'agent').wantsPreview, false);
+		assert.strictEqual(classifyIntent('start the dev server and open it', 'agent').wantsPreview, true);
+		assert.strictEqual(classifyIntent('Start the server and check the page in a browser before you finish.', 'agent').wantsPreview, true);
+	});
+
 	test('show me in the browser wants a preview', () => {
 		assert.strictEqual(classifyIntent('build the landing page and show me in the browser', 'agent').wantsPreview, true);
 	});
@@ -96,6 +103,19 @@ suite('Volt intent router', () => {
 		const intent = classifyIntent('fix the typo in README.md', 'agent');
 		assert.ok(intent.groups.includes('edit'));
 		assert.ok(!intent.groups.includes('shell'));
+	});
+
+	test('a small edit with requested verification retains the tools to perform it', () => {
+		for (const text of [
+			'Fix the typo on the submit button and check it in the browser.',
+			'Rename cnt in server/routes/stats.js and run the tests.',
+			'Change the button label and test the page in the browser.',
+		]) {
+			const intent = classifyIntent(text, 'agent');
+			assert.strictEqual(intent.lane, 'agent', text);
+			assert.ok(intent.groups.includes('shell'), text);
+			assert.ok(intent.groups.includes('browser'), text);
+		}
 	});
 
 	test('implementing from official docs stays in a coding lane and still gets web', () => {
@@ -153,6 +173,14 @@ suite('Volt intent router', () => {
 		assert.strictEqual(plan.lane, 'agent');
 		assert.ok(!plan.groups.includes('edit'));
 		assert.ok(!plan.groups.includes('shell'));
+	});
+
+	test('building from a design image is recognised; describing an image is not', () => {
+		assert.strictEqual(classifyIntent('Build design/pricing.png as a static page: index.html with plain HTML and CSS.', 'agent').matchesDesign, true);
+		assert.strictEqual(classifyIntent('implement this screen', 'agent', { attachments: ['Screenshot 2026-10-01.png'] }).matchesDesign, true);
+		assert.strictEqual(classifyIntent('what is in logo.png?', 'agent').matchesDesign, undefined);
+		assert.strictEqual(classifyIntent('compress the images in assets/ so hero.png is under 200 KB', 'agent').matchesDesign, undefined);
+		assert.strictEqual(classifyIntent('Build design/pricing.png as a page', 'ask').matchesDesign, undefined);
 	});
 
 	test('without a workspace everything is chat', () => {

@@ -80,7 +80,7 @@ export interface IModelMessage {
 	parts?: IModelAssistantPart[];
 	/** Tool only: the call failed. */
 	isError?: boolean;
-	/** Tool results that carry pixels, e.g. a browser snapshot. */
+	/** Pixels: a tool result's (browser snapshot) or, on a user message, what the user attached. */
 	images?: IModelImage[];
 }
 
@@ -104,6 +104,8 @@ export interface IModelProvider {
 }
 
 export interface IAgentStartRequest {
+	/** The Volt chat this agent serves; host tools (questions, browser) bind to it. */
+	sessionId?: string;
 	cwd?: string;
 	mode: VoltMode;
 	profile: IProviderProfile;
@@ -126,6 +128,8 @@ export interface IAgentMessage {
 	 * Built by the context pack; providers never invent their own.
 	 */
 	lead?: string;
+	/** Images the user attached to this turn. */
+	images?: readonly IModelImage[];
 }
 
 export interface IAgentProvider {
@@ -145,6 +149,12 @@ export interface IAgentProvider {
 	dispose(session: IAgentSessionHandle): Promise<void>;
 	setRunContext?(session: IAgentSessionHandle, context: { sessionId: string; runId: string; mode: VoltMode }): void;
 	applyAccessPolicy?(session: IAgentSessionHandle, policy: ICompiledPolicy): Promise<void>;
+	/** The agent advertised the slash command `/name` for this session. */
+	supportsCommand?(session: IAgentSessionHandle, name: string): boolean;
+	/** The running turn takes messages without stopping (ACP `_session/steering`). */
+	canSteer?(session: IAgentSessionHandle): boolean;
+	/** Puts a message into the running turn; false when the agent refused it. */
+	steer?(session: IAgentSessionHandle, text: string): Promise<boolean>;
 }
 
 export interface IVoltCatalogItem {

@@ -36,6 +36,21 @@ suite('Fresh streamed text', () => {
 		assert.ok(second.querySelector('strong > .volt-agent-fresh-text'), 'markup stays around the fresh text');
 	});
 
+	test('chips render as they are: only prose fades in', () => {
+		const tracker = new FreshTextTracker();
+		const root = render('<p><code class="volt-agent-path-pill">src/server.js</code> is not the default port.</p>');
+		tracker.apply({}, [root], true, 1000);
+		assert.deepStrictEqual(fresh(root), [{ text: ' is not the default port.', delay: '0ms' }]);
+		assert.strictEqual(root.querySelector('code')!.innerHTML, 'src/server.js', 'the chip is not wrapped');
+	});
+
+	test('quotes render in their own color without fading in', () => {
+		const tracker = new FreshTextTracker();
+		const root = render('<blockquote><p>Lorem ipsum</p></blockquote><p>After.</p>');
+		tracker.apply({}, [root], true, 1000);
+		assert.deepStrictEqual(fresh(root), [{ text: 'After.', delay: '0ms' }]);
+	});
+
 	test('text older than the fade is left alone', () => {
 		const tracker = new FreshTextTracker();
 		const reply = {};

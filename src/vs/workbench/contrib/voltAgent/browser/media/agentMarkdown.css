@@ -1,0 +1,675 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Agent replies, measured against Cursor 3.20's transcript (dark theme, 1280x800):
+ * 600-weight headings, Menlo code, 12px-radius cards. Body text is lighter and a size smaller
+ * than Cursor's 15/24 at 418, by the user's choice: 14/22 at 300.
+ * Alpha steps follow Cursor's text tokens: secondary 74%, tertiary 60%, quaternary 36%.
+ */
+
+.monaco-workbench {
+	--volt-md-fg: var(--vscode-foreground);
+	--volt-md-fg-secondary: color-mix(in srgb, var(--vscode-foreground) 74%, transparent);
+	--volt-md-fg-tertiary: color-mix(in srgb, var(--vscode-foreground) 60%, transparent);
+	--volt-md-fg-quaternary: color-mix(in srgb, var(--vscode-foreground) 36%, transparent);
+	--volt-md-icon-tertiary: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
+	--volt-md-stroke: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	--volt-md-stroke-faint: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	--volt-md-fill: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	--volt-md-fill-faint: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+	--volt-md-card-bg: var(--vscode-editor-background);
+	/* Cursor's link blue (--cursor-blue). */
+	--volt-md-link: #7BAFE9;
+	--volt-md-mono: Menlo, Monaco, "Courier New", monospace;
+	--volt-md-weight: 418;
+	--volt-md-diff-added: oklch(0.638 0.129 153.739 / 0.2);
+	--volt-md-diff-removed: oklch(0.5 0.2 9.842 / 0.2);
+	--volt-md-diff-added-fg: oklch(0.713 0.094 155.438);
+	--volt-md-diff-removed-fg: oklch(0.712 0.177 12.651);
+	--volt-md-mermaid-bg: var(--volt-md-card-bg);
+	--volt-md-mermaid-fg: var(--volt-md-fg);
+	--volt-md-mermaid-line: var(--volt-md-icon-tertiary);
+	--volt-md-mermaid-accent: #88c0d0;
+	--volt-md-mermaid-muted: var(--volt-md-fg-secondary);
+	--volt-md-mermaid-surface: var(--volt-md-fill);
+}
+
+.monaco-workbench.vs,
+.monaco-workbench.hc-light {
+	--volt-md-link: var(--vscode-textLink-foreground);
+	--volt-md-mermaid-accent: var(--vscode-textLink-foreground);
+	--volt-md-diff-added-fg: var(--vscode-gitDecoration-addedResourceForeground, #2e7d32);
+	--volt-md-diff-removed-fg: var(--vscode-gitDecoration-deletedResourceForeground, #c62828);
+}
+
+/* Body */
+
+.volt-agent-reply .volt-agent-block.markdown {
+	font-size: inherit;
+	line-height: inherit;
+	font-weight: inherit;
+}
+
+.volt-agent-reply {
+	font-size: 14px;
+	line-height: 22px;
+	font-weight: 300;
+	color: var(--volt-md-fg);
+}
+
+.volt-agent-markdown {
+	overflow-wrap: anywhere;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.volt-agent-markdown > :first-child {
+	margin-top: 0;
+}
+
+.volt-agent-markdown > :last-child {
+	margin-bottom: 0;
+}
+
+.volt-agent-markdown p {
+	margin: 4px 0 8px;
+}
+
+.volt-agent-markdown strong,
+.volt-agent-markdown b {
+	font-weight: 500;
+}
+
+.volt-agent-markdown em {
+	font-style: italic;
+}
+
+.volt-agent-markdown del,
+.volt-agent-markdown s {
+	color: var(--volt-md-fg-tertiary);
+	text-decoration: line-through;
+}
+
+/* Headings: 21.42 / 19.77 / 18.21px at 1.42 line height. */
+
+.volt-agent-markdown h1,
+.volt-agent-markdown h2,
+.volt-agent-markdown h3,
+.volt-agent-markdown h4,
+.volt-agent-markdown h5,
+.volt-agent-markdown h6 {
+	font-weight: 500;
+	color: var(--volt-md-fg);
+	margin: 22px 0 4px;
+}
+
+.volt-agent-markdown h1 { font-size: 21.42px; line-height: 30.42px; }
+.volt-agent-markdown h2 { font-size: 19.77px; line-height: 28.07px; }
+.volt-agent-markdown h3 { font-size: 18.21px; line-height: 25.86px; }
+.volt-agent-markdown h4 { font-size: 16.5px; line-height: 24px; }
+.volt-agent-markdown h5,
+.volt-agent-markdown h6 { font-size: 14px; line-height: 22px; }
+
+/* Lists: 30px indent, 8px between items, disc / circle / square by depth. */
+
+.volt-agent-markdown ul,
+.volt-agent-markdown ol {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 8px 0 18px;
+	padding: 0 0 0 30px;
+}
+
+.volt-agent-markdown li ul,
+.volt-agent-markdown li ol {
+	margin: 8px 0 0;
+}
+
+.volt-agent-markdown ul { list-style-type: disc; }
+.volt-agent-markdown ul ul { list-style-type: circle; }
+.volt-agent-markdown ul ul ul { list-style-type: square; }
+.volt-agent-markdown ol { list-style-type: decimal; }
+
+.volt-agent-markdown li {
+	display: list-item;
+	margin: 0;
+}
+
+.volt-agent-markdown li > p {
+	margin: 0;
+}
+
+.volt-agent-markdown ul.volt-md-task-list {
+	padding-left: 0;
+	list-style: none;
+}
+
+.volt-agent-markdown li.volt-md-task-item {
+	position: relative;
+	padding-left: 22px;
+	list-style: none;
+}
+
+.volt-md-task-marker {
+	position: absolute;
+	left: 0;
+	top: 4px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	color: var(--volt-md-fg-tertiary);
+}
+
+.volt-md-task-marker .codicon {
+	font-size: 14px;
+}
+
+/* Blockquote, rule */
+
+.volt-agent-markdown blockquote {
+	position: relative;
+	margin: 8px 0;
+	padding: 2px 0 2px 16px;
+	border: 0;
+	color: var(--volt-md-fg-secondary);
+}
+
+.volt-agent-markdown blockquote::before {
+	content: '';
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 3px;
+	border-radius: 2px;
+	background: var(--volt-md-stroke);
+}
+
+.volt-agent-markdown blockquote p {
+	margin: 0;
+}
+
+.volt-agent-markdown hr {
+	display: block;
+	height: 1px;
+	margin: 16px 0;
+	border: 0;
+	background: var(--volt-md-stroke);
+}
+
+/* Inline code: 12.5px mono (it reads larger than the 14px body at the same size) on an 8% fill. File paths look the same and open on click. */
+
+/* Inline code is in the editor's font (VS Code's monospace); highlighted when it reads as code. */
+.volt-agent-markdown code {
+	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font, var(--volt-md-mono)));
+	font-size: 12.5px;
+	font-weight: 400;
+	color: var(--volt-md-fg);
+	background: var(--volt-md-fill);
+	padding: 1.5px 2px;
+	border-radius: 5px;
+	white-space: pre-wrap;
+}
+
+.volt-agent-markdown code.volt-agent-path-pill,
+.volt-agent-markdown table code.volt-agent-path-pill {
+	display: inline;
+	font-size: 12.5px;
+	line-height: inherit;
+	padding: 1.5px 2px;
+	border-radius: 5px;
+	background: var(--volt-md-fill);
+	color: var(--volt-md-fg);
+	font-weight: 400;
+	white-space: pre-wrap;
+	vertical-align: baseline;
+}
+
+.volt-agent-markdown code.volt-agent-path-pill.clickable {
+	cursor: pointer;
+}
+
+/* A file that opens on click: sky-blue text on a light-blue chip, as in Cursor. No underline. */
+.volt-agent-markdown code.volt-agent-path-pill.clickable,
+.volt-agent-markdown table code.volt-agent-path-pill.clickable {
+	color: var(--volt-md-link);
+	background: color-mix(in srgb, var(--volt-md-link) 14%, transparent);
+	text-decoration: none;
+}
+
+.volt-agent-markdown code.volt-agent-path-pill.clickable:hover {
+	color: var(--volt-md-link);
+	background: color-mix(in srgb, var(--volt-md-link) 22%, transparent);
+	text-decoration: none;
+}
+
+/* Links: medium weight in the link colour, with the site's favicon. */
+
+.volt-agent-markdown a {
+	color: var(--volt-md-link);
+	font-weight: 500;
+	text-decoration: none;
+	padding: 2px;
+	margin: 0 -2px;
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.volt-agent-markdown a:hover {
+	color: var(--volt-md-link);
+	text-decoration: none;
+	background: color-mix(in srgb, var(--volt-md-link) 12%, transparent);
+}
+
+.volt-md-link-favicon {
+	display: inline-block;
+	width: 15px;
+	height: 15px;
+	margin: 0 4px 0 0;
+	border-radius: 3px;
+	vertical-align: -2px;
+	object-fit: contain;
+}
+
+/* Footnote references */
+
+.volt-agent-markdown sup {
+	font-size: 11.25px;
+	line-height: 0;
+}
+
+.volt-agent-markdown sup a {
+	padding: 0;
+	margin: 0;
+}
+
+/* Tables: an 8px-radius bordered frame, 6/10 cell padding, 600-weight header. */
+
+.volt-agent-markdown .volt-agent-table-shell {
+	position: relative;
+	margin: 12px 0;
+}
+
+.volt-agent-markdown .volt-agent-table-wrap {
+	margin: 12px 0;
+	border: 1px solid var(--volt-md-stroke);
+	border-radius: 8px;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+
+.volt-agent-markdown .volt-agent-table-shell > .volt-agent-table-wrap {
+	margin: 0;
+}
+
+.volt-agent-markdown .volt-agent-table-wrap table {
+	font-size: inherit;
+	line-height: inherit;
+	width: 100%;
+}
+
+.volt-agent-markdown .volt-agent-table-wrap th,
+.volt-agent-markdown .volt-agent-table-wrap td {
+	padding: 6px 10px;
+	border-right: 1px solid var(--volt-md-stroke);
+	border-bottom: 1px solid var(--volt-md-stroke);
+	overflow-wrap: normal;
+	word-break: normal;
+}
+
+.volt-agent-markdown .volt-agent-table-wrap tr > *:last-child {
+	border-right: none;
+}
+
+.volt-agent-markdown .volt-agent-table-wrap tbody tr:last-child td {
+	border-bottom: none;
+}
+
+.volt-agent-markdown .volt-agent-table-wrap thead th,
+.volt-agent-markdown .volt-agent-table-wrap thead th .volt-agent-searchable {
+	font-weight: 600 !important;
+	white-space: nowrap;
+	color: var(--volt-md-fg);
+}
+
+.volt-agent-markdown .volt-agent-table-wrap th[align='center'],
+.volt-agent-markdown .volt-agent-table-wrap td[align='center'] {
+	text-align: center;
+}
+
+.volt-agent-markdown .volt-agent-table-wrap th[align='right'],
+.volt-agent-markdown .volt-agent-table-wrap td[align='right'] {
+	text-align: right;
+}
+
+.volt-agent-markdown .volt-agent-table-wrap code {
+	white-space: normal;
+}
+
+/* Copy Table sits under the table at its right edge, shown on hover. Its row keeps its height so nothing moves. */
+.volt-agent-markdown .volt-agent-table-actions {
+	display: flex;
+	justify-content: flex-end;
+	margin: 4px 0 0;
+	padding: 0 2px;
+	background: transparent;
+	opacity: 0;
+	transition: opacity 0.1s;
+	pointer-events: none;
+}
+
+.volt-agent-markdown .volt-agent-table-shell:hover .volt-agent-table-actions,
+.volt-agent-markdown .volt-agent-table-actions:focus-within {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.volt-agent-markdown .volt-agent-table-copy-trigger {
+	font-size: 12px;
+	line-height: 18px;
+}
+
+/* Math: KaTeX at its own size; wide display math scrolls instead of overflowing. */
+
+.volt-agent-markdown .katex {
+	font-size: 1.21em;
+}
+
+.volt-agent-markdown .katex-display {
+	margin: 15px 0;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+
+/* Code cards */
+
+.volt-md-code-host {
+	display: block;
+}
+
+.volt-agent-markdown .volt-md-code-host,
+.volt-agent-block.code,
+.volt-agent-block.mermaid {
+	margin: 12px 0;
+}
+
+.volt-agent-blocks > .volt-agent-block.code,
+.volt-agent-blocks > .volt-agent-block.mermaid {
+	margin: 0;
+}
+
+.volt-md-code-block {
+	position: relative;
+	background: var(--volt-md-card-bg);
+	border: 1px solid var(--volt-md-stroke);
+	border-radius: 12px;
+	overflow: hidden;
+	font-size: 15px;
+	line-height: 24px;
+}
+
+.volt-md-code-block-content {
+	position: relative;
+}
+
+/* Cursor's header on a cited snippet (```12:40:src/app.ts): 31px, 6px 10px, icon + name + "Ln a–b". */
+.volt-md-code-citation {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	height: 31px;
+	padding: 6px 10px;
+	box-sizing: border-box;
+	border: 0;
+	border-bottom: 1px solid var(--volt-md-stroke-faint);
+	background: transparent;
+	color: var(--volt-md-fg);
+	font: inherit;
+	font-size: 14px;
+	line-height: 22px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-md-code-citation:disabled {
+	cursor: default;
+}
+
+.volt-md-code-citation:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-md-code-citation-icon {
+	position: relative;
+	flex: 0 0 16px;
+	width: 16px;
+	height: 16px;
+	overflow: hidden;
+}
+
+.volt-md-code-citation.show-file-icons .volt-md-code-citation-icon::before {
+	position: absolute;
+	inset: 0;
+	display: block;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	padding: 0;
+	background-size: 16px 16px;
+	background-repeat: no-repeat;
+	background-position: center;
+	font-size: 16px;
+	line-height: 16px;
+	text-align: center;
+}
+
+.volt-md-code-citation-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	line-height: 18px;
+	color: var(--volt-md-fg-secondary);
+}
+
+.volt-md-code-citation:not(:disabled):hover .volt-md-code-citation-name {
+	color: var(--volt-md-fg);
+}
+
+.volt-md-code-citation-lines {
+	flex: none;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--volt-md-fg-tertiary);
+}
+
+.volt-md-code-block-overlay {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.1s;
+}
+
+.volt-md-code-block:hover .volt-md-code-block-overlay,
+.volt-md-code-block-overlay:focus-within {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.volt-md-icon-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 1px solid var(--volt-md-stroke);
+	border-radius: 4px;
+	background: var(--volt-md-card-bg);
+	color: var(--volt-md-fg);
+	cursor: pointer;
+	transition: color 0.1s, background-color 0.1s, transform 0.05s;
+}
+
+.volt-md-icon-button:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, var(--volt-md-card-bg));
+}
+
+.volt-md-icon-button:active {
+	transform: scale(0.96);
+}
+
+.volt-md-icon-button .codicon {
+	font-size: 12px;
+}
+
+.volt-md-code-scroll {
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: thin;
+}
+
+.volt-md-code-scroll::-webkit-scrollbar {
+	height: 6px;
+}
+
+.volt-md-code-scroll::-webkit-scrollbar-thumb {
+	background: transparent;
+	border-radius: 9999px;
+}
+
+.volt-md-code-block:hover .volt-md-code-scroll::-webkit-scrollbar-thumb {
+	background: var(--volt-md-fill);
+}
+
+.volt-agent-markdown code.volt-md-code,
+code.volt-md-code {
+	display: block;
+	width: max-content;
+	min-width: 100%;
+	box-sizing: border-box;
+	padding: 6px 0;
+	margin: 0;
+	background: none;
+	border-radius: 0;
+	font-family: var(--volt-md-mono);
+	font-size: 12px;
+	line-height: 18px;
+	font-weight: 400;
+	color: var(--volt-md-fg);
+	white-space: pre;
+}
+
+.volt-md-code-line {
+	padding: 0 10px;
+	white-space: pre;
+	min-height: 18px;
+}
+
+/* ```diff: 20px rows, green/red tint and a 3px strip, no +/- column. */
+
+code.volt-md-code.volt-md-diff {
+	padding: 0;
+	line-height: 20px;
+}
+
+.volt-md-diff-line {
+	padding: 0 10px;
+	white-space: pre;
+	min-height: 20px;
+}
+
+.volt-md-diff-line.added {
+	background: var(--volt-md-diff-added);
+	box-shadow: inset 3px 0 0 var(--volt-md-diff-added-fg);
+}
+
+.volt-md-diff-line.removed {
+	background: var(--volt-md-diff-removed);
+	box-shadow: inset 3px 0 0 var(--volt-md-diff-removed-fg);
+}
+
+.volt-md-diff-line.meta {
+	color: var(--volt-md-fg-quaternary);
+}
+
+/* Mermaid: the diagram centred in the code card with 8px above and below. */
+
+.volt-md-code-block.mermaid .volt-md-code-scroll {
+	overflow-y: hidden;
+}
+
+.volt-md-mermaid-content {
+	display: flex;
+	justify-content: center;
+	min-width: max-content;
+	padding: 8px 0;
+}
+
+.volt-md-mermaid-svg {
+	display: block;
+	max-width: none;
+	height: auto;
+}
+
+/* Thinking text keeps its own quieter scale. */
+.volt-agent-thinking-text .volt-agent-markdown,
+.volt-agent-thinking-text .volt-agent-markdown p {
+	font-size: inherit;
+	line-height: inherit;
+}
+
+/* Expanded diagram in the preview dialog */
+.volt-agent-snapshot-diagram {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-width: min(720px, 80vw);
+	max-width: 90vw;
+	max-height: 80vh;
+	overflow: auto;
+	padding: 24px;
+	box-sizing: border-box;
+	background: var(--volt-md-card-bg);
+	border-radius: 8px;
+}
+
+.volt-agent-snapshot-diagram svg {
+	width: 100%;
+	height: auto;
+	max-height: calc(80vh - 48px);
+}
+
+/* Footnotes: superscript link-coloured numbers, notes as a numbered list with a back arrow. */
+.volt-agent-markdown sup.volt-md-footnote-ref {
+	color: var(--volt-md-link);
+	margin-left: 1px;
+}
+
+.volt-agent-markdown ol.volt-md-footnotes {
+	margin: 8px 0;
+}
+
+.volt-agent-markdown ol.volt-md-footnotes + ol.volt-md-footnotes {
+	margin-top: -4px;
+}
+
+.volt-md-footnote-back {
+	color: var(--volt-md-link);
+	font-size: 13px;
+}

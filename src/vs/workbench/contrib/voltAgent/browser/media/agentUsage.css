@@ -1,0 +1,1595 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Usage page (Cost / Tokens / Limits). The page paints no plate of its own: it sits on the agent
+ * window's translucent editor fill, which drops to 80% while Usage is open so the desktop shows
+ * through like the sidebar. No backdrop-filter anywhere (see the volt-transparent-window skill). */
+
+.monaco-workbench.volt-layout-agent.volt-usage-open {
+	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 80%, transparent);
+}
+
+.volt-usage {
+	--volt-usage-claude: #e08a6a;
+	--volt-usage-codex: #d7dbe3;
+	--volt-usage-cursor: #7f9dff;
+	--volt-usage-plate: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
+	/* Token types and speeds (agentUsageShareBar.ts). Hues no agent uses; validated for this surface. */
+	--volt-usage-type-input: #199e70;
+	--volt-usage-type-cache-read: #9085e9;
+	--volt-usage-type-cache-write: #c98500;
+	--volt-usage-type-output: #d55181;
+	--volt-usage-type-other: color-mix(in srgb, var(--vscode-foreground) 38%, transparent);
+	--volt-usage-speed-standard: #199e70;
+	--volt-usage-speed-fast: #c98500;
+	--volt-usage-speed-ultrafast: #d55181;
+	/* Raised fill for the limits and table panels: a tint, so the window's translucency carries through. */
+	--volt-usage-panel: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+	--volt-usage-line: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	--volt-usage-muted: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
+	--volt-usage-faint: color-mix(in srgb, var(--vscode-foreground) 34%, transparent);
+	--volt-usage-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	--volt-usage-spring: cubic-bezier(0.32, 1.25, 0.5, 1);
+	/* SF Pro Rounded on macOS, the face Weather and Fitness use for their big numbers. */
+	--volt-usage-display: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	box-sizing: border-box;
+	color: var(--vscode-foreground);
+	font-size: 13px;
+	background: transparent;
+	font-variant-numeric: tabular-nums;
+	-webkit-font-smoothing: antialiased;
+	container-type: inline-size;
+}
+
+.vs .volt-usage,
+.hc-light .volt-usage {
+	--volt-usage-claude: #c8623f;
+	--volt-usage-codex: #3b3f47;
+	--volt-usage-cursor: #4f74e8;
+	--volt-usage-panel: color-mix(in srgb, #000 4%, transparent);
+	--volt-usage-type-input: #1baf7a;
+	--volt-usage-type-cache-read: #4a3aa7;
+	--volt-usage-type-cache-write: #eda100;
+	--volt-usage-type-output: #e87ba4;
+	--volt-usage-speed-standard: #1baf7a;
+	--volt-usage-speed-fast: #eda100;
+	--volt-usage-speed-ultrafast: #e87ba4;
+}
+
+/* Header */
+
+/* The controls bar floats over the top of the page and stops short of the scrollbar so the slider
+ * stays visible. */
+.volt-usage {
+	position: relative;
+}
+
+.volt-usage-header {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 12px;
+	z-index: 3;
+	height: 60px;
+	padding: 18px 48px 0 48px;
+	box-sizing: border-box;
+	isolation: isolate;
+	pointer-events: none;
+}
+
+.volt-usage-header .volt-usage-controls {
+	pointer-events: auto;
+}
+
+/* The controls sit over a blurred copy of the page (syncHeaderBackdrop in
+ * agentUsageEditor.ts), like the settings titles, and the real page fades out under them.
+ * No backdrop-filter (volt-transparent-window skill). */
+.volt-usage-header-backdrop {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	/* The blur runs past the controls and fades out over the band where the real page fades in. */
+	bottom: -20px;
+	z-index: -1;
+	overflow: hidden;
+	pointer-events: none;
+	mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+}
+
+/* A light veil over the copy keeps the controls readable; the copy still shows through. */
+.volt-usage-header-backdrop::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	background: color-mix(in srgb, var(--volt-agent-window-bg-base, var(--vscode-editor-background, #141414)) 20%, transparent);
+}
+
+.volt-usage-header-backdrop > .volt-usage-mirror {
+	position: absolute;
+	top: 0;
+	left: 0;
+	margin: 0;
+	filter: blur(8px);
+}
+
+/* The page fades in below the header; the strip on the right keeps the scrollbar whole. */
+.volt-usage > .volt-usage-scroll {
+	mask-image: linear-gradient(to bottom, transparent 60px, #000 80px), linear-gradient(#000, #000);
+	mask-size: calc(100% - 12px) 100%, 12px 100%;
+	mask-position: left top, right top;
+	mask-repeat: no-repeat;
+}
+
+.volt-usage-controls {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	max-width: 1084px;
+	margin: 0 auto;
+}
+
+.volt-usage-spacer {
+	flex: 1;
+}
+
+.volt-usage-bar {
+	--volt-usage-muted: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+}
+
+/* Agent layout: the controls sit in the titlebar (placeControls in agentUsageEditor.ts), so the
+ * page drops its floating header and the fade under it. */
+.volt-usage.controls-in-titlebar > .volt-usage-header {
+	display: none;
+}
+
+.volt-usage.controls-in-titlebar > .volt-usage-scroll {
+	mask-image: none;
+}
+
+.volt-usage.controls-in-titlebar .volt-usage-content {
+	padding-top: 28px;
+}
+
+/* The ranges and refresh take the place of the IDE and panel buttons. */
+.monaco-workbench.volt-layout-agent.volt-usage-open .volt-agent-titlebar-toggles {
+	display: none !important;
+}
+
+.monaco-workbench.volt-layout-agent .part.titlebar .volt-usage-bar {
+	flex: 0 0 auto;
+	gap: 4px;
+	pointer-events: auto !important;
+	-webkit-app-region: no-drag !important;
+}
+
+.monaco-workbench.volt-layout-agent .part.titlebar .volt-usage-bar.views {
+	margin-left: 8px;
+}
+
+.monaco-workbench.volt-layout-agent .part.titlebar .volt-usage-bar.ranges {
+	margin: 0 8px 0 10px;
+}
+
+/* Sized for the 35px titlebar. The track is opaque: the same tint, mixed into the window's solid base
+ * instead of over the see-through bar. */
+.part.titlebar .volt-usage-bar .volt-segmented {
+	padding: 2px;
+	background: color-mix(in srgb, var(--vscode-foreground) 5.5%, var(--volt-segmented-plate));
+}
+
+.part.titlebar .volt-usage-bar .volt-segmented-thumb {
+	top: 2px;
+	bottom: 2px;
+}
+
+.part.titlebar .volt-usage-bar .volt-segment {
+	height: 22px;
+	padding: 0 11px;
+	font-size: 12px;
+}
+
+.part.titlebar .volt-usage-bar .volt-usage-refresh {
+	width: 26px;
+	height: 26px;
+}
+
+.part.titlebar .volt-usage-bar .volt-usage-refresh .codicon {
+	font-size: 14px;
+}
+
+.part.titlebar .volt-usage-bar .volt-usage-refresh .volt-usage-spinner {
+	width: 14px;
+	height: 14px;
+}
+
+/* The range switch grows in from nothing when Cost or Tokens shows it, so the view switch beside it
+ * slides over rather than jumps, and shrinks away on Limits, giving the refresh button the corner. */
+.part.titlebar .volt-usage-bar .volt-segmented.range {
+	interpolate-size: allow-keywords;
+	width: auto;
+	overflow: clip;
+	overflow-clip-margin: 4px;
+	transition:
+		width 340ms var(--volt-usage-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+		opacity 220ms ease,
+		transform 340ms var(--volt-usage-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+		display 340ms allow-discrete;
+}
+
+.part.titlebar .volt-usage-bar .volt-segmented.range.hidden {
+	display: none;
+	width: 0;
+	transform: translateX(8px) scale(0.96);
+}
+
+@starting-style {
+	.part.titlebar .volt-usage-bar .volt-segmented.range:not(.hidden) {
+		width: 0;
+		opacity: 0;
+		transform: translateX(8px) scale(0.96);
+	}
+}
+
+/* Segmented control with a sliding thumb, like an AppKit segmented control */
+
+.volt-usage-refresh {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 999px;
+	background: transparent;
+	color: var(--volt-usage-muted);
+	cursor: pointer;
+	transition: background-color 160ms ease, color 160ms ease;
+}
+
+.volt-usage-refresh:hover {
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+}
+
+.volt-usage-refresh .codicon {
+	font-size: 15px;
+}
+
+/* The spinner stays mounted so its SMIL clock keeps running. It sits on the refresh glyph and only appears while a reload is in flight. */
+.volt-usage-refresh .volt-usage-spinner {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 15px;
+	height: 15px;
+	flex-shrink: 0;
+	opacity: 0;
+	pointer-events: none;
+	transform: translate(-50%, -50%);
+	/* Spoke opacities are baked into the SVG, so the spinner paints the full foreground, not the muted icon color. */
+	color: var(--vscode-foreground);
+}
+
+.volt-usage-refresh.spinning .codicon {
+	visibility: hidden;
+}
+
+.volt-usage-refresh.spinning .volt-usage-spinner {
+	opacity: 1;
+}
+
+/* Body. The scrollable wrapper is a flex column so the scrolled element gets a real height. */
+
+.volt-usage-scroll {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.volt-usage-scroll > .volt-usage-body {
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.volt-usage-content {
+	max-width: 1180px;
+	margin: 0 auto;
+	/* Clears the floating controls bar (60px). */
+	padding: 82px 48px 72px;
+	box-sizing: border-box;
+}
+
+.volt-usage-content.transition {
+	animation: volt-usage-enter 340ms var(--volt-usage-ease);
+}
+
+@keyframes volt-usage-enter {
+	from { opacity: 0; transform: translateY(8px) scale(0.995); }
+	to { opacity: 1; transform: none; }
+}
+
+/* Headline */
+
+.volt-usage-headline {
+	font-family: var(--volt-usage-display);
+	font-size: 46px;
+	line-height: 1;
+	font-weight: 700;
+	letter-spacing: -0.025em;
+	white-space: nowrap;
+}
+
+.volt-usage-subline {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	margin-top: 10px;
+	color: var(--volt-usage-muted);
+	font-size: 13px;
+}
+
+.volt-usage-subline .estimate {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	cursor: default;
+}
+
+.volt-usage-subline .estimate .codicon {
+	font-size: 13px;
+}
+
+/* Section heads: small caps title, then a hairline to the edge, then any trailing control. */
+
+.volt-usage-section {
+	margin-top: 40px;
+}
+
+/* The chart rises so its dot grid starts level with the first agent: the readout (72px, the chart's
+ * top padding) and the plot's own top inset (14px, PAD_TOP in agentUsageChart.ts) sit above the
+ * row, in the empty space beside the headline. */
+.volt-usage-chart-column {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	margin-top: -86px;
+}
+
+.volt-usage-chart-column .volt-usage-chart-plot {
+	min-height: 280px;
+}
+
+.volt-usage-head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 24px;
+	margin-bottom: 14px;
+}
+
+.volt-usage-head .title {
+	flex: none;
+	color: var(--volt-usage-muted);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+}
+
+.volt-usage-head .spacer {
+	flex: 1;
+}
+
+/* Under the headline: the agent cards stacked in a narrow column, the chart beside them taking the
+ * rest of the width and stretching to the cards' height. */
+
+.volt-usage-overview {
+	display: grid;
+	grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
+	align-items: stretch;
+	gap: 64px;
+	margin-top: 28px;
+}
+
+.volt-usage-providers {
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	gap: 22px;
+}
+
+.volt-usage-provider {
+	flex: none;
+	min-width: 0;
+}
+
+.volt-usage-providers-empty {
+	color: var(--volt-usage-muted);
+}
+
+.volt-usage-provider.animate {
+	animation: volt-usage-rise 520ms var(--volt-usage-ease) both;
+	animation-delay: calc(var(--volt-usage-order) * 60ms);
+}
+
+@keyframes volt-usage-rise {
+	from { opacity: 0; transform: translateY(8px); }
+	to { opacity: 1; transform: none; }
+}
+
+.volt-usage-provider-top {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-usage-provider-top .volt-brand-icon {
+	flex: none;
+	display: inline-flex;
+}
+
+.volt-usage-provider-top .name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 13px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.volt-usage-provider-top .share {
+	margin-left: auto;
+	padding-left: 8px;
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.volt-usage-provider-value {
+	margin-top: 7px;
+	font-family: var(--volt-usage-display);
+	font-size: 19px;
+	line-height: 1.1;
+	font-weight: 650;
+	letter-spacing: -0.015em;
+}
+
+.volt-usage-provider-meter {
+	height: 3px;
+	margin-top: 10px;
+	border-radius: 2px;
+	overflow: hidden;
+	background: color-mix(in srgb, var(--volt-usage-tint) 15%, transparent);
+}
+
+.volt-usage-provider-meter > span {
+	display: block;
+	height: 100%;
+	border-radius: 2px;
+	background: var(--volt-usage-tint);
+	transform-origin: left center;
+}
+
+.volt-usage-provider.animate .volt-usage-provider-meter > span {
+	animation: volt-usage-grow 900ms var(--volt-usage-ease) both;
+	animation-delay: calc(120ms + var(--volt-usage-order) * 60ms);
+}
+
+@keyframes volt-usage-grow {
+	from { transform: scaleX(0); }
+	to { transform: scaleX(1); }
+}
+
+.volt-usage-provider-detail {
+	margin-top: 9px;
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+}
+
+.volt-usage-note {
+	display: flex;
+	align-items: flex-start;
+	gap: 7px;
+	margin-top: 16px;
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.volt-usage-note .codicon {
+	flex: none;
+	margin-top: 1px;
+	font-size: 13px;
+	color: var(--vscode-editorWarning-foreground);
+}
+
+/* Chart, in the manner of Apple Weather */
+
+.volt-usage-chart {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	padding-top: 72px;
+}
+
+.volt-usage-readout {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	min-width: 140px;
+	pointer-events: none;
+	white-space: nowrap;
+	will-change: transform;
+}
+
+.volt-usage-readout.glide {
+	transition: transform 220ms var(--volt-usage-ease);
+}
+
+.volt-usage-readout .label {
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.volt-usage-readout .value {
+	margin-top: 1px;
+	font-family: var(--volt-usage-display);
+	font-size: 26px;
+	line-height: 1.1;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.volt-usage-readout .detail {
+	margin-top: 2px;
+	color: var(--volt-usage-muted);
+	font-size: 11.5px;
+	font-weight: 500;
+}
+
+.volt-usage-chart-plot {
+	position: relative;
+	flex: 1;
+	min-height: 220px;
+	width: 100%;
+	user-select: none;
+	outline: none;
+}
+
+/* Clicking the plot focuses it; the workbench's focus outline is for the keyboard only. */
+.monaco-workbench .volt-usage-chart-plot:focus:not(:focus-visible) {
+	outline: none;
+}
+
+.volt-usage-chart-plot:focus-visible {
+	border-radius: 6px;
+	box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+}
+
+/* Out of flow, so the drawing never props its own column open: the plot's height comes from
+ * the row (the agents list beside it), and the SVG is redrawn to fit. */
+.volt-usage-chart-svg {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: block;
+	overflow: visible;
+}
+
+.volt-usage-chart-svg .grid line {
+	stroke: var(--volt-usage-line);
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+}
+
+.volt-usage-chart-svg .grid line.baseline {
+	stroke: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+.volt-usage-chart-svg .tick,
+.volt-usage-chart-measure {
+	fill: var(--volt-usage-muted);
+	color: var(--volt-usage-muted);
+	font-size: 11.5px;
+	font-weight: 600;
+}
+
+.volt-usage-chart-svg .tick.x {
+	fill: var(--volt-usage-faint);
+	font-size: 11px;
+	letter-spacing: 0.02em;
+}
+
+.volt-usage-chart-measure {
+	position: absolute;
+	visibility: hidden;
+	white-space: nowrap;
+}
+
+/* Hairline strokes over dot-matrix fills: a faint grid everywhere, lit in the series color under
+ * each curve, on a soft tint that fades toward the baseline. */
+.volt-usage-chart-svg .grid-dot {
+	fill: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+}
+
+.volt-usage-chart-svg .area-dots {
+	opacity: 0.6;
+}
+
+.volt-usage-chart-svg .area-dots.primary {
+	opacity: 0.9;
+}
+
+.volt-usage-chart-svg .line {
+	fill: none;
+	stroke-width: 1.25;
+	stroke-dasharray: 4 3;
+	stroke-linejoin: round;
+	stroke-linecap: round;
+	opacity: 0.8;
+}
+
+.volt-usage-chart-svg .line.primary {
+	opacity: 1;
+}
+
+.volt-usage-chart-svg .reveal {
+	transform-box: fill-box;
+	transform-origin: left center;
+	animation: volt-usage-reveal 1100ms var(--volt-usage-ease) both;
+}
+
+@keyframes volt-usage-reveal {
+	from { transform: scaleX(0); }
+	to { transform: scaleX(1); }
+}
+
+.volt-usage-chart-svg .hit {
+	fill: transparent;
+}
+
+.volt-usage-chart-svg .cursor {
+	pointer-events: none;
+	will-change: transform;
+}
+
+.volt-usage-chart-svg .cursor.glide {
+	transition: transform 220ms var(--volt-usage-ease);
+}
+
+.volt-usage-chart-svg .cursor .rule {
+	stroke-width: 1;
+}
+
+.volt-usage-chart-svg .rule-stop {
+	stop-color: var(--vscode-foreground);
+	stop-opacity: 0.55;
+}
+
+.volt-usage-chart-svg .rule-stop.fade {
+	stop-opacity: 0;
+}
+
+.volt-usage-chart-svg .cursor .knob {
+	fill: #fff;
+	stroke: var(--volt-usage-plate);
+	stroke-width: 2.5;
+	filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+.vs .volt-usage-chart-svg .cursor .knob,
+.hc-light .volt-usage-chart-svg .cursor .knob {
+	fill: var(--vscode-foreground);
+}
+
+.volt-usage-chart-svg .cursor .halo {
+	opacity: 0.2;
+}
+
+.volt-usage-chart-svg .cursor .ring {
+	stroke: var(--volt-usage-plate);
+	stroke-width: 2;
+}
+
+.volt-usage-chart-svg .cursor .ring.hidden {
+	visibility: hidden;
+}
+
+.volt-usage-chart-svg .cursor.glide .knob,
+.volt-usage-chart-svg .cursor.glide .halo,
+.volt-usage-chart-svg .cursor.glide .ring {
+	transition: cy 220ms var(--volt-usage-ease), opacity 160ms ease;
+}
+
+/* Totals: a flat row of figures split by hairlines */
+
+.volt-usage-totals {
+	display: grid;
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+	gap: 24px;
+}
+
+.volt-usage-total {
+	min-width: 0;
+	cursor: default;
+}
+
+.volt-usage-total .label {
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.volt-usage-total .value {
+	margin-top: 5px;
+	font-family: var(--volt-usage-display);
+	font-size: 16px;
+	font-weight: 650;
+	letter-spacing: -0.01em;
+}
+
+/* Breakdown, laid out like Cursor's usage events table: a filled panel with plain column titles */
+
+.volt-usage-head .volt-segmented {
+	flex: none;
+}
+
+.volt-usage-table {
+	border-radius: 14px;
+	overflow: hidden;
+	background: var(--volt-usage-panel);
+}
+
+.volt-usage-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) 90px 110px 120px;
+	align-items: center;
+	gap: 16px;
+	/* Padding on the row, not the table, so the lines between rows run edge to edge. */
+	padding: 0 26px;
+	height: 40px;
+	font-size: 13.5px;
+	color: color-mix(in srgb, var(--vscode-foreground) 88%, transparent);
+	border-bottom: 1px solid var(--volt-usage-line);
+}
+
+.volt-usage-row:last-child {
+	border-bottom: 0;
+}
+
+.volt-usage-row.header {
+	height: 44px;
+	background: color-mix(in srgb, #000 20%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+	font-size: 12.5px;
+	font-weight: 600;
+}
+
+.vs .volt-usage-row.header,
+.hc-light .volt-usage-row.header {
+	background: color-mix(in srgb, #000 5%, transparent);
+}
+
+.volt-usage-row:not(.header) {
+	transition: background-color 120ms ease;
+}
+
+.volt-usage-row:not(.header):hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+/* By model: rank, then the name with a share bar under it (relative to the busiest model). */
+.volt-usage-table.by-model .volt-usage-row {
+	grid-template-columns: 22px minmax(0, 1.6fr) minmax(0, 1fr) 90px 110px 120px;
+}
+
+.volt-usage-table.by-model .volt-usage-row:not(.header) {
+	height: auto;
+	min-height: 48px;
+	padding-top: 7px;
+	padding-bottom: 7px;
+}
+
+.volt-usage-row .rank {
+	color: var(--vscode-foreground);
+	font-size: 12px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-usage-table.by-model .volt-usage-row:not(.header) .name {
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+}
+
+.volt-usage-row .name .line {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.volt-usage-model-bar {
+	display: block;
+	width: 100%;
+	max-width: 192px;
+	height: 2px;
+}
+
+.volt-usage-model-bar > span {
+	display: block;
+	height: 100%;
+	border-radius: 2px;
+}
+
+.volt-usage-row.clickable {
+	cursor: pointer;
+	outline: none;
+}
+
+.volt-usage-row.clickable:focus-visible {
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+}
+
+.volt-usage-row .name,
+.volt-usage-row .agent {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-usage-row .agent {
+	color: var(--volt-usage-muted);
+	gap: 7px;
+}
+
+.volt-usage-row .volt-brand-icon {
+	flex: none;
+	display: inline-flex;
+}
+
+.volt-usage-row .text {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-usage-row .num {
+	text-align: right;
+	white-space: nowrap;
+}
+
+.volt-usage-row .num.muted {
+	color: var(--volt-usage-muted);
+}
+
+.volt-usage-table-empty {
+	padding: 20px 26px;
+	color: var(--volt-usage-muted);
+}
+
+/* Pager under the table: rows per page and the range on the left, Prev / page / Next on the right. */
+
+.volt-usage-pager {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-top: 14px;
+	color: var(--volt-usage-muted);
+	font-size: 13px;
+}
+
+.volt-usage-pager .spacer {
+	flex: 1;
+}
+
+.volt-usage-pager .page {
+	min-width: 48px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-usage-pager-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	height: 32px;
+	padding: 0 13px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	border-radius: 9px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+	transition: background-color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.volt-usage-pager-button:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+}
+
+.volt-usage-pager-button:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.volt-usage-pager-button .codicon {
+	font-size: 13px;
+	color: var(--volt-usage-muted);
+}
+
+.volt-usage-pager-button:focus:not(:focus-visible) {
+	outline: none;
+}
+
+.volt-usage-more {
+	display: inline-flex;
+	align-items: center;
+	margin: 10px 0 0 -8px;
+	padding: 0 8px;
+	height: 26px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+	font: inherit;
+	font-size: 12.5px;
+	cursor: pointer;
+	transition: background-color 120ms ease;
+}
+
+.volt-usage-more:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.volt-usage-footnote {
+	margin-top: 36px;
+	color: var(--volt-usage-faint);
+	font-size: 11.5px;
+	line-height: 1.5;
+}
+
+.volt-usage-message {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	padding: 120px 24px;
+	color: var(--volt-usage-muted);
+	text-align: center;
+}
+
+.volt-usage-message .volt-usage-more {
+	margin: 4px 0 0;
+}
+
+/* Placeholder: the real page drawn from sample data, faded, while usage loads. The loading line stays readable. */
+
+/* Loading skeleton: the page laid out from sample data, every text run, icon, meter and the chart
+ * drawn as flat, still bones. No shimmer. */
+
+.volt-usage-content.placeholder {
+	--volt-usage-bone: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	pointer-events: none;
+}
+
+.volt-usage-content.placeholder .volt-usage-bone {
+	color: transparent;
+	background: var(--volt-usage-bone);
+	border-radius: 4px;
+	-webkit-box-decoration-break: clone;
+	box-decoration-break: clone;
+}
+
+.volt-usage-content.placeholder .codicon,
+.volt-usage-content.placeholder .volt-usage-dots canvas,
+.volt-usage-content.placeholder .volt-usage-provider-meter > span,
+.volt-usage-content.placeholder .volt-usage-chart-svg,
+.volt-usage-content.placeholder .volt-usage-readout,
+.volt-usage-content.placeholder .volt-segmented,
+.volt-usage-content.placeholder .volt-usage-pager-button,
+.volt-usage-content.placeholder .volt-brand-icon > *,
+.volt-usage-content.placeholder svg {
+	visibility: hidden;
+}
+
+.volt-usage-content.placeholder .volt-brand-icon {
+	border-radius: 50%;
+	background: var(--volt-usage-bone);
+}
+
+.volt-usage-content.placeholder .volt-usage-provider-meter,
+.volt-usage-content.placeholder .volt-usage-dots,
+.volt-usage-content.placeholder .volt-usage-share-bar > .segment,
+.volt-usage-content.placeholder .volt-usage-share-legend .swatch {
+	background: var(--volt-usage-bone) !important;
+	border-radius: 999px;
+}
+
+.volt-usage-content.placeholder .volt-usage-chart-plot {
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.volt-usage-content.placeholder * {
+	animation: none !important;
+	transition: none !important;
+}
+
+/* Limits, laid out like Cursor's usage page: a filled panel per account, rows inside */
+
+.volt-usage-limits {
+	max-width: 1084px;
+	margin: 0 auto;
+}
+
+.volt-usage-limit-group + .volt-usage-limit-group {
+	margin-top: 30px;
+}
+
+.volt-usage-limit-group[data-provider="claude"] { --volt-usage-tint: var(--volt-usage-claude); }
+.volt-usage-limit-group[data-provider="codex"] { --volt-usage-tint: var(--volt-usage-codex); }
+.volt-usage-limit-group[data-provider="cursor"] { --volt-usage-tint: var(--volt-usage-cursor); }
+
+.volt-usage-limit-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0 0 10px 2px;
+}
+
+.volt-usage-limit-title .volt-brand-icon {
+	flex: none;
+	display: inline-flex;
+}
+
+.volt-usage-limit-title .name {
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.volt-usage-limit-title .plan {
+	padding: 1px 8px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--volt-usage-tint) 15%, transparent);
+	color: color-mix(in srgb, var(--volt-usage-tint) 72%, var(--vscode-foreground));
+	font-size: 10.5px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+}
+
+.volt-usage-limit-title .stale {
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+}
+
+.volt-usage-limit-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 26px;
+	padding: 20px 22px;
+	border-radius: 14px;
+	background: var(--volt-usage-panel);
+}
+
+.volt-usage-limit-top {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 11px;
+}
+
+.volt-usage-limit-top .name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 14px;
+}
+
+.volt-usage-limit-top .label {
+	font-weight: 500;
+}
+
+.volt-usage-limit-top .scope {
+	color: var(--volt-usage-muted);
+}
+
+.volt-usage-limit-top .used {
+	flex: none;
+	font-size: 14px;
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-usage-limit.high .volt-usage-limit-top .used {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-usage-limit.full .volt-usage-limit-top .used {
+	color: var(--vscode-errorForeground);
+}
+
+/* Dot-matrix meter; the canvas draws in this color. */
+.volt-usage-dots {
+	position: relative;
+	height: 9px;
+	color: var(--volt-usage-tint);
+}
+
+.volt-usage-dots canvas {
+	display: block;
+}
+
+.volt-usage-limit-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 18px;
+	margin-top: 11px;
+	color: var(--volt-usage-muted);
+	font-size: 12.5px;
+}
+
+.volt-usage-limit-meta:empty {
+	display: none;
+}
+
+.volt-usage-limit-meta .part {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-usage-limit-meta .pace.warn {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-usage-limit-meta .pace.full {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-usage-limit-note {
+	margin-top: 8px;
+	color: var(--volt-usage-muted);
+	font-size: 12.5px;
+	line-height: 1.45;
+}
+
+.volt-usage-limit.error {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--volt-usage-muted);
+}
+
+.volt-usage-limit-credit {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	color: var(--volt-usage-muted);
+	font-size: 12.5px;
+}
+
+/* Part-to-whole bars: cost by type and speed, tokens by type. One alone takes the full row. */
+
+.volt-usage-shares {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+	gap: 14px;
+}
+
+/* Each split sits in a plain card, a lighter take on the Breakdown table's fill. */
+.volt-usage-share {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+	padding: 16px 18px 15px;
+	border-radius: 8px;
+	/* The table's fill at 40%; only the fill fades, not the bar or text. */
+	background: color-mix(in srgb, var(--volt-usage-panel) 40%, transparent);
+}
+
+.volt-usage-share-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.volt-usage-share-head .title {
+	font-size: 13.5px;
+	font-weight: 600;
+}
+
+.volt-usage-share-head .aside {
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-usage-share-bar {
+	display: flex;
+	gap: 2px;
+	height: 10px;
+}
+
+.volt-usage-share-bar > .segment {
+	min-width: 4px;
+	height: 100%;
+	border-radius: 2px;
+	transition: filter 120ms ease;
+}
+
+.volt-usage-share-bar > .segment:first-child {
+	border-top-left-radius: 999px;
+	border-bottom-left-radius: 999px;
+}
+
+.volt-usage-share-bar > .segment:last-child {
+	border-top-right-radius: 999px;
+	border-bottom-right-radius: 999px;
+}
+
+.volt-usage-share-bar > .segment:hover {
+	filter: brightness(1.2);
+}
+
+.volt-usage-share-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 16px;
+	font-size: 12px;
+}
+
+.volt-usage-share-legend .item {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-usage-share-legend .swatch {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+}
+
+.volt-usage-share-legend .label {
+	color: var(--volt-usage-muted);
+}
+
+.volt-usage-share-legend .value {
+	font-variant-numeric: tabular-nums;
+}
+
+/* Model dialog. The layer dims the page but holds nothing that scrolls except the opaque dialog
+ * itself (volt-transparent-window skill, rule 3). */
+
+.volt-usage-dialog-layer {
+	position: absolute;
+	inset: 0;
+	z-index: 20;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+	box-sizing: border-box;
+}
+
+.volt-usage-dialog-backdrop {
+	position: absolute;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.5);
+	animation: volt-usage-fade-in 160ms ease both;
+}
+
+/* The page behind an open dialog goes slightly soft. A plain filter on the page, not
+ * backdrop-filter on the overlay (volt-transparent-window skill, rule 1). */
+.volt-usage > .volt-usage-scroll,
+.volt-usage > .volt-usage-header {
+	transition: filter 160ms ease;
+}
+
+.volt-usage.dialog-open > .volt-usage-scroll,
+.volt-usage.dialog-open > .volt-usage-header {
+	filter: blur(0.4px);
+}
+
+.volt-usage-dialog {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: min(760px, 100%);
+	max-height: 100%;
+	overflow: hidden;
+	box-sizing: border-box;
+	border-radius: 18px;
+	/* The 1px edge is drawn by ::before as glass; the fill lives on the glass layer below, over the
+	 * blurred copy of the page. */
+	background: transparent;
+	isolation: isolate;
+	box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+	outline: none;
+	animation: volt-usage-dialog-in 220ms var(--volt-usage-ease) both;
+}
+
+@keyframes volt-usage-fade-in {
+	from { opacity: 0; }
+}
+
+@keyframes volt-usage-dialog-in {
+	from { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+
+.volt-usage-dialog-body {
+	display: flex;
+	flex-direction: column;
+	gap: 26px;
+	min-height: 0;
+	overflow: auto;
+	padding: 27px 29px 29px;
+}
+
+.volt-usage-dialog-glass {
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	overflow: hidden;
+	border-radius: inherit;
+	pointer-events: none;
+	/* A faint inner glow along the top edge, where light enters the glass. */
+	box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 9%, transparent), inset 0 0 24px color-mix(in srgb, #fff 2.5%, transparent);
+}
+
+/* The glass edge: a 1px ring, brightest at the top-left where light catches it, thinning down the
+ * sides and picking up again along the bottom-right. The ring is cut out of a gradient with a mask. */
+.volt-usage-dialog::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	padding: 1px;
+	border-radius: inherit;
+	background: linear-gradient(150deg,
+		color-mix(in srgb, #fff 34%, transparent) 0%,
+		color-mix(in srgb, #fff 12%, transparent) 22%,
+		color-mix(in srgb, #fff 6%, transparent) 50%,
+		color-mix(in srgb, #fff 9%, transparent) 78%,
+		color-mix(in srgb, #fff 20%, transparent) 100%);
+	-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
+	pointer-events: none;
+}
+
+.vs .volt-usage-dialog::before,
+.hc-light .volt-usage-dialog::before {
+	background: linear-gradient(150deg,
+		color-mix(in srgb, #fff 90%, transparent) 0%,
+		color-mix(in srgb, #000 8%, transparent) 40%,
+		color-mix(in srgb, #000 14%, transparent) 100%);
+}
+
+.volt-usage-dialog-glass > .volt-usage-mirror {
+	position: absolute;
+	top: 0;
+	left: 0;
+	margin: 0;
+	filter: blur(2px);
+}
+
+.volt-usage-dialog-glass::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	background: color-mix(in srgb, color-mix(in srgb, var(--vscode-foreground) 3%, var(--volt-usage-plate)) 95%, transparent);
+}
+
+.volt-usage-dialog-header {
+	position: relative;
+	padding-right: 36px;
+}
+
+.volt-usage-dialog-header .title {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+}
+
+.volt-usage-dialog-header .volt-brand-icon {
+	flex: none;
+	display: inline-flex;
+}
+
+.volt-usage-dialog-header h2 {
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 19px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.volt-usage-dialog-header .description {
+	margin-top: 5px;
+	color: var(--volt-usage-muted);
+	font-size: 13px;
+}
+
+.volt-usage-dialog-header .close {
+	position: absolute;
+	top: -6px;
+	right: -8px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	height: 30px;
+	padding: 0;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--volt-usage-muted);
+	cursor: pointer;
+}
+
+.volt-usage-dialog-header .close:hover,
+.volt-usage-dialog-header .close:focus-visible {
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	color: var(--vscode-foreground);
+	outline: none;
+}
+
+.volt-usage-dialog-stats {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 16px 24px;
+	/* One card for the whole row, the same fill as the share bars below it. */
+	padding: 16px 18px 15px;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--volt-usage-panel) 40%, transparent);
+}
+
+.volt-usage-dialog-stats .stat {
+	min-width: 0;
+}
+
+.volt-usage-dialog-stats .label {
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+}
+
+.volt-usage-dialog-stats .value {
+	margin-top: 4px;
+	font-family: var(--volt-usage-display);
+	font-size: 22px;
+	font-weight: 650;
+	letter-spacing: -0.01em;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-usage-dialog-chart {
+	display: flex;
+	flex-direction: column;
+}
+
+/* In the dialog the dots only light the areas under the curves, not the whole plot. */
+.volt-usage-dialog-chart .dot-grid {
+	display: none;
+}
+
+.volt-usage-dialog .volt-usage-shares {
+	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+	gap: 12px;
+}
+
+.volt-usage-dialog-footnote {
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+}
+
+.volt-usage-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+@container (max-width: 900px) {
+	.volt-usage-chart-plot {
+		min-height: 260px;
+	}
+	.volt-usage-overview {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 26px;
+	}
+	/* Stacked under the agents, the chart keeps to its own row. */
+	.volt-usage-chart-column {
+		margin-top: 0;
+	}
+	/* No room beside the chart: the agents take the full width above it. */
+	.volt-usage-providers {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+		gap: 28px;
+	}
+	.volt-usage-totals {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		row-gap: 18px;
+	}
+	.volt-usage-row {
+		grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 64px 76px 86px;
+		gap: 10px;
+		padding: 0 16px;
+	}
+	.volt-usage-table.by-model .volt-usage-row {
+		grid-template-columns: 18px minmax(0, 1.4fr) minmax(0, 1fr) 56px 70px 80px;
+	}
+	.volt-usage-dialog-stats {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.volt-usage-content {
+		padding: 78px 22px 56px;
+	}
+	.volt-usage-header {
+		padding: 16px 22px 0;
+	}
+	.volt-usage-headline {
+		font-size: 38px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-usage *,
+	.volt-usage *::before,
+	.volt-usage *::after,
+	.volt-usage-bar *,
+	.volt-usage-bar *::before,
+	.volt-usage-bar *::after {
+		animation-duration: 1ms !important;
+		transition-duration: 1ms !important;
+	}
+}
+
+/* Focus rings for the keyboard only; a click should not leave a ring behind. Prefixed to outrank
+ * the workbench's `button:focus` ring (style.css), which otherwise wins on load order. */
+.monaco-workbench .volt-usage-refresh:focus:not(:focus-visible),
+.monaco-workbench .volt-usage-more:focus:not(:focus-visible) {
+	outline: none;
+}
+
+.volt-usage-refresh:focus-visible,
+.volt-usage-more:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}

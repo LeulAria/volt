@@ -13,6 +13,7 @@ import {
 	toOpenAiTools,
 } from '../../../common/harness/providerMessages.js';
 import { INativeLoopMessage } from '../../../common/harness/nativeLoop.js';
+import type { IModelMessage } from '../../../common/providers.js';
 
 suite('Volt provider message transforms', () => {
 
@@ -62,5 +63,12 @@ suite('Volt provider message transforms', () => {
 			type: 'function',
 			function: { name: 'read_file', description: 'read', parameters: { type: 'object' } },
 		}]);
+	});
+	test('images the user attached reach every provider format', () => {
+		const messages: IModelMessage[] = [{ role: 'user', content: 'match this', images: [{ mediaType: 'image/png', data: 'AAAA' }] }];
+		assert.deepStrictEqual(toAnthropicMessages(messages), [{ role: 'user', content: [{ type: 'text', text: 'match this' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }] }]);
+		assert.deepStrictEqual(toOpenAiMessages(messages, { vision: true }), [{ role: 'user', content: [{ type: 'text', text: 'match this' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }] }]);
+		assert.deepStrictEqual(toOpenAiMessages(messages), [{ role: 'user', content: 'match this' }]);
+		assert.deepStrictEqual(toGeminiContents(messages), [{ role: 'user', parts: [{ text: 'match this' }, { inlineData: { mimeType: 'image/png', data: 'AAAA' } }] }]);
 	});
 });
