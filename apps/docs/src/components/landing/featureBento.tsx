@@ -782,7 +782,7 @@ const LANES = [
     tone: "#c792ea",
   },
   {
-    title: "Write v0.0.5 changelog",
+    title: "Write v0.0.1 changelog",
     branch: "docs/changelog",
     start: 300,
     dur: 2600,
