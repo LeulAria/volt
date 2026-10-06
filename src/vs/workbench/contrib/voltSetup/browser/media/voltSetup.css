@@ -6,8 +6,8 @@
 /* Setup wizard, Project Settings and the storage list. They live in the opaque .volt-modal panel (or the settings page), so nothing here is see-through; no backdrop-filter anywhere. */
 
 .volt-modal.volt-setup {
-	/* Glass: a slightly translucent panel over the dim layer, plus a hairline top highlight. Still no backdrop-filter (see the transparent-window rules); the dim backdrop behind provides the frosted depth instead of a real blur. */
-	background: color-mix(in srgb, var(--vscode-quickInput-background, var(--vscode-editorWidget-background)) 92%, transparent);
+	/* Opaque: the panel holds scrolling lists over the see-through agent window (see the transparent-window rules). A hairline top highlight gives it depth instead of a blur. */
+	background: var(--vscode-quickInput-background, var(--vscode-editorWidget-background));
 	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 	box-shadow:
 		inset 0 1px 0 color-mix(in srgb, var(--vscode-foreground) 7%, transparent),
