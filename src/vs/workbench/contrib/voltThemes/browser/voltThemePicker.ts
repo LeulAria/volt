@@ -370,7 +370,7 @@ export class VoltThemePicker {
 					slider.value = String(contrastValue);
 					// The filled part of the track, painted on the input itself (the track is transparent).
 					const fill = `${(contrastValue - VOLT_THEME_CONTRAST_MIN) / (VOLT_THEME_CONTRAST_MAX - VOLT_THEME_CONTRAST_MIN) * 100}%`;
-					slider.style.background = `linear-gradient(to right, var(--vscode-button-background, var(--vscode-focusBorder)) ${fill}, color-mix(in srgb, var(--vscode-foreground) 16%, transparent) ${fill}) center / 100% 4px no-repeat`;
+					slider.style.background = `linear-gradient(to right, color-mix(in srgb, var(--vscode-foreground) 60%, transparent) ${fill}, color-mix(in srgb, var(--vscode-foreground) 16%, transparent) ${fill}) center / 100% 4px no-repeat`;
 					valueLabel.textContent = formatContrast(contrastValue);
 					minus.disabled = contrastValue <= VOLT_THEME_CONTRAST_MIN;
 					plus.disabled = contrastValue >= VOLT_THEME_CONTRAST_MAX;
