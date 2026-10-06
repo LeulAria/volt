@@ -165,6 +165,11 @@ export interface IAgentSessionMeta {
 	readonly wokeAt?: number;
 	/** When the latest prompt was sent; a running session has been working since then. */
 	readonly lastPromptAt?: number;
+	/**
+	 * When the user last wrote to the chat. Turns Volt starts on its own (subagent reports, pull
+	 * request news) do not count. Absent in older indexes: fall back to {@link lastPromptAt}.
+	 */
+	readonly lastUserPromptAt?: number;
 	readonly hasDraft?: boolean;
 	/** A reply finished while the chat was not on screen. */
 	readonly unread?: boolean;

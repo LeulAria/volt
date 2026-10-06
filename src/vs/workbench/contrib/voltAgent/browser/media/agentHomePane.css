@@ -1807,7 +1807,8 @@ html.volt-layout-agent-window body {
 	color: var(--vscode-errorForeground, #f14c4c);
 }
 
-/* Settled / Snoozed headers: a sentence-case label, a rule across the row, the fold chevron last. */
+/* Working / Settled / Snoozed headers: a sentence-case label, a rule across the row, the fold chevron last. */
+.volt-agent-home-row.is-group.group-working,
 .volt-agent-home-row.is-group.group-settled,
 .volt-agent-home-row.is-group.group-snooze {
 	font-size: 12px;
@@ -1822,12 +1823,14 @@ html.volt-layout-agent-window body {
 	color: var(--vscode-charts-blue, #3794ff);
 }
 
+.volt-agent-home-row.is-group.group-working > .name,
 .volt-agent-home-row.is-group.group-settled > .name,
 .volt-agent-home-row.is-group.group-snooze > .name {
 	flex: none;
 	order: 0;
 }
 
+.volt-agent-home-row.is-group.group-working::after,
 .volt-agent-home-row.is-group.group-settled::after,
 .volt-agent-home-row.is-group.group-snooze::after {
 	content: '';
@@ -1838,6 +1841,7 @@ html.volt-layout-agent-window body {
 	opacity: 0.25;
 }
 
+.volt-agent-home-row.is-group.group-working > .icon,
 .volt-agent-home-row.is-group.group-settled > .icon,
 .volt-agent-home-row.is-group.group-snooze > .icon {
 	order: 2;
@@ -1846,6 +1850,13 @@ html.volt-layout-agent-window body {
 .volt-agent-home-row.is-group.group-settled > .meta,
 .volt-agent-home-row.is-group.group-snooze > .meta {
 	display: none;
+}
+
+/* Working counts the chats it folds away, right after its label. */
+.volt-agent-home-row.is-group.group-working > .meta {
+	order: 0;
+	margin-left: -2px;
+	font-variant-numeric: tabular-nums;
 }
 
 /* Snoozed tabs sit back until hovered; the countdown is blue, and hover swaps it for the bell. */

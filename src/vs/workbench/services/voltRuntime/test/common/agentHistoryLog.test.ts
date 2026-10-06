@@ -222,6 +222,19 @@ suite('Volt agent history log', () => {
 		assert.strictEqual(derived.workspaceFolder, '/tmp/volt');
 	});
 
+	test('the user\'s last prompt skips the turns Volt started itself', () => {
+		const transcript = foldTranscript(header, [
+			{ type: 'user', turn: 't1', at: 1000, text: 'q', message: { kind: 'user', text: 'q' } },
+			{ type: 'agent', turn: 't1', at: 1500, final: true, status: 'done', text: 'a', message: null },
+			{ type: 'user', turn: 't2', at: 2000, text: 'report', message: { kind: 'user', text: 'report', origin: 'notification' } },
+			{ type: 'agent', turn: 't2', at: 2500, final: true, status: 'done', text: 'b', message: null },
+		]);
+		const derived = deriveMeta(transcript);
+		assert.strictEqual(derived.lastPromptAt, 2000);
+		assert.strictEqual(derived.lastUserPromptAt, 1000);
+		assert.strictEqual(deriveMeta(foldTranscript(header, [])).lastUserPromptAt, undefined);
+	});
+
 	test('status reflects unfinished turns', () => {
 		const running = foldTranscript(header, [
 			{ type: 'user', turn: 't1', at: 1, text: 'q', message: null },
