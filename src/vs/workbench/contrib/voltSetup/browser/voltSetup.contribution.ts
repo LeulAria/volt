@@ -150,7 +150,8 @@ class VoltFirstRunContribution extends Disposable implements IWorkbenchContribut
 		this.shown = true;
 		await this.history.whenReady;
 		this.storageService.store(FIRST_RUN_STORAGE_KEY, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
-		if (this.history.list({ includeArchived: true }).length) {
+		// A fresh profile opens on an empty "New Agent" draft; only chats with turns mean an existing user.
+		if (this.history.list({ includeArchived: true }).some(session => session.turnCount > 0)) {
 			return;
 		}
 		this.instantiationService.createInstance(VoltSetupWizard).show('agents');
