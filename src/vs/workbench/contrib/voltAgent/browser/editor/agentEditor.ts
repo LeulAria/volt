@@ -4381,6 +4381,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.cancelQueueEdit();
 				return;
 			}
+			if (e.keyCode === KeyCode.Enter && (e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey) {
+				// Cmd+Alt+Enter: send, leave this chat working in the background, and start a new one (T3).
+				e.preventDefault();
+				e.stopPropagation();
+				this.sendAndStartNewChat();
+				return;
+			}
 			if (e.keyCode === KeyCode.Enter && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				e.preventDefault();
 				e.stopPropagation();
@@ -4547,6 +4554,37 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this._onDidComposerSend.fire();
 		this.dispatchPrompt(agentText, display);
+	}
+
+	/**
+	 * Sends the prompt like Enter, then opens a new chat in the same project once the composer has
+	 * taken the text (a send can wait for a video's stills or a scratch folder first).
+	 */
+	private sendAndStartNewChat(): void {
+		const model = this.inputModel;
+		if (!model || !this.composerCanSend() || this.questionTray?.active || this.queueEdit || this.editingUserIndex !== undefined) {
+			return;
+		}
+		this.send();
+		const open = () => void this.commandService.executeCommand(NEW_AGENT_COMMAND_ID);
+		if (model.isDisposed() || !model.getValue().trim()) {
+			open();
+			return;
+		}
+		const store = new DisposableStore();
+		const done = (opened: boolean) => {
+			store.dispose();
+			if (opened) {
+				open();
+			}
+		};
+		store.add(model.onDidChangeContent(() => {
+			if (!model.getValue().trim()) {
+				done(true);
+			}
+		}));
+		store.add(disposableTimeout(() => done(false), 15_000));
+		this.editorDisposables.add(store);
 	}
 
 	/**
