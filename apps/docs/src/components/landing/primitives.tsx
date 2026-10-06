@@ -169,16 +169,6 @@ export function span(t: number, start: number, length: number) {
   return (t - start) / length;
 }
 
-export function TrafficLights({ className }: { className?: string }) {
-  return (
-    <div className={cn("flex items-center gap-2", className)}>
-      <span className="size-3 rounded-full bg-[#ff5f57] shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.25)]" />
-      <span className="size-3 rounded-full bg-[#febc2e] shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.25)]" />
-      <span className="size-3 rounded-full bg-[#28c840] shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.25)]" />
-    </div>
-  );
-}
-
 export function Spinner({ className }: { className?: string }) {
   return (
     <svg
@@ -204,23 +194,3 @@ export function Spinner({ className }: { className?: string }) {
     </svg>
   );
 }
-
-/** Live content-box width of an element, for scaling fixed-size illustrations. */
-export function useElementWidth<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) =>
-      setWidth(entry.contentRect.width),
-    );
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return { ref, width };
-}
-
-/** Outer frame for the scaled demo windows: the window itself is the frame, no backdrop. */
-export const WINDOW_FRAME =
-  "relative w-full overflow-hidden rounded-[12px] border border-white/[0.12] bg-[#161616] shadow-[0_48px_96px_-32px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.06)] md:rounded-[16px]";

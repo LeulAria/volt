@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { ComposerPrompt } from "@/components/composerPrompt";
 import { DynamicText } from "@/components/dynamicText";
+import { AgentIde } from "@/components/landing/agentIde";
 import { Capabilities } from "@/components/landing/capabilities";
 import { ClosingCta, SiteFooter } from "@/components/landing/closing";
 import { FeatureBento } from "@/components/landing/featureBento";
@@ -254,6 +255,8 @@ function Home() {
         <SectionRule />
         <Manifesto />
         <SectionRule className="mt-0" />
+        <AgentIde />
+        <SectionRule className="mt-24 md:mt-32" />
         <PoweredBy />
         <SectionRule className="mt-24 md:mt-32" />
         <FeatureBento />
