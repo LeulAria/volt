@@ -135,6 +135,8 @@ import { IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME } from '../../platfor
 import { VoltFsBrowseService } from '../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME } from '../../platform/voltBrowser/common/voltBrowser.js';
 import { VoltBrowserMainService } from '../../platform/voltBrowser/electron-main/voltBrowserMainService.js';
+import { IVoltDiagnosticsService } from '../../platform/voltDiagnostics/common/voltDiagnostics.js';
+import { registerVoltDiagnosticsMain, VoltDiagnosticsMainService } from '../../platform/voltDiagnostics/electron-main/voltDiagnosticsMainService.js';
 import { IVoltStorageService, VOLT_STORAGE_CHANNEL_NAME } from '../../platform/voltStorage/common/voltStorage.js';
 import { VoltStorageMainService } from '../../platform/voltStorage/electron-main/voltStorageMainService.js';
 import { IVoltEditorImportService, VOLT_EDITOR_IMPORT_CHANNEL_NAME } from '../../platform/voltEditorImport/common/voltEditorImport.js';
@@ -1077,6 +1079,9 @@ export class CodeApplication extends Disposable {
 		// Volt in-app browser (session data, color scheme emulation)
 		services.set(IVoltBrowserService, new SyncDescriptor(VoltBrowserMainService, undefined, false /* proxied to other processes */));
 
+		// Volt diagnostics (tracing export, stall log, heap snapshots)
+		services.set(IVoltDiagnosticsService, new SyncDescriptor(VoltDiagnosticsMainService, undefined, false /* proxied to other processes */));
+
 		// Volt storage cleanup and first-run import
 		services.set(IVoltStorageService, new SyncDescriptor(VoltStorageMainService, undefined, true));
 		services.set(IVoltEditorImportService, new SyncDescriptor(VoltEditorImportService, undefined, true));
@@ -1178,6 +1183,9 @@ export class CodeApplication extends Disposable {
 		// across apps until `requestSingleInstance` APIs are adopted.
 
 		const disposables = this._register(new DisposableStore());
+
+		// Volt diagnostics: times every main IPC channel registered below (stall attribution, git spans)
+		disposables.add(registerVoltDiagnosticsMain(accessor, mainProcessElectronServer));
 
 		const launchChannel = ProxyChannel.fromService(accessor.get(ILaunchMainService), disposables, { disableMarshalling: true });
 		this.mainProcessNodeIpcServer.registerChannel('launch', launchChannel);
