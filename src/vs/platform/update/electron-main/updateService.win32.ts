@@ -21,6 +21,7 @@ import { ILifecycleMainService, IRelaunchHandler, IRelaunchOptions } from '../..
 import { ILogService } from '../../log/common/log.js';
 import { INativeHostMainService } from '../../native/electron-main/nativeHostMainService.js';
 import { IProductService } from '../../product/common/productService.js';
+import { IRequestContext } from '../../../base/parts/request/common/request.js';
 import { IRequestService } from '../../request/common/request.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { AvailableForDownload, DisablementReason, IUpdate, State, StateType, UpdateType } from '../common/update.js';
@@ -136,7 +137,7 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 					return Promise.resolve(null);
 				}
 
-				this.setState(State.Downloading);
+				this.setState(this.productService.voltRelease ? State.DownloadingUpdate(update, 0) : State.Downloading);
 
 				return this.cleanup(update.version).then(() => {
 					return this.getUpdatePackagePath(update.version).then(updatePackagePath => {
@@ -148,7 +149,10 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 							const downloadPath = `${updatePackagePath}.tmp`;
 
 							return this.requestService.request({ url: update.url }, CancellationToken.None)
-								.then(context => this.fileService.writeFile(URI.file(downloadPath), context.stream))
+								.then(context => {
+									this.reportDownloadProgress(update, context);
+									return this.fileService.writeFile(URI.file(downloadPath), context.stream);
+								})
 								.then(update.sha256hash ? () => checksum(downloadPath, update.sha256hash) : () => undefined)
 								.then(() => pfs.Promises.rename(downloadPath, updatePackagePath, false /* no retry */))
 								.then(() => updatePackagePath);
@@ -176,6 +180,27 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 				const message: string | undefined = explicit ? (err.message || err) : undefined;
 				this.setState(State.Idle(getUpdateType(), message));
 			});
+	}
+
+	/** Volt: report download progress (about every 2%) so the update popover can show it. */
+	private reportDownloadProgress(update: IUpdate, context: IRequestContext): void {
+		if (!this.productService.voltRelease) {
+			return;
+		}
+		const total = Number(context.res.headers['content-length']) || (update as IVoltUpdate).size || 0;
+		if (!total) {
+			return;
+		}
+		let received = 0;
+		let reported = 0;
+		context.stream.on('data', chunk => {
+			received += chunk.byteLength;
+			const progress = Math.min(1, received / total);
+			if (progress - reported >= 0.02 && this.state.type === StateType.Downloading) {
+				reported = progress;
+				this.setState(State.DownloadingUpdate(update, progress));
+			}
+		});
 	}
 
 	protected override async doDownloadUpdate(state: AvailableForDownload): Promise<void> {

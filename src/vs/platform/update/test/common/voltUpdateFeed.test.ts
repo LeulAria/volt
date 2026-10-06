@@ -49,8 +49,11 @@ suite('Volt update feed', () => {
 			sha256hash: 'abc',
 			voltChannel: undefined,
 			releaseUrl: entry.releaseUrl,
-			downloadUrl: entry.downloadUrl
+			downloadUrl: entry.downloadUrl,
+			notes: undefined,
+			size: undefined
 		});
+		assert.strictEqual(decideVoltUpdate({ ...entry, notes: '## What\'s Changed' }, current, 'stable', page)?.notes, '## What\'s Changed');
 	});
 
 	test('ignores the running build and older builds', () => {

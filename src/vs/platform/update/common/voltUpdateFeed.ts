@@ -37,6 +37,10 @@ export interface IVoltUpdate extends IUpdate {
 	readonly releaseUrl?: string;
 	/** The installer a person would download (dmg, user setup, deb). */
 	readonly downloadUrl?: string;
+	/** Release notes (GitHub Release body, markdown). */
+	readonly notes?: string;
+	/** Size in bytes of `url`, for download progress. */
+	readonly size?: number;
 }
 
 export interface IVoltCurrentBuild {
@@ -106,6 +110,8 @@ export function decideVoltUpdate(entry: unknown, current: IVoltCurrentBuild, cha
 		voltChannel: crossChannel ? channel : undefined,
 		releaseUrl: entry.releaseUrl,
 		downloadUrl: entry.downloadUrl,
+		notes: typeof entry.notes === 'string' && entry.notes ? entry.notes.slice(0, 8000) : undefined,
+		size: crossChannel ? undefined : entry.size,
 	};
 }
 
