@@ -154,6 +154,13 @@ export interface IAgentSessionMeta {
 	readonly archived?: boolean;
 	/** Session parked out of the active Workspaces list into Settled. */
 	readonly settled?: boolean;
+	/** The user turned automatic settling off for this chat; manual settle still works. */
+	readonly autoSettle?: false;
+	/**
+	 * When the user last took the chat out of Settled by hand. It is not settled for being idle
+	 * again until the user writes to it.
+	 */
+	readonly unsettledAt?: number;
 	/** Session parked out of the active Workspaces list into Snooze. */
 	readonly snoozed?: boolean;
 	/** When a snoozed session returns to the list. Absent: snoozed until the user wakes it. */
@@ -270,7 +277,10 @@ export interface IAgentHistoryService {
 
 	setPinned(id: string, pinned: boolean): Promise<void>;
 	setArchived(id: string, archived: boolean): Promise<void>;
-	setSettled(id: string, settled: boolean): Promise<void>;
+	/** Settling drops the pin. `byUser`: a manual un-settle holds automatic settling until the next prompt. */
+	setSettled(id: string, settled: boolean, options?: { readonly byUser?: boolean }): Promise<void>;
+	/** Whether automatic settling (idle chats, finished pull requests) may move this chat. */
+	setAutoSettle(id: string, enabled: boolean): Promise<void>;
 	/** `until` is when the session comes back on its own; the service wakes it then. */
 	setSnoozed(id: string, snoozed: boolean, until?: number): Promise<void>;
 	setUnread(id: string, unread: boolean): Promise<void>;

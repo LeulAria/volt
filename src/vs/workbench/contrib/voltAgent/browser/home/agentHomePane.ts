@@ -12,7 +12,7 @@ import { IListAccessibilityProvider } from '../../../../../base/browser/ui/list/
 import { RenderIndentGuides } from '../../../../../base/browser/ui/tree/abstractTree.js';
 import { IObjectTreeElement, ITreeNode, ITreeRenderer, ObjectTreeElementCollapseState } from '../../../../../base/browser/ui/tree/tree.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
-import { Action, IAction, Separator } from '../../../../../base/common/actions.js';
+import { Action, IAction, Separator, SubmenuAction, toAction } from '../../../../../base/common/actions.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename } from '../../../../../base/common/resources.js';
@@ -1061,13 +1061,13 @@ export class AgentHomePane extends Disposable {
 		showAgentHomeNewChatMenu(this.contextViewService, anchor, projects, choice => void this.startChat(choice));
 	}
 
-	/** Right-click on an agent tab: pin, settle, snooze, archive. */
+	/** Right-click on an agent tab: pin, settle, snooze, Auto-settle, archive. */
 	showSessionMenu(session: IAgentSessionMeta, anchor: HTMLElement | { x: number; y: number }): void {
 		this.hover.hide();
 		const actions: IAction[] = [
 			new Action('volt.home.pin', session.pinned ? localize('voltAgent.home.unpin', "Unpin") : localize('voltAgent.home.pin', "Pin"), undefined, !session.archived, () => this.history.setPinned(session.id, !session.pinned)),
 			new Separator(),
-			new Action('volt.home.settle', session.settled ? localize('voltAgent.home.unsettle', "Move Out of Settled") : localize('voltAgent.home.settle', "Move to Settled"), undefined, true, () => this.history.setSettled(session.id, !session.settled)),
+			new Action('volt.home.settle', session.settled ? localize('voltAgent.home.unsettle', "Move Out of Settled") : localize('voltAgent.home.settle', "Move to Settled"), undefined, true, () => this.history.setSettled(session.id, !session.settled, { byUser: true })),
 			new Action('volt.home.snooze', session.snoozed ? localize('voltAgent.home.unsnooze', "Unsnooze") : localize('voltAgent.home.snoozeAction', "Snooze…"), undefined, true, async () => {
 				if (session.snoozed) {
 					await this.history.setSnoozed(session.id, false);
@@ -1076,6 +1076,11 @@ export class AgentHomePane extends Disposable {
 					this.openSnoozeMenu(isHTMLElement(anchor) ? anchor : this.treeContainer, session);
 				}
 			}),
+			// Off keeps the chat out of Settled however long it sits idle; settling by hand still works.
+			new SubmenuAction('volt.home.autoSettle', localize('voltAgent.home.autoSettle', "Auto-settle"), [
+				toAction({ id: 'volt.home.autoSettle.on', label: localize('voltAgent.home.autoSettleOn', "Enabled"), checked: session.autoSettle !== false, run: () => this.history.setAutoSettle(session.id, true) }),
+				toAction({ id: 'volt.home.autoSettle.off', label: localize('voltAgent.home.autoSettleOff', "Disabled"), checked: session.autoSettle === false, run: () => this.history.setAutoSettle(session.id, false) }),
+			]),
 			new Separator(),
 			new Action('volt.home.archive', session.archived ? localize('voltAgent.home.unarchive', "Unarchive") : localize('voltAgent.home.archive', "Archive"), undefined, true, () => this.history.setArchived(session.id, !session.archived)),
 		];
