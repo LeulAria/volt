@@ -20,6 +20,7 @@ import { URI } from '../../../../../base/common/uri.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { showAgentProjectMenu } from './agentHomeWorkspaceActions.js';
+import { isScratchSession, scratchProjectLabel } from './agentHomeWorkspace.js';
 import { IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
@@ -1139,6 +1140,10 @@ export class AgentHomePane extends Disposable {
 
 	/** Where a session lives, as far as the row can tell: repository or folder name, branch, initials. */
 	sessionContext(session: IAgentSessionMeta): IAgentHomeSessionContext & { readonly initials: string } {
+		if (isScratchSession(session)) {
+			const label = scratchProjectLabel();
+			return { workspace: label, initials: repoInitials(label) };
+		}
 		const primary = sessionFolders(session)[0];
 		const repo = primary ? this.repos.get(primary) : undefined;
 		const folderName = primary ? basename(uriFromStoredRoot(primary)) : undefined;

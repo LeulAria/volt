@@ -108,7 +108,8 @@ import { AgentLandingChrome } from '../home/agentLandingChrome.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
 import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
-import { adoptProjectForUnstartedSession, agentComposerCanSend, attachSessionToProject } from '../workspace/agentShell.js';
+import { adoptProjectForUnstartedSession, agentSessionNeedsScratch, attachSessionToProject } from '../workspace/agentShell.js';
+import { AgentScratchFolders } from '../workspace/agentScratchProject.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
@@ -576,6 +577,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly suggestListeners = this._register(new DisposableStore());
 	private sendKind: 'mic' | 'send' = 'mic';
 	private submitting = false;
+	/** A chat without a project is getting its scratch folder; Send waits for it. */
+	private makingScratchFolder = false;
 	private cloneBanner: HTMLElement | undefined;
 	private waitingForClone: string | undefined;
 	/** Prompts reach the orchestrator in the order they were sent, even when freezing one takes longer. */
@@ -1866,7 +1869,31 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private composerCanSend(): boolean {
-		return agentComposerCanSend(this.sessionContext, this.sessionKey, this.history.get(this.sessionKey));
+		return !this.makingScratchFolder;
+	}
+
+	/**
+	 * A chat with no project runs in a folder of its own, made on its first send. True while
+	 * that folder is being made; the send runs again once the chat is bound to it.
+	 */
+	private startInScratchFolder(): boolean {
+		if (this.queueEdit || !agentSessionNeedsScratch(this.sessionContext, this.sessionKey, this.history.get(this.sessionKey), this.messages.length > 0)) {
+			return false;
+		}
+		const { agentText } = this.readComposer();
+		if (!agentText) {
+			return false;
+		}
+		this.makingScratchFolder = true;
+		this.updateSendButton();
+		void this.instantiationService.createInstance(AgentScratchFolders).bind(this.sessionKey, agentText).then(project => {
+			this.makingScratchFolder = false;
+			this.updateSendButton();
+			if (project && !this._store.isDisposed) {
+				this.send();
+			}
+		});
+		return true;
 	}
 
 	private setSearchableText(parent: HTMLElement, text: string): void {
@@ -4348,6 +4375,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			});
 			return;
 		}
+		if (this.startInScratchFolder()) {
+			return;
+		}
 		this.submitting = true;
 		try {
 			this.doSend();
@@ -4482,7 +4512,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** The run request for a prompt: the chosen model and options, the checkout, and the prompt's images. */
 	private sendRequest(value: string, display: IAgentPromptDisplay | undefined, mode: string): IVoltSendRequest & { readonly images?: readonly IAgentImageAttachment[] } {
-		const runOn = normalizeAgentRunOn(this.storageService.get(agentRunOnStorageKey(this.sessionContext.activeProject?.id), StorageScope.APPLICATION));
+		// A scratch folder is not a git repository, so it has no worktrees.
+		const binding = this.sessionContext.bindingFor(this.sessionKey);
+		const scratch = !!binding && !!this.sessionContext.getProject(binding.projectId)?.scratch;
+		const runOn = scratch ? 'same-branch' : normalizeAgentRunOn(this.storageService.get(agentRunOnStorageKey(this.sessionContext.activeProject?.id), StorageScope.APPLICATION));
 		const images = imageAttachmentsFromMentions(display?.mentions);
 		return {
 			text: value,
@@ -4936,7 +4969,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.sendButton.replaceChildren();
 		this.sendButton.classList.remove('stop');
 		setAgentTooltip(this.sendButton, !canSend
-			? localize('voltAgent.selectProjectFirst', "Select a project to send")
+			? localize('voltAgent.makingScratchFolder', "Making a folder for this chat...")
 			: kind === 'send'
 				? localize('voltAgent.send', "Send")
 				: localize('voltAgent.voice', "Voice"));
