@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event, IValueWithChangeEvent } from '../../../../base/common/event.js';
+import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { RefCounted } from '../diffEditor/utils.js';
 import { IDiffEditorOptions } from '../../../common/config/editorOptions.js';
 import { ITextModel } from '../../../common/model.js';
@@ -27,4 +28,6 @@ export interface IDocumentDiffItem {
 	readonly options?: IDiffEditorOptions;
 	readonly onOptionsDidChange?: Event<void>;
 	readonly contextKeys?: Record<string, ContextKeyValue>;
+	/** Volt: fills a slot in the file's header, before its actions (a host's stats or checkboxes). */
+	readonly renderHeaderExtras?: (container: HTMLElement) => IDisposable;
 }

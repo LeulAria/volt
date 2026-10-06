@@ -1033,6 +1033,18 @@
 		"--vscode-chat-font-size-body-s",
 		"--vscode-chat-font-size-body-xl",
 		"--vscode-chat-font-size-body-xs",
-		"--vscode-chat-font-size-body-xxl"
+		"--vscode-chat-font-size-body-xxl",
+		"--volt-pr-add",
+		"--volt-pr-border",
+		"--volt-pr-closed",
+		"--volt-pr-del",
+		"--volt-pr-draft",
+		"--volt-pr-label",
+		"--volt-pr-merged",
+		"--volt-pr-muted",
+		"--volt-pr-open",
+		"--volt-pr-pending",
+		"--volt-pr-surface",
+		"--volt-pr-surface-strong"
 	]
 }

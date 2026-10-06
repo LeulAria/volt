@@ -146,6 +146,14 @@ class AgentReviewDiffLook extends Disposable implements IMultiDiffEditorLook {
 }
 
 
+/**
+ * The review's diff style for a multi-diff widget a view hosts itself (a pull request's Code tab):
+ * scopes the review CSS to `container` and gives the options for the widget's files.
+ */
+export function createAgentReviewDiffLook(instantiationService: IInstantiationService, container: HTMLElement): IMultiDiffEditorLook {
+	return instantiationService.createInstance(AgentReviewDiffLook, container);
+}
+
 /** Multi-diff editors in the agent window's tools take the review's diff style. */
 export class AgentReviewDiffLookContribution extends Disposable {
 

@@ -7,10 +7,8 @@ import { $, addDisposableListener, append, clearNode, EventHelper, getWindow } f
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
-import { basename, dirname } from '../../../../../base/common/path.js';
+import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
@@ -28,14 +26,12 @@ import {
 	IVoltPrReview,
 	IVoltPrReviewThread,
 	IVoltPullRequestDetail,
-	VoltPrFileChange,
 	VoltPrMergeMethod,
 	voltPrErrorCode,
 	voltPrErrorMessage,
 } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { IPrDiffLine, lineRange, parseUnifiedPatch } from '../../common/agentPrDiff.js';
 import {
 	buildExplainPrompt,
 	buildFixChecksPrompt,
@@ -49,10 +45,10 @@ import {
 	resolveMergeMethod,
 } from '../../common/agentPullRequests.js';
 import { renderMarkdownInto } from '../blocks/agentBlockRenderers.js';
-import { highlight } from '../blocks/agentCodeBlock.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { createVoltSegmented } from '../ui/segmented/voltSegmented.js';
+import { AgentPullRequestCodeDiff, canShowInCodeDiff } from './agentPullRequestCodeDiff.js';
 import { openPullRequestDiff } from './agentPullRequestDiff.js';
 import { AgentPullRequestEditorInput } from './agentPullRequestEditorInput.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
@@ -65,8 +61,6 @@ type Order = 'newest' | 'oldest';
 const POLL_MS = 20_000;
 /** Viewed ticks are sent together after this pause, like T3 Code. */
 const VIEWED_FLUSH_MS = 400;
-/** Files longer than this many diff lines start folded in the Code tab. */
-const LARGE_FILE_LINES = 400;
 
 const MERGE_METHOD_NAMES: Record<VoltPrMergeMethod, string> = {
 	squash: localize('voltPr.method.squash', "squash"),
@@ -119,12 +113,9 @@ export class AgentPullRequestView extends Disposable {
 	private timelineOrder: Order = 'newest';
 	/** Code tab: the commit shown (undefined: all of them), and the files opened. */
 	private codeCommit: string | undefined;
-	private readonly expanded = new Set<string>();
-	private readonly collapsedByUser = new Set<string>();
+	private readonly codeDiffWidget = this._register(new MutableDisposable<AgentPullRequestCodeDiff>());
 	private readonly patches = new Map<string, IPatchLoad>();
 	private readonly patchLoads = new Set<string>();
-	/** The line a shift-click extends a selection from, per file. */
-	private lineAnchor: { readonly path: string; readonly index: number } | undefined;
 	private composeOpen = false;
 	private composeMode: 'comment' | 'review' = 'comment';
 	private reviewEvent: 'comment' | 'approve' | 'requestChanges' = 'comment';
@@ -225,9 +216,6 @@ export class AgentPullRequestView extends Disposable {
 		this.drafts.clear();
 		this.deleteBranch = undefined;
 		this.codeCommit = undefined;
-		this.expanded.clear();
-		this.collapsedByUser.clear();
-		this.lineAnchor = undefined;
 		this.composeOpen = false;
 		this.element.classList.remove('scrolled');
 		this.render();
@@ -339,6 +327,8 @@ export class AgentPullRequestView extends Disposable {
 		this.renderStore.clear();
 		clearNode(this.header);
 		clearNode(this.body);
+		// The Code tab's diff scrolls itself: the body holds it at full height instead of scrolling.
+		this.body.classList.toggle('code-tab', this.tab === 'code' && !!this.detail);
 		const target = this.target;
 		if (!target) {
 			this.renderCompose(undefined);
@@ -408,6 +398,7 @@ export class AgentPullRequestView extends Disposable {
 	private renderHeader(pr: IVoltPullRequestDetail): void {
 		const top = append(this.header, $('.volt-pr-header-row'));
 		const crumbs = append(top, $('.volt-pr-crumbs'));
+		// allow-any-unicode-next-line
 		// Full row: owner/repo #12 ↗. Condensed (scrolled): #12 and the title.
 		const full = append(crumbs, $('.volt-pr-crumbs-full'));
 		const repo = append(full, $('a.volt-pr-repo')) as HTMLAnchorElement;
@@ -460,6 +451,7 @@ export class AgentPullRequestView extends Disposable {
 		const count = pr.files.length || pr.changedFiles;
 		append(files, $('span')).textContent = count === 1 ? localize('voltPr.oneFile', "1 file") : localize('voltPr.files', "{0} files", count);
 		append(files, $('span.add')).textContent = `+${pr.additions}`;
+		// allow-any-unicode-next-line
 		append(files, $('span.del')).textContent = `−${pr.deletions}`;
 		// With a local clone the changes open in a diff editor tab; without one, the Code tab shows them.
 		const canDiff = !!this.cloneFolder();
@@ -467,11 +459,22 @@ export class AgentPullRequestView extends Disposable {
 		this.onClick(files, () => canDiff ? this.openDiff(pr) : this.showTab('code'));
 
 		const tabbar = append(this.header, $('.volt-pr-tabbar'));
-		createVoltSegmented<Tab>(tabbar, [
-			{ id: 'summary', label: localize('voltPr.tab.summary', "Summary") },
-			{ id: 'timeline', label: localize('voltPr.tab.timeline', "Timeline") },
-			{ id: 'code', label: localize('voltPr.tab.code', "Code") },
-		], this.tab, tab => this.showTab(tab), this.renderStore, 'small');
+		// Text tabs with an underline under the open one.
+		const tabs = append(tabbar, $('.volt-pr-tabs'));
+		tabs.setAttribute('role', 'tablist');
+		for (const tab of [
+			{ id: 'summary' as const, label: localize('voltPr.tab.summary', "Summary") },
+			{ id: 'timeline' as const, label: localize('voltPr.tab.timeline', "Timeline") },
+			{ id: 'code' as const, label: localize('voltPr.tab.code', "Code") },
+		]) {
+			const button = append(tabs, $('button.volt-pr-tab')) as HTMLButtonElement;
+			button.type = 'button';
+			button.setAttribute('role', 'tab');
+			button.setAttribute('aria-selected', String(this.tab === tab.id));
+			button.classList.toggle('active', this.tab === tab.id);
+			button.textContent = tab.label;
+			this.onClick(button, () => this.showTab(tab.id));
+		}
 		append(tabbar, $('.volt-pr-spacer'));
 		const aside = append(tabbar, $('.volt-pr-tabbar-aside'));
 		if (this.tab === 'summary') {
@@ -1312,7 +1315,10 @@ export class AgentPullRequestView extends Disposable {
 		});
 	}
 
-	/** T3 Code's Code tab: a commit picker, viewed progress, and each file's diff inline. */
+	/**
+	 * T3 Code's Code tab: a commit picker and viewed progress over the workbench's multi-file diff in
+	 * the agent review's look (AgentPullRequestCodeDiff), each file with +/-, Ask and Viewed.
+	 */
 	private renderCode(pr: IVoltPullRequestDetail): void {
 		const commit = this.codeCommit ? pr.commits.find(candidate => candidate.oid === this.codeCommit) : undefined;
 		if (this.codeCommit && !commit) {
@@ -1340,10 +1346,7 @@ export class AgentPullRequestView extends Disposable {
 				],
 				onPick: item => {
 					this.codeCommit = item.data;
-					this.expanded.clear();
-					this.collapsedByUser.clear();
 					this.render();
-					this.body.scrollTop = 0;
 				},
 			});
 		});
@@ -1354,19 +1357,24 @@ export class AgentPullRequestView extends Disposable {
 			? localize('voltPr.filesViewedCount', "{0} · {1} / {2} viewed", fileCount, viewedCount, files.length)
 			: localize('voltPr.filesInCommitCount', "{0} in this commit", fileCount);
 		append(toolbar, $('.volt-pr-spacer'));
-		const allOpen = files.length > 0 && files.every(file => this.isExpanded(file, viewedState));
-		this.iconButton(toolbar, allOpen ? Codicon.foldUp : Codicon.foldDown, allOpen ? localize('voltPr.collapseAll', "Collapse All") : localize('voltPr.expandAll', "Expand All"), () => {
-			for (const file of files) {
-				if (allOpen) {
-					this.expanded.delete(file.path);
-					this.collapsedByUser.add(file.path);
-				} else {
-					this.expanded.add(file.path);
-					this.collapsedByUser.delete(file.path);
-				}
+		const diff = this.codeDiff();
+		const fold = this.iconButton(toolbar, Codicon.foldUp, localize('voltPr.collapseAll', "Collapse All"), () => {
+			if (diff.allCollapsed()) {
+				diff.expandAll();
+			} else {
+				diff.collapseAll();
 			}
-			this.render();
+			syncFold();
 		});
+		const syncFold = () => {
+			const collapsed = diff.allCollapsed();
+			fold.replaceChildren(renderIcon(collapsed ? Codicon.foldDown : Codicon.foldUp));
+			const label = collapsed ? localize('voltPr.expandAll', "Expand All") : localize('voltPr.collapseAll', "Collapse All");
+			fold.setAttribute('aria-label', label);
+			setAgentTooltip(fold, label);
+		};
+		syncFold();
+		this.renderStore.add(diff.onDidLoad(syncFold));
 		const folder = this.cloneFolder();
 		const openDiff = this.iconButton(toolbar, Codicon.diffMultiple, folder ? localize('voltPr.openDiff', "Open in Diff Editor") : localize('voltPr.openDiffHost', "Open the Diff on GitHub"), () => this.openDiff(pr));
 		openDiff.classList.add('subtle');
@@ -1380,186 +1388,91 @@ export class AgentPullRequestView extends Disposable {
 				this.render();
 			});
 		}
-
-		const list = append(this.body, $('.volt-pr-code-files'));
-		if (!files.length && !load) {
-			append(list, $('.muted.volt-pr-empty')).textContent = localize('voltPr.loadingChanges', "Reading the changes…");
+		if (!load?.files) {
+			if (!load) {
+				append(this.body, $('.muted.volt-pr-empty')).textContent = localize('voltPr.loadingChanges', "Reading the changes…");
+			}
 			return;
 		}
-		for (const file of files) {
-			this.renderCodeFile(list, pr, file, scopeAll ? viewedState.get(file.path) ?? false : undefined, !!load?.files);
-		}
-	}
-
-	/** Small files open on their own; viewed files and large ones stay folded until asked. */
-	private isExpanded(file: { readonly path: string; readonly additions: number; readonly deletions: number }, viewed: Map<string, boolean>): boolean {
-		if (this.expanded.has(file.path)) {
-			return true;
-		}
-		if (this.collapsedByUser.has(file.path) || viewed.get(file.path)) {
-			return false;
-		}
-		return file.additions + file.deletions <= LARGE_FILE_LINES;
-	}
-
-	private renderCodeFile(parent: HTMLElement, pr: IVoltPullRequestDetail, file: Pick<IVoltPrFilePatch, 'path' | 'previousPath' | 'change' | 'additions' | 'deletions' | 'patch'>, viewed: boolean | undefined, loaded: boolean): void {
-		const viewedMap = new Map(viewed === undefined ? [] : [[file.path, viewed]]);
-		const open = this.isExpanded(file, viewedMap);
-		const card = append(parent, $('.volt-pr-code-file'));
-		card.dataset.path = file.path;
-		card.classList.toggle('open', open);
-		card.classList.toggle('viewed', !!viewed);
-		const head = append(card, $('.volt-pr-code-file-head'));
-		const toggle = append(head, $('button.volt-pr-code-file-toggle')) as HTMLButtonElement;
-		toggle.type = 'button';
-		toggle.setAttribute('aria-expanded', String(open));
-		toggle.appendChild(renderIcon(open ? Codicon.chevronDown : Codicon.chevronRight));
-		iconSpan(toggle, changeIcon(file.change), `change-${file.change}`);
-		const name = append(toggle, $('span.volt-pr-code-path'));
-		const dir = dirname(file.path);
-		if (dir && dir !== '.') {
-			append(name, $('span.dir')).textContent = `${dir}/`;
-		}
-		append(name, $('span.base')).textContent = basename(file.path);
-		if (file.previousPath) {
-			append(toggle, $('span.muted.volt-pr-renamed')).textContent = localize('voltPr.renamedFrom', "from {0}", file.previousPath);
-		}
-		this.onClick(toggle, () => {
-			if (open) {
-				this.expanded.delete(file.path);
-				this.collapsedByUser.add(file.path);
-			} else {
-				this.expanded.add(file.path);
-				this.collapsedByUser.delete(file.path);
-			}
-			this.render();
+		// Binary files and patches GitHub leaves out have no lines to show here.
+		const hidden = load.files.filter(file => !canShowInCodeDiff(file)).map(file => file.path);
+		const noteFor = () => [...hidden, ...diff.failedPaths];
+		const note = append(this.body, $('.volt-pr-code-note.muted'));
+		const syncNote = () => {
+			const paths = noteFor();
+			note.classList.toggle('hidden', !paths.length);
+			note.textContent = paths.length ? localize('voltPr.noInlineDiff', "No diff shown for {0} (binary, too large, or unreadable).", paths.join(', ')) : '';
+		};
+		const host = append(this.body, $('.volt-pr-code-host'));
+		const loading = append(host, $('.muted.volt-pr-code-loading'));
+		loading.textContent = localize('voltPr.loadingDiff', "Reading the diff…");
+		const syncLoading = () => loading.classList.toggle('hidden', !diff.isLoading);
+		host.appendChild(diff.element);
+		this.renderStore.add(diff.onDidLoad(() => {
+			syncNote();
+			syncLoading();
+		}));
+		const observer = new ResizeObserver(() => diff.layout(host.clientWidth, host.clientHeight));
+		observer.observe(host);
+		this.renderStore.add(toDisposable(() => observer.disconnect()));
+		diff.setSource({
+			key: this.patchKey(pr),
+			repo: pr.repo,
+			...(folder ? { folder } : {}),
+			files: load.files,
 		});
-		append(head, $('.volt-pr-spacer'));
-		const stats = append(head, $('span.volt-pr-stats'));
-		append(stats, $('span.add')).textContent = `+${file.additions}`;
-		append(stats, $('span.del')).textContent = `−${file.deletions}`;
-		const folder = this.cloneFolder();
-		if (folder) {
-			const diff = this.iconButton(head, Codicon.goToFile, localize('voltPr.openFileDiff', "Open in Diff Editor"), () => this.openDiff(pr, file.path));
-			diff.classList.add('subtle');
-		}
-		if (viewed !== undefined) {
-			const box = append(head, $('button.volt-pr-viewed')) as HTMLButtonElement;
-			box.type = 'button';
-			box.setAttribute('role', 'checkbox');
-			box.setAttribute('aria-checked', String(viewed));
-			box.classList.toggle('checked', viewed);
-			box.appendChild(renderIcon(viewed ? Codicon.check : Codicon.blank));
-			append(box, $('span')).textContent = localize('voltPr.viewed', "Viewed");
-			this.onClick(box, () => this.toggleViewed(file.path, !viewed));
-		}
-		if (!open) {
-			return;
-		}
-		const diff = append(card, $('.volt-pr-diff'));
-		if (!loaded) {
-			append(diff, $('.muted.volt-pr-diff-note')).textContent = localize('voltPr.loadingDiff', "Reading the diff…");
-			return;
-		}
-		if (!file.patch) {
-			append(diff, $('.muted.volt-pr-diff-note')).textContent = file.change === 'renamed' && !file.additions && !file.deletions
-				? localize('voltPr.renamedOnly', "Renamed without changes.")
-				: localize('voltPr.noPatch', "No diff to show here (a binary file, or too large for GitHub to include).");
-			return;
-		}
-		this.renderDiff(diff, pr, file.path, file.patch);
+		syncNote();
+		syncLoading();
 	}
 
-	private renderDiff(parent: HTMLElement, pr: IVoltPullRequestDetail, path: string, patch: string): void {
-		const hunks = parseUnifiedPatch(patch);
-		const table = append(parent, $('.volt-pr-diff-lines'));
-		const rows: { readonly row: HTMLElement; readonly code: HTMLElement; readonly line: IPrDiffLine }[] = [];
-		const all: IPrDiffLine[] = [];
-		for (const hunk of hunks) {
-			if (hunk.skippedBefore > 0) {
-				append(table, $('.volt-pr-diff-gap')).textContent = hunk.skippedBefore === 1 ? localize('voltPr.oneUnmodified', "1 unmodified line") : localize('voltPr.unmodified', "{0} unmodified lines", hunk.skippedBefore);
-			}
-			for (const line of hunk.lines) {
-				const index = all.length;
-				all.push(line);
-				const row = append(table, $(`.volt-pr-diff-line.${line.kind}`));
-				const ask = append(row, $('button.volt-pr-diff-ask')) as HTMLButtonElement;
-				ask.type = 'button';
-				ask.appendChild(renderIcon(Codicon.add));
-				ask.setAttribute('aria-label', localize('voltPr.askLine', "Ask the agent about this line"));
-				ask.title = localize('voltPr.askTip', "Ask the chat's agent about this line (Shift-click to take the lines since the last one)");
-				append(row, $('span.volt-pr-diff-no.old')).textContent = line.oldLine !== undefined ? String(line.oldLine) : '';
-				append(row, $('span.volt-pr-diff-no.new')).textContent = line.newLine !== undefined ? String(line.newLine) : '';
-				append(row, $('span.volt-pr-diff-sign')).textContent = line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' ';
-				const code = append(row, $('span.volt-pr-diff-code'));
-				code.textContent = line.text || ' ';
-				rows.push({ row, code, line });
-				this.onClick(ask, e => this.askAboutLines(pr, path, all, index, e.shiftKey));
-			}
-		}
-		append(table, $('.volt-pr-diff-gap.end')).textContent = localize('voltPr.moreContext', "More unchanged context may be available");
-		// Colour after the lines show: tokenizing waits on the language's grammar.
-		const languageId = this.languageService.guessLanguageIdByFilepathOrFirstLine(URI.file(path));
-		if (!languageId || languageId === 'plaintext' || rows.length > 3000) {
-			return;
-		}
-		void highlight(this.languageService, languageId, rows.map(entry => entry.line.text).join('\n')).then(lines => {
-			if (!parent.isConnected) {
-				return;
-			}
-			rows.forEach((entry, index) => {
-				const tokens = lines[index];
-				if (tokens?.length) {
-					entry.code.replaceChildren(...tokens.map(node => node.cloneNode(true)));
-				}
+	/** The Code tab's diff: one for the view, kept across renders so it keeps its place and folds. */
+	private codeDiff(): AgentPullRequestCodeDiff {
+		if (!this.codeDiffWidget.value) {
+			this.codeDiffWidget.value = this.instantiationService.createInstance(AgentPullRequestCodeDiff, {
+				viewed: path => {
+					const pr = this.detail;
+					if (!pr || this.codeCommit) {
+						return undefined;
+					}
+					return this.pendingViewed.get(path) ?? pr.files.find(file => file.path === path)?.viewed === 'viewed';
+				},
+				toggleViewed: (path, viewed) => this.toggleViewed(path, viewed),
+				openFile: path => {
+					const pr = this.detail;
+					if (pr) {
+						this.openDiff(pr, path);
+					}
+				},
+				ask: (path, start, end, code) => {
+					const pr = this.detail;
+					if (pr) {
+						void this.toAgent(buildReviewLinePrompt(pr, path, start, end, code, ''));
+					}
+				},
 			});
-		}, () => undefined);
-	}
-
-	/** Puts the line (or the lines since the last one picked in this file) in the chat's composer. */
-	private askAboutLines(pr: IVoltPullRequestDetail, path: string, lines: readonly IPrDiffLine[], index: number, extend: boolean): void {
-		let start = index;
-		let end = index;
-		if (extend && this.lineAnchor?.path === path) {
-			start = Math.min(this.lineAnchor.index, index);
-			end = Math.max(this.lineAnchor.index, index);
 		}
-		this.lineAnchor = { path, index };
-		const picked = lines.slice(start, end + 1);
-		// New-file numbers when the lines exist there; removed lines only have old-file numbers.
-		const range = lineRange(picked) ?? { start: 1, end: 1, side: 'new' as const };
-		const code = picked.map(line => `${line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' '}${line.text}`).join('\n');
-		const request = range.side === 'old'
-			? localize('voltPr.askRemoved', "About the lines removed from {0} (old lines {1}-{2}):", path, range.start, range.end)
-			: '';
-		void this.toAgent(buildReviewLinePrompt(pr, path, range.start, range.end, code, request));
+		return this.codeDiffWidget.value;
 	}
 
-	/** From a review thread: the Code tab with that file open. */
+	/** From a review thread: the Code tab at that file. */
 	private revealInCode(path: string): void {
 		this.codeCommit = undefined;
-		this.expanded.add(path);
-		this.collapsedByUser.delete(path);
 		this.tab = 'code';
 		this.render();
-		getWindow(this.element).requestAnimationFrame(() => {
-			for (const node of this.body.querySelectorAll<HTMLElement>('.volt-pr-code-file')) {
-				if (node.dataset.path === path) {
-					node.scrollIntoView({ block: 'start' });
-					break;
-				}
-			}
+		const diff = this.codeDiff();
+		if (!diff.isLoading) {
+			diff.reveal(path);
+			return;
+		}
+		const once = diff.onDidLoad(() => {
+			once.dispose();
+			diff.reveal(path);
 		});
+		this.renderStore.add(once);
 	}
 
 	private toggleViewed(path: string, viewed: boolean): void {
 		this.pendingViewed.set(path, viewed);
-		if (viewed) {
-			// Marking a file viewed folds it, like GitHub; unmarking opens it again.
-			this.expanded.delete(path);
-		} else {
-			this.collapsedByUser.delete(path);
-		}
 		this.render();
 		this.viewedFlush.schedule();
 	}
@@ -1977,16 +1890,6 @@ export class AgentPullRequestView extends Disposable {
 	override dispose(): void {
 		this.element.remove();
 		super.dispose();
-	}
-}
-
-function changeIcon(change: VoltPrFileChange): ThemeIcon {
-	switch (change) {
-		case 'added': return Codicon.diffAdded;
-		case 'deleted': return Codicon.diffRemoved;
-		case 'renamed':
-		case 'copied': return Codicon.diffRenamed;
-		default: return Codicon.diffModified;
 	}
 }
 
