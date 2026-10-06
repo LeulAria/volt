@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { lineRange, parseUnifiedPatch } from '../../common/agentPrDiff.js';
+import { lineRange, originalFromPatch, parseUnifiedPatch } from '../../common/agentPrDiff.js';
 
 suite('agentPrDiff', () => {
 
@@ -64,5 +64,28 @@ suite('agentPrDiff', () => {
 		assert.deepStrictEqual(lineRange(hunk.lines), { start: 1, end: 2, side: 'new' });
 		assert.deepStrictEqual(lineRange(hunk.lines.filter(line => line.kind === 'del')), { start: 1, end: 1, side: 'old' });
 		assert.strictEqual(lineRange([]), undefined);
+	});
+	test('the old file comes back from the new file and its patch', () => {
+		const patch = ['@@ -1,5 +1,6 @@', ' a', '-b', '+B', ' c', ' d', ' e', '+f'].join('\n');
+		assert.strictEqual(originalFromPatch('a\nB\nc\nd\ne\nf\n', patch), 'a\nb\nc\nd\ne\n');
+		// Added and deleted files.
+		assert.strictEqual(originalFromPatch('x\ny\n', '@@ -0,0 +1,2 @@\n+x\n+y'), '');
+		assert.strictEqual(originalFromPatch('', '@@ -1,2 +0,0 @@\n-x\n-y'), 'x\ny\n');
+		// A removal without context names the line before it.
+		assert.strictEqual(originalFromPatch('a\nc\n', '@@ -2 +1,0 @@\n-b'), 'a\nb\nc\n');
+		// CRLF lines keep their \r on both sides.
+		assert.strictEqual(originalFromPatch('A\r\nb\r\n', '@@ -1,2 +1,2 @@\n-a\r\n+A\r\n b\r'), 'a\r\nb\r\n');
+	});
+
+	test('the old file\'s last newline follows the patch, else the new file', () => {
+		const patch = ['@@ -1,2 +1,3 @@', ' a', '-b', '\\ No newline at end of file', '+b', '+c'].join('\n');
+		assert.strictEqual(originalFromPatch('a\nb\nc\n', patch), 'a\nb');
+		// The end is untouched: it ends as the new file does.
+		assert.strictEqual(originalFromPatch('A\nb\nc\nd\ne\nf', '@@ -1,4 +1,4 @@\n-a\n+A\n b\n c\n d'), 'a\nb\nc\nd\ne\nf');
+	});
+
+	test('a patch that does not fit the file gives nothing', () => {
+		assert.strictEqual(originalFromPatch('a\nX\n', '@@ -1,2 +1,2 @@\n a\n-b\n+B'), undefined);
+		assert.strictEqual(originalFromPatch('a\n', '@@ -5,1 +5,1 @@\n-x\n+y'), undefined);
 	});
 });

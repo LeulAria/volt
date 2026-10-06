@@ -5,6 +5,7 @@
 
 import { localize } from '../../../../nls.js';
 import { IVoltGitStatus } from '../../../../platform/voltPullRequests/common/voltPullRequests.js';
+import { showsPullRequests } from './agentPullRequests.js';
 
 /**
  * Commit, push and open a pull request in one step, like T3 Code's git actions control: the button
@@ -68,6 +69,8 @@ export function resolveQuickAction({ status, hasOpenPr, busy, landedPr }: IAgent
 		return { label: commit, disabled: true, kind: 'hint', hint: localize('voltGit.detached', "Check out a branch before committing or opening a pull request.") };
 	}
 	const hasRemote = !!status.remote;
+	// Without an `origin` remote the steps stop at the push: no pull request to open.
+	const noPr = hasOpenPr || status.isDefaultBranch || !showsPullRequests(status.remotes);
 	const isAhead = status.ahead > 0;
 	const isBehind = status.behind > 0;
 	// Committing now would record the conflict markers as resolved.
@@ -78,7 +81,7 @@ export function resolveQuickAction({ status, hasOpenPr, busy, landedPr }: IAgent
 		if (!hasRemote) {
 			return { label: commit, disabled: false, kind: 'run', action: 'commit' };
 		}
-		if (hasOpenPr || status.isDefaultBranch) {
+		if (noPr) {
 			return { label: localize('voltGit.commitPush', "Commit & Push"), disabled: false, kind: 'run', action: 'commitPush' };
 		}
 		return { label: localize('voltGit.commitPushPr', "Commit, Push & PR"), disabled: false, kind: 'run', action: 'commitPushPr' };
@@ -95,7 +98,7 @@ export function resolveQuickAction({ status, hasOpenPr, busy, landedPr }: IAgent
 		if (!ahead) {
 			return { label: localize('voltGit.push', "Push"), disabled: true, kind: 'hint', hint: localize('voltGit.nothingToPush', "No local commits to push.") };
 		}
-		if (hasOpenPr || status.isDefaultBranch) {
+		if (noPr) {
 			return { label: localize('voltGit.push', "Push"), disabled: false, kind: 'run', action: 'push' };
 		}
 		return { label: localize('voltGit.pushPr', "Push & Create PR"), disabled: false, kind: 'run', action: 'createPr' };
@@ -107,12 +110,12 @@ export function resolveQuickAction({ status, hasOpenPr, busy, landedPr }: IAgent
 		return { label: localize('voltGit.pull', "Pull"), disabled: false, kind: 'pull' };
 	}
 	if (isAhead) {
-		if (hasOpenPr || status.isDefaultBranch) {
+		if (noPr) {
 			return { label: localize('voltGit.push', "Push"), disabled: false, kind: 'run', action: 'push' };
 		}
 		return { label: localize('voltGit.pushPr', "Push & Create PR"), disabled: false, kind: 'run', action: 'createPr' };
 	}
-	if (!hasOpenPr && aheadOfDefault(status) > 0 && !status.isDefaultBranch) {
+	if (!noPr && aheadOfDefault(status) > 0) {
 		return { label: localize('voltGit.createPr', "Create PR"), disabled: false, kind: 'run', action: 'createPr' };
 	}
 	return { label: commit, disabled: true, kind: 'hint', hint: localize('voltGit.upToDate', "The branch is up to date. Nothing to do.") };
@@ -142,7 +145,7 @@ export function buildMenuItems({ status, hasOpenPr, busy, landedPr }: IAgentGitC
 						: !status.upstream && !aheadOfDefault(status) ? localize('voltGit.nothingToPush', "No local commits to push.")
 							: undefined;
 	items.push({ id: 'push', label: localize('voltGit.push', "Push"), disabled: !!pushHint, ...(pushHint ? { hint: pushHint } : {}) });
-	if (hasOpenPr) {
+	if (hasOpenPr || !showsPullRequests(status.remotes)) {
 		return items;
 	}
 	const prHint = busy ? localize('voltGit.busy', "A git action is running.")
@@ -150,8 +153,8 @@ export function buildMenuItems({ status, hasOpenPr, busy, landedPr }: IAgentGitC
 			: changes ? localize('voltGit.commitBeforePr', "Commit the changes first, or use Commit, Push & PR.")
 				: status.isDefaultBranch ? localize('voltGit.prFromDefault', "Pull requests are opened from a feature branch.")
 					: landedPr && !status.ahead ? landedHint(landedPr)
-					: !aheadOfDefault(status) ? localize('voltGit.nothingForPr', "The branch has no commits that {0} does not.", status.defaultBranch ?? 'main')
-						: undefined;
+						: !aheadOfDefault(status) ? localize('voltGit.nothingForPr', "The branch has no commits that {0} does not.", status.defaultBranch ?? 'main')
+							: undefined;
 	items.push({ id: 'createPr', label: localize('voltGit.createPr', "Create PR"), disabled: !!prHint, ...(prHint ? { hint: prHint } : {}) });
 	return items;
 }

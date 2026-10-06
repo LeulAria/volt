@@ -258,5 +258,9 @@ suite('Volt pull requests: parsing', () => {
 		const binary = parseFilePatch({ filename: 'logo.png', status: 'removed', additions: 0, deletions: 0 });
 		assert.strictEqual(binary.change, 'deleted');
 		assert.strictEqual(binary.patch, undefined);
+		// The new side's blob, for reading the whole file; a removed file has none.
+		const sha = '1b330d0236e0720f7a558f1e12f1944c446c2a1c';
+		assert.strictEqual(parseFilePatch({ filename: 'a.js', status: 'modified', sha }).blob, sha);
+		assert.strictEqual(parseFilePatch({ filename: 'a.js', status: 'removed', sha }).blob, undefined);
 	});
 });

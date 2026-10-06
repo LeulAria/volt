@@ -606,6 +606,7 @@ export function parseFilePatch(raw: Json): IVoltPrFilePatch {
 		additions: num(raw?.additions),
 		deletions: num(raw?.deletions),
 		...(typeof raw?.patch === 'string' && raw.patch ? { patch: raw.patch } : {}),
+		...(raw?.status !== 'removed' && typeof raw?.sha === 'string' && /^[0-9a-f]{40,64}$/.test(raw.sha) ? { blob: raw.sha } : {}),
 	};
 }
 

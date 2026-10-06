@@ -440,6 +440,7 @@ class AgentViewSidebarsContribution extends Disposable {
 	}
 
 	/**
+	 * allow-any-unicode-next-line
 	 * "+12 −3" on the Changes row: the working tree's diff, as Cursor shows it, or the chat's own
 	 * changes when git has no answer. Debounced; SCM fires a burst per save.
 	 */
@@ -707,6 +708,7 @@ class AgentViewSidebarsContribution extends Disposable {
 			const row = append(this.tabList, $('button.volt-agent-dock-row')) as HTMLButtonElement;
 			row.type = 'button';
 			if (editor instanceof AgentChangesEditorInput) {
+				// allow-any-unicode-next-line
 				// Same ± as the Changes row under "On this window".
 				const icon = createStrokeIcon(row, CHANGES_ICON_PATH, '0.5');
 				icon.classList.add('volt-agent-stroke-icon');

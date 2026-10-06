@@ -96,3 +96,55 @@ export function lineRange(lines: readonly IPrDiffLine[]): { readonly start: numb
 	const old = lines.map(line => line.oldLine).filter((value): value is number => value !== undefined);
 	return old.length ? { start: Math.min(...old), end: Math.max(...old), side: 'old' } : undefined;
 }
+
+/**
+ * The file before a patch, rebuilt from the file after it: each hunk's added lines come out and its
+ * removed lines go back in. So one read of the new file gives both sides of the diff. Undefined
+ * when the patch does not fit the file.
+ */
+export function originalFromPatch(modified: string, patch: string): string | undefined {
+	const modifiedEol = modified.endsWith('\n');
+	const lines = modified === '' ? [] : modified.split('\n');
+	if (modifiedEol) {
+		lines.pop();
+	}
+	const out: string[] = [];
+	let next = 0;
+	for (const hunk of parseUnifiedPatch(patch)) {
+		// A hunk adding nothing names the line before it.
+		const start = hunk.newLines === 0 ? hunk.newStart : hunk.newStart - 1;
+		if (start < next || start > lines.length) {
+			return undefined;
+		}
+		out.push(...lines.slice(next, start));
+		let at = start;
+		for (const line of hunk.lines) {
+			if (line.kind === 'del') {
+				out.push(line.text);
+				continue;
+			}
+			if (lines[at] !== line.text) {
+				return undefined;
+			}
+			if (line.kind === 'context') {
+				out.push(line.text);
+			}
+			at++;
+		}
+		next = at;
+	}
+	const touchesEnd = next === lines.length && patch.trim() !== '';
+	out.push(...lines.slice(next));
+	// "\ No newline at end of file" after an old-side line: the old file ended without one.
+	let previous = '';
+	let originalNoEol = false;
+	for (const raw of patch.split('\n')) {
+		if (raw.startsWith('\\') && (previous === '-' || previous === ' ')) {
+			originalNoEol = true;
+		}
+		previous = raw.charAt(0);
+	}
+	const originalEol = touchesEnd ? !originalNoEol : modifiedEol;
+	return out.join('\n') + (originalEol && out.length ? '\n' : '');
+}
+

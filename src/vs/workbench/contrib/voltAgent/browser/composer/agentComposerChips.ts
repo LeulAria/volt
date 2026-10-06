@@ -186,7 +186,7 @@ export class AgentComposerChips extends Disposable {
 		this.gitControl = this._register(this.instantiationService.createInstance(AgentGitActionsControl, this.element, {
 			look: 'chip',
 			target: () => {
-				const folder = (this.sessionId ? this.pullRequests?.folderFor(this.sessionId) : undefined) ?? this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath;
+				const folder = this.gitFolder();
 				return { ...(this.sessionId ? { sessionId: this.sessionId } : {}), ...(folder ? { folder } : {}) };
 			},
 			onDidChangeVisibility: visible => {
@@ -263,6 +263,11 @@ export class AgentComposerChips extends Disposable {
 			this._register(this.pullRequests.onDidChange(sessionIds => {
 				if (this.sessionId && sessionIds.includes(this.sessionId)) {
 					void this.refreshPullRequest();
+				}
+			}));
+			this._register(this.pullRequests.onDidChangeOrigin(folder => {
+				if (folder === this.gitFolder()) {
+					this.render();
 				}
 			}));
 		}
@@ -484,9 +489,16 @@ export class AgentComposerChips extends Disposable {
 		this.render();
 	}
 
+	/** The folder the chat's agent works in (its worktree), else the window's. */
+	private gitFolder(): string | undefined {
+		return (this.sessionId ? this.pullRequests?.folderFor(this.sessionId) : undefined) ?? this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath;
+	}
+
 	private renderPullRequestChip(): boolean {
 		const pr = this.pr;
-		if (!pr) {
+		// A repository without an `origin` remote shows no pull request, even one linked before.
+		const folder = this.gitFolder();
+		if (!pr || !folder || !this.pullRequests?.hasOrigin(folder)) {
 			this.prHoverCard?.hide();
 			return false;
 		}

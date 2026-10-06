@@ -37,6 +37,7 @@ import {
 	sanitizeCommitSubject,
 	sessionPrFilterTag,
 	shouldSettleForPullRequests,
+	showsPullRequests,
 	startWatch,
 	watchSummary,
 } from '../../common/agentPullRequests.js';
@@ -105,6 +106,14 @@ const check = (name: string, state: IVoltPrCheck['state'], required?: boolean): 
 suite('Volt agent pull requests', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('pull request features need an origin remote; unknown and other remotes get none', () => {
+		assert.strictEqual(showsPullRequests(['origin']), true);
+		assert.strictEqual(showsPullRequests(['upstream', 'origin']), true);
+		assert.strictEqual(showsPullRequests(['upstream']), false);
+		assert.strictEqual(showsPullRequests([]), false);
+		assert.strictEqual(showsPullRequests(undefined), false);
+	});
 
 	test('links: add once, a dismissed branch link is not re-added by discovery but is by the user', () => {
 		let links: readonly IAgentPrLink[] = [];

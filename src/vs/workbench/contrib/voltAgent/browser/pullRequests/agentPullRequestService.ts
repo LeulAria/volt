@@ -6,7 +6,7 @@
 import { IntervalTimer, RunOnceScheduler, SequencerByKey } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableMap } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
@@ -15,6 +15,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { IHostService } from '../../../../services/host/browser/host.js';
 import { ILifecycleService } from '../../../../services/lifecycle/common/lifecycle.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { parsePullRequestUrl, prKey } from '../../../../../platform/voltPullRequests/common/voltPullRequestParse.js';
@@ -58,6 +59,7 @@ import {
 	resolveChains,
 	sanitizeCommitSubject,
 	shouldSettleForPullRequests,
+	showsPullRequests,
 	startWatch,
 	visibleLinks,
 	watchSummary,
@@ -88,6 +90,8 @@ export interface IAgentPullRequestService {
 	readonly onDidChangePullRequest: Event<string>;
 	/** Every fresh full read, so views showing it (viewed files, threads) update without reading again. */
 	readonly onDidReadDetail: Event<IVoltPullRequestDetail>;
+	/** A folder's repository gained or lost its `origin` remote (see {@link hasOrigin}). */
+	readonly onDidChangeOrigin: Event<string>;
 	readonly whenReady: Promise<void>;
 	/** The platform service, for actions the views run directly. */
 	readonly api: IVoltPullRequestService;
@@ -106,6 +110,11 @@ export interface IAgentPullRequestService {
 	folderFor(sessionId: string): string | undefined;
 	repoFor(sessionId: string): Promise<IVoltPrRepo | undefined>;
 	repoForFolder(folder: string, force?: boolean): Promise<IVoltPrRepo | undefined>;
+	/**
+	 * Whether the folder's repository has an `origin` remote: pull request features show only then.
+	 * Undefined until read; asking starts the read, and remote edits read it again.
+	 */
+	hasOrigin(folder: string): boolean | undefined;
 	/** Full read for the pull request view; reused for a few seconds unless `force`. */
 	detail(request: IVoltPrRequest, force?: boolean): Promise<IVoltPullRequestDetail>;
 	/** Pushes the branch when needed, opens the pull request, and links it to the chat. */
@@ -130,6 +139,8 @@ const DISCOVERY_MS = 2 * 60_000;
 /** Chats untouched for longer are not searched for branch pull requests. */
 const DISCOVERY_RECENT_MS = 7 * 24 * 3_600_000;
 const REPO_TTL_MS = 30_000;
+/** Remotes are re-read on config edits and focus; this only catches what neither saw. */
+const ORIGIN_TTL_MS = 60_000;
 const DETAIL_TTL_MS = 8_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
 const MERGE_METHOD_KEY = 'volt.pullRequests.mergeMethods';
@@ -137,6 +148,14 @@ const MERGE_METHOD_KEY = 'volt.pullRequests.mergeMethods';
 interface IStoreFile {
 	readonly version: number;
 	readonly chats: Record<string, IAgentPrLink[]>;
+}
+
+interface IOriginState {
+	at: number;
+	/** Undefined until the first read finishes. */
+	shows?: boolean;
+	configFile?: string;
+	reading?: boolean;
 }
 
 interface IHostState {
@@ -155,6 +174,8 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	readonly onDidChangePullRequest = this._onDidChangePullRequest.event;
 	private readonly _onDidReadDetail = this._register(new Emitter<IVoltPullRequestDetail>());
 	readonly onDidReadDetail = this._onDidReadDetail.event;
+	private readonly _onDidChangeOrigin = this._register(new Emitter<string>());
+	readonly onDidChangeOrigin = this._onDidChangeOrigin.event;
 
 	readonly whenReady: Promise<void>;
 
@@ -162,6 +183,9 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	private readonly storeFile: URI;
 	private readonly saveScheduler = this._register(new RunOnceScheduler(() => void this.save(), 400));
 	private readonly repos = new Map<string, { at: number; repo: Promise<IVoltPrRepo | undefined> }>();
+	private readonly origins = new Map<string, IOriginState>();
+	/** Repository config files watched for remote edits (a linked worktree's is its main repository's). */
+	private readonly configWatches = this._register(new DisposableMap<string>());
 	private readonly details = new Map<string, { at: number; detail: Promise<IVoltPullRequestDetail> }>();
 	private readonly hosts = new Map<string, IHostState>();
 	/** When each pull request was last read in a watch pass. */
@@ -189,6 +213,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		@IStorageService private readonly storageService: IStorageService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@ILifecycleService lifecycleService: ILifecycleService,
+		@IHostService hostService: IHostService,
 	) {
 		super();
 		this.storeFile = joinPath(environmentService.userRoamingDataHome, 'voltPullRequests', 'links.json');
@@ -221,6 +246,21 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			if (this.saveScheduler.isScheduled()) {
 				this.saveScheduler.cancel();
 				e.join(this.save(), { id: 'voltPullRequests', label: localize('voltPr.saving', "Saving linked pull requests") });
+			}
+		}));
+		// `git remote add/remove` writes the repository's config; a focus catches edits made while away.
+		this._register(this.fileService.onDidFilesChange(e => {
+			for (const [folder, state] of this.origins) {
+				if (state.configFile && e.contains(URI.file(state.configFile))) {
+					void this.readOrigin(folder);
+				}
+			}
+		}));
+		this._register(hostService.onDidChangeFocus(focused => {
+			if (focused) {
+				for (const folder of this.origins.keys()) {
+					void this.readOrigin(folder);
+				}
 			}
 		}));
 		this._register(new IntervalTimer()).cancelAndSet(() => void this.tick(false), TICK_MS);
@@ -364,6 +404,47 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		});
 		this.repos.set(folder, { at: now, repo });
 		return repo;
+	}
+
+	hasOrigin(folder: string): boolean | undefined {
+		const state = this.origins.get(folder);
+		if (!state || Date.now() - state.at > ORIGIN_TTL_MS) {
+			void this.readOrigin(folder);
+		}
+		return state?.shows;
+	}
+
+	private async readOrigin(folder: string): Promise<void> {
+		let state = this.origins.get(folder);
+		if (!state) {
+			state = { at: 0 };
+			this.origins.set(folder, state);
+		}
+		if (state.reading) {
+			return;
+		}
+		state.reading = true;
+		state.at = Date.now();
+		const remotes = await this.api.repoRemotes(folder).catch(err => {
+			this.logService.trace('[volt-pr] could not read the remotes of', folder, err);
+			return undefined;
+		});
+		state.reading = false;
+		const configFile = remotes?.configFile;
+		if (configFile && !this.configWatches.has(configFile)) {
+			this.configWatches.set(configFile, this.fileService.watch(URI.file(configFile)));
+		}
+		state.configFile = configFile;
+		const shows = showsPullRequests(remotes?.remotes);
+		if (state.shows !== shows) {
+			const known = state.shows !== undefined;
+			state.shows = shows;
+			if (known) {
+				// The remote it resolved to may have gone with it.
+				this.repos.delete(folder);
+			}
+			this._onDidChangeOrigin.fire(folder);
+		}
 	}
 
 	detail(request: IVoltPrRequest, force = false): Promise<IVoltPullRequestDetail> {

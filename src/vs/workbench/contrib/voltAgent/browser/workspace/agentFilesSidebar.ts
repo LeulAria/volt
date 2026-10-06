@@ -38,6 +38,7 @@ import { AgentScmRepositoryFocus } from '../review/agentScmRepository.js';
 import { setAgentChangesSession } from '../review/agentTurnsView.js';
 import { FILES_ICON_SHAPES, type SvgIconShapes } from './agentSurfaceMenu.js';
 import { AGENT_PULL_REQUESTS_CONTAINER_ID, setPullRequestsViewSession } from '../pullRequests/agentPullRequestsViewState.js';
+import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 
 export type AgentFilesSidebarView = 'explorer' | 'scm' | 'search' | 'pullRequests';
 
@@ -133,6 +134,7 @@ export class AgentFilesSidebar extends Disposable {
 	private scmSession: string | undefined;
 	private scmFolder: URI | undefined;
 	private readonly scmRepository: AgentScmRepositoryFocus;
+	private readonly pullRequests: IAgentPullRequestService | undefined;
 	private shown = false;
 	/** No tab beside it: it is the whole tools area. */
 	private fills = false;
@@ -170,6 +172,14 @@ export class AgentFilesSidebar extends Disposable {
 	) {
 		super();
 		this.scmRepository = this._register(instantiationService.createInstance(AgentScmRepositoryFocus));
+		this.pullRequests = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
+		if (this.pullRequests) {
+			this._register(this.pullRequests.onDidChangeOrigin(folder => {
+				if (this.sessionId && folder === this.folderOf(this.sessionId)?.fsPath) {
+					this.sync();
+				}
+			}));
+		}
 		this.element = append(parent, $('.volt-agent-files-sidebar.hidden'));
 		this.sash = append(this.element, $('.volt-agent-files-sidebar-sash'));
 		this.sash.title = localize('voltAgent.filesSidebar.resize', "Resize sidebar");
@@ -327,7 +337,7 @@ export class AgentFilesSidebar extends Disposable {
 	private sync(): void {
 		this.syncChrome();
 		const state = readState(this.storageService);
-		const want = this.shown && state.open ? state.view : undefined;
+		const want = this.shown && state.open ? this.viewFor(state) : undefined;
 		if (this.lentView !== want || (want && !this.lent.value)) {
 			this.giveBack();
 			if (want) {
@@ -394,6 +404,19 @@ export class AgentFilesSidebar extends Disposable {
 			this.scmSession = undefined;
 			this.sync();
 		}
+	}
+
+	/**
+	 * The view this sidebar shows: the window's pick, but Source Control while the chat's
+	 * repository has no `origin` remote and so no pull requests (the pick stays for other chats).
+	 */
+	private viewFor(state: ISidebarState): AgentFilesSidebarView {
+		return state.view === 'pullRequests' && !this.showsPullRequests() ? 'scm' : state.view;
+	}
+
+	private showsPullRequests(): boolean {
+		const folder = this.sessionId ? this.folderOf(this.sessionId) : undefined;
+		return folder?.scheme === 'file' && !!this.pullRequests?.hasOrigin(folder.fsPath);
 	}
 
 	private announceShownView(): void {
@@ -492,8 +515,10 @@ export class AgentFilesSidebar extends Disposable {
 
 	private syncChrome(): void {
 		const state = readState(this.storageService);
+		const shown = this.viewFor(state);
+		this.buttons.get('pullRequests')!.style.display = this.showsPullRequests() ? '' : 'none';
 		for (const [view, button] of this.buttons) {
-			const active = view === state.view;
+			const active = view === shown;
 			button.classList.toggle('active', active);
 			button.setAttribute('aria-pressed', String(active));
 		}
