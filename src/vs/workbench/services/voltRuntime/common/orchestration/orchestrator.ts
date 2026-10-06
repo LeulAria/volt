@@ -184,6 +184,14 @@ export interface IOrchTask {
 	readonly rounds: number;
 	readonly worktreePath?: string;
 	readonly worktreeBranch?: string;
+	/**
+	 * A later round of the same work, delegated again as a new task (a second review after fixes):
+	 * the task it follows, and its place in that chain (2 for the second round).
+	 */
+	readonly previousTaskId?: string;
+	readonly iteration?: number;
+	/** Times Volt restarted while it ran and it continued on its own. */
+	readonly restarts?: number;
 }
 
 export interface IOrchConflict {
@@ -241,6 +249,8 @@ export interface IOrchTaskSpawn {
 	readonly scope?: readonly string[];
 	readonly clientRequestId?: string;
 	readonly toolCallId?: string;
+	/** The task this one is the next round of (a new review after fixes). */
+	readonly previousTaskId?: string;
 	/** Id for the new task and its child chat, picked by the caller so a retry can be recognized. */
 	readonly taskId: string;
 	readonly childId: string;
@@ -298,8 +308,21 @@ export type OrchCommandBody =
 	| { readonly type: 'file.changed'; readonly threadId: string; readonly path: string }
 	/** Switch a chat to another model, now when idle or when its turn ends. */
 	| { readonly type: 'thread.handoff'; readonly threadId: string; readonly to: string; readonly toLabel: string; readonly reason?: string; readonly brief?: string; readonly by: 'agent' | 'user' }
-	/** After a restart: nothing that was running is running any more. */
-	| { readonly type: 'recover' };
+	/**
+	 * After a restart: nothing that was running is running any more. `resume` picks what continues
+	 * on its own (see `OrchRestartResume`); everything else waits for the user.
+	 */
+	| { readonly type: 'recover'; readonly resume?: OrchRestartResume };
+
+/**
+ * What continues by itself after Volt restarts mid-run (the agent processes died with the window).
+ * - `off`: nothing; every interrupted chat shows Resume.
+ * - `subagents`: delegated tasks continue, so the chat that is waiting for their reports gets them.
+ * - `all`: interrupted chats continue too.
+ */
+export type OrchRestartResume = 'off' | 'subagents' | 'all';
+
+export const ORCH_RESUME_AFTER_RESTART_SETTING = 'volt.agent.resumeAfterRestart';
 
 export type OrchCommand = OrchCommandBody & {
 	/** Idempotency key. A command id seen before is acknowledged without effect. */
@@ -335,6 +358,8 @@ export type OrchEvent =
 	| { readonly type: 'task.waiting'; readonly taskId: string; readonly on: 'approval' | 'question' | undefined }
 	| { readonly type: 'task.settled'; readonly taskId: string; readonly state: Extract<OrchTaskState, 'completed' | 'failed' | 'cancelled' | 'interrupted'>; readonly at: number; readonly result?: string; readonly error?: string }
 	| { readonly type: 'task.resumed'; readonly taskId: string; readonly at: number }
+	/** Volt restarted while the task ran and it continues in a resume turn. */
+	| { readonly type: 'task.restarted'; readonly taskId: string; readonly at: number }
 	| { readonly type: 'task.delivery'; readonly taskIds: readonly string[]; readonly delivery: AgentTaskDelivery }
 	/** Old finished tasks leave the state (their chats stay in history). */
 	| { readonly type: 'task.pruned'; readonly taskIds: readonly string[] }
@@ -380,6 +405,8 @@ export interface IOrchLimits {
 	readonly finishedTasksPerRoot: number;
 	/** Automatic turns in a row before the chat waits for the user. */
 	readonly maxWakeups: number;
+	/** Restarts a running turn continues through on its own; past that it waits for the user (a crash loop). */
+	readonly maxRestartResumes: number;
 }
 
 export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
@@ -389,6 +416,7 @@ export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
 	receipts: 512,
 	finishedTasksPerRoot: 60,
 	maxWakeups: 8,
+	maxRestartResumes: 2,
 };
 
 //#endregion

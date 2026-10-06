@@ -118,6 +118,9 @@ export interface IOrchAgentRow {
 	readonly openable: boolean;
 	/** Started by the Multitask composer (the user), not by an agent. */
 	readonly multitask: boolean;
+	/** A later round of earlier work (a second review): 2, 3, ... */
+	readonly iteration?: number;
+	readonly role?: IOrchTask['role'];
 }
 
 export function agentRow(task: IOrchTask): IOrchAgentRow {
@@ -141,6 +144,8 @@ export function agentRow(task: IOrchTask): IOrchAgentRow {
 		cancellable: task.source === 'volt' && isLiveTaskState(task.state),
 		openable: !!task.childId,
 		multitask: task.origin === 'user',
+		...(task.iteration && task.iteration > 1 ? { iteration: task.iteration } : {}),
+		...(task.role !== 'general' ? { role: task.role } : {}),
 	};
 }
 

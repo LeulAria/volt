@@ -275,7 +275,7 @@ class ChaosWorld {
 			// A crash: every agent process is gone, then the orchestrator recovers.
 			this.pendingStarts.clear();
 			this.runs.clear();
-			this.run({ type: 'recover' });
+			this.run({ type: 'recover', resume: this.pick(['off', 'subagents', 'all'] as const)! });
 		} else if (r < 0.99) {
 			// A retried command id must act at most once.
 			// Receipts are bounded; only ids still inside the window must be recognized.
@@ -517,6 +517,51 @@ suite('Volt orchestrator: chaos', () => {
 			}
 			world.quiesce();
 			checkInvariants(world.state(), limits, `seed ${seed} after recovery quiesce`);
+		}
+	});
+
+	test('a crash that lets work continue loses nothing: continued turns start fresh and everything finishes', function () {
+		this.timeout(60_000 * SCALE);
+		for (let seed = 1300; seed <= 1300 + 60 * SCALE; seed++) {
+			const world = new ChaosWorld(seededRandom(seed), limits);
+			const resume = seed % 2 ? 'subagents' as const : 'all' as const;
+			const crashAt = 20 + (seed % 120);
+			for (let index = 0; index < crashAt; index++) {
+				world.step();
+			}
+			const before = world.state();
+			const queued = Object.values(before.threads).reduce((count, thread) => count + thread.queue.length, 0);
+			const live = Object.values(before.tasks).filter(task => task.source === 'volt' && (task.delivery === 'pending' || isLiveTaskState(task.state))).map(task => task.id);
+			let loaded = emptyOrchState();
+			for (const rootId of rootIdsOf(before)) {
+				loaded = mergeRoot(loaded, parseRootSnapshot(JSON.parse(JSON.stringify(extractRoot(before, rootId, [], 0))))!);
+			}
+			world.sim.state = loaded;
+			world.pendingStarts.clear();
+			world.runs.clear();
+			world.run({ type: 'recover', resume });
+			const after = world.state();
+			checkInvariants(after, limits, `seed ${seed} after recover (${resume})`);
+			for (const thread of Object.values(after.threads)) {
+				// Nothing is bound to a run that died: a continued turn waits for a new start.
+				assert.ok(!thread.active || (!thread.active.runId && thread.active.phase === 'dispatching'), `seed ${seed}: ${thread.id} is still bound to a dead run`);
+				if (thread.active && resume === 'subagents') {
+					assert.ok(thread.taskId, `seed ${seed}: ${thread.id} continued though only subagents should`);
+				}
+			}
+			const remaining = Object.values(after.threads).reduce((count, thread) => count + thread.queue.length, 0);
+			const continued = Object.values(after.threads).filter(thread => thread.active).length;
+			assert.ok(remaining <= queued && remaining + continued >= queued, `seed ${seed}: recovery lost queued prompts`);
+			for (const id of live) {
+				const task = after.tasks[id];
+				assert.ok(task && (task.delivery === 'pending' || isLiveTaskState(task.state) || task.delivery === 'none'), `seed ${seed}: task ${id} lost its report`);
+			}
+			world.quiesce();
+			const state = world.state();
+			checkInvariants(state, limits, `seed ${seed} after recovery quiesce`);
+			for (const task of Object.values(state.tasks)) {
+				assert.ok(isTerminalTaskState(task.state), `seed ${seed}: task ${task.id} is ${task.state} after quiesce`);
+			}
 		}
 	});
 });

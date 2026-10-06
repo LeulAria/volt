@@ -2239,7 +2239,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			const head = append(row, $('.volt-agent-notification-head'));
 			// A watched pull request woke the chat: its icon, and a click opens it.
 			const prUrl = /^\[Volt\] (?:Update on|Volt stopped watching) pull request #\d+ \((https?:\/\/[^\s)]+)\)/.exec(message.agentText ?? '')?.[1];
-			head.appendChild(renderIcon(prUrl ? Codicon.gitPullRequest : Codicon.layers));
+			const restarted = (message.agentText ?? '').startsWith('[Volt] Volt restarted');
+			head.appendChild(renderIcon(prUrl ? Codicon.gitPullRequest : restarted ? Codicon.debugRestart : Codicon.layers));
 			append(head, $('span.volt-agent-notification-text')).textContent = message.text;
 			if (prUrl) {
 				head.classList.add('pull-request');

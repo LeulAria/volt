@@ -299,5 +299,8 @@ function parseTask(value: unknown): IOrchTask | undefined {
 		rounds: num(task.rounds) ?? 1,
 		...(str(task.worktreePath) ? { worktreePath: task.worktreePath as string } : {}),
 		...(str(task.worktreeBranch) ? { worktreeBranch: task.worktreeBranch as string } : {}),
+		...(str(task.previousTaskId) ? { previousTaskId: task.previousTaskId as string } : {}),
+		...(num(task.iteration) !== undefined ? { iteration: task.iteration as number } : {}),
+		...(num(task.restarts) ? { restarts: task.restarts as number } : {}),
 	};
 }

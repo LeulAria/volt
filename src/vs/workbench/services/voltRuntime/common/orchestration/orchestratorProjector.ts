@@ -128,6 +128,8 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 				const { result: _result, error: _error, endedAt: _endedAt, waitingOn: _waitingOn, startedAt: _startedAt, ...rest } = task;
 				return { ...rest, state: 'queued', rounds: task.rounds + 1, delivery: 'none' };
 			});
+		case 'task.restarted':
+			return updateTask(state, event.taskId, task => ({ ...task, restarts: (task.restarts ?? 0) + 1 }));
 		case 'task.updated':
 			return updateTask(state, event.taskId, task => ({
 				...task,

@@ -106,6 +106,7 @@ import {
 	INLINE_COMMENT_UNDO_COMMAND_ID,
 } from '../review/inlineCommentActions.js';
 import { InlineCommentController } from '../review/inlineCommentController.js';
+import '../../common/agentWorkflowSettings.js';
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'volt.agent',

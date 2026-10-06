@@ -99,7 +99,9 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		const display = liveDisplays.get(turn.id) ?? await this.thawDisplay(turn.prompt.display);
 		liveDisplays.delete(turn.id);
 		const mode = modeLabel(turn.prompt.mode ?? input.chosenMode ?? input.restoredMode);
-		const origin: IAgentUserMessage['origin'] = turn.kind === 'notification' ? 'notification' : turn.kind === 'brief' ? 'brief' : undefined;
+		// A turn Volt continued after a restart reads as a system row, like a subagent report.
+		const restarted = turn.kind === 'resume' && (turn.prompt.display as { notification?: unknown } | undefined)?.notification === true;
+		const origin: IAgentUserMessage['origin'] = turn.kind === 'notification' || restarted ? 'notification' : turn.kind === 'brief' ? 'brief' : undefined;
 		const controller = input.controller;
 		// The first turn after the chat changed models carries the handoff: the divider, and the brief the
 		// previous model wrote for this one (the runtime recaps the conversation itself).

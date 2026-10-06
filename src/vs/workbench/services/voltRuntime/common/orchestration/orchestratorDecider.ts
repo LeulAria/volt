@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { buildTaskNotification, isLiveTaskState, isTerminalTaskState, taskNotificationDisplay } from './agentTasks.js';
-import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchState, IOrchTask, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchTaskState, nextQueued } from './orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchState, IOrchTask, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
 import { applyOrchEvent, applyOrchEvents } from './orchestratorProjector.js';
 
 /**
@@ -417,7 +417,7 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			return { events: [thread.active ? { type: 'handoff.requested', threadId: thread.id, handoff } : { type: 'handoff.applied', threadId: thread.id, handoff }] };
 		}
 		case 'recover':
-			return decideRecover(state, command.at);
+			return decideRecover(state, command.at, command.resume ?? 'off', limits);
 	}
 }
 
@@ -734,6 +734,10 @@ function decideSpawn(state: IOrchState, command: Extract<OrchCommand, { type: 't
 	if (state.threads[spawn.childId]) {
 		return { events: [], rejected: `Chat ${spawn.childId} already exists.` };
 	}
+	const previous = spawn.previousTaskId ? state.tasks[spawn.previousTaskId] : undefined;
+	if (spawn.previousTaskId && (!previous || previous.rootId !== parent.rootId)) {
+		return { events: [], rejected: `No task ${spawn.previousTaskId} in this chat to continue from.` };
+	}
 	const task: IOrchTask = {
 		id: spawn.taskId,
 		source: 'volt',
@@ -759,6 +763,7 @@ function decideSpawn(state: IOrchState, command: Extract<OrchCommand, { type: 't
 		files: [],
 		delivery: 'none',
 		rounds: 1,
+		...(previous ? { previousTaskId: previous.id, iteration: (previous.iteration ?? 1) + 1 } : {}),
 	};
 	const child = newThread(spawn.childId, command.at, parent, {
 		title: spawn.title,
@@ -814,31 +819,53 @@ function decideFileChanged(state: IOrchState, threadId: string, path: string, at
 }
 
 /**
- * After a restart nothing is running: the agent processes died with the window. Turns become
- * interrupted (their queues wait for the user), live subagents become interrupted (their parents
- * hear about it), and pending questions are gone.
+ * After a restart nothing is running: the agent processes died with the window. Pending questions
+ * are gone. What was running continues by itself only where `resume` says so (a delegated task
+ * whose parent waits for its report, or every chat); everything else is interrupted and waits for
+ * the user (its queue held, its parent told). A turn that already went through
+ * `maxRestartResumes` restarts waits too, so a crash it causes cannot loop.
  */
-function decideRecover(state: IOrchState, at: number): IOrchDecision {
+function decideRecover(state: IOrchState, at: number, resume: OrchRestartResume, limits: IOrchLimits): IOrchDecision {
 	const events: OrchEvent[] = [];
 	let next = state;
 	const push = (more: readonly OrchEvent[]) => {
 		events.push(...more);
 		next = applyOrchEvents(next, more);
 	};
+	const continued = new Set<string>();
 	for (const thread of sortedThreads(state)) {
 		const current = next.threads[thread.id];
-		for (const input of current?.inputs ?? []) {
+		if (!current) {
+			continue;
+		}
+		for (const input of current.inputs) {
 			push([{ type: 'input.closed', threadId: thread.id, inputId: input.id }]);
 		}
-		if (current?.active) {
+		const task = current.taskId ? next.tasks[current.taskId] : undefined;
+		const keepsGoing = continuesAfterRestart(current, task, resume, limits);
+		if (current.active) {
+			if (keepsGoing && current.active.kind !== 'external') {
+				push(restartTurn(next, current, current.active, task, at));
+				if (task) {
+					continued.add(task.id);
+				}
+				continue;
+			}
 			push(decideRunSettled(next, thread.id, { turnId: current.active.id }, 'interrupted', at, undefined, undefined).events);
 			push([{ type: 'queue.paused', threadId: thread.id, reason: 'interrupted' }]);
-		} else if (current && current.queue.length && !current.pause) {
+		} else if (current.queue.length && !current.pause) {
+			if (keepsGoing) {
+				// Between two rounds: the scheduler sends the next one.
+				if (task) {
+					continued.add(task.id);
+				}
+				continue;
+			}
 			push([{ type: 'queue.paused', threadId: thread.id, reason: 'interrupted' }]);
 		}
 	}
 	for (const task of Object.values(next.tasks)) {
-		if (task.state === 'running' || task.state === 'waiting') {
+		if ((task.state === 'running' || task.state === 'waiting') && !continued.has(task.id)) {
 			push([{ type: 'task.settled', taskId: task.id, state: 'interrupted', at }]);
 		}
 	}
@@ -850,6 +877,69 @@ function decideRecover(state: IOrchState, at: number): IOrchDecision {
 		}
 	}
 	return { events };
+}
+
+/** The suffix a turn continued after a restart gets; its count bounds a crash loop. */
+const RESTART_TURN_SUFFIX = /~r(\d+)$/;
+
+export function restartCount(turnId: string): number {
+	const match = RESTART_TURN_SUFFIX.exec(turnId);
+	return match ? Number(match[1]) : 0;
+}
+
+function continuesAfterRestart(thread: IOrchThread, task: IOrchTask | undefined, resume: OrchRestartResume, limits: IOrchLimits): boolean {
+	if (resume === 'off' || thread.blocked) {
+		return false;
+	}
+	if (thread.active && restartCount(thread.active.id) >= limits.maxRestartResumes) {
+		return false;
+	}
+	if (task) {
+		// A delegated task the parent still waits for: a harness subagent died with its parent's turn.
+		return task.source === 'volt' && (task.state === 'running' || task.state === 'waiting') && (task.restarts ?? 0) < limits.maxRestartResumes;
+	}
+	return resume === 'all' && !thread.parentId && !!thread.active;
+}
+
+/** The text a turn cut off by a restart continues with. Model-facing; the transcript shows a short line. */
+export const RESTART_RESUME_TEXT = '[Volt] Volt restarted while you were working, so your previous run was cut off part way. Continue where you left off: check what is already done (files, git status, command output) before redoing anything, then finish the work. If you were in the middle of a delegated task, end with your report as before.';
+
+/**
+ * Ends the turn the restart cut off and starts its continuation. A turn that never reached the
+ * agent is sent again as it was; one that ran gets the resume prompt (the transcript holds what
+ * it did, and the next agent session is briefed from it).
+ */
+function restartTurn(state: IOrchState, thread: IOrchThread, active: IOrchTurn, task: IOrchTask | undefined, at: number): OrchEvent[] {
+	const events: OrchEvent[] = [{ type: 'turn.settled', threadId: thread.id, turnId: active.id, outcome: 'interrupted', at }];
+	// Harness subagents live inside the turn and died with it.
+	for (const other of Object.values(state.tasks)) {
+		if (other.source === 'harness' && other.parentId === thread.id && other.parentTurnId === active.id && !isTerminalTaskState(other.state)) {
+			events.push({ type: 'task.settled', taskId: other.id, state: 'interrupted', at });
+		}
+	}
+	if (task) {
+		if (task.state === 'waiting') {
+			// Its question or approval died with the agent; the continued turn asks again if it must.
+			events.push({ type: 'task.waiting', taskId: task.id, on: undefined });
+		}
+		events.push({ type: 'task.restarted', taskId: task.id, at });
+	}
+	const id = `${active.id.replace(RESTART_TURN_SUFFIX, '')}~r${restartCount(active.id) + 1}`;
+	const unsent = active.phase === 'dispatching' && !active.runId;
+	const prompt: IOrchPrompt = unsent ? active.prompt : {
+		text: RESTART_RESUME_TEXT,
+		display: { text: 'Continued after Volt restarted', notification: true },
+		...(active.prompt.mode ? { mode: active.prompt.mode } : {}),
+		...(active.prompt.modelRef ? { modelRef: active.prompt.modelRef } : {}),
+	};
+	events.push(dispatch(thread.id, {
+		id,
+		kind: unsent ? active.kind : 'resume',
+		prompt,
+		at,
+		...(unsent && active.taskIds ? { taskIds: active.taskIds } : {}),
+	}));
+	return events;
 }
 
 //#endregion
@@ -1067,6 +1157,7 @@ export function effectsFor(events: readonly OrchEvent[], state: IOrchState): Orc
 			}
 			case 'task.settled':
 			case 'task.waiting':
+			case 'task.restarted':
 				changed.add(event.taskId);
 				break;
 			case 'task.updated':
