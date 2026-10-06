@@ -25,7 +25,8 @@ const product = require("../../product.json");
 // If true, we fail the build if there are new dependencies found during that task.
 // The reference dependencies, which one has to update when the new dependencies
 // are valid, are in dep-lists.ts
-const FAIL_BUILD_FOR_NEW_DEPENDENCIES = true;
+// Volt builds natively instead of against Microsoft's sysroots, so its list differs; VOLT_LINUX_DEPS_WARN_ONLY=1 warns.
+const FAIL_BUILD_FOR_NEW_DEPENDENCIES = !process.env['VOLT_LINUX_DEPS_WARN_ONLY'];
 // Based on https://source.chromium.org/chromium/chromium/src/+/refs/tags/138.0.7204.251:chrome/installer/linux/BUILD.gn;l=64-80
 // and the Linux Archive build
 // Shared library dependencies that we already bundle.
@@ -57,8 +58,11 @@ async function getDependencies(packageType, buildDir, applicationName, arch) {
     const appPath = path_1.default.join(buildDir, applicationName);
     // Add the native modules
     const files = findResult.stdout.toString().trimEnd().split('\n');
-    // Add the tunnel binary.
-    files.push(path_1.default.join(buildDir, 'bin', product.tunnelApplicationName));
+    // Add the tunnel binary (Volt builds don't ship the Rust CLI yet).
+    const tunnelPath = path_1.default.join(buildDir, 'bin', product.tunnelApplicationName);
+    if (require("fs").existsSync(tunnelPath)) {
+        files.push(tunnelPath);
+    }
     // Add the main executable.
     files.push(appPath);
     // Add chrome sandbox and crashpad handler.
