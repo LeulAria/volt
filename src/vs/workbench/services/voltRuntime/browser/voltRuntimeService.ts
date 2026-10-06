@@ -638,8 +638,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return result.exitCode === 0 ? result.stdout : undefined;
 	}
 
-	async generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number }): Promise<string | undefined> {
-		const pinned = this.taskModels.title ? this.catalog.find(item => item.ref === this.taskModels.title && item.enabled) : undefined;
+	async generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number; readonly slot?: 'title' | 'git' }): Promise<string | undefined> {
+		const git = options?.slot === 'git' && this.taskModels.git ? this.catalog.find(item => item.ref === this.taskModels.git && item.enabled) : undefined;
+		const pinned = git ?? (this.taskModels.title ? this.catalog.find(item => item.ref === this.taskModels.title && item.enabled) : undefined);
 		const chatRef = options?.sessionId ? this.sessions.get(options.sessionId)?.providerRef : undefined;
 		const item = pinned
 			?? (chatRef ? this.catalog.find(candidate => candidate.ref === chatRef && candidate.enabled) : undefined)

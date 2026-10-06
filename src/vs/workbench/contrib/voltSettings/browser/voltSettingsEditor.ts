@@ -388,22 +388,29 @@ export class VoltSettingsEditor extends EditorPane {
 			this.settingsGroup(),
 			localize('voltSettings.textGenerationModel', "Text generation model"),
 			localize('voltSettings.textGenerationModelDesc', "Used for chat titles and other generated text. Follow chat runs each one on the model the chat uses."),
-			host => this.textGenerationPicker(host),
+			host => this.textGenerationPicker(host, 'title', localize('voltSettings.textGenerationModel', "Text generation model"), localize('voltSettings.followChat', "Follow chat"), localize('voltSettings.followChatDesc', "Use the model the chat runs on")),
+		);
+		this.sectionLabel(localize('voltSettings.git', "Git"));
+		this.settingRow(
+			this.settingsGroup(),
+			localize('voltSettings.gitTextModel', "Git text model"),
+			localize('voltSettings.gitTextModelDesc', "Used for AI commit messages and pull request titles and descriptions."),
+			host => this.textGenerationPicker(host, 'git', localize('voltSettings.gitTextModel', "Git text model"), localize('voltSettings.gitTextDefault', "Default"), localize('voltSettings.gitTextDefaultDesc', "Use the text generation model")),
 		);
 	}
 
-	/** The composer's model picker, bound to the text generation slot instead of the composer's model. */
-	private textGenerationPicker(host: HTMLElement): void {
+	/** The composer's model picker, bound to a generated-text slot instead of the composer's model. */
+	private textGenerationPicker(host: HTMLElement, slot: 'title' | 'git', ariaLabel: string, autoLabel: string, autoDescription: string): void {
 		const button = append(host, $('button.volt-agent-model.volt-settings-model')) as HTMLButtonElement;
 		button.type = 'button';
 		button.setAttribute('aria-haspopup', 'dialog');
-		button.setAttribute('aria-label', localize('voltSettings.textGenerationModel', "Text generation model"));
+		button.setAttribute('aria-label', ariaLabel);
 		const picker = this.renderStore.add(this.instantiationService.createInstance(AgentModelPicker, {
 			binding: {
-				get: () => this.runtime.getTaskModels().title,
-				set: ref => void this.runtime.setTaskModel('title', ref),
-				autoLabel: localize('voltSettings.followChat', "Follow chat"),
-				autoDescription: localize('voltSettings.followChatDesc', "Use the model the chat runs on"),
+				get: () => this.runtime.getTaskModels()[slot],
+				set: ref => void this.runtime.setTaskModel(slot, ref),
+				autoLabel,
+				autoDescription,
 			},
 			position: AnchorPosition.BELOW,
 			alignment: AnchorAlignment.RIGHT,
