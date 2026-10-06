@@ -7,13 +7,17 @@ import { $, addDisposableListener, append, getWindow, scheduleAtNextAnimationFra
 import { Disposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { agentTooltipShortcutTokens, IAgentTooltipShortcut } from '../chrome/agentTooltip.js';
+import { captureCitationSource, ICitationSource } from './agentCitationSource.js';
 
 export interface IAgentThreadSelectionActionsDelegate {
 	/** Whether this chat is the one on screen; a hidden chat ignores the shortcuts. */
 	isVisible(): boolean;
-	onAddToChat(text: string): void;
-	onAddToSideChat(text: string): void;
+	/** `source` is set when the selection lies in one assistant reply: the chip can lead back to it. */
+	onAddToChat(text: string, source: ICitationSource | undefined): void;
+	onAddToSideChat(text: string, source: ICitationSource | undefined): void;
 }
+
+type SelectionAction = (text: string, source: ICitationSource | undefined) => void;
 
 const GAP_PX = 6;
 const EDGE_PX = 8;
@@ -29,6 +33,7 @@ export class AgentThreadSelectionActions extends Disposable {
 	/** A drag is selecting: the bar waits for the pointer to lift. */
 	private selecting = false;
 	private text: string | undefined;
+	private range: Range | undefined;
 
 	constructor(
 		private readonly thread: HTMLElement,
@@ -39,9 +44,9 @@ export class AgentThreadSelectionActions extends Disposable {
 		this.domNode = $('.volt-agent-thread-selection-actions');
 		this.domNode.setAttribute('role', 'toolbar');
 		this._register(toDisposable(() => this.domNode.remove()));
-		this.addAction(localize('voltAgent.addToChat', "Add to Chat"), { meta: true, key: 'L' }, text => this.delegate.onAddToChat(text));
+		this.addAction(localize('voltAgent.addToChat', "Add to Chat"), { meta: true, key: 'L' }, (text, source) => this.delegate.onAddToChat(text, source));
 		append(this.domNode, $('span.volt-agent-thread-selection-divider'));
-		this.addAction(localize('voltAgent.addToSideChat', "Add to Side Chat"), { meta: true, shift: true, key: 'S' }, text => this.delegate.onAddToSideChat(text));
+		this.addAction(localize('voltAgent.addToSideChat', "Add to Side Chat"), { meta: true, shift: true, key: 'S' }, (text, source) => this.delegate.onAddToSideChat(text, source));
 		this.hide();
 
 		const win = getWindow(thread);
@@ -63,7 +68,7 @@ export class AgentThreadSelectionActions extends Disposable {
 		this._register(addDisposableListener(win, 'keydown', e => this.onKeyDown(e), true));
 	}
 
-	private addAction(label: string, shortcut: IAgentTooltipShortcut, run: (text: string) => void): void {
+	private addAction(label: string, shortcut: IAgentTooltipShortcut, run: SelectionAction): void {
 		const button = append(this.domNode, $('span.volt-agent-thread-selection-action'));
 		button.setAttribute('role', 'button');
 		append(button, $('span.volt-agent-thread-selection-label')).textContent = label;
@@ -79,14 +84,16 @@ export class AgentThreadSelectionActions extends Disposable {
 		}));
 	}
 
-	private run(action: (text: string) => void): void {
+	private run(action: SelectionAction): void {
 		const text = this.text;
 		if (!text) {
 			return;
 		}
+		// Read before the selection is cleared: the range collapses with it.
+		const source = this.range ? captureCitationSource(this.range, this.thread) : undefined;
 		getWindow(this.thread).getSelection()?.removeAllRanges();
 		this.hide();
-		action(text);
+		action(text, source);
 	}
 
 	private onKeyDown(e: KeyboardEvent): void {
@@ -97,11 +104,11 @@ export class AgentThreadSelectionActions extends Disposable {
 		if (key === 'l' && !e.shiftKey) {
 			e.preventDefault();
 			e.stopPropagation();
-			this.run(text => this.delegate.onAddToChat(text));
+			this.run((text, source) => this.delegate.onAddToChat(text, source));
 		} else if (key === 's' && e.shiftKey) {
 			e.preventDefault();
 			e.stopPropagation();
-			this.run(text => this.delegate.onAddToSideChat(text));
+			this.run((text, source) => this.delegate.onAddToSideChat(text, source));
 		}
 	}
 
@@ -143,6 +150,7 @@ export class AgentThreadSelectionActions extends Disposable {
 			return;
 		}
 		this.text = text;
+		this.range = range.cloneRange();
 		// In the workbench, not <body>: it takes the theme's colors and font from there.
 		const root = this.thread.closest<HTMLElement>('.monaco-workbench');
 		if (root && this.domNode.parentElement !== root) {
@@ -163,6 +171,7 @@ export class AgentThreadSelectionActions extends Disposable {
 
 	private hide(): void {
 		this.text = undefined;
+		this.range = undefined;
 		this.domNode.classList.remove('visible');
 	}
 }

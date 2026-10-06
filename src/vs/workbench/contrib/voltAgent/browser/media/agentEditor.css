@@ -6854,6 +6854,56 @@ pre.volt-agent-searchable {
 	background-color: transparent !important;
 }
 
+/* A quote chip's pencil: add or change the comment on the quote. */
+.volt-agent-monaco .volt-agent-mention-edit {
+	display: inline-block;
+	margin-left: 2px;
+	font-size: 12px !important;
+	line-height: 20px;
+	vertical-align: middle;
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.7;
+	cursor: pointer;
+}
+
+.volt-agent-monaco .volt-agent-mention-edit:hover,
+.volt-agent-monaco .volt-agent-mention-edit.hovered {
+	opacity: 1;
+	color: var(--vscode-textLink-foreground);
+}
+
+/* A cited quote shown in its reply after its chip was clicked (CSS Custom Highlight, no DOM changes). */
+::highlight(volt-agent-citation) {
+	background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+	color: inherit;
+}
+
+/* The comment editor over a quote chip: the quote, muted, over one field. Volt menu chrome. */
+.volt-agent-citation-comment {
+	width: 320px;
+}
+
+.volt-agent-citation-comment-quote {
+	padding: 8px 12px 6px;
+	border-left: 2px solid var(--vscode-textLink-foreground);
+	margin: 8px 12px 0;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	line-height: 1.4;
+	max-height: 4.2em;
+	overflow: hidden;
+}
+
+.volt-agent-citation-comment .volt-menu-search {
+	border-bottom: none;
+}
+
+.volt-agent-citation-comment-hint {
+	padding: 0 12px 8px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
+
 /* "Add to Chat / Add to Side Chat" over text selected in the transcript. Opaque: it floats over the window. */
 .volt-agent-thread-selection-actions {
 	position: fixed;

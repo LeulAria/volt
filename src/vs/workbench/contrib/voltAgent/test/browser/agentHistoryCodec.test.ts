@@ -7,7 +7,7 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { AgentHistoryCodec } from '../../browser/history/agentHistoryCodec.js';
-import type { IAgentAssistantMessage } from '../../browser/editor/agentEditor.js';
+import type { IAgentAssistantMessage, IAgentUserMessage } from '../../browser/editor/agentEditor.js';
 
 function codec(): AgentHistoryCodec {
 	return new AgentHistoryCodec({
@@ -43,5 +43,22 @@ suite('Agent history codec', () => {
 		const stored = viaLog(await codec().freezeAssistant(reply));
 		const thawed = await codec().thawAssistant(stored, true);
 		assert.deepStrictEqual(thawed?.segments, reply.segments);
+	});
+
+	test('a cited quote round-trips with its source and comment', async () => {
+		const user: IAgentUserMessage = {
+			kind: 'user',
+			id: 'turn-2',
+			text: 'Why this? "uses a cache" ',
+			mentions: [{
+				kind: 'selection',
+				label: '"uses a cache"',
+				value: '```chat_selection\n```',
+				citation: { agentId: 'chat-1', messageId: 'turn-1', quote: 'uses a cache', prefix: 'It ', suffix: ' so', start: 3, comment: 'Which one?' },
+			}],
+		};
+		const stored = viaLog(await codec().freezeUser(user));
+		const thawed = await codec().thawUser(stored);
+		assert.deepStrictEqual(thawed?.mentions?.[0].citation, user.mentions![0].citation);
 	});
 });
