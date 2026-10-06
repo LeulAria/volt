@@ -1,4 +1,4 @@
-import { appName, docsRoute, gitConfig } from "./shared";
+import { appName, docsRoute } from "./shared";
 
 /** Canonical site origin. Set `VITE_SITE_URL` in production (e.g. https://voltleularia.com). */
 export const siteUrl =
@@ -106,7 +106,7 @@ export function jsonLdSoftwareApplication() {
     operatingSystem: "macOS, Windows, Linux",
     description: seo.homeDescription,
     url: siteUrl,
-    downloadUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}/releases/latest`,
+    downloadUrl: absoluteUrl("/download"),
     offers: {
       "@type": "Offer",
       price: "0",
@@ -188,4 +188,31 @@ export function docsPageMeta(opts: {
 
 export function docsPageLinks(slugPath: string): Array<{ rel: string; href: string }> {
   return [{ rel: "canonical", href: absoluteUrl(slugPath) }];
+}
+
+/** Meta entries for `/download`. */
+export function downloadRouteMeta(): Array<
+  | { title: string }
+  | { name: string; content: string }
+  | { property: string; content: string }
+> {
+  const title = `Download ${appName} — macOS, Windows & Linux`;
+  const desc =
+    "Download Volt for macOS (Apple Silicon and Intel), Windows, and Linux. Stable, Beta, and Nightly builds install side by side.";
+  const url = absoluteUrl("/download");
+  return [
+    { title },
+    { name: "description", content: desc },
+    { property: "og:title", content: title },
+    { property: "og:description", content: desc },
+    { property: "og:url", content: url },
+    { property: "og:image", content: absoluteUrl(seo.defaultOgImagePath) },
+    { property: "og:type", content: "website" },
+    { name: "twitter:title", content: title },
+    { name: "twitter:description", content: desc },
+  ];
+}
+
+export function downloadRouteLinks(): Array<{ rel: string; href: string }> {
+  return [{ rel: "canonical", href: absoluteUrl("/download") }];
 }

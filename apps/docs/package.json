@@ -9,6 +9,7 @@
     "start": "serve .output/public --config ../../serve.json",
     "preview": "vite preview",
     "types:check": "fumadocs-mdx && tsc --noEmit",
+    "test:releases": "node scripts/check-releases.mjs",
     "postinstall": "fumadocs-mdx",
     "lint": "biome check",
     "format": "biome format --write"

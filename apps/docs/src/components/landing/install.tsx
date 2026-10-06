@@ -1,17 +1,15 @@
+import { Link } from "@tanstack/react-router";
 import { Check } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/cn";
+import type { Os } from "@/lib/releases";
 import { gitConfig } from "@/lib/shared";
+import { useDetectedPlatform } from "@/lib/useReleases";
 
 export const INSTALL_CURL =
   "curl -fsSL https://raw.githubusercontent.com/LeulAria/VOLT/main/install.sh | bash";
 
 export const REPO_URL = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
-const RELEASES_BASE = `${REPO_URL}/releases/latest`;
-export const RELEASES_URL = RELEASES_BASE;
-const DOWNLOAD_MAC = `${RELEASES_BASE}/download/Volt-mac.dmg`;
-const DOWNLOAD_WIN = `${RELEASES_BASE}/download/Volt-windows.exe`;
-const DOWNLOAD_LINUX = `${RELEASES_BASE}/download/Volt-linux.AppImage`;
 
 export const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0a0a]";
@@ -20,7 +18,7 @@ export const focusRing =
 const platformOutlineBtn = `inline-flex size-11 shrink-0 items-center justify-center rounded-[5px] border border-white/25 bg-transparent text-white transition-colors duration-150 hover:border-white/40 hover:bg-white/5 md:size-9 ${focusRing}`;
 
 /** Windows logo — 4 panes, monochrome (inherits `currentColor`) */
-function WindowsIcon({ className }: { className?: string }) {
+export function WindowsIcon({ className }: { className?: string }) {
   return (
     <svg
       className={className}
@@ -56,7 +54,7 @@ export function GithubMarkIcon({ className }: { className?: string }) {
 }
 
 /** Apple logo */
-function AppleIcon({ className }: { className?: string }) {
+export function AppleIcon({ className }: { className?: string }) {
   return (
     <svg
       className={className}
@@ -131,8 +129,36 @@ export function InstallCommand({ className }: { className?: string }) {
   );
 }
 
-/** Mac + Win + Linux — single row; Mac grows, platform icons fixed size */
+export function LinuxIcon({ className }: { className?: string }) {
+  return (
+    <img
+      src="/linux-icon.svg"
+      alt=""
+      className={cn("opacity-90 brightness-0 invert", className)}
+    />
+  );
+}
+
+export const OS_NAME: Record<Os, string> = {
+  darwin: "macOS",
+  win32: "Windows",
+  linux: "Linux",
+};
+
+const OS_ORDER: Os[] = ["darwin", "win32", "linux"];
+
+export function OsIcon({ os, className }: { os: Os; className?: string }) {
+  if (os === "darwin") return <AppleIcon className={className} />;
+  if (os === "win32") return <WindowsIcon className={className} />;
+  return <LinuxIcon className={className} />;
+}
+
+/**
+ * Download for the visitor's OS, plus the other two platforms as icons. All of them open
+ * /download, which resolves the actual file from GitHub Releases.
+ */
 export function DownloadButtons({ className }: { className?: string }) {
+  const primary = useDetectedPlatform()?.os ?? "darwin";
   return (
     <div
       className={cn(
@@ -140,43 +166,42 @@ export function DownloadButtons({ className }: { className?: string }) {
         className,
       )}
     >
-      <a
-        href={DOWNLOAD_MAC}
-        target="_blank"
-        rel="noreferrer"
-        title="Download for Mac"
-        aria-label="Download for Mac"
+      <Link
+        to="/download"
+        search={{ os: primary }}
+        title={`Download for ${OS_NAME[primary]}`}
         className={`inline-flex h-9 min-h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-[5px] bg-white px-2.5 font-sans text-xs font-semibold text-black transition-opacity duration-150 hover:opacity-90 sm:px-3 ${focusRing}`}
       >
         <span className="min-w-0 truncate sm:whitespace-nowrap">
-          Download for Mac
+          Download for {OS_NAME[primary]}
         </span>
-        <AppleIcon className="size-4 shrink-0 text-black" />
-      </a>
-      <a
-        href={DOWNLOAD_WIN}
-        target="_blank"
-        rel="noreferrer"
-        title="Download for Windows"
-        aria-label="Download for Windows"
-        className={platformOutlineBtn}
-      >
-        <WindowsIcon className="size-5 text-white md:size-[18px]" />
-      </a>
-      <a
-        href={DOWNLOAD_LINUX}
-        target="_blank"
-        rel="noreferrer"
-        title="Download for Linux"
-        aria-label="Download for Linux"
-        className={platformOutlineBtn}
-      >
-        <img
-          src="/linux-icon.svg"
-          alt=""
-          className="size-6 opacity-90 brightness-0 invert md:size-5"
+        <OsIcon
+          os={primary}
+          className={cn(
+            "size-4 shrink-0",
+            primary === "linux" ? "invert-0" : "text-black",
+          )}
         />
-      </a>
+      </Link>
+      {OS_ORDER.filter((os) => os !== primary).map((os) => (
+        <Link
+          key={os}
+          to="/download"
+          search={{ os }}
+          title={`Download for ${OS_NAME[os]}`}
+          aria-label={`Download for ${OS_NAME[os]}`}
+          className={platformOutlineBtn}
+        >
+          <OsIcon
+            os={os}
+            className={
+              os === "linux"
+                ? "size-6 md:size-5"
+                : "size-5 text-white md:size-[18px]"
+            }
+          />
+        </Link>
+      ))}
     </div>
   );
 }

@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { createFileRoute } from "@tanstack/react-router";
+import { useRef } from "react";
 import { ComposerPrompt } from "@/components/composerPrompt";
 import { DynamicText } from "@/components/dynamicText";
 import { AgentIde } from "@/components/landing/agentIde";
@@ -8,20 +8,15 @@ import { ClosingCta, SiteFooter } from "@/components/landing/closing";
 import { FeatureBento } from "@/components/landing/featureBento";
 import { Guides, SectionRule } from "@/components/landing/geometry";
 import { HeroGeometry } from "@/components/landing/heroGeometry";
-import {
-  DownloadButtons,
-  focusRing,
-  GithubMarkIcon,
-  InstallCommand,
-} from "@/components/landing/install";
+import { DownloadButtons, InstallCommand } from "@/components/landing/install";
 import { Manifesto } from "@/components/landing/manifesto";
 import { Models } from "@/components/landing/models";
 import { PoweredBy } from "@/components/landing/poweredBy";
 import { ScrollRuler } from "@/components/landing/scrollRuler";
+import { SiteHeader } from "@/components/landing/siteHeader";
 import { WaveField } from "@/components/waveField";
 import { gsap, REDUCED, SplitText, useGSAP } from "@/lib/gsap";
 import { homeRouteLinks, homeRouteMeta } from "@/lib/seo";
-import { gitConfig } from "@/lib/shared";
 
 export const Route = createFileRoute("/")({
   component: Home,
@@ -35,7 +30,6 @@ export const Route = createFileRoute("/")({
 });
 
 function Home() {
-  const [releaseTag, setReleaseTag] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
 
   // Opening sequence: chrome settles, the wordmark rises letter by letter, then the rest follows.
@@ -75,20 +69,6 @@ function Home() {
     { scope: root },
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    const url = `https://api.github.com/repos/${gitConfig.user}/${gitConfig.repo}/releases/latest`;
-    fetch(url, { headers: { Accept: "application/vnd.github+json" } })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { tag_name?: string } | null) => {
-        if (!cancelled && data?.tag_name) setReleaseTag(data.tag_name);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   return (
     <div
       ref={root}
@@ -106,61 +86,7 @@ function Home() {
           className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-40 bg-gradient-to-b from-transparent to-[#0a0d0c]"
         />
         <div className="relative z-10 flex min-h-dvh flex-col md:h-[100vh] md:min-h-0 md:overflow-hidden">
-          <header className="relative z-20 mx-auto flex w-full max-w-[1296px] shrink-0 items-center justify-end gap-1.5 px-4 pt-4 sm:px-6 sm:pt-5 md:px-10 lg:px-12">
-            <a
-              data-hero="head"
-              href="/"
-              aria-label="Volt home"
-              className={`mr-auto inline-flex items-center gap-2 rounded-md ${focusRing}`}
-            >
-              <img
-                src="/volt-icon-256.png"
-                alt=""
-                width={256}
-                height={256}
-                className="size-7"
-              />
-            </a>
-            <div
-              data-hero="head"
-              className="inline-flex h-6 min-w-0 items-center justify-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2 text-center text-[10px] font-medium tracking-[0.08em] text-white/75 backdrop-blur-xl sm:gap-2 sm:px-2.5 sm:tracking-[0.16em]"
-            >
-              <span className="inline-flex items-center pt-px pl-[0.16em] uppercase leading-none">
-                Public beta
-              </span>
-              {releaseTag ? (
-                <>
-                  <span
-                    className="inline-block h-2.5 w-px shrink-0 self-center bg-white/20"
-                    aria-hidden
-                  />
-                  <span className="inline-flex items-center pt-px font-mono text-[10px] font-semibold leading-none tracking-normal text-white/55">
-                    {releaseTag}
-                  </span>
-                </>
-              ) : null}
-            </div>
-            <Link
-              data-hero="head"
-              to="/docs/$"
-              params={{ _splat: "" }}
-              className={`inline-flex h-6 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] px-2.5 leading-none text-[10px] font-medium uppercase tracking-[0.16em] text-white/70 backdrop-blur-xl transition-colors duration-150 hover:border-white/25 hover:bg-white/10 hover:text-white ${focusRing}`}
-            >
-              Docs
-            </Link>
-            <a
-              data-hero="head"
-              href={`https://github.com/${gitConfig.user}/${gitConfig.repo}`}
-              target="_blank"
-              rel="noreferrer"
-              title="Volt on GitHub"
-              aria-label="Volt on GitHub"
-              className={`group inline-flex h-6 items-center justify-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2.5 leading-none text-[10px] font-medium uppercase tracking-[0.16em] text-white/70 backdrop-blur-xl transition-colors duration-150 hover:border-white/25 hover:bg-white/10 hover:text-white ${focusRing}`}
-            >
-              <GithubMarkIcon className="size-3.5 shrink-0 opacity-80 transition-opacity group-hover:opacity-100" />
-              <span className="max-[380px]:sr-only">GitHub</span>
-            </a>
-          </header>
+          <SiteHeader animate />
 
           <div className="relative z-0 flex min-h-0 flex-1 flex-col md:min-h-0 md:flex-1">
             <div className="relative z-0 flex flex-1 items-center justify-center px-4 py-2 sm:px-5 sm:py-6 md:flex-none md:px-4 md:py-1">
