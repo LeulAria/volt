@@ -76,6 +76,8 @@ export interface IBlockRenderContext {
 	readonly languageService?: ILanguageService;
 	/** Opens a Mermaid diagram larger. */
 	readonly onExpandDiagram?: (svg: SVGSVGElement, source: string) => void;
+	/** Runs a reply's shell block in the chat's terminal. */
+	readonly onRunInTerminal?: (command: string) => void;
 }
 
 export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IBlockRenderContext): void {
@@ -197,6 +199,8 @@ function codeCardOptions(ctx: IBlockRenderContext): ICodeCardOptions {
 		onCopyText: ctx.onCopyText,
 		onDidChangeSize: ctx.onScroll,
 		onOpenPath: ctx.onOpenPath,
+		// Only finished replies: a block still streaming may not be the whole command yet.
+		...(ctx.onRunInTerminal && !ctx.streaming ? { onRunInTerminal: ctx.onRunInTerminal } : {}),
 		fileIconClasses: path => ctx.instantiationService.invokeFunction(accessor => getIconClasses(accessor.get(IModelService), accessor.get(ILanguageService), URI.file(path), FileKind.FILE)),
 	};
 }

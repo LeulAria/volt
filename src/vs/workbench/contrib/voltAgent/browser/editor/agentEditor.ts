@@ -2103,6 +2103,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onOpenPath: (path, startLine, endLine) => void this.openWorkspaceFile(path, startLine, endLine),
 			onOpenUrl: url => void this.openLocalPreview(url, true),
 			onTerminalMenu: (anchor, command) => this.showTerminalBlockMenu(anchor, command),
+			...(this.isSubagentChat() ? {} : { onRunInTerminal: (command: string) => this.surfaceHost.runCommand(command) }),
 			onTableCopyMenu: (anchor, plain, markdown) => this.showTableCopyMenu(anchor, plain, markdown),
 			onCopyText: text => void this.clipboardService.writeText(text),
 			onAccessDecision: (requestId, effect, scope, pattern) => this.runtime.respondToAccessRequest(requestId, effect, scope, pattern),
