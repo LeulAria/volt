@@ -61,6 +61,13 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	 * between them). Model-side transcripts are cut to match, so the old turns are forgotten.
 	 */
 	truncateSession(sessionId: string, userTurns: number): void;
+	/**
+	 * Stops the chat's agent so its next prompt starts a fresh one, which reads skills, plugins,
+	 * MCP servers and rules again and gets the conversation as a recap. Also drops what a fresh
+	 * agent would otherwise reuse (parked spares, cached skills, failed MCP servers).
+	 * False, with nothing changed, while a run is active, unless `cancel` stops that run first.
+	 */
+	restartAgent(sessionId: string, options?: { readonly cancel?: boolean }): Promise<boolean>;
 	/** Starts the selected ACP agent ahead of the first message. No-op for native models. */
 	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void;
 	/** Restore the checkout a chat already created, so a reload does not fall through to the open folder. */
