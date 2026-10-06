@@ -219,6 +219,9 @@ import './contrib/voltSettings/browser/voltSettings.contribution.js';
 import './contrib/voltAgent/browser/editor/agentEditor.contribution.js';
 import './contrib/voltAgent/browser/history/agentHistory.contribution.js';
 import './contrib/voltProjects/browser/voltProjects.contribution.js';
+
+// Volt first-run setup, project settings, storage cleanup
+import './contrib/voltSetup/browser/voltSetup.contribution.js';
 // Volt agent sidebar rail, compact list, project icons, chat width, chat notifications
 import './contrib/voltAgent/browser/sidebar/agentSidebar.contribution.js';
 

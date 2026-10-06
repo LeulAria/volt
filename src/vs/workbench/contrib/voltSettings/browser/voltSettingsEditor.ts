@@ -47,8 +47,9 @@ import { AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_PROMPT_HISTORY_SETTING } from '../.
 import { AgentModelPicker } from '../../voltAgent/browser/picker/agentModelPicker.js';
 import { appendSettingsBlock, SettingsStickyHeads } from './settingsStickyHeads.js';
 import { VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
+import { renderProjectsSection, renderSetupButton, renderStorageSection } from '../../voltSetup/browser/settingsSections.js';
 
-type SettingsSection = 'general' | 'common' | 'providers' | 'models' | 'agents' | 'acp' | 'modes' | 'composer' | 'tab' | 'security';
+type SettingsSection = 'general' | 'common' | 'providers' | 'models' | 'agents' | 'acp' | 'modes' | 'composer' | 'tab' | 'security' | 'projects' | 'storage';
 
 const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon }[] = [
 	{ id: 'general', label: localize('voltSettings.general', "General"), icon: Codicon.settingsGear },
@@ -61,6 +62,8 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon }[] = [
 	{ id: 'composer', label: localize('voltSettings.composer', "Composer"), icon: Codicon.commentDiscussion },
 	{ id: 'tab', label: localize('voltSettings.tab', "Tab & Prediction"), icon: Codicon.keyboard },
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield },
+	{ id: 'projects', label: localize('voltSettings.projects', "Projects"), icon: Codicon.repo },
+	{ id: 'storage', label: localize('voltSettings.storage', "Storage"), icon: Codicon.database },
 ];
 
 const MODEL_PROVIDERS: ISelectOptionItem[] = [
@@ -255,6 +258,14 @@ export class VoltSettingsEditor extends EditorPane {
 		}
 	}
 
+	/** Opens a page by id, e.g. `storage` from Volt: Manage Storage. */
+	showSection(section: string): void {
+		const known = SECTIONS.find(candidate => candidate.id === section);
+		if (known) {
+			this.setSection(known.id);
+		}
+	}
+
 	private setSection(section: SettingsSection): void {
 		this.section = section;
 		for (const child of this.toc.querySelectorAll('.volt-settings-toc-item')) {
@@ -299,6 +310,14 @@ export class VoltSettingsEditor extends EditorPane {
 				break;
 			case 'security':
 				this.renderSecurity();
+				break;
+			case 'projects':
+				this.pageHead(localize('voltSettings.projects', "Projects"), localize('voltSettings.projectsLead', "What new chats in each project start with, its worktree setup and its agents' environment."));
+				renderProjectsSection(this.target, this.instantiationService, this.renderStore, this.search.trim().toLowerCase());
+				break;
+			case 'storage':
+				this.pageHead(localize('voltSettings.storage', "Storage"), localize('voltSettings.storageLead', "What Volt keeps on this machine, and what can go. Nothing in use is removed."));
+				renderStorageSection(this.target, this.instantiationService, this.renderStore);
 				break;
 			default:
 				this.renderCommon();
@@ -631,6 +650,9 @@ export class VoltSettingsEditor extends EditorPane {
 				? localize('voltSettings.acpIntro', "Agent Client Protocol connections you can pick from the composer.")
 				: localize('voltSettings.agentsLead', "Connect an agent and pick it from the composer."),
 		);
+		if (this.section === 'agents') {
+			renderSetupButton(this.target, this.instantiationService, this.renderStore);
+		}
 		this.renderConnectionForm('agent');
 		const generation = this.renderGeneration;
 		void this.runtime.detectAgents().then(results => {
