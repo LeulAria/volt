@@ -6,21 +6,6 @@ import { SectionHeading, useLoopClock } from "./primitives";
 
 const ITEMS: { title: string; body: string; art: ReactNode }[] = [
   {
-    title: "Five modes, one composer",
-    body: "Agent, Plan, Ask, Debug, and Multitask. Each mode sets what the agent may touch and how hard it thinks.",
-    art: <ModesArt />,
-  },
-  {
-    title: "You set the leash",
-    body: "Supervised, auto-accept edits, auto, or full access. Risky commands are flagged before they run.",
-    art: <AccessArt />,
-  },
-  {
-    title: "MCP tools",
-    body: "Connect MCP servers and agents call them like built-in tools, gated by the same permissions.",
-    art: <McpArt />,
-  },
-  {
     title: "@-mention anything",
     body: "Pull files into the conversation with @, with a code preview before you send.",
     art: <MentionArt />,
@@ -95,14 +80,14 @@ export function Capabilities() {
     <section ref={ref} className={cn(COLUMN, "relative pt-24 md:pt-32")}>
       <SectionHeading
         title={"Everything an agent needs."}
-        body="Modes, permissions, tools, and context are first-class in Volt, so you decide how much rope each chat gets."
+        body="Mentions, a follow-up queue, and a live context meter are built into the composer, so every chat stays on track."
       />
-      <ul className="mt-14 grid grid-cols-1 gap-px border-y border-white/[0.08] border-x border-x-transparent bg-clip-padding max-md:border-x-white/[0.08] bg-white/[0.08] sm:grid-cols-2 md:mt-20 lg:grid-cols-3">
+      <ul className="mt-14 grid grid-cols-1 gap-px border-y border-white/[0.08] border-x border-x-transparent bg-clip-padding max-md:border-x-white/[0.08] bg-white/[0.08] md:mt-20 md:grid-cols-3">
         {ITEMS.map((item, i) => (
           <li
             key={item.title}
             data-cap
-            className="group flex flex-col bg-[#0a0d0c] px-7 pt-10 pb-9 md:px-9"
+            className="group flex flex-col bg-[#0a0d0c] px-7 pt-10 pb-9 md:px-6 lg:px-9"
           >
             <div
               className="relative flex h-[210px] items-center justify-center overflow-hidden rounded-xl px-4 py-5 text-white/80 sm:h-[220px]"
@@ -155,7 +140,6 @@ const ACCENT = "#ff8a5a";
 const BG = "#0d1011";
 const GOOD = "#3ecf8e";
 const CX = 120;
-const CY = 90;
 
 const ease = (x: number) => x * x * (3 - 2 * x);
 const f1 = (n: number) => Math.round(n * 10) / 10;
@@ -186,49 +170,6 @@ function Art({
         {children}
       </svg>
     </div>
-  );
-}
-
-/** Flat rounded node: page-coloured fill so lines stop at its edge; lit nodes take the accent. */
-function Node({
-  x,
-  y,
-  w = 26,
-  h = 26,
-  r = 8,
-  lit,
-  children,
-}: {
-  x: number;
-  y: number;
-  w?: number;
-  h?: number;
-  r?: number;
-  lit?: boolean;
-  children?: ReactNode;
-}) {
-  return (
-    <g data-pop>
-      <rect
-        x={x - w / 2}
-        y={y - h / 2}
-        width={w}
-        height={h}
-        rx={r}
-        fill={BG}
-        stroke={lit ? ACCENT : "currentColor"}
-        strokeOpacity={lit ? 1 : 0.3}
-        className="transition-[stroke,stroke-opacity] duration-500"
-      />
-      <g
-        transform={`translate(${x - 6} ${y - 6})`}
-        stroke={lit ? ACCENT : "currentColor"}
-        strokeOpacity={lit ? 1 : 0.85}
-        className="transition-[stroke] duration-500"
-      >
-        {children}
-      </g>
-    </g>
   );
 }
 
@@ -265,343 +206,12 @@ function Text({
   );
 }
 
-/* 12×12 glyphs, drawn in the node's local box */
-const GLYPH = {
-  agent: (
-    <path d="M6 0.5 7.3 4.7 11.5 6 7.3 7.3 6 11.5 4.7 7.3 0.5 6 4.7 4.7Z" />
-  ),
-  plan: (
-    <path d="M1 2.5h1.5M4.5 2.5H11M1 6h1.5M4.5 6H11M1 9.5h1.5M4.5 9.5h4.5" />
-  ),
-  ask: (
-    <path d="M3.8 4.2a2.3 2.3 0 1 1 3.4 2c-.7.4-1.2.9-1.2 1.7v.4M6 10.6v.1" />
-  ),
-  debug: (
-    <>
-      <rect x={3.2} y={3.2} width={5.6} height={7.6} rx={2.8} />
-      <path d="M6 5.5v4M3.2 6.5H1M11 6.5H8.8M3.4 9.2 1.6 10.6M8.6 9.2l1.8 1.4M4.3 3.4 3.2 1.4M7.7 3.4l1.1-2" />
-    </>
-  ),
-  multi: (
-    <>
-      <rect x={0.8} y={3.6} width={7.6} height={7.6} rx={1.8} />
-      <path d="M3.6 3.6V2.6A1.8 1.8 0 0 1 5.4.8h4A1.8 1.8 0 0 1 11.2 2.6v4a1.8 1.8 0 0 1-1.8 1.8H8.4" />
-    </>
-  ),
-  plug: <path d="M4 .8v3M8 .8v3M2 3.8h8v2.4a4 4 0 0 1-8 0zM6 10.2v1.2" />,
-  db: (
-    <>
-      <ellipse cx={6} cy={2.6} rx={4.4} ry={1.8} />
-      <path d="M1.6 2.6v6.8c0 1 2 1.8 4.4 1.8s4.4-.8 4.4-1.8V2.6M1.6 6c0 1 2 1.8 4.4 1.8s4.4-.8 4.4-1.8" />
-    </>
-  ),
-  web: (
-    <>
-      <circle cx={6} cy={6} r={5} />
-      <path d="M1 6h10M6 1c-2.6 2.8-2.6 7.2 0 10M6 1c2.6 2.8 2.6 7.2 0 10" />
-    </>
-  ),
-  shell: (
-    <>
-      <rect x={0.6} y={1.4} width={10.8} height={9.2} rx={2} />
-      <path d="m3 4.6 1.8 1.6L3 7.8M6.2 8h2.8" />
-    </>
-  ),
-  doc: (
-    <path d="M2.4.8h4.8L9.8 3.4v7.8H2.4zM7 .8v2.8h2.8M4.2 6.4h3.8M4.2 8.6h2.6" />
-  ),
-};
+/* 12×12 file glyph */
+const DOC_GLYPH = (
+  <path d="M2.4.8h4.8L9.8 3.4v7.8H2.4zM7 .8v2.8h2.8M4.2 6.4h3.8M4.2 8.6h2.6" />
+);
 
-/* 1 · Modes ---------------------------------------------------------- */
-
-const MODES: { name: string; glyph: ReactNode }[] = [
-  { name: "Agent", glyph: GLYPH.agent },
-  { name: "Plan", glyph: GLYPH.plan },
-  { name: "Ask", glyph: GLYPH.ask },
-  { name: "Debug", glyph: GLYPH.debug },
-  { name: "Multitask", glyph: GLYPH.multi },
-];
-
-function ModesArt() {
-  const { ref, t } = useLoopClock(MODES.length * 1800, 0);
-  const active = Math.floor(t / 1800) % MODES.length;
-  const R = 62;
-  return (
-    <Art clockRef={ref}>
-      <circle
-        data-fade
-        cx={CX}
-        cy={CY}
-        r={R}
-        strokeOpacity={0.35}
-        strokeDasharray="1 5"
-        className="cap-orbit"
-      />
-      {MODES.map((m, i) => {
-        const deg = -90 + i * 72;
-        const [x, y] = polar(CX, CY, R, deg);
-        const [x1, y1] = polar(CX, CY, 24, deg);
-        const [x2, y2] = polar(CX, CY, R - 16, deg);
-        const lit = i === active;
-        return (
-          <g key={m.name}>
-            <line
-              x1={x1}
-              y1={y1}
-              x2={x2}
-              y2={y2}
-              stroke={lit ? ACCENT : "currentColor"}
-              strokeOpacity={lit ? 0.9 : 0.18}
-              className="transition-[stroke,stroke-opacity] duration-500"
-            />
-            <Node x={x} y={y} r={13} lit={lit}>
-              {m.glyph}
-            </Node>
-          </g>
-        );
-      })}
-      {/* the composer at the centre, wearing the active mode */}
-      <g data-pop>
-        <rect
-          x={CX - 22}
-          y={CY - 11}
-          width={44}
-          height={22}
-          rx={11}
-          fill={BG}
-          strokeOpacity={0.4}
-        />
-        <path d={`M${CX - 13} ${CY}h14`} strokeOpacity={0.35} />
-        <circle cx={CX + 11} cy={CY} r={5.5} strokeOpacity={0.9} />
-        <path
-          d={`M${CX + 11} ${CY + 2.4}v-4.6M${CX + 9} ${CY - 0.2} ${CX + 11} ${CY - 2.2} ${CX + 13} ${CY - 0.2}`}
-        />
-      </g>
-      <Text x={CX} y={CY + 23} color={ACCENT}>
-        {MODES[active].name}
-      </Text>
-    </Art>
-  );
-}
-
-/* 2 · Access --------------------------------------------------------- */
-
-const LEVELS = ["Supervised", "Edits", "Auto", "Full"];
-const LEVEL_DEG = [210, 250, 290, 330];
-
-function AccessArt() {
-  const { ref, t } = useLoopClock(LEVELS.length * 2000, 2 * 2000);
-  const level = Math.floor(t / 2000) % LEVELS.length;
-  const from = LEVEL_DEG[(level + LEVELS.length - 1) % LEVELS.length];
-  const to = LEVEL_DEG[level];
-  const deg = from + (to - from) * ease(Math.min(1, (t % 2000) / 650));
-  const px = CX;
-  const py = 126;
-  const R = 74;
-  const [nx, ny] = polar(px, py, R - 14, deg);
-  const [ax, ay] = polar(px, py, R, 195);
-  const [bx, by] = polar(px, py, R, deg);
-  const [ex, ey] = polar(px, py, R, 345);
-  const full = level === LEVELS.length - 1;
-  return (
-    <Art clockRef={ref}>
-      {/* track and the lit part of it */}
-      <path
-        data-ink
-        d={`M${ax} ${ay}A${R} ${R} 0 0 1 ${ex} ${ey}`}
-        strokeOpacity={0.16}
-      />
-      <path d={`M${ax} ${ay}A${R} ${R} 0 0 1 ${bx} ${by}`} stroke={ACCENT} />
-      {LEVELS.map((name, i) => {
-        const [dx, dy] = polar(px, py, R, LEVEL_DEG[i]);
-        const [lx, ly] = polar(px, py, R + 12, LEVEL_DEG[i]);
-        const on = i <= level;
-        return (
-          <g key={name}>
-            <circle
-              data-pop
-              cx={dx}
-              cy={dy}
-              r={2.6}
-              fill={on ? (i === 3 ? ACCENT : "currentColor") : BG}
-              strokeOpacity={0.5}
-            />
-            <Text
-              x={lx}
-              y={ly + 2}
-              anchor={i === 0 ? "end" : i === 3 ? "start" : "middle"}
-              tone={i === level ? 0.95 : 0.35}
-              color={i === level && i === 3 ? ACCENT : undefined}
-              size={5.8}
-            >
-              {name}
-            </Text>
-          </g>
-        );
-      })}
-      {/* needle and the shield it pivots on */}
-      <line
-        x1={px}
-        y1={py}
-        x2={nx}
-        y2={ny}
-        stroke={full ? ACCENT : "currentColor"}
-        strokeOpacity={0.9}
-      />
-      <circle
-        cx={nx}
-        cy={ny}
-        r={2.4}
-        fill={full ? ACCENT : "currentColor"}
-        stroke="none"
-      />
-      <g data-pop>
-        <circle cx={px} cy={py} r={16} fill={BG} strokeOpacity={0.35} />
-        <path
-          d={`M${px} ${py - 8}l6 2.4v4c0 3.8-2.5 6.3-6 7.6-3.5-1.3-6-3.8-6-7.6v-4z`}
-          strokeOpacity={0.9}
-        />
-        <path
-          d={`m${px - 2.6} ${py - 0.6} 1.9 1.9 3.5-3.7`}
-          stroke={full ? ACCENT : GOOD}
-        />
-      </g>
-      {/* at full access, the risky command gets flagged */}
-      <g
-        className="transition-[opacity,transform] duration-500"
-        opacity={full ? 1 : 0}
-        style={{ transform: `translateY(${full ? 0 : 4}px)` }}
-      >
-        <rect
-          x={CX - 40}
-          y={150}
-          width={80}
-          height={17}
-          rx={8.5}
-          fill={BG}
-          stroke={ACCENT}
-          className="cap-pulse"
-        />
-        <path
-          d={`M${CX - 30} 162l3.6-6.4 3.6 6.4z M${CX - 26.4} 158.2v1.4`}
-          stroke={ACCENT}
-        />
-        <text
-          x={CX - 19}
-          y={161}
-          stroke="none"
-          fill={ACCENT}
-          className="font-mono"
-          style={{ fontSize: 7 }}
-        >
-          rm -rf dist
-        </text>
-      </g>
-    </Art>
-  );
-}
-
-/* 3 · MCP ------------------------------------------------------------ */
-
-const TOOLS: {
-  x: number;
-  y: number;
-  name: string;
-  glyph: ReactNode;
-  d: string;
-}[] = [
-  {
-    x: 42,
-    y: 40,
-    name: "db",
-    glyph: GLYPH.db,
-    d: "M55 40H106Q112 40 112 46V70",
-  },
-  {
-    x: 198,
-    y: 40,
-    name: "web",
-    glyph: GLYPH.web,
-    d: "M185 40H134Q128 40 128 46V70",
-  },
-  {
-    x: 42,
-    y: 140,
-    name: "shell",
-    glyph: GLYPH.shell,
-    d: "M55 140H106Q112 140 112 134V110",
-  },
-  {
-    x: 198,
-    y: 140,
-    name: "docs",
-    glyph: GLYPH.doc,
-    d: "M185 140H134Q128 140 128 134V110",
-  },
-];
-
-function McpArt() {
-  const { ref, t } = useLoopClock(4 * 1500, 0);
-  const busy = Math.floor(t / 1500) % TOOLS.length;
-  return (
-    <Art clockRef={ref}>
-      {TOOLS.map((tool, i) => (
-        <g key={tool.name}>
-          <path
-            data-ink
-            d={tool.d}
-            stroke={i === busy ? ACCENT : "currentColor"}
-            strokeOpacity={i === busy ? 0.7 : 0.22}
-            className="transition-[stroke,stroke-opacity] duration-500"
-          />
-          {/* packets: requests out to the tool, results back to the hub */}
-          {[0, 1].map((k) => (
-            <circle key={k} r={1.9} fill={ACCENT} stroke="none" opacity={0}>
-              <animateMotion
-                dur="2.4s"
-                begin={`${i * 0.6 + k * 1.2}s`}
-                repeatCount="indefinite"
-                path={tool.d}
-                keyPoints={k ? "0;1" : "1;0"}
-                keyTimes="0;1"
-                calcMode="linear"
-              />
-              <animate
-                attributeName="opacity"
-                values="0;1;1;0"
-                keyTimes="0;0.15;0.85;1"
-                dur="2.4s"
-                begin={`${i * 0.6 + k * 1.2}s`}
-                repeatCount="indefinite"
-              />
-            </circle>
-          ))}
-          <Node x={tool.x} y={tool.y} lit={i === busy}>
-            {tool.glyph}
-          </Node>
-          <Text x={tool.x} y={tool.y + 24} tone={i === busy ? 0.9 : 0.4}>
-            {tool.name}
-          </Text>
-        </g>
-      ))}
-      {/* the hub: a soft ping each time it hands off a call */}
-      <rect
-        x={CX - 20}
-        y={CY - 20}
-        width={40}
-        height={40}
-        rx={12}
-        stroke={ACCENT}
-        className="cap-ping"
-      />
-      <Node x={CX} y={CY} w={40} h={40} r={12} lit>
-        {GLYPH.plug}
-      </Node>
-    </Art>
-  );
-}
-
-/* 4 · @-mention ------------------------------------------------------ */
+/* 1 · @-mention ------------------------------------------------------ */
 
 const FILES = [
   { name: "auth.ts", dir: "src/lib" },
@@ -654,7 +264,7 @@ function MentionArt() {
         {FILES.map((file, i) => (
           <g key={file.name} transform={`translate(0 ${i * 26})`}>
             <g transform="translate(40 38)" strokeOpacity={0.8}>
-              {GLYPH.doc}
+              {DOC_GLYPH}
             </g>
             <text
               x={58}
@@ -785,7 +395,7 @@ function MentionArt() {
   );
 }
 
-/* 5 · Queue ---------------------------------------------------------- */
+/* 2 · Queue ---------------------------------------------------------- */
 
 const FOLLOW_UPS = [
   "add tests for the limiter",
@@ -879,7 +489,7 @@ function QueueArt() {
   );
 }
 
-/* 6 · Context -------------------------------------------------------- */
+/* 3 · Context -------------------------------------------------------- */
 
 const TICKS = 48;
 
