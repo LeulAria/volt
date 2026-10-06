@@ -48,6 +48,7 @@ import { IStorageService } from '../../../../../platform/storage/common/storage.
 import '../chrome/agentViewSidebars.js';
 import '../chrome/agentTitlebarHeader.js';
 import '../chrome/agentNav.contribution.js';
+import './agentChatNavigation.contribution.js';
 import '../workspace/agentTerminalCwd.js';
 import '../workspace/agentIdeWorkspace.js';
 import '../workspace/agentTerminalScope.js';

@@ -11,6 +11,7 @@ import { Disposable, MutableDisposable, toDisposable } from '../../../../../base
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { AgentThreadView } from './agentThreadView.js';
+import { stepTurnIndex, ThreadGlide, threadGlide } from './agentThreadScroll.js';
 
 export interface IAgentTurnNavTurn {
 	/** The sent message: the card's first line. */
@@ -27,7 +28,9 @@ const STEP_MIN = 3;
 const RAIL_WIDTH = 16;
 /** A revealed message lands this far below the top edge, as the first one sits at rest. */
 const LANDING_OFFSET = 8;
-const SCROLL_MS = 220;
+
+/** The rail of each thread, so keyboard commands can step through its messages. */
+const navs = new WeakMap<AgentThreadView, AgentTurnNav>();
 
 /** Plain text of a reply's markdown, cut down for the card. */
 export function turnNavPreview(markdown: string, max = 280): string {
@@ -42,6 +45,11 @@ export function turnNavPreview(markdown: string, max = 280): string {
  */
 export class AgentTurnNav extends Disposable {
 
+	/** The rail drawn for a thread, if one was made. */
+	static forThread(thread: AgentThreadView): AgentTurnNav | undefined {
+		return navs.get(thread);
+	}
+
 	readonly element: HTMLElement;
 
 	private readonly up: HTMLButtonElement;
@@ -50,7 +58,7 @@ export class AgentTurnNav extends Disposable {
 	private readonly card: HTMLElement;
 	private readonly cardPrompt: HTMLElement;
 	private readonly cardReply: HTMLElement;
-	private readonly scrollAnimation = this._register(new MutableDisposable());
+	private readonly glide: ThreadGlide;
 	private readonly syncFrame = this._register(new MutableDisposable());
 	private turns: readonly IAgentTurnNavTurn[] = [];
 	private ticks: HTMLButtonElement[] = [];
@@ -61,6 +69,10 @@ export class AgentTurnNav extends Disposable {
 
 	constructor(private readonly thread: AgentThreadView) {
 		super();
+		navs.set(thread, this);
+		this._register(toDisposable(() => navs.delete(thread)));
+		this.glide = threadGlide(thread.scroll, thread.element);
+		this._register(toDisposable(() => this.glide.cancel()));
 		this.element = append(thread.element, $('.volt-agent-turn-nav.hidden'));
 		this.element.setAttribute('role', 'navigation');
 		this.element.setAttribute('aria-label', localize('voltAgent.turnNav', "Messages"));
@@ -78,7 +90,7 @@ export class AgentTurnNav extends Disposable {
 			this.hideCard();
 		}));
 		// A wheel or drag during the glide hands the scroll back to the user.
-		this._register(addDisposableListener(thread.element, 'wheel', () => this.scrollAnimation.clear(), { passive: true }));
+		this._register(addDisposableListener(thread.element, 'wheel', () => this.glide.cancel(), { passive: true }));
 		const observer = new (getWindow(thread.element).ResizeObserver)(() => this.layout());
 		observer.observe(thread.element);
 		this._register(toDisposable(() => observer.disconnect()));
@@ -175,16 +187,23 @@ export class AgentTurnNav extends Disposable {
 		this.down.disabled = !below || pos.scrollTop >= dims.scrollHeight - dims.height - 1;
 	}
 
-	/** The message above or below the one at the top of the view. */
-	private stepTo(direction: -1 | 1): void {
-		const landing = this.thread.scroll.getDomNode().getBoundingClientRect().top + LANDING_OFFSET;
+	/**
+	 * Glides to the message above or below the one at the top of the view (the arrows, and the
+	 * previous/next message keys). Steps from where a running glide is headed, so a held key
+	 * walks message by message. Returns false when there is no message that way.
+	 */
+	stepTo(direction: -1 | 1): boolean {
+		const viewportTop = this.thread.scroll.getDomNode().getBoundingClientRect().top;
+		// Where the view will be once the running glide ends, in the same frame as the tops below.
+		const ahead = this.glide.target - this.thread.scroll.getScrollPosition().scrollTop;
+		const landing = viewportTop + LANDING_OFFSET + ahead;
 		const tops = this.exchanges().map(exchange => exchange.getBoundingClientRect().top);
-		const target = direction < 0
-			? tops.findLastIndex(top => top < landing - 2)
-			: tops.findIndex(top => top > landing + 2);
-		if (target >= 0) {
-			this.reveal(target);
+		const target = stepTurnIndex(tops, landing, direction);
+		if (target < 0) {
+			return false;
 		}
+		this.reveal(target);
+		return true;
 	}
 
 	/** Glides the message to the top of the view. */
@@ -195,20 +214,7 @@ export class AgentTurnNav extends Disposable {
 		}
 		const viewport = this.thread.scroll.getDomNode().getBoundingClientRect();
 		const from = this.thread.scroll.getScrollPosition().scrollTop;
-		const dims = this.thread.scroll.getScrollDimensions();
-		const to = Math.max(0, Math.min(dims.scrollHeight - dims.height, from + exchange.getBoundingClientRect().top - viewport.top - LANDING_OFFSET));
-		if (Math.abs(to - from) < 1) {
-			return;
-		}
-		const targetWindow = getWindow(this.element);
-		const start = Date.now();
-		const frame = () => {
-			const t = Math.min(1, (Date.now() - start) / SCROLL_MS);
-			const eased = 1 - Math.pow(1 - t, 3);
-			this.thread.scroll.setScrollPosition({ scrollTop: from + (to - from) * eased });
-			this.scrollAnimation.value = t < 1 ? scheduleAtNextAnimationFrame(targetWindow, frame) : undefined;
-		};
-		this.scrollAnimation.value = scheduleAtNextAnimationFrame(targetWindow, frame);
+		this.glide.glideTo(from + exchange.getBoundingClientRect().top - viewport.top - LANDING_OFFSET);
 	}
 
 	private showCard(index: number): void {
