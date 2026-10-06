@@ -938,6 +938,7 @@
 		"--volt-settings-hover",
 		"--volt-settings-pad",
 		"--volt-settings-radius",
+		"--volt-settings-selected",
 		"--volt-settings-surface",
 		"--volt-shimmer",
 		"--volt-shimmer-base",

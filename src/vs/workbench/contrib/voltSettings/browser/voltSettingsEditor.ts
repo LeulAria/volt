@@ -23,7 +23,10 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
+import { DisablementReason, IUpdateService, State as UpdateState, StateType } from '../../../../platform/update/common/update.js';
+import { VOLT_RELEASE_CHANNEL_SETTING } from '../../../../platform/update/common/voltUpdateFeed.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { defaultButtonStyles, getInputBoxStyle, getSelectBoxStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
@@ -389,6 +392,53 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.textGenerationModel', "Text generation model"),
 			localize('voltSettings.textGenerationModelDesc', "Used for chat titles and other generated text. Follow chat runs each one on the model the chat uses."),
 			host => this.textGenerationPicker(host),
+		);
+		this.renderUpdates();
+	}
+
+	/** Release channel, version and a manual update check. */
+	private renderUpdates(): void {
+		const { product, updates } = this.instantiationService.invokeFunction(accessor => ({ product: accessor.get(IProductService), updates: accessor.get(IUpdateService) }));
+		this.sectionLabel(localize('voltSettings.updates', "Updates"));
+		const group = this.settingsGroup();
+
+		const channels = [
+			{ id: 'default', text: localize('voltSettings.channelDefault', "This app's channel") },
+			{ id: 'stable', text: localize('voltSettings.channelStable', "Stable") },
+			{ id: 'beta', text: localize('voltSettings.channelBeta', "Beta") },
+			{ id: 'nightly', text: localize('voltSettings.channelNightly', "Nightly") },
+		];
+		this.settingRow(
+			group,
+			localize('voltSettings.releaseChannel', "Release channel"),
+			localize('voltSettings.releaseChannelDesc', "Volt, Volt Beta and Volt Nightly are separate apps that install side by side. Picking another channel offers its download."),
+			host => {
+				const current = this.configurationService.getValue<string>(VOLT_RELEASE_CHANNEL_SETTING);
+				const selected = Math.max(0, channels.findIndex(c => c.id === current));
+				const box = this.selectBox(append(host, $('.volt-settings-select')), channels.map(c => ({ text: c.text })), selected, localize('voltSettings.releaseChannel', "Release channel"));
+				this.renderStore.add(box.onDidSelect(e => void this.configurationService.updateValue(VOLT_RELEASE_CHANNEL_SETTING, channels[e.index].id)));
+			},
+		);
+
+		const version = product.voltVersion ?? product.version;
+		const build = [product.quality, product.commit?.slice(0, 8)].filter(Boolean).join(' · ');
+		this.settingRow(
+			group,
+			localize('voltSettings.version', "{0} {1}", product.nameLong, version),
+			build || localize('voltSettings.devBuild', "Development build"),
+			host => {
+				host.classList.add('volt-settings-update-control');
+				const status = append(host, $('span.volt-settings-update-status'));
+				const check = this.renderStore.add(new Button(host, { ...defaultButtonStyles, secondary: true }));
+				check.label = localize('voltSettings.checkForUpdates', "Check for Updates");
+				const render = (state: UpdateState) => {
+					status.textContent = describeUpdateState(state);
+					check.enabled = state.type === StateType.Idle;
+				};
+				render(updates.state);
+				this.renderStore.add(updates.onStateChange(render));
+				this.renderStore.add(check.onDidClick(() => void updates.checkForUpdates(true)));
+			},
 		);
 	}
 
@@ -1039,5 +1089,22 @@ export class VoltSettingsEditor extends EditorPane {
 
 	override layout(_dimension: Dimension): void {
 		this.scheduleScrollSync();
+	}
+}
+
+function describeUpdateState(state: UpdateState): string {
+	switch (state.type) {
+		case StateType.Disabled:
+			return state.reason === DisablementReason.NotBuilt
+				? localize('voltSettings.updatesDev', "Updates are off in development builds.")
+				: localize('voltSettings.updatesOff', "Updates are turned off.");
+		case StateType.CheckingForUpdates: return localize('voltSettings.updatesChecking', "Checking…");
+		case StateType.AvailableForDownload: return localize('voltSettings.updatesAvailable', "{0} is available.", state.update.productVersion ?? '');
+		case StateType.Downloading: return localize('voltSettings.updatesDownloading', "Downloading…");
+		case StateType.Downloaded:
+		case StateType.Updating: return localize('voltSettings.updatesInstalling', "Installing…");
+		case StateType.Ready: return localize('voltSettings.updatesReady', "Restart to update to {0}.", state.update.productVersion ?? '');
+		case StateType.Idle: return state.error ? localize('voltSettings.updatesError', "The last check failed.") : '';
+		default: return '';
 	}
 }

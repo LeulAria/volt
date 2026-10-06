@@ -409,6 +409,25 @@
 	width: 220px;
 }
 
+.volt-settings-update-status {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.volt-settings-update-status:empty {
+	display: none;
+}
+
+.volt-settings-row-control.volt-settings-update-control {
+	max-width: 420px;
+}
+
+.volt-settings-update-control .monaco-button {
+	white-space: nowrap;
+	width: auto;
+}
+
 .volt-settings-input.wide {
 	width: 280px;
 }
