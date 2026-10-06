@@ -31,7 +31,6 @@ export class OpenAiToolAssembler {
 
 	apply(delta: {
 		content?: string;
-		reasoning_content?: string;
 		tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
 	} | undefined, finishReason?: string | null): IVoltEvent[] {
 		const events: IVoltEvent[] = [];

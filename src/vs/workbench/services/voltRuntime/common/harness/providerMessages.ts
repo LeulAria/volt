@@ -6,6 +6,7 @@
 import { IModelAssistantPart, IModelMessage, IModelToolCall } from '../providers.js';
 import { IToolSchema } from '../tools/tool.js';
 import { INativeLoopMessage } from './nativeLoop.js';
+import { IOpenAiReasoningReplay, IReasoningDetail } from './reasoningStream.js';
 
 /**
  * One provider-neutral transcript, rendered for whichever model runs the next turn. Switching
@@ -128,6 +129,13 @@ function shortHash(text: string): string {
 export interface IOpenAiMessageOptions {
 	/** The model accepts image parts; tool images are sent as a follow-up user message. */
 	readonly vision?: boolean;
+	/**
+	 * The provider and model this request goes to. Reasoning they produced is handed back on the
+	 * assistant tool-call messages it preceded: DeepSeek and Kimi reject a thinking-mode tool call
+	 * replayed without its `reasoning_content`, and OpenRouter keeps upstream reasoning alive
+	 * through `reasoning_details`. Reasoning from any other model is left out.
+	 */
+	readonly reasoning?: { readonly provider: string; readonly model: string };
 }
 
 export function toOpenAiMessages(messages: readonly IModelMessage[], options: IOpenAiMessageOptions = {}): object[] {
@@ -158,6 +166,7 @@ export function toOpenAiMessages(messages: readonly IModelMessage[], options: IO
 			out.push({
 				role: 'assistant',
 				content: message.content || null,
+				...openAiReasoningReplay(message, options.reasoning),
 				tool_calls: message.toolCalls.map(toOpenAiToolCall),
 			});
 			continue;
@@ -187,6 +196,36 @@ export function toOpenAiTools(tools: readonly IToolSchema[]): object[] {
 			parameters: tool.parameters,
 		},
 	}));
+}
+
+/** The reasoning fields an assistant message gets back, joined across its reasoning blocks. */
+function openAiReasoningReplay(message: IModelMessage, target: IOpenAiMessageOptions['reasoning']): IOpenAiReasoningReplay {
+	if (!target) {
+		return {};
+	}
+	let content: string | undefined;
+	let text: string | undefined;
+	const details: IReasoningDetail[] = [];
+	for (const part of message.parts ?? []) {
+		if (part.type !== 'reasoning' || part.block.provider !== target.provider || part.block.model !== target.model) {
+			continue;
+		}
+		const opaque = part.block.opaque as IOpenAiReasoningReplay | undefined;
+		if (typeof opaque?.reasoning_content === 'string') {
+			content = (content ?? '') + opaque.reasoning_content;
+		}
+		if (typeof opaque?.reasoning === 'string') {
+			text = (text ?? '') + opaque.reasoning;
+		}
+		if (Array.isArray(opaque?.reasoning_details)) {
+			details.push(...opaque.reasoning_details);
+		}
+	}
+	return {
+		...(content !== undefined ? { reasoning_content: content } : {}),
+		...(text !== undefined ? { reasoning: text } : {}),
+		...(details.length ? { reasoning_details: details } : {}),
+	};
 }
 
 function toOpenAiToolCall(call: IModelToolCall): object {
