@@ -29,6 +29,7 @@ import {
 	IAgentSessionDraft,
 	IAgentSessionHandle,
 	IAgentSessionHeader,
+	IAgentSessionLifecycle,
 	IAgentSessionMeta,
 	IAgentSessionTranscript,
 	IAgentSessionWorkspace,
@@ -791,6 +792,15 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 			// Snoozing again drops the last wake; waking by hand is not a timed wake.
 			wokeAt: undefined,
 		});
+		this.scheduleSnoozeWake();
+	}
+
+	async restoreLifecycle(id: string, lifecycle: IAgentSessionLifecycle): Promise<void> {
+		const meta = this.sessions.get(id);
+		if (!meta) {
+			return;
+		}
+		this.updateMeta({ ...meta, ...lifecycle });
 		this.scheduleSnoozeWake();
 	}
 

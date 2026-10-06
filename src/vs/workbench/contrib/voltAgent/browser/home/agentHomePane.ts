@@ -95,6 +95,8 @@ import { IAgentPullRequestService } from '../pullRequests/agentPullRequestServic
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { IAgentPrBadge, prBadge, sessionPrFilterTag, visibleLinks } from '../../common/agentPullRequests.js';
 import { AGENT_HOME_WORKING_SECTION_SETTING } from '../../common/agentHomeSettings.js';
+import { lifecycleUndoLabel } from '../../common/agentLifecycleUndo.js';
+import { AGENT_LIFECYCLE_UNDO_COMMAND_ID, IAgentThreadLifecycleService } from './agentThreadLifecycle.js';
 
 const ROW_HEIGHT = 28;
 /** An agent tab with a second line (branch, pull request, model). */
@@ -685,6 +687,7 @@ export class AgentHomePane extends Disposable {
 		@ILayoutService private readonly layoutService: ILayoutService,
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IAgentThreadLifecycleService private readonly lifecycle: IAgentThreadLifecycleService,
 	) {
 		super();
 		this._register(this.voltProjects.onDidChange(() => this.scheduleRefresh()));
@@ -719,7 +722,7 @@ export class AgentHomePane extends Disposable {
 		this.nav = append(this.element, $('.volt-agent-home-nav'));
 		this.installNav(keybindingService);
 		this.treeContainer = append(this.element, $('.volt-agent-home-tree'));
-		this.installSettingsButton();
+		this.installSettingsButton(keybindingService);
 
 		this.tree = this._register(this.instantiationService.createInstance(
 			WorkbenchObjectTree<AgentHomeElement>,
@@ -799,7 +802,7 @@ export class AgentHomePane extends Disposable {
 	 * Footer of the agent list: Settings and Usage. While Usage is the active page the row
 	 * turns into a Back button that closes it and returns to the chat underneath.
 	 */
-	private installSettingsButton(): void {
+	private installSettingsButton(keybindingService: IKeybindingService): void {
 		const footer = append(this.element, $('.volt-agent-home-footer'));
 
 		const back = append(footer, $('button.volt-agent-home-back')) as HTMLButtonElement;
@@ -853,6 +856,38 @@ export class AgentHomePane extends Disposable {
 		};
 		this._register(this.editorService.onDidActiveEditorChange(sync));
 		sync();
+		this.installUndoNotice(footer, keybindingService);
+	}
+
+	/**
+	 * "Settled 'Fix login'  Undo Cmd+Z" in the footer for a few seconds after a settle, snooze,
+	 * archive or pin. It sits in the footer's free space, so the list above never moves.
+	 */
+	private installUndoNotice(footer: HTMLElement, keybindingService: IKeybindingService): void {
+		const notice = append(footer, $('.volt-agent-home-undo.hidden'));
+		notice.setAttribute('role', 'status');
+		notice.setAttribute('aria-live', 'polite');
+		const label = append(notice, $('span.label'));
+		const undo = append(notice, $('button.undo')) as HTMLButtonElement;
+		undo.type = 'button';
+		append(undo, $('span')).textContent = localize('voltAgent.home.undo', "Undo");
+		const key = append(undo, $('span.keybinding'));
+		this._register(addDisposableListener(undo, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.lifecycle.undo();
+		}));
+		const render = () => {
+			const entry = this.lifecycle.notice;
+			notice.classList.toggle('hidden', !entry);
+			if (entry) {
+				label.textContent = lifecycleUndoLabel(entry);
+				setAgentTooltip(label, label.textContent);
+				key.textContent = keybindingService.lookupKeybinding(AGENT_LIFECYCLE_UNDO_COMMAND_ID)?.getLabel() ?? '';
+			}
+		};
+		this._register(this.lifecycle.onDidChangeNotice(render));
+		render();
 	}
 
 	/** Closes every Usage tab; the group falls back to the chat that was open before it. */
@@ -1001,29 +1036,29 @@ export class AgentHomePane extends Disposable {
 	}
 
 	togglePin(session: IAgentSessionMeta): void {
-		void this.history.setPinned(session.id, !session.pinned);
+		void this.lifecycle.setPinned(session.id, !session.pinned);
 	}
 
 	toggleArchive(session: IAgentSessionMeta): void {
 		this.hover.hide();
-		void this.history.setArchived(session.id, !session.archived);
+		void this.lifecycle.setArchived(session.id, !session.archived);
 	}
 
 	settle(session: IAgentSessionMeta): void {
 		this.hover.hide();
-		void this.history.setSettled(session.id, true);
+		void this.lifecycle.setSettled(session.id, true);
 	}
 
 	/** The clock on an agent tab: quick picks, or Custom… for a date or a duration. */
 	openSnoozeMenu(anchor: HTMLElement, session: IAgentSessionMeta): void {
 		this.hover.hide();
-		showAgentSnoozeMenu(this.contextViewService, anchor, this.layoutService.activeContainer, until => void this.history.setSnoozed(session.id, true, until));
+		showAgentSnoozeMenu(this.contextViewService, anchor, this.layoutService.activeContainer, until => void this.lifecycle.setSnoozed(session.id, true, until));
 	}
 
 	/** The bell on a snoozed tab: back to the list now. */
 	wake(session: IAgentSessionMeta): void {
 		this.hover.hide();
-		void this.history.setSnoozed(session.id, false);
+		void this.lifecycle.setSnoozed(session.id, false);
 	}
 
 	openFilterMenu(anchor: HTMLElement): void {
@@ -1065,12 +1100,12 @@ export class AgentHomePane extends Disposable {
 	showSessionMenu(session: IAgentSessionMeta, anchor: HTMLElement | { x: number; y: number }): void {
 		this.hover.hide();
 		const actions: IAction[] = [
-			new Action('volt.home.pin', session.pinned ? localize('voltAgent.home.unpin', "Unpin") : localize('voltAgent.home.pin', "Pin"), undefined, !session.archived, () => this.history.setPinned(session.id, !session.pinned)),
+			new Action('volt.home.pin', session.pinned ? localize('voltAgent.home.unpin', "Unpin") : localize('voltAgent.home.pin', "Pin"), undefined, !session.archived, () => this.lifecycle.setPinned(session.id, !session.pinned)),
 			new Separator(),
-			new Action('volt.home.settle', session.settled ? localize('voltAgent.home.unsettle', "Move Out of Settled") : localize('voltAgent.home.settle', "Move to Settled"), undefined, true, () => this.history.setSettled(session.id, !session.settled, { byUser: true })),
+			new Action('volt.home.settle', session.settled ? localize('voltAgent.home.unsettle', "Move Out of Settled") : localize('voltAgent.home.settle', "Move to Settled"), undefined, true, () => this.lifecycle.setSettled(session.id, !session.settled)),
 			new Action('volt.home.snooze', session.snoozed ? localize('voltAgent.home.unsnooze', "Unsnooze") : localize('voltAgent.home.snoozeAction', "Snooze…"), undefined, true, async () => {
 				if (session.snoozed) {
-					await this.history.setSnoozed(session.id, false);
+					await this.lifecycle.setSnoozed(session.id, false);
 				} else {
 					// The picker hangs from an element; a right-click at a point falls back to the list.
 					this.openSnoozeMenu(isHTMLElement(anchor) ? anchor : this.treeContainer, session);
@@ -1082,7 +1117,7 @@ export class AgentHomePane extends Disposable {
 				toAction({ id: 'volt.home.autoSettle.off', label: localize('voltAgent.home.autoSettleOff', "Disabled"), checked: session.autoSettle === false, run: () => this.history.setAutoSettle(session.id, false) }),
 			]),
 			new Separator(),
-			new Action('volt.home.archive', session.archived ? localize('voltAgent.home.unarchive', "Unarchive") : localize('voltAgent.home.archive', "Archive"), undefined, true, () => this.history.setArchived(session.id, !session.archived)),
+			new Action('volt.home.archive', session.archived ? localize('voltAgent.home.unarchive', "Unarchive") : localize('voltAgent.home.archive', "Archive"), undefined, true, () => this.lifecycle.setArchived(session.id, !session.archived)),
 		];
 		this.contextMenuService.showContextMenu({
 			getAnchor: () => anchor,

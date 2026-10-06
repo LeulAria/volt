@@ -234,6 +234,68 @@
 	display: none;
 }
 
+/* Undo notice after a settle, snooze, archive or pin: the footer's free space, for five seconds. */
+.volt-agent-home-undo {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	margin-left: 6px;
+	padding: 0 4px 0 10px;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	font-size: 12px;
+	animation: volt-agent-home-back-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.volt-agent-home-undo.hidden,
+.volt-agent-home-footer.usage-open .volt-agent-home-undo {
+	display: none;
+}
+
+.volt-agent-home-undo > .label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: color-mix(in srgb, var(--vscode-foreground) 75%, transparent);
+}
+
+.volt-agent-home-undo > .undo {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 22px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+	font: inherit;
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.volt-agent-home-undo > .undo:hover,
+.volt-agent-home-undo > .undo:focus-visible {
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-agent-home-undo > .undo > .keybinding {
+	font-size: 11px;
+	font-weight: 400;
+	opacity: 0.6;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-home-undo > .undo > .keybinding:empty {
+	display: none;
+}
+
 @keyframes volt-agent-home-back-in {
 	from { opacity: 0; transform: translateX(-6px); }
 	to { opacity: 1; transform: none; }

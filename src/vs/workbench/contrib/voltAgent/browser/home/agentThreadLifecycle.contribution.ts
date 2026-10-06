@@ -4,8 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IntervalTimer } from '../../../../../base/common/async.js';
+import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { localize2 } from '../../../../../nls.js';
+import { Action2, registerAction2 } from '../../../../../platform/actions/common/actions.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contextkey.js';
+import { InputFocusedContext } from '../../../../../platform/contextkey/common/contextkeys.js';
+import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
+import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -13,6 +20,7 @@ import { isLiveTaskState } from '../../../../services/voltRuntime/common/orchest
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { shouldAutoSettleIdle } from '../../common/agentAutoSettle.js';
 import { AGENT_HOME_AUTO_SETTLE_DAYS_SETTING } from '../../common/agentHomeSettings.js';
+import { AGENT_LIFECYCLE_UNDO_COMMAND_ID, AgentLifecycleUndoContext, IAgentThreadLifecycleService } from './agentThreadLifecycle.js';
 
 /** How often idle chats are looked at again; the rule counts days, so an hour is plenty. */
 const AUTO_SETTLE_INTERVAL_MS = 60 * 60_000;
@@ -62,3 +70,27 @@ class AgentAutoSettleContribution extends Disposable implements IWorkbenchContri
 }
 
 registerWorkbenchContribution2(AgentAutoSettleContribution.ID, AgentAutoSettleContribution, WorkbenchPhase.Eventually);
+
+/**
+ * Cmd+Z while the sidebar shows an Undo notice puts the chats back. Text fields and terminals keep
+ * their own undo; the notice's 5 seconds keep the shortcut from taking over anywhere else.
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: AGENT_LIFECYCLE_UNDO_COMMAND_ID,
+			title: localize2('voltAgent.undoLifecycle', "Undo Last Chat Settle, Snooze, Archive or Pin"),
+			precondition: AgentLifecycleUndoContext,
+			keybinding: {
+				primary: KeyMod.CtrlCmd | KeyCode.KeyZ,
+				// Above the editor's undo, which has no when clause of its own.
+				weight: KeybindingWeight.WorkbenchContrib + 50,
+				when: ContextKeyExpr.and(AgentLifecycleUndoContext, InputFocusedContext.negate(), ContextKeyExpr.not('terminalFocus')),
+			},
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		await accessor.get(IAgentThreadLifecycleService).undo();
+	}
+});
