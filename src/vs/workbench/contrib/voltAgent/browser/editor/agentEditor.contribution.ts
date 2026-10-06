@@ -107,6 +107,7 @@ import {
 } from '../review/inlineCommentActions.js';
 import { InlineCommentController } from '../review/inlineCommentController.js';
 import '../../common/agentWorkflowSettings.js';
+import '../schedules/agentSchedules.contribution.js';
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'volt.agent',

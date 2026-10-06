@@ -402,6 +402,9 @@ const TOOL_PREFIX_RE = /^(?:mcp__volt__|volt[-_:]\s*|volt\.)/i;
 /** Pull request tools (registered by the pull request service): safe, they only change Volt's own state. */
 export const PULL_REQUEST_TOOL_NAMES = ['link_pull_request', 'unlink_pull_request', 'list_thread_pull_requests', 'watch_pull_request', 'unwatch_pull_request'] as const;
 
+/** Scheduled task tools (registered by the schedule service): they only change Volt's own state. */
+export const SCHEDULE_TOOL_NAMES = ['schedule_task', 'list_scheduled_tasks', 'update_scheduled_task', 'delete_scheduled_task', 'run_scheduled_task_now'] as const;
+
 export function voltHostToolName(name?: string, title?: string): string | undefined {
 	for (const raw of [name, title]) {
 		const value = (raw ?? '').trim();
@@ -411,7 +414,7 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id)) {
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (SCHEDULE_TOOL_NAMES as readonly string[]).includes(id)) {
 				return id;
 			}
 		}

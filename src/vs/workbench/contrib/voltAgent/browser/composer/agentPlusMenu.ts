@@ -16,7 +16,7 @@ export interface IAgentPlusMenuMode {
 	readonly description?: string;
 }
 
-export type AgentPlusMenuAction = 'files' | 'image' | 'video' | 'openFile' | 'terminal' | 'browser' | 'model' | 'mcp';
+export type AgentPlusMenuAction = 'files' | 'image' | 'video' | 'openFile' | 'terminal' | 'browser' | 'model' | 'mcp' | 'schedule';
 
 export interface IAgentPlusMenuOptions {
 	/** The composer box: the menu spans it and opens above it, like the @ panel. */
@@ -91,6 +91,8 @@ function actionItem(action: AgentPlusMenuAction, modelName: string | undefined):
 			return { id: action, label: localize('voltAgent.plusModel', "Model"), detail: modelName, icon: createCubeIcon, data };
 		case 'mcp':
 			return { id: action, label: localize('voltAgent.plusMcp', "MCP"), icon: createPlugIcon, trailingIcon: Codicon.chevronRight, data };
+		case 'schedule':
+			return { id: action, label: localize('voltAgent.plusSchedule', "Schedule…"), keywords: 'recurring repeat cron timer later automation', icon: Codicon.history, data };
 	}
 }
 

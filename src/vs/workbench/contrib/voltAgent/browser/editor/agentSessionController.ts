@@ -52,6 +52,7 @@ export interface IAgentTurnSpec {
 	readonly origin?: IAgentUserMessage['origin'];
 	readonly taskIds?: readonly string[];
 	readonly handoff?: IAgentUserMessage['handoff'];
+	readonly scheduled?: IAgentUserMessage['scheduled'];
 }
 
 export interface IAgentSessionChange {
@@ -189,6 +190,7 @@ export class AgentSessionController extends Disposable {
 			...(spec.origin ? { origin: spec.origin } : {}),
 			...(spec.taskIds?.length ? { taskIds: [...spec.taskIds] } : {}),
 			...(spec.handoff ? { handoff: spec.handoff } : {}),
+			...(spec.scheduled ? { scheduled: spec.scheduled } : {}),
 		};
 		const reply: IAgentAssistantMessage = {
 			kind: 'agent',

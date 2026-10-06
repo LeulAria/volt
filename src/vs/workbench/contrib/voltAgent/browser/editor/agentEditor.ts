@@ -114,6 +114,7 @@ import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agent
 import { AgentThreadView } from './agentThreadView.js';
 import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
+import { NEW_AGENT_SCHEDULE_COMMAND_ID, OPEN_AGENT_SCHEDULES_COMMAND_ID } from '../schedules/agentScheduleCommands.js';
 import { createModeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
 import { showAgentPlusMenu } from '../composer/agentPlusMenu.js';
 import { IVoltMenuHandle } from '../ui/menu/voltMenu.js';
@@ -361,6 +362,8 @@ export interface IAgentUserMessage {
 	taskIds?: string[];
 	/** The chat moved to another model before this turn: drawn as a "Context handoff" divider above it. */
 	handoff?: { fromLabel?: string; toLabel: string; at: number; by: 'agent' | 'user'; reason?: string };
+	/** Sent by a scheduled task, not typed now: drawn with a "Scheduled" divider above it. */
+	scheduled?: { id: string; title: string };
 }
 
 export interface IAgentPromptDisplay {
@@ -1724,7 +1727,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			anchor,
 			modes: MODE_OPTIONS.filter(option => option.id !== 'Agent'),
 			currentMode: this.currentMode,
-			actions: ['files', 'image', 'video', 'openFile', 'terminal', 'browser', 'model', 'mcp'],
+			actions: edit ? ['files', 'image', 'video', 'openFile', 'terminal', 'browser', 'model', 'mcp'] : ['files', 'image', 'video', 'openFile', 'terminal', 'browser', 'model', 'mcp', 'schedule'],
 			modelName: this.modelAuto
 				? localize('voltAgent.auto', "Auto")
 				: selected
@@ -1764,6 +1767,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 						return;
 					case 'mcp':
 						void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
+						return;
+					case 'schedule':
+						// The composer's text becomes the scheduled prompt; runs go to this chat by default.
+						void this.commandService.executeCommand(NEW_AGENT_SCHEDULE_COMMAND_ID, {
+							threadId: this.sessionKey,
+							prompt: this.inputModel?.getValue().trim() || undefined,
+							mode: this.currentMode,
+						});
 						return;
 				}
 			},
@@ -2220,6 +2231,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				if (message.origin === 'brief') {
 					this.renderSubagentOfPill(turn);
 				}
+				if (message.scheduled) {
+					this.renderScheduledPill(turn, message.scheduled);
+				}
 				this.renderUserTurn(turn, message, index);
 			}
 		} else {
@@ -2296,6 +2310,23 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		pill.appendChild(renderIcon(Codicon.hubot));
 		append(pill, $('span.label')).textContent = localize('voltAgent.subagentOf', "Subagent of");
 		append(pill, $('span.parent')).textContent = `· ${parentTitle}`;
+	}
+
+	/** "Scheduled · Daily CI check" above a prompt a scheduled task sent; a click opens the task list. */
+	private renderScheduledPill(turn: HTMLElement, scheduled: NonNullable<IAgentUserMessage['scheduled']>): void {
+		const divider = append(turn, $('.volt-agent-subagent-of.scheduled'));
+		const pill = append(divider, $('span.volt-agent-subagent-of-pill'));
+		pill.appendChild(renderIcon(Codicon.history));
+		append(pill, $('span.label')).textContent = localize('voltAgent.scheduledRun', "Scheduled");
+		append(pill, $('span.parent')).textContent = `· ${scheduled.title}`;
+		pill.setAttribute('role', 'button');
+		pill.tabIndex = 0;
+		setAgentTooltip(pill, localize('voltAgent.scheduledRun.open', "Sent by a scheduled task. Click to see your scheduled tasks."));
+		this.threadListeners.add(addDisposableListener(pill, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.commandService.executeCommand(OPEN_AGENT_SCHEDULES_COMMAND_ID, scheduled.id);
+		}));
 	}
 
 	/** The sent messages for the left rail; each reply is read only when its card opens. */
