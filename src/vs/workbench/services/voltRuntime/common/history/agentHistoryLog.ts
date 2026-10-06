@@ -314,6 +314,7 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 		snoozedUntil: previous?.snoozedUntil,
 		wokeAt: previous?.wokeAt,
 		lastPromptAt: last?.user.at,
+		lastUserPromptAt: lastUserPromptAt(transcript),
 		hasDraft: previous?.hasDraft,
 		unread: previous?.unread,
 		attention: previous?.attention,
@@ -324,6 +325,20 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 		parentId: transcript.header.parentId ?? previous?.parentId,
 		subagent: transcript.header.subagent || previous?.subagent || undefined,
 	};
+}
+
+/**
+ * The latest prompt the user wrote. The editor marks the turns Volt starts itself (a subagent
+ * report, a delegated brief, pull request news) with an `origin` in the stored message.
+ */
+function lastUserPromptAt(transcript: IAgentSessionTranscript): number | undefined {
+	for (let i = transcript.turns.length - 1; i >= 0; i--) {
+		const message = transcript.turns[i].user.message;
+		if (!message || typeof message !== 'object' || (message as { origin?: unknown }).origin === undefined) {
+			return transcript.turns[i].user.at;
+		}
+	}
+	return undefined;
 }
 
 /**

@@ -22,6 +22,7 @@ import { localize } from '../../../../../nls.js';
 import { showAgentProjectMenu } from './agentHomeWorkspaceActions.js';
 import { IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IContextMenuService, IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -66,6 +67,8 @@ import { showAgentHomeNewChatMenu } from './agentHomeNewChatMenu.js';
 import {
 	AGENT_HOME_GROUP_EXPAND_ALL,
 	AgentHomeActionId,
+	agentHomeLiveWork,
+	AgentHomeWorkState,
 	AgentHomeElement,
 	AgentHomeStatusBadgeKind,
 	agentHomeAddStart,
@@ -92,6 +95,7 @@ import { agentSessionHoverRows, agentSessionStatusNote } from './agentSessionHov
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { IAgentPrBadge, prBadge, sessionPrFilterTag, visibleLinks } from '../../common/agentPullRequests.js';
+import { AGENT_HOME_WORKING_SECTION_SETTING } from '../../common/agentHomeSettings.js';
 
 const ROW_HEIGHT = 28;
 /** An agent tab with a second line (branch, pull request, model). */
@@ -151,7 +155,7 @@ const ROW_STATE_CLASSES = [
 	'is-new', 'is-action', 'is-section', 'is-folder', 'is-bucket', 'is-group', 'is-session', 'is-more', 'is-empty',
 	'is-nested', 'is-flat', 'is-collapsible', 'current', 'unread', 'archived', 'pinned',
 	'status-needsAttention', 'status-working', 'status-draft', 'status-done',
-	'actions-cover-name', 'active-chat', 'shelf-active', 'shelf-settled', 'shelf-snooze', 'group-settled', 'group-snooze', 'two-line',
+	'actions-cover-name', 'active-chat', 'shelf-active', 'shelf-settled', 'shelf-snooze', 'group-working', 'group-settled', 'group-snooze', 'two-line',
 ];
 
 class AgentHomeDelegate implements IListVirtualDelegate<AgentHomeElement> {
@@ -355,6 +359,9 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 	private renderBucket(element: Extract<AgentHomeElement, { type: 'bucket' }>, template: IHomeTemplate): void {
 		template.container.classList.add('is-group', 'is-collapsible');
 		template.name.textContent = element.label;
+		if (element.count !== undefined) {
+			template.meta.textContent = String(element.count);
+		}
 		if (element.filter) {
 			this.renderFilter(template);
 		}
@@ -383,10 +390,13 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		}));
 	}
 
-	/** Settled / Snoozed: the label, a rule across the row, and the fold chevron at the end. */
+	/** Working / Settled / Snoozed: the label (Working counts its folded chats), a rule across the row, and the fold chevron at the end. */
 	private renderGroup(element: Extract<AgentHomeElement, { type: 'group' }>, template: IHomeTemplate): void {
 		template.container.classList.add('is-group', 'is-collapsible', `group-${element.id}`);
 		template.name.textContent = agentHomeGroupLabel(element.id);
+		if (element.count !== undefined) {
+			template.meta.textContent = String(element.count);
+		}
 	}
 
 	private renderSession(element: Extract<AgentHomeElement, { type: 'session' }>, template: IHomeTemplate): void {
@@ -416,7 +426,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			this.renderSecondLine(template, session, context);
 		}
 
-		const badge = sessionShowsStatusBadge(session, this.host.view) ? sessionStatusBadge(session, now) : undefined;
+		const badge = sessionShowsStatusBadge(session, this.host.view) ? sessionStatusBadge(session, now, this.host.liveWork(session.id)) : undefined;
 		if (badge) {
 			this.renderStatusBadge(template.badge, badge);
 		}
@@ -619,6 +629,10 @@ function actionSpec(id: AgentHomeActionId): { readonly label: string; readonly i
 	}
 }
 
+function sameLiveWork(a: ReadonlyMap<string, AgentHomeWorkState>, b: ReadonlyMap<string, AgentHomeWorkState>): boolean {
+	return a.size === b.size && [...a].every(([id, state]) => b.get(id) === state);
+}
+
 function sameRepo(a: IAgentRepoInfo | undefined, b: IAgentRepoInfo | undefined): boolean {
 	return a?.id === b?.id && a?.name === b?.name && a?.owner === b?.owner && a?.branch === b?.branch && a?.root.toString() === b?.root.toString();
 }
@@ -648,6 +662,8 @@ export class AgentHomePane extends Disposable {
 	private readonly pullRequests: IAgentPullRequestService | undefined;
 	/** Whether the tree was last built with two-line agent tabs; their height changes with it. */
 	private builtTwoLine: boolean | undefined;
+	/** Chats the orchestrator sees busy: a turn starting or running, or subagents still at work. */
+	private live = new Map<string, AgentHomeWorkState>();
 
 	constructor(
 		parent: HTMLElement,
@@ -669,9 +685,15 @@ export class AgentHomePane extends Disposable {
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 		@ILayoutService private readonly layoutService: ILayoutService,
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 	) {
 		super();
 		this._register(this.voltProjects.onDidChange(() => this.scheduleRefresh()));
+		this._register(this.configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(AGENT_HOME_WORKING_SECTION_SETTING)) {
+				this.scheduleRefresh();
+			}
+		}));
 		// Subagent chats are reached from their parent, not listed. Chats from before the history kept
 		// that flag learn it once their orchestration is loaded; the history change refreshes the list.
 		this._register(this.orchestrator.onDidChange(change => {
@@ -680,6 +702,10 @@ export class AgentHomePane extends Disposable {
 				if (thread?.taskId && thread.parentId && !this.history.get(id)?.subagent) {
 					this.history.pinSessionParent(id, thread.parentId, { subagent: true });
 				}
+			}
+			// A turn starting or subagents finishing moves a chat in or out of Working before history says so.
+			if (!sameLiveWork(this.live, agentHomeLiveWork(this.orchestrator.getState()))) {
+				this.scheduleRefresh();
 			}
 		}));
 		this.pullRequests = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
@@ -904,6 +930,14 @@ export class AgentHomePane extends Disposable {
 		return session.model || this.orchestrator.getThread(session.id)?.modelLabel;
 	}
 
+	liveWork(sessionId: string): AgentHomeWorkState | undefined {
+		return this.live.get(sessionId);
+	}
+
+	get workingSection(): boolean {
+		return this.configurationService.getValue<boolean>(AGENT_HOME_WORKING_SECTION_SETTING) !== false;
+	}
+
 	prBadge(sessionId: string): IAgentPrBadge | undefined {
 		return this.pullRequests ? prBadge(this.pullRequests.links(sessionId)) : undefined;
 	}
@@ -1000,6 +1034,10 @@ export class AgentHomePane extends Disposable {
 				return pane.view;
 			},
 			setView: next => pane.setView(next),
+			get workingSection() {
+				return pane.workingSection;
+			},
+			setWorkingSection: on => void pane.configurationService.updateValue(AGENT_HOME_WORKING_SECTION_SETTING, on),
 			collapseAll: () => pane.collapseAll(),
 			markAllAsRead: () => pane.markAllAsRead(),
 		});
@@ -1349,7 +1387,8 @@ export class AgentHomePane extends Disposable {
 				}
 			}
 		}
-		const tree = buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags });
+		this.live = agentHomeLiveWork(this.orchestrator.getState());
+		const tree = buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags, workingShelf: this.workingSection, live: this.live });
 		// Row heights are measured when rows are inserted: switching one and two lines inserts them again.
 		if (this.builtTwoLine !== undefined && this.builtTwoLine !== this.twoLine) {
 			this.tree.setChildren(null, []);

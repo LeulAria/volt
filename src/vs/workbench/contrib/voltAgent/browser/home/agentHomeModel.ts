@@ -7,6 +7,8 @@ import { basename } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { isLiveTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
+import type { IOrchState } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { isUsageLimitText } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { combineDayAndTime, MINUTES_PER_DAY } from '../ui/dateTime/voltDateTime.js';
@@ -58,7 +60,7 @@ export interface IAgentHomeProject {
 }
 
 export type AgentHomeSectionKey = 'repositories' | 'workspaces' | 'agents';
-export type AgentHomeGroupId = 'settled' | 'snooze';
+export type AgentHomeGroupId = 'working' | 'settled' | 'snooze';
 export type AgentHomeActionId = 'search' | 'automations' | 'customize';
 
 export type AgentHomeElement =
@@ -66,8 +68,9 @@ export type AgentHomeElement =
 	| { readonly type: 'action'; readonly id: AgentHomeActionId }
 	| { readonly type: 'section'; readonly key: AgentHomeSectionKey; readonly add?: boolean; readonly filter?: boolean }
 	| { readonly type: 'folder'; readonly project: IAgentHomeProject }
-	| { readonly type: 'bucket'; readonly id: string; readonly label: string; readonly filter?: boolean; readonly add?: boolean }
-	| { readonly type: 'group'; readonly id: AgentHomeGroupId }
+	/** `count` is shown on headers that fold busy rows away (Working). */
+	| { readonly type: 'bucket'; readonly id: string; readonly label: string; readonly filter?: boolean; readonly add?: boolean; readonly count?: number }
+	| { readonly type: 'group'; readonly id: AgentHomeGroupId; readonly count?: number }
 	/**
 	 * `nested` sessions sit under their project; the others list the project by its initials.
 	 * `sideDepth` is set on a side chat, listed right under the chat it was opened in.
@@ -90,6 +93,10 @@ export interface IAgentHomeTreeOptions {
 	readonly limits?: ReadonlyMap<string, number>;
 	/** What each session's linked pull requests add up to, for the PR filter. Absent: "No PR". */
 	readonly prTags?: ReadonlyMap<string, AgentHomePrFilter>;
+	/** Fold busy chats into a collapsed Working shelf below the active list (`volt.agent.home.workingSection`). */
+	readonly workingShelf?: boolean;
+	/** What the orchestrator knows that history does not: a turn starting, or subagents still running. See {@link agentHomeLiveWork}. */
+	readonly live?: ReadonlyMap<string, AgentHomeWorkState>;
 }
 
 /** Agent tabs shown in a group before a "Show more" row. */
@@ -101,8 +108,73 @@ export const AGENT_HOME_GROUP_EXPAND_ALL = Number.MAX_SAFE_INTEGER;
 
 export type AgentHomeSessionShelf = 'active' | 'settled' | 'snooze';
 
-/** Shelves below the active list, in display order. */
-export const AGENT_HOME_SHELVES: readonly AgentHomeGroupId[] = ['settled', 'snooze'];
+/** Parking shelves below the active list (and below Working), in display order. */
+export const AGENT_HOME_SHELVES: readonly Exclude<AgentHomeSessionShelf, 'active'>[] = ['settled', 'snooze'];
+
+/**
+ * Why a chat is busy without needing the user: its own turn runs (`working`), or it stopped while
+ * the subagents it started still run and will wake it with their reports (`delegating`).
+ */
+export type AgentHomeWorkState = 'working' | 'delegating';
+
+/**
+ * Busy chats as the orchestrator sees them. A chat waiting on an approval or answer is not busy, and
+ * neither is one whose subagent waits on the user: both need the user, so they stay in the inbox.
+ */
+export function agentHomeLiveWork(state: Pick<IOrchState, 'threads' | 'tasks'>): Map<string, AgentHomeWorkState> {
+	const delegating = new Set<string>();
+	const blocked = new Set<string>();
+	for (const task of Object.values(state.tasks)) {
+		if (task.source !== 'volt' || !isLiveTaskState(task.state)) {
+			continue;
+		}
+		(task.state === 'waiting' ? blocked : delegating).add(task.parentId);
+	}
+	const live = new Map<string, AgentHomeWorkState>();
+	for (const thread of Object.values(state.threads)) {
+		if (thread.inputs.length) {
+			continue;
+		}
+		if (thread.active) {
+			live.set(thread.id, 'working');
+		} else if (delegating.has(thread.id) && !blocked.has(thread.id)) {
+			live.set(thread.id, 'delegating');
+		}
+	}
+	return live;
+}
+
+/**
+ * Whether a chat is busy with work that does not need the user, from its history and the
+ * orchestrator's view (`live`). Pending approvals and questions, failures and interruptions need the
+ * user; a turn the orchestrator is starting again (a retry, a queued prompt) is work.
+ */
+export function sessionWorkState(session: IAgentSessionMeta, live?: AgentHomeWorkState): AgentHomeWorkState | undefined {
+	if (session.attention) {
+		return undefined;
+	}
+	if (session.status === 'running' || live === 'working') {
+		return 'working';
+	}
+	if (session.status === 'error' || session.status === 'interrupted') {
+		return undefined;
+	}
+	return live;
+}
+
+/** Working shelf: busy inbox chats. Pinned chats stay pinned; Settled and Snoozed keep their own shelves. */
+export function sessionInWorkingShelf(session: IAgentSessionMeta, live?: AgentHomeWorkState): boolean {
+	return !session.pinned && sessionHomeShelf(session) === 'active' && sessionWorkState(session, live) !== undefined;
+}
+
+/**
+ * The Working shelf lists the chat the user last sent work to first. Runs ending and Volt's own
+ * wake-ups (subagent reports, pull request news) do not move a row, so the order holds while agents work.
+ */
+export function sortWorkingSessions(sessions: readonly IAgentSessionMeta[]): IAgentSessionMeta[] {
+	const sent = (session: IAgentSessionMeta) => Math.max(session.createdAt, session.lastUserPromptAt ?? session.lastPromptAt ?? 0);
+	return [...sessions].sort((a, b) => sent(b) - sent(a) || a.id.localeCompare(b.id));
+}
 
 /** Where a session lives in the agent home list. Snooze wins over settled. */
 export function sessionHomeShelf(session: IAgentSessionMeta): AgentHomeSessionShelf {
@@ -313,7 +385,12 @@ export function buildAgentHomeTree(
 	const { roots: visible, sideChats } = splitSideChats(sessions.filter(session => sessionPassesHomeFilters(session, view, workspaceFileIds, options.prTags)));
 	const active = visible.filter(session => sessionHomeShelf(session) === 'active');
 	const pinned = sortSessionsForHome(active.filter(session => session.pinned), view.chatOrder);
-	const unpinned = active.filter(session => !session.pinned);
+	// Busy chats fold into Working and come back to the inbox when they finish, fail or need the user.
+	const working = options.workingShelf
+		? sortWorkingSessions(active.filter(session => sessionInWorkingShelf(session, options.live?.get(session.id))))
+		: [];
+	const folded = new Set(working);
+	const unpinned = active.filter(session => !session.pinned && !folded.has(session));
 	const filtered = anyHomeFilterActive(view);
 
 	const body: IAgentHomeNode[] = [];
@@ -327,6 +404,9 @@ export function buildAgentHomeTree(
 	if (flat) {
 		body.push(...flatBucketNodes(view.grouping, sortSessionsForHome(unpinned, view.chatOrder), now, options.limits));
 		if (shelvesAsBuckets) {
+			if (working.length) {
+				body.push(bucketNode('working', statusBucketLabel('working'), working, options.limits, { add: true, collapsed: true, count: working.length }));
+			}
 			for (const shelf of AGENT_HOME_SHELVES) {
 				const members = shelved(shelf);
 				if (members.length) {
@@ -335,10 +415,11 @@ export function buildAgentHomeTree(
 			}
 		}
 		if (!body.length) {
+			// Every chat busy: the header keeps the filter, without "No agents yet" over the Working shelf.
 			body.push({
 				element: { type: 'section', key: 'agents', filter: true },
 				collapsed: false,
-				children: [{ element: { type: 'empty', key: 'agents', filtered } }],
+				children: working.length ? [] : [{ element: { type: 'empty', key: 'agents', filtered } }],
 			});
 		} else {
 			// The filter control lives on the first header, whichever bucket that is.
@@ -361,6 +442,13 @@ export function buildAgentHomeTree(
 	const tree: IAgentHomeNode[] = [...body];
 
 	if (!shelvesAsBuckets) {
+		if (working.length) {
+			tree.push({
+				element: { type: 'group', id: 'working', count: working.length },
+				collapsed: true,
+				children: working.map(session => ({ element: { type: 'session' as const, session, folderKey: 'group:working', nested: false } })),
+			});
+		}
 		for (const shelf of AGENT_HOME_SHELVES) {
 			const members = shelved(shelf);
 			if (members.length) {
@@ -438,6 +526,7 @@ interface IBucketNodeOptions {
 	readonly collapsed?: boolean;
 	readonly add?: boolean;
 	readonly defaultLimit?: number;
+	readonly count?: number;
 }
 
 function bucketNode(
@@ -449,7 +538,7 @@ function bucketNode(
 ): IAgentHomeNode {
 	const groupKey = `bucket:${id}`;
 	return {
-		element: { type: 'bucket', id, label, add: options.add },
+		element: { type: 'bucket', id, label, add: options.add, ...(options.count !== undefined ? { count: options.count } : {}) },
 		collapsed: options.collapsed ?? false,
 		children: pagedSessionNodes(groupKey, sessions, false, limits, options.defaultLimit),
 	};
@@ -756,6 +845,8 @@ export function sessionSecondLine(session: IAgentSessionMeta, context: IAgentHom
 
 export function agentHomeGroupLabel(id: AgentHomeGroupId): string {
 	switch (id) {
+		case 'working':
+			return localize('voltAgent.home.working', "Working");
 		case 'settled':
 			return localize('voltAgent.home.settled', "Settled");
 		case 'snooze':
@@ -812,8 +903,11 @@ export function sessionShowsStatusBadge(session: IAgentSessionMeta, view: IAgent
 	return view.show.has('status') && sessionHomeShelf(session) === 'active';
 }
 
-/** The badge after an agent tab's age: "Input", "Working 2m", "Woke", "Done", "Draft", "Limited", "Failed". Stopped and idle tabs have none. */
-export function sessionStatusBadge(session: IAgentSessionMeta, now: number): IAgentHomeStatusBadge | undefined {
+/**
+ * The badge after an agent tab's age: "Input", "Working 2m", "Waiting", "Woke", "Done", "Draft", "Limited", "Failed".
+ * Stopped and idle tabs have none. `live` is the orchestrator's view (see {@link agentHomeLiveWork}).
+ */
+export function sessionStatusBadge(session: IAgentSessionMeta, now: number, live?: AgentHomeWorkState): IAgentHomeStatusBadge | undefined {
 	switch (session.attention) {
 		case 'approval':
 		case 'question':
@@ -822,6 +916,14 @@ export function sessionStatusBadge(session: IAgentSessionMeta, now: number): IAg
 		default: {
 			const unexpected: never = session.attention;
 			return unexpected;
+		}
+	}
+	if (session.status !== 'running') {
+		// History has not caught up with a turn that is starting, or the chat waits on its subagents.
+		switch (sessionWorkState(session, live)) {
+			case 'working': return { kind: 'working', label: localize('voltAgent.home.badge.working', "Working") };
+			case 'delegating': return { kind: 'working', label: localize('voltAgent.home.badge.waiting', "Waiting") };
+			case undefined: break;
 		}
 	}
 	// Back from a timed snooze and not opened yet. A run that started since says Working instead.
