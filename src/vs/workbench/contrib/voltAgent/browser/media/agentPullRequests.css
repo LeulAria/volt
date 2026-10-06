@@ -795,13 +795,6 @@
 	overflow: hidden;
 }
 
-.volt-pr-renamed {
-	font-size: 11.5px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
 .volt-pr-sha {
 	flex: none;
 	height: 20px;
@@ -1430,11 +1423,52 @@
 
 .volt-pr-tabbar {
 	display: flex;
-	align-items: center;
+	align-items: stretch;
 	gap: 8px;
+	min-height: 36px;
 	margin: 0 -16px;
-	padding: 8px 16px;
+	padding: 0 16px;
 	border-top: 1px solid var(--volt-pr-border);
+}
+
+.volt-pr-tabbar > .volt-pr-tabbar-aside {
+	align-self: center;
+}
+
+/* Plain text tabs; the open one is underlined on the bar's bottom edge. */
+.volt-pr-tabs {
+	display: flex;
+	align-items: stretch;
+	gap: 18px;
+}
+
+.volt-pr-tab {
+	display: inline-flex;
+	align-items: center;
+	padding: 0 1px;
+	margin-bottom: -1px;
+	border: 0;
+	border-bottom: 2px solid transparent;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.volt-pr-tab:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-tab.active {
+	color: var(--vscode-foreground);
+	border-bottom-color: var(--vscode-foreground);
+}
+
+.volt-pr-tab:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
 }
 
 .volt-pr-tabbar-aside {
@@ -1868,79 +1902,104 @@
 	white-space: nowrap;
 }
 
-.volt-pr-code-files {
-	display: grid;
-	gap: 8px;
-}
-
-.volt-pr-code-file {
-	border: 1px solid var(--volt-pr-border);
-	border-radius: 8px;
+/*
+ * The diff is the workbench's multi-file diff in the review's look (agentChangesEditor.css); here
+ * only its place in the tab and what the pull request adds to each file's header.
+ */
+.volt-pr-body.code-tab {
+	display: flex;
+	flex-direction: column;
 	overflow: hidden;
-	background: var(--vscode-editor-background);
+	padding: 0;
 }
 
-.volt-pr-code-file-head {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	min-height: 34px;
-	padding: 0 8px 0 4px;
-	background: var(--volt-pr-surface);
+.volt-pr-body.code-tab > .volt-pr-code-toolbar {
+	position: static;
+	flex: none;
+	margin: 0;
 }
 
-.volt-pr-code-file.open .volt-pr-code-file-head {
-	border-bottom: 1px solid var(--volt-pr-border);
+.volt-pr-body.code-tab > .volt-pr-notice,
+.volt-pr-body.code-tab > .volt-pr-empty,
+.volt-pr-body.code-tab > .volt-pr-code-note {
+	flex: none;
+	margin: 8px 16px 0;
 }
 
-.volt-pr-code-file-toggle {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	min-width: 0;
-	flex: 1;
-	border: 0;
-	padding: 4px;
-	background: transparent;
-	color: var(--vscode-foreground);
-	font: inherit;
-	font-size: 12.5px;
-	text-align: left;
-	cursor: pointer;
-}
-
-.volt-pr-code-file-toggle > .codicon {
+.volt-pr-code-note {
 	font-size: 12px;
-	color: var(--volt-pr-muted);
 }
 
-.volt-pr-code-path {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+.volt-pr-code-note.hidden,
+.volt-pr-code-loading.hidden {
+	display: none;
+}
+
+.volt-pr-code-host {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+}
+
+.volt-pr-code-diff {
+	position: absolute;
+	inset: 0;
+}
+
+.volt-pr-code-loading {
+	position: absolute;
+	top: 12px;
+	left: 16px;
+	z-index: 1;
+	font-size: 12.5px;
+}
+
+.volt-pr-code-diff .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .volt-header-extras {
+	order: 1;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: none;
+	margin-left: auto;
+	padding-left: 8px;
+}
+
+.volt-pr-code-diff .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .actions {
+	margin-left: 0;
+}
+
+.volt-pr-code-stats {
+	display: inline-flex;
+	gap: 6px;
 	font-family: var(--monaco-monospace-font);
 	font-size: 12px;
 }
 
-.volt-pr-code-path .dir {
+.volt-pr-code-stats .add { color: var(--volt-pr-add); }
+.volt-pr-code-stats .del { color: var(--volt-pr-del); }
+
+.volt-pr-code-ask {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
 	color: var(--volt-pr-muted);
+	cursor: pointer;
 }
 
-.volt-pr-code-file.viewed .volt-pr-code-path {
-	opacity: 0.6;
+.volt-pr-code-ask:hover {
+	background: var(--volt-pr-surface-strong);
+	color: var(--vscode-foreground);
 }
 
-.volt-pr-icon.change-added { color: var(--volt-pr-add); }
-.volt-pr-icon.change-deleted { color: var(--volt-pr-del); }
-.volt-pr-icon.change-modified,
-.volt-pr-icon.change-changed { color: var(--vscode-textLink-foreground); }
-.volt-pr-icon.change-renamed,
-.volt-pr-icon.change-copied { color: var(--volt-pr-pending); }
-
-.volt-pr-renamed {
-	font-size: 11.5px;
-	white-space: nowrap;
+.volt-pr-code-ask .codicon {
+	font-size: 14px;
+	color: inherit;
 }
 
 .volt-pr-viewed {
@@ -1959,16 +2018,19 @@
 	cursor: pointer;
 }
 
-.volt-pr-viewed .codicon {
-	width: 14px;
-	height: 14px;
-	font-size: 12px;
-	border-radius: 3px;
-	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 35%, transparent);
-	color: inherit;
+.volt-pr-viewed-box {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
+	width: 14px;
+	height: 14px;
+	border-radius: 3px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 35%, transparent);
+}
+
+.volt-pr-viewed-box .codicon {
+	font-size: 12px;
+	color: inherit;
 }
 
 .volt-pr-viewed.checked {
@@ -1976,107 +2038,10 @@
 	background: var(--volt-pr-surface-strong);
 }
 
-.volt-pr-viewed.checked .codicon {
+.volt-pr-viewed.checked .volt-pr-viewed-box {
 	background: var(--vscode-textLink-foreground);
 	border-color: var(--vscode-textLink-foreground);
-	color: var(--vscode-editor-background) !important;
-}
-
-.volt-pr-diff {
-	overflow-x: auto;
-	font-size: 12px;
-	line-height: 20px;
-}
-
-.volt-pr-diff-note {
-	padding: 10px 12px;
-	font-size: 12.5px;
-}
-
-.volt-pr-diff-lines {
-	min-width: max-content;
-}
-
-.volt-pr-diff-line {
-	position: relative;
-	font-family: var(--monaco-monospace-font);
-	display: grid;
-	grid-template-columns: 22px 44px 44px 16px auto;
-	align-items: start;
-	white-space: pre;
-}
-
-.volt-pr-diff-line.add {
-	background: color-mix(in srgb, var(--volt-pr-add) 12%, transparent);
-}
-
-.volt-pr-diff-line.del {
-	background: color-mix(in srgb, var(--volt-pr-del) 12%, transparent);
-}
-
-.volt-pr-diff-line.add .volt-pr-diff-no,
-.volt-pr-diff-line.add .volt-pr-diff-sign { color: var(--volt-pr-add); }
-.volt-pr-diff-line.del .volt-pr-diff-no,
-.volt-pr-diff-line.del .volt-pr-diff-sign { color: var(--volt-pr-del); }
-
-.volt-pr-diff-no {
-	padding-right: 8px;
-	text-align: right;
-	color: var(--volt-pr-muted);
-	user-select: none;
-	opacity: 0.8;
-}
-
-.volt-pr-diff-sign {
-	user-select: none;
-	color: var(--volt-pr-muted);
-}
-
-.volt-pr-diff-code {
-	padding-right: 16px;
-}
-
-.volt-pr-diff-ask {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 18px;
-	height: 18px;
-	margin: 1px 2px;
-	padding: 0;
-	border: 0;
-	border-radius: 4px;
-	background: var(--vscode-textLink-foreground);
 	color: var(--vscode-editor-background);
-	opacity: 0;
-	cursor: pointer;
-}
-
-.volt-pr-diff-ask .codicon {
-	font-size: 12px;
-	color: inherit !important;
-}
-
-.volt-pr-diff-line:hover .volt-pr-diff-ask,
-.volt-pr-diff-ask:focus-visible {
-	opacity: 1;
-}
-
-.volt-pr-diff-gap {
-	padding: 3px 12px 3px 104px;
-	font-size: 11.5px;
-	color: var(--volt-pr-muted);
-	background: var(--volt-pr-surface);
-	border-top: 1px solid var(--volt-pr-border);
-	border-bottom: 1px solid var(--volt-pr-border);
-}
-
-.volt-pr-diff-gap:first-child {
-	border-top: 0;
-}
-
-.volt-pr-diff-gap.end {
-	border-bottom: 0;
 }
 
 /* The floating composer: a round button, then a card with Comment | Review. */
