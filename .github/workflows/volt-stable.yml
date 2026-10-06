@@ -1,0 +1,35 @@
+name: Volt Stable
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '!v*-*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, e.g. 0.0.1 (empty = package.json version)'
+        default: ''
+      platforms:
+        description: 'Targets (comma-separated) or "all"'
+        default: all
+      publish:
+        description: Publish the release and update the feed
+        type: boolean
+        default: true
+
+concurrency:
+  group: volt-release-stable-${{ github.ref }}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/volt-build.yml
+    secrets: inherit
+    with:
+      channel: stable
+      version: ${{ inputs.version || '' }}
+      platforms: ${{ inputs.platforms || 'all' }}
+      publish: ${{ github.event_name == 'push' || inputs.publish }}
