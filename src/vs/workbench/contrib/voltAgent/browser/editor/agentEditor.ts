@@ -43,6 +43,7 @@ import { CodeDataTransfers } from '../../../../../platform/dnd/browser/dnd.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
+import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
@@ -121,6 +122,7 @@ import { AgentMentionController, IAgentDisplayMention, IAgentImageAttachment, IA
 import { AgentImageStrip, formatImageSize, IAgentImageStripItem, imageThumbClass } from '../composer/agentImageAttachments.js';
 import { AgentImageViewer, showAgentImageViewer } from '../composer/agentImageViewer.js';
 import { VIDEO_EXTENSIONS } from '../composer/agentVideoAttachments.js';
+import { fileChipDetail, isTextAttachment } from '../composer/agentFileAttachments.js';
 import { AgentVideoViewer, showAgentVideoViewer } from '../composer/agentVideoViewer.js';
 import { MentionCodePreview } from '../composer/mentionCodePreview.js';
 import { appendAgentScrollableList } from './agentScrollable.js';
@@ -1724,7 +1726,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			anchor,
 			modes: MODE_OPTIONS.filter(option => option.id !== 'Agent'),
 			currentMode: this.currentMode,
-			actions: ['files', 'image', 'video', 'openFile', 'terminal', 'browser', 'model', 'mcp'],
+			actions: ['files', 'attachFile', 'image', 'video', 'openFile', 'terminal', 'browser', 'model', 'mcp'],
 			modelName: this.modelAuto
 				? localize('voltAgent.auto', "Auto")
 				: selected
@@ -1748,6 +1750,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 						return;
 					case 'image':
 					case 'video':
+					case 'attachFile':
 						void this.pickMedia(edit, action);
 						return;
 					case 'openFile':
@@ -1776,28 +1779,33 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.plusMenu = handle;
 	}
 
-	/** "+" › Image / Video: pick files from disk and attach them at the cursor. */
-	private async pickMedia(edit: boolean, kind: 'image' | 'video'): Promise<void> {
+	/** "+" > Image / Video / File...: pick files from disk and attach them at the cursor. */
+	private async pickMedia(edit: boolean, kind: 'image' | 'video' | 'attachFile'): Promise<void> {
 		const resources = await this.fileDialogService.showOpenDialog({
-			title: kind === 'video' ? localize('voltAgent.pickVideosTitle', "Attach Videos") : localize('voltAgent.pickImagesTitle', "Attach Images"),
+			title: kind === 'video' ? localize('voltAgent.pickVideosTitle', "Attach Videos")
+				: kind === 'image' ? localize('voltAgent.pickImagesTitle', "Attach Images")
+					: localize('voltAgent.pickFilesTitle', "Attach Files"),
 			canSelectFiles: true,
 			canSelectFolders: false,
 			canSelectMany: true,
 			defaultUri: this.sessionContext.activeProject?.root ?? await this.fileDialogService.defaultFilePath(),
-			filters: [kind === 'video'
-				? { name: localize('voltAgent.videoFilter', "Videos"), extensions: [...VIDEO_EXTENSIONS] }
-				: { name: localize('voltAgent.imageFilter', "Images"), extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }],
+			filters: kind === 'video'
+				? [{ name: localize('voltAgent.videoFilter', "Videos"), extensions: [...VIDEO_EXTENSIONS] }]
+				: kind === 'image'
+					// HEIC photos are converted to JPEG on the way in.
+					? [{ name: localize('voltAgent.imageFilter', "Images"), extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif'] }]
+					: undefined,
 		});
 		if (!resources?.length) {
 			return;
 		}
 		if (edit) {
 			this.ensureEditComposer();
-			await this.editMentionController?.addMediaFiles(resources);
+			await this.editMentionController?.addAttachmentFiles(resources);
 			this.editEditor?.focus();
 		} else {
 			this.ensureInputEditor();
-			await this.mentionController?.addMediaFiles(resources);
+			await this.mentionController?.addAttachmentFiles(resources);
 			this.inputEditor?.focus();
 		}
 	}
@@ -1896,6 +1904,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				append(chip, $('span.volt-agent-mention-size')).textContent = formatImageSize(mention.image.bytes.byteLength);
 			} else if (mention.kind === 'video' && mention.video) {
 				append(chip, $('span.volt-agent-mention-size')).textContent = videoDetail(mention.video);
+			} else if (mention.file) {
+				append(chip, $('span.volt-agent-mention-size')).textContent = fileChipDetail(mention.file);
 			}
 			if (mention.resource && mention.range) {
 				chip.setAttribute('data-preview', 'true');
@@ -1921,11 +1931,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				}));
 			} else if (mention.resource && (mention.kind === 'file' || mention.kind === 'image')) {
 				const resource = URI.revive(mention.resource);
+				// An attached PDF or archive opens in its own app; text and project files beside the chat.
+				const external = !!mention.file && !isTextAttachment(mention.file.name, mention.file.mime);
 				chip.setAttribute('data-open', 'true');
 				this.threadListeners.add(addDisposableListener(chip, 'click', e => {
 					e.preventDefault();
 					e.stopPropagation();
-					this.surfaceHost.openFile(resource);
+					if (external) {
+						void this.instantiationService.invokeFunction(accessor => accessor.get(IOpenerService).open(resource, { openExternal: true }));
+					} else {
+						this.surfaceHost.openFile(resource);
+					}
 				}));
 			}
 			cursor = index + mention.label.length;
