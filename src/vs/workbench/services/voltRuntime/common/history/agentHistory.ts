@@ -192,6 +192,21 @@ export interface IAgentSessionMeta {
 	readonly subagent?: boolean;
 }
 
+/** Where a chat sits in the sidebar (pin, archive, settle, snooze), as one value an undo puts back. */
+export type IAgentSessionLifecycle = Pick<IAgentSessionMeta, 'pinned' | 'archived' | 'settled' | 'unsettledAt' | 'snoozed' | 'snoozedUntil' | 'wokeAt'>;
+
+export function sessionLifecycle(meta: IAgentSessionMeta): IAgentSessionLifecycle {
+	return {
+		pinned: meta.pinned,
+		archived: meta.archived,
+		settled: meta.settled,
+		unsettledAt: meta.unsettledAt,
+		snoozed: meta.snoozed,
+		snoozedUntil: meta.snoozedUntil,
+		wokeAt: meta.wokeAt,
+	};
+}
+
 export interface IAgentHistoryIndex {
 	readonly version: number;
 	readonly sessions: IAgentSessionMeta[];
@@ -283,6 +298,8 @@ export interface IAgentHistoryService {
 	setAutoSettle(id: string, enabled: boolean): Promise<void>;
 	/** `until` is when the session comes back on its own; the service wakes it then. */
 	setSnoozed(id: string, snoozed: boolean, until?: number): Promise<void>;
+	/** Puts back a lifecycle read earlier with {@link sessionLifecycle} (undo). A snooze that ran out meanwhile wakes. */
+	restoreLifecycle(id: string, lifecycle: IAgentSessionLifecycle): Promise<void>;
 	setUnread(id: string, unread: boolean): Promise<void>;
 	/** The user has seen a session that woke from its snooze; it drops the "Woke" mark. */
 	clearWoke(id: string): Promise<void>;
