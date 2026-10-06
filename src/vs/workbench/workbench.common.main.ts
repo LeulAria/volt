@@ -218,6 +218,7 @@ import './contrib/voltSettings/browser/voltSettings.contribution.js';
 // New Agent editor
 import './contrib/voltAgent/browser/editor/agentEditor.contribution.js';
 import './contrib/voltAgent/browser/history/agentHistory.contribution.js';
+import './contrib/voltAgent/browser/home/agentThreadLifecycle.contribution.js';
 import './contrib/voltProjects/browser/voltProjects.contribution.js';
 
 // Volt Prediction (Tab / NES / cross-file edits)

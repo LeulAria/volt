@@ -771,7 +771,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			}
 			const thread = this.orchestrator.getThread(sessionId);
 			const busy = !!thread?.active || !!thread?.queue.length || !!thread?.inputs.length || meta.status === 'running' || !!meta.attention;
-			if (shouldSettleForPullRequests(links, { createdAt: meta.createdAt, lastPromptAt: meta.lastPromptAt, pinned: meta.pinned, settled: meta.settled, snoozed: meta.snoozed, archived: meta.archived, busy })) {
+			if (shouldSettleForPullRequests(links, { createdAt: meta.createdAt, lastPromptAt: meta.lastPromptAt, pinned: meta.pinned, settled: meta.settled, snoozed: meta.snoozed, archived: meta.archived, autoSettle: meta.autoSettle, busy })) {
 				void this.history.setSettled(sessionId, true);
 			}
 			// Every link finished and the chat idle: handled, so moving the chat back out of Settled sticks.

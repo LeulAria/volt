@@ -752,7 +752,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		}
 	}
 
-	async setSettled(id: string, settled: boolean): Promise<void> {
+	async setSettled(id: string, settled: boolean, options?: { readonly byUser?: boolean }): Promise<void> {
 		const meta = this.sessions.get(id);
 		if (!meta || !!meta.settled === settled) {
 			return;
@@ -760,11 +760,21 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		this.updateMeta({
 			...meta,
 			settled: settled || undefined,
+			// Settled work leaves the pinned list too, the way T3 Code settles a thread.
+			pinned: settled ? undefined : meta.pinned,
+			unsettledAt: settled ? undefined : options?.byUser ? Date.now() : meta.unsettledAt,
 			snoozed: settled ? undefined : meta.snoozed,
 			snoozedUntil: settled ? undefined : meta.snoozedUntil,
 			wokeAt: settled ? undefined : meta.wokeAt,
 		});
 		this.scheduleSnoozeWake();
+	}
+
+	async setAutoSettle(id: string, enabled: boolean): Promise<void> {
+		const meta = this.sessions.get(id);
+		if (meta && (meta.autoSettle !== false) !== enabled) {
+			this.updateMeta({ ...meta, autoSettle: enabled ? undefined : false });
+		}
 	}
 
 	async setSnoozed(id: string, snoozed: boolean, until?: number): Promise<void> {

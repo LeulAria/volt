@@ -310,6 +310,8 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 		pinned: previous?.pinned,
 		archived: previous?.archived,
 		settled: previous?.settled,
+		autoSettle: previous?.autoSettle,
+		unsettledAt: previous?.unsettledAt,
 		snoozed: previous?.snoozed,
 		snoozedUntil: previous?.snoozedUntil,
 		wokeAt: previous?.wokeAt,
