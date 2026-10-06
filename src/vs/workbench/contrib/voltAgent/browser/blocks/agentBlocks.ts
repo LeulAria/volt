@@ -128,7 +128,8 @@ export interface IAnswersBlock extends IAgentBaseBlock {
 	readonly type: 'answers';
 	requestId: string;
 	outcome: 'answered' | 'skipped' | 'cancelled';
-	items: { question: string; answer: string }[];
+	/** `attachments`: files sent with the answer, shown as chips under it. */
+	items: { question: string; answer: string; attachments?: readonly { name: string; kind: 'image' | 'file'; size: number; path?: string }[] }[];
 	note?: string;
 }
 
@@ -1057,7 +1058,7 @@ export function blocksPlainText(blocks: AgentBlock[]): string {
 			case 'approval':
 				return [block.action, block.resource, block.reason].filter(Boolean).join('\n');
 			case 'answers':
-				return block.items.map(item => `${item.question}\n${item.answer}`).concat(block.note ? [block.note] : []).join('\n');
+				return block.items.map(item => [item.question, item.answer, ...(item.attachments ?? []).map(file => file.name)].filter(Boolean).join('\n')).concat(block.note ? [block.note] : []).join('\n');
 			case 'plan':
 				return [block.name, block.markdown].filter(Boolean).join('\n\n');
 		}

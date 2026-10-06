@@ -10,6 +10,8 @@
  * `IAgentQuestionRequest`, answered by the tray above the composer.
  */
 
+import { attachmentSavedLine, IFileAttachmentInfo } from './fileAttachments.js';
+
 export interface IAgentQuestionOption {
 	readonly id: string;
 	readonly label: string;
@@ -33,10 +35,17 @@ export interface IAgentQuestionRequest {
 	readonly questions: readonly IAgentQuestion[];
 }
 
+/** A file attached to one answer, already saved where the agent's tools can open it. */
+export interface IAgentQuestionAttachment extends IFileAttachmentInfo {
+	readonly path: string;
+}
+
 export interface IAgentQuestionAnswer {
 	readonly questionId: string;
 	readonly optionIds: readonly string[];
 	readonly other?: string;
+	/** Only on questions that take a custom answer; may be the whole answer. */
+	readonly attachments?: readonly IAgentQuestionAttachment[];
 }
 
 export interface IAgentQuestionResponse {
@@ -44,6 +53,11 @@ export interface IAgentQuestionResponse {
 	readonly answers: readonly IAgentQuestionAnswer[];
 	/** What the user typed in the composer under the tray ("Add more optional details..."). */
 	readonly note?: string;
+	/**
+	 * With `cancelled`: the user closed the tray. The agent is told and carries on, where a
+	 * cancel from Stop or a steer ends the question with the run.
+	 */
+	readonly dismissed?: boolean;
 }
 
 export type AgentQuestionDraft = Omit<IAgentQuestionRequest, 'id' | 'sessionId' | 'runId'>;
@@ -52,6 +66,7 @@ export type AgentQuestionDraft = Omit<IAgentQuestionRequest, 'id' | 'sessionId' 
 export interface IAgentAnsweredQuestion {
 	readonly question: string;
 	readonly answer: string;
+	readonly attachments?: readonly IAgentQuestionAttachment[];
 }
 
 function str(value: unknown): string {
@@ -150,6 +165,11 @@ function optionLabels(question: IAgentQuestion, answer: IAgentQuestionAnswer | u
 	return labels;
 }
 
+/** `[Image "x.png" is saved at: /path]` per file attached to an answer. */
+export function answerAttachmentLines(answer: IAgentQuestionAnswer | undefined): string[] {
+	return (answer?.attachments ?? []).map(attachment => attachmentSavedLine(attachment)).filter((line): line is string => !!line);
+}
+
 /** The pairs the Answers card lists. Multi-select answers are comma-joined, like Cursor. */
 export function answeredQuestions(request: Pick<IAgentQuestionRequest, 'questions'>, response: IAgentQuestionResponse): IAgentAnsweredQuestion[] {
 	if (response.outcome !== 'answered') {
@@ -157,19 +177,24 @@ export function answeredQuestions(request: Pick<IAgentQuestionRequest, 'question
 	}
 	const out: IAgentAnsweredQuestion[] = [];
 	for (const question of request.questions) {
-		const labels = optionLabels(question, response.answers.find(answer => answer.questionId === question.id));
-		if (labels.length) {
-			out.push({ question: question.prompt, answer: labels.join(', ') });
+		const answer = response.answers.find(item => item.questionId === question.id);
+		const labels = optionLabels(question, answer);
+		const attachments = answer?.attachments?.length ? answer.attachments : undefined;
+		if (labels.length || attachments) {
+			out.push({ question: question.prompt, answer: labels.join(', '), ...(attachments ? { attachments } : {}) });
 		}
 	}
 	return out;
 }
 
+/** Said to the agent when the user closes the tray without answering. */
+export const QUESTIONS_DISMISSED_TEXT = 'The user dismissed the questions. Do not ask them again; continue with your best judgement or stop and wait for instructions.';
+
 /** What the `ask_question` MCP tool hands back to the model. */
 export function questionResponseText(request: Pick<IAgentQuestionRequest, 'questions'>, response: IAgentQuestionResponse): string {
 	const note = response.note?.trim();
 	if (response.outcome === 'cancelled') {
-		return 'The user dismissed the questions. Do not ask them again; continue with your best judgement or stop and wait for instructions.';
+		return QUESTIONS_DISMISSED_TEXT;
 	}
 	const lines: string[] = [];
 	if (response.outcome === 'skipped') {
@@ -177,8 +202,11 @@ export function questionResponseText(request: Pick<IAgentQuestionRequest, 'quest
 	} else {
 		lines.push('The user answered:');
 		for (const question of request.questions) {
-			const labels = optionLabels(question, response.answers.find(answer => answer.questionId === question.id));
-			lines.push(`- ${question.prompt} → ${labels.length ? labels.join(', ') : '(no answer)'}`);
+			const answer = response.answers.find(item => item.questionId === question.id);
+			const labels = optionLabels(question, answer);
+			const files = answerAttachmentLines(answer);
+			lines.push(`- ${question.prompt} → ${labels.length ? labels.join(', ') : files.length ? '(see the attached files)' : '(no answer)'}`);
+			lines.push(...files.map(line => `  ${line}`));
 		}
 	}
 	if (note) {
@@ -201,6 +229,10 @@ export interface ICursorAskQuestionResult {
  * appended to the last question: the model reads both verbatim.
  */
 export function cursorAskQuestionResult(request: Pick<IAgentQuestionRequest, 'questions'>, response: IAgentQuestionResponse): ICursorAskQuestionResult {
+	if (response.outcome === 'cancelled' && response.dismissed) {
+		// Skipped, not cancelled: a cancelled ask ends cursor-agent's tool call as if the run stopped.
+		return { outcome: { outcome: 'skipped', reason: QUESTIONS_DISMISSED_TEXT } };
+	}
 	if (response.outcome === 'cancelled') {
 		return { outcome: { outcome: 'cancelled' } };
 	}
@@ -215,6 +247,7 @@ export function cursorAskQuestionResult(request: Pick<IAgentQuestionRequest, 'qu
 		if (answer?.other?.trim()) {
 			ids.push(`Other: ${answer.other.trim()}`);
 		}
+		ids.push(...answerAttachmentLines(answer));
 		if (note && index === request.questions.length - 1) {
 			ids.push(`Additional details: ${note}`);
 		}
@@ -302,9 +335,13 @@ export function elicitationToQuestions(params: unknown): AgentQuestionDraft | un
 	return { ...(message && !single ? { title: message } : {}), questions };
 }
 
+/**
+ * A dismissed tray declines: claude-agent-acp turns `cancel` into an aborted tool call, which ends
+ * the turn, while `decline` tells the model the user skipped and lets it carry on.
+ */
 export function elicitationResult(request: Pick<IAgentQuestionRequest, 'questions'>, response: IAgentQuestionResponse): { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> } {
 	if (response.outcome === 'cancelled') {
-		return { action: 'cancel' };
+		return { action: response.dismissed ? 'decline' : 'cancel' };
 	}
 	if (response.outcome === 'skipped') {
 		return { action: 'decline' };
@@ -325,7 +362,7 @@ export function elicitationResult(request: Pick<IAgentQuestionRequest, 'question
 		} else if (ids[0]) {
 			content[question.id] = ids[0];
 		}
-		const other = [answer?.other?.trim(), index === request.questions.length - 1 ? note : undefined].filter(Boolean).join('\n');
+		const other = [answer?.other?.trim(), ...answerAttachmentLines(answer), index === request.questions.length - 1 ? note : undefined].filter(Boolean).join('\n');
 		if (other && question.allowOther) {
 			content[`${question.id}${CUSTOM_SUFFIX}`] = other;
 		}

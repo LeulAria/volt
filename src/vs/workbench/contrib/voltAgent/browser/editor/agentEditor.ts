@@ -123,6 +123,7 @@ import { AgentImageStrip, formatImageSize, IAgentImageStripItem, imageThumbClass
 import { AgentImageViewer, showAgentImageViewer } from '../composer/agentImageViewer.js';
 import { VIDEO_EXTENSIONS } from '../composer/agentVideoAttachments.js';
 import { fileChipDetail, isTextAttachment } from '../composer/agentFileAttachments.js';
+import { AgentAttachmentStore, IAgentPreparedAttachment } from '../composer/agentAttachmentStore.js';
 import { AgentVideoViewer, showAgentVideoViewer } from '../composer/agentVideoViewer.js';
 import { MentionCodePreview } from '../composer/mentionCodePreview.js';
 import { appendAgentScrollableList } from './agentScrollable.js';
@@ -907,9 +908,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.landingChrome = this._register(this.instantiationService.createInstance(AgentLandingChrome, (folder: URI) => this.openLandingProject(folder)));
 		append(this.composerEl, this.landingChrome.element);
+		const answerFiles = this.instantiationService.createInstance(AgentAttachmentStore);
 		this.questionTray = this._register(new AgentQuestionTray({
-			onSubmit: (requestId, response) => this.answerQuestions(requestId, response),
+			onSubmit: (requestId, response, media) => void this.answerQuestions(requestId, response, media),
 			onLayout: () => this.layoutInputEditor(),
+			attachments: {
+				pickFiles: () => answerFiles.pickFiles(this.sessionContext.activeProject?.root),
+				prepare: source => answerFiles.prepare(source),
+			},
 		}));
 		append(this.composerEl, this.questionTray.element);
 		this._register(this.runtime.onDidChangeQuestions(sessionId => {
@@ -4936,16 +4942,33 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
-	private answerQuestions(requestId: string, response: IAgentQuestionResponse): void {
+	private async answerQuestions(requestId: string, response: IAgentQuestionResponse, media: readonly IAgentPreparedAttachment[]): Promise<void> {
+		if (response.outcome === 'cancelled') {
+			// Dismissed: nothing is sent and the composer keeps its draft (T3 dismisses without restarting the agent).
+			this.runtime.respondToQuestions(requestId, response);
+			return;
+		}
+		// Files and videos just attached in the composer are still being saved; their paths go in the note.
+		await this.mentionController?.whenMediaReady();
+		if (!this.runtime.getPendingQuestions(this.sessionKey).some(item => item.id === requestId)) {
+			return;
+		}
 		const note = (this.mentionController?.serialize() || this.inputModel?.getValue() || '').trim();
+		const composerImages = cloneDisplayMentions(this.mentionController?.displayMentions() ?? []).filter(mention => mention.kind === 'image' || mention.kind === 'video');
 		if (note) {
 			this.clearComposer();
 		}
 		const request = this.runtime.getPendingQuestions(this.sessionKey).find(item => item.id === requestId);
 		const answered = note ? { ...response, note } : response;
-		if (!this.runtime.respondToQuestions(requestId, answered) && request && answered.outcome !== 'cancelled') {
-			// The agent stopped waiting (its turn ended): the answers go to it as the next message.
-			this.enqueueOrSendText(questionResponseText(request, answered));
+		if (!this.runtime.respondToQuestions(requestId, answered) && request) {
+			// The agent stopped waiting (its turn ended): the answers go to it as the next message,
+			// with the attached pictures as images.
+			const text = questionResponseText(request, answered);
+			const mentions: IAgentDisplayMention[] = [
+				...composerImages,
+				...media.filter(item => item.bytes).map((item): IAgentDisplayMention => ({ kind: 'image', label: item.name, image: { id: item.id, mime: item.mime, bytes: item.bytes!, name: item.name, path: item.path } })),
+			];
+			this.enqueueOrSendText(text, mentions.length ? { text, mentions } : undefined);
 		}
 	}
 

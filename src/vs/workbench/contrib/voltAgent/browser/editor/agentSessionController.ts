@@ -870,7 +870,11 @@ export class AgentSessionController extends Disposable {
 							status: 'complete',
 							requestId: event.requestId,
 							outcome: event.outcome,
-							items: event.answers.map(item => ({ question: item.question, answer: item.answer })),
+							items: event.answers.map(item => ({
+								question: item.question,
+								answer: item.answer,
+								...(item.attachments?.length ? { attachments: item.attachments.map(file => ({ name: file.name, kind: file.kind, size: file.size, path: file.path })) } : {}),
+							})),
 							...(event.note ? { note: event.note } : {}),
 						},
 					});
