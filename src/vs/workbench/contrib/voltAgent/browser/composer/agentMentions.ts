@@ -40,6 +40,7 @@ import { FileKind, IFileService } from '../../../../../platform/files/common/fil
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
+import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { EditorResourceAccessor } from '../../../../common/editor.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
@@ -57,6 +58,8 @@ import { AgentAttachmentStore } from './agentAttachmentStore.js';
 import { attachmentRoute, countLines, fileChipDetail, heicJpegName, IAgentFilePayload, isSendableImageMime, isTextAttachment, PASTED_TEXT_NAME, shouldFoldPaste, storageMime } from './agentFileAttachments.js';
 import { AgentImageStrip, formatImageSize, imageExtension, imageThumbClass } from './agentImageAttachments.js';
 import { AgentImageViewer, showAgentImageViewer } from './agentImageViewer.js';
+import { citationLabel, IAgentCitation, serializeChatSelection, withCitationComment } from './agentCitation.js';
+import { showCitationCommentEditor } from './agentCitationComment.js';
 import { formatDuration, IAgentVideoFrame, ITimeRange, mapRangesToSource, MAX_VIDEO_BYTES, normalizeVideoMime, probeVideo, rangesDuration, videoExtensionForMime, videoMimeForExtension } from './agentVideoAttachments.js';
 import { AgentVideoViewer, IAgentVideoClip, showAgentVideoViewer } from './agentVideoViewer.js';
 
@@ -108,6 +111,8 @@ export interface IAgentMention {
 	video?: IAgentVideoPayload;
 	/** A file attached to the prompt (kind `file`): saved in the attachment store, not a project path. */
 	file?: IAgentFilePayload;
+	/** `selection` only: where the quote came from and the user's comment on it. */
+	citation?: IAgentCitation;
 }
 
 export const BROWSER_MENTION_COLORS = ['#89b4fa', '#a6e3a1', '#94e2d5', '#fab387', '#74c7ec', '#cba6f7', '#f9e2af', '#f5c2e7'] as const;
@@ -127,6 +132,7 @@ export interface IAgentDisplayMention {
 	image?: IAgentImagePayload;
 	video?: IAgentVideoPayload;
 	file?: IAgentFilePayload;
+	citation?: IAgentCitation;
 }
 
 /** An image the model receives with the prompt: the runtime's `IVoltImageAttachment` shape. */
@@ -239,6 +245,7 @@ export function cloneDisplayMentions(mentions: readonly IAgentDisplayMention[]):
 		// Videos are large and never changed in place (an edit makes a new payload), so the bytes are shared.
 		video: mention.video ? { ...mention.video } : undefined,
 		file: mention.file ? { ...mention.file } : undefined,
+		citation: mention.citation ? { ...mention.citation } : undefined,
 	}));
 }
 
@@ -252,6 +259,8 @@ export interface IAgentMentionHost {
 	openResource?(resource: URI, range?: { startLineNumber: number; endLineNumber: number }): void;
 	/** The chat this composer belongs to; left out of the Chats list. */
 	sessionId?(): string | undefined;
+	/** Shows a cited quote in its reply. False when the reply or the words are gone. */
+	openCitation?(citation: IAgentCitation, chip: HTMLElement | undefined): void;
 }
 
 type MentionMenuView = 'root' | 'files' | 'terminals' | 'chats';
@@ -313,6 +322,25 @@ export function mentionIconClasses(
 							: mention.kind === 'browser' ? Codicon.inspect
 								: Codicon.globe;
 	return ['codicon', `codicon-${icon.id}`];
+}
+
+/** The whole quote, the comment, and what clicking does. */
+function citationHover(citation: IAgentCitation): MarkdownString {
+	const hover = new MarkdownString();
+	for (const line of citation.quote.trim().split('\n')) {
+		hover.appendMarkdown('> ');
+		hover.appendText(line);
+		hover.appendMarkdown('\n');
+	}
+	if (citation.comment) {
+		hover.appendMarkdown('\n\n');
+		hover.appendText(citation.comment);
+	}
+	hover.appendMarkdown('\n\n');
+	hover.appendText(citation.messageId
+		? localize('voltAgent.citationHoverHint', "Click to show it in the reply. Pencil to comment.")
+		: localize('voltAgent.citationHoverHintNoSource', "Pencil to comment."));
+	return hover;
 }
 
 /** `0:09 · 3.2 MB`, or just the size until the video is decoded. */
@@ -385,6 +413,7 @@ export class AgentMentionController extends Disposable {
 		@INotificationService private readonly notificationService: INotificationService,
 		@IClipboardService private readonly clipboardService: IClipboardService,
 		@IOpenerService private readonly openerService: IOpenerService,
+		@IContextViewService private readonly contextViewService: IContextViewService,
 	) {
 		super();
 		this.attachmentStore = instantiationService.createInstance(AgentAttachmentStore);
@@ -725,6 +754,7 @@ export class AgentMentionController extends Disposable {
 			image: mention.image,
 			video: mention.video,
 			file: mention.file,
+			citation: mention.citation,
 		}));
 	}
 
@@ -760,6 +790,7 @@ export class AgentMentionController extends Disposable {
 				image: item.image,
 				video: item.video,
 				file: item.file,
+				citation: item.citation,
 			};
 			this.addDecoration(mention, {
 				startLineNumber: start.lineNumber,
@@ -843,19 +874,72 @@ export class AgentMentionController extends Disposable {
 		}
 	}
 
-	/** Text selected in a chat transcript, sent as a `chat_selection` block in place of the chip. */
-	addChatSelectionMention(text: string, agentId: string): void {
+	/**
+	 * Text selected in a chat transcript, sent as a `chat_selection` block in place of the chip.
+	 * With a source (one assistant reply), the chip leads back to the quoted words.
+	 */
+	addChatSelectionMention(text: string, agentId: string, source?: Omit<IAgentCitation, 'agentId' | 'comment'>): void {
 		const insertRange = this.cursorRangeAfterSpacer();
 		if (!insertRange) {
 			return;
 		}
-		const quoted = text.replace(/\s+/g, ' ').trim();
+		const citation: IAgentCitation = { ...source, agentId, quote: source?.quote ?? text.trim() };
 		this.insertMention({
 			id: `selection:${generateUuid()}`,
 			kind: 'selection',
-			label: `"${truncateLabel(quoted, 40)}"`,
-			value: ['', '```chat_selection', `agent_id: ${agentId}`, 'selected_text:', text.trim(), '```', ''].join('\n'),
+			label: citationLabel(citation),
+			value: serializeChatSelection(citation),
+			citation,
 		}, insertRange);
+	}
+
+	/** Opens the comment editor on a quote chip (its pencil). */
+	private editCitationComment(mention: IAgentMention, anchor: HTMLElement): void {
+		const citation = mention.citation;
+		if (!citation) {
+			return;
+		}
+		showCitationCommentEditor(this.contextViewService, {
+			anchor,
+			quote: citation.quote,
+			comment: citation.comment,
+			onSave: comment => {
+				this.setCitationComment(mention, comment);
+				this.editor.focus();
+			},
+			onHide: () => this.editor.focus(),
+		});
+	}
+
+	/** A new comment changes the chip's text (the comment shows in place of the quote). */
+	private setCitationComment(mention: IAgentMention, comment: string): void {
+		const model = this.editor.getModel();
+		const range = mention.decorationId && model ? model.getDecorationRange(mention.decorationId) : undefined;
+		if (!model || !range || !mention.citation) {
+			return;
+		}
+		const citation = withCitationComment(mention.citation, comment);
+		const label = citationLabel(citation);
+		mention.citation = citation;
+		mention.value = serializeChatSelection(citation);
+		if (label === mention.label) {
+			this.addDecoration(mention, range);
+			return;
+		}
+		const wasInserting = this.insertingMention;
+		this.insertingMention = true;
+		try {
+			this.editor.executeEdits('volt-agent-citation-comment', [{ range, text: label }]);
+			mention.label = label;
+			this.addDecoration(mention, {
+				startLineNumber: range.startLineNumber,
+				startColumn: range.startColumn,
+				endLineNumber: range.startLineNumber,
+				endColumn: range.startColumn + label.length,
+			});
+		} finally {
+			this.insertingMention = wasInserting;
+		}
 	}
 
 	addResourceMention(resource: URI, range?: { startLineNumber: number; endLineNumber: number }): void {
@@ -996,6 +1080,10 @@ export class AgentMentionController extends Disposable {
 				e.event.preventDefault();
 				e.event.stopPropagation();
 				this.removeMention(mention);
+			} else if (mention?.citation && e.target.element?.classList.contains('volt-agent-mention-edit')) {
+				e.event.preventDefault();
+				e.event.stopPropagation();
+				this.editCitationComment(mention, e.target.element);
 			}
 		}));
 
@@ -1004,7 +1092,7 @@ export class AgentMentionController extends Disposable {
 				return;
 			}
 			const mention = this.mentionFromMouse(e);
-			if (!mention || this.isMentionIconTarget(e)) {
+			if (!mention || this.isMentionIconTarget(e) || e.target.element?.classList.contains('volt-agent-mention-edit')) {
 				return;
 			}
 			if (this.editor.getSelection() && !this.editor.getSelection()?.isEmpty()) {
@@ -1021,6 +1109,8 @@ export class AgentMentionController extends Disposable {
 				this.openVideoViewer(mention);
 			} else if (mention.kind === 'file' || mention.kind === 'folder') {
 				void this.openMention(mention);
+			} else if (mention.citation) {
+				this.host.openCitation?.(mention.citation, e.target.element ?? undefined);
 			}
 		}));
 
@@ -2052,6 +2142,12 @@ export class AgentMentionController extends Disposable {
 						inlineClassName: `volt-agent-mention-size${hoverClass}`,
 						inlineClassNameAffectsLetterSpacing: true,
 						attachedData: { mentionId: mention.id },
+					} : mention.citation ? {
+						// The quote's pencil: add or change the comment.
+						content: '\u00a0',
+						inlineClassName: `volt-agent-mention-edit codicon codicon-edit${hoverClass}`,
+						inlineClassNameAffectsLetterSpacing: true,
+						attachedData: { mentionId: mention.id },
 					} : undefined,
 					stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
 					hoverMessage: mention.resource && mention.range ? undefined : this.hoverFor(mention),
@@ -2237,6 +2333,9 @@ export class AgentMentionController extends Disposable {
 		}
 		if (mention.kind === 'video' && mention.video) {
 			return new MarkdownString(localize('voltAgent.videoChipHover', "{0} · {1} — click to trim, cut out parts or pick a frame", mention.label, videoDetail(mention.video)));
+		}
+		if (mention.citation) {
+			return citationHover(mention.citation);
 		}
 		return new MarkdownString(this.tagValueFor(mention));
 	}

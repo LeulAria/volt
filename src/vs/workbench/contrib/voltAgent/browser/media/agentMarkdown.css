@@ -673,3 +673,21 @@ code.volt-md-code.volt-md-diff {
 	color: var(--volt-md-link);
 	font-size: 13px;
 }
+
+.volt-agent-markdown sup.volt-md-footnote-ref,
+.volt-md-footnote-back {
+	cursor: pointer;
+	border-radius: 3px;
+}
+
+.volt-agent-markdown sup.volt-md-footnote-ref:hover,
+.volt-md-footnote-back:hover {
+	text-decoration: underline;
+}
+
+/* Where a footnote jump landed. */
+.volt-md-footnote-flash {
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--vscode-textLink-foreground) 18%, transparent);
+	transition: background-color 0.3s ease;
+}

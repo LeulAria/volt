@@ -108,6 +108,8 @@ import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
+import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
+import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
 import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
 import { adoptProjectForUnstartedSession, agentSessionNeedsScratch, attachSessionToProject } from '../workspace/agentShell.js';
@@ -811,9 +813,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.turnNav = this._register(new AgentTurnNav(this.threadView));
 		this._register(new AgentThreadSelectionActions(this.threadEl, {
 			isVisible: () => this.isVisible(),
-			onAddToChat: text => this.addChatSelection(text, this.sessionKey),
-			onAddToSideChat: text => void this.addChatSelectionToSideChat(text),
+			onAddToChat: (text, source) => this.addChatSelection(text, this.sessionKey, source),
+			onAddToSideChat: (text, source) => void this.addChatSelectionToSideChat(text, source),
 		}));
+		this._register(registerCitationTarget(this.citationTarget));
 		this.editorMainEl = append(this.container, $('.volt-agent-editor-main'));
 		this.surfaceHost = this._register(this.instantiationService.createInstance(AgentSurfaceHost, this.container, this.editorMainEl));
 		append(this.editorMainEl, this.threadEl);
@@ -2017,6 +2020,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					e.stopPropagation();
 					this.openMessageMedia(message, mediaIndex);
 				}));
+			} else if (mention.citation) {
+				const citation = mention.citation;
+				// The chip shows the comment when there is one; the hover always has the quote.
+				setAgentTooltip(chip, citation.comment ? `${citationLabel({ quote: citation.quote })}\n${citation.comment}` : citation.quote);
+				if (citation.messageId) {
+					chip.setAttribute('data-open', 'true');
+					this.threadListeners.add(addDisposableListener(chip, 'click', e => {
+						e.preventDefault();
+						e.stopPropagation();
+						this.openCitation(citation, chip);
+					}));
+				}
 			} else if (mention.resource && (mention.kind === 'file' || mention.kind === 'image')) {
 				const resource = URI.revive(mention.resource);
 				// An attached PDF or archive opens in its own app; text and project files beside the chat.
@@ -2308,6 +2323,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private renderThreadMessage(exchange: HTMLElement, message: IAgentMessage, index: number): void {
 		const turn = append(exchange, $(`.volt-agent-turn.${message.kind}`));
+		if (message.id) {
+			// Quote chips find their reply by it (agentCitationSource.ts).
+			turn.dataset.messageId = message.id;
+		}
 		if (message.kind === 'user') {
 			if (this.editingUserIndex === index) {
 				turn.classList.add('editing');
@@ -3939,6 +3958,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			root: () => this.surfaceHost.executionRoot(),
 			openResource: (resource, range) => this.surfaceHost.openFile(resource, range ? { startLine: range.startLineNumber, endLine: range.endLineNumber } : undefined),
 			sessionId: () => this.sessionKey,
+			openCitation: (citation, chip) => this.openCitation(citation, chip ?? anchor),
 		};
 	}
 
@@ -4187,18 +4207,41 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	/** Text selected in a chat transcript (this one or another), added as a quoted chip. */
-	addChatSelection(text: string, agentId: string): void {
+	addChatSelection(text: string, agentId: string, source?: ICitationSource): void {
 		this.ensureInputEditor();
-		this.mentionController?.addChatSelectionMention(text, agentId);
+		this.mentionController?.addChatSelectionMention(text, agentId, source);
 		this.inputEditor?.focus();
 	}
 
-	private async addChatSelectionToSideChat(text: string): Promise<void> {
+	private async addChatSelectionToSideChat(text: string, source: ICitationSource | undefined): Promise<void> {
 		const agentId = this.sessionKey;
 		const pane = await this.surfaceHost.openSideChat();
 		if (pane instanceof AgentEditor) {
-			pane.addChatSelection(text, agentId);
+			pane.addChatSelection(text, agentId, source);
 		}
+	}
+
+	/** This chat's transcript, for quote chips here or in its side chat. Only a chat on screen can show one. */
+	private readonly citationTarget: ICitationTarget = {
+		sessionId: () => this.sessionKey,
+		reveal: citation => {
+			if (!this.isVisible() || !revealCitation(this.threadInner, citation)) {
+				return false;
+			}
+			this.syncThreadScroll();
+			return true;
+		},
+	};
+
+	/** A quote chip was clicked: show its words in the reply, or say they are gone. */
+	private openCitation(citation: IAgentCitation, anchor: HTMLElement): void {
+		if (revealCitationInChats(citation, this.citationTarget)) {
+			return;
+		}
+		this.tooltip.show(anchor, [{ label: localize('voltAgent.citationNotFound', "Source not found. The reply changed or is no longer in this chat; the quote is kept as written.") }]);
+		const win = getWindow(anchor);
+		const timer = win.setTimeout(() => this.tooltip.hide(), 3000);
+		this.threadListeners.add(toDisposable(() => win.clearTimeout(timer)));
 	}
 
 	async addResourceMentions(resources: readonly URI[]): Promise<void> {

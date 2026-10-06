@@ -58,10 +58,58 @@ export function agentMarkdownRenderOptions(win: CodeWindow, options: IAgentMarkd
 	};
 }
 
-/** Post-render touches that marked cannot express: task markers and link favicons. */
+/** Post-render touches that marked cannot express: task markers, link favicons, footnote links. */
 export function decorateAgentMarkdown(root: HTMLElement, store: DisposableStore): void {
 	decorateTaskLists(root);
 	decorateLinkFavicons(root, store);
+	linkFootnotes(root, store);
+}
+
+/** How far a footnote jump looks: the whole reply, since a reply renders as several markdown blocks. */
+function footnoteScope(from: Element): Element {
+	return from.closest('.volt-agent-thread-body') ?? from.closest('.volt-agent-markdown') ?? from.ownerDocument.body;
+}
+
+/** The note a superscript ref points at, or the first ref of a note (its back arrow). */
+export function footnoteTarget(from: HTMLElement): HTMLElement | undefined {
+	const scope = footnoteScope(from);
+	if (from.matches('sup.volt-md-footnote-ref')) {
+		const n = from.textContent?.trim();
+		return Array.from(scope.querySelectorAll<HTMLElement>('ol.volt-md-footnotes')).find(note => (note.getAttribute('start') ?? '1') === n)?.querySelector('li') ?? undefined;
+	}
+	const n = from.closest('ol.volt-md-footnotes')?.getAttribute('start') ?? '1';
+	return Array.from(scope.querySelectorAll<HTMLElement>('sup.volt-md-footnote-ref')).find(ref => ref.textContent?.trim() === n);
+}
+
+const FOOTNOTE_FLASH_MS = 1600;
+
+/** Refs jump to their note and the note's back arrow returns, both briefly tinted on arrival. */
+function linkFootnotes(root: HTMLElement, store: DisposableStore): void {
+	const jump = (from: HTMLElement) => {
+		const target = footnoteTarget(from);
+		if (!target) {
+			return;
+		}
+		target.scrollIntoView({ block: 'center', inline: 'nearest' });
+		target.classList.add('volt-md-footnote-flash');
+		const win = target.ownerDocument.defaultView;
+		win?.setTimeout(() => target.classList.remove('volt-md-footnote-flash'), FOOTNOTE_FLASH_MS);
+	};
+	for (const link of root.querySelectorAll<HTMLElement>('sup.volt-md-footnote-ref, .volt-md-footnote-back')) {
+		link.setAttribute('role', 'link');
+		link.tabIndex = 0;
+		store.add(addDisposableListener(link, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			jump(link);
+		}));
+		store.add(addDisposableListener(link, 'keydown', e => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				jump(link);
+			}
+		}));
+	}
 }
 
 /** GFM task items render a disabled checkbox; Cursor draws a round check / empty circle instead. */

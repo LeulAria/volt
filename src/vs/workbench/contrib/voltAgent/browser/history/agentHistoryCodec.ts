@@ -12,6 +12,7 @@ import { ATTACHMENT_REF_PREFIX } from '../../../../services/voltRuntime/common/h
 import type { IAgentAssistantMessage, IAgentUserMessage } from '../editor/agentEditor.js';
 import type { IAgentDisplayMention, IAgentImagePayload, IAgentVideoPayload } from '../composer/agentMentions.js';
 import type { IAgentVideoFrame, ITimeRange } from '../composer/agentVideoAttachments.js';
+import { reviveCitation } from '../composer/agentCitation.js';
 import { AgentSegment, IAgentActivityItem } from '../blocks/agentBlocks.js';
 
 /**
@@ -130,6 +131,7 @@ export class AgentHistoryCodec {
 				resource: item.resource ? URI.revive(item.resource) : undefined,
 				image: item.image ? await this.thawImage(item.image) : undefined,
 				video: item.video ? await this.thawVideo(item.video) : undefined,
+				citation: reviveCitation(item.citation),
 			});
 		}
 		return mentions;
