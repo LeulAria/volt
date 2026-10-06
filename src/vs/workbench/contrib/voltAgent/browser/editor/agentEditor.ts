@@ -102,6 +102,8 @@ import { AgentPromptHistoryNavigator, IAgentPromptHistoryEntry, readStoredPrompt
 import { AGENT_PROMPT_HISTORY_SETTING } from '../../common/agentComposerSettings.js';
 import { AgentComposerQueue, IAgentComposerQueueState, QueuePause } from '../composer/agentComposerQueue.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
+import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
+import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
@@ -582,6 +584,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	/** A chat without a project is getting its scratch folder; Send waits for it. */
 	private makingScratchFolder = false;
 	private cloneBanner: HTMLElement | undefined;
+	private worktreeSetupCard: AgentWorktreeSetupCard | undefined;
 	private waitingForClone: string | undefined;
 	/** Prompts reach the orchestrator in the order they were sent, even when freezing one takes longer. */
 	private submitChain: Promise<unknown> = Promise.resolve();
@@ -714,6 +717,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@ICommandService private readonly commandService: ICommandService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
+		@IAgentWorktreeSetupService private readonly worktreeSetup: IAgentWorktreeSetupService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IFileService private readonly fileService: IFileService,
@@ -960,6 +964,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.renderCloneBanner();
 		// A subagent's chat says whose it is and how it is doing, above everything else on the composer.
 		this.subagentBar = append(this.composerEl, $('.volt-agent-subagent-bar.hidden'));
+		// A new worktree's setup steps (submodules, install scripts) with Cancel and Retry.
+		this.worktreeSetupCard = this._register(this.instantiationService.createInstance(AgentWorktreeSetupCard, {
+			onRetry: chatId => this.retryWorktreeSetup(chatId),
+			onDidChangeHeight: () => this.layoutInputEditor(),
+		}));
+		append(this.composerEl, this.worktreeSetupCard.element);
 		// Subagents and queued prompts sit right on top of the text area, under the chips (Cursor).
 		append(this.composerEl, this.composerQueue.element);
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
@@ -3669,6 +3679,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.deliverNow(item);
 	}
 
+	/**
+	 * Retry on the worktree setup card: the turn the setup held up runs again (its send retries the
+	 * setup from the step that failed). Without such a turn, only the setup runs again.
+	 */
+	private retryWorktreeSetup(chatId: string): void {
+		const last = this.messages.at(-1);
+		if (chatId === this.sessionKey && !this.isStreaming() && last?.kind === 'agent' && (last.outcome === 'failed' || last.outcome === 'stopped')) {
+			this.retryLastTurn();
+			return;
+		}
+		void this.worktreeSetup.retry(chatId).catch(() => undefined);
+	}
+
 	/** Cursor's "Try again": the newest prompt runs again in place of the turn that failed or stopped. */
 	private retryLastTurn(): void {
 		if (this.isStreaming()) {
@@ -5430,6 +5453,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		await super.setInput(input, options, context, token);
 		// One pane shows every agent tab: the banner follows the tab's project.
 		this.renderCloneBanner();
+		this.worktreeSetupCard?.setChat(this.sessionKey);
 		try {
 			await input.ensureLoaded();
 		} catch (err) {

@@ -114,6 +114,7 @@ suite('Agent orchestrator service', () => {
 			stub({ create: async () => ({ path: '/wt/a', branch: 'volt/a' }), ensure: async () => false }),
 			stub({ rootFor: () => URI.file('/repo') }),
 			stub({ getValue: () => existing?.resume ?? 'off' }),
+			stub({ run: async () => undefined, needsRetry: () => false }),
 		));
 		await service.whenReady;
 		const host = new FakeHost(runtime);

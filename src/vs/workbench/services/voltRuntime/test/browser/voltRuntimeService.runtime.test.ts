@@ -170,6 +170,7 @@ suite('Agent runtime orchestration', () => {
 			stub({ rootFor: () => undefined }),
 			stub({ open: () => ({ setMeta: () => { } }), setAgentTitle: async () => { } }),
 			stub({}),
+			stub({ run: async () => undefined, needsRetry: () => false }),
 			stub({ files: { get: () => undefined } }),
 			stub({ userHome: async () => { throw new Error('no home'); } }),
 			stub({}),

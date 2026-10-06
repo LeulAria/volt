@@ -39,6 +39,8 @@ import { resolveTabModel } from '../common/models/modelAccess.js';
 import { IAgentRuntimeService, IVoltMcpServerStatus, IVoltTaskModels } from '../common/runtime.js';
 import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
+import './git/agentWorktreeSetupService.js';
 import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService } from '../common/hostTools.js';
 import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQuestionResponse } from '../common/questions.js';
 import { AcpAgentProvider, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
@@ -351,6 +353,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
+		@IAgentWorktreeSetupService private readonly worktreeSetup: IAgentWorktreeSetupService,
 		@ITextFileService private readonly textFileService: ITextFileService,
 		@IPathService private readonly pathService: IPathService,
 		@IMarkerService markerService: IMarkerService,
@@ -551,7 +554,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const engine = catalogItem?.kind === 'agent' ? 'agent' : 'native';
 		const run = this.beginRun(session, request.mode, engine, sendAt);
 		try {
-			await this.prepareWorktree(session, request);
+			await this.prepareWorktree(session, request, () => !this.isCurrent(session, run));
 		} catch (err) {
 			this.emit(session, run.runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
 			this.finish(session, run, 'fail');
@@ -1851,7 +1854,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** First send in New Worktree mode creates the checkout. Later sends stay there, recreating it if archive pruned the files. */
-	private async prepareWorktree(session: ISessionState, request: IVoltSendRequest): Promise<void> {
+	private async prepareWorktree(session: ISessionState, request: IVoltSendRequest, isCancelled: () => boolean): Promise<void> {
 		const project = this.projectRoot(session);
 		if (session.worktreePath && session.worktreeBranch) {
 			if (!project) {
@@ -1860,6 +1863,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			const recreated = await this.worktrees.ensure(project.fsPath, session.worktreePath, session.worktreeBranch);
 			if (recreated) {
 				session.announceWorktree = true;
+				// A checkout recreated from its branch has none of what setup installed.
+				await this.worktreeSetup.run(session.sessionId, { repoRoot: project.fsPath, worktreePath: session.worktreePath, branch: session.worktreeBranch, isCancelled });
+			} else if (this.worktreeSetup.needsRetry(session.sessionId)) {
+				// The last setup failed or was cancelled: finish it before the agent works there.
+				await this.worktreeSetup.retry(session.sessionId, { isCancelled });
 			}
 			return;
 		}
@@ -1875,6 +1883,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.worktreeBranch = created.branch;
 		session.announceWorktree = true;
 		this.history.open(session.sessionId).setMeta({ worktreePath: created.path, worktreeBranch: created.branch });
+		await this.worktreeSetup.run(session.sessionId, { repoRoot: project.fsPath, worktreePath: created.path, branch: created.branch, isCancelled });
 	}
 
 	private noteWorktree(session: ISessionState, runId: string): void {

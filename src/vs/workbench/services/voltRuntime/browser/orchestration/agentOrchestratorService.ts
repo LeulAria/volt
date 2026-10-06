@@ -16,6 +16,7 @@ import { InstantiationType, registerSingleton } from '../../../../../platform/in
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IVoltEventEnvelope } from '../../common/events.js';
 import { IAgentWorktreeService } from '../../common/git/agentWorktree.js';
+import { IAgentWorktreeSetupService } from '../../common/git/worktreeSetupPlan.js';
 import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
 import { normalizeVoltMode } from '../../common/modes.js';
@@ -77,6 +78,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IAgentWorktreeSetupService private readonly worktreeSetup: IAgentWorktreeSetupService,
 	) {
 		super();
 		this.store = new OrchestratorStore(joinPath(environmentService.userRoamingDataHome, 'voltOrchestrator'), fileService, logService);
@@ -512,6 +514,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			const created = await this.worktrees.create(root.fsPath);
 			this.runtime.rememberWorktree(task.childId, created.path, created.branch);
 			this.history.open(task.childId).setMeta({ worktreePath: created.path, worktreeBranch: created.branch });
+			// The subagent's chat stays blocked until its worktree is set up (the card shows each step).
+			await this.worktreeSetup.run(task.childId, {
+				repoRoot: root.fsPath,
+				worktreePath: created.path,
+				branch: created.branch,
+				isCancelled: () => isTerminalTaskState(this.state.tasks[taskId]?.state ?? 'cancelled'),
+			});
 			this.apply({ type: 'task.worktree', taskId, path: created.path, branch: created.branch });
 		} catch (err) {
 			this.apply({ type: 'task.error', taskId, error: `Could not create its worktree: ${err instanceof Error ? err.message : String(err)}` });
