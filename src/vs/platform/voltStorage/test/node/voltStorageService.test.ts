@@ -135,8 +135,8 @@ suite('VoltStorageService on real folders', function () {
 		git(repo, 'worktree', 'add', '-q', '-b', 'volt/bbbbbbbb', dirty);
 		git(repo, 'worktree', 'add', '-q', '-b', 'volt/cccccccc', used);
 		await writeFile(join(dirty, 'wip.txt'), 'uncommitted');
-		const context: IVoltStorageContext = { ...EMPTY, worktrees: [{ path: used, sessionId: 's1', archived: false }, { path: clean, sessionId: 's2', archived: true }] };
-		const project = { ...context, root: repo, projectSessionIds: ['s1', 's2'] };
+		const context: IVoltStorageContext = { ...EMPTY, worktrees: [{ path: used, sessionId: 's1', archived: false }, { path: clean, sessionId: 's2', archived: true }, { path: dirty, sessionId: 's3', archived: true }] };
+		const project = { ...context, root: repo, projectSessionIds: ['s1', 's2', 's3'] };
 		const report = await service.projectReport(project);
 		const row = report.items.find(item => item.id === 'project.worktrees')!;
 		assert.deepStrictEqual(Object.fromEntries(row.entries.map(entry => [entry.path, entry.keep])), { [clean]: undefined, [dirty]: 'dirty', [used]: 'inUse' });

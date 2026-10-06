@@ -146,13 +146,18 @@ export function fileUriToPath(uri: string): string | undefined {
 
 /**
  * A Volt worktree stays while an open (not archived) chat runs in it, or while it has uncommitted
- * changes (`dirty`), or when git could not tell (`dirty === undefined`). Clean ones of archived
- * or deleted chats go.
+ * changes (`dirty`), or when git could not tell (`dirty === undefined`). Only clean ones of this
+ * profile's archived chats go: the worktree folder is shared by every Volt app and profile, so a
+ * checkout no chat here knows may belong to another one.
  */
 export function worktreeKeep(path: string, refs: readonly IVoltStorageWorktreeRef[], dirty: boolean | undefined): VoltStorageKeep | undefined {
 	const target = samePathKey(path);
-	if (refs.some(ref => !ref.archived && samePathKey(ref.path) === target)) {
+	const mine = refs.filter(ref => samePathKey(ref.path) === target);
+	if (mine.some(ref => !ref.archived)) {
 		return 'inUse';
+	}
+	if (!mine.length) {
+		return 'foreign';
 	}
 	if (dirty === undefined) {
 		return 'unknown';

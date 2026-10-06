@@ -39,8 +39,9 @@ export type VoltStorageId = VoltMachineStorageId | VoltProjectStorageId;
  * - `unknown`: its state could not be read (a worktree whose repository is gone).
  * - `exists`: it belongs to a folder that is still there; clean it from that project instead.
  * - `managed`: another feature owns its lifetime (run groups).
+ * - `foreign`: no chat of this profile knows it; `~/.volt/worktrees` is shared by every Volt app and profile.
  */
-export type VoltStorageKeep = 'current' | 'open' | 'inUse' | 'dirty' | 'unknown' | 'exists' | 'managed';
+export type VoltStorageKeep = 'current' | 'open' | 'inUse' | 'dirty' | 'unknown' | 'exists' | 'managed' | 'foreign';
 
 export interface IVoltStorageEntry {
 	readonly path: string;

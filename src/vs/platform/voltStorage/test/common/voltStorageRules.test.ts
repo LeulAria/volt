@@ -71,7 +71,7 @@ suite('Volt storage rules', () => {
 		assert.strictEqual(workspaceStorageKeep('open1', 'file:///here', true, open, true), 'open');
 	});
 
-	test('worktrees: open chats\' and dirty ones stay, unreadable ones warn', () => {
+	test('worktrees: only clean ones of this profile\'s archived chats go', () => {
 		const refs = [
 			{ path: '/wt/r/volt-aaaaaaaa', sessionId: 's1', archived: false },
 			{ path: '/wt/r/volt-bbbbbbbb', sessionId: 's2', archived: true },
@@ -80,7 +80,9 @@ suite('Volt storage rules', () => {
 		assert.strictEqual(worktreeKeep('/wt/r/volt-aaaaaaaa/', refs, false), 'inUse');
 		assert.strictEqual(worktreeKeep('/wt/r/volt-bbbbbbbb', refs, false), undefined);
 		assert.strictEqual(worktreeKeep('/wt/r/volt-bbbbbbbb', refs, true), 'dirty');
-		assert.strictEqual(worktreeKeep('/wt/r/volt-cccccccc', refs, undefined), 'unknown');
+		assert.strictEqual(worktreeKeep('/wt/r/volt-bbbbbbbb', refs, undefined), 'unknown');
+		// Not this profile's: another Volt app or profile may own it.
+		assert.strictEqual(worktreeKeep('/wt/r/volt-cccccccc', refs, false), 'foreign');
 		assert.strictEqual(checkpointKeep(false), undefined);
 		assert.strictEqual(checkpointKeep(true), 'exists');
 		assert.strictEqual(checkpointKeep(undefined), 'exists');
