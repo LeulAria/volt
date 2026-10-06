@@ -135,6 +135,8 @@ import { IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME } from '../../platfor
 import { VoltFsBrowseService } from '../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME } from '../../platform/voltBrowser/common/voltBrowser.js';
 import { VoltBrowserMainService } from '../../platform/voltBrowser/electron-main/voltBrowserMainService.js';
+import { IVoltBadgeService, VOLT_BADGE_CHANNEL_NAME } from '../../platform/voltBadge/common/voltBadge.js';
+import { VoltBadgeMainService } from '../../platform/voltBadge/electron-main/voltBadgeMainService.js';
 import { IVoltDiagnosticsService } from '../../platform/voltDiagnostics/common/voltDiagnostics.js';
 import { registerVoltDiagnosticsMain, VoltDiagnosticsMainService } from '../../platform/voltDiagnostics/electron-main/voltDiagnosticsMainService.js';
 import { IVoltStorageService, VOLT_STORAGE_CHANNEL_NAME } from '../../platform/voltStorage/common/voltStorage.js';
@@ -1079,6 +1081,9 @@ export class CodeApplication extends Disposable {
 		// Volt in-app browser (session data, color scheme emulation)
 		services.set(IVoltBrowserService, new SyncDescriptor(VoltBrowserMainService, undefined, false /* proxied to other processes */));
 
+		// Volt app badge (chats that finished in the background)
+		services.set(IVoltBadgeService, new SyncDescriptor(VoltBadgeMainService, undefined, false /* proxied to other processes */));
+
 		// Volt diagnostics (tracing export, stall log, heap snapshots)
 		services.set(IVoltDiagnosticsService, new SyncDescriptor(VoltDiagnosticsMainService, undefined, false /* proxied to other processes */));
 
@@ -1270,6 +1275,9 @@ export class CodeApplication extends Disposable {
 		// Volt in-app browser
 		const voltBrowserChannel = ProxyChannel.fromService(accessor.get(IVoltBrowserService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_BROWSER_CHANNEL_NAME, voltBrowserChannel);
+
+		// Volt app badge
+		mainProcessElectronServer.registerChannel(VOLT_BADGE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltBadgeService), disposables));
 
 		// Volt storage cleanup and first-run import
 		mainProcessElectronServer.registerChannel(VOLT_STORAGE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltStorageService), disposables));

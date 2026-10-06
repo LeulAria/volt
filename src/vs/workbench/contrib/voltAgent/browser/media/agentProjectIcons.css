@@ -1,0 +1,183 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* A project's icon: a monogram tile, a codicon, or a picture, at --volt-project-icon-size. */
+.volt-project-icon {
+	--volt-project-icon-size: 16px;
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--volt-project-icon-size);
+	height: var(--volt-project-icon-size);
+	box-sizing: border-box;
+	border-radius: calc(var(--volt-project-icon-size) * 0.28);
+	overflow: hidden;
+	line-height: 1;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.volt-project-icon.kind-monogram {
+	font-size: calc(var(--volt-project-icon-size) * 0.56);
+	font-weight: 650;
+	letter-spacing: 0;
+}
+
+.volt-project-icon.kind-monogram.two-letters {
+	font-size: calc(var(--volt-project-icon-size) * 0.44);
+	letter-spacing: 0.01em;
+}
+
+.volt-project-icon.kind-codicon .codicon {
+	font-size: calc(var(--volt-project-icon-size) * 0.9) !important;
+}
+
+/* A tint wins over the theme's icon color. */
+.volt-project-icon.kind-codicon.tinted .codicon {
+	color: inherit !important;
+}
+
+.volt-project-icon.kind-image img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+/* Picker dialog: the Custom snooze card (agentSnooze.css) with a preview beside the title. */
+.volt-project-icon-dialog {
+	width: min(420px, 100%);
+}
+
+.volt-project-icon-head {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	margin-bottom: 4px;
+}
+
+.volt-project-icon-preview {
+	display: flex;
+	width: 44px;
+	height: 44px;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+}
+
+.volt-project-icon-titles {
+	min-width: 0;
+}
+
+.volt-project-icon-titles .volt-agent-snooze-subtitle {
+	margin-bottom: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-project-icon-pane {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+.volt-project-icon-pane.hidden {
+	display: none;
+}
+
+.volt-project-icon-input {
+	height: 34px;
+	box-sizing: border-box;
+	padding: 0 10px;
+	border-radius: 8px;
+	border: 1px solid var(--volt-dt-line);
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 13px;
+	text-transform: uppercase;
+	outline: none;
+}
+
+.volt-project-icon-input:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-project-icon-swatches {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.volt-project-icon-swatch {
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	cursor: pointer;
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+/* Auto: the derived color (or the text color for icons), split by a slash. */
+.volt-project-icon-swatch.auto {
+	background:
+		linear-gradient(135deg, transparent 45%, color-mix(in srgb, var(--vscode-foreground) 55%, transparent) 45%, color-mix(in srgb, var(--vscode-foreground) 55%, transparent) 55%, transparent 55%),
+		var(--volt-swatch-auto, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+}
+
+.volt-project-icon-swatch.selected {
+	box-shadow: 0 0 0 2px var(--vscode-quickInput-background, #1e1e1e), 0 0 0 3.5px var(--vscode-focusBorder, #3794ff);
+}
+
+.volt-project-icon-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(32px, 1fr));
+	gap: 4px;
+}
+
+.volt-project-icon-choice {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 32px;
+	padding: 0;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	opacity: 0.8;
+}
+
+.volt-project-icon-choice:hover {
+	opacity: 1;
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.volt-project-icon-choice.selected {
+	opacity: 1;
+	background: color-mix(in srgb, var(--vscode-focusBorder, #3794ff) 22%, transparent);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder, #3794ff) 60%, transparent);
+}
+
+.monaco-workbench .volt-project-icon-choice:focus:not(:focus-visible),
+.monaco-workbench .volt-project-icon-swatch:focus:not(:focus-visible) {
+	outline: none !important;
+}
+
+.volt-project-icon-image-pane {
+	align-items: flex-start;
+}
+
+.volt-project-icon-image-pane .volt-agent-snooze-preview {
+	margin-top: 0;
+}
+
+/* Use Default sits apart, on the left. */
+.volt-project-icon-footer .volt-project-icon-reset {
+	margin-right: auto;
+}

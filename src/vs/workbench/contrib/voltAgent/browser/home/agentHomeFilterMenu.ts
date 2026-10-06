@@ -28,6 +28,7 @@ import {
 	isStatusFilterActive,
 } from './agentHomeFilter.js';
 import { createHomeEnvironmentIcon, createHomeFolderIcon, createHomeStatusIcon } from './agentHomeIcons.js';
+import { agentHomeDensityHost } from './agentHomeDensity.js';
 
 export interface IAgentHomeFilterMenuHost {
 	readonly view: IAgentHomeViewState;
@@ -166,6 +167,20 @@ function buildMainMenu(
 		onHover: () => openFlyout('show'),
 		store,
 	});
+	const density = agentHomeDensityHost();
+	if (density) {
+		appendToggleRow(menu, {
+			label: localize('voltAgent.home.filter.compact', "Compact List"),
+			checked: density.compact,
+			// The same view again repaints the menu with the new check.
+			onClick: () => {
+				density.setCompact(!density.compact);
+				setView(view);
+			},
+			onHover: () => openFlyout(undefined),
+			store,
+		});
+	}
 	append(menu, $('.volt-agent-home-filter-sep'));
 
 	const filters = append(menu, $('.volt-agent-home-filter-section'));
