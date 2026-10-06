@@ -33,6 +33,8 @@ export interface IVoltTaskModels {
 	tab?: string;
 	/** Model for chat titles and other generated text. Falls back to the chat's own model. */
 	title?: string;
+	/** Model for commit messages and pull request titles and descriptions. Falls back to the text generation model. */
+	git?: string;
 }
 
 /** An MCP server from the project or user config, and how its connection is doing. */
@@ -142,7 +144,7 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	/**
 	 * One small tool-less call for generated text (commit messages, pull request descriptions):
 	 * the text generation model when one is set in Settings, else the chat's model, else the first
-	 * enabled one. Undefined when no model answered.
+	 * enabled one. The `git` slot tries the git text model first. Undefined when no model answered.
 	 */
-	generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number }): Promise<string | undefined>;
+	generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number; readonly slot?: 'title' | 'git' }): Promise<string | undefined>;
 }

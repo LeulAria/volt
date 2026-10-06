@@ -905,7 +905,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		if (!summary.commits.length && !summary.patch.trim()) {
 			return undefined;
 		}
-		const raw = await this.runtime.generateText(buildPullRequestTextPrompt(summary.head, summary.base, summary.commits, summary.stat, summary.patch, summary.template), { sessionId });
+		const raw = await this.runtime.generateText(buildPullRequestTextPrompt(summary.head, summary.base, summary.commits, summary.stat, summary.patch, summary.template), { sessionId, slot: 'git' });
 		const parsed = parseGeneratedJson(raw, ['title', 'body'] as const);
 		if (parsed?.title) {
 			return { title: sanitizeCommitSubject(parsed.title, summary.commits.at(-1)), body: (parsed.body ?? '').trim() };
@@ -921,7 +921,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		if (!summary.files.trim()) {
 			return undefined;
 		}
-		const raw = await this.runtime.generateText(buildCommitMessagePrompt(summary.branch, summary.files, summary.patch, summary.recentSubjects), { sessionId });
+		const raw = await this.runtime.generateText(buildCommitMessagePrompt(summary.branch, summary.files, summary.patch, summary.recentSubjects), { sessionId, slot: 'git' });
 		return commitMessageFrom(raw);
 	}
 
