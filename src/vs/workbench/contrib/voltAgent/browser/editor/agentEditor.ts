@@ -2700,6 +2700,74 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				void this.restoreCheckpoint(turnId);
 			}));
 		}
+		if (message.id && !this.isStreaming() && !this.isSubagentChat()) {
+			const turnId = message.id;
+			const rewind = append(bubble, $('button.volt-agent-user-restore.volt-agent-user-rewind')) as HTMLButtonElement;
+			rewind.type = 'button';
+			rewind.setAttribute('aria-label', localize('voltAgent.rewind', "Rewind to Here"));
+			setAgentTooltip(rewind, localize('voltAgent.rewind.hint', "Rewind the chat to before this message, keeping file changes"));
+			rewind.appendChild(renderIcon(Codicon.debugStepBack));
+			this.threadListeners.add(addDisposableListener(rewind, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				void this.rewindTo(turnId);
+			}));
+		}
+	}
+
+	/**
+	 * T3's "Edit from here": the message and everything after it leave the chat and the agent's
+	 * context (the next send starts the agent fresh with the rest as a recap), and the message goes
+	 * back to the composer to edit and send again. Files stay as the agent left them unless the user
+	 * picks Revert Files too. Any unsent draft stays above the restored prompt.
+	 */
+	private async rewindTo(turnId: string): Promise<void> {
+		if (this.isStreaming() || this.isSubagentChat()) {
+			return;
+		}
+		const sessionId = this.sessionKey;
+		const userTurn = this.userTurnOf(turnId);
+		const canRevert = hasCommand(CHECKPOINT_RESTORE_COMMAND) && hasCommand(CHECKPOINT_HAS_CHANGES_COMMAND)
+			&& await this.commandService.executeCommand<boolean>(CHECKPOINT_HAS_CHANGES_COMMAND, { sessionId, turnId, userTurn }).catch(() => false);
+		const { result } = await this.dialogService.prompt<'keep' | 'revert' | 'cancel'>({
+			message: localize('voltAgent.rewind.title', "Rewind the chat to before this message?"),
+			detail: canRevert
+				? localize('voltAgent.rewind.detailRevertable', "This message and everything after it are removed from the chat and the agent's context, and the message goes back to the composer. Files the agent changed since stay as they are, unless you revert them too.")
+				: localize('voltAgent.rewind.detail', "This message and everything after it are removed from the chat and the agent's context, and the message goes back to the composer. Files stay as they are."),
+			buttons: [
+				{ label: localize({ key: 'voltAgent.rewind.keep', comment: ['&& denotes a mnemonic'] }, "&&Rewind"), run: () => 'keep' },
+				...(canRevert ? [{ label: localize({ key: 'voltAgent.rewind.revert', comment: ['&& denotes a mnemonic'] }, "Rewind and Revert &&Files"), run: () => 'revert' as const }] : []),
+			],
+			cancelButton: { label: localize('voltAgent.rewind.cancel', "Cancel"), run: () => 'cancel' },
+		});
+		if (result === 'cancel' || this.sessionKey !== sessionId || this.isStreaming()) {
+			return;
+		}
+		if (result === 'revert') {
+			await this.commandService.executeCommand<boolean>(CHECKPOINT_RESTORE_COMMAND, { sessionId, turnId, userTurn }).catch(err => this.logService.warn('[volt agent] revert files failed', err));
+		}
+		const index = this.messages.findIndex(message => message.kind === 'user' && message.id === turnId);
+		const message = this.messages[index];
+		if (index < 0 || message?.kind !== 'user' || this.sessionKey !== sessionId) {
+			return;
+		}
+		if (this.editingUserIndex !== undefined) {
+			this.cancelUserEdit(false);
+		}
+		this.messages.splice(index);
+		if (this.input instanceof AgentEditorInput) {
+			this.input.recordTruncate(message);
+		}
+		this.runtime.truncateSession(sessionId, this.messages.filter(candidate => candidate.kind === 'user').length);
+		const draft = this.inputModel?.getValue().trim() ?? '';
+		const draftMentions = cloneDisplayMentions(this.mentionController?.displayMentions() ?? []);
+		this.setComposerContent(draft ? `${draft}\n\n${message.text}` : message.text, [...(draft ? draftMentions : []), ...(message.mentions ?? [])]);
+		if (message.mode) {
+			this.setMode(message.mode);
+		}
+		this.renderThread(false);
+		this.syncComposerPlacement();
+		this.inputEditor?.focus();
 	}
 
 	/**

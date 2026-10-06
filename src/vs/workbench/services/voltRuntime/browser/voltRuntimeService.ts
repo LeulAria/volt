@@ -3521,7 +3521,8 @@ function conversationRecap(messages: readonly { role: string; content: string; m
 	}
 	return [
 		'<conversation_so_far>',
-		'This conversation started with another model. Here is what was said before this message; continue from it.',
+		// Read after a model switch, a rewind or a restarted agent: none of them is "another model" for sure.
+		'You are joining a conversation already in progress (another model or an earlier session of yours answered before). Here is what was said before this message; continue from it.',
 		...lines,
 		'</conversation_so_far>',
 	].join('\n');

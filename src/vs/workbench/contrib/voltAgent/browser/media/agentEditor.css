@@ -8545,6 +8545,11 @@ pre.volt-agent-searchable {
 	font-size: 14px;
 }
 
+/* Rewind to Here sits right after Restore Checkpoint when both show. */
+.volt-agent-user-restore + .volt-agent-user-rewind {
+	margin-left: 2px;
+}
+
 /* "Redo checkpoint" under a message whose checkpoint was restored. */
 
 .volt-agent-redo-checkpoint {
