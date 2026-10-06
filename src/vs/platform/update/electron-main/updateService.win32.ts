@@ -21,10 +21,11 @@ import { ILifecycleMainService, IRelaunchHandler, IRelaunchOptions } from '../..
 import { ILogService } from '../../log/common/log.js';
 import { INativeHostMainService } from '../../native/electron-main/nativeHostMainService.js';
 import { IProductService } from '../../product/common/productService.js';
-import { asJson, IRequestService } from '../../request/common/request.js';
+import { IRequestService } from '../../request/common/request.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { AvailableForDownload, DisablementReason, IUpdate, State, StateType, UpdateType } from '../common/update.js';
 import { AbstractUpdateService, createUpdateURL, UpdateErrorClassification } from './abstractUpdateService.js';
+import { IVoltUpdate } from '../common/voltUpdateFeed.js';
 
 async function pollUntil(fn: () => boolean, millis = 1000): Promise<void> {
 	while (!fn()) {
@@ -120,7 +121,7 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 		this.setState(State.CheckingForUpdates(explicit));
 
 		this.requestService.request({ url }, CancellationToken.None)
-			.then<IUpdate | null>(asJson)
+			.then(context => this.parseUpdateResponse(context))
 			.then(update => {
 				const updateType = getUpdateType();
 
@@ -129,7 +130,8 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 					return Promise.resolve(null);
 				}
 
-				if (updateType === UpdateType.Archive) {
+				// Archive installs can't update themselves; another Volt channel is a separate app.
+				if (updateType === UpdateType.Archive || (update as IVoltUpdate).voltChannel) {
 					this.setState(State.AvailableForDownload(update));
 					return Promise.resolve(null);
 				}

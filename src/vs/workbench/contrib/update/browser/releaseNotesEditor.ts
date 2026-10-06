@@ -19,7 +19,8 @@ import { IEnvironmentService } from '../../../../platform/environment/common/env
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
-import { asTextOrError, IRequestService } from '../../../../platform/request/common/request.js';
+import { asJson, asTextOrError, IRequestService } from '../../../../platform/request/common/request.js';
+import { voltReleaseTag } from '../../../../platform/update/common/voltUpdateFeed.js';
 import { DEFAULT_MARKDOWN_STYLES, renderMarkdownDocument } from '../../markdown/browser/markdownDocumentRenderer.js';
 import { WebviewInput } from '../../webviewPanel/browser/webviewEditorInput.js';
 import { IWebviewWorkbenchService } from '../../webviewPanel/browser/webviewWorkbenchService.js';
@@ -86,6 +87,9 @@ export class ReleaseNotesManager extends Disposable {
 			if (currentFileUri) {
 				return dirname(currentFileUri);
 			}
+		}
+		if (this._productService.voltRelease) {
+			return URI.parse(`https://github.com/${this._productService.voltRelease.repository}/releases`);
 		}
 		return URI.parse('https://code.visualstudio.com/raw');
 	}
@@ -211,6 +215,11 @@ export class ReleaseNotesManager extends Disposable {
 				if (useCurrentFile) {
 					const file = this._codeEditorService.getActiveCodeEditor()?.getModel()?.getValue();
 					text = file ? file.substring(file.indexOf('#')) : undefined;
+				} else if (this._productService.voltRelease) {
+					// Volt's release notes are the GitHub Release body.
+					const releaseUrl = `https://api.github.com/repos/${this._productService.voltRelease.repository}/releases/tags/${voltReleaseTag(version)}`;
+					const release = await asJson<{ name?: string; body?: string; html_url?: string }>(await this._requestService.request({ url: releaseUrl, headers: { Accept: 'application/vnd.github+json' } }, CancellationToken.None));
+					text = release ? `# ${release.name || version}\n\n${release.body ?? ''}\n\n[View on GitHub](${release.html_url})\n` : undefined;
 				} else {
 					text = await asTextOrError(await this._requestService.request({ url }, CancellationToken.None));
 				}

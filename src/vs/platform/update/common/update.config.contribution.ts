@@ -40,6 +40,21 @@ configurationRegistry.registerConfiguration({
 			description: localize('updateMode', "Configure whether you receive automatic updates. Requires a restart after change. The updates are fetched from a Microsoft online service."),
 			deprecationMessage: localize('deprecated', "This setting is deprecated, please use '{0}' instead.", 'update.mode')
 		},
+		'update.releaseChannel': {
+			type: 'string',
+			enum: ['default', 'stable', 'beta', 'nightly'],
+			default: 'default',
+			scope: ConfigurationScope.APPLICATION,
+			title: localize('releaseChannelTitle', "Release Channel"),
+			markdownDescription: localize('releaseChannel', "The Volt release channel to follow. Each channel is a separate app (Volt, Volt Beta, Volt Nightly) with its own settings folder, so choosing another channel offers its download instead of replacing this app. Updates are fetched from GitHub Releases."),
+			enumDescriptions: [
+				localize('releaseChannel.default', "Follow the channel this app was built for."),
+				localize('releaseChannel.stable', "Tested releases."),
+				localize('releaseChannel.beta', "Early access to the next release."),
+				localize('releaseChannel.nightly', "Built every night from the main branch.")
+			],
+			tags: ['usesOnlineServices']
+		},
 		'update.enableWindowsBackgroundUpdates': {
 			type: 'boolean',
 			default: true,
