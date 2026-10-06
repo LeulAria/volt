@@ -12,6 +12,7 @@ import { IProviderProfile } from '../../common/profiles.js';
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
 import { OpenAiToolAssembler } from '../../common/harness/openaiToolStream.js';
 import { stringifyToolArgs, toOpenAiMessages, toOpenAiTools } from '../../common/harness/providerMessages.js';
+import { ProviderReasoning } from '../../common/harness/reasoningStream.js';
 import { requestSseStream, requestText } from '../host/httpStream.js';
 
 export class OllamaProvider implements IModelProvider {
@@ -67,11 +68,45 @@ export class OllamaProvider implements IModelProvider {
 		}
 	}
 
+	/**
+	 * Whether the model can think, from `/api/show` (asked once per model). Ollama rejects
+	 * `think` for a model without the capability, so only these get it.
+	 */
+	private thinks(baseURL: string, model: string, token: CancellationToken): Promise<boolean> {
+		const key = `${baseURL}|${model}`;
+		let known = this.thinking.get(key);
+		if (!known) {
+			known = requestText(this.requestService, `${baseURL}/api/show`, {
+				type: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				data: JSON.stringify({ model }),
+			}, token).then(({ status, text }) => {
+				if (status !== 200) {
+					this.thinking.delete(key);
+					return false;
+				}
+				const capabilities = (JSON.parse(text) as { capabilities?: unknown }).capabilities;
+				return Array.isArray(capabilities) && capabilities.includes('thinking');
+			}, () => {
+				this.thinking.delete(key);
+				return false;
+			});
+			this.thinking.set(key, known);
+		}
+		return known;
+	}
+
+	private readonly thinking = new Map<string, Promise<boolean>>();
+
 	async *stream(req: IModelRequest, token: CancellationToken): AsyncIterable<IVoltEvent> {
-		const url = `${this.baseURL(req.profile)}/api/chat`;
+		const baseURL = this.baseURL(req.profile);
+		const url = `${baseURL}/api/chat`;
 		const tools = req.tools?.length ? toOpenAiTools(req.tools) : undefined;
 		const textId = `text-${Date.now()}`;
 		const assembler = new OpenAiToolAssembler();
+		// Ollama never takes thinking back, so the block is for the Thought row only.
+		const reasoning = new ProviderReasoning(`${textId}-think`, this.id, req.modelId, 'none');
+		const think = await this.thinks(baseURL, req.modelId, token);
 		const callPrefix = `ollama_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 		let started = false;
 		for await (const line of requestSseStream(this.requestService, url, {
@@ -82,6 +117,8 @@ export class OllamaProvider implements IModelProvider {
 				stream: true,
 				messages: toOpenAiMessages(req.messages),
 				...(tools ? { tools } : {}),
+				// Thinking in its own field, not inline <think> tags in the reply.
+				...(think ? { think: true } : {}),
 			}),
 		}, token)) {
 			if (typeof line !== 'string') {
@@ -98,6 +135,7 @@ export class OllamaProvider implements IModelProvider {
 			let json: {
 				message?: {
 					content?: string;
+					thinking?: string;
 					tool_calls?: { id?: string; function?: { name?: string; arguments?: unknown } }[];
 				};
 				done?: boolean;
@@ -110,7 +148,14 @@ export class OllamaProvider implements IModelProvider {
 			} catch {
 				continue;
 			}
+			const thinking = json.message?.thinking;
+			if (thinking) {
+				yield* reasoning.delta(thinking);
+			}
 			const content = json.message?.content;
+			if (content || json.message?.tool_calls?.length) {
+				yield* reasoning.close();
+			}
 			if (content) {
 				if (!started) {
 					started = true;
@@ -133,6 +178,7 @@ export class OllamaProvider implements IModelProvider {
 				yield event;
 			}
 			if (json.done) {
+				yield* reasoning.close();
 				if (json.prompt_eval_count !== undefined || json.eval_count !== undefined) {
 					yield { type: 'usage', input: json.prompt_eval_count ?? 0, output: json.eval_count ?? 0 };
 				}
@@ -142,6 +188,7 @@ export class OllamaProvider implements IModelProvider {
 				}
 			}
 		}
+		yield* reasoning.close();
 		if (started) {
 			yield { type: 'text.end', id: textId };
 		}
