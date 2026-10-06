@@ -221,6 +221,8 @@ interface ISessionState extends IVoltSession {
 	 * conversation as a recap, so the title it names would come from the recap, not the chat.
 	 */
 	agentJoinedLate?: IAgentSessionHandle;
+	/** The user restarted the agent while a turn held it: the next prompt starts a fresh one. */
+	restartPending?: boolean;
 	/** Catalog ref the live agent session was started for. */
 	agentRef?: string;
 	/** Folder the live agent session was started in. A chat moved to another project needs a new one. */
@@ -824,6 +826,47 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session.agentHandle && (session.agentSynced ?? 0) > session.messages.length) {
 			this.disposeSessionAgent(session);
 			session.agentSynced = 0;
+		}
+	}
+
+	async restartAgent(sessionId: string, options?: { readonly cancel?: boolean }): Promise<boolean> {
+		const session = this.sessions.get(sessionId);
+		const run = session?.run;
+		if (run && !run.ended && !options?.cancel) {
+			this.logService.info(`[volt] not restarting the agent of ${sessionId}: a turn is running`);
+			return false;
+		}
+		this.forgetAgentSetup();
+		if (!session) {
+			// Nothing started yet: the chat's first agent reads the new setup anyway.
+			return true;
+		}
+		// Set before the cancel: a queued prompt that starts while this turn unwinds starts fresh too.
+		session.restartPending = true;
+		if (run && !run.ended) {
+			await this.cancel(sessionId);
+		}
+		// A cancelled turn holds its agent until it unwinds; disposing it under the turn would race it.
+		await this.waitSettled(run, SETTLE_WAIT_AGENT_MS);
+		if (session.restartPending && !(session.run && !session.run.ended)) {
+			session.restartPending = false;
+			this.releaseAgent(session);
+		}
+		return true;
+	}
+
+	/**
+	 * Drops what a fresh agent would reuse instead of reading again: spares started with the old
+	 * setup, skills and rules read a moment ago, and MCP servers that failed to start.
+	 */
+	private forgetAgentSetup(): void {
+		this.instructionsByRoot.clear();
+		this.mcpHost.forgetFailed();
+		this.agentPool.clear();
+		for (const provider of this.agentProviders.values()) {
+			if (provider instanceof AcpAgentProvider) {
+				void provider.disposeSpares().catch(() => undefined);
+			}
 		}
 	}
 
@@ -2483,6 +2526,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.logService.info('[volt] the cancelled turn did not release its agent in time; using another one');
 			this.disposeSessionAgent(session);
 			session.agentSynced = 0;
+		}
+		if (session.restartPending && this.isCurrent(session, run)) {
+			// Restarted while the previous turn held the agent (see restartAgent).
+			session.restartPending = false;
+			this.releaseAgent(session);
 		}
 		const turns: string[] = [];
 		try {

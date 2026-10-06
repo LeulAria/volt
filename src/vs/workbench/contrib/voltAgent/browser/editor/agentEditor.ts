@@ -110,6 +110,8 @@ import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
 import { adoptProjectForUnstartedSession, agentSessionNeedsScratch, attachSessionToProject } from '../workspace/agentShell.js';
 import { AgentScratchFolders } from '../workspace/agentScratchProject.js';
+import { isAgentPaletteKey } from './agentCommandPalette.js';
+import { SHOW_AGENT_COMMANDS_COMMAND_ID } from './agentSessionCommands.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
@@ -855,6 +857,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			if (e.key === 'Escape' && this.editingUserIndex !== undefined) {
 				e.preventDefault();
 				this.cancelUserEdit();
+			}
+		}, true));
+		// Cmd+K while reading the transcript opens the agent palette. Captured before the
+		// keybinding service starts a chord; editors and inputs elsewhere keep their Cmd+K chords.
+		this._register(addDisposableListener(getWindow(this.container), 'keydown', e => {
+			if (isAgentPaletteKey(e) && this.ownsPaletteKey(e.target)) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.showAgentCommands();
 			}
 		}, true));
 		this.composerEl = append(this.editorMainEl, $('.volt-agent-composer'));
@@ -1870,6 +1881,29 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private composerCanSend(): boolean {
 		return !this.makingScratchFolder;
+	}
+
+	private showAgentCommands(): void {
+		void this.commandService.executeCommand(SHOW_AGENT_COMMANDS_COMMAND_ID, { sessionId: this.sessionKey, running: this.isStreaming() });
+	}
+
+	/**
+	 * Whether Cmd+K pressed on `target` belongs to this chat: text in its transcript, or nothing
+	 * focused while it is the active editor. Editors and inputs (a code block, a message being
+	 * edited) keep the key; the composer handles it in its own key handler.
+	 */
+	private ownsPaletteKey(target: EventTarget | null): boolean {
+		if (!this.isVisible() || !isHTMLElement(target)) {
+			return false;
+		}
+		if (this.threadEl.contains(target)) {
+			return !target.closest('.monaco-editor, input, textarea, select, [contenteditable="true"]');
+		}
+		const doc = this.container.ownerDocument;
+		if (target !== doc.body && target !== doc.documentElement) {
+			return false;
+		}
+		return !!this.group && this.editorGroupsService.activeGroup === this.group && this.group.activeEditorPane === this;
 	}
 
 	/**
@@ -4224,6 +4258,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			if (e.keyCode === KeyCode.KeyF && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				e.preventDefault();
 				this.revealFind();
+				return;
+			}
+			if (isAgentPaletteKey(e.browserEvent)) {
+				// The composer has no use for the editor's Cmd+K chords; the chat's own commands take it.
+				e.preventDefault();
+				e.stopPropagation();
+				this.showAgentCommands();
 				return;
 			}
 			if (e.keyCode === KeyCode.KeyL && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
