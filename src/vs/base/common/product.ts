@@ -58,13 +58,29 @@ export type ExtensionUntrustedWorkspaceSupport = {
 	readonly override?: boolean | 'limited';
 };
 
+export interface IVoltReleaseConfiguration {
+	/** GitHub `owner/repo` that publishes releases. */
+	readonly repository: string;
+	/** Base URL of the static update feed: `<feedUrl>/<channel>/<platform>.json`. */
+	readonly feedUrl: string;
+	/** Download page that offers every platform, arch and channel. */
+	readonly downloadPage: string;
+}
+
 export type ExtensionVirtualWorkspaceSupport = {
 	readonly default?: boolean;
 	readonly override?: boolean;
 };
 
 export interface IProductConfiguration {
+	/** VS Code engine version. Extension compatibility and `vscode.version` use it. */
 	readonly version: string;
+	/** Volt's own release version (e.g. 0.0.1, 0.0.1-beta.1). Shown to users and used for updates. */
+	readonly voltVersion?: string;
+	/** Upstream VS Code version this build is based on; becomes `version` at build time. */
+	readonly vscodeVersion?: string;
+	/** Where Volt releases and the update feed live. */
+	readonly voltRelease?: IVoltReleaseConfiguration;
 	readonly date?: string;
 	readonly quality?: string;
 	readonly commit?: string;

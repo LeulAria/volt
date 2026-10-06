@@ -45,8 +45,11 @@ else if (globalThis._VSCODE_PRODUCT_JSON && globalThis._VSCODE_PACKAGE_JSON) {
 	if (!product.version) {
 		const pkg = globalThis._VSCODE_PACKAGE_JSON as { version: string };
 
+		// package.json carries Volt's version; `version` stays the VS Code engine version
+		// so extension compatibility checks keep working.
 		Object.assign(product, {
-			version: pkg.version
+			version: product.vscodeVersion ?? pkg.version,
+			voltVersion: pkg.version
 		});
 	}
 }
