@@ -72,9 +72,36 @@ export type AgentHomeElement =
 	 * `nested` sessions sit under their project; the others list the project by its initials.
 	 * `sideDepth` is set on a side chat, listed right under the chat it was opened in.
 	 */
-	| { readonly type: 'session'; readonly session: IAgentSessionMeta; readonly folderKey: string; readonly nested: boolean; readonly sideDepth?: number }
+	| { readonly type: 'session'; readonly session: IAgentSessionMeta; readonly folderKey: string; readonly nested: boolean; readonly sideDepth?: number; readonly runMember?: IAgentHomeRunMember }
+	/** One prompt sent to several models: a row that opens the compare view and folds out into its runs. */
+	| { readonly type: 'runGroup'; readonly group: IAgentHomeRunGroup; readonly folderKey: string; readonly nested: boolean }
 	| { readonly type: 'more'; readonly groupKey: string; readonly hidden: number; readonly nested: boolean }
 	| { readonly type: 'empty'; readonly key: string; readonly filtered: boolean };
+
+/** A run of a group as its row shows it: the model instead of the chat's title. */
+export interface IAgentHomeRunMember {
+	readonly sessionId: string;
+	readonly label: string;
+	readonly family: string;
+	readonly branch: string;
+	readonly statusLabel: string;
+	readonly badge?: IAgentHomeStatusBadge;
+	readonly winner?: boolean;
+	readonly discarded?: boolean;
+}
+
+export interface IAgentHomeRunGroup {
+	readonly id: string;
+	/** Stands in for the group wherever the list sorts, filters and groups chats: dates, project, status. */
+	readonly session: IAgentSessionMeta;
+	readonly families: readonly string[];
+	/** "3 models · 2 working". */
+	readonly summary: string;
+	readonly badge?: IAgentHomeStatusBadge;
+	readonly members: readonly IAgentHomeRunMember[];
+	/** The runs' own history entries, for those that have one yet. */
+	readonly metas: ReadonlyMap<string, IAgentSessionMeta>;
+}
 
 export interface IAgentHomeNode {
 	readonly element: AgentHomeElement;
@@ -90,6 +117,8 @@ export interface IAgentHomeTreeOptions {
 	readonly limits?: ReadonlyMap<string, number>;
 	/** What each session's linked pull requests add up to, for the PR filter. Absent: "No PR". */
 	readonly prTags?: ReadonlyMap<string, AgentHomePrFilter>;
+	/** Run groups: each replaces its runs' rows with one row that folds out into them. */
+	readonly runGroups?: readonly IAgentHomeRunGroup[];
 }
 
 /** Agent tabs shown in a group before a "Show more" row. */
@@ -303,9 +332,62 @@ export function agentHomeSectionLabel(key: AgentHomeSectionKey): string {
 
 export function buildAgentHomeTree(
 	folders: readonly IAgentHomeFolder[],
-	sessions: readonly IAgentSessionMeta[],
+	allSessions: readonly IAgentSessionMeta[],
 	view: IAgentHomeViewState,
 	options: IAgentHomeTreeOptions = {},
+): IAgentHomeNode[] {
+	const runGroups = new Map((options.runGroups ?? []).map(group => [group.id, group]));
+	const sessions = runGroups.size ? withRunGroupRows(allSessions, [...runGroups.values()]) : allSessions;
+	const built = buildHomeTree(folders, sessions, view, options);
+	return runGroups.size ? foldRunGroups(built, runGroups) : built;
+}
+
+/** The runs leave the list; their group stands in for them. */
+function withRunGroupRows(sessions: readonly IAgentSessionMeta[], groups: readonly IAgentHomeRunGroup[]): IAgentSessionMeta[] {
+	const members = new Set(groups.flatMap(group => group.members.map(member => member.sessionId)));
+	return [...sessions.filter(session => !members.has(session.id)), ...groups.map(group => group.session)];
+}
+
+/** Turns each group's stand-in row into the group row with its runs under it (folded until opened). */
+function foldRunGroups(nodes: readonly IAgentHomeNode[], groups: ReadonlyMap<string, IAgentHomeRunGroup>): IAgentHomeNode[] {
+	return nodes.map(node => {
+		const element = node.element;
+		if (element.type === 'session') {
+			const group = groups.get(element.session.id);
+			if (group) {
+				return {
+					element: { type: 'runGroup', group, folderKey: element.folderKey, nested: element.nested },
+					collapsed: true,
+					children: group.members.map(member => ({
+						element: { type: 'session' as const, session: group.metas.get(member.sessionId) ?? runMemberMeta(group, member), folderKey: element.folderKey, nested: element.nested, sideDepth: 1, runMember: member },
+					})),
+				};
+			}
+		}
+		return node.children ? { ...node, children: foldRunGroups(node.children, groups) } : node;
+	});
+}
+
+/** A run whose chat has no history yet (its worktree is still being made). */
+function runMemberMeta(group: IAgentHomeRunGroup, member: IAgentHomeRunMember): IAgentSessionMeta {
+	return {
+		...group.session,
+		id: member.sessionId,
+		title: member.label,
+		turnCount: 0,
+		preview: '',
+		summary: undefined,
+		model: member.label,
+		worktreeBranch: member.branch,
+		pinned: false,
+	};
+}
+
+function buildHomeTree(
+	folders: readonly IAgentHomeFolder[],
+	sessions: readonly IAgentSessionMeta[],
+	view: IAgentHomeViewState,
+	options: IAgentHomeTreeOptions,
 ): IAgentHomeNode[] {
 	const now = options.now ?? Date.now();
 	const unique = uniqueHomeFolders(folders);
@@ -790,6 +872,7 @@ export function agentHomeAddStart(element: AgentHomeElement):
 		case 'section':
 		case 'group':
 		case 'session':
+		case 'runGroup':
 		case 'more':
 		case 'empty':
 			return undefined;

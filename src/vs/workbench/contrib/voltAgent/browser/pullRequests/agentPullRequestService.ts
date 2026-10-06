@@ -111,7 +111,8 @@ export interface IAgentPullRequestService {
 	/** Pushes the branch when needed, opens the pull request, and links it to the chat. */
 	create(sessionId: string | undefined, folder: string, options: IAgentPrCreateOptions): Promise<IVoltPullRequest>;
 	generatePullRequestText(folder: string, base: string, sessionId?: string): Promise<{ title: string; body: string } | undefined>;
-	generateCommitMessage(folder: string, sessionId?: string): Promise<string | undefined>;
+	/** A message for committing everything, or exactly `paths`. */
+	generateCommitMessage(folder: string, sessionId?: string, paths?: readonly string[]): Promise<string | undefined>;
 	/** The merge method last picked for a repository. */
 	lastMergeMethod(repo: IVoltPrRepoRef): VoltPrMergeMethod | undefined;
 	rememberMergeMethod(repo: IVoltPrRepoRef, method: VoltPrMergeMethod): void;
@@ -916,8 +917,8 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		return { title: sanitizeCommitSubject(title), body };
 	}
 
-	async generateCommitMessage(folder: string, sessionId?: string): Promise<string | undefined> {
-		const summary = await this.api.describeChanges({ folder });
+	async generateCommitMessage(folder: string, sessionId?: string, paths?: readonly string[]): Promise<string | undefined> {
+		const summary = await this.api.describeChanges({ folder, ...(paths ? { paths } : {}) });
 		if (!summary.files.trim()) {
 			return undefined;
 		}

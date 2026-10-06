@@ -186,6 +186,7 @@ import './contrib/mcp/electron-browser/mcp.contribution.js';
 import './services/voltRuntime/electron-browser/voltStdio.contribution.js';
 import './contrib/voltAgent/electron-browser/voltHostMcp.contribution.js';
 import './contrib/voltAgent/browser/pullRequests/agentPullRequests.contribution.js';
+import './contrib/voltAgent/browser/runGroups/agentRunGroups.contribution.js';
 import './services/voltRuntime/electron-browser/voltGit.contribution.js';
 import './services/voltRuntime/electron-browser/voltUsage.contribution.js';
 import './contrib/voltProjects/electron-browser/voltProjects.contribution.js';

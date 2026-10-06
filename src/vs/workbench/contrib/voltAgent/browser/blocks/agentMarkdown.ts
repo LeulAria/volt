@@ -12,11 +12,12 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import type * as marked from '../../../../../base/common/marked/marked.js';
 import { MarkedKatexSupport } from '../../../markdown/browser/markedKatexSupport.js';
 import { ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
+import { replaceEmojiWithIcons } from './agentEmojiIcons.js';
 import { IMermaidOptions, preloadMermaid, renderMermaidDiagram } from './agentMermaid.js';
 
 /**
  * Markdown the way Cursor's transcript draws it: KaTeX math, highlighted code cards,
- * Mermaid diagrams for ```mermaid fences, round task markers, and link favicons.
+ * Mermaid diagrams for ```mermaid fences, round task markers, link favicons, and emoji as line icons.
  */
 
 let mathLoad: Promise<unknown> | undefined;
@@ -58,9 +59,10 @@ export function agentMarkdownRenderOptions(win: CodeWindow, options: IAgentMarkd
 	};
 }
 
-/** Post-render touches that marked cannot express: task markers and link favicons. */
+/** Post-render touches that marked cannot express: task markers, link favicons and emoji icons. */
 export function decorateAgentMarkdown(root: HTMLElement, store: DisposableStore): void {
 	decorateTaskLists(root);
+	replaceEmojiWithIcons(root);
 	decorateLinkFavicons(root, store);
 }
 

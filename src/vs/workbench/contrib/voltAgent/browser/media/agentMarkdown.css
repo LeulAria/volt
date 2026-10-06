@@ -170,6 +170,38 @@
 	font-size: 14px;
 }
 
+/* Emoji drawn as line icons (agentEmojiIcons.ts) */
+
+.volt-agent-markdown .volt-emoji-icon {
+	/* Text-sized, so it scales with headings and sits on the baseline like a glyph */
+	display: inline-block;
+	width: 1em;
+	height: 1em;
+	vertical-align: -0.14em;
+	color: var(--volt-md-icon-tertiary);
+	overflow: visible;
+}
+
+.volt-agent-markdown .volt-emoji-icon[data-tone="success"] {
+	color: var(--vscode-charts-green, #3fb950);
+}
+
+.volt-agent-markdown .volt-emoji-icon[data-tone="error"] {
+	color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.volt-agent-markdown .volt-emoji-icon[data-tone="warning"] {
+	color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.volt-agent-markdown .volt-emoji-icon[data-tone="progress"] {
+	color: var(--vscode-testing-iconQueued, #cca700);
+}
+
+.volt-agent-markdown .volt-emoji-icon[data-tone="info"] {
+	color: var(--vscode-charts-blue, #3794ff);
+}
+
 /* Blockquote, rule */
 
 .volt-agent-markdown blockquote {
@@ -289,7 +321,7 @@
 	margin: 0;
 }
 
-/* Tables: an 8px-radius bordered frame, 6/10 cell padding, 600-weight header. */
+/* Tables: a 12px-radius bordered frame, 6/10 cell padding, 600-weight header (Cursor). */
 
 .volt-agent-markdown .volt-agent-table-shell {
 	position: relative;
@@ -299,7 +331,7 @@
 .volt-agent-markdown .volt-agent-table-wrap {
 	margin: 12px 0;
 	border: 1px solid var(--volt-md-stroke);
-	border-radius: 8px;
+	border-radius: 12px;
 	overflow-x: auto;
 	overflow-y: hidden;
 }
@@ -350,6 +382,11 @@
 
 .volt-agent-markdown .volt-agent-table-wrap code {
 	white-space: normal;
+}
+
+/* A short column (an id, a status, `setup ok`) stays on one line, code included. */
+.volt-agent-markdown .volt-agent-table-wrap td.fit code {
+	white-space: nowrap;
 }
 
 /* Copy Table sits under the table at its right edge, shown on hover. Its row keeps its height so nothing moves. */

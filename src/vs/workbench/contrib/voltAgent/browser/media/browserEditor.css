@@ -825,6 +825,11 @@ the background paints a solid square) and keep the glyph in the accent. */
 	--volt-composer-bg: rgba(34, 34, 34, 0.78);
 	--volt-dock-ease: cubic-bezier(0.22, 1, 0.36, 1);
 	--volt-dock-max: 650px;
+	/* The collapsed bar over a dark page: a lighter tint. */
+	--volt-dock-bar-bg: rgba(255, 255, 255, 0.26);
+	--volt-dock-bar-border: rgba(255, 255, 255, 0.08);
+	--volt-dock-bar-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+	--volt-dock-pill-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
 	position: absolute;
 	inset: 0;
 	z-index: 9;
@@ -840,6 +845,26 @@ the background paints a solid square) and keep the glyph in the accent. */
 .monaco-workbench.vs .volt-browser-dock,
 .monaco-workbench.hc-light .volt-browser-dock {
 	--volt-composer-bg: rgba(236, 236, 236, 0.82);
+}
+
+/*
+ * The bar follows the page under it (BrowserEditor.sampleDockTone), not the theme: darker with a
+ * drop shadow over a light page so it still shows on white, lighter over a dark one.
+ */
+.monaco-workbench.vs .volt-browser-dock,
+.monaco-workbench.hc-light .volt-browser-dock,
+.monaco-workbench .volt-browser-dock.backdrop-light {
+	--volt-dock-bar-bg: rgba(0, 0, 0, 0.2);
+	--volt-dock-bar-border: rgba(0, 0, 0, 0.06);
+	--volt-dock-bar-shadow: 0 1px 5px rgba(0, 0, 0, 0.22);
+	--volt-dock-pill-shadow: 0 6px 18px rgba(0, 0, 0, 0.18), 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.monaco-workbench .volt-browser-dock.backdrop-dark {
+	--volt-dock-bar-bg: rgba(255, 255, 255, 0.26);
+	--volt-dock-bar-border: rgba(255, 255, 255, 0.08);
+	--volt-dock-bar-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+	--volt-dock-pill-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
 }
 
 .volt-browser-dock.blocked {
@@ -884,22 +909,18 @@ the background paints a solid square) and keep the glyph in the accent. */
 	width: 100%;
 }
 
-/*
- * Glass without `backdrop-filter` (it breaks the see-through window): a see-through tint over
- * the page, a 1px rim, a top highlight, and a small drop shadow.
- */
+/* A tint over the page without `backdrop-filter` (it breaks the see-through window). */
 .volt-browser-dock-shell {
 	position: relative;
 	width: 156px;
-	height: 10px;
-	border: 1px solid rgba(255, 255, 255, 0.45);
+	height: 8px;
+	border: 1px solid var(--volt-dock-bar-border);
 	border-radius: 999px;
-	/* Light grey glass: a pale tint with a bright top edge, readable over dark and light pages. */
-	background: linear-gradient(180deg, rgba(236, 236, 236, 0.7), rgba(196, 196, 196, 0.6));
+	background: var(--volt-dock-bar-bg);
 	overflow: hidden;
 	cursor: pointer;
 	transform-origin: bottom center;
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 2px 8px rgba(0, 0, 0, 0.22);
+	box-shadow: var(--volt-dock-bar-shadow);
 	transition:
 		width 480ms var(--volt-dock-ease),
 		height 480ms var(--volt-dock-ease),
@@ -910,18 +931,11 @@ the background paints a solid square) and keep the glyph in the accent. */
 		padding 480ms var(--volt-dock-ease);
 }
 
-.monaco-workbench.vs .volt-browser-dock-shell,
-.monaco-workbench.hc-light .volt-browser-dock-shell {
-	background: linear-gradient(180deg, rgba(214, 214, 214, 0.75), rgba(184, 184, 184, 0.65));
-	border-color: rgba(255, 255, 255, 0.6);
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 2px 8px rgba(0, 0, 0, 0.14);
-}
-
 .volt-browser-dock.mode-hover .volt-browser-dock-shell,
 .volt-browser-dock.mode-activity .volt-browser-dock-shell {
-	background: rgba(34, 34, 34, 0.88);
-	border-color: rgba(255, 255, 255, 0.16);
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 3px 10px rgba(0, 0, 0, 0.3);
+	background: rgba(30, 30, 30, 0.92);
+	border-color: rgba(255, 255, 255, 0.12);
+	box-shadow: var(--volt-dock-pill-shadow);
 	cursor: pointer;
 }
 
@@ -929,15 +943,16 @@ the background paints a solid square) and keep the glyph in the accent. */
 .monaco-workbench.hc-light .volt-browser-dock.mode-hover .volt-browser-dock-shell,
 .monaco-workbench.vs .volt-browser-dock.mode-activity .volt-browser-dock-shell,
 .monaco-workbench.hc-light .volt-browser-dock.mode-activity .volt-browser-dock-shell {
-	background: rgba(255, 255, 255, 0.9);
-	border-color: rgba(0, 0, 0, 0.12);
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 3px 10px rgba(0, 0, 0, 0.12);
+	background: rgba(255, 255, 255, 0.94);
+	border-color: rgba(0, 0, 0, 0.1);
+	box-shadow: var(--volt-dock-pill-shadow);
 }
 
 .volt-browser-dock.mode-expanded .volt-browser-dock-shell {
 	position: relative;
 	z-index: 1;
 	background: #222222;
+	border-color: rgba(255, 255, 255, 0.1);
 	border-radius: 22px;
 	box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
 	backdrop-filter: none;
@@ -954,6 +969,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 .monaco-workbench.vs .volt-browser-dock.mode-expanded .volt-browser-dock-shell,
 .monaco-workbench.hc-light .volt-browser-dock.mode-expanded .volt-browser-dock-shell {
 	background: #ececec;
+	border-color: rgba(0, 0, 0, 0.1);
 	box-shadow: 0 18px 48px rgba(0, 0, 0, 0.16);
 }
 
@@ -1134,13 +1150,14 @@ the background paints a solid square) and keep the glyph in the accent. */
 	color: inherit;
 }
 
+/* Cursor's in-progress loader: a plus of square cells; the edges and the center trade places. */
 .volt-browser-dock-dots {
 	display: none;
-	grid-template-columns: repeat(3, 3px);
-	grid-template-rows: repeat(3, 3px);
-	gap: 2px;
-	width: 13px;
-	height: 13px;
+	grid-template-columns: repeat(3, 2px);
+	grid-template-rows: repeat(3, 2px);
+	gap: 1.5px;
+	width: 9px;
+	height: 9px;
 	flex-shrink: 0;
 }
 
@@ -1149,16 +1166,47 @@ the background paints a solid square) and keep the glyph in the accent. */
 }
 
 .volt-browser-dock-dot {
-	width: 3px;
-	height: 3px;
-	border-radius: 50%;
-	background: #d0d0d0;
-	opacity: 0.1;
+	width: 2px;
+	height: 2px;
+	background: currentColor;
+	opacity: 0.3;
+	animation: volt-thinking-edge-v 1.68s cubic-bezier(0.4, 0, 0.2, 1) -0.15s infinite;
 }
 
-.monaco-workbench.vs .volt-browser-dock-dot,
-.monaco-workbench.hc-light .volt-browser-dock-dot {
-	background: #6f6f6f;
+.volt-browser-dock-dot.top { grid-area: 1 / 2; }
+.volt-browser-dock-dot.left { grid-area: 2 / 1; animation-name: volt-thinking-edge-h; }
+.volt-browser-dock-dot.center { grid-area: 2 / 2; opacity: 1; animation-name: volt-thinking-center; }
+.volt-browser-dock-dot.right { grid-area: 2 / 3; animation-name: volt-thinking-edge-h; }
+.volt-browser-dock-dot.bottom { grid-area: 3 / 2; }
+
+@keyframes volt-thinking-edge-v {
+	0%, 16.67% { opacity: 0.3; }
+	25.6%, 33.33% { opacity: 1; }
+	42.26%, 66.67% { opacity: 0.3; }
+	75.6%, 83.33% { opacity: 1; }
+	92.26%, 100% { opacity: 0.3; }
+}
+
+@keyframes volt-thinking-edge-h {
+	0% { opacity: 1; }
+	8.93%, 16.67% { opacity: 0.3; }
+	25.6%, 33.33% { opacity: 1; }
+	42.26%, 83.33% { opacity: 0.3; }
+	92.26%, 100% { opacity: 1; }
+}
+
+@keyframes volt-thinking-center {
+	0% { opacity: 0.3; }
+	8.93%, 16.67% { opacity: 1; }
+	25.6%, 33.33% { opacity: 0.3; }
+	42.26%, 66.67% { opacity: 1; }
+	75.6%, 100% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-browser-dock-dot {
+		animation: none;
+	}
 }
 
 .volt-browser-dock-composer {

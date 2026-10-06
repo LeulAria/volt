@@ -2143,6 +2143,13 @@ registerAction2(class ShowAgentSourceControlAction extends Action2 {
 	}
 });
 
+/** Opens the right sidebar on `view` beside the chat on screen; false when no chat can open tools (IDE layout). */
+export function showAgentFilesSidebar(view: AgentFilesSidebarView): boolean {
+	const host = [...hosts].find(candidate => candidate.canOpenTools());
+	host?.showFilesSidebar(view);
+	return !!host;
+}
+
 registerAction2(class ToggleAgentToolsFullScreenAction extends Action2 {
 	constructor() {
 		super({

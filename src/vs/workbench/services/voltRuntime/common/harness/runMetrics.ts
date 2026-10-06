@@ -83,6 +83,8 @@ export class RunMetrics {
 	private stalls = 0;
 	private loops = 0;
 	private compactions = 0;
+	/** Agents repeat a compaction's terminal update to patch in its token counts: count each id once. */
+	private readonly compactionsDone = new Set<string>();
 	private continuations = 0;
 	private errors = 0;
 	private readonly tokens = { input: 0, output: 0, cache: 0 };
@@ -157,6 +159,12 @@ export class RunMetrics {
 				break;
 			case 'compaction':
 				this.compactions++;
+				break;
+			case 'context.compaction':
+				if (event.status === 'completed' && !this.compactionsDone.has(event.id)) {
+					this.compactionsDone.add(event.id);
+					this.compactions++;
+				}
 				break;
 			case 'usage':
 				this.tokens.input += event.input;

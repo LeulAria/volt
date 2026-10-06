@@ -267,6 +267,9 @@ export function settleAssistant(message: IAgentAssistantMessage, at?: number): v
 	for (const segment of message.segments) {
 		if (segment.kind === 'block' && segment.block.status === 'streaming') {
 			segment.block.status = segment.block.type === 'approval' ? 'error' : 'complete';
+		} else if (segment.kind === 'compaction' && segment.compaction.status === 'running') {
+			// Cut off with its turn: whether the agent kept the summary is unknown.
+			segment.compaction.status = 'cancelled';
 		}
 	}
 }

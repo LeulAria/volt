@@ -61,7 +61,7 @@
 .volt-pr-header {
 	position: relative;
 	flex: none;
-	padding: 12px 20px 0;
+	padding: 10px 16px 0;
 	border-bottom: 1px solid var(--volt-pr-border);
 	background: var(--vscode-editor-background);
 }
@@ -104,54 +104,12 @@
 
 .volt-pr-title {
 	margin: 8px 0 6px;
-	font-size: 19px;
+	font-size: 17px;
 	font-weight: 600;
 	line-height: 1.3;
 	letter-spacing: -0.01em;
 	overflow-wrap: anywhere;
 }
-
-.volt-pr-meta {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 6px 8px;
-	margin-bottom: 10px;
-	font-size: 12px;
-	color: var(--volt-pr-muted);
-}
-
-.volt-pr-meta strong {
-	color: var(--vscode-foreground);
-	font-weight: 500;
-}
-
-.volt-pr-meta-text {
-	min-width: 0;
-	line-height: 22px;
-}
-
-.volt-pr-state-pill {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	height: 22px;
-	padding: 0 9px 0 7px;
-	border-radius: 999px;
-	color: #ffffff;
-	font-weight: 500;
-	font-size: 12px;
-}
-
-.volt-pr-state-pill .codicon {
-	font-size: 13px;
-	color: inherit;
-}
-
-.volt-pr-state-pill.state-open { background: var(--volt-pr-open); }
-.volt-pr-state-pill.state-draft { background: var(--volt-pr-draft); }
-.volt-pr-state-pill.state-merged { background: var(--volt-pr-merged); }
-.volt-pr-state-pill.state-closed { background: var(--volt-pr-closed); }
 
 .volt-pr-branch {
 	display: inline-flex;
@@ -185,52 +143,6 @@
 	background: var(--volt-pr-surface-strong);
 }
 
-.volt-pr-meta-time {
-	margin-left: auto;
-}
-
-.volt-pr-tabs {
-	display: flex;
-	align-items: flex-end;
-	gap: 2px;
-	margin: 0 -8px;
-}
-
-.volt-pr-tab {
-	position: relative;
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	height: 34px;
-	padding: 0 10px;
-	border: 0;
-	background: transparent;
-	color: var(--volt-pr-muted);
-	font: inherit;
-	font-size: 13px;
-	cursor: pointer;
-}
-
-.volt-pr-tab:hover {
-	color: var(--vscode-foreground);
-}
-
-.volt-pr-tab.active {
-	color: var(--vscode-foreground);
-	font-weight: 500;
-}
-
-.volt-pr-tab.active::after {
-	content: '';
-	position: absolute;
-	left: 8px;
-	right: 8px;
-	bottom: -1px;
-	height: 2px;
-	border-radius: 2px;
-	background: var(--vscode-foreground);
-}
-
 .volt-pr-count {
 	min-width: 18px;
 	height: 18px;
@@ -253,17 +165,13 @@
 	white-space: nowrap;
 }
 
-.volt-pr-tabs > .volt-pr-stats {
-	align-self: center;
-	padding-right: 8px;
-}
-
 .volt-pr-stats .add { color: var(--volt-pr-add); }
 .volt-pr-stats .del { color: var(--volt-pr-del); }
 
 .volt-pr-busy {
 	position: absolute;
-	right: 20px;
+	z-index: 3;
+	right: 16px;
 	top: 44px;
 	display: inline-flex;
 	align-items: center;
@@ -591,35 +499,7 @@
 	color: var(--vscode-textLink-foreground);
 	background: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
 }
-
 /* People and labels */
-
-.volt-pr-people {
-	display: grid;
-	gap: 10px;
-}
-
-.volt-pr-people-row {
-	display: flex;
-	align-items: flex-start;
-	gap: 12px;
-}
-
-.volt-pr-people-label {
-	flex: none;
-	width: 72px;
-	padding-top: 3px;
-	font-size: 12px;
-	color: var(--volt-pr-muted);
-}
-
-.volt-pr-people-list {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 6px;
-	min-width: 0;
-}
 
 .volt-pr-person {
 	display: inline-flex;
@@ -706,12 +586,6 @@
 
 .volt-pr-markdown img {
 	max-width: 100%;
-}
-
-.volt-pr-timeline {
-	display: flex;
-	flex-direction: column;
-	gap: 10px;
 }
 
 .volt-pr-comment,
@@ -865,10 +739,6 @@
 	padding: 8px 12px 12px;
 }
 
-.volt-pr-compose .volt-pr-reply {
-	padding: 0;
-}
-
 .volt-pr-reply-actions {
 	display: none;
 	justify-content: flex-end;
@@ -876,12 +746,6 @@
 
 .volt-pr-reply.active .volt-pr-reply-actions {
 	display: flex;
-}
-
-.volt-pr-review-actions {
-	display: flex;
-	gap: 8px;
-	margin-top: 10px;
 }
 
 .volt-pr-textarea,
@@ -922,35 +786,7 @@
 	from { background-position: 100% 0; }
 	to { background-position: -100% 0; }
 }
-
 /* Files, commits, checks */
-
-.volt-pr-files-head {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	margin-bottom: 10px;
-	font-size: 12px;
-}
-
-.volt-pr-progress {
-	width: 120px;
-	height: 6px;
-	border-radius: 999px;
-	background: var(--volt-pr-surface-strong);
-	overflow: hidden;
-}
-
-.volt-pr-progress-bar {
-	height: 100%;
-	border-radius: 999px;
-	background: var(--volt-pr-open);
-	transition: width 160ms ease;
-}
-
-.volt-pr-viewed-count {
-	color: var(--volt-pr-muted);
-}
 
 .volt-pr-files,
 .volt-pr-list {
@@ -959,139 +795,11 @@
 	overflow: hidden;
 }
 
-.volt-pr-dir {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	height: 28px;
-	padding: 0 12px;
-	background: var(--volt-pr-surface-strong);
-	color: var(--volt-pr-muted);
-	font-size: 12px;
-	font-family: var(--monaco-monospace-font);
-}
-
-.volt-pr-dir .codicon {
-	font-size: 13px;
-}
-
-.volt-pr-file,
-.volt-pr-row {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	min-height: 34px;
-	padding: 0 12px;
-	border-top: 1px solid var(--volt-pr-border);
-	box-sizing: border-box;
-}
-
-.volt-pr-file:first-child,
-.volt-pr-row:first-child {
-	border-top: 0;
-}
-
-.volt-pr-file.nested {
-	padding-left: 22px;
-}
-
-.volt-pr-file:hover,
-.volt-pr-row:hover {
-	background: var(--volt-pr-surface);
-}
-
-.volt-pr-file.viewed .volt-pr-file-name {
-	color: var(--volt-pr-muted);
-}
-
-.volt-pr-check {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	flex: none;
-	width: 20px;
-	height: 20px;
-	padding: 0;
-	border: 0;
-	background: transparent;
-	color: var(--volt-pr-muted);
-	cursor: pointer;
-}
-
-.volt-pr-file.viewed .volt-pr-check {
-	color: var(--volt-pr-open);
-}
-
-.volt-pr-check .codicon {
-	font-size: 15px;
-	color: inherit;
-}
-
-.volt-pr-change {
-	flex: none;
-	width: 14px;
-	font-size: 11px;
-	font-weight: 600;
-	text-align: center;
-	font-family: var(--monaco-monospace-font);
-}
-
-.volt-pr-change.change-added { color: var(--volt-pr-add); }
-.volt-pr-change.change-deleted { color: var(--volt-pr-del); }
-.volt-pr-change.change-modified,
-.volt-pr-change.change-changed { color: var(--volt-pr-pending); }
-.volt-pr-change.change-renamed,
-.volt-pr-change.change-copied { color: var(--volt-pr-merged); }
-
-.volt-pr-file-name {
-	min-width: 0;
-	padding: 0;
-	border: 0;
-	background: transparent;
-	color: var(--vscode-foreground);
-	font: inherit;
-	font-family: var(--monaco-monospace-font);
-	font-size: 12.5px;
-	text-align: left;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	cursor: pointer;
-}
-
-.volt-pr-file-name:hover:not(:disabled) {
-	text-decoration: underline;
-}
-
-.volt-pr-file-name:disabled {
-	cursor: default;
-}
-
 .volt-pr-renamed {
 	font-size: 11.5px;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-}
-
-.volt-pr-row-title {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.volt-pr-row-detail {
-	min-width: 0;
-	font-size: 12px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.volt-pr-row > .muted {
-	flex: none;
-	font-size: 12px;
 }
 
 .volt-pr-sha {
@@ -1312,21 +1020,6 @@
 	line-height: 1.5;
 }
 
-.volt-pr-list-row {
-	position: relative;
-	display: flex;
-	flex-direction: column;
-	justify-content: center;
-	gap: 2px;
-	min-height: 46px;
-	margin: 0 6px;
-	padding: 4px 8px;
-	border-radius: 6px;
-	box-sizing: border-box;
-	cursor: pointer;
-	outline: none;
-}
-
 .volt-pr-list-row:hover,
 .volt-pr-list-row:focus-visible {
 	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
@@ -1346,12 +1039,6 @@
 	align-items: center;
 	gap: 6px;
 	min-width: 0;
-}
-
-.volt-pr-list-line.sub {
-	padding-left: 20px;
-	font-size: 11.5px;
-	color: var(--volt-pr-muted);
 }
 
 .volt-pr-list-title {
@@ -1391,12 +1078,6 @@
 	align-items: center;
 	gap: 2px;
 	flex: none;
-}
-
-.volt-pr-list-reason {
-	flex: none;
-	margin-left: auto;
-	white-space: nowrap;
 }
 
 .volt-pr-list-reason.reason-bad { color: var(--volt-pr-closed); }
@@ -1550,4 +1231,1434 @@
 .volt-pr-quick-button .codicon,
 .volt-pr-icon-button .codicon {
 	color: inherit !important;
+}
+
+/* ------------------------------------------------------------------------------------------
+ * The pull request panel, laid out like T3 Code's: crumbs and actions, title, byline, base ←
+ * head, then Summary | Timeline | Code. Solid fills only (volt-transparent-window).
+ * ---------------------------------------------------------------------------------------- */
+
+.volt-pr-view {
+	position: relative;
+}
+
+.volt-pr-crumbs {
+	position: relative;
+	flex: 1;
+	min-width: 0;
+	height: 24px;
+}
+
+.volt-pr-crumbs-full,
+.volt-pr-crumbs-condensed {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.volt-pr-crumbs-condensed {
+	opacity: 0;
+	transform: translateY(4px);
+	pointer-events: none;
+	font-size: 12.5px;
+}
+
+.volt-pr-view.scrolled .volt-pr-crumbs-full {
+	opacity: 0;
+	transform: translateY(-4px);
+	pointer-events: none;
+}
+
+.volt-pr-view.scrolled .volt-pr-crumbs-condensed {
+	opacity: 1;
+	transform: none;
+	pointer-events: auto;
+}
+
+.volt-pr-condensed-title {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 500;
+}
+
+.volt-pr-number.state-open { color: var(--volt-pr-open); }
+.volt-pr-number.state-draft { color: var(--volt-pr-draft); }
+.volt-pr-number.state-merged { color: var(--volt-pr-merged); }
+.volt-pr-number.state-closed { color: var(--volt-pr-closed); }
+.volt-pr-number:hover { text-decoration: underline; }
+
+.volt-pr-header-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: none;
+}
+
+.volt-pr-fold {
+	overflow: hidden;
+	transition: max-height 160ms ease, opacity 160ms ease;
+	max-height: 240px;
+}
+
+.volt-pr-view.scrolled .volt-pr-fold {
+	max-height: 0;
+	opacity: 0;
+}
+
+.monaco-workbench.reduce-motion .volt-pr-fold,
+.monaco-workbench.reduce-motion .volt-pr-crumbs-full,
+.monaco-workbench.reduce-motion .volt-pr-crumbs-condensed {
+	transition: none;
+}
+
+.volt-pr-byline,
+.volt-pr-branches {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	font-size: 12px;
+}
+
+.volt-pr-byline strong {
+	font-weight: 500;
+}
+
+.volt-pr-dot {
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-checkout {
+	flex: none;
+	border: 0;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	cursor: pointer;
+	padding: 2px 4px;
+	border-radius: 4px;
+}
+
+.volt-pr-checkout:hover {
+	color: var(--vscode-foreground);
+	background: var(--volt-pr-surface-strong);
+}
+
+.volt-pr-branches {
+	margin: 10px 0 12px;
+}
+
+.volt-pr-branches .volt-pr-branch {
+	background: transparent;
+	color: var(--volt-pr-muted);
+	padding: 0 2px;
+	font-size: 12px;
+}
+
+.volt-pr-branches .volt-pr-branch:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-branches .volt-pr-branch.behind {
+	color: var(--volt-pr-pending);
+}
+
+.volt-pr-behind {
+	display: inline-flex;
+	align-items: center;
+	border: 0;
+	padding: 0 2px;
+	margin-left: -4px;
+	background: transparent;
+	color: var(--volt-pr-pending);
+	cursor: pointer;
+}
+
+.volt-pr-behind .codicon {
+	font-size: 13px;
+	color: inherit !important;
+}
+
+.volt-pr-arrow {
+	display: inline-flex;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-arrow .codicon {
+	font-size: 12px;
+}
+
+.volt-pr-filestat {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex: none;
+	border: 0;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font: inherit;
+	font-size: 12px;
+	padding: 2px 4px;
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.volt-pr-filestat:hover {
+	background: var(--volt-pr-surface-strong);
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-filestat .codicon {
+	font-size: 13px;
+	color: inherit;
+}
+
+.volt-pr-filestat .add,
+.volt-pr-filestat .del {
+	font-family: var(--monaco-monospace-font);
+}
+
+.volt-pr-filestat .add { color: var(--volt-pr-add); }
+.volt-pr-filestat .del { color: var(--volt-pr-del); }
+
+.volt-pr-tabbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0 -16px;
+	padding: 8px 16px;
+	border-top: 1px solid var(--volt-pr-border);
+}
+
+.volt-pr-tabbar-aside {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	color: var(--volt-pr-muted);
+	font-size: 12px;
+}
+
+.volt-pr-tabbar-stat {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.volt-pr-tabbar-stat .codicon {
+	font-size: 13px;
+	color: inherit;
+}
+
+.volt-pr-checks-summary {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	border: 0;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font: inherit;
+	font-size: 12px;
+	padding: 2px 6px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.volt-pr-checks-summary:hover:not(:disabled) {
+	background: var(--volt-pr-surface-strong);
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-checks-summary:disabled {
+	cursor: default;
+}
+
+.volt-pr-order {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	border: 0;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font: inherit;
+	font-size: 12px;
+	padding: 2px 6px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.volt-pr-order:hover {
+	color: var(--vscode-foreground);
+	background: var(--volt-pr-surface-strong);
+}
+
+.volt-pr-order .codicon {
+	font-size: 12px;
+	color: inherit;
+	transform: rotate(90deg);
+}
+
+.volt-pr-state-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 24px;
+	padding: 0 10px;
+	border-radius: 7px;
+	border: 1px solid currentColor;
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.volt-pr-state-badge .codicon {
+	font-size: 13px;
+	color: inherit !important;
+}
+
+.volt-pr-state-badge.state-merged { color: var(--volt-pr-merged); }
+.volt-pr-state-badge.state-closed { color: var(--volt-pr-closed); }
+
+.volt-pr-button.danger {
+	border-color: color-mix(in srgb, var(--volt-pr-closed) 55%, transparent);
+	background: color-mix(in srgb, var(--volt-pr-closed) 10%, transparent);
+	color: var(--volt-pr-closed);
+}
+
+.volt-pr-button.danger:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--volt-pr-closed) 18%, transparent);
+}
+
+.volt-pr-button.armed {
+	border-color: color-mix(in srgb, var(--volt-pr-open) 50%, transparent);
+	background: color-mix(in srgb, var(--volt-pr-open) 10%, transparent);
+	color: var(--volt-pr-open);
+}
+
+.volt-pr-icon-button.subtle {
+	opacity: 0.75;
+}
+
+.volt-pr-icon-button.subtle:hover {
+	opacity: 1;
+}
+
+/* Summary */
+
+.volt-pr-body {
+	padding: 14px 16px 72px;
+}
+
+.volt-pr-meta-rows {
+	display: grid;
+	gap: 8px;
+	margin-bottom: 14px;
+}
+
+.volt-pr-meta-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 26px;
+}
+
+.volt-pr-meta-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex: none;
+	width: 104px;
+	font-size: 12.5px;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-meta-label .codicon {
+	font-size: 14px;
+	color: inherit;
+}
+
+.volt-pr-meta-list {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	font-size: 12.5px;
+}
+
+.volt-pr-notice {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	margin: 0 0 12px;
+	padding: 8px 10px;
+	border-radius: 8px;
+	border: 1px solid var(--volt-pr-border);
+	background: var(--volt-pr-surface);
+	font-size: 12.5px;
+	line-height: 1.45;
+}
+
+.volt-pr-notice .codicon {
+	font-size: 14px;
+	margin-top: 1px;
+	color: var(--volt-pr-pending) !important;
+}
+
+.volt-pr-notice.danger {
+	border-color: color-mix(in srgb, var(--volt-pr-closed) 35%, transparent);
+	background: color-mix(in srgb, var(--volt-pr-closed) 7%, transparent);
+}
+
+.volt-pr-notice.danger .codicon { color: var(--volt-pr-closed) !important; }
+.volt-pr-notice.armed .codicon { color: var(--volt-pr-open) !important; }
+
+.volt-pr-notice > span:not(.codicon) {
+	flex: 1;
+}
+
+.volt-pr-notice > .codicon {
+	flex: none;
+}
+
+.volt-pr-fold-section {
+	margin-top: 4px;
+}
+
+.volt-pr-fold-header {
+	position: sticky;
+	top: -14px;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 32px;
+	margin: 0 -16px;
+	padding: 0 16px;
+	background: var(--vscode-editor-background);
+}
+
+.volt-pr-fold-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	border: 0;
+	padding: 2px 0;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font: inherit;
+	font-size: 12.5px;
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.volt-pr-fold-toggle:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-fold-toggle .codicon {
+	font-size: 12px;
+	color: inherit;
+}
+
+.volt-pr-fold-body {
+	padding: 4px 0 14px;
+}
+
+.volt-pr-empty {
+	font-size: 12.5px;
+	padding: 2px 0 6px;
+}
+
+.volt-pr-checks {
+	display: grid;
+	gap: 1px;
+}
+
+.volt-pr-check-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 30px;
+	padding: 0 6px;
+	border-radius: 6px;
+	font-size: 12.5px;
+}
+
+.volt-pr-check-row:hover {
+	background: var(--volt-pr-surface);
+}
+
+.volt-pr-check-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-check-time {
+	font-size: 11.5px;
+	font-family: var(--monaco-monospace-font);
+}
+
+.volt-pr-check-state {
+	flex: none;
+	font-size: 12px;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-check-state.check-failure { color: var(--volt-pr-closed); }
+.volt-pr-check-state.check-pending { color: var(--volt-pr-pending); }
+
+.volt-pr-comment,
+.volt-pr-review,
+.volt-pr-thread {
+	margin-bottom: 10px;
+}
+
+/* Timeline: a rail with a marker per event. */
+
+.volt-pr-rail {
+	position: relative;
+	padding-left: 2px;
+}
+
+.volt-pr-rail-item {
+	position: relative;
+	display: flex;
+	gap: 12px;
+	padding-bottom: 18px;
+}
+
+.volt-pr-rail-item:not(:last-child)::before {
+	content: '';
+	position: absolute;
+	left: 12px;
+	top: 28px;
+	bottom: 2px;
+	width: 1px;
+	background: var(--volt-pr-border);
+}
+
+.volt-pr-rail-marker {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 25px;
+	height: 25px;
+}
+
+.volt-pr-rail-marker > .volt-pr-icon .codicon {
+	font-size: 16px;
+}
+
+.volt-pr-rail-content {
+	flex: 1;
+	min-width: 0;
+	padding-top: 2px;
+}
+
+.volt-pr-rail-line {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	font-size: 13px;
+}
+
+.volt-pr-rail-line strong {
+	font-weight: 600;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.volt-pr-rail-line > span {
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-rail-sub {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 2px;
+	font-size: 11.5px;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-rail-body {
+	margin-top: 6px;
+	padding: 8px 10px;
+	border-radius: 8px;
+	border: 1px solid var(--volt-pr-border);
+	background: var(--volt-pr-surface);
+}
+
+.volt-pr-sha {
+	border: 0;
+	padding: 0;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+	cursor: pointer;
+}
+
+.volt-pr-sha:hover {
+	color: var(--vscode-textLink-foreground);
+}
+
+/* Code: the commit picker, viewed count and every file's diff inline. */
+
+.volt-pr-code-toolbar {
+	position: sticky;
+	top: -14px;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 38px;
+	margin: -14px -16px 8px;
+	padding: 0 16px;
+	border-bottom: 1px solid var(--volt-pr-border);
+	background: var(--vscode-editor-background);
+}
+
+.volt-pr-commit-picker {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	max-width: 50%;
+	height: 26px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12.5px;
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.volt-pr-commit-picker > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-commit-picker:hover {
+	background: var(--volt-pr-surface-strong);
+}
+
+.volt-pr-commit-picker .codicon {
+	font-size: 12px;
+	color: inherit;
+}
+
+.volt-pr-code-counts {
+	color: var(--volt-pr-muted);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.volt-pr-code-files {
+	display: grid;
+	gap: 8px;
+}
+
+.volt-pr-code-file {
+	border: 1px solid var(--volt-pr-border);
+	border-radius: 8px;
+	overflow: hidden;
+	background: var(--vscode-editor-background);
+}
+
+.volt-pr-code-file-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 34px;
+	padding: 0 8px 0 4px;
+	background: var(--volt-pr-surface);
+}
+
+.volt-pr-code-file.open .volt-pr-code-file-head {
+	border-bottom: 1px solid var(--volt-pr-border);
+}
+
+.volt-pr-code-file-toggle {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	flex: 1;
+	border: 0;
+	padding: 4px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12.5px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-pr-code-file-toggle > .codicon {
+	font-size: 12px;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-code-path {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+}
+
+.volt-pr-code-path .dir {
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-code-file.viewed .volt-pr-code-path {
+	opacity: 0.6;
+}
+
+.volt-pr-icon.change-added { color: var(--volt-pr-add); }
+.volt-pr-icon.change-deleted { color: var(--volt-pr-del); }
+.volt-pr-icon.change-modified,
+.volt-pr-icon.change-changed { color: var(--vscode-textLink-foreground); }
+.volt-pr-icon.change-renamed,
+.volt-pr-icon.change-copied { color: var(--volt-pr-pending); }
+
+.volt-pr-renamed {
+	font-size: 11.5px;
+	white-space: nowrap;
+}
+
+.volt-pr-viewed {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	flex: none;
+	height: 22px;
+	padding: 0 7px 0 4px;
+	border: 1px solid var(--volt-pr-border);
+	border-radius: 6px;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-pr-viewed .codicon {
+	width: 14px;
+	height: 14px;
+	font-size: 12px;
+	border-radius: 3px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 35%, transparent);
+	color: inherit;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.volt-pr-viewed.checked {
+	color: var(--vscode-foreground);
+	background: var(--volt-pr-surface-strong);
+}
+
+.volt-pr-viewed.checked .codicon {
+	background: var(--vscode-textLink-foreground);
+	border-color: var(--vscode-textLink-foreground);
+	color: var(--vscode-editor-background) !important;
+}
+
+.volt-pr-diff {
+	overflow-x: auto;
+	font-size: 12px;
+	line-height: 20px;
+}
+
+.volt-pr-diff-note {
+	padding: 10px 12px;
+	font-size: 12.5px;
+}
+
+.volt-pr-diff-lines {
+	min-width: max-content;
+}
+
+.volt-pr-diff-line {
+	position: relative;
+	font-family: var(--monaco-monospace-font);
+	display: grid;
+	grid-template-columns: 22px 44px 44px 16px auto;
+	align-items: start;
+	white-space: pre;
+}
+
+.volt-pr-diff-line.add {
+	background: color-mix(in srgb, var(--volt-pr-add) 12%, transparent);
+}
+
+.volt-pr-diff-line.del {
+	background: color-mix(in srgb, var(--volt-pr-del) 12%, transparent);
+}
+
+.volt-pr-diff-line.add .volt-pr-diff-no,
+.volt-pr-diff-line.add .volt-pr-diff-sign { color: var(--volt-pr-add); }
+.volt-pr-diff-line.del .volt-pr-diff-no,
+.volt-pr-diff-line.del .volt-pr-diff-sign { color: var(--volt-pr-del); }
+
+.volt-pr-diff-no {
+	padding-right: 8px;
+	text-align: right;
+	color: var(--volt-pr-muted);
+	user-select: none;
+	opacity: 0.8;
+}
+
+.volt-pr-diff-sign {
+	user-select: none;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-diff-code {
+	padding-right: 16px;
+}
+
+.volt-pr-diff-ask {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	margin: 1px 2px;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: var(--vscode-textLink-foreground);
+	color: var(--vscode-editor-background);
+	opacity: 0;
+	cursor: pointer;
+}
+
+.volt-pr-diff-ask .codicon {
+	font-size: 12px;
+	color: inherit !important;
+}
+
+.volt-pr-diff-line:hover .volt-pr-diff-ask,
+.volt-pr-diff-ask:focus-visible {
+	opacity: 1;
+}
+
+.volt-pr-diff-gap {
+	padding: 3px 12px 3px 104px;
+	font-size: 11.5px;
+	color: var(--volt-pr-muted);
+	background: var(--volt-pr-surface);
+	border-top: 1px solid var(--volt-pr-border);
+	border-bottom: 1px solid var(--volt-pr-border);
+}
+
+.volt-pr-diff-gap:first-child {
+	border-top: 0;
+}
+
+.volt-pr-diff-gap.end {
+	border-bottom: 0;
+}
+
+/* The floating composer: a round button, then a card with Comment | Review. */
+
+.volt-pr-compose-host {
+	position: absolute;
+	right: 16px;
+	bottom: 12px;
+	z-index: 5;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	pointer-events: none;
+}
+
+.volt-pr-compose-host > * {
+	pointer-events: auto;
+}
+
+.volt-pr-compose-fab {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 34px;
+	height: 34px;
+	border-radius: 50%;
+	border: 1px solid var(--volt-pr-border);
+	background: var(--vscode-editorWidget-background, #252526);
+	color: var(--vscode-foreground);
+	box-shadow: 0 4px 14px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+	cursor: pointer;
+}
+
+.volt-pr-compose-fab:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, var(--vscode-editorWidget-background, #252526));
+}
+
+.volt-pr-compose-fab .codicon {
+	font-size: 15px;
+	color: inherit !important;
+}
+
+.volt-pr-compose-card {
+	display: grid;
+	gap: 8px;
+	width: min(420px, calc(100vw - 48px));
+	padding: 10px;
+	border-radius: 12px;
+	border: 1px solid var(--volt-pr-border);
+	background: var(--vscode-editorWidget-background, #252526);
+	box-shadow: 0 8px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.4));
+}
+
+.volt-pr-compose-top,
+.volt-pr-compose-footer {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-pr-compose-card .volt-pr-textarea {
+	min-height: 84px;
+	resize: vertical;
+}
+
+.volt-pr-compose-verdicts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.volt-pr-verdict {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 26px;
+	padding: 0 9px;
+	border: 1px solid var(--volt-pr-border);
+	border-radius: 7px;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-pr-verdict .codicon {
+	font-size: 13px;
+	color: inherit !important;
+}
+
+.volt-pr-verdict.checked {
+	color: var(--vscode-foreground);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+	background: var(--volt-pr-surface-strong);
+}
+
+.volt-pr-verdict:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+/* The Pull Requests list: T3 Code's two-line rows. */
+
+.volt-pr-list-row {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	min-height: 48px;
+	margin: 0 6px;
+	padding: 6px 8px;
+	border-radius: 6px;
+	box-sizing: border-box;
+	cursor: pointer;
+	outline: none;
+}
+
+.volt-pr-list-glyph {
+	position: relative;
+	flex: none;
+	width: 16px;
+	padding-top: 2px;
+}
+
+.volt-pr-list-glyph > .volt-pr-icon.conflict {
+	position: absolute;
+	right: -5px;
+	bottom: -6px;
+}
+
+.volt-pr-list-glyph > .volt-pr-icon.conflict .codicon {
+	font-size: 10px;
+	color: var(--volt-pr-closed) !important;
+}
+
+.volt-pr-list-lines {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-pr-list-line.sub {
+	font-size: 11.5px;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-list-line .volt-pr-stats {
+	font-size: 11px;
+}
+
+.volt-pr-list-number {
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-list-title {
+	flex: 0 1 auto;
+}
+
+.volt-pr-list-author {
+	flex: none;
+	color: var(--vscode-foreground);
+	opacity: 0.8;
+}
+
+.volt-pr-list-line.sub .volt-pr-avatar {
+	font-size: 8px;
+}
+
+.volt-pr-label.small {
+	height: 16px;
+	padding: 0 6px;
+	font-size: 10.5px;
+}
+
+.volt-pr-list-reason {
+	flex: none;
+	white-space: nowrap;
+}
+
+/* Dock rows: the git control and the chat's pull request. */
+
+.volt-git-control.dock {
+	display: flex;
+	align-items: stretch;
+	min-width: 0;
+}
+
+.volt-git-control.dock > .volt-git-control-main {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-git-control.dock.hidden {
+	display: none;
+}
+
+.volt-git-control-icon {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+}
+
+.volt-git-control-icon .codicon {
+	color: inherit;
+}
+
+.volt-git-control-main.disabled {
+	opacity: 0.6;
+}
+
+.volt-git-control-elapsed {
+	flex: none;
+	margin-left: auto;
+	font-size: 11px;
+	font-family: var(--monaco-monospace-font);
+	color: var(--volt-pr-muted, color-mix(in srgb, var(--vscode-foreground) 55%, transparent));
+}
+
+.volt-git-control-elapsed:empty {
+	display: none;
+}
+
+.volt-git-control-chevron {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 24px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	cursor: pointer;
+}
+
+.volt-git-control-chevron:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-git-control-chevron:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.volt-git-control-chevron .codicon {
+	font-size: 12px;
+	color: inherit !important;
+}
+
+/* The composer chip: one pill, the action and a chevron. */
+.volt-git-control.chip {
+	display: inline-flex;
+	align-items: stretch;
+	padding: 0;
+	gap: 0;
+	overflow: hidden;
+}
+
+.volt-git-control.chip.hidden {
+	display: none;
+}
+
+.volt-git-control.chip > .volt-git-control-main {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	border: 0;
+	padding: 0 6px 0 12px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.volt-git-control.chip > .volt-git-control-chevron {
+	width: 22px;
+	border-radius: 0;
+	border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-git-control.chip .volt-git-control-icon .codicon {
+	font-size: 13px;
+}
+
+.volt-git-control.chip.busy > .volt-git-control-main {
+	cursor: default;
+}
+
+.volt-agent-dock-pr.state-open .volt-agent-dock-pr-icon { color: var(--volt-pr-open, #3fb950); }
+.volt-agent-dock-pr.state-draft .volt-agent-dock-pr-icon { color: var(--volt-pr-draft, #8b949e); }
+.volt-agent-dock-pr.state-merged .volt-agent-dock-pr-icon { color: var(--volt-pr-merged, #a371f7); }
+.volt-agent-dock-pr.state-closed .volt-agent-dock-pr-icon { color: var(--volt-pr-closed, #f85149); }
+
+.volt-agent-dock-pr-icon {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+}
+
+.volt-agent-dock-pr-icon .codicon {
+	color: inherit !important;
+}
+
+.volt-agent-dock-pr-state {
+	flex: none;
+	margin-left: auto;
+	padding: 0 6px;
+	border-radius: 5px;
+	font-size: 11.5px;
+	line-height: 18px;
+	color: color-mix(in srgb, var(--vscode-foreground) 60%, transparent);
+}
+
+.volt-agent-dock-pr-state:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-dock-pr-state.hidden {
+	display: none;
+}
+
+.volt-agent-dock-pr-state.danger { color: #f85149; }
+.volt-agent-dock-pr-state.ok { color: #3fb950; }
+.volt-agent-dock-pr-state.pending { color: #d29922; }
+
+/* The commit dialog: a solid card over a dimmed layer. */
+
+.volt-git-dialog-layer {
+	position: absolute;
+	inset: 0;
+	z-index: 2600;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.volt-git-dialog-backdrop {
+	position: absolute;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.45);
+}
+
+.volt-git-dialog {
+	--volt-pr-border: rgba(255, 255, 255, 0.09);
+	--volt-pr-surface: rgba(255, 255, 255, 0.03);
+	--volt-pr-surface-strong: rgba(255, 255, 255, 0.07);
+	--volt-pr-muted: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	--volt-pr-add: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+	--volt-pr-del: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	width: min(520px, calc(100% - 48px));
+	max-height: calc(100% - 80px);
+	padding: 18px;
+	border-radius: 14px;
+	border: 1px solid var(--volt-pr-border);
+	background: var(--vscode-editorWidget-background, #1f1f1f);
+	color: var(--vscode-foreground);
+	box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+	font-size: 13px;
+	outline: none;
+	animation: volt-git-dialog-in 140ms ease-out;
+}
+
+.monaco-workbench.vs .volt-git-dialog,
+.monaco-workbench.hc-light .volt-git-dialog {
+	--volt-pr-border: rgba(0, 0, 0, 0.1);
+	--volt-pr-surface: rgba(0, 0, 0, 0.025);
+	--volt-pr-surface-strong: rgba(0, 0, 0, 0.05);
+}
+
+@keyframes volt-git-dialog-in {
+	from { opacity: 0; transform: translateY(6px) scale(0.99); }
+	to { opacity: 1; transform: none; }
+}
+
+.monaco-workbench.reduce-motion .volt-git-dialog {
+	animation: none;
+}
+
+.volt-git-dialog-head h2 {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.volt-git-dialog-head p {
+	margin: 4px 0 0;
+	color: var(--volt-pr-muted);
+	font-size: 12.5px;
+	line-height: 1.45;
+}
+
+.volt-git-dialog-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 12.5px;
+}
+
+.volt-git-dialog-row .label {
+	color: var(--volt-pr-muted);
+	min-width: 56px;
+}
+
+.volt-git-dialog-row .mono {
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+}
+
+.volt-git-dialog-row .warning {
+	margin-left: auto;
+	color: var(--volt-pr-pending, #d29922);
+	font-size: 12px;
+}
+
+.volt-git-dialog-row.files-head .totals {
+	display: inline-flex;
+	gap: 6px;
+	margin-left: auto;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+}
+
+.volt-git-dialog .add { color: var(--volt-pr-add); }
+.volt-git-dialog .del { color: var(--volt-pr-del); }
+
+.volt-git-dialog-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	border: 0;
+	padding: 2px 4px;
+	background: transparent;
+	color: var(--vscode-textLink-foreground);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	border-radius: 4px;
+}
+
+.volt-git-dialog-link:hover:not(:disabled) {
+	background: var(--volt-pr-surface-strong);
+}
+
+.volt-git-dialog-link .codicon {
+	font-size: 12px;
+	color: inherit !important;
+}
+
+.volt-git-dialog-files {
+	display: grid;
+	gap: 1px;
+	max-height: 220px;
+	overflow: auto;
+	padding: 4px;
+	border-radius: 8px;
+	border: 1px solid var(--volt-pr-border);
+	background: var(--volt-pr-surface);
+}
+
+.volt-git-dialog-file {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 24px;
+	padding: 0 6px;
+	border-radius: 5px;
+	font-size: 12px;
+}
+
+.volt-git-dialog-file:hover {
+	background: var(--volt-pr-surface-strong);
+}
+
+.volt-git-dialog-file .status {
+	flex: none;
+	width: 12px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11px;
+	font-weight: 600;
+	text-align: center;
+	color: var(--vscode-textLink-foreground);
+}
+
+.volt-git-dialog-file .status-added,
+.volt-git-dialog-file .status-untracked { color: var(--volt-pr-add); }
+.volt-git-dialog-file .status-deleted { color: var(--volt-pr-del); }
+.volt-git-dialog-file .status-conflicted { color: var(--volt-pr-pending, #d29922); }
+
+.volt-git-dialog-file .path {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--monaco-monospace-font);
+}
+
+.volt-git-dialog-file .stats {
+	display: inline-flex;
+	gap: 6px;
+	flex: none;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+}
+
+.volt-git-dialog-file.excluded .path {
+	color: var(--volt-pr-muted);
+	text-decoration: line-through;
+}
+
+.volt-git-dialog-file .excluded-tag {
+	flex: none;
+	font-size: 11px;
+	color: var(--volt-pr-muted);
+}
+
+.volt-git-dialog-check {
+	display: inline-flex;
+	align-items: center;
+	border: 0;
+	padding: 0;
+	background: transparent;
+	color: var(--vscode-textLink-foreground);
+	cursor: pointer;
+}
+
+.volt-git-dialog-file.excluded .volt-git-dialog-check {
+	color: var(--volt-pr-muted);
+}
+
+.volt-git-dialog-check .codicon {
+	font-size: 14px;
+	color: inherit !important;
+}
+
+.volt-git-dialog-message-label {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	font-size: 12.5px;
+	color: var(--volt-pr-muted);
+	margin-bottom: -6px;
+}
+
+.volt-git-dialog-message {
+	width: 100%;
+	box-sizing: border-box;
+	min-height: 72px;
+	padding: 8px 10px;
+	border-radius: 8px;
+	border: 1px solid var(--volt-pr-border);
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font: inherit;
+	font-size: 13px;
+	resize: vertical;
+	outline: none;
+}
+
+.volt-git-dialog-message:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-git-dialog-footer {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.volt-git-dialog-footer .spacer {
+	flex: 1;
+}
+
+.volt-git-dialog .volt-pr-button {
+	height: 28px;
 }

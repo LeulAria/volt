@@ -20,6 +20,7 @@ import {
 	groupContextModels,
 	occupancyFromUsage,
 	overheadFromCustomizations,
+	promptBaseTokens,
 	resolveModelContextWindow,
 } from '../../browser/context/agentContextUsage.js';
 import { IAgentCustomization } from '../../browser/customize/agentCustomize.js';
@@ -472,6 +473,61 @@ suite('Agent context usage', () => {
 
 		assert.strictEqual(snapshot.used, 20_000);
 		assert.strictEqual(snapshot.estimated, false);
+	});
+
+	test('Claude end-of-turn totals that add up every call\'s cache reads do not fill the meter', () => {
+		// A real Opus turn: 27K in the window, 117K cache read across its model calls.
+		assert.strictEqual(occupancyFromUsage({ tokensUsed: 27_119, tokensIn: 10, tokensOut: 1_080, tokensCache: 117_032 }), 27_119);
+		const snapshot = buildContextUsageSnapshot({
+			messages: [
+				{ kind: 'user', text: 'Verify setup and checks' },
+				{ kind: 'agent', text: 'All four commands ran.', tokensUsed: 27_119, tokensWindow: 1_000_000, tokensIn: 10, tokensOut: 1_080, tokensCache: 117_032 },
+			],
+			draft: '',
+			modelWindow: 1_000_000,
+			nativeAgent: true,
+			models: [],
+		});
+		assert.strictEqual(snapshot.used, 27_119);
+		assert.ok(snapshot.percent < 3, `${snapshot.percent}%`);
+	});
+
+	test('right after compacting, the kept summary sits on the system prompt and tools', () => {
+		const first = 'Read notes1.txt, notes2.txt and notes3.txt';
+		const messages = [
+			{ kind: 'user' as const, text: first },
+			{ kind: 'agent' as const, text: 'Three files, 401 lines each.', tokensUsed: 51_761, tokensWindow: 200_000, tokensBase: 21_426 },
+			{ kind: 'user' as const, text: '/compact' },
+			{ kind: 'agent' as const, segments: [{ kind: 'compaction' as const, compaction: { id: 'c1', status: 'completed' as const, preTokens: 51_787, postTokens: 2_244 } }], tokensUsed: 2_244, tokensWindow: 200_000, usageExcludesPrompt: true },
+		];
+		const base = 21_426 - estimateTokensFromText(first);
+		assert.strictEqual(promptBaseTokens(messages, 9_999), base);
+		const snapshot = buildContextUsageSnapshot({ messages, draft: '', modelWindow: 200_000, nativeAgent: true, models: [] });
+		// The next turn of the recorded chat reported 24,189: the summary plus the same system prompt and tools.
+		assert.strictEqual(snapshot.used, 2_244 + base);
+		assert.strictEqual(snapshot.estimated, true);
+		assert.strictEqual(snapshot.items.reduce((sum, item) => sum + item.tokens, 0), snapshot.used);
+
+		// A chat recorded before the first prompt-side figure was kept falls back to the local estimate.
+		const older = messages.map(message => message.kind === 'agent' ? { ...message, tokensBase: undefined } : message);
+		const overhead = defaultOverhead(true);
+		const estimate = overhead.system + overhead.tools;
+		assert.strictEqual(buildContextUsageSnapshot({ messages: older, draft: '', modelWindow: 200_000, nativeAgent: true, overhead, models: [] }).used, 2_244 + estimate);
+	});
+
+	test('a later real figure replaces the post-compaction estimate', () => {
+		const snapshot = buildContextUsageSnapshot({
+			messages: [
+				{ kind: 'agent', text: 'ok', tokensUsed: 2_244, usageExcludesPrompt: true, tokensBase: 21_426 },
+				{ kind: 'user', text: 'Reply with just: ok' },
+				{ kind: 'agent', text: 'ok', tokensUsed: 24_261, tokensWindow: 200_000 },
+			],
+			draft: '',
+			modelWindow: 200_000,
+			nativeAgent: true,
+			models: [],
+		});
+		assert.strictEqual(snapshot.used, 24_261);
 	});
 
 	test('sizes rules from file bytes, and skills by their catalog entry only', () => {

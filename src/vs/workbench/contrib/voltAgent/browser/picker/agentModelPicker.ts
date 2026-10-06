@@ -28,6 +28,7 @@ import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/vol
 import { createHomeSearchIcon } from '../home/agentHomeIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createAutoSparkIcon, IModelPickerRow, ModelPickerListDelegate, ModelPickerListRenderer, pickerListHeight } from './agentModelPickerList.js';
+import { parseRememberedModels, RUN_GROUP_MAX_MODELS, RUN_GROUP_MODELS_STORAGE_KEY, toggleRunModel } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { filterPickerModels, sortProviderGroups, MODEL_FAVORITES_STORAGE_KEY, parseFavoriteRefs, PICKER_FAVORITES_TAB, PICKER_SHORTCUT_COUNT, toggleFavoriteRefs, type IModelOption, type IProviderGroup } from './agentModelPickerModel.js';
 
 export type { IModelOption, IProviderGroup } from './agentModelPickerModel.js';
@@ -107,6 +108,14 @@ export interface IAgentModelPickerHost {
 	 * label changes, so its menu should hang from the right edge to stay put.
 	 */
 	readonly alignment?: AnchorAlignment;
+	/**
+	 * Lets the picker send one prompt to several models (each in its own worktree). The composer
+	 * offers it only where a send can start them: a new chat in a git project.
+	 */
+	readonly multi?: {
+		/** Undefined when several models can be picked now, else why not. */
+		unavailableReason(): string | undefined;
+	};
 }
 
 export function catalogToOption(item: IVoltCatalogItem): IModelOption {
@@ -149,6 +158,8 @@ export class AgentModelPicker extends Disposable {
 	private pickerDetail: { mode: 'preview' | 'edit'; ref: string } | undefined;
 	private pickerDetailAnchor: HTMLElement | undefined;
 	private favorites = new Set<string>();
+	/** Models picked to run side by side; undefined in the usual one-model mode. */
+	private multiRefs: string[] | undefined;
 
 	constructor(
 		private readonly host: IAgentModelPickerHost,
@@ -247,8 +258,70 @@ export class AgentModelPicker extends Disposable {
 		return undefined;
 	}
 
+	/**
+	 * The models picked to compare, in pick order. Only where the composer can compare now: the
+	 * editor is shared between chats, and a chat that already started keeps its own model.
+	 */
+	multiModels(): IModelOption[] | undefined {
+		if (!this.isMulti()) {
+			return undefined;
+		}
+		return this.multiRefs!.map(ref => this.catalog.find(option => option.ref === ref)).filter((option): option is IModelOption => !!option);
+	}
+
+	/** Several models are picked (two or more): a send starts a run per model. */
+	isComparing(): boolean {
+		return (this.multiModels()?.length ?? 0) >= 2;
+	}
+
+	/** In multi mode, whatever the count, where the composer can compare. */
+	isMulti(): boolean {
+		return !!this.multiRefs && !this.host.multi?.unavailableReason();
+	}
+
+	/** Enters multi mode with the remembered set (or the current model), or leaves it. `add` toggles a model in. */
+	setMulti(on: boolean, add?: IModelOption): void {
+		if (!on) {
+			this.multiRefs = undefined;
+			this.host.onDidChange?.();
+			return;
+		}
+		if (!this.multiRefs) {
+			const available = new Set(this.catalog.map(option => option.ref));
+			const remembered = parseRememberedModels(this.storageService.get(RUN_GROUP_MODELS_STORAGE_KEY, StorageScope.APPLICATION), available);
+			const current = this.currentModel && !this.modelAuto ? [this.currentModel] : [];
+			this.multiRefs = add
+				? [...new Set([...current, add.ref])].slice(0, RUN_GROUP_MAX_MODELS)
+				: remembered.length ? remembered : current;
+		} else if (add) {
+			this.multiRefs = toggleRunModel(this.multiRefs.map(ref => ({ ref })), { ref: add.ref }).map(entry => entry.ref);
+		}
+		this.host.onDidChange?.();
+	}
+
+	/** Remembers the set that was just sent, for the next comparison. */
+	rememberMulti(): void {
+		if (this.multiRefs?.length) {
+			this.storageService.store(RUN_GROUP_MODELS_STORAGE_KEY, JSON.stringify(this.multiRefs), StorageScope.APPLICATION, StorageTarget.USER);
+		}
+	}
+
 	/** Icon + model name, with the selected effort as full text. */
 	renderTrigger(button: HTMLElement): void {
+		const picked = this.multiModels();
+		if (picked) {
+			const stack = append(button, $('span.volt-agent-model-stack'));
+			for (const model of picked.slice(0, RUN_GROUP_MAX_MODELS)) {
+				stack.appendChild(createBrandIcon(model.family, 13));
+			}
+			const label = append(button, $('span.volt-agent-model-label'));
+			label.textContent = picked.length === 1
+				? splitModelDisplayName(picked[0].name).name
+				: localize('voltAgent.modelsPicked', "{0} models", picked.length);
+			button.classList.add('comparing');
+			return;
+		}
+		button.classList.remove('comparing');
 		const selected = this.selectedModel();
 		if (this.modelAuto) {
 			button.appendChild(createAutoSparkIcon());
@@ -347,6 +420,24 @@ export class AgentModelPicker extends Disposable {
 				tabs.setAttribute('role', 'tablist');
 				tabs.setAttribute('aria-label', localize('voltAgent.providers', "Providers"));
 				// Outside the scrolling tab strip, so it stays put however many providers there are.
+				const multiHost = this.host.multi;
+				let multiToggle: HTMLButtonElement | undefined;
+				if (multiHost) {
+					multiToggle = append(tabBar, $('button.volt-agent-picker-multi')) as HTMLButtonElement;
+					multiToggle.type = 'button';
+					multiToggle.appendChild(renderIcon(Codicon.layers));
+					store.add(addDisposableListener(multiToggle, 'mousedown', e => e.stopPropagation()));
+					store.add(addDisposableListener(multiToggle, 'click', e => {
+						e.preventDefault();
+						e.stopPropagation();
+						if (multiHost.unavailableReason()) {
+							return;
+						}
+						this.setMulti(!this.isMulti());
+						renderAll();
+						search.focus();
+					}));
+				}
 				const settings = append(tabBar, $('button.volt-agent-picker-settings')) as HTMLButtonElement;
 				settings.type = 'button';
 				settings.appendChild(createSettingsIcon());
@@ -362,10 +453,45 @@ export class AgentModelPicker extends Disposable {
 
 				const body = append(panel, $('.volt-agent-picker-body'));
 				const listHost = append(body, $('.volt-agent-picker-list'));
+				const multiFooter = append(panel, $('.volt-agent-picker-multi-footer.hidden'));
+				const multiCount = append(multiFooter, $('span.count'));
+				const multiDone = append(multiFooter, $('button.volt-agent-picker-multi-done')) as HTMLButtonElement;
+				multiDone.type = 'button';
+				multiDone.textContent = localize('voltAgent.multiDone', "Done");
+				store.add(addDisposableListener(multiDone, 'mousedown', e => e.stopPropagation()));
+				store.add(addDisposableListener(multiDone, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					this.contextViewService.hideContextView();
+				}));
+				const syncMulti = () => {
+					const on = this.isMulti();
+					menu.classList.toggle('multi', on);
+					multiFooter.classList.toggle('hidden', !on);
+					if (multiToggle && multiHost) {
+						const reason = multiHost.unavailableReason();
+						multiToggle.classList.toggle('active', on);
+						multiToggle.classList.toggle('disabled', !!reason);
+						multiToggle.setAttribute('aria-pressed', String(on));
+						const label = reason ?? (on
+							? localize('voltAgent.multiOff', "Back to one model")
+							: localize('voltAgent.multiOn', "Compare models: run this prompt on several models, each in its own worktree (⇧-click a model)"));
+						multiToggle.setAttribute('aria-label', label);
+						setAgentTooltip(multiToggle, label);
+					}
+					if (on) {
+						const count = this.multiRefs!.length;
+						multiCount.textContent = count < 2
+							? localize('voltAgent.multiPickMore', "Pick 2 to {0} models · each runs in its own worktree", RUN_GROUP_MAX_MODELS)
+							: localize('voltAgent.multiCount', "{0} of {1} models · each runs in its own worktree", count, RUN_GROUP_MAX_MODELS);
+						multiDone.disabled = count < 2;
+					}
+				};
 				let previewTimer: ReturnType<typeof setTimeout> | undefined;
 				const listContext = {
 					selectedRef: this.currentModel,
 					modelAuto: this.modelAuto,
+					multi: undefined as ReadonlySet<string> | undefined,
 					auto: this.host.binding && { label: this.host.binding.autoLabel, description: this.host.binding.autoDescription },
 					favorites: this.favorites,
 					subtitle: (model: IModelOption) => this.modelSubtitle(model),
@@ -527,6 +653,8 @@ export class AgentModelPicker extends Disposable {
 				const renderList = () => {
 					listContext.selectedRef = this.currentModel;
 					listContext.modelAuto = this.modelAuto;
+					listContext.multi = this.isMulti() ? new Set(this.multiRefs) : undefined;
+					syncMulti();
 					listContext.favorites = this.favorites;
 					const groups = this.providerGroups();
 					const rows: IModelPickerRow[] = [];
@@ -539,7 +667,7 @@ export class AgentModelPicker extends Disposable {
 							rows.push({ id: 'settings', kind: 'settings' });
 						}
 					} else {
-						if (!input.value.trim() && this.pickerProviderId === PICKER_FAVORITES_TAB) {
+						if (!input.value.trim() && this.pickerProviderId === PICKER_FAVORITES_TAB && !this.isMulti()) {
 							rows.push({ id: 'auto', kind: 'auto' });
 						}
 						const models = visibleModels();
@@ -613,8 +741,14 @@ export class AgentModelPicker extends Disposable {
 					syncFlyout();
 				};
 
-				const activateRow = (row: IModelPickerRow | undefined) => {
+				const activateRow = (row: IModelPickerRow | undefined, additive = false) => {
 					if (!row || row.kind === 'message' || row.kind === 'skeleton') {
+						return;
+					}
+					// Several models: every pick toggles (⇧/⌘-click starts it from one model, as in T3).
+					if (row.kind === 'model' && (this.isMulti() || (additive && multiHost && !multiHost.unavailableReason()))) {
+						this.setMulti(true, row.model);
+						renderList();
 						return;
 					}
 					if (row.kind === 'settings') {
@@ -631,7 +765,10 @@ export class AgentModelPicker extends Disposable {
 					this.contextViewService.hideContextView();
 				};
 
-				store.add(modelsList.onDidOpen(e => activateRow(e.element)));
+				store.add(modelsList.onDidOpen(e => {
+					const event = e.browserEvent as MouseEvent | KeyboardEvent | undefined;
+					activateRow(e.element, !!event && (event.shiftKey || event.metaKey || event.ctrlKey));
+				}));
 
 				const activateTab = (id: string) => {
 					if (!id || id === this.pickerProviderId) {
@@ -690,6 +827,11 @@ export class AgentModelPicker extends Disposable {
 							const model = visibleModels()[i];
 							if (model) {
 								event.preventDefault();
+								if (this.isMulti()) {
+									this.setMulti(true, model);
+									renderList();
+									return;
+								}
 								this.selectModel(model);
 								this.contextViewService.hideContextView();
 							}
@@ -717,7 +859,7 @@ export class AgentModelPicker extends Disposable {
 						const focus = modelsList.getFocus()[0];
 						if (typeof focus === 'number' && event.target === search) {
 							event.preventDefault();
-							activateRow(modelsList.element(focus));
+							activateRow(modelsList.element(focus), event.shiftKey);
 						}
 					}
 				}, true));

@@ -5,6 +5,8 @@
 
 .volt-agent-quick-open-actions {
 	display: none;
+	user-select: none;
+	-webkit-user-select: none;
 }
 
 .volt-agent-titlebar-toggles {

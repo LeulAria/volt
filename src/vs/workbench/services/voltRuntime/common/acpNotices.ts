@@ -38,6 +38,8 @@ const HANDLED_UPDATES = new Set([
 	'current_mode_update',
 	'config_option_update',
 	'session_info_update',
+	'compaction_update',
+	'compaction_summary_chunk',
 ]);
 
 const LIMIT_FAMILY = /\b(spend limit|usage limit|rate limit|quota|session limit|hit your)\b/i;

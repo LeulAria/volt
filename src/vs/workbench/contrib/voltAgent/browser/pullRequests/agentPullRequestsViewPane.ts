@@ -32,7 +32,7 @@ import { showVoltMenu } from '../ui/menu/voltMenu.js';
 import { agentToolsSessionOnScreen } from '../workspace/agentSurfaceHost.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
 import { onDidChangePullRequestsViewSession, pullRequestsViewSession } from './agentPullRequestsViewState.js';
-import { ago, checkIcon, iconSpan, openPullRequest, problemText, prStateIcon, signInWithGh } from './agentPullRequestUi.js';
+import { ago, avatar, checkIcon, checksLabel, iconSpan, openPullRequest, problemText, prStateIcon, signInWithGh } from './agentPullRequestUi.js';
 
 const SORT_KEY = 'volt.pullRequests.sort';
 const STATE_KEY = 'volt.pullRequests.state';
@@ -355,26 +355,46 @@ export class AgentPullRequestsViewPane extends ViewPane {
 		});
 	}
 
-	/** Two lines: state, title and age; then number, branch, checks and what it waits on. */
+	/**
+	 * T3 Code's two lines: state glyph (a conflict marks its corner), #number, title and checks, with
+	 * the size on the right; then the author, branch, labels and what it waits on, with its age.
+	 */
 	private row(pr: IVoltPullRequest, link: IAgentPrLink | undefined): void {
 		const row = append(this.content, $('.volt-pr-list-row')) as HTMLElement;
 		row.tabIndex = 0;
 		row.setAttribute('role', 'button');
 		row.classList.toggle('busy', this.busyKey === pr.key);
-		const line1 = append(row, $('.volt-pr-list-line'));
-		iconSpan(line1, prStateIcon(pr.state), `state-${pr.state}`);
+		const glyph = append(row, $('.volt-pr-list-glyph'));
+		iconSpan(glyph, prStateIcon(pr.state), `state-${pr.state}`);
+		if (pr.mergeable === 'conflicting' && isOpenState(pr.state)) {
+			const conflict = iconSpan(glyph, Codicon.warning, 'conflict');
+			setAgentTooltip(conflict, localize('voltPr.list.conflicts', "Has conflicts with {0}", pr.baseRefName));
+		}
+		const lines = append(row, $('.volt-pr-list-lines'));
+		const line1 = append(lines, $('.volt-pr-list-line'));
+		append(line1, $('span.volt-pr-list-number')).textContent = `#${pr.number}`;
 		append(line1, $('span.volt-pr-list-title')).textContent = pr.title;
+		if (pr.checks.state !== 'none' && isOpenState(pr.state)) {
+			const checks = iconSpan(line1, checkIcon(pr.checks.state), `check-${pr.checks.state}`);
+			setAgentTooltip(checks, checksLabel(pr));
+		}
 		if (link?.watch) {
 			const eye = iconSpan(line1, Codicon.eye, 'watching');
 			setAgentTooltip(eye, localize('voltPr.list.watched', "This chat's agent is watching it"));
 		}
-		append(line1, $('span.volt-pr-list-age')).textContent = ago(pr.updatedAt);
+		append(line1, $('.volt-pr-spacer'));
+		const size = append(line1, $('span.volt-pr-stats'));
+		append(size, $('span.add')).textContent = `+${pr.additions}`;
+		append(size, $('span.del')).textContent = `−${pr.deletions}`;
 
-		const line2 = append(row, $('.volt-pr-list-line.sub'));
-		append(line2, $('span.volt-pr-list-number')).textContent = `#${pr.number}`;
+		const line2 = append(lines, $('.volt-pr-list-line.sub'));
+		avatar(line2, pr.author.login, pr.author.avatarUrl, 14);
+		append(line2, $('span.volt-pr-list-author')).textContent = pr.author.login;
 		append(line2, $('span.volt-pr-list-branch')).textContent = pr.headRefName;
-		if (pr.checks.state !== 'none' && isOpenState(pr.state)) {
-			iconSpan(line2, checkIcon(pr.checks.state), `check-${pr.checks.state}`);
+		for (const label of pr.labels.slice(0, 2)) {
+			const chip = append(line2, $('span.volt-pr-label.small'));
+			chip.style.setProperty('--volt-pr-label', `#${/^[0-9a-f]{6}$/i.test(label.color) ? label.color : '888888'}`);
+			chip.textContent = label.name;
 		}
 		if (pr.unresolvedThreads) {
 			const threads = append(line2, $('span.volt-pr-list-threads'));
@@ -385,6 +405,8 @@ export class AgentPullRequestsViewPane extends ViewPane {
 		if (reason) {
 			append(line2, $(`span.volt-pr-list-reason.reason-${reasonClass(pr)}`)).textContent = reason;
 		}
+		append(line2, $('.volt-pr-spacer'));
+		append(line2, $('span.volt-pr-list-age')).textContent = ago(pr.updatedAt);
 		this.quickActions(row, pr);
 
 		const open = () => void this.instantiationService.invokeFunction(accessor => openPullRequest(accessor, { kind: 'pr', repo: pr.repo, number: pr.number }, this.sessionId()));

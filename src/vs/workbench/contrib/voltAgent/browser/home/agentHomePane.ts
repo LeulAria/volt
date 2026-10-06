@@ -36,6 +36,8 @@ import { GroupsOrder, IEditorGroupsService } from '../../../../services/editor/c
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IRecentFolder, IRecentWorkspace, IWorkspacesService, isRecentFolder, isRecentWorkspace } from '../../../../../platform/workspaces/common/workspaces.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
@@ -74,6 +76,8 @@ import {
 	folderPath,
 	IAgentHomeFolder,
 	IAgentHomeNode,
+	IAgentHomeRunGroup,
+	IAgentHomeRunMember,
 	IAgentHomeProject,
 	IAgentHomeSessionContext,
 	IAgentHomeStatusBadge,
@@ -91,6 +95,9 @@ import { agentSessionHoverRows, agentSessionStatusNote } from './agentSessionHov
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { IAgentPrBadge, prBadge, sessionPrFilterTag, visibleLinks } from '../../common/agentPullRequests.js';
+import { IAgentRunGroupService } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
+import { runBadgeKind, runGroupBadge, runGroupSummary, runStatusLabel } from '../runGroups/agentRunGroupLabels.js';
+import { ARCHIVE_RUN_GROUP_COMMAND_ID, OPEN_RUN_GROUP_COMMAND_ID } from '../runGroups/agentRunGroupCommands.js';
 
 const ROW_HEIGHT = 28;
 /** An agent tab with a second line (branch, pull request, model). */
@@ -110,6 +117,7 @@ const identityProvider: IIdentityProvider<AgentHomeElement> = {
 			case 'bucket': return `bucket:${element.id}`;
 			case 'group': return `group:${element.id}`;
 			case 'session': return `session:${element.folderKey}:${element.session.id}`;
+			case 'runGroup': return `runGroup:${element.folderKey}:${element.group.id}`;
 			case 'more': return `more:${element.groupKey}`;
 			case 'empty': return `empty:${element.key}`;
 			default: {
@@ -151,13 +159,14 @@ const ROW_STATE_CLASSES = [
 	'is-nested', 'is-flat', 'is-collapsible', 'current', 'unread', 'archived', 'pinned',
 	'status-needsAttention', 'status-working', 'status-draft', 'status-done',
 	'actions-cover-name', 'active-chat', 'shelf-active', 'shelf-settled', 'shelf-snooze', 'group-settled', 'group-snooze', 'two-line',
+	'is-run-group', 'is-run-member', 'run-winner', 'run-discarded',
 ];
 
 class AgentHomeDelegate implements IListVirtualDelegate<AgentHomeElement> {
 	constructor(private readonly host: { readonly twoLine: boolean }) { }
 
 	getHeight(element: AgentHomeElement): number {
-		return element.type === 'session' && this.host.twoLine ? TWO_LINE_ROW_HEIGHT : ROW_HEIGHT;
+		return (element.type === 'session' || element.type === 'runGroup') && this.host.twoLine ? TWO_LINE_ROW_HEIGHT : ROW_HEIGHT;
 	}
 
 	getTemplateId(): string {
@@ -266,7 +275,14 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 				this.renderGroup(element, template);
 				break;
 			case 'session':
-				this.renderSession(element, template);
+				if (element.runMember) {
+					this.renderRunMember(element, element.runMember, template);
+				} else {
+					this.renderSession(element, template);
+				}
+				break;
+			case 'runGroup':
+				this.renderRunGroup(element, template);
 				break;
 			case 'more':
 				template.container.classList.add('is-more');
@@ -400,10 +416,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.container.classList.toggle('pinned', !!session.pinned);
 		template.container.classList.toggle('active-chat', this.host.isActiveChat(session.id));
 
-		// Under a project a dot is enough; in a flat list the project's initials say where the tab lives.
-		if (element.nested || !context.initials) {
-			append(template.glyph, $('span.volt-agent-home-dot'));
-		} else {
+		// In a flat list the project's initials say where the tab lives; under a project the title stands alone.
+		if (!element.nested && context.initials) {
 			append(template.glyph, $('span.volt-agent-home-initials')).textContent = context.initials;
 		}
 		template.name.textContent = session.title || localize('voltAgent.home.untitled', "New Agent");
@@ -437,12 +451,80 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			this.renderRowAction(template, template.wake, localize('voltAgent.home.unsnoozeThread', "Unsnooze"),
 				() => this.host.wake(session), renderIcon(Codicon.bellSlash));
 		}
+		// Run rows hide these; a recycled template must show them again.
+		template.pin.classList.remove('hidden');
+		template.archive.classList.remove('hidden');
 		this.renderRowAction(template, template.pin, session.pinned ? localize('voltAgent.home.unpin', "Unpin") : localize('voltAgent.home.pin', "Pin"),
 			() => this.host.togglePin(session), renderIcon(session.pinned ? Codicon.pinned : Codicon.pin));
 		this.renderRowAction(template, template.archive, session.archived ? localize('voltAgent.home.unarchive', "Unarchive") : localize('voltAgent.home.archive', "Archive"),
 			() => this.host.toggleArchive(session), renderIcon(Codicon.archive));
 		template.elementDisposables.add(this.host.bindSessionHover(template.container, session));
 		template.elementDisposables.add(addDisposableListener(template.container, 'mouseenter', () => this.fadeNameUnderActions(template)));
+	}
+
+	/** One prompt, several models: their icons stacked, the prompt, and how far the runs are. */
+	private renderRunGroup(element: Extract<AgentHomeElement, { type: 'runGroup' }>, template: IHomeTemplate): void {
+		const group = element.group;
+		const status = sessionPrimaryStatus(group.session);
+		template.container.classList.add('is-session', 'is-run-group', 'is-collapsible', `status-${status}`, element.nested ? 'is-nested' : 'is-flat', 'shelf-active');
+		template.container.classList.toggle('archived', !!group.session.archived);
+		template.container.classList.toggle('active-chat', this.host.isActiveRunGroup(group.id));
+		template.glyph.appendChild(renderIcon(Codicon.layers));
+		template.name.textContent = group.session.title;
+		// The models, as overlapping brand icons where other rows show their age.
+		const stack = append(template.meta, $('span.volt-run-group-stack'));
+		for (const family of group.families.slice(0, 4)) {
+			stack.appendChild(createBrandIcon(family, 12));
+		}
+		const twoLine = this.host.twoLine;
+		template.container.classList.toggle('two-line', twoLine);
+		if (twoLine) {
+			append(template.subBranch, $('span.sub-text')).textContent = group.summary;
+		}
+		if (group.badge) {
+			this.renderStatusBadge(template.badge, group.badge);
+		}
+		// The chevron folds the runs out; the rest of the row opens the compare view.
+		template.elementDisposables.add(addDisposableListener(template.twist, 'mousedown', e => e.stopPropagation()));
+		template.elementDisposables.add(addDisposableListener(template.twist, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.host.toggleRunGroup(element);
+		}));
+		// Rows are recycled: a session row may have left its snooze, settle and pin buttons showing.
+		for (const button of [template.snooze, template.settle, template.wake, template.pin]) {
+			button.classList.add('hidden');
+		}
+		template.archive.classList.remove('hidden');
+		this.renderRowAction(template, template.archive, localize('voltAgent.home.archiveRunGroup', "Archive"),
+			() => this.host.archiveRunGroup(group.id), renderIcon(Codicon.archive));
+		setAgentTooltip(template.container, `${group.session.title}\n${group.summary}`);
+	}
+
+	/** A run in a group: its model, live status, and what it changed so far. */
+	private renderRunMember(element: Extract<AgentHomeElement, { type: 'session' }>, member: IAgentHomeRunMember, template: IHomeTemplate): void {
+		const live = this.host.runMemberView(member);
+		template.container.classList.add('is-session', 'is-run-member', element.nested ? 'is-nested' : 'is-flat', 'shelf-active');
+		template.container.classList.toggle('run-winner', !!member.winner);
+		template.container.classList.toggle('run-discarded', !!member.discarded);
+		template.container.classList.toggle('active-chat', this.host.isActiveChat(member.sessionId));
+		template.glyph.appendChild(createBrandIcon(member.family, 13));
+		template.name.textContent = member.winner ? localize('voltAgent.home.runWinner', "{0} · Winner", member.label) : member.label;
+		const twoLine = this.host.twoLine;
+		template.container.classList.toggle('two-line', twoLine);
+		if (twoLine) {
+			template.subBranch.appendChild(renderIcon(Codicon.gitBranch));
+			append(template.subBranch, $('span.sub-text')).textContent = member.branch;
+		}
+		template.meta.textContent = live.stat ?? '';
+		const badge = live.badge ?? member.badge;
+		if (badge) {
+			this.renderStatusBadge(template.badge, badge);
+		}
+		for (const button of [template.snooze, template.settle, template.wake, template.pin, template.archive]) {
+			button.classList.add('hidden');
+		}
+		setAgentTooltip(template.container, `${member.label} · ${member.branch}\n${live.label}`);
 	}
 
 	/** Branch (or project), the pull request badge, and the model, under the title. */
@@ -458,7 +540,16 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		if (badge) {
 			this.renderPrBadge(template, session, badge);
 		}
-		template.subModel.textContent = line.model ?? '';
+		// The model's brand icon, its name on hover; the name itself when the provider is unknown.
+		const model = line.model;
+		const provider = model ? this.host.modelProvider(session, model) : undefined;
+		if (model && provider) {
+			template.subModel.appendChild(createBrandIcon(provider, 12));
+			template.subModel.title = model;
+		} else {
+			template.subModel.textContent = line.model ?? '';
+			template.subModel.removeAttribute('title');
+		}
 	}
 
 	private renderPrBadge(template: IHomeTemplate, session: IAgentSessionMeta, badge: IAgentPrBadge): void {
@@ -548,6 +639,8 @@ function statusBadgeIcon(kind: AgentHomeStatusBadgeKind): HTMLElement {
 /** Headers sit flush; agent tabs under a project or time/status group step in once (~6px). */
 function rowLevel(element: AgentHomeElement): number {
 	switch (element.type) {
+		case 'runGroup':
+			return 1;
 		case 'session':
 			// A side chat steps in past its chat's dot, so it reads as part of that chat.
 			return 1 + 3 * (element.sideDepth ?? 0);
@@ -576,7 +669,11 @@ function elementLabel(element: AgentHomeElement): string {
 		case 'folder': return element.project.label;
 		case 'bucket': return element.label;
 		case 'group': return agentHomeGroupLabel(element.id);
+		case 'runGroup': return localize('voltAgent.home.runGroupRow', "{0}, {1}", element.group.session.title, element.group.summary);
 		case 'session': {
+			if (element.runMember) {
+				return localize('voltAgent.home.runMemberRow', "{0}, {1}", element.runMember.label, element.runMember.statusLabel);
+			}
 			const title = element.session.title || localize('voltAgent.home.untitled', "New Agent");
 			return element.session.turnCount === 0
 				? localize('voltAgent.home.draftRow', "{0}, Draft", title)
@@ -645,6 +742,8 @@ export class AgentHomePane extends Disposable {
 	private readonly checkedSubagents = new Set<string>();
 	/** Desktop only: pull requests linked to chats. */
 	private readonly pullRequests: IAgentPullRequestService | undefined;
+	/** Desktop only: prompts sent to several models at once. */
+	private readonly runGroups: IAgentRunGroupService | undefined;
 	/** Whether the tree was last built with two-line agent tabs; their height changes with it. */
 	private builtTwoLine: boolean | undefined;
 
@@ -668,9 +767,11 @@ export class AgentHomePane extends Disposable {
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 		@ILayoutService private readonly layoutService: ILayoutService,
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
+		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 	) {
 		super();
 		this._register(this.voltProjects.onDidChange(() => this.scheduleRefresh()));
+		this._register(this.runtime.onDidChangeCatalog(() => this.scheduleRefresh()));
 		// Subagent chats are reached from their parent, not listed. Chats from before the history kept
 		// that flag learn it once their orchestration is loaded; the history change refreshes the list.
 		this._register(this.orchestrator.onDidChange(change => {
@@ -684,6 +785,10 @@ export class AgentHomePane extends Disposable {
 		this.pullRequests = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
 		if (this.pullRequests) {
 			this._register(this.pullRequests.onDidChange(() => this.scheduleRefresh()));
+		}
+		this.runGroups = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentRunGroupService));
+		if (this.runGroups) {
+			this._register(this.runGroups.onDidChange(() => this.scheduleRefresh()));
 		}
 		this.repoResolver = new AgentRepoResolver(fileService);
 		this.viewState = this.readViewState();
@@ -710,7 +815,8 @@ export class AgentHomePane extends Disposable {
 				multipleSelectionSupport: false,
 				hideTwistiesOfChildlessElements: false,
 				renderIndentGuides: RenderIndentGuides.None,
-				expandOnlyOnTwistieClick: false,
+				// A run group's row opens its compare view; its chevron folds the runs out.
+				expandOnlyOnTwistieClick: (element: AgentHomeElement) => element.type === 'runGroup',
 				// Every node carries its own default collapse state; see toTreeElement.
 				paddingBottom: ROW_HEIGHT,
 				setRowLineHeight: false,
@@ -896,6 +1002,14 @@ export class AgentHomePane extends Disposable {
 
 	get twoLine(): boolean {
 		return isTwoLineView(this.viewState);
+	}
+
+	/** The provider behind a chat's model: its orchestration's model ref, else the catalog entry with that label. */
+	modelProvider(session: IAgentSessionMeta, label: string): string | undefined {
+		const catalog = this.runtime.listCatalog();
+		const ref = this.orchestrator.getThread(session.id)?.modelRef;
+		return (ref ? catalog.find(item => item.ref === ref) : undefined)?.providerId
+			?? catalog.find(item => item.label === label)?.providerId;
 	}
 
 	/** The model a chat last ran on: its history, else its loaded orchestration. */
@@ -1122,6 +1236,7 @@ export class AgentHomePane extends Disposable {
 			case 'newChat':
 			case 'action':
 			case 'session':
+			case 'runGroup':
 			case 'more':
 			case 'empty':
 				return false;
@@ -1150,6 +1265,9 @@ export class AgentHomePane extends Disposable {
 				return;
 			case 'session':
 				await this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, element.session.id);
+				return;
+			case 'runGroup':
+				await this.commandService.executeCommand(OPEN_RUN_GROUP_COMMAND_ID, element.group.id);
 				return;
 			case 'more':
 				this.showMore(element.groupKey);
@@ -1346,7 +1464,8 @@ export class AgentHomePane extends Disposable {
 				}
 			}
 		}
-		const tree = buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags });
+		const runGroups = this.homeRunGroups(sessions);
+		const tree = buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags, runGroups });
 		// Row heights are measured when rows are inserted: switching one and two lines inserts them again.
 		if (this.builtTwoLine !== undefined && this.builtTwoLine !== this.twoLine) {
 			this.tree.setChildren(null, []);
@@ -1364,6 +1483,104 @@ export class AgentHomePane extends Disposable {
 	 * Reads git facts for every folder the list can show. The resolver caches
 	 * them, so a refresh only follows when a repository or branch changed.
 	 */
+	/** Each run group as one row: it stands in for its runs wherever the list sorts or groups chats. */
+	private homeRunGroups(sessions: readonly IAgentSessionMeta[]): IAgentHomeRunGroup[] {
+		const service = this.runGroups;
+		if (!service) {
+			return [];
+		}
+		const byId = new Map(sessions.map(session => [session.id, session]));
+		const now = Date.now();
+		const showArchived = this.viewState.archived === 'show';
+		return service.list().filter(group => showArchived || !group.archived).map(group => {
+			const rollup = service.rollup(group.id);
+			const summary = runGroupSummary(group, rollup);
+			const metas = new Map<string, IAgentSessionMeta>();
+			for (const run of group.runs) {
+				const meta = byId.get(run.id);
+				if (meta) {
+					metas.set(run.id, meta);
+				}
+			}
+			const first = metas.values().next().value as IAgentSessionMeta | undefined;
+			const updatedAt = Math.max(group.createdAt, ...[...metas.values()].map(meta => meta.updatedAt));
+			const badge = runGroupBadge(rollup);
+			const session: IAgentSessionMeta = {
+				id: group.id,
+				title: group.title,
+				createdAt: group.createdAt,
+				updatedAt,
+				workspaceId: first?.workspaceId ?? group.repoRoot,
+				workspaceLabel: first?.workspaceLabel ?? basename(URI.file(group.repoRoot)),
+				workspaceFolder: first?.workspaceFolder ?? group.repoRoot,
+				turnCount: 1,
+				preview: group.prompt.text.slice(0, 200),
+				summary,
+				status: rollup.live ? 'running' : rollup.status === 'failed' ? 'error' : 'done',
+				lastPromptAt: group.createdAt,
+				...(rollup.status === 'needsInput' ? { attention: 'question' as const } : {}),
+				...(group.archived ? { archived: true } : {}),
+			};
+			return {
+				id: group.id,
+				session,
+				families: group.runs.map(run => run.model.family),
+				summary,
+				...(badge ? { badge } : {}),
+				metas,
+				members: group.runs.map(run => {
+					const status = service.runStatus(group.id, run.id);
+					const kind = runBadgeKind(status);
+					const statusLabel = runStatusLabel(status, run, now);
+					return {
+						sessionId: run.id,
+						label: run.model.label,
+						family: run.model.family,
+						branch: run.branch,
+						statusLabel,
+						...(kind ? { badge: { kind, label: statusLabel } } : {}),
+						...(group.winner?.runId === run.id ? { winner: true } : {}),
+						...(run.discarded ? { discarded: true } : {}),
+					};
+				}),
+			};
+		});
+	}
+
+	/** A run row's live status (its clock moves between refreshes) and its diff stat. */
+	runMemberView(member: IAgentHomeRunMember): { readonly label: string; readonly badge?: IAgentHomeStatusBadge; readonly stat?: string } {
+		const group = this.runGroups?.groupOf(member.sessionId);
+		const run = group?.runs.find(candidate => candidate.id === member.sessionId);
+		if (!group || !run || !this.runGroups) {
+			return { label: member.statusLabel };
+		}
+		const status = this.runGroups.runStatus(group.id, run.id);
+		const label = runStatusLabel(status, run, Date.now());
+		const kind = runBadgeKind(status);
+		const stat = run.stats && (run.stats.additions || run.stats.deletions) ? `+${run.stats.additions} −${run.stats.deletions}` : undefined;
+		return { label, ...(kind ? { badge: { kind, label } } : {}), ...(stat ? { stat } : {}) };
+	}
+
+	isActiveRunGroup(groupId: string): boolean {
+		const active = this.editorService.activeEditor as { readonly runGroupId?: string } | undefined;
+		return active?.runGroupId === groupId;
+	}
+
+	toggleRunGroup(element: AgentHomeElement): void {
+		if (!this.tree.hasElement(element)) {
+			return;
+		}
+		if (this.tree.isCollapsed(element)) {
+			this.tree.expand(element);
+		} else {
+			this.tree.collapse(element);
+		}
+	}
+
+	archiveRunGroup(groupId: string): void {
+		void this.commandService.executeCommand(ARCHIVE_RUN_GROUP_COMMAND_ID, groupId);
+	}
+
 	private isSubagentSession(session: IAgentSessionMeta): boolean {
 		if (session.subagent || this.orchestrator.getThread(session.id)?.taskId) {
 			return true;
@@ -1537,6 +1754,7 @@ function toTreeElement(node: IAgentHomeNode): IObjectTreeElement<AgentHomeElemen
 		case 'bucket':
 		case 'group':
 		case 'section':
+		case 'runGroup':
 			collapsible = hasChildren;
 			break;
 		case 'newChat':

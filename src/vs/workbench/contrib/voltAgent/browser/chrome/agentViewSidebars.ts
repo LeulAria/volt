@@ -29,9 +29,12 @@ import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { OPEN_BROWSER_COMMAND_ID, VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { AgentChangesEditorInput, OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
 import { createPrimarySidebarToggleIcon } from '../../../../browser/parts/titlebar/sidebarToggleIcon.js';
-import { OPEN_CHAT_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
+import { OPEN_PULL_REQUEST_COMMAND_ID, SHOW_PULL_REQUESTS_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
+import { AgentGitActionsControl } from '../pullRequests/agentGitActionsControl.js';
+import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
+import { currentLink, IAgentPrLink, isOpenState } from '../../common/agentPullRequests.js';
 import { setAgentTooltip } from './agentTooltip.js';
-import { onDidChangeAgentToolEditors, openAgentToolsPanel, revealAgentToolEditor, SHOW_AGENT_FILES_COMMAND_ID, SHOW_AGENT_SCM_COMMAND_ID, shownAgentToolEditors } from '../workspace/agentSurfaceHost.js';
+import { onDidChangeAgentToolEditors, openAgentToolsPanel, revealAgentToolEditor, SHOW_AGENT_FILES_COMMAND_ID, shownAgentToolEditors } from '../workspace/agentSurfaceHost.js';
 import { CHANGES_ICON_PATH, createSurfaceStrokeIcon, FILES_ICON_SHAPES, type SvgIconShapes } from '../workspace/agentSurfaceMenu.js';
 import { AGENT_TOOLS_VISIBILITY_EVENT } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -191,6 +194,14 @@ class AgentViewSidebarsContribution extends Disposable {
 	private statsGen = 0;
 	private readonly changesAdd: HTMLElement;
 	private readonly changesDel: HTMLElement;
+	/** Commit, Push & PR (T3 Code's git actions), in place of a plain Commit & push row. */
+	private readonly gitControl: AgentGitActionsControl;
+	/** The chat's pull request, or "Pull requests": opens the Pull Requests tab of the right sidebar. */
+	private readonly prRow: HTMLButtonElement;
+	private readonly prIcon: HTMLElement;
+	private readonly prLabel: HTMLElement;
+	private readonly prState: HTMLElement;
+	private readonly pullRequests: IAgentPullRequestService | undefined;
 	/** The chat whose changes the Changes row counts. */
 	private changesSessionId: string | undefined;
 	/** The agents of the chat on screen: running, previous, and its parent in a subagent's chat. */
@@ -293,10 +304,35 @@ class AgentViewSidebarsContribution extends Disposable {
 		// The project's repository goes along, or git first asks which repository (agent worktrees are repositories too).
 		this.branchLabel = this.createActionRow(git, { id: 'branch', label: '', icon: Codicon.gitBranch, command: 'git.checkout', args: () => this.branchRepository?.provider.rootUri ? [this.branchRepository.provider.rootUri] : [] });
 		this.branchRow = this.branchLabel.parentElement!;
-		// Commit opens Source Control in the right panel.
-		this.createActionRow(git, { id: 'commit', label: localize('voltAgent.dock.commitPush', "Commit & push"), icon: Codicon.cloudUpload, command: SHOW_AGENT_SCM_COMMAND_ID });
-		// The chat's pull request, or the form for a new one.
-		this.createActionRow(git, { id: 'pullRequest', label: localize('voltAgent.dock.pullRequest', "Pull request"), icon: Codicon.gitPullRequest, command: OPEN_CHAT_PULL_REQUEST_COMMAND_ID });
+		this.pullRequests = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
+		// The chat's pull request opens the Pull Requests tab of the right sidebar, its list first.
+		this.prRow = append(git, $('button.volt-agent-dock-row.volt-agent-dock-pr')) as HTMLButtonElement;
+		this.prRow.type = 'button';
+		this.prIcon = append(this.prRow, $('span.volt-agent-dock-pr-icon'));
+		this.prLabel = append(this.prRow, $('span.volt-agent-dock-row-label'));
+		this.prState = append(this.prRow, $('span.volt-agent-dock-pr-state'));
+		this._register(addDisposableListener(this.prRow, 'click', () => {
+			void this.commandService.executeCommand(SHOW_PULL_REQUESTS_COMMAND_ID, this.changesSessionId);
+		}));
+		this._register(addDisposableListener(this.prState, 'click', e => {
+			const link = this.changesSessionId && this.pullRequests ? currentLink(this.pullRequests.links(this.changesSessionId)) : undefined;
+			if (!link) {
+				return;
+			}
+			e.preventDefault();
+			e.stopPropagation();
+			void this.commandService.executeCommand(OPEN_PULL_REQUEST_COMMAND_ID, { host: link.repo.host, owner: link.repo.owner, name: link.repo.name, number: link.number }, this.changesSessionId);
+		}));
+		if (this.pullRequests) {
+			this._register(this.pullRequests.onDidChange(sessionIds => {
+				if (this.changesSessionId && sessionIds.includes(this.changesSessionId)) {
+					this.renderPullRequestRow();
+				}
+			}));
+		}
+		this.renderPullRequestRow();
+		// Commit, Push & PR runs the next step; its menu has each step and Source Control.
+		this.gitControl = this._register(instantiationService.createInstance(AgentGitActionsControl, git, { look: 'dock', target: () => this.gitTarget() }));
 		const changesLabel = this.createActionRow(git, changes);
 		this.changesAdd = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.add'));
 		this.changesDel = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.del'));
@@ -432,7 +468,46 @@ class AgentViewSidebarsContribution extends Disposable {
 	 * changes when git has no answer. Debounced; SCM fires a burst per save.
 	 */
 	private renderChangesStats(): void {
-		this.statsTimer.value = disposableTimeout(() => void this.refreshChangesStats(), 300);
+		this.statsTimer.value = disposableTimeout(() => {
+			void this.refreshChangesStats();
+			void this.gitControl.refresh();
+		}, 300);
+	}
+
+	/** The chat on screen and the folder its agent works in (its worktree), else the window's folder. */
+	private gitTarget(): { sessionId?: string; folder?: string } {
+		const sessionId = this.changesSessionId;
+		const folder = (sessionId ? this.pullRequests?.folderFor(sessionId) : undefined)
+			?? this.branchRepository?.provider.rootUri?.fsPath
+			?? this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath;
+		return { ...(sessionId ? { sessionId } : {}), ...(folder ? { folder } : {}) };
+	}
+
+	/** "#6: Label notes with…" with its state, like T3 Code's thread row; "Pull requests" without one. */
+	private renderPullRequestRow(): void {
+		const link: IAgentPrLink | undefined = this.changesSessionId && this.pullRequests ? currentLink(this.pullRequests.links(this.changesSessionId)) : undefined;
+		const snapshot = link?.snapshot;
+		const state = snapshot?.state ?? (link ? 'open' : undefined);
+		this.prIcon.replaceChildren(renderIcon(state === 'merged' ? Codicon.gitMerge : state === 'closed' ? Codicon.gitPullRequestClosed : state === 'draft' ? Codicon.gitPullRequestDraft : Codicon.gitPullRequest));
+		this.prRow.className = `volt-agent-dock-row volt-agent-dock-pr${state ? ` state-${state}` : ''}`;
+		this.prLabel.textContent = link
+			? snapshot ? `#${link.number}: ${snapshot.title}` : `#${link.number}`
+			: localize('voltAgent.dock.pullRequests', "Pull requests");
+		const hint = snapshot && isOpenState(snapshot.state)
+			? snapshot.mergeable === 'conflicting' ? { text: localize('voltAgent.dock.prResolve', "Resolve"), kind: 'danger' }
+				: snapshot.checks.state === 'failure' ? { text: localize('voltAgent.dock.prFix', "Fix"), kind: 'danger' }
+					: snapshot.state === 'draft' ? { text: localize('voltAgent.dock.prDraft', "Draft"), kind: 'muted' }
+						: snapshot.checks.state === 'pending' ? { text: localize('voltAgent.dock.prRunning', "Checks"), kind: 'pending' }
+							: { text: localize('voltAgent.dock.prOpen', "Open"), kind: 'ok' }
+			: snapshot ? { text: snapshot.state === 'merged' ? localize('voltAgent.dock.prMerged', "Merged") : localize('voltAgent.dock.prClosed', "Closed"), kind: 'muted' } : undefined;
+		this.prState.textContent = hint?.text ?? '';
+		this.prState.className = `volt-agent-dock-pr-state${hint ? ` ${hint.kind}` : ' hidden'}`;
+		setAgentTooltip(this.prRow, link
+			? localize('voltAgent.dock.prTip', "Show the pull requests in the right sidebar. Click the state to open #{0}.", link.number)
+			: localize('voltAgent.dock.prsTip', "Show the repository's pull requests in the right sidebar"));
+		if (hint) {
+			setAgentTooltip(this.prState, localize('voltAgent.dock.prOpenTip', "Open #{0}", link!.number));
+		}
 	}
 
 	private async refreshChangesStats(): Promise<void> {
@@ -718,6 +793,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		if (sessionId !== this.changesSessionId) {
 			this.changesSessionId = sessionId;
 			this.renderChangesStats();
+			this.renderPullRequestRow();
 		}
 	}
 
