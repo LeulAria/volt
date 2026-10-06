@@ -339,6 +339,8 @@ export interface IVoltPrFilePatch {
 	readonly deletions: number;
 	/** Unified hunks; undefined for binary files and patches GitHub leaves out as too large. */
 	readonly patch?: string;
+	/** The file's blob on the new side; undefined for a deleted file. */
+	readonly blob?: string;
 }
 
 export type VoltGitFileStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
@@ -360,6 +362,8 @@ export interface IVoltGitStatus {
 	readonly head?: string;
 	/** The remote pushes go to (the upstream's, else `origin`); undefined without remotes. */
 	readonly remote?: string;
+	/** Every remote's name (`origin`, `upstream`). */
+	readonly remotes: readonly string[];
 	/** The branch's upstream on that remote, when it has one. */
 	readonly upstream?: string;
 	readonly ahead: number;
@@ -373,6 +377,15 @@ export interface IVoltGitStatus {
 	readonly files: readonly IVoltGitStatusFile[];
 	readonly insertions: number;
 	readonly deletions: number;
+}
+
+/** A work tree's remotes, read cheaply to decide whether pull request features apply. */
+export interface IVoltRepoRemotes {
+	/** The work tree's top folder. */
+	readonly root: string;
+	/** The repository's config file (the main repository's for a linked worktree): remotes change there. */
+	readonly configFile: string;
+	readonly remotes: readonly string[];
 }
 
 export interface IVoltGitCommitRequest {
@@ -444,6 +457,8 @@ export interface IVoltPullRequestService {
 	accounts(host?: string): Promise<IVoltPrAccount[]>;
 	/** Undefined when the folder is not in a git work tree or has no remote on a known host. */
 	resolveRepo(folder: string): Promise<IVoltPrRepo | undefined>;
+	/** The folder's remotes; undefined outside a git repository. */
+	repoRemotes(folder: string): Promise<IVoltRepoRemotes | undefined>;
 	list(request: IVoltPrListRequest): Promise<IVoltPullRequest[]>;
 	/** Pull requests whose head is the branch, newest first. */
 	forBranch(request: IVoltPrBranchRequest): Promise<IVoltPullRequest[]>;
@@ -484,6 +499,8 @@ export interface IVoltPullRequestService {
 	describeBranch(request: { readonly folder: string; readonly base: string }): Promise<IVoltBranchSummary>;
 	/** Changed files with patches: the whole pull request, or one of its commits. */
 	filePatches(request: IVoltPrRequest & { readonly commit?: string }): Promise<IVoltPrFilePatch[]>;
+	/** A file's text by blob id: from the clone at `folder` when it has the blob, else from the host. */
+	readBlob(request: IVoltPrAuth & { readonly repo: IVoltPrRepoRef; readonly sha: string; readonly folder?: string }): Promise<string>;
 	/** Branch, upstream, default branch and uncommitted files of the work tree at `folder`. */
 	gitStatus(folder: string): Promise<IVoltGitStatus | undefined>;
 	/** Stages (all, or `paths`) and commits; optionally on a new branch. */

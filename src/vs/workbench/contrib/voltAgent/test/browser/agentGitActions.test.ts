@@ -21,6 +21,7 @@ function status(overrides: Partial<IVoltGitStatus> = {}): IVoltGitStatus {
 		root: '/repo',
 		branch: 'feature/x',
 		remote: 'origin',
+		remotes: ['origin'],
 		upstream: 'feature/x',
 		ahead: 0,
 		behind: 0,
@@ -121,6 +122,15 @@ suite('agentGitActions', () => {
 		test('an open pull request leaves Create PR out; no remote leaves only Commit', () => {
 			assert.deepStrictEqual(buildMenuItems({ status: status({ ahead: 1 }), hasOpenPr: true, busy: false }).map(item => item.id), ['commit', 'push']);
 			assert.deepStrictEqual(buildMenuItems({ status: status({ remote: undefined }), hasOpenPr: false, busy: false }).map(item => item.id), ['commit']);
+		});
+
+		test('a remote that is not origin: Commit and Push, never Create PR', () => {
+			const fork = { remote: 'upstream', remotes: ['upstream'] };
+			assert.deepStrictEqual(buildMenuItems({ status: status({ ...fork, ahead: 1, aheadOfDefault: 1 }), hasOpenPr: false, busy: false }).map(item => item.id), ['commit', 'push']);
+			assert.strictEqual(resolveQuickAction({ status: status({ ...fork, files: changed }), hasOpenPr: false, busy: false }).action, 'commitPush');
+			assert.strictEqual(resolveQuickAction({ status: status({ ...fork, ahead: 1, aheadOfDefault: 1 }), hasOpenPr: false, busy: false }).action, 'push');
+			assert.strictEqual(resolveQuickAction({ status: status({ ...fork, upstream: undefined, aheadOfDefault: 2 }), hasOpenPr: false, busy: false }).action, 'push');
+			assert.strictEqual(resolveQuickAction({ status: status({ ...fork, aheadOfDefault: 2 }), hasOpenPr: false, busy: false }).disabled, true);
 		});
 
 		test('clean, ahead of the default branch: Push and Create PR are offered', () => {

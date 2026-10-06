@@ -63,6 +63,18 @@ export interface IAgentPrLink {
 	readonly notifiedAt?: number;
 }
 
+/** The remote pull requests go through: Volt reads and opens them against `origin`. */
+export const PR_REMOTE = 'origin';
+
+/**
+ * Whether a folder gets pull request features (the Pull Requests tab, the dock row, the PR chip,
+ * Create PR): only a git repository with an `origin` remote. Not read yet (undefined) shows none,
+ * so a local-only repository never flashes them.
+ */
+export function showsPullRequests(remotes: readonly string[] | undefined): boolean {
+	return !!remotes?.includes(PR_REMOTE);
+}
+
 export function isOpenState(state: VoltPrState | undefined): boolean {
 	return state === 'open' || state === 'draft';
 }

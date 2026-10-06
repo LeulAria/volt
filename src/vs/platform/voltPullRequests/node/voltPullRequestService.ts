@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import { join } from '../../../base/common/path.js';
 import { SequencerByKey } from '../../../base/common/async.js';
 import { Emitter } from '../../../base/common/event.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
@@ -48,6 +49,7 @@ import {
 	IVoltPullRequest,
 	IVoltPullRequestDetail,
 	IVoltPullRequestService,
+	IVoltRepoRemotes,
 	VoltPrError,
 } from '../common/voltPullRequests.js';
 
@@ -291,6 +293,20 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			...(upstream ? { upstream } : {}),
 			...(ahead !== undefined ? { ahead } : {}),
 			...(behind !== undefined ? { behind } : {}),
+		};
+	}
+
+	async repoRemotes(folder: string): Promise<IVoltRepoRemotes | undefined> {
+		const top = await this.run('git', ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], { cwd: folder, timeoutMs: 15_000 });
+		const [root, commonDir] = top.stdout.trim().split('\n').map(line => line.trim());
+		if (top.code !== 0 || !root || !commonDir) {
+			return undefined;
+		}
+		const remotes = await this.run('git', ['remote'], { cwd: root, timeoutMs: 15_000 });
+		return {
+			root,
+			configFile: join(commonDir, 'config'),
+			remotes: remotes.code === 0 ? remotes.stdout.split('\n').map(line => line.trim()).filter(Boolean) : [],
 		};
 	}
 
@@ -841,6 +857,25 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		return entries.slice(0, MAX_FILES).map(parseFilePatch).filter(file => !!file.path);
 	}
 
+	async readBlob(request: IVoltPrAuth & { readonly repo: IVoltPrRepoRef; readonly sha: string; readonly folder?: string }): Promise<string> {
+		if (!/^[0-9a-f]{40,64}$/i.test(request.sha)) {
+			throw new VoltPrError('failed', `Not a blob id: ${request.sha}`);
+		}
+		if (request.folder) {
+			const local = await this.run('git', ['cat-file', 'blob', request.sha], { cwd: request.folder, timeoutMs: 15_000 });
+			if (local.code === 0) {
+				return local.stdout;
+			}
+		}
+		// Raw, not through rest(): the text must not be trimmed or read as JSON.
+		const { env } = await this.authEnv(request.repo.host, request);
+		const result = await this.run(this.ghCommand, ['api', '--hostname', apiHost(request.repo.host), '-H', 'Accept: application/vnd.github.raw+json', `repos/${request.repo.owner}/${request.repo.name}/git/blobs/${request.sha}`], { env, timeoutMs: GH_TIMEOUT_MS });
+		if (result.code !== 0) {
+			throw this.failure(result, []);
+		}
+		return result.stdout;
+	}
+
 	async gitStatus(folder: string): Promise<IVoltGitStatus | undefined> {
 		const top = await this.run('git', ['rev-parse', '--show-toplevel'], { cwd: folder, timeoutMs: 15_000 });
 		if (top.code !== 0) {
@@ -906,6 +941,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			...(parsed.branch ? { branch: parsed.branch } : {}),
 			...(parsed.head ? { head: parsed.head } : {}),
 			...(remote ? { remote } : {}),
+			remotes,
 			...(upstream ? { upstream } : {}),
 			ahead: upstream ? parsed.ahead : 0,
 			behind: upstream ? parsed.behind : 0,

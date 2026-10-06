@@ -329,6 +329,11 @@ class AgentViewSidebarsContribution extends Disposable {
 					this.renderPullRequestRow();
 				}
 			}));
+			this._register(this.pullRequests.onDidChangeOrigin(folder => {
+				if (folder === this.gitTarget().folder) {
+					this.renderPullRequestRow();
+				}
+			}));
 		}
 		this.renderPullRequestRow();
 		// Commit, Push & PR runs the next step; its menu has each step and Source Control.
@@ -451,6 +456,8 @@ class AgentViewSidebarsContribution extends Disposable {
 		const folder = this.workspaceContextService.getWorkspace().folders[0]?.uri;
 		const repository = repositories.find(candidate => !!folder && !!candidate.provider.rootUri && isEqual(candidate.provider.rootUri, folder)) ?? repositories[0];
 		this.branchRepository = repository;
+		// Without a chat the PR row follows the window's repository.
+		this.renderPullRequestRow();
 		// The diff counts follow the working tree.
 		if (repository) {
 			this.branchWatch.add(repository.provider.onDidChangeResources(() => this.renderChangesStats()));
@@ -464,6 +471,7 @@ class AgentViewSidebarsContribution extends Disposable {
 	}
 
 	/**
+	 * allow-any-unicode-next-line
 	 * "+12 −3" on the Changes row: the working tree's diff, as Cursor shows it, or the chat's own
 	 * changes when git has no answer. Debounced; SCM fires a burst per save.
 	 */
@@ -485,11 +493,17 @@ class AgentViewSidebarsContribution extends Disposable {
 
 	/** "#6: Label notes with…" with its state, like T3 Code's thread row; "Pull requests" without one. */
 	private renderPullRequestRow(): void {
+		// Only a repository with an `origin` remote has pull requests to show.
+		const folder = this.gitTarget().folder;
+		this.prRow.style.display = folder && this.pullRequests?.hasOrigin(folder) ? '' : 'none';
 		const link: IAgentPrLink | undefined = this.changesSessionId && this.pullRequests ? currentLink(this.pullRequests.links(this.changesSessionId)) : undefined;
 		const snapshot = link?.snapshot;
 		const state = snapshot?.state ?? (link ? 'open' : undefined);
 		this.prIcon.replaceChildren(renderIcon(state === 'merged' ? Codicon.gitMerge : state === 'closed' ? Codicon.gitPullRequestClosed : state === 'draft' ? Codicon.gitPullRequestDraft : Codicon.gitPullRequest));
-		this.prRow.className = `volt-agent-dock-row volt-agent-dock-pr${state ? ` state-${state}` : ''}`;
+		this.prRow.classList.remove('state-open', 'state-draft', 'state-merged', 'state-closed');
+		if (state) {
+			this.prRow.classList.add(`state-${state}`);
+		}
 		this.prLabel.textContent = link
 			? snapshot ? `#${link.number}: ${snapshot.title}` : `#${link.number}`
 			: localize('voltAgent.dock.pullRequests', "Pull requests");
@@ -758,6 +772,7 @@ class AgentViewSidebarsContribution extends Disposable {
 			const row = append(this.tabList, $('button.volt-agent-dock-row')) as HTMLButtonElement;
 			row.type = 'button';
 			if (editor instanceof AgentChangesEditorInput) {
+				// allow-any-unicode-next-line
 				// Same ± as the Changes row under "On this window".
 				const icon = createStrokeIcon(row, CHANGES_ICON_PATH, '0.5');
 				icon.classList.add('volt-agent-stroke-icon');
