@@ -33,7 +33,7 @@ const agentLayout = LayoutModeContext.isEqualTo('agent');
 const category = localize2('voltAgent.category', "Volt Agent");
 
 /** The chat a command acts on: the one on screen, else the side panel's. */
-function activeAgentSessionId(accessor: ServicesAccessor): string | undefined {
+export function activeAgentSessionId(accessor: ServicesAccessor): string | undefined {
 	const active = accessor.get(IEditorService).activeEditor;
 	if (active instanceof AgentEditorInput) {
 		return active.sessionId;

@@ -40,6 +40,7 @@ import { IAgentRuntimeService, IVoltMcpServerStatus, IVoltTaskModels } from '../
 import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
+import { agentCompactionPrompt, compactedHistory, compactInstructions, isCompactCommand } from '../common/compaction.js';
 import './git/agentWorktreeSetupService.js';
 import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService } from '../common/hostTools.js';
 import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQuestionResponse } from '../common/questions.js';
@@ -476,6 +477,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 
 	supportsCommand(sessionId: string, name: string): boolean {
 		const session = this.sessions.get(sessionId);
+		if (name === 'compact') {
+			// Every chat can compact: the agent's own /compact, Volt's summarizer, or a hand-off summary.
+			return !!session?.messages.some(message => message.role === 'assistant');
+		}
 		if (!session?.agentHandle || !session.agentProviderId) {
 			return false;
 		}
@@ -1971,6 +1976,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		const state = this.nativeState(session);
+		if (isCompactCommand(request.text)) {
+			await this.compactNativeNow(session, run, state, provider, profile, apiKey, item);
+			return;
+		}
 		// This run appends to its own copy; cancelling detaches it, so a loop that is still unwinding
 		// cannot push tool results after the next run's user message.
 		const transcript = state.messages.slice();
@@ -2227,6 +2236,35 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * Summarizes older turns into one handoff message and keeps the recent tail verbatim. Done in
 	 * place on the loop's own array, at one boundary, so the prompt cache restarts only once.
 	 */
+	/**
+	 * `/compact` in a native chat: Volt's summarizer folds everything but the latest exchange into a
+	 * summary, as it does on its own near the context limit, and nothing is sent to the model.
+	 */
+	private async compactNativeNow(session: ISessionState, run: IRunState, state: INativeState, provider: IModelProvider, profile: IProviderProfile, apiKey: string | undefined, item: IVoltCatalogItem): Promise<void> {
+		// The /compact message is a command, not part of the conversation.
+		if (session.messages.at(-1)?.role === 'user' && isCompactCommand(session.messages.at(-1)!.content)) {
+			session.messages.pop();
+		}
+		const messages = state.messages.slice();
+		const compacted = await this.compactNative(session, run, state, messages, {
+			provider, profile, apiKey, item, system: '', contextWindow: item.capabilities.contextWindow || DEFAULT_MODEL_CAPABILITIES.contextWindow, aggressive: true, token: run.cancel.token, keepTokens: 0,
+		});
+		if (!this.isCurrent(session, run)) {
+			return;
+		}
+		if (compacted) {
+			state.messages = messages;
+			state.synced = session.messages.length;
+			this.journal.schedule(session.sessionId, () => ({ version: 1 as const, messages: state.messages, synced: state.synced, effort: state.effort, todo: state.todo, savedAt: Date.now() }));
+		}
+		const id = generateUuid();
+		const text = compacted ? 'Compacted the conversation: earlier turns are now a summary the model continues from.' : 'Nothing to compact yet: the conversation is already short.';
+		this.emit(session, run.runId, { type: 'text.start', id });
+		this.emit(session, run.runId, { type: 'text.delta', id, delta: text });
+		this.emit(session, run.runId, { type: 'text.end', id });
+		this.finish(session, run, 'done');
+	}
+
 	private async compactNative(session: ISessionState, run: IRunState, state: INativeState, messages: INativeLoopMessage[], input: {
 		readonly provider: IModelProvider;
 		readonly profile: IProviderProfile;
@@ -2236,9 +2274,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		readonly contextWindow: number;
 		readonly aggressive: boolean;
 		readonly token: CancellationToken;
+		/** Tokens of recent turns to keep verbatim; `/compact` keeps only the latest exchange. */
+		readonly keepTokens?: number;
 	}): Promise<boolean> {
 		const window = effectiveWindow({ window: input.contextWindow, ...DEFAULT_COMPACTION });
-		const boundary = compactionBoundary(messages, Math.floor(window * (input.aggressive ? 0.1 : 0.25)));
+		const boundary = compactionBoundary(messages, input.keepTokens ?? Math.floor(window * (input.aggressive ? 0.1 : 0.25)));
 		if (boundary <= 0) {
 			return false;
 		}
@@ -2542,6 +2582,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.releaseAgent(session);
 		}
 		const turns: string[] = [];
+		let voltCompaction = false;
 		try {
 			for (let attempt = 0; attempt < 2; attempt++) {
 				if (!this.isCurrent(session, run)) {
@@ -2568,7 +2609,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						return;
 					}
 					const images = this.modelImages(request.images);
-					const first = await this.agentTurn(session, run, provider, handle, profile, { text: request.text, mode: request.mode, lead, ...(images ? { images } : {}) }, attempt === 0);
+					// An agent with no /compact of its own writes a hand-off summary that replaces the history.
+					voltCompaction = isCompactCommand(request.text) && !(provider.supportsCommand?.(handle, 'compact') ?? false);
+					const text = voltCompaction ? agentCompactionPrompt(compactInstructions(request.text)) : request.text;
+					const first = await this.agentTurn(session, run, provider, handle, profile, { text, mode: request.mode, lead, ...(images ? { images } : {}) }, attempt === 0);
 					if (first.kind === 'stale') {
 						return;
 					}
@@ -2580,7 +2624,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					turns.push(first.assistant);
 					let reason = first.reason;
 					// The agent wants to stop. Volt's checks may send it back once per reason.
-					while (reason === 'done') {
+					while (reason === 'done' && !voltCompaction) {
 						const message = await this.qualityContinuation(session, run);
 						if (!message || !this.isCurrent(session, run)) {
 							break;
@@ -2604,6 +2648,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						session.messages.push({ role: 'assistant', content: assistant, model: item.label });
 					}
 					session.agentSynced = session.messages.length;
+					if (voltCompaction && reason === 'done' && assistant.trim()) {
+						// The summary is the whole context now; the next prompt starts a fresh agent briefed with it.
+						const dropped = session.messages.length;
+						session.messages = compactedHistory(assistant);
+						this.releaseAgent(session);
+						this.emit(session, run.runId, { type: 'compaction', stages: ['handoff'], dropped });
+						this.emit(session, run.runId, { type: 'notice', severity: 'info', title: 'Conversation compacted', description: 'The next message starts a fresh agent session that sees only this summary.' });
+					}
 					this.finish(session, run, reason);
 					return;
 				} catch (err) {

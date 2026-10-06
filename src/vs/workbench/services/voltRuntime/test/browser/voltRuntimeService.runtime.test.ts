@@ -400,6 +400,47 @@ suite('Agent runtime orchestration', () => {
 		assert.strictEqual(agent.maxConcurrent, 1);
 	});
 
+	test('/compact on an agent with no compaction of its own: its summary replaces the context and the next prompt starts fresh', async () => {
+		const { service, agent, ref, waitEnd } = await setup('agent');
+		assert.strictEqual(service.supportsCommand('chat', 'compact'), false, 'nothing to compact before the first reply');
+		await waitEnd(await service.send('chat', { text: 'build the parser', mode: 'agent', providerRef: ref }));
+		assert.strictEqual(service.supportsCommand('chat', 'compact'), true);
+		agent.turns.push(async function* () {
+			yield { type: 'text.delta', id: 's', delta: 'Summary of the conversation so far: the parser is built.' };
+			yield { type: 'run.end', runId: 'x', reason: 'done' };
+		});
+		assert.strictEqual((await waitEnd(await service.send('chat', { text: '/compact keep the grammar decisions', mode: 'agent', providerRef: ref }))).reason, 'done');
+		const asked = agent.prompts.at(-1)!.text;
+		const compactedOn = agent.promptHandles.at(-1);
+		assert.ok(asked.includes('Compact this conversation') && asked.includes('keep the grammar decisions'), 'the agent was asked for a hand-off summary');
+		assert.deepStrictEqual(service.getOrCreateSession('chat').messages.map(message => message.role), ['user', 'assistant'], 'the summary stands in for the history');
+		assert.ok(agent.disposed.length >= 1, 'the agent session is let go');
+
+		await waitEnd(await service.send('chat', { text: 'now add tests', mode: 'agent', providerRef: ref }));
+		assert.notStrictEqual(agent.promptHandles.at(-1), compactedOn, 'a fresh agent');
+		const lead = agent.prompts.at(-1)!.lead ?? '';
+		assert.ok(lead.includes('the parser is built') && !lead.includes('build the parser'), 'briefed with the summary, not the old turns');
+	});
+
+	test('/compact in a native chat summarizes the transcript without a model turn', async () => {
+		const { service, model, internals, ref, waitEnd } = await setup('model');
+		for (const text of ['one', 'two', 'three']) {
+			await waitEnd(await service.send('chat', { text, mode: 'agent', providerRef: ref }));
+		}
+		model.turns.push(async function* () {
+			yield { type: 'text.delta', id: 's', delta: 'SUMMARY' };
+			yield { type: 'finish', reason: 'stop' };
+		});
+		const calls = model.requests.length;
+		await waitEnd(await service.send('chat', { text: '/compact', mode: 'agent', providerRef: ref }));
+		const during = model.requests.slice(calls);
+		assert.ok(during.some(request => request.messages[0]?.role === 'system' && !request.tools?.length), 'the summarizer ran');
+		assert.ok(!during.some(request => request.messages.some(message => typeof message.content === 'string' && message.content.trim() === '/compact')), 'the model never saw /compact as a prompt');
+		const transcript = internals.sessions.get('chat')!.deepseek!.messages.map(message => message.content).join('\n');
+		assert.ok(transcript.includes('SUMMARY'));
+		assert.ok(!service.getOrCreateSession('chat').messages.some(message => message.content === '/compact'), 'the command is not part of the conversation');
+	});
+
 	test('steering a live native run is not a user turn', async () => {
 		const { service, model, ref, waitEnd } = await setup('model');
 		const release = new DeferredPromise<void>();

@@ -104,6 +104,7 @@ import { AgentComposerQueue, IAgentComposerQueueState, QueuePause } from '../com
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
+import { COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend } from '../../../../services/voltRuntime/common/compaction.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
@@ -4622,6 +4623,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.adoptVisibleProject();
 		}
 		this._onDidComposerSend.fire();
+		if (this.compactsBeforeSend(agentText)) {
+			// An old, large chat: compact first, so the prompt does not resend its whole stale history.
+			this.submitToOrchestrator('/compact', undefined, this.currentMode, 'auto');
+		}
 		this.dispatchPrompt(agentText, display);
 	}
 
@@ -4766,6 +4771,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		return this.isStreaming() || this.cloningProject()
 			? { blockedReason: localize('voltAgent.compactBusy', "Compacting is unavailable while the agent is working") }
 			: {};
+	}
+
+	/** T3's "Resume with less context", done for the user: see `shouldCompactBeforeSend`. */
+	private compactsBeforeSend(text: string): boolean {
+		const last = this.messages.findLast(message => message.kind === 'agent');
+		const state = this.compactState();
+		return shouldCompactBeforeSend({
+			enabled: this.configurationService.getValue<boolean>(COMPACT_OLD_THREADS_SETTING) !== false,
+			lastActivityAt: last?.kind === 'agent' ? last.endedAt ?? last.startedAt : undefined,
+			usedTokens: last?.kind === 'agent' ? last.tokensUsed ?? ((last.tokensIn ?? 0) + (last.tokensCache ?? 0)) : undefined,
+			now: Date.now(),
+			canCompact: !!state && !state.blockedReason,
+			text,
+		});
 	}
 
 	/** Runs the agent's own `/compact` as the next turn. Unlike a send, the composer draft stays. */
