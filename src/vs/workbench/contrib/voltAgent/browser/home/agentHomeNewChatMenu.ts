@@ -21,7 +21,7 @@ export interface IAgentHomeNewChatProject {
 	readonly current: boolean;
 }
 
-/** Where the new chat goes: a project, or none (the composer asks for one before Send). */
+/** Where the new chat goes: a project, or none (its first send makes it a folder of its own). */
 export type AgentHomeNewChatChoice =
 	| { readonly kind: 'folder'; readonly root: URI; readonly name: string }
 	| { readonly kind: 'none' };

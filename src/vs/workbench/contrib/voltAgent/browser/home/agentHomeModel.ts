@@ -35,6 +35,7 @@ import {
 	updatedBucketLabel,
 } from './agentHomeFilter.js';
 import { dominantRepoOwner, IAgentRepoInfo, repoDisplayName } from './agentRepoInfo.js';
+import { isScratchSession, scratchProjectLabel } from './agentHomeWorkspace.js';
 
 export interface IAgentHomeFolder {
 	readonly uri: URI;
@@ -601,6 +602,11 @@ function projectNodes(
 		const workspaceFile = workspaceFileIds.has(session.workspaceId)
 			? folders.find(folder => folder.workspace && folder.workspaceId === session.workspaceId)
 			: undefined;
+		// Chats without a project share one group; each has a scratch folder no one picks as a project.
+		if (isScratchSession(session)) {
+			draftFor({ key: 'scratch', label: scratchProjectLabel(), multi: false }).sessions.push(session);
+			continue;
+		}
 		const identity = workspaceFile && kind === 'workspace'
 			? { key: homeFolderKey(workspaceFile), label: workspaceFile.name, multi: true, folder: workspaceFile }
 			: identify(sessionFolders(session), folders.find(folder => !folder.workspace && folder.name === session.workspaceLabel)) ?? {

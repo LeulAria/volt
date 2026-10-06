@@ -19,6 +19,11 @@ export interface IVoltProjectRecord {
 	readonly displayName: string;
 	/** `file` for local folders. Remote authorities stay on the URI. */
 	readonly authority: string;
+	/**
+	 * The folder Volt made for a chat started without a project. Chats run in it like any
+	 * project, but it is never listed, selected or offered as one.
+	 */
+	readonly scratch?: boolean;
 }
 
 /** Execution binding for one agent session. The root does not follow the visible chat. */
@@ -37,12 +42,16 @@ export interface IVoltSessionContextService {
 	readonly onDidChangeProjects: Event<void>;
 	readonly onDidChangeActiveProject: Event<string | undefined>;
 
+	/** Registered projects, without scratch folders. */
 	readonly projects: readonly IVoltProjectRecord[];
 	readonly activeProject: IVoltProjectRecord | undefined;
 
+	/** Any record, scratch folders included. */
 	getProject(id: string): IVoltProjectRecord | undefined;
-	/** Register the folder immediately. Does not open a workbench. */
+	/** Register the folder immediately. Does not open a workbench. A known scratch folder stays scratch. */
 	registerProject(root: URI, displayName?: string): IVoltProjectRecord;
+	/** Records a chat's scratch folder (see {@link IVoltProjectRecord.scratch}) so a session can bind to it. */
+	registerScratchProject(root: URI, displayName: string): IVoltProjectRecord;
 	/** Forgets a project (a cancelled clone). Chats bound to it keep their saved folder. */
 	unregisterProject(id: string): void;
 	selectProject(id: string | undefined): void;

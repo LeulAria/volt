@@ -9,11 +9,16 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import {
 	agentHomeWorkspaceEntries,
 	cloneFolderName,
+	commitFailureSummary,
 	filterAgentHomeWorkspaceEntries,
 	freeFolderName,
 	gitErrorSummary,
+	namedProjectReadme,
 	newFolderNameProblem,
+	newProjectNameProblem,
+	projectFolderSlug,
 	resolveCloneUrl,
+	scratchFolderName,
 } from '../../browser/home/agentHomeWorkspace.js';
 
 suite('Agent home workspace menu', () => {
@@ -84,6 +89,35 @@ suite('Agent home workspace menu', () => {
 		assert.ok(newFolderNameProblem('  '));
 		assert.ok(newFolderNameProblem('a/b'));
 		assert.ok(newFolderNameProblem('..'));
+	});
+
+	test('project folder slug: ascii words joined by dashes', () => {
+		assert.strictEqual(projectFolderSlug('My Cool App'), 'my-cool-app');
+		assert.strictEqual(projectFolderSlug('  Café Résumé!! '), 'cafe-resume');
+		assert.strictEqual(projectFolderSlug('../../etc'), 'etc');
+		assert.strictEqual(projectFolderSlug('日本語'), 'project');
+		assert.strictEqual(projectFolderSlug('CON'), 'con-project');
+		assert.strictEqual(projectFolderSlug('a'.repeat(80)).length, 64);
+		assert.strictEqual(projectFolderSlug(`${'a'.repeat(63)} b`), 'a'.repeat(63), 'no trailing dash after the cut');
+	});
+
+	test('scratch folder: local date, first five words, eight id characters', () => {
+		const day = new Date(2026, 8, 5, 23, 30);
+		assert.strictEqual(scratchFolderName(day, 'Convert these PNGs to WebP, please, quickly', 'A1B2-C3D4-E5F6'), '2026-09-05-convert-these-pngs-to-webp-a1b2c3d4');
+		assert.strictEqual(scratchFolderName(day, '???', 'abcdef0123'), '2026-09-05-abcdef01');
+		assert.strictEqual(scratchFolderName(day, `${'x'.repeat(60)} y`, 'ff'), `2026-09-05-${'x'.repeat(48)}-ff`);
+	});
+
+	test('new project README and commit failures', async () => {
+		assert.strictEqual(namedProjectReadme(' Weather Bot '), '# Weather Bot\n');
+		assert.match(commitFailureSummary('Author identity unknown\n\n*** Please tell me who you are.\n'), /user\.name and user\.email/);
+		assert.strictEqual(commitFailureSummary('error: gpg failed to sign the data\nfatal: failed to write commit object\n'), 'gpg failed to sign the data');
+		assert.ok(commitFailureSummary(''));
+		assert.ok(newProjectNameProblem('  '));
+		assert.strictEqual(newProjectNameProblem('Weather'), undefined);
+		// Taken names count up, as for new folders.
+		const taken = new Set(['weather-bot']);
+		assert.strictEqual(await freeFolderName(projectFolderSlug('Weather Bot'), async name => taken.has(name)), 'weather-bot-2');
 	});
 
 	test('git error summary keeps the fatal line', () => {

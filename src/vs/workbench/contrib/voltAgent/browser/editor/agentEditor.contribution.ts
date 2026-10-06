@@ -57,6 +57,7 @@ import '../review/agentChangesActions.js';
 import { AgentTurnsViewContribution } from '../review/agentTurnsView.js';
 import '../review/agentEditsEditor.js';
 import '../preview/browserAutomation.js';
+import './agentSessionCommands.js';
 import { AgentBaselineContentProvider } from '../review/agentEditsService.js';
 import { AgentEditor } from './agentEditor.js';
 import { AgentChangesMultiDiffSourceResolver, AgentSnapshotContentProvider, parseAgentChangesSourceUri } from '../review/agentSessionChangesService.js';

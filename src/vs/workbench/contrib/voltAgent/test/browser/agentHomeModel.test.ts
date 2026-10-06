@@ -34,6 +34,7 @@ import {
 	unsentDraftForFolder,
 } from '../../browser/home/agentHomeModel.js';
 import { IAgentRepoInfo } from '../../browser/home/agentRepoInfo.js';
+import { AGENT_SCRATCH_WORKSPACE_ID } from '../../browser/home/agentHomeWorkspace.js';
 
 function session(id: string, extra: Partial<IAgentSessionMeta> = {}): IAgentSessionMeta {
 	return {
@@ -164,6 +165,18 @@ suite('Agent home list model', () => {
 		const workspaces = section(tree);
 		assert.ok(workspaces.element.type === 'section' && workspaces.element.key === 'workspaces' && workspaces.element.filter);
 		assert.deepStrictEqual(projectLabels(workspaces), ['volt']);
+	});
+
+	test('chats without a project share one No Project group, not a group per scratch folder', () => {
+		const tree = buildAgentHomeTree([folder('/tmp/volt', { current: true })], [
+			session('repo', { workspaceFolder: '/tmp/volt' }),
+			session('a', { workspaceId: AGENT_SCRATCH_WORKSPACE_ID, workspaceLabel: 'No Project', workspaceFolder: '/h/.volt/scratch/2026-10-06-a-11111111', updatedAt: 5 }),
+			session('b', { workspaceId: AGENT_SCRATCH_WORKSPACE_ID, workspaceLabel: 'No Project', workspaceFolder: '/h/.volt/scratch/2026-10-06-b-22222222', updatedAt: 6 }),
+		], view());
+		assert.deepStrictEqual(projectLabels(section(tree)).sort(), ['No Project', 'volt']);
+		const scratch = section(tree).children?.find(child => child.element.type === 'folder' && child.element.project.label === 'No Project');
+		assert.deepStrictEqual(sessionIds(scratch), ['b', 'a']);
+		assert.ok(scratch?.element.type === 'folder' && !scratch.element.project.folder, 'the group has no folder to start a chat in');
 	});
 
 	test('nests agent tabs under their project, newest first', () => {
