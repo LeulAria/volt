@@ -14,7 +14,9 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
+import { browserBlockedMessage, IVoltBrowserAccessService } from '../../common/browserAccess.js';
 import { VoltMode } from '../../common/modes.js';
+import '../browserAccessService.js';
 import { AgentQuestionDraft, parseQuestionDraft, questionResponseText } from '../../common/questions.js';
 import { cropImage, describeInspection, flattenAlpha, IImagePoint, IImageRect, inspectImage, IRgbaImage, MAX_ANALYSIS_PIXELS, parseRect } from '../../common/tools/imageAnalysis.js';
 import { decodeImage, ImageFormat, MAX_IMAGE_BYTES, scaleScreenshot, zoomImage } from './imageCodec.js';
@@ -61,6 +63,7 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		@ICommandService private readonly commandService: ICommandService,
 		@IFileService private readonly fileService: IFileService,
 		@IWorkspaceContextService private readonly workspace: IWorkspaceContextService,
+		@IVoltBrowserAccessService private readonly browserAccess: IVoltBrowserAccessService,
 	) {
 		super();
 	}
@@ -90,8 +93,10 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 
 	private async run(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		for (const provider of this.providers) {
-			if (provider.tools.some(tool => tool.name === name)) {
-				return provider.invoke(name, args, call);
+			const tool = provider.tools.find(candidate => candidate.name === name);
+			if (tool) {
+				const refusal = tool.approvalInReadOnlyModes && call?.sessionId ? await this.checkReadOnly(call.sessionId, name, args, call, tool.approvalInReadOnlyModes) : undefined;
+				return refusal ?? provider.invoke(name, args, call);
 			}
 		}
 		if (name === ASK_QUESTION_TOOL_NAME) {
@@ -105,6 +110,10 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 			return this.inspect(args, call);
 		}
 		if (isBrowserAutomationTool(name)) {
+			const blocked = this.browserAccess.blockReason(call?.sessionId);
+			if (blocked) {
+				return { error: browserBlockedMessage(name, blocked) };
+			}
 			if (!call?.sessionId) {
 				// No chat binding: the only thing to look at is the visible browser pane.
 				return name === BROWSER_SCREENSHOT_TOOL_NAME ? this.captureBrowser(args) : { error: 'The in-app browser tools need a Volt chat.' };
@@ -148,6 +157,20 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		}
 		const allowed = await this.approver.approve({ sessionId, name, args, mode, reason: verdict.reason }, call.token ?? CancellationToken.None).catch(() => false);
 		return allowed ? undefined : { error: `The user did not allow ${name} in ${label} mode (it ${verdict.reason}). Continue without it.` };
+	}
+
+	/** A provider tool that acts (taps, installs, records) needs the user's approval in Ask and Plan. */
+	private async checkReadOnly(sessionId: string, name: string, args: Record<string, unknown>, call: IVoltHostToolCall, reason: string): Promise<IVoltHostToolResult | undefined> {
+		const mode = call.mode ?? this.sessions?.mode(sessionId);
+		if (mode !== 'ask' && mode !== 'plan') {
+			return undefined;
+		}
+		const label = MODE_LABEL[mode];
+		if (!this.approver) {
+			return { error: `${name} was not run: in ${label} mode it needs the user's approval because it ${reason}. Look with the read-only tools instead, or ask the user to switch to Agent mode.` };
+		}
+		const allowed = await this.approver.approve({ sessionId, name, args, mode, reason }, call.token ?? CancellationToken.None).catch(() => false);
+		return allowed ? undefined : { error: `The user did not allow ${name} in ${label} mode (it ${reason}). Continue without it.` };
 	}
 
 	private resolveImage(path: unknown, call: IVoltHostToolCall | undefined): URI {
