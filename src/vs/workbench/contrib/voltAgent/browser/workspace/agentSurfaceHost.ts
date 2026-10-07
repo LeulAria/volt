@@ -658,6 +658,11 @@ export class AgentSurfaceHost extends Disposable {
 		void this.target()?.runCommandInTerminal(command);
 	}
 
+	/** Runs a command from the chat (a reply's shell block) in the chat's terminal, in its worktree or project. */
+	runCommand(command: string): void {
+		void this.target()?.runCommandInTerminal(command);
+	}
+
 	openBrowser(url?: string, title?: string, reuse = false): void {
 		void this.target()?.openBrowserInTools(url, title, reuse, false);
 	}

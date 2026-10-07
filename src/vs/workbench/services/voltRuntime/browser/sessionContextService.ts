@@ -29,6 +29,7 @@ interface IStoredProject {
 	readonly uri?: string;
 	readonly name?: string;
 	readonly authority?: string;
+	readonly scratch?: boolean;
 }
 
 interface IStoredBinding {
@@ -60,6 +61,7 @@ export function reviveProjects(raw: unknown): Map<string, IVoltProjectRecord> {
 			root,
 			displayName: projectDisplayName(root, stored.name),
 			authority: stored.authority || projectAuthority(root),
+			...(stored.scratch === true ? { scratch: true } : {}),
 		};
 		projects.set(record.id, record);
 	}
@@ -138,7 +140,7 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 	 */
 	private initialActiveProject(workspaceContextService: IWorkspaceContextService): string | undefined {
 		const own = this.storageService.get(ACTIVE_KEY, StorageScope.WORKSPACE, '');
-		if (own && this.projectMap.has(own)) {
+		if (own && this.isListed(own)) {
 			return own;
 		}
 		const folders = workspaceContextService.getWorkbenchState() === WorkbenchState.FOLDER ? workspaceContextService.getWorkspace().folders : [];
@@ -148,7 +150,7 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 			return project.id;
 		}
 		const last = this.storageService.get(ACTIVE_KEY, StorageScope.APPLICATION, '');
-		return last && this.projectMap.has(last) ? last : undefined;
+		return last && this.isListed(last) ? last : undefined;
 	}
 
 	/** Adds projects another window registered. Returns whether anything was new. */
@@ -177,11 +179,18 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 	}
 
 	get projects(): readonly IVoltProjectRecord[] {
-		return [...this.projectMap.values()];
+		return [...this.projectMap.values()].filter(project => !project.scratch);
 	}
 
 	get activeProject(): IVoltProjectRecord | undefined {
-		return this.activeId ? this.projectMap.get(this.activeId) : undefined;
+		const project = this.activeId ? this.projectMap.get(this.activeId) : undefined;
+		return project?.scratch ? undefined : project;
+	}
+
+	/** A project the user can see and select: registered, and not a scratch folder. */
+	private isListed(id: string): boolean {
+		const project = this.projectMap.get(id);
+		return !!project && !project.scratch;
 	}
 
 	getProject(id: string): IVoltProjectRecord | undefined {
@@ -189,6 +198,14 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 	}
 
 	registerProject(root: URI, displayName?: string): IVoltProjectRecord {
+		return this.addProject(root, displayName, false);
+	}
+
+	registerScratchProject(root: URI, displayName: string): IVoltProjectRecord {
+		return this.addProject(root, displayName, true);
+	}
+
+	private addProject(root: URI, displayName: string | undefined, scratch: boolean): IVoltProjectRecord {
 		const canonical = canonicalProjectRoot(root);
 		const id = projectIdForRoot(canonical);
 		const existing = this.projectMap.get(id);
@@ -200,6 +217,7 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 			root: canonical,
 			displayName: projectDisplayName(canonical, displayName),
 			authority: projectAuthority(canonical),
+			...(scratch ? { scratch: true } : {}),
 		};
 		const next = new Map<string, IVoltProjectRecord>([[id, record], ...this.projectMap]);
 		this.projectMap.clear();
@@ -225,7 +243,8 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 	}
 
 	selectProject(id: string | undefined): void {
-		const next = id && this.projectMap.has(id) ? id : undefined;
+		// A scratch chat on screen shows no project; selecting its folder would list it.
+		const next = id && this.isListed(id) ? id : undefined;
 		if (this.activeId === next) {
 			return;
 		}
@@ -292,6 +311,7 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 			uri: project.root.toString(),
 			name: project.displayName,
 			authority: project.authority,
+			...(project.scratch ? { scratch: true } : {}),
 		}));
 		this.storageService.store(PROJECTS_KEY, JSON.stringify(stored), StorageScope.APPLICATION, StorageTarget.USER);
 	}

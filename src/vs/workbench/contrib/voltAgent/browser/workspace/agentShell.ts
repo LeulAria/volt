@@ -23,7 +23,7 @@ export type SessionProjectMatch =
  * How a new agent chat picks its project. Kept in one place with send/chip gating.
  * - `folder`: bind that repo/workspace (folder-row +).
  * - `active`: use the last-used / selected project when one exists (New Chat).
- * - `none`: open with no project; Send and Enter stay off until one is chosen.
+ * - `none`: open with no project; the first send makes the chat a scratch folder.
  */
 export type AgentChatStart =
 	| { readonly kind: 'folder'; readonly root: URI; readonly name: string }
@@ -42,13 +42,20 @@ export function agentSessionHasProject(
 	return !!session?.workspaceFolder;
 }
 
-/** New chats without a project cannot send until one is selected. */
-export function agentComposerCanSend(
+/**
+ * The first send of a chat with no project makes it a scratch folder (see AgentScratchFolders).
+ * A chat that has not sent yet adopts the selected project instead, when there is one.
+ */
+export function agentSessionNeedsScratch(
 	sessionContext: IVoltSessionContextService,
 	sessionId: string,
-	session?: { readonly workspaceFolder?: string } | undefined,
+	session: { readonly workspaceFolder?: string } | undefined,
+	started: boolean,
 ): boolean {
-	return agentSessionHasProject(sessionContext, sessionId, session);
+	if (agentSessionHasProject(sessionContext, sessionId, session)) {
+		return false;
+	}
+	return started || !sessionContext.activeProject;
 }
 
 /** A hydration result applies only while its selection is still the latest one. */

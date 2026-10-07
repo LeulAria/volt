@@ -292,7 +292,7 @@ function unsentDraftChat(
 
 /**
  * Open a new agent from a home control. Project selection and the no-project
- * (send disabled) path share this entry so New Chat, folder +, and bucket + agree.
+ * (scratch folder on first send) path share this entry so New Chat, folder +, and bucket + agree.
  */
 export async function startAgentChat(
 	sessionContext: IVoltSessionContextService,

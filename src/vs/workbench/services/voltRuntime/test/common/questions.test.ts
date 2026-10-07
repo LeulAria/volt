@@ -99,6 +99,53 @@ suite('Agent questions', () => {
 		assert.deepStrictEqual(elicitationResult(form, { outcome: 'skipped', answers: [] }), { action: 'decline' });
 	});
 
+	test('a dismissed tray lets every wire carry on; a stop still cancels', () => {
+		const dismissed: IAgentQuestionResponse = { outcome: 'cancelled', dismissed: true, answers: [] };
+		const stopped: IAgentQuestionResponse = { outcome: 'cancelled', answers: [] };
+		assert.ok(questionResponseText(draft, dismissed).startsWith('The user dismissed the questions.'));
+		const cursor = cursorAskQuestionResult(draft, dismissed).outcome;
+		assert.strictEqual(cursor.outcome, 'skipped');
+		assert.ok(cursor.outcome === 'skipped' && cursor.reason?.includes('dismissed'));
+		assert.deepStrictEqual(cursorAskQuestionResult(draft, stopped), { outcome: { outcome: 'cancelled' } });
+		// claude-agent-acp aborts the tool call (and the turn) on cancel; decline lets the model go on.
+		assert.deepStrictEqual(elicitationResult(draft, dismissed), { action: 'decline' });
+		assert.deepStrictEqual(elicitationResult(draft, stopped), { action: 'cancel' });
+	});
+
+	test('files attached to an answer reach the agent as saved paths on every wire', () => {
+		const withFiles: IAgentQuestionResponse = {
+			outcome: 'answered',
+			answers: [
+				{ questionId: 'mode', optionIds: ['cpu'], attachments: [{ kind: 'image', name: 'board.png', size: 2048, path: '/att/1.png' }] },
+				// A file alone is an answer.
+				{ questionId: 'extras', optionIds: [], attachments: [{ kind: 'file', name: 'spec.pdf', size: 2.1 * 1024 * 1024, mime: 'application/pdf', path: '/att/2.pdf' }] },
+			],
+		};
+		const text = questionResponseText(draft, withFiles);
+		assert.ok(text.includes('- Who plays? → Vs computer\n  [Image "board.png" is saved at: /att/1.png]'), text);
+		assert.ok(text.includes('- Which extras? → (see the attached files)\n  [File "spec.pdf" (PDF, 2.1 MB) is saved at: /att/2.pdf]'), text);
+
+		const card = answeredQuestions(draft, withFiles);
+		assert.deepStrictEqual(card.map(item => [item.question, item.answer, item.attachments?.map(file => file.name)]), [
+			['Who plays?', 'Vs computer', ['board.png']],
+			['Which extras?', '', ['spec.pdf']],
+		]);
+
+		const cursor = cursorAskQuestionResult(draft, withFiles).outcome;
+		assert.ok(cursor.outcome === 'answered');
+		assert.deepStrictEqual(cursor.answers[1].selectedOptionIds, ['[File "spec.pdf" (PDF, 2.1 MB) is saved at: /att/2.pdf]']);
+
+		const form = elicitationToQuestions({
+			mode: 'form',
+			message: 'Pick a board',
+			requestedSchema: { type: 'object', properties: { question_0: { type: 'string', oneOf: [{ const: 'A', title: 'A' }] }, question_0_custom: { type: 'string' } } },
+		})!;
+		assert.deepStrictEqual(elicitationResult(form, { outcome: 'answered', answers: [{ questionId: 'question_0', optionIds: [], attachments: [{ kind: 'image', name: 'b.png', size: 1, path: '/att/b.png' }] }] }), {
+			action: 'accept',
+			content: { question_0_custom: '[Image "b.png" is saved at: /att/b.png]' },
+		});
+	});
+
 	test('leaves forms with free-form fields to the agent', () => {
 		assert.strictEqual(elicitationToQuestions({ mode: 'form', message: 'Token?', requestedSchema: { type: 'object', properties: { token: { type: 'string' } } } }), undefined);
 		assert.strictEqual(elicitationToQuestions({ mode: 'url', url: 'https://x' }), undefined);

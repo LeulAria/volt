@@ -93,7 +93,7 @@ suite('Agent orchestrator service', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	async function setup(existing?: { fileService: FileService }) {
+	async function setup(existing?: { fileService?: FileService; resume?: string }) {
 		const disposables = store.add(new DisposableStore());
 		let fileService = existing?.fileService;
 		if (!fileService) {
@@ -113,6 +113,8 @@ suite('Agent orchestrator service', () => {
 			stub({ registerToolProvider: (provider: IVoltHostToolProvider) => { tools = provider; return toDisposable(() => tools = undefined); } }),
 			stub({ create: async () => ({ path: '/wt/a', branch: 'volt/a' }), ensure: async () => false }),
 			stub({ rootFor: () => URI.file('/repo') }),
+			stub({ getValue: () => existing?.resume ?? 'off' }),
+			stub({ run: async () => undefined, needsRetry: () => false }),
 		));
 		await service.whenReady;
 		const host = new FakeHost(runtime);
@@ -230,6 +232,55 @@ suite('Agent orchestrator service', () => {
 		await second.service.dispatch({ type: 'queue.resume', threadId: 'chat' });
 		await settle();
 		assert.deepStrictEqual(second.host.started.map(request => request.turn.id), ['t2']);
+	});
+
+	test('after a restart a delegated task that was running continues by itself and still reports to its parent', async () => {
+		const first = await setup();
+		await first.service.submit('parent', { text: 'go' }, 'auto', 'p1');
+		await settle();
+		await first.tool('parent', 'delegate_task', { task: 'Audit the API', title: 'Audit' });
+		await settle();
+		first.runtime.finish('parent', 'Delegated.');
+		await settle();
+		const task = first.service.tasksOf('parent')[0];
+		assert.strictEqual(first.service.getTask(task.id)?.state, 'running');
+		await timeout(300);
+
+		const second = await setup({ fileService: first.fileService, resume: 'subagents' });
+		await settle();
+		const resumed = second.host.started.find(request => request.threadId === task.childId);
+		assert.strictEqual(resumed?.turn.kind, 'resume');
+		assert.ok(resumed?.turn.prompt.text.includes('Volt restarted'));
+		assert.strictEqual(second.service.getTask(task.id)?.restarts, 1);
+		assert.ok(!second.host.started.some(request => request.threadId === 'parent'), 'the parent does not run until the report comes');
+		second.runtime.finish(task.childId!, 'API audited: 3 findings.');
+		await settle();
+		const wake = second.host.started.at(-1);
+		assert.strictEqual(wake?.threadId, 'parent');
+		assert.ok(wake?.turn.prompt.text.includes('API audited: 3 findings.'));
+		assert.match(await second.tool('parent', 'task_status', { task_id: task.id }), /continued after a Volt restart/);
+	});
+
+	test('delegate_task with previous_task_id starts the next round with the previous brief and report', async () => {
+		const { service, runtime, host, tool } = await setup();
+		await service.submit('parent', { text: 'ship it' }, 'auto', 'p1');
+		await settle();
+		await tool('parent', 'delegate_task', { task: 'Review src/auth.ts', role: 'review', model: 'Cursor Grok 4.6', client_request_id: 'review-1' });
+		await settle();
+		const round1 = service.tasksOf('parent')[0];
+		runtime.finish(round1.childId!, 'Found: missing null check in login().');
+		await settle();
+		const started = await tool('parent', 'delegate_task', { task: 'I added the null check. Review again.', previous_task_id: round1.id, client_request_id: 'review-2' });
+		assert.match(started, /iteration: 2 \(follows t-/);
+		await settle();
+		const round2 = service.tasksOf('parent')[1];
+		assert.strictEqual(round2.previousTaskId, round1.id);
+		assert.strictEqual(round2.role, 'review', 'the round keeps the reviewer role');
+		assert.strictEqual(round2.modelLabel, 'Cursor Grok 4.6', 'and the reviewer model');
+		const brief = host.started.find(request => request.threadId === round2.childId);
+		assert.ok(brief?.turn.prompt.text.includes('Found: missing null check in login().'), 'the new reviewer sees the previous report');
+		assert.ok(brief?.turn.prompt.text.includes('round 2'));
+		assert.match(await tool('parent', 'delegate_task', { task: 'x', previous_task_id: 't-000000' }), /No task t-000000/);
 	});
 
 	test('a harness subagent is tracked from the Task call and ends with its parent turn', async () => {

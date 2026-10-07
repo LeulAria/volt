@@ -39,6 +39,9 @@ import { resolveTabModel } from '../common/models/modelAccess.js';
 import { IAgentRuntimeService, IVoltMcpServerStatus, IVoltTaskModels } from '../common/runtime.js';
 import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
+import { agentCompactionPrompt, compactedHistory, compactInstructions, isCompactCommand } from '../common/compaction.js';
+import './git/agentWorktreeSetupService.js';
 import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService, VISUAL_TOOL_NAMES } from '../common/hostTools.js';
 import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQuestionResponse } from '../common/questions.js';
 import { AcpAgentProvider, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
@@ -221,6 +224,8 @@ interface ISessionState extends IVoltSession {
 	 * conversation as a recap, so the title it names would come from the recap, not the chat.
 	 */
 	agentJoinedLate?: IAgentSessionHandle;
+	/** The user restarted the agent while a turn held it: the next prompt starts a fresh one. */
+	restartPending?: boolean;
 	/** Catalog ref the live agent session was started for. */
 	agentRef?: string;
 	/** Folder the live agent session was started in. A chat moved to another project needs a new one. */
@@ -349,6 +354,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
+		@IAgentWorktreeSetupService private readonly worktreeSetup: IAgentWorktreeSetupService,
 		@ITextFileService private readonly textFileService: ITextFileService,
 		@IPathService private readonly pathService: IPathService,
 		@IMarkerService markerService: IMarkerService,
@@ -471,6 +477,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 
 	supportsCommand(sessionId: string, name: string): boolean {
 		const session = this.sessions.get(sessionId);
+		if (name === 'compact') {
+			// Every chat can compact: the agent's own /compact, Volt's summarizer, or a hand-off summary.
+			return !!session?.messages.some(message => message.role === 'assistant');
+		}
 		if (!session?.agentHandle || !session.agentProviderId) {
 			return false;
 		}
@@ -549,7 +559,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const engine = catalogItem?.kind === 'agent' ? 'agent' : 'native';
 		const run = this.beginRun(session, request.mode, engine, sendAt);
 		try {
-			await this.prepareWorktree(session, request);
+			await this.prepareWorktree(session, request, () => !this.isCurrent(session, run));
 		} catch (err) {
 			this.emit(session, run.runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
 			this.finish(session, run, 'fail');
@@ -825,6 +835,47 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session.agentHandle && (session.agentSynced ?? 0) > session.messages.length) {
 			this.disposeSessionAgent(session);
 			session.agentSynced = 0;
+		}
+	}
+
+	async restartAgent(sessionId: string, options?: { readonly cancel?: boolean }): Promise<boolean> {
+		const session = this.sessions.get(sessionId);
+		const run = session?.run;
+		if (run && !run.ended && !options?.cancel) {
+			this.logService.info(`[volt] not restarting the agent of ${sessionId}: a turn is running`);
+			return false;
+		}
+		this.forgetAgentSetup();
+		if (!session) {
+			// Nothing started yet: the chat's first agent reads the new setup anyway.
+			return true;
+		}
+		// Set before the cancel: a queued prompt that starts while this turn unwinds starts fresh too.
+		session.restartPending = true;
+		if (run && !run.ended) {
+			await this.cancel(sessionId);
+		}
+		// A cancelled turn holds its agent until it unwinds; disposing it under the turn would race it.
+		await this.waitSettled(run, SETTLE_WAIT_AGENT_MS);
+		if (session.restartPending && !(session.run && !session.run.ended)) {
+			session.restartPending = false;
+			this.releaseAgent(session);
+		}
+		return true;
+	}
+
+	/**
+	 * Drops what a fresh agent would reuse instead of reading again: spares started with the old
+	 * setup, skills and rules read a moment ago, and MCP servers that failed to start.
+	 */
+	private forgetAgentSetup(): void {
+		this.instructionsByRoot.clear();
+		this.mcpHost.forgetFailed();
+		this.agentPool.clear();
+		for (const provider of this.agentProviders.values()) {
+			if (provider instanceof AcpAgentProvider) {
+				void provider.disposeSpares().catch(() => undefined);
+			}
 		}
 	}
 
@@ -1812,7 +1863,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** First send in New Worktree mode creates the checkout. Later sends stay there, recreating it if archive pruned the files. */
-	private async prepareWorktree(session: ISessionState, request: IVoltSendRequest): Promise<void> {
+	private async prepareWorktree(session: ISessionState, request: IVoltSendRequest, isCancelled: () => boolean): Promise<void> {
 		const project = this.projectRoot(session);
 		if (session.worktreePath && session.worktreeBranch) {
 			if (!project) {
@@ -1821,6 +1872,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			const recreated = await this.worktrees.ensure(project.fsPath, session.worktreePath, session.worktreeBranch);
 			if (recreated) {
 				session.announceWorktree = true;
+				// A checkout recreated from its branch has none of what setup installed.
+				await this.worktreeSetup.run(session.sessionId, { repoRoot: project.fsPath, worktreePath: session.worktreePath, branch: session.worktreeBranch, isCancelled });
+			} else if (this.worktreeSetup.needsRetry(session.sessionId)) {
+				// The last setup failed or was cancelled: finish it before the agent works there.
+				await this.worktreeSetup.retry(session.sessionId, { isCancelled });
 			}
 			return;
 		}
@@ -1836,6 +1892,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.worktreeBranch = created.branch;
 		session.announceWorktree = true;
 		this.history.open(session.sessionId).setMeta({ worktreePath: created.path, worktreeBranch: created.branch });
+		await this.worktreeSetup.run(session.sessionId, { repoRoot: project.fsPath, worktreePath: created.path, branch: created.branch, isCancelled });
 	}
 
 	private noteWorktree(session: ISessionState, runId: string): void {
@@ -1923,6 +1980,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		const state = this.nativeState(session);
+		if (isCompactCommand(request.text)) {
+			await this.compactNativeNow(session, run, state, provider, profile, apiKey, item);
+			return;
+		}
 		// This run appends to its own copy; cancelling detaches it, so a loop that is still unwinding
 		// cannot push tool results after the next run's user message.
 		const transcript = state.messages.slice();
@@ -2179,6 +2240,35 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * Summarizes older turns into one handoff message and keeps the recent tail verbatim. Done in
 	 * place on the loop's own array, at one boundary, so the prompt cache restarts only once.
 	 */
+	/**
+	 * `/compact` in a native chat: Volt's summarizer folds everything but the latest exchange into a
+	 * summary, as it does on its own near the context limit, and nothing is sent to the model.
+	 */
+	private async compactNativeNow(session: ISessionState, run: IRunState, state: INativeState, provider: IModelProvider, profile: IProviderProfile, apiKey: string | undefined, item: IVoltCatalogItem): Promise<void> {
+		// The /compact message is a command, not part of the conversation.
+		if (session.messages.at(-1)?.role === 'user' && isCompactCommand(session.messages.at(-1)!.content)) {
+			session.messages.pop();
+		}
+		const messages = state.messages.slice();
+		const compacted = await this.compactNative(session, run, state, messages, {
+			provider, profile, apiKey, item, system: '', contextWindow: item.capabilities.contextWindow || DEFAULT_MODEL_CAPABILITIES.contextWindow, aggressive: true, token: run.cancel.token, keepTokens: 0,
+		});
+		if (!this.isCurrent(session, run)) {
+			return;
+		}
+		if (compacted) {
+			state.messages = messages;
+			state.synced = session.messages.length;
+			this.journal.schedule(session.sessionId, () => ({ version: 1 as const, messages: state.messages, synced: state.synced, effort: state.effort, todo: state.todo, savedAt: Date.now() }));
+		}
+		const id = generateUuid();
+		const text = compacted ? 'Compacted the conversation: earlier turns are now a summary the model continues from.' : 'Nothing to compact yet: the conversation is already short.';
+		this.emit(session, run.runId, { type: 'text.start', id });
+		this.emit(session, run.runId, { type: 'text.delta', id, delta: text });
+		this.emit(session, run.runId, { type: 'text.end', id });
+		this.finish(session, run, 'done');
+	}
+
 	private async compactNative(session: ISessionState, run: IRunState, state: INativeState, messages: INativeLoopMessage[], input: {
 		readonly provider: IModelProvider;
 		readonly profile: IProviderProfile;
@@ -2188,9 +2278,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		readonly contextWindow: number;
 		readonly aggressive: boolean;
 		readonly token: CancellationToken;
+		/** Tokens of recent turns to keep verbatim; `/compact` keeps only the latest exchange. */
+		readonly keepTokens?: number;
 	}): Promise<boolean> {
 		const window = effectiveWindow({ window: input.contextWindow, ...DEFAULT_COMPACTION });
-		const boundary = compactionBoundary(messages, Math.floor(window * (input.aggressive ? 0.1 : 0.25)));
+		const boundary = compactionBoundary(messages, input.keepTokens ?? Math.floor(window * (input.aggressive ? 0.1 : 0.25)));
 		if (boundary <= 0) {
 			return false;
 		}
@@ -2498,7 +2590,13 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.disposeSessionAgent(session);
 			session.agentSynced = 0;
 		}
+		if (session.restartPending && this.isCurrent(session, run)) {
+			// Restarted while the previous turn held the agent (see restartAgent).
+			session.restartPending = false;
+			this.releaseAgent(session);
+		}
 		const turns: string[] = [];
+		let voltCompaction = false;
 		try {
 			for (let attempt = 0; attempt < 2; attempt++) {
 				if (!this.isCurrent(session, run)) {
@@ -2525,7 +2623,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						return;
 					}
 					const images = this.modelImages(request.images);
-					const first = await this.agentTurn(session, run, provider, handle, profile, { text: request.text, mode: request.mode, lead, ...(images ? { images } : {}) }, attempt === 0);
+					// An agent with no /compact of its own writes a hand-off summary that replaces the history.
+					voltCompaction = isCompactCommand(request.text) && !(provider.supportsCommand?.(handle, 'compact') ?? false);
+					const text = voltCompaction ? agentCompactionPrompt(compactInstructions(request.text)) : request.text;
+					const first = await this.agentTurn(session, run, provider, handle, profile, { text, mode: request.mode, lead, ...(images ? { images } : {}) }, attempt === 0);
 					if (first.kind === 'stale') {
 						return;
 					}
@@ -2537,7 +2638,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					turns.push(first.assistant);
 					let reason = first.reason;
 					// The agent wants to stop. Volt's checks may send it back once per reason.
-					while (reason === 'done') {
+					while (reason === 'done' && !voltCompaction) {
 						const message = await this.qualityContinuation(session, run);
 						if (!message || !this.isCurrent(session, run)) {
 							break;
@@ -2561,6 +2662,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						session.messages.push({ role: 'assistant', content: assistant, model: item.label });
 					}
 					session.agentSynced = session.messages.length;
+					if (voltCompaction && reason === 'done' && assistant.trim()) {
+						// The summary is the whole context now; the next prompt starts a fresh agent briefed with it.
+						const dropped = session.messages.length;
+						session.messages = compactedHistory(assistant);
+						this.releaseAgent(session);
+						this.emit(session, run.runId, { type: 'compaction', stages: ['handoff'], dropped });
+						this.emit(session, run.runId, { type: 'notice', severity: 'info', title: 'Conversation compacted', description: 'The next message starts a fresh agent session that sees only this summary.' });
+					}
 					this.finish(session, run, reason);
 					return;
 				} catch (err) {
@@ -3478,7 +3587,8 @@ function conversationRecap(messages: readonly { role: string; content: string; m
 	}
 	return [
 		'<conversation_so_far>',
-		'This conversation started with another model. Here is what was said before this message; continue from it.',
+		// Read after a model switch, a rewind or a restarted agent: none of them is "another model" for sure.
+		'You are joining a conversation already in progress (another model or an earlier session of yours answered before). Here is what was said before this message; continue from it.',
 		...lines,
 		'</conversation_so_far>',
 	].join('\n');

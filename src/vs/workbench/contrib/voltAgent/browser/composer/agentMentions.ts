@@ -18,6 +18,7 @@ import { basename } from '../../../../../base/common/path.js';
 import { dirname, isEqualOrParent, relativePath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
+import { isMacintosh } from '../../../../../base/common/platform.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { ICodeEditor, IEditorMouseEvent, MouseTargetType } from '../../../../../editor/browser/editorBrowser.js';
@@ -33,10 +34,13 @@ import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
-import { extractEditorsDropData } from '../../../../../platform/dnd/browser/dnd.js';
+import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
+import { extractEditorsDropData, getPathForFile } from '../../../../../platform/dnd/browser/dnd.js';
 import { FileKind, IFileService } from '../../../../../platform/files/common/files.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
+import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { EditorResourceAccessor } from '../../../../common/editor.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
@@ -44,13 +48,18 @@ import { IHistoryService } from '../../../../services/history/common/history.js'
 import { ISearchService } from '../../../../services/search/common/search.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService, IVoltMcpServerStatus } from '../../../../services/voltRuntime/common/runtime.js';
+import { attachmentSavedLine, fileTypeLabel, formatAttachmentSize, MAX_FILE_ATTACHMENT_BYTES } from '../../../../services/voltRuntime/common/fileAttachments.js';
 import { searchFilesAndFolders } from '../../../search/browser/searchChatContext.js';
 import { ITerminalService } from '../../../terminal/browser/terminal.js';
 import { compactSessionAge } from '../home/agentHomeModel.js';
 import { AgentMentionMenu, AgentMentionMenuContent, AgentMentionRow, IAgentMentionFileRow, IAgentMentionTreeEntry } from './agentMentionMenu.js';
 import { MentionCodePreview } from './mentionCodePreview.js';
+import { AgentAttachmentStore } from './agentAttachmentStore.js';
+import { attachmentRoute, countLines, fileChipDetail, heicJpegName, IAgentFilePayload, isSendableImageMime, isTextAttachment, PASTED_TEXT_NAME, shouldFoldPaste, storageMime } from './agentFileAttachments.js';
 import { AgentImageStrip, formatImageSize, imageExtension, imageThumbClass } from './agentImageAttachments.js';
 import { AgentImageViewer, showAgentImageViewer } from './agentImageViewer.js';
+import { citationLabel, IAgentCitation, serializeChatSelection, withCitationComment } from './agentCitation.js';
+import { showCitationCommentEditor } from './agentCitationComment.js';
 import { formatDuration, IAgentVideoFrame, ITimeRange, mapRangesToSource, MAX_VIDEO_BYTES, normalizeVideoMime, probeVideo, rangesDuration, videoExtensionForMime, videoMimeForExtension } from './agentVideoAttachments.js';
 import { AgentVideoViewer, IAgentVideoClip, showAgentVideoViewer } from './agentVideoViewer.js';
 
@@ -100,6 +109,10 @@ export interface IAgentMention {
 	range?: { startLineNumber: number; endLineNumber: number };
 	image?: IAgentImagePayload;
 	video?: IAgentVideoPayload;
+	/** A file attached to the prompt (kind `file`): saved in the attachment store, not a project path. */
+	file?: IAgentFilePayload;
+	/** `selection` only: where the quote came from and the user's comment on it. */
+	citation?: IAgentCitation;
 }
 
 export const BROWSER_MENTION_COLORS = ['#89b4fa', '#a6e3a1', '#94e2d5', '#fab387', '#74c7ec', '#cba6f7', '#f9e2af', '#f5c2e7'] as const;
@@ -118,6 +131,8 @@ export interface IAgentDisplayMention {
 	range?: { startLineNumber: number; endLineNumber: number };
 	image?: IAgentImagePayload;
 	video?: IAgentVideoPayload;
+	file?: IAgentFilePayload;
+	citation?: IAgentCitation;
 }
 
 /** An image the model receives with the prompt: the runtime's `IVoltImageAttachment` shape. */
@@ -128,9 +143,6 @@ export interface IAgentImageAttachment {
 	/** The name the prompt text refers to ("Image1" for `@Image1`, the file name for a dropped file). */
 	readonly name?: string;
 }
-
-/** Image types every vision provider takes; others (SVG) stay a text mention only. */
-const SENDABLE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
 /**
  * The pasted and dropped images among a prompt's mentions, and the stills of its videos, ready for
@@ -151,7 +163,7 @@ export function imageAttachmentsFromMentions(mentions: readonly IAgentDisplayMen
 			continue;
 		}
 		const mediaType = image.mime.toLowerCase() === 'image/jpg' ? 'image/jpeg' : image.mime.toLowerCase();
-		if (!SENDABLE_IMAGE_TYPES.has(mediaType)) {
+		if (!isSendableImageMime(mediaType)) {
 			continue;
 		}
 		seen.add(image.bytes);
@@ -166,17 +178,26 @@ export function videoFrameName(label: string, time: number): string {
 }
 
 /**
- * `[Image #1 "image.png" is saved at: /path]` for each image in a prompt, and a line per video
- * naming its stills. The model gets the pixels as image blocks; the paths let its tools open the
- * files (copy one into the repo, cut a video with ffmpeg, attach it to a PR).
+ * `[Image #1 "image.png" is saved at: /path]` for each image in a prompt, a line per video
+ * naming its stills, and `[File #1 "report.pdf" (PDF, 2.1 MB) is saved at: /path]` per attached
+ * file. The model gets the pixels as image blocks; the paths let its tools open the files (copy
+ * one into the repo, cut a video with ffmpeg, read a folded paste, unzip an archive).
  */
 export function attachmentPathLines(mentions: readonly IAgentDisplayMention[]): string[] {
 	const lines: string[] = [];
 	let images = 0;
 	let videos = 0;
+	let files = 0;
 	for (const mention of mentions) {
 		const fsPath = mention.resource?.scheme === 'file' ? mention.resource.fsPath : undefined;
-		if (mention.kind === 'image' && mention.image) {
+		if (mention.file) {
+			files += 1;
+			const file = mention.file;
+			const line = attachmentSavedLine({ kind: 'file', name: mention.label, size: file.size, mime: file.mime, path: file.path, pasted: file.pasted, lines: file.lines }, files);
+			if (line) {
+				lines.push(line);
+			}
+		} else if (mention.kind === 'image' && mention.image) {
 			images += 1;
 			const path = mention.image.path ?? fsPath;
 			if (path) {
@@ -223,6 +244,8 @@ export function cloneDisplayMentions(mentions: readonly IAgentDisplayMention[]):
 		} : undefined,
 		// Videos are large and never changed in place (an edit makes a new payload), so the bytes are shared.
 		video: mention.video ? { ...mention.video } : undefined,
+		file: mention.file ? { ...mention.file } : undefined,
+		citation: mention.citation ? { ...mention.citation } : undefined,
 	}));
 }
 
@@ -236,6 +259,8 @@ export interface IAgentMentionHost {
 	openResource?(resource: URI, range?: { startLineNumber: number; endLineNumber: number }): void;
 	/** The chat this composer belongs to; left out of the Chats list. */
 	sessionId?(): string | undefined;
+	/** Shows a cited quote in its reply. False when the reply or the words are gone. */
+	openCitation?(citation: IAgentCitation, chip: HTMLElement | undefined): void;
 }
 
 type MentionMenuView = 'root' | 'files' | 'terminals' | 'chats';
@@ -265,17 +290,19 @@ function filterRows(rows: readonly AgentMentionRow[], query: string): AgentMenti
 	});
 }
 
-const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
-
 function chipText(label: string): string {
 	return label;
 }
 
 export function mentionIconClasses(
-	mention: Pick<IAgentDisplayMention, 'kind' | 'resource'>,
+	mention: Pick<IAgentDisplayMention, 'kind' | 'resource' | 'file'>,
 	modelService: IModelService,
 	languageService: ILanguageService,
 ): string[] {
+	if (mention.file) {
+		// By the name the user knows (the saved copy is named by its hash).
+		return getIconClasses(modelService, languageService, URI.file(`/${mention.file.name}`), FileKind.FILE);
+	}
 	if (mention.kind === 'folder') {
 		return getIconClasses(modelService, languageService, mention.resource, FileKind.FOLDER);
 	}
@@ -297,6 +324,25 @@ export function mentionIconClasses(
 	return ['codicon', `codicon-${icon.id}`];
 }
 
+/** The whole quote, the comment, and what clicking does. */
+function citationHover(citation: IAgentCitation): MarkdownString {
+	const hover = new MarkdownString();
+	for (const line of citation.quote.trim().split('\n')) {
+		hover.appendMarkdown('> ');
+		hover.appendText(line);
+		hover.appendMarkdown('\n');
+	}
+	if (citation.comment) {
+		hover.appendMarkdown('\n\n');
+		hover.appendText(citation.comment);
+	}
+	hover.appendMarkdown('\n\n');
+	hover.appendText(citation.messageId
+		? localize('voltAgent.citationHoverHint', "Click to show it in the reply. Pencil to comment.")
+		: localize('voltAgent.citationHoverHintNoSource', "Pencil to comment."));
+	return hover;
+}
+
 /** `0:09 · 3.2 MB`, or just the size until the video is decoded. */
 export function videoDetail(video: Pick<IAgentVideoPayload, 'duration' | 'size'>): string {
 	return [video.duration ? formatDuration(video.duration) : undefined, formatImageSize(video.size)].filter(Boolean).join(' · ');
@@ -304,15 +350,6 @@ export function videoDetail(video: Pick<IAgentVideoPayload, 'duration' | 'size'>
 
 function truncateLabel(name: string, max = 22): string {
 	return name.length <= max ? name : `${name.slice(0, Math.max(0, max - 3))}...`;
-}
-
-function isImageUri(resource: URI): boolean {
-	const ext = basename(resource.path).split('.').pop()?.toLowerCase() ?? '';
-	return IMAGE_EXTS.has(ext);
-}
-
-function isVideoUri(resource: URI): boolean {
-	return !!videoMimeForExtension(basename(resource.path).split('.').pop() ?? '');
 }
 
 export class AgentMentionController extends Disposable {
@@ -326,6 +363,9 @@ export class AgentMentionController extends Disposable {
 	private readonly imageStrips: AgentImageStrip[] = [];
 	/** Videos still being decoded for their stills; a send waits for them. */
 	private readonly videoPreparations = new Map<IAgentVideoPayload, Promise<void>>();
+	/** Attached files still being saved; a send waits for their paths. */
+	private readonly filePreparations = new Map<IAgentFilePayload, Promise<void>>();
+	private readonly attachmentStore: AgentAttachmentStore;
 	private host: IAgentMentionHost = {};
 	private readonly mentionMenu: AgentMentionMenu;
 	private menuView: MentionMenuView = 'root';
@@ -371,8 +411,12 @@ export class AgentMentionController extends Disposable {
 		@IAgentHistoryService private readonly agentHistory: IAgentHistoryService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IClipboardService private readonly clipboardService: IClipboardService,
+		@IOpenerService private readonly openerService: IOpenerService,
+		@IContextViewService private readonly contextViewService: IContextViewService,
 	) {
 		super();
+		this.attachmentStore = instantiationService.createInstance(AgentAttachmentStore);
 		this.codePreview = this._register(instantiationService.createInstance(MentionCodePreview));
 		this.mentionMenu = this._register(instantiationService.createInstance(AgentMentionMenu, {
 			anchor: () => this.host.anchor,
@@ -431,6 +475,20 @@ export class AgentMentionController extends Disposable {
 			.map(item => item.mention);
 	}
 
+	/** Attached files in the order they appear in the text. */
+	private fileMentions(): IAgentMention[] {
+		const model = this.editor.getModel();
+		if (!model) {
+			return [];
+		}
+		return this.mentions
+			.filter(mention => mention.file && mention.decorationId)
+			.map(mention => ({ mention, range: model.getDecorationRange(mention.decorationId!) }))
+			.filter((item): item is { mention: IAgentMention; range: Range } => !!item.range)
+			.sort((a, b) => Range.compareRangesUsingStarts(a.range, b.range))
+			.map(item => item.mention);
+	}
+
 	private imageMentions(): IAgentMention[] {
 		return this.mediaMentions().filter(mention => mention.kind === 'image');
 	}
@@ -462,9 +520,10 @@ export class AgentMentionController extends Disposable {
 		return this.mediaMentions().length > 0;
 	}
 
-	/** Resolves once every attached video has its stills; undefined when none is pending. */
+	/** Resolves once every attached video has its stills and every attached file is saved; undefined when none is pending. */
 	whenMediaReady(): Promise<void> | undefined {
-		return this.videoPreparations.size ? Promise.all([...this.videoPreparations.values()]).then(() => undefined) : undefined;
+		const pending = [...this.videoPreparations.values(), ...this.filePreparations.values()];
+		return pending.length ? Promise.all(pending).then(() => undefined) : undefined;
 	}
 
 	private syncImageStrip(strip: AgentImageStrip): void {
@@ -608,7 +667,7 @@ export class AgentMentionController extends Disposable {
 	}
 
 	private notifyVideoTooLarge(name: string, size: number): void {
-		this.notificationService.info(localize('voltAgent.videoTooLarge', "{0} is {1}. Videos up to {2} can be previewed and trimmed; it is attached as a file instead.", name, formatImageSize(size), formatImageSize(MAX_VIDEO_BYTES)));
+		this.notificationService.info(localize('voltAgent.videoTooLarge', "{0} is {1}. Videos up to {2} can be previewed and trimmed; it is referenced at its location instead.", name, formatImageSize(size), formatImageSize(MAX_VIDEO_BYTES)));
 	}
 
 	openImageViewer(index: number): void {
@@ -644,19 +703,24 @@ export class AgentMentionController extends Disposable {
 		});
 	}
 
-	/** Adds image and video files picked from disk at the cursor. */
-	async addMediaFiles(resources: readonly URI[]): Promise<void> {
+	/**
+	 * Attaches files picked from disk ("+" > Image, Video or File...) at the cursor: images and
+	 * videos get their chips, project files an `@path` mention and anything else a file
+	 * attachment (see {@link attachmentRoute}).
+	 */
+	async addAttachmentFiles(resources: readonly URI[]): Promise<void> {
 		for (const resource of resources) {
 			const range = this.cursorRangeAfterSpacer();
 			if (!range) {
 				return;
 			}
-			if (isVideoUri(resource)) {
-				await this.insertVideoFromUri(resource, range);
-			} else {
-				await this.insertImageFromUri(resource, range);
-			}
+			await this.insertResource(resource, range, undefined, true);
 		}
+	}
+
+	/** Lets the composer pick a file for the tray and the "+" menu without its own store. */
+	get attachments(): AgentAttachmentStore {
+		return this.attachmentStore;
 	}
 
 	/** Saves a copy under the agent history's attachments, for the path line sent with the prompt. */
@@ -689,6 +753,8 @@ export class AgentMentionController extends Disposable {
 			range: mention.range,
 			image: mention.image,
 			video: mention.video,
+			file: mention.file,
+			citation: mention.citation,
 		}));
 	}
 
@@ -723,6 +789,8 @@ export class AgentMentionController extends Disposable {
 				range: item.range,
 				image: item.image,
 				video: item.video,
+				file: item.file,
+				citation: item.citation,
 			};
 			this.addDecoration(mention, {
 				startLineNumber: start.lineNumber,
@@ -806,19 +874,72 @@ export class AgentMentionController extends Disposable {
 		}
 	}
 
-	/** Text selected in a chat transcript, sent as a `chat_selection` block in place of the chip. */
-	addChatSelectionMention(text: string, agentId: string): void {
+	/**
+	 * Text selected in a chat transcript, sent as a `chat_selection` block in place of the chip.
+	 * With a source (one assistant reply), the chip leads back to the quoted words.
+	 */
+	addChatSelectionMention(text: string, agentId: string, source?: Omit<IAgentCitation, 'agentId' | 'comment'>): void {
 		const insertRange = this.cursorRangeAfterSpacer();
 		if (!insertRange) {
 			return;
 		}
-		const quoted = text.replace(/\s+/g, ' ').trim();
+		const citation: IAgentCitation = { ...source, agentId, quote: source?.quote ?? text.trim() };
 		this.insertMention({
 			id: `selection:${generateUuid()}`,
 			kind: 'selection',
-			label: `"${truncateLabel(quoted, 40)}"`,
-			value: ['', '```chat_selection', `agent_id: ${agentId}`, 'selected_text:', text.trim(), '```', ''].join('\n'),
+			label: citationLabel(citation),
+			value: serializeChatSelection(citation),
+			citation,
 		}, insertRange);
+	}
+
+	/** Opens the comment editor on a quote chip (its pencil). */
+	private editCitationComment(mention: IAgentMention, anchor: HTMLElement): void {
+		const citation = mention.citation;
+		if (!citation) {
+			return;
+		}
+		showCitationCommentEditor(this.contextViewService, {
+			anchor,
+			quote: citation.quote,
+			comment: citation.comment,
+			onSave: comment => {
+				this.setCitationComment(mention, comment);
+				this.editor.focus();
+			},
+			onHide: () => this.editor.focus(),
+		});
+	}
+
+	/** A new comment changes the chip's text (the comment shows in place of the quote). */
+	private setCitationComment(mention: IAgentMention, comment: string): void {
+		const model = this.editor.getModel();
+		const range = mention.decorationId && model ? model.getDecorationRange(mention.decorationId) : undefined;
+		if (!model || !range || !mention.citation) {
+			return;
+		}
+		const citation = withCitationComment(mention.citation, comment);
+		const label = citationLabel(citation);
+		mention.citation = citation;
+		mention.value = serializeChatSelection(citation);
+		if (label === mention.label) {
+			this.addDecoration(mention, range);
+			return;
+		}
+		const wasInserting = this.insertingMention;
+		this.insertingMention = true;
+		try {
+			this.editor.executeEdits('volt-agent-citation-comment', [{ range, text: label }]);
+			mention.label = label;
+			this.addDecoration(mention, {
+				startLineNumber: range.startLineNumber,
+				startColumn: range.startColumn,
+				endLineNumber: range.startLineNumber,
+				endColumn: range.startColumn + label.length,
+			});
+		} finally {
+			this.insertingMention = wasInserting;
+		}
 	}
 
 	addResourceMention(resource: URI, range?: { startLineNumber: number; endLineNumber: number }): void {
@@ -959,6 +1080,10 @@ export class AgentMentionController extends Disposable {
 				e.event.preventDefault();
 				e.event.stopPropagation();
 				this.removeMention(mention);
+			} else if (mention?.citation && e.target.element?.classList.contains('volt-agent-mention-edit')) {
+				e.event.preventDefault();
+				e.event.stopPropagation();
+				this.editCitationComment(mention, e.target.element);
 			}
 		}));
 
@@ -967,13 +1092,15 @@ export class AgentMentionController extends Disposable {
 				return;
 			}
 			const mention = this.mentionFromMouse(e);
-			if (!mention || this.isMentionIconTarget(e)) {
+			if (!mention || this.isMentionIconTarget(e) || e.target.element?.classList.contains('volt-agent-mention-edit')) {
 				return;
 			}
 			if (this.editor.getSelection() && !this.editor.getSelection()?.isEmpty()) {
 				return;
 			}
-			if (mention.kind === 'image' && mention.image) {
+			if (mention.file) {
+				this.openFileAttachment(mention.file);
+			} else if (mention.kind === 'image' && mention.image) {
 				const index = this.imageMentions().indexOf(mention);
 				if (index >= 0) {
 					this.openImageViewer(index);
@@ -982,6 +1109,8 @@ export class AgentMentionController extends Disposable {
 				this.openVideoViewer(mention);
 			} else if (mention.kind === 'file' || mention.kind === 'folder') {
 				void this.openMention(mention);
+			} else if (mention.citation) {
+				this.host.openCitation?.(mention.citation, e.target.element ?? undefined);
 			}
 		}));
 
@@ -1022,6 +1151,16 @@ export class AgentMentionController extends Disposable {
 			}
 			if (e.keyCode === KeyCode.Backspace || e.keyCode === KeyCode.Delete) {
 				this.tryDeleteMention(e, e.keyCode === KeyCode.Delete);
+			}
+			if (e.keyCode === KeyCode.KeyV && e.shiftKey && !e.altKey && (isMacintosh ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) {
+				// Paste as plain text: a large paste stays editable in the composer instead of folding.
+				e.preventDefault();
+				e.stopPropagation();
+				void this.clipboardService.readText().then(text => {
+					if (text && !this.disposed) {
+						this.editor.trigger('keyboard', 'paste', { text, pasteOnNewLine: false, multicursorText: null, mode: null });
+					}
+				});
 			}
 		}));
 	}
@@ -1643,12 +1782,23 @@ export class AgentMentionController extends Disposable {
 		};
 	}
 
-	private async insertResource(resource: URI, replaceRange: IRange, fileKind?: FileKind): Promise<void> {
-		if (fileKind !== FileKind.FOLDER && isImageUri(resource)) {
+	/**
+	 * `attaching`: the user dropped, pasted or picked the file to attach it, rather than naming it
+	 * from the @ panel. Then a file from outside the project is copied in as an attachment and an
+	 * image type no model takes is called out (see {@link attachmentRoute}).
+	 */
+	private async insertResource(resource: URI, replaceRange: IRange, fileKind?: FileKind, attaching = false): Promise<void> {
+		const name = basename(resource.path) || resource.path;
+		const route = fileKind === FileKind.FOLDER ? undefined : attachmentRoute(name, undefined);
+		if (route === 'image') {
 			await this.insertImageFromUri(resource, replaceRange);
 			return;
 		}
-		if (fileKind !== FileKind.FOLDER && isVideoUri(resource)) {
+		if (route === 'heic') {
+			await this.insertHeicFromUri(resource, replaceRange);
+			return;
+		}
+		if (route === 'video') {
 			await this.insertVideoFromUri(resource, replaceRange);
 			return;
 		}
@@ -1661,12 +1811,174 @@ export class AgentMentionController extends Disposable {
 				kind = 'file';
 			}
 		}
+		if (attaching && kind === 'file' && !this.isProjectResource(resource)) {
+			await this.attachFileFromUri(resource, replaceRange, route === 'otherImage');
+			return;
+		}
+		if (attaching && route === 'otherImage') {
+			this.attachmentStore.notifyNotSentAsImage(name);
+		}
 		this.insertMention({
 			id: resource.toString(),
 			kind,
 			label: truncateLabel(basename(resource.path) || resource.path),
 			resource,
 		}, replaceRange);
+	}
+
+	/** Inside the project (or a workspace folder): the agent reads it there, so it stays a mention. */
+	private isProjectResource(resource: URI): boolean {
+		const root = this.searchRoot();
+		return (!!root && isEqualOrParent(resource, root)) || this.workspaceContextService.isInsideWorkspace(resource);
+	}
+
+	/** A file from outside the project: copied into the attachment store, or referenced in place past the limit. */
+	private async attachFileFromUri(resource: URI, replaceRange: IRange, notAnImage: boolean): Promise<void> {
+		const name = basename(resource.path) || resource.path;
+		const asMention = () => this.insertMention({ id: resource.toString(), kind: 'file', label: truncateLabel(name), resource }, replaceRange);
+		let size: number | undefined;
+		try {
+			size = (await this.fileService.stat(resource)).size;
+		} catch {
+			// Unreadable: a plain mention still names it.
+		}
+		if (size === undefined) {
+			asMention();
+			return;
+		}
+		if (size > MAX_FILE_ATTACHMENT_BYTES) {
+			this.attachmentStore.notifyTooLarge(name, size, true);
+			asMention();
+			return;
+		}
+		if (notAnImage) {
+			this.attachmentStore.notifyNotSentAsImage(name);
+		}
+		this.insertFileAttachment(name, undefined, size, replaceRange, resource);
+	}
+
+	/**
+	 * A file without a path of its own (a pasted file, a browser drag) or with one: routed like
+	 * {@link insertResource} with `attaching`, reading the bytes only when it must be copied.
+	 * `range` undefined: wherever the cursor is once the bytes are read (a paste).
+	 */
+	private async attachBlob(file: File, range: IRange | undefined): Promise<void> {
+		const at = () => range ?? this.cursorRange();
+		const path = getPathForFile(file);
+		if (path) {
+			await this.insertResource(URI.file(path), at(), undefined, true);
+			return;
+		}
+		const route = attachmentRoute(file.name, file.type);
+		const name = file.name || (route === 'image' || route === 'heic' ? `image.${imageExtension(file.type || 'image/png')}` : 'file');
+		if (route === 'video' && file.size <= MAX_VIDEO_BYTES) {
+			this.insertVideo(new Uint8Array(await file.arrayBuffer()), file.type || videoMimeForExtension(name.split('.').pop() ?? '') || 'video/mp4', at(), file.name);
+			return;
+		}
+		if (route === 'image') {
+			this.insertImage(new Uint8Array(await file.arrayBuffer()), file.type || storageMime(name, undefined), at(), file.name);
+			return;
+		}
+		if (file.size > MAX_FILE_ATTACHMENT_BYTES) {
+			this.attachmentStore.notifyTooLarge(name, file.size, false);
+			return;
+		}
+		const bytes = new Uint8Array(await file.arrayBuffer());
+		if (route === 'heic') {
+			await this.insertHeic(bytes, name, at());
+			return;
+		}
+		if (route === 'otherImage') {
+			this.attachmentStore.notifyNotSentAsImage(name);
+		}
+		this.insertFileAttachment(name, file.type, file.size, at(), bytes);
+	}
+
+	private async insertHeicFromUri(resource: URI, replaceRange: IRange): Promise<void> {
+		const name = basename(resource.path);
+		try {
+			const file = await this.fileService.readFile(resource);
+			await this.insertHeic(file.value.buffer, name, replaceRange);
+		} catch {
+			this.insertMention({ id: resource.toString(), kind: 'file', label: truncateLabel(name), resource }, replaceRange);
+		}
+	}
+
+	/** A HEIC/HEIF photo joins as a JPEG image; when it cannot be converted, as a file. */
+	private async insertHeic(bytes: Uint8Array, name: string, replaceRange: IRange): Promise<void> {
+		const jpeg = await this.attachmentStore.heicToJpeg(bytes);
+		if (this.disposed) {
+			return;
+		}
+		if (jpeg) {
+			this.insertImage(jpeg.bytes, 'image/jpeg', replaceRange, heicJpegName(name));
+			return;
+		}
+		this.attachmentStore.notifyHeicFailed(name);
+		this.insertFileAttachment(name, 'image/heic', bytes.byteLength, replaceRange, bytes);
+	}
+
+	/** A file chip; the copy is saved in the background and a send waits for it (see {@link whenMediaReady}). */
+	private insertFileAttachment(name: string, mime: string | undefined, size: number, replaceRange: IRange, source: Uint8Array | URI, extra?: Pick<IAgentFilePayload, 'pasted' | 'lines'>): void {
+		const id = `file-${generateUuid()}`;
+		const label = this.uniqueMediaName(name || 'file');
+		const file: IAgentFilePayload = { id, name: label, mime: storageMime(name, mime), size, ...extra };
+		this.insertMention({ id, kind: 'file', label, file }, replaceRange);
+		this.prepareFile(file, source);
+	}
+
+	private prepareFile(file: IAgentFilePayload, source: Uint8Array | URI): void {
+		const work = (async () => {
+			const bytes = URI.isUri(source) ? (await this.fileService.readFile(source)).value.buffer : source;
+			file.path = await this.attachmentStore.save(bytes, file.mime);
+		})().catch(() => undefined);
+		this.filePreparations.set(file, work);
+		void work.finally(() => {
+			this.filePreparations.delete(file);
+			if (this.disposed) {
+				return;
+			}
+			const holders = this.mentionCatalog.filter(mention => mention.file === file);
+			if (!file.path) {
+				this.attachmentStore.notifySaveFailed(file.name);
+				holders.forEach(mention => this.removeMention(mention));
+				return;
+			}
+			for (const mention of holders) {
+				// The saved copy: what the chip opens and the transcript shows.
+				mention.resource = URI.file(file.path);
+				this.refreshMentionDecoration(mention);
+			}
+		});
+	}
+
+	/** Pasted text past the fold limit: a `Pasted text` chip in place of the text. */
+	private foldPastedText(text: string): void {
+		const selection = this.editor.getSelection();
+		if (selection && !selection.isEmpty()) {
+			this.editor.executeEdits('volt-agent-paste-fold', [{ range: selection, text: '' }]);
+		}
+		const range = this.cursorRangeAfterSpacer();
+		if (!range) {
+			return;
+		}
+		const bytes = new TextEncoder().encode(text);
+		this.insertFileAttachment(PASTED_TEXT_NAME, 'text/plain', bytes.byteLength, range, bytes, { pasted: true, lines: countLines(text) });
+	}
+
+	/** Text opens in an editor; PDFs, archives and the rest in their own app. */
+	private openFileAttachment(file: IAgentFilePayload): void {
+		if (!file.path) {
+			return;
+		}
+		const resource = URI.file(file.path);
+		if (!isTextAttachment(file.name, file.mime)) {
+			void this.openerService.open(resource, { openExternal: true });
+		} else if (this.host.openResource) {
+			this.host.openResource(resource);
+		} else {
+			void this.editorService.openEditor({ resource, options: { pinned: true } });
+		}
 	}
 
 	private async insertImageFromUri(resource: URI, replaceRange: IRange): Promise<void> {
@@ -1735,7 +2047,7 @@ export class AgentMentionController extends Disposable {
 	/** Pasted screenshots are all `image.png`; number repeats so the text can tell them apart. */
 	private uniqueMediaName(fileName: string): string {
 		const name = truncateLabel(fileName, 40);
-		const taken = new Set(this.mentions.filter(mention => mention.kind === 'image' || mention.kind === 'video').map(mention => mention.label));
+		const taken = new Set(this.mentions.filter(mention => mention.kind === 'image' || mention.kind === 'video' || mention.file).map(mention => mention.label));
 		if (!taken.has(name)) {
 			return name;
 		}
@@ -1830,6 +2142,12 @@ export class AgentMentionController extends Disposable {
 						inlineClassName: `volt-agent-mention-size${hoverClass}`,
 						inlineClassNameAffectsLetterSpacing: true,
 						attachedData: { mentionId: mention.id },
+					} : mention.citation ? {
+						// The quote's pencil: add or change the comment.
+						content: '\u00a0',
+						inlineClassName: `volt-agent-mention-edit codicon codicon-edit${hoverClass}`,
+						inlineClassNameAffectsLetterSpacing: true,
+						attachedData: { mentionId: mention.id },
 					} : undefined,
 					stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
 					hoverMessage: mention.resource && mention.range ? undefined : this.hoverFor(mention),
@@ -1856,6 +2174,9 @@ export class AgentMentionController extends Disposable {
 		}
 		if (mention.kind === 'video' && mention.video) {
 			return videoDetail(mention.video);
+		}
+		if (mention.file) {
+			return fileChipDetail(mention.file);
 		}
 		return undefined;
 	}
@@ -1963,6 +2284,11 @@ export class AgentMentionController extends Disposable {
 	}
 
 	private tagValueFor(mention: IAgentMention): string {
+		if (mention.file) {
+			// The saved path follows the prompt (see attachmentPathLines), numbered the same way.
+			const number = this.fileMentions().indexOf(mention) + 1;
+			return number > 0 ? `[File #${number}: ${mention.label}]` : `[File: ${mention.label}]`;
+		}
 		if (mention.kind === 'image' && mention.image) {
 			// The pixels and the saved path follow the prompt, numbered the same way.
 			const number = this.imageMentions().indexOf(mention) + 1;
@@ -2002,8 +2328,14 @@ export class AgentMentionController extends Disposable {
 		if (mention.kind === 'image' && mention.image) {
 			return new MarkdownString(localize('voltAgent.imageChipHover', "{0} · {1} — click to open", mention.label, formatImageSize(mention.image.bytes.byteLength)));
 		}
+		if (mention.file) {
+			return new MarkdownString(localize('voltAgent.fileChipHover', "{0} · {1} · {2}. Click to open", mention.label, mention.file.pasted ? localize('voltAgent.pastedTextKind', "Text") : fileTypeLabel(mention.file.name, mention.file.mime), formatAttachmentSize(mention.file.size)));
+		}
 		if (mention.kind === 'video' && mention.video) {
 			return new MarkdownString(localize('voltAgent.videoChipHover', "{0} · {1} — click to trim, cut out parts or pick a frame", mention.label, videoDetail(mention.video)));
+		}
+		if (mention.citation) {
+			return citationHover(mention.citation);
 		}
 		return new MarkdownString(this.tagValueFor(mention));
 	}
@@ -2190,7 +2522,7 @@ export class AgentMentionController extends Disposable {
 		if (editors.length) {
 			for (const editor of editors) {
 				if (editor.resource) {
-					await this.insertResource(editor.resource, range);
+					await this.insertResource(editor.resource, range, undefined, true);
 				}
 			}
 			return;
@@ -2200,51 +2532,44 @@ export class AgentMentionController extends Disposable {
 			return;
 		}
 		for (const file of Array.from(files)) {
-			if (file.type.startsWith('video/')) {
-				const path = (file as File & { path?: string }).path;
-				if (path) {
-					await this.insertResource(URI.file(path), range);
-				} else if (file.size > MAX_VIDEO_BYTES) {
-					this.notifyVideoTooLarge(file.name, file.size);
-				} else {
-					this.insertVideo(new Uint8Array(await file.arrayBuffer()), file.type, range, file.name);
-				}
-				continue;
-			}
-			if (file.type.startsWith('image/')) {
-				const bytes = new Uint8Array(await file.arrayBuffer());
-				this.insertImage(bytes, file.type || 'image/png', range, file.name);
-				continue;
-			}
-			const path = (file as File & { path?: string }).path;
-			if (path) {
-				await this.insertResource(URI.file(path), range);
-			}
+			await this.attachBlob(file, range);
 		}
 	}
 
+	/**
+	 * Files on the clipboard (a screenshot, a file copied in Finder) are attached; text past
+	 * the fold limit becomes a `Pasted text` attachment (⌘⇧V pastes it as text instead).
+	 */
 	private handlePaste(e: ClipboardEvent): void {
-		const files = Array.from(e.clipboardData?.items ?? [])
-			.filter(item => item.type.startsWith('image/') || item.type.startsWith('video/'))
+		const data = e.clipboardData;
+		if (!data) {
+			return;
+		}
+		const files = Array.from(data.items ?? [])
+			.filter(item => item.kind === 'file')
 			.map(item => item.getAsFile())
 			.filter((file): file is File => !!file);
-		if (!files.length) {
+		if (files.length) {
+			e.preventDefault();
+			e.stopPropagation();
+			void (async () => {
+				for (const file of files) {
+					await this.attachBlob(file, undefined);
+				}
+			})();
+			return;
+		}
+		const text = data.getData('text/plain');
+		const model = this.editor.getModel();
+		if (!text || !model) {
+			return;
+		}
+		const replaced = (this.editor.getSelections() ?? []).reduce((sum, selection) => sum + model.getValueLengthInRange(selection), 0);
+		if (!shouldFoldPaste(text, model.getValueLength(), replaced)) {
 			return;
 		}
 		e.preventDefault();
 		e.stopPropagation();
-		for (const file of files) {
-			if (file.type.startsWith('video/') && file.size > MAX_VIDEO_BYTES) {
-				this.notifyVideoTooLarge(file.name, file.size);
-				continue;
-			}
-			void file.arrayBuffer().then(buffer => {
-				if (file.type.startsWith('video/')) {
-					this.insertVideo(new Uint8Array(buffer), file.type, this.cursorRange(), file.name);
-				} else {
-					this.insertImage(new Uint8Array(buffer), file.type || 'image/png', this.cursorRange(), file.name);
-				}
-			});
-		}
+		this.foldPastedText(text);
 	}
 }

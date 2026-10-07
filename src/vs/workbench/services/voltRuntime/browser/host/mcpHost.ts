@@ -260,6 +260,20 @@ export class McpHost extends Disposable {
 		};
 	}
 
+	/**
+	 * Lets servers that failed to start be tried on the next run instead of after the retry delay
+	 * (the user just fixed their config). Live connections stay: other chats may be using them.
+	 */
+	forgetFailed(): void {
+		for (const [key, connection] of [...this.settled]) {
+			if (!connection?.alive) {
+				connection?.dispose();
+				this.connections.delete(key);
+				this.settled.delete(key);
+			}
+		}
+	}
+
 	private closeAll(): void {
 		for (const entry of this.connections.values()) {
 			void entry.value.then(connection => connection?.dispose());

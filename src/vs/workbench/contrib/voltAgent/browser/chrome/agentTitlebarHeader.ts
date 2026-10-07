@@ -28,7 +28,8 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { IVoltSessionContextService, projectIdForRoot, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { scratchProjectLabel } from '../home/agentHomeWorkspace.js';
 import { ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { localEnvironmentLabel } from '../home/agentHomeFilter.js';
@@ -536,6 +537,9 @@ class AgentTitlebarHeaderContribution extends Disposable {
 	}
 
 	private projectName(folder: URI): string {
+		if (this.sessionContext.getProject(projectIdForRoot(folder))?.scratch) {
+			return scratchProjectLabel();
+		}
 		const project = this.sessionContext.projects.find(p => p.root.toString() === folder.toString());
 		return project?.displayName || basename(folder) || folderDisplayPath(folder);
 	}

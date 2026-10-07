@@ -54,6 +54,8 @@ class FakeAgent implements IAgentProvider {
 	readonly label = 'Fake agent';
 	readonly starts: IAgentStartRequest[] = [];
 	readonly prompts: IAgentMessage[] = [];
+	/** The handle each prompt went to. */
+	readonly promptHandles: string[] = [];
 	readonly disposed: string[] = [];
 	readonly turns: Turn<IAgentMessage>[] = [];
 	private readonly live = new Map<string, number>();
@@ -67,6 +69,7 @@ class FakeAgent implements IAgentProvider {
 	isLive() { return true; }
 	async *send(handle: IAgentSessionHandle, message: IAgentMessage, _profile: IProviderProfile, token: CancellationToken): AsyncIterable<IVoltEvent> {
 		this.prompts.push(message);
+		this.promptHandles.push(handle.id);
 		const running = (this.live.get(handle.id) ?? 0) + 1;
 		this.live.set(handle.id, running);
 		this.maxConcurrent = Math.max(this.maxConcurrent, running);
@@ -167,6 +170,7 @@ suite('Agent runtime orchestration', () => {
 			stub({ rootFor: () => undefined }),
 			stub({ open: () => ({ setMeta: () => { } }), setAgentTitle: async () => { } }),
 			stub({}),
+			stub({ run: async () => undefined, needsRetry: () => false }),
 			stub({ files: { get: () => undefined } }),
 			stub({ userHome: async () => { throw new Error('no home'); } }),
 			stub({}),
@@ -347,6 +351,94 @@ suite('Agent runtime orchestration', () => {
 		assert.ok(agent.prompts[1].text.includes('- Add tests'));
 		assert.ok(!agent.prompts[1].text.includes('Write the route'));
 		assert.strictEqual(service.getOrCreateSession('chat').messages.at(-1)?.content, 'Tests are out of scope.');
+	});
+
+	test('restart: the idle agent is let go and the next prompt starts a fresh one with the conversation', async () => {
+		const { service, agent, ref, waitEnd } = await setup('agent');
+		await waitEnd(await service.send('chat', { text: 'one', mode: 'agent', providerRef: ref }));
+		const [first] = agent.promptHandles;
+		// The first run leaves a spare behind for the next chat; it was started with the old setup.
+		await waitFor(() => agent.starts.length === 2, 'the replacement spare');
+		const spare = `h${agent.starts.length}`;
+
+		assert.strictEqual(await service.restartAgent('chat'), true);
+		assert.ok(agent.disposed.includes(first), 'the old agent process is stopped');
+		await waitFor(() => agent.disposed.includes(spare), 'the stale spare to stop');
+
+		assert.strictEqual((await waitEnd(await service.send('chat', { text: 'two', mode: 'agent', providerRef: ref }))).reason, 'done');
+		assert.notStrictEqual(agent.promptHandles[1], first, 'a fresh agent');
+		assert.notStrictEqual(agent.promptHandles[1], spare, 'not the stale spare either');
+		const lead = agent.prompts[1].lead ?? '';
+		assert.ok(lead.includes('<conversation_so_far>') && lead.includes('User: one') && lead.includes('Assistant'), 'the fresh agent gets the conversation');
+		assert.deepStrictEqual(service.getOrCreateSession('chat').messages.map(message => message.content), ['one', 'done', 'two', 'done']);
+		assert.strictEqual(await service.restartAgent('never-used'), true, 'a chat with no agent yet has nothing to stop');
+	});
+
+	test('restart refuses while a turn runs; with cancel it stops the turn first', async () => {
+		const { service, agent, ref, waitEnd } = await setup('agent');
+		agent.turns.push(async function* (_message, token) {
+			yield { type: 'text.delta', id: 't', delta: 'working ' };
+			await new Promise<void>(resolve => {
+				const listener = token.onCancellationRequested(() => {
+					listener.dispose();
+					resolve();
+				});
+			});
+			yield { type: 'run.end', runId: 'x', reason: 'abort' };
+		});
+		const first = await service.send('chat', { text: 'one', mode: 'agent', providerRef: ref });
+		await waitFor(() => agent.prompts.length === 1, 'the first prompt');
+		const [working] = agent.promptHandles;
+		assert.strictEqual(await service.restartAgent('chat'), false);
+		assert.ok(!agent.disposed.includes(working), 'nothing stopped while the turn runs');
+
+		assert.strictEqual(await service.restartAgent('chat', { cancel: true }), true);
+		assert.strictEqual((await waitEnd(first)).reason, 'abort');
+		assert.ok(agent.disposed.includes(working));
+		await waitEnd(await service.send('chat', { text: 'two', mode: 'agent', providerRef: ref }));
+		assert.notStrictEqual(agent.promptHandles[1], working, 'the next prompt starts a fresh agent');
+		assert.strictEqual(agent.maxConcurrent, 1);
+	});
+
+	test('/compact on an agent with no compaction of its own: its summary replaces the context and the next prompt starts fresh', async () => {
+		const { service, agent, ref, waitEnd } = await setup('agent');
+		assert.strictEqual(service.supportsCommand('chat', 'compact'), false, 'nothing to compact before the first reply');
+		await waitEnd(await service.send('chat', { text: 'build the parser', mode: 'agent', providerRef: ref }));
+		assert.strictEqual(service.supportsCommand('chat', 'compact'), true);
+		agent.turns.push(async function* () {
+			yield { type: 'text.delta', id: 's', delta: 'Summary of the conversation so far: the parser is built.' };
+			yield { type: 'run.end', runId: 'x', reason: 'done' };
+		});
+		assert.strictEqual((await waitEnd(await service.send('chat', { text: '/compact keep the grammar decisions', mode: 'agent', providerRef: ref }))).reason, 'done');
+		const asked = agent.prompts.at(-1)!.text;
+		const compactedOn = agent.promptHandles.at(-1);
+		assert.ok(asked.includes('Compact this conversation') && asked.includes('keep the grammar decisions'), 'the agent was asked for a hand-off summary');
+		assert.deepStrictEqual(service.getOrCreateSession('chat').messages.map(message => message.role), ['user', 'assistant'], 'the summary stands in for the history');
+		assert.ok(agent.disposed.length >= 1, 'the agent session is let go');
+
+		await waitEnd(await service.send('chat', { text: 'now add tests', mode: 'agent', providerRef: ref }));
+		assert.notStrictEqual(agent.promptHandles.at(-1), compactedOn, 'a fresh agent');
+		const lead = agent.prompts.at(-1)!.lead ?? '';
+		assert.ok(lead.includes('the parser is built') && !lead.includes('build the parser'), 'briefed with the summary, not the old turns');
+	});
+
+	test('/compact in a native chat summarizes the transcript without a model turn', async () => {
+		const { service, model, internals, ref, waitEnd } = await setup('model');
+		for (const text of ['one', 'two', 'three']) {
+			await waitEnd(await service.send('chat', { text, mode: 'agent', providerRef: ref }));
+		}
+		model.turns.push(async function* () {
+			yield { type: 'text.delta', id: 's', delta: 'SUMMARY' };
+			yield { type: 'finish', reason: 'stop' };
+		});
+		const calls = model.requests.length;
+		await waitEnd(await service.send('chat', { text: '/compact', mode: 'agent', providerRef: ref }));
+		const during = model.requests.slice(calls);
+		assert.ok(during.some(request => request.messages[0]?.role === 'system' && !request.tools?.length), 'the summarizer ran');
+		assert.ok(!during.some(request => request.messages.some(message => typeof message.content === 'string' && message.content.trim() === '/compact')), 'the model never saw /compact as a prompt');
+		const transcript = internals.sessions.get('chat')!.deepseek!.messages.map(message => message.content).join('\n');
+		assert.ok(transcript.includes('SUMMARY'));
+		assert.ok(!service.getOrCreateSession('chat').messages.some(message => message.content === '/compact'), 'the command is not part of the conversation');
 	});
 
 	test('steering a live native run is not a user turn', async () => {

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, append, getWindow } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow } from '../../../../../base/browser/dom.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
@@ -42,6 +42,15 @@ export class AgentThreadView extends Disposable {
 		append(this.element, $('.volt-agent-thread-fade.top'));
 		append(this.element, $('.volt-agent-thread-fade.bottom'));
 		this._register(this.scroll.onScroll(() => this.syncStuckTurns()));
+		// A native scroll (scrollIntoView for a footnote or a cited quote, find, a drag-select past
+		// the edge) moves the element under the scrollable; catch the scrollable up, or the next
+		// wheel turn would jump back.
+		this._register(addDisposableListener(this.inner, 'scroll', () => {
+			const scrollTop = this.inner.scrollTop;
+			if (Math.abs(this.scroll.getScrollPosition().scrollTop - scrollTop) > 1) {
+				this.scroll.setScrollPosition({ scrollTop });
+			}
+		}));
 	}
 
 	/** Pins fade edges and marks the sent card that is stuck at the top. Runs on every scroll. */

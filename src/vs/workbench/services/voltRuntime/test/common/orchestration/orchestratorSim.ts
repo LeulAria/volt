@@ -85,6 +85,7 @@ export class OrchSim {
 			...(extra.clientRequestId ? { clientRequestId: extra.clientRequestId } : {}),
 			...(extra.toolCallId ? { toolCallId: extra.toolCallId } : {}),
 			...(extra.scope ? { scope: extra.scope } : {}),
+			...(extra.previousTaskId ? { previousTaskId: extra.previousTaskId } : {}),
 		};
 		return this.run({ type: 'task.spawn', spawn });
 	}

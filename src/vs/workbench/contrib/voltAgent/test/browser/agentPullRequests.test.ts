@@ -310,6 +310,7 @@ suite('Volt agent pull requests', () => {
 		assert.ok(!shouldSettleForPullRequests([merged], { ...chat, pinned: true }));
 		assert.ok(!shouldSettleForPullRequests([merged], { ...chat, busy: true }));
 		assert.ok(!shouldSettleForPullRequests([merged], { ...chat, settled: true }));
+		assert.ok(!shouldSettleForPullRequests([merged], { ...chat, autoSettle: false }), 'Auto-settle turned off for the chat');
 		assert.ok(!shouldSettleForPullRequests([{ ...merged, settleHandled: true }], chat), 'moving it back sticks');
 		assert.ok(!shouldSettleForPullRequests([merged], chat, false), 'merges can be told not to settle');
 		assert.ok(shouldSettleForPullRequests([link(3, 'closed', {}, { closedAt: 900 })], chat, false), 'a close always settles');

@@ -49,6 +49,7 @@ import { highlight, ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js
 import { agentMarkdownRenderOptions, decorateAgentMarkdown, normalizeMathDelimiters } from './agentMarkdown.js';
 import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../preview/localPreview.js';
 import { AccessDecisionScope } from '../../../../services/voltRuntime/common/access/accessTypes.js';
+import { formatAttachmentSize } from '../../../../services/voltRuntime/common/fileAttachments.js';
 import { FileChangePreview } from '../review/fileChangePreview.js';
 import { chooseFileChangeDiffStyle, formatChangeStats, type FileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
 import { fileChangeGroupTitle, fileChangeSource, ThreadPart } from '../chrome/agentTimeline.js';
@@ -81,6 +82,8 @@ export interface IBlockRenderContext {
 	readonly onWheel?: (event: IMouseWheelEvent) => void;
 	/** Shows a chart or page full size; `store` is disposed when it closes. */
 	readonly onExpandVisual?: (title: string, content: HTMLElement, store: IDisposable) => void;
+	/** Runs a reply's shell block in the chat's terminal. */
+	readonly onRunInTerminal?: (command: string) => void;
 }
 
 export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IBlockRenderContext): void {
@@ -122,7 +125,7 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 			renderApprovalBlock(parent, block, ctx);
 			return;
 		case 'answers':
-			renderAnswersBlock(parent, block);
+			renderAnswersBlock(parent, block, ctx);
 			return;
 		case 'plan':
 			renderPlanBlock(parent, block, ctx);
@@ -157,7 +160,7 @@ function renderPlanBlock(parent: HTMLElement, block: IPlanBlock, ctx: IBlockRend
 }
 
 /** Cursor's "Answers" card: each question in muted text over the user's answer, with hairlines between. */
-function renderAnswersBlock(parent: HTMLElement, block: IAnswersBlock): void {
+function renderAnswersBlock(parent: HTMLElement, block: IAnswersBlock, ctx: IBlockRenderContext): void {
 	const card = append(parent, $('.volt-agent-answers'));
 	const header = append(card, $('.volt-agent-answers-header'));
 	append(header, $('span.volt-agent-answers-icon')).appendChild(renderIcon(Codicon.commentDiscussion));
@@ -173,7 +176,28 @@ function renderAnswersBlock(parent: HTMLElement, block: IAnswersBlock): void {
 		}
 		const row = append(body, $('.volt-agent-answers-pair'));
 		append(row, $('.volt-agent-answers-question.volt-agent-searchable')).textContent = pair.question;
-		append(row, $('.volt-agent-answers-answer.volt-agent-searchable')).textContent = pair.answer;
+		if (pair.answer) {
+			append(row, $('.volt-agent-answers-answer.volt-agent-searchable')).textContent = pair.answer;
+		}
+		const files = pair.attachments;
+		if (files?.length) {
+			const list = append(row, $('.volt-agent-answers-files'));
+			for (const file of files) {
+				const chip = append(list, $('span.volt-agent-answers-file'));
+				chip.appendChild(renderIcon(file.kind === 'image' ? Codicon.fileMedia : Codicon.file));
+				append(chip, $('span.volt-agent-answers-file-name.volt-agent-searchable')).textContent = file.name;
+				append(chip, $('span.volt-agent-answers-file-size')).textContent = formatAttachmentSize(file.size);
+				const path = file.path;
+				if (path && ctx.onOpenPath) {
+					chip.classList.add('openable');
+					chip.title = path;
+					ctx.store.add(addDisposableListener(chip, 'click', e => {
+						e.preventDefault();
+						ctx.onOpenPath?.(path);
+					}));
+				}
+			}
+		}
 	});
 }
 
@@ -185,6 +209,8 @@ function codeCardOptions(ctx: IBlockRenderContext): ICodeCardOptions {
 		onCopyText: ctx.onCopyText,
 		onDidChangeSize: ctx.onScroll,
 		onOpenPath: ctx.onOpenPath,
+		// Only finished replies: a block still streaming may not be the whole command yet.
+		...(ctx.onRunInTerminal && !ctx.streaming ? { onRunInTerminal: ctx.onRunInTerminal } : {}),
 		fileIconClasses: path => ctx.instantiationService.invokeFunction(accessor => getIconClasses(accessor.get(IModelService), accessor.get(ILanguageService), URI.file(path), FileKind.FILE)),
 	};
 }

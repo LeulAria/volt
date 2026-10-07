@@ -58,6 +58,7 @@ import '../review/agentChangesActions.js';
 import { AgentTurnsViewContribution } from '../review/agentTurnsView.js';
 import '../review/agentEditsEditor.js';
 import '../preview/browserAutomation.js';
+import './agentSessionCommands.js';
 import { AgentBaselineContentProvider } from '../review/agentEditsService.js';
 import { AgentEditor } from './agentEditor.js';
 import { AgentChangesMultiDiffSourceResolver, AgentSnapshotContentProvider, parseAgentChangesSourceUri } from '../review/agentSessionChangesService.js';
@@ -107,6 +108,9 @@ import {
 	INLINE_COMMENT_UNDO_COMMAND_ID,
 } from '../review/inlineCommentActions.js';
 import { InlineCommentController } from '../review/inlineCommentController.js';
+import '../../common/agentWorkflowSettings.js';
+import '../schedules/agentSchedules.contribution.js';
+import './agentWorkflowCommands.js';
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'volt.agent',

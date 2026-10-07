@@ -5,6 +5,7 @@
 
 import { $, addDisposableListener, append, getWindow, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { Codicon } from '../../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -43,6 +44,26 @@ export interface ICodeCardOptions {
 	readonly onOpenPath?: (path: string, startLine?: number, endLine?: number) => void;
 	/** Icon theme classes for the cited file. */
 	readonly fileIconClasses?: (path: string) => readonly string[];
+	/** Runs a shell block in the chat's terminal; absent while the reply still streams. */
+	readonly onRunInTerminal?: (command: string) => void;
+}
+
+const SHELL_LANGS = new Set(['sh', 'bash', 'zsh', 'fish', 'shell', 'console', 'powershell', 'pwsh']);
+
+/**
+ * The command a shell block runs, or undefined when it should not offer Run (T3's rule): empty,
+ * ending in a line continuation, or holding control or invisible format characters that could make
+ * what is shown differ from what the terminal receives. A `$ ` prompt prefix is dropped.
+ */
+export function runnableShellCommand(language: string | undefined, code: string): string | undefined {
+	if (!SHELL_LANGS.has((language ?? '').trim().toLowerCase())) {
+		return undefined;
+	}
+	const command = code.replace(/\n$/, '').split('\n').map(line => line.replace(/^\$ /, '')).join('\n').trim();
+	if (!command || command.endsWith('\\') || /[\p{Cc}\p{Cf}]/u.test(command.replace(/[\n\t]/g, ''))) {
+		return undefined;
+	}
+	return command;
 }
 
 /** A code reference the way Cursor's agents write one: ```12:40:src/app.ts */
@@ -117,7 +138,12 @@ export function renderCodeCard(parent: HTMLElement, language: string | undefined
 	if (!citation && (DIFF_LANGS.has(lang) || (!lang && looksLikeUnifiedDiff(text)))) {
 		return renderDiffCard(parent, text, options);
 	}
-	const shell = createCodeCardShell(parent, options, [], text);
+	const command = options.onRunInTerminal ? runnableShellCommand(lang, text) : undefined;
+	const run = options.onRunInTerminal;
+	const actions: ICodeCardAction[] = command && run
+		? [{ label: localize('voltAgent.runInTerminal', "Run in terminal"), icon: Codicon.play, run: () => run(command) }]
+		: [];
+	const shell = createCodeCardShell(parent, options, actions, text);
 	shell.card.dataset.lang = lang || 'text';
 	if (citation) {
 		renderCitationHeader(shell.card, citation, options);

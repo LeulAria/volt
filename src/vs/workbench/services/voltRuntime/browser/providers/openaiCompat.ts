@@ -12,6 +12,7 @@ import { contextLabelFromTokens, pickNumber, pickText } from '../../common/model
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
 import { IModelOptionDescriptor, MODEL_OPTION_REASONING, reasoningOption } from '../../common/models/modelOptions.js';
 import { OpenAiToolAssembler } from '../../common/harness/openaiToolStream.js';
+import { IOpenAiReasoningFields, openAiReasoningText, ProviderReasoning, reasoningDetails } from '../../common/harness/reasoningStream.js';
 import { toOpenAiMessages, toOpenAiTools } from '../../common/harness/providerMessages.js';
 import { parseSseData, requestSseStream, requestText } from '../host/httpStream.js';
 
@@ -24,13 +25,14 @@ interface IListedModel {
 	context_window?: number;
 	max_model_len?: number;
 	top_provider?: { context_length?: number };
+	/** OpenRouter: the request parameters the model takes, e.g. `reasoning`. */
+	supported_parameters?: string[];
 }
 
 /** Reasoning models accept an effort hint; chat models reject the field outright. */
-function reasoningDescriptors(modelId: string): IModelOptionDescriptor[] | undefined {
+function looksLikeReasoningModel(modelId: string): boolean {
 	const id = modelId.toLowerCase();
-	const reasoning = /^o\d/.test(id) || id.includes('gpt-5') || id.includes('reason') || id.includes('thinking');
-	return reasoning ? [reasoningOption(['auto', 'low', 'medium', 'high'], 'auto')] : undefined;
+	return /^o\d/.test(id) || id.includes('gpt-5') || id.includes('reason') || id.includes('thinking');
 }
 
 export class OpenAICompatProvider implements IModelProvider {
@@ -73,18 +75,22 @@ export class OpenAICompatProvider implements IModelProvider {
 	async *stream(req: IModelRequest, token: CancellationToken): AsyncIterable<IVoltEvent> {
 		const url = `${this.baseURL(req.profile)}/chat/completions`;
 		const selected = req.options?.[MODEL_OPTION_REASONING];
-		const effort = reasoningDescriptors(req.modelId) && typeof selected === 'string' && selected !== 'auto' && selected !== 'off' ? selected : undefined;
+		const effort = this.supportsReasoning(req.modelId) && typeof selected === 'string' && selected !== 'auto' && selected !== 'off' ? selected : undefined;
 		const tools = req.tools?.length ? toOpenAiTools(req.tools) : undefined;
 		const body = JSON.stringify({
 			model: req.modelId,
 			stream: true,
 			stream_options: { include_usage: true },
-			messages: toOpenAiMessages(req.messages, { vision: this.capabilitiesFor(req.modelId).vision }),
-			...(effort ? { reasoning_effort: effort } : {}),
+			messages: toOpenAiMessages(req.messages, {
+				vision: this.capabilitiesFor(req.modelId).vision,
+				reasoning: { provider: this.id, model: req.modelId },
+			}),
+			...(effort ? this.reasoningRequest(effort) : {}),
 			...(tools ? { tools, tool_choice: 'auto' } : {}),
 		});
 		const textId = `text-${Date.now()}`;
 		const assembler = new OpenAiToolAssembler();
+		const reasoning = new ProviderReasoning(`${textId}-think`, this.id, req.modelId, this.reasoningReplay);
 		let started = false;
 		for await (const line of requestSseStream(this.requestService, url, {
 			type: 'POST',
@@ -105,7 +111,7 @@ export class OpenAICompatProvider implements IModelProvider {
 			}
 			let json: {
 				choices?: {
-					delta?: { content?: string; reasoning_content?: string; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] };
+					delta?: IOpenAiReasoningFields & { content?: string; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] };
 					finish_reason?: string | null;
 				}[];
 				usage?: { prompt_tokens?: number; completion_tokens?: number; input_tokens?: number; output_tokens?: number; prompt_tokens_details?: { cached_tokens?: number }; prompt_cache_hit_tokens?: number };
@@ -128,11 +134,12 @@ export class OpenAICompatProvider implements IModelProvider {
 			}
 			const choice = json.choices?.[0];
 			const delta = choice?.delta;
-			const reasoning = delta?.reasoning_content;
-			if (reasoning) {
-				yield { type: 'reasoning.delta', id: `${textId}-think`, delta: reasoning };
-			}
+			yield* reasoning.delta(openAiReasoningText(delta), reasoningDetails(delta));
 			const content = delta?.content;
+			if (content || delta?.tool_calls?.length) {
+				// The thought is over: seal it before the reply or the call, so it is stored apart.
+				yield* reasoning.close();
+			}
 			if (content) {
 				if (!started) {
 					started = true;
@@ -144,11 +151,25 @@ export class OpenAICompatProvider implements IModelProvider {
 				yield event;
 			}
 		}
+		yield* reasoning.close();
 		if (started) {
 			yield { type: 'text.end', id: textId };
 		}
 		yield* assembler.drain();
 		yield assembler.finish();
+	}
+
+	/** How this server takes reasoning back on later requests (see `toOpenAiMessages`). */
+	protected readonly reasoningReplay: 'reasoning_content' | 'details' | 'none' = 'reasoning_content';
+
+	/** Whether the model takes a reasoning effort. Only those get the option and the request field. */
+	protected supportsReasoning(modelId: string, _listed?: IListedModel): boolean {
+		return looksLikeReasoningModel(modelId);
+	}
+
+	/** The request fields for a picked effort, in this server's dialect. */
+	protected reasoningRequest(effort: string): Record<string, unknown> {
+		return { reasoning_effort: effort };
 	}
 
 	protected headers(apiKey?: string): Record<string, string> {
@@ -164,7 +185,7 @@ export class OpenAICompatProvider implements IModelProvider {
 	}
 
 	protected modelInfo(id: string, listed?: IListedModel): IModelInfo {
-		const optionDescriptors = reasoningDescriptors(id);
+		const optionDescriptors: IModelOptionDescriptor[] | undefined = this.supportsReasoning(id, listed) ? [reasoningOption(['auto', 'low', 'medium', 'high'], 'auto')] : undefined;
 		const description = pickText(listed?.description);
 		const tokens = pickNumber(listed?.context_length, listed?.context_window, listed?.max_model_len, listed?.top_provider?.context_length);
 		const capabilities = { ...this.capabilitiesFor(id), reasoning: !!optionDescriptors, ...(tokens ? { contextWindow: tokens } : {}) };
@@ -201,6 +222,23 @@ export function createOpenRouterProvider(requestService: IRequestService): OpenA
 				'HTTP-Referer': 'https://volt.dev',
 				'X-Title': 'Volt',
 			}));
+		}
+		/** Models the listing said take `reasoning`; the name guess covers ones not listed yet. */
+		private readonly reasoningModels = new Set<string>();
+		protected override readonly reasoningReplay = 'details';
+		protected override supportsReasoning(modelId: string, listed?: IListedModel): boolean {
+			if (listed?.supported_parameters?.includes('reasoning')) {
+				this.reasoningModels.add(modelId);
+			}
+			return this.reasoningModels.has(modelId) || looksLikeReasoningModel(modelId);
+		}
+		/**
+		 * OpenRouter's unified field. Nothing is sent without a picked effort: reasoning models
+		 * already stream their thoughts by default, and asking would turn thinking on (and bill it)
+		 * for models where it is optional.
+		 */
+		protected override reasoningRequest(effort: string): Record<string, unknown> {
+			return { reasoning: { effort } };
 		}
 		protected override fallbackModels(): IModelInfo[] {
 			return [

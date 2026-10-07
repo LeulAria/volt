@@ -11,10 +11,24 @@ import { contextLabelFromTokens, pickNumber, pickText } from '../../common/model
 import { IProviderProfile } from '../../common/profiles.js';
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
 import { GeminiToolAssembler, IGeminiPart } from '../../common/harness/geminiToolStream.js';
+import { ProviderReasoning } from '../../common/harness/reasoningStream.js';
 import { toGeminiContents, toGeminiTools } from '../../common/harness/providerMessages.js';
 import { parseSseData, requestSseStream, requestText } from '../host/httpStream.js';
 
 const MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'];
+
+/**
+ * Gemini 2.5 and later think; 2.0 and the image, speech and live variants do not, and reject a
+ * `thinkingConfig`. Used when the model listing did not say.
+ */
+export function geminiModelThinks(modelId: string): boolean {
+	const id = modelId.toLowerCase().replace(/^models\//, '');
+	const version = /^gemini-(\d+(?:\.\d+)?)/.exec(id);
+	if (!version || Number(version[1]) < 2.5) {
+		return false;
+	}
+	return !/(image|tts|live|audio|embedding)/.test(id);
+}
 
 export class GeminiProvider implements IModelProvider {
 	readonly id = 'gemini';
@@ -52,6 +66,7 @@ export class GeminiProvider implements IModelProvider {
 					description?: string;
 					inputTokenLimit?: number;
 					supportedGenerationMethods?: string[];
+					thinking?: boolean;
 				}[];
 			};
 			return (parsed.models ?? []).flatMap(item => {
@@ -64,6 +79,9 @@ export class GeminiProvider implements IModelProvider {
 					return [];
 				}
 				const id = raw.replace(/^models\//, '');
+				if (typeof item.thinking === 'boolean') {
+					this.thinking.set(id, item.thinking);
+				}
 				return [this.modelInfo(id, pickText(item.displayName) ?? id, pickText(item.description), pickNumber(item.inputTokenLimit))];
 			});
 		} catch {
@@ -71,12 +89,19 @@ export class GeminiProvider implements IModelProvider {
 		}
 	}
 
+	/** What the model listing said about thinking, by model id. */
+	private readonly thinking = new Map<string, boolean>();
+
+	private thinks(modelId: string): boolean {
+		return this.thinking.get(modelId) ?? geminiModelThinks(modelId);
+	}
+
 	private modelInfo(id: string, label: string, description?: string, tokens?: number): IModelInfo {
 		const contextWindow = tokens ?? 1_000_000;
 		return {
 			id,
 			label,
-			capabilities: { ...DEFAULT_MODEL_CAPABILITIES, contextWindow },
+			capabilities: { ...DEFAULT_MODEL_CAPABILITIES, contextWindow, reasoning: this.thinks(id) },
 			...(description ? { description } : {}),
 			contextLabel: contextLabelFromTokens(contextWindow),
 		};
@@ -93,6 +118,8 @@ export class GeminiProvider implements IModelProvider {
 		const tools = req.tools?.length ? toGeminiTools(req.tools) : undefined;
 		const textId = `text-${Date.now()}`;
 		const assembler = new GeminiToolAssembler(req.modelId);
+		// Gemini takes thoughts back only as signatures on calls (see GeminiToolAssembler).
+		const reasoning = new ProviderReasoning(`${textId}-think`, this.id, req.modelId, 'none');
 		let started = false;
 		for await (const line of requestSseStream(this.requestService, url, {
 			type: 'POST',
@@ -101,6 +128,8 @@ export class GeminiProvider implements IModelProvider {
 				contents: toGeminiContents(req.messages, { model: req.modelId }),
 				systemInstruction: system ? { parts: [{ text: system }] } : undefined,
 				...(tools ? { tools } : {}),
+				// Thought summaries stream only when asked for; they become the Thought row.
+				...(this.thinks(req.modelId) ? { generationConfig: { thinkingConfig: { includeThoughts: true } } } : {}),
 			}),
 		}, token)) {
 			if (typeof line !== 'string') {
@@ -137,8 +166,11 @@ export class GeminiProvider implements IModelProvider {
 			const parts = candidate?.content?.parts ?? [];
 			for (const part of parts) {
 				if (part.thought && part.text) {
-					yield { type: 'reasoning.delta', id: `${textId}-think`, delta: part.text };
+					yield* reasoning.delta(part.text);
 					continue;
+				}
+				if (part.text || part.functionCall) {
+					yield* reasoning.close();
 				}
 				if (part.text && !part.functionCall) {
 					if (!started) {
@@ -152,6 +184,7 @@ export class GeminiProvider implements IModelProvider {
 				yield event;
 			}
 		}
+		yield* reasoning.close();
 		if (started) {
 			yield { type: 'text.end', id: textId };
 		}

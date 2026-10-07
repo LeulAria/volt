@@ -154,6 +154,13 @@ export interface IAgentSessionMeta {
 	readonly archived?: boolean;
 	/** Session parked out of the active Workspaces list into Settled. */
 	readonly settled?: boolean;
+	/** The user turned automatic settling off for this chat; manual settle still works. */
+	readonly autoSettle?: false;
+	/**
+	 * When the user last took the chat out of Settled by hand. It is not settled for being idle
+	 * again until the user writes to it.
+	 */
+	readonly unsettledAt?: number;
 	/** Session parked out of the active Workspaces list into Snooze. */
 	readonly snoozed?: boolean;
 	/** When a snoozed session returns to the list. Absent: snoozed until the user wakes it. */
@@ -165,6 +172,11 @@ export interface IAgentSessionMeta {
 	readonly wokeAt?: number;
 	/** When the latest prompt was sent; a running session has been working since then. */
 	readonly lastPromptAt?: number;
+	/**
+	 * When the user last wrote to the chat. Turns Volt starts on its own (subagent reports, pull
+	 * request news) do not count. Absent in older indexes: fall back to {@link lastPromptAt}.
+	 */
+	readonly lastUserPromptAt?: number;
 	readonly hasDraft?: boolean;
 	/** A reply finished while the chat was not on screen. */
 	readonly unread?: boolean;
@@ -178,6 +190,21 @@ export interface IAgentSessionMeta {
 	readonly parentId?: string;
 	/** A subagent's chat: reached from its parent, never listed in the sidebar. */
 	readonly subagent?: boolean;
+}
+
+/** Where a chat sits in the sidebar (pin, archive, settle, snooze), as one value an undo puts back. */
+export type IAgentSessionLifecycle = Pick<IAgentSessionMeta, 'pinned' | 'archived' | 'settled' | 'unsettledAt' | 'snoozed' | 'snoozedUntil' | 'wokeAt'>;
+
+export function sessionLifecycle(meta: IAgentSessionMeta): IAgentSessionLifecycle {
+	return {
+		pinned: meta.pinned,
+		archived: meta.archived,
+		settled: meta.settled,
+		unsettledAt: meta.unsettledAt,
+		snoozed: meta.snoozed,
+		snoozedUntil: meta.snoozedUntil,
+		wokeAt: meta.wokeAt,
+	};
 }
 
 export interface IAgentHistoryIndex {
@@ -265,9 +292,14 @@ export interface IAgentHistoryService {
 
 	setPinned(id: string, pinned: boolean): Promise<void>;
 	setArchived(id: string, archived: boolean): Promise<void>;
-	setSettled(id: string, settled: boolean): Promise<void>;
+	/** Settling drops the pin. `byUser`: a manual un-settle holds automatic settling until the next prompt. */
+	setSettled(id: string, settled: boolean, options?: { readonly byUser?: boolean }): Promise<void>;
+	/** Whether automatic settling (idle chats, finished pull requests) may move this chat. */
+	setAutoSettle(id: string, enabled: boolean): Promise<void>;
 	/** `until` is when the session comes back on its own; the service wakes it then. */
 	setSnoozed(id: string, snoozed: boolean, until?: number): Promise<void>;
+	/** Puts back a lifecycle read earlier with {@link sessionLifecycle} (undo). A snooze that ran out meanwhile wakes. */
+	restoreLifecycle(id: string, lifecycle: IAgentSessionLifecycle): Promise<void>;
 	setUnread(id: string, unread: boolean): Promise<void>;
 	/** The user has seen a session that woke from its snooze; it drops the "Woke" mark. */
 	clearWoke(id: string): Promise<void>;

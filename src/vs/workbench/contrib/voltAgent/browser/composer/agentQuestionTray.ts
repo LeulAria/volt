@@ -8,15 +8,30 @@ import { $, addDisposableListener, append, EventType } from '../../../../../base
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { ThemeIcon } from '../../../../../base/common/themables.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
+import { formatAttachmentSize } from '../../../../services/voltRuntime/common/fileAttachments.js';
 import type { IAgentQuestion, IAgentQuestionAnswer, IAgentQuestionRequest, IAgentQuestionResponse } from '../../../../services/voltRuntime/common/questions.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import type { IAgentPreparedAttachment } from './agentAttachmentStore.js';
+
+/** Saves what the user attaches to an answer (the composer's attachment store). */
+export interface IAgentQuestionTrayAttachmentHost {
+	pickFiles(): Promise<readonly URI[] | undefined>;
+	prepare(source: File | URI): Promise<IAgentPreparedAttachment | undefined>;
+}
 
 export interface IAgentQuestionTrayOptions {
-	/** The editor adds the composer text as the response's note and clears it. */
-	onSubmit(requestId: string, response: IAgentQuestionResponse): void;
+	/**
+	 * The editor adds the composer text as the response's note and clears it. `media`: the
+	 * images attached to answers, sent as images if the answers go out as the next prompt.
+	 */
+	onSubmit(requestId: string, response: IAgentQuestionResponse, media: readonly IAgentPreparedAttachment[]): void;
 	/** The tray changed height; the composer relayouts. */
 	onLayout(): void;
+	/** Without it, answers take no attachments. */
+	readonly attachments?: IAgentQuestionTrayAttachmentHost;
 }
 
 interface IDraftAnswer {
@@ -24,6 +39,8 @@ interface IDraftAnswer {
 	other: string;
 	/** The "Other..." row is an input right now. */
 	editingOther: boolean;
+	/** Files attached to this question's answer; each question keeps its own. */
+	readonly attachments: IAgentPreparedAttachment[];
 }
 
 /** Letter badges A, B, C…; past Z the rows count on (AA is never needed in practice). */
@@ -47,6 +64,9 @@ export class AgentQuestionTray extends Disposable {
 	private collapsed = false;
 	private answers = new Map<string, IDraftAnswer>();
 	private advanceTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Attachments still being saved; Continue waits for them. */
+	private readonly pending = new Set<Promise<void>>();
+	private submitting = false;
 
 	constructor(private readonly options: IAgentQuestionTrayOptions) {
 		super();
@@ -54,6 +74,49 @@ export class AgentQuestionTray extends Disposable {
 		this.element.setAttribute('role', 'dialog');
 		this.element.setAttribute('aria-label', localize('voltAgent.questions', "Questions"));
 		this._register({ dispose: () => this.clearAdvance() });
+		this._register(addDisposableListener(this.element, EventType.KEY_DOWN, e => {
+			// The Other input handles its own Escape (it leaves the input); anywhere else in the tray it dismisses.
+			if (e.key === 'Escape' && this.request && !e.defaultPrevented) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.dismiss();
+			}
+		}));
+		this._register(addDisposableListener(this.element, 'paste', (e: ClipboardEvent) => {
+			const question = this.currentQuestion();
+			const files = Array.from(e.clipboardData?.items ?? []).filter(item => item.kind === 'file').map(item => item.getAsFile()).filter((file): file is File => !!file);
+			if (question && files.length && this.canAttach(question)) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.attach(question, files);
+			}
+		}));
+		const dragging = (e: DragEvent) => {
+			const question = this.currentQuestion();
+			if (question && this.canAttach(question) && e.dataTransfer?.types.includes('Files')) {
+				e.preventDefault();
+				e.stopPropagation();
+				e.dataTransfer.dropEffect = 'copy';
+				this.element.classList.add('drop-target');
+			}
+		};
+		this._register(addDisposableListener(this.element, EventType.DRAG_ENTER, dragging));
+		this._register(addDisposableListener(this.element, EventType.DRAG_OVER, dragging));
+		this._register(addDisposableListener(this.element, EventType.DRAG_LEAVE, (e: DragEvent) => {
+			if (!e.relatedTarget || !this.element.contains(e.relatedTarget as Node)) {
+				this.element.classList.remove('drop-target');
+			}
+		}));
+		this._register(addDisposableListener(this.element, EventType.DROP, (e: DragEvent) => {
+			this.element.classList.remove('drop-target');
+			const question = this.currentQuestion();
+			const files = Array.from(e.dataTransfer?.files ?? []);
+			if (question && files.length && this.canAttach(question)) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.attach(question, files);
+			}
+		}));
 	}
 
 	get active(): boolean {
@@ -75,7 +138,7 @@ export class AgentQuestionTray extends Disposable {
 		this.collapsed = false;
 		this.answers = new Map();
 		for (const question of request?.questions ?? []) {
-			this.answers.set(question.id, { selected: new Set(), other: '', editingOther: false });
+			this.answers.set(question.id, { selected: new Set(), other: '', editingOther: false, attachments: [] });
 		}
 		this.render();
 	}
@@ -130,7 +193,64 @@ export class AgentQuestionTray extends Disposable {
 
 	private isAnswered(question: IAgentQuestion): boolean {
 		const draft = this.answers.get(question.id);
-		return !!draft && (draft.selected.size > 0 || !!draft.other.trim());
+		return !!draft && (draft.selected.size > 0 || !!draft.other.trim() || draft.attachments.length > 0);
+	}
+
+	/** Like T3: only questions that take a custom answer take files. */
+	private canAttach(question: IAgentQuestion): boolean {
+		return !!this.options.attachments && question.allowOther;
+	}
+
+	/** "Attach files": the OS file dialog. */
+	private async pickAttachments(question: IAgentQuestion): Promise<void> {
+		const resources = await this.options.attachments?.pickFiles();
+		if (resources?.length && this.currentQuestion() === question) {
+			this.attach(question, resources);
+		}
+	}
+
+	/** Saves `sources` and adds them to `question`'s answer; Continue waits until they are saved. */
+	private attach(question: IAgentQuestion, sources: readonly (File | URI)[]): void {
+		const host = this.options.attachments;
+		const draft = this.answers.get(question.id);
+		if (!host || !draft || !question.allowOther) {
+			return;
+		}
+		const work = (async () => {
+			for (const source of sources) {
+				const prepared = await host.prepare(source);
+				if (prepared && this.answers.get(question.id) === draft) {
+					draft.attachments.push(prepared);
+				}
+			}
+		})().catch(() => undefined);
+		this.pending.add(work);
+		this.render();
+		void work.finally(() => {
+			this.pending.delete(work);
+			if (this.answers.get(question.id) === draft && !this._store.isDisposed) {
+				this.render();
+			}
+		});
+	}
+
+	private removeAttachment(question: IAgentQuestion, id: string): void {
+		const draft = this.answers.get(question.id);
+		const index = draft?.attachments.findIndex(attachment => attachment.id === id) ?? -1;
+		if (draft && index >= 0) {
+			draft.attachments.splice(index, 1);
+			this.render();
+		}
+	}
+
+	/** The x button and Escape: the agent hears the questions were dismissed and carries on. */
+	dismiss(): void {
+		const request = this.request;
+		if (!request) {
+			return;
+		}
+		this.clearAdvance();
+		this.options.onSubmit(request.id, { outcome: 'cancelled', dismissed: true, answers: [] }, []);
 	}
 
 	private pick(question: IAgentQuestion, optionId: string): void {
@@ -177,7 +297,7 @@ export class AgentQuestionTray extends Disposable {
 	private next(): void {
 		this.clearAdvance();
 		if (this.isLastStep()) {
-			this.submit();
+			void this.submit();
 			return;
 		}
 		this.step++;
@@ -201,25 +321,46 @@ export class AgentQuestionTray extends Disposable {
 			if (draft) {
 				draft.other = '';
 				draft.editingOther = false;
+				draft.attachments.length = 0;
 			}
 		}
 		this.next();
 	}
 
-	private submit(): void {
+	private async submit(): Promise<void> {
 		const request = this.request;
-		if (!request) {
+		if (!request || this.submitting) {
 			return;
 		}
+		if (this.pending.size) {
+			// Files still being saved: send once they are on disk.
+			this.submitting = true;
+			try {
+				await Promise.all([...this.pending]);
+			} finally {
+				this.submitting = false;
+			}
+			if (this.request !== request) {
+				return;
+			}
+		}
 		const answers: IAgentQuestionAnswer[] = [];
+		const media: IAgentPreparedAttachment[] = [];
 		for (const question of request.questions) {
 			const draft = this.answers.get(question.id);
 			const other = draft?.other.trim();
-			if (draft && (draft.selected.size || other)) {
-				answers.push({ questionId: question.id, optionIds: question.options.filter(option => draft.selected.has(option.id)).map(option => option.id), ...(other ? { other } : {}) });
+			const attachments = draft?.attachments.map(({ kind, name, mime, size, path }) => ({ kind, name, mime, size, path })) ?? [];
+			if (draft && (draft.selected.size || other || attachments.length)) {
+				answers.push({
+					questionId: question.id,
+					optionIds: question.options.filter(option => draft.selected.has(option.id)).map(option => option.id),
+					...(other ? { other } : {}),
+					...(attachments.length ? { attachments } : {}),
+				});
+				media.push(...draft.attachments.filter(attachment => attachment.kind === 'image' && attachment.bytes));
 			}
 		}
-		this.options.onSubmit(request.id, { outcome: answers.length ? 'answered' : 'skipped', answers });
+		this.options.onSubmit(request.id, { outcome: answers.length ? 'answered' : 'skipped', answers }, media);
 	}
 
 	private clearAdvance(): void {
@@ -230,6 +371,8 @@ export class AgentQuestionTray extends Disposable {
 	}
 
 	private render(): void {
+		// A re-render (an attachment finished saving) must not take the caret out of the Other input.
+		const typing = this.element.ownerDocument.activeElement?.classList.contains('volt-question-other-input') && this.element.contains(this.element.ownerDocument.activeElement);
 		this.render_.clear();
 		this.element.replaceChildren();
 		const request = this.request;
@@ -251,8 +394,19 @@ export class AgentQuestionTray extends Disposable {
 		collapse.appendChild(renderIcon(this.collapsed ? Codicon.chevronUp : Codicon.dash));
 		this.render_.add(addDisposableListener(collapse, EventType.CLICK, e => {
 			e.preventDefault();
+			e.stopPropagation();
 			this.collapsed = !this.collapsed;
 			this.render();
+		}));
+		const dismiss = append(header, $('button.volt-question-tray-icon-btn.dismiss')) as HTMLButtonElement;
+		dismiss.type = 'button';
+		dismiss.setAttribute('aria-label', localize('voltAgent.questions.dismiss', "Dismiss questions"));
+		setAgentTooltip(dismiss, localize('voltAgent.questions.dismissTooltip', "Dismiss (Esc). The agent continues without your answers."));
+		dismiss.appendChild(renderIcon(Codicon.close));
+		this.render_.add(addDisposableListener(dismiss, EventType.CLICK, e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.dismiss();
 		}));
 		if (this.collapsed) {
 			this.render_.add(addDisposableListener(header, EventType.CLICK, () => {
@@ -359,6 +513,13 @@ export class AgentQuestionTray extends Disposable {
 			}
 		}
 
+		if (draft.attachments.length || (this.pending.size && this.canAttach(question))) {
+			this.renderAttachments(step, question, draft);
+		}
+		if (typing && draft.editingOther) {
+			this.element.querySelector<HTMLInputElement>('.volt-question-other-input')?.focus();
+		}
+
 		const footer = append(this.element, $('.volt-question-tray-footer'));
 		if (request.questions.length > 1) {
 			const stepper = append(footer, $('.volt-question-stepper'));
@@ -384,6 +545,17 @@ export class AgentQuestionTray extends Disposable {
 				this.render();
 			}));
 		}
+		if (this.canAttach(question)) {
+			const attach = append(footer, $('button.volt-question-tray-icon-btn.attach')) as HTMLButtonElement;
+			attach.type = 'button';
+			attach.setAttribute('aria-label', localize('voltAgent.questions.attach', "Attach files"));
+			setAgentTooltip(attach, localize('voltAgent.questions.attachTooltip', "Attach files to this answer. You can also paste or drop them here."));
+			attach.appendChild(renderIcon(Codicon.attach));
+			this.render_.add(addDisposableListener(attach, EventType.CLICK, e => {
+				e.preventDefault();
+				void this.pickAttachments(question);
+			}));
+		}
 		append(footer, $('.volt-question-footer-spacer'));
 		const skip = append(footer, $('button.volt-question-pill.ghost')) as HTMLButtonElement;
 		skip.type = 'button';
@@ -404,6 +576,33 @@ export class AgentQuestionTray extends Disposable {
 		}));
 		this.syncFooter(question);
 		this.options.onLayout();
+	}
+
+	/** Chips for the files attached to this question's answer, with a remove button each. */
+	private renderAttachments(parent: HTMLElement, question: IAgentQuestion, draft: IDraftAnswer): void {
+		const row = append(parent, $('.volt-question-attachments'));
+		for (const attachment of draft.attachments) {
+			const chip = append(row, $('span.volt-question-attachment'));
+			chip.appendChild(renderIcon(attachment.kind === 'image' ? Codicon.fileMedia : Codicon.file));
+			const name = append(chip, $('span.volt-question-attachment-name'));
+			name.textContent = attachment.name;
+			append(chip, $('span.volt-question-attachment-size')).textContent = formatAttachmentSize(attachment.size);
+			setAgentTooltip(chip, attachment.path);
+			const remove = append(chip, $('button.volt-question-attachment-remove')) as HTMLButtonElement;
+			remove.type = 'button';
+			remove.setAttribute('aria-label', localize('voltAgent.questions.removeAttachment', "Remove {0}", attachment.name));
+			remove.appendChild(renderIcon(Codicon.close));
+			this.render_.add(addDisposableListener(remove, EventType.CLICK, e => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.removeAttachment(question, attachment.id);
+			}));
+		}
+		if (this.pending.size) {
+			const chip = append(row, $('span.volt-question-attachment.pending'));
+			chip.appendChild(renderIcon(ThemeIcon.modify(Codicon.loading, 'spin')));
+			append(chip, $('span.volt-question-attachment-name')).textContent = localize('voltAgent.questions.attaching', "Attaching...");
+		}
 	}
 
 	private syncFooter(question: IAgentQuestion): void {

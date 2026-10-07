@@ -44,6 +44,11 @@ import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runti
 import { IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
 import { createBrandIcon } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_PROMPT_HISTORY_SETTING } from '../../voltAgent/common/agentComposerSettings.js';
+import { AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING } from '../../voltAgent/common/agentWorkflowSettings.js';
+import { AGENT_HOME_AUTO_SETTLE_DAYS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING } from '../../voltAgent/common/agentHomeSettings.js';
+
+/** Settings on the Composer page whose rows redraw when they change. */
+const COMPOSER_PAGE_SETTINGS = [AGENT_PROMPT_HISTORY_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING, AGENT_HOME_AUTO_SETTLE_DAYS_SETTING];
 import { AgentModelPicker } from '../../voltAgent/browser/picker/agentModelPicker.js';
 import { appendSettingsBlock, SettingsStickyHeads } from './settingsStickyHeads.js';
 import { VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
@@ -156,7 +161,7 @@ export class VoltSettingsEditor extends EditorPane {
 	) {
 		super(VoltSettingsEditor.ID, group, telemetryService, themeService, storageService);
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
-			if (this.section === 'composer' && (e.affectsConfiguration(AGENT_PROMPT_HISTORY_SETTING) || e.affectsConfiguration(AGENT_NEW_CHAT_DRAFT_SETTING))) {
+			if (this.section === 'composer' && COMPOSER_PAGE_SETTINGS.some(key => e.affectsConfiguration(key))) {
 				this.renderContent();
 			}
 		}));
@@ -730,6 +735,49 @@ export class VoltSettingsEditor extends EditorPane {
 			AGENT_NEW_CHAT_DRAFT_SETTING,
 			localize('voltSettings.restoreDraft', "Keep unsent text for a new chat"),
 			localize('voltSettings.restoreDraftDesc', "If a new chat was left with text you never sent, New Agent opens it again with the text still in the composer."),
+		);
+
+		const workflow = this.settingsGroup();
+		const resumeOptions: ISelectOptionItem[] = [
+			{ text: localize('voltSettings.resumeSubagents', "Delegated tasks"), detail: 'subagents' },
+			{ text: localize('voltSettings.resumeAll', "Every chat"), detail: 'all' },
+			{ text: localize('voltSettings.resumeOff', "Nothing"), detail: 'off' },
+		];
+		const resume = this.configurationService.getValue<string>(AGENT_RESUME_AFTER_RESTART_SETTING);
+		this.settingRow(
+			workflow,
+			localize('voltSettings.resumeAfterRestart', "Continue after a restart"),
+			localize('voltSettings.resumeAfterRestartDesc', "What keeps working on its own when Volt restarts in the middle of a run. Everything else shows Resume."),
+			host => {
+				const box = this.selectBox(append(host, $('.volt-settings-select')), resumeOptions, Math.max(0, resumeOptions.findIndex(option => option.detail === resume)), localize('voltSettings.resumeAfterRestart', "Continue after a restart"));
+				this.renderStore.add(box.onDidSelect(e => void this.configurationService.updateValue(AGENT_RESUME_AFTER_RESTART_SETTING, resumeOptions[e.index].detail)));
+			},
+		);
+		this.settingSwitch(
+			workflow,
+			AGENT_COMPACT_OLD_THREADS_SETTING,
+			localize('voltSettings.compactOld', "Compact old chats before resuming them"),
+			localize('voltSettings.compactOldDesc', "A chat with 100K tokens or more that sat idle for over an hour is compacted before your next message, so its whole history is not resent at full price."),
+		);
+		this.settingSwitch(
+			workflow,
+			AGENT_HOME_WORKING_SECTION_SETTING,
+			localize('voltSettings.workingSection', "Working section"),
+			localize('voltSettings.workingSectionDesc', "Chats that are busy fold into a Working section in the sidebar and come back when they finish or need you."),
+		);
+		const settleOptions: ISelectOptionItem[] = [0, 1, 3, 7, 14].map(days => ({
+			text: days === 0 ? localize('voltSettings.settleNever', "Never") : days === 1 ? localize('voltSettings.settleDay', "After 1 day") : localize('voltSettings.settleDays', "After {0} days", days),
+			detail: String(days),
+		}));
+		const settleDays = String(this.configurationService.getValue<number>(AGENT_HOME_AUTO_SETTLE_DAYS_SETTING) ?? 3);
+		this.settingRow(
+			workflow,
+			localize('voltSettings.autoSettle', "Settle idle chats"),
+			localize('voltSettings.autoSettleDesc', "Move a chat to Settled after it goes this long without a message from you. Each chat's Auto-settle switch can keep it out."),
+			host => {
+				const box = this.selectBox(append(host, $('.volt-settings-select')), settleOptions, Math.max(0, settleOptions.findIndex(option => option.detail === settleDays)), localize('voltSettings.autoSettle', "Settle idle chats"));
+				this.renderStore.add(box.onDidSelect(e => void this.configurationService.updateValue(AGENT_HOME_AUTO_SETTLE_DAYS_SETTING, Number(settleOptions[e.index].detail))));
+			},
 		);
 	}
 

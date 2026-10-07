@@ -9,18 +9,20 @@ import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IVoltEventEnvelope } from '../../common/events.js';
 import { IAgentWorktreeService } from '../../common/git/agentWorktree.js';
+import { IAgentWorktreeSetupService } from '../../common/git/worktreeSetupPlan.js';
 import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
 import { normalizeVoltMode } from '../../common/modes.js';
 import { AGENT_TASK_TOOLS, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome } from '../../common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, ORCH_RESUME_AFTER_RESTART_SETTING, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
 import { extractRoot, IOrchIndex, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { harnessTaskId, IOrchStep, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
@@ -75,6 +77,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IAgentWorktreeSetupService private readonly worktreeSetup: IAgentWorktreeSetupService,
 	) {
 		super();
 		this.store = new OrchestratorStore(joinPath(environmentService.userRoamingDataHome, 'voltOrchestrator'), fileService, logService);
@@ -327,9 +331,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				}
 			}
 			this.state = { ...state, seq: Math.max(state.seq, index.seq) };
-			const step = this.apply({ type: 'recover' }, `recover:${generateUuid()}`);
+			const step = this.apply({ type: 'recover', resume: this.restartResume() }, `recover:${generateUuid()}`);
 			if (step.envelopes.length) {
-				this.logService.info(`[volt orchestrator] recovered ${index.live.length} live chat tree(s); ${step.envelopes.length} change(s) after the restart`);
+				const continued = step.envelopes.filter(envelope => envelope.event.type === 'turn.dispatched').length;
+				this.logService.info(`[volt orchestrator] recovered ${index.live.length} live chat tree(s); ${step.envelopes.length} change(s) after the restart, ${continued} turn(s) continued`);
 			}
 			if (this.state.threads && Object.keys(this.state.threads).length) {
 				this._onDidChange.fire({ threads: Object.keys(this.state.threads), tasks: Object.keys(this.state.tasks) });
@@ -339,6 +344,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		} finally {
 			this.ready.complete();
 		}
+	}
+
+	private restartResume(): OrchRestartResume {
+		const value = this.configurationService.getValue<string>(ORCH_RESUME_AFTER_RESTART_SETTING);
+		return value === 'off' || value === 'all' ? value : 'subagents';
 	}
 
 	async ensureThreadLoaded(threadId: string): Promise<void> {
@@ -504,6 +514,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			const created = await this.worktrees.create(root.fsPath);
 			this.runtime.rememberWorktree(task.childId, created.path, created.branch);
 			this.history.open(task.childId).setMeta({ worktreePath: created.path, worktreeBranch: created.branch });
+			// The subagent's chat stays blocked until its worktree is set up (the card shows each step).
+			await this.worktreeSetup.run(task.childId, {
+				repoRoot: root.fsPath,
+				worktreePath: created.path,
+				branch: created.branch,
+				isCancelled: () => isTerminalTaskState(this.state.tasks[taskId]?.state ?? 'cancelled'),
+			});
 			this.apply({ type: 'task.worktree', taskId, path: created.path, branch: created.branch });
 		} catch (err) {
 			this.apply({ type: 'task.error', taskId, error: `Could not create its worktree: ${err instanceof Error ? err.message : String(err)}` });
@@ -748,13 +765,21 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			return { error: 'delegate_task needs a `task`: the complete brief for the subagent.' };
 		}
 		const parent = this.state.threads[parentId];
-		const model = this.resolveModel(args.model) ?? (parent?.modelRef ? { ref: parent.modelRef, label: parent.modelLabel ?? parent.modelRef } : undefined);
-		const role = normalizeTaskRole(args.role);
+		const previousId = typeof args.previous_task_id === 'string' && args.previous_task_id.trim() ? args.previous_task_id.trim() : undefined;
+		const previous = previousId ? this.state.tasks[previousId] : undefined;
+		if (previousId && (!previous || previous.rootId !== parent?.rootId)) {
+			return { error: `No task ${previousId} in this chat to continue from. Call task_status to list this chat's tasks.` };
+		}
+		// A new round keeps the previous round's reviewer and role unless the agent picks others.
+		const model = this.resolveModel(args.model)
+			?? (previous?.modelRef ? { ref: previous.modelRef, label: previous.modelLabel ?? previous.modelRef } : undefined)
+			?? (parent?.modelRef ? { ref: parent.modelRef, label: parent.modelLabel ?? parent.modelRef } : undefined);
+		const role = typeof args.role === 'string' || !previous ? normalizeTaskRole(args.role) : previous.role;
 		const isolation = args.isolation === 'worktree' ? 'worktree' : 'shared';
 		const parentMode = parent?.active?.prompt.mode ? normalizeVoltMode(parent.active.prompt.mode) : 'agent';
 		// A child never gets more than its parent: a read-only chat delegates read-only work.
 		const mode = parentMode === 'ask' || parentMode === 'plan' ? 'ask' : modeForTaskRole(role, undefined);
-		const title = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 80) : titleFromBrief(brief);
+		const title = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 80) : previous?.title ?? titleFromBrief(brief);
 		const taskId = newTaskId(id => !!this.state.tasks[id]);
 		const depth = (parent?.depth ?? 0) + 1;
 		const toolCallId = this.delegateCalls.get(parentId)?.shift();
@@ -774,8 +799,15 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				...(typeof args.client_request_id === 'string' && args.client_request_id.trim() ? { clientRequestId: args.client_request_id.trim() } : {}),
 				...(toolCallId ? { toolCallId } : {}),
 				...(Array.isArray(args.scope) ? { scope: args.scope.filter((path): path is string => typeof path === 'string') } : {}),
+				...(previous ? { previousTaskId: previous.id } : {}),
 				childPrompt: {
-					text: buildTaskPrompt(brief, { parentTitle: parent?.title, role, depth, isolation }),
+					text: buildTaskPrompt(brief, {
+						parentTitle: parent?.title,
+						role,
+						depth,
+						isolation,
+						...(previous ? { previous: { id: previous.id, iteration: previous.iteration ?? 1, brief: previous.brief, result: previous.result, state: previous.state } } : {}),
+					}),
 					display: { text: brief, brief: true },
 					mode,
 					...(model ? { modelRef: model.ref } : {}),
@@ -942,6 +974,7 @@ function touched(event: OrchEvent): { threadIds: string[]; taskIds: string[] } {
 		case 'task.waiting':
 		case 'task.settled':
 		case 'task.resumed':
+		case 'task.restarted':
 			return { threadIds: [], taskIds: [event.taskId] };
 		case 'task.delivery':
 		case 'task.pruned':

@@ -24,6 +24,7 @@ import {
 	cloneProviderPlaceholder,
 	filterAgentHomeWorkspaceEntries,
 	IAgentHomeWorkspaceEntry,
+	newProjectNameProblem,
 	resolveCloneUrl,
 } from './agentHomeWorkspace.js';
 
@@ -43,13 +44,15 @@ export interface IAgentHomeWorkspaceMenuHost {
 	/** The Add Project dialog on its GitHub tab: your repositories, searchable. */
 	browseGitHub(): Promise<void>;
 	startFromScratch(): Promise<void>;
+	/** A repository from just a name, open in a new chat. Resolves with a message when it could not be made. */
+	createProject(name: string): Promise<string | undefined>;
 	/** Resolves with a message when the clone failed. */
 	clone(url: string): Promise<string | undefined>;
 	/** A failure that lands after the menu closed. */
 	reportError(message: string): void;
 }
 
-type FlyoutKind = 'mac' | 'clone';
+type FlyoutKind = 'mac' | 'clone' | 'newProject';
 
 /**
  * Open Workspace popover on the sidebar's project header: Recents, then under
@@ -124,6 +127,7 @@ class AgentHomeWorkspaceMenu extends Disposable {
 	private readonly selected = new Map<string, IAgentHomeWorkspaceEntry>();
 	private cloneProvider: AgentCloneProvider = 'github';
 	private cloneUrl = '';
+	private projectName = '';
 	private busy = false;
 	private error: string | undefined;
 
@@ -209,6 +213,13 @@ class AgentHomeWorkspaceMenu extends Disposable {
 			label: localize('voltAgent.workspace.fromScratch', "Start from scratch"),
 			icon: Codicon.add,
 			onClick: () => this.run(() => this.host.startFromScratch()),
+			onHover: closeHover,
+		});
+		this.row(this.body, store, {
+			label: localize('voltAgent.workspace.newProject', "New Project..."),
+			icon: Codicon.repo,
+			flyout: 'newProject',
+			onClick: () => this.openFlyout('newProject', true),
 			onHover: closeHover,
 		});
 		this.row(this.body, store, {
@@ -300,13 +311,16 @@ class AgentHomeWorkspaceMenu extends Disposable {
 		clearNode(this.flyout);
 		this.flyout.classList.remove('hidden');
 		this.flyout.classList.toggle('mac', kind === 'mac');
-		this.flyout.classList.toggle('form', kind === 'clone');
+		this.flyout.classList.toggle('form', kind === 'clone' || kind === 'newProject');
 		switch (kind) {
 			case 'mac':
 				this.paintMac();
 				break;
 			case 'clone':
 				this.paintClone();
+				break;
+			case 'newProject':
+				this.paintNewProject();
 				break;
 			default: {
 				const unexpected: never = kind;
@@ -502,6 +516,55 @@ class AgentHomeWorkspaceMenu extends Disposable {
 			return;
 		}
 		await this.whileBusy(() => this.host.clone(url));
+	}
+
+	/** New Project: a name; the project becomes a repository with a README and a first commit. */
+	private paintNewProject(): void {
+		const store = this.flyoutStore;
+		this.heading(this.flyout, localize('voltAgent.workspace.newProjectHeading', "New Project"));
+		const form = append(this.flyout, $('.volt-agent-home-workspace-form'));
+		const name = this.input(form, localize('voltAgent.workspace.projectName', "Project name"));
+		name.classList.add('field');
+		name.value = this.projectName;
+		name.disabled = this.busy;
+		this.location(form, store, localize('voltAgent.workspace.createIn', "Create in"));
+		const message = append(form, $('.volt-agent-home-workspace-error'));
+		message.textContent = this.error ?? '';
+		const submit = this.submit(form, store, this.busy
+			? localize('voltAgent.workspace.creating', "Creating...")
+			: localize('voltAgent.workspace.create', "Create"), () => void this.submitNewProject());
+		const sync = () => {
+			submit.disabled = this.busy || !name.value.trim();
+		};
+		sync();
+		store.add(addDisposableListener(name, 'input', () => {
+			this.projectName = name.value;
+			this.error = undefined;
+			message.textContent = '';
+			sync();
+		}));
+		store.add(addDisposableListener(name, 'keydown', e => {
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				void this.submitNewProject();
+			}
+		}));
+		submit.classList.toggle('busy', this.busy);
+	}
+
+	private async submitNewProject(): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		const problem = newProjectNameProblem(this.projectName);
+		if (problem) {
+			this.error = problem;
+			this.paintFlyout();
+			this.focusFlyout();
+			return;
+		}
+		const name = this.projectName.trim();
+		await this.whileBusy(() => this.host.createProject(name));
 	}
 
 	/** Runs a form action with its inputs locked. Closes on success, shows the message on failure. */

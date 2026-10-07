@@ -25,6 +25,7 @@ import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { takeTurnDisplay } from './agentTurnDisplays.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
+import { scheduledRunOf } from '../schedules/agentScheduleCommands.js';
 
 const CHECKPOINT_BEGIN_TURN_COMMAND = 'voltAgent.checkpoint.beginTurn';
 
@@ -85,7 +86,9 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		}
 		const display = takeTurnDisplay(turn.id) ?? await this.thawDisplay(turn.prompt.display);
 		const mode = modeLabel(turn.prompt.mode ?? input.chosenMode ?? input.restoredMode);
-		const origin: IAgentUserMessage['origin'] = turn.kind === 'notification' ? 'notification' : turn.kind === 'brief' ? 'brief' : undefined;
+		// A turn Volt continued after a restart reads as a system row, like a subagent report.
+		const restarted = turn.kind === 'resume' && (turn.prompt.display as { notification?: unknown } | undefined)?.notification === true;
+		const origin: IAgentUserMessage['origin'] = turn.kind === 'notification' || restarted ? 'notification' : turn.kind === 'brief' ? 'brief' : undefined;
 		const controller = input.controller;
 		// The first turn after the chat changed models carries the handoff: the divider, and the brief the
 		// previous model wrote for this one (the runtime recaps the conversation itself).
@@ -102,6 +105,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			...(origin ? { origin } : {}),
 			...(turn.taskIds ? { taskIds: turn.taskIds } : {}),
 			...(handoff ? { handoff: { ...(handoff.fromLabel ? { fromLabel: handoff.fromLabel } : {}), toLabel: handoff.toLabel, at: handoff.at, by: handoff.by, ...(handoff.reason ? { reason: handoff.reason } : {}) } } : {}),
+			...(scheduledRunOf(turn.prompt.host) ? { scheduled: { ...scheduledRunOf(turn.prompt.host)! } } : {}),
 		});
 		if (turn.kind === 'brief' && thread.title) {
 			// A subagent's chat is named after its task, not after the framing its model reads.

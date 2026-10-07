@@ -16,7 +16,7 @@ export interface IAgentPlusMenuMode {
 	readonly description?: string;
 }
 
-export type AgentPlusMenuAction = 'files' | 'image' | 'video' | 'openFile' | 'terminal' | 'browser' | 'model' | 'mcp';
+export type AgentPlusMenuAction = 'files' | 'attachFile' | 'image' | 'video' | 'openFile' | 'terminal' | 'browser' | 'model' | 'mcp' | 'schedule';
 
 export interface IAgentPlusMenuOptions {
 	/** The composer box: the menu spans it and opens above it, like the @ panel. */
@@ -80,6 +80,8 @@ function actionItem(action: AgentPlusMenuAction, modelName: string | undefined):
 	switch (action) {
 		case 'files':
 			return { id: action, label: localize('voltAgent.plusFiles', "Files"), keywords: 'file attach', icon: createPaperclipIcon, data };
+		case 'attachFile':
+			return { id: action, label: localize('voltAgent.plusAttachFile', "File\u2026"), detail: localize('voltAgent.plusAttachFileDetail', "From your computer"), keywords: 'attach upload pdf zip document archive computer disk', icon: createUploadIcon, data };
 		case 'image':
 			return { id: action, label: localize('voltAgent.plusImage', "Image"), keywords: 'picture screenshot photo attach', icon: createImageIcon, data };
 		case 'video':
@@ -94,11 +96,17 @@ function actionItem(action: AgentPlusMenuAction, modelName: string | undefined):
 			return { id: action, label: localize('voltAgent.plusModel', "Model"), detail: modelName, icon: createCubeIcon, data };
 		case 'mcp':
 			return { id: action, label: localize('voltAgent.plusMcp', "MCP"), icon: createPlugIcon, trailingIcon: Codicon.chevronRight, data };
+		case 'schedule':
+			return { id: action, label: localize('voltAgent.plusSchedule', "Schedule…"), keywords: 'recurring repeat cron timer later automation', icon: Codicon.history, data };
 	}
 }
 
 function createPaperclipIcon(): HTMLElement {
 	return createStrokeIcon('paperclip', ['M16 6v9.5a3.5 3.5 0 0 1-7 0V6a2.5 2.5 0 0 1 5 0v9']);
+}
+
+function createUploadIcon(): HTMLElement {
+	return createStrokeIcon('upload', ['M12 15V4.5', 'M7.5 9L12 4.5L16.5 9', 'M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3']);
 }
 
 function createImageIcon(): HTMLElement {

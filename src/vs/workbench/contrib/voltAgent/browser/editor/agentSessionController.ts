@@ -53,6 +53,7 @@ export interface IAgentTurnSpec {
 	readonly origin?: IAgentUserMessage['origin'];
 	readonly taskIds?: readonly string[];
 	readonly handoff?: IAgentUserMessage['handoff'];
+	readonly scheduled?: IAgentUserMessage['scheduled'];
 }
 
 export interface IAgentSessionChange {
@@ -242,6 +243,7 @@ export class AgentSessionController extends Disposable {
 			...(spec.origin ? { origin: spec.origin } : {}),
 			...(spec.taskIds?.length ? { taskIds: [...spec.taskIds] } : {}),
 			...(spec.handoff ? { handoff: spec.handoff } : {}),
+			...(spec.scheduled ? { scheduled: spec.scheduled } : {}),
 		};
 		const reply: IAgentAssistantMessage = {
 			kind: 'agent',
@@ -994,7 +996,11 @@ export class AgentSessionController extends Disposable {
 							status: 'complete',
 							requestId: event.requestId,
 							outcome: event.outcome,
-							items: event.answers.map(item => ({ question: item.question, answer: item.answer })),
+							items: event.answers.map(item => ({
+								question: item.question,
+								answer: item.answer,
+								...(item.attachments?.length ? { attachments: item.attachments.map(file => ({ name: file.name, kind: file.kind, size: file.size, path: file.path })) } : {}),
+							})),
 							...(event.note ? { note: event.note } : {}),
 						},
 					});

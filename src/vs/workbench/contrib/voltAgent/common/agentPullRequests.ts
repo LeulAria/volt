@@ -501,6 +501,8 @@ export interface IAgentPrSettleContext {
 	readonly settled?: boolean;
 	readonly snoozed?: boolean;
 	readonly archived?: boolean;
+	/** The user turned automatic settling off for this chat. */
+	readonly autoSettle?: false;
 	/** A turn is running or queued, or the agent waits on the user. */
 	readonly busy: boolean;
 }
@@ -512,7 +514,7 @@ export interface IAgentPrSettleContext {
  */
 export function shouldSettleForPullRequests(links: readonly IAgentPrLink[] | undefined, chat: IAgentPrSettleContext, settleOnMerge = true): boolean {
 	const visible = visibleLinks(links);
-	if (!visible.length || chat.pinned || chat.settled || chat.snoozed || chat.archived || chat.busy) {
+	if (!visible.length || chat.pinned || chat.settled || chat.snoozed || chat.archived || chat.busy || chat.autoSettle === false) {
 		return false;
 	}
 	if (!visible.every(link => link.snapshot && isTerminalState(link.snapshot.state))) {
