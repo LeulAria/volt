@@ -33,13 +33,16 @@ import { ISCMService } from '../../../scm/common/scm.js';
 import { buildReviewLinePrompt, currentLink } from '../../common/agentPullRequests.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { AgentFilesSidebar } from '../workspace/agentFilesSidebar.js';
-import { agentToolsSessionOnScreen } from '../workspace/agentSurfaceHost.js';
+import { agentToolsSessionOnScreen, showAgentFilesSidebar } from '../workspace/agentSurfaceHost.js';
+import { LayoutModeContext } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { IViewsService } from '../../../../services/views/common/viewsService.js';
+import { AgentGitActionsService, IAgentGitActionsService } from './agentGitActionsService.js';
 import { parseBlobUri, PR_BLOB_SCHEME, PrBlobContentProvider, PrDiffSourceResolver } from './agentPullRequestDiff.js';
 import { AgentPullRequestEditor } from './agentPullRequestEditor.js';
 import { AGENT_PULL_REQUEST_EDITOR_ID, AGENT_PULL_REQUEST_SCHEME, AgentPullRequestEditorInput, AgentPullRequestEditorInputSerializer, parsePullRequestUri } from './agentPullRequestEditorInput.js';
 import { AgentPullRequestService, IAgentPullRequestService } from './agentPullRequestService.js';
 import { AgentPullRequestsViewPane } from './agentPullRequestsViewPane.js';
-import { AGENT_PULL_REQUESTS_CONTAINER_ID, AGENT_PULL_REQUESTS_VIEW_ID } from './agentPullRequestsViewState.js';
+import { AGENT_PULL_REQUESTS_CONTAINER_ID, AGENT_PULL_REQUESTS_VIEW_ID, setPullRequestsViewSession } from './agentPullRequestsViewState.js';
 import { composeInChat, openPullRequest, visibleChatSession } from './agentPullRequestUi.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
@@ -49,6 +52,7 @@ import { CREATE_PULL_REQUEST_COMMAND_ID, FIX_PR_SELECTION_COMMAND_ID, GENERATE_C
 export const VOLT_COMMIT_MESSAGES_CONTEXT = new RawContextKey<boolean>('voltCommitMessages', false);
 
 registerSingleton(IAgentPullRequestService, AgentPullRequestService, InstantiationType.Delayed);
+registerSingleton(IAgentGitActionsService, AgentGitActionsService, InstantiationType.Delayed);
 
 const pullRequestsIcon = registerIcon('volt-pull-requests-view', Codicon.gitPullRequest, localize('voltPr.viewIcon', "Pull Requests view icon."));
 
@@ -193,8 +197,20 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({ id: SHOW_PULL_REQUESTS_COMMAND_ID, title: localize2('voltPr.showList', "Show Pull Requests"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.gitPullRequest });
 	}
-	override async run(accessor: ServicesAccessor): Promise<void> {
-		AgentFilesSidebar.show(accessor.get(IStorageService), 'pullRequests');
+	override async run(accessor: ServicesAccessor, sessionId?: string): Promise<void> {
+		const chat = typeof sessionId === 'string' ? sessionId : visibleChatSession(accessor);
+		if (chat) {
+			setPullRequestsViewSession(chat);
+		}
+		// Agent layout: the right sidebar's Pull Requests tab, beside the chat. IDE layout: the view.
+		if (showAgentFilesSidebar('pullRequests')) {
+			return;
+		}
+		if (accessor.get(IContextKeyService).getContextKeyValue<string>(LayoutModeContext.key) === 'agent') {
+			AgentFilesSidebar.show(accessor.get(IStorageService), 'pullRequests');
+			return;
+		}
+		await accessor.get(IViewsService).openViewContainer(AGENT_PULL_REQUESTS_CONTAINER_ID, true);
 	}
 });
 

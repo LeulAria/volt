@@ -22,12 +22,14 @@ export function parseTokenUsage(raw: unknown): IVoltUsageEvent | undefined {
 	const total = readTokenCount(usage.totalTokens ?? usage.total_tokens);
 	const used = readTokenCount(usage.used ?? o.used);
 	const size = readTokenCount(usage.size ?? o.size);
-	if (input === undefined && output === undefined && total === undefined && used === undefined && size === undefined) {
+	const costUsd = readCostUsd(o.cost ?? usage.cost);
+	if (input === undefined && output === undefined && total === undefined && used === undefined && size === undefined && costUsd === undefined) {
 		return undefined;
 	}
 	const resolvedInput = input ?? 0;
 	const resolvedOutput = output ?? (total !== undefined ? Math.max(0, total - resolvedInput) : 0);
-	const cache = readTokenCount(usage.cachedReadTokens ?? usage.cached_read_tokens ?? usage.cache);
+	const cache = readTokenCount(usage.cachedReadTokens ?? usage.cached_read_tokens ?? usage.cacheReadTokens ?? usage.cache);
+	const cacheWrite = readTokenCount(usage.cachedWriteTokens ?? usage.cached_write_tokens ?? usage.cacheWriteTokens);
 	return {
 		type: 'usage',
 		input: resolvedInput,
@@ -35,7 +37,20 @@ export function parseTokenUsage(raw: unknown): IVoltUsageEvent | undefined {
 		...(used !== undefined ? { used } : {}),
 		...(size !== undefined ? { size } : {}),
 		...(cache !== undefined ? { cache } : {}),
+		...(cacheWrite !== undefined ? { cacheWrite } : {}),
+		...(costUsd !== undefined ? { costUsd } : {}),
 	};
+}
+
+/** ACP's `cost: { amount, currency }`, in US dollars only. */
+function readCostUsd(raw: unknown): number | undefined {
+	if (!raw || typeof raw !== 'object') {
+		return undefined;
+	}
+	const cost = raw as { amount?: unknown; currency?: unknown };
+	const currency = typeof cost.currency === 'string' ? cost.currency.toUpperCase() : 'USD';
+	const amount = typeof cost.amount === 'number' ? cost.amount : typeof cost.amount === 'string' ? Number(cost.amount) : NaN;
+	return currency === 'USD' && Number.isFinite(amount) && amount >= 0 ? amount : undefined;
 }
 
 export function readTokenCount(value: unknown): number | undefined {

@@ -11,6 +11,8 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { extname } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
 import { AgentBlock, IAgentActivityItem, IToolBlock } from '../blocks/agentBlocks.js';
+import { formatContextTokens } from '../context/agentContextUsage.js';
+import { createCompactIcon } from '../context/agentContextUsageView.js';
 import { appendHighlightedShell, IBlockRenderContext, renderMarkdownInto } from '../blocks/agentBlockRenderers.js';
 import { highlightCodeLines } from '../blocks/agentCodeBlock.js';
 import { computeFileChangePreview, IFileChangePreviewLine } from '../review/fileChangePreviewModel.js';
@@ -92,7 +94,9 @@ export function renderTranscript(parent: HTMLElement, rows: readonly TranscriptR
 	}
 	if (options.streaming) {
 		const last = rows.at(-1);
-		if (!last || last.kind === 'steps' || last.kind === 'thought' || last.kind === 'subagent' || last.kind === 'subagents' || last.kind === 'steer') {
+		// A running compaction shows its own progress; once it is done the agent goes on thinking.
+		if (!last || last.kind === 'steps' || last.kind === 'thought' || last.kind === 'subagent' || last.kind === 'subagents' || last.kind === 'steer'
+			|| (last.kind === 'compaction' && last.compaction.status !== 'running')) {
 			const tail = append(parent, $('.volt-tr-tail'));
 			host.renderStatus(tail, `${options.statusKey}:tail`, tailPhrase(rows, options.status));
 			if (options.elapsedSince !== undefined) {
@@ -167,6 +171,66 @@ function renderSteerRow(parent: HTMLElement, row: Extract<TranscriptRow, { kind:
 	host.setSearchableText(append(el, $('span.volt-tr-steer-text')), row.text);
 }
 
+/**
+ * A divider across the transcript where the agent compacted the chat: "Compacting context · 12s"
+ * shimmering while it summarizes, then "Context compacted from 51.8K tokens", which opens the summary
+ * the conversation goes on from (when the agent shared it).
+ */
+function renderCompactionRow(parent: HTMLElement, row: Extract<TranscriptRow, { kind: 'compaction' }>, host: ITranscriptHost): void {
+	const { compaction } = row;
+	const auto = compaction.trigger === 'auto';
+	const summary = compaction.status === 'completed' ? compaction.summary?.trim() : undefined;
+	const open = !!summary && (host.isExpanded(row.id) ?? false);
+	const el = append(parent, $(`.volt-tr-compaction.${compaction.status}`));
+	el.classList.toggle('open', open);
+	const line = append(el, $('.volt-tr-compaction-line'));
+	const pill = append(line, $(summary ? 'button.volt-tr-compaction-pill' : 'span.volt-tr-compaction-pill'));
+	if (pill instanceof HTMLButtonElement) {
+		pill.type = 'button';
+		pill.setAttribute('aria-expanded', String(open));
+	}
+	const icon = append(pill, $('span.volt-tr-compaction-icon'));
+	icon.appendChild(compaction.status === 'failed' ? renderIcon(Codicon.warning) : createCompactIcon(icon.ownerDocument));
+	const label = append(pill, $('span.volt-tr-compaction-label'));
+	let detail: string | undefined;
+	switch (compaction.status) {
+		case 'running':
+			host.setSearchableText(label, auto ? localize('voltAgent.compaction.autoRunning', "Auto-compacting context") : localize('voltAgent.compaction.running', "Compacting context"));
+			label.classList.add('shimmer');
+			break;
+		case 'completed':
+			host.setSearchableText(label, auto ? localize('voltAgent.compaction.autoDone', "Context auto-compacted") : localize('voltAgent.compaction.done', "Context compacted"));
+			detail = compaction.preTokens ? localize('voltAgent.compaction.from', "from {0} tokens", formatContextTokens(compaction.preTokens)) : undefined;
+			break;
+		case 'failed':
+			host.setSearchableText(label, localize('voltAgent.compaction.failed', "Couldn't compact context"));
+			detail = compaction.error;
+			break;
+		case 'cancelled':
+			host.setSearchableText(label, localize('voltAgent.compaction.cancelled', "Compaction stopped"));
+			break;
+	}
+	if (detail) {
+		host.setSearchableText(append(pill, $('span.volt-tr-compaction-detail')), detail);
+	}
+	if (compaction.status === 'running' && compaction.startedAt !== undefined) {
+		appendElapsed(pill, compaction.startedAt);
+	}
+	if (!summary) {
+		return;
+	}
+	appendChevron(pill);
+	host.store.add(addDisposableListener(pill, 'click', e => {
+		e.preventDefault();
+		e.stopPropagation();
+		host.setExpanded(row.id, !open);
+	}));
+	if (open) {
+		const body = append(el, $('.volt-tr-compaction-summary.volt-tr-thinking.volt-agent-thinking-text'));
+		renderMarkdownInto(body, summary, host.ctx);
+	}
+}
+
 function renderRow(parent: HTMLElement, row: TranscriptRow, host: ITranscriptHost, options: ITranscriptRenderOptions, replies: HTMLElement[]): void {
 	switch (row.kind) {
 		case 'markdown': {
@@ -203,6 +267,9 @@ function renderRow(parent: HTMLElement, row: TranscriptRow, host: ITranscriptHos
 			return;
 		case 'steer':
 			renderSteerRow(parent, row, host);
+			return;
+		case 'compaction':
+			renderCompactionRow(parent, row, host);
 			return;
 		case 'block':
 			host.renderBlock(parent, row.block);

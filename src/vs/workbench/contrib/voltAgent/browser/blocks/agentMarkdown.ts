@@ -12,11 +12,13 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import type * as marked from '../../../../../base/common/marked/marked.js';
 import { MarkedKatexSupport } from '../../../markdown/browser/markedKatexSupport.js';
 import { ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
+import { replaceEmojiWithIcons } from './agentEmojiIcons.js';
 import { IMermaidOptions, preloadMermaid, renderMermaidDiagram } from './agentMermaid.js';
+import { IVisualHostContext, mountChart } from '../visuals/agentVisuals.js';
 
 /**
  * Markdown the way Cursor's transcript draws it: KaTeX math, highlighted code cards,
- * Mermaid diagrams for ```mermaid fences, round task markers, and link favicons.
+ * Mermaid diagrams for ```mermaid fences, round task markers, link favicons, and emoji as line icons.
  */
 
 let mathLoad: Promise<unknown> | undefined;
@@ -33,6 +35,32 @@ export function isMarkdownMathLoaded(win: CodeWindow): boolean {
 
 export interface IAgentMarkdownOptions extends ICodeCardOptions {
 	readonly onExpandDiagram?: IMermaidOptions['onExpand'];
+	/** Draws ```volt-chart fences as native charts. */
+	readonly visualHost?: IVisualHostContext;
+}
+
+const CHART_FENCES = new Set(['volt-chart', 'voltchart', 'chart-json', 'volt-charts']);
+
+/** A ```volt-chart fence once its JSON is complete; undefined while it streams or when it is not a chart. */
+function parseChartFence(value: string): unknown {
+	const trimmed = value.trim();
+	if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+		return undefined;
+	}
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return undefined;
+	}
+}
+
+/** Same text, same key: a fence redrawn on every streamed frame keeps one live chart. */
+function fenceKey(value: string): string {
+	let hash = 0;
+	for (let index = 0; index < value.length; index++) {
+		hash = (hash * 31 + value.charCodeAt(index)) | 0;
+	}
+	return `fence:${value.length}:${hash}`;
 }
 
 /** Render options for MarkdownRenderer.render: math, sanitizer for KaTeX output, and Cursor code cards. */
@@ -48,8 +76,13 @@ export function agentMarkdownRenderOptions(win: CodeWindow, options: IAgentMarkd
 		}) : undefined,
 		codeBlockRendererSync: (languageId, value) => {
 			const host = $('div.volt-md-code-host');
-			if ((languageId ?? '').toLowerCase() === 'mermaid') {
+			const language = (languageId ?? '').toLowerCase();
+			const chart = CHART_FENCES.has(language) && options.visualHost ? parseChartFence(value) : undefined;
+			if (language === 'mermaid') {
 				renderMermaidDiagram(host, value, { ...options, onExpand: options.onExpandDiagram });
+			} else if (chart !== undefined && options.visualHost) {
+				host.classList.add('volt-md-chart-host');
+				mountChart(host, fenceKey(value), chart, options.visualHost);
 			} else {
 				renderCodeCard(host, languageId, value, options);
 			}
@@ -58,9 +91,10 @@ export function agentMarkdownRenderOptions(win: CodeWindow, options: IAgentMarkd
 	};
 }
 
-/** Post-render touches that marked cannot express: task markers and link favicons. */
+/** Post-render touches that marked cannot express: task markers, link favicons and emoji icons. */
 export function decorateAgentMarkdown(root: HTMLElement, store: DisposableStore): void {
 	decorateTaskLists(root);
+	replaceEmojiWithIcons(root);
 	decorateLinkFavicons(root, store);
 }
 

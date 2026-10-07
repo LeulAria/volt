@@ -59,7 +59,7 @@ export class AgentThreadView extends Disposable {
 		const targetWindow = getWindow(this.inner);
 		const cards: { turn: HTMLElement; exchange: HTMLElement | null; stuck: boolean; bottom: number; replies: { reply: HTMLElement; top: number }[] }[] = [];
 		// Only prompts the user sent pin; a subagent report scrolls with the replies under them.
-		for (const turn of this.inner.querySelectorAll<HTMLElement>('.volt-agent-turn.user:not(.notification)')) {
+		for (const turn of this.inner.querySelectorAll<HTMLElement>('.volt-agent-turn.user:not(.notification):not(.compact-command)')) {
 			const exchange = turn.parentElement;
 			if (!exchange) {
 				cards.push({ turn, exchange, stuck: false, bottom: 0, replies: [] });

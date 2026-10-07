@@ -15,6 +15,9 @@ import {
 	gqlString,
 	parseCheckRun,
 	parseFile,
+	parseFilePatch,
+	parseGitStatusV2,
+	parseNumstat,
 	parsePullRequest,
 	parsePullRequestDetail,
 	parseRemoteUrl,
@@ -25,6 +28,9 @@ import {
 import {
 	IVoltBranchSummary,
 	IVoltChangesSummary,
+	IVoltGitCommitRequest,
+	IVoltGitCommitResult,
+	IVoltGitStatus,
 	IVoltPrAccount,
 	IVoltPrAuth,
 	IVoltPrBranchRequest,
@@ -32,6 +38,7 @@ import {
 	IVoltPrCreateRequest,
 	IVoltPrFetchResult,
 	IVoltPrFile,
+	IVoltPrFilePatch,
 	IVoltPrListRequest,
 	IVoltPrMergeRequest,
 	IVoltPrPushResult,
@@ -705,11 +712,13 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			throw new VoltPrError('failed', 'Check out a branch before pushing (HEAD is detached).');
 		}
 		const remote = request.remote ?? repo.remote;
-		const setUpstream = !repo.upstream;
+		// A branch made from origin/main tracks main: pushing to its upstream would push onto main.
+		// It goes to a branch of its own name instead, which becomes its upstream.
+		const setUpstream = !repo.upstream || repo.upstream !== repo.branch || remote !== repo.remote;
 		return this.gitQueue.queue(repo.root, async () => {
-			const args = setUpstream
-				? ['push', '--porcelain', '-u', remote, `HEAD:refs/heads/${repo.branch}`]
-				: ['push', '--porcelain'];
+			// Always an explicit remote and branch: a bare push follows push.default (matching pushes
+			// every branch) and pushRemote, which can differ from the remote reported and opened against.
+			const args = ['push', '--porcelain', ...(setUpstream ? ['-u'] : []), remote, `HEAD:refs/heads/${repo.branch}`];
 			const pushed = await this.run('git', ['-c', 'credential.interactive=never', ...args], { cwd: repo.root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
 			if (pushed.code !== 0) {
 				const text = `${pushed.stderr}\n${pushed.stdout}`;
@@ -722,9 +731,12 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		});
 	}
 
-	async describeChanges(request: { readonly folder: string }): Promise<IVoltChangesSummary> {
+	async describeChanges(request: { readonly folder: string; readonly paths?: readonly string[] }): Promise<IVoltChangesSummary> {
 		const cwd = request.folder;
-		const git = (args: string[], timeoutMs = 30_000) => this.run('git', ['-c', 'core.quotepath=off', ...args], { cwd, timeoutMs });
+		const git = (args: string[], timeoutMs = 30_000) => this.run('git', ['--no-optional-locks', '--literal-pathspecs', '-c', 'core.quotepath=off', ...args], { cwd, timeoutMs });
+		if (request.paths) {
+			return this.describePaths(request.paths.filter(path => !!path), git);
+		}
 		const [branchOut, stagedNames, logOut] = await Promise.all([
 			git(['symbolic-ref', '--short', '-q', 'HEAD']),
 			git(['diff', '--cached', '--name-status', '-M']),
@@ -742,6 +754,34 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			hasHead ? git(['diff', 'HEAD', '--name-status', '-M']) : Promise.resolve(EMPTY_RUN),
 			hasHead ? git(['diff', 'HEAD', '--no-ext-diff', '--patch', '--minimal', '-M']) : Promise.resolve(EMPTY_RUN),
 			git(['ls-files', '--others', '--exclude-standard']),
+		]);
+		const added = untracked.stdout.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 200).map(path => `A\t${path}`);
+		return {
+			...(branch ? { branch } : {}),
+			staged: false,
+			files: [names.stdout.trim(), ...added].filter(Boolean).join('\n'),
+			patch: patch.stdout,
+			recentSubjects,
+		};
+	}
+
+	/** Exactly these paths against HEAD (what `commit` with paths records), untracked ones as added. */
+	private async describePaths(paths: readonly string[], git: (args: string[]) => Promise<IRunResult>): Promise<IVoltChangesSummary> {
+		const [branchOut, logOut, hasHead] = await Promise.all([
+			git(['symbolic-ref', '--short', '-q', 'HEAD']),
+			git(['log', '-n', '10', '--format=%s']),
+			git(['rev-parse', '--verify', '-q', 'HEAD']).then(result => result.code === 0),
+		]);
+		const branch = branchOut.code === 0 ? branchOut.stdout.trim() || undefined : undefined;
+		const recentSubjects = logOut.code === 0 ? logOut.stdout.split('\n').map(line => line.trim()).filter(Boolean) : [];
+		if (!paths.length) {
+			return { ...(branch ? { branch } : {}), staged: false, files: '', patch: '', recentSubjects };
+		}
+		const spec = ['--', ...paths];
+		const [names, patch, untracked] = await Promise.all([
+			hasHead ? git(['diff', 'HEAD', '--name-status', '-M', ...spec]) : Promise.resolve(EMPTY_RUN),
+			hasHead ? git(['diff', 'HEAD', '--no-ext-diff', '--patch', '--minimal', '-M', ...spec]) : Promise.resolve(EMPTY_RUN),
+			git(['ls-files', '--others', '--exclude-standard', ...spec]),
 		]);
 		const added = untracked.stdout.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 200).map(path => `A\t${path}`);
 		return {
@@ -787,6 +827,189 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			patch: patch.stdout,
 			...(template ? { template } : {}),
 		};
+	}
+
+	async filePatches(request: IVoltPrRequest & { readonly commit?: string }): Promise<IVoltPrFilePatch[]> {
+		if (request.commit && !/^[0-9a-f]{7,40}$/i.test(request.commit)) {
+			throw new VoltPrError('failed', `Not a commit id: ${request.commit}`);
+		}
+		const path = request.commit
+			? `repos/${request.repo.owner}/${request.repo.name}/commits/${request.commit}`
+			: `repos/${request.repo.owner}/${request.repo.name}/pulls/${request.number}/files?per_page=100`;
+		const out = await this.rest(request.repo.host, request, 'GET', path, undefined, request.commit ? [] : ['--paginate', '--slurp']);
+		const entries: Json[] = request.commit ? (Array.isArray(out?.files) ? out.files : []) : Array.isArray(out) ? out.flat() : [];
+		return entries.slice(0, MAX_FILES).map(parseFilePatch).filter(file => !!file.path);
+	}
+
+	async gitStatus(folder: string): Promise<IVoltGitStatus | undefined> {
+		const top = await this.run('git', ['rev-parse', '--show-toplevel'], { cwd: folder, timeoutMs: 15_000 });
+		if (top.code !== 0) {
+			return undefined;
+		}
+		const root = top.stdout.trim();
+		// Read-only: never take index.lock, so a terminal `git commit` running now does not fail.
+		const git = (args: string[]) => this.run('git', ['--no-optional-locks', '-c', 'core.quotepath=off', ...args], { cwd: root, timeoutMs: 30_000 });
+		const [statusOut, remotesOut, hasHead] = await Promise.all([
+			git(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all']),
+			git(['remote']),
+			git(['rev-parse', '--verify', '-q', 'HEAD']).then(result => result.code === 0),
+		]);
+		if (statusOut.code !== 0) {
+			throw new VoltPrError('failed', `git status failed: ${ghErrorText(statusOut.stderr)}`);
+		}
+		const parsed = parseGitStatusV2(statusOut.stdout);
+		const remotes = remotesOut.stdout.split('\n').map(line => line.trim()).filter(Boolean);
+		const upstreamRemote = parsed.upstream ? remotes.filter(name => parsed.upstream!.startsWith(`${name}/`)).sort((a, b) => b.length - a.length)[0] : undefined;
+		const remote = upstreamRemote ?? (remotes.includes('origin') ? 'origin' : remotes[0]);
+		const tracked = parsed.upstream && upstreamRemote ? parsed.upstream.slice(upstreamRemote.length + 1) : undefined;
+		// Tracking another branch (made from origin/main) is not being pushed: the branch has no copy of its own yet.
+		const upstream = tracked && tracked === parsed.branch ? tracked : undefined;
+		let defaultBranch: string | undefined;
+		if (remote) {
+			const head = await git(['symbolic-ref', '--short', '-q', `refs/remotes/${remote}/HEAD`]);
+			if (head.code === 0 && head.stdout.trim().startsWith(`${remote}/`)) {
+				defaultBranch = head.stdout.trim().slice(remote.length + 1);
+			} else {
+				for (const candidate of ['main', 'master', 'trunk', 'develop']) {
+					if ((await git(['rev-parse', '--verify', '-q', `refs/remotes/${remote}/${candidate}`])).code === 0) {
+						defaultBranch = candidate;
+						break;
+					}
+				}
+			}
+		}
+		let aheadOfDefault: number | undefined;
+		if (remote && defaultBranch && hasHead) {
+			const count = await git(['rev-list', '--count', `refs/remotes/${remote}/${defaultBranch}..HEAD`]);
+			if (count.code === 0 && /^\d+$/.test(count.stdout.trim())) {
+				aheadOfDefault = Number(count.stdout.trim());
+			}
+		}
+		if (aheadOfDefault === undefined && remote && hasHead && !upstream) {
+			// No default branch known (an empty remote, no origin/HEAD): commits the remote has nowhere.
+			const count = await git(['rev-list', '--count', 'HEAD', '--not', `--remotes=${remote}`]);
+			if (count.code === 0 && /^\d+$/.test(count.stdout.trim())) {
+				aheadOfDefault = Number(count.stdout.trim());
+			}
+		}
+		const stats = hasHead && parsed.files.length ? parseNumstat((await git(['diff', 'HEAD', '--numstat', '-z', '-M'])).stdout) : new Map<string, { additions: number; deletions: number }>();
+		let insertions = 0;
+		let deletions = 0;
+		const files = parsed.files.map(file => {
+			const stat = stats.get(file.path);
+			insertions += stat?.additions ?? 0;
+			deletions += stat?.deletions ?? 0;
+			return stat ? { ...file, additions: stat.additions, deletions: stat.deletions } : file;
+		});
+		return {
+			root,
+			...(parsed.branch ? { branch: parsed.branch } : {}),
+			...(parsed.head ? { head: parsed.head } : {}),
+			...(remote ? { remote } : {}),
+			...(upstream ? { upstream } : {}),
+			ahead: upstream ? parsed.ahead : 0,
+			behind: upstream ? parsed.behind : 0,
+			...(defaultBranch ? { defaultBranch } : {}),
+			isDefaultBranch: !!parsed.branch && parsed.branch === defaultBranch,
+			...(aheadOfDefault !== undefined ? { aheadOfDefault } : {}),
+			files,
+			insertions,
+			deletions,
+		};
+	}
+
+	async commit(request: IVoltGitCommitRequest): Promise<IVoltGitCommitResult> {
+		const message = request.message.trim();
+		if (!message) {
+			throw new VoltPrError('failed', 'The commit message is empty.');
+		}
+		const top = await this.run('git', ['rev-parse', '--show-toplevel'], { cwd: request.folder, timeoutMs: 15_000 });
+		if (top.code !== 0) {
+			throw new VoltPrError('notFound', 'This folder is not a git repository.');
+		}
+		const root = top.stdout.trim();
+		const git = (args: string[], input?: string) => this.run('git', args, { cwd: root, timeoutMs: GIT_TIMEOUT_MS, ...(input !== undefined ? { input } : {}) });
+		const fail = (what: string, result: IRunResult) => new VoltPrError('failed', `${what} failed: ${ghErrorText(result.stderr || result.stdout)}`);
+		return this.gitQueue.queue(root, async () => {
+			// A merge or cherry-pick stopped on conflicts: `git add` would mark the markers resolved.
+			const unmerged = await git(['--no-optional-locks', 'diff', '--name-only', '--diff-filter=U']);
+			if (unmerged.code === 0 && unmerged.stdout.trim()) {
+				throw new VoltPrError('conflict', `Resolve the merge conflicts first: ${unmerged.stdout.trim().split('\n').slice(0, 3).join(', ')}.`);
+			}
+			if (request.paths && !request.paths.some(path => !!path)) {
+				throw new VoltPrError('failed', 'No files were chosen to commit.');
+			}
+			let created: string | undefined;
+			if (request.newBranch) {
+				validateBranchName(request.newBranch);
+				const checkout = await git(['checkout', '-b', request.newBranch]);
+				if (checkout.code !== 0) {
+					throw fail('git checkout -b', checkout);
+				}
+				created = request.newBranch;
+			}
+			try {
+				// Paths go through stdin, NUL-separated and literal: no length limit, and `[slug]` or a
+				// leading `:` is a file name, not a pattern.
+				const paths = request.paths?.filter(path => !!path);
+				const pathInput = paths ? `${paths.join('\0')}\0` : undefined;
+				const pathArgs = paths ? ['--pathspec-from-file=-', '--pathspec-file-nul'] : [];
+				const added = await git(['--literal-pathspecs', 'add', '-A', ...pathArgs], pathInput);
+				if (added.code !== 0) {
+					throw fail('git add', added);
+				}
+				const committed = await git(['--literal-pathspecs', 'commit', '-m', message, ...pathArgs], pathInput);
+				if (committed.code !== 0) {
+					const text = `${committed.stdout}\n${committed.stderr}`;
+					throw new VoltPrError('failed', /nothing (added )?to commit|no changes added/i.test(text) ? 'There is nothing to commit.' : `git commit failed: ${ghErrorText(committed.stderr || committed.stdout)}`);
+				}
+			} catch (err) {
+				if (created) {
+					// Back where the user was, with their changes: a failed commit leaves no stray branch.
+					const back = await git(['checkout', '-']);
+					if (back.code === 0) {
+						await git(['branch', '-D', created]);
+					}
+				}
+				throw err;
+			}
+			const [sha, branch] = await Promise.all([git(['rev-parse', 'HEAD']), git(['symbolic-ref', '--short', '-q', 'HEAD'])]);
+			return {
+				sha: sha.stdout.trim(),
+				...(branch.code === 0 && branch.stdout.trim() ? { branch: branch.stdout.trim() } : {}),
+				subject: message.split('\n')[0],
+			};
+		});
+	}
+
+	async pull(folder: string): Promise<{ readonly updated: boolean; readonly branch: string; readonly upstream: string }> {
+		const status = await this.gitStatus(folder);
+		if (!status?.branch) {
+			throw new VoltPrError('failed', 'Check out a branch before pulling (HEAD is detached).');
+		}
+		if (!status.upstream || !status.remote) {
+			throw new VoltPrError('failed', `${status.branch} has no upstream to pull from.`);
+		}
+		const upstream = `${status.remote}/${status.upstream}`;
+		return this.gitQueue.queue(status.root, async () => {
+			const pulled = await this.run('git', ['-c', 'credential.interactive=never', 'pull', '--ff-only', '--no-rebase'], { cwd: status.root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
+			if (pulled.code !== 0) {
+				const text = `${pulled.stderr}\n${pulled.stdout}`;
+				if (/not possible to fast-forward|diverg/i.test(text)) {
+					throw new VoltPrError('conflict', `${status.branch} and ${upstream} have diverged. Rebase or merge first.`);
+				}
+				throw new VoltPrError(classifyGhError(pulled.stderr, pulled.code, pulled.spawnError) === 'noAuth' ? 'noAuth' : 'failed', `git pull failed: ${ghErrorText(pulled.stderr)}`);
+			}
+			return { updated: !/already up.to.date/i.test(pulled.stdout), branch: status.branch!, upstream };
+		});
+	}
+
+	async checkoutNewBranch(request: { readonly folder: string; readonly name: string }): Promise<void> {
+		validateBranchName(request.name);
+		const created = await this.run('git', ['checkout', '-b', request.name], { cwd: request.folder, timeoutMs: 30_000 });
+		if (created.code !== 0) {
+			throw new VoltPrError('failed', `git checkout -b ${request.name} failed: ${ghErrorText(created.stderr)}`);
+		}
 	}
 
 	//#endregion
@@ -956,6 +1179,12 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	//#endregion
+}
+
+function validateBranchName(name: string): void {
+	if (!name || name.startsWith('-') || /[\s~^:?*\[\\]|\.\.|@\{|\.lock$|\/$|^\//.test(name)) {
+		throw new VoltPrError('failed', `Not a valid branch name: ${name}`);
+	}
 }
 
 function sameRepo(a: IVoltPrRepoRef, b: IVoltPrRepoRef): boolean {

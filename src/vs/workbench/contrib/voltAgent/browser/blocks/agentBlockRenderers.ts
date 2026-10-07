@@ -7,7 +7,8 @@ import '../media/agentMarkdown.css';
 import { $, addDisposableListener, append, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
-import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
 import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
@@ -43,6 +44,7 @@ import {
 	terminalCommandLabels,
 } from './agentBlocks.js';
 import { renderMermaidDiagram } from './agentMermaid.js';
+import { mountChart, renderVisualBlock } from '../visuals/agentVisuals.js';
 import { highlight, ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
 import { agentMarkdownRenderOptions, decorateAgentMarkdown, normalizeMathDelimiters } from './agentMarkdown.js';
 import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../preview/localPreview.js';
@@ -75,6 +77,10 @@ export interface IBlockRenderContext {
 	readonly languageService?: ILanguageService;
 	/** Opens a Mermaid diagram larger. */
 	readonly onExpandDiagram?: (svg: SVGSVGElement, source: string) => void;
+	/** A page under the pointer took a wheel event: scroll the transcript instead. */
+	readonly onWheel?: (event: IMouseWheelEvent) => void;
+	/** Shows a chart or page full size; `store` is disposed when it closes. */
+	readonly onExpandVisual?: (title: string, content: HTMLElement, store: IDisposable) => void;
 }
 
 export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IBlockRenderContext): void {
@@ -98,7 +104,7 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 			renderCardsBlock(parent, block, ctx);
 			return;
 		case 'chart':
-			renderChartBlock(parent, block);
+			renderChartBlock(parent, block, ctx);
 			return;
 		case 'mermaid':
 			renderMermaidDiagram(parent, block.source, { ...codeCardOptions(ctx), onExpand: ctx.onExpandDiagram });
@@ -120,6 +126,9 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 			return;
 		case 'plan':
 			renderPlanBlock(parent, block, ctx);
+			return;
+		case 'visual':
+			renderVisualBlock(parent, block, ctx);
 	}
 }
 
@@ -172,6 +181,7 @@ function codeCardOptions(ctx: IBlockRenderContext): ICodeCardOptions {
 	return {
 		store: ctx.store,
 		languageService: ctx.languageService,
+		instantiationService: ctx.instantiationService,
 		onCopyText: ctx.onCopyText,
 		onDidChangeSize: ctx.onScroll,
 		onOpenPath: ctx.onOpenPath,
@@ -181,7 +191,7 @@ function codeCardOptions(ctx: IBlockRenderContext): ICodeCardOptions {
 
 export function renderMarkdownInto(parent: HTMLElement, text: string, ctx: IBlockRenderContext, extraClass?: string): void {
 	const result = ctx.markdownRenderer.render(new MarkdownString(linkifyPreviewUrls(normalizeMathDelimiters(text))), {
-		...agentMarkdownRenderOptions(getWindow(parent), { ...codeCardOptions(ctx), onExpandDiagram: ctx.onExpandDiagram }),
+		...agentMarkdownRenderOptions(getWindow(parent), { ...codeCardOptions(ctx), onExpandDiagram: ctx.onExpandDiagram, visualHost: ctx }),
 		fillInIncompleteTokens: true,
 		asyncRenderCallback: ctx.onScroll,
 		actionHandler: link => {
@@ -518,30 +528,17 @@ function renderCardsBlock(parent: HTMLElement, block: ICardsBlock, ctx: IBlockRe
 	}
 }
 
-function renderChartBlock(parent: HTMLElement, block: IChartBlock): void {
-	const wrap = append(parent, $('.volt-agent-block.chart.volt-agent-chart'));
-	if (block.title) {
-		const title = append(wrap, $('.volt-agent-chart-title.volt-agent-searchable'));
-		title.textContent = block.title;
-	}
-	const max = Math.max(...block.values, 0.0001);
-	for (const [index, label] of block.labels.entries()) {
-		const row = append(wrap, $('.volt-agent-chart-row'));
-		const name = append(row, $('span.volt-agent-chart-label.volt-agent-searchable'));
-		name.textContent = label;
-		const track = append(row, $('.volt-agent-chart-track'));
-		const bar = append(track, $('.volt-agent-chart-bar'));
-		bar.style.width = `${Math.max(4, (block.values[index] / max) * 100)}%`;
-		const value = append(row, $('span.volt-agent-chart-value.volt-agent-searchable'));
-		value.textContent = `${formatChartValue(block.values[index])}${block.unit ?? ''}`;
-	}
-}
-
-function formatChartValue(value: number): string {
-	if (Number.isInteger(value)) {
-		return String(value);
-	}
-	return String(Math.round(value * 100) / 100);
+/** The native loop's bar list, drawn by the chart engine as a ranked chart. */
+function renderChartBlock(parent: HTMLElement, block: IChartBlock, ctx: IBlockRenderContext): void {
+	const wrap = append(parent, $('.volt-agent-block.chart.volt-agent-chart.engine'));
+	const spec = {
+		type: 'ranked',
+		title: block.title,
+		unit: block.unit ? { suffix: block.unit } : undefined,
+		limit: 20,
+		data: block.labels.map((label, index) => ({ label, value: block.values[index] ?? 0 })),
+	};
+	mountChart(wrap, `${block.id}:${block.labels.length}:${block.values.join(',')}`, spec, ctx);
 }
 
 function renderErrorBlock(parent: HTMLElement, block: IErrorBlock): void {

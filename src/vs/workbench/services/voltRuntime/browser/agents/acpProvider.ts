@@ -15,6 +15,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { IAccessDecision, IAccessGate, IAccessRequest, ICompiledPolicy } from '../../common/access/accessTypes.js';
 import { IProviderAccessBridge } from '../../common/access/providerAccessBridge.js';
 import { classifyRisk } from '../../common/access/riskClassifier.js';
+import { compactionEventsFromAcpUpdate } from '../../common/acpCompaction.js';
 import { IAcpNotice, noticesFromAcpPayload, noticesFromAcpUpdate } from '../../common/acpNotices.js';
 import { acpModeForVoltMode, collectAcpToolDiffs, collectAcpToolInput, collectAcpToolLocations, IAcpSessionMode } from '../../common/acpToolInput.js';
 import { IVoltEvent } from '../../common/events.js';
@@ -192,6 +193,9 @@ const ACP_CLIENT_CAPABILITIES = {
 	terminal: false,
 	// Form elicitations are how Claude's AskUserQuestion (and Codex's request-user-input) reach the question tray.
 	elicitation: { form: {} },
+	// Compaction as its own entity (`compaction_update`): Claude and Codex then report when it starts and ends,
+	// the summary they kept and the tokens before and after, instead of a generic "Compact conversation" tool call.
+	session: { compaction: {} },
 	_meta: {
 		parameterizedModelPicker: true,
 		jetbrains: {
@@ -530,7 +534,8 @@ export class AcpAgentProvider implements IAgentProvider {
 	private async createSession(req: IAgentStartRequest): Promise<IAcpSession> {
 		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
 		const cwd = req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
-		const processId = await this.stdio.spawn({ command, args, cwd });
+		const env = cliAgentDefinition(this.id)?.acpEnv;
+		const processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}) });
 		const client = new AcpJsonRpcClient(this.stdio, processId);
 		this.bindClientRequests(client);
 		client.whenDead(() => {
@@ -991,6 +996,16 @@ export class AcpAgentProvider implements IAgentProvider {
 			case 'reasoning.delta':
 				turn.watchdog.modelOutput();
 				break;
+			case 'context.compaction':
+				// Summarizing a long chat is quiet for a minute or more: it waits like a running tool.
+				if (event.status === 'running') {
+					turn.watchdog.toolStarted(`compaction:${event.id}`);
+				} else if (event.status) {
+					turn.watchdog.toolEnded(`compaction:${event.id}`);
+				} else {
+					turn.watchdog.activity();
+				}
+				break;
 			default:
 				turn.watchdog.activity();
 		}
@@ -1347,6 +1362,10 @@ export class AcpAgentProvider implements IAgentProvider {
 		const body = params as { update?: Record<string, unknown>; sessionUpdate?: string };
 		const update = (body.update ?? body) as Record<string, unknown>;
 		const kind = String(update.sessionUpdate ?? update.type ?? '');
+		const compaction = compactionEventsFromAcpUpdate(update);
+		if (compaction) {
+			return compaction;
+		}
 		const events: IVoltEvent[] = [];
 		if (kind === 'agent_message_chunk' || kind === 'agent_message') {
 			const text = this.contentText(update.content);

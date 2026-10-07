@@ -8,7 +8,9 @@ import {
 	IVoltPrChecksSummary,
 	IVoltPrComment,
 	IVoltPrCommit,
+	IVoltGitStatusFile,
 	IVoltPrFile,
+	IVoltPrFilePatch,
 	IVoltPrLabel,
 	IVoltPrRepoRef,
 	IVoltPrReview,
@@ -17,6 +19,7 @@ import {
 	IVoltPrUser,
 	IVoltPullRequest,
 	IVoltPullRequestDetail,
+	VoltGitFileStatus,
 	VoltPrCheckState,
 	VoltPrChecksState,
 	VoltPrErrorCode,
@@ -587,6 +590,121 @@ export function parsePullRequestDetail(raw: Json, repoRaw: Json, repo: IVoltPrRe
 /** A GraphQL string literal. */
 export function gqlString(value: string): string {
 	return JSON.stringify(value);
+}
+
+//#endregion
+
+//#region Local git
+
+/** A REST file entry (`pulls/N/files`, `commits/SHA`) with its patch. */
+export function parseFilePatch(raw: Json): IVoltPrFilePatch {
+	const previousPath = raw?.previous_filename;
+	return {
+		path: str(raw?.filename),
+		...(typeof previousPath === 'string' && previousPath && previousPath !== raw?.filename ? { previousPath } : {}),
+		change: parseRestFileChange(raw?.status),
+		additions: num(raw?.additions),
+		deletions: num(raw?.deletions),
+		...(typeof raw?.patch === 'string' && raw.patch ? { patch: raw.patch } : {}),
+	};
+}
+
+export function parseRestFileChange(value: unknown): VoltPrFileChange {
+	switch (value) {
+		case 'added': return 'added';
+		case 'removed': return 'deleted';
+		case 'renamed': return 'renamed';
+		case 'copied': return 'copied';
+		case 'modified': return 'modified';
+		default: return 'changed';
+	}
+}
+
+export interface IParsedGitStatus {
+	readonly branch?: string;
+	readonly head?: string;
+	readonly upstream?: string;
+	readonly ahead: number;
+	readonly behind: number;
+	readonly files: IVoltGitStatusFile[];
+}
+
+/** `git status --porcelain=v2 --branch -z`: branch, upstream, ahead/behind and the changed files (no line counts). */
+export function parseGitStatusV2(text: string): IParsedGitStatus {
+	const entries = text.split('\0');
+	let branch: string | undefined;
+	let head: string | undefined;
+	let upstream: string | undefined;
+	let ahead = 0;
+	let behind = 0;
+	const files: IVoltGitStatusFile[] = [];
+	for (let i = 0; i < entries.length; i++) {
+		const entry = entries[i];
+		if (!entry) {
+			continue;
+		}
+		if (entry.startsWith('# branch.oid ')) {
+			const oid = entry.slice('# branch.oid '.length);
+			head = /^[0-9a-f]{7,64}$/.test(oid) ? oid : undefined;
+		} else if (entry.startsWith('# branch.head ')) {
+			const head = entry.slice('# branch.head '.length);
+			branch = head === '(detached)' ? undefined : head;
+		} else if (entry.startsWith('# branch.upstream ')) {
+			upstream = entry.slice('# branch.upstream '.length);
+		} else if (entry.startsWith('# branch.ab ')) {
+			const match = /^\+(\d+) -(\d+)$/.exec(entry.slice('# branch.ab '.length));
+			if (match) {
+				ahead = Number(match[1]);
+				behind = Number(match[2]);
+			}
+		} else if (entry.startsWith('1 ')) {
+			// 1 XY sub mH mI mW hH hI path
+			const parts = entry.split(' ');
+			files.push({ path: parts.slice(8).join(' '), status: statusFromXY(parts[1]), additions: 0, deletions: 0 });
+		} else if (entry.startsWith('2 ')) {
+			// 2 XY sub mH mI mW hH hI Xscore path, then the original path as the next entry
+			const parts = entry.split(' ');
+			const previousPath = entries[++i];
+			files.push({ path: parts.slice(9).join(' '), ...(previousPath ? { previousPath } : {}), status: 'renamed', additions: 0, deletions: 0 });
+		} else if (entry.startsWith('u ')) {
+			const parts = entry.split(' ');
+			files.push({ path: parts.slice(10).join(' '), status: 'conflicted', additions: 0, deletions: 0 });
+		} else if (entry.startsWith('? ')) {
+			files.push({ path: entry.slice(2), status: 'untracked', additions: 0, deletions: 0 });
+		}
+	}
+	return { ...(branch ? { branch } : {}), ...(head ? { head } : {}), ...(upstream ? { upstream } : {}), ahead, behind, files };
+}
+
+function statusFromXY(xy: string): VoltGitFileStatus {
+	if (xy.includes('D')) {
+		return 'deleted';
+	}
+	if (xy.includes('A')) {
+		return 'added';
+	}
+	return 'modified';
+}
+
+/** `git diff --numstat -z`: added and deleted lines by path (binary files count 0). */
+export function parseNumstat(text: string): Map<string, { additions: number; deletions: number }> {
+	const stats = new Map<string, { additions: number; deletions: number }>();
+	const entries = text.split('\0');
+	for (let i = 0; i < entries.length; i++) {
+		const entry = entries[i];
+		const match = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(entry);
+		if (!match) {
+			continue;
+		}
+		let path = match[3];
+		if (!path) {
+			// A rename: the old and new paths follow as their own entries.
+			i++;
+			path = entries[++i] ?? '';
+		}
+		stats.set(path, { additions: match[1] === '-' ? 0 : Number(match[1]), deletions: match[2] === '-' ? 0 : Number(match[2]) });
+	}
+	return stats;
 }
 
 //#endregion

@@ -7,15 +7,19 @@ import { $, addDisposableListener, append } from '../../../../../base/browser/do
 import { RunOnceScheduler, Sequencer } from '../../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
+import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IWorkspaceContextService, WorkbenchState } from '../../../../../platform/workspace/common/workspace.js';
 import { IViewDescriptorService } from '../../../../common/views.js';
-import { getLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { getLayoutMode, isAgentLeftSidebarHidden, openAgentSidebar } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { ILentPaneCompositePart, IPaneCompositePartService } from '../../../../services/panecomposite/browser/panecomposite.js';
@@ -28,6 +32,7 @@ import { VIEWLET_ID as EXPLORER_VIEWLET_ID } from '../../../files/common/files.j
 import { IExplorerService } from '../../../files/browser/files.js';
 import { VIEWLET_ID as SCM_VIEWLET_ID } from '../../../scm/common/scm.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { INIT_TIMEOUT_MS, runGit } from '../home/agentHomeWorkspaceActions.js';
 import { trackLentPanesCollapsed } from '../review/agentChangesEditor.js';
 import { AgentScmRepositoryFocus } from '../review/agentScmRepository.js';
 import { setAgentChangesSession } from '../review/agentTurnsView.js';
@@ -115,6 +120,8 @@ export class AgentFilesSidebar extends Disposable {
 	private readonly header: HTMLElement;
 	private readonly body: HTMLElement;
 	private readonly repositoryStatus: HTMLElement;
+	private readonly repositoryMessage: HTMLElement;
+	private readonly initRepositoryButton: HTMLButtonElement;
 	private readonly explorerScope = this._register(new MutableDisposable());
 	private explorerFolder: URI | undefined;
 	private readonly sash: HTMLElement;
@@ -127,6 +134,8 @@ export class AgentFilesSidebar extends Disposable {
 	private scmFolder: URI | undefined;
 	private readonly scmRepository: AgentScmRepositoryFocus;
 	private shown = false;
+	/** No tab beside it: it is the whole tools area. */
+	private fills = false;
 	private sessionId: string | undefined;
 	/** The chat whose folder the window was last moved to; cleared when the sidebar stops showing. */
 	private folderSession: string | undefined;
@@ -156,6 +165,8 @@ export class AgentFilesSidebar extends Disposable {
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@ILogService private readonly logService: ILogService,
 		@IExplorerService private readonly explorerService: IExplorerService,
+		@IVoltStdioService private readonly stdio: IVoltStdioService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super();
 		this.scmRepository = this._register(instantiationService.createInstance(AgentScmRepositoryFocus));
@@ -184,6 +195,13 @@ export class AgentFilesSidebar extends Disposable {
 		unavailable.textContent = localize('voltAgent.filesSidebar.unavailable', "This view is open in another part of the window.");
 		this.repositoryStatus = append(this.body, $('.volt-agent-files-repository-status'));
 		this.repositoryStatus.setAttribute('role', 'status');
+		this.repositoryMessage = append(this.repositoryStatus, $('.volt-agent-files-repository-message'));
+		// Source Control's empty state: make the chat's folder a repository right here.
+		this.initRepositoryButton = append(this.repositoryStatus, $('button.volt-agent-files-repository-init.hidden')) as HTMLButtonElement;
+		this.initRepositoryButton.type = 'button';
+		this.initRepositoryButton.appendChild(createTabIcon(this.initRepositoryButton.ownerDocument, VIEWS.find(view => view.id === 'scm')!.icon));
+		append(this.initRepositoryButton, $('span')).textContent = localize('voltAgent.filesSidebar.initRepository', "Initialize Repository");
+		this._register(addDisposableListener(this.initRepositoryButton, 'click', () => void this.initRepository()));
 
 		this.toggleButton = $('button.volt-agent-tools-files-toggle') as HTMLButtonElement;
 		this.toggleButton.type = 'button';
@@ -262,6 +280,12 @@ export class AgentFilesSidebar extends Disposable {
 		const visible = width > 0 && height > 0 && !!sessionId;
 		this.sessionId = sessionId;
 		this.element.classList.toggle('fills', fills);
+		if (this.fills !== fills) {
+			this.fills = fills;
+			if (this.shown) {
+				shownEmitter.fire();
+			}
+		}
 		this.element.style.width = `${width}px`;
 		this.element.style.setProperty('--volt-files-sidebar-header', `${headerHeight}px`);
 		// Less its 1px left border.
@@ -273,6 +297,11 @@ export class AgentFilesSidebar extends Disposable {
 	hide(): void {
 		this.size = undefined;
 		this.setShown(false);
+	}
+
+	/** On screen beside tabs, not as the whole tools area, and not in a full-screen area. */
+	isBesideTabs(): boolean {
+		return this.shown && !this.fills && !this.element.closest('.volt-agent-tools-area.fullscreen');
 	}
 
 	/** Shows Source Control for this chat now. */
@@ -331,13 +360,40 @@ export class AgentFilesSidebar extends Disposable {
 			setAgentChangesSession(scmSession);
 			void this.scmRepository.show(scmSession, () => this.showsScmFor(scmSession), scmFolder, state => {
 				this.body.classList.toggle('repository-pending', state !== 'ready');
-				this.repositoryStatus.textContent = state === 'loading'
+				this.repositoryMessage.textContent = state === 'loading'
 					? localize('voltAgent.filesSidebar.loadingRepository', "Loading repository…")
 					: state === 'unavailable' ? localize('voltAgent.filesSidebar.repositoryUnavailable', "No Git repository is available for this folder.") : '';
+				this.initRepositoryButton.classList.toggle('hidden', state !== 'unavailable' || scmFolder?.scheme !== Schemas.file);
 			});
 		}
 		this.layoutLent();
 		this.announceShownView();
+	}
+
+	/** `git init` in the chat's folder, then Source Control opens the new repository. */
+	private async initRepository(): Promise<void> {
+		const session = this.scmSession;
+		const folder = this.scmFolder;
+		if (!session || folder?.scheme !== Schemas.file || this.initRepositoryButton.disabled) {
+			return;
+		}
+		this.initRepositoryButton.disabled = true;
+		try {
+			const result = await runGit(this.stdio, folder.fsPath, ['init'], INIT_TIMEOUT_MS);
+			if (result.exitCode !== 0) {
+				this.notificationService.error(result.timedOut
+					? localize('voltAgent.initTimedOut', "git init did not finish in time")
+					: result.stderr.trim() || localize('voltAgent.initFailed', "git init failed"));
+				return;
+			}
+		} finally {
+			this.initRepositoryButton.disabled = false;
+		}
+		if (this.scmSession === session && this.uriIdentityService.extUri.isEqual(this.scmFolder, folder)) {
+			// Forget the folder so sync asks Git to open it again.
+			this.scmSession = undefined;
+			this.sync();
+		}
 	}
 
 	private announceShownView(): void {
@@ -509,14 +565,24 @@ const LEFT_NARROW_MIN = 220;
  * narrower, and it gets its width back when the sidebar closes. (The chat gives up some room too:
  * see the split in agentSurfaceHost.ts.) The width to give back is stored, so it survives a restart
  * with the sidebar open.
+ *
+ * With tabs beside the sidebar as well, the chat would be squeezed by three columns, so the list
+ * closes until they do, and then comes back. Opening it again meanwhile keeps it open.
  */
 class AgentFilesSidebarRoomContribution extends Disposable {
 
 	static readonly ID = 'workbench.contrib.voltAgentFilesSidebarRoom';
 
+	/** The list was closed here to make room, and opens again when the room is back. */
+	private listAutoHidden = false;
+	/** The user opened the list again while crowded; it stays until they close it. */
+	private listKept = false;
+
 	constructor(
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@IStorageService private readonly storageService: IStorageService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IPaneCompositePartService private readonly paneCompositeService: IPaneCompositePartService,
 	) {
 		super();
 		// Sidebars hide and show again while a chat switches; act on where they settle.
@@ -528,11 +594,10 @@ class AgentFilesSidebarRoomContribution extends Disposable {
 	}
 
 	private apply(): void {
+		this.applyCrowded();
 		const saved = this.storageService.getNumber(LEFT_WIDTH_KEY, StorageScope.PROFILE);
 		// A drawer floats over the window and has a fixed width; only the column is narrowed.
-		const column = getLayoutMode(this.layoutService) === 'agent'
-			&& this.layoutService.isVisible(Parts.AUXILIARYBAR_PART)
-			&& !this.layoutService.mainContainer.classList.contains('volt-agent-drawer-mode');
+		const column = this.isColumnShowing();
 		if (!column) {
 			return;
 		}
@@ -549,6 +614,40 @@ class AgentFilesSidebarRoomContribution extends Disposable {
 		} else if (saved !== undefined) {
 			this.storageService.remove(LEFT_WIDTH_KEY, StorageScope.PROFILE);
 			this.layoutService.setSize(Parts.AUXILIARYBAR_PART, { width: saved, height: size.height });
+		}
+	}
+
+	private isColumnShowing(): boolean {
+		return getLayoutMode(this.layoutService) === 'agent'
+			&& this.layoutService.isVisible(Parts.AUXILIARYBAR_PART)
+			&& !this.layoutService.mainContainer.classList.contains('volt-agent-drawer-mode');
+	}
+
+	/** Closes the list while tabs and the files sidebar both show, and opens it again after. */
+	private applyCrowded(): void {
+		if (getLayoutMode(this.layoutService) !== 'agent' || this.layoutService.mainContainer.classList.contains('volt-agent-drawer-mode')) {
+			return;
+		}
+		const visible = this.layoutService.isVisible(Parts.AUXILIARYBAR_PART);
+		const crowded = [...shownSidebars].some(sidebar => sidebar.isBesideTabs());
+		if (!visible && !this.listAutoHidden) {
+			// Closed by the user: next time it may close on its own again.
+			this.listKept = false;
+		}
+		if (crowded) {
+			if (visible && this.listAutoHidden) {
+				// Opened again while crowded: it stays.
+				this.listAutoHidden = false;
+				this.listKept = true;
+			} else if (visible && !this.listKept) {
+				this.listAutoHidden = true;
+				this.layoutService.setPartHidden(true, Parts.AUXILIARYBAR_PART);
+			}
+		} else if (this.listAutoHidden) {
+			this.listAutoHidden = false;
+			if (!visible && !isAgentLeftSidebarHidden(this.storageService)) {
+				void openAgentSidebar(this.configurationService, this.layoutService, this.paneCompositeService);
+			}
 		}
 	}
 }

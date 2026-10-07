@@ -96,13 +96,13 @@ if BETA:
   {nebula()}
   {starfield()}
   <path d="{grid}" fill="none" stroke="#fff" stroke-width="2.5" stroke-linejoin="round" mask="url(#gridMask)"/>'''
-    pal = dict(top="#1A1048", mid="#0D0A2C", low="#07061C", foot="#030210", well="#000000", well2="#05031A",
+    pal = dict(top="#1A1048", mid="#0D0A2C", low="#07061C", foot="#030210", well="#000000", well2="#05031A", wellOp="0.75",
                grid0="0.14", grid1="0.08", shade="#020110", shadow="#05021A", bevel="#9C93C9", glyphFoot="#E3DDF7")
 else:
     background = f'''<path d="{body}" fill="url(#bodyFill)"/>
   <path d="{grid}" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round" mask="url(#gridMask)"/>'''
-    pal = dict(top="#3A9BF2", mid="#1B58D4", low="#0F37A3", foot="#061653", well="#030B30", well2="#040F3D",
-               grid0="0.26", grid1="0.13", shade="#061A5E", shadow="#04154F", bevel="#7E9CCF", glyphFoot="#D9E6FA")
+    pal = dict(top="#62B8FF", mid="#3A7EEC", low="#2A5ED0", foot="#17409C", well="#0C2C7A", well2="#123A8E", wellOp="0.45",
+               grid0="0.26", grid1="0.13", shade="#123C8E", shadow="#04154F", bevel="#7E9CCF", glyphFoot="#D9E6FA")
 
 svg=f'''<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
 <defs>
@@ -115,7 +115,7 @@ svg=f'''<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewB
   </linearGradient>
   <!-- the gravity well: shade deepening toward the bolt's core -->
   <radialGradient id="glow" cx="0.5" cy="0.5" r="0.42">
-    <stop offset="0" stop-color="{pal['well']}" stop-opacity="0.75"/>
+    <stop offset="0" stop-color="{pal['well']}" stop-opacity="{pal['wellOp']}"/>
     <stop offset="0.55" stop-color="{pal['well2']}" stop-opacity="0.28"/>
     <stop offset="1" stop-color="{pal['well2']}" stop-opacity="0"/>
   </radialGradient>
@@ -143,19 +143,19 @@ svg=f'''<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewB
     <stop offset="1" stop-color="{pal['glyphFoot']}"/>
   </linearGradient>
   <filter id="iconShadow" x="-20%" y="-20%" width="140%" height="140%">
-    <feGaussianBlur in="SourceAlpha" stdDeviation="14"/><feOffset dy="12"/>
-    <feComponentTransfer><feFuncA type="linear" slope="0.32"/></feComponentTransfer>
+    <feGaussianBlur in="SourceAlpha" stdDeviation="8"/><feOffset dy="5"/>
+    <feComponentTransfer><feFuncA type="linear" slope="0.16"/></feComponentTransfer>
     <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
   </filter>
   <!-- bolt lifts off the body: a wide soft shadow plus a tight contact shadow -->
   <filter id="glyphShadow" x="-30%" y="-30%" width="160%" height="160%">
     <feGaussianBlur in="SourceAlpha" stdDeviation="14" result="b1"/>
-    <feOffset in="b1" dy="10" result="o1"/>
-    <feFlood flood-color="{pal['shadow']}" flood-opacity="0.24"/>
+    <feOffset in="b1" dy="6" result="o1"/>
+    <feFlood flood-color="{pal['shadow']}" flood-opacity="0.12"/>
     <feComposite in2="o1" operator="in" result="s1"/>
     <feGaussianBlur in="SourceAlpha" stdDeviation="5" result="b2"/>
     <feOffset in="b2" dy="3" result="o2"/>
-    <feFlood flood-color="{pal['shadow']}" flood-opacity="0.18"/>
+    <feFlood flood-color="{pal['shadow']}" flood-opacity="0.09"/>
     <feComposite in2="o2" operator="in" result="s2"/>
     <feMerge><feMergeNode in="s1"/><feMergeNode in="s2"/></feMerge>
   </filter>

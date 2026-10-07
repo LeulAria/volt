@@ -130,6 +130,8 @@ import { VoltGitMainService } from '../../platform/voltGit/electron-main/voltGit
 import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestMainService } from '../../platform/voltPullRequests/electron-main/voltPullRequestMainService.js';
 import { IVoltUsageService, VOLT_USAGE_CHANNEL_NAME } from '../../platform/voltUsage/common/voltUsage.js';
+import { IVoltVisualPreviewService, VOLT_VISUAL_PREVIEW_CHANNEL_NAME } from '../../platform/voltVisualPreview/common/voltVisualPreview.js';
+import { VoltVisualPreviewMainService } from '../../platform/voltVisualPreview/electron-main/voltVisualPreviewMainService.js';
 import { VoltUsageMainService } from '../../platform/voltUsage/electron-main/voltUsageMainService.js';
 import { IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME } from '../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../platform/voltFsBrowse/node/voltFsBrowseService.js';
@@ -1074,6 +1076,7 @@ export class CodeApplication extends Disposable {
 
 		// Volt usage and limits
 		services.set(IVoltUsageService, new SyncDescriptor(VoltUsageMainService, undefined, true));
+		services.set(IVoltVisualPreviewService, new SyncDescriptor(VoltVisualPreviewMainService, undefined, true));
 
 		// Volt in-app folder picker
 		services.set(IVoltFsBrowseService, new SyncDescriptor(VoltFsBrowseService, undefined, false /* proxied to other processes */));
@@ -1267,6 +1270,8 @@ export class CodeApplication extends Disposable {
 		// Volt usage and limits
 		const voltUsageChannel = ProxyChannel.fromService(accessor.get(IVoltUsageService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_USAGE_CHANNEL_NAME, voltUsageChannel);
+		const voltVisualPreviewChannel = ProxyChannel.fromService(accessor.get(IVoltVisualPreviewService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_VISUAL_PREVIEW_CHANNEL_NAME, voltVisualPreviewChannel);
 
 		// Volt in-app folder picker
 		const voltFsBrowseChannel = ProxyChannel.fromService(accessor.get(IVoltFsBrowseService), disposables);

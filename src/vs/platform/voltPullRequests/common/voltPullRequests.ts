@@ -330,6 +330,66 @@ export interface IVoltBranchSummary {
 	readonly template?: string;
 }
 
+/** One changed file of a pull request (or of one of its commits) with its patch, for the inline diff. */
+export interface IVoltPrFilePatch {
+	readonly path: string;
+	readonly previousPath?: string;
+	readonly change: VoltPrFileChange;
+	readonly additions: number;
+	readonly deletions: number;
+	/** Unified hunks; undefined for binary files and patches GitHub leaves out as too large. */
+	readonly patch?: string;
+}
+
+export type VoltGitFileStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
+
+export interface IVoltGitStatusFile {
+	readonly path: string;
+	readonly previousPath?: string;
+	readonly status: VoltGitFileStatus;
+	readonly additions: number;
+	readonly deletions: number;
+}
+
+/** Where a work tree stands against its remote: what Commit, Push and Create PR can do from here. */
+export interface IVoltGitStatus {
+	readonly root: string;
+	/** The checked out branch; undefined when HEAD is detached or unborn. */
+	readonly branch?: string;
+	/** The commit HEAD points at; undefined before the first commit. */
+	readonly head?: string;
+	/** The remote pushes go to (the upstream's, else `origin`); undefined without remotes. */
+	readonly remote?: string;
+	/** The branch's upstream on that remote, when it has one. */
+	readonly upstream?: string;
+	readonly ahead: number;
+	readonly behind: number;
+	/** The remote's default branch (`main`), when it is known. */
+	readonly defaultBranch?: string;
+	readonly isDefaultBranch: boolean;
+	/** Commits on this branch the remote's default branch does not have. */
+	readonly aheadOfDefault?: number;
+	/** Uncommitted changes, staged or not, untracked files included. */
+	readonly files: readonly IVoltGitStatusFile[];
+	readonly insertions: number;
+	readonly deletions: number;
+}
+
+export interface IVoltGitCommitRequest {
+	readonly folder: string;
+	readonly message: string;
+	/** Commit only these paths; every change when undefined. */
+	readonly paths?: readonly string[];
+	/** Create and check out this branch first; the changes come along. */
+	readonly newBranch?: string;
+}
+
+export interface IVoltGitCommitResult {
+	readonly sha: string;
+	readonly branch?: string;
+	readonly subject: string;
+}
+
 export type VoltPrErrorCode =
 	/** The GitHub CLI is not installed. */
 	| 'noCli'
@@ -418,9 +478,20 @@ export interface IVoltPullRequestService {
 	push(request: { readonly folder: string; readonly remote?: string }): Promise<IVoltPrPushResult>;
 	/** Branches on the remote, for the base picker. */
 	remoteBranches(request: IVoltPrAuth & { readonly repo: IVoltPrRepoRef }): Promise<string[]>;
-	describeChanges(request: { readonly folder: string }): Promise<IVoltChangesSummary>;
+	/** What a commit would hold: the staged changes, else everything; or exactly `paths` against HEAD. */
+	describeChanges(request: { readonly folder: string; readonly paths?: readonly string[] }): Promise<IVoltChangesSummary>;
 	/** `base` is a branch name; its remote-tracking branch is used when there is one. */
 	describeBranch(request: { readonly folder: string; readonly base: string }): Promise<IVoltBranchSummary>;
+	/** Changed files with patches: the whole pull request, or one of its commits. */
+	filePatches(request: IVoltPrRequest & { readonly commit?: string }): Promise<IVoltPrFilePatch[]>;
+	/** Branch, upstream, default branch and uncommitted files of the work tree at `folder`. */
+	gitStatus(folder: string): Promise<IVoltGitStatus | undefined>;
+	/** Stages (all, or `paths`) and commits; optionally on a new branch. */
+	commit(request: IVoltGitCommitRequest): Promise<IVoltGitCommitResult>;
+	/** Fast-forwards the branch to its upstream. */
+	pull(folder: string): Promise<{ readonly updated: boolean; readonly branch: string; readonly upstream: string }>;
+	/** Creates and checks out `name` at HEAD; uncommitted changes come along. */
+	checkoutNewBranch(request: { readonly folder: string; readonly name: string }): Promise<void>;
 	/** Forget cached accounts and tokens (after the user signed in or out in a terminal). */
 	refreshAccounts(): Promise<void>;
 }

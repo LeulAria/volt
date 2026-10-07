@@ -1,0 +1,153 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Visuals in the reply: native charts (render_chart, ```volt-chart) and agent pages (render_html). */
+
+.volt-agent-block.volt-agent-visual {
+	position: relative;
+	margin: 10px 0 18px;
+	min-width: 0;
+}
+
+.volt-agent-visual-body {
+	min-width: 0;
+}
+
+.volt-agent-visual-chart {
+	min-width: 0;
+}
+
+/* Expand and Copy appear on hover, on an opaque chip (the window is see-through; no blur). */
+.volt-agent-visual-actions {
+	position: absolute;
+	top: 0;
+	right: 0;
+	z-index: 4;
+	display: flex;
+	gap: 2px;
+	padding: 2px;
+	border-radius: 8px;
+	background: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
+	box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 140ms ease;
+}
+
+.volt-agent-visual.actions-above .volt-agent-visual-actions {
+	top: auto;
+	bottom: calc(100% + 4px);
+}
+
+.volt-agent-visual:hover .volt-agent-visual-actions,
+.volt-agent-visual:focus-within .volt-agent-visual-actions {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.volt-agent-visual-action {
+	appearance: none;
+	border: 0;
+	width: 24px;
+	height: 24px;
+	border-radius: 6px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--vscode-descriptionForeground);
+	background: transparent;
+	cursor: pointer;
+}
+
+.volt-agent-visual-action:hover {
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+}
+
+.volt-agent-visual-action:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-agent-visual-action .codicon {
+	font-size: 14px;
+}
+
+/*
+ * A page's frame is an out-of-process iframe. In the transparent agent window it sits on an
+ * opaque fill in its own contained layer, and draws in its own compositor pass (opacity .999),
+ * so pages that blur or animate never leave trails or blacken the sidebar.
+ */
+.volt-agent-visual-frame {
+	position: relative;
+	width: 100%;
+	isolation: isolate;
+	contain: paint;
+	background: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
+	transition: height 160ms ease;
+}
+
+.volt-agent-visual-frame > iframe.webview {
+	display: block;
+	opacity: 0.999;
+}
+
+.volt-agent-visual-frame.fill {
+	height: 100%;
+}
+
+.volt-agent-visual-slot {
+	width: 100%;
+}
+
+.volt-agent-visual-missing {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	padding: 10px 0;
+}
+
+/* Expanded: the same visual, larger, in the preview dialog. */
+.volt-agent-snapshot-dialog.wide {
+	width: min(1240px, calc(100vw - 64px));
+}
+
+.volt-agent-visual-expanded {
+	min-width: 0;
+	max-height: calc(100vh - 140px);
+	overflow: auto;
+	padding: 6px 24px 24px;
+}
+
+.volt-agent-visual-expanded.page {
+	height: calc(100vh - 140px);
+	overflow: hidden;
+	padding: 0;
+}
+
+/* The DeepSeek bar-list view, drawn by the chart engine. */
+.volt-agent-block.chart.volt-agent-chart.engine {
+	padding: 4px 0;
+}
+
+/* Parked live pages: still loaded, never drawn. */
+.volt-agent-visual-parking {
+	display: none;
+}
+
+/* Usage page: the main chart and Insights are drawn by the same engine. No readout above the
+ * plot (the tooltip carries it), so the column no longer reaches up beside the headline. */
+.volt-usage-chart-column.engine {
+	margin-top: 0;
+}
+
+.volt-usage-chart.engine {
+	padding-top: 0;
+	display: block;
+}
+
+.volt-usage-insights-body {
+	margin-top: 14px;
+	min-width: 0;
+}

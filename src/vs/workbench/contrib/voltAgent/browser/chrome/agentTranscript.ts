@@ -8,10 +8,11 @@ import { DELEGATE_TASK_TOOL_NAME } from '../../../../services/voltRuntime/common
 import { basename } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
 import { isSnapshotActivity } from '../preview/browserSnapshot.js';
-import { AgentBlock, AgentSegment, createPlanBlock, humanTerminalTitle, IAgentActivityItem, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPlanTool, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
+import { AgentBlock, AgentSegment, createPlanBlock, humanTerminalTitle, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPlanTool, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
 import { computeChangeStats } from '../review/fileChangePreviewModel.js';
 import { isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
+import { PREVIEW_HTML_TOOL_NAME, VISUAL_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /**
  * Cursor's transcript model. Between two pieces of assistant text, every tool call and
@@ -20,7 +21,7 @@ import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
  * step with content (command output, diff, reasoning) expands in place.
  */
 
-export type TranscriptStepKind = 'thought' | 'read' | 'search' | 'browser' | 'snapshot' | 'wait' | 'note' | 'run' | 'edit' | 'tool' | 'todo';
+export type TranscriptStepKind = 'thought' | 'read' | 'search' | 'browser' | 'snapshot' | 'wait' | 'note' | 'run' | 'edit' | 'tool' | 'todo' | 'visual';
 
 export interface ITranscriptStep {
 	readonly id: string;
@@ -53,7 +54,9 @@ export type TranscriptRow =
 	| { readonly kind: 'subagents'; readonly id: string; readonly items: readonly { readonly id: string; readonly tool: IToolBlock; readonly live: boolean }[]; readonly live: boolean }
 	| { readonly kind: 'notice'; readonly id: string; readonly severity: 'info' | 'warning' | 'error'; readonly title: string; readonly description?: string; readonly supervision?: SupervisionKind }
 	/** A message the user sent into the running turn ("Steer"); the agent read it between steps. */
-	| { readonly kind: 'steer'; readonly id: string; readonly text: string };
+	| { readonly kind: 'steer'; readonly id: string; readonly text: string }
+	/** "Compacting context" while the agent summarizes the chat, then "Context compacted". */
+	| { readonly kind: 'compaction'; readonly id: string; readonly compaction: IAgentCompaction };
 
 /** A steering message recorded on a reply: `at` is how many segments the reply had when it was sent. */
 export interface ITranscriptSteer {
@@ -147,6 +150,11 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 				pending.push(activityStep(nextStepId(), segment.item));
 				break;
 			}
+			case 'compaction':
+				flushReply();
+				flushSteps();
+				rows.push({ kind: 'compaction', id: `compaction-${segment.compaction.id}`, compaction: segment.compaction });
+				break;
 			case 'notice':
 				flushReply();
 				flushSteps();
@@ -327,6 +335,9 @@ function activityStep(id: string, item: IAgentActivityItem): ITranscriptStep {
 	if (!item.browserTool && isSnapshotActivity(item)) {
 		return { id, kind: 'snapshot', action: item.label || localize('voltAgent.step.tookScreenshot', "Took screenshot"), detail: item.detail, item };
 	}
+	if (item.browserTool && (VISUAL_TOOL_NAMES as readonly string[]).includes(item.browserTool) && item.browserTool !== PREVIEW_HTML_TOOL_NAME) {
+		return { id, kind: 'visual', action: item.label, detail: item.detail, item };
+	}
 	if (item.browserTool) {
 		return { id, kind: 'browser', action: item.label, detail: item.detail, item };
 	}
@@ -410,7 +421,7 @@ export interface IStepsTitle {
  */
 export function stepsGroupTitle(steps: readonly ITranscriptStep[], live: boolean): IStepsTitle {
 	const edited = new Set<string>();
-	let reads = 0, searches = 0, browsers = 0, commands = 0, additions = 0, deletions = 0;
+	let reads = 0, searches = 0, browsers = 0, commands = 0, visuals = 0, additions = 0, deletions = 0;
 	for (const step of steps) {
 		switch (step.kind) {
 			case 'edit':
@@ -431,8 +442,12 @@ export function stepsGroupTitle(steps: readonly ITranscriptStep[], live: boolean
 			case 'run':
 				commands++;
 				break;
+			case 'visual':
+				visuals++;
+				break;
 		}
 	}
+	const made = visuals ? (visuals === 1 ? localize('voltAgent.count.madeVisual', "made 1 visual") : localize('voltAgent.count.madeVisuals', "made {0} visuals", visuals)) : '';
 	const explore = countList([
 		[reads, localize('voltAgent.count.file', "1 file"), localize('voltAgent.count.files', "{0} files", reads)],
 		[searches, localize('voltAgent.count.search', "1 search"), localize('voltAgent.count.searches', "{0} searches", searches)],
@@ -441,18 +456,21 @@ export function stepsGroupTitle(steps: readonly ITranscriptStep[], live: boolean
 	const ran = commands ? (commands === 1 ? localize('voltAgent.count.ranCommand', "ran 1 command") : localize('voltAgent.count.ranCommands', "ran {0} commands", commands)) : '';
 	if (edited.size) {
 		const first = edited.size === 1 ? basename([...edited][0]) : localize('voltAgent.count.files', "{0} files", edited.size);
-		const detail = [first, explore ? localize('voltAgent.count.explored', "explored {0}", explore) : '', ran].filter(Boolean).join(', ');
+		const detail = [first, explore ? localize('voltAgent.count.explored', "explored {0}", explore) : '', ran, made].filter(Boolean).join(', ');
 		return { action: live ? localize('voltAgent.step.editing', "Editing") : localize('voltAgent.step.edited', "Edited"), detail, additions, deletions };
 	}
 	if (reads || searches) {
-		return { action: live ? localize('voltAgent.step.exploring', "Exploring") : localize('voltAgent.step.explored', "Explored"), detail: [explore, ran].filter(Boolean).join(', '), additions, deletions };
+		return { action: live ? localize('voltAgent.step.exploring', "Exploring") : localize('voltAgent.step.explored', "Explored"), detail: [explore, ran, made].filter(Boolean).join(', '), additions, deletions };
 	}
 	if (commands || browsers) {
 		const detail = countList([
 			[commands, localize('voltAgent.count.command', "1 command"), localize('voltAgent.count.commands', "{0} commands", commands)],
 			[browsers, localize('voltAgent.count.browser', "1 browser action"), localize('voltAgent.count.browsers', "{0} browser actions", browsers)],
 		]);
-		return { action: live ? localize('voltAgent.step.running', "Running") : localize('voltAgent.step.ran', "Ran"), detail, additions, deletions };
+		return { action: live ? localize('voltAgent.step.running', "Running") : localize('voltAgent.step.ran', "Ran"), detail: [detail, made].filter(Boolean).join(', '), additions, deletions };
+	}
+	if (visuals) {
+		return { action: live ? localize('voltAgent.step.drawing', "Drawing") : localize('voltAgent.step.drew', "Drew"), detail: visuals === 1 ? localize('voltAgent.count.visual', "1 visual") : localize('voltAgent.count.visuals', "{0} visuals", visuals), additions, deletions };
 	}
 	if (steps.every(step => step.kind === 'thought')) {
 		const merged = mergeThoughts(steps);
@@ -478,10 +496,14 @@ export function splitWorkedRows(rows: readonly TranscriptRow[]): { work: Transcr
 	while (start > 0 && isAnswerRow(rows[start - 1])) {
 		start--;
 	}
-	if (start === rows.length) {
-		return { work: [...rows], answer: [] };
-	}
-	return { work: rows.slice(0, start), answer: rows.slice(start) };
+	// Charts and pages the agent showed sit right above its answer, even when it kept working after.
+	const work = rows.slice(0, start);
+	const visuals = work.filter(isVisualRow);
+	return { work: visuals.length ? work.filter(row => !isVisualRow(row)) : work, answer: [...visuals, ...rows.slice(start)] };
+}
+
+function isVisualRow(row: TranscriptRow): boolean {
+	return row.kind === 'block' && row.block.type === 'visual';
 }
 
 function isAnswerRow(row: TranscriptRow): boolean {

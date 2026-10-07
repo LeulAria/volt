@@ -267,6 +267,10 @@ export function buildThreadParts(segments: AgentSegment[] | undefined, fallbackT
 			}
 			continue;
 		}
+		if (segment.kind === 'compaction') {
+			// The transcript draws it as a divider; it is not part of the reply's work or answer.
+			continue;
+		}
 		flushReply();
 		if (segment.block.type === 'tool' && isExploreTool(segment.block.name, segment.block.title)) {
 			continue;
@@ -784,6 +788,99 @@ export function todoChecklist(steps: readonly { readonly label: string; readonly
 		? localize('voltAgent.todos.progress', "{0} of {1} To-dos", done, items.length)
 		: localize('voltAgent.todos.completed', "{0} of {1} To-dos Completed", done, items.length);
 	return { items, done, total: items.length, current: done === items.length ? undefined : current, title };
+}
+
+/** One of the agent's to-dos, with when it started and finished (as far as its updates told us). */
+export interface IAgentTodoStep {
+	label: string;
+	state: 'done' | 'current' | 'pending';
+	startedAt?: number;
+	endedAt?: number;
+}
+
+/**
+ * The next to-do list with times carried over from the previous one: a to-do starts when it first
+ * shows in progress and ends when it first shows done. To-dos match by label, else by position in a
+ * list of the same length for the one that was in progress: Claude names it differently while it runs
+ * ("Verifying …" for "Verify …").
+ */
+export function stampTodoSteps(previous: readonly IAgentTodoStep[], next: readonly Pick<IAgentTodoStep, 'label' | 'state'>[], now: number): IAgentTodoStep[] {
+	const before = new Map(previous.map(step => [step.label, step]));
+	const labels = new Set(next.map(step => step.label));
+	const renamed = (index: number) => {
+		const step = previous.length === next.length ? previous[index] : undefined;
+		return step?.state === 'current' && !labels.has(step.label) ? step : undefined;
+	};
+	return next.map(({ label, state }, index) => {
+		const prior = before.get(label) ?? renamed(index);
+		const startedAt = prior?.startedAt ?? (state === 'current' ? now : undefined);
+		const endedAt = state === 'done' ? prior?.endedAt ?? now : undefined;
+		return {
+			label,
+			state,
+			...(startedAt !== undefined && state !== 'pending' ? { startedAt } : {}),
+			...(endedAt !== undefined ? { endedAt } : {}),
+		};
+	});
+}
+
+export interface ITasksCardItem {
+	readonly label: string;
+	readonly state: 'done' | 'current' | 'pending';
+	/** "1m 32s" for a finished to-do whose start we saw, "now" for the one in progress. */
+	readonly time?: string;
+}
+
+/** The "Tasks" card docked on the composer while the agent works through its to-dos. */
+export interface ITasksCard {
+	readonly items: readonly ITasksCardItem[];
+	readonly done: number;
+	readonly total: number;
+	/** The to-do in progress, else the next open one; undefined once all are done. */
+	readonly current?: string;
+	readonly live: boolean;
+}
+
+export function tasksCard(steps: readonly IAgentTodoStep[], live: boolean): ITasksCard | undefined {
+	const shown = steps.filter(step => step.label.trim());
+	if (!shown.length) {
+		return undefined;
+	}
+	const items = shown.map((step): ITasksCardItem => {
+		if (step.state === 'done' && step.startedAt !== undefined && step.endedAt !== undefined) {
+			return { label: step.label, state: step.state, time: formatElapsed(step.endedAt - step.startedAt) };
+		}
+		if (step.state === 'current' && live) {
+			return { label: step.label, state: step.state, time: localize('voltAgent.tasks.now', "now") };
+		}
+		return { label: step.label, state: step.state };
+	});
+	const done = shown.filter(step => step.state === 'done').length;
+	const current = (shown.find(step => step.state === 'current') ?? shown.find(step => step.state === 'pending'))?.label;
+	return { items, done, total: shown.length, current, live };
+}
+
+/**
+ * Which to-dos the composer's Tasks card shows: the latest list in the chat, while its turn (or a
+ * later one) runs, or after it if some are still open. A finished list leaves the card.
+ */
+export function composerTasks(messages: readonly { readonly kind: string; readonly steps?: readonly IAgentTodoStep[]; readonly activity?: { readonly streaming?: boolean } }[]): ITasksCard | undefined {
+	const agents = messages.filter(message => message.kind === 'agent');
+	const last = agents.at(-1);
+	const owner = agents.findLast(message => !!message.steps?.length);
+	if (!last || !owner?.steps) {
+		return undefined;
+	}
+	const live = !!last.activity?.streaming;
+	const open = owner.steps.some(step => step.state !== 'done');
+	if (owner !== last && !(live && open)) {
+		// An older turn's list: only a run that is still working through it brings it back.
+		return undefined;
+	}
+	if (!live && !open) {
+		return undefined;
+	}
+	return tasksCard(owner.steps, live);
 }
 
 /** "42s", "3m 05s", "1h 02m": a live turn's elapsed time, steady width so it does not jitter. */

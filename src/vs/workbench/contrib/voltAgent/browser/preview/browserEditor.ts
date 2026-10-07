@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/browserEditor.css';
-import { $, addDisposableListener, append, Dimension, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, Dimension, disposableWindowInterval, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IAction, Separator, toAction } from '../../../../../base/common/actions.js';
@@ -162,6 +162,44 @@ const SCREEN_COLOR_SCRIPT = `(() => {
 	const background = visible(body) ? body : visible(root) ? root : '#ffffff';
 	const meta = document.querySelector('meta[name="theme-color"]');
 	return { top: (meta && meta.getAttribute('content')) || background, bottom: background };
+})()`;
+
+/**
+ * Whether the page is light or dark at a point: the first opaque background under it, read through a
+ * 1px canvas so any color syntax (oklch, color-mix) resolves. null over images and gradients.
+ */
+const dockToneScript = (x: number, y: number) => `(() => {
+	const canvas = document.createElement('canvas');
+	canvas.width = canvas.height = 1;
+	const ctx = canvas.getContext('2d', { willReadFrequently: true });
+	if (!ctx) {
+		return null;
+	}
+	const rgba = color => {
+		ctx.clearRect(0, 0, 1, 1);
+		ctx.fillStyle = '#0000';
+		ctx.fillStyle = color;
+		ctx.fillRect(0, 0, 1, 1);
+		return ctx.getImageData(0, 0, 1, 1).data;
+	};
+	const stack = [...document.elementsFromPoint(${x}, ${y}), document.body, document.documentElement];
+	for (const el of stack) {
+		if (!el) {
+			continue;
+		}
+		if (/^(img|video|canvas|svg|iframe|picture|object|embed)$/i.test(el.tagName)) {
+			return null;
+		}
+		const style = getComputedStyle(el);
+		const c = rgba(style.backgroundColor);
+		if (c[3] >= 128) {
+			return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] > 140 ? 'light' : 'dark';
+		}
+		if (style.backgroundImage !== 'none') {
+			return null;
+		}
+	}
+	return matchMedia('(prefers-color-scheme: dark)').matches && /dark/.test(getComputedStyle(document.documentElement).colorScheme) ? 'dark' : 'light';
 })()`;
 
 /** Electron's `InputEvent` for `<webview>.sendInputEvent`: trusted input, like a real user. */
@@ -351,6 +389,7 @@ export class VoltBrowserView extends Disposable {
 	private webview: IVoltWebview | undefined;
 	private readonly webviewListeners = this._register(new DisposableStore());
 	private guestReady = false;
+	private dockToneBusy = false;
 	private guestIdle = false;
 	private pendingUrl: string | undefined;
 	/** The main frame failed: the load that finishes next is Chromium's error page. */
@@ -571,6 +610,7 @@ export class VoltBrowserView extends Disposable {
 		this.dock = this._register(this.instantiationService.createInstance(BrowserAgentDock));
 		this.dock.setChatResolver(() => this.ownerSession());
 		append(this.container, this.dock.element);
+		this._register(disposableWindowInterval(getWindow(this.container), () => { void this.sampleDockTone(); }, 1000));
 		// The stage changes size without the view moving (bookmark bar, floating chrome): lay the page out again.
 		const stageObserver = new (getWindow(this.container).ResizeObserver)(() => this.layout());
 		stageObserver.observe(this.stage);
@@ -2151,6 +2191,32 @@ export class VoltBrowserView extends Disposable {
 		}
 		lines.push('```');
 		return lines.join('\n');
+	}
+
+	/** Reads the page colour under the collapsed dock, so the bar keeps its contrast over light and dark pages. */
+	private async sampleDockTone(): Promise<void> {
+		const dock = this.dock;
+		const webview = this.webview;
+		const point = dock?.backdropPoint();
+		if (!dock || !webview || !point || !this.guestReady || this.dockToneBusy || webview.ownerDocument.visibilityState === 'hidden') {
+			return;
+		}
+		const frame = webview.getBoundingClientRect();
+		if (!frame.width || point.x < frame.left || point.x > frame.right || point.y < frame.top || point.y > frame.bottom) {
+			dock.setBackdropTone(undefined);
+			return;
+		}
+		// Device mode scales the page and zoom changes its CSS pixels.
+		const scale = (webview.offsetWidth / frame.width || 1) / this.zoomFactor;
+		this.dockToneBusy = true;
+		try {
+			const tone = await this.runGuest<'light' | 'dark' | null>(dockToneScript(Math.round((point.x - frame.left) * scale), Math.round((point.y - frame.top) * scale)));
+			if (tone && this.webview === webview) {
+				dock.setBackdropTone(tone);
+			}
+		} finally {
+			this.dockToneBusy = false;
+		}
 	}
 
 	private async runGuest<T>(code: string): Promise<T | undefined> {

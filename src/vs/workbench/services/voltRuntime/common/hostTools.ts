@@ -27,15 +27,31 @@ export const AUTOMATE_BROWSER_COMMAND_ID = 'volt.browser.automate';
 export const BROWSER_PAGE_URL_COMMAND_ID = 'volt.browser.pageUrl';
 
 export const BROWSER_COMPARE_IMAGE_TOOL_NAME = 'browser_compare_image';
+
+/** Visual replies: a native chart from a JSON spec, a sandboxed HTML page, and a screenshot check of a page. */
+export const RENDER_CHART_TOOL_NAME = 'render_chart';
+export const RENDER_HTML_TOOL_NAME = 'render_html';
+export const PREVIEW_HTML_TOOL_NAME = 'preview_html';
+export const VISUAL_TOOL_NAMES = [RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, PREVIEW_HTML_TOOL_NAME] as const;
+
+/** A visual a render tool published: where its spec or page is stored, for the transcript to draw. */
+export interface IVoltVisualRef {
+	readonly kind: 'chart' | 'html';
+	/** `volt-attachment:<hash>.json` (chart spec) or `.html` (page). */
+	readonly ref: string;
+	readonly title: string;
+	/** Pages: the height the page needed at the reply column's width, so the frame opens at its size. */
+	readonly height?: number;
+}
 export const BROWSER_NETWORK_TOOL_NAME = 'browser_network';
 export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
 
 /**
  * `core`: questions. `browser`: the in-app browser. `image`: reading image files. `pullRequests`:
- * linking and watching the chat's pull requests. An agent can be
+ * linking and watching the chat's pull requests. `visuals`: charts and pages shown in the reply. An agent can be
  * handed a subset (`getMcpServers(sessionId, { groups })`) to keep its tool list short.
  */
-export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'pullRequests';
+export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'pullRequests' | 'visuals';
 
 export interface IVoltHostToolInfo {
 	readonly name: string;
@@ -49,6 +65,8 @@ export interface IVoltHostToolResult {
 	readonly text?: string;
 	readonly image?: string;
 	readonly error?: string;
+	/** Set by the render tools: the transcript draws it above the reply. */
+	readonly visual?: IVoltVisualRef;
 }
 
 export interface IVoltMcpServer {
@@ -411,7 +429,7 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id)) {
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id)) {
 				return id;
 			}
 		}

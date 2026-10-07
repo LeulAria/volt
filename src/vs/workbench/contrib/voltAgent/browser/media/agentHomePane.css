@@ -150,6 +150,25 @@
 	padding: 0;
 }
 
+/* macOS-style scroll edge: rows still below the fold fade out above the footer.
+ * A mask, not backdrop-filter (that blacks out the transparent sidebar). */
+@property --volt-home-bottom-fade {
+	syntax: '<length>';
+	inherits: false;
+	initial-value: 0px;
+}
+
+.volt-agent-home-tree > .monaco-list > .monaco-scrollable-element {
+	--volt-home-bottom-fade: 0px;
+	-webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--volt-home-bottom-fade)), transparent);
+	mask-image: linear-gradient(to bottom, #000 calc(100% - var(--volt-home-bottom-fade)), transparent);
+	transition: --volt-home-bottom-fade 180ms ease;
+}
+
+.volt-agent-home-tree.more-below > .monaco-list > .monaco-scrollable-element {
+	--volt-home-bottom-fade: 36px;
+}
+
 .volt-agent-home-footer {
 	flex: none;
 	display: flex;
@@ -642,15 +661,7 @@
 	border: none !important;
 }
 
-/* Agent tab rows: a status dot under a project, the project's initials in flat lists. */
-.volt-agent-home-dot {
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: currentColor;
-	opacity: 0.4;
-	box-sizing: border-box;
-}
+/* Agent tab rows: the project's initials in flat lists; nothing under a project. */
 
 .volt-agent-home-initials {
 	display: flex;
@@ -667,26 +678,18 @@
 	opacity: 0.6;
 }
 
-.volt-agent-home-row.is-session.unread .volt-agent-home-dot,
 .volt-agent-home-row.is-session.unread .volt-agent-home-initials {
 	color: var(--vscode-charts-blue, var(--vscode-textLink-foreground, #3794ff));
 	opacity: 1;
 }
 
-.volt-agent-home-row.is-session.status-needsAttention .volt-agent-home-dot,
 .volt-agent-home-row.is-session.status-needsAttention .volt-agent-home-initials {
 	color: var(--vscode-editorWarning-foreground, #cca700);
 	opacity: 1;
 }
 
-.volt-agent-home-row.is-session.status-working .volt-agent-home-dot,
 .volt-agent-home-row.is-session.status-working .volt-agent-home-initials {
 	animation: volt-agent-home-working 1.4s ease-in-out infinite;
-}
-
-.volt-agent-home-row.is-session.status-draft .volt-agent-home-dot {
-	background: transparent;
-	border: 1px solid currentColor;
 }
 
 .volt-agent-home-row.is-session.status-draft .volt-agent-home-initials {
@@ -783,6 +786,10 @@
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	opacity: 0.9;
+}
+
+.volt-agent-home-row.is-session.two-line > .sub > .sub-model > .volt-brand-icon {
+	display: flex;
 }
 
 .volt-agent-home-row.is-session.two-line.active-chat > .sub {
@@ -1864,4 +1871,41 @@ html.volt-layout-agent-window body {
 .volt-agent-home-row.is-session.shelf-snooze > .meta {
 	color: var(--vscode-charts-blue, #3794ff);
 	opacity: 1;
+}
+
+/* Run groups: one prompt on several models. The models overlap where other rows show their age. */
+.volt-run-group-stack {
+	display: inline-flex;
+	align-items: center;
+	vertical-align: middle;
+}
+
+.volt-run-group-stack > .volt-brand-icon {
+	border-radius: 50%;
+	background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+	box-shadow: 0 0 0 1.5px var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+
+.volt-run-group-stack > .volt-brand-icon + .volt-brand-icon {
+	margin-left: -4px;
+}
+
+.volt-agent-home-row.is-run-member .name {
+	font-weight: 400;
+}
+
+.volt-agent-home-row.is-run-member > .icon .volt-brand-icon {
+	opacity: 0.9;
+}
+
+.volt-agent-home-row.is-run-member.run-winner .name {
+	color: var(--vscode-charts-green, #3fb950);
+}
+
+.volt-agent-home-row.is-run-member.run-discarded {
+	opacity: 0.55;
+}
+
+.volt-agent-home-row.is-run-member > .meta {
+	font-variant-numeric: tabular-nums;
 }

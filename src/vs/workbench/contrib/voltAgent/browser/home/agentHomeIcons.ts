@@ -169,7 +169,7 @@ export function createHomeEnvironmentIcon(): HTMLElement {
 	return createHomeStrokeIcon('environment', [AGENT_HOME_ENVIRONMENT_ICON_PATH], '1.25', [[15, 12], [18, 12]]);
 }
 
-/** Folder-plus on the Open Workspace header control and the New Folder row; lighter than New project. */
+/** Folder-plus on the Open Workspace header control; lighter than New project. */
 export function createHomeOpenWorkspaceIcon(): HTMLElement {
 	return createHomeSvgIcon('open-workspace', AGENT_HOME_NEW_PROJECT_ICON_PATH, { strokeWidth: '1.5' });
 }

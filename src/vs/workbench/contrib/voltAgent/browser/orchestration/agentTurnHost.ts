@@ -23,25 +23,12 @@ import type { IAgentPromptDisplay, IAgentUserMessage } from '../editor/agentEdit
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
+import { takeTurnDisplay } from './agentTurnDisplays.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 
 const CHECKPOINT_BEGIN_TURN_COMMAND = 'voltAgent.checkpoint.beginTurn';
 
-/**
- * The composer's live display (mentions with image bytes) for prompts it just submitted, by turn
- * id. The orchestrator stores a frozen copy; a turn started right away uses this one and skips
- * reading attachments back from disk.
- */
-const liveDisplays = new Map<string, IAgentPromptDisplay>();
-
-export function stashTurnDisplay(turnId: string, display: IAgentPromptDisplay | undefined): void {
-	if (display) {
-		liveDisplays.set(turnId, display);
-		if (liveDisplays.size > 64) {
-			liveDisplays.delete(liveDisplays.keys().next().value!);
-		}
-	}
-}
+export { stashTurnDisplay } from './agentTurnDisplays.js';
 
 /** Send options only the chat UI sets, carried by an orchestrator prompt as `host`. */
 export interface IAgentPromptHostOptions {
@@ -96,8 +83,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		if (!request.isCurrent()) {
 			return undefined;
 		}
-		const display = liveDisplays.get(turn.id) ?? await this.thawDisplay(turn.prompt.display);
-		liveDisplays.delete(turn.id);
+		const display = takeTurnDisplay(turn.id) ?? await this.thawDisplay(turn.prompt.display);
 		const mode = modeLabel(turn.prompt.mode ?? input.chosenMode ?? input.restoredMode);
 		const origin: IAgentUserMessage['origin'] = turn.kind === 'notification' ? 'notification' : turn.kind === 'brief' ? 'brief' : undefined;
 		const controller = input.controller;

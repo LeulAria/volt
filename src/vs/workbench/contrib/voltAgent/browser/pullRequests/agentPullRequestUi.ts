@@ -10,15 +10,25 @@ import { fromNow } from '../../../../../base/common/date.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IVoltPrCheck, IVoltPullRequest, VoltPrCheckState, VoltPrChecksState, VoltPrErrorCode, VoltPrState } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
+import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { IVoltPrCheck, IVoltPrRepoRef, IVoltPullRequest, VoltPrCheckState, VoltPrChecksState, VoltPrErrorCode, VoltPrMergeMethod, VoltPrState, voltPrErrorMessage } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { ITerminalService } from '../../../terminal/browser/terminal.js';
 import { AgentEditor } from '../editor/agentEditor.js';
 import { AgentEditorInput, OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { openInAgentTools } from '../workspace/agentSurfaceHost.js';
+import { blockedReason, primaryAction, resolveMergeMethod } from '../../common/agentPullRequests.js';
 import { AgentPullRequestEditorInput, AgentPullRequestTarget } from './agentPullRequestEditorInput.js';
+import { IAgentPullRequestService } from './agentPullRequestService.js';
+
+export const MERGE_LABELS: Record<VoltPrMergeMethod, string> = {
+	squash: localize('voltPr.merge.squash', "Squash and Merge"),
+	merge: localize('voltPr.merge.merge', "Merge"),
+	rebase: localize('voltPr.merge.rebase', "Rebase and Merge"),
+};
 
 export function prStateIcon(state: VoltPrState): ThemeIcon {
 	switch (state) {
@@ -162,6 +172,43 @@ export function visibleChatSession(accessor: ServicesAccessor): string | undefin
 		}
 	}
 	return undefined;
+}
+
+/**
+ * Merges a pull request from outside its view (the chip's hover card, the side panel): reads it
+ * again, asks once unless `skipConfirm`, and merges with the method the view would pick.
+ * Resolves true when it merged.
+ */
+export async function mergePullRequest(accessor: ServicesAccessor, target: { readonly repo: IVoltPrRepoRef; readonly number: number }, skipConfirm = false): Promise<boolean> {
+	const pullRequests = accessor.get(IAgentPullRequestService);
+	const dialogService = accessor.get(IDialogService);
+	const notificationService = accessor.get(INotificationService);
+	try {
+		const pr = await pullRequests.detail({ repo: target.repo, number: target.number }, true);
+		if (primaryAction(pr) !== 'merge' || !pr.viewerCanMerge) {
+			notificationService.info(localize('voltPr.cannotMerge', "#{0} can't be merged now: {1}", pr.number, blockedReason(pr) ?? prStateLabel(pr.state)));
+			return false;
+		}
+		const method = resolveMergeMethod(pr.mergeOptions, pullRequests.lastMergeMethod(pr.repo));
+		const deleteBranch = !pr.crossRepository && pr.mergeOptions.deleteBranchOnMerge;
+		if (!skipConfirm) {
+			const { confirmed } = await dialogService.confirm({
+				message: localize('voltPr.confirmMerge', "Merge pull request #{0} into {1}?", pr.number, pr.baseRefName),
+				detail: [localize('voltPr.confirmMethod', "Method: {0}", MERGE_LABELS[method]), deleteBranch ? localize('voltPr.confirmDelete', "{0} is deleted afterwards.", pr.headRefName) : undefined].filter(Boolean).join('\n'),
+				primaryButton: MERGE_LABELS[method],
+			});
+			if (!confirmed) {
+				return false;
+			}
+		}
+		pullRequests.rememberMergeMethod(pr.repo, method);
+		await pullRequests.api.merge({ repo: pr.repo, number: pr.number, method, auto: false, headOid: pr.headRefOid, deleteBranch });
+		await pullRequests.refresh([pr.key]);
+		return true;
+	} catch (err) {
+		notificationService.error(localize('voltPr.mergeFailed', "Could not merge #{0}: {1}", target.number, voltPrErrorMessage(err)));
+		return false;
+	}
 }
 
 /** Runs `gh auth login` for `host` in a terminal, where the CLI walks the user through it. */

@@ -15,7 +15,10 @@ import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
+import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { getLayoutMode, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
@@ -28,6 +31,9 @@ import { IAgentHistoryService } from '../../../../services/voltRuntime/common/hi
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { localEnvironmentLabel } from '../home/agentHomeFilter.js';
+import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
+import { displayComputerName, IUsageEnvironmentSelection, showUsageEnvironmentMenu, usageEnvironmentTriggerLabel, usageMachineName } from '../usage/agentUsageEnvironmentMenu.js';
 import { setAgentTooltip } from './agentTooltip.js';
 
 const QUICK_OPEN_COMMAND_ID = 'workbench.action.quickOpenWithModes';
@@ -258,11 +264,27 @@ function createAgentHeaderLaptopIcon(parent: HTMLElement): SVGElement {
 	return svg;
 }
 
+function createAgentHeaderChevronIcon(parent: HTMLElement): SVGElement {
+	const svg = createHeaderSvg(parent.ownerDocument, 12);
+	const path = parent.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+	path.setAttribute('d', 'M6 9l6 6 6-6');
+	strokeAttrs(path, '1.75');
+	svg.appendChild(path);
+	parent.appendChild(svg);
+	return svg;
+}
+
+function headerProcessEnv(): { COMPUTERNAME?: string; HOSTNAME?: string } | undefined {
+	const vscode = (globalThis as { vscode?: { process?: { env?: { COMPUTERNAME?: string; HOSTNAME?: string } } } }).vscode;
+	return vscode?.process?.env;
+}
+
 /**
  * Primary title bar in agent layout.
  * Open sidebar: project name / short tab title. Hover shows the project, its branch when there is one, and the folder,
  * with a button that copies the absolute folder path.
  * Closed sidebar: the same title, plus search, and New Agent unless that screen is already open.
+ * Usage: “Usage / All environments”, a menu of this computer and Model prices.
  */
 class AgentTitlebarHeaderContribution extends Disposable {
 
@@ -277,6 +299,9 @@ class AgentTitlebarHeaderContribution extends Disposable {
 	private readonly projectLabel: HTMLElement;
 	private readonly projectSeparator: HTMLElement;
 	private readonly titleLabel: HTMLElement;
+	private readonly envButton: HTMLButtonElement;
+	private readonly envLabel: HTMLElement;
+	private readonly laptop: HTMLElement;
 	private readonly hover: HTMLElement;
 	private readonly editorListeners = this._register(new DisposableStore());
 	private readonly scmWatch = this._register(new MutableDisposable());
@@ -285,6 +310,9 @@ class AgentTitlebarHeaderContribution extends Disposable {
 	private copied = false;
 	private userHome: string | undefined;
 	private renderScheduled = false;
+	private usageCrumb = false;
+	private environments: IUsageEnvironmentSelection = { all: true, local: true };
+	private machineLabel: string;
 
 	constructor(
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
@@ -299,8 +327,30 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		@ISCMService private readonly scmService: ISCMService,
 		@ISCMViewService private readonly scmViewService: ISCMViewService,
 		@IClipboardService private readonly clipboardService: IClipboardService,
+		@IContextViewService private readonly contextViewService: IContextViewService,
+		@IInstantiationService instantiationService: IInstantiationService,
 	) {
 		super();
+		this.machineLabel = usageMachineName(headerProcessEnv(), localEnvironmentLabel());
+		const nativeHost = instantiationService.invokeFunction(accessor => accessor.getIfExists(INativeHostService));
+		if (nativeHost) {
+			try {
+				void nativeHost.getComputerName().then(name => {
+					let display = displayComputerName(name).replace(/\.local$/i, '').trim();
+					if (display && !display.includes(' ') && display.includes('-')) {
+						display = display.replace(/-/g, ' ');
+					}
+					// A dotted host name is not the label in the menu. Keep “This Mac” until the real name arrives.
+					if (!display || display === this.machineLabel || (!display.includes(' ') && display.includes('.')) || this._store.isDisposed) {
+						return;
+					}
+					this.machineLabel = display;
+					this.scheduleRender();
+				}, () => undefined);
+			} catch {
+				// Older main process without getComputerName. The fallback label stays.
+			}
+		}
 		this.element = $('.volt-agent-primary-header');
 		this.element.hidden = true;
 		this.dragSpacer = $('.volt-agent-titlebar-drag');
@@ -320,8 +370,20 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		this.projectSeparator = append(this.titleCluster, $('span.volt-agent-primary-header-separator'));
 		createAgentHeaderSeparatorIcon(this.projectSeparator);
 		this.titleLabel = append(this.titleCluster, $('span.volt-agent-primary-header-label'));
-		const laptop = append(this.titleCluster, $('span.volt-agent-primary-header-laptop'));
-		createAgentHeaderLaptopIcon(laptop);
+		this.envButton = append(this.titleCluster, $('button.volt-agent-primary-header-env')) as HTMLButtonElement;
+		this.envButton.type = 'button';
+		this.envButton.hidden = true;
+		this.envButton.setAttribute('aria-haspopup', 'menu');
+		this.envButton.setAttribute('aria-expanded', 'false');
+		this.envLabel = append(this.envButton, $('span.volt-agent-primary-header-env-label'));
+		createAgentHeaderChevronIcon(append(this.envButton, $('span.volt-agent-primary-header-chevron')));
+		this._register(addDisposableListener(this.envButton, 'click', event => {
+			event.preventDefault();
+			event.stopPropagation();
+			this.openEnvironmentMenu();
+		}));
+		this.laptop = append(this.titleCluster, $('span.volt-agent-primary-header-laptop'));
+		createAgentHeaderLaptopIcon(this.laptop);
 
 		this.hover = $('.volt-agent-primary-header-hover.hidden');
 		this.hover.setAttribute('role', 'tooltip');
@@ -502,26 +564,64 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		this.searchButton.hidden = !showSearch;
 		this.newAgentButton.hidden = !showNew;
 		this.element.classList.toggle('has-controls', showSearch || showNew);
-		const short = shortTabTitle(full);
-		this.titleCluster.hidden = short.length === 0;
-		this.titleLabel.textContent = short;
-		const folder = this.folderUri();
-		const project = folder ? this.projectName(folder) : '';
-		this.projectLabel.textContent = project;
-		this.projectLabel.hidden = !project;
-		this.projectSeparator.hidden = !project;
-		if (short.length > 0) {
-			this.titleCluster.setAttribute('aria-label', project ? `${project} / ${full}` : full);
+		const usageOpen = editor instanceof AgentUsageEditorInput;
+		this.usageCrumb = usageOpen;
+		this.envButton.hidden = !usageOpen;
+		this.laptop.hidden = usageOpen;
+		this.titleLabel.hidden = usageOpen;
+		if (usageOpen) {
+			const lead = localize('voltAgent.header.usage', "Usage");
+			const trigger = usageEnvironmentTriggerLabel(
+				this.environments,
+				this.machineLabel,
+				localize('voltAgent.header.allEnvironments', "All environments"),
+				localize('voltAgent.header.noEnvironments', "No environments"),
+			);
+			this.projectLabel.textContent = lead;
+			this.projectLabel.hidden = false;
+			this.projectSeparator.hidden = false;
+			this.envLabel.textContent = trigger;
+			this.envButton.setAttribute('aria-label', trigger);
+			this.titleCluster.hidden = false;
+			this.titleCluster.setAttribute('aria-label', `${lead} / ${trigger}`);
 		} else {
-			this.titleCluster.removeAttribute('aria-label');
+			const short = shortTabTitle(full);
+			this.titleCluster.hidden = short.length === 0;
+			this.titleLabel.textContent = short;
+			const folder = this.folderUri();
+			const project = folder ? this.projectName(folder) : '';
+			this.projectLabel.textContent = project;
+			this.projectLabel.hidden = !project;
+			this.projectSeparator.hidden = !project;
+			if (short.length > 0) {
+				this.titleCluster.setAttribute('aria-label', project ? `${project} / ${full}` : full);
+			} else {
+				this.titleCluster.removeAttribute('aria-label');
+			}
 		}
 		if (!this.hover.classList.contains('hidden')) {
 			this.showHover();
 		}
 	}
 
+	private openEnvironmentMenu(): void {
+		showUsageEnvironmentMenu(this.contextViewService, {
+			anchor: this.envButton,
+			state: this.environments,
+			machineLabel: this.machineLabel,
+			onToggle: state => {
+				this.environments = state;
+				this.render();
+			},
+		});
+	}
+
 	private showHover(): void {
 		this.hideTimer.clear();
+		if (this.usageCrumb) {
+			this.hideHover();
+			return;
+		}
 		const folder = this.folderUri();
 		const absolutePath = folder ? folderDisplayPath(folder) : undefined;
 		const lines = folder && absolutePath

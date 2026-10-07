@@ -51,6 +51,15 @@ suite('Fresh streamed text', () => {
 		assert.deepStrictEqual(fresh(root), [{ text: 'After.', delay: '0ms' }]);
 	});
 
+	test('a table keeps its structure: only cell text fades in', () => {
+		const tracker = new FreshTextTracker();
+		const root = render('<table>\n<thead>\n<tr>\n<th>#</th>\n<th>Item</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n<td>Verify</td>\n</tr>\n</tbody>\n</table>');
+		tracker.apply({}, [root], true, 1000);
+		assert.deepStrictEqual(fresh(root).map(span => span.text), ['#', 'Item', '1', 'Verify']);
+		const row = root.querySelector('tbody tr')!;
+		assert.deepStrictEqual([...row.children].map(child => child.tagName), ['TD', 'TD'], 'no span becomes an extra cell');
+	});
+
 	test('text older than the fade is left alone', () => {
 		const tracker = new FreshTextTracker();
 		const reply = {};

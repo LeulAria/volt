@@ -724,6 +724,16 @@ export function blockedReason(pr: IVoltPullRequest): string | undefined {
 	return pr.mergeState === 'clean' ? 'Ready to merge' : undefined;
 }
 
+/** Nothing stands between the pull request and a merge: the chip's hover card and the side panel offer Merge. */
+export function isReadyToMerge(pr: IVoltPullRequest): boolean {
+	return pr.state === 'open'
+		&& pr.mergeable === 'mergeable'
+		&& (pr.mergeState === 'clean' || pr.mergeState === 'hasHooks' || pr.mergeState === 'unstable')
+		&& pr.checks.state !== 'failure'
+		&& pr.checks.state !== 'pending'
+		&& pr.reviewDecision !== 'changesRequested';
+}
+
 //#endregion
 
 //#region Merge

@@ -39,7 +39,7 @@ import { resolveTabModel } from '../common/models/modelAccess.js';
 import { IAgentRuntimeService, IVoltMcpServerStatus, IVoltTaskModels } from '../common/runtime.js';
 import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
-import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService } from '../common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService, VISUAL_TOOL_NAMES } from '../common/hostTools.js';
 import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQuestionResponse } from '../common/questions.js';
 import { AcpAgentProvider, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
 import { AcpLoopDetector } from '../common/harness/acpLoopDetector.js';
@@ -1555,13 +1555,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!session || call.name === ASK_QUESTION_TOOL_NAME || call.name === AWAIT_ANSWERS_TOOL_NAME) {
 			return;
 		}
+		// A page or chart spec can be hundreds of KB; the visual's stored copy is what the transcript keeps.
+		const visualTool = (VISUAL_TOOL_NAMES as readonly string[]).includes(call.name);
 		this.emit(session, session.activeRun?.runId || session.sessionId, {
 			type: 'host.tool',
 			name: call.name,
-			args: call.args,
+			args: visualTool ? { ...(typeof call.args.title === 'string' ? { title: call.args.title } : {}) } : call.args,
 			...(call.result.text ? { text: call.result.text } : {}),
 			...(call.result.image ? { image: call.result.image } : {}),
 			...(call.result.error ? { error: call.result.error } : {}),
+			...(call.result.visual ? { visual: call.result.visual } : {}),
 		});
 	}
 
@@ -2193,7 +2196,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		const older = messages.slice(0, boundary);
 		const carry = { files: state.ledger.summary(), todo: state.todo };
-		this.emitEngine(session, run, { type: 'notice', severity: 'info', title: 'Compacting the conversation to keep it within the model\'s context.' });
+		const compactionId = generateUuid();
+		const startedAt = Date.now();
+		const preTokens = estimateTokens(input.system) + totalTokens(messages);
+		this.emitEngine(session, run, { type: 'context.compaction', id: compactionId, status: 'running', trigger: 'auto', preTokens });
 		let summary: string | undefined;
 		try {
 			let text = '';
@@ -2220,7 +2226,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		messages.splice(0, messages.length, ...next);
 		state.ledger.invalidateReferences();
 		state.promptTokens = estimateTokens(input.system) + totalTokens(messages);
-		this.emitEngine(session, run, { type: 'compaction', stages: [summary ? 'summarize' : 'mechanical'], dropped: boundary });
+		this.emitEngine(session, run, {
+			type: 'context.compaction',
+			id: compactionId,
+			status: 'completed',
+			postTokens: state.promptTokens,
+			durationMs: Date.now() - startedAt,
+			...(summary ? { summary } : {}),
+		});
 		return true;
 	}
 

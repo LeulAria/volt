@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, PULL_REQUEST_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /** How one of Volt's own MCP tools reads in the activity trail, the way Cursor words its browser actions. */
 export interface IHostToolActivity {
@@ -79,6 +79,16 @@ export function describeHostToolActivity(name: string | undefined, title: string
 	}
 	if (tool === IMAGE_INSPECT_TOOL_NAME) {
 		return { tool, label: 'Inspected image', detail: text(args.path, 120) };
+	}
+	// The visual itself shows above the reply; the row only records that it was made.
+	if (tool === RENDER_CHART_TOOL_NAME) {
+		return { tool, label: 'Rendered chart', detail: text(args.title, 80) };
+	}
+	if (tool === RENDER_HTML_TOOL_NAME) {
+		return { tool, label: 'Rendered page', detail: text(args.title, 80) };
+	}
+	if (tool === PREVIEW_HTML_TOOL_NAME) {
+		return { tool, label: 'Previewed page', detail: typeof args.width === 'number' ? `${args.width}px` : undefined };
 	}
 	if (!isBrowserToolName(tool)) {
 		return undefined;

@@ -156,8 +156,9 @@
 	mask-image: none;
 }
 
+/* The titlebar holds the controls, so the page only needs a short inset under it. */
 .volt-usage.controls-in-titlebar .volt-usage-content {
-	padding-top: 28px;
+	padding-top: 15px;
 }
 
 /* The ranges and refresh take the place of the IDE and panel buttons. */

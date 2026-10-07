@@ -12,7 +12,7 @@ import type { IWorkCounts, ToolKind } from '../../../../services/voltRuntime/com
 
 export type AgentBlockStatus = 'streaming' | 'complete' | 'error';
 
-export type AgentBlockType = 'markdown' | 'code' | 'terminal' | 'table' | 'list' | 'cards' | 'chart' | 'mermaid' | 'tool' | 'file' | 'error' | 'approval' | 'answers' | 'plan';
+export type AgentBlockType = 'markdown' | 'code' | 'terminal' | 'table' | 'list' | 'cards' | 'chart' | 'mermaid' | 'tool' | 'file' | 'error' | 'approval' | 'answers' | 'plan' | 'visual';
 
 export interface IAgentBaseBlock {
 	readonly id: string;
@@ -68,6 +68,20 @@ export interface IChartBlock extends IAgentBaseBlock {
 	values: number[];
 	unit?: string;
 	title?: string;
+}
+
+/**
+ * A chart or page an agent showed with render_chart / render_html. The transcript draws it above
+ * the reply: a native chart from the stored spec, or the page in a sandboxed frame.
+ */
+export interface IVisualBlock extends IAgentBaseBlock {
+	readonly type: 'visual';
+	kind: 'chart' | 'html';
+	title: string;
+	/** The stored spec (`volt-attachment:<hash>.json`) or page (`.html`). */
+	ref: string;
+	/** Pages: height at the reply column's width, so the frame opens at its size. */
+	height?: number;
 }
 
 export interface IMermaidBlock extends IAgentBaseBlock {
@@ -179,7 +193,8 @@ export type AgentBlock =
 	| IToolBlock
 	| IFileChangeBlock
 	| IErrorBlock
-	| IApprovalBlock;
+	| IApprovalBlock
+	| IVisualBlock;
 
 export function createApprovalBlock(partial: Omit<IApprovalBlock, 'type' | 'status'> & { status?: AgentBlockStatus }): IApprovalBlock {
 	return {
@@ -238,7 +253,32 @@ export type AgentSegment =
 	 * Provider or harness status. `supervision` marks a run supervisor's finding (a loop, a stall,
 	 * a budget stop): the transcript draws it as a tray with actions instead of a plain line.
 	 */
-	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind };
+	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind }
+	/** The agent compacted the conversation here: a divider while it summarizes, then what it kept. */
+	| { kind: 'compaction'; compaction: IAgentCompaction };
+
+/** A context compaction in a reply (`/compact`, or the agent's own when the window filled up). */
+export interface IAgentCompaction {
+	id: string;
+	status: 'running' | 'completed' | 'failed' | 'cancelled';
+	trigger?: 'manual' | 'auto';
+	/** The context before, as the agent counted it. */
+	preTokens?: number;
+	/** The context after, as the agent counted it (Claude: the kept summary alone). */
+	postTokens?: number;
+	durationMs?: number;
+	/** The summary the conversation continues from, when the agent shares it. */
+	summary?: string;
+	error?: string;
+	startedAt?: number;
+	/** Drawn when a `/compact` turn started, before the agent reported its own compaction. */
+	provisional?: boolean;
+}
+
+/** `/compact`, alone or with instructions for the summary. */
+export function isCompactCommand(text: string | undefined): boolean {
+	return /^\/compact(?:\s|$)/.test(text?.trim() ?? '');
+}
 
 /** What a run supervisor reported: the agent repeats itself, went quiet, or hit a step/time/token budget. */
 export type SupervisionKind = 'loop' | 'stall' | 'budget';
@@ -1060,6 +1100,8 @@ export function blocksPlainText(blocks: AgentBlock[]): string {
 				return block.items.map(item => `${item.question}\n${item.answer}`).concat(block.note ? [block.note] : []).join('\n');
 			case 'plan':
 				return [block.name, block.markdown].filter(Boolean).join('\n\n');
+			case 'visual':
+				return block.title;
 		}
 	}).filter(Boolean).join('\n\n');
 }

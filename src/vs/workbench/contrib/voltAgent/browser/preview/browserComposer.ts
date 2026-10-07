@@ -266,6 +266,14 @@ export class BrowserAgentComposer extends Disposable {
 				this.submit();
 			}
 		}));
+		// The text line is only 22px of the box: a click on the rest of it focuses the input too.
+		const blankSurfaces = new Set<EventTarget>([this.element, this.monacoHost, this.placeholderEl, actions]);
+		this._register(addDisposableListener(this.element, 'mousedown', e => {
+			if (e.button === 0 && e.target && blankSurfaces.has(e.target)) {
+				e.preventDefault();
+				this.focus();
+			}
+		}));
 
 		this.updateModelButton();
 		this.syncSend();

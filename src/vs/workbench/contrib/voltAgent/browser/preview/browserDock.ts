@@ -16,7 +16,7 @@ import { IWorkbenchLayoutService } from '../../../../services/layout/browser/lay
 import { revealAgentSidePanel } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import '../media/agentEditor.css';
-import { AgentComposerChips, createThinkingDots, paintThinkingDots, THINKING_DOTS_SPEED } from '../composer/agentComposerChips.js';
+import { AgentComposerChips, createThinkingDots } from '../composer/agentComposerChips.js';
 import { AgentComposerQueue } from '../composer/agentComposerQueue.js';
 import { AgentEditor, IAgentDockState, IAgentPromptDisplay } from '../editor/agentEditor.js';
 import { AGENT_SIDE_PANEL_VIEW_ID, AgentEditorInput } from '../editor/agentEditorInput.js';
@@ -45,9 +45,6 @@ export class BrowserAgentDock extends Disposable {
 	private readonly activityEl: HTMLElement;
 	private readonly activityTextEl: HTMLElement;
 	private readonly activityMoreEl: HTMLElement;
-	private readonly activityDots: HTMLElement[];
-	private activityDotsTimer: number | undefined;
-	private activityDotsStep = 0;
 	private readonly chips: AgentComposerChips;
 	private readonly composerHost: HTMLElement;
 	private readonly floatEl: HTMLElement;
@@ -111,9 +108,7 @@ export class BrowserAgentDock extends Disposable {
 		append(this.labelEl, $('span.volt-browser-dock-label-kb')).textContent = formatAgentTooltipShortcut({ meta: true, key: 'L' });
 		this.activityEl = append(this.shellEl, $('.volt-browser-dock-activity'));
 		this.activityEl.setAttribute('aria-live', 'polite');
-		const activityDots = createThinkingDots();
-		this.activityDots = activityDots.cells;
-		append(this.activityEl, activityDots.root);
+		append(this.activityEl, createThinkingDots());
 		this.activityTextEl = append(this.activityEl, $('span.volt-browser-dock-activity-text'));
 		this.activityMoreEl = append(this.activityEl, $('span.volt-browser-dock-activity-more'));
 		this.composerHost = append(this.shellEl, $('.volt-browser-dock-composer'));
@@ -272,6 +267,24 @@ export class BrowserAgentDock extends Disposable {
 			return;
 		}
 		this.sync();
+	}
+
+	/** Over a light page the collapsed bar darkens, over a dark one it lightens; undefined follows the theme. */
+	setBackdropTone(tone: 'light' | 'dark' | undefined): void {
+		this.element.classList.toggle('backdrop-light', tone === 'light');
+		this.element.classList.toggle('backdrop-dark', tone === 'dark');
+	}
+
+	/** The middle of the collapsed bar in window coordinates, while it is on screen. */
+	backdropPoint(): { x: number; y: number } | undefined {
+		if (this.mode === 'expanded' || this.element.classList.contains('blocked')) {
+			return undefined;
+		}
+		const rect = this.shellEl.getBoundingClientRect();
+		if (!rect.width || !rect.height) {
+			return undefined;
+		}
+		return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
 	}
 
 	layout(): void {
@@ -558,6 +571,7 @@ export class BrowserAgentDock extends Disposable {
 			return;
 		}
 		const state = this.dockState();
+		this.composerQueue.setTasks(this.agentEditor?.getTasksCard());
 		const hasTurns = !!state?.turns.length;
 		const streaming = !!state?.streaming;
 		if (streaming) {
@@ -580,7 +594,6 @@ export class BrowserAgentDock extends Disposable {
 		this.activityTextEl.textContent = activity?.text || chipLabel;
 		this.activityMoreEl.textContent = activity && activity.more > 0 ? `+${activity.more}` : '';
 		this.activityMoreEl.classList.toggle('hidden', !activity || activity.more <= 0);
-		this.setActivityDots(mode === 'activity');
 
 		this.element.classList.toggle('working', working);
 		this.element.classList.toggle('float-open', this.floatOpen);
@@ -595,22 +608,6 @@ export class BrowserAgentDock extends Disposable {
 			this.floatTitle.textContent = state?.title || localize('voltAgent.chat', "Agent");
 		}
 		this.morphTo(mode);
-	}
-
-	private setActivityDots(on: boolean): void {
-		const win = getWindow(this.element);
-		if (!on) {
-			if (this.activityDotsTimer !== undefined) {
-				win.clearInterval(this.activityDotsTimer);
-				this.activityDotsTimer = undefined;
-			}
-			return;
-		}
-		if (this.activityDotsTimer !== undefined) {
-			return;
-		}
-		paintThinkingDots(this.activityDots, this.activityDotsStep);
-		this.activityDotsTimer = win.setInterval(() => paintThinkingDots(this.activityDots, ++this.activityDotsStep), THINKING_DOTS_SPEED);
 	}
 
 	private activityWidth(available: number): number {
@@ -647,7 +644,7 @@ export class BrowserAgentDock extends Disposable {
 					? 0
 					: Math.min(650, Math.round(available * 0.9));
 		const toHeight = mode === 'idle'
-			? 10
+			? 8
 			: mode === 'activity'
 				? 34
 				: mode === 'hover'
@@ -666,7 +663,6 @@ export class BrowserAgentDock extends Disposable {
 	}
 
 	override dispose(): void {
-		this.setActivityDots(false);
 		this.restoreThread();
 		super.dispose();
 	}

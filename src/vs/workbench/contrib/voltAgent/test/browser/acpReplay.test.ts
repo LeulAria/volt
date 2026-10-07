@@ -20,7 +20,7 @@ import type { AgentSegment } from '../../browser/blocks/agentBlocks.js';
 import type { IAgentAssistantMessage, IAgentMessage } from '../../browser/editor/agentEditor.js';
 import { AgentSessionController, IAgentSessionHost } from '../../browser/editor/agentSessionController.js';
 import { IAgentWorkspaceService } from '../../browser/workspace/agentWorkspace.js';
-import { CLAUDE_EDIT_TURN, CURSOR_EDIT_TURN } from './acpReplayFixtures.js';
+import { CLAUDE_COMPACT_TURN, CLAUDE_COMPACT_TURN_LEGACY, CLAUDE_EDIT_TURN, CURSOR_EDIT_TURN } from './acpReplayFixtures.js';
 import { buildThreadParts, visibleReplyParts } from '../../browser/chrome/agentTimeline.js';
 
 class ReplayRuntime {
@@ -63,6 +63,9 @@ export function describeSegments(segments: readonly AgentSegment[]): string[] {
 		}
 		if (segment.kind === 'notice') {
 			return `notice: ${segment.title}`;
+		}
+		if (segment.kind === 'compaction') {
+			return `compaction: ${segment.compaction.status}`;
 		}
 		const block = segment.block;
 		switch (block.type) {
@@ -144,6 +147,72 @@ suite('ACP replay', () => {
 			assert.ok(kinds.some(kind => kind === 'block:file' || kind === 'changes'), kinds.join(', '));
 			assert.strictEqual(kinds.at(-1), 'markdown', kinds.join(', '));
 		}
+	});
+
+	/** A `/compact` turn as the orchestrator starts it: `beginTurn`, then the agent's updates. */
+	function replayCompact(updates: readonly Record<string, unknown>[], reason: 'done' | 'abort' = 'done') {
+		const runtime = new ReplayRuntime();
+		const host: IAgentSessionHost = {
+			sessionId: 's1',
+			messages: [
+				{ kind: 'user', id: 'turn-0', text: 'Read the notes' },
+				{ kind: 'agent', id: 'turn-0', title: '', steps: [], segments: [{ kind: 'text', text: 'Three files, 401 lines each.' }], blockState: {}, tokensUsed: 51_761, tokensWindow: 200_000, tokensBase: 21_426 },
+			] as IAgentMessage[],
+			contextUsed: 51_761,
+			recordAssistant: () => { },
+		};
+		const controller = store.add(new AgentSessionController(
+			host,
+			runtime as unknown as IAgentRuntimeService,
+			{ rootFor: () => undefined } as unknown as IVoltSessionContextService,
+			{ getWorkspace: () => ({ folders: [] }) } as unknown as IWorkspaceContextService,
+			{ openSurface: () => undefined } as unknown as IAgentWorkspaceService,
+			{ get: () => undefined, setAttention: async () => { }, setAgentTitle: async () => { } } as unknown as IAgentHistoryService,
+		));
+		const provider = new AcpAgentProvider('claude-code', 'Claude', 'claude', [], undefined as unknown as IVoltStdioService,
+			undefined as unknown as IWorkspaceContextService, undefined as unknown as IFileService, undefined as unknown as ILogService);
+		const reply = controller.beginTurn({ turnId: 'turn-1', text: '/compact', mode: 'Agent' });
+		const running = describeSegments(reply.segments);
+		const runningStatus = reply.activity?.status;
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
+		for (const update of updates) {
+			for (const event of mapUpdate(provider, update)) {
+				runtime.emit(event);
+			}
+		}
+		runtime.emit({ type: 'run.end', runId: 'run-1', reason });
+		return { reply, running, runningStatus };
+	}
+
+	test('a /compact turn shows the compaction from its first frame and ends as one finished compaction', () => {
+		for (const [turn, pre, post, summary] of [[CLAUDE_COMPACT_TURN, 51_787, 2_244, true], [CLAUDE_COMPACT_TURN_LEGACY, 49_437, 2_075, false]] as const) {
+			const { reply, running, runningStatus } = replayCompact(turn);
+			assert.deepStrictEqual(running, ['compaction: running'], 'drawn before the agent says anything');
+			assert.strictEqual(runningStatus, 'Compacting context');
+			const lines = describeSegments(reply.segments);
+			assert.deepStrictEqual(lines, ['compaction: completed'], lines.join('\n'));
+			const compaction = reply.segments[0].kind === 'compaction' ? reply.segments[0].compaction : undefined;
+			assert.strictEqual(compaction?.provisional, undefined, 'the compaction the agent reported took over the placeholder');
+			assert.strictEqual(compaction?.trigger, 'manual');
+			assert.strictEqual(compaction?.preTokens, pre);
+			assert.strictEqual(compaction?.postTokens, post);
+			assert.strictEqual(!!compaction?.summary?.startsWith('1. Primary Request'), summary);
+			assert.ok(!reply.text?.includes('Stopped before a reply'), 'a compaction is the reply');
+			assert.strictEqual(reply.outcome, 'done');
+			// Claude's `used` right after compacting is the summary alone; the meter adds the prompt back.
+			assert.strictEqual(reply.tokensUsed, post);
+			assert.strictEqual(reply.usageExcludesPrompt, true);
+		}
+	});
+
+	test('a /compact turn stopped mid-way reads as a stopped compaction', () => {
+		const { reply } = replayCompact(CLAUDE_COMPACT_TURN.slice(0, 1), 'abort');
+		assert.deepStrictEqual(describeSegments(reply.segments), ['compaction: cancelled']);
+	});
+
+	test('a /compact turn the agent answered in words keeps only the answer', () => {
+		const { reply } = replayCompact([{ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Unknown command: /compact' } }]);
+		assert.deepStrictEqual(describeSegments(reply.segments), ['text: Unknown command: /compact']);
 	});
 
 	test('the run supervisor stays silent on real edit turns', () => {
