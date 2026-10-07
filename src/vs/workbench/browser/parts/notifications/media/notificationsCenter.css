@@ -10,7 +10,7 @@
 	bottom: 29px; /* 22px status bar height + 7px (attempt to position at same location as a toast) */
 	display: none;
 	overflow: hidden;
-	border-radius: 4px;
+	border-radius: 5px;
 }
 
 .monaco-workbench.nostatusbar > .notifications-center {

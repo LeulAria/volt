@@ -30,8 +30,10 @@ export type LayoutMode = 'agent' | 'ide';
  * The agent list floats over the chat as a drawer when the window cannot fit it beside the
  * chat (and the tools, when open). With room it stays a column on the left.
  */
-export function agentNeedsSidebarDrawer(containerWidth: number, listWidth: number, toolsOpen: boolean): boolean {
-	const needed = toolsOpen ? AGENT_DRAWER_CHAT_AND_TOOLS_MIN_WIDTH : AGENT_DRAWER_CHAT_MIN_WIDTH;
+export function agentNeedsSidebarDrawer(containerWidth: number, listWidth: number, toolsOpen: boolean, edgeWidth = 0): boolean {
+	// The right-edge sidebar (Files, Source Control, Pull Requests) takes its own column on top
+	// of the chat and tools, so the list folds away earlier while it is open.
+	const needed = (toolsOpen ? AGENT_DRAWER_CHAT_AND_TOOLS_MIN_WIDTH : AGENT_DRAWER_CHAT_MIN_WIDTH) + edgeWidth;
 	return containerWidth > 0 && containerWidth - listWidth < needed;
 }
 

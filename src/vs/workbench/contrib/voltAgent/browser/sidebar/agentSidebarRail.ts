@@ -184,7 +184,11 @@ export class AgentSidebarRailContribution extends Disposable implements IWorkben
 			part.appendChild(this.rail);
 		}
 		const footer = part?.querySelector('.volt-agent-home-footer');
-		if (isHTMLElement(footer) && this.collapseButton.parentElement !== footer) {
+		// Only the rail shows the toggle (as Expand Sidebar); the expanded list's footer slot
+		// belongs to the update button instead.
+		if (!(this.on && this.agentLayout)) {
+			this.collapseButton.remove();
+		} else if (isHTMLElement(footer) && this.collapseButton.parentElement !== footer) {
 			footer.appendChild(this.collapseButton);
 		}
 		if (isHTMLElement(footer) && footer !== this.observedFooter) {
