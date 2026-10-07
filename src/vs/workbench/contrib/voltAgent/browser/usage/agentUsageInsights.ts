@@ -69,15 +69,22 @@ function percent(value: number): string {
 	return `${Math.round(value * 100)}%`;
 }
 
+/** One Insights card: a chart spec, and whether it takes the whole row. */
+export interface IUsageInsight {
+	readonly spec: { readonly type: string; readonly title: string };
+	readonly wide: boolean;
+}
+
 /**
- * The Insights section, or undefined when the range has nothing to say. Each chart's title is the
- * finding ("Busiest on Tuesdays around 3pm"), its subtitle what was measured.
+ * The Insights cards, empty when the range has nothing to say. Each chart's title is the finding
+ * ("Busiest on Tuesdays around 3pm"), its subtitle what was measured. Token kinds use the colors
+ * of the "Tokens by type" bar above them.
  */
-export function usageInsightsSpec(snapshot: IVoltUsageSnapshot, summary: IUsageSummary, metric: UsageMetric): object | undefined {
+export function usageInsights(snapshot: IVoltUsageSnapshot, summary: IUsageSummary, metric: UsageMetric): IUsageInsight[] {
 	if (!summary.providers.length) {
-		return undefined;
+		return [];
 	}
-	const charts: object[] = [];
+	const charts: IUsageInsight[] = [];
 	const measure = metric === 'cost' ? localize('voltUsage.insights.spend', "spend") : localize('voltUsage.insights.tokens', "tokens");
 	const starts = summary.slots.map(slot => slot.start);
 	const index = new Map(starts.map((start, at) => [start, at]));
@@ -97,42 +104,45 @@ export function usageInsightsSpec(snapshot: IVoltUsageSnapshot, summary: IUsageS
 	const allTokens = sum(mix.cached) + sum(mix.uncached) + sum(mix.cacheWrite) + sum(mix.output);
 	const step = summary.hourly ? 'hour' : 'day';
 	const x = { start: starts[0], step };
-	const row: object[] = [];
 	if (allTokens > 0) {
-		row.push({
-			type: 'stacked-area',
-			title: localize('voltUsage.insights.mixTitle', "{0} of tokens were cache reads", percent(sum(mix.cached) / allTokens)),
-			subtitle: summary.hourly ? localize('voltUsage.insights.mixHourly', "Tokens per hour by kind") : localize('voltUsage.insights.mixDaily', "Tokens per day by kind"),
-			unit: 'tokens',
-			height: 200,
-			x,
-			series: [
-				{ name: localize('voltUsage.insights.cacheReads', "Cache reads"), data: mix.cached, color: 'blue' },
-				{ name: localize('voltUsage.insights.input', "Input"), data: mix.uncached, color: 'orange' },
-				{ name: localize('voltUsage.insights.cacheWrites', "Cache writes"), data: mix.cacheWrite, color: 'purple' },
-				{ name: localize('voltUsage.insights.output', "Output"), data: mix.output, color: 'green' },
-			],
+		charts.push({
+			wide: false, spec: {
+				type: 'stacked-area',
+				title: localize('voltUsage.insights.mixTitle', "{0} of tokens were cache reads", percent(sum(mix.cached) / allTokens)),
+				subtitle: summary.hourly ? localize('voltUsage.insights.mixHourly', "Tokens per hour by kind") : localize('voltUsage.insights.mixDaily', "Tokens per day by kind"),
+				unit: 'tokens',
+				height: 180,
+				x,
+				endLabels: false,
+				series: [
+					{ name: localize('voltUsage.insights.cacheReads', "Cache read"), data: mix.cached, color: '--volt-usage-type-cache-read' },
+					{ name: localize('voltUsage.insights.input', "Input"), data: mix.uncached, color: '--volt-usage-type-input' },
+					{ name: localize('voltUsage.insights.cacheWrites', "Cache write"), data: mix.cacheWrite, color: '--volt-usage-type-cache-write' },
+					{ name: localize('voltUsage.insights.output', "Output"), data: mix.output, color: '--volt-usage-type-output' },
+				],
+			}
 		});
 	}
 	const input = starts.map((_, at) => mix.cached[at] + mix.uncached[at] + mix.cacheWrite[at]);
-	const hitRate = input.map((value, at) => value > 0 ? mix.cached[at] / value : null);
+	// Only slots that had input: an idle day is no reading, and the line runs straight across it.
+	const hitRate = starts.flatMap((start, at) => input[at] > 0 ? [[start, mix.cached[at] / input[at]]] : []);
 	const totalInput = sum(input);
 	if (totalInput > 0) {
 		const average = sum(mix.cached) / totalInput;
-		row.push({
-			type: 'line',
-			title: localize('voltUsage.insights.cacheTitle', "Cache hits averaged {0} of input", percent(average)),
-			subtitle: localize('voltUsage.insights.cacheSubtitle', "Share of input read from the prompt cache. Higher is cheaper."),
-			unit: 'ratio',
-			height: 200,
-			y: { min: 0, max: 1 },
-			x,
-			rules: [{ y: average, label: localize('voltUsage.insights.average', "Average") }],
-			series: [{ name: localize('voltUsage.insights.hitRate', "Cache hit rate"), data: hitRate, color: 'green' }],
+		charts.push({
+			wide: false, spec: {
+				type: 'line',
+				title: localize('voltUsage.insights.cacheTitle', "Cache hits averaged {0} of input", percent(average)),
+				subtitle: localize('voltUsage.insights.cacheSubtitle', "Share of input read from the prompt cache. Higher is cheaper."),
+				unit: 'ratio',
+				height: 180,
+				y: { min: 0, max: 1 },
+				x: { type: 'time' },
+				legend: false,
+				rules: [{ y: average, label: localize('voltUsage.insights.average', "Average") }],
+				series: [{ name: localize('voltUsage.insights.hitRate', "Cache hit rate"), data: hitRate, color: '--volt-usage-type-cache-read' }],
+			}
 		});
-	}
-	if (row.length) {
-		charts.push({ type: 'row', charts: row });
 	}
 
 	// Models over the range, as shares: the top five and the rest.
@@ -155,18 +165,29 @@ export function usageInsightsSpec(snapshot: IVoltUsageSnapshot, summary: IUsageS
 		const top = models.slice(0, 5);
 		const rest = models.slice(5);
 		const whole = sum(models.map(item => item.total));
-		const series = top.map(item => ({ name: item.model, data: item.values }));
+		const lines = top.map(item => ({ name: item.model, values: item.values, color: undefined as string | undefined }));
 		if (rest.length) {
-			series.push({ name: localize('voltUsage.insights.other', "Other"), data: starts.map((_, at) => sum(rest.map(item => item.values[at]))) });
+			lines.push({ name: localize('voltUsage.insights.other', "Other"), values: starts.map((_, at) => sum(rest.map(item => item.values[at]))), color: 'muted' });
 		}
+		// A 100% bar per slot rather than a smoothed band: idle days stay empty instead of bridging
+		// into blocks, and a day carried by one small model reads as one day.
+		const slotTotals = starts.map((_, at) => sum(lines.map(line => line.values[at])));
+		const series = lines.map(line => ({
+			name: line.name,
+			color: line.color,
+			data: line.values.map((value, at) => slotTotals[at] > 0 ? (value / slotTotals[at]) * 100 : null),
+		}));
 		charts.push({
-			type: 'share',
-			title: localize('voltUsage.insights.modelsTitle', "{0} handled {1} of your {2}", top[0].model, percent(top[0].total / whole), measure),
-			subtitle: localize('voltUsage.insights.modelsSubtitle', "Share of {0} per {1}, by model.", measure, summary.hourly ? localize('voltUsage.insights.hour', "hour") : localize('voltUsage.insights.day', "day")),
-			height: 220,
-			x,
-			endLabels: true,
-			series,
+			wide: true, spec: {
+				type: 'stacked-bar',
+				title: localize('voltUsage.insights.modelsTitle', "{0} handled {1} of your {2}", top[0].model, percent(top[0].total / whole), measure),
+				subtitle: localize('voltUsage.insights.modelsSubtitle', "Share of {0} per {1}, by model.", measure, summary.hourly ? localize('voltUsage.insights.hour', "hour") : localize('voltUsage.insights.day', "day")),
+				unit: 'percent',
+				height: 200,
+				y: { min: 0, max: 100 },
+				x,
+				series,
+			}
 		});
 	}
 
@@ -191,16 +212,18 @@ export function usageInsightsSpec(snapshot: IVoltUsageSnapshot, summary: IUsageS
 		const weekdays = sum(grid.slice(0, 5).map(sum)) / 5;
 		const weekends = sum(grid.slice(5).map(sum)) / 2;
 		charts.push({
-			type: 'heatmap',
-			title: localize('voltUsage.insights.peakTitle', "Busiest on {0} around {1}", weekdayName(WEEKDAYS[peakRow], true), hourName(peakHour)),
-			subtitle: weekdays > 0
-				? localize('voltUsage.insights.peakSubtitle', "{0} by weekday and hour in your time zone, last {1} days. Weekends run at {2} of weekdays.", measure.charAt(0).toUpperCase() + measure.slice(1), Math.round((snapshot.generatedAt - snapshot.sinceMs) / (24 * HOUR_MS)), percent(weekends / weekdays))
-				: localize('voltUsage.insights.peakSubtitleShort', "{0} by weekday and hour in your time zone.", measure.charAt(0).toUpperCase() + measure.slice(1)),
-			unit: unitOf(metric),
-			rows: WEEKDAYS.map(day => weekdayName(day, false)),
-			columns: Array.from({ length: 24 }, (_, hour) => hourName(hour)),
-			values: grid,
+			wide: true, spec: {
+				type: 'heatmap',
+				title: localize('voltUsage.insights.peakTitle', "Busiest on {0} around {1}", weekdayName(WEEKDAYS[peakRow], true), hourName(peakHour)),
+				subtitle: weekdays > 0
+					? localize('voltUsage.insights.peakSubtitle', "{0} by weekday and hour in your time zone, last {1} days. Weekends run at {2} of weekdays.", measure.charAt(0).toUpperCase() + measure.slice(1), Math.round((snapshot.generatedAt - snapshot.sinceMs) / (24 * HOUR_MS)), percent(weekends / weekdays))
+					: localize('voltUsage.insights.peakSubtitleShort', "{0} by weekday and hour in your time zone.", measure.charAt(0).toUpperCase() + measure.slice(1)),
+				unit: unitOf(metric),
+				rows: WEEKDAYS.map(day => weekdayName(day, false)),
+				columns: Array.from({ length: 24 }, (_, hour) => hourName(hour)),
+				values: grid,
+			}
 		});
 	}
-	return charts.length ? { charts } : undefined;
+	return charts;
 }

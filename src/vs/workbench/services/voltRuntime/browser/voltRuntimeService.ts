@@ -47,7 +47,7 @@ import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQue
 import { AcpAgentProvider, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
 import { AcpLoopDetector } from '../common/harness/acpLoopDetector.js';
 import { LOOP_NOTICE_TITLE } from '../common/harness/supervisor.js';
-import { DeepseekDirective, IDeepseekStep } from '../common/deepseek/loop.js';
+import { DeepseekDirective, IDeepseekStep, runDeepseekLoop } from '../common/deepseek/loop.js';
 import { EditBaselineTracker } from './editBaselines.js';
 import './host/hostToolService.js';
 import { clearClaudeModelCache } from './agents/claudeCatalog.js';
@@ -93,7 +93,6 @@ import { isAcpTurnRestartable } from '../common/harness/sessionRetry.js';
 import { TaskLifecycle } from '../common/harness/lifecycle.js';
 import { IToolCall, IToolContext, IVoltTool, toolSchemas } from '../common/tools/tool.js';
 import { deepseekKnobs, resolveApproval } from '../common/deepseek/approval.js';
-import { runDeepseekLoop } from '../common/deepseek/loop.js';
 import { VoltLlmAdapter } from './deepseek/voltLlmAdapter.js';
 import { buildSubagentPrompt, nativeModelTurn } from '../common/deepseek/prompt.js';
 import { ApprovalOutcome } from '../common/deepseek/protocol.js';
@@ -2569,6 +2568,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			environment: this.environmentFacts(root),
 			...(intent.shape ? { shape: intent.shape } : {}),
 			...(mode === 'multitask' ? { taskModels: [...new Set(this.listCatalog().filter(item => item.enabled).map(item => item.label))] } : {}),
+			visuals: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
 		};
 	}
 

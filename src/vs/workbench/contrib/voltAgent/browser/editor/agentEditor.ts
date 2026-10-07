@@ -87,7 +87,7 @@ import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { ISearchService } from '../../../../services/search/common/search.js';
 import { searchFilesAndFolders } from '../../../search/browser/searchChatContext.js';
-import { AGENT_EDITOR_LINE_NUMBERS_SETTING, AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from './agentEditorInput.js';
+import { AGENT_EDITOR_LINE_NUMBERS_SETTING, AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from './agentEditorInput.js';
 import { createAgentTitleActionViewItem } from './agentTitleActions.js';
 import { IAction } from '../../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
@@ -386,6 +386,8 @@ export interface IAgentUserMessage {
 	handoff?: { fromLabel?: string; toLabel: string; at: number; by: 'agent' | 'user'; reason?: string };
 	/** Sent by a scheduled task, not typed now: drawn with a "Scheduled" divider above it. */
 	scheduled?: { id: string; title: string };
+	/** Written by another chat's agent (a message, the task it launched, or a fork's first prompt): drawn with a "From" pill that opens that chat. */
+	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork' };
 }
 
 export interface IAgentPromptDisplay {
@@ -2178,7 +2180,23 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.showPreviewOverlay(title, content, true);
 				this.snapshotStore.add(store);
 			},
+			sessionId: this.sessionKey,
+			onPagePrompt: (text, page, send) => this.promptFromPage(text, page, send),
 		};
+	}
+
+	/**
+	 * A page the agent showed (html_render) asked to talk to it: a button the user clicked sends the
+	 * message now; anything else lands in the composer for the user to send.
+	 */
+	private promptFromPage(text: string, page: string, send: boolean): void {
+		if (!send || this.isSubagentChat()) {
+			const existing = (this.input instanceof AgentEditorInput ? this.input.draft ?? '' : '').trim();
+			this.prefillDraft(existing ? `${existing}\n\n${text}` : text);
+			return;
+		}
+		this.stickToBottom = true;
+		void this.submitToOrchestrator(`${text}\n\n[Sent from the page "${page.replace(/"/g, '\'')}" you showed in this chat, when the user clicked in it.]`, { text }, this.currentMode, 'auto');
 	}
 
 	private flashTableCopyButton(anchor: HTMLElement): void {
@@ -2420,6 +2438,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				if (message.scheduled) {
 					this.renderScheduledPill(turn, message.scheduled);
 				}
+				if (message.fromThread) {
+					this.renderFromThreadPill(turn, message.fromThread);
+				}
 				this.renderUserTurn(turn, message, index);
 			}
 		} else {
@@ -2467,7 +2488,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
-	/** "⇄ Context handoff · Claude Opus 5.5 → GPT-6": the chat moved to another model before this turn. */
+	/** "Context handoff · Claude Opus 5.5 → GPT-6": the chat moved to another model before this turn. */
 	private renderHandoffDivider(turn: HTMLElement, handoff: NonNullable<IAgentUserMessage['handoff']>): void {
 		const divider = append(turn, $('.volt-agent-handoff'));
 		const pill = append(divider, $('span.volt-agent-handoff-pill'));
@@ -2496,6 +2517,34 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		pill.appendChild(renderIcon(Codicon.hubot));
 		append(pill, $('span.label')).textContent = localize('voltAgent.subagentOf', "Subagent of");
 		append(pill, $('span.parent')).textContent = `· ${parentTitle}`;
+	}
+
+	/**
+	 * "From · Release captain" above a message another chat's agent wrote (or "Launched by", "Forked
+	 * by"); a click opens that chat.
+	 */
+	private renderFromThreadPill(turn: HTMLElement, from: NonNullable<IAgentUserMessage['fromThread']>): void {
+		const divider = append(turn, $('.volt-agent-subagent-of.from-thread'));
+		const pill = append(divider, $('span.volt-agent-subagent-of-pill'));
+		pill.appendChild(renderIcon(from.kind === 'fork' ? Codicon.repoForked : from.kind === 'launch' ? Codicon.rocket : Codicon.commentDiscussion));
+		append(pill, $('span.label')).textContent = from.kind === 'fork'
+			? localize('voltAgent.fromThread.fork', "Forked by")
+			: from.kind === 'launch' ? localize('voltAgent.fromThread.launch', "Started by") : localize('voltAgent.fromThread.message', "From");
+		append(pill, $('span.parent')).textContent = `· ${this.history.get(from.id)?.title || from.title}`;
+		pill.setAttribute('role', 'button');
+		pill.tabIndex = 0;
+		setAgentTooltip(pill, localize('voltAgent.fromThread.open', "Written by the agent of another chat, not by you. Click to open that chat."));
+		const open = (e: UIEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, from.id);
+		};
+		this.threadListeners.add(addDisposableListener(pill, 'click', open));
+		this.threadListeners.add(addDisposableListener(pill, 'keydown', e => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				open(e);
+			}
+		}));
 	}
 
 	/** "Scheduled · Daily CI check" above a prompt a scheduled task sent; a click opens the task list. */
@@ -2796,7 +2845,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			rewind.type = 'button';
 			rewind.setAttribute('aria-label', localize('voltAgent.rewind', "Rewind to Here"));
 			setAgentTooltip(rewind, localize('voltAgent.rewind.hint', "Rewind the chat to before this message, keeping file changes"));
-			rewind.appendChild(renderIcon(Codicon.debugStepBack));
+			rewind.appendChild(renderIcon(Codicon.history));
 			this.threadListeners.add(addDisposableListener(rewind, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();

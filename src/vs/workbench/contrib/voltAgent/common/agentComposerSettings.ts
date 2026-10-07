@@ -13,6 +13,9 @@ export const AGENT_PROMPT_HISTORY_SETTING = 'volt.agent.composer.promptHistory';
 /** New Agent reopens the project's chat that only holds unsent text, instead of starting another empty one. */
 export const AGENT_NEW_CHAT_DRAFT_SETTING = 'volt.agent.composer.restoreUnsentDraft';
 
+/** The model a new chat starts on (a catalog ref). Empty: the model picked last. A project's own default wins. */
+export const AGENT_DEFAULT_MODEL_SETTING = 'volt.agent.defaultModel';
+
 Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfiguration({
 	id: 'volt.agent.composer',
 	title: localize('voltAgent.composerConfigTitle', "Agent Composer"),
@@ -27,6 +30,11 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			type: 'boolean',
 			default: true,
 			description: localize('voltAgent.restoreUnsentDraft', "When a new chat was left with text that was never sent, New Agent opens that chat again with the text still in the composer."),
+		},
+		[AGENT_DEFAULT_MODEL_SETTING]: {
+			type: 'string',
+			default: '',
+			description: localize('voltAgent.defaultModel', "The model new chats start on. Empty uses the model you picked last. A project's own default model wins over this."),
 		},
 	},
 });

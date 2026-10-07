@@ -818,9 +818,11 @@
 	display: none;
 }
 
+/* Second-line glyphs (branch on chat and run rows) sit a step under the 11.5px text, centered on it. */
 .volt-agent-home-row.is-session.two-line > .sub .codicon {
 	flex: none;
-	font-size: 12px;
+	font-size: 11px;
+	line-height: 1;
 	opacity: 0.8;
 }
 
@@ -1876,10 +1878,15 @@ html.volt-layout-agent-window body {
 	color: var(--vscode-errorForeground, #f14c4c);
 }
 
-/* Working / Settled / Snoozed headers: a sentence-case label, a rule across the row, the fold chevron last. */
-.volt-agent-home-row.is-group.group-working,
-.volt-agent-home-row.is-group.group-settled,
-.volt-agent-home-row.is-group.group-snooze {
+/* Stopped by the user: the badge's muted color; the stop square a step smaller so it does not read as a button. */
+.volt-agent-home-row > .status-badge.kind-stopped > .status-icon .codicon {
+	font-size: 11px;
+}
+
+/* Working header: a sentence-case label, a rule across the row, the fold chevron last.
+ * Settled and Snoozed keep the VS Code pane section header look of the other group headers
+ * (leading chevron, small uppercase label); Snoozed only tints its label blue. */
+.volt-agent-home-row.is-group.group-working {
 	font-size: 12px;
 	font-weight: 500;
 	text-transform: none;
@@ -1892,16 +1899,12 @@ html.volt-layout-agent-window body {
 	color: var(--vscode-charts-blue, #3794ff);
 }
 
-.volt-agent-home-row.is-group.group-working > .name,
-.volt-agent-home-row.is-group.group-settled > .name,
-.volt-agent-home-row.is-group.group-snooze > .name {
+.volt-agent-home-row.is-group.group-working > .name {
 	flex: none;
 	order: 0;
 }
 
-.volt-agent-home-row.is-group.group-working::after,
-.volt-agent-home-row.is-group.group-settled::after,
-.volt-agent-home-row.is-group.group-snooze::after {
+.volt-agent-home-row.is-group.group-working::after {
 	content: '';
 	flex: 1;
 	order: 1;
@@ -1910,9 +1913,7 @@ html.volt-layout-agent-window body {
 	opacity: 0.25;
 }
 
-.volt-agent-home-row.is-group.group-working > .icon,
-.volt-agent-home-row.is-group.group-settled > .icon,
-.volt-agent-home-row.is-group.group-snooze > .icon {
+.volt-agent-home-row.is-group.group-working > .icon {
 	order: 2;
 }
 

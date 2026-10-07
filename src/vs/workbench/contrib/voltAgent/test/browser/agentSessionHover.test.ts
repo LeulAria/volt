@@ -17,6 +17,8 @@ suite('Agent session hover card', () => {
 		assert.strictEqual(agentSessionStatusNote({ status: 'interrupted' }), 'The last run was interrupted');
 		assert.strictEqual(agentSessionStatusNote({ status: 'error' }), 'The last run failed');
 		assert.strictEqual(agentSessionStatusNote({ status: 'done' }), undefined);
+		assert.strictEqual(agentSessionStatusNote({ status: 'cancelled' }), 'The last run was stopped');
+		assert.strictEqual(agentSessionStatusNote({ status: 'error', summary: 'You\'ve hit your monthly spend limit' }), 'The last run stopped at a usage limit');
 
 		const interrupted = agentSessionHoverRows('Testing', agentSessionStatusNote({ status: 'interrupted' }), [
 			{ pathLabel: '~/Desktop/Agent-Test' },

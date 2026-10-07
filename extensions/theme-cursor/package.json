@@ -1,7 +1,7 @@
 {
 	"name": "theme-cursor",
-	"displayName": "Cursor Themes",
-	"description": "Default Cursor color themes",
+	"displayName": "Volt Themes",
+	"description": "Default Volt color themes",
 	"version": "0.0.2",
 	"publisher": "volt",
 	"license": "MIT",
@@ -14,32 +14,32 @@
 	"contributes": {
 		"themes": [
 			{
-				"id": "Cursor Dark",
-				"label": "Cursor Dark",
+				"id": "Volt Dark",
+				"label": "Volt Dark",
 				"uiTheme": "vs-dark",
 				"path": "./themes/cursor-dark-color-theme.json"
 			},
 			{
-				"id": "Cursor Dark Midnight",
-				"label": "Cursor Dark Midnight",
+				"id": "Volt Dark Midnight",
+				"label": "Volt Dark Midnight",
 				"uiTheme": "vs-dark",
 				"path": "./themes/cursor-dark-midnight-color-theme.json"
 			},
 			{
-				"id": "Cursor Dark High Contrast",
-				"label": "Cursor Dark High Contrast",
+				"id": "Volt Dark High Contrast",
+				"label": "Volt Dark High Contrast",
 				"uiTheme": "hc-black",
 				"path": "./themes/cursor-dark-hc-color-theme.json"
 			},
 			{
-				"id": "Cursor Light",
-				"label": "Cursor Light",
+				"id": "Volt Light",
+				"label": "Volt Light",
 				"uiTheme": "vs",
 				"path": "./themes/cursor-light-color-theme.json"
 			},
 			{
-				"id": "Cursor Light Colorblind (Beta)",
-				"label": "Cursor Light Colorblind (Beta)",
+				"id": "Volt Light Colorblind (Beta)",
+				"label": "Volt Light Colorblind (Beta)",
 				"uiTheme": "vs",
 				"path": "./themes/cursor-light-colorblind-color-theme.json"
 			}

@@ -226,6 +226,14 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			this.hosts.clear();
 			void this.tick(true);
 		}));
+		// The user stopped the chat: it is no longer working on its own, so nothing wakes it (as in T3 Code).
+		this._register(this.orchestrator.onDidStop(threadId => {
+			for (const link of this.links(threadId)) {
+				if (link.watch) {
+					this.unwatch(threadId, link.key);
+				}
+			}
+		}));
 		// A finished turn may have pushed a branch or opened a pull request.
 		this._register(this.orchestrator.onDidChange(change => {
 			for (const threadId of change.threads) {
@@ -1012,9 +1020,18 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	//#region Agent tools
 
 	private async invokeTool(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
-		const sessionId = call?.sessionId ? this.runtime.chatFor(call.sessionId) : undefined;
-		if (!sessionId) {
+		const caller = call?.sessionId ? this.runtime.chatFor(call.sessionId) : undefined;
+		if (!caller) {
 			return { error: 'This tool needs a Volt chat.' };
+		}
+		// An orchestrating agent may link and watch for a chat it launched (`thread_id`).
+		const other = typeof args.thread_id === 'string' && args.thread_id.trim() && args.thread_id.trim() !== caller ? args.thread_id.trim() : undefined;
+		if (other && !this.history.get(other) && !this.orchestrator.getThread(other)) {
+			return { error: `No chat ${other}. thread_list shows chat ids.` };
+		}
+		const sessionId = other ?? caller;
+		if (name === WATCH_TOOL && (this.orchestrator.getThread(sessionId)?.taskId || this.history.get(sessionId)?.subagent)) {
+			return { error: 'A subagent cannot watch pull requests: its parent chat owns them. Name the pull request in your report; the parent can call watch_pull_request.' };
 		}
 		try {
 			const target: IAgentPrTarget = {
@@ -1057,7 +1074,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 					}
 					const wasWatching = !!this.links(sessionId).find(link => link.key === key)?.watch;
 					const link = await this.watch(sessionId, key);
-					return json({ ...describeLink(link), watching: true, wasWatching, note: 'Volt wakes this chat when checks fail or pass, a review or comment comes in, the branch conflicts, or it merges. End your turn now.' });
+					return json({ ...describeLink(link), watching: true, wasWatching, ...(other ? { threadId: other } : {}), note: other ? 'Volt wakes that chat (not this one) when checks fail or pass, a review or comment comes in, or the branch conflicts.' : 'Volt wakes this chat when checks fail or pass, a review or comment comes in, or the branch conflicts. Handle the comments that are already there first, then end your turn now.' });
 				}
 				case UNWATCH_TOOL: {
 					const ref = await this.resolveTarget(sessionId, target);
@@ -1090,6 +1107,7 @@ const TARGET_SCHEMA = {
 		repository: { type: 'string', description: '"owner/repo". Defaults to the repository of this chat\'s folder.' },
 		number: { type: 'number', description: 'The pull request number.' },
 		host: { type: 'string', description: 'Code host, default github.com (an Enterprise host otherwise).' },
+		thread_id: { type: 'string', description: 'Another chat to act for (one you launched or manage, from thread_list). Omit for this chat.' },
 	},
 };
 
@@ -1112,21 +1130,21 @@ export const PULL_REQUEST_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: LIST_TOOL,
 		title: 'Listed pull requests',
 		group: 'pullRequests',
-		description: 'List the pull requests linked to this Volt chat with their state, branches, checks, whether Volt watches them, and stacks.',
-		inputSchema: { type: 'object', properties: {} },
+		description: 'List the pull requests linked to this Volt chat (or thread_id) with their state, branches, checks, whether Volt watches them, and stacks.',
+		inputSchema: { type: 'object', properties: { thread_id: TARGET_SCHEMA.properties.thread_id } },
 	},
 	{
 		name: WATCH_TOOL,
 		title: 'Watching pull request',
 		group: 'pullRequests',
-		description: 'Watch an open pull request: Volt wakes this chat with an update when checks fail or all pass, a review or comment comes in (not your own), or the branch starts to conflict, and stops when it merges or closes. Links it if needed. After calling it, end your turn.',
+		description: 'Watch an open pull request instead of polling, sleeping or running a watcher: Volt checks it and wakes this chat with a message when a check fails, the required checks pass, someone else comments or reviews, or the branch starts to conflict. Links it if needed. Only comments posted after this call wake you, so handle the existing ones first, then end your turn. A wake is news, not a merge decision: check readiness yourself before merging. Watching ends when it merges or closes, when the user stops this chat, after 10 comment-only updates in a row, or with unwatch_pull_request; call unwatch_pull_request before you hand the work back to the user. A subagent cannot watch (its parent owns the pull request).',
 		inputSchema: TARGET_SCHEMA,
 	},
 	{
 		name: UNWATCH_TOOL,
 		title: 'Stopped watching pull request',
 		group: 'pullRequests',
-		description: 'Stop watching a pull request for this chat.',
+		description: 'Stop watching a pull request for this chat (or thread_id). It stays linked.',
 		inputSchema: TARGET_SCHEMA,
 	},
 ];

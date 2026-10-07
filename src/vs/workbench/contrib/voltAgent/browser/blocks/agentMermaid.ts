@@ -56,9 +56,115 @@ export function preloadMermaid(): Promise<unknown> {
 	return mermaidLoad.catch(() => undefined);
 }
 
+//#region xychart-beta as a Volt chart
+
+/** `"Liechtenstein", Luxembourg, "United States"` → the items without their quotes. */
+function splitMermaidList(list: string): string[] {
+	const items: string[] = [];
+	for (const match of list.matchAll(/\s*(?:"([^"]*)"|'([^']*)'|([^,]+))\s*(?:,|$)/g)) {
+		const item = (match[1] ?? match[2] ?? match[3] ?? '').trim();
+		if (item || match[1] !== undefined) {
+			items.push(item);
+		}
+	}
+	return items;
+}
+
+function unquote(value: string | undefined): string | undefined {
+	const text = value?.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1').trim();
+	return text || undefined;
+}
+
+/** True for ```mermaid sources that are data charts (`xychart-beta`), not diagrams. */
+export function isMermaidXyChart(source: string): boolean {
+	return /^\s*(?:%%[^\n]*\n\s*)*xychart(?:-beta)?\b/i.test(source);
+}
+
+/**
+ * A mermaid `xychart-beta` (bars and lines over categories) as a Volt chart spec, so a data chart
+ * an agent wrote in mermaid draws like render_chart: theme colors, hover, readable labels.
+ * Undefined until the source has at least one complete data series.
+ */
+export function xychartToChartSpec(source: string): Record<string, unknown> | undefined {
+	if (!isMermaidXyChart(source)) {
+		return undefined;
+	}
+	let title: string | undefined;
+	let categories: string[] | undefined;
+	let xLabel: string | undefined;
+	let xRange: [number, number] | undefined;
+	let yLabel: string | undefined;
+	let yRange: [number, number] | undefined;
+	const series: { kind: 'bar' | 'line'; name?: string; data: number[] }[] = [];
+	for (const raw of source.split('\n').slice(1)) {
+		const line = raw.replace(/%%.*$/, '').trim();
+		if (!line) {
+			continue;
+		}
+		let match: RegExpExecArray | null;
+		if ((match = /^title\s+(.+)$/i.exec(line))) {
+			title = unquote(match[1]);
+		} else if ((match = /^x-axis\s*(?:("[^"]*"|[^\s[]+)\s*)?\[(.*)\]\s*$/i.exec(line))) {
+			xLabel = unquote(match[1]);
+			categories = splitMermaidList(match[2]);
+		} else if ((match = /^x-axis\s*(?:("[^"]*"|[^\s\d-][^\s]*)\s+)?(-?[\d.]+)\s*-->\s*(-?[\d.]+)\s*$/i.exec(line))) {
+			xLabel = unquote(match[1]);
+			xRange = [Number(match[2]), Number(match[3])];
+		} else if ((match = /^y-axis\s*(?:("[^"]*"|[^\s\d-][^\s]*)\s*)?(?:(-?[\d.]+)\s*-->\s*(-?[\d.]+))?\s*$/i.exec(line))) {
+			yLabel = unquote(match[1]);
+			if (match[2] !== undefined && match[3] !== undefined) {
+				yRange = [Number(match[2]), Number(match[3])];
+			}
+		} else if ((match = /^(bar|line)\s*("[^"]*")?\s*\[(.*)\]\s*$/i.exec(line))) {
+			const data = splitMermaidList(match[3]).map(Number);
+			if (data.length && data.every(Number.isFinite)) {
+				series.push({ kind: match[1].toLowerCase() as 'bar' | 'line', name: unquote(match[2]), data });
+			}
+		}
+	}
+	if (!series.length) {
+		return undefined;
+	}
+	const points = Math.max(...series.map(s => s.data.length));
+	if (!categories?.length) {
+		const [from, to] = xRange ?? [1, points];
+		const step = points > 1 ? (to - from) / (points - 1) : 0;
+		categories = Array.from({ length: points }, (_, index) => String(Math.round((from + step * index) * 100) / 100));
+	}
+	const bars = series.filter(s => s.kind === 'bar');
+	const fallbackName = (index: number) => series.length === 1 ? (yLabel ?? title ?? 'Value') : `Series ${index + 1}`;
+	const spec: Record<string, unknown> = {
+		type: bars.length > 1 ? 'grouped-bar' : bars.length ? 'bar' : 'line',
+		...(title ? { title } : {}),
+		// Mermaid carries no unit; plain numbers, so "Thousand USD" never prints 227 as $227.
+		unit: 'number',
+		categories,
+		x: { type: 'category', ...(xLabel ? { label: xLabel } : {}) },
+		series: series.map((s, index) => ({
+			name: s.name ?? fallbackName(index),
+			data: s.data,
+			...(bars.length && s.kind === 'line' ? { type: 'line' } : {}),
+		})),
+	};
+	if (yLabel || yRange) {
+		spec.y = { ...(yLabel ? { label: yLabel } : {}), ...(yRange ? { min: yRange[0], max: yRange[1] } : {}) };
+	}
+	return spec;
+}
+
+/** beautiful-mermaid keeps the quotes around xychart categories; drop them before it draws. */
+function withoutQuotedCategories(source: string): string {
+	if (!isMermaidXyChart(source)) {
+		return source;
+	}
+	return source.replace(/^(\s*x-axis\s*(?:"[^"]*"\s*)?)\[(.*)\]\s*$/im, (_, head: string, list: string) => `${head}[${splitMermaidList(list).map(item => item.replace(/,/g, ' ')).join(', ')}]`);
+}
+
+//#endregion
+
 /** SVG markup for `source`, or `null` when the renderer cannot draw it. `undefined` means not loaded yet. */
 function mermaidMarkup(source: string): string | null | undefined {
-	const key = source.trim();
+	const key = withoutQuotedCategories(source.trim());
 	if (svgCache.has(key)) {
 		return svgCache.get(key)!;
 	}

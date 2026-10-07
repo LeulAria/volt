@@ -11,7 +11,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME } from '../../../../platform/voltBrowser/common/voltBrowser.js';
 import { IVoltHostMcpResult, IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../../../platform/voltHostMcp/common/voltHostMcp.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
-import { IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
+import { IVoltHostToolResult, IVoltHostToolService, LEGACY_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
 // The device and window capture host tools (and their UI) are served on this window's MCP server too.
 import './voltDevices.contribution.js';
 
@@ -57,7 +57,7 @@ class VoltHostMcpContribution extends Disposable implements IWorkbenchContributi
 
 	private async start(): Promise<void> {
 		try {
-			const tools = this.hostTools.listTools().map(tool => ({ name: tool.name, title: tool.title, description: tool.description, inputSchema: tool.inputSchema, group: tool.group }));
+			const tools = this.hostTools.listTools().map(tool => ({ name: tool.name, title: tool.title, description: tool.description, inputSchema: tool.inputSchema, group: tool.group, ...aliasesOf(tool.name) }));
 			const endpoint = await this.mcp.start(this.serverId, tools);
 			this.hostTools.setMcpEndpoint(endpoint.url, endpoint.token);
 		} catch (err) {
@@ -103,6 +103,12 @@ function asMcpImage(image: string | undefined): { type: 'image'; data: string; m
 		return { type: 'image', mimeType: match[1], data: match[2] };
 	}
 	return { type: 'image', mimeType: 'image/png', data: image };
+}
+
+/** Earlier names of a tool, so an agent that listed tools before a rename can still call it. */
+function aliasesOf(name: string): { aliases?: string[] } {
+	const aliases = Object.keys(LEGACY_TOOL_NAMES).filter(alias => LEGACY_TOOL_NAMES[alias] === name);
+	return aliases.length ? { aliases } : {};
 }
 
 registerWorkbenchContribution2(VoltHostMcpContribution.ID, VoltHostMcpContribution, WorkbenchPhase.AfterRestored);

@@ -9,6 +9,7 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { isLinux, isWindows } from '../../../../base/common/platform.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
@@ -20,6 +21,7 @@ import { setProjectRunEnvResolver } from '../../../services/voltRuntime/common/p
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../services/voltRuntime/common/sessionContext.js';
 import { AgentEditorInput } from '../../voltAgent/browser/editor/agentEditorInput.js';
+import { AGENT_DEFAULT_MODEL_SETTING } from '../../voltAgent/common/agentComposerSettings.js';
 import { IVoltProjectSettings, normalizeProjectSettings, PROJECT_SETTINGS_STORAGE_KEY, projectForPath, ProjectSettingsMap, readWorktreeSetup, CURSOR_WORKTREES_FILE, VOLT_WORKTREES_FILE, withProjectSettings, writeWorktreeSetup, IWorktreeSetupRead } from '../common/projectSettings.js';
 
 export const IVoltProjectSettingsService = createDecorator<IVoltProjectSettingsService>('voltProjectSettingsService');
@@ -164,6 +166,7 @@ export class ProjectDefaultModelContribution extends Disposable implements IWork
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IVoltProjectSettingsService private readonly settings: IVoltProjectSettingsService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 	) {
 		super();
 		this._register(this.editorService.onDidActiveEditorChange(() => this.apply()));
@@ -178,7 +181,9 @@ export class ProjectDefaultModelContribution extends Disposable implements IWork
 			return;
 		}
 		const projectId = this.sessionContext.bindingFor(editor.sessionId)?.projectId ?? this.sessionContext.activeProject?.id;
-		const ref = projectId ? this.settings.get(projectId).defaultModel : undefined;
+		const ref = (projectId ? this.settings.get(projectId).defaultModel : undefined)
+			|| this.configurationService.getValue<string>(AGENT_DEFAULT_MODEL_SETTING)
+			|| undefined;
 		if (!ref) {
 			return;
 		}

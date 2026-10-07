@@ -26,6 +26,7 @@ import { attachSessionToProject } from '../workspace/agentShell.js';
 import { takeTurnDisplay } from './agentTurnDisplays.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { scheduledRunOf } from '../schedules/agentScheduleCommands.js';
+import { takePageContext } from '../visuals/agentVisualBridge.js';
 
 const CHECKPOINT_BEGIN_TURN_COMMAND = 'voltAgent.checkpoint.beginTurn';
 
@@ -35,6 +36,19 @@ export { stashTurnDisplay } from './agentTurnDisplays.js';
 export interface IAgentPromptHostOptions {
 	readonly runOn?: AgentRunOn;
 	readonly worktreeTarget?: AgentWorktreeTarget;
+}
+
+/**
+ * A prompt another chat's agent sent (thread_send), started (thread_launch) or forked into
+ * (thread_fork), carried as `host`: the transcript shows it as that chat's message, not the user's.
+ */
+export interface IAgentThreadSourceHost {
+	readonly fromThread: { readonly id: string; readonly title: string; readonly kind: 'message' | 'launch' | 'fork' };
+}
+
+export function threadSourceOf(host: unknown): IAgentThreadSourceHost['fromThread'] | undefined {
+	const from = (host as Partial<IAgentThreadSourceHost> | undefined)?.fromThread;
+	return from && typeof from.id === 'string' && typeof from.title === 'string' ? { id: from.id, title: from.title, kind: from.kind === 'launch' || from.kind === 'fork' ? from.kind : 'message' } : undefined;
 }
 
 /** The composer's mode labels; the runtime's modes are their lower-case forms. */
@@ -88,15 +102,20 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		const mode = modeLabel(turn.prompt.mode ?? input.chosenMode ?? input.restoredMode);
 		// A turn Volt continued after a restart reads as a system row, like a subagent report.
 		const restarted = turn.kind === 'resume' && (turn.prompt.display as { notification?: unknown } | undefined)?.notification === true;
-		const origin: IAgentUserMessage['origin'] = turn.kind === 'notification' || restarted ? 'notification' : turn.kind === 'brief' ? 'brief' : undefined;
+		// Another chat's agent wrote it: a message bubble marked with that chat, not a system row.
+		const fromThread = threadSourceOf(turn.prompt.host);
+		const origin: IAgentUserMessage['origin'] = fromThread ? undefined : turn.kind === 'notification' || restarted ? 'notification' : turn.kind === 'brief' ? 'brief' : undefined;
 		const controller = input.controller;
 		// The first turn after the chat changed models carries the handoff: the divider, and the brief the
 		// previous model wrote for this one (the runtime recaps the conversation itself).
 		const latest = thread.handoffs.at(-1);
 		const handoff = latest && !input.messages.some(message => message.kind === 'user' && message.handoff?.at === latest.at) ? latest : undefined;
-		const text = handoff?.brief
+		const base = handoff?.brief
 			? `[Volt] ${handoff.fromLabel ?? 'The previous model'} handed this conversation to you. Its brief:\n<handoff_brief>\n${handoff.brief}\n</handoff_brief>\n\n${turn.prompt.text}`
 			: turn.prompt.text;
+		// What the user set in the chat's interactive pages since the agent last read it.
+		const pageState = takePageContext(threadId);
+		const text = pageState ? `${base}\n\n${pageState}` : base;
 		controller.beginTurn({
 			turnId: turn.id,
 			text,
@@ -106,6 +125,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			...(turn.taskIds ? { taskIds: turn.taskIds } : {}),
 			...(handoff ? { handoff: { ...(handoff.fromLabel ? { fromLabel: handoff.fromLabel } : {}), toLabel: handoff.toLabel, at: handoff.at, by: handoff.by, ...(handoff.reason ? { reason: handoff.reason } : {}) } } : {}),
 			...(scheduledRunOf(turn.prompt.host) ? { scheduled: { ...scheduledRunOf(turn.prompt.host)! } } : {}),
+			...(fromThread ? { fromThread } : {}),
 		});
 		if (turn.kind === 'brief' && thread.title) {
 			// A subagent's chat is named after its task, not after the framing its model reads.

@@ -8,11 +8,11 @@ import { DELEGATE_TASK_TOOL_NAME } from '../../../../services/voltRuntime/common
 import { basename } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
 import { isSnapshotActivity } from '../preview/browserSnapshot.js';
-import { AgentBlock, AgentSegment, createPlanBlock, humanTerminalTitle, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPlanTool, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
+import { AgentBlock, AgentSegment, createPlanBlock, humanTerminalTitle, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPlanTool, IVisualBlock, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
 import { computeChangeStats } from '../review/fileChangePreviewModel.js';
 import { isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
-import { PREVIEW_HTML_TOOL_NAME, VISUAL_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
+import { PREVIEW_HTML_TOOL_NAME, RENDER_HTML_TOOL_NAME, VISUAL_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /**
  * Cursor's transcript model. Between two pieces of assistant text, every tool call and
@@ -85,6 +85,7 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 	const nextStepId = () => `step-${stepIndex++}`;
 	const pendingSteers = steers.filter(steer => steer.text.trim()).slice().sort((a, b) => a.at - b.at);
 	let steerIndex = 0;
+	const pendingVisuals: IVisualBlock[] = [];
 	const flushSteers = (before: number) => {
 		while (pendingSteers.length && pendingSteers[0].at <= before) {
 			const steer = pendingSteers.shift()!;
@@ -148,6 +149,12 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 				}
 				flushReply();
 				pending.push(activityStep(nextStepId(), segment.item));
+				if (streaming) {
+					const placeholder = pendingVisualBlock(segment.item, source, segmentIndex);
+					if (placeholder) {
+						pendingVisuals.push(placeholder);
+					}
+				}
 				break;
 			}
 			case 'compaction':
@@ -209,6 +216,10 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 	flushReply();
 	flushSteps();
 	flushSteers(Number.POSITIVE_INFINITY);
+	// A chart or page still streaming in holds its place with a skeleton, below the work so far.
+	for (const block of pendingVisuals) {
+		rows.push({ kind: 'block', block });
+	}
 	const grouped = groupSubagents(rows);
 	return streaming ? markLive(grouped) : grouped;
 }
@@ -329,6 +340,31 @@ export function formatThoughtDuration(ms: number | undefined): string {
 		return localize('voltAgent.step.briefly', "briefly");
 	}
 	return localize('voltAgent.step.seconds', "{0}s", Math.round(ms / 1000));
+}
+
+/**
+ * A render_chart / render_html call that has not returned yet: a placeholder visual (no ref) the
+ * transcript draws as a skeleton. Gone once the call returns or its visual block arrives.
+ */
+function pendingVisualBlock(item: IAgentActivityItem, source: readonly AgentSegment[], index: number): IVisualBlock | undefined {
+	const tool = item.browserTool;
+	if (!tool || tool === PREVIEW_HTML_TOOL_NAME || !(VISUAL_TOOL_NAMES as readonly string[]).includes(tool) || item.result !== undefined || item.error !== undefined) {
+		return undefined;
+	}
+	if (source.slice(index + 1).some(segment => segment.kind === 'block' && segment.block.type === 'visual')) {
+		return undefined;
+	}
+	const title = typeof item.hostArgs?.title === 'string' ? item.hostArgs.title : (/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(item.input ?? '')?.[1] ?? '');
+	const height = typeof item.hostArgs?.height === 'number' ? item.hostArgs.height : undefined;
+	return {
+		id: `visual-pending-${item.callId ?? index}`,
+		type: 'visual',
+		status: 'streaming',
+		kind: tool === RENDER_HTML_TOOL_NAME ? 'html' : 'chart',
+		title,
+		ref: '',
+		...(height ? { height } : {}),
+	};
 }
 
 function activityStep(id: string, item: IAgentActivityItem): ITranscriptStep {

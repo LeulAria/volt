@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentTranscript.css';
-import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, isHTMLButtonElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
@@ -96,7 +96,8 @@ export function renderTranscript(parent: HTMLElement, rows: readonly TranscriptR
 		const last = rows.at(-1);
 		// A running compaction shows its own progress; once it is done the agent goes on thinking.
 		if (!last || last.kind === 'steps' || last.kind === 'thought' || last.kind === 'subagent' || last.kind === 'subagents' || last.kind === 'steer'
-			|| (last.kind === 'compaction' && last.compaction.status !== 'running')) {
+			|| (last.kind === 'compaction' && last.compaction.status !== 'running')
+			|| (last.kind === 'block' && last.block.type === 'visual' && !last.block.ref)) {
 			const tail = append(parent, $('.volt-tr-tail'));
 			host.renderStatus(tail, `${options.statusKey}:tail`, tailPhrase(rows, options.status));
 			if (options.elapsedSince !== undefined) {
@@ -185,7 +186,7 @@ function renderCompactionRow(parent: HTMLElement, row: Extract<TranscriptRow, { 
 	el.classList.toggle('open', open);
 	const line = append(el, $('.volt-tr-compaction-line'));
 	const pill = append(line, $(summary ? 'button.volt-tr-compaction-pill' : 'span.volt-tr-compaction-pill'));
-	if (pill instanceof HTMLButtonElement) {
+	if (isHTMLButtonElement(pill)) {
 		pill.type = 'button';
 		pill.setAttribute('aria-expanded', String(open));
 	}
@@ -277,7 +278,7 @@ function renderRow(parent: HTMLElement, row: TranscriptRow, host: ITranscriptHos
 	}
 }
 
-/** "Worked for 3m 3s ⌄": the fold over everything before the final answer. */
+/** "Worked for 3m 3s" with a chevron: the fold over everything before the final answer. */
 function renderWorkedHeader(parent: HTMLElement, ms: number, open: boolean, host: ITranscriptHost): void {
 	const group = append(parent, $('.volt-tr-group.worked'));
 	const header = collapsibleHeader(group, open, true);
@@ -483,6 +484,7 @@ function renderInlineDiff(parent: HTMLElement, step: ITranscriptStep, host: ITra
 		append(gutter, $('span.volt-tr-diff-num')).textContent = String(line.lineNumber);
 		append(gutter, $('span.volt-tr-diff-ind')).textContent = line.kind === 'insert' ? '+' : line.kind === 'delete' ? '-' : '';
 		const text = append(el, $('.volt-tr-diff-text.volt-agent-searchable'));
+		// allow-any-unicode-next-line
 		text.textContent = line.text || '​';
 		rows.push({ line, text });
 		previous = line;

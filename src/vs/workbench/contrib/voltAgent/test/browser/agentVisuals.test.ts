@@ -15,6 +15,8 @@ import { describeHostToolActivity } from '../../browser/blocks/agentHostToolActi
 import { buildTranscriptRows, splitWorkedRows } from '../../browser/chrome/agentTranscript.js';
 import { buildVisualPage, inlineLocalImages, localImagePaths } from '../../browser/visuals/agentVisualPage.js';
 import { chartPaletteVariables } from '../../browser/visuals/agentVisuals.js';
+import { xychartToChartSpec } from '../../browser/blocks/agentMermaid.js';
+import { fenceChartSpec } from '../../browser/blocks/agentMarkdown.js';
 import { IVoltChartsHandle, voltChartsRuntime } from '../../browser/visuals/voltChartsRuntime.js';
 
 suite('Agent visuals', () => {
@@ -51,8 +53,8 @@ suite('Agent visuals', () => {
 		assert.deepStrictEqual({ charts: line.charts, points: line.points, problems: line.problems }, { charts: 1, points: 3, problems: [] });
 		const heat = charts.inspect({ charts: [{ type: 'heatmap', rows: ['Mon', 'Tue'], columns: ['1a', '2a'], values: [[1, 2]] }] });
 		assert.ok(heat.problems.some(problem => problem.includes('"values" must have 2 rows of 2 numbers')), heat.problems.join('\n'));
-		const unknown = charts.inspect({ charts: [{ type: 'radar', series: [{ name: 'a', data: [1] }] }] });
-		assert.ok(unknown.problems.some(problem => problem.includes('unknown chart type "radar"')), unknown.problems.join('\n'));
+		const unknown = charts.inspect({ charts: [{ type: 'polar-area', series: [{ name: 'a', data: [1] }] }] });
+		assert.ok(unknown.problems.some(problem => problem.includes('unknown chart type "polar-area"') && problem.includes('sankey')), unknown.problems.join('\n'));
 		const empty = charts.inspect({ charts: [{ type: 'line', title: 'Nothing', series: [{ name: 'x', data: [] }] }] });
 		assert.strictEqual(empty.points, 0);
 		assert.ok(empty.problems.some(problem => problem.includes('has no values to draw')));
@@ -142,6 +144,47 @@ suite('Agent visuals', () => {
 		assert.ok([...host.querySelectorAll('.vc-callout text')].some(text => text.textContent?.startsWith('top 10%')));
 	});
 
+	test('draws the showcase types: gauge, rings, radar, funnel, sunburst, sankey and candles', () => {
+		render({
+			charts: [
+				{ type: 'gauge', data: [{ label: 'Conventional', value: 98, max: 100 }, { label: 'Tests', value: 41 }], unit: 'percent' },
+				{ type: 'rings', data: [{ label: 'web', value: 50 }, { label: 'server', value: 32 }, { label: 'mobile', value: 22 }], unit: 'percent' },
+				{ type: 'radar', axes: ['Commits', 'Authors', 'Files'], series: [{ name: 'web', data: [1136, 101, 1292] }, { name: 'server', data: [729, 91, 1719] }] },
+				{ type: 'funnel', data: [{ label: 'Tracked', value: 5338 }, { label: 'Touched', value: 4772 }, { label: '50+ commits', value: 15 }] },
+				{ type: 'sunburst', data: { name: 'repo', children: [{ name: 'apps', children: [{ name: 'web', value: 40 }, { name: 'server', value: 60 }] }, { name: 'docs', value: 5 }] } },
+				{ type: 'sankey', links: [{ source: 'Ana', target: 'fix', value: 6 }, { source: 'Ana', target: 'feat', value: 2 }, { source: 'fix', target: 'web', value: 4 }, { source: 'fix', target: 'server', value: 2 }, { source: 'feat', target: 'web', value: 2 }] },
+				{ type: 'candlestick', data: [{ x: '2026-10-01', open: 10, high: 12, low: 9, close: 11 }, ['2026-10-02', 11, 11.5, 8, 9]] },
+			],
+		});
+		assert.strictEqual(host.querySelectorAll('.vc-gauge-lit').length, 40);
+		assert.strictEqual(host.querySelectorAll('.vc-gauge-lit[style*="opacity: 1"]').length, 39, 'the first gauge lights 98% of its notches');
+		assert.strictEqual(host.querySelectorAll('.vc-ring-arc').length, 3);
+		assert.strictEqual(host.querySelectorAll('.vc-radar-area').length, 2);
+		assert.strictEqual(host.querySelectorAll('.vc-funnel-seg').length, 3);
+		assert.ok([...host.querySelectorAll('.vc-note')].some(note => note.textContent?.includes('log-scaled')), 'a 5338-to-15 funnel switches to a log scale and says so');
+		assert.strictEqual(host.querySelectorAll('.vc-sb-arc').length, 4);
+		assert.strictEqual(host.querySelectorAll('.vc-sk-link').length, 5);
+		assert.strictEqual(host.querySelectorAll('.vc-candle').length, 2);
+		const sankeyNodes = [...host.querySelectorAll<SVGRectElement>('.vc-sk-node')];
+		const xOf = (index: number) => Number(sankeyNodes[index].getAttribute('x'));
+		assert.ok(xOf(0) < xOf(1) && xOf(1) < xOf(3), 'authors, then commit types, then packages');
+		const inspect = charts.inspect({ charts: [{ type: 'sankey', links: [] }, { type: 'radar', axes: ['a', 'b'], series: [{ name: 's', data: [1, 2] }] }] });
+		assert.ok(inspect.problems.some(problem => problem.includes('"links"')), inspect.problems.join('\n'));
+		assert.ok(inspect.problems.some(problem => problem.includes('3 or more')), inspect.problems.join('\n'));
+	});
+
+	test('draws a line series over bars as a composed chart, kept out of the bar totals', () => {
+		render({
+			type: 'bar',
+			x: { start: '2026-10-01', step: 'day' },
+			headline: { aggregate: 'sum' },
+			series: [{ name: 'Commits', data: [10, 20, 30] }, { name: '7-day average', type: 'line', data: [10, 15, 20] }],
+		});
+		assert.strictEqual(host.querySelectorAll('.vc-line').length, 1);
+		assert.strictEqual(host.querySelectorAll('.vc-line.vc-ref').length, 0, 'the overlay is a solid series line, not a muted reference');
+		assert.strictEqual(host.querySelector('.vc-metric-value')?.textContent, '60', 'the headline sums the bars only');
+	});
+
 	test('draws a bar chart over many long names as a ranked list, and keeps word units off the axis', () => {
 		const files = ['apps/web/src/components/ChatView.tsx', 'apps/web/src/components/chat/MessagesTimeline.tsx', 'apps/server/src/ws.ts', 'apps/web/src/components/Sidebar.tsx', 'apps/web/src/components/chat/ChatComposer.tsx', 'packages/contracts/src/settings.ts'];
 		render({ type: 'bar', title: 'Hottest files', unit: { suffix: ' commits' }, categories: files, series: [{ name: 'Commits', data: [199, 129, 115, 100, 92, 79] }] });
@@ -226,5 +269,178 @@ suite('Agent visuals', () => {
 		const { work, answer } = splitWorkedRows(buildTranscriptRows(segments, undefined, false));
 		assert.ok(work.every(row => !(row.kind === 'block' && row.block.type === 'visual')));
 		assert.deepStrictEqual(answer.map(row => row.kind === 'block' ? row.block.type : row.kind), ['visual', 'markdown']);
+	});
+
+	test('a render call still streaming in holds a skeleton slot until its visual arrives', () => {
+		const running: AgentSegment[] = [
+			{ kind: 'text', text: 'Pulling the numbers.' },
+			{ kind: 'activity', item: { kind: 'browser', label: 'Rendered chart', callId: 'c1', browserTool: 'render_chart', input: '{"title":"Cost by day","charts":[' } },
+		];
+		const pending = buildTranscriptRows(running, undefined, true).filter(row => row.kind === 'block' && row.block.type === 'visual');
+		assert.strictEqual(pending.length, 1);
+		const block = pending[0].kind === 'block' && pending[0].block.type === 'visual' ? pending[0].block : undefined;
+		assert.deepStrictEqual({ ref: block?.ref, kind: block?.kind, title: block?.title }, { ref: '', kind: 'chart', title: 'Cost by day' });
+		// Done (a result came back), or not live: no placeholder.
+		const done: AgentSegment[] = [running[0], { kind: 'activity', item: { ...(running[1] as { item: object }).item, kind: 'browser', label: 'Rendered chart', result: 'ok' } }];
+		assert.ok(!buildTranscriptRows(done, undefined, true).some(row => row.kind === 'block' && row.block.type === 'visual'));
+		assert.ok(!buildTranscriptRows(running, undefined, false).some(row => row.kind === 'block' && row.block.type === 'visual'));
+	});
+
+	test('draws a mermaid xychart as a Volt chart: quotes gone, bars and lines kept', () => {
+		const spec = xychartToChartSpec([
+			'xychart-beta',
+			'    title "GDP per person, thousand USD"',
+			'    x-axis ["Liechtenstein", "Luxembourg", "United States"]',
+			'    y-axis "Thousand USD" 0 --> 250',
+			'    bar [227, 159, 94]',
+			'    line [200, 150, 100]',
+		].join('\n'));
+		assert.deepStrictEqual(spec, {
+			type: 'bar',
+			title: 'GDP per person, thousand USD',
+			unit: 'number',
+			categories: ['Liechtenstein', 'Luxembourg', 'United States'],
+			x: { type: 'category' },
+			series: [{ name: 'Series 1', data: [227, 159, 94] }, { name: 'Series 2', data: [200, 150, 100], type: 'line' }],
+			y: { label: 'Thousand USD', min: 0, max: 250 },
+		});
+		assert.strictEqual(xychartToChartSpec('xychart-beta\n  title "Still streaming"\n  x-axis [a, b]'), undefined);
+		assert.strictEqual(xychartToChartSpec('flowchart LR\n  A --> B'), undefined);
+		assert.deepStrictEqual((xychartToChartSpec('xychart-beta\n x-axis "Week" 1 --> 3\n line [1, 2, 3]') as { categories: string[] }).categories, ['1', '2', '3']);
+		// Fences: a volt-chart JSON spec draws; one still streaming is a skeleton; other code stays code.
+		assert.ok(typeof fenceChartSpec('volt-chart', '{"type":"bar","series":[]}') === 'object');
+		assert.strictEqual(fenceChartSpec('volt-chart', '{"type":"bar","ser', true), 'pending');
+		assert.strictEqual(fenceChartSpec('json', '{"a":1}'), undefined);
+		assert.ok(typeof fenceChartSpec('mermaid', 'xychart-beta\n bar [1, 2]') === 'object');
+	});
+
+	test('a date pill rides the x axis with the cursor and names the point in short form', () => {
+		render({ type: 'bar', x: { start: '2026-10-01', step: 'day', timeZone: 'UTC' }, unit: 'count', series: [{ name: 'Commits', data: [3, 9, 4, 12] }] });
+		const plot = host.querySelector<HTMLElement>('.vc-plot')!;
+		plot.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+		const pill = host.querySelector('.vc-pill')!;
+		assert.ok(pill.classList.contains('vc-shown'));
+		assert.strictEqual(pill.textContent, 'Oct4');
+		plot.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		render({ type: 'line', pill: false, x: { start: '2026-10-01', step: 'day' }, series: [{ name: 'a', data: [1, 2] }] });
+		host.querySelectorAll<HTMLElement>('.vc-plot')[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+		assert.ok(!host.querySelectorAll('.vc-pill')[1].classList.contains('vc-shown'), '"pill": false keeps it off');
+	});
+
+	test('style options shape fills, backdrops, bands and bars', () => {
+		render({
+			charts: [
+				{ type: 'area', style: { fill: 'pattern', stroke: false, background: 'dots', bands: [{ from: 4, to: 8, label: 'Target' }] }, categories: ['a', 'b', 'c'], series: [{ name: 's', data: [2, 6, 10] }] },
+				{ type: 'bar', shape: 'pill', gap: 0, fill: 'gradient', grid: 'none', categories: ['a', 'b'], series: [{ name: 's', data: [2, 6] }] },
+			],
+		});
+		const [area, bar] = [...host.querySelectorAll('.vc-cartesian')];
+		assert.ok(/url\(/.test(area.querySelector('.vc-area')?.getAttribute('style') ?? ''), 'pattern fill');
+		assert.ok(area.querySelector('.vc-line.vc-nostroke'), 'stroke: false hides the line');
+		assert.ok(area.querySelector('.vc-bg pattern circle'), 'dot-grid backdrop');
+		assert.strictEqual(area.querySelector('.vc-refband text')?.textContent, 'Target');
+		assert.ok(bar.querySelector('.vc-grid.vc-grid-none'));
+		assert.ok(/url\(/.test(bar.querySelector('.vc-bar')?.getAttribute('style') ?? ''), 'gradient bars');
+	});
+
+	test('axis pills stay bounded during rapid scrubbing and cancel their rolls on dismissal', () => {
+		render({ type: 'line', categories: ['Short', 'A much longer category'], series: [{ name: 'Count', data: [2, 9] }] });
+		const plot = host.querySelector<HTMLElement>('.vc-plot')!;
+		for (let index = 0; index < 40; index++) {
+			plot.dispatchEvent(new KeyboardEvent('keydown', { key: index % 2 ? 'Home' : 'End', bubbles: true }));
+			for (const slot of host.querySelectorAll('.vc-pill-slot')) {
+				assert.ok(slot.childElementCount <= 2, 'at most an outgoing and incoming word per slot');
+			}
+		}
+		plot.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		assert.strictEqual(host.querySelectorAll('.vc-pill-word').length, 1);
+		assert.strictEqual(host.querySelector('.vc-pill')!.getAnimations({ subtree: true }).length, 0);
+	});
+
+	test('long axis pills and tooltips fit a narrow chart', () => {
+		host.style.width = '240px';
+		render({ type: 'line', categories: ['A', 'A_very_long_category_name_'.repeat(6)], series: [{ name: 'Count', data: [2, 9] }] });
+		const plot = host.querySelector<HTMLElement>('.vc-plot')!;
+		plot.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+		for (const selector of ['.vc-pill', '.vc-tip']) {
+			assert.ok(plot.querySelector(selector)!.getBoundingClientRect().width <= plot.clientWidth, selector);
+		}
+	});
+
+	test('axis pills follow pointer readings across cartesian variants', async () => {
+		const types = ['line', 'area', 'bar', 'grouped-bar', 'stacked-bar', 'stacked-area', 'share', 'scatter', 'composed'];
+		render({ charts: types.map(type => ({ type, categories: ['Mon', 'Tue', 'Wed'], series: [{ name: 'Count', data: [2, 8, 5] }] })) });
+		for (const plot of host.querySelectorAll<HTMLElement>('.vc-plot')) {
+			const rect = (plot.querySelectorAll('.vc-scatter')[1] ?? plot).getBoundingClientRect();
+			plot.dispatchEvent(new PointerEvent('pointermove', { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, pointerType: 'mouse' }));
+		}
+		await new Promise<void>(resolve => mainWindow.requestAnimationFrame(() => resolve()));
+		for (const plot of host.querySelectorAll<HTMLElement>('.vc-plot')) {
+			assert.strictEqual(plot.querySelector('.vc-pill.vc-shown')?.textContent, 'Tue');
+			assert.ok(plot.querySelector('.vc-tip.vc-shown'));
+			plot.dispatchEvent(new PointerEvent('pointerleave'));
+			assert.ok(!plot.querySelector('.vc-pill.vc-shown'));
+		}
+	});
+
+	test('candlestick readings support keyboard navigation, reuse tooltips and survive resizing', async () => {
+		const handle = render({ type: 'candlestick', x: { timeZone: 'UTC' }, data: [['2026-10-01', 10, 12, 9, 11], ['2026-10-02', 11, 13, 8, 9]] });
+		const plot = host.querySelector<HTMLElement>('.vc-plot')!;
+		plot.focus();
+		assert.ok(plot.querySelector('.vc-sr')!.textContent?.includes('Oct 2'));
+		plot.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+		assert.ok(plot.querySelector('.vc-sr')!.textContent?.includes('Oct 1'));
+		const hero = plot.querySelector('.vc-tip-hero');
+		const rect = plot.getBoundingClientRect();
+		for (let index = 0; index < 20; index++) {
+			plot.dispatchEvent(new PointerEvent('pointermove', { clientX: rect.left + rect.width / 4, clientY: rect.top + 40, pointerType: 'mouse' }));
+		}
+		assert.strictEqual(plot.querySelector('.vc-tip-hero'), hero, 'moving within a candle reuses the tooltip');
+		plot.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+		host.style.width = '320px';
+		handle.layout();
+		await new Promise<void>(resolve => mainWindow.requestAnimationFrame(() => resolve()));
+		const pill = plot.querySelector('.vc-pill.vc-shown')!;
+		assert.strictEqual(pill.textContent, 'Oct2');
+		assert.ok(pill.getBoundingClientRect().right <= plot.getBoundingClientRect().right + 1);
+		plot.blur();
+		assert.ok(!plot.querySelector('.vc-pill.vc-shown'));
+		assert.strictEqual(plot.querySelector('.vc-sr')!.textContent, '');
+	});
+
+	test('gauge, rings, funnel, donut and candlestick variants', () => {
+		render({
+			charts: [
+				{ type: 'gauge', shape: 'linear', notches: 50, notch: 'round', value: 42, max: 100 },
+				{ type: 'gauge', notch: 'soft', depth: 0.4, value: 60, max: 100 },
+				{ type: 'rings', arc: 270, caps: 'flat', legend: 'bars', data: [{ label: 'a', value: 40 }, { label: 'b', value: 80 }], unit: 'percent' },
+				{ type: 'funnel', orientation: 'horizontal', edges: 'straight', colors: 'palette', labels: 'grouped', grid: true, data: [{ label: 'Visitors', value: 100 }, { label: 'Leads', value: 55 }, { label: 'Closed', value: 5 }] },
+				{ type: 'pie', fill: 'pattern', data: [{ label: 'a', value: 2 }, { label: 'b', value: 1 }] },
+				{ type: 'candlestick', fill: 'solid', background: 'pattern', bands: [{ from: 9, to: 10 }], data: [['2026-10-01', 10, 12, 9, 11], ['2026-10-02', 11, 11.5, 8, 9]] },
+			],
+		});
+		const gauges = [...host.querySelectorAll('.vc-gauge')];
+		assert.strictEqual(gauges[0].querySelectorAll('rect.vc-gauge-lit[style*="opacity: 1"]').length, 21, '42% of 50 notches');
+		assert.ok(gauges[1].querySelector('line.vc-gauge-cap'), 'soft notches are capped strokes');
+		const track = host.querySelector('.vc-ring-track')!;
+		const [shown, full] = track.getAttribute('stroke-dasharray')!.split(' ').map(Number);
+		assert.ok(Math.abs(shown / full - 0.75) < 0.01, 'a 270° ring track covers three quarters');
+		assert.strictEqual(track.getAttribute('stroke-linecap'), 'butt');
+		assert.strictEqual(host.querySelectorAll('.vc-ring-progress i').length, 2);
+		assert.strictEqual(host.querySelectorAll('.vc-funnel-band').length, 2);
+		assert.strictEqual(host.querySelectorAll('.vc-funnel-big').length, 3);
+		const pie = host.querySelector('.vc-arc')!.closest('.vc-block')!;
+		assert.strictEqual(pie.querySelector('.vc-donut-center-value')?.textContent, '', 'a pie has no hole for the center label');
+		assert.ok(/url\(/.test(pie.querySelector('.vc-arc')?.getAttribute('style') ?? ''));
+		assert.ok(!/url\(/.test(host.querySelector('.vc-candle-body')?.getAttribute('style') ?? ''), 'solid bodies');
+		assert.ok(host.querySelector('.vc-refband'));
+	});
+
+	test('three small charts share a row instead of wrapping, and narrow bars keep their axis labels clear', () => {
+		render({ type: 'row', charts: [1, 2, 3].map(index => ({ type: 'bar', title: `Chart ${index}`, categories: ['a', 'b'], series: [{ name: 's', data: [20, 18] }] })) });
+		const tops = [...host.querySelectorAll('.vc-row > .vc-block')].map(block => Math.round(block.getBoundingClientRect().top));
+		assert.strictEqual(new Set(tops).size, 1, `rows at ${tops.join(', ')}`);
+		const label = [...host.querySelectorAll('.vc-tick text')].find(text => text.textContent === '20');
+		assert.strictEqual(label?.getAttribute('text-anchor'), 'end', 'labels sit in a gutter left of the bars');
 	});
 });

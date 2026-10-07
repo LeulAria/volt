@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME } from '../hostTools.js';
 import { modePolicy, VoltMode } from '../modes.js';
 import { IRunPlan } from '../runPlan.js';
 import { IIntent } from './intent.js';
@@ -43,6 +44,8 @@ export interface IContextPackInput {
 	readonly shape?: IRequestShape;
 	/** Multitask: names of the connected models a subagent can run on (`delegate_task`'s `model`). */
 	readonly taskModels?: readonly string[];
+	/** The agent gets Volt's visual tools (render_chart, render_html) through the volt MCP server. */
+	readonly visuals?: boolean;
 }
 
 export interface IEnvironmentFacts {
@@ -77,6 +80,9 @@ export function buildContextSections(input: IContextPackInput): IContextSection[
 
 	if (input.toolSnippets?.length) {
 		sections.push({ id: 'tools', cacheable: true, text: ['Tools available this turn:', ...input.toolSnippets.map(s => `- ${s}`)].join('\n') });
+	}
+	if (input.visuals && input.intent.lane !== 'fast') {
+		sections.push({ id: 'visuals', cacheable: true, text: VISUAL_REPLIES });
 	}
 
 	if (input.skills?.trim()) {
@@ -200,6 +206,9 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.intent.mentionsTests && allowWrites) {
 		parts.push(`[Volt] ${TEST_INTEGRITY}`);
 	}
+	if (input.visuals && input.intent.lane !== 'fast') {
+		parts.push(`[Volt] ${VISUAL_REPLIES}`);
+	}
 	const contract = modeContract(input.mode);
 	if (contract) {
 		parts.push(`[Volt mode: ${input.mode}] ${contract}`);
@@ -230,6 +239,12 @@ export const CALLER_VISIBLE_CHANGES = 'This is an open-ended change. When you al
  * caller's stack to pass both. A passing suite is not the goal; correct code is.
  */
 export const TEST_INTEGRITY = 'Make tests pass by fixing the code. Never special-case tests (checking callers, stack traces, test names or env), weaken or delete assertions, or edit tests you were told not to touch. If tests contradict each other or the request, stop and explain instead of forcing a pass.';
+
+/**
+ * Tool descriptions say what the visual tools do; this says when to reach for them unasked. Not
+ * sent in the fast lane (small edits) or when the agent cannot reach the volt MCP server.
+ */
+export const VISUAL_REPLIES = `When a visual helps explain the answer, render it proactively: call ${RENDER_CHART_TOOL_NAME} from the volt MCP server for numbers over time, comparisons, distributions, flows or hierarchies, including repo and usage analyses; use ${RENDER_HTML_TOOL_NAME} for diagrams, relationships, processes and custom layouts. Choose the chart type, variants and style controls to suit the data without asking the user to choose. Use observed data, or clearly label illustrative data. If your provider does not expose the visual tools, a fenced volt-chart block containing the same JSON chart spec renders natively in Volt; use a mermaid fence for diagrams. Render before your final text, then do not restate what it shows. Skip it for short or trivial answers.`;
 
 export const WORKSPACE_SCOPE = 'Keep project exploration inside this workspace. You may read a skill or instruction file explicitly supplied by the user or listed by your configured skills, including its referenced resources, even when it lives outside the workspace. Do not search the home folder, sibling projects, or other tools\' private data and chat history unless the user asks; if something the user mentions is missing, say so instead of hunting for it elsewhere.';
 

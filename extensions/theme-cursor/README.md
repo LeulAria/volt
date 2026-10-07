@@ -1,9 +1,11 @@
-# Cursor Themes
+# Volt Themes
 
-Default Cursor color themes extracted from Cursor.app (`theme-cursor`) and used as VOLT's built-in defaults.
+Volt's built-in color themes (adapted from Cursor's) and its defaults.
 
-- **Cursor Dark** — default dark theme
-- **Cursor Dark Midnight**
-- **Cursor Dark High Contrast**
-- **Cursor Light** — default light theme
-- **Cursor Light Colorblind (Beta)**
+- **Volt Dark** — default dark theme
+- **Volt Dark Midnight**
+- **Volt Dark High Contrast**
+- **Volt Light** — default light theme
+- **Volt Light Colorblind (Beta)**
+
+The ids were `Cursor …` before; `ThemeConfiguration` maps saved `Cursor …` settings to these.

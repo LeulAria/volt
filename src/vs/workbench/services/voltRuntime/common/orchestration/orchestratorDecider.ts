@@ -82,7 +82,7 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 		case 'thread.submit':
 			return decideSubmit(state, command.threadId, { id: command.turnId, prompt: command.prompt, at: command.at }, command.delivery, !!command.canSteer);
 		case 'thread.notify':
-			return decideNotify(state, command.threadId, { id: command.turnId, prompt: command.prompt, at: command.at, kind: 'notification' }, limits);
+			return decideNotify(state, command.threadId, { id: command.turnId, prompt: command.prompt, at: command.at, kind: 'notification' }, limits, !!command.interrupt);
 		case 'thread.block': {
 			const thread = state.threads[command.threadId];
 			if (!thread) {
@@ -131,7 +131,14 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 		}
 		case 'queue.clear': {
 			const thread = state.threads[command.threadId];
-			return { events: thread ? thread.queue.map(item => ({ type: 'queue.removed', threadId: thread.id, itemId: item.id, reason: 'cleared' }) as OrchEvent) : [] };
+			if (!thread) {
+				return { events: [] };
+			}
+			const events: OrchEvent[] = [];
+			for (const item of thread.queue) {
+				events.push({ type: 'queue.removed', threadId: thread.id, itemId: item.id, reason: 'cleared' });
+			}
+			return { events };
 		}
 		case 'queue.sendNow': {
 			const thread = state.threads[command.threadId];
@@ -513,7 +520,7 @@ function decideSubmit(state: IOrchState, threadId: string, item: ISubmitItem, de
  * A notification never interrupts: it starts when the chat is idle and otherwise waits at the end
  * of the queue. A chat that keeps waking itself with no user turn between is left for the user.
  */
-function decideNotify(state: IOrchState, threadId: string, item: ISubmitItem, limits: IOrchLimits): IOrchDecision {
+function decideNotify(state: IOrchState, threadId: string, item: ISubmitItem, limits: IOrchLimits, interrupt = false): IOrchDecision {
 	const events: OrchEvent[] = [];
 	let thread = state.threads[threadId];
 	if (!thread) {
@@ -534,7 +541,19 @@ function decideNotify(state: IOrchState, threadId: string, item: ISubmitItem, li
 	if ((thread.wakeups ?? 0) + pendingWakes >= limits.maxWakeups) {
 		return { events: [], rejected: `The chat woke itself ${limits.maxWakeups} times in a row; it waits for the user.` };
 	}
-	if (task || thread.active || thread.pause || thread.blocked || thread.queue.length) {
+	const active = thread.active;
+	if (interrupt && active && !task && !thread.blocked) {
+		// Stop what runs and go first: the queue resumes with this turn once the stop lands.
+		if (thread.pause) {
+			events.push({ type: 'queue.resumed', threadId: thread.id });
+		}
+		events.push({ type: 'queue.added', threadId: thread.id, item: { id: item.id, prompt: item.prompt, at: item.at, kind: 'notification' }, head: true });
+		if (active.phase !== 'cancelling') {
+			events.push({ type: 'turn.cancelling', threadId: thread.id, turnId: active.id });
+		}
+		return { events, outcome: 'queued' };
+	}
+	if (task || active || thread.pause || thread.blocked || thread.queue.length) {
 		events.push({ type: 'queue.added', threadId: thread.id, item: { id: item.id, prompt: item.prompt, at: item.at, kind: 'notification' } });
 		return { events, outcome: 'queued' };
 	}

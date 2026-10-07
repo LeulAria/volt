@@ -5,6 +5,7 @@
 
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { localize } from '../../../../../nls.js';
+import { isUsageLimitText } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentTooltipRow } from '../chrome/agentTooltip.js';
 import { createSessionHoverFolderIcon } from './agentHomeIcons.js';
@@ -17,7 +18,7 @@ export interface IAgentSessionHoverFolder {
 }
 
 /** Why a tab is in Needs Attention or what the last run did, for the hover card. */
-export function agentSessionStatusNote(session: Pick<IAgentSessionMeta, 'attention' | 'status'>): string | undefined {
+export function agentSessionStatusNote(session: Pick<IAgentSessionMeta, 'attention' | 'status'> & Partial<Pick<IAgentSessionMeta, 'summary'>>): string | undefined {
 	switch (session.attention) {
 		case 'approval': return localize('voltAgent.home.waitingApproval', "Waiting for your approval");
 		case 'question': return localize('voltAgent.home.askedQuestion', "Asked you a question");
@@ -28,12 +29,14 @@ export function agentSessionStatusNote(session: Pick<IAgentSessionMeta, 'attenti
 		}
 	}
 	switch (session.status) {
-		case 'error': return localize('voltAgent.home.runFailed', "The last run failed");
+		case 'error': return isUsageLimitText(session.summary)
+			? localize('voltAgent.home.runLimited', "The last run stopped at a usage limit")
+			: localize('voltAgent.home.runFailed', "The last run failed");
 		case 'interrupted': return localize('voltAgent.home.runInterrupted', "The last run was interrupted");
+		case 'cancelled': return localize('voltAgent.home.runStopped', "The last run was stopped");
 		case 'idle':
 		case 'running':
 		case 'done':
-		case 'cancelled':
 			return undefined;
 		default: {
 			const unexpected: never = session.status;

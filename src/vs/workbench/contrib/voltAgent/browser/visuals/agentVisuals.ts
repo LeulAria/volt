@@ -8,21 +8,27 @@ import { $, addDisposableListener, append, getWindow } from '../../../../../base
 import { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
 import { CodeWindow } from '../../../../../base/browser/window.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Color, RGBA } from '../../../../../base/common/color.js';
-import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { autorun } from '../../../../../base/common/observable.js';
+import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { ColorScheme } from '../../../../../platform/theme/common/theme.js';
 import { IColorTheme, IThemeService, registerThemingParticipant } from '../../../../../platform/theme/common/themeService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { WebviewThemeDataProvider } from '../../../webview/browser/themeing.js';
 import { IWebviewElement, IWebviewService, WebviewContentPurpose } from '../../../webview/browser/webview.js';
 import type { IVisualBlock } from '../blocks/agentBlocks.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { pageHeightFor, PAGE_SEND_INTERVAL_MS, PageRequest, parsePageRequest, setPageContext } from './agentVisualBridge.js';
 import { buildVisualPage, VISUAL_COLUMN_WIDTH, VISUAL_MAX_HEIGHT, VISUAL_MIN_HEIGHT } from './agentVisualPage.js';
 import { IVoltChartsHandle, IVoltChartsRuntime, IVoltChartsStrings, voltChartsRuntime } from './voltChartsRuntime.js';
 
@@ -59,6 +65,17 @@ export function voltChartStrings(): Partial<IVoltChartsStrings> {
 		other: localize('voltCharts.other', "Other"),
 		vsPrevious: localize('voltCharts.vsPrevious', "vs previous"),
 		chart: localize('voltCharts.chart', "Chart"),
+		zoomIn: localize('voltCharts.zoomIn', "Click to zoom in"),
+		ofParent: localize('voltCharts.ofParent', "of {0}"),
+		ofPrevious: localize('voltCharts.ofPrevious', "of the previous stage"),
+		ofFirst: localize('voltCharts.ofFirst', "Share of the first stage"),
+		logScale: localize('voltCharts.logScale', "Widths are log-scaled; the numbers are exact."),
+		candleOpen: localize('voltCharts.candleOpen', "Open"),
+		candleHigh: localize('voltCharts.candleHigh', "High"),
+		candleLow: localize('voltCharts.candleLow', "Low"),
+		candleClose: localize('voltCharts.candleClose', "Close"),
+		rising: localize('voltCharts.rising', "Up"),
+		falling: localize('voltCharts.falling', "Down"),
 	};
 }
 
@@ -154,6 +171,10 @@ export interface IVisualHostContext {
 	readonly onWheel?: (event: IMouseWheelEvent) => void;
 	/** Shows the visual full size; `store` is disposed when it closes. */
 	readonly onExpandVisual?: (title: string, content: HTMLElement, store: IDisposable) => void;
+	/** The chat the visual is shown in (page state for its next turn). */
+	readonly sessionId?: string;
+	/** A page asked to send a message as the user (`send`), or to put one in the composer. */
+	readonly onPagePrompt?: (text: string, page: string, send: boolean) => void;
 }
 
 /** `volt://session/<id>`, `volt://file/<path>#L12-20`, a local path, or a web link. */
@@ -206,7 +227,21 @@ interface ILiveFrame {
 	readonly store: DisposableStore;
 	ctx: IVisualHostContext;
 	height: number;
+	readonly key: string;
+	readonly title: string;
+	/** Shown over the chat (top layer), in place: the page keeps its state. */
+	fullscreen?: DisposableStore;
+	lastSend?: number;
 }
+
+/** How a page frame opens: heights measured at several widths, and the agent's cap. */
+interface IFrameSizing {
+	readonly heights?: readonly (readonly [number, number])[];
+	readonly cap?: number;
+}
+
+/** The reply column's width last seen by a frame, for sizing frames before they are in the document. */
+let replyWidth = VISUAL_COLUMN_WIDTH;
 
 const MAX_LIVE_CHARTS = 48;
 const MAX_LIVE_FRAMES = 10;
@@ -283,51 +318,103 @@ function frameHeight(height: number | undefined): number {
 	return Math.round(Math.min(VISUAL_MAX_HEIGHT, Math.max(VISUAL_MIN_HEIGHT, height ?? 360)));
 }
 
-function createFrame(key: string, title: string, html: string, height: number | undefined, ctx: IVisualHostContext, win: CodeWindow): ILiveFrame {
+function createFrame(key: string, title: string, html: string, height: number | undefined, ctx: IVisualHostContext, win: CodeWindow, sizing: IFrameSizing = {}): ILiveFrame {
 	const store = new DisposableStore();
 	const element = $('.volt-agent-visual-frame');
-	element.style.height = `${frameHeight(height)}px`;
+	const opening = frameHeight(pageHeightFor(replyWidth, sizing.heights, sizing.cap) ?? height);
+	element.style.height = `${opening}px`;
 	const frame: ILiveFrame = {
 		element,
 		store,
 		ctx,
-		height: frameHeight(height),
+		height: opening,
 		webview: undefined,
+		key,
+		title,
 	};
-	ctx.instantiationService.invokeFunction(accessor => {
-		const webviewService = accessor.get(IWebviewService);
-		const themeService = accessor.get(IThemeService);
-		const webview = store.add(webviewService.createWebviewElement({
-			title,
-			origin: key,
-			options: { enableFindWidget: false, purpose: WebviewContentPurpose.ChatOutputItem, tryRestoreScrollPosition: false, disableServiceWorker: true },
-			contentOptions: { allowScripts: true, localResourceRoots: [] },
-			extension: undefined,
-		}));
-		frame.webview = webview;
-		const theme = themeService.getColorTheme();
-		webview.setHtml(buildVisualPage(html, { themeCss: visualThemeCss(theme), kind: themeKind(theme) }));
-		store.add(themeService.onDidColorThemeChange(next => {
-			void webview.postMessage({ type: 'volt-theme', css: visualThemeCss(next), kind: themeKind(next) });
-		}));
-		store.add(autorun(reader => {
-			const size = reader.readObservable(webview.intrinsicContentSize);
-			if (size?.height) {
-				frame.height = frameHeight(size.height);
-				element.style.height = `${frame.height}px`;
-			}
-		}));
-		store.add(webview.onDidWheel(event => frame.ctx.onWheel?.(event)));
-		store.add(webview.onDidClickLink(link => openVisualHref(link, frame.ctx)));
-		store.add(webview.onMessage(event => {
-			const message = event.message as { type?: unknown; href?: unknown } | undefined;
-			if (message?.type === 'volt-open' && typeof message.href === 'string') {
-				openVisualHref(message.href, frame.ctx);
-			}
-		}));
-		webview.mountTo(element, win);
-	});
+	store.add(toDisposable(() => frame.fullscreen?.dispose()));
+	// A skeleton until the page reports its size (it has loaded and laid out), or 4s at most.
+	const skeleton = renderVisualSkeleton(element, 'page');
+	const settle = () => skeleton.remove();
+	const timer = win.setTimeout(settle, 4000);
+	store.add(toDisposable(() => win.clearTimeout(timer)));
+	const current = store.add(new MutableDisposable<DisposableStore>());
+	const mount = () => {
+		const webviewStore = current.value = new DisposableStore();
+		ctx.instantiationService.invokeFunction(accessor => {
+			const webviewService = accessor.get(IWebviewService);
+			const themeService = accessor.get(IThemeService);
+			const webview = webviewStore.add(webviewService.createWebviewElement({
+				title,
+				origin: key,
+				options: { enableFindWidget: false, purpose: WebviewContentPurpose.ChatOutputItem, tryRestoreScrollPosition: false, disableServiceWorker: true },
+				contentOptions: { allowScripts: true, localResourceRoots: [] },
+				extension: undefined,
+			}));
+			frame.webview = webview;
+			const theme = themeService.getColorTheme();
+			webview.setHtml(buildVisualPage(html, { themeCss: visualThemeCss(theme), kind: themeKind(theme) }));
+			webviewStore.add(themeService.onDidColorThemeChange(next => {
+				void webview.postMessage({ type: 'volt-theme', css: visualThemeCss(next), kind: themeKind(next) });
+			}));
+			webviewStore.add(autorun(reader => {
+				const size = reader.readObservable(webview.intrinsicContentSize);
+				if (size?.height) {
+					frame.height = frameHeight(sizing.cap ? Math.min(sizing.cap, size.height) : size.height);
+					element.style.height = `${frame.height}px`;
+					if (element.clientWidth) {
+						replyWidth = element.clientWidth;
+					}
+					settle();
+				}
+			}));
+			// The page posts its wheel events as plain data; the transcript's scrollable calls
+			// preventDefault/stopPropagation on what it handles, so give it no-op ones (as chat does).
+			webviewStore.add(webview.onDidWheel(event => frame.ctx.onWheel?.({ ...event, preventDefault: () => { }, stopPropagation: () => { } })));
+			webviewStore.add(webview.onDidClickLink(link => openVisualHref(link, frame.ctx)));
+			webviewStore.add(webview.onMessage(event => {
+				const request = parsePageRequest(event.message);
+				if (request) {
+					handlePageRequest(frame, request, win);
+				}
+			}));
+			webview.mountTo(element, win);
+			webviewStore.add(onHostReloaded(element, () => {
+				// Out of the event: the old webview goes and a new one loads the page.
+				win.setTimeout(() => {
+					if (current.value === webviewStore && !store.isDisposed) {
+						mount();
+					}
+				}, 0);
+			}));
+		});
+	};
+	mount();
 	return frame;
+}
+
+/**
+ * An iframe that leaves the document loses its page; when it comes back it loads the empty webview
+ * host again, which shows nothing and swallows every wheel event over it (the transcript stops
+ * scrolling there). That happens behind our back whenever the editor is hidden (another editor,
+ * the Usage page) and shown again. A host can not be reliably re-primed in place, so `onReload`
+ * fires on any load after the first, and the caller swaps in a fresh webview.
+ */
+function onHostReloaded(element: HTMLElement, onReload: () => void): IDisposable {
+	const iframe = element.querySelector('iframe');
+	if (!iframe) {
+		return toDisposable(() => { });
+	}
+	let loaded = false;
+	return addDisposableListener(iframe, 'load', () => {
+		if (!iframe.getAttribute('src')) {
+			return;
+		}
+		if (loaded) {
+			onReload();
+		}
+		loaded = true;
+	});
 }
 
 /** Puts the live frame for each slot under `root` into its slot, keeping the page alive where it can. */
@@ -348,11 +435,9 @@ export function adoptVisualFrames(root: ParentNode): void {
 				// Not movable atomically (another document): fall back to a reload.
 			}
 		}
-		const wasDetached = !live.element.isConnected;
+		// A frame that was out of the document reloads its host as it comes back; its load
+		// listener (watchFrameReloads) puts the page back.
 		slot.replaceWith(live.element);
-		if (wasDetached || !live.element.isConnected) {
-			live.webview?.reinitializeAfterDismount();
-		}
 	}
 }
 
@@ -379,7 +464,7 @@ export function parkVisualFrames(root: ParentNode, parking: HTMLElement): void {
 }
 
 /** A page for `key` in `host`. A live one is adopted (now, or after the caller connects the new row). */
-function mountFrame(host: HTMLElement, key: string, title: string, html: string, height: number | undefined, ctx: IVisualHostContext): void {
+function mountFrame(host: HTMLElement, key: string, title: string, html: string, height: number | undefined, ctx: IVisualHostContext, sizing: IFrameSizing = {}): void {
 	const live = liveFrames.get(key);
 	if (live) {
 		live.ctx = ctx;
@@ -395,14 +480,158 @@ function mountFrame(host: HTMLElement, key: string, title: string, html: string,
 		});
 		return;
 	}
-	const frame = createFrame(key, title, html, height, ctx, getWindow(host));
+	if (host.clientWidth) {
+		replyWidth = host.clientWidth;
+	}
+	const frame = createFrame(key, title, html, height, ctx, getWindow(host), sizing);
 	host.appendChild(frame.element);
 	touch(liveFrames, key, frame, MAX_LIVE_FRAMES, value => value.store.dispose());
+}
+
+/**
+ * Acts on what a page asked (see agentVisualBridge.ts). Sending as the user needs the page to have
+ * the user's focus (they clicked in it), and at most one message per {@link PAGE_SEND_INTERVAL_MS}.
+ */
+function handlePageRequest(frame: ILiveFrame, request: PageRequest, win: CodeWindow): void {
+	switch (request.kind) {
+		case 'open':
+			openVisualHref(request.href, frame.ctx);
+			return;
+		case 'display':
+			setFrameFullscreen(frame, request.mode === 'fullscreen', win);
+			return;
+		case 'context':
+			if (frame.ctx.sessionId) {
+				setPageContext(frame.ctx.sessionId, frame.key, frame.title, request.value);
+			}
+			return;
+		case 'prompt':
+			frame.ctx.onPagePrompt?.(request.text, frame.title, false);
+			return;
+		case 'send': {
+			const focused = frame.element.contains(win.document.activeElement);
+			const now = Date.now();
+			if (!focused || (frame.lastSend && now - frame.lastSend < PAGE_SEND_INTERVAL_MS)) {
+				// Not from the user's click (or too fast): it goes to the composer for the user to send.
+				frame.ctx.onPagePrompt?.(request.text, frame.title, false);
+				return;
+			}
+			frame.lastSend = now;
+			setFrameFullscreen(frame, false, win);
+			frame.ctx.onPagePrompt?.(request.text, frame.title, true);
+			return;
+		}
+	}
+}
+
+/**
+ * Shows the page over the chat in the top layer (a popover), where it is: the iframe never moves,
+ * so the page keeps its state. The row keeps its height so the transcript does not jump. Opaque and
+ * contained like the inline frame (volt-transparent-window). Esc or the close button ends it.
+ */
+function setFrameFullscreen(frame: ILiveFrame, on: boolean, win: CodeWindow): boolean {
+	const element = frame.element as HTMLElement & { showPopover?(): void; hidePopover?(): void };
+	if (!element.showPopover || on === !!frame.fullscreen) {
+		return !!element.showPopover;
+	}
+	if (!on) {
+		frame.fullscreen?.dispose();
+		return true;
+	}
+	const store = frame.fullscreen = new DisposableStore();
+	const holder = element.parentElement;
+	if (holder) {
+		holder.style.minHeight = `${frame.height}px`;
+	}
+	element.setAttribute('popover', 'manual');
+	element.classList.add('fullscreen');
+	try {
+		element.showPopover();
+	} catch {
+		// Not connected: stay inline.
+	}
+	const close = append(element, $('button.volt-agent-visual-fullscreen-close')) as HTMLButtonElement;
+	close.type = 'button';
+	close.setAttribute('aria-label', localize('voltVisual.exitFullscreen', "Exit Full Screen"));
+	close.appendChild(renderIcon(Codicon.screenNormal));
+	setAgentTooltip(close, localize('voltVisual.exitFullscreenEsc', "Exit Full Screen (Esc)"));
+	store.add(addDisposableListener(close, 'click', event => {
+		event.preventDefault();
+		setFrameFullscreen(frame, false, win);
+	}));
+	store.add(addDisposableListener(win, 'keydown', event => {
+		if (event.key === 'Escape') {
+			event.preventDefault();
+			setFrameFullscreen(frame, false, win);
+		}
+	}, true));
+	store.add(toDisposable(() => {
+		close.remove();
+		try {
+			element.hidePopover?.();
+		} catch {
+			// already hidden
+		}
+		element.removeAttribute('popover');
+		element.classList.remove('fullscreen');
+		element.style.height = `${frame.height}px`;
+		if (holder) {
+			holder.style.minHeight = '';
+		}
+		if (frame.fullscreen === store) {
+			frame.fullscreen = undefined;
+		}
+	}));
+	return true;
+}
+
+/** Saves the page as a standalone file with the current theme baked in, to open in a browser or share. */
+async function savePage(ctx: IVisualHostContext, title: string, html: string): Promise<void> {
+	await ctx.instantiationService.invokeFunction(async accessor => {
+		const dialogs = accessor.get(IFileDialogService);
+		const files = accessor.get(IFileService);
+		const theme = accessor.get(IThemeService).getColorTheme();
+		const provider = ctx.instantiationService.createInstance(WebviewThemeDataProvider);
+		try {
+			const vscode: Record<string, string> = {};
+			for (const [name, value] of Object.entries(provider.getWebviewThemeData().styles)) {
+				vscode[`--${name}`] = String(value);
+			}
+			const name = `${title.replace(/[^\p{L}\p{N} _.-]+/gu, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'page'}.html`;
+			const target = await dialogs.showSaveDialog({ title: localize('voltVisual.saveTitle', "Save Page"), defaultUri: joinPath(await dialogs.defaultFilePath(), name), filters: [{ name: 'HTML', extensions: ['html'] }] });
+			if (target) {
+				await files.writeFile(target, VSBuffer.fromString(buildVisualPage(html, { themeCss: visualThemeCss(theme, vscode), kind: themeKind(theme), preview: true })));
+			}
+		} finally {
+			provider.dispose();
+		}
+	});
 }
 
 //#endregion
 
 //#region The transcript block
+
+/**
+ * A chart-shaped placeholder (title line, plot with faint bars) for a visual that is on its way:
+ * the tool call still streaming in, its stored spec being read, or the page loading.
+ */
+export function renderVisualSkeleton(parent: HTMLElement, kind: 'chart' | 'html' | 'page', height?: number): HTMLElement {
+	const skeleton = append(parent, $('.volt-agent-visual-skeleton'));
+	skeleton.classList.add(kind === 'chart' ? 'chart' : 'page');
+	skeleton.setAttribute('role', 'status');
+	skeleton.setAttribute('aria-label', kind === 'chart' ? localize('voltVisual.loadingChart', "Loading chart") : localize('voltVisual.loadingPage', "Loading page"));
+	if (height) {
+		skeleton.style.height = `${height}px`;
+	}
+	append(skeleton, $('.volt-agent-visual-skeleton-title'));
+	append(skeleton, $('.volt-agent-visual-skeleton-subtitle'));
+	const plot = append(skeleton, $('.volt-agent-visual-skeleton-plot'));
+	for (const level of [46, 72, 58, 88, 64, 80, 40, 68]) {
+		append(plot, $('.volt-agent-visual-skeleton-bar')).style.height = `${level}%`;
+	}
+	return skeleton;
+}
 
 function toolbarButton(parent: HTMLElement, icon: ThemeIconLike, label: string, run: () => void, store: DisposableStore): HTMLButtonElement {
 	const button = append(parent, $('button.volt-agent-visual-action')) as HTMLButtonElement;
@@ -437,6 +666,12 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 	const actions = append(wrap, $('.volt-agent-visual-actions'));
 	const key = `${block.id}:${block.ref}`;
 	const title = block.title || (block.kind === 'html' ? localize('voltVisual.page', "Page") : localize('voltVisual.chart', "Chart"));
+	if (!block.ref) {
+		// The render_chart / render_html call is still streaming in: hold its place.
+		wrap.classList.add('pending');
+		renderVisualSkeleton(body, block.kind, block.kind === 'html' ? frameHeight(block.height) : undefined);
+		return;
+	}
 	if (block.kind === 'chart') {
 		const live = liveCharts.has(key);
 		const draw = (spec: unknown) => {
@@ -453,11 +688,8 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 			mountChart(body, key, undefined, ctx);
 			placeActions(wrap, body);
 		} else {
-			body.style.minHeight = '240px';
-			void loadSpec(ctx, block.ref).then(spec => {
-				body.style.minHeight = '';
-				draw(spec);
-			});
+			renderVisualSkeleton(body, 'chart');
+			void loadSpec(ctx, block.ref).then(spec => draw(spec));
 		}
 		toolbarButton(actions, Codicon.screenFull, localize('voltVisual.expand', "Expand"), () => {
 			void loadSpec(ctx, block.ref).then(spec => {
@@ -474,25 +706,32 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 		}, ctx.store);
 		return;
 	}
-	// A page: its frame survives redraws (see mountFrame); first time, load it from storage.
+	// A page: its frame survives redraws (see mountFrame); first time, load it from storage once it
+	// is near the screen, so a long chat with many pages does not start a frame for each.
+	const sizing: IFrameSizing = { heights: block.heights, cap: block.cap };
 	if (liveFrames.has(key)) {
-		mountFrame(body, key, title, '', block.height, ctx);
+		mountFrame(body, key, title, '', block.height, ctx, sizing);
 	} else {
-		body.style.height = `${frameHeight(block.height)}px`;
-		void loadPage(ctx, block.ref).then(html => {
-			body.style.height = '';
-			if (html === undefined) {
-				append(body, $('.volt-agent-visual-missing')).textContent = localize('voltVisual.pageMissing', "This page is no longer stored.");
-				return;
-			}
+		renderVisualSkeleton(body, 'page', frameHeight(pageHeightFor(replyWidth, block.heights, block.cap) ?? block.height));
+		const load = () => void loadPage(ctx, block.ref).then(html => {
 			if (!wrap.isConnected && !liveFrames.has(key)) {
 				// Redrawn away while loading; the new row loads it.
 				return;
 			}
-			mountFrame(body, key, title, html, block.height, ctx);
+			body.replaceChildren();
+			if (html === undefined) {
+				append(body, $('.volt-agent-visual-missing')).textContent = localize('voltVisual.pageMissing', "This page is no longer stored.");
+				return;
+			}
+			mountFrame(body, key, title, html, block.height, ctx, sizing);
 		});
+		whenNearScreen(wrap, load, ctx.store);
 	}
-	toolbarButton(actions, Codicon.screenFull, localize('voltVisual.expand', "Expand"), () => {
+	toolbarButton(actions, Codicon.screenFull, localize('voltVisual.fullscreen', "Full Screen"), () => {
+		const live = liveFrames.get(key);
+		if (live && setFrameFullscreen(live, true, getWindow(parent))) {
+			return;
+		}
 		void loadPage(ctx, block.ref).then(html => {
 			if (html === undefined || !ctx.onExpandVisual) {
 				return;
@@ -508,6 +747,26 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 	toolbarButton(actions, Codicon.copy, localize('voltVisual.copySource', "Copy HTML"), () => {
 		void loadPage(ctx, block.ref).then(html => html !== undefined && ctx.onCopyText?.(html));
 	}, ctx.store);
+	toolbarButton(actions, Codicon.desktopDownload, localize('voltVisual.save', "Save as HTML File"), () => {
+		void loadPage(ctx, block.ref).then(html => html !== undefined ? savePage(ctx, title, html) : undefined);
+	}, ctx.store);
+}
+
+/** Runs `load` once `element` comes within a screen or so of the viewport (at once without IntersectionObserver). */
+function whenNearScreen(element: HTMLElement, load: () => void, store: DisposableStore): void {
+	const win = getWindow(element) as Window & typeof globalThis;
+	if (typeof win.IntersectionObserver !== 'function') {
+		load();
+		return;
+	}
+	const observer = new win.IntersectionObserver(entries => {
+		if (entries.some(entry => entry.isIntersecting)) {
+			observer.disconnect();
+			load();
+		}
+	}, { rootMargin: '1200px 0px' });
+	observer.observe(element);
+	store.add(toDisposable(() => observer.disconnect()));
 }
 
 /** The width a visual is laid out at in the reply column, for tools that measure pages. */

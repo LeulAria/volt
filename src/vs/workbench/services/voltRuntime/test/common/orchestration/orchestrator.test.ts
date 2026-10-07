@@ -137,6 +137,24 @@ suite('Volt orchestrator: turns and queue', () => {
 		assert.strictEqual(again.outcome, 'duplicate', 'a retried wake-up is not sent twice');
 	});
 
+	test('an interrupting notification (another agent\'s restart) stops the running turn and goes first', () => {
+		const sim = new OrchSim();
+		sim.submit('a', 'one');
+		sim.start('a');
+		const later = sim.submit('a', 'queued by the user');
+		const wake = sim.run({ type: 'thread.notify', threadId: 'a', turnId: 'm-1', prompt: prompt('Stop and do this instead'), interrupt: true });
+		assert.strictEqual(wake.outcome, 'queued');
+		assert.strictEqual(sim.state.threads.a.active?.phase, 'cancelling');
+		assert.deepStrictEqual(sim.state.threads.a.queue.map(item => item.id), ['m-1', later.turnId], 'it goes ahead of what was queued');
+		sim.settle('a', 'cancelled');
+		assert.strictEqual(sim.state.threads.a.active?.id, 'm-1');
+		assert.strictEqual(sim.state.threads.a.active?.kind, 'notification');
+		assert.strictEqual(sim.state.threads.a.wakeups, 1, 'it counts toward the wake-up limit like any agent message');
+
+		const idle = new OrchSim();
+		assert.strictEqual(idle.run({ type: 'thread.notify', threadId: 'b', turnId: 'm-2', prompt: prompt('hi'), interrupt: true }).outcome, 'started', 'an idle chat just starts it');
+	});
+
 	test('notifications wait for a paused or blocked chat, and stop after too many wake-ups in a row', () => {
 		const sim = new OrchSim({ ...DEFAULT_ORCH_LIMITS, maxWakeups: 3 });
 		const thread = (id: string) => sim.state.threads[id];

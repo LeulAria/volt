@@ -131,6 +131,11 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 				},
 				title: { type: 'string', description: 'A short title shown in Volt (3-6 words).' },
 				model: MODEL_ARG,
+				models: {
+					type: 'array',
+					items: { type: 'string' },
+					description: 'Run the same brief on 2-4 models at once, one task each (independent reviews, competing designs, a second opinion from another vendor). Each report comes back on its own. Use instead of `model`.',
+				},
 				role: {
 					type: 'string',
 					enum: AGENT_TASK_ROLES,

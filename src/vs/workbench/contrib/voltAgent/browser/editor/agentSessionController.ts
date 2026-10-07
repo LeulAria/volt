@@ -54,6 +54,7 @@ export interface IAgentTurnSpec {
 	readonly taskIds?: readonly string[];
 	readonly handoff?: IAgentUserMessage['handoff'];
 	readonly scheduled?: IAgentUserMessage['scheduled'];
+	readonly fromThread?: IAgentUserMessage['fromThread'];
 }
 
 export interface IAgentSessionChange {
@@ -244,6 +245,7 @@ export class AgentSessionController extends Disposable {
 			...(spec.taskIds?.length ? { taskIds: [...spec.taskIds] } : {}),
 			...(spec.handoff ? { handoff: spec.handoff } : {}),
 			...(spec.scheduled ? { scheduled: spec.scheduled } : {}),
+			...(spec.fromThread ? { fromThread: spec.fromThread } : {}),
 		};
 		const reply: IAgentAssistantMessage = {
 			kind: 'agent',
@@ -374,7 +376,7 @@ export class AgentSessionController extends Disposable {
 		if (last.segments.some(segment => segment.kind === 'block' && segment.block.id === id)) {
 			return;
 		}
-		last.segments.push({ kind: 'block', block: { id, type: 'visual', status: 'complete', kind: visual.kind, title: visual.title, ref: visual.ref, ...(visual.height ? { height: visual.height } : {}) } });
+		last.segments.push({ kind: 'block', block: { id, type: 'visual', status: 'complete', kind: visual.kind, title: visual.title, ref: visual.ref, ...(visual.height ? { height: visual.height } : {}), ...(visual.heights?.length ? { heights: visual.heights } : {}), ...(visual.cap ? { cap: visual.cap } : {}) } });
 		for (const segment of last.segments) {
 			if (segment.kind === 'activity' && segment.item.browserTool === tool && segment.item.input && segment.item.input.length > 2000) {
 				segment.item.input = JSON.stringify({ title: visual.title });

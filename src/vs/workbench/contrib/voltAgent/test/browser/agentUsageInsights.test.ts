@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltUsageBucket, IVoltUsageSnapshot } from '../../../../../platform/voltUsage/common/voltUsage.js';
-import { usageChartSpec, usageInsightsSpec } from '../../browser/usage/agentUsageInsights.js';
+import { usageChartSpec, usageInsights } from '../../browser/usage/agentUsageInsights.js';
 import { summarizeUsage } from '../../browser/usage/agentUsageModel.js';
 
 function bucket(hour: number, model: string, cached: number, uncached: number, costUsd: number): IVoltUsageBucket {
@@ -32,13 +32,13 @@ suite('Usage insights', () => {
 
 	test('titles each insight with its finding', () => {
 		const summary = summarizeUsage(snapshot, '7d', 'cost', now);
-		const spec = usageInsightsSpec(snapshot, summary, 'cost') as { charts: { type: string; title?: string; charts?: { title: string }[] }[] };
-		const row = spec.charts.find(chart => chart.type === 'row')!;
-		assert.deepStrictEqual(row.charts!.map(chart => chart.title), ['85% of tokens were cache reads', 'Cache hits averaged 86% of input']);
-		const share = spec.charts.find(chart => chart.type === 'share')!;
-		assert.strictEqual(share.title, 'claude-opus-5-5 handled 75% of your spend');
-		const heat = spec.charts.find(chart => chart.type === 'heatmap')!;
-		assert.ok(heat.title?.startsWith('Busiest on Tuesday around 3'), heat.title);
+		const insights = usageInsights(snapshot, summary, 'cost');
+		assert.deepStrictEqual(insights.filter(insight => !insight.wide).map(insight => insight.spec.title), ['85% of tokens were cache reads', 'Cache hits averaged 86% of input']);
+		const models = insights.find(insight => insight.spec.type === 'stacked-bar')!;
+		assert.strictEqual(models.spec.title, 'claude-opus-5-5 handled 75% of your spend');
+		assert.ok(models.wide);
+		const heat = insights.find(insight => insight.spec.type === 'heatmap')!;
+		assert.ok(heat.spec.title.startsWith('Busiest on Tuesday around 3'), heat.spec.title);
 	});
 
 	test('the main chart has one series per agent over every slot', () => {

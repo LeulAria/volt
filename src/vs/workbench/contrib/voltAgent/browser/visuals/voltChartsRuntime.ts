@@ -52,6 +52,8 @@ export interface IVoltChartSeriesSpec {
 	/** A reference series (previous period, target): drawn muted and dashed, left out of totals. */
 	readonly reference?: boolean;
 	readonly hidden?: boolean;
+	/** In a bar chart, draw this series as a line over the bars (a trend or an average): a composed chart. */
+	readonly type?: 'line';
 }
 
 export type VoltChartStep = 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year' | number;
@@ -238,7 +240,84 @@ export interface IVoltRowSpec {
 	readonly charts: readonly VoltChartSpec[];
 }
 
-export type VoltChartSpec = IVoltCartesianSpec | IVoltHeatmapSpec | IVoltTreemapSpec | IVoltDonutSpec | IVoltRankedSpec | IVoltCumulativeSpec | IVoltStatsSpec | IVoltRowSpec;
+export interface IVoltMeterSpec {
+	readonly label: string;
+	readonly value: number;
+	/** Full scale. Default 100 for percents, 1 for ratios, else the largest value. */
+	readonly max?: number;
+	readonly color?: string | number;
+	readonly detail?: string;
+	readonly href?: string;
+}
+
+export interface IVoltGaugeSpec extends IVoltChartCommonSpec {
+	readonly type: 'gauge';
+	readonly value?: number;
+	readonly max?: number;
+	readonly label?: string;
+	/** Several readings: a switcher picks the one the gauge shows. */
+	readonly data?: readonly IVoltMeterSpec[];
+	readonly notches?: number;
+}
+
+export interface IVoltRingSpec extends IVoltChartCommonSpec {
+	/** Concentric progress rings ("ring" alone means a donut). */
+	readonly type: 'rings';
+	/** One concentric ring per item, outermost first. */
+	readonly data: readonly IVoltMeterSpec[];
+}
+
+export interface IVoltRadarSpec extends IVoltChartCommonSpec {
+	readonly type: 'radar';
+	/** 3-12 measures; each is scaled to its largest value unless it (or the chart) sets `max`. */
+	readonly axes: readonly (string | { readonly label: string; readonly unit?: VoltChartUnit; readonly max?: number })[];
+	readonly series: readonly { readonly name: string; readonly data: readonly number[]; readonly color?: string | number }[];
+	readonly max?: number;
+}
+
+export interface IVoltFunnelSpec extends IVoltChartCommonSpec {
+	readonly type: 'funnel';
+	/** Stages in order, widest first. */
+	readonly data: readonly IVoltPartSpec[];
+	/** `log` when stages span orders of magnitude (picked automatically past 40x). */
+	readonly scale?: 'linear' | 'log';
+	readonly color?: string;
+}
+
+export interface IVoltSunburstSpec extends IVoltChartCommonSpec {
+	readonly type: 'sunburst';
+	readonly data: IVoltTreemapNode | readonly IVoltTreemapNode[];
+	readonly sizeLabel?: string;
+	/** Rings shown at once. Default 4. */
+	readonly depth?: number;
+}
+
+export interface IVoltSankeySpec extends IVoltChartCommonSpec {
+	readonly type: 'sankey';
+	readonly links: readonly { readonly source: string; readonly target: string; readonly value: number }[];
+	readonly nodes?: readonly { readonly name: string; readonly color?: string | number; readonly href?: string }[];
+	/** Which stage carries color (others are gray). Default the middle one. */
+	readonly colorColumn?: number;
+}
+
+export interface IVoltCandleSpec {
+	readonly x: VoltChartX;
+	readonly open: number;
+	readonly high: number;
+	readonly low: number;
+	readonly close: number;
+	readonly label?: string;
+	readonly detail?: Readonly<Record<string, string | number>>;
+}
+
+export interface IVoltCandlestickSpec extends IVoltChartCommonSpec {
+	readonly type: 'candlestick';
+	readonly data: readonly (IVoltCandleSpec | readonly [VoltChartX, number, number, number, number])[];
+	readonly x?: IVoltChartXSpec;
+}
+
+export type VoltChartSpec = IVoltCartesianSpec | IVoltHeatmapSpec | IVoltTreemapSpec | IVoltDonutSpec | IVoltRankedSpec | IVoltCumulativeSpec | IVoltStatsSpec | IVoltRowSpec
+	| IVoltGaugeSpec | IVoltRingSpec | IVoltRadarSpec | IVoltFunnelSpec | IVoltSunburstSpec | IVoltSankeySpec | IVoltCandlestickSpec;
 
 /** A whole visual: a title and charts stacked top to bottom. A single chart spec is accepted too. */
 export interface IVoltVisualSpec {
@@ -266,6 +345,18 @@ export interface IVoltChartsStrings {
 	readonly other: string;
 	readonly vsPrevious: string;
 	readonly chart: string;
+	readonly zoomIn: string;
+	/** `{0}` is the whole, e.g. "of apps" or "of Julius's flow". */
+	readonly ofParent: string;
+	readonly ofPrevious: string;
+	readonly ofFirst: string;
+	readonly logScale: string;
+	readonly candleOpen: string;
+	readonly candleHigh: string;
+	readonly candleLow: string;
+	readonly candleClose: string;
+	readonly rising: string;
+	readonly falling: string;
 }
 
 export interface IVoltChartsRenderOptions {
@@ -331,6 +422,17 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		other: 'Other',
 		vsPrevious: 'vs previous',
 		chart: 'Chart',
+		zoomIn: 'Click to zoom in',
+		ofParent: 'of {0}',
+		ofPrevious: 'of the previous stage',
+		ofFirst: 'Share of the first stage',
+		logScale: 'Widths are log-scaled; the numbers are exact.',
+		candleOpen: 'Open',
+		candleHigh: 'High',
+		candleLow: 'Low',
+		candleClose: 'Close',
+		rising: 'Up',
+		falling: 'Down',
 	};
 
 	let uid = 0;
@@ -661,6 +763,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 	/** A value read on its own (tooltips, headlines): `$18.42`, `2.1M tokens`, `42 ms`, `51.2%`. */
 	function formatValue(value: number | null | undefined, unit: IUnit, long = false): string {
 		if (!isNum(value)) {
+			// allow-any-unicode-next-line
 			return '—';
 		}
 		switch (unit.kind) {
@@ -1526,7 +1629,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 .vc-visual-subtitle{color:var(--vc-muted);margin:2px 0 0}
 .vc-blocks{display:flex;flex-direction:column;gap:34px}
 .vc-block{min-width:0;position:relative}
-.vc-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:28px 32px}
+.vc-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:28px 24px}
 .vc-head{margin:0 0 12px}
 .vc-variant-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;margin:0 0 12px}
 .vc-variant-head .vc-head{margin:0;flex:1 1 240px;min-width:0}
@@ -1666,7 +1769,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		}
 		const style = target.createElement('style');
 		style.id = 'vc-styles';
-		style.textContent = CSS;
+		style.textContent = CSS + SHOWCASE_CSS;
 		(target.head ?? target.documentElement).appendChild(style);
 	}
 
@@ -2010,6 +2113,8 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		readonly color: string;
 		readonly dashed: boolean;
 		readonly reference: boolean;
+		/** A bar chart series drawn as a solid line over the bars; kept out of stacks and totals like a reference. */
+		readonly overlay?: boolean;
 		readonly unit: IUnit;
 		readonly hidden: boolean;
 		readonly points: readonly ICPoint[];
@@ -2056,6 +2161,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		readonly curve: Curve;
 		readonly legend?: boolean;
 		readonly points?: boolean;
+		readonly look: ILook;
 		readonly height: number;
 		readonly title?: string;
 		readonly subtitle?: string;
@@ -2092,6 +2198,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 	/** Reads a line/area/bar spec into series of numeric points, collecting what an agent should fix. */
 	function parseCartesian(spec: Record<string, unknown>, problems: string[], where: string): ICModel {
 		const type = (CARTESIAN_TYPES as readonly string[]).includes(spec.type as string) ? spec.type as VoltCartesianType : 'line';
+		const bars = type === 'bar' || type === 'grouped-bar' || type === 'stacked-bar';
 		const xSpec = isRecord(spec.x) ? spec.x : {};
 		const ySpec = isRecord(spec.y) ? spec.y : {};
 		const zone = timeZoneOf(xSpec.timeZone);
@@ -2233,7 +2340,8 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				name,
 				color,
 				dashed: series.dashed === true || series.reference === true,
-				reference: series.reference === true,
+				reference: series.reference === true || (bars && series.type === 'line'),
+				overlay: bars && series.type === 'line',
 				unit: series.unit !== undefined ? resolveUnit(series.unit) : unit,
 				hidden: series.hidden === true,
 				points,
@@ -2304,6 +2412,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			curve: spec.curve === 'linear' || spec.curve === 'step' ? spec.curve : 'smooth',
 			legend: typeof spec.legend === 'boolean' ? spec.legend : undefined,
 			points: typeof spec.points === 'boolean' ? spec.points : undefined,
+			look: readLook(spec),
 			height: isNum(spec.height) ? clamp(Math.round(spec.height), 100, 720) : 240,
 			title: str(spec.title, 160),
 			subtitle: str(spec.subtitle, 300),
@@ -2380,6 +2489,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		private readonly plot: HTMLElement;
 		private readonly svg: SVGSVGElement;
 		private readonly defs: SVGDefsElement;
+		private readonly bgLayer: SVGGElement;
 		private readonly gridLayer: SVGGElement;
 		private readonly xAxisLayer: SVGGElement;
 		private readonly marksBack: SVGGElement;
@@ -2388,6 +2498,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		private readonly cursorLayer: SVGGElement;
 		private readonly hit: SVGRectElement;
 		private readonly tip: Tip;
+		private readonly pill: AxisPill;
 		private readonly live: HTMLElement;
 		private readonly noteEl: HTMLElement;
 		private emptyEl: HTMLElement | undefined;
@@ -2435,6 +2546,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			this.plot.setAttribute('aria-roledescription', 'interactive chart');
 			this.svg = s('svg', { class: 'vc-svg' }, this.plot);
 			this.defs = s('defs', {}, this.svg);
+			this.bgLayer = s('g', { class: 'vc-bg' }, this.svg);
 			this.gridLayer = s('g', { class: 'vc-grid' }, this.svg);
 			this.xAxisLayer = s('g', { class: 'vc-axis' }, this.svg);
 			this.marksBack = s('g', {}, this.svg);
@@ -2447,6 +2559,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			this.knob = s('circle', { class: 'vc-knob', r: 4.5 }, this.cursorLayer);
 			this.hit = s('rect', { class: 'vc-hit' }, this.svg);
 			this.tip = new Tip(this.plot);
+			this.pill = new AxisPill(this.plot);
 			this.live = h('div', 'vc-sr', this.plot);
 			this.live.setAttribute('aria-live', 'polite');
 			this.noteEl = h('div', 'vc-note');
@@ -2837,6 +2950,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			const frame = this.buildFrame(height - top - bottom);
 			const box = this.computeBox(frame, height, top, bottom);
 			this.box = box;
+			this.applyLook(box);
 			const sx = this.xScale(frame, box);
 			this.sx = sx;
 			this.drawXAxis(frame, box, sx);
@@ -2902,7 +3016,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 
 		private computeBox(frame: IFrame & { ticks: INiceScale }, height: number, top: number, bottom: number): IBox {
 			const width = this.width;
-			const compactAxis = width < 400;
+			const compactAxis = this.compactAxis();
 			const font = `400 11px ${win.getComputedStyle(this.element).fontFamily || 'system-ui'}`;
 			let labelWidth = 0;
 			for (const value of frame.ticks.values) {
@@ -3025,6 +3139,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				lastEnd = start + width;
 				const text = s('text', { x: anchor === 'start' ? start : anchor === 'end' ? box.width : x, y, 'text-anchor': anchor }, this.xAxisLayer);
 				text.textContent = tick.label;
+				text.dataset.cx = String(x);
 			}
 		}
 
@@ -3044,7 +3159,9 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				const nodes: ISeriesNodes = { group };
 				if (this.bars && !source.reference) {
 					nodes.bars = s('path', { class: 'vc-bar' }, group);
-					nodes.bars.style.fill = source.color;
+					const fill = this.model.look.fill;
+					nodes.bars.style.fill = fill === 'pattern' ? pattern(this.defs, 'lines', source.color, { tint: 0.16, ink: 0.85 })
+						: fill === 'gradient' ? verticalGradient(this.defs, source.color, source.color, 1, 0.32) : source.color;
 				} else if (type === 'scatter') {
 					nodes.dots = s('g', {}, group);
 				} else {
@@ -3052,7 +3169,14 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 						nodes.area = s('path', { class: 'vc-band' }, group);
 						nodes.area.style.fill = source.color;
 						nodes.area.style.fillOpacity = '0.9';
-					} else if ((type === 'area' || (type === 'line' && visibleCount === 1)) && !source.reference) {
+					} else if (this.areaFill(visibleCount) !== 'none' && this.areaFill(visibleCount) !== 'gradient' && !source.reference) {
+						const fill = this.areaFill(visibleCount);
+						nodes.area = s('path', { class: 'vc-area' }, group);
+						nodes.area.style.fill = fill === 'pattern' ? pattern(this.defs, 'lines', source.color, { tint: 0.05, ink: 0.45 }) : source.color;
+						if (fill === 'solid') {
+							nodes.area.style.fillOpacity = type === 'area' ? '0.3' : '0.18';
+						}
+					} else if (this.areaFill(visibleCount) === 'gradient' && !source.reference) {
 						const id = nextId('fill');
 						const gradient = s('linearGradient', { id, x1: 0, x2: 0, y1: 0, y2: 1 }, this.defs);
 						const strength = type === 'area' ? (index === 0 ? 0.26 : 0.14) : 0.16;
@@ -3066,8 +3190,9 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 						nodes.gradient = id;
 					}
 					if (!this.stacked || source.reference) {
-						nodes.line = s('path', { class: `vc-line${source.reference ? ' vc-ref' : source.dashed ? ' vc-dashed' : ''}` }, group);
+						nodes.line = s('path', { class: `vc-line${source.reference && !source.overlay ? ' vc-ref' : source.dashed ? ' vc-dashed' : ''}` }, group);
 						nodes.line.style.stroke = source.color;
+						nodes.line.classList.toggle('vc-nostroke', !this.model.look.stroke && !!nodes.area);
 					}
 					nodes.dots = s('g', {}, group);
 				}
@@ -3106,9 +3231,10 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			const visibleBars = frame.series.filter(series => series.visible && !series.source.reference);
 			const gap = this.typicalGap(frame);
 			const slot = Math.abs(sx(gap) - sx(0));
-			const groupWidth = Math.min(slot * (type === 'grouped-bar' ? 0.8 : 0.72), type === 'grouped-bar' ? 96 : 56);
+			const look = this.model.look;
+			const groupWidth = look.barGap !== undefined ? slot * (1 - look.barGap) : Math.min(slot * (type === 'grouped-bar' ? 0.8 : 0.72), type === 'grouped-bar' ? 96 : 56);
 			const barWidth = type === 'grouped-bar' ? groupWidth / Math.max(1, visibleBars.length) : groupWidth;
-			const radius = Math.min(3, barWidth / 3);
+			const radius = look.barShape === 'square' ? 0 : look.barShape === 'pill' ? barWidth / 2 : Math.min(3, barWidth / 3);
 			for (const series of frame.series) {
 				const nodes = this.nodes.get(series.source.key);
 				if (!nodes) {
@@ -3201,7 +3327,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 
 		/** Y gridlines and labels, keyed by value so a rescale slides them instead of redrawing. */
 		private renderTicks(ticks: INiceScale, sy: IScale, box: IBox, entering: boolean): void {
-			const compactAxis = this.width < 400;
+			const compactAxis = this.compactAxis();
 			const unit = this.metric.unit;
 			const keep = new Set(ticks.values);
 			for (const [value, group] of this.ticks) {
@@ -3258,33 +3384,27 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		}
 
 		private playDraw(): void {
-			for (const nodes of this.nodes.values()) {
-				const line = nodes.line;
-				if (line && !line.classList.contains('vc-dashed') && !line.classList.contains('vc-ref')) {
-					line.setAttribute('pathLength', '1');
-					line.style.strokeDasharray = '1 1';
-					line.style.strokeDashoffset = '1';
-					line.style.transition = 'none';
-					void line.getBoundingClientRect();
-					line.style.transition = `stroke-dashoffset ${DRAW_MS}ms ${EASE_OUT}`;
-					line.style.strokeDashoffset = '0';
-					win.setTimeout(() => {
-						line.removeAttribute('pathLength');
-						line.style.strokeDasharray = '';
-						line.style.strokeDashoffset = '';
-						line.style.transition = '';
-					}, DRAW_MS + 40);
-				} else if (line) {
-					line.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: DRAW_MS, easing: 'ease-out' });
-				}
-				for (const other of [nodes.area, nodes.dots]) {
-					other?.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 380, delay: 140, easing: 'ease-out', fill: 'backwards' });
-				}
+			const box = this.box;
+			if (!box) {
+				return;
 			}
-			this.marksFront.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 260, delay: DRAW_MS - 120, fill: 'backwards' });
+			// One clip grows across the plot, so lines, fills and dots arrive left to right together.
+			const id = nextId('rv');
+			const clip = s('clipPath', { id }, this.defs);
+			const rect = s('rect', { x: box.left - 8, y: 0, width: 0, height: box.height }, clip);
+			this.seriesLayer.setAttribute('clip-path', `url(#${id})`);
+			const done = () => {
+				if (this.seriesLayer.getAttribute('clip-path') === `url(#${id})`) {
+					this.seriesLayer.removeAttribute('clip-path');
+				}
+				clip.remove();
+			};
+			const animation = rect.animate([{ width: '0px' }, { width: `${num(box.right - box.left + 16)}px` }], { duration: DRAW_MS * 2, easing: ENTER_CSS, fill: 'forwards' });
+			animation.onfinish = done;
+			animation.oncancel = done;
+			this.marksFront.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 300, delay: 650, fill: 'backwards' });
 		}
 
-		/** A copy of the old series that fades out while the new ones fade in. */
 		private ghost(): void {
 			const copy = this.seriesLayer.cloneNode(true) as SVGGElement;
 			copy.removeAttribute('class');
@@ -3306,6 +3426,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			const front = this.marksFront;
 			back.replaceChildren();
 			front.replaceChildren();
+			drawBands(back, this.model.look.bands, box, sy, this.metric.unit);
 			const font = `600 11px ${win.getComputedStyle(this.element).fontFamily || 'system-ui'}`;
 			for (const rule of this.model.rules) {
 				const y = crisp(sy(rule.y));
@@ -3772,10 +3893,16 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			this.hit.classList.toggle('vc-link', !!this.currentPointAt(index)?.href);
 			if (changed || firstShow) {
 				this.tip.set(this.tipModel(frame, index));
+				if (this.model.look.pill) {
+					this.pill.set(this.pillLabel(x), index);
+				}
 			}
 			this.cursorShown = true;
 			this.cursorLayer.classList.add('vc-shown');
 			this.tip.show();
+			if (this.model.look.pill) {
+				this.pill.show();
+			}
 			this.applyCursor();
 		}
 
@@ -3806,6 +3933,10 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 					setAttrs(knob, { cx: x, cy: this.springs.get(`y:${key}`) });
 				}
 			}
+			if (this.model.look.pill) {
+				this.pill.place(x, box.bottom + 3, box.width);
+				fadeTicks(this.xAxisLayer, x);
+			}
 			const anchorY = this.bars ? box.top + (box.bottom - box.top) * 0.35 : ky;
 			this.tip.place(x, anchorY, box.width, 0, box.height, this.bars ? Math.abs((this.sx?.(this.typicalGap(this.shown!)) ?? 0) - (this.sx?.(0) ?? 0)) / 2 + 8 : 14);
 		}
@@ -3817,7 +3948,50 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			this.cursorShown = false;
 			this.cursorLayer.classList.remove('vc-shown');
 			this.tip.hide();
+			this.pill.hide();
+			fadeTicks(this.xAxisLayer, undefined);
 			this.hit.classList.remove('vc-link');
+		}
+
+		/** The short form of x the axis pill shows: "Sep 5", "Sep 5, 14:00", "Oct 2026". */
+		private pillLabel(x: number): string {
+			const model = this.model;
+			if (model.xKind !== 'time') {
+				return this.xLabel(x);
+			}
+			const options: Intl.DateTimeFormatOptions = model.grain === 'year' ? { year: 'numeric' }
+				: model.grain === 'month' ? { month: 'short', year: 'numeric' }
+					: model.grain === 'day' || model.grain === 'week' ? { month: 'short', day: 'numeric' }
+						: { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+			return dateFormat(options, model.zone).format(x);
+		}
+
+		/** Area fill for line and area charts: what the spec asks for, else a gradient under areas and lone lines. */
+		private areaFill(visibleCount: number): 'gradient' | 'solid' | 'pattern' | 'none' {
+			const type = this.model.type;
+			if (type !== 'area' && type !== 'line') {
+				return 'none';
+			}
+			return this.model.look.fill ?? (type === 'area' || visibleCount === 1 ? 'gradient' : 'none');
+		}
+
+		/** Grid style, backdrop and edge fade for the current box. */
+		private applyLook(box: IBox): void {
+			const look = this.model.look;
+			this.element.classList.toggle('vc-bars', this.bars);
+			this.gridLayer.classList.toggle('vc-grid-dashed', look.grid === 'dashed');
+			this.gridLayer.classList.toggle('vc-grid-none', look.grid === 'none');
+			drawBackdrop(this.bgLayer, look, box);
+			if (look.fadeEdges) {
+				this.seriesLayer.setAttribute('mask', edgeMask(this.bgLayer, box.left, box.right, box.top, box.bottom));
+			} else {
+				this.seriesLayer.removeAttribute('mask');
+			}
+		}
+
+		/** Narrow plots put y labels inside, over the grid; bars would cover them there, so bars keep a gutter. */
+		private compactAxis(): boolean {
+			return this.width < 400 && !this.bars;
 		}
 
 		private xLabel(x: number): string {
@@ -3910,6 +4084,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			this.animation?.cancel();
 			this.springs.dispose();
 			this.tip.dispose();
+			this.pill.dispose();
 			this.header?.dispose();
 			if (this.pointerFrame) {
 				win.cancelAnimationFrame(this.pointerFrame);
@@ -3950,6 +4125,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				const tile = h('div', 'vc-stat', inner);
 				const label = str(item.label, 80) ?? '';
 				const unit = resolveUnit(item.unit, label, isNum(item.value) ? [item.value] : []);
+				// allow-any-unicode-next-line
 				const text = isNum(item.value) ? formatValue(item.value, unit) : str(item.value, 40) ?? '—';
 				const value = h('div', 'vc-stat-value', tile, text);
 				value.title = text;
@@ -4816,6 +4992,11 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		private readonly centerValue: SVGTextElement;
 		private readonly centerLabel: SVGTextElement;
 		private readonly centerText: string;
+		private readonly hole: number;
+		private readonly fillStyle: 'solid' | 'gradient' | 'pattern';
+		private readonly grow: boolean;
+		private readonly centerValueSpec?: string;
+		private geometry: { start: number; end: number }[] = [];
 		private arcs: SVGPathElement[] = [];
 		private items: HTMLElement[] = [];
 		private active = -1;
@@ -4834,6 +5015,11 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			this.total = this.parts.reduce((sum, part) => sum + part.value, 0);
 			this.unit = resolveUnit(spec.unit, `${str(spec.title) ?? ''} ${str(spec.subtitle) ?? ''}`, this.parts.map(part => part.value));
 			this.centerText = str(spec.centerLabel, 40) ?? ctx.strings.total;
+			// "pie" (or hole 0) fills the middle; the center label needs a hole to sit in.
+			this.hole = isNum(spec.hole) ? clamp(spec.hole, 0, 0.9) : spec.type === 'pie' ? 0 : 0.66;
+			this.fillStyle = oneOf(spec.fill, ['solid', 'gradient', 'pattern'] as const) ?? 'solid';
+			this.grow = spec.hover === 'grow';
+			this.centerValueSpec = str(spec.centerValue, 24);
 			const wrap = h('div', 'vc-donut', this.element);
 			this.svg = s('svg', { role: 'img' }, wrap);
 			this.list = h('div', 'vc-donut-list', wrap);
@@ -4877,7 +5063,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			this.svg.replaceChildren();
 			this.arcs = this.parts.map(part => {
 				const arc = s('path', { class: 'vc-arc' }, this.svg);
-				arc.style.fill = part.color;
+				arc.style.fill = this.sliceFill(part.color, this.parts.indexOf(part));
 				return arc;
 			});
 			this.arcs.forEach((arc, index) => {
@@ -4898,8 +5084,8 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 
 		private draw(progress: number): void {
 			const size = this.size;
-			const outer = size / 2 - 4;
-			const inner = outer * 0.66;
+			const outer = size / 2 - (this.grow ? 10 : 4);
+			const inner = outer * this.hole;
 			const pad = this.parts.length > 1 ? 0.012 : 0;
 			let angle = -Math.PI / 2;
 			const full = Math.PI * 2 * progress;
@@ -4908,6 +5094,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				const start = angle + pad / 2;
 				const end = angle + sweep - pad / 2;
 				this.arcs[index].setAttribute('d', arcPath(size / 2, size / 2, outer, inner, start, Math.max(start, end)));
+				this.geometry[index] = { start, end: Math.max(start, end) };
 				const mid = (start + end) / 2;
 				this.arcs[index].dataset.dx = String(Math.cos(mid) * 3);
 				this.arcs[index].dataset.dy = String(Math.sin(mid) * 3);
@@ -4915,8 +5102,34 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			});
 		}
 
+		/** Solid, a radial gradient lit from the middle, or hatching at a different angle per slice. */
+		private sliceFill(color: string, index: number): string {
+			if (this.fillStyle === 'pattern') {
+				return pattern(this.svg, 'lines', color, { angle: [45, 135, 0, 90, 22, 158][index % 6], tint: 0.12, ink: 0.85 });
+			}
+			if (this.fillStyle === 'gradient') {
+				const id = nextId('rg');
+				const gradient = s('radialGradient', { id, cx: '50%', cy: '50%', r: '60%' }, this.svg);
+				for (const [offset, stop] of [['0%', `color-mix(in oklab, ${color} 55%, var(--vc-fg))`], ['100%', color]] as const) {
+					s('stop', { offset }, gradient).style.stopColor = stop;
+				}
+				return `url(#${id})`;
+			}
+			return color;
+		}
+
 		private renderCenter(): void {
+			if (this.hole < 0.45) {
+				this.centerValue.textContent = '';
+				this.centerLabel.textContent = '';
+				return;
+			}
 			const part = this.parts[this.active];
+			if (!part && this.centerValueSpec !== undefined) {
+				this.centerValue.textContent = this.centerValueSpec;
+				this.centerLabel.textContent = this.centerText;
+				return;
+			}
 			this.centerValue.textContent = part ? formatPercent((part.value / (this.total || 1)) * 100) : formatValue(this.total, this.unit);
 			this.centerLabel.textContent = part ? ellipsize(part.label, '400 11px system-ui', this.size * 0.5) : this.centerText;
 		}
@@ -4925,7 +5138,17 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			this.active = index;
 			this.arcs.forEach((arc, at) => {
 				arc.style.opacity = index < 0 || at === index ? '' : '0.32';
-				arc.style.transform = at === index ? `translate(${arc.dataset.dx}px,${arc.dataset.dy}px)` : '';
+				if (this.grow) {
+					// Grow: the hovered slice reaches outward instead of sliding.
+					const geometry = this.geometry[at];
+					const outer = this.size / 2 - 10;
+					if (geometry) {
+						arc.setAttribute('d', arcPath(this.size / 2, this.size / 2, outer + (at === index ? 7 : 0), outer * this.hole, geometry.start, geometry.end));
+					}
+				} else {
+					arc.style.transform = at === index ? `translate(${arc.dataset.dx}px,${arc.dataset.dy}px)` : '';
+				}
+				arc.style.filter = at === index ? glow(this.parts[at].color) : '';
 			});
 			this.items.forEach((item, at) => item.classList.toggle('vc-active', at === index));
 			this.renderCenter();
@@ -5042,6 +5265,2050 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 
 	//#endregion
 
+	//#region Showcase charts: gauge, ring, radar, funnel, sunburst, sankey, candlestick
+
+	/*
+	 * These enter the way bklit's charts do: a 1.1s ease-in-out with items staggered in turn, and
+	 * hover answers on a spring with a touch of overshoot. Plain SVG, Web Animations and CSS
+	 * transitions; reduced motion skips all of it.
+	 */
+	const ENTER_MS = 1100;
+	const ENTER_CSS = 'cubic-bezier(0.85, 0, 0.15, 1)';
+
+	/** A CSS cubic-bezier as a function of t, for frame loops that must match a CSS easing. */
+	function cubicBezier(x1: number, y1: number, x2: number, y2: number): (t: number) => number {
+		const cx = 3 * x1;
+		const bx = 3 * (x2 - x1) - cx;
+		const ax = 1 - cx - bx;
+		const cy = 3 * y1;
+		const by = 3 * (y2 - y1) - cy;
+		const ay = 1 - cy - by;
+		const curveX = (t: number) => ((ax * t + bx) * t + cx) * t;
+		return (x: number) => {
+			let lo = 0;
+			let hi = 1;
+			let t = x;
+			for (let step = 0; step < 24; step++) {
+				const value = curveX(t);
+				if (Math.abs(value - x) < 1e-5) {
+					break;
+				}
+				if (value < x) {
+					lo = t;
+				} else {
+					hi = t;
+				}
+				t = (lo + hi) / 2;
+			}
+			return ((ay * t + by) * t + cy) * t;
+		};
+	}
+
+	const enterEase = cubicBezier(0.85, 0, 0.15, 1);
+	const zoomEase = cubicBezier(0.22, 1, 0.36, 1);
+
+	interface ISpringCss {
+		readonly ms: number;
+		readonly easing: string;
+	}
+
+	/** A mass-1 spring sampled into a CSS `linear()` easing, so transitions get it without a frame loop. */
+	function springCss(stiffness: number, damping: number): ISpringCss {
+		const samples = [0];
+		const dt = 1 / 240;
+		let x = 0;
+		let v = 0;
+		let t = 0;
+		let still = 0;
+		while (t < 2.5 && still < 24) {
+			v += (-stiffness * (x - 1) - damping * v) * dt;
+			x += v * dt;
+			t += dt;
+			if (Math.round(t * 240) % 4 === 0) {
+				samples.push(x);
+			}
+			still = Math.abs(x - 1) < 0.002 && Math.abs(v) < 0.02 ? still + 1 : 0;
+		}
+		samples.push(1);
+		return { ms: Math.round(t * 1000), easing: `linear(${samples.map(value => value.toFixed(3)).join(',')})` };
+	}
+
+	const HOVER_SPRING = springCss(400, 25);
+	const POP_SPRING = springCss(300, 20);
+	const SOFT_SPRING = springCss(100, 15);
+	const CANDLE_SPRING = springCss(62, 13.3);
+
+	/** Plays `keyframes` once, holding the first frame through `delay`. */
+	function enter(node: Element, keyframes: Keyframe[], ms: number, delay = 0, easing = ENTER_CSS): void {
+		if (!reducedMotion() && typeof node.animate === 'function') {
+			node.animate(keyframes, { duration: ms, delay, easing, fill: 'backwards' });
+		}
+	}
+
+	/** Like `tween`, with its own easing curve. */
+	function play(ms: number, ease: (t: number) => number, frame: (t: number) => void, done?: () => void): ITween {
+		if (ms <= 0 || reducedMotion()) {
+			frame(1);
+			done?.();
+			return { cancel: () => { } };
+		}
+		let handle = 0;
+		const start = win.performance.now();
+		const step = (now: number) => {
+			const t = Math.min(1, (now - start) / ms);
+			frame(ease(t));
+			if (t < 1) {
+				handle = win.requestAnimationFrame(step);
+			} else {
+				handle = 0;
+				done?.();
+			}
+		};
+		handle = win.requestAnimationFrame(step);
+		return { cancel: () => handle && win.cancelAnimationFrame(handle) };
+	}
+
+	/** Pointer position inside `element`, in CSS pixels. */
+	function localPoint(event: MouseEvent, element: Element): [number, number] {
+		const rect = element.getBoundingClientRect();
+		return [event.clientX - rect.left, event.clientY - rect.top];
+	}
+
+	function glow(color: string): string {
+		return `drop-shadow(0 0 10px color-mix(in srgb, ${color} 55%, transparent))`;
+	}
+
+	function origin(node: SVGElement | HTMLElement, x: number, y: number): void {
+		node.style.transformOrigin = `${num(x)}px ${num(y)}px`;
+	}
+
+	/** Where a point at `angle` (0 = 3 o'clock, clockwise) and `radius` sits. */
+	function polar(cx: number, cy: number, radius: number, angle: number): [number, number] {
+		return [cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)];
+	}
+
+	//#region Looks: fills, backdrops, bands and the axis pill
+
+	interface IBand {
+		readonly from: number;
+		readonly to: number;
+		readonly label?: string;
+		readonly pattern: boolean;
+	}
+
+	/** How an agent can style a chart: `style: { ... }` on it, or the same keys on the chart itself. */
+	interface ILook {
+		readonly fill?: 'gradient' | 'solid' | 'pattern' | 'none';
+		readonly stroke: boolean;
+		readonly fadeEdges: boolean;
+		readonly background: 'none' | 'dots' | 'pattern';
+		readonly grid: 'dashed' | 'solid' | 'none';
+		readonly barShape: 'rounded' | 'square' | 'pill';
+		/** Share of each slot left empty between bars, 0 for touching bars. */
+		readonly barGap?: number;
+		readonly bands: readonly IBand[];
+		/** The date pill that rides the x axis under the cursor. */
+		readonly pill: boolean;
+	}
+
+	function oneOf<T extends string>(value: unknown, options: readonly T[]): T | undefined {
+		return typeof value === 'string' && (options as readonly string[]).includes(value) ? value as T : undefined;
+	}
+
+	function readLook(spec: Record<string, unknown>): ILook {
+		const style: Record<string, unknown> = isRecord(spec.style) ? { ...spec, ...spec.style } : spec;
+		const bands = (Array.isArray(style.bands) ? style.bands : []).filter(isRecord).slice(0, 6).flatMap(band => {
+			const from = isNum(band.from) ? band.from : isNum(band.y0) ? band.y0 : undefined;
+			const to = isNum(band.to) ? band.to : isNum(band.y1) ? band.y1 : undefined;
+			return from === undefined || to === undefined ? [] : [{ from: Math.min(from, to), to: Math.max(from, to), label: str(band.label, 60), pattern: band.pattern === true || band.fill === 'pattern' }];
+		});
+		const gap = style.barGap ?? style.gap;
+		return {
+			fill: oneOf(style.fill, ['gradient', 'solid', 'pattern', 'none'] as const),
+			stroke: style.stroke !== false,
+			fadeEdges: style.fadeEdges === true,
+			background: oneOf(style.background, ['none', 'dots', 'pattern'] as const) ?? 'none',
+			grid: oneOf(style.grid, ['dashed', 'solid', 'none'] as const) ?? 'dashed',
+			barShape: oneOf(style.barShape ?? style.shape, ['rounded', 'square', 'pill'] as const) ?? 'rounded',
+			barGap: isNum(gap) ? clamp(gap, 0, 0.9) : undefined,
+			bands,
+			pill: style.pill !== false,
+		};
+	}
+
+	/** Hatching or a dot grid in `color`, defined inside `parent` so it goes away with its chart. */
+	function pattern(parent: Element, kind: 'lines' | 'dots', color: string, options?: { readonly angle?: number; readonly tint?: number; readonly ink?: number }): string {
+		const id = nextId('pt');
+		const size = kind === 'dots' ? 10 : 6;
+		const node = s('pattern', { id, patternUnits: 'userSpaceOnUse', width: size, height: size, patternTransform: kind === 'lines' ? `rotate(${options?.angle ?? 45})` : undefined }, parent);
+		if (options?.tint) {
+			const back = s('rect', { width: size, height: size }, node);
+			back.style.fill = color;
+			back.style.fillOpacity = String(options.tint);
+		}
+		if (kind === 'lines') {
+			const line = s('line', { x1: 0, y1: 0, x2: 0, y2: size }, node);
+			line.style.stroke = color;
+			line.style.strokeWidth = '1.5';
+			line.style.strokeOpacity = String(options?.ink ?? 0.7);
+		} else {
+			const dot = s('circle', { cx: size / 2, cy: size / 2, r: 1.1 }, node);
+			dot.style.fill = color;
+			dot.style.fillOpacity = String(options?.ink ?? 0.7);
+		}
+		return `url(#${id})`;
+	}
+
+	/** A top-to-bottom gradient between two colors (or one color at two opacities). */
+	function verticalGradient(parent: Element, top: string, bottom: string, topOpacity = 1, bottomOpacity = 1): string {
+		const id = nextId('vg');
+		const gradient = s('linearGradient', { id, x1: 0, x2: 0, y1: 0, y2: 1 }, parent);
+		for (const [offset, color, opacity] of [['0%', top, topOpacity], ['100%', bottom, bottomOpacity]] as const) {
+			const stop = s('stop', { offset }, gradient);
+			stop.style.stopColor = color;
+			stop.style.stopOpacity = String(opacity);
+		}
+		return `url(#${id})`;
+	}
+
+	/** A mask that fades its content in over the first and out over the last `edge` of [x0, x1]. */
+	function edgeMask(parent: Element, x0: number, x1: number, y0: number, y1: number, edge = 0.06): string {
+		const id = nextId('fm');
+		const gradient = s('linearGradient', { id: `${id}g`, gradientUnits: 'userSpaceOnUse', x1: x0, x2: x1, y1: 0, y2: 0 }, parent);
+		for (const [offset, opacity] of [[0, 0], [edge, 1], [1 - edge, 1], [1, 0]]) {
+			const stop = s('stop', { offset: String(offset) }, gradient);
+			stop.style.stopColor = '#fff';
+			stop.style.stopOpacity = String(opacity);
+		}
+		const mask = s('mask', { id, maskUnits: 'userSpaceOnUse', x: x0 - 20, y: y0 - 60, width: x1 - x0 + 40, height: y1 - y0 + 120 }, parent);
+		s('rect', { x: x0 - 20, y: y0 - 60, width: x1 - x0 + 40, height: y1 - y0 + 120, fill: `url(#${id}g)` }, mask);
+		return `url(#${id})`;
+	}
+
+	/** A dot-grid or hatched backdrop behind the plot, faded at the sides. */
+	function drawBackdrop(layer: SVGGElement, look: ILook, box: IBox): void {
+		layer.replaceChildren();
+		if (look.background === 'none') {
+			return;
+		}
+		const fill = pattern(layer, look.background === 'dots' ? 'dots' : 'lines', 'var(--vc-fg)', { ink: look.background === 'dots' ? 0.2 : 0.07 });
+		const rect = s('rect', { x: box.left, y: box.top, width: Math.max(0, box.right - box.left), height: Math.max(0, box.bottom - box.top), fill }, layer);
+		rect.setAttribute('mask', edgeMask(layer, box.left, box.right, box.top, box.bottom, 0.08));
+	}
+
+	/** Horizontal reference bands (a target range, a normal band), dashed at both edges. */
+	function drawBands(layer: SVGGElement, bands: readonly IBand[], box: IBox, sy: (value: number) => number, unit: IUnit): void {
+		for (const band of bands) {
+			const y0 = clamp(sy(band.to), box.top, box.bottom);
+			const y1 = clamp(sy(band.from), box.top, box.bottom);
+			if (y1 - y0 < 1) {
+				continue;
+			}
+			const group = s('g', { class: 'vc-refband' }, layer);
+			const rect = s('rect', { x: box.left, y: y0, width: Math.max(0, box.right - box.left), height: y1 - y0 }, group);
+			rect.style.fill = band.pattern ? pattern(group, 'lines', 'var(--vc-fg)', { ink: 0.16 }) : 'color-mix(in srgb, var(--vc-fg) 6%, transparent)';
+			rect.setAttribute('mask', edgeMask(group, box.left, box.right, y0, y1, 0.04));
+			for (const y of [y0, y1]) {
+				s('line', { x1: box.left, x2: box.right, y1: crisp(y), y2: crisp(y) }, group);
+			}
+			// allow-any-unicode-next-line
+			s('text', { x: box.right - 4, y: y0 + 13, 'text-anchor': 'end' }, group).textContent = band.label ?? `${formatValue(band.from, unit)} – ${formatValue(band.to, unit)}`;
+		}
+	}
+
+	const ROLL_SPRING = springCss(400, 35);
+
+	/**
+	 * The label riding the x axis under the cursor (bklit's date pill). It glides with the cursor
+	 * spring and rolls only the words that change: up when the cursor moves right, down when left.
+	 */
+	class AxisPill {
+		readonly element: HTMLElement;
+		private readonly slots: HTMLElement[] = [];
+		private words: string[] = [];
+		private order = -1;
+		private width = 0;
+
+		constructor(parent: HTMLElement) {
+			this.element = h('div', 'vc-pill', parent);
+			this.element.setAttribute('aria-hidden', 'true');
+		}
+
+		set(label: string, order: number): void {
+			const words = label.split(' ').filter(Boolean);
+			const direction = order >= this.order ? 1 : -1;
+			const roll = this.order >= 0 && !reducedMotion();
+			this.order = order;
+			while (this.slots.length > words.length) {
+				this.slots.pop()?.remove();
+			}
+			words.forEach((word, index) => {
+				let slot = this.slots[index];
+				if (!slot) {
+					slot = h('span', 'vc-pill-slot', this.element);
+					this.slots.push(slot);
+					this.words[index] = '';
+				}
+				if (this.words[index] === word) {
+					return;
+				}
+				const previous = slot.lastElementChild;
+				// Keep only the current word when a new hover interrupts the previous roll.
+				for (const child of [...slot.children]) {
+					for (const animation of child.getAnimations()) {
+						animation.cancel();
+					}
+					if (child !== previous) {
+						child.remove();
+					}
+				}
+				const next = h('span', 'vc-pill-word', slot, word);
+				if (previous && roll) {
+					previous.animate([{ transform: 'translateY(0)', opacity: 1 }, { transform: `translateY(${-direction * 100}%)`, opacity: 0 }], { duration: ROLL_SPRING.ms, easing: ROLL_SPRING.easing, fill: 'forwards' }).onfinish = () => previous.remove();
+					next.animate([{ transform: `translateY(${direction * 100}%)`, opacity: 0 }, { transform: 'translateY(0)', opacity: 1 }], { duration: ROLL_SPRING.ms, easing: ROLL_SPRING.easing });
+				} else {
+					previous?.remove();
+				}
+				this.words[index] = word;
+			});
+			this.words = this.words.slice(0, words.length);
+			this.width = this.element.offsetWidth;
+		}
+
+		place(x: number, top: number, width: number): void {
+			const left = clamp(x - this.width / 2, 0, Math.max(0, width - this.width));
+			this.element.style.transform = `translate3d(${Math.round(left)}px,${Math.round(top)}px,0)`;
+		}
+
+		show(): void {
+			this.element.classList.add('vc-shown');
+		}
+
+		hide(): void {
+			this.element.classList.remove('vc-shown');
+			this.order = -1;
+			this.dispose();
+		}
+
+		dispose(): void {
+			for (const slot of this.slots) {
+				for (const child of [...slot.children]) {
+					for (const animation of child.getAnimations()) {
+						animation.cancel();
+					}
+					if (child !== slot.lastElementChild) {
+						child.remove();
+					}
+				}
+			}
+		}
+	}
+
+	/** Axis tick labels the pill covers fade out, and come back as it moves on. */
+	function fadeTicks(layer: SVGGElement, x: number | undefined): void {
+		for (const text of layer.querySelectorAll<SVGTextElement>('text')) {
+			const cx = Number(text.dataset.cx);
+			const distance = x === undefined || !Number.isFinite(cx) ? Infinity : Math.abs(cx - x);
+			text.style.opacity = distance < 44 ? '0' : distance < 64 ? String((distance - 44) / 20) : '';
+		}
+	}
+
+	//#endregion
+
+	//#region Gauge and rings
+
+	interface IMeter {
+		readonly label: string;
+		readonly value: number;
+		readonly max: number;
+		readonly color: string;
+		readonly detail?: string;
+		readonly href?: string;
+	}
+
+	/** `data: [{ label, value, max? }]`, or one meter from `value` / `max` / `label` on the spec itself. */
+	function readMeters(spec: Record<string, unknown>, unit: IUnit, problems: string[], where: string): IMeter[] {
+		const raw = Array.isArray(spec.data) ? spec.data.filter(isRecord) : isNum(spec.value) ? [{ label: spec.label ?? spec.title, value: spec.value, max: spec.max }] : [];
+		const values = raw.map(item => item.value).filter(isNum);
+		const fallbackMax = isNum(spec.max) ? spec.max
+			: unit.kind === 'percent' ? 100
+				: unit.kind === 'ratio' || values.every(value => value <= 1) ? 1
+					: values.every(value => value <= 100) ? 100
+						: Math.max(...values, 1);
+		const meters = raw.slice(0, 12).flatMap((item, index) => {
+			const value = item.value;
+			if (!isNum(value)) {
+				problems.push(`${where}: item ${index + 1} needs a numeric "value".`);
+				return [];
+			}
+			const max = isNum(item.max) && item.max > 0 ? item.max : fallbackMax;
+			return [{ label: str(item.label ?? item.name, 80) ?? '', value, max, color: seriesColor(item.color, index, str(item.label)), detail: str(item.detail, 200), href: safeHref(item.href) }];
+		});
+		if (!meters.length) {
+			problems.push(`${where}: give "value": 72 (with "max"), or "data": [{ "label": "...", "value": 72, "max": 100 }].`);
+		}
+		return meters;
+	}
+
+	/**
+	 * Notches that light up to the value, on a 270-degree arc or a straight track. Notches can be square
+	 * wedges, soft or fully round, shallow or deep, and take a two-color ramp; several readings get
+	 * a switcher.
+	 */
+	class GaugeBlock implements IBlock {
+		readonly element: HTMLElement;
+		private readonly unit: IUnit;
+		private readonly meters: IMeter[];
+		private readonly notches: number;
+		private readonly linear: boolean;
+		private readonly notchStyle: 'square' | 'soft' | 'round';
+		private readonly depth: number;
+		private readonly ramp: readonly [string, string] | undefined;
+		private readonly labelPlacement: 'center' | 'below' | 'none';
+		private readonly plot: HTMLElement;
+		private readonly svg: SVGSVGElement;
+		private readonly center: HTMLElement;
+		private readonly valueEl: HTMLElement;
+		private readonly labelEl: HTMLElement;
+		private readonly caption: HTMLElement;
+		private lit: SVGElement[] = [];
+		private litCount = 0;
+		private index = 0;
+		private shown = 0;
+		private width = 0;
+		private drawn = false;
+		private counter: ITween | undefined;
+
+		constructor(parent: HTMLElement, spec: Record<string, unknown>, private readonly ctx: IContext, problems: string[], where: string) {
+			this.element = h('div', 'vc-block', parent);
+			blockHead(this.element, spec.title, spec.subtitle);
+			const values = (Array.isArray(spec.data) ? spec.data.filter(isRecord).map(item => item.value) : [spec.value]).filter(isNum);
+			this.unit = resolveUnit(spec.unit, `${str(spec.title) ?? ''} ${str(spec.subtitle) ?? ''}`, values);
+			this.meters = readMeters(spec, this.unit, problems, where);
+			this.notches = isNum(spec.notches) ? clamp(Math.round(spec.notches), 8, 120) : spec.shape === 'linear' ? 64 : 40;
+			this.linear = spec.shape === 'linear' || spec.orientation === 'linear' || spec.orientation === 'horizontal';
+			this.notchStyle = oneOf(spec.notch ?? spec.notchStyle, ['square', 'soft', 'round'] as const) ?? (this.linear ? 'soft' : 'square');
+			this.depth = isNum(spec.depth) ? clamp(spec.depth, 0.15, 1) : 1;
+			const colors = (Array.isArray(spec.colors) ? spec.colors : []).map(cssColor).filter((color): color is string => !!color);
+			this.ramp = colors.length ? [colors[0], colors[colors.length - 1]] : undefined;
+			this.labelPlacement = oneOf(spec.labelPlacement, ['center', 'below', 'none'] as const) ?? (this.linear ? 'below' : 'center');
+			if (this.meters.length > 1) {
+				segmented(this.element, str(spec.title) ?? ctx.strings.chart, this.meters.map((meter, index) => ({ id: String(index), label: meter.label })), '0', id => this.select(Number(id), true));
+			}
+			this.plot = h('div', `vc-plot vc-gauge${this.linear ? ' vc-gauge-linear' : ''}`, this.element);
+			this.svg = s('svg', { class: 'vc-svg', role: 'img' }, this.plot);
+			this.center = h('div', `vc-gauge-center vc-at-${this.labelPlacement}`, this.plot);
+			this.valueEl = h('div', 'vc-gauge-value', this.center);
+			this.labelEl = h('div', 'vc-gauge-label', this.center);
+			this.caption = h('div', 'vc-note vc-gauge-caption', this.element);
+		}
+
+		private notchColor(index: number, lit: boolean): string {
+			const t = index / Math.max(1, this.notches - 1);
+			if (this.ramp) {
+				const color = `color-mix(in oklab, ${this.ramp[1]} ${Math.round(t * 100)}%, ${this.ramp[0]})`;
+				return lit ? color : `color-mix(in srgb, ${color} 20%, transparent)`;
+			}
+			return lit ? `color-mix(in oklab, var(--vc-accent) ${Math.round(42 + 58 * t)}%, var(--vc-bg))` : '';
+		}
+
+		layout(width: number): void {
+			if (width === this.width && this.drawn) {
+				return;
+			}
+			this.width = width;
+			const animate = !this.drawn && this.ctx.animate;
+			this.svg.replaceChildren();
+			this.lit = [];
+			if (this.linear) {
+				this.layoutLinear(width, animate);
+			} else {
+				this.layoutArc(width, animate);
+			}
+			this.litCount = 0;
+			this.select(this.index, animate);
+			this.drawn = true;
+		}
+
+		private addNotch(make: () => SVGElement, index: number, cx: number, cy: number, animate: boolean, fromCenter: boolean): void {
+			const track = make();
+			track.classList.add('vc-gauge-track');
+			const trackColor = this.notchColor(index, false);
+			if (trackColor) {
+				track.style.color = trackColor;
+			}
+			const lit = make();
+			lit.classList.add('vc-gauge-lit');
+			lit.style.color = this.notchColor(index, true);
+			origin(track, cx, cy);
+			origin(lit, cx, cy);
+			if (animate) {
+				enter(track, [{ transform: fromCenter ? 'scale(0)' : 'scaleY(0)', opacity: 0 }, { transform: 'none', opacity: 1 }], POP_SPRING.ms, index * (fromCenter ? 15 : 6), POP_SPRING.easing);
+			}
+			this.lit.push(lit);
+		}
+
+		private layoutArc(width: number, animate: boolean): void {
+			const size = Math.round(clamp(width < 440 ? width * 0.78 : width * 0.5, 170, 280));
+			const cx = size / 2;
+			const cy = size * 0.52;
+			const outer = size * 0.46;
+			const inner = outer - (outer - size * 0.31) * this.depth;
+			const height = Math.round(size * 0.9);
+			setAttrs(this.svg, { width: size, height, viewBox: `0 0 ${size} ${height}` });
+			this.center.style.top = `${Math.round(cy - 26)}px`;
+			const start = Math.PI * 0.75;
+			const slot = (Math.PI * 1.5) / this.notches;
+			for (let index = 0; index < this.notches; index++) {
+				const a0 = start + index * slot + slot * 0.1;
+				const a1 = a0 + slot * 0.8;
+				this.addNotch(() => {
+					if (this.notchStyle === 'square') {
+						return s('path', { d: arcPath(cx, cy, outer, inner, a0, a1), class: 'vc-gauge-notch' }, this.svg);
+					}
+					// Soft and round notches are radial strokes with round caps, so their tips are filleted.
+					const mid = (a0 + a1) / 2;
+					const thick = Math.max(2, ((a1 - a0) * (outer + inner)) / 2 * (this.notchStyle === 'round' ? 1.15 : 0.8));
+					let r0 = inner + thick / 2;
+					let r1 = outer - thick / 2;
+					if (r1 < r0) {
+						r0 = r1 = (r0 + r1) / 2;
+					}
+					const [x0, y0] = polar(cx, cy, r0, mid);
+					const [x1, y1] = polar(cx, cy, r1, mid);
+					return s('line', { x1: x0, y1: y0, x2: x1, y2: y1, 'stroke-width': num(thick), class: 'vc-gauge-notch vc-gauge-cap' }, this.svg);
+				}, index, cx, cy, animate, true);
+			}
+		}
+
+		private layoutLinear(width: number, animate: boolean): void {
+			const barHeight = Math.round(8 + 24 * this.depth);
+			setAttrs(this.svg, { width, height: barHeight, viewBox: `0 0 ${width} ${barHeight}` });
+			const slot = width / this.notches;
+			const notchWidth = Math.max(1.5, slot * (this.notchStyle === 'round' ? 0.62 : 0.55));
+			const radius = this.notchStyle === 'square' ? 0.5 : this.notchStyle === 'soft' ? Math.min(2.5, notchWidth / 2) : notchWidth / 2;
+			for (let index = 0; index < this.notches; index++) {
+				const x = index * slot + (slot - notchWidth) / 2;
+				this.addNotch(() => s('rect', { x, y: 0, width: notchWidth, height: barHeight, rx: radius, class: 'vc-gauge-notch' }, this.svg), index, x + notchWidth / 2, barHeight, animate, false);
+			}
+		}
+
+		private select(index: number, animate: boolean): void {
+			const meter = this.meters[index];
+			if (!meter) {
+				return;
+			}
+			this.index = index;
+			const count = Math.round(clamp(meter.value / meter.max, 0, 1) * this.notches);
+			const first = !this.drawn;
+			this.lit.forEach((notch, at) => {
+				const on = at < count;
+				if (animate && on && at >= this.litCount) {
+					enter(notch, [{ opacity: 0, transform: this.linear ? 'scaleY(.4)' : 'scale(.6)' }, { opacity: 1, transform: 'none' }], POP_SPRING.ms, (first ? 300 : 0) + (at - (first ? 0 : this.litCount)) * (this.linear ? 10 : 20), POP_SPRING.easing);
+				}
+				notch.style.opacity = on ? '1' : '0';
+			});
+			this.litCount = count;
+			const from = this.shown;
+			this.shown = meter.value;
+			this.counter?.cancel();
+			this.counter = tween(animate ? 900 : 0, t => this.valueEl.textContent = formatValue(from + (meter.value - from) * t, this.unit));
+			this.labelEl.textContent = meter.label;
+			this.caption.textContent = meter.detail ?? `${formatValue(meter.value, this.unit, true)} / ${formatValue(meter.max, this.unit, true)}`;
+			this.svg.setAttribute('aria-label', `${meter.label} ${formatValue(meter.value, this.unit, true)}`);
+		}
+
+		dispose(): void {
+			this.counter?.cancel();
+		}
+	}
+
+	/**
+	 * Concentric progress rings, one per meter, on a full circle, three quarters or a half. Caps
+	 * are round or flat; the legend is a list or a list with progress bars.
+	 */
+	class RingBlock implements IBlock {
+		readonly element: HTMLElement;
+		private readonly unit: IUnit;
+		private readonly meters: IMeter[];
+		private readonly sweep: number;
+		private readonly caps: 'round' | 'flat';
+		private readonly thickSpec?: number;
+		private readonly gapSpec?: number;
+		private readonly centerValueSpec?: string;
+		private readonly centerLabelSpec?: string;
+		private readonly svg: SVGSVGElement;
+		private readonly list: HTMLElement;
+		private readonly centerValue: SVGTextElement;
+		private readonly centerLabel: SVGTextElement;
+		private groups: SVGGElement[] = [];
+		private readonly items: HTMLElement[] = [];
+		private active = -1;
+		private size = 0;
+		private drawn = false;
+
+		constructor(parent: HTMLElement, spec: Record<string, unknown>, private readonly ctx: IContext, problems: string[], where: string) {
+			this.element = h('div', 'vc-block', parent);
+			blockHead(this.element, spec.title, spec.subtitle);
+			const values = (Array.isArray(spec.data) ? spec.data.filter(isRecord).map(item => item.value) : []).filter(isNum);
+			this.unit = resolveUnit(spec.unit, `${str(spec.title) ?? ''} ${str(spec.subtitle) ?? ''}`, values);
+			this.meters = readMeters(spec, this.unit, problems, where).slice(0, 6);
+			this.sweep = spec.arc === 270 || spec.arc === '270' ? 270 : spec.arc === 180 || spec.arc === '180' ? 180 : 360;
+			this.caps = spec.caps === 'flat' || spec.caps === 'butt' ? 'flat' : 'round';
+			this.thickSpec = isNum(spec.thickness) ? clamp(spec.thickness, 4, 40) : undefined;
+			this.gapSpec = isNum(spec.gap) ? clamp(spec.gap, 0, 30) : undefined;
+			this.centerValueSpec = isNum(spec.centerValue) ? formatValue(spec.centerValue, this.unit) : str(spec.centerValue, 24);
+			this.centerLabelSpec = str(spec.centerLabel, 40);
+			const bars = spec.legend === 'bars';
+			const wrap = h('div', `vc-donut${bars ? ' vc-ring-stack' : ''}`, this.element);
+			this.svg = s('svg', { role: 'img', class: 'vc-ring' }, wrap);
+			this.list = h('div', `vc-donut-list${bars ? ' vc-ring-bars' : ''}`, wrap);
+			this.list.setAttribute('role', 'list');
+			if (spec.legend === 'none') {
+				this.list.style.display = 'none';
+			}
+			this.centerValue = s('text', { class: 'vc-donut-center-value', 'text-anchor': 'middle' });
+			this.centerLabel = s('text', { class: 'vc-donut-center-label', 'text-anchor': 'middle' });
+			this.meters.forEach((meter, index) => {
+				const item = h('div', 'vc-donut-item', this.list);
+				item.tabIndex = 0;
+				item.setAttribute('role', 'listitem');
+				const line = bars ? h('div', 'vc-ring-row', item) : item;
+				h('span', 'vc-swatch', line).style.background = meter.color;
+				h('span', 'vc-tip-name', line, meter.label);
+				h('span', 'vc-tip-value', line, formatValue(meter.value, this.unit));
+				// A percent out of 100 is already its own share.
+				if (!(this.unit.kind === 'percent' && meter.max === 100)) {
+					h('span', 'vc-donut-share', line, formatPercent((meter.value / meter.max) * 100));
+				}
+				if (bars) {
+					const fill = h('i', '', h('span', 'vc-ring-progress', item));
+					fill.style.width = `${clamp(meter.value / meter.max, 0, 1) * 100}%`;
+					fill.style.background = meter.color;
+				}
+				item.addEventListener('pointerenter', () => this.setActive(index));
+				item.addEventListener('pointerleave', () => this.setActive(-1));
+				item.addEventListener('focus', () => this.setActive(index));
+				item.addEventListener('blur', () => this.setActive(-1));
+				item.addEventListener('click', () => meter.href && this.ctx.onOpen?.(meter.href));
+				this.items.push(item);
+			});
+			this.svg.setAttribute('aria-label', this.meters.map(meter => `${meter.label} ${formatValue(meter.value, this.unit, true)}`).join(', '));
+		}
+
+		layout(width: number): void {
+			const size = Math.round(clamp(width < 440 ? width * 0.56 : 196, 140, 240));
+			if (size === this.size && this.drawn) {
+				return;
+			}
+			this.size = size;
+			const animate = !this.drawn && this.ctx.animate;
+			const half = this.sweep === 180;
+			const height = half ? Math.round(size * 0.58) : size;
+			setAttrs(this.svg, { width: size, height, viewBox: `0 0 ${size} ${height}` });
+			this.svg.replaceChildren();
+			const c = size / 2;
+			const cy = half ? height - 6 : c;
+			const thick = this.thickSpec ?? clamp(size * 0.065, 8, 15);
+			const gap = this.gapSpec ?? thick * 0.5;
+			// Where the arc starts, in SVG degrees (0 = 3 o'clock): the top, the bottom, or the left.
+			const rotation = this.sweep === 360 ? -90 : this.sweep === 270 ? 90 : 180;
+			const span = this.sweep / 360;
+			this.groups = [];
+			this.meters.forEach((meter, index) => {
+				const radius = (half ? Math.min(c, cy) : c) - 4 - thick / 2 - index * (thick + gap);
+				if (radius < thick) {
+					return;
+				}
+				const length = 2 * Math.PI * radius;
+				const share = clamp(meter.value / meter.max, 0, 1);
+				const group = s('g', { class: 'vc-ring-g' }, this.svg);
+				origin(group, c, cy);
+				const turn = `rotate(${rotation} ${num(c)} ${num(cy)})`;
+				const linecap = this.caps === 'round' ? 'round' : 'butt';
+				s('circle', { cx: c, cy, r: radius, class: 'vc-ring-track', 'stroke-width': thick, 'stroke-linecap': linecap, 'stroke-dasharray': `${num(length * span)} ${num(length)}`, transform: turn }, group);
+				const arc = s('circle', { cx: c, cy, r: radius, class: 'vc-ring-arc', 'stroke-width': thick, 'stroke-linecap': linecap, 'stroke-dasharray': `${num(length * span * share)} ${num(length)}`, transform: turn }, group);
+				arc.style.stroke = meter.color;
+				s('circle', { cx: c, cy, r: radius, class: 'vc-ring-hit', 'stroke-width': thick + gap, 'stroke-dasharray': `${num(length * span)} ${num(length)}`, transform: turn }, group);
+				group.addEventListener('pointerenter', () => this.setActive(index));
+				group.addEventListener('pointerleave', () => this.setActive(-1));
+				group.addEventListener('click', () => meter.href && this.ctx.onOpen?.(meter.href));
+				if (animate) {
+					enter(group, [{ transform: 'scale(0)' }, { transform: 'scale(1)' }], ENTER_MS, index * 80);
+					enter(arc, [{ strokeDasharray: `0 ${num(length)}` }, { strokeDasharray: `${num(length * span * share)} ${num(length)}` }], ENTER_MS, 600 + index * 100);
+				}
+				this.groups.push(group);
+			});
+			this.svg.appendChild(this.centerValue);
+			this.svg.appendChild(this.centerLabel);
+			setAttrs(this.centerValue, { x: c, y: half ? cy - 22 : cy + 2 });
+			setAttrs(this.centerLabel, { x: c, y: half ? cy - 5 : cy + 19 });
+			this.renderCenter();
+			this.drawn = true;
+		}
+
+		private renderCenter(): void {
+			const meter = this.meters[this.active];
+			const lead = this.meters[0];
+			if (!meter && this.centerValueSpec !== undefined) {
+				this.centerValue.textContent = this.centerValueSpec;
+				this.centerLabel.textContent = this.centerLabelSpec ?? '';
+				return;
+			}
+			const shown = meter ?? lead;
+			this.centerValue.textContent = shown ? formatValue(shown.value, this.unit) : '';
+			this.centerLabel.textContent = shown ? ellipsize(meter ? shown.label : this.centerLabelSpec ?? shown.label, '400 11px system-ui', this.size * 0.42) : '';
+		}
+
+		private setActive(index: number): void {
+			this.active = index;
+			this.groups.forEach((group, at) => {
+				group.style.transform = index < 0 ? '' : at === index ? 'scale(1.03)' : at < index ? 'scale(1.02)' : '';
+				group.style.opacity = index < 0 || at === index ? '' : '0.35';
+				group.style.filter = at === index ? glow(this.meters[at].color) : '';
+			});
+			this.items.forEach((item, at) => item.classList.toggle('vc-active', at === index));
+			this.renderCenter();
+		}
+
+		dispose(): void { }
+	}
+
+	//#endregion
+
+	//#region Radar
+
+	interface IRadarAxis {
+		readonly label: string;
+		readonly unit: IUnit;
+		readonly max: number;
+	}
+
+	interface IRadarSeries {
+		readonly name: string;
+		readonly color: string;
+		readonly values: readonly number[];
+	}
+
+	/** Several entities compared across 3-12 measures. Each axis is scaled to its largest value unless a shared `max` is given. */
+	class RadarBlock implements IBlock {
+		readonly element: HTMLElement;
+		private readonly axes: IRadarAxis[];
+		private readonly series: IRadarSeries[];
+		private readonly plot: HTMLElement;
+		private readonly svg: SVGSVGElement;
+		private readonly tip: Tip;
+		private readonly legendItems: HTMLElement[] = [];
+		private areas: { group: SVGGElement; polygon: SVGPolygonElement; dots: SVGCircleElement[] }[] = [];
+		private width = 0;
+		private drawn = false;
+
+		constructor(parent: HTMLElement, spec: Record<string, unknown>, private readonly ctx: IContext, problems: string[], where: string) {
+			this.element = h('div', 'vc-block', parent);
+			blockHead(this.element, spec.title, spec.subtitle);
+			const rawAxes = Array.isArray(spec.axes) ? spec.axes.slice(0, 12) : Array.isArray(spec.categories) ? spec.categories.slice(0, 12) : [];
+			const rawSeries = (Array.isArray(spec.series) ? spec.series : []).filter(isRecord).slice(0, 8);
+			const unit = resolveUnit(spec.unit, `${str(spec.title) ?? ''} ${str(spec.subtitle) ?? ''}`);
+			this.series = rawSeries.map((series, index) => {
+				const name = str(series.name, 80) ?? `${index + 1}`;
+				const values = (Array.isArray(series.data) ? series.data : []).slice(0, rawAxes.length).map(value => isNum(value) ? value : 0);
+				if (values.length !== rawAxes.length) {
+					problems.push(`${where}: series "${name}" needs one value per axis (${rawAxes.length}).`);
+				}
+				return { name, color: seriesColor(series.color, index, name), values };
+			});
+			this.axes = rawAxes.map((axis, index) => {
+				const record: Record<string, unknown> = isRecord(axis) ? axis : { label: axis };
+				const own = Math.max(...this.series.map(series => series.values[index] ?? 0), 0);
+				return {
+					label: str(record.label ?? record.name, 40) ?? `${index + 1}`,
+					unit: record.unit !== undefined ? resolveUnit(record.unit) : unit,
+					max: isNum(record.max) && record.max > 0 ? record.max : isNum(spec.max) && spec.max > 0 ? spec.max : own || 1,
+				};
+			});
+			if (this.axes.length < 3 || !this.series.length) {
+				problems.push(`${where}: radars need "axes": ["Speed", "Cost", "Quality", ...] (3 or more) and "series": [{ "name": "...", "data": [one per axis] }].`);
+			}
+			this.plot = h('div', 'vc-plot', this.element);
+			this.svg = s('svg', { class: 'vc-svg', role: 'img' }, this.plot);
+			this.svg.setAttribute('aria-label', this.series.map(series => `${series.name}: ${series.values.map((value, index) => `${this.axes[index]?.label} ${formatValue(value, this.axes[index]?.unit ?? unit, true)}`).join(', ')}`).join('; '));
+			this.tip = new Tip(this.plot);
+			if (this.series.length > 1) {
+				const legend = h('div', 'vc-legend vc-legend-static', this.element);
+				this.series.forEach((series, index) => {
+					const item = h('span', 'vc-legend-item', legend);
+					h('span', 'vc-swatch', item).style.background = series.color;
+					item.append(series.name);
+					item.addEventListener('pointerenter', () => this.highlight(index));
+					item.addEventListener('pointerleave', () => this.highlight(-1));
+					this.legendItems.push(item);
+				});
+			}
+		}
+
+		layout(width: number): void {
+			if (width === this.width && this.drawn) {
+				return;
+			}
+			this.width = width;
+			const animate = !this.drawn && this.ctx.animate;
+			const size = Math.min(width, 420);
+			const cx = width / 2;
+			const cy = size / 2;
+			const radius = Math.max(40, size / 2 - (width < 520 ? 74 : 60));
+			const n = this.axes.length;
+			const angle = (index: number) => -Math.PI / 2 + (index / n) * Math.PI * 2;
+			setAttrs(this.svg, { width, height: size, viewBox: `0 0 ${width} ${size}` });
+			this.plot.style.height = `${size}px`;
+			this.svg.replaceChildren();
+			const grid = s('g', { class: 'vc-radar-grid' }, this.svg);
+			for (let level = 1; level <= 5; level++) {
+				const points = this.axes.map((_, index) => polar(cx, cy, (radius * level) / 5, angle(index)).map(num).join(',')).join(' ');
+				const ring = s('polygon', { points, class: level === 5 ? 'vc-radar-edge' : '' }, grid);
+				origin(ring, cx, cy);
+				if (animate) {
+					enter(ring, [{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], SOFT_SPRING.ms, level * 80, SOFT_SPRING.easing);
+				}
+			}
+			const font = `600 11.5px ${win.getComputedStyle(this.element).fontFamily || 'system-ui'}`;
+			this.axes.forEach((axis, index) => {
+				const [x, y] = polar(cx, cy, radius, angle(index));
+				const spoke = s('line', { x1: cx, y1: cy, x2: x, y2: y }, grid);
+				origin(spoke, cx, cy);
+				const [lx, ly] = polar(cx, cy, radius + 18, angle(index));
+				const anchor = Math.abs(lx - cx) < 6 ? 'middle' : lx > cx ? 'start' : 'end';
+				const room = anchor === 'middle' ? width : anchor === 'start' ? width - lx - 2 : lx - 2;
+				const label = s('text', { x: lx, y: ly, 'text-anchor': anchor, 'dominant-baseline': 'central', class: 'vc-radar-label' }, this.svg);
+				label.textContent = ellipsize(axis.label, font, room);
+				if (animate) {
+					enter(spoke, [{ transform: 'scale(0)' }, { transform: 'scale(1)' }], SOFT_SPRING.ms, index * 50, SOFT_SPRING.easing);
+					enter(label, [{ transform: `translate(${num(cx - lx)}px,${num(cy - ly)}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }], SOFT_SPRING.ms, 200 + index * 80, SOFT_SPRING.easing);
+				}
+			});
+			this.areas = this.series.map((series, si) => {
+				const group = s('g', { class: 'vc-radar-area' }, this.svg);
+				origin(group, cx, cy);
+				const points = series.values.map((value, index) => polar(cx, cy, radius * clamp(value / this.axes[index].max, 0, 1.15), angle(index)));
+				const polygon = s('polygon', { points: points.map(point => point.map(num).join(',')).join(' ') }, group);
+				polygon.style.fill = series.color;
+				polygon.style.stroke = series.color;
+				const dots = points.map(([x, y]) => {
+					const dot = s('circle', { cx: x, cy: y, r: 3.5 }, group);
+					dot.style.fill = series.color;
+					return dot;
+				});
+				polygon.addEventListener('pointerenter', () => this.highlight(si));
+				polygon.addEventListener('pointerleave', () => this.highlight(-1));
+				if (animate) {
+					enter(group, [{ transform: 'scale(0)' }, { transform: 'scale(1)' }], ENTER_MS, 600 + si * 150);
+				}
+				return { group, polygon, dots };
+			});
+			// Bigger-than-the-dot targets at each vertex compare every series on that axis.
+			this.axes.forEach((axis, index) => {
+				const [x, y] = polar(cx, cy, radius, angle(index));
+				const hit = s('circle', { cx: x, cy: y, r: 16, class: 'vc-radar-hit' }, this.svg);
+				hit.addEventListener('pointerenter', () => {
+					this.tip.set({ title: axis.label, rows: this.series.map(series => ({ name: series.name, value: formatValue(series.values[index], axis.unit), color: series.color })) });
+					this.tip.show();
+					this.tip.place(x, y, width, 0, size);
+				});
+				hit.addEventListener('pointerleave', () => this.tip.hide());
+			});
+			this.drawn = true;
+		}
+
+		private highlight(index: number): void {
+			this.areas.forEach((area, at) => {
+				const on = at === index;
+				area.group.classList.toggle('vc-on', on);
+				area.group.style.opacity = index < 0 || on ? '' : '0.3';
+				area.group.style.filter = on ? glow(this.series[at].color) : '';
+			});
+			this.legendItems.forEach((item, at) => item.style.opacity = index < 0 || at === index ? '' : '0.45');
+			if (index >= 0) {
+				const series = this.series[index];
+				this.tip.set({ title: series.name, rows: this.axes.map((axis, at) => ({ name: axis.label, value: formatValue(series.values[at], axis.unit) })) });
+				this.tip.show();
+				this.tip.place(this.width / 2 + 40, 40, this.width, 0, this.plot.clientHeight);
+			} else {
+				this.tip.hide();
+			}
+		}
+
+		dispose(): void {
+			this.tip.dispose();
+		}
+	}
+
+	//#endregion
+
+	//#region Funnel
+
+	/**
+	 * Stages that narrow: sign-ups to paying users, files to the hottest few. Vertical (top to
+	 * bottom) or horizontal (left to right); curved or straight edges; one color, the palette, or a
+	 * ramp; labels beside the funnel or grouped on it.
+	 */
+	class FunnelBlock implements IBlock {
+		readonly element: HTMLElement;
+		private readonly parts: IPart[];
+		private readonly unit: IUnit;
+		private readonly color: string;
+		private readonly log: boolean;
+		private readonly horizontal: boolean;
+		private readonly straight: boolean;
+		private readonly colors: 'single' | 'palette' | 'gradient';
+		private readonly patterned: boolean;
+		private readonly grouped: boolean;
+		private readonly grid: boolean;
+		private readonly svg: SVGSVGElement;
+		private readonly plot: HTMLElement;
+		private readonly tip: Tip;
+		private segments: { group: SVGGElement; layers: SVGPathElement[]; label: SVGGElement; anchor: [number, number] }[] = [];
+		private width = 0;
+		private drawn = false;
+
+		constructor(parent: HTMLElement, spec: Record<string, unknown>, private readonly ctx: IContext, problems: string[], where: string) {
+			this.element = h('div', 'vc-block', parent);
+			blockHead(this.element, spec.title, spec.subtitle);
+			this.parts = readParts(spec.data, problems, where).filter(part => part.value >= 0).slice(0, 12);
+			this.unit = resolveUnit(spec.unit, `${str(spec.title) ?? ''} ${str(spec.subtitle) ?? ''}`, this.parts.map(part => part.value));
+			this.color = cssColor(spec.color) ?? 'var(--vc-accent)';
+			const values = this.parts.map(part => part.value).filter(value => value > 0);
+			const spread = values.length ? Math.max(...values) / Math.min(...values) : 1;
+			this.log = spec.scale === 'log' || (spec.scale !== 'linear' && spread > 40);
+			this.horizontal = spec.orientation === 'horizontal';
+			this.straight = spec.edges === 'straight';
+			this.colors = oneOf(spec.colors, ['single', 'palette', 'gradient'] as const) ?? 'single';
+			this.patterned = spec.fill === 'pattern';
+			this.grouped = spec.labels === 'grouped';
+			this.grid = spec.grid === true || spec.background === 'grid';
+			this.plot = h('div', 'vc-plot', this.element);
+			this.svg = s('svg', { class: 'vc-svg', role: 'img' }, this.plot);
+			this.svg.setAttribute('aria-label', this.parts.map(part => `${part.label} ${formatValue(part.value, this.unit, true)}`).join(', '));
+			this.tip = new Tip(this.plot);
+			if (this.log) {
+				h('div', 'vc-note', this.element, ctx.strings.logScale);
+			}
+		}
+
+		private stageColor(index: number): string {
+			if (this.colors === 'palette') {
+				return PALETTE[index % PALETTE.length];
+			}
+			if (this.colors === 'gradient') {
+				return `color-mix(in oklab, var(--vc-fg) ${Math.round((index / Math.max(1, this.parts.length - 1)) * 70)}%, ${this.color})`;
+			}
+			return this.color;
+		}
+
+		private norm(value: number): number {
+			const first = this.parts[0]?.value || 1;
+			return Math.max(0.04, this.log ? Math.log10(value + 1) / Math.log10(first + 1) : value / first);
+		}
+
+		/** A segment between two half-widths, along x (horizontal) or y (vertical). */
+		private shape(a0: number, a1: number, half0: number, half1: number, center: number, k: number): string {
+			const p = (along: number, across: number) => this.horizontal ? `${num(along)},${num(center + across)}` : `${num(center + across)},${num(along)}`;
+			const length = a1 - a0;
+			const h0 = half0 * k;
+			const h1 = half1 * k;
+			if (this.straight) {
+				return `M${p(a0, -h0)}L${p(a1, -h1)}L${p(a1, h1)}L${p(a0, h0)}Z`;
+			}
+			return `M${p(a0, -h0)}C${p(a0 + length * 0.55, -h0)} ${p(a1 - length * 0.55, -h1)} ${p(a1, -h1)}L${p(a1, h1)}C${p(a1 - length * 0.55, h1)} ${p(a0 + length * 0.55, h0)} ${p(a0, h0)}Z`;
+		}
+
+		layout(width: number): void {
+			if (width === this.width && this.drawn) {
+				return;
+			}
+			this.width = width;
+			const animate = !this.drawn && this.ctx.animate;
+			const parts = this.parts;
+			const n = Math.max(1, parts.length);
+			const fontFamily = win.getComputedStyle(this.element).fontFamily || 'system-ui';
+			const font = `400 12px ${fontFamily}`;
+			const first = parts[0]?.value || 1;
+			const gapAlong = 4;
+			let height: number;
+			let segLength: number;
+			let center: number;
+			let half: number;
+			if (this.horizontal) {
+				height = width < 440 ? 220 : 260;
+				segLength = (width - gapAlong * (n - 1)) / n;
+				center = height / 2;
+				half = height * 0.32;
+			} else {
+				segLength = width < 440 ? 46 : 54;
+				height = n * (segLength + gapAlong);
+				center = this.grouped ? width / 2 : Math.min(width * 0.3, 150);
+				half = this.grouped ? Math.min(width * 0.42, 220) : Math.min(width * 0.27, 128);
+			}
+			setAttrs(this.svg, { width, height, viewBox: `0 0 ${width} ${height}` });
+			this.plot.style.height = `${height}px`;
+			this.svg.replaceChildren();
+			if (this.grid) {
+				parts.forEach((_, index) => {
+					if (index % 2 === 0) {
+						const a0 = index * (segLength + gapAlong);
+						s('rect', this.horizontal ? { x: a0, y: 0, width: segLength, height, class: 'vc-funnel-band' } : { x: 0, y: a0, width, height: segLength, class: 'vc-funnel-band' }, this.svg);
+					}
+				});
+			}
+			this.segments = parts.map((part, index) => {
+				const a0 = index * (segLength + gapAlong);
+				const a1 = a0 + segLength;
+				const half0 = this.norm(part.value) * half;
+				const half1 = this.norm(parts[index + 1]?.value ?? part.value * 0.6) * half;
+				const color = this.stageColor(index);
+				const group = s('g', { class: 'vc-funnel-seg' }, this.svg);
+				const pivot: [number, number] = this.horizontal ? [a0, center] : [center, a0];
+				origin(group, pivot[0], pivot[1]);
+				const layers = [0, 1, 2].map(layer => {
+					const path = s('path', { d: this.shape(a0, a1, half0, half1, center, 1 - (layer / 3) * 0.35) }, group);
+					path.style.fill = layer === 2 && this.patterned ? pattern(group, 'lines', color, { tint: 0.35, ink: 0.9 }) : color;
+					path.style.opacity = String(0.18 + (layer / 2) * 0.65);
+					if (this.horizontal) {
+						origin(path, (a0 + a1) / 2, center);
+					} else {
+						origin(path, center, a0 + segLength / 2);
+					}
+					const spring = springCss(300 - 60 * layer, 24 - 3 * layer);
+					path.style.transition = `transform ${spring.ms}ms ${spring.easing}`;
+					return path;
+				});
+				const label = s('g', { class: 'vc-funnel-label' }, this.svg);
+				const valueText = formatValue(part.value, this.unit);
+				const share = part.value / first;
+				const pctText = share >= 0.995 ? '100%' : share < 0.01 ? `${(share * 100).toFixed(2)}%` : formatPercent(share * 100);
+				const pillFont = `600 10.5px ${fontFamily}`;
+				const pillWidth = textWidth(pctText, pillFont) + 14;
+				const pill = (x: number, y: number) => {
+					s('rect', { x: x - pillWidth / 2, y: y - 9, width: pillWidth, height: 18, rx: 9, class: 'vc-funnel-pill' }, label);
+					s('text', { x, y: y + 3.5, 'text-anchor': 'middle', class: 'vc-funnel-pill-text' }, label).textContent = pctText;
+				};
+				let anchor: [number, number];
+				if (this.horizontal) {
+					const mid = (a0 + a1) / 2;
+					const room = segLength - 8;
+					if (this.grouped) {
+						s('text', { x: mid, y: center - 24, 'text-anchor': 'middle', class: 'vc-funnel-big' }, label).textContent = valueText;
+						pill(mid, center);
+						s('text', { x: mid, y: center + 28, 'text-anchor': 'middle', class: 'vc-funnel-value' }, label).textContent = ellipsize(part.label, font, room);
+					} else {
+						s('text', { x: mid, y: 22, 'text-anchor': 'middle', class: 'vc-funnel-big' }, label).textContent = valueText;
+						pill(mid, center);
+						s('text', { x: mid, y: height - 10, 'text-anchor': 'middle', class: 'vc-funnel-value' }, label).textContent = ellipsize(part.label, font, room);
+					}
+					anchor = [mid, center];
+				} else if (this.grouped) {
+					const mid = a0 + segLength / 2;
+					s('text', { x: center - 12, y: mid + 4, 'text-anchor': 'end', class: 'vc-funnel-big' }, label).textContent = valueText;
+					pill(center + 12 + pillWidth / 2, mid);
+					s('text', { x: width - 4, y: mid + 4, 'text-anchor': 'end', class: 'vc-funnel-value' }, label).textContent = ellipsize(part.label, font, width * 0.25);
+					anchor = [center, mid];
+				} else {
+					const lx = center + half + 18;
+					s('text', { x: lx, y: a0 + 21, class: 'vc-funnel-name' }, label).textContent = ellipsize(part.label, `600 12px ${fontFamily}`, width - lx - 4);
+					s('text', { x: lx, y: a0 + 39, class: 'vc-funnel-value' }, label).textContent = valueText;
+					const px = lx + textWidth(valueText, font) + 8 + pillWidth / 2;
+					if (px + pillWidth / 2 < width) {
+						pill(px, a0 + 35);
+					}
+					anchor = [center, a0 + segLength / 2];
+				}
+				const hit = s('rect', this.horizontal ? { x: a0, y: 0, width: segLength, height, class: 'vc-hit-rect' } : { x: 0, y: a0, width, height: segLength, class: 'vc-hit-rect' }, this.svg);
+				hit.addEventListener('pointerenter', () => this.setActive(index));
+				hit.addEventListener('pointerleave', () => this.setActive(-1));
+				hit.addEventListener('click', () => part.href && this.ctx.onOpen?.(part.href));
+				if (animate) {
+					enter(group, [{ transform: 'scale(0)' }, { transform: 'scale(1)' }], ENTER_MS, index * 120);
+					enter(label, [{ opacity: 0 }, { opacity: 1 }], 350, index * 120 + 250, 'ease-out');
+				}
+				return { group, layers, label, anchor };
+			});
+			this.drawn = true;
+		}
+
+		private setActive(index: number): void {
+			this.segments.forEach((segment, at) => {
+				const on = at === index;
+				segment.group.style.opacity = index < 0 || on ? '' : '0.4';
+				segment.label.style.opacity = index < 0 || on ? '' : '0.4';
+				// The halo layers swell across the funnel, the inner ones most, each on its own spring.
+				segment.layers.forEach((layer, l) => layer.style.transform = on ? `${this.horizontal ? 'scaleY' : 'scaleX'}(${1 + (1 - l / 2) * 0.12})` : '');
+			});
+			const part = this.parts[index];
+			const segment = this.segments[index];
+			if (!part || !segment) {
+				this.tip.hide();
+				return;
+			}
+			const previous = this.parts[index - 1];
+			this.tip.set({
+				title: part.label,
+				hero: formatValue(part.value, this.unit, true),
+				sub: previous ? `${formatPercent((part.value / (previous.value || 1)) * 100)} ${this.ctx.strings.ofPrevious}` : part.detail,
+				meta: index ? [[this.ctx.strings.ofFirst, formatPercent((part.value / (this.parts[0].value || 1)) * 100)]] : undefined,
+				hint: part.href ? this.ctx.strings.open : undefined,
+			});
+			this.tip.show();
+			this.tip.place(segment.anchor[0], segment.anchor[1], this.width, 0, this.plot.clientHeight);
+		}
+
+		dispose(): void {
+			this.tip.dispose();
+		}
+	}
+
+	//#endregion
+
+	//#region Sunburst
+
+	interface IArcState {
+		a0: number;
+		a1: number;
+		r0: number;
+		r1: number;
+		color: string;
+		opacity: number;
+	}
+
+	/** A tree as rings: angle is size, rings are depth. Click a ring to zoom into it, the center to go back. */
+	class SunburstBlock implements IBlock {
+		readonly element: HTMLElement;
+		private readonly root: ITreeNode;
+		private readonly unit: IUnit;
+		private readonly sizeLabel?: string;
+		private readonly depth: number;
+		private readonly crumbs: HTMLElement;
+		private readonly plot: HTMLElement;
+		private readonly svg: SVGSVGElement;
+		private readonly arcsLayer: SVGGElement;
+		private readonly labelsLayer: SVGGElement;
+		private readonly hub: SVGGElement;
+		private readonly tip: Tip;
+		private readonly paths = new Map<ITreeNode, SVGPathElement>();
+		private state = new Map<ITreeNode, IArcState>();
+		private focus: ITreeNode;
+		private width = 0;
+		private size = 0;
+		private ringWidth = 0;
+		private hubRadius = 0;
+		private drawn = false;
+		private animation: ITween | undefined;
+
+		constructor(parent: HTMLElement, spec: Record<string, unknown>, private readonly ctx: IContext, problems: string[], where: string) {
+			this.element = h('div', 'vc-block', parent);
+			blockHead(this.element, spec.title, spec.subtitle);
+			this.root = readTree(spec.data, problems, where);
+			this.focus = this.root;
+			this.sizeLabel = str(spec.sizeLabel, 40);
+			this.unit = resolveUnit(spec.unit, this.sizeLabel);
+			this.depth = isNum(spec.depth) ? clamp(Math.round(spec.depth), 1, 6) : 4;
+			this.crumbs = h('div', 'vc-tree-crumbs', this.element);
+			this.plot = h('div', 'vc-plot', this.element);
+			this.plot.tabIndex = 0;
+			this.plot.setAttribute('role', 'group');
+			this.plot.setAttribute('aria-roledescription', 'sunburst');
+			this.plot.setAttribute('aria-label', `${str(spec.title) ?? 'Sunburst'}. Escape zooms out.`);
+			this.svg = s('svg', { class: 'vc-svg' }, this.plot);
+			this.arcsLayer = s('g', {}, this.svg);
+			this.labelsLayer = s('g', { class: 'vc-sb-labels' }, this.svg);
+			this.hub = s('g', { class: 'vc-sb-hub' }, this.svg);
+			this.tip = new Tip(this.plot);
+			this.plot.addEventListener('keydown', event => {
+				if (event.key === 'Escape' && this.focus.parent) {
+					event.preventDefault();
+					this.zoom(this.focus.parent);
+				}
+			});
+			this.plot.addEventListener('contextmenu', event => {
+				if (this.focus.parent) {
+					event.preventDefault();
+					this.zoom(this.focus.parent);
+				}
+			});
+			h('div', 'vc-tree-foot', this.element).append(h('span', 'vc-tree-hint', undefined, ctx.strings.zoomHint));
+		}
+
+		layout(width: number): void {
+			if (width === this.width && this.drawn) {
+				return;
+			}
+			this.width = width;
+			this.size = Math.min(width, 460);
+			setAttrs(this.svg, { width, height: this.size, viewBox: `0 0 ${width} ${this.size}` });
+			this.plot.style.height = `${this.size}px`;
+			const animate = !this.drawn && this.ctx.animate;
+			const target = this.layoutFor(this.focus);
+			this.renderHub();
+			this.renderCrumbs();
+			this.labelsLayer.replaceChildren();
+			for (const [node, path] of this.paths) {
+				if (!target.has(node)) {
+					path.remove();
+					this.paths.delete(node);
+				}
+			}
+			this.state = target;
+			this.animation?.cancel();
+			if (animate && !reducedMotion()) {
+				const items = [...target];
+				const delayOf = (arc: IArcState) => Math.round((arc.r0 - this.hubRadius) / (this.ringWidth || 1)) * 120 + ((arc.a0 + Math.PI / 2) / (Math.PI * 2)) * 450;
+				const longest = Math.max(0, ...items.map(([, arc]) => delayOf(arc)));
+				this.animation = play(longest + ENTER_MS, t => t, t => {
+					const now = t * (longest + ENTER_MS);
+					for (const [node, arc] of items) {
+						const p = enterEase(clamp((now - delayOf(arc)) / ENTER_MS, 0, 1));
+						this.paint(node, { ...arc, r0: arc.r0 * p, r1: arc.r1 * p, a1: arc.a0 + (arc.a1 - arc.a0) * p });
+					}
+				}, () => this.renderLabels());
+			} else {
+				for (const [node, arc] of target) {
+					this.paint(node, arc);
+				}
+				this.renderLabels();
+			}
+			this.drawn = true;
+		}
+
+		/** Angles and radii for every visible node when `focus` fills the circle. */
+		private layoutFor(focus: ITreeNode): Map<ITreeNode, IArcState> {
+			const below = (node: ITreeNode, depth: number): number => node.children.length && depth < this.depth ? 1 + Math.max(...node.children.map(child => below(child, depth + 1))) : 0;
+			const rings = Math.max(1, below(focus, 0));
+			const outer = this.size / 2 - 6;
+			this.hubRadius = outer * 0.22;
+			this.ringWidth = (outer - this.hubRadius) / rings;
+			const groups = focus.children;
+			const colorOf = (node: ITreeNode) => {
+				let top = node;
+				while (top.parent && top.parent !== focus) {
+					top = top.parent;
+				}
+				const index = groups.indexOf(top);
+				return index >= 0 && index < PALETTE.length && !OTHER_NAME.test(top.name) ? PALETTE[index] : 'var(--vc-other)';
+			};
+			const out = new Map<ITreeNode, IArcState>();
+			const walk = (node: ITreeNode, a0: number, a1: number, ring: number) => {
+				if (ring > 0) {
+					out.set(node, { a0, a1, r0: this.hubRadius + (ring - 1) * this.ringWidth, r1: this.hubRadius + ring * this.ringWidth - 1, color: colorOf(node), opacity: Math.max(0.45, 1 - 0.15 * (ring - 1)) });
+				}
+				if (ring >= rings) {
+					return;
+				}
+				let angle = a0;
+				for (const child of node.children) {
+					const span = ((a1 - a0) * child.value) / (node.value || 1);
+					walk(child, angle, angle + span, ring + 1);
+					angle += span;
+				}
+			};
+			walk(focus, -Math.PI / 2, Math.PI * 1.5, 0);
+			return out;
+		}
+
+		private pathFor(node: ITreeNode): SVGPathElement {
+			let path = this.paths.get(node);
+			if (!path) {
+				path = s('path', { class: 'vc-sb-arc' }, this.arcsLayer);
+				path.addEventListener('pointermove', event => this.hover(node, event));
+				path.addEventListener('pointerleave', () => this.hover(undefined));
+				path.addEventListener('click', () => {
+					if (node.children.length && node !== this.focus) {
+						this.zoom(node);
+					} else if (node.href) {
+						this.ctx.onOpen?.(node.href);
+					}
+				});
+				this.paths.set(node, path);
+			}
+			return path;
+		}
+
+		private paint(node: ITreeNode, arc: IArcState | undefined): void {
+			const path = this.pathFor(node);
+			if (!arc || arc.a1 - arc.a0 < 0.002 || arc.r1 <= arc.r0) {
+				path.style.display = 'none';
+				return;
+			}
+			path.style.display = '';
+			path.setAttribute('d', arcPath(this.width / 2, this.size / 2, arc.r1, Math.max(0, arc.r0), arc.a0, arc.a1));
+			path.style.fill = arc.color;
+			path.style.fillOpacity = String(arc.opacity);
+		}
+
+		private hover(node: ITreeNode | undefined, event?: PointerEvent): void {
+			const related = (a: ITreeNode, b: ITreeNode) => {
+				for (let at: ITreeNode | undefined = a; at; at = at.parent) {
+					if (at === b) {
+						return true;
+					}
+				}
+				return false;
+			};
+			for (const [other, path] of this.paths) {
+				path.style.opacity = !node || related(other, node) || related(node, other) ? '' : '0.25';
+			}
+			if (!node || !event) {
+				this.tip.hide();
+				return;
+			}
+			const share = node.value / (this.focus.value || 1);
+			this.tip.set({
+				title: node.path,
+				hero: `${formatValue(node.value, this.unit, true)}${this.sizeLabel ? ` ${this.sizeLabel}` : ''}`,
+				sub: `${formatPercent(share * 100)} ${this.ctx.strings.ofParent.replace('{0}', this.focus.name || this.ctx.strings.total)}`,
+				meta: node.detail,
+				hint: node.children.length && node !== this.focus ? this.ctx.strings.zoomIn : node.href ? this.ctx.strings.open : undefined,
+			});
+			this.tip.show();
+			const [x, y] = localPoint(event, this.plot);
+			this.tip.place(x, y, this.width, 0, this.size);
+		}
+
+		private zoom(target: ITreeNode): void {
+			this.hover(undefined);
+			this.labelsLayer.replaceChildren();
+			const from = this.state;
+			const to = this.layoutFor(target);
+			this.focus = target;
+			this.renderHub();
+			this.renderCrumbs();
+			const nodes = new Set([...from.keys(), ...to.keys()]);
+			const collapse = (arc: IArcState, toward: IArcState | undefined): IArcState => {
+				const mid = (arc.a0 + arc.a1) / 2;
+				return { ...arc, a0: mid, a1: mid, r0: toward ? toward.r0 : arc.r1, r1: toward ? toward.r1 : arc.r1 };
+			};
+			this.animation?.cancel();
+			this.animation = play(750, zoomEase, t => {
+				for (const node of nodes) {
+					const a = from.get(node);
+					const b = to.get(node);
+					const start = a ?? collapse(b!, b);
+					const end = b ?? collapse(a!, undefined);
+					this.paint(node, {
+						a0: start.a0 + (end.a0 - start.a0) * t,
+						a1: start.a1 + (end.a1 - start.a1) * t,
+						r0: start.r0 + (end.r0 - start.r0) * t,
+						r1: start.r1 + (end.r1 - start.r1) * t,
+						color: (b ?? a)!.color,
+						opacity: start.opacity + (end.opacity - start.opacity) * t,
+					});
+				}
+			}, () => {
+				for (const node of nodes) {
+					if (!to.has(node)) {
+						this.paths.get(node)?.remove();
+						this.paths.delete(node);
+					}
+				}
+				this.state = to;
+				this.renderLabels();
+			});
+		}
+
+		private renderHub(): void {
+			this.hub.replaceChildren();
+			const cx = this.width / 2;
+			const cy = this.size / 2;
+			s('circle', { cx, cy, r: Math.max(0, this.hubRadius - 3), class: 'vc-sb-hub-disc' }, this.hub);
+			const name = s('text', { x: cx, y: cy - 3, 'text-anchor': 'middle', class: 'vc-sb-hub-name' }, this.hub);
+			name.textContent = ellipsize(this.focus.name || this.ctx.strings.total, '600 13px system-ui', this.hubRadius * 1.7);
+			const value = s('text', { x: cx, y: cy + 14, 'text-anchor': 'middle', class: 'vc-sb-hub-value' }, this.hub);
+			value.textContent = `${formatValue(this.focus.value, this.unit)}${this.sizeLabel ? ` ${this.sizeLabel}` : ''}`;
+			this.hub.classList.toggle('vc-link', !!this.focus.parent);
+			this.hub.onclick = () => this.focus.parent && this.zoom(this.focus.parent);
+		}
+
+		private renderCrumbs(): void {
+			this.crumbs.replaceChildren();
+			const chain: ITreeNode[] = [];
+			for (let node: ITreeNode | undefined = this.focus; node; node = node.parent) {
+				chain.unshift(node);
+			}
+			chain.forEach((node, index) => {
+				if (index > 0) {
+					h('span', '', this.crumbs, '/');
+				}
+				const label = node.name || 'root';
+				if (index === chain.length - 1) {
+					h('span', 'vc-current', this.crumbs, label);
+				} else {
+					const button = h('button', '', this.crumbs, label);
+					button.type = 'button';
+					button.addEventListener('click', () => this.zoom(node));
+				}
+			});
+		}
+
+		/** Names along the arcs wide and thick enough to hold them, turned to stay upright. */
+		private renderLabels(): void {
+			this.labelsLayer.replaceChildren();
+			const cx = this.width / 2;
+			const cy = this.size / 2;
+			for (const [node, arc] of this.state) {
+				const thickness = arc.r1 - arc.r0;
+				const length = (arc.a1 - arc.a0) * (arc.r0 + arc.r1) / 2;
+				if (length < 26 || thickness < 16) {
+					continue;
+				}
+				const mid = (arc.a0 + arc.a1) / 2;
+				const [x, y] = polar(cx, cy, (arc.r0 + arc.r1) / 2, mid);
+				let rotate = (mid * 180) / Math.PI;
+				if (Math.cos(mid) < 0) {
+					rotate += 180;
+				}
+				const text = s('text', { x, y, 'text-anchor': 'middle', 'dominant-baseline': 'central', transform: `rotate(${num(rotate)} ${num(x)} ${num(y)})`, class: 'vc-sb-label' }, this.labelsLayer);
+				text.textContent = ellipsize(node.name, '600 11px system-ui', thickness - 8);
+			}
+			if (!reducedMotion()) {
+				this.labelsLayer.classList.remove('vc-fade-in');
+				void this.labelsLayer.getBoundingClientRect();
+				this.labelsLayer.classList.add('vc-fade-in');
+			}
+		}
+
+		dispose(): void {
+			this.animation?.cancel();
+			this.tip.dispose();
+		}
+	}
+
+	//#endregion
+
+	//#region Sankey
+
+	interface ISankeyNode {
+		readonly name: string;
+		readonly href?: string;
+		color: string;
+		column: number;
+		inValue: number;
+		outValue: number;
+		x: number;
+		y: number;
+		height: number;
+		readonly incoming: ISankeyLink[];
+		readonly outgoing: ISankeyLink[];
+	}
+
+	interface ISankeyLink {
+		readonly source: ISankeyNode;
+		readonly target: ISankeyNode;
+		readonly value: number;
+		y0: number;
+		y1: number;
+		path?: SVGPathElement;
+	}
+
+	/** Flows between stages: who did what, where it went. Links are as thick as their value. */
+	class SankeyBlock implements IBlock {
+		readonly element: HTMLElement;
+		private readonly nodes: ISankeyNode[] = [];
+		private readonly links: ISankeyLink[] = [];
+		private readonly unit: IUnit;
+		private readonly heightSpec?: number;
+		private readonly plot: HTMLElement;
+		private readonly svg: SVGSVGElement;
+		private readonly tip: Tip;
+		private nodeEls = new Map<ISankeyNode, { rect: SVGRectElement; label: SVGGElement }>();
+		private width = 0;
+		private drawn = false;
+
+		constructor(parent: HTMLElement, spec: Record<string, unknown>, private readonly ctx: IContext, problems: string[], where: string) {
+			this.element = h('div', 'vc-block', parent);
+			blockHead(this.element, spec.title, spec.subtitle);
+			const byName = new Map<string, ISankeyNode>();
+			const declared = new Map<string, Record<string, unknown>>();
+			for (const item of (Array.isArray(spec.nodes) ? spec.nodes : []).filter(isRecord)) {
+				const name = str(item.name ?? item.id ?? item.label, 80);
+				if (name) {
+					declared.set(name, item);
+				}
+			}
+			const node = (raw: unknown): ISankeyNode | undefined => {
+				const name = str(raw, 80);
+				if (!name) {
+					return undefined;
+				}
+				let found = byName.get(name);
+				if (!found) {
+					const extra = declared.get(name);
+					found = { name, href: safeHref(extra?.href), color: cssColor(extra?.color) ?? '', column: 0, inValue: 0, outValue: 0, x: 0, y: 0, height: 0, incoming: [], outgoing: [] };
+					byName.set(name, found);
+					this.nodes.push(found);
+				}
+				return found;
+			};
+			for (const raw of (Array.isArray(spec.links) ? spec.links : []).filter(isRecord).slice(0, 400)) {
+				const source = node(raw.source ?? raw.from);
+				const target = node(raw.target ?? raw.to);
+				if (!source || !target || source === target || !isNum(raw.value) || raw.value <= 0) {
+					continue;
+				}
+				const link: ISankeyLink = { source, target, value: raw.value, y0: 0, y1: 0 };
+				source.outgoing.push(link);
+				target.incoming.push(link);
+				source.outValue += raw.value;
+				target.inValue += raw.value;
+				this.links.push(link);
+			}
+			if (!this.links.length) {
+				problems.push(`${where}: sankeys need "links": [{ "source": "Signed up", "target": "Activated", "value": 120 }].`);
+			}
+			// Columns: each node sits one step right of its furthest source. Cycles stop after n passes.
+			for (let pass = 0, moved = true; moved && pass < this.nodes.length; pass++) {
+				moved = false;
+				for (const link of this.links) {
+					if (link.target.column < link.source.column + 1) {
+						link.target.column = link.source.column + 1;
+						moved = true;
+					}
+				}
+			}
+			const columns = Math.max(0, ...this.nodes.map(item => item.column)) + 1;
+			// Color follows the middle stage (the "what"), or the first one in a two-step flow.
+			const colorColumn = isNum(spec.colorColumn) ? spec.colorColumn : columns >= 3 ? 1 : 0;
+			let paletteIndex = 0;
+			for (const item of [...this.nodes].sort((a, b) => Math.max(b.inValue, b.outValue) - Math.max(a.inValue, a.outValue))) {
+				if (!item.color) {
+					item.color = item.column === colorColumn && !OTHER_NAME.test(item.name) && paletteIndex < PALETTE.length ? PALETTE[paletteIndex++] : 'var(--vc-other)';
+				}
+			}
+			this.unit = resolveUnit(spec.unit, `${str(spec.title) ?? ''} ${str(spec.subtitle) ?? ''}`, this.links.map(link => link.value));
+			this.heightSpec = isNum(spec.height) ? clamp(spec.height, 180, 900) : undefined;
+			this.plot = h('div', 'vc-plot', this.element);
+			this.svg = s('svg', { class: 'vc-svg', role: 'img' }, this.plot);
+			this.svg.setAttribute('aria-label', this.links.slice(0, 40).map(link => `${link.source.name} to ${link.target.name} ${formatValue(link.value, this.unit, true)}`).join(', '));
+			this.tip = new Tip(this.plot);
+		}
+
+		layout(width: number): void {
+			if (width === this.width && this.drawn) {
+				return;
+			}
+			this.width = width;
+			const animate = !this.drawn && this.ctx.animate;
+			const font = `600 12px ${win.getComputedStyle(this.element).fontFamily || 'system-ui'}`;
+			const columns: ISankeyNode[][] = [];
+			for (const item of this.nodes) {
+				(columns[item.column] ??= []).push(item);
+			}
+			const last = columns.length - 1;
+			const nodeW = 14;
+			const pad = 12;
+			const labelRoom = (list: ISankeyNode[] | undefined) => Math.min(width * 0.24, Math.max(40, ...(list ?? []).map(item => textWidth(item.name, font))) + 12);
+			const marginL = labelRoom(columns[0]);
+			const marginR = last > 0 ? labelRoom(columns[last]) : 0;
+			const tallest = Math.max(1, ...columns.map(list => list?.length ?? 0));
+			const height = this.heightSpec ?? clamp(tallest * 46, 240, 520);
+			const value = (item: ISankeyNode) => Math.max(item.inValue, item.outValue);
+			const ky = Math.min(...columns.map(list => (height - 20 - ((list?.length ?? 1) - 1) * pad) / Math.max(1e-9, (list ?? []).reduce((sum, item) => sum + value(item), 0))));
+			columns.forEach((list, index) => {
+				if (!list) {
+					return;
+				}
+				list.sort((a, b) => Number(OTHER_NAME.test(a.name)) - Number(OTHER_NAME.test(b.name)) || value(b) - value(a));
+				const used = list.reduce((sum, item) => sum + Math.max(2, value(item) * ky), 0) + (list.length - 1) * pad;
+				let y = (height - used) / 2;
+				const x = last ? marginL + ((width - marginL - marginR - nodeW) * index) / last : (width - nodeW) / 2;
+				for (const item of list) {
+					item.x = x;
+					item.y = y;
+					item.height = Math.max(2, value(item) * ky);
+					y += item.height + pad;
+				}
+			});
+			for (const item of this.nodes) {
+				item.outgoing.sort((a, b) => a.target.y - b.target.y);
+				item.incoming.sort((a, b) => a.source.y - b.source.y);
+				let offset = 0;
+				for (const link of item.outgoing) {
+					link.y0 = item.y + offset + (link.value * ky) / 2;
+					offset += link.value * ky;
+				}
+				offset = 0;
+				for (const link of item.incoming) {
+					link.y1 = item.y + offset + (link.value * ky) / 2;
+					offset += link.value * ky;
+				}
+			}
+			setAttrs(this.svg, { width, height, viewBox: `0 0 ${width} ${height}` });
+			this.plot.style.height = `${height}px`;
+			this.svg.replaceChildren();
+			const defs = s('defs', {}, this.svg);
+			const linkLayer = s('g', { class: 'vc-sk-links' }, this.svg);
+			const nodeLayer = s('g', {}, this.svg);
+			const labelLayer = s('g', {}, this.svg);
+			const ordered = [...this.links].sort((a, b) => b.value - a.value);
+			ordered.forEach((link, index) => {
+				const x0 = link.source.x + nodeW;
+				const x1 = link.target.x;
+				const xm = (x0 + x1) / 2;
+				const id = nextId('sk');
+				const gradient = s('linearGradient', { id, gradientUnits: 'userSpaceOnUse', x1: x0, x2: x1, y1: 0, y2: 0 }, defs);
+				s('stop', { offset: '0%' }, gradient).style.stopColor = link.source.color;
+				s('stop', { offset: '100%' }, gradient).style.stopColor = link.target.color;
+				const path = s('path', { d: `M${num(x0)},${num(link.y0)}C${num(xm)},${num(link.y0)} ${num(xm)},${num(link.y1)} ${num(x1)},${num(link.y1)}`, stroke: `url(#${id})`, 'stroke-width': num(Math.max(1, link.value * ky)), class: 'vc-sk-link' }, linkLayer);
+				path.addEventListener('pointermove', event => this.hover(undefined, link, event));
+				path.addEventListener('pointerleave', () => this.hover());
+				link.path = path;
+				if (animate && !reducedMotion()) {
+					const length = path.getTotalLength();
+					path.style.strokeDasharray = `${num(length)} ${num(length)}`;
+					const animation = path.animate([{ strokeDashoffset: num(length) }, { strokeDashoffset: '0' }], { duration: ENTER_MS, delay: 220 + (index / ordered.length) * 352, easing: ENTER_CSS, fill: 'backwards' });
+					animation.onfinish = () => path.style.strokeDasharray = '';
+				}
+			});
+			this.nodeEls.clear();
+			this.nodes.forEach((item, index) => {
+				const rect = s('rect', { x: item.x, y: item.y, width: nodeW, height: item.height, rx: 4, class: 'vc-sk-node' }, nodeLayer);
+				rect.style.fill = item.color;
+				origin(rect, item.x + nodeW / 2, item.y + item.height / 2);
+				rect.addEventListener('pointermove', event => this.hover(item, undefined, event));
+				rect.addEventListener('pointerleave', () => this.hover());
+				rect.addEventListener('click', () => item.href && this.ctx.onOpen?.(item.href));
+				const right = item.column > 0;
+				const lx = right ? item.x + nodeW + 8 : item.x - 8;
+				const room = right ? (item.column === last ? width - lx - 2 : (width - marginL - marginR) / Math.max(1, last) - nodeW - 16) : lx - 2;
+				const label = s('g', { class: `vc-sk-label${item.column > 0 && item.column < last ? ' vc-mid' : ''}` }, labelLayer);
+				const tall = item.height > 24;
+				const name = s('text', { x: lx, y: item.y + item.height / 2 + (tall ? -2 : 4), 'text-anchor': right ? 'start' : 'end', class: 'vc-sk-name' }, label);
+				name.textContent = ellipsize(item.name, font, room);
+				if (tall) {
+					const amount = s('text', { x: lx, y: item.y + item.height / 2 + 13, 'text-anchor': right ? 'start' : 'end', class: 'vc-sk-value' }, label);
+					amount.textContent = formatValue(value(item), this.unit);
+				}
+				if (animate) {
+					enter(rect, [{ transform: 'scaleY(0)', opacity: 0 }, { transform: 'scaleY(1)', opacity: 1 }], ENTER_MS, (index / this.nodes.length) * 264);
+					enter(label, [{ transform: `translateX(${right ? -10 : 10}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }], 700, (index / this.nodes.length) * 264 + 520, 'cubic-bezier(0.22, 1, 0.36, 1)');
+				}
+				this.nodeEls.set(item, { rect, label });
+			});
+			this.drawn = true;
+		}
+
+		private hover(item?: ISankeyNode, link?: ISankeyLink, event?: PointerEvent): void {
+			const litLinks = new Set<ISankeyLink>();
+			const litNodes = new Set<ISankeyNode>();
+			if (item) {
+				litNodes.add(item);
+				for (const other of [...item.incoming, ...item.outgoing]) {
+					litLinks.add(other);
+					litNodes.add(other.source);
+					litNodes.add(other.target);
+				}
+			}
+			if (link) {
+				litLinks.add(link);
+				litNodes.add(link.source);
+				litNodes.add(link.target);
+			}
+			const any = !!(item || link);
+			for (const other of this.links) {
+				other.path?.classList.toggle('vc-lit', any && litLinks.has(other));
+				other.path?.classList.toggle('vc-dim', any && !litLinks.has(other));
+			}
+			for (const [other, els] of this.nodeEls) {
+				const opacity = !any || litNodes.has(other) ? '' : '0.4';
+				els.rect.style.opacity = opacity;
+				els.label.style.opacity = opacity;
+			}
+			if (!event || !any) {
+				this.tip.hide();
+				return;
+			}
+			if (link) {
+				this.tip.set({ title: `${link.source.name} → ${link.target.name}`, hero: formatValue(link.value, this.unit, true), sub: `${formatPercent((link.value / (link.source.outValue || 1)) * 100)} ${this.ctx.strings.ofParent.replace('{0}', link.source.name)}` });
+			} else if (item) {
+				const flows = (item.outgoing.length ? item.outgoing.map(other => [other.target, other.value] as const) : item.incoming.map(other => [other.source, other.value] as const)).slice().sort((a, b) => b[1] - a[1]).slice(0, 5);
+				this.tip.set({ title: item.name, hero: formatValue(Math.max(item.inValue, item.outValue), this.unit, true), rows: flows.map(([other, amount]) => ({ name: other.name, value: formatValue(amount, this.unit), color: other.color })), hint: item.href ? this.ctx.strings.open : undefined });
+			}
+			this.tip.show();
+			const [x, y] = localPoint(event, this.plot);
+			this.tip.place(x, y, this.width, 0, this.plot.clientHeight);
+		}
+
+		dispose(): void {
+			this.tip.dispose();
+		}
+	}
+
+	//#endregion
+
+	//#region Candlestick
+
+	interface ICandle {
+		readonly x: number;
+		readonly open: number;
+		readonly high: number;
+		readonly low: number;
+		readonly close: number;
+		readonly label?: string;
+		readonly detail?: readonly (readonly [string, string])[];
+	}
+
+	/**
+	 * Open, high, low and close per period: prices, repo size, queue depth. Bodies are gradients
+	 * (lime to emerald up, yellow to red down), solid or hatched, over an optional backdrop and bands.
+	 */
+	class CandlestickBlock implements IBlock {
+		readonly element: HTMLElement;
+		private readonly candles: ICandle[];
+		private readonly unit: IUnit;
+		private readonly zone: ITimeZone;
+		private readonly time: boolean;
+		private readonly categories: string[] = [];
+		private readonly heightSpec: number;
+		private readonly look: ILook;
+		private readonly up: string;
+		private readonly down: string;
+		private readonly plot: HTMLElement;
+		private readonly svg: SVGSVGElement;
+		private readonly tip: Tip;
+		private readonly pill: AxisPill;
+		private readonly cursor: SVGLineElement;
+		private readonly live: HTMLElement;
+		private readonly springs: Springs;
+		private axis: SVGGElement | undefined;
+		private groups: SVGGElement[] = [];
+		private sx: ((index: number) => number) | undefined;
+		private box: IBox | undefined;
+		private active = -1;
+		private width = 0;
+		private drawn = false;
+
+		constructor(parent: HTMLElement, spec: Record<string, unknown>, private readonly ctx: IContext, problems: string[], where: string) {
+			this.element = h('div', 'vc-block', parent);
+			blockHead(this.element, spec.title, spec.subtitle);
+			this.zone = timeZoneOf(isRecord(spec.x) ? spec.x.timeZone : spec.timeZone);
+			this.look = readLook(spec);
+			const colors = isRecord(spec.colors) ? spec.colors : {};
+			this.up = cssColor(colors.up) ?? 'var(--vc-good)';
+			this.down = cssColor(colors.down) ?? 'var(--vc-bad)';
+			const raw = (Array.isArray(spec.data) ? spec.data : []).slice(0, 5000);
+			this.time = raw.some(item => looksLikeTime(Array.isArray(item) ? item[0] : isRecord(item) ? item.x ?? item.time ?? item.date : undefined));
+			this.candles = raw.flatMap((item, index) => {
+				const [x, open, high, low, close] = Array.isArray(item) ? item : isRecord(item) ? [item.x ?? item.time ?? item.date, item.open ?? item.o, item.high ?? item.h, item.low ?? item.l, item.close ?? item.c] : [];
+				if (!isNum(open) || !isNum(high) || !isNum(low) || !isNum(close)) {
+					problems.push(`${where}: candle ${index + 1} needs numeric "open", "high", "low" and "close".`);
+					return [];
+				}
+				let at: number | undefined = index;
+				if (this.time) {
+					at = parseTime(x, this.zone);
+				} else {
+					this.categories.push(str(x, 40) ?? String(index + 1));
+				}
+				if (at === undefined) {
+					problems.push(`${where}: candle ${index + 1} has an "x" that is not a date.`);
+					return [];
+				}
+				return [{ x: at, open, high: Math.max(high, open, close), low: Math.min(low, open, close), close, label: isRecord(item) ? str(item.label, 120) : undefined, detail: isRecord(item) ? detailRows(item.detail) : undefined }];
+			});
+			if (this.time) {
+				this.candles.sort((a, b) => a.x - b.x);
+			}
+			if (!this.candles.length) {
+				problems.push(`${where}: candlesticks need "data": [{ "x": "2026-10-01", "open": 10, "high": 12, "low": 9, "close": 11 }].`);
+			}
+			this.unit = resolveUnit(spec.unit, `${str(spec.title) ?? ''} ${str(spec.subtitle) ?? ''}`, this.candles.map(candle => candle.close));
+			this.heightSpec = isNum(spec.height) ? clamp(spec.height, 140, 900) : 280;
+			this.plot = h('div', 'vc-plot', this.element);
+			this.plot.tabIndex = 0;
+			this.plot.setAttribute('role', 'group');
+			this.plot.setAttribute('aria-label', `${str(spec.title) ?? ctx.strings.chart}. Candlestick chart. Use arrow keys to read values.`);
+			this.svg = s('svg', { class: 'vc-svg', role: 'img' }, this.plot);
+			this.cursor = s('line', { class: 'vc-cs-cursor' });
+			this.tip = new Tip(this.plot);
+			this.pill = new AxisPill(this.plot);
+			this.live = h('div', 'vc-sr', this.plot);
+			this.live.setAttribute('aria-live', 'polite');
+			this.live.setAttribute('aria-atomic', 'true');
+			this.springs = new Springs(() => this.follow(), 300, 0.87);
+			const legend = h('div', 'vc-legend vc-legend-static', this.element);
+			for (const [label, color] of [[ctx.strings.rising, this.up], [ctx.strings.falling, this.down]]) {
+				const item = h('span', 'vc-legend-item', legend);
+				h('span', 'vc-swatch', item).style.background = color;
+				item.append(label);
+			}
+			this.plot.addEventListener('pointermove', event => {
+				const [x] = localPoint(event, this.svg);
+				this.activate(this.indexAt(x));
+			});
+			this.plot.addEventListener('pointerleave', () => {
+				if (this.plot.ownerDocument.activeElement !== this.plot) {
+					this.activate(-1);
+				}
+			});
+			this.plot.addEventListener('focus', () => {
+				this.activate(this.active < 0 ? this.candles.length - 1 : this.active);
+				this.announce();
+			});
+			this.plot.addEventListener('blur', () => this.activate(-1));
+			this.plot.addEventListener('keydown', event => {
+				const last = this.candles.length - 1;
+				let index = this.active < 0 ? last : this.active;
+				switch (event.key) {
+					case 'Home': index = 0; break;
+					case 'End': index = last; break;
+					case 'ArrowLeft': index--; break;
+					case 'ArrowRight': index++; break;
+					case 'Escape': this.activate(-1); return;
+					default: return;
+				}
+				event.preventDefault();
+				this.activate(clamp(index, 0, last));
+				this.announce();
+			});
+		}
+
+		/** Body fill for rising or falling candles, per the chosen look. */
+		private bodyFill(defs: SVGDefsElement, rising: boolean): string {
+			const color = rising ? this.up : this.down;
+			if (this.look.fill === 'solid') {
+				return color;
+			}
+			if (this.look.fill === 'pattern') {
+				return pattern(defs, 'lines', color, { tint: 0.25, ink: 0.95 });
+			}
+			// Lime into emerald for rising, yellow into red for falling.
+			return rising
+				? verticalGradient(defs, `color-mix(in oklab, ${color} 62%, var(--vc-yellow))`, color)
+				: verticalGradient(defs, `color-mix(in oklab, ${color} 45%, var(--vc-yellow))`, color);
+		}
+
+		layout(width: number): void {
+			if (width === this.width && this.drawn) {
+				return;
+			}
+			this.width = width;
+			const animate = !this.drawn && this.ctx.animate;
+			const height = width < 420 ? Math.max(150, Math.round(this.heightSpec * 0.82)) : this.heightSpec;
+			const n = this.candles.length;
+			const lo = Math.min(...this.candles.map(candle => candle.low));
+			const hi = Math.max(...this.candles.map(candle => candle.high));
+			const ticks = niceScale(lo, hi, 4, false);
+			const font = `400 11px ${win.getComputedStyle(this.element).fontFamily || 'system-ui'}`;
+			const labelWidth = Math.max(0, ...ticks.values.map(value => textWidth(formatTick(value, ticks.step, this.unit), font)));
+			const box: IBox = { width, height, left: width < 400 ? 0 : Math.ceil(labelWidth) + 10, right: width - 4, top: 10, bottom: height - 24 };
+			this.box = box;
+			const slot = (box.right - box.left) / Math.max(1, n);
+			const sx = (index: number) => box.left + (index + 0.5) * slot;
+			this.sx = sx;
+			const sy = linearScale(ticks.lo, ticks.hi, box.bottom, box.top);
+			setAttrs(this.svg, { width, height, viewBox: `0 0 ${width} ${height}` });
+			this.plot.style.height = `${height}px`;
+			// Reposition the active reading after a resize, even if its data index is unchanged.
+			const active = this.active;
+			this.activate(-1);
+			this.svg.replaceChildren();
+			const defs = s('defs', {}, this.svg);
+			drawBackdrop(s('g', {}, this.svg), this.look, box);
+			const grid = s('g', { class: `vc-grid${this.look.grid === 'dashed' ? ' vc-grid-dashed' : this.look.grid === 'none' ? ' vc-grid-none' : ''}` }, this.svg);
+			const axis = s('g', { class: 'vc-axis' }, this.svg);
+			this.axis = axis;
+			for (const value of ticks.values) {
+				const y = crisp(sy(value));
+				s('line', { x1: box.left, x2: box.right, y1: y, y2: y, class: value === ticks.values[0] ? 'vc-zero' : undefined }, grid);
+				if (box.left > 0) {
+					s('text', { x: box.left - 8, y, 'text-anchor': 'end', 'dominant-baseline': 'central' }, axis).textContent = formatTick(value, ticks.step, this.unit);
+				}
+			}
+			drawBands(s('g', {}, this.svg), this.look.bands, box, sy, this.unit);
+			const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((box.right - box.left) / 80))));
+			const grain = this.time ? grainOf(this.candles.map(candle => candle.x)) : 'day';
+			for (let index = 0; index < n; index += every) {
+				const label = s('text', { x: sx(index), y: height - 6, 'text-anchor': 'middle' }, axis);
+				label.textContent = this.time ? formatTimePoint(this.candles[index].x, grain, this.zone) : this.categories[index];
+				label.dataset.cx = String(sx(index));
+			}
+			setAttrs(this.cursor, { x1: 0, x2: 0, y1: box.top, y2: box.bottom });
+			this.svg.appendChild(this.cursor);
+			const bodyWidth = Math.max(1.5, slot * 0.7);
+			const fills = { up: this.bodyFill(defs, true), down: this.bodyFill(defs, false) };
+			this.groups = this.candles.map((candle, index) => {
+				const rising = candle.close >= candle.open;
+				const group = s('g', { class: 'vc-candle' }, this.svg);
+				group.style.color = rising ? this.up : this.down;
+				const top = sy(candle.high);
+				const bottom = sy(candle.low);
+				origin(group, sx(index), (top + bottom) / 2);
+				s('rect', { x: sx(index) - 0.75, y: top, width: 1.5, height: Math.max(1, bottom - top), class: 'vc-candle-wick' }, group);
+				const body = s('rect', { x: sx(index) - bodyWidth / 2, y: sy(Math.max(candle.open, candle.close)), width: bodyWidth, height: Math.max(1.5, Math.abs(sy(candle.open) - sy(candle.close))), rx: 1, class: 'vc-candle-body' }, group);
+				body.style.fill = rising ? fills.up : fills.down;
+				if (animate) {
+					enter(group, [{ transform: 'scaleY(0)', opacity: 0 }, { transform: 'scaleY(1)', opacity: 1 }], CANDLE_SPRING.ms, index * ((0.6 * 800) / Math.max(1, n)), CANDLE_SPRING.easing);
+				}
+				return group;
+			});
+			this.svg.setAttribute('aria-label', `${n} candles, ${formatValue(this.candles[0]?.open, this.unit, true)} to ${formatValue(this.candles[n - 1]?.close, this.unit, true)}`);
+			this.drawn = true;
+			if (active >= 0) {
+				this.activate(active);
+			}
+		}
+
+		private indexAt(x: number): number {
+			const box = this.box;
+			if (!box || x < box.left - 4 || x > box.right + 4) {
+				return -1;
+			}
+			return clamp(Math.floor(((x - box.left) / (box.right - box.left)) * this.candles.length), 0, this.candles.length - 1);
+		}
+
+		/** Cursor line, pill and tip ride the same spring. */
+		private follow(): void {
+			const x = this.springs.get('x');
+			this.cursor.style.transform = `translateX(${num(x)}px)`;
+			if (this.box && this.look.pill && this.active >= 0) {
+				this.pill.place(x, this.box.bottom + 3, this.box.width);
+				if (this.axis) {
+					fadeTicks(this.axis, x);
+				}
+			}
+		}
+
+		private activate(index: number): void {
+			if (index === this.active) {
+				return;
+			}
+			const first = this.active < 0;
+			this.active = index;
+			this.groups.forEach((group, at) => group.style.opacity = index < 0 || at === index ? '' : '0.3');
+			const candle = this.candles[index];
+			if (!candle || !this.sx || !this.box) {
+				this.cursor.style.opacity = '0';
+				this.tip.hide();
+				this.pill.hide();
+				this.live.textContent = '';
+				if (this.axis) {
+					fadeTicks(this.axis, undefined);
+				}
+				return;
+			}
+			const x = this.sx(index);
+			const rising = candle.close >= candle.open;
+			this.cursor.style.stroke = rising ? this.up : this.down;
+			this.cursor.style.opacity = '1';
+			if (this.look.pill) {
+				this.pill.set(this.time ? dateFormat({ month: 'short', day: 'numeric' }, this.zone).format(candle.x) : this.categories[index], index);
+				this.pill.show();
+			}
+			this.springs.set('x', x, first);
+			const change = candle.close - candle.open;
+			const strings = this.ctx.strings;
+			this.tip.set({
+				title: candle.label ?? (this.time ? formatTimePoint(candle.x, 'day', this.zone) : this.categories[index]),
+				hero: formatValue(candle.close, this.unit, true),
+				// allow-any-unicode-next-line
+				sub: `${change >= 0 ? '+' : '−'}${formatValue(Math.abs(change), this.unit, true)}`,
+				rows: [[strings.candleOpen, candle.open], [strings.candleHigh, candle.high], [strings.candleLow, candle.low], [strings.candleClose, candle.close]].map(([name, value]) => ({ name: String(name), value: formatValue(Number(value), this.unit) })),
+				meta: candle.detail,
+			});
+			this.tip.show();
+			this.tip.place(x, (this.box.top + this.box.bottom) / 2, this.width, 0, this.box.height);
+		}
+
+		private announce(): void {
+			this.live.textContent = this.active < 0 ? '' : [...this.tip.element.querySelectorAll('.vc-tip-title,.vc-tip-hero,.vc-tip-sub,.vc-tip-name,.vc-tip-value')].map(element => element.textContent).join(', ');
+		}
+
+		dispose(): void {
+			this.springs.dispose();
+			this.tip.dispose();
+			this.pill.dispose();
+		}
+	}
+
+	//#endregion
+
+	const SHOWCASE_CSS = `
+.vc-gauge{display:flex;justify-content:center}
+.vc-gauge-notch{fill:currentColor}
+.vc-gauge-cap{fill:none;stroke:currentColor;stroke-linecap:round}
+.vc-gauge-track{color:color-mix(in srgb,var(--vc-fg) 11%,transparent)}
+.vc-gauge-linear{flex-direction:column;align-items:stretch;gap:10px}
+.vc-gauge-linear .vc-gauge-center{position:static}
+.vc-gauge-linear .vc-gauge-center.vc-at-below{order:2}
+.vc-gauge-center.vc-at-none{display:none}
+.vc-ring-stack{flex-direction:column;align-items:stretch}
+.vc-ring-stack svg{align-self:center}
+.vc-ring-bars .vc-donut-item{display:block;padding:4px 6px}
+.vc-ring-row{display:flex;align-items:center;gap:8px}
+.vc-ring-progress{display:block;height:4px;border-radius:2px;margin-top:6px;background:color-mix(in srgb,var(--vc-fg) 9%,transparent);overflow:hidden}
+.vc-ring-progress i{display:block;height:100%;border-radius:2px}
+.vc-funnel-band{fill:color-mix(in srgb,var(--vc-fg) 4%,transparent)}
+.vc-funnel-big{fill:var(--vc-fg);font-size:15px;font-weight:650;font-variant-numeric:tabular-nums}
+.vc-tip{background:color-mix(in srgb,var(--vc-tip-bg) 88%,transparent);-webkit-backdrop-filter:blur(14px) saturate(1.4);backdrop-filter:blur(14px) saturate(1.4);border:1px solid var(--vc-tip-border);border-radius:12px;padding:9px 11px 10px;box-shadow:var(--vc-shadow),inset 0 1px 0 color-mix(in srgb,var(--vc-fg) 7%,transparent);scale:.96;transition:opacity 120ms ease,scale 240ms ${EASE_OUT}}
+.vc-tip.vc-shown{scale:1}
+.vc-tip-title{font-weight:500;letter-spacing:.01em}
+.vc-tip-hero{font-size:18px;line-height:23px}
+.vc-tip-row{gap:8px}
+.vc-cartesian:not(.vc-bars) .vc-tip .vc-swatch:not(.vc-dash){width:10px;height:2.5px;border-radius:2px}
+.vc-grid-dashed line:not(.vc-zero){stroke-dasharray:3 4}
+.vc-grid-none line:not(.vc-zero){display:none}
+.vc-line.vc-nostroke{stroke-opacity:0}
+.vc-refband line{stroke:var(--vc-muted);stroke-dasharray:4 4;stroke-opacity:.6}
+.vc-refband text{fill:var(--vc-muted);font-size:11px}
+.vc-pill{box-sizing:border-box;max-width:100%;overflow:hidden;position:absolute;left:0;top:0;z-index:2;display:flex;gap:4px;align-items:center;height:22px;padding:0 10px;border-radius:999px;background:var(--vc-fg);color:var(--vc-bg);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px -4px rgba(0,0,0,.45);opacity:0;transition:opacity 120ms ease;will-change:transform}
+.vc-pill.vc-shown{opacity:1}
+.vc-pill-slot{min-width:0;display:inline-grid;overflow:hidden;line-height:22px}
+.vc-pill-word{grid-area:1/1;overflow:hidden;text-overflow:ellipsis}
+.vc-axis text{transition:opacity 160ms ease}
+.vc-gauge-lit{transition:opacity 250ms ease}
+.vc-gauge-center{position:absolute;left:0;right:0;display:flex;flex-direction:column;align-items:center;pointer-events:none}
+.vc-gauge-value{font-size:30px;line-height:36px;font-weight:650;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.vc-gauge-label{color:var(--vc-muted);font-size:12px}
+.vc-gauge-caption{text-align:center;margin-top:2px}
+.vc-ring{flex:none;overflow:visible}
+.vc-ring-g{transition:transform ${HOVER_SPRING.ms}ms ${HOVER_SPRING.easing},opacity 150ms,filter 150ms;cursor:default}
+.vc-ring-track{fill:none;stroke:color-mix(in srgb,var(--vc-fg) 9%,transparent)}
+.vc-ring-arc{fill:none;stroke-linecap:round}
+.vc-ring-hit{fill:none;stroke:transparent}
+.vc-radar-grid polygon,.vc-radar-grid line{fill:none;stroke:var(--vc-hair)}
+.vc-radar-grid polygon:not(.vc-radar-edge){stroke-dasharray:3 4}
+.vc-radar-label{fill:var(--vc-fg);font-size:11.5px;font-weight:600}
+.vc-radar-area{transition:transform ${HOVER_SPRING.ms}ms ${HOVER_SPRING.easing},opacity 150ms,filter 150ms}
+.vc-radar-area polygon{fill-opacity:.15;stroke-width:2;stroke-linejoin:round;transition:fill-opacity 200ms,stroke-width 200ms}
+.vc-radar-area circle{stroke:var(--vc-bg);stroke-width:2;transition:r 200ms}
+.vc-radar-area.vc-on{transform:scale(1.05)}
+.vc-radar-area.vc-on polygon{fill-opacity:.35;stroke-width:3}
+.vc-radar-area.vc-on circle{r:5}
+.vc-radar-hit{fill:transparent}
+.vc-legend-static .vc-legend-item{cursor:default}
+.vc-funnel-seg,.vc-funnel-label{transition:opacity 150ms}
+.vc-funnel-name{fill:var(--vc-fg);font-size:12px;font-weight:600}
+.vc-funnel-value{fill:var(--vc-muted);font-size:12px;font-variant-numeric:tabular-nums}
+.vc-funnel-pill{fill:var(--vc-fg)}
+.vc-funnel-pill-text{fill:var(--vc-bg);font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.vc-hit-rect{fill:transparent}
+.vc-sb-arc{stroke:var(--vc-bg);stroke-width:1;transition:opacity 160ms ease;cursor:pointer}
+.vc-sb-label{fill:#fff;font-size:11px;font-weight:600;paint-order:stroke;stroke:rgba(0,0,0,.35);stroke-width:2.5px;pointer-events:none}
+.vc-sb-labels.vc-fade-in{animation:vc-fade 250ms ease both}
+.vc-sb-hub-disc{fill:color-mix(in srgb,var(--vc-fg) 5%,transparent);stroke:var(--vc-hair)}
+.vc-sb-hub-name{fill:var(--vc-fg);font-size:13px;font-weight:600}
+.vc-sb-hub-value{fill:var(--vc-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.vc-sb-hub.vc-link{cursor:pointer}
+.vc-sk-link{fill:none;stroke-opacity:.5;transition:stroke-opacity 180ms ease-out}
+.vc-sk-link.vc-lit{stroke-opacity:.65}
+.vc-sk-link.vc-dim{stroke-opacity:.1}
+.vc-sk-node{transition:opacity 180ms ease-out}
+.vc-sk-label{transition:opacity 180ms ease-out;pointer-events:none}
+.vc-sk-name{fill:var(--vc-fg);font-size:12px;font-weight:600}
+.vc-sk-value{fill:var(--vc-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.vc-sk-label.vc-mid text{paint-order:stroke;stroke:var(--vc-bg);stroke-width:3px;stroke-linejoin:round}
+.vc-candle{transition:opacity 150ms ease-in-out}
+.vc-candle-wick,.vc-candle-body{fill:currentColor}
+.vc-cs-cursor{stroke:var(--vc-muted);stroke-width:1;opacity:0;transition:opacity 120ms;pointer-events:none}
+`;
+
+	//#endregion
+
 	//#region Cumulative share (Lorenz curve)
 
 	/** Turns per-entity values into a cumulative-share line chart with callouts at the marks. */
@@ -5138,6 +7405,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 	const TYPE_ALIASES: Readonly<Record<string, string>> = {
 		pie: 'donut', ring: 'donut', 'bars-h': 'ranked', hbar: 'ranked', list: 'ranked', top: 'ranked', lorenz: 'cumulative', pareto: 'cumulative',
 		grid: 'row', columns: 'row', kpi: 'stats', kpis: 'stats', numbers: 'stats', columnchart: 'bar', column: 'bar', 'stacked': 'stacked-area', 'stacked-column': 'stacked-bar',
+		composed: 'bar', combo: 'bar', meter: 'gauge', progress: 'rings', activity: 'rings', spider: 'radar', ohlc: 'candlestick', candles: 'candlestick', flow: 'sankey', alluvial: 'sankey', 'funnel-chart': 'funnel',
 		'100%': 'share', percent: 'share', 'area-share': 'share', dots: 'scatter', bubble: 'scatter', sessions: 'scatter', 'grouped': 'grouped-bar', calendar: 'heatmap', matrix: 'heatmap',
 	};
 
@@ -5313,13 +7581,20 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			case 'donut': return new DonutBlock(parent, spec, ctx, problems, where);
 			case 'ranked': return new RankedBlock(parent, spec, ctx, problems, where);
 			case 'row': return new RowBlock(parent, spec, ctx, problems, where);
+			case 'gauge': return new GaugeBlock(parent, spec, ctx, problems, where);
+			case 'rings': return new RingBlock(parent, spec, ctx, problems, where);
+			case 'radar': return new RadarBlock(parent, spec, ctx, problems, where);
+			case 'funnel': return new FunnelBlock(parent, spec, ctx, problems, where);
+			case 'sunburst': return new SunburstBlock(parent, spec, ctx, problems, where);
+			case 'sankey': return new SankeyBlock(parent, spec, ctx, problems, where);
+			case 'candlestick': return new CandlestickBlock(parent, spec, ctx, problems, where);
 			case 'cumulative': {
 				const { spec: lineSpec, tooltip } = cumulativeSpec(spec, problems, where);
 				return new CartesianChart(parent, lineSpec, ctx, problems, where, tooltip);
 			}
 			default:
 				if (!(CARTESIAN_TYPES as readonly string[]).includes(type)) {
-					problems.push(`${where}: unknown chart type "${type}". Use one of: ${[...CARTESIAN_TYPES, 'heatmap', 'treemap', 'donut', 'ranked', 'cumulative', 'stats', 'row'].join(', ')}.`);
+					problems.push(`${where}: unknown chart type "${type}". Use one of: ${[...CARTESIAN_TYPES, 'heatmap', 'treemap', 'sunburst', 'donut', 'ranked', 'funnel', 'gauge', 'rings', 'radar', 'sankey', 'candlestick', 'cumulative', 'stats', 'row'].join(', ')}.`);
 				}
 				return new CartesianChart(parent, { ...spec, type: (CARTESIAN_TYPES as readonly string[]).includes(type) ? type : (spec.series || spec.metrics ? 'line' : type) }, ctx, problems, where);
 		}
@@ -5537,6 +7812,20 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				return Array.isArray(spec.data) ? spec.data.filter(item => isRecord(item) && isNum(item.value)).length : 0;
 			case 'cumulative':
 				return finite(spec.values);
+			case 'gauge':
+				return Array.isArray(spec.data) ? spec.data.filter(item => isRecord(item) && isNum(item.value)).length : isNum(spec.value) ? 1 : 0;
+			case 'rings':
+			case 'funnel':
+			case 'candlestick':
+				return Array.isArray(spec.data) ? spec.data.filter(item => isRecord(item) || Array.isArray(item)).length : 0;
+			case 'radar':
+				return Array.isArray(spec.series) ? spec.series.filter(isRecord).reduce((sum: number, series) => sum + finite(series.data), 0) : 0;
+			case 'sankey':
+				return Array.isArray(spec.links) ? spec.links.filter(link => isRecord(link) && isNum(link.value) && link.value > 0).length : 0;
+			case 'sunburst': {
+				const leaves = (node: unknown): number => !isRecord(node) ? 0 : Array.isArray(node.children) && node.children.length ? node.children.reduce((sum: number, child) => sum + leaves(child), 0) : (isNum(node.value) && node.value > 0 ? 1 : 0);
+				return Array.isArray(spec.data) ? spec.data.reduce((sum: number, node) => sum + leaves(node), 0) : leaves(spec.data);
+			}
 			case 'row':
 				return Array.isArray(spec.charts) ? spec.charts.filter(isRecord).reduce((sum: number, chart) => sum + countData(chart), 0) : 0;
 			default: {
@@ -5600,6 +7889,22 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				table(chart.title, rows);
 			} else if (type === 'donut' || type === 'ranked') {
 				table(chart.title, [['label', 'value'], ...readParts(chart.data, [], '').map(part => [part.label, part.value])]);
+			} else if (type === 'sunburst') {
+				const root = readTree(chart.data, [], '');
+				const rows: unknown[][] = [['path', 'value']];
+				const walk = (node: ITreeNode) => node.children.length ? node.children.forEach(walk) : rows.push([node.path, node.value]);
+				walk(root);
+				table(chart.title, rows);
+			} else if (type === 'funnel' || type === 'rings' || type === 'gauge') {
+				const items = Array.isArray(chart.data) ? chart.data.filter(isRecord) : [{ label: chart.label, value: chart.value, max: chart.max }];
+				table(chart.title, [['label', 'value', 'max'], ...items.map(item => [item.label ?? item.name, item.value, item.max])]);
+			} else if (type === 'radar') {
+				const axes = (Array.isArray(chart.axes) ? chart.axes : []).map(axis => isRecord(axis) ? axis.label : axis);
+				table(chart.title, [['series', ...axes], ...(Array.isArray(chart.series) ? chart.series.filter(isRecord) : []).map(series => [series.name, ...(Array.isArray(series.data) ? series.data : [])])]);
+			} else if (type === 'sankey') {
+				table(chart.title, [['source', 'target', 'value'], ...(Array.isArray(chart.links) ? chart.links.filter(isRecord) : []).map(link => [link.source ?? link.from, link.target ?? link.to, link.value])]);
+			} else if (type === 'candlestick') {
+				table(chart.title, [['x', 'open', 'high', 'low', 'close'], ...(Array.isArray(chart.data) ? chart.data : []).map(item => Array.isArray(item) ? item.slice(0, 5) : isRecord(item) ? [item.x ?? item.time ?? item.date, item.open, item.high, item.low, item.close] : [])]);
 			} else if (type === 'cumulative') {
 				const values = (Array.isArray(chart.values) ? chart.values : []).filter(isNum).sort((a, b) => b - a);
 				table(chart.title, [['rank', 'value'], ...values.map((value, index) => [index + 1, value])]);

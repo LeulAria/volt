@@ -13,8 +13,8 @@ import type * as marked from '../../../../../base/common/marked/marked.js';
 import { MarkedKatexSupport } from '../../../markdown/browser/markedKatexSupport.js';
 import { ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
 import { replaceEmojiWithIcons } from './agentEmojiIcons.js';
-import { IMermaidOptions, preloadMermaid, renderMermaidDiagram } from './agentMermaid.js';
-import { IVisualHostContext, mountChart } from '../visuals/agentVisuals.js';
+import { IMermaidOptions, isMermaidXyChart, preloadMermaid, renderMermaidDiagram, xychartToChartSpec } from './agentMermaid.js';
+import { IVisualHostContext, mountChart, renderVisualSkeleton } from '../visuals/agentVisuals.js';
 
 /**
  * Markdown the way Cursor's transcript draws it: KaTeX math, highlighted code cards,
@@ -54,6 +54,43 @@ function parseChartFence(value: string): unknown {
 	}
 }
 
+/**
+ * What a fence draws as a native chart: a ```volt-chart JSON spec, or a mermaid `xychart-beta`
+ * (a data chart written as a diagram) converted to one. `pending` while a chart fence is still
+ * streaming in (draw a skeleton), undefined for anything that is not a chart.
+ */
+export function fenceChartSpec(language: string | undefined, value: string, streaming = false): { readonly spec: unknown; readonly key: string } | 'pending' | undefined {
+	const lang = (language ?? '').trim().toLowerCase();
+	if (CHART_FENCES.has(lang)) {
+		const spec = parseChartFence(value);
+		return spec !== undefined ? { spec, key: fenceKey(value) } : (streaming || !value.trim() ? 'pending' : undefined);
+	}
+	if (lang === 'mermaid' && isMermaidXyChart(value)) {
+		const spec = xychartToChartSpec(value);
+		// Keyed by the spec, so later lines that change nothing (blank, a comment) keep the live chart.
+		return spec ? { spec, key: fenceKey(JSON.stringify(spec)) } : (streaming ? 'pending' : undefined);
+	}
+	return undefined;
+}
+
+/** Draws a chart fence (see `fenceChartSpec`) into `host`; false when the fence is not a chart. */
+export function renderFenceChart(host: HTMLElement, language: string | undefined, value: string, visualHost: IVisualHostContext | undefined, streaming = false): boolean {
+	if (!visualHost) {
+		return false;
+	}
+	const chart = fenceChartSpec(language, value, streaming);
+	if (!chart) {
+		return false;
+	}
+	host.classList.add('volt-md-chart-host');
+	if (chart === 'pending') {
+		renderVisualSkeleton(host, 'chart');
+	} else {
+		mountChart(host, chart.key, chart.spec, visualHost);
+	}
+	return true;
+}
+
 /** Same text, same key: a fence redrawn on every streamed frame keeps one live chart. */
 function fenceKey(value: string): string {
 	let hash = 0;
@@ -77,12 +114,10 @@ export function agentMarkdownRenderOptions(win: CodeWindow, options: IAgentMarkd
 		codeBlockRendererSync: (languageId, value) => {
 			const host = $('div.volt-md-code-host');
 			const language = (languageId ?? '').toLowerCase();
-			const chart = CHART_FENCES.has(language) && options.visualHost ? parseChartFence(value) : undefined;
-			if (language === 'mermaid') {
+			if (renderFenceChart(host, language, value, options.visualHost)) {
+				// A native chart (```volt-chart, or a mermaid xychart).
+			} else if (language === 'mermaid') {
 				renderMermaidDiagram(host, value, { ...options, onExpand: options.onExpandDiagram });
-			} else if (chart !== undefined && options.visualHost) {
-				host.classList.add('volt-md-chart-host');
-				mountChart(host, fenceKey(value), chart, options.visualHost);
 			} else {
 				renderCodeCard(host, languageId, value, options);
 			}

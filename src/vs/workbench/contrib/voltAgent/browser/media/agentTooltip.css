@@ -91,6 +91,7 @@
 
 .volt-agent-tooltip.beside .volt-agent-tooltip-label {
 	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 
 .monaco-workbench.vs .volt-agent-tooltip,
@@ -115,6 +116,19 @@
 
 .volt-agent-tooltip-label {
 	color: inherit;
+}
+
+/* Long hints wrap inside the box's max-width; a long URL breaks anywhere. The shortcut keeps its line. */
+.volt-agent-tooltip:not(.files):not(.pill):not(.card):not(.beside) .volt-agent-tooltip-row:not(.file) > .volt-agent-tooltip-label {
+	flex: 0 1 auto;
+	min-width: 0;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
+.volt-agent-tooltip-kb {
+	flex: none;
+	white-space: nowrap;
 }
 
 .volt-agent-tooltip-kb {
@@ -216,7 +230,7 @@
 }
 
 /* One slot for every leading glyph so clock, git, and folder share a column
-   and the labels start on the same x. Codicon's own rule is 16px; this wins it. */
+ * and the labels start on the same x. Codicon's own rule is 16px; this wins it. */
 .volt-agent-tooltip-card-icon,
 .volt-agent-tooltip-card-icon.codicon[class*='codicon-'],
 .volt-agent-tooltip-card-icon.volt-agent-svg-icon {

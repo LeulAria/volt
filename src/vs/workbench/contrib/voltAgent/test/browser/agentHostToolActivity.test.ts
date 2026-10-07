@@ -33,6 +33,24 @@ suite('Agent host tool activity', () => {
 		assert.deepStrictEqual(describeHostToolActivity('mcp__volt__list_thread_pull_requests', undefined, '{}'), { tool: 'list_thread_pull_requests', label: 'Listed pull requests' });
 	});
 
+	test('orchestration tools read as what the agent did to other chats', () => {
+		assert.deepStrictEqual(describeHostToolActivity('mcp__volt__thread_send', undefined, JSON.stringify({ thread_id: 'agent-0123456789ab', message: 'Rebase on main', wait: true })), { tool: 'thread_send', label: 'Asked chat', detail: 'Rebase on main' });
+		assert.deepStrictEqual(describeHostToolActivity('mcp__volt__thread_send', undefined, JSON.stringify({ thread_id: 'x', message: 'Stop', mode: 'restart' })), { tool: 'thread_send', label: 'Interrupted chat with', detail: 'Stop' });
+		assert.deepStrictEqual(describeHostToolActivity('MCP: tool', 'volt: thread_launch', JSON.stringify({ providerIdentifier: 'volt', toolName: 'thread_launch', args: { title: 'Stack layer 2', models: ['a', 'b', 'c'] } })), { tool: 'thread_launch', label: 'Launched 3 chats', detail: 'Stack layer 2' });
+		assert.deepStrictEqual(describeHostToolActivity('mcp__volt__thread_wait', undefined, JSON.stringify({ thread_ids: ['a', 'b'] })), { tool: 'thread_wait', label: 'Waited for 2 chats', detail: undefined });
+		assert.deepStrictEqual(describeHostToolActivity('mcp__volt__thread_read', undefined, JSON.stringify({ thread_id: 'volt://session/agent-0123456789ab' })), { tool: 'thread_read', label: 'Read chat', detail: '…6789ab' });
+		assert.strictEqual(describeHostToolActivity('mcp__volt__thread_fork', undefined, '{}')?.label, 'Forked this chat');
+		assert.strictEqual(describeHostToolActivity('mcp__volt__thread_update', undefined, '{"action":"archive"}')?.label, 'Archived chat');
+		assert.strictEqual(describeHostToolActivity('mcp__volt__queue_cancel', undefined, '{"all":true}')?.label, 'Cleared queue');
+		assert.ok(isVoltHostTool('mcp__volt__queue_send_now'));
+	});
+
+	test('a page rendered under its earlier name reads the same as html_render', () => {
+		assert.deepStrictEqual(describeHostToolActivity('mcp__volt__render_html', undefined, '{"title":"Release dashboard"}'), { tool: 'html_render', label: 'Rendered page', detail: 'Release dashboard' });
+		assert.deepStrictEqual(describeHostToolActivity('mcp__volt__html_render', undefined, '{"title":"Release dashboard"}'), { tool: 'html_render', label: 'Rendered page', detail: 'Release dashboard' });
+		assert.strictEqual(describeHostToolActivity('volt-html_preview: html_preview', undefined, '{"width":390}')?.detail, '390px');
+	});
+
 	test('hides the question tools', () => {
 		assert.strictEqual(describeHostToolActivity('mcp__volt__ask_question', undefined, '{}')?.hidden, true);
 		assert.strictEqual(describeHostToolActivity('MCP: tool', 'volt: await_answers', '{}')?.hidden, true);

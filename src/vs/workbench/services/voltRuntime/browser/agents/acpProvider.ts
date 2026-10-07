@@ -40,6 +40,9 @@ import { resolveAntigravityCliModelLabel } from '../../common/models/antigravity
 import { IModelOptionDescriptor, MODEL_OPTION_REASONING, unionDescriptors } from '../../common/models/modelOptions.js';
 import { advertisedModelVariant, applyContextWindowSuffix, applyOptionsToParameterizedId, configUpdatesForOptions, descriptorsFromAcpModel, flattenChoices, formatAgentModelLabel, IAcpAvailableModel, IAcpConfigOption, IAcpModelMeta, isModelConfigOption, metadataForAcpModel, parseParameterizedModelId } from './acpModels.js';
 
+/** `initialize`'s `agentCapabilities.mcpCapabilities`: the MCP transports the agent can connect to. */
+type IAcpMcpCapabilities = { http?: boolean; sse?: boolean };
+
 interface IAcpSession {
 	handle: IAgentSessionHandle;
 	client: AcpJsonRpcClient;
@@ -68,6 +71,8 @@ interface IAcpSession {
 	settling?: Promise<void>;
 	/** Pool key of the setup this session was started with (spares are matched on it). */
 	setupKey?: string;
+	/** The host MCP servers `session/new` connected (JSON), and what they were derived from. */
+	hostMcp?: { readonly sessionId?: string; readonly capabilities?: IAcpMcpCapabilities; readonly servers: string };
 	/** The agent takes `_session/steering`: a message goes into the running turn without stopping it (Claude, Codex). */
 	steering?: boolean;
 	/** The harness's own subagents of this session, by child session id (native) or Task call id (Cursor). */
@@ -202,7 +207,7 @@ const ACP_CLIENT_CAPABILITIES = {
 			air: {
 				version: 1,
 				// Native subagent sessions: Claude and Codex announce each subagent, stream its own
-				// updates under its session id, and report how it ended (.aInsp/research/cursor-subagents-protocol.md §2.4).
+				// updates under its session id, and report how it ended (.aInsp/research/cursor-subagents-protocol.md section 2.4).
 				capabilities: ['sessionFailure', 'nativeSubagentSessions'],
 			},
 		},
@@ -551,22 +556,23 @@ export class AcpAgentProvider implements IAgentProvider {
 		let initialized: {
 			agentCapabilities?: {
 				session?: { _meta?: unknown; modes?: { availableModes?: { id: string; name?: string }[] } };
-				mcpCapabilities?: { http?: boolean; sse?: boolean };
+				mcpCapabilities?: IAcpMcpCapabilities;
 				promptCapabilities?: { image?: boolean };
 			};
 			configOptions?: IAcpConfigOption[];
 		};
 		let created: ISessionNewResponse;
+		let hostMcp: IAcpSession['hostMcp'];
 		try {
 			initialized = await client.request('initialize', {
 				protocolVersion: 1,
 				clientCapabilities: ACP_CLIENT_CAPABILITIES,
 				clientInfo: { name: 'volt', title: 'Volt', version: '0.1.0' },
 			}, ACP_INITIALIZE_TIMEOUT_MS);
-			created = await client.request<ISessionNewResponse>('session/new', {
-				cwd: cwd ?? '',
-				mcpServers: acceptedMcpServers(this.hostTools?.getMcpServers(req.sessionId) ?? [], initialized.agentCapabilities?.mcpCapabilities),
-			}, ACP_SESSION_NEW_TIMEOUT_MS);
+			const capabilities = initialized.agentCapabilities?.mcpCapabilities;
+			const mcpServers = this.hostMcpServers(req.sessionId, capabilities);
+			hostMcp = { sessionId: req.sessionId, capabilities, servers: JSON.stringify(mcpServers) };
+			created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers }, ACP_SESSION_NEW_TIMEOUT_MS);
 		} catch (err) {
 			client.dispose();
 			void this.stdio.kill(processId);
@@ -586,6 +592,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			currentModeId: created.modes?.currentModeId,
 			promptImages: initialized.agentCapabilities?.promptCapabilities?.image === true,
 			setupKey: this.setupKey(req),
+			hostMcp,
 			steering: (initialized as { _meta?: { steering?: { supported?: unknown } } })._meta?.steering?.supported === true,
 		};
 		// One listener for the life of the session; it routes to whichever turn is current.
@@ -606,9 +613,19 @@ export class AcpAgentProvider implements IAgentProvider {
 		return live;
 	}
 
+	/**
+	 * A session whose host MCP servers are no longer the current ones (it started before the
+	 * window's server was up, or the server restarted on another port) cannot reach Volt's tools,
+	 * render_chart included. It counts as dead, so the next turn starts a new one with the recap.
+	 */
 	isLive(session: IAgentSessionHandle): boolean {
 		const live = this.sessions.get(session.id);
-		return !!live && !live.client.isDead;
+		return !!live && !live.client.isDead
+			&& (!live.hostMcp || JSON.stringify(this.hostMcpServers(live.hostMcp.sessionId, live.hostMcp.capabilities)) === live.hostMcp.servers);
+	}
+
+	private hostMcpServers(sessionId: string | undefined, capabilities: IAcpMcpCapabilities | undefined): IVoltMcpServer[] {
+		return acceptedMcpServers(this.hostTools?.getMcpServers(sessionId) ?? [], capabilities);
 	}
 
 	private async launchFor(profile: IProviderProfile, args: string[]): Promise<{ command: string; args: string[] }> {
@@ -1736,7 +1753,7 @@ export function planFromCursorTodos(params: unknown): Extract<IVoltEvent, { type
  * Volt's host MCP server is HTTP. Agents declare HTTP support in `mcpCapabilities.http`; one that
  * does not would reject the whole `session/new` over a transport it cannot speak.
  */
-export function acceptedMcpServers(servers: readonly IVoltMcpServer[], capabilities: { http?: boolean; sse?: boolean } | undefined): IVoltMcpServer[] {
+export function acceptedMcpServers(servers: readonly IVoltMcpServer[], capabilities: IAcpMcpCapabilities | undefined): IVoltMcpServer[] {
 	return servers.filter(server => server.type !== 'http' || capabilities?.http === true);
 }
 

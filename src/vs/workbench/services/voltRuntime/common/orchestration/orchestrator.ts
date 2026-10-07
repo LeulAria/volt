@@ -266,8 +266,10 @@ export type OrchCommandBody =
 	 * Volt wakes the chat with news it did not ask for in this turn (a watched pull request's checks
 	 * failed, a review came in). It runs as a `notification` turn after whatever is running or
 	 * queued, counts toward `maxWakeups`, and is refused once the chat woke that often in a row.
+	 * Another chat's agent messages a chat the same way (`thread_send`), so two agents cannot keep
+	 * each other busy forever. `interrupt`: stop the running turn and run this one next.
 	 */
-	| { readonly type: 'thread.notify'; readonly threadId: string; readonly turnId: string; readonly prompt: IOrchPrompt }
+	| { readonly type: 'thread.notify'; readonly threadId: string; readonly turnId: string; readonly prompt: IOrchPrompt; readonly interrupt?: boolean }
 	| { readonly type: 'thread.block'; readonly threadId: string; readonly reason: string | undefined }
 	| { readonly type: 'thread.forget'; readonly threadId: string }
 	| { readonly type: 'queue.remove'; readonly threadId: string; readonly itemId: string }
@@ -481,8 +483,11 @@ export interface IAgentOrchestratorService {
 	/** `turnId` becomes the transcript id of the user message; callers pass one to correlate. */
 	submit(threadId: string, prompt: IOrchPrompt, delivery: OrchDelivery, turnId?: string): Promise<IOrchSubmitResult>;
 	/** Wakes the chat with a notification turn (see `thread.notify`). A retried `turnId` is not sent twice. */
-	notify(threadId: string, prompt: IOrchPrompt, turnId: string): Promise<IOrchSubmitResult>;
+	notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean }): Promise<IOrchSubmitResult>;
+	/** The user's Stop (or Stop all). Agents interrupt chats with `dispatch({ type: 'turn.cancel' })`, which does not fire `onDidStop`. */
 	cancel(threadId: string, options?: { readonly cascade?: 'turn' | 'all' }): Promise<void>;
+	/** The user stopped a chat: what it was waiting on for itself (pull request watches) ends too. */
+	readonly onDidStop: Event<string>;
 	/** The turn is the chat's active one and is not being stopped. */
 	isTurnCurrent(threadId: string, turnId: string): boolean;
 	/** Load a chat's persisted orchestration (its root) when it is opened. */

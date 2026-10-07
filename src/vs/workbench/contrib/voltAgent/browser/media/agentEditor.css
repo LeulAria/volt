@@ -3575,7 +3575,7 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
-/* The agent's to-dos: a card like Context Usage, above the chips. One line ("Tasks <current> 1/4 ▬▬▬▬") that opens into the list. */
+/* The agent's to-dos: a card like Context Usage, above the chips. One line ("Tasks <current> 1/4" plus a bar) that opens into the list. */
 
 .volt-agent-tasks-card {
 	--volt-tasks-done: var(--vscode-charts-green, #3fb950);
@@ -7761,7 +7761,7 @@ pre.volt-agent-searchable {
 }
 
 /* Open in Tools follows the last tab. The rule is on the button itself, so a toolbar rebuild
-   cannot drop it back into the right-hand cluster before the next measurement. */
+ * cannot drop it back into the right-hand cluster before the next measurement. */
 .monaco-workbench .volt-agent-tools-area .editor-actions .action-item:has(.codicon-add) {
 	position: absolute;
 	top: 0;
@@ -8862,13 +8862,15 @@ pre.volt-agent-searchable {
 	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.08));
 }
 
-.volt-agent-user-restore .codicon {
+/* The button's colour, whatever the glyph: theme rules colour some codicons (debug icons are blue). */
+.volt-agent-turn.user .volt-agent-user-restore .codicon {
 	font-size: 14px;
+	color: inherit;
 }
 
-/* Rewind to Here sits right after Restore Checkpoint when both show. */
+/* Both buttons sit in the bottom-right corner; Rewind to Here goes left of Restore Checkpoint. */
 .volt-agent-user-restore + .volt-agent-user-rewind {
-	margin-left: 2px;
+	right: 27px;
 }
 
 /* "Redo checkpoint" under a message whose checkpoint was restored. */

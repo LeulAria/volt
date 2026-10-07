@@ -419,6 +419,19 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 .volt-agent-subagent-of-pill .label { font-weight: 500; }
 .volt-agent-subagent-of-pill .parent { color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent); overflow: hidden; text-overflow: ellipsis; }
 
+/* "From · <chat>" above a message another chat's agent wrote, and the scheduled-run pill: both open what sent them. */
+.volt-agent-subagent-of.from-thread .volt-agent-subagent-of-pill,
+.volt-agent-subagent-of.scheduled .volt-agent-subagent-of-pill {
+	cursor: pointer;
+}
+
+.volt-agent-subagent-of.from-thread .volt-agent-subagent-of-pill:hover,
+.volt-agent-subagent-of.from-thread .volt-agent-subagent-of-pill:focus-visible {
+	border-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+	color: var(--vscode-foreground);
+	outline: none;
+}
+
 /* The dock beside the chat: one card, its sections (Workspace, Changes, Agents) split by full-width rules. */
 
 .monaco-workbench.volt-layout-agent .volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body {
@@ -622,7 +635,7 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	outline-offset: -1px;
 }
 
-/* "⇄ Context handoff · Claude Opus 5.5 → GPT-6" above the first turn on the new model. */
+/* "Context handoff · Claude Opus 5.5 → GPT-6" above the first turn on the new model. */
 
 .volt-agent-handoff {
 	display: flex;

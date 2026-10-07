@@ -29,6 +29,8 @@ import { IAgentRuntimeService } from '../../common/runtime.js';
 import { IVoltSessionContextService } from '../../common/sessionContext.js';
 import { OrchestratorStore } from './orchestratorStore.js';
 
+/** Models one delegate_task call may run the same brief on. */
+const MAX_FAN_OUT = 4;
 /** A cancelled run that does not report its end within this long is settled by Volt. */
 const CANCEL_SETTLE_MS = 15_000;
 /** A Volt chat id for a subagent's chat; the agent editor reads session ids from this shape. */
@@ -67,6 +69,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	readonly onDidChange: Event<IOrchChange> = this._onDidChange.event;
 	private readonly _onDidChangeTasks = this._register(new Emitter<readonly string[]>());
 	readonly onDidChangeTasks: Event<readonly string[]> = this._onDidChangeTasks.event;
+	private readonly _onDidStop = this._register(new Emitter<string>());
+	readonly onDidStop: Event<string> = this._onDidStop.event;
 
 	constructor(
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
@@ -135,17 +139,18 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return outcome ? { outcome } : { outcome: 'rejected', ...(step.decision.rejected ? { reason: step.decision.rejected } : {}) };
 	}
 
-	async notify(threadId: string, prompt: IOrchPrompt, turnId: string): Promise<IOrchSubmitResult> {
+	async notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean }): Promise<IOrchSubmitResult> {
 		await this.ensureThreadLoaded(threadId);
 		this.describeThread(threadId, undefined);
 		// The turn id doubles as the command id, so a retried wake-up is acknowledged, not sent twice.
-		const step = this.apply({ type: 'thread.notify', threadId, turnId, prompt }, `notify:${turnId}`);
+		const step = this.apply({ type: 'thread.notify', threadId, turnId, prompt, ...(options?.interrupt ? { interrupt: true } : {}) }, `notify:${turnId}`);
 		const outcome = step.decision.outcome;
 		return outcome ? { outcome } : { outcome: 'rejected', ...(step.decision.rejected ? { reason: step.decision.rejected } : {}) };
 	}
 
 	async cancel(threadId: string, options?: { readonly cascade?: 'turn' | 'all' }): Promise<void> {
 		this.apply({ type: 'turn.cancel', threadId, ...(options?.cascade ? { cascade: options.cascade } : {}) });
+		this._onDidStop.fire(threadId);
 	}
 
 	isTurnCurrent(threadId: string, turnId: string): boolean {
@@ -759,10 +764,14 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return { ref: match.ref, label: match.label };
 	}
 
-	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken): Promise<IVoltHostToolResult> {
+	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken, binding?: { readonly toolCallId: string | undefined }): Promise<IVoltHostToolResult> {
 		const brief = typeof args.task === 'string' ? args.task.trim() : '';
 		if (!brief) {
 			return { error: 'delegate_task needs a `task`: the complete brief for the subagent.' };
+		}
+		const fanOut = Array.isArray(args.models) ? [...new Set(args.models.filter((name): name is string => typeof name === 'string' && !!name.trim()).map(name => name.trim()))] : [];
+		if (fanOut.length > 1 && !binding) {
+			return this.delegateToModels(parentId, args, fanOut, token);
 		}
 		const parent = this.state.threads[parentId];
 		const previousId = typeof args.previous_task_id === 'string' && args.previous_task_id.trim() ? args.previous_task_id.trim() : undefined;
@@ -782,7 +791,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const title = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 80) : previous?.title ?? titleFromBrief(brief);
 		const taskId = newTaskId(id => !!this.state.tasks[id]);
 		const depth = (parent?.depth ?? 0) + 1;
-		const toolCallId = this.delegateCalls.get(parentId)?.shift();
+		const toolCallId = binding ? binding.toolCallId : this.delegateCalls.get(parentId)?.shift();
 		const step = this.apply({
 			type: 'task.spawn',
 			spawn: {
@@ -832,6 +841,55 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			lines.push('Its report is delivered to this chat as a new message when it finishes; you may end your turn. Call wait_tasks only if you need the result before you can continue.');
 		}
 		return { text: lines.join('\n') };
+	}
+
+	/**
+	 * One brief, several models: a task each (independent reviews, competing designs). The parent's
+	 * delegate_task row belongs to the first; every report comes back like any task's.
+	 */
+	private async delegateToModels(parentId: string, args: Record<string, unknown>, names: readonly string[], token: CancellationToken): Promise<IVoltHostToolResult> {
+		if (names.length > MAX_FAN_OUT) {
+			return { error: `delegate_task runs one brief on at most ${MAX_FAN_OUT} models at once.` };
+		}
+		// Resolve every model first: an unknown one starts nothing.
+		const models = names.map(name => this.resolveModel(name)!);
+		const toolCallId = this.delegateCalls.get(parentId)?.shift();
+		const key = typeof args.client_request_id === 'string' && args.client_request_id.trim() ? args.client_request_id.trim() : undefined;
+		const baseTitle = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 60) : titleFromBrief(String(args.task));
+		const ids: string[] = [];
+		const lines: string[] = [];
+		for (const [index, model] of models.entries()) {
+			const result = await this.delegate(parentId, {
+				...args,
+				models: undefined,
+				model: model.ref,
+				wait: false,
+				title: `${baseTitle} · ${model.label}`,
+				...(key ? { client_request_id: `${key}:${model.ref}` } : {}),
+			}, token, { toolCallId: index === 0 ? toolCallId : undefined });
+			const id = /\b(t-[0-9a-f]{6})\b/.exec(result.text ?? '')?.[1];
+			if (id) {
+				ids.push(id);
+			}
+			lines.push(`${model.label}: ${result.error ?? result.text?.split('\n')[0] ?? ''}`);
+		}
+		if (args.wait === true && ids.length) {
+			await this.waitFor(ids, false, TASK_WAIT_MS, token);
+		}
+		const now = Date.now();
+		const tasks = ids.map(id => this.state.tasks[id]).filter((task): task is IOrchTask => !!task);
+		const finished = tasks.filter(task => isTerminalTaskState(task.state));
+		if (finished.length) {
+			this.apply({ type: 'task.ack', taskIds: finished.map(task => task.id) });
+		}
+		return {
+			text: [
+				`Started the same brief on ${ids.length} models:`,
+				...lines,
+				...tasks.map(task => describeTask(task, now, { includeResult: isTerminalTaskState(task.state) })),
+				finished.length === tasks.length ? '' : 'Their reports are delivered to this chat as they finish; you may end your turn. wait_tasks returns them sooner if you need them now.',
+			].filter(Boolean).join('\n'),
+		};
 	}
 
 	private visibleTasks(threadId: string): IOrchTask[] {

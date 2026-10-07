@@ -155,6 +155,10 @@ export class AgentTooltip extends Disposable {
 			this.domNode.style.fontFeatureSettings = '';
 		}
 
+		// Measure at the origin: a fixed box left near the right edge from the last show would
+		// shrink-to-fit into the leftover width and wrap a short label.
+		this.domNode.style.left = '0px';
+		this.domNode.style.top = '0px';
 		this.domNode.classList.remove('hidden');
 		const gap = options?.gap ?? 6;
 		const rect = anchor.getBoundingClientRect();
@@ -179,7 +183,11 @@ export class AgentTooltip extends Disposable {
 		left = Math.max(8, Math.min(left, win.innerWidth - width - 8));
 		const above = rect.top - height - gap;
 		const below = rect.bottom + gap;
-		const top = options?.placement === 'below' || above < 8 ? below : above;
+		let top = options?.placement === 'below' || above < 8 ? below : above;
+		if (top === below && below + height > win.innerHeight - 8 && above >= 8) {
+			top = above;
+		}
+		top = Math.max(8, Math.min(top, win.innerHeight - height - 8));
 		this.domNode.style.left = `${left}px`;
 		this.domNode.style.top = `${top}px`;
 	}

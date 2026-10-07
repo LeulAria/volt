@@ -220,6 +220,34 @@ suite('ACP provider supervision', () => {
 		await finish(env, handle);
 	});
 
+	test('a session that missed the current host MCP server is not live, so the next turn gets Volt\'s tools', async () => {
+		let endpoint: string | undefined;
+		const env = setup({ getMcpServers: (sessionId?: string) => endpoint ? [{ type: 'http', name: 'volt', url: `${endpoint}/${sessionId}`, headers: [] }] : [] } as unknown as IVoltHostToolService);
+		const sent = () => env.agent.written.filter(entry => entry.msg.method === 'session/new').map(entry => entry.msg.params?.mcpServers).slice(-1)[0];
+
+		// Started before the window's MCP server was up: no volt server, so no render_chart.
+		const early = await env.provider.start(request({ sessionId: 's1' }));
+		assert.deepStrictEqual(sent(), []);
+		assert.strictEqual(env.provider.isLive(early), true);
+		endpoint = 'http://127.0.0.1:4000/mcp';
+		assert.strictEqual(env.provider.isLive(early), false);
+		await finish(env, early);
+
+		const handle = await env.provider.start(request({ sessionId: 's1' }));
+		assert.deepStrictEqual(sent(), [{ type: 'http', name: 'volt', url: 'http://127.0.0.1:4000/mcp/s1', headers: [] }]);
+		assert.strictEqual(env.provider.isLive(handle), true, 'an unchanged endpoint keeps the session');
+		endpoint = 'http://127.0.0.1:4001/mcp';
+		assert.strictEqual(env.provider.isLive(handle), false, 'the server restarted on another port');
+		await finish(env, handle);
+
+		// An agent without HTTP MCP never gets the server, so a new endpoint changes nothing for it.
+		env.agent.capabilities = { mcpCapabilities: { http: false } };
+		const noHttp = await env.provider.start(request({ sessionId: 's1' }));
+		endpoint = 'http://127.0.0.1:4002/mcp';
+		assert.strictEqual(env.provider.isLive(noHttp), true);
+		await finish(env, noHttp);
+	});
+
 	test('Stop sends one session/cancel even when the token and interrupt() both fire', async () => {
 		const env = setup();
 		const { handle, cts, turn } = await startTurn(env);

@@ -71,7 +71,10 @@ a{color:var(--accent)}`;
 function bootstrapScript(preview: boolean, kind: 'light' | 'dark'): string {
 	return `(function(){var preview=${preview ? 'true' : 'false'},api=null;try{if(typeof acquireVsCodeApi==='function'){api=acquireVsCodeApi();}}catch(e){}
 function post(m){if(api){api.postMessage(m);}}
-window.volt={preview:preview,theme:'${kind}',open:function(h){post({type:'volt-open',href:String(h)});},openFile:function(p,l){post({type:'volt-open',href:'volt://file/'+encodeURI(String(p))+(l?'#L'+l:'')});},openSession:function(id){post({type:'volt-open',href:'volt://session/'+encodeURIComponent(String(id))});}};
+function str(v){return typeof v==='string'?v:JSON.stringify(v);}
+var data,dataRead=false;function readData(){if(!dataRead){var el=document.getElementById('volt-data');if(el){dataRead=true;try{data=JSON.parse(el.textContent||'null');}catch(e){data=null;}}}return data===undefined?null:data;}
+window.volt={preview:preview,theme:'${kind}',get data(){return readData();},open:function(h){post({type:'volt-open',href:String(h)});},openFile:function(p,l){post({type:'volt-open',href:'volt://file/'+encodeURI(String(p))+(l?'#L'+l:'')});},openSession:function(id){post({type:'volt-open',href:'volt://session/'+encodeURIComponent(String(id))});},
+send:function(t){post({type:'volt-send',text:str(t)});},prompt:function(t){post({type:'volt-prompt',text:str(t)});},setContext:function(v){post({type:'volt-context',value:str(v)});},fullscreen:function(on){post({type:'volt-display',mode:on===false?'inline':'fullscreen'});}};
 window.addEventListener('message',function(e){var d=e.data;if(d&&d.type==='volt-theme'&&typeof d.css==='string'){var s=document.getElementById('volt-visual-theme');if(s){s.textContent=d.css;}if(d.kind){window.volt.theme=d.kind;}}});
 function mount(){if(preview&&document.body&&!/vscode-(light|dark|high-contrast)/.test(document.body.className)){document.body.classList.add('vscode-${kind}');}if(window.VoltCharts){window.VoltCharts.mountAll(document,{animate:!preview,onOpen:window.volt.open});}}
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',mount);}else{mount();}})();`;
@@ -101,6 +104,21 @@ function blankNonMarkup(html: string): string {
 /** Escapes a script body so the page's markup cannot end it early. */
 function scriptBody(source: string): string {
 	return source.replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\!--');
+}
+
+/**
+ * Puts the agent's `data` (any JSON) into its page as `<script id="volt-data" type="application/json">`,
+ * read by the page as `window.volt.data`: the page stays a template and the data stays exact.
+ */
+export function withPageData(html: string, data: unknown): string {
+	const tag = `<script id="volt-data" type="application/json">${scriptBody(JSON.stringify(data) ?? 'null')}</script>`;
+	const scan = blankNonMarkup(html);
+	const head = /<head(?:\s[^>]*)?>/i.exec(scan);
+	if (head) {
+		const at = head.index + head[0].length;
+		return html.slice(0, at) + tag + html.slice(at);
+	}
+	return tag + html;
 }
 
 export function buildVisualPage(html: string, options: IVisualPageOptions): string {

@@ -518,14 +518,16 @@ suite('Agent home list model', () => {
 		assert.strictEqual(sessionMetaParts(chat, context, view({ show: ['machine'] }), 1_000_000).length, 1);
 	});
 
-	test('status badge: input, working time, woke, done, draft, limited, failed; none when stopped or idle; only for inbox tabs', () => {
+	test('status badge: input, working time, woke, done, draft, limit reached, failed, stopped; none when idle; only for inbox tabs', () => {
 		const now = 10 * 60_000;
 		assert.deepStrictEqual(sessionStatusBadge(session('w', { status: 'running', lastPromptAt: now - 2 * 60_000 }), now), { kind: 'working', label: 'Working 2m' });
 		assert.deepStrictEqual(sessionStatusBadge(session('d', { status: 'done' }), now), { kind: 'done', label: 'Done' });
 		assert.deepStrictEqual(sessionStatusBadge(session('n', { status: 'idle', turnCount: 0 }), now), { kind: 'draft', label: 'Draft' });
 		assert.strictEqual(sessionStatusBadge(session('i', { status: 'idle', turnCount: 2 }), now), undefined);
-		assert.strictEqual(sessionStatusBadge(session('c', { status: 'cancelled' }), now), undefined);
-		assert.deepStrictEqual(sessionStatusBadge(session('l', { status: 'error', summary: 'Usage limit reached · resets 3:20 AM' }), now), { kind: 'limited', label: 'Limited' });
+		assert.deepStrictEqual(sessionStatusBadge(session('c', { status: 'cancelled' }), now), { kind: 'stopped', label: 'Stopped' });
+		assert.deepStrictEqual(sessionStatusBadge(session('l', { status: 'error', summary: 'Usage limit reached · resets 3:20 AM' }), now), { kind: 'limited', label: 'Limit reached' });
+		assert.deepStrictEqual(sessionStatusBadge(session('h', { status: 'done', summary: 'You\u2019ve hit your limit · resets 5pm (Asia/Dubai)' }), now), { kind: 'limited', label: 'Limit reached' });
+		assert.deepStrictEqual(sessionStatusBadge(session('r', { status: 'done', summary: 'Added a retry when the API rate limit is hit' }), now), { kind: 'done', label: 'Done' });
 		assert.deepStrictEqual(sessionStatusBadge(session('f', { status: 'error', summary: 'Connection reset' }), now), { kind: 'failed', label: 'Failed' });
 		assert.deepStrictEqual(sessionStatusBadge(session('a', { status: 'running', attention: 'approval' }), now), { kind: 'input', label: 'Input' });
 		assert.deepStrictEqual(sessionStatusBadge(session('q', { status: 'running', attention: 'question' }), now), { kind: 'input', label: 'Input' });

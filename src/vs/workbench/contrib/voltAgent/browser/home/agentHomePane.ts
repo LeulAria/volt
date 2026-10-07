@@ -254,9 +254,10 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 
 		const element = node.element;
 		// Group headers: collapsed left / expanded down. Folder rows keep collapsed right.
-		// Settled / Snoozed put a trailing chevron after their rule: down to open, up to fold.
+		// Working puts a trailing chevron after its rule: down to open, up to fold. Settled / Snoozed
+		// lead with a pane-header chevron like the other group headers: right when folded, down when open.
 		const collapsedChevron = element.type === 'bucket' ? Codicon.chevronLeft : Codicon.chevronRight;
-		const chevron = element.type === 'group'
+		const chevron = element.type === 'group' && element.id === 'working'
 			? (node.collapsed ? Codicon.chevronDown : Codicon.chevronUp)
 			: (node.collapsed ? collapsedChevron : Codicon.chevronDown);
 		template.twist.replaceChildren(renderIcon(chevron));
@@ -409,7 +410,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		}));
 	}
 
-	/** Working / Settled / Snoozed: the label (Working counts its folded chats), a rule across the row, and the fold chevron at the end. */
+	/** Working: the label, its folded-chat count, a rule and a trailing chevron. Settled / Snoozed: a pane section header (leading chevron, uppercase label). */
 	private renderGroup(element: Extract<AgentHomeElement, { type: 'group' }>, template: IHomeTemplate): void {
 		template.container.classList.add('is-group', 'is-collapsible', `group-${element.id}`);
 		template.name.textContent = agentHomeGroupLabel(element.id);
@@ -631,7 +632,7 @@ function prBadgeIcon(state: IAgentPrBadge['state']): ThemeIcon {
 	}
 }
 
-/** The glyph in a status badge: drawn rings for most states, a codicon for Interrupted. */
+/** The glyph in a status badge: drawn rings for most states, codicons for Interrupted and Stopped. */
 function statusBadgeIcon(kind: AgentHomeStatusBadgeKind): HTMLElement {
 	switch (kind) {
 		case 'input':
@@ -643,6 +644,8 @@ function statusBadgeIcon(kind: AgentHomeStatusBadgeKind): HTMLElement {
 		case 'failed':
 			return createHomeStatusBadgeIcon(kind);
 		case 'interrupted': return renderIcon(Codicon.debugPause);
+		// The same square as the transcript's "Stopped" marker.
+		case 'stopped': return renderIcon(Codicon.debugStop);
 		default: {
 			const unexpected: never = kind;
 			return unexpected;
@@ -877,6 +880,14 @@ export class AgentHomePane extends Disposable {
 					this.tree.setFocus([]);
 				}
 			});
+		}));
+
+		// Header chevrons and the row's `collapsed` class are drawn in renderElement; a fold alone does not re-render the row.
+		this._register(this.tree.onDidChangeCollapseState(e => {
+			const element = e.node.element;
+			if (element && this.tree.hasElement(element)) {
+				this.tree.rerender(element);
+			}
 		}));
 
 		this._register(this.tree.onContextMenu(e => {
@@ -1649,6 +1660,7 @@ export class AgentHomePane extends Disposable {
 		const status = this.runGroups.runStatus(group.id, run.id);
 		const label = runStatusLabel(status, run, Date.now());
 		const kind = runBadgeKind(status);
+		// allow-any-unicode-next-line
 		const stat = run.stats && (run.stats.additions || run.stats.deletions) ? `+${run.stats.additions} −${run.stats.deletions}` : undefined;
 		return { label, ...(kind ? { badge: { kind, label } } : {}), ...(stat ? { stat } : {}) };
 	}

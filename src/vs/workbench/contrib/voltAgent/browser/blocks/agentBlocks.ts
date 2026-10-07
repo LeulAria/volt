@@ -82,6 +82,10 @@ export interface IVisualBlock extends IAgentBaseBlock {
 	ref: string;
 	/** Pages: height at the reply column's width, so the frame opens at its size. */
 	height?: number;
+	/** Pages: `[width, height]` at several reader widths (see `IVoltVisualRef.heights`). */
+	heights?: readonly (readonly [number, number])[];
+	/** Pages: the agent's cap on the frame height. */
+	cap?: number;
 }
 
 export interface IMermaidBlock extends IAgentBaseBlock {

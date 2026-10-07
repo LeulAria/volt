@@ -29,11 +29,26 @@ export const BROWSER_PAGE_URL_COMMAND_ID = 'volt.browser.pageUrl';
 
 export const BROWSER_COMPARE_IMAGE_TOOL_NAME = 'browser_compare_image';
 
-/** Visual replies: a native chart from a JSON spec, a sandboxed HTML page, and a screenshot check of a page. */
+/**
+ * Visual replies: a native chart from a JSON spec, a sandboxed HTML page, and a screenshot check of
+ * a page. The page tools carry T3 Code's names (`html_render`, `html_preview`), which agents and
+ * users already know; Volt's first names for them still work (see `LEGACY_TOOL_NAMES`).
+ */
 export const RENDER_CHART_TOOL_NAME = 'render_chart';
-export const RENDER_HTML_TOOL_NAME = 'render_html';
-export const PREVIEW_HTML_TOOL_NAME = 'preview_html';
-export const VISUAL_TOOL_NAMES = [RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, PREVIEW_HTML_TOOL_NAME] as const;
+export const RENDER_HTML_TOOL_NAME = 'html_render';
+export const PREVIEW_HTML_TOOL_NAME = 'html_preview';
+export const VISUAL_TOOL_NAMES = [RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, 'render_html', 'preview_html'] as const;
+
+/** Earlier names of host tools, still accepted from agents and read in stored transcripts. */
+export const LEGACY_TOOL_NAMES: Readonly<Record<string, string>> = {
+	render_html: RENDER_HTML_TOOL_NAME,
+	preview_html: PREVIEW_HTML_TOOL_NAME,
+};
+
+/** The current name of a host tool an agent may call by an earlier one. */
+export function canonicalHostToolName(name: string): string {
+	return LEGACY_TOOL_NAMES[name] ?? name;
+}
 
 /** A visual a render tool published: where its spec or page is stored, for the transcript to draw. */
 export interface IVoltVisualRef {
@@ -43,17 +58,22 @@ export interface IVoltVisualRef {
 	readonly title: string;
 	/** Pages: the height the page needed at the reply column's width, so the frame opens at its size. */
 	readonly height?: number;
+	/** Pages: `[width, height]` measured at several reader widths, so a narrower chat opens at the right size too. */
+	readonly heights?: readonly (readonly [number, number])[];
+	/** Pages: the agent's cap on the frame height; taller content scrolls inside. */
+	readonly cap?: number;
 }
 export const BROWSER_NETWORK_TOOL_NAME = 'browser_network';
 export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
 
 /**
- * `core`: questions. `browser`: the in-app browser. `image`: reading image files. `pullRequests`:
+ * `core`: questions. `browser`: the in-app browser. `image`: reading image files. `threads`: other
+ * chats, their queues and checkouts (an agent as orchestrator). `pullRequests`:
  * linking and watching the chat's pull requests. `visuals`: charts and pages shown in the reply. `devices`: iOS simulators
  * and Android emulators. `capture`: screenshots and recordings of windows. An agent can be
  * handed a subset (`getMcpServers(sessionId, { groups })`) to keep its tool list short.
  */
-export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'pullRequests' | 'visuals' | 'devices' | 'capture';
+export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture';
 
 export interface IVoltHostToolInfo {
 	readonly name: string;
@@ -430,6 +450,35 @@ export const PULL_REQUEST_TOOL_NAMES = ['link_pull_request', 'unlink_pull_reques
 /** Scheduled task tools (registered by the schedule service): they only change Volt's own state. */
 export const SCHEDULE_TOOL_NAMES = ['schedule_task', 'list_scheduled_tasks', 'update_scheduled_task', 'delete_scheduled_task', 'run_scheduled_task_now'] as const;
 
+/**
+ * Orchestration tools (registered by the thread tool service): an agent reads, messages, forks and
+ * launches other chats, and manages their queues. They change Volt's own state; mode and caller
+ * checks live in the service.
+ */
+export const THREAD_TOOL_NAMES = [
+	'orchestrator_capabilities',
+	'thread_list',
+	'thread_search',
+	'thread_read',
+	'thread_send',
+	'thread_wait',
+	'thread_interrupt',
+	'thread_fork',
+	'thread_launch',
+	'thread_update',
+	'thread_configure',
+	'queue_list',
+	'queue_edit',
+	'queue_cancel',
+	'queue_reorder',
+	'queue_send_now',
+	'queue_resume',
+	'worktree_status',
+	'worktree_list',
+] as const;
+
+export type VoltThreadToolName = typeof THREAD_TOOL_NAMES[number];
+
 export function voltHostToolName(name?: string, title?: string): string | undefined {
 	for (const raw of [name, title]) {
 		const value = (raw ?? '').trim();
@@ -439,8 +488,8 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (SCHEDULE_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id)) {
-				return id;
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (SCHEDULE_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id)) {
+				return canonicalHostToolName(id);
 			}
 		}
 	}
