@@ -2383,9 +2383,13 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		const root = this.mainContainer;
 		const agent = root.classList.contains('volt-layout-agent');
 		const toolsOpen = !!root.querySelector(':scope > .volt-agent-tools-area:not(.hidden):not(.floating)');
+		// The right-edge sidebar (Files / Source Control / Pull Requests) inside the tools area
+		// takes a column of its own; count it so the list folds away when it opens in a tight window.
+		const edge = toolsOpen ? root.querySelector<HTMLElement>(':scope > .volt-agent-tools-area:not(.hidden):not(.floating) .volt-agent-files-sidebar:not(.hidden)') : null;
+		const edgeWidth = edge ? (edge.offsetWidth || 300) : 0;
 		// The rail is narrow enough to stay a column in any window.
 		const rail = root.classList.contains(AGENT_SIDEBAR_RAIL_CLASS);
-		const drawer = agent && !rail && agentNeedsSidebarDrawer(this._mainContainerDimension.width, AuxiliaryBarPart.AGENT_DEFAULT_WIDTH, toolsOpen);
+		const drawer = agent && !rail && agentNeedsSidebarDrawer(this._mainContainerDimension.width, AuxiliaryBarPart.AGENT_DEFAULT_WIDTH, toolsOpen, edgeWidth);
 		if (drawer === this.agentDrawerMode) {
 			return false;
 		}

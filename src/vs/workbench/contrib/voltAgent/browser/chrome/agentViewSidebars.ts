@@ -30,8 +30,10 @@ import { OPEN_BROWSER_COMMAND_ID, VoltBrowserEditorInput } from '../preview/brow
 import { AgentChangesEditorInput, OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
 import { createPrimarySidebarToggleIcon } from '../../../../browser/parts/titlebar/sidebarToggleIcon.js';
 import { OPEN_CHAT_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
+import { AgentPullRequestDockControl } from '../pullRequests/agentPullRequestDockControl.js';
+import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 import { setAgentTooltip } from './agentTooltip.js';
-import { onDidChangeAgentToolEditors, openAgentToolsPanel, revealAgentToolEditor, SHOW_AGENT_FILES_COMMAND_ID, SHOW_AGENT_SCM_COMMAND_ID, shownAgentToolEditors } from '../workspace/agentSurfaceHost.js';
+import { closeAgentToolEditor, onDidChangeAgentToolEditors, openAgentToolsPanel, revealAgentToolEditor, SHOW_AGENT_FILES_COMMAND_ID, SHOW_AGENT_SCM_COMMAND_ID, shownAgentToolEditors } from '../workspace/agentSurfaceHost.js';
 import { CHANGES_ICON_PATH, createSurfaceStrokeIcon, FILES_ICON_SHAPES, type SvgIconShapes } from '../workspace/agentSurfaceMenu.js';
 import { AGENT_TOOLS_VISIBILITY_EVENT } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -195,6 +197,8 @@ class AgentViewSidebarsContribution extends Disposable {
 	private changesSessionId: string | undefined;
 	/** The agents of the chat on screen: running, previous, and its parent in a subagent's chat. */
 	private readonly lineage: AgentLineageDock;
+	/** The chat's pull request with its checks and Merge, or the plain "Pull request" row. */
+	private readonly pullRequestControl: AgentPullRequestDockControl;
 	private readonly tabListeners = this._register(new DisposableStore());
 	/** Editors currently painted in Open Tabs. Unchanged focus events must not rebuild those rows. */
 	private tabKeys = '';
@@ -296,7 +300,11 @@ class AgentViewSidebarsContribution extends Disposable {
 		// Commit opens Source Control in the right panel.
 		this.createActionRow(git, { id: 'commit', label: localize('voltAgent.dock.commitPush', "Commit & push"), icon: Codicon.cloudUpload, command: SHOW_AGENT_SCM_COMMAND_ID });
 		// The chat's pull request, or the form for a new one.
-		this.createActionRow(git, { id: 'pullRequest', label: localize('voltAgent.dock.pullRequest', "Pull request"), icon: Codicon.gitPullRequest, command: OPEN_CHAT_PULL_REQUEST_COMMAND_ID });
+		const pullRequests = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
+		this.pullRequestControl = this._register(instantiationService.createInstance(AgentPullRequestDockControl, git, pullRequests, {
+			openCommandId: OPEN_CHAT_PULL_REQUEST_COMMAND_ID,
+			emptyLabel: localize('voltAgent.dock.pullRequest', "Pull request"),
+		}));
 		const changesLabel = this.createActionRow(git, changes);
 		this.changesAdd = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.add'));
 		this.changesDel = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.del'));
@@ -668,7 +676,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		if (keys === this.tabKeys && this.tabList.childElementCount === tabs.length) {
 			const rows = this.tabList.querySelectorAll('.volt-agent-dock-row');
 			for (let index = 0; index < tabs.length; index++) {
-				const label = rows[index]?.lastElementChild;
+				const label = rows[index]?.querySelector('.volt-agent-dock-row-label');
 				const name = tabs[index].getName();
 				if (label && label.textContent !== name) {
 					label.textContent = name;
@@ -690,8 +698,30 @@ class AgentViewSidebarsContribution extends Disposable {
 			} else {
 				row.appendChild(renderIcon(this.iconFor(editor)));
 			}
-			append(row, $('span')).textContent = editor.getName();
+			append(row, $('span.volt-agent-dock-row-label')).textContent = editor.getName();
+			// A span, not a button: a button cannot sit inside the row's button. Shown on hover (agentViewSidebars.css).
+			const close = append(row, $('span.volt-agent-dock-tab-close'));
+			close.setAttribute('role', 'button');
+			close.setAttribute('aria-label', localize('voltAgent.dock.closeTab', "Close {0}", editor.getName()));
+			close.appendChild(renderIcon(Codicon.close));
 			this.tabListeners.add(editor.onDidChangeLabel(() => this.renderTabs()));
+			// Stops the row's pointerdown, which would open the tab first.
+			this.tabListeners.add(addDisposableListener(close, 'pointerdown', event => {
+				event.stopPropagation();
+				event.preventDefault();
+			}));
+			this.tabListeners.add(addDisposableListener(close, 'click', event => {
+				event.stopPropagation();
+				event.preventDefault();
+				this.closeTab(editor);
+			}));
+			// Middle click closes, like an editor tab.
+			this.tabListeners.add(addDisposableListener(row, 'auxclick', event => {
+				if (event.button === 1) {
+					event.preventDefault();
+					this.closeTab(editor);
+				}
+			}));
 			// pointerdown runs before the row can be replaced. A mouse click is ignored so it does not open twice.
 			this.tabListeners.add(addDisposableListener(row, 'pointerdown', event => {
 				if (event.button !== 0) {
@@ -708,6 +738,15 @@ class AgentViewSidebarsContribution extends Disposable {
 		}
 	}
 
+	/** Close the tab in whichever group shows it: a chat's tools area, else the main editor part. */
+	private closeTab(editor: EditorInput): void {
+		if (closeAgentToolEditor(editor)) {
+			return;
+		}
+		const group = this.editorGroupsService.mainPart.groups.find(candidate => candidate.contains(editor));
+		void group?.closeEditor(editor);
+	}
+
 	/** The lineage follows the chat in the main panel. */
 	private syncLineage(): void {
 		// Agent chats live in their own editor part: the chat the dock sits in says which one it is.
@@ -715,6 +754,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		const active = this.editorService.activeEditor;
 		const sessionId = host ?? (active instanceof AgentEditorInput ? active.sessionId : undefined);
 		this.lineage.setSession(sessionId);
+		this.pullRequestControl.setSession(sessionId);
 		if (sessionId !== this.changesSessionId) {
 			this.changesSessionId = sessionId;
 			this.renderChangesStats();

@@ -26,13 +26,11 @@ import { IWorkbenchLayoutService } from '../../../../services/layout/browser/lay
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createCompactIcon } from '../context/agentContextUsageView.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
+import { AgentPullRequestHoverCard } from '../pullRequests/agentPullRequestHoverCard.js';
 import { CREATE_PULL_REQUEST_COMMAND_ID, OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { currentLink, IAgentPrLink, isOpenState, isTrunkBranch } from '../../common/agentPullRequests.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 
-const DOT_RING = [0, 1, 2, 5, 8, 7, 6, 3];
-const DOT_TRAIL = 2;
-const DOT_SPEED = 90;
 /** A reader this close to the last line is at the end, so the arrow stays hidden. */
 export const SCROLL_END_SLACK_PX = 96;
 
@@ -63,40 +61,35 @@ interface IGitShortStat {
 	deletions: number;
 }
 
-export function createThinkingDots(): { root: HTMLElement; cells: HTMLElement[] } {
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/**
+ * Cursor's in-progress loader for pills (DotGridLoader, sine_3x3): nine dots on a 3x3 grid, same
+ * geometry (r 1.125 on a 4 pitch in a 10.5 box). The wave is CSS keyframes per dot (browserEditor.css).
+ */
+export function createThinkingDots(): HTMLElement {
 	const root = $('span.volt-browser-dock-dots');
 	root.setAttribute('aria-hidden', 'true');
-	const cells: HTMLElement[] = [];
-	for (let i = 0; i < 9; i++) {
-		cells.push(append(root, $('span.volt-browser-dock-dot')));
+	const svg = root.ownerDocument.createElementNS(SVG_NS, 'svg');
+	svg.setAttribute('viewBox', '0 0 10.5 10.5');
+	svg.setAttribute('focusable', 'false');
+	for (let index = 0; index < 9; index++) {
+		const dot = root.ownerDocument.createElementNS(SVG_NS, 'circle');
+		dot.setAttribute('cx', String(1.25 + (index % 3) * 4));
+		dot.setAttribute('cy', String(1.25 + Math.floor(index / 3) * 4));
+		dot.setAttribute('r', '1.125');
+		dot.setAttribute('class', `volt-browser-dock-dot d${index + 1}`);
+		svg.appendChild(dot);
 	}
-	return { root, cells };
+	root.appendChild(svg);
+	return root;
 }
-
-/** One frame of the dots' spin: a short bright trail runs around the ring of the 3x3 grid. */
-export function paintThinkingDots(cells: readonly HTMLElement[], step: number): void {
-	for (const [index, cell] of cells.entries()) {
-		let opacity = index === 4 ? 0.16 : 0.1;
-		const ring = DOT_RING.indexOf(index);
-		if (ring >= 0) {
-			const distance = (ring - (step % DOT_RING.length) + DOT_RING.length) % DOT_RING.length;
-			if (distance <= DOT_TRAIL) {
-				opacity = 1 - distance / (DOT_TRAIL + 1);
-			}
-		}
-		cell.style.opacity = String(opacity);
-	}
-}
-
-/** How often the dots step, in ms. */
-export const THINKING_DOTS_SPEED = DOT_SPEED;
 
 export class AgentComposerChips extends Disposable {
 
 	readonly element: HTMLElement;
 
 	private readonly statusChip: HTMLButtonElement;
-	private readonly chipDots: HTMLElement[];
 	private readonly chipLabelEl: HTMLElement;
 	private readonly changesChip: HTMLButtonElement;
 	private readonly changesLabelEl: HTMLElement;
@@ -112,6 +105,8 @@ export class AgentComposerChips extends Disposable {
 	private readonly prChecks: HTMLElement;
 	private readonly prExit = this._register(new MutableDisposable());
 	private readonly pullRequests: IAgentPullRequestService | undefined;
+	/** State, checks and size of the chat's pull request, with Merge when it is ready, over the chip. */
+	private readonly prHoverCard: AgentPullRequestHoverCard | undefined;
 	private pr: { readonly kind: 'link'; readonly link: IAgentPrLink } | { readonly kind: 'create' } | undefined;
 	private prGen = 0;
 	private readonly compactChip: HTMLButtonElement;
@@ -132,8 +127,6 @@ export class AgentComposerChips extends Disposable {
 	private runningTerminals = 0;
 	private refreshHandle: number | undefined;
 	private refreshGen = 0;
-	private dotsTimer: number | undefined;
-	private dotsStep = 0;
 
 	constructor(
 		private readonly options: IAgentComposerChipsOptions,
@@ -151,9 +144,7 @@ export class AgentComposerChips extends Disposable {
 
 		this.statusChip = append(this.element, $('button.volt-agent-composer-chip.status.volt-browser-dock-chip')) as HTMLButtonElement;
 		this.statusChip.type = 'button';
-		const dots = createThinkingDots();
-		this.chipDots = dots.cells;
-		append(this.statusChip, dots.root);
+		append(this.statusChip, createThinkingDots());
 		this.chipLabelEl = append(this.statusChip, $('span.volt-agent-composer-chip-label.volt-browser-dock-chip-label'));
 
 		this.compactChip = append(this.element, $('button.volt-agent-composer-chip.compact.volt-browser-dock-chip.hidden')) as HTMLButtonElement;
@@ -184,6 +175,9 @@ export class AgentComposerChips extends Disposable {
 		this.prLabel = append(this.prChip, $('span.volt-agent-composer-chip-label'));
 		this.prChecks = append(this.prChip, $('span.volt-agent-composer-chip-pr-checks'));
 		this.pullRequests = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
+		this.prHoverCard = this.pullRequests
+			? this._register(this.instantiationService.createInstance(AgentPullRequestHoverCard, this.prChip, () => this.pr?.kind === 'link' ? this.pr.link : undefined))
+			: undefined;
 
 		this.scrollChip = append(this.element, $('button.volt-agent-composer-chip.scroll-bottom.hidden')) as HTMLButtonElement;
 		this.scrollChip.type = 'button';
@@ -450,6 +444,9 @@ export class AgentComposerChips extends Disposable {
 
 	private renderPullRequestChip(): boolean {
 		const pr = this.pr;
+		if (pr?.kind !== 'link') {
+			this.prHoverCard?.hide();
+		}
 		if (!pr) {
 			return false;
 		}
@@ -474,9 +471,9 @@ export class AgentComposerChips extends Disposable {
 		if (checks !== 'none') {
 			this.prChecks.classList.add(`check-${checks}`);
 		}
-		setAgentTooltip(this.prChip, snapshot
-			? `${snapshot.title}\n${snapshot.headRefName} → ${snapshot.baseRefName}${pr.link.watch ? `\n${localize('voltAgent.prWatching', "Watching for checks, reviews and conflicts")}` : ''}`
-			: localize('voltAgent.prNumber', "Pull request #{0}", pr.link.number));
+		// With a snapshot the hover card tells the rest (state, checks, size, Merge).
+		setAgentTooltip(this.prChip, snapshot && this.prHoverCard ? undefined : localize('voltAgent.prNumber', "Pull request #{0}", pr.link.number));
+		this.prHoverCard?.update();
 		return true;
 	}
 
@@ -498,11 +495,6 @@ export class AgentComposerChips extends Disposable {
 		this.statusChip.classList.toggle('hidden', !showStatus);
 		this.statusChip.classList.toggle('working', this.status.working);
 		this.chipLabelEl.textContent = this.status.label;
-		if (this.status.working) {
-			this.startDots();
-		} else {
-			this.stopDots();
-		}
 
 		this.compactChip.classList.toggle('hidden', !this.offerCompact);
 
@@ -593,36 +585,12 @@ export class AgentComposerChips extends Disposable {
 		}, 180);
 	}
 
-	private startDots(): void {
-		if (this.dotsTimer !== undefined) {
-			return;
-		}
-		this.paintDots();
-		this.dotsTimer = getWindow(this.element).setInterval(() => {
-			this.dotsStep++;
-			this.paintDots();
-		}, DOT_SPEED);
-	}
-
-	private stopDots(): void {
-		if (this.dotsTimer === undefined) {
-			return;
-		}
-		getWindow(this.element).clearInterval(this.dotsTimer);
-		this.dotsTimer = undefined;
-	}
-
-	private paintDots(): void {
-		paintThinkingDots(this.chipDots, this.dotsStep);
-	}
-
 	override dispose(): void {
 		const win = getWindow(this.element);
 		if (this.refreshHandle !== undefined) {
 			win.clearTimeout(this.refreshHandle);
 			this.refreshHandle = undefined;
 		}
-		this.stopDots();
 		super.dispose();
 	}
 }

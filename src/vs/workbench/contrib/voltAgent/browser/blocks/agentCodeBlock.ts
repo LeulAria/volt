@@ -3,25 +3,40 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, getWindow } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
+import { generateUuid } from '../../../../../base/common/uuid.js';
 import { posix } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
+import { EditorExtensionsRegistry } from '../../../../../editor/browser/editorExtensions.js';
+import { ICodeEditorWidgetOptions } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
+import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
+import { EDITOR_FONT_DEFAULTS } from '../../../../../editor/common/config/editorOptions.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { PLAINTEXT_LANGUAGE_ID } from '../../../../../editor/common/languages/modesRegistry.js';
 import { tokenizeToString } from '../../../../../editor/common/languages/textToHtmlTokenizer.js';
 import { TokenizationRegistry } from '../../../../../editor/common/languages.js';
+import { IModelService } from '../../../../../editor/common/services/model.js';
+import { ContextMenuController } from '../../../../../editor/contrib/contextmenu/browser/contextmenu.js';
+import { ViewportSemanticTokensContribution } from '../../../../../editor/contrib/semanticTokens/browser/viewportSemanticTokens.js';
 import { timeout } from '../../../../../base/common/async.js';
 import { Event } from '../../../../../base/common/event.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { MenuPreventer } from '../../../codeEditor/browser/menuPreventer.js';
+import { SelectionClipboardContributionID } from '../../../codeEditor/browser/selectionClipboard.js';
+import { getSimpleEditorOptions } from '../../../codeEditor/browser/simpleEditorOptions.js';
 import { markupToFragment } from './agentMarkupDom.js';
 
 export interface ICodeCardOptions {
 	readonly store: DisposableStore;
 	readonly languageService?: ILanguageService;
+	/** When set, the card body is a read-only Monaco editor (the editor's font, indent, and colours). */
+	readonly instantiationService?: IInstantiationService;
 	readonly onCopyText?: (text: string) => void;
 	/** Called after async highlighting changed the block's size. */
 	readonly onDidChangeSize?: () => void;
@@ -91,8 +106,9 @@ const lastHighlight = new Map<string, { code: string; lines: Node[][] }>();
 const DIFF_LANGS = new Set(['diff', 'patch']);
 
 /**
- * Cursor's code card: a bordered `#181818` card, Menlo 12/18, no language label, and a copy
- * button that appears on hover. The body scrolls sideways instead of wrapping.
+ * Cursor's code card: a bordered card, no language label, and a copy button that appears on hover.
+ * The body is a read-only Monaco editor so indent and colours match the workbench editor. The body
+ * scrolls sideways instead of wrapping.
  */
 export function renderCodeCard(parent: HTMLElement, language: string | undefined, code: string, options: ICodeCardOptions): HTMLElement {
 	const citation = parseCodeCitation(language);
@@ -106,6 +122,10 @@ export function renderCodeCard(parent: HTMLElement, language: string | undefined
 	shell.card.dataset.lang = lang || 'text';
 	if (citation) {
 		renderCitationHeader(shell.card, citation, options);
+	}
+	if (mountMonacoCode(shell.scroll, text, lang, options)) {
+		shell.card.classList.add('has-editor');
+		return shell.card;
 	}
 	const codeEl = append(shell.scroll, $('code.volt-md-code.volt-agent-searchable'));
 	const key = `${lang}\n${text}`;
@@ -200,6 +220,159 @@ export function createCodeCardShell(parent: HTMLElement, options: ICodeCardOptio
 	}
 	const scroll = append(content, $('.volt-md-code-scroll'));
 	return { card, content, scroll, overlay };
+}
+
+/**
+ * A read-only Monaco editor in the card, so tabs, indent guides, and token colours are the
+ * workbench editor's. Returns false when there is no instantiation service (plain HTML fallback).
+ */
+function mountMonacoCode(scroll: HTMLElement, text: string, alias: string, options: ICodeCardOptions): boolean {
+	const instantiationService = options.instantiationService;
+	if (!instantiationService) {
+		return false;
+	}
+	const host = append(scroll, $('.volt-md-code-editor'));
+	try {
+		instantiationService.invokeFunction(accessor => {
+			const configurationService = accessor.get(IConfigurationService);
+			const modelService = accessor.get(IModelService);
+			const languageService = options.languageService ?? accessor.get(ILanguageService);
+			const fontFamily = configurationService.getValue<string>('editor.fontFamily');
+			const fontSize = configurationService.getValue<number>('editor.fontSize') || EDITOR_FONT_DEFAULTS.fontSize;
+			const configuredLineHeight = configurationService.getValue<number>('editor.lineHeight');
+			const lineHeight = configuredLineHeight > 0 ? configuredLineHeight : Math.round(fontSize * 1.5);
+			const lineCount = Math.max(1, text.split('\n').length);
+			host.style.height = `${lineCount * lineHeight + 12}px`;
+
+			const widgetOptions: ICodeEditorWidgetOptions = {
+				isSimpleWidget: true,
+				contributions: EditorExtensionsRegistry.getSomeEditorContributions([
+					MenuPreventer.ID,
+					SelectionClipboardContributionID,
+					ContextMenuController.ID,
+					ViewportSemanticTokensContribution.ID,
+				]),
+			};
+			const editor = instantiationService.createInstance(
+				CodeEditorWidget,
+				host,
+				{
+					...getSimpleEditorOptions(configurationService),
+					readOnly: true,
+					domReadOnly: true,
+					lineNumbers: 'off',
+					glyphMargin: false,
+					folding: false,
+					lineDecorationsWidth: 0,
+					lineNumbersMinChars: 0,
+					minimap: { enabled: false },
+					scrollBeyondLastLine: false,
+					wordWrap: 'off',
+					renderLineHighlight: 'none',
+					renderLineHighlightOnlyWhenFocus: false,
+					overviewRulerLanes: 0,
+					hideCursorInOverviewRuler: true,
+					cursorWidth: 0,
+					matchBrackets: 'never',
+					selectionHighlight: false,
+					occurrencesHighlight: 'off',
+					links: false,
+					contextmenu: false,
+					stickyScroll: { enabled: false },
+					mouseWheelZoom: false,
+					automaticLayout: false,
+					padding: { top: 6, bottom: 6 },
+					scrollbar: {
+						vertical: 'hidden',
+						horizontal: 'auto',
+						verticalScrollbarSize: 0,
+						horizontalScrollbarSize: 6,
+						alwaysConsumeMouseWheel: false,
+						handleMouseWheel: false,
+						useShadows: false,
+					},
+					guides: {
+						indentation: configurationService.getValue<boolean>('editor.guides.indentation') !== false,
+						highlightActiveIndentation: false,
+						bracketPairs: false,
+						bracketPairsHorizontal: false,
+						highlightActiveBracketPair: false,
+					},
+					bracketPairColorization: {
+						enabled: configurationService.getValue<boolean>('editor.bracketPairColorization.enabled') !== false,
+					},
+					renderWhitespace: configurationService.getValue('editor.renderWhitespace'),
+					fontLigatures: configurationService.getValue('editor.fontLigatures'),
+					fontFamily: !fontFamily || fontFamily === 'default' ? EDITOR_FONT_DEFAULTS.fontFamily : fontFamily,
+					fontSize,
+					fontWeight: configurationService.getValue<string>('editor.fontWeight') || EDITOR_FONT_DEFAULTS.fontWeight,
+					lineHeight,
+					letterSpacing: configurationService.getValue<number>('editor.letterSpacing') ?? EDITOR_FONT_DEFAULTS.letterSpacing,
+					ariaLabel: localize('voltAgent.codeCard', "Code"),
+				},
+				widgetOptions,
+			);
+
+			const languageId = alias && !PLAIN_ALIASES.has(alias) ? resolveLanguageId(languageService, alias) : undefined;
+			if (languageId) {
+				languageService.requestRichLanguageFeatures(languageId);
+			}
+			const resource = URI.from({ scheme: 'volt-md-code', path: `/${generateUuid()}` });
+			const model = modelService.createModel(
+				text,
+				languageService.createById(languageId ?? PLAINTEXT_LANGUAGE_ID),
+				resource,
+				true,
+			);
+			// Model first so the store disposes the editor before the model.
+			options.store.add(model);
+			options.store.add(editor);
+			editor.setModel(model);
+			if (alias && !languageId && !PLAIN_ALIASES.has(alias)) {
+				void languageIdFor(languageService, alias).then(id => {
+					if (id && !model.isDisposed() && model.getLanguageId() !== id) {
+						languageService.requestRichLanguageFeatures(id);
+						model.setLanguage(id);
+					}
+				});
+			}
+
+			let lastWidth = -1;
+			let lastHeight = -1;
+			const layout = () => {
+				const win = getWindow(host);
+				const style = win.getComputedStyle(host);
+				const pad = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+				const width = Math.floor(host.clientWidth - pad);
+				if (width <= 0) {
+					return;
+				}
+				const height = Math.max(lineHeight + 12, Math.ceil(editor.getContentHeight()));
+				if (width === lastWidth && height === lastHeight) {
+					return;
+				}
+				const heightChanged = height !== lastHeight;
+				lastWidth = width;
+				lastHeight = height;
+				host.style.height = `${height}px`;
+				editor.layout({ width, height });
+				if (heightChanged) {
+					options.onDidChangeSize?.();
+				}
+			};
+			const win = getWindow(host);
+			options.store.add(editor.onDidContentSizeChange(() => layout()));
+			const observer = new win.ResizeObserver(() => layout());
+			observer.observe(host);
+			options.store.add(toDisposable(() => observer.disconnect()));
+			options.store.add(scheduleAtNextAnimationFrame(win, () => layout()));
+			layout();
+		});
+		return true;
+	} catch {
+		host.remove();
+		return false;
+	}
 }
 
 /**

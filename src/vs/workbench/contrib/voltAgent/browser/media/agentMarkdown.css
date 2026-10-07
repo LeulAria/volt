@@ -5,7 +5,7 @@
 
 /*
  * Agent replies, measured against Cursor 3.20's transcript (dark theme, 1280x800):
- * 600-weight headings, Menlo code, 12px-radius cards. Body text is lighter and a size smaller
+ * 600-weight headings, the editor mono font (Geist Mono by default), 12px-radius cards. Body text is lighter and a size smaller
  * than Cursor's 15/24 at 418, by the user's choice: 14/22 at 300.
  * Alpha steps follow Cursor's text tokens: secondary 74%, tertiary 60%, quaternary 36%.
  */
@@ -23,7 +23,7 @@
 	--volt-md-card-bg: var(--vscode-editor-background);
 	/* Cursor's link blue (--cursor-blue). */
 	--volt-md-link: #7BAFE9;
-	--volt-md-mono: Menlo, Monaco, "Courier New", monospace;
+	--volt-md-mono: var(--monaco-monospace-font, "Geist Mono", Menlo, Monaco, monospace);
 	--volt-md-weight: 418;
 	--volt-md-diff-added: oklch(0.638 0.129 153.739 / 0.2);
 	--volt-md-diff-removed: oklch(0.5 0.2 9.842 / 0.2);
@@ -93,7 +93,7 @@
 	text-decoration: line-through;
 }
 
-/* Headings: 21.42 / 19.77 / 18.21px at 1.42 line height. */
+/* Headings: a step above the 14px body, not a display size. */
 
 .volt-agent-markdown h1,
 .volt-agent-markdown h2,
@@ -106,10 +106,10 @@
 	margin: 22px 0 4px;
 }
 
-.volt-agent-markdown h1 { font-size: 21.42px; line-height: 30.42px; }
-.volt-agent-markdown h2 { font-size: 19.77px; line-height: 28.07px; }
-.volt-agent-markdown h3 { font-size: 18.21px; line-height: 25.86px; }
-.volt-agent-markdown h4 { font-size: 16.5px; line-height: 24px; }
+.volt-agent-markdown h1 { font-size: 18px; line-height: 26px; }
+.volt-agent-markdown h2 { font-size: 16.5px; line-height: 24px; }
+.volt-agent-markdown h3 { font-size: 15.5px; line-height: 22px; }
+.volt-agent-markdown h4 { font-size: 15px; line-height: 22px; }
 .volt-agent-markdown h5,
 .volt-agent-markdown h6 { font-size: 14px; line-height: 22px; }
 
@@ -557,6 +557,67 @@
 	background: var(--volt-md-fill);
 }
 
+/* Monaco body: the card paints the fill; the editor is see-through so indent and tokens match the workbench. */
+.volt-md-code-block.has-editor .volt-md-code-scroll {
+	overflow: hidden;
+}
+
+.volt-md-code-block.has-editor .volt-md-code-block-overlay {
+	z-index: 2;
+}
+
+.volt-md-code-editor {
+	box-sizing: border-box;
+	width: 100%;
+	padding: 0 10px;
+}
+
+.volt-md-code-editor .monaco-scrollable-element > .shadow,
+.volt-md-code-editor .monaco-scrollable-element > .shadow.top,
+.volt-md-code-editor .monaco-scrollable-element > .shadow.top-left-corner {
+	display: none !important;
+}
+
+.volt-md-code-editor .monaco-editor,
+.volt-md-code-editor .monaco-editor .overflow-guard,
+.volt-md-code-editor .monaco-editor-background,
+.volt-md-code-editor .monaco-editor .margin,
+.volt-md-code-editor .monaco-editor .monaco-editor-background,
+.volt-md-code-editor .monaco-editor .inputarea,
+.volt-md-code-editor .monaco-editor .lines-content {
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
+.volt-md-code-editor .monaco-editor,
+.volt-md-code-editor .monaco-editor.focused {
+	outline: none !important;
+}
+
+.volt-md-code-editor .monaco-editor .cursors-layer,
+.volt-md-code-editor .monaco-editor .cursors-layer .cursor,
+.volt-md-code-editor .monaco-editor .cursor {
+	display: none !important;
+}
+
+.volt-md-code-editor .monaco-editor .inputarea,
+.volt-md-code-editor .monaco-editor .native-edit-context,
+.volt-md-code-editor .monaco-editor .native-edit-context:focus {
+	caret-color: transparent !important;
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+.volt-md-code-editor .monaco-editor .view-overlays .current-line,
+.volt-md-code-editor .monaco-editor .margin-view-overlays .current-line-margin,
+.volt-md-code-editor .monaco-editor .current-line,
+.volt-md-code-editor .monaco-editor .focused .current-line {
+	display: none !important;
+	border: none !important;
+	box-shadow: none !important;
+	background: transparent !important;
+}
+
 .volt-agent-markdown code.volt-md-code,
 code.volt-md-code {
 	display: block;
@@ -567,7 +628,7 @@ code.volt-md-code {
 	margin: 0;
 	background: none;
 	border-radius: 0;
-	font-family: var(--volt-md-mono);
+	font-family: var(--volt-code-font, var(--volt-md-mono));
 	font-size: 12px;
 	line-height: 18px;
 	font-weight: 400;

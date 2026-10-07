@@ -16,6 +16,7 @@ import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/
 import { IWorkspaceContextService, WorkbenchState } from '../../../../../platform/workspace/common/workspace.js';
 import { IViewDescriptorService } from '../../../../common/views.js';
 import { getLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { AGENT_TOOLS_VISIBILITY_EVENT } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { ILentPaneCompositePart, IPaneCompositePartService } from '../../../../services/panecomposite/browser/panecomposite.js';
@@ -528,6 +529,9 @@ class AgentFilesSidebarRoomContribution extends Disposable {
 	}
 
 	private apply(): void {
+		// The layout counts the edge sidebar's width when weighing the list against the window
+		// (drawer mode); tell it the sidebar settled so the list folds away in a tight window.
+		this.layoutService.mainContainer.dispatchEvent(new CustomEvent(AGENT_TOOLS_VISIBILITY_EVENT));
 		const saved = this.storageService.getNumber(LEFT_WIDTH_KEY, StorageScope.PROFILE);
 		// A drawer floats over the window and has a fixed width; only the column is narrowed.
 		const column = getLayoutMode(this.layoutService) === 'agent'

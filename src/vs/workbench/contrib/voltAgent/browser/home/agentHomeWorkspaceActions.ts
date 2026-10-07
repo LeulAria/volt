@@ -34,13 +34,13 @@ import { AddProjectDialog } from '../../../voltProjects/browser/ui/addProjectVie
 import { agentHomeWorkspaceEntries, cloneFolderName, freeFolderName, IAgentHomeWorkspaceEntry } from './agentHomeWorkspace.js';
 import { IAgentHomeWorkspaceMenuHost, showAgentHomeWorkspaceMenu } from './agentHomeWorkspaceMenu.js';
 
-/** Parent folder for clones, New Folder and Start from scratch, once the user picks one. */
+/** Parent folder for clones and Start from scratch, once the user picks one. */
 const LOCATION_STORAGE_KEY = 'volt.agent.home.projectsLocation';
 export const INIT_TIMEOUT_MS = 30_000;
 /** Folder name for Start from scratch; a number follows when it is taken. */
 const SCRATCH_FOLDER_NAME = 'new-project';
 
-/** What the Open Workspace menu does: open, clone and create local folders, then show them as projects. */
+/** What the Open Workspace menu does: open and clone local folders, then show them as projects. */
 export class AgentHomeWorkspaceActions {
 
 	/** Where one folder goes instead of its latest chat, e.g. into the new chat whose picker opened the menu. */
@@ -81,7 +81,6 @@ export class AgentHomeWorkspaceActions {
 			browse: () => this.browse(),
 			browseGitHub: () => this.instantiationService.createInstance(AddProjectDialog).show('github'),
 			startFromScratch: () => this.startFromScratch(),
-			createFolder: name => this.createFolder(name),
 			clone: url => this.clone(url),
 			reportError: message => this.notificationService.error(message),
 		};
@@ -196,20 +195,6 @@ export class AgentHomeWorkspaceActions {
 		}
 	}
 
-	private async createFolder(name: string): Promise<string | undefined> {
-		const target = joinPath(this.locationUri(), name);
-		try {
-			if (await this.fileService.exists(target)) {
-				return localize('voltAgent.workspace.folderExists', "A folder named {0} is already there.", name);
-			}
-			await this.fileService.createFolder(target);
-		} catch (err) {
-			return toErrorMessage(err);
-		}
-		await this.openFolders([target]);
-		return undefined;
-	}
-
 	/**
 	 * Clones into a free folder under the projects location. The project opens at once while git
 	 * runs in the background, with progress on the project and prompts held until the files land.
@@ -267,7 +252,7 @@ function shellQuote(arg: string): string {
 }
 
 /**
- * The project menu (Recents, On This Mac, Start from scratch, Use Existing, New Folder) under
+ * The project menu (Recents, Start from scratch, Local folder, On This Mac, clone hosts) under
  * `anchor`, shared by the sidebar header, the new agent's project picker and Add Project.
  * Without `openOne`, a folder shows its latest chat (or a new one). A second click on the
  * same anchor closes it.

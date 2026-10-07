@@ -7,6 +7,9 @@ import '../media/agentUpdate.css';
 import { $, addDisposableListener, append, getWindow } from '../../../../../base/browser/dom.js';
 import { Button } from '../../../../../base/browser/ui/button/button.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
+import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { disposableTimeout } from '../../../../../base/common/async.js';
+import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../../nls.js';
@@ -25,6 +28,7 @@ import { IVoltUpdate, voltReleaseTag } from '../../../../../platform/update/comm
 import { IWorkbenchContribution } from '../../../../common/contributions.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { summarizeReleaseNotes } from '../../common/agentUpdateNotes.js';
+import { createRefreshSpinner } from '../usage/agentUsageIcons.js';
 
 /** States worth a button in the agent sidebar footer. */
 function isActionable(state: State): boolean {
@@ -92,6 +96,16 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 	private simulated: State | undefined;
 	private button: HTMLButtonElement | undefined;
 	private glyph: ReturnType<typeof createUpdateGlyph> | undefined;
+	/** The user asked for a check; cleared when the service answers. */
+	private checking = false;
+	/** What an explicit check found when nothing new came of it, shown until `resultUntil`. */
+	private result: 'upToDate' | 'unavailable' | undefined;
+	private resultUntil = 0;
+	private readonly resultTimer = this._register(new MutableDisposable());
+	/** Ends a check the service never answers (it only checks from Idle; builds from sources never do). */
+	private readonly checkTimeout = this._register(new MutableDisposable());
+	/** Refresh glyph, the Usage page's spinner and a check, built once: the spinner's SMIL clock keeps running. */
+	private idleGlyph: Element[] | undefined;
 	private readonly attachment = this._register(new MutableDisposable<DisposableStore>());
 	private renderPopover: (() => void) | undefined;
 	private hidePopover: (() => void) | undefined;
@@ -127,10 +141,19 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 	}
 
 	private sync(): void {
-		if (!isActionable(this.current)) {
+		const state = this.current;
+		if (!isActionable(state)) {
 			this.hidePopover?.();
-			this.attachment.clear();
-			return;
+			// An explicit check came back with nothing new: say so briefly.
+			if (this.checking && state.type === StateType.Idle) {
+				this.showResult('upToDate');
+			}
+			this.checking = this.checking && state.type === StateType.CheckingForUpdates;
+		} else {
+			this.checking = false;
+		}
+		if (!this.checking) {
+			this.checkTimeout.clear();
 		}
 		if (!this.attachment.value) {
 			this.attach();
@@ -179,10 +202,24 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 		store.add(addDisposableListener(button, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
-			if (this.hidePopover) {
-				this.hidePopover();
-			} else {
-				this.showPopover(button);
+			if (isActionable(this.current)) {
+				if (this.hidePopover) {
+					this.hidePopover();
+				} else {
+					this.showPopover(button);
+				}
+			} else if (!this.checking && this.current.type !== StateType.CheckingForUpdates) {
+				this.checking = true;
+				this.result = undefined;
+				this.renderButton();
+				const idle = this.current.type === StateType.Idle;
+				void this.updateService.checkForUpdates(true);
+				this.checkTimeout.value = disposableTimeout(() => {
+					if (this.checking) {
+						this.checking = false;
+						this.showResult(idle ? undefined : 'unavailable');
+					}
+				}, idle ? 60_000 : 900);
 			}
 		}));
 		this.button = button;
@@ -195,6 +232,37 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 			return;
 		}
 		const state = this.current;
+		// Nothing pending: a round refresh button that checks for the latest release.
+		if (!isActionable(state)) {
+			const checking = this.checking || state.type === StateType.CheckingForUpdates;
+			const result = !checking && Date.now() < this.resultUntil ? this.result : undefined;
+			this.idleGlyph ??= [renderIcon(Codicon.refresh), createRefreshSpinner(), renderIcon(Codicon.check)];
+			this.idleGlyph[2].classList.add('volt-agent-update-done');
+			if (this.idleGlyph[0].parentElement !== button) {
+				button.replaceChildren(...this.idleGlyph);
+			}
+			button.classList.add('idle');
+			button.classList.toggle('checking', checking);
+			button.classList.toggle('up-to-date', result === 'upToDate');
+			button.classList.remove('downloading', 'indeterminate', 'ready');
+			const label = checking
+				? localize('voltUpdate.checking', "Checking for updates…")
+				: result === 'upToDate'
+					? localize('voltUpdate.upToDate', "You're on the latest version")
+					: result === 'unavailable'
+						? localize('voltUpdate.unavailable', "Updates are off in this build")
+						: localize('voltUpdate.check', "Check for Updates");
+			button.setAttribute('aria-label', label);
+			button.toggleAttribute('aria-busy', checking);
+			// While it checks, the spinner is all it shows: no tooltip over it.
+			setAgentTooltip(button, checking ? undefined : label);
+			return;
+		}
+		button.classList.remove('idle', 'checking', 'up-to-date');
+		button.removeAttribute('aria-busy');
+		if (glyph.root.parentElement !== button) {
+			button.replaceChildren(glyph.root);
+		}
 		const progress = state.type === StateType.Downloading ? state.progress : undefined;
 		button.classList.toggle('downloading', state.type === StateType.Downloading || state.type === StateType.Updating);
 		button.classList.toggle('indeterminate', (state.type === StateType.Downloading && progress === undefined) || state.type === StateType.Updating);
@@ -203,6 +271,14 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 		const label = this.title(state);
 		button.setAttribute('aria-label', label);
 		setAgentTooltip(button, label);
+	}
+
+	/** Holds what a check found for a few seconds, then back to the plain refresh button. */
+	private showResult(result: 'upToDate' | 'unavailable' | undefined): void {
+		this.result = result;
+		this.resultUntil = result ? Date.now() + 4_000 : 0;
+		this.resultTimer.value = result ? disposableTimeout(() => this.renderButton(), 4_050) : undefined;
+		this.renderButton();
 	}
 
 	private title(state: State): string {

@@ -7,7 +7,10 @@
  * and the composer chip. Solid surfaces only, no backdrop-filter (volt-transparent-window). */
 
 .volt-pr-editor,
-.volt-pr-list-view {
+.volt-pr-list-view,
+.volt-pr-hover-card,
+.volt-pr-dock,
+.volt-pr-checks-menu {
 	--volt-pr-border: rgba(255, 255, 255, 0.08);
 	--volt-pr-surface: rgba(255, 255, 255, 0.03);
 	--volt-pr-surface-strong: rgba(255, 255, 255, 0.06);
@@ -24,7 +27,13 @@
 .monaco-workbench.vs .volt-pr-editor,
 .monaco-workbench.hc-light .volt-pr-editor,
 .monaco-workbench.vs .volt-pr-list-view,
-.monaco-workbench.hc-light .volt-pr-list-view {
+.monaco-workbench.hc-light .volt-pr-list-view,
+.monaco-workbench.vs .volt-pr-hover-card,
+.monaco-workbench.hc-light .volt-pr-hover-card,
+.monaco-workbench.vs .volt-pr-dock,
+.monaco-workbench.hc-light .volt-pr-dock,
+.monaco-workbench.vs .volt-pr-checks-menu,
+.monaco-workbench.hc-light .volt-pr-checks-menu {
 	--volt-pr-border: rgba(0, 0, 0, 0.09);
 	--volt-pr-surface: rgba(0, 0, 0, 0.025);
 	--volt-pr-surface-strong: rgba(0, 0, 0, 0.05);
@@ -1551,3 +1560,369 @@
 .volt-pr-icon-button .codicon {
 	color: inherit !important;
 }
+
+/* ---- Files as the workbench tree -------------------------------------------------------- */
+
+.volt-pr-files-tree {
+	flex: none;
+}
+
+.volt-pr-files-tree .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-pr-files-tree .monaco-tl-contents {
+	overflow: hidden;
+}
+
+.volt-pr-files-tree .volt-pr-file {
+	height: 100%;
+	min-height: 0;
+	border-top: 0;
+	padding: 0 12px 0 0;
+}
+
+.volt-pr-files-tree .volt-pr-file:hover {
+	background: transparent;
+}
+
+.volt-pr-files-tree .volt-pr-dir {
+	height: 100%;
+	padding: 0;
+	background: transparent;
+}
+
+.volt-pr-dir-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-dir-count {
+	font-size: 11px;
+}
+
+.volt-pr-file-dir {
+	font-size: 11.5px;
+	flex-shrink: 10;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ---- head → base flow -------------------------------------------------------------------- */
+
+.volt-pr-branch-flow {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+
+.volt-pr-branch-arrow {
+	display: inline-flex;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-branch-arrow .codicon {
+	font-size: 12px;
+}
+
+/* ---- Hover card over the chat's pull request chip ---------------------------------------- */
+
+/* Fixed over the see-through window, so it paints an opaque surface (volt-transparent-window). */
+.volt-pr-hover-card {
+	position: fixed;
+	/* Over context-view menus (2575), under the agent tooltip (2700) its Merge hint uses. */
+	z-index: 2600;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	width: 300px;
+	max-width: calc(100vw - 16px);
+	box-sizing: border-box;
+	padding: 12px;
+	border-radius: 10px;
+	background: var(--vscode-editor-background, #1e1e1e);
+	color: var(--vscode-foreground);
+	box-shadow:
+		0 0 0 1px var(--vscode-widget-border, rgba(255, 255, 255, 0.1)),
+		0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 18px;
+	cursor: default;
+}
+
+.volt-pr-hover-head {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-pr-hover-head > .volt-pr-icon {
+	height: 18px;
+}
+
+.volt-pr-hover-title {
+	flex: 1;
+	min-width: 0;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	overflow-wrap: anywhere;
+	font-size: 13px;
+	font-weight: 500;
+}
+
+.volt-pr-hover-number {
+	color: var(--volt-pr-muted);
+	font-weight: 400;
+}
+
+.volt-pr-hover-flow {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	padding-left: 22px;
+}
+
+.volt-pr-hover-branch {
+	min-width: 0;
+	height: 20px;
+	padding: 0 6px;
+	border-radius: 5px;
+	background: var(--volt-pr-surface-strong);
+	font-family: var(--monaco-monospace-font);
+	font-size: 11px;
+	line-height: 20px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The base is short ("main"): the head gives way first. */
+.volt-pr-hover-flow > .volt-pr-hover-branch:first-child {
+	flex: none;
+	max-width: 45%;
+}
+
+.volt-pr-hover-arrow {
+	display: inline-flex;
+	flex: none;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-hover-arrow .codicon[class*='codicon-'] {
+	font-size: 12px;
+}
+
+/* The workbench draws every codicon at 16px; the card's glyphs sit on 18px lines. */
+.volt-pr-hover-card .volt-pr-icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-pr-hover-rows {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-top: 10px;
+	border-top: 1px solid var(--volt-pr-border);
+}
+
+.volt-pr-hover-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-pr-hover-label {
+	white-space: nowrap;
+}
+
+.volt-pr-hover-label.muted {
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-hover-detail {
+	min-width: 0;
+	margin-left: auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-pr-muted);
+}
+
+.volt-pr-hover-detail.ready {
+	color: var(--volt-pr-open);
+}
+
+.volt-pr-hover-stats {
+	display: inline-flex;
+	gap: 6px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-pr-hover-stats .add { color: var(--volt-pr-add); }
+.volt-pr-hover-stats .del { color: var(--volt-pr-del); }
+
+.volt-pr-hover-actions {
+	display: flex;
+}
+
+/* Ready to merge: a white button with the merge glyph (dark on a light theme). */
+.volt-pr-hover-merge {
+	flex: 1;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 12px;
+	border: 0;
+	border-radius: 7px;
+	background: #ffffff;
+	color: #0d0d0d;
+	font: inherit;
+	font-size: 12.5px;
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.volt-pr-hover-merge:hover {
+	background: #e6e6e6;
+}
+
+.volt-pr-hover-merge:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.volt-pr-hover-merge .codicon[class*='codicon-'] {
+	font-size: 14px;
+	color: inherit;
+}
+
+.monaco-workbench.vs .volt-pr-hover-merge,
+.monaco-workbench.hc-light .volt-pr-hover-merge {
+	background: #1f1f1f;
+	color: #ffffff;
+}
+
+.monaco-workbench.vs .volt-pr-hover-merge:hover,
+.monaco-workbench.hc-light .volt-pr-hover-merge:hover {
+	background: #3a3a3a;
+}
+
+/* ---- The chat's pull request in the side panel (Quick Open Actions) ------------------------ */
+
+/* One list row in three parts, as Cursor draws it: #8: title | checks ⌄ | Merge. */
+.volt-agent-quick-open-actions .volt-agent-dock-row.volt-pr-dock {
+	gap: 0;
+	padding: 0;
+	cursor: default;
+}
+
+.volt-pr-dock > button {
+	display: flex;
+	align-items: center;
+	height: 100%;
+	margin: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.volt-pr-dock > button.hidden,
+.volt-pr-dock > .volt-pr-dock-sep.hidden {
+	display: none;
+}
+
+.volt-pr-dock > .volt-pr-dock-main {
+	flex: 1;
+	min-width: 0;
+	gap: 6px;
+	padding: 0 8px 0 12px;
+	text-align: left;
+}
+
+.volt-pr-dock:not(.linked) > .volt-pr-dock-main {
+	padding-right: 12px;
+}
+
+.volt-pr-dock-icon {
+	display: inline-flex;
+	flex: none;
+}
+
+.volt-pr-dock-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-dock-sep {
+	flex: none;
+	width: 1px;
+	height: 14px;
+	background: var(--volt-pr-border);
+}
+
+.volt-pr-dock > .volt-pr-dock-checks {
+	flex: none;
+	gap: 2px;
+	padding: 0 6px 0 8px;
+}
+
+.volt-pr-dock-checks-icon {
+	display: inline-flex;
+}
+
+.volt-agent-quick-open-actions .volt-pr-dock .codicon.volt-pr-dock-chevron {
+	font-size: 12px;
+	width: 12px;
+	height: 12px;
+}
+
+.volt-pr-dock > .volt-pr-dock-merge {
+	flex: none;
+	padding: 0 12px 0 8px;
+	color: var(--volt-pr-muted);
+	font-size: 12.5px;
+}
+
+.volt-pr-dock > .volt-pr-dock-merge:disabled {
+	cursor: default;
+}
+
+.volt-pr-dock > .volt-pr-dock-merge.ready {
+	color: var(--volt-pr-merge-accent);
+}
+
+.volt-pr-dock > .volt-pr-dock-merge.ready:hover {
+	color: var(--volt-pr-merge-accent-hover);
+}
+
+.volt-pr-dock-main:hover .volt-pr-dock-label,
+.volt-pr-dock-checks:hover .volt-pr-dock-chevron {
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-dock {
+	--volt-pr-merge-accent: #d4537e;
+	--volt-pr-merge-accent-hover: #ec6f98;
+}
+
+.monaco-workbench.vs .volt-pr-dock,
+.monaco-workbench.hc-light .volt-pr-dock {
+	--volt-pr-merge-accent: #b42d5a;
+	--volt-pr-merge-accent-hover: #8f1f45;
+}
+

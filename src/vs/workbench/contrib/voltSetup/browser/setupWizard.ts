@@ -63,6 +63,8 @@ export class VoltSetupWizard {
 
 	private readonly agentSetup: AgentSetupService;
 	private step: SetupStep = 'agents';
+	/** The step the panel last drew, so a re-render of the same step keeps its scroll. */
+	private renderedStep: SetupStep | undefined;
 	private readonly states = new Map<string, IAgentSetupState | 'checking'>();
 	private editors: readonly IVoltImportedEditor[] | undefined;
 	private readonly selected = new Set<string>();
@@ -258,9 +260,15 @@ export class VoltSetupWizard {
 		if (!body) {
 			return;
 		}
+		// A re-render on the same step (ticking a folder, a CLI check) keeps the list where it was
+		// and the focus on the row that was clicked.
+		const sameStep = this.renderedStep === this.step;
+		const scrollTop = sameStep ? body.querySelector<HTMLElement>('.volt-setup-content')?.scrollTop ?? 0 : 0;
+		const focusedPath = sameStep ? body.querySelector<HTMLElement>('.volt-setup-folder:focus')?.dataset.path : undefined;
 		this.renderStore.clear();
 		body.replaceChildren();
 		if (this.panel?.classList.contains('collapsed') && this.running) {
+			this.renderedStep = undefined;
 			this.renderRunning(body, this.running);
 			return;
 		}
@@ -277,6 +285,11 @@ export class VoltSetupWizard {
 			case 'done':
 				this.renderDone(content, footer);
 				break;
+		}
+		this.renderedStep = this.step;
+		content.scrollTop = scrollTop;
+		if (focusedPath) {
+			[...content.querySelectorAll<HTMLElement>('.volt-setup-folder')].find(row => row.dataset.path === focusedPath)?.focus({ preventScroll: true });
 		}
 	}
 
@@ -540,6 +553,7 @@ export class VoltSetupWizard {
 			const checked = added || this.selected.has(folder.path);
 			const row = append(group, $('button.volt-setup-folder')) as HTMLButtonElement;
 			row.type = 'button';
+			row.dataset.path = folder.path;
 			row.setAttribute('role', 'checkbox');
 			row.setAttribute('aria-checked', String(checked));
 			row.disabled = added;

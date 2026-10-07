@@ -473,7 +473,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		}
 		const snapshot = badge.link.snapshot;
 		setAgentTooltip(pill, snapshot
-			? `#${snapshot.number} ${snapshot.title}\n${snapshot.headRefName} → ${snapshot.baseRefName}${badge.link.watch ? `\n${localize('voltAgent.home.prWatched', "Watched: the agent wakes on checks, reviews and conflicts")}` : ''}`
+			? `#${snapshot.number} ${snapshot.title}\n${snapshot.baseRefName} ← ${snapshot.headRefName}${badge.link.watch ? `\n${localize('voltAgent.home.prWatched', "Watched: the agent wakes on checks, reviews and conflicts")}` : ''}`
 			: localize('voltAgent.home.prLinked', "Pull request #{0}", badge.number));
 		template.elementDisposables.add(addDisposableListener(pill, 'mousedown', e => e.stopPropagation()));
 		template.elementDisposables.add(addDisposableListener(pill, 'click', e => {

@@ -22,6 +22,7 @@ import {
 	findPullRequestUrls,
 	groupAndRank,
 	IAgentPrLink,
+	isReadyToMerge,
 	isTrunkBranch,
 	matchesPrQuery,
 	newLink,
@@ -365,6 +366,22 @@ suite('Volt agent pull requests', () => {
 		assert.strictEqual(blockedReason(ready), 'Ready to merge');
 		assert.strictEqual(blockedReason(merged), 'Merged');
 		assert.strictEqual(blockedReason(pr(12, { reviewDecision: 'reviewRequired' })), 'Awaiting review');
+	});
+
+	test('ready to merge: open, mergeable, a clean merge box, and no failing, running or rejecting gate', () => {
+		const noChecks = { state: 'none', total: 0, passed: 0, failed: 0, pending: 0, skipped: 0, failing: [] } as const;
+		assert.strictEqual(isReadyToMerge(pr(1)), true);
+		assert.strictEqual(isReadyToMerge(pr(1, { checks: noChecks })), true);
+		assert.strictEqual(isReadyToMerge(pr(1, { mergeState: 'hasHooks' })), true);
+		assert.strictEqual(isReadyToMerge(pr(1, { state: 'draft' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { state: 'merged' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { mergeable: 'conflicting', mergeState: 'dirty' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { mergeable: 'unknown', mergeState: 'unknown' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { mergeState: 'blocked' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { mergeState: 'behind' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { reviewDecision: 'changesRequested' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { checks: { state: 'pending', total: 1, passed: 0, failed: 0, pending: 1, skipped: 0, failing: [] } })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { checks: { state: 'failure', total: 1, passed: 0, failed: 1, pending: 0, skipped: 0, failing: ['ci'] } })), false);
 	});
 
 	test('merge: the method follows the last pick, then the default, then what the repository allows; the main button follows the state', () => {

@@ -137,12 +137,12 @@ import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME } from '../../platform/v
 import { VoltBrowserMainService } from '../../platform/voltBrowser/electron-main/voltBrowserMainService.js';
 import { IVoltBadgeService, VOLT_BADGE_CHANNEL_NAME } from '../../platform/voltBadge/common/voltBadge.js';
 import { VoltBadgeMainService } from '../../platform/voltBadge/electron-main/voltBadgeMainService.js';
-import { IVoltDiagnosticsService } from '../../platform/voltDiagnostics/common/voltDiagnostics.js';
-import { registerVoltDiagnosticsMain, VoltDiagnosticsMainService } from '../../platform/voltDiagnostics/electron-main/voltDiagnosticsMainService.js';
 import { IVoltStorageService, VOLT_STORAGE_CHANNEL_NAME } from '../../platform/voltStorage/common/voltStorage.js';
 import { VoltStorageMainService } from '../../platform/voltStorage/electron-main/voltStorageMainService.js';
 import { IVoltEditorImportService, VOLT_EDITOR_IMPORT_CHANNEL_NAME } from '../../platform/voltEditorImport/common/voltEditorImport.js';
 import { VoltEditorImportService } from '../../platform/voltEditorImport/node/voltEditorImportService.js';
+import { IVoltDiagnosticsService } from '../../platform/voltDiagnostics/common/voltDiagnostics.js';
+import { registerVoltDiagnosticsMain, VoltDiagnosticsMainService } from '../../platform/voltDiagnostics/electron-main/voltDiagnosticsMainService.js';
 import ErrorTelemetry from '../../platform/telemetry/electron-main/errorTelemetry.js';
 
 /**
@@ -1084,12 +1084,12 @@ export class CodeApplication extends Disposable {
 		// Volt app badge (chats that finished in the background)
 		services.set(IVoltBadgeService, new SyncDescriptor(VoltBadgeMainService, undefined, false /* proxied to other processes */));
 
-		// Volt diagnostics (tracing export, stall log, heap snapshots)
-		services.set(IVoltDiagnosticsService, new SyncDescriptor(VoltDiagnosticsMainService, undefined, false /* proxied to other processes */));
-
 		// Volt storage cleanup and first-run import
 		services.set(IVoltStorageService, new SyncDescriptor(VoltStorageMainService, undefined, true));
 		services.set(IVoltEditorImportService, new SyncDescriptor(VoltEditorImportService, undefined, true));
+
+		// Volt diagnostics (tracing export, stall log, heap snapshots)
+		services.set(IVoltDiagnosticsService, new SyncDescriptor(VoltDiagnosticsMainService, undefined, false /* proxied to other processes */));
 
 		// Webview Manager
 		services.set(IWebviewManagerService, new SyncDescriptor(WebviewMainService));

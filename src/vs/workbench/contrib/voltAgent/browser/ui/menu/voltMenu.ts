@@ -37,6 +37,8 @@ export interface IVoltMenuItem<T> {
 	/** Spins the icon (clone in progress). */
 	readonly busy?: boolean;
 	readonly checked?: boolean;
+	/** Picking it leaves the menu open, so a checkbox can toggle and refresh. */
+	readonly keepOpen?: boolean;
 	readonly disabled?: boolean;
 	/** Right-aligned hint such as "⌘⌥A". */
 	readonly keybinding?: string;
@@ -719,7 +721,9 @@ class VoltMenuWidget<T> extends Disposable {
 			}
 			return;
 		}
-		this.context.hide();
+		if (!item.keepOpen) {
+			this.context.hide();
+		}
 		await this.context.pick(item);
 	}
 

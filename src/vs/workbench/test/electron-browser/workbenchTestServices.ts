@@ -126,6 +126,7 @@ export class TestNativeHostService implements INativeHostService {
 	async writeElevated(source: URI, target: URI): Promise<void> { }
 	async isRunningUnderARM64Translation(): Promise<boolean> { return false; }
 	async getOSProperties(): Promise<IOSProperties> { return Object.create(null); }
+	async getComputerName(): Promise<string> { return 'Test Machine'; }
 	async getOSStatistics(): Promise<IOSStatistics> { return Object.create(null); }
 	async getOSVirtualMachineHint(): Promise<number> { return 0; }
 	async getOSColorScheme(): Promise<IColorScheme> { return { dark: true, highContrast: false }; }

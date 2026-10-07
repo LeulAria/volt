@@ -315,6 +315,21 @@ export function revealAgentToolEditor(editor: EditorInput): boolean {
 	void located.group.openEditor(target, { pinned: true });
 	return true;
 }
+/** Close a tab that lives in a chat's tools area. False when no tools area holds it. */
+export function closeAgentToolEditor(editor: EditorInput): boolean {
+	const located = toolGroupFor(editor);
+	if (!located) {
+		return false;
+	}
+	const target = located.group.editors.find(open => open === editor)
+		?? located.group.editors.find(open => !!editor.resource && open.resource?.toString() === editor.resource.toString());
+	if (!target) {
+		return false;
+	}
+	void located.group.closeEditor(target);
+	return true;
+}
+
 /**
  * The browser tab the agent of `sessionId` drives: the one showing in its tools area, else the
  * most recent browser tab there. Undefined until the chat's tools area holds a browser.
@@ -2142,6 +2157,13 @@ registerAction2(class ShowAgentSourceControlAction extends Action2 {
 		host?.showFilesSidebar('scm');
 	}
 });
+
+/** Opens the right sidebar on `view` beside the chat on screen; false when no chat can open tools (IDE layout). */
+export function showAgentFilesSidebar(view: AgentFilesSidebarView): boolean {
+	const host = [...hosts].find(candidate => candidate.canOpenTools());
+	host?.showFilesSidebar(view);
+	return !!host;
+}
 
 registerAction2(class ToggleAgentToolsFullScreenAction extends Action2 {
 	constructor() {

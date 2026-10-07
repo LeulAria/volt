@@ -3127,7 +3127,7 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-editor:not(.has-turns):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-input-box:not(.follow-up) .volt-agent-monaco {
-	min-height: 56px;
+	min-height: 72px;
 	padding: 12px 14px 8px;
 }
 
@@ -3375,14 +3375,14 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-input-box.focused {
-	border-color: rgba(255, 255, 255, 0.14);
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+	border-color: rgba(255, 255, 255, 0.16);
+	box-shadow: none;
 }
 
 .monaco-workbench.vs-dark .volt-agent-input-box.focused,
 .monaco-workbench.hc-black .volt-agent-input-box.focused {
-	border-color: rgba(255, 255, 255, 0.14);
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+	border-color: rgba(255, 255, 255, 0.16);
+	box-shadow: none;
 }
 
 .monaco-workbench.vs .volt-agent-input-box,
@@ -3393,8 +3393,8 @@ pre.volt-agent-searchable {
 
 .monaco-workbench.vs .volt-agent-input-box.focused,
 .monaco-workbench.hc-light .volt-agent-input-box.focused {
-	border-color: rgba(0, 0, 0, 0.12);
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+	border-color: rgba(0, 0, 0, 0.16);
+	box-shadow: none;
 }
 
 .volt-agent-input-box.drop-target,

@@ -28,6 +28,8 @@
 
 .volt-agent-update-track {
 	stroke: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+	opacity: 0;
+	transition: opacity 160ms ease;
 }
 
 .volt-agent-update-progress {
@@ -47,16 +49,14 @@
 	stroke-linejoin: round;
 }
 
+/* No ring at rest: the track only shows behind the progress arc while downloading. */
+.volt-agent-update-button.downloading .volt-agent-update-track,
 .volt-agent-update-button.downloading .volt-agent-update-progress {
 	opacity: 1;
 }
 
 .volt-agent-update-button.indeterminate .volt-agent-update-progress {
 	animation: volt-agent-update-spin 1.1s linear infinite;
-}
-
-.volt-agent-update-button.ready .volt-agent-update-track {
-	stroke: var(--vscode-button-background, #0078d4);
 }
 
 .volt-agent-update-button.ready .volt-agent-update-arrow {
@@ -209,5 +209,65 @@
 .volt-update-popover-actions .monaco-button {
 	width: auto;
 	padding: 4px 12px;
+	border-radius: 6px;
 	white-space: nowrap;
+}
+
+/* Round, like the Usage page's refresh button, so its hover fill and focus ring are circles too. */
+.volt-agent-home-settings.volt-agent-update-button {
+	border-radius: 999px;
+}
+
+/* A click should not leave a ring behind; the keyboard still gets one. */
+.monaco-workbench .volt-agent-update-button:focus:not(:focus-visible) {
+	outline: none;
+}
+
+.volt-agent-update-button:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+/* Nothing pending: a plain refresh button that checks GitHub for the latest release. */
+.volt-agent-update-button.idle {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-update-button.idle:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-update-button.idle .codicon {
+	font-size: 16px;
+}
+
+/* Checking: the Usage page's spinner alone, on the refresh glyph's spot. It stays mounted so its SMIL clock keeps running. */
+.volt-agent-update-button.idle .volt-usage-spinner,
+.volt-agent-update-button.idle .volt-agent-update-done {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	opacity: 0;
+	pointer-events: none;
+}
+
+.volt-agent-update-button.idle .volt-usage-spinner {
+	width: 15px;
+	height: 15px;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-update-button.checking .codicon-refresh,
+.volt-agent-update-button.up-to-date .codicon-refresh {
+	visibility: hidden;
+}
+
+.volt-agent-update-button.checking .volt-usage-spinner,
+.volt-agent-update-button.up-to-date .volt-agent-update-done {
+	opacity: 1;
+}
+
+.volt-agent-update-button.checking {
+	cursor: default;
 }

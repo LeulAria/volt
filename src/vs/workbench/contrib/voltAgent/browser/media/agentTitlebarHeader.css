@@ -148,6 +148,75 @@
 	opacity: 0.72;
 }
 
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-laptop[hidden],
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-label[hidden],
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-env[hidden] {
+	display: none !important;
+}
+
+/* Usage: the crumb sits a little lower than the centered chat title. */
+.monaco-workbench.volt-layout-agent.volt-usage-open .volt-agent-primary-header {
+	box-sizing: border-box;
+	align-items: flex-start;
+	padding-top: 10px;
+}
+
+.monaco-workbench.volt-layout-agent.volt-usage-open .volt-agent-primary-header-project {
+	opacity: 0.72;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-env {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	min-width: 0;
+	max-width: 100%;
+	height: 22px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-env:focus {
+	outline: none;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-env:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-env-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	font-weight: 400;
+	line-height: 18px;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-chevron {
+	display: inline-flex;
+	flex-shrink: 0;
+	opacity: 0.9;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-env.open .volt-agent-primary-header-chevron {
+	transform: rotate(180deg);
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-chevron svg {
+	display: block;
+	width: 12px;
+	height: 12px;
+}
+
 .monaco-workbench.volt-layout-agent .volt-agent-primary-header-laptop svg {
 	display: block;
 	width: 14px;

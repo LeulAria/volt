@@ -5,6 +5,8 @@
 
 import { $, addDisposableListener, append, clearNode, EventHelper, getWindow } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
+import { IObjectTreeElement, ITreeNode, ITreeRenderer } from '../../../../../base/browser/ui/tree/tree.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
@@ -19,9 +21,12 @@ import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.j
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
+import { WorkbenchObjectTree } from '../../../../../platform/list/browser/listService.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { prKey } from '../../../../../platform/voltPullRequests/common/voltPullRequestParse.js';
 import {
 	IVoltPrCheck,
+	IVoltPrFile,
 	IVoltPrComment,
 	IVoltPrReview,
 	IVoltPrReviewThread,
@@ -49,7 +54,7 @@ import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { openPullRequestDiff } from './agentPullRequestDiff.js';
 import { AgentPullRequestEditorInput } from './agentPullRequestEditorInput.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
-import { ago, avatar, checkDuration, checkIcon, checksLabel, composeInChat, iconSpan, openPullRequest, problemText, prStateIcon, prStateLabel, signInWithGh, visibleChatSession } from './agentPullRequestUi.js';
+import { ago, avatar, checkDuration, checkIcon, checksLabel, composeInChat, iconSpan, MERGE_LABELS, openPullRequest, problemText, prStateIcon, prStateLabel, signInWithGh, visibleChatSession } from './agentPullRequestUi.js';
 
 type Tab = 'overview' | 'files' | 'commits' | 'checks';
 
@@ -57,12 +62,8 @@ type Tab = 'overview' | 'files' | 'commits' | 'checks';
 const POLL_MS = 20_000;
 /** Viewed ticks are sent together after this pause, like T3 Code. */
 const VIEWED_FLUSH_MS = 400;
-
-const MERGE_LABELS: Record<VoltPrMergeMethod, string> = {
-	squash: localize('voltPr.merge.squash', "Squash and merge"),
-	merge: localize('voltPr.merge.merge', "Create a merge commit"),
-	rebase: localize('voltPr.merge.rebase', "Rebase and merge"),
-};
+/** The Files tab's layout: directories as a tree, or one flat list. */
+const FILES_AS_TREE_KEY = 'volt.pullRequests.filesAsTree';
 
 /**
  * One pull request: header with its state and main action, and Overview, Files, Commits and
@@ -94,6 +95,8 @@ export class AgentPullRequestView extends Disposable {
 	private deleteBranch: boolean | undefined;
 	private shiftHeld = false;
 	private renderPending = false;
+	/** Directories folded in the Files tree, kept across re-renders of the same view. */
+	private readonly collapsedDirs = new Set<string>();
 
 	constructor(
 		parent: HTMLElement,
@@ -107,6 +110,7 @@ export class AgentPullRequestView extends Disposable {
 		@ILanguageService private readonly languageService: ILanguageService,
 		@IHostService private readonly hostService: IHostService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super();
 		this.element = append(parent, $('.volt-pr-view'));
@@ -367,13 +371,19 @@ export class AgentPullRequestView extends Disposable {
 		const sentence = append(meta, $('span.volt-pr-meta-text'));
 		append(sentence, $('strong')).textContent = pr.author.login;
 		const commits = pr.commits.length;
-		const verb = pr.state === 'merged'
-			? localize('voltPr.meta.merged', " merged {0} into ", commits === 1 ? localize('voltPr.oneCommit', "1 commit") : localize('voltPr.commits', "{0} commits", commits))
-			: localize('voltPr.meta.wants', " wants to merge {0} into ", commits === 1 ? localize('voltPr.oneCommit', "1 commit") : localize('voltPr.commits', "{0} commits", commits));
-		append(sentence, $('span')).textContent = verb;
-		this.branchChip(sentence, pr.baseRefName, pr.mergeState === 'behind');
-		append(sentence, $('span')).textContent = localize('voltPr.meta.from', " from ");
-		this.branchChip(sentence, pr.crossRepository && pr.headOwner ? `${pr.headOwner}:${pr.headRefName}` : pr.headRefName);
+		const count = commits === 1 ? localize('voltPr.oneCommit', "1 commit") : localize('voltPr.commits', "{0} commits", commits);
+		append(sentence, $('span')).textContent = pr.state === 'merged'
+			? localize('voltPr.meta.mergedFlow', " merged {0}", count)
+			: localize('voltPr.meta.wantsFlow', " wants to merge {0}", count);
+		// base ← head, as one flow: where the work lands first, then where it comes from.
+		const flow = append(meta, $('span.volt-pr-branch-flow'));
+		this.branchChip(flow, pr.baseRefName, pr.mergeState === 'behind');
+		const arrow = append(flow, $('span.volt-pr-branch-arrow'));
+		arrow.appendChild(renderIcon(Codicon.arrowLeft));
+		setAgentTooltip(arrow, pr.state === 'merged'
+			? localize('voltPr.flowMerged', "{0} was merged into {1}", pr.headRefName, pr.baseRefName)
+			: localize('voltPr.flowInto', "{0} merges into {1}", pr.headRefName, pr.baseRefName));
+		this.branchChip(flow, pr.crossRepository && pr.headOwner ? `${pr.headOwner}:${pr.headRefName}` : pr.headRefName);
 		append(meta, $('span.volt-pr-meta-time')).textContent = localize('voltPr.updated', "updated {0}", ago(pr.updatedAt));
 
 		const tabs = append(this.header, $('.volt-pr-tabs'));
@@ -440,7 +450,7 @@ export class AgentPullRequestView extends Disposable {
 			const layers: IVoltMenuItem<Pick>[] = [...chain].reverse().map(link => ({
 				id: link.key,
 				label: `#${link.number} ${link.snapshot?.title ?? ''}`,
-				description: link.snapshot ? `${link.snapshot.headRefName} → ${link.snapshot.baseRefName}` : undefined,
+				description: link.snapshot ? `${link.snapshot.baseRefName} ← ${link.snapshot.headRefName}` : undefined,
 				icon: link.snapshot ? prStateIcon(link.snapshot.state) : Codicon.gitPullRequest,
 				checked: link.key === pr.key,
 				data: { kind: 'open', link },
@@ -1027,53 +1037,108 @@ export class AgentPullRequestView extends Disposable {
 		bar.style.width = pr.files.length ? `${Math.round(viewed / pr.files.length * 100)}%` : '0%';
 		append(head, $('span.volt-pr-viewed-count')).textContent = localize('voltPr.viewedCount', "{0} / {1} viewed", viewed, pr.files.length);
 		append(head, $('.volt-pr-spacer'));
+		const asTree = this.filesAsTree;
+		const mode = this.iconButton(head, asTree ? Codicon.listFlat : Codicon.listTree, asTree ? localize('voltPr.viewAsList', "View as List") : localize('voltPr.viewAsTree', "View as Tree"), () => {
+			this.filesAsTree = !asTree;
+			this.render();
+		});
+		mode.classList.add('volt-pr-files-mode');
 		const folder = this.cloneFolder();
 		const open = this.button(head, localize('voltPr.openDiff', "Open Diff"), () => this.openDiff(pr), 'secondary', Codicon.diffMultiple);
 		open.disabled = !folder;
 		if (!folder) {
 			setAgentTooltip(open, localize('voltPr.needsClone', "Open a chat in a clone of {0}/{1} to read the diff here.", pr.repo.owner, pr.repo.name));
 		}
-		const list = append(this.body, $('.volt-pr-files'));
-		let lastDir: string | undefined;
-		for (const file of pr.files) {
-			const dir = dirname(file.path);
-			if (dir !== lastDir) {
-				lastDir = dir;
-				if (dir && dir !== '.') {
-					const dirRow = append(list, $('.volt-pr-dir'));
-					dirRow.appendChild(renderIcon(Codicon.folder));
-					append(dirRow, $('span')).textContent = dir;
+		this.renderFilesTree(pr, !!folder);
+	}
+
+	private get filesAsTree(): boolean {
+		return this.storageService.getBoolean(FILES_AS_TREE_KEY, StorageScope.PROFILE, true);
+	}
+
+	private set filesAsTree(value: boolean) {
+		this.storageService.store(FILES_AS_TREE_KEY, value, StorageScope.PROFILE, StorageTarget.USER);
+	}
+
+	/** The changed files as the workbench's own tree: directories fold, or a flat list with each file's folder. */
+	private renderFilesTree(pr: IVoltPullRequestDetail, canOpen: boolean): void {
+		const container = append(this.body, $('.volt-pr-files.volt-pr-files-tree'));
+		const isViewed = (file: { path: string; viewed: string }) => this.pendingViewed.get(file.path) ?? file.viewed === 'viewed';
+		const tree = this.renderStore.add(this.instantiationService.createInstance(
+			WorkbenchObjectTree<PrFilesNode, void>,
+			'VoltPrFiles',
+			container,
+			new PrFilesDelegate(),
+			[new PrFileRenderer(!this.filesAsTree, isViewed, (path, viewed) => this.toggleViewed(path, viewed)), new PrDirRenderer()],
+			{
+				identityProvider: { getId: (node: PrFilesNode) => node.kind === 'dir' ? `dir:${node.dir}` : `file:${node.file.path}` },
+				accessibilityProvider: {
+					getAriaLabel: (node: PrFilesNode) => node.kind === 'dir' ? node.dir : node.file.path,
+					getWidgetAriaLabel: () => localize('voltPr.filesAria', "Changed files"),
+				},
+				horizontalScrolling: false,
+				expandOnlyOnTwistieClick: false,
+			},
+		)) as WorkbenchObjectTree<PrFilesNode, void>;
+
+		const fileNode = (file: IVoltPullRequestDetail['files'][number]): IObjectTreeElement<PrFilesNode> => ({ element: { kind: 'file', file } });
+		if (this.filesAsTree) {
+			// One level, like the diff's own grouping: the directory, then its files.
+			const groups = new Map<string, IObjectTreeElement<PrFilesNode>[]>();
+			for (const file of pr.files) {
+				const dir = dirname(file.path);
+				const key = dir === '.' ? '' : dir;
+				let bucket = groups.get(key);
+				if (!bucket) {
+					groups.set(key, bucket = []);
+				}
+				bucket.push(fileNode(file));
+			}
+			const roots: IObjectTreeElement<PrFilesNode>[] = [];
+			for (const [dir, children] of groups) {
+				if (!dir) {
+					roots.push(...children);
+				} else {
+					roots.push({
+						element: { kind: 'dir', dir, count: children.length },
+						children,
+						collapsible: true,
+						collapsed: this.collapsedDirs.has(dir),
+					});
 				}
 			}
-			const pending = this.pendingViewed.get(file.path);
-			const isViewed = pending ?? file.viewed === 'viewed';
-			const row = append(list, $('.volt-pr-file'));
-			row.classList.toggle('viewed', isViewed);
-			row.classList.toggle('nested', !!dir && dir !== '.');
-			const box = append(row, $('button.volt-pr-check')) as HTMLButtonElement;
-			box.type = 'button';
-			box.setAttribute('role', 'checkbox');
-			box.setAttribute('aria-checked', String(isViewed));
-			box.appendChild(renderIcon(isViewed ? Codicon.passFilled : Codicon.circleLarge));
-			setAgentTooltip(box, isViewed ? localize('voltPr.unmarkViewed', "Mark as not viewed") : localize('voltPr.markViewedTip', "Mark as viewed"));
-			this.onClick(box, () => this.toggleViewed(file.path, !isViewed));
-			append(row, $(`span.volt-pr-change.change-${file.change}`)).textContent = changeLetter(file.change);
-			const name = append(row, $('button.volt-pr-file-name')) as HTMLButtonElement;
-			name.type = 'button';
-			name.textContent = basename(file.path);
-			if (file.previousPath) {
-				append(row, $('span.muted.volt-pr-renamed')).textContent = localize('voltPr.renamedFrom', "from {0}", file.previousPath);
-			}
-			if (file.viewed === 'dismissed') {
-				append(row, $('span.volt-pr-tag.changed')).textContent = localize('voltPr.changedSinceViewed', "changed");
-			}
-			append(row, $('.volt-pr-spacer'));
-			const stats = append(row, $('span.volt-pr-stats'));
-			append(stats, $('span.add')).textContent = `+${file.additions}`;
-			append(stats, $('span.del')).textContent = `−${file.deletions}`;
-			this.onClick(name, () => this.openDiff(pr, file.path));
-			name.disabled = !folder;
+			tree.setChildren(null, roots);
+		} else {
+			tree.setChildren(null, pr.files.map(fileNode));
 		}
+
+		this.renderStore.add(tree.onDidChangeCollapseState(e => {
+			const element = e.node.element;
+			if (element?.kind === 'dir') {
+				if (e.node.collapsed) {
+					this.collapsedDirs.add(element.dir);
+				} else {
+					this.collapsedDirs.delete(element.dir);
+				}
+			}
+		}));
+		this.renderStore.add(tree.onDidOpen(e => {
+			if (e.element?.kind === 'file' && canOpen) {
+				this.openDiff(pr, e.element.file.path);
+			}
+		}));
+
+		// The view's body does the scrolling; the tree always shows all of its rows.
+		const relayout = () => {
+			const height = tree.contentHeight;
+			container.style.height = `${height}px`;
+			tree.layout(height, container.clientWidth || undefined);
+		};
+		this.renderStore.add(tree.onDidChangeContentHeight(relayout));
+		const resize = new ResizeObserver(relayout);
+		resize.observe(container);
+		this.renderStore.add({ dispose: () => resize.disconnect() });
+		relayout();
 	}
 
 	private toggleViewed(path: string, viewed: boolean): void {
@@ -1420,6 +1485,134 @@ export class AgentPullRequestView extends Disposable {
 		super.dispose();
 	}
 }
+
+//#region Files tree
+
+type PrFilesNode =
+	| { readonly kind: 'file'; readonly file: IVoltPrFile }
+	| { readonly kind: 'dir'; readonly dir: string; readonly count: number };
+
+class PrFilesDelegate implements IListVirtualDelegate<PrFilesNode> {
+	getHeight(node: PrFilesNode): number {
+		return node.kind === 'dir' ? 28 : 32;
+	}
+	getTemplateId(node: PrFilesNode): string {
+		return node.kind;
+	}
+}
+
+interface IPrFileTemplate {
+	readonly check: HTMLButtonElement;
+	readonly change: HTMLElement;
+	readonly name: HTMLElement;
+	readonly dir: HTMLElement;
+	readonly renamed: HTMLElement;
+	readonly tag: HTMLElement;
+	readonly add: HTMLElement;
+	readonly del: HTMLElement;
+	readonly store: DisposableStore;
+	current?: IVoltPrFile;
+	viewed?: boolean;
+}
+
+class PrFileRenderer implements ITreeRenderer<PrFilesNode, void, IPrFileTemplate> {
+
+	readonly templateId = 'file';
+
+	constructor(
+		private readonly showDir: boolean,
+		private readonly isViewed: (file: IVoltPrFile) => boolean,
+		private readonly toggleViewed: (path: string, viewed: boolean) => void,
+	) { }
+
+	renderTemplate(container: HTMLElement): IPrFileTemplate {
+		const row = append(container, $('.volt-pr-file'));
+		const store = new DisposableStore();
+		const check = append(row, $('button.volt-pr-check')) as HTMLButtonElement;
+		check.type = 'button';
+		check.setAttribute('role', 'checkbox');
+		const change = append(row, $('span.volt-pr-change'));
+		const name = append(row, $('span.volt-pr-file-name'));
+		const dir = append(row, $('span.muted.volt-pr-file-dir'));
+		const renamed = append(row, $('span.muted.volt-pr-renamed'));
+		const tag = append(row, $('span.volt-pr-tag.changed'));
+		tag.textContent = localize('voltPr.changedSinceViewed', "changed");
+		append(row, $('.volt-pr-spacer'));
+		const stats = append(row, $('span.volt-pr-stats'));
+		const add = append(stats, $('span.add'));
+		const del = append(stats, $('span.del'));
+		const template: IPrFileTemplate = { check, change, name, dir, renamed, tag, add, del, store };
+		// The tick must not open the diff: the tree acts on mouse down, so stop that too.
+		store.add(addDisposableListener(check, 'mousedown', e => EventHelper.stop(e, true)));
+		store.add(addDisposableListener(check, 'click', e => {
+			EventHelper.stop(e, true);
+			if (template.current) {
+				this.toggleViewed(template.current.path, !template.viewed);
+			}
+		}));
+		return template;
+	}
+
+	renderElement(node: ITreeNode<PrFilesNode, void>, _index: number, template: IPrFileTemplate): void {
+		const element = node.element;
+		if (element.kind !== 'file') {
+			return;
+		}
+		const file = element.file;
+		const viewed = this.isViewed(file);
+		template.current = file;
+		template.viewed = viewed;
+		const row = template.check.parentElement!;
+		row.classList.toggle('viewed', viewed);
+		template.check.setAttribute('aria-checked', String(viewed));
+		template.check.replaceChildren(renderIcon(viewed ? Codicon.passFilled : Codicon.circleLarge));
+		setAgentTooltip(template.check, viewed ? localize('voltPr.unmarkViewed', "Mark as not viewed") : localize('voltPr.markViewedTip', "Mark as viewed"));
+		template.change.className = `volt-pr-change change-${file.change}`;
+		template.change.textContent = changeLetter(file.change);
+		template.name.textContent = basename(file.path);
+		const dir = dirname(file.path);
+		template.dir.textContent = this.showDir && dir && dir !== '.' ? dir : '';
+		template.renamed.textContent = file.previousPath ? localize('voltPr.renamedFrom', "from {0}", file.previousPath) : '';
+		template.tag.style.display = file.viewed === 'dismissed' ? '' : 'none';
+		template.add.textContent = `+${file.additions}`;
+		template.del.textContent = `−${file.deletions}`;
+	}
+
+	disposeTemplate(template: IPrFileTemplate): void {
+		template.store.dispose();
+	}
+}
+
+interface IPrDirTemplate {
+	readonly name: HTMLElement;
+	readonly count: HTMLElement;
+}
+
+class PrDirRenderer implements ITreeRenderer<PrFilesNode, void, IPrDirTemplate> {
+
+	readonly templateId = 'dir';
+
+	renderTemplate(container: HTMLElement): IPrDirTemplate {
+		const row = append(container, $('.volt-pr-dir'));
+		row.appendChild(renderIcon(Codicon.folder));
+		const name = append(row, $('span.volt-pr-dir-name'));
+		const count = append(row, $('span.muted.volt-pr-dir-count'));
+		return { name, count };
+	}
+
+	renderElement(node: ITreeNode<PrFilesNode, void>, _index: number, template: IPrDirTemplate): void {
+		const element = node.element;
+		if (element.kind !== 'dir') {
+			return;
+		}
+		template.name.textContent = element.dir;
+		template.count.textContent = String(element.count);
+	}
+
+	disposeTemplate(): void { }
+}
+
+//#endregion
 
 function changeLetter(change: string): string {
 	switch (change) {

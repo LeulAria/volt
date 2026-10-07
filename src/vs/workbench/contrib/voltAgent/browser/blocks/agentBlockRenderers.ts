@@ -172,6 +172,7 @@ function codeCardOptions(ctx: IBlockRenderContext): ICodeCardOptions {
 	return {
 		store: ctx.store,
 		languageService: ctx.languageService,
+		instantiationService: ctx.instantiationService,
 		onCopyText: ctx.onCopyText,
 		onDidChangeSize: ctx.onScroll,
 		onOpenPath: ctx.onOpenPath,

@@ -400,7 +400,7 @@ export class AgentPullRequestsViewPane extends ViewPane {
 				open();
 			}
 		}));
-		setAgentTooltip(row, `#${pr.number} ${pr.title}\n${pr.headRefName} → ${pr.baseRefName} · ${pr.author.login}\n+${pr.additions} −${pr.deletions} · ${pr.changedFiles} files`);
+		setAgentTooltip(row, `#${pr.number} ${pr.title}\n${pr.baseRefName} ← ${pr.headRefName} · ${pr.author.login}\n+${pr.additions} −${pr.deletions} · ${pr.changedFiles} files`);
 	}
 
 	/** Shown while Shift is held: one click acts, no confirmation (the Shift is the confirmation). */

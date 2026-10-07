@@ -5,6 +5,8 @@
 
 .volt-agent-quick-open-actions {
 	display: none;
+	user-select: none;
+	-webkit-user-select: none;
 }
 
 .volt-agent-titlebar-toggles {
@@ -447,6 +449,45 @@
 	outline-offset: -1px;
 }
 
+/* Six tabs show; more scroll. 26px rows. */
+.volt-agent-dock-tab-list {
+	max-height: 156px;
+	overflow-x: hidden;
+	overflow-y: auto;
+	scrollbar-width: thin;
+}
+
+.volt-agent-dock-tab-list > .volt-agent-dock-row > .volt-agent-dock-row-label {
+	flex: 1;
+}
+
+/* Close on hover, at the row's end. */
+.volt-agent-dock-row > .volt-agent-dock-tab-close {
+	display: none;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	margin-right: -3px;
+	border-radius: 4px;
+}
+
+.volt-agent-dock-row:hover > .volt-agent-dock-tab-close,
+.monaco-workbench .volt-agent-dock-row:focus-visible > .volt-agent-dock-tab-close {
+	display: inline-flex;
+}
+
+.volt-agent-dock-row > .volt-agent-dock-tab-close:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-agent-quick-open-actions .volt-agent-dock-row > .volt-agent-dock-tab-close .codicon {
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
+}
+
 /* "+12 −3" at the end of the Changes row. */
 .volt-agent-dock-row > .volt-agent-dock-row-label {
 	flex: 1;
@@ -476,6 +517,24 @@
 	width: 15px;
 	height: 15px;
 	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+}
+
+/* The pull-request glyph fills its box more than the other row icons. */
+.volt-agent-quick-open-actions .volt-agent-dock-row .codicon-git-pull-request {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 13px;
+	line-height: 13px;
+}
+
+/* The pull-request glyph fills its box more than the other row icons. */
+.volt-agent-quick-open-actions .volt-agent-dock-row .codicon-git-pull-request {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 13px;
+	line-height: 13px;
 }
 
 .volt-agent-quick-open-actions .volt-agent-stroke-icon {
