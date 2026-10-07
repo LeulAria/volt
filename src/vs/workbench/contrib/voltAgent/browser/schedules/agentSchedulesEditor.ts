@@ -17,6 +17,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { ILayoutService } from '../../../../../platform/layout/browser/layoutService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
@@ -105,6 +106,7 @@ export class AgentSchedulesEditor extends EditorPane {
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
+		@ILayoutService private readonly layoutService: ILayoutService,
 	) {
 		super(AgentSchedulesEditor.ID, group, telemetryService, themeService, storageService);
 		this._register(this.schedules.onDidChange(() => this.render()));
@@ -312,7 +314,8 @@ export class AgentSchedulesEditor extends EditorPane {
 
 	private openDialog(task: IAgentSchedule | undefined): void {
 		const threadId = task?.target.kind === 'thread' ? task.target.threadId : undefined;
-		this.dialog.value = showAgentScheduleDialog(getWindow(this.container).document.body, {
+		// Inside the workbench, so the dialog gets its fonts and theme.
+		this.dialog.value = showAgentScheduleDialog(this.layoutService.activeContainer, {
 			...(task ? { task } : {}),
 			...(threadId ? { threadId, threadTitle: this.history.get(threadId)?.title } : {}),
 			projectLabel: task ? this.projectLabel(task) : this.sessionContext.activeProject?.displayName,
