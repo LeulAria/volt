@@ -252,7 +252,7 @@ class FakeHost implements INativeLoopHost {
 
 	constructor(private readonly script: StreamEvent[][]) { }
 
-	async *stream(messages: readonly INativeLoopMessage[]): AsyncIterable<StreamEvent> {
+	async *stream(messages: readonly INativeLoopMessage[], _token?: { isCancellationRequested: boolean }): AsyncIterable<StreamEvent> {
 		this.streams.push(messages.slice());
 		const events = this.script.shift() ?? [finish('stop')];
 		for (const event of events) {

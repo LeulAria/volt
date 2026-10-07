@@ -95,7 +95,7 @@ import {
 } from './agentEditorInput.js';
 import { CONTEXT_AGENT_FIND_INPUT_FOCUSED, CONTEXT_AGENT_FIND_WIDGET_VISIBLE, CONTEXT_IN_AGENT_INPUT } from './agentFindWidget.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
-import { openAgentPanel, startAgentChat } from '../workspace/agentPanels.js';
+import { startAgentChat } from '../workspace/agentPanels.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
@@ -584,7 +584,7 @@ const hasEditorSelection = ContextKeyExpr.and(
 	EditorContextKeys.hasNonEmptySelection,
 	ActiveEditorContext.notEqualsTo(AGENT_EDITOR_ID),
 	CONTEXT_IN_AGENT_INPUT.negate(),
-);
+) ?? ContextKeyExpr.false();
 
 /**
  * The editor a selection command acts on. Embedded editors (the diffs in Review / Last Agent Turn)

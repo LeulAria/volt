@@ -260,6 +260,7 @@ export interface IFileService {
 	 * This means, most listeners in the application will receive your events. It is encouraged to
 	 * use correlated watchers (via `IWatchOptionsWithCorrelation`) to limit events to your listener.
 	*/
+	watch(resource: URI, options: IWatchOptionsWithCorrelation): IFileSystemWatcher;
 	watch(resource: URI, options?: IWatchOptionsWithoutCorrelation): IDisposable;
 
 	/**

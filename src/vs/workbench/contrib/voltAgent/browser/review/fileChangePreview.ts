@@ -450,11 +450,9 @@ export class FileChangePreview extends Disposable {
 			fontSize: this.configurationService.getValue<number>('editor.fontSize') || EDITOR_FONT_DEFAULTS.fontSize,
 			fontWeight: this.configurationService.getValue<string>('editor.fontWeight') || EDITOR_FONT_DEFAULTS.fontWeight,
 			lineHeight: this.configurationService.getValue<number>('editor.lineHeight') ?? EDITOR_FONT_DEFAULTS.lineHeight,
-			fontLigatures: this.configurationService.getValue('editor.fontLigatures'),
+			fontLigatures: this.configurationService.getValue<boolean | string>('editor.fontLigatures'),
 			letterSpacing: this.configurationService.getValue<number>('editor.letterSpacing') ?? EDITOR_FONT_DEFAULTS.letterSpacing,
-			renderWhitespace: this.configurationService.getValue('editor.renderWhitespace'),
-			tabSize: this.configurationService.getValue('editor.tabSize'),
-			insertSpaces: this.configurationService.getValue('editor.insertSpaces'),
+			renderWhitespace: this.configurationService.getValue<'none' | 'boundary' | 'selection' | 'trailing' | 'all'>('editor.renderWhitespace'),
 			ariaLabel: localize('voltFilePreview.diffAria', "File change"),
 		};
 	}
@@ -502,6 +500,18 @@ export class FileChangePreview extends Disposable {
 			original: this.originalModel,
 			modified: this.modifiedModel,
 		});
+		this.applyModelOptions();
+	}
+
+	private applyModelOptions(): void {
+		const tabSize = this.configurationService.getValue<number>('editor.tabSize');
+		const insertSpaces = this.configurationService.getValue<boolean>('editor.insertSpaces');
+		const options = {
+			...(typeof tabSize === 'number' ? { tabSize } : {}),
+			...(typeof insertSpaces === 'boolean' ? { insertSpaces } : {}),
+		};
+		this.originalModel?.updateOptions(options);
+		this.modifiedModel?.updateOptions(options);
 	}
 
 	private applyHiddenPrefixAreas(): void {
@@ -511,8 +521,8 @@ export class FileChangePreview extends Disposable {
 		}
 		const prefix = this.prefixLineCount > 0 ? [new Range(1, 1, this.prefixLineCount, 1)] : [];
 		const helper = (line: number | undefined) => line ? [new Range(line, 1, line, 1)] : [];
-		editor.getOriginalEditor().setHiddenAreas([...prefix, ...helper(this.helperLines.original)], 'volt-file-preview', true);
-		editor.getModifiedEditor().setHiddenAreas([...prefix, ...helper(this.helperLines.modified)], 'volt-file-preview', true);
+		editor.getOriginalEditor().setHiddenAreas([...prefix, ...helper(this.helperLines.original)], 'volt-file-preview');
+		editor.getModifiedEditor().setHiddenAreas([...prefix, ...helper(this.helperLines.modified)], 'volt-file-preview');
 	}
 
 	private previewModelUri(side: 'original' | 'modified'): URI {

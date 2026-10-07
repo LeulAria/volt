@@ -127,7 +127,7 @@ class AgentNavContribution extends Disposable {
 		}
 		const titlebar = this.layoutService.getContainer(mainWindow, Parts.TITLEBAR_PART);
 		const left = titlebar?.querySelector('.titlebar-left');
-		if (left && !left.querySelector(':scope > .volt-agent-nav-titlebar')) {
+		if (isHTMLElement(left) && !left.querySelector(':scope > .volt-agent-nav-titlebar')) {
 			const nav = this.mountPair(left, true);
 			const header = left.querySelector('.volt-agent-primary-header');
 			if (header) {
@@ -136,7 +136,7 @@ class AgentNavContribution extends Disposable {
 		}
 	}
 
-	private mountPair(parent: Element, titlebar: boolean): HTMLElement {
+	private mountPair(parent: HTMLElement, titlebar: boolean): HTMLElement {
 		const nav = append(parent, $(titlebar ? '.volt-agent-nav.volt-agent-nav-titlebar' : '.volt-agent-nav'));
 		const back = this.button(nav, 'back', localize('voltAgent.goBack', "Go Back"), '[');
 		const forward = this.button(nav, 'forward', localize('voltAgent.goForward', "Go Forward"), ']');
@@ -192,7 +192,7 @@ class AgentNavContribution extends Disposable {
 	}
 
 	private async reveal(editor: EditorInput): Promise<void> {
-		if (editor.isDisposed) {
+		if (editor.isDisposed()) {
 			if (editor instanceof AgentEditorInput) {
 				await openAgentPanel(this.editorGroupsService, this.instantiationService, editor.sessionId, { preserveFocus: true });
 			} else if (editor instanceof VoltSettingsEditorInput) {

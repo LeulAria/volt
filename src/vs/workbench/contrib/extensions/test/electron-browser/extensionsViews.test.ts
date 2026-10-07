@@ -104,7 +104,7 @@ suite('ExtensionsViews Tests', () => {
 			onProfileAwareDidInstallExtensions: Event.None,
 			async getInstalled() { return []; },
 			async getInstalledWorkspaceExtensions() { return []; },
-			async canInstall() { return true; },
+			async canInstall(): Promise<true> { return true; },
 			async getExtensionsControlManifest() { return { malicious: [], deprecated: {}, search: [], publisherMapping: {} }; },
 			async getTargetPlatform() { return getTargetPlatform(platform, arch); },
 			async updateMetadata(local) { return local; }

@@ -147,7 +147,7 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 		}
 		// Setting it again cancels the read already waiting.
 		this.rereads.set(folder, disposableTimeout(() => {
-			this.rereads.deleteAndLeak(folder);
+			this.rereads.deleteAndDispose(folder);
 			void this.state(folder, this.sessions.get(folder), true);
 		}, REREAD_DELAY_MS));
 	}

@@ -33,7 +33,7 @@ export interface IVoltMenuItem<T> {
 	readonly subtitle?: string;
 	/** Line counts after the label, green and red as in a diff. Zero counts are left out. */
 	readonly stats?: { readonly additions: number; readonly deletions: number };
-	readonly icon?: ThemeIcon | (() => HTMLElement);
+	readonly icon?: ThemeIcon | (() => HTMLElement | SVGElement);
 	/** Spins the icon (clone in progress). */
 	readonly busy?: boolean;
 	readonly checked?: boolean;

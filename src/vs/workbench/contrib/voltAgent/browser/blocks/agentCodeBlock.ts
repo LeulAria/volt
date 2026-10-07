@@ -13,8 +13,7 @@ import { generateUuid } from '../../../../../base/common/uuid.js';
 import { posix } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
 import { EditorExtensionsRegistry } from '../../../../../editor/browser/editorExtensions.js';
-import { ICodeEditorWidgetOptions } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
-import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
+import { CodeEditorWidget, ICodeEditorWidgetOptions } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { EDITOR_FONT_DEFAULTS } from '../../../../../editor/common/config/editorOptions.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { PLAINTEXT_LANGUAGE_ID } from '../../../../../editor/common/languages/modesRegistry.js';
@@ -173,7 +172,7 @@ export function renderCodeCard(parent: HTMLElement, language: string | undefined
 	return shell.card;
 }
 
-/** Cursor's header on a cited snippet: file icon, name, "Ln a–b"; clicking opens the file there. */
+/** The header on a cited snippet: file icon, name, "Ln a-b"; clicking opens the file there. */
 function renderCitationHeader(card: HTMLElement, citation: ICodeCitation, options: ICodeCardOptions): void {
 	const header = $('button.volt-md-code-citation.show-file-icons') as HTMLButtonElement;
 	header.type = 'button';
@@ -377,8 +376,8 @@ function mountMonacoCode(scroll: HTMLElement, text: string, alias: string, optio
 					bracketPairColorization: {
 						enabled: configurationService.getValue<boolean>('editor.bracketPairColorization.enabled') !== false,
 					},
-					renderWhitespace: configurationService.getValue('editor.renderWhitespace'),
-					fontLigatures: configurationService.getValue('editor.fontLigatures'),
+					renderWhitespace: configurationService.getValue<'none' | 'boundary' | 'selection' | 'trailing' | 'all'>('editor.renderWhitespace'),
+					fontLigatures: configurationService.getValue<boolean | string>('editor.fontLigatures'),
 					fontFamily: !fontFamily || fontFamily === 'default' ? EDITOR_FONT_DEFAULTS.fontFamily : fontFamily,
 					fontSize,
 					fontWeight: configurationService.getValue<string>('editor.fontWeight') || EDITOR_FONT_DEFAULTS.fontWeight,
@@ -482,6 +481,7 @@ function renderDiffCard(parent: HTMLElement, text: string, options: ICodeCardOpt
 					content.appendChild(node);
 				}
 			} else {
+				// allow-any-unicode-next-line
 				content.textContent = row.text || '​';
 			}
 		});
@@ -703,6 +703,7 @@ function appendLines(codeEl: HTMLElement, lines: Node[][]): void {
 	for (const nodes of lines) {
 		const line = append(codeEl, $('div.volt-md-code-line'));
 		if (!nodes.length || (nodes.length === 1 && !nodes[0].textContent)) {
+			// allow-any-unicode-next-line
 			line.textContent = '​';
 			continue;
 		}

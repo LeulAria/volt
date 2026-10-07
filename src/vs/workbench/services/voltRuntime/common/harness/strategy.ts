@@ -153,7 +153,7 @@ function exitOf(strategy: RunStrategy, intent: IIntent): IExitCriteria {
 		default:
 			return {
 				requirePlanComplete: intent.lane !== 'chat',
-				requireGates: strategy !== 'fast-edit',
+				requireGates: true,
 				requireMutation: intent.lane !== 'chat',
 				requireConfidence: 0.55,
 			};
@@ -195,7 +195,7 @@ export function applyStrategy(plan: IExecutionPlan | undefined, strategy: RunStr
 				: strategy === 'research-first' || strategy === 'research-answer' || signals.webRequired ? 'research'
 					: strategy === 'ui-browser' && first.role === 'explore' ? 'explore'
 						: undefined;
-	let steps: IPlanStep[] = plan.steps;
+	let steps: readonly IPlanStep[] = plan.steps;
 	if (firstRole && first.role !== firstRole) {
 		steps = steps.map((step, index) => index === 0 ? { ...step, role: firstRole } : step);
 	}

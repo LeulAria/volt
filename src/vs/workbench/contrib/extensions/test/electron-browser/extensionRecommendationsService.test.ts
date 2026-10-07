@@ -230,7 +230,7 @@ suite('ExtensionRecommendationsService Test', () => {
 			onDidChangeProfile: Event.None,
 			onProfileAwareDidInstallExtensions: Event.None,
 			async getInstalled() { return []; },
-			async canInstall() { return true; },
+			async canInstall(): Promise<true> { return true; },
 			async getExtensionsControlManifest() { return { malicious: [], deprecated: {}, search: [], publisherMapping: {} }; },
 			async getTargetPlatform() { return getTargetPlatform(platform, arch); },
 		});

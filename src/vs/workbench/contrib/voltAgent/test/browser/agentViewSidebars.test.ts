@@ -82,8 +82,8 @@ suite('Agent view sidebars', () => {
 	});
 
 	test('open tabs include a right-side browser and skip the chat', () => {
-		const chat = { id: 'chat' } as EditorInput;
-		const browser = { id: 'browser' } as EditorInput;
+		const chat = { id: 'chat' } as unknown as EditorInput;
+		const browser = { id: 'browser' } as unknown as EditorInput;
 		const tabs = dockOpenTabs(
 			[{ editors: [chat] }, { editors: [browser, browser] }],
 			editor => editor === chat,

@@ -71,7 +71,7 @@ function percent(value: number): string {
 
 /** One Insights card: a chart spec, and whether it takes the whole row. */
 export interface IUsageInsight {
-	readonly spec: { readonly type: string; readonly title: string };
+	readonly spec: { readonly type: string; readonly title: string } & Record<string, unknown>;
 	readonly wide: boolean;
 }
 

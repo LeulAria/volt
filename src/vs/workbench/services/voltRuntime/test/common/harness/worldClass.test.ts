@@ -423,7 +423,7 @@ suite('Volt world-class harness fabric', () => {
 	});
 
 	test('a passed gate seals its upstream tasks against supersede', () => {
-		const drafted = draftMission('m1', analyzeTask('add login and add tests', classifyIntent('add login and add tests', 'multitask', { hasWorkspace: true }), { hasWorkspace: true }));
+		const drafted = draftMission('m1', analyzeTask('add login and add tests', classifyIntent('add login and add tests', 'multitask', { hasWorkspace: true })));
 		const withGate = applyPatch(drafted, {
 			add: [{ id: 'G1', type: 'gate', body: 'prove it', targets: ['c0'], dependsOn: drafted.tasks.map(task => task.id) }],
 		}, 'add gate');
