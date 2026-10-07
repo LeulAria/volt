@@ -45,6 +45,8 @@ import { BrowserAgentDock } from './browserDock.js';
 import { BROWSER_PRESENT_EVENT, BROWSER_PRESENTATION_EVENT, BrowserPresentation, DEFAULT_BROWSER_URL, VoltBrowserEditorInput } from './browserEditorInput.js';
 import { BrowserAppearance, IBrowserHistoryEntry, isRememberedUrl, IVoltBrowserHistory, shortBrowserUrl } from './browserHistory.js';
 import { BrowserMenuEntry, showBrowserMenu } from './browserMenu.js';
+import { browserMenuExtras } from './browserMenuExtras.js';
+import { RecordingBadge } from '../capture/recordingBadge.js';
 import { sanitizeBrowserUrl } from './localPreview.js';
 
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -548,6 +550,7 @@ export class VoltBrowserView extends Disposable {
 		this.suggestEl.setAttribute('role', 'listbox');
 
 		this.stage = append(this.container, $('.volt-browser-stage'));
+		this._register(this.instantiationService.createInstance(RecordingBadge, this.stage));
 		this.errorEl = append(this.stage, $('.volt-browser-error.hidden'));
 		this.overlay = append(this.stage, $('.volt-browser-overlay'));
 		this.hoverBox = append(this.overlay, $('.volt-browser-box.hover.hidden'));
@@ -1326,8 +1329,10 @@ export class VoltBrowserView extends Disposable {
 				void this.applyAppearance();
 			},
 		});
+		const extras = this.instantiationService.invokeFunction(accessor => browserMenuExtras(accessor, { sessionId: this.ownerSession(), anchor: this.moreButton, toast: message => this.showToast(message) }));
 		const entries: BrowserMenuEntry[] = [
 			{ kind: 'item', label: localize('voltBrowser.menu.screenshot', "Take Screenshot"), disabled: !hasPage, run: () => void this.takeScreenshot() },
+			...extras.capture,
 			{ kind: 'separator' },
 			{ kind: 'item', label: localize('voltBrowser.menu.hardReload', "Hard Reload"), disabled: !hasPage, run: () => this.callGuest(() => this.webview?.reloadIgnoringCache?.()) },
 			{ kind: 'item', label: localize('voltBrowser.menu.copyUrl', "Copy Current URL"), disabled: !url, run: () => void this.clipboardService.writeText(url) },
@@ -1335,6 +1340,7 @@ export class VoltBrowserView extends Disposable {
 			{ kind: 'item', label: localize('voltBrowser.menu.devtools', "Open DevTools"), disabled: !hasPage, run: () => this.openDevTools() },
 			{ kind: 'item', label: localize('voltBrowser.menu.window', "Open Separate Preview Window"), run: () => void this.openInWindow() },
 			{ kind: 'toggle', label: localize('voltBrowser.menu.deviceToolbar', "Show Device Toolbar"), checked: this.deviceMode.active, run: () => this.toggleResponsive() },
+			...extras.devices,
 			{
 				kind: 'submenu',
 				label: localize('voltBrowser.menu.appearance', "Appearance"),
@@ -1352,12 +1358,14 @@ export class VoltBrowserView extends Disposable {
 				reset: () => this.setZoom(1),
 			},
 			{ kind: 'separator' },
+			...extras.agents,
 			{ kind: 'toggle', label: localize('voltBrowser.menu.bookmarkBar', "Show Bookmark Bar"), checked: this.history.showBookmarkBar, run: show => { this.history.showBookmarkBar = show; } },
 			{ kind: 'separator' },
 			{ kind: 'header', label: localize('voltBrowser.menu.profile', "Profile: Default") },
 			{ kind: 'item', label: localize('voltBrowser.menu.clearHistory', "Clear Browsing History"), run: () => this.clearHistory() },
 			{ kind: 'item', label: localize('voltBrowser.menu.clearCookies', "Clear Cookies"), run: () => void this.clearData('cookies') },
 			{ kind: 'item', label: localize('voltBrowser.menu.clearCache', "Clear Cache"), run: () => void this.clearData('cache') },
+			...extras.profile,
 		];
 		showBrowserMenu(this.contextViewService, this.moreButton, entries);
 	}

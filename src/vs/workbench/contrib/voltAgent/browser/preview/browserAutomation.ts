@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { getActiveDocument } from '../../../../../base/browser/dom.js';
 import { raceCancellation, raceTimeout, SequencerByKey, timeout } from '../../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Disposable, DisposableMap, toDisposable } from '../../../../../base/common/lifecycle.js';
@@ -16,6 +17,7 @@ import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/ru
 import { clampRect, compareImages, compareLayout, cropImage, describeComparison, describeLayout, diffHeatmap, parseRect, sideBySide } from '../../../../services/voltRuntime/common/tools/imageAnalysis.js';
 import { agentSessionBrowser } from '../workspace/agentSurfaceHost.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
+import { keepUserFocus } from './agentFocusGuard.js';
 import { IVoltBrowserViews, IVoltConsoleMessage, normalizeBrowserUrl, VoltBrowserView } from './browserEditor.js';
 import { clickFallbackScript, evaluateScript, focusScript, INetworkEntry, NETWORK_SCRIPT, rectScript, scrollScript, selectOptionScript, setValueScript, SNAPSHOT_SCRIPT, snapshotScript, targetScript, textPresentScript } from './browserAutomationScripts.js';
 
@@ -431,7 +433,8 @@ async function automate(services: IAutomationServices, sessionId: string, tool: 
 				throw new AutomationError('The in-app browser page is not ready yet.');
 			}
 		}
-		const result = await act(view, tool, args, normalized, opened, ctx);
+		// The user keeps typing in the composer while the agent clicks and types in the page.
+		const result = await keepUserFocus(getActiveDocument(), () => act(view, tool, args, normalized, opened, ctx));
 		if (args.screenshot === true && !result.error && !result.image && tool !== 'browser_screenshot') {
 			const shot = await screenshot(view, {}, ctx.token);
 			if (shot) {

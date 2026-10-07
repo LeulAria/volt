@@ -1,0 +1,66 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Over the page in a preview: an opaque pill, never a see-through layer (volt-transparent-window). */
+.volt-recording-badge {
+	position: absolute;
+	top: 10px;
+	left: 10px;
+	z-index: 30;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 24px;
+	padding: 0 9px 0 8px;
+	border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+	border-radius: 12px;
+	background: var(--vscode-editorWidget-background);
+	color: var(--vscode-foreground);
+	font-family: var(--vscode-font-family);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	cursor: pointer;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+	pointer-events: auto;
+}
+
+.volt-recording-badge.hidden {
+	display: none;
+}
+
+.volt-recording-badge:hover {
+	background: var(--vscode-list-hoverBackground, var(--vscode-editorWidget-background));
+}
+
+.volt-recording-badge:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-recording-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--vscode-errorForeground, #f14c4c);
+	animation: volt-recording-pulse 1.6s ease-in-out infinite;
+}
+
+.volt-recording-time {
+	font-variant-numeric: tabular-nums;
+	font-weight: 500;
+	color: var(--vscode-descriptionForeground);
+}
+
+@keyframes volt-recording-pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-recording-dot {
+		animation: none;
+	}
+}

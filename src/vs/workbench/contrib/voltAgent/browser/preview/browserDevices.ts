@@ -374,6 +374,22 @@ function renderDeviceFrame(device: IBrowserDevice, spec: IFrameSpec, width: numb
 	return frame;
 }
 
+/**
+ * A device frame around a screen that draws its own status bar and home indicator (a simulator's
+ * screenshot): portrait, `width`×`height` CSS px of screen, cameras and buttons included. The
+ * screen goes into `display`. Undefined for shapes without a frame.
+ */
+export function renderBareDeviceFrame(device: IBrowserDevice, width: number, height: number): { frame: HTMLElement; display: HTMLElement; width: number; height: number } | undefined {
+	const spec = frameSpec(device);
+	if (!spec) {
+		return undefined;
+	}
+	const bare: IFrameSpec = { ...spec, status: 0, home: 0 };
+	const frame = renderDeviceFrame(device, bare, width, height);
+	const display = frame.querySelector<HTMLElement>('.volt-device-display')!;
+	return { frame, display, width: width + bare.side * 2, height: height + bare.top + bare.bottom };
+}
+
 export interface IBrowserDeviceSize {
 	readonly width: number;
 	readonly height: number;

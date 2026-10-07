@@ -15,6 +15,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { VoltHostToolService } from '../../browser/host/hostToolService.js';
 import { dataUrlBytes, decodeDataUrl, encodeImage, scaleScreenshot } from '../../browser/host/imageCodec.js';
 import { createBrowserTools } from '../../browser/tools/browserTool.js';
+import { BrowserBlockReason, IVoltBrowserAccessService } from '../../common/browserAccess.js';
 import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostToolApproval, IVoltHostToolInvocation, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
 import { VoltMode } from '../../common/modes.js';
 import { createImage, IRgbaImage } from '../../common/tools/imageAnalysis.js';
@@ -64,11 +65,13 @@ suite('Volt host tool service', () => {
 			},
 		} as unknown as IFileService;
 		const workspace = { getWorkspace: () => ({ folders: [{ uri: URI.file('/ws') }] }) } as unknown as IWorkspaceContextService;
-		const service = store.add(new VoltHostToolService(commands, files, workspace));
+		const blocked = new Map<string | undefined, BrowserBlockReason>();
+		const access = { blockReason: (sessionId: string | undefined) => blocked.get(sessionId) } as unknown as IVoltBrowserAccessService;
+		const service = store.add(new VoltHostToolService(commands, files, workspace, access));
 		const modes = new Map<string, VoltMode>();
 		service.setSessionResolver({ mode: id => modes.get(id), cwd: () => undefined });
 		const automated = () => calls.filter(call => call.id === AUTOMATE_BROWSER_COMMAND_ID);
-		return { service, calls, modes, automated };
+		return { service, calls, modes, automated, blocked };
 	}
 
 	test('hands agents the endpoint with the bearer token and optional tool groups', () => {
@@ -182,5 +185,45 @@ suite('Volt host tool service', () => {
 		const ran = await tool.execute({ expression: '1' }, { signal: controller.signal, sessionId: 's9', mode: 'agent' });
 		assert.strictEqual(ran.text, 'ran browser_evaluate');
 		assert.strictEqual(automated()[0].args[0], 's9');
+	});
+
+	test('blocked browser access refuses every browser tool with a reason, without touching the page', async () => {
+		const { service, automated, blocked } = setup();
+		blocked.set('s1', 'chat');
+		const refused = await service.invokeTool('browser_click', { element: 'Buy', ref: 'e2' }, { sessionId: 's1' });
+		assert.match(refused.error ?? '', /^browser_click was not run: the user turned off browser access for agents in this chat\. Do not retry/);
+		assert.match((await service.invokeTool('browser_navigate', { url: 'http://localhost:3000' }, { sessionId: 's1' })).error ?? '', /turned off browser access/);
+		assert.strictEqual(automated().length, 0);
+
+		// The setting blocks calls without a chat too (the visible pane's screenshot).
+		blocked.set(undefined, 'setting');
+		assert.match((await service.invokeTool('browser_screenshot', {})).error ?? '', /volt\.browser\.allowAgents/);
+
+		// Other chats and non-browser tools are unaffected.
+		assert.strictEqual((await service.invokeTool('browser_snapshot', {}, { sessionId: 's2' })).text, 'ran browser_snapshot');
+		assert.strictEqual(automated().length, 1);
+	});
+
+	test('provider tools marked for approval ask in Ask and Plan modes and run freely in Agent mode', async () => {
+		const { service, modes } = setup();
+		const ran: string[] = [];
+		store.add(service.registerToolProvider({
+			tools: [
+				{ name: 'device_tap', title: 'Tapped', description: '', inputSchema: {}, approvalInReadOnlyModes: 'taps on the device' },
+				{ name: 'device_list', title: 'Listed', description: '', inputSchema: {} },
+			],
+			invoke: async name => { ran.push(name); return { text: `ran ${name}` }; },
+		}));
+		modes.set('s1', 'plan');
+		assert.match((await service.invokeTool('device_tap', { x: 1, y: 2 }, { sessionId: 's1' })).error ?? '', /in Plan mode it needs the user's approval because it taps on the device/);
+		assert.strictEqual((await service.invokeTool('device_list', {}, { sessionId: 's1' })).text, 'ran device_list');
+		const asked: IVoltHostToolApproval[] = [];
+		service.setApprover({ approve: async request => { asked.push(request); return true; } });
+		assert.strictEqual((await service.invokeTool('device_tap', { x: 1, y: 2 }, { sessionId: 's1' })).text, 'ran device_tap');
+		assert.strictEqual(asked[0].reason, 'taps on the device');
+		modes.set('s1', 'agent');
+		assert.strictEqual((await service.invokeTool('device_tap', { x: 1, y: 2 }, { sessionId: 's1' })).text, 'ran device_tap');
+		assert.strictEqual(asked.length, 1);
+		assert.deepStrictEqual(ran, ['device_list', 'device_tap', 'device_tap']);
 	});
 });

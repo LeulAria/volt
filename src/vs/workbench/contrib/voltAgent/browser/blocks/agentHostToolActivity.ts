@@ -77,6 +77,10 @@ export function describeHostToolActivity(name: string | undefined, title: string
 			default: return { tool, label: 'Listed pull requests' };
 		}
 	}
+	const device = describeDeviceActivity(tool, args);
+	if (device) {
+		return device;
+	}
 	if (tool === IMAGE_INSPECT_TOOL_NAME) {
 		return { tool, label: 'Inspected image', detail: text(args.path, 120) };
 	}
@@ -129,6 +133,33 @@ export function describeHostToolActivity(name: string | undefined, title: string
 		case 'browser_screenshot':
 			return { tool, label: 'Took screenshot' };
 	}
+}
+
+/** Simulator, emulator and window capture tools. */
+function describeDeviceActivity(tool: string, args: Record<string, unknown>): IHostToolActivity | undefined {
+	const device = text(args.device);
+	const at = typeof args.x === 'number' && typeof args.y === 'number' ? `${Math.round(args.x)}, ${Math.round(args.y)}` : undefined;
+	switch (tool) {
+		case 'device_list': return { tool, label: 'Listed devices', detail: text(args.host) };
+		case 'device_boot': return { tool, label: 'Booted', detail: device };
+		case 'device_shutdown': return { tool, label: 'Shut down', detail: device };
+		case 'device_screenshot': return { tool, label: 'Took device screenshot', detail: device };
+		case 'device_tap': return { tool, label: 'Tapped', detail: [at, device ? `on ${device}` : undefined].filter(Boolean).join(' ') || undefined };
+		case 'device_swipe': return { tool, label: 'Swiped', detail: device };
+		case 'device_type': {
+			const typed = text(args.text, 40);
+			return { tool, label: 'Typed', detail: typed ? `"${typed}"` : undefined };
+		}
+		case 'device_press_button': return { tool, label: 'Pressed', detail: text(args.button) };
+		case 'device_install_app': return { tool, label: 'Installed', detail: text(args.path, 120) };
+		case 'device_launch_app': return { tool, label: 'Launched', detail: text(args.app, 120) };
+		case 'device_set_posture': return { tool, label: 'Changed posture to', detail: args.posture === 'halfOpen' ? 'half open' : text(args.posture) };
+		case 'window_list': return { tool, label: 'Listed windows' };
+		case 'window_capture': return { tool, label: 'Captured window', detail: text(args.window) };
+		case 'window_record_start': return { tool, label: 'Started recording', detail: text(args.window) };
+		case 'window_record_stop': return { tool, label: 'Stopped recording' };
+	}
+	return undefined;
 }
 
 /** Two argument sets name the same call: the agent's echo of a host call may drop or reorder keys. */

@@ -7,6 +7,7 @@ import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
 import type { VoltMode } from './modes.js';
 import type { AgentQuestionDraft, IAgentQuestionResponse } from './questions.js';
 import type { IRgbaImage } from './tools/imageAnalysis.js';
@@ -32,10 +33,11 @@ export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
 
 /**
  * `core`: questions. `browser`: the in-app browser. `image`: reading image files. `pullRequests`:
- * linking and watching the chat's pull requests. An agent can be
+ * linking and watching the chat's pull requests. `devices`: iOS simulators and Android emulators.
+ * `capture`: screenshots and recordings of windows. An agent can be
  * handed a subset (`getMcpServers(sessionId, { groups })`) to keep its tool list short.
  */
-export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'pullRequests';
+export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'pullRequests' | 'devices' | 'capture';
 
 export interface IVoltHostToolInfo {
 	readonly name: string;
@@ -43,6 +45,11 @@ export interface IVoltHostToolInfo {
 	readonly description: string;
 	readonly inputSchema: object;
 	readonly group?: VoltHostToolGroup;
+	/**
+	 * Why Ask and Plan modes (read-only) need the user's approval to run it, e.g. "taps on the
+	 * simulator". Unset: it runs in every mode.
+	 */
+	readonly approvalInReadOnlyModes?: string;
 }
 
 export interface IVoltHostToolResult {
@@ -411,7 +418,7 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id)) {
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id)) {
 				return id;
 			}
 		}

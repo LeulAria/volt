@@ -12,6 +12,8 @@ import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME } from '../../../../plat
 import { IVoltHostMcpResult, IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../../../platform/voltHostMcp/common/voltHostMcp.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
+// The device and window capture host tools (and their UI) are served on this window's MCP server too.
+import './voltDevices.contribution.js';
 
 registerMainProcessRemoteService(IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME);
 // The in-app browser's session and DevTools protocol live in the main process too.
