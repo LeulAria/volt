@@ -20,10 +20,10 @@ import { EditorExtensions, IEditorFactoryRegistry } from '../../../../common/edi
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { describeSchedule, IAgentScheduleService } from '../../../../services/voltRuntime/common/schedules/agentSchedules.js';
+import { describeSchedule, IAgentScheduleService, scheduleModelChoices } from '../../../../services/voltRuntime/common/schedules/agentSchedules.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { NEW_AGENT_SCHEDULE_COMMAND_ID, OPEN_AGENT_SCHEDULES_COMMAND_ID } from './agentScheduleCommands.js';
-import { scheduleModelChoices, showAgentScheduleDialog } from './agentScheduleDialog.js';
+import { showAgentScheduleDialog } from './agentScheduleDialog.js';
 import { AgentScheduleService } from './agentScheduleService.js';
 import { connectVoltRelay } from './agentWebhookRelay.js';
 import { AGENT_SCHEDULES_EDITOR_ID, AgentSchedulesEditor, AgentSchedulesEditorInput, AgentSchedulesEditorInputSerializer } from './agentSchedulesEditor.js';

@@ -30,13 +30,13 @@ import { IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../.
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { describeSchedule, IAgentSchedule, IAgentScheduleService, usesClock, usesWebhook } from '../../../../services/voltRuntime/common/schedules/agentSchedules.js';
+import { describeSchedule, IAgentSchedule, IAgentScheduleService, scheduleModelChoices, usesClock, usesWebhook } from '../../../../services/voltRuntime/common/schedules/agentSchedules.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createAgentScrollable } from '../editor/agentScrollable.js';
 import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { showVoltMenu } from '../ui/menu/voltMenu.js';
-import { scheduleModelChoices, showAgentScheduleDialog } from './agentScheduleDialog.js';
+import { showAgentScheduleDialog } from './agentScheduleDialog.js';
 import { connectVoltRelay } from './agentWebhookRelay.js';
 import { formatScheduleWhen } from './agentScheduleFormat.js';
 

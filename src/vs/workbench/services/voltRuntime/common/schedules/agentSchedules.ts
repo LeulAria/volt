@@ -399,3 +399,9 @@ export interface IAgentScheduleService {
 }
 
 //#endregion
+
+/** The models a scheduled run can use, from the catalog. */
+export function scheduleModelChoices(catalog: readonly { readonly ref: string; readonly label: string; readonly enabled: boolean; readonly kind: string }[]): { readonly ref: string; readonly label: string }[] {
+	// Agent-provider models (Cursor's Grok 4.7) are kind 'agent'; local ones are 'model'. Both can run a task.
+	return catalog.filter(item => item.enabled && (item.kind === 'model' || item.kind === 'agent')).map(item => ({ ref: item.ref, label: item.label }));
+}
