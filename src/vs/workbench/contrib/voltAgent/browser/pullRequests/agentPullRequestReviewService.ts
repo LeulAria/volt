@@ -19,6 +19,8 @@ import { IVoltPullRequestService } from '../../../../../platform/voltPullRequest
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentWorktreeService } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IAgentOrchestratorService, IOrchPrompt } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { resolveRunModelRef } from '../../../../services/voltRuntime/common/models/modelAccess.js';
+import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import {
 	AutoReviewMode,
@@ -90,6 +92,7 @@ export class AgentPullRequestReviewService extends Disposable implements IAgentP
 		@IAgentPullRequestService private readonly pullRequests: IAgentPullRequestService,
 		@IVoltPullRequestService private readonly api: IVoltPullRequestService,
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
+		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
@@ -222,10 +225,19 @@ export class AgentPullRequestReviewService extends Disposable implements IAgentP
 		if (!snapshot) {
 			return;
 		}
-		this.running.add(key);
 		const previous = this.reviews.get(key);
 		const startedAt = Date.now();
-		const model = this.configurationService.getValue<string>(AGENT_PR_REVIEW_MODEL_SETTING) || undefined;
+		// The review model setting, else the chat's own model, else the last one the user picked.
+		const model = resolveRunModelRef({
+			explicit: this.configurationService.getValue<string>(AGENT_PR_REVIEW_MODEL_SETTING) || undefined,
+			chat: this.orchestrator.getThread(parent)?.modelRef,
+			lastUsed: this.runtime.getActiveCatalogRef(),
+		}, this.runtime.listCatalog());
+		if (!model) {
+			this.put(key, { key, headSha, state: 'failed', startedAt, endedAt: startedAt, findings: previous?.findings ?? [], error: 'No model is set for the review. Pick one in Volt Settings → Pull requests, or in the chat.' });
+			return;
+		}
+		this.running.add(key);
 		this.put(key, { key, headSha, state: 'running', startedAt, model, findings: previous?.findings ?? [] });
 
 		let worktreePath: string | undefined;
@@ -335,6 +347,14 @@ export class AgentPullRequestReviewService extends Disposable implements IAgentP
 		if (!chat) {
 			throw new Error('Link the pull request to a chat to fix its findings there.');
 		}
-		await this.orchestrator.submit(chat, { text: buildFixPrompt(finding) }, 'auto');
+		// The PR chat's model, else the model that reviewed the pull request.
+		const modelRef = resolveRunModelRef({
+			chat: this.orchestrator.getThread(chat)?.modelRef ?? this.record(key)?.model,
+			lastUsed: this.runtime.getActiveCatalogRef(),
+		}, this.runtime.listCatalog());
+		if (!modelRef) {
+			throw new Error('No model is set for this chat. Pick one in the composer, then fix the finding again.');
+		}
+		await this.orchestrator.submit(chat, { text: buildFixPrompt(finding), modelRef }, 'auto');
 	}
 }

@@ -203,12 +203,9 @@ export class AgentModelPicker extends Disposable {
 			this.currentModel = persisted;
 		}
 		if (!this.currentModel || !this.catalog.some(item => item.ref === this.currentModel)) {
+			// Only shown, never saved: a saved pick is the last model the user chose, and Volt's own runs
+			// start on it, so the first catalog entry must not become that choice by default.
 			this.currentModel = this.catalog[0]?.ref ?? '';
-		}
-		// A saved pick that is missing (catalog still loading, CLI not answered yet) stays saved,
-		// so a new window lands on it once it shows up instead of on the first model.
-		if (this.currentModel && !persisted) {
-			void this.runtime.setActiveCatalogRef(this.currentModel);
 		}
 	}
 

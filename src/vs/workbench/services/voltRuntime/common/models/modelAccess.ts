@@ -78,6 +78,16 @@ export function resolveTabModel(
 		?? catalog.find(c => c.kind === 'model' && c.enabled && usable(c))?.ref;
 }
 
+/**
+ * The model a run Volt starts on its own (a schedule, a webhook, a PR review or fix, a notification)
+ * gets: the model the run names, else the chat's model, else the last model the user picked. Never
+ * the catalog's first entry: on a fresh profile that is a local model that may not serve the run.
+ * Undefined means the run must not start.
+ */
+export function resolveRunModelRef(candidates: { readonly explicit?: string; readonly chat?: string; readonly lastUsed?: string }, catalog: readonly IVoltCatalogItem[]): string | undefined {
+	return [candidates.explicit, candidates.chat, candidates.lastUsed].find(ref => !!isEnabledItem(catalog, ref));
+}
+
 /** Turns a provider throw (often raw OpenAI JSON) into a short status line. */
 export function formatPredictionError(err: unknown): string {
 	const raw = err instanceof Error ? err.message : String(err);
