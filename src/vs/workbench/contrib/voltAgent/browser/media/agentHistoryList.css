@@ -237,6 +237,23 @@
 	display: block;
 }
 
+/* Cloud task rows: the status icon takes the task's state (running, done, failed). */
+.volt-agent-history-row.is-cloud.cloud-active .status {
+	color: var(--vscode-charts-blue, var(--vscode-focusBorder, #3794ff));
+}
+
+.volt-agent-history-row.is-cloud.cloud-succeeded .status {
+	color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #73c991));
+}
+
+.volt-agent-history-row.is-cloud.cloud-failed .status {
+	color: var(--vscode-testing-iconFailed, var(--vscode-charts-red, #f14c4c));
+}
+
+.volt-agent-history-row.is-cloud.cloud-muted .status {
+	color: var(--vscode-descriptionForeground);
+}
+
 .volt-agent-history-row > .pin {
 	flex: none;
 	display: none;

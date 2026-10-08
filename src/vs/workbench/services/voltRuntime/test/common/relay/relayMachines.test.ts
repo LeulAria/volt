@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { cpuPressure, describeMachineLoad, IRelayMachine, IRelayMachineLoad, machineEligibility, machineLoadLevel, memoryPressure, pickMachine, scoreMachine } from '../../../common/relay/relayMachines.js';
+import { canTakeAgent, cpuPressure, describeMachineLoad, IRelayMachine, IRelayMachineLoad, machineLoadLevel, memoryPressure } from '../../../common/relay/relayMachines.js';
 
 const GB = 1024 ** 3;
 
@@ -35,58 +35,12 @@ suite('Volt relay machines', () => {
 		assert.strictEqual(machineLoadLevel({ load: { cpu: 3 } }), 1);
 	});
 
-	test('Auto picks the least loaded runner', () => {
-		const idle = runner('idle', { cpu: 0.05 });
-		const busy = runner('busy', { cpu: 0.97 });
-		const pick = pickMachine([busy, idle], { agent: 'claude' });
-		assert.strictEqual(pick.machine?.name, 'idle');
-		assert.strictEqual(pick.why, 'Least loaded');
-		assert.deepStrictEqual(pick.ranked.map(entry => entry.machine.name), ['idle', 'busy']);
-	});
-
-	test('capability filters: agent installed, logged in, online, a runner', () => {
-		const noCodex = runner('a', { cpu: 0 });
-		const codexNoLogin = runner('b', { cpu: 0 }, { caps: { agents: { codex: { installed: true, credentials: false } } } });
-		const codex = runner('c', { cpu: 0.9 }, { caps: { agents: { codex: { installed: true, credentials: true } } } });
-		const offline = runner('d', { cpu: 0 }, { online: false, caps: { agents: { codex: { installed: true, credentials: true } } } });
-		const mac: IRelayMachine = { ...runner('mac', { cpu: 0 }), kind: 'client' };
-		assert.strictEqual(machineEligibility(noCodex, { agent: 'codex' }).reason, 'No Codex');
-		assert.strictEqual(machineEligibility(codexNoLogin, { agent: 'codex' }).reason, 'No Codex login');
-		assert.strictEqual(machineEligibility(offline, { agent: 'codex' }).reason, 'Offline');
-		assert.strictEqual(machineEligibility(mac, { agent: 'codex' }).reason, 'Not a runner');
-		assert.strictEqual(pickMachine([noCodex, codexNoLogin, offline, mac, codex], { agent: 'codex' }).machine?.name, 'c');
-	});
-
-	test('no machine fits: says why', () => {
-		assert.match(pickMachine([], { agent: 'claude' }).why, /No runners/);
-		assert.match(pickMachine([runner('a', {}, { online: false })], { agent: 'claude' }).why, /offline/);
-		const pick = pickMachine([runner('a', {}, { caps: { agents: {} } })], { agent: 'claude' });
-		assert.strictEqual(pick.machine, undefined);
-		assert.match(pick.why, /No Claude Code/);
-	});
-
-	test('hysteresis keeps the previous pick until another is clearly better', () => {
-		const a = runner('a', { cpu: 0.20 });
-		const b = runner('b', { cpu: 0.10 });
-		// 0.055 apart: within the margin, so Auto stays where it was.
-		assert.strictEqual(pickMachine([a, b], { agent: 'claude' }, { previousId: a.id }).machine?.name, 'a');
-		assert.match(pickMachine([a, b], { agent: 'claude' }, { previousId: a.id }).why, /Stays on a/);
-		// A big gap moves it.
-		const hot = runner('a', { cpu: 0.9 });
-		assert.strictEqual(pickMachine([hot, b], { agent: 'claude' }, { previousId: hot.id }).machine?.name, 'b');
-		// A previous pick that can no longer run it is dropped.
-		assert.strictEqual(pickMachine([{ ...a, online: false }, b], { agent: 'claude' }, { previousId: a.id }).machine?.name, 'b');
-	});
-
-	test('queued work, battery and heat count against a machine', () => {
-		const free = runner('free', { cpu: 0.3 });
-		const reserved = runner('reserved', { cpu: 0.1 }, { reserved: 1 });
-		assert.ok(scoreMachine(reserved) > scoreMachine(free), 'a task already on its way counts');
-		assert.strictEqual(pickMachine([reserved, free], { agent: 'claude' }).machine?.name, 'free');
-		const laptop = runner('laptop', { cpu: 0.1, battery: { percent: 15, charging: false } });
-		assert.ok(scoreMachine(laptop) > scoreMachine(runner('plugged', { cpu: 0.1 })) + 0.4);
-		assert.ok(scoreMachine(runner('hot', { cpu: 0.1, thermal: 'serious' })) > scoreMachine(runner('cool', { cpu: 0.1 })));
-		assert.strictEqual(machineEligibility(runner('melting', { thermal: 'critical' }), { agent: 'claude' }).eligible, false);
+	test('a machine takes an agent\'s task only where the relay says so', () => {
+		const idle = runner('idle', { cpu: 0.05 }, { placement: { claude: { eligible: true, reason: null }, codex: { eligible: false, reason: 'codex is not installed' } } });
+		assert.strictEqual(canTakeAgent(idle, 'claude'), true);
+		assert.strictEqual(canTakeAgent(idle, 'codex'), false);
+		// A machine the relay did not report on cannot take anything.
+		assert.strictEqual(canTakeAgent(runner('unreported', {}), 'claude'), false);
 	});
 
 	test('describes load for the picker', () => {

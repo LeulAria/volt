@@ -21,6 +21,7 @@ import {
 	isManagedWorktree,
 	normalizeAgentRunOn,
 	removeAgentWorktree,
+	runOnForPrompt,
 } from '../../../common/git/agentWorktree.js';
 
 const REPO = '/repo';
@@ -381,3 +382,23 @@ function ok(stdout: string): IGitRunResult {
 function fail(stderr: string): IGitRunResult {
 	return { exitCode: 1, stdout: '', stderr };
 }
+
+suite('Agent run location per prompt', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('a new chat starts where the project location says', () => {
+		assert.strictEqual(runOnForPrompt('cloud', false), 'cloud');
+		assert.strictEqual(runOnForPrompt('worktree', false), 'worktree');
+		assert.strictEqual(runOnForPrompt('same-branch', false), 'same-branch');
+	});
+
+	test('a follow-up in a chat with turns never goes to the cloud', () => {
+		assert.strictEqual(runOnForPrompt('cloud', true), 'same-branch');
+	});
+
+	test('a follow-up keeps a local location as it is', () => {
+		assert.strictEqual(runOnForPrompt('worktree', true), 'worktree');
+		assert.strictEqual(runOnForPrompt('same-branch', true), 'same-branch');
+	});
+});

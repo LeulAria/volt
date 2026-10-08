@@ -239,6 +239,18 @@ describe('relay', () => {
 		assert.equal(claimed.assignedName, 'Idle');
 	});
 
+	test('the machine list carries each machine\'s score, its placement per agent and the Auto pick', async () => {
+		const machines = (await relay.call('GET', '/api/machines', undefined, token)).body.machines;
+		const idle = machines.find(machine => machine.name === 'Idle');
+		const busy = machines.find(machine => machine.name === 'Busy');
+		assert.ok(idle.score < busy.score, 'the idle runner scores better');
+		assert.deepEqual(idle.placement.claude, { eligible: true, reason: null });
+		assert.equal(busy.placement.codex.eligible, false);
+		assert.match(busy.placement.codex.reason, /codex is not installed/);
+		assert.equal(idle.autoPick.claude, true);
+		assert.equal(busy.autoPick.claude, false);
+	});
+
 	test('a waiting claim wakes when a task arrives', async () => {
 		const runner = (await relay.call('POST', '/api/pair', { enrollKey: 'enroll-secret', kind: 'runner', name: 'C', machineId: 'machine-c' })).body.token;
 		const waiting = relay.call('POST', '/api/runner/claim?wait=5', { agents: { claude: true } }, runner);

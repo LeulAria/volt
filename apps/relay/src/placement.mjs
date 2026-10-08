@@ -27,7 +27,9 @@ export function loadScore(machine) {
 	const memPart = memTotal > 0 ? 1 - Math.min(1, Math.max(0, (Number(load.memFree) || 0) / memTotal)) : 0;
 	const runningPart = (Number(load.running) || 0) * 0.25;
 	const thermalPart = load.thermal === 'serious' || load.thermal === 'critical' ? 1 : 0;
-	return cpuPart + memPart * 0.5 + runningPart + thermalPart;
+	// A laptop on battery pays extra, more when nearly empty, so plugged-in machines are preferred.
+	const batteryPart = load.battery?.charging === false ? 0.15 + ((Number(load.battery.percent) || 100) < 20 ? 0.3 : 0) : 0;
+	return cpuPart + memPart * 0.5 + runningPart + thermalPart + batteryPart;
 }
 
 /** Why a machine cannot take the task, or undefined when it can. */
