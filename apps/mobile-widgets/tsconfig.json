@@ -12,5 +12,5 @@
     "lib": ["es2022"],
     "types": ["node"]
   },
-  "include": ["src/model.ts", "src/serverShapes.ts", "src/steps.ts", "src/agentState.ts", "src/planner.ts", "src/widgetData.ts", "src/apns.ts", "server/*.ts", "test/*.ts"]
+  "include": ["src/model.ts", "src/serverShapes.ts", "src/steps.ts", "src/agentState.ts", "src/planner.ts", "src/widgetData.ts", "src/driver.ts", "src/apns.ts", "server/*.ts", "test/*.ts"]
 }

@@ -12,8 +12,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "brands": "node scripts/genBrands.mjs"
   },
+  "dependencies": {
+    "@expo/config-plugins": "~57.0.9"
+  },
   "peerDependencies": {
     "expo": "*",
+    "expo-modules-core": "*",
     "react": "*",
     "react-native": "*"
   }

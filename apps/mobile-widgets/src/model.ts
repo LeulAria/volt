@@ -5,9 +5,9 @@
 
 // What the app hands to iOS: the Live Activity's attributes and content state, and the snapshot the
 // widgets read from the App Group. These shapes are the JSON contract with the Swift side
-// (ios/Shared/VoltActivityAttributes.swift, ios/Shared/VoltWidgetSnapshot.swift) and with the
-// APNs payloads the agent server sends (server/apns.ts). Times are Unix seconds (Double in Swift)
-// so a push payload decodes without any date strategy. Change both sides together.
+// (ios/Shared/VoltActivityAttributes.swift, targets/widget/VoltWidgetData.swift) and with the APNs
+// payloads the agent server sends (src/apns.ts). Times are Unix seconds (Double in Swift) so a push
+// payload decodes without any date strategy. Change both sides together.
 
 /**
  * - `working`: a turn is running.
