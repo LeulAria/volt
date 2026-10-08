@@ -19,6 +19,11 @@ export const AGENT_DEFAULT_MODEL_SETTING = 'volt.agent.defaultModel';
 /** Pastes this large (KiB) become a `Pasted text` attachment instead of composer text. 0 keeps them inline. */
 export const AGENT_LARGE_PASTE_SETTING = 'volt.agent.composer.largePasteKB';
 
+/** Dictation falls back to this OpenAI-compatible base URL (`/audio/transcriptions`) when on-device speech is not installed. */
+export const AGENT_VOICE_ENDPOINT_SETTING = 'volt.agent.composer.voice.transcriptionEndpoint';
+
+export const AGENT_VOICE_MODEL_SETTING = 'volt.agent.composer.voice.transcriptionModel';
+
 Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfiguration({
 	id: 'volt.agent.composer',
 	title: localize('voltAgent.composerConfigTitle', "Agent Composer"),
@@ -39,6 +44,16 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			default: 32,
 			minimum: 0,
 			description: localize('voltAgent.largePaste', "Text pasted into the agent composer that is at least this many KB becomes a \"Pasted text\" attachment (click it to preview or turn it back into text). 0 keeps pastes inline. Cmd+Shift+V always pastes as text."),
+		},
+		[AGENT_VOICE_ENDPOINT_SETTING]: {
+			type: 'string',
+			default: '',
+			description: localize('voltAgent.voiceEndpoint', "Base URL of an OpenAI-compatible speech-to-text server, such as http://localhost:8000/v1. Dictation uses it when the on-device speech model is not installed. Left empty, macOS sends dictation to Apple's speech service in that case."),
+		},
+		[AGENT_VOICE_MODEL_SETTING]: {
+			type: 'string',
+			default: 'whisper-1',
+			description: localize('voltAgent.voiceModel', "The transcription model sent to the speech-to-text endpoint."),
 		},
 		[AGENT_DEFAULT_MODEL_SETTING]: {
 			type: 'string',

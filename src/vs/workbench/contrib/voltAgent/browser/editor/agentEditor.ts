@@ -109,6 +109,8 @@ import { AgentComposerQueue, IAgentComposerQueueState, QueuePause } from '../com
 import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
+import { AgentVoiceDictation } from '../composer/agentVoiceDictation.js';
+import { AgentVoiceStrip } from '../composer/agentVoiceStrip.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend } from '../../../../services/voltRuntime/common/compaction.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
@@ -605,6 +607,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private contextUsageView!: AgentContextUsageView;
 	private attachButton!: HTMLButtonElement;
 	private sendButton!: HTMLButtonElement;
+
+	private voiceDictation!: AgentVoiceDictation;
+
+	private voiceStrip!: AgentVoiceStrip;
 	private suggestEl!: HTMLElement;
 	private composerQueue!: AgentComposerQueue;
 	/** The agent's to-dos, above the chips like the Context Usage card. */
@@ -1027,6 +1033,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		append(this.composerEl, this.worktreeSetupCard.element);
 		// Subagents and queued prompts sit right on top of the text area, under the chips (Cursor).
 		append(this.composerEl, this.composerQueue.element);
+		this.voiceDictation = this._register(this.instantiationService.createInstance(AgentVoiceDictation));
+		this.voiceStrip = this._register(this.instantiationService.createInstance(AgentVoiceStrip, this.voiceDictation));
+		append(this.composerEl, this.voiceStrip.element);
+		this._register(this.voiceDictation.onDidChange(() => this.sendButton.classList.toggle('recording', this.voiceDictation.active)));
+		this._register(this.voiceDictation.onDidCommit(text => this.insertDictatedText(text)));
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
 		this.monacoHost = append(this.inputBox, $('.volt-agent-monaco.show-file-icons'));
 		this.placeholderEl = append(this.monacoHost, $('.volt-agent-placeholder'));
@@ -1171,6 +1182,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			void this.openEditInNewAgent();
 		}));
 		this._register(addDisposableListener(this.sendButton, 'click', () => {
+			if (this.sendKind === 'mic') {
+				this.voiceDictation.toggle();
+				return;
+			}
 			if (!this.composerCanSend()) {
 				return;
 			}
@@ -4547,6 +4562,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.layoutInputEditor();
 			}
 		}));
+		this.editorDisposables.add(this.inputEditor.onKeyUp(e => {
+			if (e.keyCode === KeyCode.Space || e.keyCode === KeyCode.Meta || e.keyCode === KeyCode.Ctrl || e.keyCode === KeyCode.Shift) {
+				this.voiceDictation.endHold();
+			}
+		}));
 		this.editorDisposables.add(this.inputEditor.onKeyDown(e => {
 			// The @ panel already used this key (picked a row, moved the selection).
 			if (e.browserEvent.defaultPrevented) {
@@ -4616,6 +4636,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					e.stopPropagation();
 					this.setComposerContent(recalled.text, recalled.mentions);
 				}
+				return;
+			}
+			if (e.keyCode === KeyCode.Escape && this.voiceDictation.active) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.voiceDictation.cancel();
+				return;
+			}
+			if (e.keyCode === KeyCode.Space && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.voiceDictation.beginHold();
 				return;
 			}
 			if (e.keyCode === KeyCode.Escape && this.editingUserIndex !== undefined) {
@@ -5552,6 +5584,21 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private hasDraft(): boolean {
 		return !!(this.inputModel?.getValue().trim());
+	}
+
+	private insertDictatedText(text: string): void {
+		this.ensureInputEditor();
+		const editor = this.inputEditor;
+		const model = this.inputModel;
+		if (!editor || !model || model.isDisposed()) {
+			return;
+		}
+		const pos = editor.getPosition() ?? model.getFullModelRange().getEndPosition();
+		const range = { startLineNumber: pos.lineNumber, startColumn: pos.column, endLineNumber: pos.lineNumber, endColumn: pos.column };
+		const before = model.getValueInRange({ ...range, startColumn: Math.max(1, pos.column - 1) });
+		const separator = before && !/\s/.test(before) ? ' ' : '';
+		editor.executeEdits('volt-dictation', [{ range, text: separator + text }]);
+		editor.focus();
 	}
 
 	private updateSendButton(): void {

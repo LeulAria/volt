@@ -111,3 +111,109 @@
 .volt-paste-preview-btn .codicon {
 	font-size: 13px;
 }
+
+.volt-agent-send.recording {
+	background: var(--vscode-errorForeground);
+	color: var(--vscode-editor-background);
+}
+
+.volt-agent-voice-strip {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0 0 6px;
+	padding: 6px 6px 6px 10px;
+	border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border));
+	border-radius: 8px;
+	background: var(--vscode-editorWidget-background);
+	color: var(--vscode-foreground);
+	font-size: 12px;
+}
+
+.volt-agent-voice-strip.hidden {
+	display: none;
+}
+
+.volt-agent-voice-strip.error .volt-agent-voice-label {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-agent-voice-meter {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 14px;
+	flex: none;
+}
+
+.volt-agent-voice-bar {
+	width: 3px;
+	height: 100%;
+	border-radius: 2px;
+	background: var(--vscode-foreground);
+	opacity: 0.7;
+	transform: scaleY(0.2);
+	transition: transform 60ms linear;
+}
+
+.volt-agent-voice-bar:nth-child(1),
+.volt-agent-voice-bar:nth-child(5) {
+	transform: scaleY(calc(0.2 + var(--volt-voice-level, 0) * 0.5));
+}
+
+.volt-agent-voice-bar:nth-child(2),
+.volt-agent-voice-bar:nth-child(4) {
+	transform: scaleY(calc(0.2 + var(--volt-voice-level, 0) * 0.8));
+}
+
+.volt-agent-voice-bar:nth-child(3) {
+	transform: scaleY(calc(0.2 + var(--volt-voice-level, 0)));
+}
+
+.volt-agent-voice-strip.transcribing .volt-agent-voice-bar {
+	animation: volt-agent-voice-pulse 1s ease-in-out infinite;
+}
+
+.volt-agent-voice-strip.transcribing .volt-agent-voice-bar:nth-child(2) {
+	animation-delay: 0.15s;
+}
+
+.volt-agent-voice-strip.transcribing .volt-agent-voice-bar:nth-child(3) {
+	animation-delay: 0.3s;
+}
+
+@keyframes volt-agent-voice-pulse {
+	0%, 100% { opacity: 0.3; }
+	50% { opacity: 0.9; }
+}
+
+.volt-agent-voice-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-voice-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.volt-agent-voice-btn:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-agent-voice-btn .codicon {
+	font-size: 14px;
+}

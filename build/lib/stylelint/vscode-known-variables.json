@@ -922,6 +922,7 @@
 		"--volt-file-preview-head-hover",
 		"--volt-home-indent",
 		"--volt-home-level",
+		"--volt-voice-level",
 		"--volt-file-preview-insert-bar",
 		"--volt-file-preview-insert-bg",
 		"--volt-picker-stroke",
