@@ -9,10 +9,11 @@ import { createDecorator } from '../../instantiation/common/instantiation.js';
 /**
  * Pull requests for agent chats: read, create, review and merge them on the code host.
  *
- * The desktop service runs in the main process and talks to GitHub (github.com and Enterprise
- * hosts) through the GitHub CLI, so it uses the accounts the user already signed in with
- * (`gh auth login`), several per host included. Other hosts are recognized from the remote and
- * reported as unsupported rather than guessed at.
+ * The desktop service runs in the main process. GitHub (github.com and Enterprise hosts) goes
+ * through the GitHub CLI, so it uses the accounts the user already signed in with (`gh auth login`),
+ * several per host included. GitLab, Bitbucket, Gitea / Forgejo and Azure DevOps go through their
+ * REST APIs with a token: one the user gave Volt (kept in Volt's secret storage), else the host's
+ * CLI login (glab, tea, az) or its usual environment variable.
  */
 
 export const IVoltPullRequestService = createDecorator<IVoltPullRequestService>('voltPullRequestService');
@@ -49,6 +50,10 @@ export interface IVoltPrRepo extends IVoltPrRepoRef {
 export interface IVoltPrAccount {
 	readonly host: string;
 	readonly login: string;
+	/** Absent for GitHub CLI accounts. */
+	readonly provider?: VoltPrProvider;
+	/** Where the login comes from: the GitHub CLI, a token given to Volt, another CLI, an environment variable. */
+	readonly source?: VoltPrAuthSource;
 	/** The host's default account in the GitHub CLI. */
 	readonly active: boolean;
 	/** False when the CLI holds a token that no longer works. */
@@ -126,8 +131,10 @@ export interface IVoltPullRequest {
 	readonly key: string;
 	readonly repo: IVoltPrRepoRef;
 	readonly number: number;
-	/** GraphQL node id. */
+	/** GraphQL node id (or the host's own id). */
 	readonly id: string;
+	/** The kind of host; absent means GitHub. GitLab calls these merge requests (`!12`). */
+	readonly provider?: VoltPrProvider;
 	readonly title: string;
 	readonly url: string;
 	readonly state: VoltPrState;
@@ -248,6 +255,45 @@ export interface IVoltPullRequestDetail extends IVoltPullRequest {
 	readonly repoLabels: readonly IVoltPrLabel[];
 }
 
+export type VoltPrAuthSource = 'gh' | 'volt' | 'cli' | 'env';
+
+/** A token the user gave Volt for a host (kept in Volt's secret storage, handed to the main process). */
+export interface IVoltPrHostCredential {
+	/** `gitlab.com`, `git.corp:8443`, `dev.azure.com`. */
+	readonly host: string;
+	readonly provider: VoltPrProvider;
+	readonly token: string;
+	/** The web UI's root when it is not `https://<host>` (another port, a path, plain http). */
+	readonly webUrl?: string;
+	/** Bitbucket API tokens and app passwords sign in with a username (or the Atlassian email). */
+	readonly username?: string;
+	/** The account the token belongs to, as the host reported it at sign-in. */
+	readonly login?: string;
+}
+
+export interface IVoltPrSignInRequest {
+	readonly host: string;
+	readonly provider: VoltPrProvider;
+	readonly token: string;
+	readonly webUrl?: string;
+	readonly username?: string;
+	/** Azure DevOps: an organization/project to check the token against (tokens are per organization). */
+	readonly owner?: string;
+}
+
+/** What Volt knows about a code host: what it is, where it lives, and who it is signed in as. */
+export interface IVoltPrHostInfo {
+	readonly host: string;
+	readonly provider: VoltPrProvider;
+	/** Gitea and Forgejo share an API; the version endpoint says which one it is. */
+	readonly flavor?: 'gitea' | 'forgejo';
+	readonly webUrl: string;
+	readonly apiUrl?: string;
+	readonly auth?: { readonly source: VoltPrAuthSource; readonly login?: string };
+	/** How it was recognized: its name, a setting, a sign-in, an answer from the server, or not at all. */
+	readonly detectedBy: 'name' | 'setting' | 'signIn' | 'probe' | 'gh' | 'unknown';
+}
+
 /** Which account reads a repository: the host's active one unless the user picked another. */
 export interface IVoltPrAuth {
 	readonly account?: string;
@@ -341,6 +387,13 @@ export interface IVoltPrFilePatch {
 	readonly patch?: string;
 	/** The file's blob on the new side; undefined for a deleted file. */
 	readonly blob?: string;
+}
+
+/** A comment on a line of a pull request's new side. */
+export interface IVoltPrLineComment {
+	readonly path: string;
+	readonly line: number;
+	readonly body: string;
 }
 
 export type VoltGitFileStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
@@ -497,8 +550,16 @@ export interface IVoltPullRequestService {
 	describeChanges(request: { readonly folder: string; readonly paths?: readonly string[] }): Promise<IVoltChangesSummary>;
 	/** `base` is a branch name; its remote-tracking branch is used when there is one. */
 	describeBranch(request: { readonly folder: string; readonly base: string }): Promise<IVoltBranchSummary>;
-	/** Changed files with patches: the whole pull request, or one of its commits. */
-	filePatches(request: IVoltPrRequest & { readonly commit?: string }): Promise<IVoltPrFilePatch[]>;
+	/**
+	 * Changed files with patches: the whole pull request, or one of its commits. With `folder` (a
+	 * local clone), hosts other than GitHub read them from git there, blobs included.
+	 */
+	filePatches(request: IVoltPrRequest & { readonly commit?: string; readonly folder?: string }): Promise<IVoltPrFilePatch[]>;
+	/**
+	 * Posts a review with comments on lines of the new side (Volt's review findings). Hosts without
+	 * line comments in their API get one comment with every finding.
+	 */
+	postReview(request: IVoltPrRequest & { readonly body: string; readonly comments: readonly IVoltPrLineComment[]; readonly headOid?: string }): Promise<{ readonly posted: number; readonly url?: string }>;
 	/** A file's text by blob id: from the clone at `folder` when it has the blob, else from the host. */
 	readBlob(request: IVoltPrAuth & { readonly repo: IVoltPrRepoRef; readonly sha: string; readonly folder?: string }): Promise<string>;
 	/** Branch, upstream, default branch and uncommitted files of the work tree at `folder`. */
@@ -511,4 +572,10 @@ export interface IVoltPullRequestService {
 	checkoutNewBranch(request: { readonly folder: string; readonly name: string }): Promise<void>;
 	/** Forget cached accounts and tokens (after the user signed in or out in a terminal). */
 	refreshAccounts(): Promise<void>;
+	/** The tokens the user gave Volt, every host (replaces the previous set). */
+	setHostCredentials(credentials: readonly IVoltPrHostCredential[]): Promise<void>;
+	/** Checks a token against its host and returns the account it belongs to; the caller keeps it. */
+	signInHost(request: IVoltPrSignInRequest): Promise<IVoltPrAccount>;
+	/** What the host is and who Volt reads it as (probing an unknown host once). */
+	hostInfo(host: string): Promise<IVoltPrHostInfo>;
 }

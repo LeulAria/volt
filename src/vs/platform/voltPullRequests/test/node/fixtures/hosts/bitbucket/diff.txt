@@ -1,0 +1,200 @@
+diff --git a/README.md b/README.md
+index 4e09f2de..56abe70f 100644
+--- a/README.md
++++ b/README.md
+@@ -23,7 +23,7 @@ It's important to understand that [Express](http://expressjs.com/) by itself is
+ a library of middleware and convenience helpers that make it easier to build Atlassian add-ons. Specifically, ACE adds:
+ 
+ * An optimized dev loop by handling registration and deregistration on the target Atlassian application for you at startup and shutdown.
+-* A filesystem watcher that detects changes to `atlassian-connect.json`. When changes are detected, the add-on is re-registered with the host(s).
++* A filesystem watcher that detects changes to `atlassian-connect.json`, if present. When changes are detected, the add-on is re-registered with the host(s).
+ * Automatic JWT authentication of inbound requests as well as JWT signing for outbound requests back to the host.
+ * Automatic persistence of host details (i.e., client key, host public key, host base url etc.).
+ 
+@@ -88,7 +88,9 @@ changes, consider using [nodemon](https://npmjs.org/package/nodemon) or the like
+ #### Automatic registration
+ 
+ This section will describe how to configure ACE so that it can automatically register your add-on with your
+-Jira or Confluence host, re-register on changes to the descriptor, and de-register on shut down.
++Jira or Confluence host, re-register on changes to the descriptor, and de-register on shut down. 
++
++Note that automatic registration requires a descriptor file to be present on start-up.
+ 
+ To get this functionality, you will need to:
+ 
+@@ -298,10 +300,10 @@ AC_OPTS=no-auth,force-reg node app.js
+ Set it to a space or comma delimited list containing one or more of the following values.
+ 
+ **force-reg** Make the add-on always register itself with running a Jira or Confluence host when it starts up
+-(normally auto-registration only happens if the add-on is using a memory store).
++(normally auto-registration only happens if the add-on is using a memory store). A descriptor file must exist for this environment variable to apply.
+ 
+ **force-dereg** Make the add-on always de-register itself with running a Jira or Confluence host on shutdown
+-(normally auto-registration only happens if the add-on is using a memory store or running in development mode).
++(normally auto-registration only happens if the add-on is using a memory store or running in development mode). A descriptor file must exist for this environment variable to apply.
+ 
+ **no-reg** Make the add-on never register itself with running a Jira or Confluence host
+ (i.e. don't auto-register even if a memory store is being used).
+@@ -333,6 +335,19 @@ var addon = ac(app, { config: {
+ }});
+ ```
+ 
++### Running ACE without a Descriptor
++When starting up your add-on server with a descriptor, ACE is capable of automically registering/deregistering your app with your host and configuring it with routes from the descriptor. However, when migrating to Forge, you may no longer have any use for the descriptor file and therefore, may want to run ACE without it. In this case, it is important to be aware of the following changes in functionality:
++
++- ACE will no longer automatically register your add-on, re-register on changes to the descriptor, and de-register on shutdown.
++  - The `AC_OPTS` environment variables will not change this behaviour
++- ACE will no longer automatically generate routes based on the descriptor definition. For example, the `/installed` lifecycle handler or any webhook handlers defined in the descriptor will no longer be generated.
++  - If your add-on requires these, you will have to implement them manually.
++  - Any authentication middleware can be leveraged by configuring the `localBaseUrl` or `allowedBaseUrls` fields in `config.json`
++- The `createJwtPayload` method, exposed as part of the `HostClient` class, defaults to using the add-on key if an issuer is not provided as an argument.
++  - This default behavior can be maintained by configuring the `appKey` field in `config.json` or passing in the `AC_APP_KEY` environment variable.
++
++As long as your add-on continues to use any connect modules, the descriptor should not be deleted.
++
+ ## Sample Add-ons
+ 
+ * [Jira Example](https://bitbucket.org/atlassianlabs/atlassian-connect-jira-example) -- a simple Jira example add-on
+@@ -449,6 +464,8 @@ module.exports = function(app, addon) {
+ };
+ ```
+ 
++If you are adopting Forge, please ensure that the `baseUrl` configured in your descriptor file aligns with that in the manifest across all environments. Mismatched baseUrls can lead to authentication errors within the middleware. To minimise the risk of discrepancies, consider using the `config.json` file to parameterise the `localBaseUrl`.
++
+ #### Authorizing requests
+ 
+ If your app API accepts requests from the front-end using context JWTs, it's important to perform authorization checks.
+diff --git a/RELEASENOTES.md b/RELEASENOTES.md
+index b208ac34..760dde4c 100644
+--- a/RELEASENOTES.md
++++ b/RELEASENOTES.md
+@@ -1,6 +1,11 @@
+ # Atlassian Connect for Express.js Release Notes
+ 
+-## 12.0.2
++## 12.1.0
++* ACE framework can now operate without the connect descriptor.
++* When the descriptor file is not provided, no routes or handlers will be autogenerated.
++* When the descriptor file is not provided, automatic registration/deregistration is not available.
++
++## 12.0.1
+ * Pinned `form-data` to version 4.0.4
+ 
+ ## 12.0.0
+diff --git a/lib/index.js b/lib/index.js
+index f1d3e540..8ccfac15 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -49,9 +49,12 @@ class Addon extends EventEmitter {
+     self.forgeAppTokenCache = new ForgeAppTokenCache(self);
+     self.schema = self.settings.schema; // store-adapter-dependent
+     self.descriptorFilename = descriptorFilename;
+-    self.descriptor = require("./internal/addon-descriptor")(self);
+-    self.key = self.descriptor.key;
+-    self.name = self.descriptor.name;
++    self.descriptorExists = fs.existsSync(self.descriptorFilename);
++    self.descriptor = self.descriptorExists
++      ? require("./internal/addon-descriptor")(self)
++      : {};
++    self.key = self.descriptor.key || self.config.appKey();
++    self.name = self.descriptorExists ? self.descriptor.name : undefined;
+     self._jwt = jwt;
+ 
+     try {
+@@ -60,7 +63,7 @@ class Addon extends EventEmitter {
+       self.logger.info("Auto registration is not available for this add-on.");
+     }
+ 
+-    if (self.app.get("env") === "development") {
++    if (self.app.get("env") === "development" && self.descriptorExists) {
+       // validate current descriptor on start
+       if (self.config.validateDescriptor()) {
+         self.validateDescriptor();
+@@ -103,6 +106,16 @@ class Addon extends EventEmitter {
+   _configure(callback) {
+     const self = this;
+ 
++    if (!this.descriptorExists) {
++      this.logger.warn(
++        `Descriptor file "${this.descriptorFilename}" not found; Skipping auto-generation of routes.`
++      );
++      if (callback) {
++        callback();
++      }
++      return;
++    }
++
+     if (!this.descriptor.baseUrl) {
+       throw Error(
+         `The "baseUrl" in ${self.descriptorFilename} must be present and non-empty.`
+@@ -115,6 +128,7 @@ class Addon extends EventEmitter {
+       .clone()
+       .segment(self.descriptorFilename);
+ 
++    // Expose descriptor over HTTP only if present
+     self.app.get(descriptorUrl.path(), (req, res) => {
+       res.charset = "UTF-8"; // avoid browsers and https://jsonformatter.curiousconcept.com/ saying "Invalid encoding, expecting UTF-8, UTF-16 or UTF-32."
+       res.json(self.descriptor);
+diff --git a/lib/internal/registration/register-jira-conf.js b/lib/internal/registration/register-jira-conf.js
+index 953d599e..9cb880ca 100644
+--- a/lib/internal/registration/register-jira-conf.js
++++ b/lib/internal/registration/register-jira-conf.js
+@@ -49,6 +49,12 @@ exports.shouldDeregister = function () {
+ exports.register = function (isReregistration) {
+   const self = this;
+   return new Promise((resolve, reject) => {
++    if (!self.descriptorExists) {
++      self.logger.warn(
++        `Auto-registration disabled since no descriptor file "${this.descriptorFilename}" was found.`
++      );
++      return resolve();
++    }
+     if (/no-reg/.test(process.env.AC_OPTS)) {
+       self.logger.warn("Auto-registration disabled with AC_OPTS=no-reg");
+       return resolve();
+diff --git a/lib/middleware/verify-installation.js b/lib/middleware/verify-installation.js
+index 5b020502..ead6750d 100644
+--- a/lib/middleware/verify-installation.js
++++ b/lib/middleware/verify-installation.js
+@@ -234,7 +234,7 @@ async function verifyAsymmetricJwtAndGetClaims(addon, req) {
+   }
+ 
+   const allowedBaseUrls = _.compact([
+-    addon.descriptor.baseUrl,
++    addon.descriptor?.baseUrl,
+     ...addon.config.allowedBaseUrls()
+   ]);
+   const refinedAllowedBaseUrls = _.map(allowedBaseUrls, url =>
+diff --git a/package.json b/package.json
+index ca5f1356..8175f015 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@atlassian/atlassian-connect-express",
+-  "version": "12.0.1",
++  "version": "12.1.0",
+   "description": "Library for building Atlassian Add-ons on top of Express",
+   "author": "Atlassian",
+   "license": "Apache-2.0",
+diff --git a/test/descriptor.test.js b/test/descriptor.test.js
+index 8be204c0..7e7ad800 100644
+--- a/test/descriptor.test.js
++++ b/test/descriptor.test.js
+@@ -1,5 +1,10 @@
+-const app = require("express")();
++const express = require("express");
++const http = require("http");
++const request = require("request");
++const app = express();
+ const _ = require("lodash");
++const bodyParser = require("body-parser");
++const helper = require("./test_helper");
+ 
+ const ac = require("../index");
+ const logger = require("./logger");
+@@ -99,4 +104,101 @@ describe("Descriptor", () => {
+       expect(addon.descriptor.key).toEqual(targetKey);
+     });
+   });
++
