@@ -8,7 +8,7 @@
 import AppIntents
 import Foundation
 #if canImport(VoltMobileWidgets)
-import VoltMobileWidgets
+internal import VoltMobileWidgets
 #endif
 
 @available(iOS 17.0, *)
