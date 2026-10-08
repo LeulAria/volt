@@ -38,22 +38,25 @@ registerAction2(class MoveAgentChatAction extends Action2 {
 
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const input = accessor.get(IEditorService).activeEditor;
+		const notifications = accessor.get(INotificationService);
+		const quickInput = accessor.get(IQuickInputService);
+		const worktrees = accessor.get(IAgentWorktreeService);
+		const orchestrator = accessor.get(IAgentOrchestratorService);
 		if (!(input instanceof AgentEditorInput)) {
-			accessor.get(INotificationService).info(localize('voltAgent.move.noChat', "Open a chat to move it."));
+			notifications.info(localize('voltAgent.move.noChat', "Open a chat to move it."));
 			return;
 		}
 		const threadId = input.sessionId;
 		const root = accessor.get(IVoltSessionContextService).rootFor(threadId);
 		if (!root) {
-			accessor.get(INotificationService).info(localize('voltAgent.move.noProject', "This chat has no project folder."));
+			notifications.info(localize('voltAgent.move.noProject', "This chat has no project folder."));
 			return;
 		}
-		const listing = await accessor.get(IAgentWorktreeService).git(root.fsPath, ['worktree', 'list', '--porcelain']);
+		const listing = await worktrees.git(root.fsPath, ['worktree', 'list', '--porcelain']);
 		if (listing.exitCode !== 0) {
-			accessor.get(INotificationService).warn(listing.stderr.trim() || localize('voltAgent.move.noWorktrees', "Could not list this project's worktrees."));
+			notifications.warn(listing.stderr.trim() || localize('voltAgent.move.noWorktrees', "Could not list this project's worktrees."));
 			return;
 		}
-		const quickInput = accessor.get(IQuickInputService);
 		const destinations: IDestinationPick[] = [{ label: localize('voltAgent.move.newWorktree', "New worktree"), description: localize('voltAgent.move.newWorktreeHint', "A new branch from HEAD"), target: { kind: 'newWorktree' } }];
 		const [main, ...others] = parseWorktreeList(listing.stdout);
 		if (main) {
@@ -75,8 +78,6 @@ registerAction2(class MoveAgentChatAction extends Action2 {
 		if (!carry) {
 			return;
 		}
-		const orchestrator = accessor.get(IAgentOrchestratorService);
-		const notifications = accessor.get(INotificationService);
 		const result = await orchestrator.move(threadId, { target: destination.target, carry: carry.carry }, { by: 'user' });
 		if (result.outcome === 'rejected') {
 			notifications.warn(result.reason ?? localize('voltAgent.move.rejected', "This chat cannot move now."));
