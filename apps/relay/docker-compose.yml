@@ -1,0 +1,22 @@
+# A relay plus one runner on one host. For runners elsewhere, run only the runner service there
+# with VOLT_RELAY_URL pointing at this relay.
+services:
+  relay:
+    build: .
+    ports: ["8787:8787"]
+    volumes: ["relay-data:/data"]
+    environment:
+      VOLT_RELAY_PUBLIC_URL: ${VOLT_RELAY_PUBLIC_URL:-http://localhost:8787}
+      VOLT_RELAY_ENROLL_KEY: ${VOLT_RELAY_ENROLL_KEY:?set an enrollment key for runners}
+  runner:
+    build: { context: ., dockerfile: Dockerfile.runner }
+    environment:
+      VOLT_RELAY_URL: http://relay:8787
+      VOLT_RELAY_ENROLL_KEY: ${VOLT_RELAY_ENROLL_KEY}
+      VOLT_RUNNER_NAME: ${VOLT_RUNNER_NAME:-docker-runner}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes: ["runner-data:/home/node/.volt-runner"]
+volumes:
+  relay-data: {}
+  runner-data: {}
