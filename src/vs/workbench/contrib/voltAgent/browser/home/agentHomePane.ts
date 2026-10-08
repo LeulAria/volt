@@ -368,8 +368,11 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 
 	private renderCloudRow(task: ICloudTask, template: IHomeTemplate): void {
 		const tone = cloudTaskTone(task);
+		// Rows are reused: the tone from an earlier render goes before the current one is set.
+		template.container.classList.remove('cloud-active', 'cloud-succeeded', 'cloud-failed', 'cloud-muted');
 		template.container.classList.add('is-cloud', `cloud-${tone}`);
 		template.name.textContent = task.title;
+		template.meta.textContent = cloudTaskStatusText(task);
 		setAgentTooltip(template.container, `${task.title}\n${cloudTaskStatusText(task)}`);
 	}
 
