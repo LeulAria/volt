@@ -42,6 +42,9 @@ import { parseBlobUri, PR_BLOB_SCHEME, PrBlobContentProvider, PrDiffSourceResolv
 import { AgentPullRequestEditor } from './agentPullRequestEditor.js';
 import { AGENT_PULL_REQUEST_EDITOR_ID, AGENT_PULL_REQUEST_SCHEME, AgentPullRequestEditorInput, AgentPullRequestEditorInputSerializer, parsePullRequestUri } from './agentPullRequestEditorInput.js';
 import { AgentPullRequestService, IAgentPullRequestService } from './agentPullRequestService.js';
+import { AGENT_PR_REVIEW_MODEL_SETTING, AGENT_PR_AUTO_REVIEW_SETTING, AgentPullRequestReviewService, IAgentPrReviewService } from './agentPullRequestReviewService.js';
+import { AUTO_REVIEW_MODES } from '../../common/agentPrReview.js';
+import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../../platform/configuration/common/configurationRegistry.js';
 import { AgentPullRequestsViewPane } from './agentPullRequestsViewPane.js';
 import { AGENT_PULL_REQUESTS_CONTAINER_ID, AGENT_PULL_REQUESTS_VIEW_ID, setPullRequestsViewSession } from './agentPullRequestsViewState.js';
 import { composeInChat, openPullRequest, visibleChatSession } from './agentPullRequestUi.js';
@@ -54,6 +57,42 @@ export const VOLT_COMMIT_MESSAGES_CONTEXT = new RawContextKey<boolean>('voltComm
 
 registerSingleton(IAgentPullRequestService, AgentPullRequestService, InstantiationType.Delayed);
 registerSingleton(IAgentGitActionsService, AgentGitActionsService, InstantiationType.Delayed);
+registerSingleton(IAgentPrReviewService, AgentPullRequestReviewService, InstantiationType.Delayed);
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'volt.pullRequests',
+	title: localize('voltPr.configTitle', "Pull Requests"),
+	type: 'object',
+	properties: {
+		[AGENT_PR_AUTO_REVIEW_SETTING]: {
+			type: 'string',
+			enum: [...AUTO_REVIEW_MODES],
+			enumDescriptions: [
+				localize('voltPr.autoReview.off', "Do not review pull requests automatically."),
+				localize('voltPr.autoReview.mine', "Review the pull requests you opened when their head changes."),
+				localize('voltPr.autoReview.all', "Review every open pull request linked to a chat when its head changes."),
+			],
+			default: 'off',
+			description: localize('voltPr.autoReview', "Runs a review agent on a pull request's head (in its own worktree) and lists the findings in the pull request's Review section."),
+		},
+		[AGENT_PR_REVIEW_MODEL_SETTING]: {
+			type: 'string',
+			default: '',
+			description: localize('voltPr.reviewModel', "The model that reviews pull requests (its catalog ref). Empty uses the linked chat's model."),
+		},
+	},
+});
+
+/** Starts the review service with the workbench, so the PR watcher's head changes trigger reviews. */
+class AgentPullRequestReviewsContribution {
+
+	static readonly ID = 'workbench.contrib.voltAgentPrReviews';
+
+	constructor(@IAgentPrReviewService reviews: IAgentPrReviewService) {
+		void reviews.whenReady;
+	}
+}
+registerWorkbenchContribution2(AgentPullRequestReviewsContribution.ID, AgentPullRequestReviewsContribution, WorkbenchPhase.AfterRestored);
 
 const pullRequestsIcon = registerIcon('volt-pull-requests-view', Codicon.gitPullRequest, localize('voltPr.viewIcon', "Pull Requests view icon."));
 

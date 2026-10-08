@@ -8,6 +8,8 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { joinPath } from '../../../../../base/common/resources.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
@@ -46,6 +48,9 @@ import {
 	resolveChains,
 	resolveMergeMethod,
 } from '../../common/agentPullRequests.js';
+import { openFindingsSorted, reviewSeverityLabel, IReviewFinding } from '../../common/agentPrReview.js';
+import { AGENT_PR_AUTO_REVIEW_SETTING, IAgentPrReviewService } from './agentPullRequestReviewService.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { renderMarkdownInto } from '../blocks/agentBlockRenderers.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
@@ -137,8 +142,15 @@ export class AgentPullRequestView extends Disposable {
 		@IHostService private readonly hostService: IHostService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@IAgentPrReviewService private readonly reviews: IAgentPrReviewService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 	) {
 		super();
+		this._register(this.reviews.onDidChange(key => {
+			if (this.detail && prKey(this.detail.repo, this.detail.number) === key) {
+				this.renderSoon();
+			}
+		}));
 		this.element = append(parent, $('.volt-pr-view'));
 		this.element.tabIndex = -1;
 		this.header = append(this.element, $('.volt-pr-header'));
@@ -959,6 +971,8 @@ export class AgentPullRequestView extends Disposable {
 			this.renderChecks(checks, pr);
 		}
 
+		this.renderAutoReview(body, pr);
+
 		const items = this.commentItems(pr);
 		const comments = this.foldSection(body, 'comments', localize('voltPr.commentsCount', "Comments ({0})", items.length), header => {
 			this.orderToggle(header, this.commentOrder, order => {
@@ -1001,6 +1015,70 @@ export class AgentPullRequestView extends Disposable {
 			notice.appendChild(renderIcon(Codicon.clock));
 			append(notice, $('span')).textContent = localize('voltPr.autoOnNotice', "Auto-merge is on: it merges once checks pass and reviews allow.");
 		}
+	}
+
+	/** Bugbot-style findings of the automatic (or a manual) review of the pull request's head. */
+	private renderAutoReview(parent: HTMLElement, pr: IVoltPullRequestDetail): void {
+		const key = prKey(pr.repo, pr.number);
+		const record = this.reviews.record(key);
+		const open = openFindingsSorted(record?.findings ?? []);
+		const title = open.length ? localize('voltPr.reviewCount', "Review ({0})", open.length) : localize('voltPr.reviewTitle', "Review");
+		const section = this.foldSection(parent, 'review', title, header => {
+			this.button(header, localize('voltPr.reviewNow', "Review Now"), () => void this.run(localize('voltPr.reviewNowBusy', "Reviewing…"), () => this.reviews.reviewNow(key), false), 'ghost', Codicon.search);
+		});
+		if (!section) {
+			return;
+		}
+		if (!record) {
+			section.classList.add('volt-pr-review-empty');
+			append(section, $('.muted')).textContent = localize('voltPr.reviewNone', "Not reviewed yet. Review Now checks this head; the volt.pullRequests.autoReview setting ({0}) reviews it when it changes.", this.configurationService.getValue<string>(AGENT_PR_AUTO_REVIEW_SETTING) ?? 'off');
+			return;
+		}
+		if (record.state === 'running') {
+			append(section, $('.muted')).textContent = localize('voltPr.reviewRunning', "Reviewing {0}…", record.headSha.slice(0, 7));
+			return;
+		}
+		if (record.state === 'failed') {
+			append(section, $('.volt-pr-review-error')).textContent = localize('voltPr.reviewFailed', "The review of {0} failed: {1}", record.headSha.slice(0, 7), record.error ?? '');
+		}
+		if (!open.length) {
+			if (record.state === 'done') {
+				append(section, $('.muted')).textContent = localize('voltPr.reviewClean', "No open findings on {0}.", record.headSha.slice(0, 7));
+			}
+			return;
+		}
+		const list = append(section, $('ul.volt-pr-review-findings'));
+		for (const finding of open) {
+			this.renderFinding(list, key, finding);
+		}
+	}
+
+	private renderFinding(parent: HTMLElement, key: string, finding: IReviewFinding): void {
+		const item = append(parent, $('li.volt-pr-review-finding'));
+		item.classList.add(`severity-${finding.severity}`);
+		const top = append(item, $('.volt-pr-review-top'));
+		append(top, $(`span.volt-pr-review-severity.${finding.severity}`)).textContent = reviewSeverityLabel(finding.severity);
+		const location = append(top, $('button.volt-pr-review-location')) as HTMLButtonElement;
+		location.type = 'button';
+		location.textContent = `${finding.file}:${finding.line}`;
+		this.onClick(location, () => void this.openFindingFile(key, finding));
+		append(item, $('.volt-pr-review-title')).textContent = finding.title;
+		if (finding.explanation) {
+			append(item, $('.volt-pr-review-explanation')).textContent = finding.explanation;
+		}
+		const actions = append(item, $('.volt-pr-review-actions'));
+		this.button(actions, localize('voltPr.reviewFix', "Fix in Chat"), () => void this.run(localize('voltPr.reviewFixBusy', "Sending to the chat…"), () => this.reviews.fixInChat(key, finding), false), 'secondary', Codicon.wrench);
+		this.button(actions, localize('voltPr.reviewDismiss', "Dismiss"), () => this.reviews.setDismissed(key, finding.id, true), 'ghost', Codicon.close);
+	}
+
+	private async openFindingFile(key: string, finding: IReviewFinding): Promise<void> {
+		const chat = this.pullRequests.sessionsFor(key)[0];
+		const folder = chat ? this.pullRequests.folderFor(chat) : undefined;
+		if (!folder) {
+			this.notificationService.info(localize('voltPr.reviewNoFolder', "Link the pull request to a chat in a project to open {0}.", finding.file));
+			return;
+		}
+		await this.openerService.open(joinPath(URI.file(folder), finding.file), { fromUserGesture: true });
 	}
 
 	/** A collapsible section with a sticky header; returns its body, or undefined while folded. */

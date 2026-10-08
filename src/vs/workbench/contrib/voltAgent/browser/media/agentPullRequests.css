@@ -2958,3 +2958,79 @@
 	--volt-pr-merge-accent-hover: #8f1f45;
 }
 
+
+/* Automatic review findings (Review section of the pull request summary). */
+.volt-pr-review-findings {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.volt-pr-review-finding {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px 10px;
+	border: 1px solid var(--vscode-widget-border, transparent);
+	border-left-width: 3px;
+	border-radius: 6px;
+}
+
+.volt-pr-review-finding.severity-high {
+	border-left-color: var(--vscode-errorForeground);
+}
+
+.volt-pr-review-finding.severity-medium {
+	border-left-color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-pr-review-finding.severity-low {
+	border-left-color: var(--vscode-descriptionForeground);
+}
+
+.volt-pr-review-top {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-pr-review-severity {
+	font-size: 11px;
+	text-transform: uppercase;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pr-review-location {
+	background: none;
+	border: none;
+	padding: 0;
+	cursor: pointer;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	color: var(--vscode-textLink-foreground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-review-title {
+	font-weight: 600;
+}
+
+.volt-pr-review-explanation {
+	color: var(--vscode-descriptionForeground);
+	white-space: pre-wrap;
+}
+
+.volt-pr-review-actions {
+	display: flex;
+	gap: 6px;
+}
+
+.volt-pr-review-error {
+	color: var(--vscode-errorForeground);
+}
