@@ -26,6 +26,13 @@ import {
 	providerForHost,
 	providerLabel,
 } from '../common/voltPullRequestParse.js';
+import { splitUnifiedDiff } from '../common/hosts/hostParse.js';
+import { pullRequestHeadRef, repositoryWebUrl } from '../common/voltPrHosts.js';
+import { isStackTrunk, IVoltRestackResult, stackBranchName } from '../common/voltPrStacks.js';
+import { findingsAsComment, IVoltPrHostClient, parseCommitPathRef } from './hosts/voltPrHostClient.js';
+import { readBranchStates, readStack, recordParent, restackStack, retargetChildren, IStackContext, StackGit } from './voltPrStackGit.js';
+import { VoltPrFetch } from './hosts/voltPrHttp.js';
+import { VoltPrHostRegistry } from './hosts/voltPrHostRegistry.js';
 import {
 	IVoltBranchSummary,
 	IVoltChangesSummary,
@@ -40,6 +47,12 @@ import {
 	IVoltPrFetchResult,
 	IVoltPrFile,
 	IVoltPrFilePatch,
+	IVoltPrHostCredential,
+	IVoltPrRestackOutcome,
+	IVoltPrStackView,
+	IVoltPrStackLayerView,
+	IVoltPrHostInfo,
+	IVoltPrLineComment,
 	IVoltPrListRequest,
 	IVoltPrMergeRequest,
 	IVoltPrPushResult,
@@ -49,8 +62,11 @@ import {
 	IVoltPullRequest,
 	IVoltPullRequestDetail,
 	IVoltPullRequestService,
+	IVoltPrSignInRequest,
 	IVoltRepoRemotes,
 	VoltPrError,
+	voltPrErrorCode,
+	VoltPrProvider,
 } from '../common/voltPullRequests.js';
 
 const GH_TIMEOUT_MS = 45_000;
@@ -86,6 +102,14 @@ interface IRunOptions {
 
 type Json = any;
 
+export interface IVoltPullRequestServiceOptions {
+	/** `volt.sourceControl.hosts`: the user's word on which kind of server a host is. */
+	readonly hostSettings?: () => unknown;
+	/** Tests point hosts at a local server. */
+	readonly fetch?: VoltPrFetch;
+	readonly homeDir?: string;
+}
+
 export class VoltPullRequestService extends Disposable implements IVoltPullRequestService {
 
 	declare readonly _serviceBrand: undefined;
@@ -100,17 +124,62 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	/** Git writes into one clone run one at a time (fetch into hidden refs, push). */
 	private readonly gitQueue = new SequencerByKey<string>();
 
+	/** GitLab, Bitbucket, Gitea / Forgejo and Azure DevOps. */
+	private readonly hosts: VoltPrHostRegistry;
+
 	constructor(
 		private readonly resolveEnv: () => Promise<NodeJS.ProcessEnv>,
 		private readonly logService?: ILogService,
 		private readonly ghCommand = 'gh',
+		options: IVoltPullRequestServiceOptions = {},
 	) {
 		super();
+		this.hosts = new VoltPrHostRegistry({
+			run: (command, args, timeoutMs) => this.run(command, args, { timeoutMs }),
+			env: () => this.env(undefined),
+			settings: options.hostSettings,
+			githubHosts: async () => new Set((await this.githubAccounts()).map(account => account.host)),
+			...(options.fetch ? { fetch: options.fetch } : {}),
+			...(options.homeDir ? { homeDir: options.homeDir } : {}),
+		});
 	}
+
+	//#region Other hosts
+
+	async setHostCredentials(credentials: readonly IVoltPrHostCredential[]): Promise<void> {
+		this.hosts.setCredentials(credentials);
+		this._onDidChangeAccounts.fire();
+	}
+
+	signInHost(request: IVoltPrSignInRequest): Promise<IVoltPrAccount> {
+		return this.hosts.signIn(request);
+	}
+
+	hostInfo(host: string): Promise<IVoltPrHostInfo> {
+		return this.hosts.info(apiHost(host));
+	}
+
+	/** The REST client for a host that is not GitHub; undefined sends the call down the GitHub CLI path. */
+	private async other(host: string): Promise<IVoltPrHostClient | undefined> {
+		const api = apiHost(host);
+		if (providerForHost(api) === 'github') {
+			return undefined;
+		}
+		return this.hosts.client(api);
+	}
+
+	//#endregion
 
 	//#region Accounts
 
 	async accounts(host?: string): Promise<IVoltPrAccount[]> {
+		const [github, others] = await Promise.all([this.githubAccounts(), this.hosts.accounts()]);
+		const all = [...github, ...others];
+		return host ? all.filter(account => account.host === apiHost(host)) : all;
+	}
+
+	/** GitHub CLI accounts only (they decide which hosts are GitHub Enterprise). */
+	private async githubAccounts(host?: string): Promise<IVoltPrAccount[]> {
 		const now = Date.now();
 		if (!this.accountCache || now - this.accountCache.at > ACCOUNT_TTL_MS) {
 			const accounts = this.readAccounts();
@@ -129,6 +198,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 
 	async refreshAccounts(): Promise<void> {
 		this.accountCache = undefined;
+		this.hosts.refresh();
 		this.tokens.clear();
 		this.viewers.clear();
 		this._onDidChangeAccounts.fire();
@@ -153,6 +223,8 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 					accounts.push({
 						host: host.toLowerCase(),
 						login: entry.login,
+						provider: 'github',
+						source: 'gh',
 						active: !!entry.active,
 						ok: entry.state === 'success',
 						...(typeof entry.scopes === 'string' ? { scopes: entry.scopes } : {}),
@@ -183,7 +255,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 
 	/** The account a call runs as: the one asked for, else the host's active one. */
 	private async accountFor(host: string, account: string | undefined): Promise<IVoltPrAccount> {
-		const accounts = await this.accounts(host);
+		const accounts = await this.githubAccounts(host);
 		const picked = account ? accounts.find(candidate => candidate.login.toLowerCase() === account.toLowerCase()) : undefined;
 		const chosen = picked ?? accounts.find(candidate => candidate.active) ?? accounts[0];
 		if (!chosen) {
@@ -212,7 +284,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	/** Environment that pins a `gh` call to one host and account. */
 	private async authEnv(host: string, auth: IVoltPrAuth): Promise<{ env: Record<string, string>; login: string }> {
 		const api = apiHost(host);
-		const githubHosts = new Set((await this.accounts()).map(account => account.host));
+		const githubHosts = new Set((await this.githubAccounts()).map(account => account.host));
 		const provider = providerForHost(api, githubHosts);
 		if (provider !== 'github' && provider !== 'unknown') {
 			throw unsupportedProviderError(provider);
@@ -265,10 +337,19 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		if (!remote || !url) {
 			return undefined;
 		}
-		const githubHosts = new Set((await this.accounts().catch(() => [] as IVoltPrAccount[])).map(account => account.host));
-		const parsed = parseRemoteUrl(url, githubHosts);
+		const githubHosts = new Set((await this.githubAccounts().catch(() => [] as IVoltPrAccount[])).map(account => account.host));
+		let parsed = parseRemoteUrl(url, githubHosts, this.hosts.knownProviders());
 		if (!parsed) {
 			return undefined;
+		}
+		let webBase: string | undefined;
+		if (parsed.provider !== 'github') {
+			// Self-hosted servers: a setting, a sign-in or the server's own version endpoint says what it is.
+			const info = await this.hosts.info(parsed.host).catch(() => undefined);
+			if (info) {
+				parsed = { ...parsed, provider: info.provider };
+				webBase = info.webUrl;
+			}
 		}
 		let ahead: number | undefined;
 		let behind: number | undefined;
@@ -286,7 +367,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			host,
 			owner: parsed.owner,
 			name: parsed.name,
-			webUrl: `https://${host}/${parsed.owner}/${parsed.name}`,
+			webUrl: webBase ? repositoryWebUrl(parsed.provider, webBase, parsed) : `https://${host}/${parsed.owner}/${parsed.name}`,
 			remote,
 			root,
 			...(branch ? { branch } : {}),
@@ -311,6 +392,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async remoteBranches(request: IVoltPrAuth & { readonly repo: IVoltPrRepoRef }): Promise<string[]> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.remoteBranches(request.repo);
+		}
 		const data = await this.graphql(request.repo.host, request, `query($owner: String!, $name: String!) {
 			repository(owner: $owner, name: $name) {
 				defaultBranchRef { name }
@@ -328,6 +413,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	//#region Reads
 
 	async list(request: IVoltPrListRequest): Promise<IVoltPullRequest[]> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return tagProvider(await other.list(request.repo, request.state, Math.max(1, Math.min(100, request.limit ?? 50))), other.provider);
+		}
 		const states = request.state === 'open' ? '[OPEN]' : request.state === 'closed' ? '[CLOSED, MERGED]' : '[OPEN, CLOSED, MERGED]';
 		const limit = Math.max(1, Math.min(100, request.limit ?? 50));
 		const { data, login } = await this.graphqlAs(request.repo.host, request, `query($owner: String!, $name: String!) {
@@ -342,6 +431,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async forBranch(request: IVoltPrBranchRequest): Promise<IVoltPullRequest[]> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return tagProvider(await other.forBranch(request.repo, request.branch, request.headOwner), other.provider);
+		}
 		const { data, login } = await this.graphqlAs(request.repo.host, request, `query($owner: String!, $name: String!, $branch: String!) {
 			viewer { login }
 			repository(owner: $owner, name: $name) {
@@ -370,6 +463,22 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		const results: IVoltPullRequest[] = [];
 		const errors: unknown[] = [];
 		await Promise.all([...groups.values()].map(async group => {
+			let other: IVoltPrHostClient | undefined;
+			try {
+				other = await this.other(group[0].repo.host);
+			} catch (err) {
+				errors.push(err);
+				return;
+			}
+			if (other) {
+				const client = other;
+				const read = await Promise.all(group.map(request => client.get(request.repo, request.number).catch(err => {
+					errors.push(err);
+					return undefined;
+				})));
+				results.push(...tagProvider(read.filter((pr): pr is IVoltPullRequest => !!pr), client.provider));
+				return;
+			}
 			for (let start = 0; start < group.length; start += BATCH_SIZE) {
 				const batch = group.slice(start, start + BATCH_SIZE);
 				try {
@@ -415,6 +524,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async detail(request: IVoltPrRequest): Promise<IVoltPullRequestDetail> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return { ...await other.detail(request.repo, request.number), provider: other.provider };
+		}
 		const { data, login } = await this.graphqlAs(request.repo.host, request, `query($owner: String!, $name: String!, $number: Int!) {
 			viewer { login }
 			repository(owner: $owner, name: $name) {
@@ -506,6 +619,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	//#region Writes
 
 	async create(request: IVoltPrCreateRequest): Promise<IVoltPullRequest> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return { ...await other.create(request), provider: other.provider };
+		}
 		const head = request.headOwner && request.headOwner.toLowerCase() !== request.repo.owner.toLowerCase() ? `${request.headOwner}:${request.head}` : request.head;
 		const created = await this.rest(request.repo.host, request, 'POST', `repos/${request.repo.owner}/${request.repo.name}/pulls`, {
 			title: request.title,
@@ -526,6 +643,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async merge(request: IVoltPrMergeRequest): Promise<void> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.merge(request);
+		}
 		const id = await this.nodeId(request);
 		const method = request.method.toUpperCase();
 		if (request.auto) {
@@ -561,11 +682,19 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async cancelAutoMerge(request: IVoltPrRequest): Promise<void> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.cancelAutoMerge(request.repo, request.number);
+		}
 		const id = await this.nodeId(request);
 		await this.mutate(request, `mutation($id: ID!) { disablePullRequestAutoMerge(input: { pullRequestId: $id }) { clientMutationId } }`, { id });
 	}
 
 	async updateBranch(request: IVoltPrRequest & { readonly rebase: boolean }): Promise<void> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.updateBranch(request.repo, request.number, request.rebase);
+		}
 		const id = await this.nodeId(request);
 		await this.mutate(request, `mutation($id: ID!, $method: PullRequestBranchUpdateMethod) {
 			updatePullRequestBranch(input: { pullRequestId: $id, updateMethod: $method }) { clientMutationId }
@@ -573,6 +702,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async setDraft(request: IVoltPrRequest & { readonly draft: boolean }): Promise<void> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.setDraft(request.repo, request.number, request.draft);
+		}
 		const id = await this.nodeId(request);
 		await this.mutate(request, request.draft
 			? `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { clientMutationId } }`
@@ -580,6 +713,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async setState(request: IVoltPrRequest & { readonly state: 'open' | 'closed' }): Promise<void> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.setState(request.repo, request.number, request.state);
+		}
 		const id = await this.nodeId(request);
 		await this.mutate(request, request.state === 'closed'
 			? `mutation($id: ID!) { closePullRequest(input: { pullRequestId: $id }) { clientMutationId } }`
@@ -587,11 +724,19 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async setBase(request: IVoltPrRequest & { readonly base: string }): Promise<void> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.setBase(request.repo, request.number, request.base);
+		}
 		const id = await this.nodeId(request);
 		await this.mutate(request, `mutation($id: ID!, $base: String!) { updatePullRequest(input: { pullRequestId: $id, baseRefName: $base }) { clientMutationId } }`, { id, base: request.base });
 	}
 
 	async setLabels(request: IVoltPrRequest & { readonly add: readonly string[]; readonly remove: readonly string[] }): Promise<void> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.setLabels(request.repo, request.number, request.add, request.remove);
+		}
 		const path = `repos/${request.repo.owner}/${request.repo.name}/issues/${request.number}/labels`;
 		if (request.add.length) {
 			await this.rest(request.repo.host, request, 'POST', path, { labels: request.add });
@@ -607,6 +752,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async setViewed(request: IVoltPrRequest & { readonly path: string; readonly viewed: boolean }): Promise<void> {
+		if (await this.other(request.repo.host)) {
+			// Viewed files are GitHub's: other hosts keep no such state in their API.
+			return;
+		}
 		const id = await this.nodeId(request);
 		await this.mutate(request, request.viewed
 			? `mutation($id: ID!, $path: String!) { markFileAsViewed(input: { pullRequestId: $id, path: $path }) { clientMutationId } }`
@@ -614,23 +763,39 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async comment(request: IVoltPrRequest & { readonly body: string }): Promise<void> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.comment(request.repo, request.number, request.body);
+		}
 		const id = await this.nodeId(request);
 		await this.mutate(request, `mutation($id: ID!, $body: String!) { addComment(input: { subjectId: $id, body: $body }) { clientMutationId } }`, { id, body: request.body });
 	}
 
 	async reply(request: IVoltPrRequest & { readonly threadId: string; readonly body: string }): Promise<void> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.reply(request.repo, request.number, request.threadId, request.body);
+		}
 		await this.mutate(request, `mutation($thread: ID!, $body: String!) {
 			addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $thread, body: $body }) { clientMutationId }
 		}`, { thread: request.threadId, body: request.body });
 	}
 
 	async resolveThread(request: IVoltPrRequest & { readonly threadId: string; readonly resolved: boolean }): Promise<void> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.resolveThread(request.repo, request.number, request.threadId, request.resolved);
+		}
 		await this.mutate(request, request.resolved
 			? `mutation($thread: ID!) { resolveReviewThread(input: { threadId: $thread }) { clientMutationId } }`
 			: `mutation($thread: ID!) { unresolveReviewThread(input: { threadId: $thread }) { clientMutationId } }`, { thread: request.threadId });
 	}
 
 	async review(request: IVoltPrRequest & { readonly event: 'approve' | 'requestChanges' | 'comment'; readonly body: string }): Promise<void> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.review(request.repo, request.number, request.event, request.body);
+		}
 		const id = await this.nodeId(request);
 		const event = request.event === 'approve' ? 'APPROVE' : request.event === 'requestChanges' ? 'REQUEST_CHANGES' : 'COMMENT';
 		await this.mutate(request, `mutation($id: ID!, $event: PullRequestReviewEvent!, $body: String) {
@@ -639,6 +804,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async requestReviewers(request: IVoltPrRequest & { readonly logins: readonly string[] }): Promise<void> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.requestReviewers(request.repo, request.number, request.logins);
+		}
 		if (!request.logins.length) {
 			return;
 		}
@@ -651,6 +820,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async rerunFailedChecks(request: IVoltPrRequest): Promise<number> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.rerunFailedChecks(request.repo, request.number);
+		}
 		const [pr] = await this.getMany([request]);
 		if (!pr) {
 			throw new VoltPrError('notFound', `Pull request #${request.number} was not found.`);
@@ -669,6 +842,30 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		return started;
 	}
 
+	async postReview(request: IVoltPrRequest & { readonly body: string; readonly comments: readonly IVoltPrLineComment[]; readonly headOid?: string }): Promise<{ readonly posted: number; readonly url?: string }> {
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.postReview(request.repo, request.number, request.body, request.comments, request.headOid);
+		}
+		const path = `repos/${request.repo.owner}/${request.repo.name}/pulls/${request.number}/reviews`;
+		try {
+			const review = await this.rest(request.repo.host, request, 'POST', path, {
+				...(request.headOid ? { commit_id: request.headOid } : {}),
+				body: request.body,
+				event: 'COMMENT',
+				comments: request.comments.map(comment => ({ path: comment.path, line: comment.line, side: 'RIGHT', body: comment.body })),
+			});
+			return { posted: request.comments.length, ...(typeof review?.html_url === 'string' ? { url: review.html_url } : {}) };
+		} catch (err) {
+			// 422: a line is outside the diff. Everything goes in one review body instead.
+			if (!request.comments.length || voltPrErrorCode(err) === 'noAuth' || voltPrErrorCode(err) === 'network') {
+				throw err;
+			}
+			const review = await this.rest(request.repo.host, request, 'POST', path, { body: findingsAsComment(request.body, request.comments), event: 'COMMENT' });
+			return { posted: request.comments.length, ...(typeof review?.html_url === 'string' ? { url: review.html_url } : {}) };
+		}
+	}
+
 	//#endregion
 
 	//#region Git
@@ -684,11 +881,14 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		}
 		const remote = await this.remoteFor(repo.root, request.repo) ?? repo.remote;
 		const ref = `refs/volt/pr/${request.number}`;
+		// Hosts that keep a ref per pull request are fetched by number, so forks and deleted head
+		// branches work too; the others (Bitbucket, Azure DevOps) by the head branch.
+		const provider = (await this.other(request.repo.host))?.provider ?? 'github';
+		const headRef = pullRequestHeadRef(provider, request.number) ?? `refs/heads/${pr.headRefName}`;
 		return this.gitQueue.queue(repo.root, async () => {
-			// Pull requests are fetched by number, so forks and deleted head branches work too.
 			const fetched = await this.run('git', [
 				'-c', 'credential.interactive=never', 'fetch', '--no-tags', '--no-write-fetch-head', '--quiet', remote,
-				`+refs/pull/${request.number}/head:${ref}/head`,
+				`+${headRef}:${ref}/head`,
 				`+refs/heads/${pr.baseRefName}:${ref}/base`,
 			], { cwd: repo.root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
 			if (fetched.code !== 0) {
@@ -845,9 +1045,20 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		};
 	}
 
-	async filePatches(request: IVoltPrRequest & { readonly commit?: string }): Promise<IVoltPrFilePatch[]> {
+	async filePatches(request: IVoltPrRequest & { readonly commit?: string; readonly folder?: string }): Promise<IVoltPrFilePatch[]> {
 		if (request.commit && !/^[0-9a-f]{7,40}$/i.test(request.commit)) {
 			throw new VoltPrError('failed', `Not a commit id: ${request.commit}`);
+		}
+		const other = await this.other(request.repo.host);
+		if (other) {
+			if (request.folder) {
+				try {
+					return await this.localFilePatches(request as IVoltPrRequest & { readonly folder: string; readonly commit?: string });
+				} catch (err) {
+					this.logService?.trace('[volt-pr] reading the diff from the clone failed; asking the host', err);
+				}
+			}
+			return other.filePatches(request.repo, request.number, request.commit);
 		}
 		const path = request.commit
 			? `repos/${request.repo.owner}/${request.repo.name}/commits/${request.commit}`
@@ -857,15 +1068,37 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		return entries.slice(0, MAX_FILES).map(parseFilePatch).filter(file => !!file.path);
 	}
 
+	/** A pull request's (or one commit's) changes from git in a local clone: fetched into hidden refs, blobs included. */
+	private async localFilePatches(request: IVoltPrRequest & { readonly folder: string; readonly commit?: string }): Promise<IVoltPrFilePatch[]> {
+		const range = request.commit ? undefined : await this.fetch(request);
+		const root = (await this.run('git', ['rev-parse', '--show-toplevel'], { cwd: request.folder, timeoutMs: 15_000 })).stdout.trim() || request.folder;
+		const args = request.commit
+			? ['-c', 'core.quotepath=off', 'diff', '--no-color', '--no-ext-diff', '--full-index', '-M', `${request.commit}^`, request.commit]
+			: ['-c', 'core.quotepath=off', 'diff', '--no-color', '--no-ext-diff', '--full-index', '-M', range!.base, range!.head];
+		const diff = await this.run('git', args, { cwd: root, timeoutMs: GIT_TIMEOUT_MS });
+		if (diff.code !== 0) {
+			throw new VoltPrError('failed', `git diff failed: ${ghErrorText(diff.stderr)}`);
+		}
+		return splitUnifiedDiff(diff.stdout).slice(0, MAX_FILES);
+	}
+
 	async readBlob(request: IVoltPrAuth & { readonly repo: IVoltPrRepoRef; readonly sha: string; readonly folder?: string }): Promise<string> {
-		if (!/^[0-9a-f]{40,64}$/i.test(request.sha)) {
+		const byPath = parseCommitPathRef(request.sha);
+		if (!/^[0-9a-f]{40,64}$/i.test(request.sha) && !byPath) {
 			throw new VoltPrError('failed', `Not a blob id: ${request.sha}`);
 		}
 		if (request.folder) {
-			const local = await this.run('git', ['cat-file', 'blob', request.sha], { cwd: request.folder, timeoutMs: 15_000 });
+			const local = await this.run('git', ['cat-file', 'blob', byPath ? `${byPath.commit}:${byPath.path}` : request.sha], { cwd: request.folder, timeoutMs: 15_000 });
 			if (local.code === 0) {
 				return local.stdout;
 			}
+		}
+		const other = await this.other(request.repo.host);
+		if (other) {
+			return other.readBlob(request.repo, request.sha);
+		}
+		if (byPath) {
+			throw new VoltPrError('failed', `Not a blob id: ${request.sha}`);
 		}
 		// Raw, not through rest(): the text must not be trimmed or read as JSON.
 		const { env } = await this.authEnv(request.repo.host, request);
@@ -1045,6 +1278,104 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		const created = await this.run('git', ['checkout', '-b', request.name], { cwd: request.folder, timeoutMs: 30_000 });
 		if (created.code !== 0) {
 			throw new VoltPrError('failed', `git checkout -b ${request.name} failed: ${ghErrorText(created.stderr)}`);
+		}
+	}
+
+	//#endregion
+
+	//#region Stacks
+
+	async stack(request: { readonly folder: string; readonly branch?: string }): Promise<IVoltPrStackView | undefined> {
+		const status = await this.gitStatus(request.folder);
+		if (!status) {
+			return undefined;
+		}
+		const context = this.stackContext(status.root, status.defaultBranch, status.remote);
+		const stack = await readStack(context, request.branch ?? status.branch);
+		const repo = await this.resolveRepo(request.folder);
+		const layers: IVoltPrStackLayerView[] = [];
+		for (const layer of stack.layers) {
+			const prs = repo ? await this.forBranchOrNone(repo, layer.branch) : [];
+			layers.push({ layer, pullRequest: prs.find(isOpen) ?? prs[0] });
+		}
+		return { stack, layers, checkedOut: status.branch };
+	}
+
+	async stackNewBranch(request: { readonly folder: string; readonly title: string }): Promise<{ readonly branch: string; readonly parent: string }> {
+		const status = await this.gitStatus(request.folder);
+		if (!status?.branch || !status.head) {
+			throw new VoltPrError('failed', 'Check out a branch with a commit to stack on.');
+		}
+		const parent = status.branch;
+		const parentOid = status.head;
+		const context = this.stackContext(status.root, status.defaultBranch, status.remote);
+		return this.gitQueue.queue(status.root, async () => {
+			const branch = stackBranchName(request.title, new Set((await readBranchStates(context)).keys()));
+			const created = await this.run('git', ['checkout', '-b', branch], { cwd: status.root, timeoutMs: 30_000 });
+			if (created.code !== 0) {
+				throw new VoltPrError('failed', `git checkout -b ${branch} failed: ${ghErrorText(created.stderr)}`);
+			}
+			await recordParent(context, branch, parent, parentOid);
+			return { branch, parent };
+		});
+	}
+
+	async restack(request: { readonly folder: string; readonly branch?: string; readonly syncTrunk?: boolean }): Promise<IVoltPrRestackOutcome> {
+		const status = await this.gitStatus(request.folder);
+		if (!status?.branch) {
+			throw new VoltPrError('failed', 'Check out a branch in the stack first.');
+		}
+		const context = this.stackContext(status.root, status.defaultBranch, status.remote);
+		const current = request.branch ?? status.branch;
+		const repo = await this.resolveRepo(request.folder);
+		return this.gitQueue.queue(status.root, async () => {
+			const retargeted: { branch: string; to: string }[] = [];
+			if (repo) {
+				const handled = new Set<string>();
+				for (const layer of (await readStack(context, current)).layers) {
+					const parent = layer.parent;
+					if (isStackTrunk(parent, context.trunk) || handled.has(parent)) {
+						continue;
+					}
+					handled.add(parent);
+					if (!(await this.forBranchOrNone(repo, parent)).some(pr => pr.state === 'merged')) {
+						continue;
+					}
+					for (const move of await retargetChildren(context, parent)) {
+						retargeted.push({ branch: move.branch, to: move.to });
+						const open = (await this.forBranchOrNone(repo, move.branch)).find(isOpen);
+						if (open) {
+							await this.setBase({ repo, number: open.number, base: move.to });
+						}
+					}
+				}
+			}
+			const syncTrunk = !!request.syncTrunk || retargeted.some(move => isStackTrunk(move.to, context.trunk));
+			if (syncTrunk && context.remote) {
+				const fetched = await this.run('git', ['-c', 'credential.interactive=never', 'fetch', '--quiet', context.remote, context.trunk], { cwd: status.root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
+				if (fetched.code !== 0) {
+					throw new VoltPrError('network', `git fetch failed: ${ghErrorText(fetched.stderr)}`);
+				}
+			}
+			const result: IVoltRestackResult = await restackStack(context, current, { syncTrunk });
+			return { ...result, retargeted };
+		});
+	}
+
+	private stackContext(root: string, trunk: string | undefined, remote: string | undefined): IStackContext {
+		const git: StackGit = (args, cwd) => this.run('git', args, { cwd, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
+		return { git, root, trunk: trunk ?? 'main', remote };
+	}
+
+	/** Pull requests for a branch; none when the host can't answer (no sign-in yet), since a stack view still works without them. */
+	private async forBranchOrNone(repo: IVoltPrRepo, branch: string): Promise<IVoltPullRequest[]> {
+		try {
+			return await this.forBranch({ repo, branch });
+		} catch (err) {
+			if (voltPrErrorCode(err) === 'failed') {
+				throw err;
+			}
+			return [];
 		}
 	}
 
@@ -1234,4 +1565,9 @@ function isOpen(pr: IVoltPullRequest): boolean {
 /** For callers outside GitHub: what to tell the user. */
 export function unsupportedProviderError(provider: Parameters<typeof providerLabel>[0]): VoltPrError {
 	return new VoltPrError('unsupported', `Pull requests on ${providerLabel(provider)} are not supported yet. Volt works with GitHub and GitHub Enterprise.`);
+}
+
+/** Marks reads from a host that is not GitHub with its kind, so views say "merge request" and `!12` where they should. */
+function tagProvider<T extends IVoltPullRequest>(prs: readonly T[], provider: VoltPrProvider): T[] {
+	return prs.map(pr => ({ ...pr, provider }));
 }

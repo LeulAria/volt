@@ -8,6 +8,8 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { joinPath } from '../../../../../base/common/resources.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
@@ -18,6 +20,7 @@ import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.j
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { prKey } from '../../../../../platform/voltPullRequests/common/voltPullRequestParse.js';
 import {
 	IVoltPrCheck,
@@ -25,6 +28,7 @@ import {
 	IVoltPrFilePatch,
 	IVoltPrReview,
 	IVoltPrReviewThread,
+	IVoltPrStackView,
 	IVoltPullRequestDetail,
 	VoltPrMergeMethod,
 	voltPrErrorCode,
@@ -44,6 +48,9 @@ import {
 	resolveChains,
 	resolveMergeMethod,
 } from '../../common/agentPullRequests.js';
+import { openFindingsSorted, reviewSeverityLabel, IReviewFinding } from '../../common/agentPrReview.js';
+import { AGENT_PR_AUTO_REVIEW_SETTING, IAgentPrReviewService } from './agentPullRequestReviewService.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { renderMarkdownInto } from '../blocks/agentBlockRenderers.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
@@ -116,6 +123,7 @@ export class AgentPullRequestView extends Disposable {
 	private readonly codeDiffWidget = this._register(new MutableDisposable<AgentPullRequestCodeDiff>());
 	private readonly patches = new Map<string, IPatchLoad>();
 	private readonly patchLoads = new Set<string>();
+	private stackView: IVoltPrStackView | undefined;
 	private composeOpen = false;
 	private composeMode: 'comment' | 'review' = 'comment';
 	private reviewEvent: 'comment' | 'approve' | 'requestChanges' = 'comment';
@@ -133,8 +141,16 @@ export class AgentPullRequestView extends Disposable {
 		@ILanguageService private readonly languageService: ILanguageService,
 		@IHostService private readonly hostService: IHostService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@IAgentPrReviewService private readonly reviews: IAgentPrReviewService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 	) {
 		super();
+		this._register(this.reviews.onDidChange(key => {
+			if (this.detail && prKey(this.detail.repo, this.detail.number) === key) {
+				this.renderSoon();
+			}
+		}));
 		this.element = append(parent, $('.volt-pr-view'));
 		this.element.tabIndex = -1;
 		this.header = append(this.element, $('.volt-pr-header'));
@@ -283,6 +299,9 @@ export class AgentPullRequestView extends Disposable {
 			this.detailSignature = signature;
 			this.detail = detail;
 			this.error = undefined;
+			if (!unchanged) {
+				void this.readStack(detail.headRefName);
+			}
 		} catch (err) {
 			if (seq !== this.loadSeq) {
 				return;
@@ -596,7 +615,7 @@ export class AgentPullRequestView extends Disposable {
 					{ id: 'layers', title: localize('voltPr.stackLayers', "Layers, top first"), items: layers },
 					{
 						id: 'actions', items: [
-							{ id: 'rebase', label: localize('voltPr.rebaseStack', "Rebase Stack ({0})", open.length), icon: Codicon.sync, disabled: !open.length, data: { kind: 'rebase' } },
+							{ id: 'rebase', label: localize('voltPr.rebaseStack', "Update Branches on GitHub ({0})", open.length), icon: Codicon.sync, disabled: !open.length, data: { kind: 'rebase' } },
 							{ id: 'merge', label: localize('voltPr.mergeStack', "Merge Stack up to #{0}", pr.number), icon: Codicon.gitMerge, disabled: !isOpenState(pr.state), data: { kind: 'merge' } },
 						],
 					},
@@ -614,6 +633,112 @@ export class AgentPullRequestView extends Disposable {
 					}
 				},
 			});
+		});
+	}
+
+	/** The stack this branch sits in, read from the chat's folder: layers top first, each with its pull request. */
+	private renderStack(parent: HTMLElement, pr: IVoltPullRequestDetail): void {
+		const sessionId = this.sessionId;
+		const folder = sessionId ? this.pullRequests.folderFor(sessionId) : undefined;
+		const view = this.stackView;
+		if (!sessionId || !folder || !view || view.stack.current !== pr.headRefName) {
+			return;
+		}
+		const checkedOut = view.checkedOut === pr.headRefName;
+		const layers = [...view.layers].reverse();
+		if (!layers.length && !checkedOut) {
+			return;
+		}
+		const section = this.foldSection(parent, 'stack', layers.length ? localize('voltPr.stackCount', "Stack ({0})", layers.length) : localize('voltPr.stackTitle', "Stack"), header => {
+			if (layers.length) {
+				this.button(header, localize('voltPr.restackShort', "Restack"), () => void this.restackStack(folder, pr.headRefName), 'ghost', Codicon.sync);
+			}
+			if (checkedOut) {
+				this.button(header, localize('voltPr.stackNewShort', "Stack Branch"), () => void this.stackNewBranch(folder), 'ghost', Codicon.layers);
+			}
+		});
+		if (!section) {
+			return;
+		}
+		if (!layers.length) {
+			section.appendChild(renderIcon(Codicon.layers));
+			append(section, $('span.muted')).textContent = localize('voltPr.notStacked', "Not stacked. Stack Branch adds a layer on top of this branch, and its pull request targets this branch.");
+			return;
+		}
+		const list = append(section, $('ol.volt-pr-stack'));
+		for (const { layer, pullRequest } of layers) {
+			const row = append(list, $('li.volt-pr-stack-layer'));
+			row.classList.toggle('current', layer.branch === pr.headRefName);
+			row.appendChild(renderIcon(pullRequest ? prStateIcon(pullRequest.state) : Codicon.gitBranch));
+			append(row, $('span.volt-pr-stack-name')).textContent = pullRequest ? `#${pullRequest.number} ${pullRequest.title}` : layer.branch;
+			append(row, $('span.muted')).textContent = `← ${layer.parent}`;
+			const chips = append(row, $('span.volt-pr-stack-chips'));
+			const chip = (label: string, warning: boolean) => {
+				append(chips, $(warning ? 'span.volt-pr-stack-chip.warning' : 'span.volt-pr-stack-chip')).textContent = label;
+			};
+			if (layer.needsRestack) {
+				chip(localize('voltPr.stackNeedsRestack', "needs restack"), true);
+			}
+			if (layer.dirty) {
+				chip(localize('voltPr.stackDirty', "uncommitted changes"), true);
+			}
+			if (layer.rebaseInProgress) {
+				chip(localize('voltPr.stackRebasing', "rebase waiting"), true);
+			}
+			if (layer.unpushed) {
+				chip(localize('voltPr.stackUnpushed', "not pushed"), false);
+			}
+			if (pullRequest && pullRequest.baseRefName !== layer.parent) {
+				chip(localize('voltPr.stackRetarget', "base is {0}", pullRequest.baseRefName), true);
+			}
+			if (pullRequest && pullRequest.number !== pr.number) {
+				this.onClick(row, () => void this.instantiationService.invokeFunction(accessor => openPullRequest(accessor, { kind: 'pr', repo: pullRequest.repo, number: pullRequest.number }, sessionId)));
+			}
+		}
+	}
+
+	private async readStack(branch: string): Promise<void> {
+		const sessionId = this.sessionId;
+		const folder = sessionId ? this.pullRequests.folderFor(sessionId) : undefined;
+		if (!folder) {
+			return;
+		}
+		this.stackView = await this.pullRequests.stack(folder, branch).catch(() => undefined);
+		this.renderSoon();
+	}
+
+	private async restackStack(folder: string, branch: string): Promise<void> {
+		const { confirmed } = await this.dialogService.confirm({
+			message: localize('voltPr.confirmRestack', "Restack the stack?"),
+			detail: localize('voltPr.confirmRestackDetail', "Each layer above a parent that changed moves onto it. The moved layers are pushed with --force-with-lease, and nothing else is rewritten."),
+			primaryButton: localize('voltPr.restackButton', "Restack"),
+		});
+		if (!confirmed) {
+			return;
+		}
+		await this.run(localize('voltPr.restackBusy', "Restacking the stack…"), async () => {
+			const outcome = await this.pullRequests.restack(folder, branch, false);
+			if (outcome.stopped) {
+				this.notificationService.warn(localize('voltPr.restackStopped', "Restack stopped at {0}: {1}", outcome.stopped.branch, outcome.stopped.message));
+			} else if (outcome.pushFailures.length) {
+				this.notificationService.warn(localize('voltPr.restackPushFailed', "Restacked locally, but the remote refused {0} push(es) because someone else pushed. Pull, then restack again.", outcome.pushFailures.length));
+			} else {
+				this.notificationService.info(outcome.restacked.length ? localize('voltPr.restacked', "Restacked {0} layer(s) and pushed them.", outcome.restacked.length) : localize('voltPr.restackUpToDate', "The stack is up to date."));
+			}
+		});
+	}
+
+	private async stackNewBranch(folder: string): Promise<void> {
+		const title = await this.quickInputService.input({
+			prompt: localize('voltPr.stackTitlePrompt', "Name the new layer"),
+			placeHolder: localize('voltPr.stackTitleHint', "What this change does. It becomes the branch name."),
+		});
+		if (!title?.trim()) {
+			return;
+		}
+		await this.run(localize('voltPr.stackBusy', "Stacking a branch…"), async () => {
+			const made = await this.pullRequests.stackNewBranch(folder, title.trim());
+			this.notificationService.info(localize('voltPr.stacked', "Checked out {0} on top of {1}. Commit, then open its pull request against {1}.", made.branch, made.parent));
 		});
 	}
 
@@ -822,6 +947,8 @@ export class AgentPullRequestView extends Disposable {
 		this.renderLabels(meta, pr);
 		this.renderMergeNotice(body, pr);
 
+		this.renderStack(body, pr);
+
 		const description = this.foldSection(body, 'description', localize('voltPr.description', "Description"));
 		if (description) {
 			const text = append(description, $('.volt-pr-markdown'));
@@ -843,6 +970,8 @@ export class AgentPullRequestView extends Disposable {
 		if (checks) {
 			this.renderChecks(checks, pr);
 		}
+
+		this.renderAutoReview(body, pr);
 
 		const items = this.commentItems(pr);
 		const comments = this.foldSection(body, 'comments', localize('voltPr.commentsCount', "Comments ({0})", items.length), header => {
@@ -886,6 +1015,70 @@ export class AgentPullRequestView extends Disposable {
 			notice.appendChild(renderIcon(Codicon.clock));
 			append(notice, $('span')).textContent = localize('voltPr.autoOnNotice', "Auto-merge is on: it merges once checks pass and reviews allow.");
 		}
+	}
+
+	/** Bugbot-style findings of the automatic (or a manual) review of the pull request's head. */
+	private renderAutoReview(parent: HTMLElement, pr: IVoltPullRequestDetail): void {
+		const key = prKey(pr.repo, pr.number);
+		const record = this.reviews.record(key);
+		const open = openFindingsSorted(record?.findings ?? []);
+		const title = open.length ? localize('voltPr.reviewCount', "Review ({0})", open.length) : localize('voltPr.reviewTitle', "Review");
+		const section = this.foldSection(parent, 'review', title, header => {
+			this.button(header, localize('voltPr.reviewNow', "Review Now"), () => void this.run(localize('voltPr.reviewNowBusy', "Reviewing…"), () => this.reviews.reviewNow(key), false), 'ghost', Codicon.search);
+		});
+		if (!section) {
+			return;
+		}
+		if (!record) {
+			section.classList.add('volt-pr-review-empty');
+			append(section, $('.muted')).textContent = localize('voltPr.reviewNone', "Not reviewed yet. Review Now checks this head; the volt.pullRequests.autoReview setting ({0}) reviews it when it changes.", this.configurationService.getValue<string>(AGENT_PR_AUTO_REVIEW_SETTING) ?? 'off');
+			return;
+		}
+		if (record.state === 'running') {
+			append(section, $('.muted')).textContent = localize('voltPr.reviewRunning', "Reviewing {0}…", record.headSha.slice(0, 7));
+			return;
+		}
+		if (record.state === 'failed') {
+			append(section, $('.volt-pr-review-error')).textContent = localize('voltPr.reviewFailed', "The review of {0} failed: {1}", record.headSha.slice(0, 7), record.error ?? '');
+		}
+		if (!open.length) {
+			if (record.state === 'done') {
+				append(section, $('.muted')).textContent = localize('voltPr.reviewClean', "No open findings on {0}.", record.headSha.slice(0, 7));
+			}
+			return;
+		}
+		const list = append(section, $('ul.volt-pr-review-findings'));
+		for (const finding of open) {
+			this.renderFinding(list, key, finding);
+		}
+	}
+
+	private renderFinding(parent: HTMLElement, key: string, finding: IReviewFinding): void {
+		const item = append(parent, $('li.volt-pr-review-finding'));
+		item.classList.add(`severity-${finding.severity}`);
+		const top = append(item, $('.volt-pr-review-top'));
+		append(top, $(`span.volt-pr-review-severity.${finding.severity}`)).textContent = reviewSeverityLabel(finding.severity);
+		const location = append(top, $('button.volt-pr-review-location')) as HTMLButtonElement;
+		location.type = 'button';
+		location.textContent = `${finding.file}:${finding.line}`;
+		this.onClick(location, () => void this.openFindingFile(key, finding));
+		append(item, $('.volt-pr-review-title')).textContent = finding.title;
+		if (finding.explanation) {
+			append(item, $('.volt-pr-review-explanation')).textContent = finding.explanation;
+		}
+		const actions = append(item, $('.volt-pr-review-actions'));
+		this.button(actions, localize('voltPr.reviewFix', "Fix in Chat"), () => void this.run(localize('voltPr.reviewFixBusy', "Sending to the chat…"), () => this.reviews.fixInChat(key, finding), false), 'secondary', Codicon.wrench);
+		this.button(actions, localize('voltPr.reviewDismiss', "Dismiss"), () => this.reviews.setDismissed(key, finding.id, true), 'ghost', Codicon.close);
+	}
+
+	private async openFindingFile(key: string, finding: IReviewFinding): Promise<void> {
+		const chat = this.pullRequests.sessionsFor(key)[0];
+		const folder = chat ? this.pullRequests.folderFor(chat) : undefined;
+		if (!folder) {
+			this.notificationService.info(localize('voltPr.reviewNoFolder', "Link the pull request to a chat in a project to open {0}.", finding.file));
+			return;
+		}
+		await this.openerService.open(joinPath(URI.file(folder), finding.file), { fromUserGesture: true });
 	}
 
 	/** A collapsible section with a sticky header; returns its body, or undefined while folded. */

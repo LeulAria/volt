@@ -142,6 +142,10 @@ export class AgentPullRequestCreateView extends Disposable {
 			this.existing = existing.find(pr => pr.state === 'open' || pr.state === 'draft');
 			this.branches = branches.filter(branch => branch !== repo.branch);
 			this.base = this.branches[0];
+			const parent = repo.branch ? (await this.pullRequests.stack(folder, repo.branch).catch(() => undefined))?.stack.layers.find(layer => layer.branch === repo.branch)?.parent : undefined;
+			if (parent && this.branches.includes(parent)) {
+				this.base = parent;
+			}
 			this.error = undefined;
 		} catch (err) {
 			if (seq === this.loadSeq) {
@@ -229,8 +233,8 @@ export class AgentPullRequestCreateView extends Disposable {
 			this.renderProblem(body);
 			return;
 		}
-		if (repo.provider !== 'github') {
-			this.renderProblem(body, localize('voltPr.create.onlyGithub', "Volt opens pull requests on GitHub and GitHub Enterprise."));
+		if (repo.provider === 'unknown') {
+			this.renderProblem(body, localize('voltPr.create.onlyKnown', "Volt opens pull requests on GitHub, GitLab, Bitbucket, Gitea, Forgejo and Azure DevOps. Sign in to this server first."));
 			return;
 		}
 		if (!repo.branch) {

@@ -210,8 +210,8 @@ export class AgentPullRequestsViewPane extends ViewPane {
 			this.empty(localize('voltPr.list.noChat', "Open a chat in a GitHub project to see its pull requests."));
 			return;
 		}
-		if (this.repo && this.repo.provider !== 'github') {
-			this.empty(localize('voltPr.list.unsupported', "This project's remote is not on GitHub. Volt reads pull requests from GitHub and GitHub Enterprise."));
+		if (this.repo && this.repo.provider === 'unknown') {
+			this.empty(localize('voltPr.list.unsupported', "Volt does not know this project's code host yet. Sign in to it to read its pull requests."));
 			return;
 		}
 		if (!this.repo && !this.loading && !this.error) {

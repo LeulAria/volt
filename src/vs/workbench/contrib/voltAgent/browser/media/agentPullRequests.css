@@ -1714,6 +1714,67 @@
 	padding: 4px 0 14px;
 }
 
+.volt-pr-stack {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.volt-pr-stack-layer {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	min-height: 28px;
+	padding: 4px 8px;
+	border-radius: 6px;
+	font-size: 12.5px;
+}
+
+.volt-pr-stack-layer:not(.current):hover {
+	cursor: pointer;
+	background: var(--volt-pr-surface-strong);
+}
+
+.volt-pr-stack-layer.current {
+	background: var(--volt-pr-surface-strong);
+	font-weight: 600;
+}
+
+.volt-pr-stack-layer .codicon {
+	font-size: 13px;
+}
+
+.volt-pr-stack-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-stack-chips {
+	display: inline-flex;
+	gap: 4px;
+	margin-left: auto;
+}
+
+.volt-pr-stack-chip {
+	padding: 0 6px;
+	border: 1px solid var(--volt-pr-border);
+	border-radius: 999px;
+	font-size: 11px;
+	color: var(--volt-pr-muted);
+	white-space: nowrap;
+}
+
+.volt-pr-stack-chip.warning {
+	color: var(--volt-pr-pending);
+	border-color: color-mix(in srgb, var(--volt-pr-pending) 45%, transparent);
+}
+
 .volt-pr-empty {
 	font-size: 12.5px;
 	padding: 2px 0 6px;
@@ -2791,7 +2852,7 @@
 
 /* ---- The chat's pull request in the side panel (Quick Open Actions) ------------------------ */
 
-/* One list row in three parts, as Cursor draws it: #8: title | checks ⌄ | Merge. */
+/* One list row in three parts, as Cursor draws it: #8: title | checks menu | Merge. */
 .volt-agent-quick-open-actions .volt-agent-dock-row.volt-pr-dock {
 	gap: 0;
 	padding: 0;
@@ -2897,3 +2958,79 @@
 	--volt-pr-merge-accent-hover: #8f1f45;
 }
 
+
+/* Automatic review findings (Review section of the pull request summary). */
+.volt-pr-review-findings {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.volt-pr-review-finding {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px 10px;
+	border: 1px solid var(--vscode-widget-border, transparent);
+	border-left-width: 3px;
+	border-radius: 6px;
+}
+
+.volt-pr-review-finding.severity-high {
+	border-left-color: var(--vscode-errorForeground);
+}
+
+.volt-pr-review-finding.severity-medium {
+	border-left-color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-pr-review-finding.severity-low {
+	border-left-color: var(--vscode-descriptionForeground);
+}
+
+.volt-pr-review-top {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-pr-review-severity {
+	font-size: 11px;
+	text-transform: uppercase;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pr-review-location {
+	background: none;
+	border: none;
+	padding: 0;
+	cursor: pointer;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	color: var(--vscode-textLink-foreground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-pr-review-title {
+	font-weight: 600;
+}
+
+.volt-pr-review-explanation {
+	color: var(--vscode-descriptionForeground);
+	white-space: pre-wrap;
+}
+
+.volt-pr-review-actions {
+	display: flex;
+	gap: 6px;
+}
+
+.volt-pr-review-error {
+	color: var(--vscode-errorForeground);
+}

@@ -476,7 +476,7 @@ const TOOL_PREFIX_RE = /^(?:mcp__volt__|volt[-_:]\s*|volt\.)/i;
  * (Claude), `volt: browser_click` or `volt-browser_click: browser_click` (Cursor).
  */
 /** Pull request tools (registered by the pull request service): safe, they only change Volt's own state. */
-export const PULL_REQUEST_TOOL_NAMES = ['link_pull_request', 'unlink_pull_request', 'list_thread_pull_requests', 'watch_pull_request', 'unwatch_pull_request'] as const;
+export const PULL_REQUEST_TOOL_NAMES = ['link_pull_request', 'unlink_pull_request', 'list_thread_pull_requests', 'watch_pull_request', 'unwatch_pull_request', 'stack_status', 'stack_branch', 'restack_stack'] as const;
 
 /** Scheduled task tools (registered by the schedule service): they only change Volt's own state. */
 export const SCHEDULE_TOOL_NAMES = ['schedule_task', 'list_scheduled_tasks', 'update_scheduled_task', 'delete_scheduled_task', 'run_scheduled_task_now'] as const;

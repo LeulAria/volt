@@ -18,12 +18,19 @@ import { INotificationService, Severity } from '../../../../../platform/notifica
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { ILifecycleService } from '../../../../services/lifecycle/common/lifecycle.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
+import { ISecretStorageService } from '../../../../../platform/secrets/common/secrets.js';
 import { parsePullRequestUrl, prKey } from '../../../../../platform/voltPullRequests/common/voltPullRequestParse.js';
+import { buildRestackConflictPrompt } from '../../../../../platform/voltPullRequests/common/voltPrStacks.js';
 import {
+	IVoltPrAccount,
 	IVoltPrCreateRequest,
+	IVoltPrHostCredential,
 	IVoltPrRepo,
 	IVoltPrRepoRef,
 	IVoltPrRequest,
+	IVoltPrRestackOutcome,
+	IVoltPrSignInRequest,
+	IVoltPrStackView,
 	IVoltPullRequest,
 	IVoltPullRequestDetail,
 	IVoltPullRequestService,
@@ -120,6 +127,12 @@ export interface IAgentPullRequestService {
 	/** Pushes the branch when needed, opens the pull request, and links it to the chat. */
 	create(sessionId: string | undefined, folder: string, options: IAgentPrCreateOptions): Promise<IVoltPullRequest>;
 	generatePullRequestText(folder: string, base: string, sessionId?: string): Promise<{ title: string; body: string } | undefined>;
+	/** The stack a folder's branch (the checked out one by default) is in, bottom first, with each layer's pull request. */
+	stack(folder: string, branch?: string): Promise<IVoltPrStackView | undefined>;
+	/** Makes a layer on the checked out branch of `folder`, named from `title`, and checks it out. */
+	stackNewBranch(folder: string, title: string): Promise<{ readonly branch: string; readonly parent: string }>;
+	/** Restacks the stack `branch` is in and refreshes the pull requests it touched. */
+	restack(folder: string, branch: string | undefined, syncTrunk: boolean): Promise<IVoltPrRestackOutcome>;
 	/** A message for committing everything, or exactly `paths`. */
 	generateCommitMessage(folder: string, sessionId?: string, paths?: readonly string[]): Promise<string | undefined>;
 	/** The merge method last picked for a repository. */
@@ -127,6 +140,12 @@ export interface IAgentPullRequestService {
 	rememberMergeMethod(repo: IVoltPrRepoRef, method: VoltPrMergeMethod): void;
 	/** What stopped the last sync of a host (no CLI, signed out); undefined when it works. */
 	hostProblem(host: string): { readonly code: VoltPrErrorCode; readonly message: string } | undefined;
+	/** Checks a token against its host, keeps it in secret storage, and syncs with it. */
+	signInHost(request: IVoltPrSignInRequest): Promise<IVoltPrAccount>;
+	/** Forgets the token Volt holds for a host. */
+	signOutHost(host: string): Promise<void>;
+	/** The hosts Volt holds a token for (never the tokens themselves). */
+	signedInHosts(): readonly IVoltPrHostCredential[];
 }
 
 const STORE_VERSION = 1;
@@ -144,6 +163,8 @@ const ORIGIN_TTL_MS = 60_000;
 const DETAIL_TTL_MS = 8_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
 const MERGE_METHOD_KEY = 'volt.pullRequests.mergeMethods';
+/** Tokens the user gave Volt for code hosts other than GitHub (secret storage, JSON). */
+const HOST_TOKENS_KEY = 'volt.pullRequests.hostTokens';
 
 interface IStoreFile {
 	readonly version: number;
@@ -188,6 +209,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	private readonly configWatches = this._register(new DisposableMap<string>());
 	private readonly details = new Map<string, { at: number; detail: Promise<IVoltPullRequestDetail> }>();
 	private readonly hosts = new Map<string, IHostState>();
+	private hostTokens: IVoltPrHostCredential[] = [];
 	/** When each pull request was last read in a watch pass. */
 	private readonly watchedAt = new Map<string, number>();
 	private readonly linkLocks = new SequencerByKey<string>();
@@ -214,10 +236,11 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		@INotificationService private readonly notificationService: INotificationService,
 		@ILifecycleService lifecycleService: ILifecycleService,
 		@IHostService hostService: IHostService,
+		@ISecretStorageService private readonly secretStorage: ISecretStorageService,
 	) {
 		super();
 		this.storeFile = joinPath(environmentService.userRoamingDataHome, 'voltPullRequests', 'links.json');
-		this.whenReady = this.load();
+		this.whenReady = Promise.all([this.load(), this.loadHostTokens()]).then(() => undefined);
 		this._register(hostTools.registerToolProvider({
 			tools: PULL_REQUEST_TOOLS,
 			invoke: (name, args, call) => this.invokeTool(name, args, call),
@@ -380,6 +403,56 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 
 	hostProblem(host: string): { readonly code: VoltPrErrorCode; readonly message: string } | undefined {
 		return this.hosts.get(host.toLowerCase())?.problem;
+	}
+
+	signedInHosts(): readonly IVoltPrHostCredential[] {
+		return this.hostTokens;
+	}
+
+	async signInHost(request: IVoltPrSignInRequest): Promise<IVoltPrAccount> {
+		const account = await this.api.signInHost(request);
+		const credential: IVoltPrHostCredential = { host: account.host, provider: request.provider, token: request.token.trim(), login: account.login, ...(request.webUrl ? { webUrl: request.webUrl } : {}), ...(request.username ? { username: request.username } : {}) };
+		await this.saveHostTokens([...this.hostTokens.filter(existing => existing.host !== account.host), credential]);
+		this.hosts.clear();
+		void this.tick(true);
+		return account;
+	}
+
+	async signOutHost(host: string): Promise<void> {
+		await this.saveHostTokens(this.hostTokens.filter(existing => existing.host !== host.toLowerCase()));
+		this.hosts.clear();
+		void this.tick(true);
+	}
+
+	private async loadHostTokens(): Promise<void> {
+		try {
+			const raw = await this.secretStorage.get(HOST_TOKENS_KEY);
+			this.hostTokens = raw ? JSON.parse(raw) as IVoltPrHostCredential[] : [];
+		} catch (err) {
+			this.logService.warn('[volt pull requests] could not read host tokens', err);
+			this.hostTokens = [];
+		}
+		await this.api.setHostCredentials(this.hostTokens);
+	}
+
+	private async saveHostTokens(credentials: IVoltPrHostCredential[]): Promise<void> {
+		this.hostTokens = credentials;
+		await this.secretStorage.set(HOST_TOKENS_KEY, JSON.stringify(credentials));
+		await this.api.setHostCredentials(credentials);
+	}
+
+	stack(folder: string, branch?: string): Promise<IVoltPrStackView | undefined> {
+		return this.api.stack({ folder, branch });
+	}
+
+	stackNewBranch(folder: string, title: string): Promise<{ readonly branch: string; readonly parent: string }> {
+		return this.api.stackNewBranch({ folder, title });
+	}
+
+	async restack(folder: string, branch: string | undefined, syncTrunk: boolean): Promise<IVoltPrRestackOutcome> {
+		const outcome = await this.api.restack({ folder, branch, syncTrunk });
+		void this.refresh();
+		return outcome;
 	}
 
 	folderFor(sessionId: string): string | undefined {
@@ -1083,6 +1156,36 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 					this.unwatch(sessionId, key);
 					return json({ host: ref.repo.host, repository: `${ref.repo.owner}/${ref.repo.name}`, number: ref.number, watching: false, wasWatching });
 				}
+				case STACK_STATUS_TOOL: {
+					const folder = this.folderFor(sessionId);
+					const view = folder ? await this.api.stack({ folder, branch: typeof args.branch === 'string' && args.branch.trim() ? args.branch.trim() : undefined }) : undefined;
+					return view ? json(describeStack(view)) : { error: 'This chat is not in a git repository.' };
+				}
+				case STACK_BRANCH_TOOL: {
+					const folder = this.folderFor(sessionId);
+					const title = typeof args.title === 'string' ? args.title.trim() : '';
+					if (!folder) {
+						return { error: 'This chat is not in a git repository.' };
+					}
+					if (!title) {
+						return { error: 'Give a title for the new layer.' };
+					}
+					return json(await this.api.stackNewBranch({ folder, title }));
+				}
+				case RESTACK_TOOL: {
+					const folder = this.folderFor(sessionId);
+					if (!folder) {
+						return { error: 'This chat is not in a git repository.' };
+					}
+					const branch = typeof args.branch === 'string' && args.branch.trim() ? args.branch.trim() : undefined;
+					const outcome = await this.api.restack({ folder, branch, syncTrunk: args.sync_trunk === true });
+					if (!outcome.stopped) {
+						return json(outcome);
+					}
+					const view = await this.api.stack({ folder, branch });
+					const stackBranches = view?.stack.layers.map(layer => layer.branch) ?? [outcome.stopped.branch];
+					return json({ ...outcome, prompt: buildRestackConflictPrompt(outcome.stopped, stackBranches) });
+				}
 				default:
 					return { error: `Unknown tool ${name}` };
 			}
@@ -1099,6 +1202,9 @@ const UNLINK_TOOL = 'unlink_pull_request';
 const LIST_TOOL = 'list_thread_pull_requests';
 const WATCH_TOOL = 'watch_pull_request';
 const UNWATCH_TOOL = 'unwatch_pull_request';
+const STACK_STATUS_TOOL = 'stack_status';
+const STACK_BRANCH_TOOL = 'stack_branch';
+const RESTACK_TOOL = 'restack_stack';
 
 const TARGET_SCHEMA = {
 	type: 'object',
@@ -1147,10 +1253,48 @@ export const PULL_REQUEST_TOOLS: readonly IVoltHostToolInfo[] = [
 		description: 'Stop watching a pull request for this chat (or thread_id). It stays linked.',
 		inputSchema: TARGET_SCHEMA,
 	},
+	{
+		name: STACK_STATUS_TOOL,
+		title: 'Stack',
+		group: 'pullRequests',
+		description: 'Read the stack the branch (the checked out one by default) is in, bottom first: each layer\'s parent, commits ahead, whether it needs a restack, is unpushed, or has a rebase waiting, and its pull request.',
+		inputSchema: { type: 'object', properties: { branch: { type: 'string', description: 'A branch of the stack. Default: the checked out branch.' } } },
+	},
+	{
+		name: STACK_BRANCH_TOOL,
+		title: 'Stacked branch',
+		group: 'pullRequests',
+		description: 'Make a new layer on top of the checked out branch: a branch named from the title that records the current branch as its parent, so its pull request targets that branch. Commit the work on it afterwards and open the pull request with base set to the parent.',
+		inputSchema: { type: 'object', properties: { title: { type: 'string', description: 'What the layer does; becomes the branch name (volt/<slug>).' } }, required: ['title'] },
+	},
+	{
+		name: RESTACK_TOOL,
+		title: 'Restacked',
+		group: 'pullRequests',
+		description: 'Restack the stack the branch is in: move each layer above a parent that changed (amended, rebased, or squash-merged) onto it, then push the moved layers with a lease. Children of merged parents are retargeted to the grandparent and their pull requests changed to match. When it stops on a conflict, follow the prompt it returns: resolve the files in the rebase it leaves, then call this tool again.',
+		inputSchema: { type: 'object', properties: { branch: { type: 'string', description: 'A branch of the stack. Default: the checked out branch.' }, sync_trunk: { type: 'boolean', description: 'Also move the bottom layer onto the latest trunk.' } } },
+	},
 ];
 
 function json(value: unknown): IVoltHostToolResult {
 	return { text: JSON.stringify(value, null, 2) };
+}
+
+function describeStack(view: IVoltPrStackView): Record<string, unknown> {
+	return {
+		trunk: view.stack.trunk,
+		current: view.stack.current,
+		layers: view.layers.map(({ layer, pullRequest }) => ({
+			branch: layer.branch,
+			parent: layer.parent,
+			ahead: layer.ahead,
+			needsRestack: layer.needsRestack,
+			unpushed: layer.unpushed,
+			dirty: layer.dirty ?? false,
+			rebaseInProgress: layer.rebaseInProgress ?? false,
+			...(pullRequest ? { number: pullRequest.number, url: pullRequest.url, state: pullRequest.state, baseRefName: pullRequest.baseRefName } : {}),
+		})),
+	};
 }
 
 function describeLink(link: IAgentPrLink): Record<string, unknown> {

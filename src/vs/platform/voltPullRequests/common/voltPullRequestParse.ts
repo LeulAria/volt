@@ -32,6 +32,7 @@ import {
 	VoltPrState,
 	VoltPrViewedState,
 } from './voltPullRequests.js';
+import { hostName, hostProductLabel, parseChangeRequestUrl, providerForKnownHost } from './voltPrHosts.js';
 
 //#region Remotes
 
@@ -47,7 +48,7 @@ export interface IParsedRemote {
  * (`dev.azure.com/org/project/_git/repo`, `org@vs-ssh.visualstudio.com:v3/org/project/repo`).
  * `githubHosts` are hosts with a GitHub CLI login, so Enterprise servers count as GitHub.
  */
-export function parseRemoteUrl(url: string, githubHosts: ReadonlySet<string> = new Set()): IParsedRemote | undefined {
+export function parseRemoteUrl(url: string, githubHosts: ReadonlySet<string> = new Set(), knownHosts?: ReadonlyMap<string, VoltPrProvider>): IParsedRemote | undefined {
 	const raw = url.trim();
 	if (!raw) {
 		return undefined;
@@ -68,19 +69,24 @@ export function parseRemoteUrl(url: string, githubHosts: ReadonlySet<string> = n
 		if (!/^(https?|ssh|git|git\+ssh):$/.test(parsed.protocol)) {
 			return undefined;
 		}
-		host = parsed.hostname;
+		// The web port is part of the host (a server on :3000); an SSH port is not where the API is.
+		host = /^https?:$/.test(parsed.protocol) ? parsed.host : parsed.hostname;
 		path = decodeURIComponent(parsed.pathname);
 	}
 	host = host.toLowerCase();
 	const parts = path.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').split('/').filter(Boolean);
-	if (host === 'dev.azure.com' || host.endsWith('.dev.azure.com') || host.endsWith('.visualstudio.com')) {
-		// https: org/project/_git/repo; ssh: v3/org/project/repo
-		const git = parts.indexOf('_git');
-		if (git >= 1 && parts[git + 1]) {
-			return { host: 'dev.azure.com', owner: parts.slice(0, git).join('/'), name: parts[git + 1], provider: 'azure' };
-		}
+	const bare = hostName(host);
+	if (bare === 'dev.azure.com' || bare.endsWith('.dev.azure.com') || bare.endsWith('.visualstudio.com')) {
+		// https: org/project/_git/repo (org.visualstudio.com/[DefaultCollection/]project/_git/repo); ssh: v3/org/project/repo
 		if (parts[0] === 'v3' && parts.length >= 4) {
 			return { host: 'dev.azure.com', owner: `${parts[1]}/${parts[2]}`, name: parts[3], provider: 'azure' };
+		}
+		const git = parts.indexOf('_git');
+		if (git >= 1 && parts[git + 1]) {
+			const before = parts.slice(0, git).filter(part => part.toLowerCase() !== 'defaultcollection');
+			const org = bare.endsWith('.visualstudio.com') && !bare.startsWith('vs-ssh.') ? bare.slice(0, -'.visualstudio.com'.length) : undefined;
+			const owner = (org ? [org, ...before] : before).slice(0, 2).join('/');
+			return owner.includes('/') ? { host: 'dev.azure.com', owner, name: parts[git + 1], provider: 'azure' } : undefined;
 		}
 		return undefined;
 	}
@@ -90,27 +96,15 @@ export function parseRemoteUrl(url: string, githubHosts: ReadonlySet<string> = n
 	// GitLab groups nest; everything before the last segment is the namespace.
 	const name = parts[parts.length - 1];
 	const owner = parts.slice(0, -1).join('/');
-	return { host, owner, name, provider: providerForHost(host, githubHosts) };
+	return { host, owner, name, provider: knownHosts?.get(host) ?? providerForHost(host, githubHosts) };
 }
 
 export function providerForHost(host: string, githubHosts: ReadonlySet<string> = new Set()): VoltPrProvider {
 	const h = host.toLowerCase();
-	if (h === 'github.com' || h === 'ssh.github.com' || h.endsWith('.ghe.com') || githubHosts.has(h)) {
+	if (githubHosts.has(h)) {
 		return 'github';
 	}
-	if (h === 'gitlab.com' || h.startsWith('gitlab.')) {
-		return 'gitlab';
-	}
-	if (h === 'bitbucket.org' || h.startsWith('bitbucket.')) {
-		return 'bitbucket';
-	}
-	if (h === 'codeberg.org' || h === 'gitea.com' || h.startsWith('gitea.') || h.startsWith('forgejo.')) {
-		return 'gitea';
-	}
-	if (h === 'dev.azure.com' || h.endsWith('.dev.azure.com') || h.endsWith('.visualstudio.com')) {
-		return 'azure';
-	}
-	return 'unknown';
+	return providerForKnownHost(h);
 }
 
 /** `ssh.github.com` is GitHub's SSH-over-443 alias; the API lives on github.com. */
@@ -119,40 +113,17 @@ export function apiHost(host: string): string {
 }
 
 export function providerLabel(provider: VoltPrProvider): string {
-	switch (provider) {
-		case 'github': return 'GitHub';
-		case 'gitlab': return 'GitLab';
-		case 'bitbucket': return 'Bitbucket';
-		case 'gitea': return 'Gitea / Forgejo';
-		case 'azure': return 'Azure DevOps';
-		case 'unknown': return 'this host';
-	}
+	return hostProductLabel(provider);
 }
 
 export function prKey(repo: IVoltPrRepoRef, number: number): string {
 	return `${repo.host}/${repo.owner}/${repo.name}#${number}`.toLowerCase();
 }
 
-/** `https://github.com/o/n/pull/12` (and Enterprise hosts) → repo and number. */
+/** A pull request (merge request) URL on any host Volt knows (see {@link parseChangeRequestUrl}) → repo and number. */
 export function parsePullRequestUrl(url: string): { repo: IVoltPrRepoRef; number: number } | undefined {
-	let parsed: URL;
-	try {
-		parsed = new URL(url.trim());
-	} catch {
-		return undefined;
-	}
-	if (!/^https?:$/.test(parsed.protocol)) {
-		return undefined;
-	}
-	const match = /^\/([^/]+)\/([^/]+)\/pulls?\/(\d+)(?:\/.*)?$/.exec(parsed.pathname);
-	if (!match) {
-		return undefined;
-	}
-	const number = Number(match[3]);
-	if (!Number.isSafeInteger(number) || number <= 0) {
-		return undefined;
-	}
-	return { repo: { host: parsed.hostname.toLowerCase(), owner: match[1], name: match[2].replace(/\.git$/i, '') }, number };
+	const parsed = parseChangeRequestUrl(url);
+	return parsed ? { repo: parsed.repo, number: parsed.number } : undefined;
 }
 
 //#endregion

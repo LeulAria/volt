@@ -232,7 +232,7 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 			return cached.pr;
 		}
 		const repo = await this.pullRequests.repoForFolder(folder);
-		if (!repo || repo.provider !== 'github') {
+		if (!repo || repo.provider === 'unknown') {
 			return undefined;
 		}
 		try {
@@ -405,8 +405,8 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 				this.setProgress(folder, localize('voltGit.stage.prepare', "Preparing pull request…"));
 				const repo = await this.pullRequests.repoForFolder(folder, true);
 				const branch = repo?.branch;
-				if (!repo || repo.provider !== 'github' || !branch) {
-					throw new Error(localize('voltGit.noGithub', "This repository has no GitHub remote to open a pull request on."));
+				if (!repo || repo.provider === 'unknown' || !branch) {
+					throw new Error(localize('voltGit.noGithub', "This repository has no code host remote to open a pull request on."));
 				}
 				const existing = await this.openPrFor(folder, branch, sessionId, true);
 				if (existing) {
@@ -489,7 +489,7 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 		const existing: string[] = [];
 		try {
 			const repo = await this.pullRequests.repoForFolder(folder);
-			if (repo?.provider === 'github') {
+			if (repo && repo.provider !== 'unknown') {
 				existing.push(...await this.pullRequests.api.remoteBranches({ repo: { host: repo.host, owner: repo.owner, name: repo.name } }));
 			}
 		} catch (err) {
