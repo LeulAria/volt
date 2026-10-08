@@ -1,0 +1,20 @@
+{
+  "name": "volt-mobile-widgets",
+  "version": "0.1.0",
+  "description": "Live Activities, Dynamic Island and home-screen widgets for the Volt mobile app (Expo config plugin + native module).",
+  "license": "MIT",
+  "author": "Volt ADK",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": ["src", "server", "ios", "targets", "plugin", "app.plugin.js", "expo-module.config.json", "brands"],
+  "scripts": {
+    "test": "node --test 'test/*.test.ts'",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "brands": "node scripts/genBrands.mjs"
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

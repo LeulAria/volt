@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true,
+    "lib": ["es2022"],
+    "types": ["node"]
+  },
+  "include": ["src/model.ts", "src/serverShapes.ts", "src/steps.ts", "src/agentState.ts", "src/planner.ts", "src/widgetData.ts", "src/apns.ts", "server/*.ts", "test/*.ts"]
+}
