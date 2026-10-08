@@ -98,9 +98,15 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 			this.sandboxes.set(id, launch);
 			this.sandboxTags.set(launch.tag, id);
 		}
+		const env = { ...await this.env(), ...options.env, ...sandboxEnv };
+		if (launch) {
+			// Diagnostics for sandboxed spawns: exactly what runs, where, from which parent and with which env names.
+			this.logService.info(`[volt-sandbox-spawn] ${id} ppid=${process.pid} cwd=${options.cwd ?? ''} argv=${JSON.stringify([command, ...args.filter(arg => arg.length < 200)])}`);
+			this.logService.info(`[volt-sandbox-spawn] ${id} env=${Object.keys(env).sort().join(',')}`);
+		}
 		const child = spawn(command, args, {
 			cwd: options.cwd,
-			env: { ...await this.env(), ...options.env, ...sandboxEnv },
+			env,
 			stdio: ['pipe', 'pipe', 'pipe'],
 			// Its own process group, so stopping it also stops the workers it starts.
 			detached: process.platform !== 'win32',

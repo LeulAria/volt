@@ -28,6 +28,13 @@ suite('Volt sandbox policy', () => {
 		assert.strictEqual(normalizeSandboxLevel(undefined), 'off');
 	});
 
+	test('cursor: the CLI may save its own settings (cli-config.json) but not its hooks or MCP config', () => {
+		const plan = resolveSandboxPlan({ ...request(), providerId: 'cursor-acp' }, MAC);
+		assert.ok(planAllowsWrite(plan, `${MAC.home}/.cursor/cli-config.json`), 'choosing a model rewrites it');
+		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/hooks.json`));
+		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/mcp.json`));
+	});
+
 	test('workspace-write: workspace, temp and the agent state are writable; nothing else', () => {
 		const plan = resolveSandboxPlan(request(), MAC);
 		assert.ok(planAllowsWrite(plan, '/Users/me/repo/src/a.ts'));
