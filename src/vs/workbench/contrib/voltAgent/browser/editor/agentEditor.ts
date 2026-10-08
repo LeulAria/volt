@@ -110,7 +110,7 @@ import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
-import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend } from '../../../../services/voltRuntime/common/compaction.js';
+import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend, shouldOfferCompactChip } from '../../../../services/voltRuntime/common/compaction.js';
 import type { IVoltEvent } from '../../../../services/voltRuntime/common/events.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
@@ -5155,7 +5155,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		const threshold = this.configurationService.getValue<number>(COMPACT_CHIP_THRESHOLD_SETTING);
 		const percent = typeof threshold === 'number' && threshold > 0 && threshold <= 100 ? threshold : COMPACT_CHIP_PERCENT;
-		return this.contextPercent >= percent || this.compactsBeforeSend('');
+		const plan = this.compactPlan();
+		return shouldOfferCompactChip({ usedTokens: this.contextUsedTokens, percentFull: this.contextPercent, thresholdPercent: percent, compactedTokens: plan?.kind === 'handoff' ? plan.tokens : undefined })
+			|| this.compactsBeforeSend('');
 	}
 
 	private toggleCompactFirst(): void {

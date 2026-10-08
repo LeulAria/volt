@@ -47,6 +47,28 @@ export const COMPACT_OLD_THREADS_SETTING = 'volt.agent.compactOldThreads';
 /** Context meter fill (percent) from which the composer offers "Compact first". */
 export const COMPACT_CHIP_THRESHOLD_SETTING = 'volt.agent.compactChipThreshold';
 
+/** Below this a compaction saves little: the system prompt and tool definitions alone take about 20K. */
+export const COMPACT_CHIP_MIN_TOKENS = 60_000;
+
+export interface ICompactChipInput {
+	readonly usedTokens: number;
+	/** The context as a share of the model's window, 0-100. */
+	readonly percentFull: number;
+	readonly thresholdPercent: number;
+	/** What the conversation shrinks to, when known (a Volt handoff summary). */
+	readonly compactedTokens?: number;
+}
+
+/**
+ * Whether the composer offers "Compact first": the chat is big enough for a summary to matter,
+ * the window is nearly full, and compacting at least halves the conversation.
+ */
+export function shouldOfferCompactChip(input: ICompactChipInput): boolean {
+	return input.usedTokens >= COMPACT_CHIP_MIN_TOKENS
+		&& input.percentFull >= input.thresholdPercent
+		&& (input.compactedTokens === undefined || input.compactedTokens * 2 <= input.usedTokens);
+}
+
 /** How long a chat must sit idle for its provider's prompt cache to be gone (an hour, plus margin). */
 export const OLD_THREAD_IDLE_MS = 70 * 60_000;
 /** Only chats this large are worth a compaction turn before the next prompt. */
