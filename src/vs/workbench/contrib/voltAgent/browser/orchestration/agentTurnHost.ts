@@ -18,7 +18,9 @@ import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/ru
 import { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { AgentRunOn, AgentWorktreeTarget } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
-import { imageAttachmentsFromMentions } from '../composer/agentMentions.js';
+import { imageAttachmentsFromMentions, resourceAttachmentsFromMentions } from '../composer/agentMentions.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
+import { IVoltResourceAttachment, MAX_EMBEDDED_RESOURCE_CHARS } from '../../../../services/voltRuntime/common/fileAttachments.js';
 import type { IAgentPromptDisplay, IAgentUserMessage } from '../editor/agentEditor.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
@@ -86,6 +88,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentWorkspaceService private readonly workspace: IAgentWorkspaceService,
 		@ILogService private readonly logService: ILogService,
+		@IFileService private readonly fileService: IFileService,
 	) {
 		super();
 		this.codec = new AgentHistoryCodec(history);
@@ -149,6 +152,11 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		const ref = turn.prompt.modelRef ?? (turn.kind === 'prompt' && !handoff ? undefined : thread.modelRef);
 		const host = (turn.prompt.host ?? {}) as IAgentPromptHostOptions;
 		const images = imageAttachmentsFromMentions(display?.mentions);
+		const resources = await this.resourcesFor(display);
+		if (!request.isCurrent()) {
+			controller.endUnstartedTurn(turn.id, undefined);
+			return undefined;
+		}
 		const send: IVoltSendRequest = {
 			text,
 			mode: normalizeVoltMode(mode),
@@ -157,6 +165,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			...(host.runOn ? { runOn: host.runOn } : {}),
 			...(host.worktreeTarget ? { worktreeTarget: host.worktreeTarget } : {}),
 			...(images.length ? { images } : {}),
+			...(resources.length ? { resources } : {}),
 		};
 		try {
 			const runId = await this.runtime.send(threadId, send);
@@ -166,6 +175,21 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			controller.endUnstartedTurn(turn.id, err instanceof Error ? err.message : String(err));
 			throw err;
 		}
+	}
+
+	/** Attached files as resources; a folded paste carries its text (read from its saved copy). */
+	private async resourcesFor(display: IAgentPromptDisplay | undefined): Promise<IVoltResourceAttachment[]> {
+		return Promise.all(resourceAttachmentsFromMentions(display?.mentions).map(async ({ pasted, ...resource }) => {
+			if (!pasted || (resource.size ?? 0) > MAX_EMBEDDED_RESOURCE_CHARS * 3) {
+				return resource;
+			}
+			try {
+				const text = (await this.fileService.readFile(URI.parse(resource.uri))).value.toString();
+				return { ...resource, text };
+			} catch {
+				return resource;
+			}
+		}));
 	}
 
 	/** The model a chat last ran on, for its sidebar row: written to its history when it changes. */

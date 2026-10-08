@@ -8,6 +8,7 @@ import { AgentRunOn, AgentWorktreeTarget } from './git/agentWorktree.js';
 import { IVoltModelOptions } from './models/modelOptions.js';
 import { VoltMode } from './modes.js';
 import type { IHandoffActivity } from './contextHandoff.js';
+import type { IVoltResourceAttachment } from './fileAttachments.js';
 
 export type VoltRunStatus = 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
 
@@ -73,6 +74,8 @@ export interface IVoltSendRequest {
 	mentions?: string[];
 	/** Images attached to this message. Native models get them as image content, ACP agents as prompt image blocks. */
 	images?: readonly IVoltImageAttachment[];
+	/** Files attached to this message (folded pastes with their text); ACP agents get resource blocks. */
+	resources?: readonly IVoltResourceAttachment[];
 	options?: IVoltModelOptions;
 	/** Same branch uses the open checkout. Worktree creates a checkout on the first send. */
 	runOn?: AgentRunOn;

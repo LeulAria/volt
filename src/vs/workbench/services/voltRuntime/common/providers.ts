@@ -9,6 +9,7 @@ import { IProviderCapabilities } from './capabilities.js';
 import { IVoltEvent } from './events.js';
 import { IModelOptionDescriptor, IVoltModelOptions } from './models/modelOptions.js';
 import { VoltMode } from './modes.js';
+import type { IVoltResourceAttachment } from './fileAttachments.js';
 import { IProviderProfile } from './profiles.js';
 import type { IToolSchema } from './tools/tool.js';
 
@@ -130,6 +131,8 @@ export interface IAgentMessage {
 	lead?: string;
 	/** Images the user attached to this turn. */
 	images?: readonly IModelImage[];
+	/** Files the user attached to this turn (see `acpResourceBlock`). */
+	resources?: readonly IVoltResourceAttachment[];
 }
 
 export interface IAgentProvider {

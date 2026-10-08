@@ -80,6 +80,13 @@ async function main(buildDir) {
         ]);
         await (0, cross_spawn_promise_1.spawn)('plutil', [
             '-replace',
+            'NSSpeechRecognitionUsageDescription',
+            '-string',
+            'Volt turns your dictation into text for the agent composer.',
+            `${infoPlistPath}`
+        ]);
+        await (0, cross_spawn_promise_1.spawn)('plutil', [
+            '-replace',
             'NSCameraUsageDescription',
             '-string',
             'An application in Visual Studio Code wants to use the Camera.',

@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentEditor.css';
+import '../media/agentComposerInput.css';
 import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
@@ -16,6 +17,7 @@ import { disposableTimeout, raceTimeout } from '../../../../../base/common/async
 import { DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename, dirname, isAbsolute } from '../../../../../base/common/path.js';
 import { joinPath } from '../../../../../base/common/resources.js';
+import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { escapeRegExpCharacters } from '../../../../../base/common/strings.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
@@ -114,6 +116,9 @@ import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { AgentLimitBanner } from '../composer/agentLimitBanner.js';
+import { AgentVoiceDictation } from '../composer/agentVoiceDictation.js';
+import { PLANS_FOLDER, planDocument, planFileName } from '../../../../services/voltRuntime/common/plans.js';
+import { AgentVoiceStrip } from '../composer/agentVoiceStrip.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend, shouldOfferCompactChip } from '../../../../services/voltRuntime/common/compaction.js';
 import type { IVoltEvent } from '../../../../services/voltRuntime/common/events.js';
@@ -618,6 +623,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private contextUsageView!: AgentContextUsageView;
 	private attachButton!: HTMLButtonElement;
 	private sendButton!: HTMLButtonElement;
+
+	private voiceDictation!: AgentVoiceDictation;
+
+	private voiceStrip!: AgentVoiceStrip;
 	private suggestEl!: HTMLElement;
 	private composerQueue!: AgentComposerQueue;
 	/** The agent's to-dos, above the chips like the Context Usage card. */
@@ -1054,6 +1063,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		append(this.composerEl, this.limitBanner.element);
 		// Subagents and queued prompts sit right on top of the text area, under the chips (Cursor).
 		append(this.composerEl, this.composerQueue.element);
+		this.voiceDictation = this._register(this.instantiationService.createInstance(AgentVoiceDictation));
+		this.voiceStrip = this._register(this.instantiationService.createInstance(AgentVoiceStrip, this.voiceDictation));
+		append(this.composerEl, this.voiceStrip.element);
+		this._register(this.voiceDictation.onDidChange(() => this.sendButton.classList.toggle('recording', this.voiceDictation.active)));
+		this._register(this.voiceDictation.onDidCommit(text => this.insertDictatedText(text)));
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
 		this.monacoHost = append(this.inputBox, $('.volt-agent-monaco.show-file-icons'));
 		this.placeholderEl = append(this.monacoHost, $('.volt-agent-placeholder'));
@@ -1200,6 +1214,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			void this.openEditInNewAgent();
 		}));
 		this._register(addDisposableListener(this.sendButton, 'click', () => {
+			if (this.sendKind === 'mic') {
+				this.voiceDictation.toggle();
+				return;
+			}
 			if (!this.composerCanSend()) {
 				return;
 			}
@@ -2202,6 +2220,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onAccessDecision: (requestId, effect, scope, pattern) => this.runtime.respondToAccessRequest(requestId, effect, scope, pattern),
 			onBuildPlan: () => this.setMode('Agent'),
 			onBuildCreatedPlan: plan => this.buildCreatedPlan(plan),
+			onRevisePlan: plan => this.revisePlan(plan),
+			onSavePlan: plan => this.savePlanDocument(plan),
 			streaming: !!message.activity?.streaming,
 			languageService: this.languageService,
 			onExpandDiagram: svg => this.showDiagramPreview(svg),
@@ -4625,6 +4645,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.layoutInputEditor();
 			}
 		}));
+		this.editorDisposables.add(this.inputEditor.onKeyUp(e => {
+			if (e.keyCode === KeyCode.Space || e.keyCode === KeyCode.Meta || e.keyCode === KeyCode.Ctrl || e.keyCode === KeyCode.Shift) {
+				this.voiceDictation.endHold();
+			}
+		}));
 		this.editorDisposables.add(this.inputEditor.onKeyDown(e => {
 			// The @ panel already used this key (picked a row, moved the selection).
 			if (e.browserEvent.defaultPrevented) {
@@ -4694,6 +4719,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					e.stopPropagation();
 					this.setComposerContent(recalled.text, recalled.mentions);
 				}
+				return;
+			}
+			if (e.keyCode === KeyCode.Escape && this.voiceDictation.active) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.voiceDictation.cancel();
+				return;
+			}
+			if (e.keyCode === KeyCode.Space && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.voiceDictation.beginHold();
 				return;
 			}
 			if (e.keyCode === KeyCode.Escape && this.editingUserIndex !== undefined) {
@@ -5060,6 +5097,28 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.setMode('Agent');
 		const prompt = createdPlanPrompt(plan);
 		this.enqueueOrSendText(prompt.text, { text: prompt.display });
+	}
+
+	/** Plan mode again, with the composer ready for the feedback; the agent answers with a new propose_plan. */
+	private revisePlan(plan: IPlanBlock): void {
+		this.setMode('Plan');
+		const about = plan.name ? localize('voltAgent.plan.reviseNamed', "the plan \"{0}\"", plan.name) : localize('voltAgent.plan.revisePlain', "the plan");
+		const existing = (this.input instanceof AgentEditorInput ? this.input.draft ?? '' : '').trim();
+		const text = localize('voltAgent.plan.reviseDraft', "Revise {0}: ", about);
+		this.prefillDraft(existing ? `${existing}\n\n${text}` : text);
+	}
+
+	/** Writes the plan under `.volt/plans` in the chat's folder and resolves to its path, relative to that folder. */
+	private async savePlanDocument(plan: IPlanBlock): Promise<string | undefined> {
+		const root = this.surfaceHost.executionRoot();
+		if (!root) {
+			return undefined;
+		}
+		const folder = joinPath(root, PLANS_FOLDER);
+		const taken = new Set(await this.fileService.resolve(folder).then(stat => (stat.children ?? []).map(child => child.name), () => [] as string[]));
+		const name = planFileName(plan.name, taken);
+		await this.fileService.writeFile(joinPath(folder, name), VSBuffer.fromString(planDocument({ title: plan.name, markdown: plan.markdown, openQuestions: plan.openQuestions ?? [] })));
+		return `${PLANS_FOLDER}/${name}`;
 	}
 
 	private nextQueueId(): string {
@@ -5687,6 +5746,21 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private hasDraft(): boolean {
 		return !!(this.inputModel?.getValue().trim());
+	}
+
+	private insertDictatedText(text: string): void {
+		this.ensureInputEditor();
+		const editor = this.inputEditor;
+		const model = this.inputModel;
+		if (!editor || !model || model.isDisposed()) {
+			return;
+		}
+		const pos = editor.getPosition() ?? model.getFullModelRange().getEndPosition();
+		const range = { startLineNumber: pos.lineNumber, startColumn: pos.column, endLineNumber: pos.lineNumber, endColumn: pos.column };
+		const before = model.getValueInRange({ ...range, startColumn: Math.max(1, pos.column - 1) });
+		const separator = before && !/\s/.test(before) ? ' ' : '';
+		editor.executeEdits('volt-dictation', [{ range, text: separator + text }]);
+		editor.focus();
 	}
 
 	private updateSendButton(): void {

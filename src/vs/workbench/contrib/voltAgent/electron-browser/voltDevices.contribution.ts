@@ -14,6 +14,7 @@ import { registerMainProcessRemoteService } from '../../../../platform/ipc/elect
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IVoltCaptureService, VOLT_CAPTURE_CHANNEL_NAME } from '../../../../platform/voltCapture/common/voltCapture.js';
 import { IVoltDevicesService, VOLT_DEVICES_CHANNEL_NAME } from '../../../../platform/voltDevices/common/voltDevices.js';
+import { IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME } from '../../../../platform/voltSpeech/common/voltSpeech.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { EditorExtensions, IEditorFactoryRegistry } from '../../../common/editor.js';
@@ -27,6 +28,7 @@ import './voltWindowCapture.js';
 
 registerMainProcessRemoteService(IVoltDevicesService, VOLT_DEVICES_CHANNEL_NAME);
 registerMainProcessRemoteService(IVoltCaptureService, VOLT_CAPTURE_CHANNEL_NAME);
+registerMainProcessRemoteService(IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME);
 registerSingleton(IAgentDevicesService, AgentDevicesService, InstantiationType.Delayed);
 
 export const OPEN_DEVICE_PREVIEW_COMMAND_ID = 'volt.devices.openPreview';

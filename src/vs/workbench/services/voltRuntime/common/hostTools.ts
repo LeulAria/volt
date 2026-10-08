@@ -10,6 +10,7 @@ import { createDecorator } from '../../../../platform/instantiation/common/insta
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
 import type { VoltMode } from './modes.js';
 import type { AgentQuestionDraft, IAgentQuestionResponse } from './questions.js';
+import { PROPOSE_PLAN_TOOL_NAME } from './plans.js';
 import type { IRgbaImage } from './tools/imageAnalysis.js';
 
 export const IVoltHostToolService = createDecorator<IVoltHostToolService>('voltHostToolService');
@@ -255,6 +256,21 @@ export const VOLT_HOST_TOOLS: readonly IVoltHostToolInfo[] = [
 		group: 'core',
 		description: 'Keep waiting for the user\'s answers to an ask_question call that returned "still answering". Call it right away with the request_id it gave; do nothing else meanwhile.',
 		inputSchema: { type: 'object', properties: { request_id: { type: 'string' } }, required: ['request_id'] },
+	},
+	{
+		name: PROPOSE_PLAN_TOOL_NAME,
+		title: 'Proposed plan',
+		group: 'core',
+		description: 'Present an implementation plan for the user to approve, revise or edit in Volt. Use it in Plan mode, after you have investigated, instead of writing the plan into your reply or using a built-in plan tool. Give a short title and the plan in Markdown: the approach, the files to change, ordered steps, risks, and how to verify. Put anything only the user can decide in open_questions. Then stop and wait: do not implement the plan until the user approves it.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				title: { type: 'string', description: 'Short title, e.g. "Add dark mode toggle".' },
+				plan: { type: 'string', description: 'The plan in Markdown: approach, files to change, steps, risks, how to verify.' },
+				open_questions: { type: 'array', items: { type: 'string' }, description: 'Decisions the user must make before building.' },
+			},
+			required: ['title', 'plan'],
+		},
 	},
 	{
 		name: 'browser_navigate',

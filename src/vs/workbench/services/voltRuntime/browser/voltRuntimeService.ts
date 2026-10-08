@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { inlineResourceContext } from '../common/fileAttachments.js';
 import { DeferredPromise, IntervalTimer, RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
@@ -44,6 +45,7 @@ import { agentCompactionPrompt, compactedHistory, compactInstructions, isCompact
 import { buildContextHandoff, compactionBudget, handoffBudget, HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_MAX_TOKENS_SETTING, handoffPath, handoffToolCall, HandoffReason, IContextHandoff, IHandoffActivity, IHandoffFile, IHandoffToolCall } from '../common/contextHandoff.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import './git/agentWorktreeSetupService.js';
+import { withPlanModeInstruction } from '../common/plans.js';
 import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService, VISUAL_TOOL_NAMES } from '../common/hostTools.js';
 import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQuestionResponse } from '../common/questions.js';
 import { AcpAgentProvider, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
@@ -2111,7 +2113,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		state.changed.clear();
 		state.ledger.resumeReferences();
 		const images = this.modelImages(request.images);
-		this.syncNativeTranscript(session, state, request.text, images);
+		// A model Volt runs itself reads a folded paste inline, as ACP agents with embedded context do.
+		const pasted = inlineResourceContext(request.resources);
+		this.syncNativeTranscript(session, state, pasted ? `${request.text}\n\n${pasted}` : request.text, images);
 
 		const [projectInstructions, instructions, mcpTools] = await Promise.all([
 			this.workspaceProjectInstructions(root),
@@ -2794,7 +2798,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					// An agent with no /compact of its own writes a hand-off summary that replaces the history.
 					voltCompaction = isCompactCommand(request.text) && !(provider.supportsCommand?.(handle, 'compact') ?? false);
 					const text = voltCompaction ? agentCompactionPrompt(compactInstructions(request.text)) : request.text;
-					const first = await this.agentTurn(session, run, provider, handle, profile, { text, mode: request.mode, lead, ...(images ? { images } : {}) }, attempt === 0);
+					const first = await this.agentTurn(session, run, provider, handle, profile, { text: request.mode === 'plan' ? withPlanModeInstruction(text) : text, mode: request.mode, lead, ...(images ? { images } : {}), ...(request.resources?.length ? { resources: request.resources } : {}) }, attempt === 0);
 					if (first.kind === 'stale') {
 						return;
 					}
