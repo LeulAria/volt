@@ -5,6 +5,7 @@
 
 import { URI } from '../../../../base/common/uri.js';
 import { IAccessRequest } from './access/accessTypes.js';
+import type { HandoffReason } from './contextHandoff.js';
 import type { VoltLane } from './harness/lanes.js';
 import type { TaskPhase } from './harness/lifecycle.js';
 import type { ToolKind } from './harness/workLog.js';
@@ -97,6 +98,12 @@ export type IVoltEvent =
 	 * is the kept summary alone, without the system prompt and tools). `summary` replaces the kept
 	 * text, `summaryDelta` appends to it.
 	 */
+	/**
+	 * The conversation went to an agent session that had not seen it (a model or provider switch, a
+	 * fork, a restarted session), sized to the receiving model's window. `reused`: a session the chat
+	 * was on before resumed, and only the turns it missed went to it.
+	 */
+	| { type: 'context.handoff'; reason: HandoffReason; fromLabel?: string; toLabel: string; tokens: number; budget: number; reused: boolean; turns: number; verbatimTurns: number; condensedTurns: number; omittedTurns: number; toolCalls: number; files: number; text: string }
 	| { type: 'context.compaction'; id: string; status?: VoltCompactionStatus; trigger?: 'manual' | 'auto'; preTokens?: number; postTokens?: number; durationMs?: number; summary?: string; summaryDelta?: string; error?: string }
 	| { type: 'error'; message: string; retryable?: boolean }
 	/** Provider status that is not assistant prose: usage limits, retries, and other ACP notices. */

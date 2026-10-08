@@ -14,7 +14,9 @@ import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.
 import { EditorInputCapabilities, GroupIdentifier, IEditorSerializer, IRevertOptions, IUntypedEditorInput } from '../../../../common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { AgentSessionStatus, IAgentHistoryService, IAgentSessionHandle } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, IVoltSeedMessage } from '../../../../services/voltRuntime/common/runtime.js';
+import { isCompactCommand } from '../../../../services/voltRuntime/common/compaction.js';
+import { handoffActivityOf } from '../blocks/agentHandoffActivity.js';
 import type { IAgentAssistantMessage, IAgentMessage, IAgentPromptDisplay, IAgentUserMessage } from './agentEditor.js';
 import { AgentHistoryCodec, assistantSummary, userMessageText } from '../history/agentHistoryCodec.js';
 import { AgentSessionController } from './agentSessionController.js';
@@ -226,7 +228,7 @@ export class AgentEditorInput extends EditorInput {
 		}
 		if (!this.messages.length && transcript.turns.length) {
 			const messages: IAgentMessage[] = [];
-			const modelTranscript: { role: 'user' | 'assistant'; content: string }[] = [];
+			let modelTranscript: IVoltSeedMessage[] = [];
 			for (const turn of transcript.turns) {
 				const user = await this.codec.thawUser(turn.user.message);
 				if (!user) {
@@ -234,17 +236,30 @@ export class AgentEditorInput extends EditorInput {
 				}
 				user.id = turn.id;
 				messages.push(user);
-				modelTranscript.push({ role: 'user', content: turn.user.text });
+				const compactCommand = isCompactCommand(turn.user.text);
+				if (!compactCommand) {
+					modelTranscript.push({ role: 'user', content: turn.user.text });
+				}
 				if (turn.assistant) {
 					const assistant = await this.codec.thawAssistant(turn.assistant.message, true, turn.assistant.at);
 					if (assistant) {
 						assistant.id = turn.id;
 						messages.push(assistant);
+						// A completed compaction with its summary: the model's context starts over from it.
+						const compaction = assistant.segments.findLast(segment => segment.kind === 'compaction' && segment.compaction.status === 'completed' && !!segment.compaction.summary?.trim());
+						if (compaction?.kind === 'compaction') {
+							modelTranscript = [{ role: 'assistant', content: compaction.compaction.summary!.trim(), compacted: true }];
+							if (compactCommand) {
+								continue;
+							}
+						}
 						// What the model said, not the saved plain text: that one also lists tool rows and
 						// their raw input, which a model handed this chat read back as part of the reply.
 						const reply = assistant.text?.trim() || turn.assistant.text;
-						if (reply) {
-							modelTranscript.push({ role: 'assistant', content: reply });
+						const activity = handoffActivityOf(assistant.segments, transcript.worktreePath);
+						const model = (assistant as { model?: { label?: string } }).model?.label;
+						if (reply || activity) {
+							modelTranscript.push({ role: 'assistant', content: reply ?? '', ...(model ? { model } : {}), ...(activity ? { activity } : {}) });
 						}
 					}
 				}

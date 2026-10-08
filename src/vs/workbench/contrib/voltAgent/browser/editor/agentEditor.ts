@@ -110,6 +110,7 @@ import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend } from '../../../../services/voltRuntime/common/compaction.js';
+import type { IVoltEvent } from '../../../../services/voltRuntime/common/events.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
@@ -127,6 +128,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { AgentThreadView } from './agentThreadView.js';
 import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
+import { renderHandoffDivider } from '../chrome/agentHandoffDivider.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { NEW_AGENT_SCHEDULE_COMMAND_ID, OPEN_AGENT_SCHEDULES_COMMAND_ID } from '../schedules/agentScheduleCommands.js';
 import { createModeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
@@ -384,11 +386,16 @@ export interface IAgentUserMessage {
 	taskIds?: string[];
 	/** The chat moved to another model before this turn: drawn as a "Context handoff" divider above it. */
 	handoff?: { fromLabel?: string; toLabel: string; at: number; by: 'agent' | 'user'; reason?: string };
+	/** What Volt handed the session that answered this turn (it had not seen the conversation, or missed turns of it). */
+	contextHandoff?: IAgentContextHandoffInfo;
 	/** Sent by a scheduled task, not typed now: drawn with a "Scheduled" divider above it. */
 	scheduled?: { id: string; title: string };
 	/** Written by another chat's agent (a message, the task it launched, or a fork's first prompt): drawn with a "From" pill that opens that chat. */
 	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork' };
 }
+
+/** A `context.handoff` as the transcript keeps it: the divider's numbers and the text that was sent. */
+export type IAgentContextHandoffInfo = Omit<Extract<IVoltEvent, { type: 'context.handoff' }>, 'type'>;
 
 export interface IAgentPromptDisplay {
 	text: string;
@@ -2421,17 +2428,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				turn.classList.add('editing');
 				this.renderRedoCheckpoint(append(turn, $('.volt-agent-edit-slot')), message);
 			} else if (message.origin === 'notification') {
-				if (message.handoff) {
-					this.renderHandoffDivider(turn, message.handoff);
-				}
+				renderHandoffDivider(turn, message, this.threadListeners);
 				this.renderNotificationTurn(turn, message);
 			} else if (isBareCompactCommand(message) && !message.handoff && this.replyCompacts(index)) {
 				// Compact context, from the chip or typed alone: the reply's divider says it all.
 				turn.classList.add('compact-command');
 			} else {
-				if (message.handoff) {
-					this.renderHandoffDivider(turn, message.handoff);
-				}
+				renderHandoffDivider(turn, message, this.threadListeners);
 				if (message.origin === 'brief') {
 					this.renderSubagentOfPill(turn);
 				}
@@ -2486,22 +2489,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				onOpen: view => this.openSubagent(view.key),
 			});
 		}
-	}
-
-	/** "Context handoff · Claude Opus 5.5 → GPT-6": the chat moved to another model before this turn. */
-	private renderHandoffDivider(turn: HTMLElement, handoff: NonNullable<IAgentUserMessage['handoff']>): void {
-		const divider = append(turn, $('.volt-agent-handoff'));
-		const pill = append(divider, $('span.volt-agent-handoff-pill'));
-		pill.appendChild(renderIcon(Codicon.arrowSwap));
-		append(pill, $('span.label')).textContent = localize('voltAgent.handoff', "Context handoff");
-		if (handoff.fromLabel) {
-			append(pill, $('span.from')).textContent = handoff.fromLabel;
-			pill.appendChild(renderIcon(Codicon.arrowRight));
-		}
-		append(pill, $('span.to')).textContent = handoff.toLabel;
-		setAgentTooltip(pill, handoff.by === 'agent'
-			? (handoff.reason ? localize('voltAgent.handoff.agentReason', "The agent handed the chat over: {0}", handoff.reason) : localize('voltAgent.handoff.agent', "The agent handed the chat over with a brief"))
-			: localize('voltAgent.handoff.user', "You switched models; the conversation so far went with it"));
 	}
 
 	/** The top of a subagent's chat: whose subagent it is, a click away from the parent. */

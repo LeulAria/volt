@@ -7,6 +7,7 @@ import type { VoltLane } from './harness/lanes.js';
 import { AgentRunOn, AgentWorktreeTarget } from './git/agentWorktree.js';
 import { IVoltModelOptions } from './models/modelOptions.js';
 import { VoltMode } from './modes.js';
+import type { IHandoffActivity } from './contextHandoff.js';
 
 export type VoltRunStatus = 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
 
@@ -27,6 +28,10 @@ export interface IVoltSessionMessage {
 	steer?: boolean;
 	/** The model that wrote a reply, so a model handed the chat later knows who said what. */
 	model?: string;
+	/** What a reply did besides talking (tool calls, file edits), for handoffs to another session. */
+	activity?: IHandoffActivity;
+	/** A compacted summary standing in for everything before it. */
+	compacted?: boolean;
 }
 
 /** User turns in `messages`: user messages that were not steering a live run. */
