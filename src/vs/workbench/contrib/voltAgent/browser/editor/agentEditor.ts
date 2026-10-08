@@ -10,7 +10,7 @@ import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
-import { IVoltSandboxSettings, withAllowedDomain, withWritableRoot } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { describeSandbox, IVoltSandboxSettings, VoltSandboxLevel, withAllowedDomain, withWritableRoot } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
@@ -1232,7 +1232,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.accessButton.appendChild(createAccessIcon(option.id));
 		append(this.accessButton, $('span.volt-agent-access-label')).textContent = option.label;
 		this.accessButton.appendChild(createChevronIcon());
-		setAgentTooltip(this.accessButton, option.description);
+		const sandbox = this.runtime.getSandboxSettings(this.sessionKey);
+		setAgentTooltip(this.accessButton, this.activeIsAgent() && sandbox.level !== 'off' ? `${option.description}\n${describeSandbox(sandbox)}` : option.description);
 		this.animateChipWidth(this.accessButton, fromWidth);
 	}
 
@@ -1275,12 +1276,70 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 						this.contextViewService.hideContextView();
 					}));
 				}
+				if (this.activeIsAgent()) {
+					this.appendSandboxSection(list, store);
+				}
 				this.bindDropdownDismiss(store, menu, this.accessButton);
 				store.add(toDisposable(() => menu.remove()));
 				scheduleAtNextAnimationFrame(getWindow(menu), () => scroll.scanDomNode());
 				return store;
 			}
 		});
+	}
+
+	/** Agents run inside the chat's OS sandbox: its level, and whether the network stays reachable. */
+	private appendSandboxSection(list: HTMLElement, store: DisposableStore): void {
+		const settings = this.runtime.getSandboxSettings(this.sessionKey);
+		append(list, $('div.volt-agent-dropdown-separator'));
+		append(list, $('div.volt-agent-dropdown-heading')).textContent = localize('voltAgent.sandbox.heading', "Sandbox");
+		const levels: readonly { readonly level: VoltSandboxLevel; readonly icon: typeof Codicon.edit; readonly label: string; readonly description: string }[] = [
+			{ level: 'off', icon: Codicon.circleSlash, label: localize('voltAgent.sandbox.off', "Off"), description: localize('voltAgent.sandbox.off.desc', "The agent runs with your permissions") },
+			{ level: 'workspace-write', icon: Codicon.edit, label: localize('voltAgent.sandbox.workspace', "Workspace write"), description: localize('voltAgent.sandbox.workspace.desc', "Writes stay in this project, its worktree and temp folders") },
+			{ level: 'read-only', icon: Codicon.lock, label: localize('voltAgent.sandbox.readOnly', "Read-only"), description: localize('voltAgent.sandbox.readOnly.desc', "Nothing is written except temp folders and folders you allow") },
+		];
+		for (const option of levels) {
+			const item = append(list, $('button.volt-agent-dropdown-item.access')) as HTMLButtonElement;
+			if (option.level === settings.level) {
+				item.classList.add('active');
+			}
+			append(item, $('span.icon')).appendChild(renderIcon(option.icon));
+			const copy = append(item, $('span.copy'));
+			append(copy, $('span.label')).textContent = option.label;
+			append(copy, $('span.desc')).textContent = option.description;
+			store.add(addDisposableListener(item, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.chooseSandbox({ ...settings, level: option.level });
+			}));
+		}
+		if (settings.level === 'off') {
+			return;
+		}
+		const network = append(list, $('button.volt-agent-dropdown-item.access')) as HTMLButtonElement;
+		if (settings.network) {
+			network.classList.add('active');
+		}
+		append(network, $('span.icon')).appendChild(renderIcon(Codicon.globe));
+		const copy = append(network, $('span.copy'));
+		append(copy, $('span.label')).textContent = localize('voltAgent.sandbox.networkAccess', "Network access");
+		append(copy, $('span.desc')).textContent = settings.network
+			? localize('voltAgent.sandbox.network.on', "The agent can reach the internet")
+			: localize('voltAgent.sandbox.network.off', "Only the agent's own API and the hosts you allow");
+		store.add(addDisposableListener(network, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.chooseSandbox({ ...settings, network: !settings.network });
+		}));
+	}
+
+	private chooseSandbox(settings: IVoltSandboxSettings): void {
+		void this.runtime.setSandboxSettings(this.sessionKey, settings);
+		this.updateAccessButton();
+		this.contextViewService.hideContextView();
+	}
+
+	private activeIsAgent(): boolean {
+		return this.runtime.listCatalog().find(item => item.ref === this.currentModel)?.kind === 'agent';
 	}
 
 	private updateModeButton(): void {
