@@ -17,6 +17,7 @@ import { disposableTimeout, raceTimeout } from '../../../../../base/common/async
 import { DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename, dirname, isAbsolute } from '../../../../../base/common/path.js';
 import { joinPath } from '../../../../../base/common/resources.js';
+import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { escapeRegExpCharacters } from '../../../../../base/common/strings.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
@@ -110,6 +111,7 @@ import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { AgentVoiceDictation } from '../composer/agentVoiceDictation.js';
+import { PLANS_FOLDER, planDocument, planFileName } from '../../../../services/voltRuntime/common/plans.js';
 import { AgentVoiceStrip } from '../composer/agentVoiceStrip.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend } from '../../../../services/voltRuntime/common/compaction.js';
@@ -2188,6 +2190,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onAccessDecision: (requestId, effect, scope, pattern) => this.runtime.respondToAccessRequest(requestId, effect, scope, pattern),
 			onBuildPlan: () => this.setMode('Agent'),
 			onBuildCreatedPlan: plan => this.buildCreatedPlan(plan),
+			onRevisePlan: plan => this.revisePlan(plan),
+			onSavePlan: plan => this.savePlanDocument(plan),
 			streaming: !!message.activity?.streaming,
 			languageService: this.languageService,
 			onExpandDiagram: svg => this.showDiagramPreview(svg),
@@ -5007,6 +5011,28 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.setMode('Agent');
 		const prompt = createdPlanPrompt(plan);
 		this.enqueueOrSendText(prompt.text, { text: prompt.display });
+	}
+
+	/** Plan mode again, with the composer ready for the feedback; the agent answers with a new propose_plan. */
+	private revisePlan(plan: IPlanBlock): void {
+		this.setMode('Plan');
+		const about = plan.name ? localize('voltAgent.plan.reviseNamed', "the plan \"{0}\"", plan.name) : localize('voltAgent.plan.revisePlain', "the plan");
+		const existing = (this.input instanceof AgentEditorInput ? this.input.draft ?? '' : '').trim();
+		const text = localize('voltAgent.plan.reviseDraft', "Revise {0}: ", about);
+		this.prefillDraft(existing ? `${existing}\n\n${text}` : text);
+	}
+
+	/** Writes the plan under `.volt/plans` in the chat's folder and resolves to its path, relative to that folder. */
+	private async savePlanDocument(plan: IPlanBlock): Promise<string | undefined> {
+		const root = this.surfaceHost.executionRoot();
+		if (!root) {
+			return undefined;
+		}
+		const folder = joinPath(root, PLANS_FOLDER);
+		const taken = new Set(await this.fileService.resolve(folder).then(stat => (stat.children ?? []).map(child => child.name), () => [] as string[]));
+		const name = planFileName(plan.name, taken);
+		await this.fileService.writeFile(joinPath(folder, name), VSBuffer.fromString(planDocument({ title: plan.name, markdown: plan.markdown, openQuestions: plan.openQuestions ?? [] })));
+		return `${PLANS_FOLDER}/${name}`;
 	}
 
 	private nextQueueId(): string {

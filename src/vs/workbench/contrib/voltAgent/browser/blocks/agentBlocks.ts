@@ -5,6 +5,8 @@
 
 import { isSubagentToolName } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
 import { sameProviderNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
+import { voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { planProposalFromArgs, PROPOSE_PLAN_TOOL_NAME } from '../../../../services/voltRuntime/common/plans.js';
 import type { IVoltToolView } from '../../../../services/voltRuntime/common/events.js';
 import { presentOutput, type OutputView } from '../../../../services/voltRuntime/common/harness/adaptiveOutput.js';
 import { describeHostToolActivity, hostToolCall } from './agentHostToolActivity.js';
@@ -151,12 +153,13 @@ export interface IAnswersBlock extends IAgentBaseBlock {
 	note?: string;
 }
 
-/** A plan an agent wrote for approval (cursor-agent's createPlan): the plan itself, then Build. */
+/** A plan an agent wrote for approval (cursor-agent's createPlan, Volt's propose_plan): the plan itself, then Build. */
 export interface IPlanBlock extends IAgentBaseBlock {
 	readonly type: 'plan';
 	callId?: string;
 	name?: string;
 	markdown: string;
+	openQuestions?: readonly string[];
 	input?: string;
 }
 
@@ -164,20 +167,24 @@ export function createPlanBlock(partial: Omit<IPlanBlock, 'type' | 'status'> & {
 	return { type: 'plan', status: 'streaming', ...partial };
 }
 
-/** cursor-agent's plan tool: `Create Plan` with `{ name, plan, todos }` input. */
+/** The plan tools: cursor-agent's `Create Plan` ({ name, plan, todos }), the native create_plan, and Volt's propose_plan. */
 export function isPlanTool(name: string, title?: string, input?: string): boolean {
-	return /^create[ _-]?plan$/i.test(name.trim()) || /^create[ _-]?plan$/i.test((title ?? '').trim()) || /"_toolName"\s*:\s*"createPlan"/.test(input ?? '');
+	return /^create[ _-]?plan$/i.test(name.trim()) || /^create[ _-]?plan$/i.test((title ?? '').trim()) || /"_toolName"\s*:\s*"createPlan"/.test(input ?? '') || voltHostToolName(name, title) === PROPOSE_PLAN_TOOL_NAME || /"toolName"\s*:\s*"propose_plan"/.test(input ?? '');
 }
 
-export function parsePlanToolInput(input: string | undefined): { name?: string; plan?: string } {
+/** A plan tool's input. Cursor wraps MCP calls as `{ toolName, args }`, so the arguments are unwrapped first. */
+export function parsePlanToolInput(input: string | undefined): { name?: string; plan?: string; openQuestions?: readonly string[] } {
 	if (!input) {
 		return {};
 	}
 	try {
-		const parsed = JSON.parse(input) as { name?: unknown; plan?: unknown };
+		const parsed = JSON.parse(input) as Record<string, unknown>;
+		const args = parsed.args && typeof parsed.args === 'object' ? parsed.args as Record<string, unknown> : parsed;
+		const plan = planProposalFromArgs(args);
 		return {
-			...(typeof parsed.name === 'string' ? { name: parsed.name } : {}),
-			...(typeof parsed.plan === 'string' ? { plan: parsed.plan } : {}),
+			...(plan.title ? { name: plan.title } : {}),
+			...(plan.markdown ? { plan: plan.markdown } : {}),
+			...(plan.openQuestions.length ? { openQuestions: plan.openQuestions } : {}),
 		};
 	} catch {
 		return {};

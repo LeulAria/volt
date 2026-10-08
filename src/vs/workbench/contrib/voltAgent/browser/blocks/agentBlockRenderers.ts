@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentMarkdown.css';
-import { $, addDisposableListener, append, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, clearNode, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
 import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
@@ -72,6 +72,10 @@ export interface IBlockRenderContext {
 	readonly onBuildPlan?: () => void;
 	/** Build a plan the agent wrote with its plan tool: switch to Agent and ask for it. */
 	readonly onBuildCreatedPlan?: (plan: IPlanBlock) => void;
+	/** Ask for changes to a plan: the composer takes the feedback, and the agent proposes again. */
+	readonly onRevisePlan?: (plan: IPlanBlock) => void;
+	/** Save a plan under `.volt/plans` and resolve to its path. */
+	readonly onSavePlan?: (plan: IPlanBlock) => Promise<string | undefined>;
 	/** When false, a still-running command must not keep the streaming shimmer. */
 	readonly streaming?: boolean;
 	/** Highlights code cards. Without it they render as plain text. */
@@ -144,28 +148,98 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 	}
 }
 
-/** cursor-agent's plan, as the plan card Cursor shows: title, the plan, Build. */
+/**
+ * A plan for approval, as Cursor draws its plan card: title, the plan, then the actions. Volt's plans
+ * also list their open questions and can be revised, edited in place, or saved as a document.
+ */
 function renderPlanBlock(parent: HTMLElement, block: IPlanBlock, ctx: IBlockRenderContext): void {
 	const wrap = append(parent, $('.volt-agent-block.approval.question.plan'));
 	append(wrap, $('.volt-agent-approval-title')).textContent = block.name
 		? localize('voltAgent.plan.named', "Plan: {0}", block.name)
 		: localize('voltAgent.plan.title', "Plan");
 	const body = append(wrap, $('.volt-agent-approval-plan'));
-	if (block.markdown) {
-		renderMarkdownInto(body, block.markdown, ctx);
-	} else {
-		body.textContent = localize('voltAgent.plan.writing', "Writing the plan…");
-	}
-	if (block.status !== 'complete' || !ctx.onBuildCreatedPlan) {
-		return;
-	}
+	const savedLine = append(wrap, $('.volt-agent-plan-saved.hidden'));
 	const actions = append(wrap, $('.volt-agent-approval-actions'));
-	const build = append(actions, $('button.volt-agent-approval-btn.primary')) as HTMLButtonElement;
-	build.textContent = localize('voltAgent.plan.build', "Build");
-	ctx.store.add(addDisposableListener(build, 'click', e => {
-		e.preventDefault();
-		ctx.onBuildCreatedPlan?.(block);
-	}));
+	let editor: HTMLTextAreaElement | undefined;
+
+	const renderBody = () => {
+		clearNode(body);
+		if (block.markdown) {
+			renderMarkdownInto(body, block.markdown, ctx);
+		} else {
+			body.textContent = localize('voltAgent.plan.writing', "Writing the plan…");
+		}
+		if (block.openQuestions?.length) {
+			const questions = append(body, $('.volt-agent-plan-questions'));
+			append(questions, $('.volt-agent-plan-questions-title')).textContent = localize('voltAgent.plan.openQuestions', "Open questions");
+			const list = append(questions, $('ul'));
+			for (const question of block.openQuestions) {
+				append(list, $('li')).textContent = question;
+			}
+		}
+	};
+
+	const button = (label: string, className: string, onClick: () => void) => {
+		const element = append(actions, $(`button.volt-agent-approval-btn${className}`)) as HTMLButtonElement;
+		element.textContent = label;
+		ctx.store.add(addDisposableListener(element, 'click', e => {
+			e.preventDefault();
+			onClick();
+		}));
+		return element;
+	};
+
+	const renderActions = () => {
+		clearNode(actions);
+		if (block.status !== 'complete' || !ctx.onBuildCreatedPlan) {
+			return;
+		}
+		if (editor) {
+			button(localize('voltAgent.plan.saveEdit', "Save edit"), '.primary', () => {
+				block.markdown = editor?.value.trim() ?? block.markdown;
+				editor = undefined;
+				renderBody();
+				renderActions();
+			});
+			button(localize('voltAgent.plan.cancelEdit', "Cancel"), '', () => {
+				editor = undefined;
+				renderBody();
+				renderActions();
+			});
+			return;
+		}
+		button(localize('voltAgent.plan.approveImplement', "Approve & implement"), '.primary', () => ctx.onBuildCreatedPlan?.(block));
+		if (ctx.onRevisePlan) {
+			button(localize('voltAgent.plan.revise', "Revise"), '', () => ctx.onRevisePlan?.(block));
+		}
+		button(localize('voltAgent.plan.edit', "Edit"), '', () => {
+			clearNode(body);
+			editor = append(body, $('textarea.volt-agent-plan-editor')) as HTMLTextAreaElement;
+			editor.value = block.markdown;
+			editor.rows = Math.min(24, Math.max(8, block.markdown.split('\n').length));
+			renderActions();
+			editor.focus();
+		});
+		if (ctx.onSavePlan) {
+			button(localize('voltAgent.plan.save', "Save to .volt/plans"), '', async () => {
+				const path = await ctx.onSavePlan?.(block);
+				if (path) {
+					savedLine.classList.remove('hidden');
+					clearNode(savedLine);
+					const link = append(savedLine, $('a.volt-agent-plan-saved-link')) as HTMLAnchorElement;
+					link.textContent = path;
+					link.href = '#';
+					ctx.store.add(addDisposableListener(link, 'click', e => {
+						e.preventDefault();
+						ctx.onOpenPath?.(path);
+					}));
+				}
+			});
+		}
+	};
+
+	renderBody();
+	renderActions();
 }
 
 /** Cursor's "Answers" card: each question in muted text over the user's answer, with hairlines between. */

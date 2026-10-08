@@ -793,7 +793,7 @@ export class AgentSessionController extends Disposable {
 					const parsedPlan = parsePlanToolInput(event.input);
 					last.segments.push({
 						kind: 'block',
-						block: createPlanBlock({ id, callId: event.callId, input: event.input, name: parsedPlan.name, markdown: parsedPlan.plan ?? '' }),
+						block: createPlanBlock({ id, callId: event.callId, input: event.input, name: parsedPlan.name, markdown: parsedPlan.plan ?? '', openQuestions: parsedPlan.openQuestions }),
 					});
 					activity.status = localize('voltAgent.planning', "Planning");
 				} else if (isFileChangeTool(event.name, event.title, kind)) {
@@ -872,6 +872,7 @@ export class AgentSessionController extends Disposable {
 						const parsedPlan = parsePlanToolInput(block.input);
 						block.name = parsedPlan.name ?? block.name;
 						block.markdown = parsedPlan.plan ?? block.markdown;
+						block.openQuestions = parsedPlan.openQuestions ?? block.openQuestions;
 					}
 					const item = this.findActivityByCallId(last, event.callId);
 					if (item) {
@@ -1183,6 +1184,7 @@ export class AgentSessionController extends Disposable {
 			const parsedPlan = parsePlanToolInput(raw);
 			block.name = parsedPlan.name ?? block.name;
 			block.markdown = parsedPlan.plan ?? block.markdown;
+			block.openQuestions = parsedPlan.openQuestions ?? block.openQuestions;
 		} else if (block?.type === 'file') {
 			block.input = raw;
 			const parsedAt = this.rawParsedAt.get(callId) ?? 0;
@@ -1235,7 +1237,7 @@ export class AgentSessionController extends Disposable {
 
 	private planFromInput(id: string, callId: string, input: string | undefined): IPlanBlock {
 		const parsed = parsePlanToolInput(input);
-		return createPlanBlock({ id, callId, input, name: parsed.name, markdown: parsed.plan ?? '' });
+		return createPlanBlock({ id, callId, input, name: parsed.name, markdown: parsed.plan ?? '', openQuestions: parsed.openQuestions });
 	}
 
 	private createFileChangeFromTool(id: string, callId: string, name: string, title: string | undefined, input?: string): IFileChangeBlock {

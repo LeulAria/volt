@@ -289,6 +289,15 @@ suite('Agent explore activity details', () => {
 		assert.strictEqual(isPlanTool('edit', 'Edit `src/plan.ts`', '{"path":"src/plan.ts"}'), false);
 		assert.deepStrictEqual(parsePlanToolInput(input), { name: 'Persist todos', plan: '# Persist todos\n\n1. Add a store' });
 	});
+	test('Volt\'s propose_plan is a plan, also when Cursor wraps the MCP call', () => {
+		const args = { title: 'Export CSV', plan: '1. Add a button', open_questions: ['Include headers?'] };
+		assert.strictEqual(isPlanTool('mcp__volt__propose_plan', undefined, JSON.stringify(args)), true);
+		assert.strictEqual(isPlanTool('MCP: volt', 'propose_plan'), true);
+		assert.strictEqual(isPlanTool('MCP: volt', undefined, JSON.stringify({ providerIdentifier: 'volt', toolName: 'propose_plan', args })), true);
+		assert.strictEqual(isPlanTool('ask_question', undefined, JSON.stringify(args)), false);
+		assert.deepStrictEqual(parsePlanToolInput(JSON.stringify(args)), { name: 'Export CSV', plan: '1. Add a button', openQuestions: ['Include headers?'] });
+		assert.deepStrictEqual(parsePlanToolInput(JSON.stringify({ providerIdentifier: 'volt', toolName: 'propose_plan', args })), { name: 'Export CSV', plan: '1. Add a button', openQuestions: ['Include headers?'] });
+	});
 });
 
 suite('Agent host tool rows', () => {
