@@ -18,14 +18,18 @@ import { INotificationService, Severity } from '../../../../../platform/notifica
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { ILifecycleService } from '../../../../services/lifecycle/common/lifecycle.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
+import { ISecretStorageService } from '../../../../../platform/secrets/common/secrets.js';
 import { parsePullRequestUrl, prKey } from '../../../../../platform/voltPullRequests/common/voltPullRequestParse.js';
 import { buildRestackConflictPrompt } from '../../../../../platform/voltPullRequests/common/voltPrStacks.js';
 import {
+	IVoltPrAccount,
 	IVoltPrCreateRequest,
+	IVoltPrHostCredential,
 	IVoltPrRepo,
 	IVoltPrRepoRef,
 	IVoltPrRequest,
 	IVoltPrRestackOutcome,
+	IVoltPrSignInRequest,
 	IVoltPrStackView,
 	IVoltPullRequest,
 	IVoltPullRequestDetail,
@@ -136,6 +140,12 @@ export interface IAgentPullRequestService {
 	rememberMergeMethod(repo: IVoltPrRepoRef, method: VoltPrMergeMethod): void;
 	/** What stopped the last sync of a host (no CLI, signed out); undefined when it works. */
 	hostProblem(host: string): { readonly code: VoltPrErrorCode; readonly message: string } | undefined;
+	/** Checks a token against its host, keeps it in secret storage, and syncs with it. */
+	signInHost(request: IVoltPrSignInRequest): Promise<IVoltPrAccount>;
+	/** Forgets the token Volt holds for a host. */
+	signOutHost(host: string): Promise<void>;
+	/** The hosts Volt holds a token for (never the tokens themselves). */
+	signedInHosts(): readonly IVoltPrHostCredential[];
 }
 
 const STORE_VERSION = 1;
@@ -153,6 +163,8 @@ const ORIGIN_TTL_MS = 60_000;
 const DETAIL_TTL_MS = 8_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
 const MERGE_METHOD_KEY = 'volt.pullRequests.mergeMethods';
+/** Tokens the user gave Volt for code hosts other than GitHub (secret storage, JSON). */
+const HOST_TOKENS_KEY = 'volt.pullRequests.hostTokens';
 
 interface IStoreFile {
 	readonly version: number;
@@ -197,6 +209,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	private readonly configWatches = this._register(new DisposableMap<string>());
 	private readonly details = new Map<string, { at: number; detail: Promise<IVoltPullRequestDetail> }>();
 	private readonly hosts = new Map<string, IHostState>();
+	private hostTokens: IVoltPrHostCredential[] = [];
 	/** When each pull request was last read in a watch pass. */
 	private readonly watchedAt = new Map<string, number>();
 	private readonly linkLocks = new SequencerByKey<string>();
@@ -223,10 +236,11 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		@INotificationService private readonly notificationService: INotificationService,
 		@ILifecycleService lifecycleService: ILifecycleService,
 		@IHostService hostService: IHostService,
+		@ISecretStorageService private readonly secretStorage: ISecretStorageService,
 	) {
 		super();
 		this.storeFile = joinPath(environmentService.userRoamingDataHome, 'voltPullRequests', 'links.json');
-		this.whenReady = this.load();
+		this.whenReady = Promise.all([this.load(), this.loadHostTokens()]).then(() => undefined);
 		this._register(hostTools.registerToolProvider({
 			tools: PULL_REQUEST_TOOLS,
 			invoke: (name, args, call) => this.invokeTool(name, args, call),
@@ -389,6 +403,42 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 
 	hostProblem(host: string): { readonly code: VoltPrErrorCode; readonly message: string } | undefined {
 		return this.hosts.get(host.toLowerCase())?.problem;
+	}
+
+	signedInHosts(): readonly IVoltPrHostCredential[] {
+		return this.hostTokens;
+	}
+
+	async signInHost(request: IVoltPrSignInRequest): Promise<IVoltPrAccount> {
+		const account = await this.api.signInHost(request);
+		const credential: IVoltPrHostCredential = { host: account.host, provider: request.provider, token: request.token.trim(), login: account.login, ...(request.webUrl ? { webUrl: request.webUrl } : {}), ...(request.username ? { username: request.username } : {}) };
+		await this.saveHostTokens([...this.hostTokens.filter(existing => existing.host !== account.host), credential]);
+		this.hosts.clear();
+		void this.tick(true);
+		return account;
+	}
+
+	async signOutHost(host: string): Promise<void> {
+		await this.saveHostTokens(this.hostTokens.filter(existing => existing.host !== host.toLowerCase()));
+		this.hosts.clear();
+		void this.tick(true);
+	}
+
+	private async loadHostTokens(): Promise<void> {
+		try {
+			const raw = await this.secretStorage.get(HOST_TOKENS_KEY);
+			this.hostTokens = raw ? JSON.parse(raw) as IVoltPrHostCredential[] : [];
+		} catch (err) {
+			this.logService.warn('[volt pull requests] could not read host tokens', err);
+			this.hostTokens = [];
+		}
+		await this.api.setHostCredentials(this.hostTokens);
+	}
+
+	private async saveHostTokens(credentials: IVoltPrHostCredential[]): Promise<void> {
+		this.hostTokens = credentials;
+		await this.secretStorage.set(HOST_TOKENS_KEY, JSON.stringify(credentials));
+		await this.api.setHostCredentials(credentials);
 	}
 
 	stack(folder: string, branch?: string): Promise<IVoltPrStackView | undefined> {

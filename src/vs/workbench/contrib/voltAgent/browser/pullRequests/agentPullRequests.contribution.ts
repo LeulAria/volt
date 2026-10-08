@@ -20,6 +20,7 @@ import { Registry } from '../../../../../platform/registry/common/platform.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
 import { parsePullRequestUrl } from '../../../../../platform/voltPullRequests/common/voltPullRequestParse.js';
+import { hostProductLabel, normalizeHost, VOLT_PR_PROVIDERS, VoltPrSupportedProvider } from '../../../../../platform/voltPullRequests/common/voltPrHosts.js';
 import { voltPrErrorMessage } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../../browser/editor.js';
 import { ViewPaneContainer } from '../../../../browser/parts/views/viewPaneContainer.js';
@@ -46,7 +47,7 @@ import { AGENT_PULL_REQUESTS_CONTAINER_ID, AGENT_PULL_REQUESTS_VIEW_ID, setPullR
 import { composeInChat, openPullRequest, visibleChatSession } from './agentPullRequestUi.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
-import { CREATE_PULL_REQUEST_COMMAND_ID, FIX_PR_SELECTION_COMMAND_ID, GENERATE_COMMIT_MESSAGE_COMMAND_ID, LINK_PULL_REQUEST_COMMAND_ID, OPEN_CHAT_PULL_REQUEST_COMMAND_ID, OPEN_PULL_REQUEST_COMMAND_ID, SHOW_PULL_REQUESTS_COMMAND_ID } from './agentPullRequestCommands.js';
+import { CREATE_PULL_REQUEST_COMMAND_ID, FIX_PR_SELECTION_COMMAND_ID, GENERATE_COMMIT_MESSAGE_COMMAND_ID, LINK_PULL_REQUEST_COMMAND_ID, OPEN_CHAT_PULL_REQUEST_COMMAND_ID, OPEN_PULL_REQUEST_COMMAND_ID, SHOW_PULL_REQUESTS_COMMAND_ID, SIGN_IN_HOST_COMMAND_ID } from './agentPullRequestCommands.js';
 
 /** Volt writes commit messages itself; the core sparkle (Copilot setup) stays hidden. */
 export const VOLT_COMMIT_MESSAGES_CONTEXT = new RawContextKey<boolean>('voltCommitMessages', false);
@@ -239,6 +240,47 @@ registerAction2(class extends Action2 {
 		try {
 			const link = await pullRequests.link(chat, /^#?\d+$/.test(trimmed) ? { number: Number(trimmed.replace('#', '')) } : { url: trimmed }, 'manual');
 			notificationService.info(localize('voltPr.linked', "Linked #{0} to the chat.", link.number));
+		} catch (err) {
+			notificationService.error(voltPrErrorMessage(err));
+		}
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({ id: SIGN_IN_HOST_COMMAND_ID, title: localize2('voltPr.signInCommand', "Sign In to a Code Host"), category: localize2('volt', "Volt"), f1: true });
+	}
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const pullRequests = accessor.get(IAgentPullRequestService);
+		const quickInputService = accessor.get(IQuickInputService);
+		const notificationService = accessor.get(INotificationService);
+		const picked = await quickInputService.pick(VOLT_PR_PROVIDERS.filter(provider => provider !== 'github').map(provider => ({ id: provider, label: hostProductLabel(provider) })), {
+			placeHolder: localize('voltPr.signInProvider', "What kind of code host is it?"),
+		});
+		if (!picked) {
+			return;
+		}
+		const provider = picked.id as VoltPrSupportedProvider;
+		const server = await quickInputService.input({
+			prompt: localize('voltPr.signInServer', "The server's web address"),
+			placeHolder: provider === 'gitlab' ? 'https://gitlab.com' : provider === 'bitbucket' ? 'https://bitbucket.org' : provider === 'azure' ? 'https://dev.azure.com' : 'https://git.example.com',
+			validateInput: async input => normalizeHost(input) ? undefined : localize('voltPr.signInServerInvalid', "Enter the server's address, such as https://git.example.com"),
+		});
+		const host = server && normalizeHost(server);
+		if (!server || !host) {
+			return;
+		}
+		const token = await quickInputService.input({
+			prompt: localize('voltPr.signInToken', "An access token for {0} ({1})", hostProductLabel(provider), host),
+			password: true,
+			validateInput: async input => input.trim() ? undefined : localize('voltPr.signInTokenEmpty', "Enter an access token"),
+		});
+		if (!token) {
+			return;
+		}
+		try {
+			const account = await pullRequests.signInHost({ host, provider, token, webUrl: server.trim().replace(/\/+$/, '') });
+			notificationService.info(localize('voltPr.signedIn', "Signed in to {0} as {1}.", host, account.login));
 		} catch (err) {
 			notificationService.error(voltPrErrorMessage(err));
 		}
