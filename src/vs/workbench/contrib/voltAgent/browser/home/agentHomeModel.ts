@@ -38,6 +38,7 @@ import {
 } from './agentHomeFilter.js';
 import { dominantRepoOwner, IAgentRepoInfo, repoDisplayName } from './agentRepoInfo.js';
 import { isScratchSession, scratchProjectLabel } from './agentHomeWorkspace.js';
+import { ICloudTask } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
 
 export interface IAgentHomeFolder {
 	readonly uri: URI;
@@ -80,7 +81,10 @@ export type AgentHomeElement =
 	/** One prompt sent to several models: a row that opens the compare view and folds out into its runs. */
 	| { readonly type: 'runGroup'; readonly group: IAgentHomeRunGroup; readonly folderKey: string; readonly nested: boolean }
 	| { readonly type: 'more'; readonly groupKey: string; readonly hidden: number; readonly nested: boolean }
-	| { readonly type: 'empty'; readonly key: string; readonly filtered: boolean };
+	| { readonly type: 'empty'; readonly key: string; readonly filtered: boolean }
+	/** Cloud tasks this Volt sent: a header with the tasks under it (see {@link buildCloudHomeNodes}). */
+	| { readonly type: 'cloudHeader'; readonly count: number }
+	| { readonly type: 'cloud'; readonly task: ICloudTask };
 
 /** A run of a group as its row shows it: the model instead of the chat's title. */
 export interface IAgentHomeRunMember {
@@ -401,6 +405,17 @@ export function agentHomeSectionLabel(key: AgentHomeSectionKey): string {
 			return unexpected;
 		}
 	}
+}
+
+/** Cloud tasks, newest first, under a Cloud header above the chats. None: no header. */
+export function buildCloudHomeNodes(tasks: readonly ICloudTask[]): IAgentHomeNode[] {
+	if (!tasks.length) {
+		return [];
+	}
+	return [{
+		element: { type: 'cloudHeader', count: tasks.length },
+		children: tasks.map(task => ({ element: { type: 'cloud' as const, task } })),
+	}];
 }
 
 export function buildAgentHomeTree(
@@ -972,6 +987,8 @@ export function agentHomeAddStart(element: AgentHomeElement):
 		case 'runGroup':
 		case 'more':
 		case 'empty':
+		case 'cloudHeader':
+		case 'cloud':
 			return undefined;
 		default: {
 			const unexpected: never = element;

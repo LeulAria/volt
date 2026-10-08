@@ -8,14 +8,17 @@ import { basename, dirname, isAbsolute, join, normalize, relative } from '../../
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 
-/** Where a new chat runs. Same branch uses the open checkout. */
-export type AgentRunOn = 'same-branch' | 'worktree';
+/**
+ * Where a new chat runs. Same branch uses the open checkout. Cloud sends the task to a Volt Relay
+ * runner (see cloud/cloudTasks.ts for the machine choice).
+ */
+export type AgentRunOn = 'same-branch' | 'worktree' | 'cloud';
 
-export const AGENT_RUN_ON_OPTIONS = ['same-branch', 'worktree'] as const;
+export const AGENT_RUN_ON_OPTIONS = ['same-branch', 'worktree', 'cloud'] as const;
 
 /** Missing or unknown values stay on the open checkout. */
 export function normalizeAgentRunOn(value: string | undefined): AgentRunOn {
-	return value === 'worktree' ? 'worktree' : 'same-branch';
+	return value === 'worktree' || value === 'cloud' ? value : 'same-branch';
 }
 
 export function agentRunOnStorageKey(projectId: string | undefined): string {

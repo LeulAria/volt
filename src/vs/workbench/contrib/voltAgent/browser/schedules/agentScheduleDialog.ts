@@ -10,7 +10,7 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
-import { AgentScheduleSpec, AgentScheduleTarget, describeSchedule, formatTimeOfDay, IAgentSchedule, IAgentScheduleInput, MIN_SCHEDULE_INTERVAL_MS, nextScheduleRun, parseTimeOfDay, scheduleModelChoices } from '../../../../services/voltRuntime/common/schedules/agentSchedules.js';
+import { AgentScheduleSpec, AgentScheduleTarget, describeSchedule, formatTimeOfDay, IAgentSchedule, IAgentScheduleInput, MIN_SCHEDULE_INTERVAL_MS, nextScheduleRun, parseTimeOfDay } from '../../../../services/voltRuntime/common/schedules/agentSchedules.js';
 import { AgentScheduleTriggerKind, formatWebhookFilter, IAgentWebhookFilter, IAgentWebhookSignature, IAgentWebhookTrigger, newWebhookTrigger, parseWebhookFilter, WebhookSignatureKind } from '../../../../services/voltRuntime/common/schedules/agentWebhooks.js';
 import { IVoltRelayService, IVoltRelayState } from '../../../../../platform/voltRelay/common/voltRelay.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';

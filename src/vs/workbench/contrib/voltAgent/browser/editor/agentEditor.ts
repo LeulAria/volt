@@ -75,6 +75,8 @@ import { AgentContextUsageView, type IAgentCompactState, type IAgentStatusBranch
 import { AgentModelPicker, type IModelOption } from '../picker/agentModelPicker.js';
 import { cliLoginForNotice } from '../../../../services/voltRuntime/browser/agents/cliAgents.js';
 import { createBrandIcon, providerFamilyLabel } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
+import { CLOUD_AUTO, cloudAgentForFamily, cloudMachineStorageKey, normalizeCloudMachine } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
 import { splitModelDisplayName } from '../../../../services/voltRuntime/common/models/modelOptions.js';
 import { IAgentRunGroupService, IRunGroupModel, validateRunSelection } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
@@ -640,6 +642,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private subagentBarKey = '';
 	/** The agent handoff the composer's model already followed. */
 	private followedHandoffAt: number | undefined;
+	/** The chat and the stored model last followed by the composer. */
+	private followedThreadModel: string | undefined;
 	private displayCodec: AgentHistoryCodec | undefined;
 	/** A queued prompt loaded into the composer for editing, and the draft it replaced. */
 	private queueEdit: { readonly id: string; readonly stash: { readonly text: string; readonly mentions: IAgentDisplayMention[] } } | undefined;
@@ -773,6 +777,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@ILogService private readonly logService: ILogService,
 		@IAgentSessionChangesService private readonly sessionChanges: IAgentSessionChangesService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
+		@IAgentCloudTasksService private readonly cloudTasks: IAgentCloudTasksService,
+		@INotificationService private readonly notificationService: INotificationService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 		@IDialogService private readonly dialogService: IDialogService,
@@ -952,6 +958,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this._register(this.orchestrator.onDidChange(change => {
 			if (change.threads.includes(this.sessionKey)) {
 				this.followAgentHandoff();
+				this.followThreadModel();
 				this.syncQueueStack();
 				this.updateSendButton();
 				// Subagent rows and report cards read live task state.
@@ -5014,6 +5021,43 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	/**
+	 * Cloud location: the prompt becomes a cloud task on the chosen runner (Auto: the least loaded
+	 * one). It runs beside the chats and shows in the sidebar's Cloud group until it is applied.
+	 */
+	private async sendToCloud(value: string): Promise<boolean> {
+		const binding = this.sessionContext.bindingFor(this.sessionKey);
+		const project = (binding ? this.sessionContext.getProject(binding.projectId) : undefined) ?? this.sessionContext.activeProject;
+		const selected = this.modelPicker.selectedModel();
+		const model = this.runtime.listCatalog().find(item => item.ref === selected?.ref);
+		const agent = cloudAgentForFamily(selected?.family);
+		if (!project || project.scratch) {
+			this.notificationService.error(localize('voltAgent.cloud.needsProject', "A cloud run needs a project folder."));
+			return false;
+		}
+		if (!agent) {
+			this.notificationService.error(localize('voltAgent.cloud.needsAgent', "Cloud runs use a Claude Code or Codex model. Pick one in the model picker."));
+			return false;
+		}
+		const machine = normalizeCloudMachine(this.storageService.get(cloudMachineStorageKey(project.id), StorageScope.APPLICATION));
+		try {
+			const task = await this.cloudTasks.send({
+				repoRoot: project.root.fsPath,
+				prompt: value,
+				title: value.split('\n')[0].slice(0, 120),
+				agent,
+				model: model?.id,
+				...(machine !== CLOUD_AUTO ? { machineId: machine } : {}),
+				chatId: this.sessionKey,
+			});
+			this.notificationService.info(localize('voltAgent.cloud.sent', "Sent to the cloud: {0}", task.title));
+			return true;
+		} catch (err) {
+			this.notificationService.error(localize('voltAgent.cloud.sendFailed', "Could not start the cloud run: {0}", err instanceof Error ? err.message : String(err)));
+			return false;
+		}
+	}
+
+	/**
 	 * Sends a prompt as the chat's next turn. The orchestrator owns the turn from here: it starts it
 	 * now, or queues it behind the running one, and the session controller adds the messages when
 	 * the turn starts (`turnStart`), whether or not this panel still shows the chat.
@@ -5160,6 +5204,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** Hands a prompt to the orchestrator with the composer's model, options and checkout choice. Resolves whether it took it. */
 	private submitToOrchestrator(value: string, display: IAgentPromptDisplay | undefined, mode: string, delivery: OrchDelivery, turnId = generateUuid()): Promise<boolean> {
+		if (this.sendRequest(value, display, mode).runOn === 'cloud') {
+			return this.sendToCloud(value);
+		}
 		const input = this.input instanceof AgentEditorInput ? this.input : undefined;
 		const threadId = this.sessionKey;
 		input?.recordMode(normalizeVoltMode(this.currentMode));
@@ -5285,6 +5332,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return true;
 		}
 		return this.editorGroupsService.mainPart.groups.some(group => group.editors.some(editor => editor instanceof AgentEditorInput && editor.sessionId === sessionId));
+	}
+
+	/**
+	 * A chat's stored model is its own: a scheduled or webhook run on Grok shows Grok in its chat,
+	 * not the app's default. Follows the stored model when it changes; a pick not yet sent stays put.
+	 */
+	private followThreadModel(): void {
+		const ref = this.orchestrator.getThread(this.sessionKey)?.modelRef;
+		const followed = `${this.sessionKey}\n${ref}`;
+		if (!ref || followed === this.followedThreadModel) {
+			return;
+		}
+		this.followedThreadModel = followed;
+		if (this.modelPicker.showRef(ref)) {
+			this.updateModelButton();
+		}
 	}
 
 	/** An agent handed this chat to another model: the composer follows, so the next prompt goes there too. */
@@ -6006,6 +6069,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.ensureInputEditor();
 		this.restoreInputState(input);
+		this.followThreadModel();
 		this.container.classList.remove('restoring');
 		this.composerChips.setSessionId(this.sessionKey);
 		this.composerChips.setNewChat(this.messages.length === 0);

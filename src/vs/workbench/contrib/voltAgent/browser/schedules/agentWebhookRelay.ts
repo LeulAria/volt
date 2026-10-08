@@ -186,8 +186,16 @@ class AgentWebhookRelayContribution extends Disposable implements IWorkbenchCont
 
 registerWorkbenchContribution2(AgentWebhookRelayContribution.ID, AgentWebhookRelayContribution, WorkbenchPhase.AfterRestored);
 
+let pendingRelayConnect: Promise<IVoltRelayState | undefined> | undefined;
+
 /** Asks for a link from `volt-relay pair` (or a URL and a code) and connects this Volt to it. */
-export async function connectVoltRelay(relay: IVoltRelayService, quickInput: IQuickInputService, notifications: INotificationService): Promise<IVoltRelayState | undefined> {
+export function connectVoltRelay(relay: IVoltRelayService, quickInput: IQuickInputService, notifications: INotificationService): Promise<IVoltRelayState | undefined> {
+	// One prompt at a time: a second click on Connect while the link is being pasted joins the first.
+	pendingRelayConnect ??= askAndConnect(relay, quickInput, notifications).finally(() => pendingRelayConnect = undefined);
+	return pendingRelayConnect;
+}
+
+async function askAndConnect(relay: IVoltRelayService, quickInput: IQuickInputService, notifications: INotificationService): Promise<IVoltRelayState | undefined> {
 	const link = await quickInput.input({
 		prompt: localize('voltRelay.linkPrompt', "Paste the link from volt-relay pair"),
 		placeHolder: 'https://relay.example.com/#pair=ABCD-EFGH',

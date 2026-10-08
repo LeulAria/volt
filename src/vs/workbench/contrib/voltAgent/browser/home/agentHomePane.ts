@@ -37,6 +37,9 @@ import { EditorsOrder } from '../../../../common/editor.js';
 import { GroupsOrder, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
+import { cloudTaskStatusText, cloudTaskTone, ICloudTask } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
+import { AgentCloudTaskMenu } from '../cloud/agentCloudTaskMenu.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
@@ -78,6 +81,7 @@ import {
 	agentHomeGroupLabel,
 	agentHomeSectionLabel,
 	buildAgentHomeTree,
+	buildCloudHomeNodes,
 	folderPath,
 	IAgentHomeFolder,
 	IAgentHomeNode,
@@ -128,6 +132,8 @@ const identityProvider: IIdentityProvider<AgentHomeElement> = {
 			case 'runGroup': return `runGroup:${element.folderKey}:${element.group.id}`;
 			case 'more': return `more:${element.groupKey}`;
 			case 'empty': return `empty:${element.key}`;
+			case 'cloudHeader': return 'cloudHeader';
+			case 'cloud': return `cloud:${element.task.id}`;
 			default: {
 				const unexpected: never = element;
 				return unexpected;
@@ -298,6 +304,12 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 				template.container.classList.toggle('is-nested', element.nested);
 				template.name.textContent = localize('voltAgent.home.showMore', "Show more");
 				break;
+			case 'cloudHeader':
+				this.renderCloudHeader(element.count, template);
+				break;
+			case 'cloud':
+				this.renderCloudRow(element.task, template);
+				break;
 			case 'empty':
 				template.container.classList.add('is-empty');
 				template.name.textContent = element.filtered
@@ -346,6 +358,18 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			e.stopPropagation();
 			this.host.openWorkspaceMenu(template.openWorkspace);
 		}));
+	}
+
+	private renderCloudHeader(count: number, template: IHomeTemplate): void {
+		template.container.classList.add('is-section');
+		template.name.textContent = `${localize('voltAgent.home.cloud', "Cloud")} · ${count}`;
+	}
+
+	private renderCloudRow(task: ICloudTask, template: IHomeTemplate): void {
+		const tone = cloudTaskTone(task);
+		template.container.classList.add('is-cloud', `cloud-${tone}`);
+		template.name.textContent = task.title;
+		setAgentTooltip(template.container, `${task.title}\n${cloudTaskStatusText(task)}`);
 	}
 
 	private renderSection(element: Extract<AgentHomeElement, { type: 'section' }>, template: IHomeTemplate): void {
@@ -670,6 +694,8 @@ function rowLevel(element: AgentHomeElement): number {
 		case 'bucket':
 		case 'group':
 		case 'empty':
+		case 'cloudHeader':
+		case 'cloud':
 			return 0;
 		default: {
 			const unexpected: never = element;
@@ -697,6 +723,8 @@ function elementLabel(element: AgentHomeElement): string {
 				: title;
 		}
 		case 'more': return localize('voltAgent.home.showMore', "Show more");
+		case 'cloudHeader': return localize('voltAgent.home.cloud', "Cloud");
+		case 'cloud': return element.task.title;
 		case 'empty': return element.filtered
 			? localize('voltAgent.home.noMatches', "No agents match these filters")
 			: localize('voltAgent.home.noAgents', "No agents yet");
@@ -758,6 +786,9 @@ export class AgentHomePane extends Disposable {
 	/** Recently opened folders, read once and again only when that list changes. */
 	private recents: Promise<readonly (IRecentFolder | IRecentWorkspace)[]> | undefined;
 	private refreshSeq = 0;
+	/** The Cloud rows' menu opens beside the list. */
+	private readonly cloudMenu: AgentCloudTaskMenu;
+	private readonly cloudAnchor: HTMLElement;
 	private viewState: IAgentHomeViewState;
 	/** Chats with a parent whose orchestration was asked for, to learn if they are subagents. */
 	private readonly checkedSubagents = new Set<string>();
@@ -782,6 +813,7 @@ export class AgentHomePane extends Disposable {
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
 		@IWorkspacesService private readonly workspacesService: IWorkspacesService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IAgentCloudTasksService private readonly cloud: IAgentCloudTasksService,
 		@IVoltSessionContextService private readonly voltSessionContext: IVoltSessionContextService,
 		@IAgentWorkspaceService private readonly agentWorkspace: IAgentWorkspaceService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
@@ -906,6 +938,9 @@ export class AgentHomePane extends Disposable {
 		this._register(this.workspaceService.onDidChangeWorkspaceFolders(() => this.scheduleRefresh()));
 		this._register(this.workspaceService.onDidChangeWorkbenchState(() => this.scheduleRefresh()));
 		this._register(this.history.onDidChange(() => this.scheduleRefresh()));
+		this._register(this.cloud.onDidChange(() => this.scheduleRefresh()));
+		this.cloudAnchor = parent;
+		this.cloudMenu = instantiationService.createInstance(AgentCloudTaskMenu);
 		this._register(this.editorService.onDidEditorsChange(() => this.scheduleRefresh()));
 		this._register(this.editorService.onDidActiveEditorChange(() => this.scheduleRefresh()));
 		this._register(onDidChangeAgentToolEditors(() => this.scheduleRefresh()));
@@ -1332,6 +1367,7 @@ export class AgentHomePane extends Disposable {
 			case 'bucket':
 			case 'group':
 			case 'section':
+			case 'cloudHeader':
 				return this.tree.getNode(element).collapsible;
 			case 'newChat':
 			case 'action':
@@ -1339,6 +1375,7 @@ export class AgentHomePane extends Disposable {
 			case 'runGroup':
 			case 'more':
 			case 'empty':
+			case 'cloud':
 				return false;
 			default: {
 				const unexpected: never = element;
@@ -1359,6 +1396,10 @@ export class AgentHomePane extends Disposable {
 			case 'bucket':
 			case 'group':
 			case 'empty':
+			case 'cloudHeader':
+				return;
+			case 'cloud':
+				this.cloudMenu.show(element.task, this.cloudAnchor);
 				return;
 			case 'folder':
 				await this.openProject(element);
@@ -1568,7 +1609,7 @@ export class AgentHomePane extends Disposable {
 		}
 		const runGroups = this.homeRunGroups(sessions);
 		this.live = agentHomeLiveWork(this.orchestrator.getState());
-		const tree = buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags, runGroups, workingShelf: this.workingSection, live: this.live });
+		const tree = [...buildCloudHomeNodes(this.cloud.tasks), ...buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags, runGroups, workingShelf: this.workingSection, live: this.live })];
 		// Row heights are measured when rows are inserted: switching one and two lines inserts them again.
 		if (this.builtTwoLine !== undefined && this.builtTwoLine !== this.twoLine) {
 			this.tree.setChildren(null, []);
@@ -1859,6 +1900,7 @@ function toTreeElement(node: IAgentHomeNode): IObjectTreeElement<AgentHomeElemen
 		case 'group':
 		case 'section':
 		case 'runGroup':
+		case 'cloudHeader':
 			collapsible = hasChildren;
 			break;
 		case 'newChat':
@@ -1866,6 +1908,7 @@ function toTreeElement(node: IAgentHomeNode): IObjectTreeElement<AgentHomeElemen
 		case 'session':
 		case 'more':
 		case 'empty':
+		case 'cloud':
 			collapsible = false;
 			break;
 		default: {

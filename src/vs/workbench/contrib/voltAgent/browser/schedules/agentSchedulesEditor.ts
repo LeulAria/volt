@@ -55,6 +55,7 @@ interface IRelayDelivery {
 function deliveryStatusLabel(status: string): string {
 	switch (status) {
 		case 'held': return localize('voltSchedules.deliveryHeld', "Held until Volt opens");
+		case 'delivered': return localize('voltSchedules.deliveryDelivered', "Running");
 		case 'ran': return localize('voltSchedules.deliveryRan', "Ran");
 		case 'filtered': return localize('voltSchedules.deliveryFiltered', "Filtered out");
 		case 'failed': return localize('voltSchedules.deliveryFailed', "Failed");
@@ -336,7 +337,9 @@ export class AgentSchedulesEditor extends EditorPane {
 		const list = append(box, $('.volt-schedules-delivery-list'));
 		const note = append(box, $('.volt-schedules-delivery-note'));
 		const hookId = task.webhook.id;
-		void this.loadDeliveries(hookId).then(rows => {
+		const load = () => void this.loadDeliveries(hookId).then(rows => {
+			list.replaceChildren();
+			note.textContent = '';
 			if (rows === undefined) {
 				note.textContent = localize('voltSchedules.deliveriesOffline', "Connect to Volt Relay to see deliveries that arrive while Volt is closed.");
 			} else if (!rows.length) {
@@ -348,6 +351,13 @@ export class AgentSchedulesEditor extends EditorPane {
 		}, err => {
 			note.textContent = localize('voltSchedules.deliveriesFailed', "Could not load deliveries: {0}", err instanceof Error ? err.message : String(err));
 		});
+		load();
+		// A delivery moves from held to delivered to ran as Volt works on it: the list follows the relay.
+		this.renderStore.add(this.relay.onDidEvent(event => {
+			if (event.type === 'delivery' && box.isConnected) {
+				load();
+			}
+		}));
 	}
 
 	private async loadDeliveries(hookId: string): Promise<IRelayDelivery[] | undefined> {
