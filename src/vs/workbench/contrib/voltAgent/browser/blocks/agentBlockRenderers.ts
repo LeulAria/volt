@@ -74,6 +74,10 @@ export interface IBlockRenderContext {
 	readonly onBuildCreatedPlan?: (plan: IPlanBlock) => void;
 	/** Ask for changes to a plan: the composer takes the feedback, and the agent proposes again. */
 	readonly onRevisePlan?: (plan: IPlanBlock) => void;
+	/** Build a plan in a new chat on its own worktree: the chat forks from this reply and starts with the plan. */
+	readonly onBuildPlanInWorktree?: (plan: IPlanBlock) => void;
+	/** An inline edit of a plan was saved: the reply is recorded again so the edit survives a reload. */
+	readonly onEditPlan?: (plan: IPlanBlock) => void;
 	/** Save a plan under `.volt/plans` and resolve to its path. */
 	readonly onSavePlan?: (plan: IPlanBlock) => Promise<string | undefined>;
 	/** When false, a still-running command must not keep the streaming shimmer. */
@@ -200,6 +204,7 @@ function renderPlanBlock(parent: HTMLElement, block: IPlanBlock, ctx: IBlockRend
 				editor = undefined;
 				renderBody();
 				renderActions();
+				ctx.onEditPlan?.(block);
 			});
 			button(localize('voltAgent.plan.cancelEdit', "Cancel"), '', () => {
 				editor = undefined;
@@ -209,6 +214,9 @@ function renderPlanBlock(parent: HTMLElement, block: IPlanBlock, ctx: IBlockRend
 			return;
 		}
 		button(localize('voltAgent.plan.approveImplement', "Approve & implement"), '.primary', () => ctx.onBuildCreatedPlan?.(block));
+		if (ctx.onBuildPlanInWorktree) {
+			button(localize('voltAgent.plan.approveWorktree', "Approve in a new worktree chat"), '', () => ctx.onBuildPlanInWorktree?.(block));
+		}
 		if (ctx.onRevisePlan) {
 			button(localize('voltAgent.plan.revise', "Revise"), '', () => ctx.onRevisePlan?.(block));
 		}

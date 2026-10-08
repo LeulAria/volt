@@ -16,6 +16,8 @@ export interface IAgentForkChatOptions {
 	readonly title?: string;
 	readonly model?: { readonly ref: string; readonly label: string };
 	readonly workspace: 'same' | 'worktree';
+	/** Mode of the fork's first prompt. Default: the source's mode. */
+	readonly mode?: string;
 	readonly message?: string;
 	readonly open?: boolean;
 	/** The chat whose agent asked for the fork; its message is shown as that chat's. */
