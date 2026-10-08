@@ -8,7 +8,7 @@ import { promises as fs } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { promisify } from 'util';
 import { Emitter, Event } from '../../../base/common/event.js';
-import { basename, delimiter, join } from '../../../base/common/path.js';
+import { basename, delimiter, dirname, join } from '../../../base/common/path.js';
 import { Disposable, DisposableStore } from '../../../base/common/lifecycle.js';
 import { CancellationToken } from '../../../base/common/cancellation.js';
 import { generateUuid } from '../../../base/common/uuid.js';
@@ -18,6 +18,7 @@ import { ILifecycleMainService } from '../../lifecycle/electron-main/lifecycleMa
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
+import { isPathInside, planAllowsWrite } from '../../voltSandbox/common/sandboxPolicy.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
 import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxEvent, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
 
@@ -139,6 +140,20 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 
 	async allowSandboxDomains(id: string, domains: readonly string[]): Promise<void> {
 		this.sandboxes.get(id)?.allowDomains(domains);
+	}
+
+	async sandboxAllows(id: string, path: string, access: 'read' | 'write'): Promise<boolean> {
+		const launch = this.sandboxes.get(id);
+		if (!launch) {
+			return true;
+		}
+		const resolved = await realpathOfNearest(path);
+		const plan = launch.plan;
+		if (access === 'read') {
+			return !plan.denyReadSubpaths.some(root => isPathInside(path, root) || isPathInside(resolved, root));
+		}
+		// Both spellings must pass, as Seatbelt checks the resolved path and Volt writes the given one.
+		return planAllowsWrite(plan, path) && planAllowsWrite(plan, resolved);
 	}
 
 	private disposeSandbox(id: string): void {
@@ -526,6 +541,22 @@ function shellFor(env: NodeJS.ProcessEnv): { file: string; args: (command: strin
 	}
 	const preferred = env.SHELL && /^(zsh|bash|sh|dash|ksh)$/.test(basename(env.SHELL)) ? env.SHELL : undefined;
 	return { file: preferred ?? (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash'), args: command => ['-c', command] };
+}
+
+/** The real path of `path`, or of its nearest existing parent plus the rest (a file about to be created). */
+async function realpathOfNearest(path: string): Promise<string> {
+	const rest: string[] = [];
+	let current = path;
+	for (let i = 0; i < 64 && current && current !== '/'; i++) {
+		try {
+			const real = await fs.realpath(current);
+			return [real, ...rest].join('/').replace(/\/{2,}/g, '/');
+		} catch {
+			rest.unshift(basename(current));
+			current = dirname(current);
+		}
+	}
+	return path;
 }
 
 function windowOwner(windowId: number): string {

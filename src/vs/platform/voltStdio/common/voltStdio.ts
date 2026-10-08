@@ -109,4 +109,10 @@ export interface IVoltStdioService {
 	sandboxSupport?(): Promise<IVoltSandboxSupportInfo>;
 	/** Lets a sandboxed process (network off) reach more hosts, without a restart. */
 	allowSandboxDomains?(id: string, domains: readonly string[]): Promise<void>;
+	/**
+	 * Whether the sandbox of spawn `id` lets it read or write `path`. For file access the agent
+	 * routes through Volt (ACP `fs/*`), which happens outside the agent's process. True when the
+	 * spawn is not sandboxed.
+	 */
+	sandboxAllows?(id: string, path: string, access: 'read' | 'write'): Promise<boolean>;
 }

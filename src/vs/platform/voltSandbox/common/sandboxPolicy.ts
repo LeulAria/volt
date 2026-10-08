@@ -366,3 +366,100 @@ export function describeSandbox(settings: IVoltSandboxSettings): string {
 	const where = settings.level === 'read-only' ? 'Read-only: the agent cannot change your files' : 'Writes stay inside the workspace';
 	return `${where}; network ${settings.network ? 'on' : 'off (only the agent\'s own API)'}.`;
 }
+
+// --- Per chat settings ------------------------------------------------------------------------
+
+export const DEFAULT_SANDBOX_SETTINGS: IVoltSandboxSettings = { level: 'off', network: true };
+
+/** Settings read back from storage: unknown fields dropped, paths and hosts cleaned. */
+export function normalizeSandboxSettings(value: unknown): IVoltSandboxSettings {
+	const raw = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+	const strings = (list: unknown) => Array.isArray(list) ? [...new Set(list.filter((item): item is string => typeof item === 'string' && !!item.trim()).map(item => item.trim()))] : [];
+	const extra = strings(raw.extraWritableRoots).map(normalizeSandboxPath).filter(isAbsolute);
+	const domains = strings(raw.allowedDomains).map(domain => domain.toLowerCase());
+	return {
+		level: normalizeSandboxLevel(raw.level),
+		network: raw.network !== false,
+		...(extra.length ? { extraWritableRoots: extra } : {}),
+		...(domains.length ? { allowedDomains: domains } : {}),
+	};
+}
+
+/**
+ * What the agent process was started with. A chat whose key changed needs a new process (the OS
+ * profile is fixed at launch); allowed hosts are not in it, the proxy takes those live.
+ */
+export function sandboxLaunchKey(settings: IVoltSandboxSettings | undefined): string {
+	if (!settings || settings.level === 'off') {
+		return 'off';
+	}
+	return JSON.stringify([settings.level, settings.network, [...(settings.extraWritableRoots ?? [])].sort()]);
+}
+
+/** The settings with one more folder the agent may write. */
+export function withWritableRoot(settings: IVoltSandboxSettings, folder: string): IVoltSandboxSettings {
+	const path = normalizeSandboxPath(folder);
+	if (!isAbsolute(path) || (settings.extraWritableRoots ?? []).some(root => isPathInside(path, root))) {
+		return settings;
+	}
+	return { ...settings, extraWritableRoots: [...(settings.extraWritableRoots ?? []).filter(root => !isPathInside(root, path)), path] };
+}
+
+/** The settings with one more host reachable while network is off. */
+export function withAllowedDomain(settings: IVoltSandboxSettings, host: string): IVoltSandboxSettings {
+	const name = host.trim().toLowerCase();
+	if (!name || domainAllowed(name, settings.allowedDomains ?? [])) {
+		return settings;
+	}
+	return { ...settings, allowedDomains: [...(settings.allowedDomains ?? []), name] };
+}
+
+/**
+ * Folders an agent may write for a chat: its checkout, plus the main repository's `.git` when the
+ * checkout is a linked worktree (commits, the index and refs live there).
+ */
+export function sandboxWorkspaceRoots(cwd: string | undefined, projectRoot: string | undefined, worktree: boolean): string[] {
+	const roots: string[] = [];
+	if (cwd) {
+		roots.push(normalizeSandboxPath(cwd));
+	}
+	if (worktree && projectRoot) {
+		roots.push(`${normalizeSandboxPath(projectRoot)}/.git`);
+	}
+	return roots.filter(isAbsolute);
+}
+
+/** The loopback port of an `http://127.0.0.1:<port>/...` URL (Volt's MCP server), if it is one. */
+export function loopbackPort(url: string | undefined): number | undefined {
+	const match = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):(\d+)/i.exec(url ?? '');
+	const port = match ? Number(match[1]) : NaN;
+	return Number.isInteger(port) && port > 0 && port < 65536 ? port : undefined;
+}
+
+// --- Codex's own sandbox --------------------------------------------------------------------
+
+/**
+ * Codex config and session-mode values Volt sends, adjusted for the chat's sandbox.
+ * - `native` (workspace-write): Codex's own Seatbelt / Landlock does the job per command, and its
+ *   escalation requests reach Volt's approval UI. Full access is never chosen.
+ * - `wrap` (read-only): Volt confines the whole tree, so Codex's per-command sandbox must stay
+ *   off; macOS refuses a second sandbox inside one that denies anything.
+ */
+export function codexSandboxValue(id: string, value: string | boolean, strategy: SandboxStrategy): string | boolean {
+	if (strategy === 'none' || typeof value !== 'string') {
+		return value;
+	}
+	if (id === 'mode') {
+		if (strategy === 'wrap') {
+			return 'agent-full-access';
+		}
+		return value === 'agent-full-access' ? 'agent' : value;
+	}
+	if (id === 'sandbox' || id === 'sandbox_mode') {
+		if (strategy === 'wrap') {
+			return 'danger-full-access';
+		}
+		return value === 'danger-full-access' ? 'workspace-write' : value;
+	}
+	return value;
+}
