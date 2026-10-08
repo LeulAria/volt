@@ -132,6 +132,7 @@ export class Runner {
 			load: { ...load, running: this.active.size, slots: Math.max(0, this.config.maxParallel - this.active.size), ...this.config.extraLoad?.() },
 			caps: {
 				agents: this.agents,
+				maxParallel: this.config.maxParallel,
 				os: `${os.platform()}`,
 				arch: os.arch(),
 				gitPush: this.gitPush,

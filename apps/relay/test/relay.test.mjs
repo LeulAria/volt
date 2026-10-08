@@ -219,6 +219,26 @@ describe('relay', () => {
 		assert.match(task.error, /stopped responding/);
 	});
 
+	test('auto tasks go to the least loaded runner that can take them', async () => {
+		const caps = { agents: { claude: { installed: true, credentials: true } }, maxParallel: 2 };
+		const idle = (await relay.call('POST', '/api/pair', { enrollKey: 'enroll-secret', kind: 'runner', name: 'Idle', machineId: 'machine-idle' })).body.token;
+		const busy = (await relay.call('POST', '/api/pair', { enrollKey: 'enroll-secret', kind: 'runner', name: 'Busy', machineId: 'machine-busy' })).body.token;
+		await relay.call('POST', '/api/heartbeat', { load: { cpus: 2, cpu: 0.02, container: true, load1: 9 }, caps }, idle);
+		await relay.call('POST', '/api/heartbeat', { load: { cpus: 2, cpu: 0.97, container: true, load1: 9 }, caps }, busy);
+		// The other runners from earlier tests are saturated too, so the idle one is the only choice.
+		for (const name of ['A', 'B', 'C']) {
+			const machine = relay.server.relay.state.machines.find(candidate => candidate.name === name);
+			if (machine) {
+				machine.load = { ...machine.load, cpus: 2, cpu: 1, container: true };
+			}
+		}
+		const created = (await relay.call('POST', '/api/tasks', { prompt: 'Auto', source: { repoUrl: 'https://example.com/auto.git' }, target: { autoPicked: true } }, token)).body;
+		assert.equal((await relay.call('POST', '/api/runner/claim?wait=0', { agents: { claude: true } }, busy)).body.task, null);
+		const claimed = (await relay.call('POST', '/api/runner/claim?wait=0', { agents: { claude: true } }, idle)).body.task;
+		assert.equal(claimed.id, created.id);
+		assert.equal(claimed.assignedName, 'Idle');
+	});
+
 	test('a waiting claim wakes when a task arrives', async () => {
 		const runner = (await relay.call('POST', '/api/pair', { enrollKey: 'enroll-secret', kind: 'runner', name: 'C', machineId: 'machine-c' })).body.token;
 		const waiting = relay.call('POST', '/api/runner/claim?wait=5', { agents: { claude: true } }, runner);

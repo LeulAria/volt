@@ -15,11 +15,14 @@ export const HEARTBEAT_FRESH_MS = 30_000;
 /** A challenger must beat the incumbent by this much to take the task. */
 export const SWITCH_MARGIN = 0.25;
 
-/** 0 = idle. About 1 = saturated (load equals the core count). Higher is worse. */
+/** 0 = idle. About 1 = saturated (load equals the core count, or the container's CPU quota is used up). Higher is worse. */
 export function loadScore(machine) {
 	const load = machine.load ?? {};
 	const cpus = Math.max(1, Number(load.cpus) || 1);
-	const cpuPart = Math.max(0, Number(load.load1) || 0) / cpus;
+	// In a container the load average is the whole Docker VM's, so its own cgroup busy fraction counts.
+	const cpuPart = load.container
+		? Math.max(0, Math.min(1, Number(load.cpu) || 0))
+		: Math.max(0, Number(load.load1) || 0) / cpus;
 	const memTotal = Number(load.memTotal) || 0;
 	const memPart = memTotal > 0 ? 1 - Math.min(1, Math.max(0, (Number(load.memFree) || 0) / memTotal)) : 0;
 	const runningPart = (Number(load.running) || 0) * 0.25;

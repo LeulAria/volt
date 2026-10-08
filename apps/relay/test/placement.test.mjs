@@ -61,3 +61,10 @@ test('hysteresis: the previous machine keeps a task unless another is clearly le
 test('ties break by machine id, so the choice is stable', () => {
 	assert.equal(pickMachine([machine('b', idle), machine('a', idle)], task, { now: NOW }).machineId, 'a');
 });
+
+test('inside a container the cgroup busy fraction is the load, not the shared host load average', () => {
+	const shared = { ...idle, container: true, cpu: 0.9, load1: 0.1 };
+	const quiet = { ...idle, container: true, cpu: 0.05, load1: 30 };
+	assert.ok(loadScore({ load: shared }) > loadScore({ load: quiet }));
+	assert.ok(loadScore({ load: quiet }) < 0.1);
+});

@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { verifySignature } from './signature.mjs';
 import { Store } from './store.mjs';
+import { pickMachine } from './placement.mjs';
 import { HttpError, newId, normalizePairingCode, pairingCode, randomToken, redactHeaders, safeEqual, sha256 } from './util.mjs';
 
 export const PROTOCOL_VERSION = 1;
@@ -667,13 +668,39 @@ export class Relay {
 					return false;
 				}
 				const target = task.target?.machineId;
-				if (!target || target === device.id) {
+				const overdue = now - task.createdAt > (task.target?.fallbackAfterSec ?? DEFAULT_FALLBACK_SEC) * 1000;
+				if (!target) {
+					// Auto: the least loaded runner that can take it gets it; anyone once it has waited too long.
+					if (!task.target?.autoPicked || overdue) {
+						return true;
+					}
+					return this.autoMachineFor(task, now) === device.id;
+				}
+				if (target === device.id) {
 					return true;
 				}
 				const aimed = machines.get(target);
 				const aimedOffline = !aimed || now - aimed.at > MACHINE_STALE_MS;
-				return aimedOffline || now - task.createdAt > (task.target.fallbackAfterSec ?? DEFAULT_FALLBACK_SEC) * 1000;
+				return aimedOffline || overdue;
 			});
+	}
+
+	/**
+	 * The runner an Auto task goes to (see placement.mjs), counting the tasks already assigned to
+	 * each runner, since its heartbeat may not list them yet. The chat's last runner keeps it unless
+	 * another is clearly less loaded.
+	 */
+	autoMachineFor(task, now) {
+		const active = this.state.tasks.filter(candidate => TASK_ACTIVE.has(candidate.status) && candidate.assignedTo);
+		const machines = this.state.machines
+			.filter(machine => this.state.devices.some(device => device.id === machine.id && !device.revokedAt))
+			.map(machine => ({
+				...machine,
+				running: [...new Set([...(machine.running ?? []), ...active.filter(candidate => candidate.assignedTo === machine.id).map(candidate => candidate.id)])],
+			}));
+		const chatId = task.origin?.chatId;
+		const last = chatId ? this.state.tasks.filter(candidate => candidate.id !== task.id && candidate.origin?.chatId === chatId && candidate.assignedTo).at(-1) : undefined;
+		return pickMachine(machines, task, { now, previousId: last?.assignedTo }).machineId;
 	}
 
 	assign(task, device) {
@@ -885,6 +912,7 @@ function sanitizeCaps(caps) {
 	}
 	return {
 		agents,
+		maxParallel: num(raw.maxParallel),
 		os: typeof raw.os === 'string' ? raw.os.slice(0, 40) : undefined,
 		arch: typeof raw.arch === 'string' ? raw.arch.slice(0, 20) : undefined,
 		gitPush: raw.gitPush === true,
