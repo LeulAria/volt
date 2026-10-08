@@ -113,7 +113,7 @@ suite('Agent orchestrator service', () => {
 			stub({ registerToolProvider: (provider: IVoltHostToolProvider) => { tools = provider; return toDisposable(() => tools = undefined); } }),
 			stub({ create: async () => ({ path: '/wt/a', branch: 'volt/a' }), ensure: async () => false }),
 			stub({ rootFor: () => URI.file('/repo') }),
-			stub({ getValue: () => existing?.resume ?? 'off' }),
+			stub({ getValue: () => existing?.resume ?? 'off', onDidChangeConfiguration: () => toDisposable(() => undefined) }),
 			stub({ run: async () => undefined, needsRetry: () => false }),
 		));
 		await service.whenReady;

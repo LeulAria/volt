@@ -182,7 +182,7 @@ suite('Run group service', () => {
 			stub({ registerToolProvider: () => toDisposable(() => undefined) }),
 			stub({ create: async () => ({ path: '/wt/a', branch: 'volt/a' }), ensure: async () => false }),
 			stub({ rootFor: () => URI.file('/repo') }),
-			stub({ getValue: () => undefined }),
+			stub({ getValue: () => undefined, onDidChangeConfiguration: () => toDisposable(() => undefined) }),
 			stub({ run: async () => undefined }),
 		));
 		await orchestrator.whenReady;
