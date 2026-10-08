@@ -44,6 +44,8 @@ export function compactedHistory(summary: string): { readonly role: 'user' | 'as
 }
 
 export const COMPACT_OLD_THREADS_SETTING = 'volt.agent.compactOldThreads';
+/** Context meter fill (percent) from which the composer offers "Compact first". */
+export const COMPACT_CHIP_THRESHOLD_SETTING = 'volt.agent.compactChipThreshold';
 
 /** How long a chat must sit idle for its provider's prompt cache to be gone (an hour, plus margin). */
 export const OLD_THREAD_IDLE_MS = 70 * 60_000;

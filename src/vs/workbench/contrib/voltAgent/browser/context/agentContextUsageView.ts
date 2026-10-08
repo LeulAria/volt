@@ -58,7 +58,7 @@ export interface IAgentContextUsageHost {
 	isCompacting?(): boolean;
 	compact?(): void;
 	/** After every repaint, with how full the window is (0 without a chat). */
-	onDidRefresh?(percent: number): void;
+	onDidRefresh?(percent: number, used?: number): void;
 	getPanelAnchor(): { parent: HTMLElement; before: HTMLElement };
 	getBranch(): IAgentStatusBranch;
 	onWillOpenPanel?(): void;
@@ -181,7 +181,7 @@ export class AgentContextUsageView extends Disposable {
 		if (this.open && this.popup) {
 			this.fillPopup(this.popup, snapshot);
 		}
-		this.host.onDidRefresh?.(snapshot.percent);
+		this.host.onDidRefresh?.(snapshot.percent, snapshot.used);
 	}
 
 	private snapshot(): IContextUsageSnapshot {

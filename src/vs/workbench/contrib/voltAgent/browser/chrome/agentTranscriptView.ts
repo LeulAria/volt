@@ -198,10 +198,14 @@ function renderCompactionRow(parent: HTMLElement, row: Extract<TranscriptRow, { 
 		case 'running':
 			host.setSearchableText(label, auto ? localize('voltAgent.compaction.autoRunning', "Auto-compacting context") : localize('voltAgent.compaction.running', "Compacting context"));
 			label.classList.add('shimmer');
+			detail = compaction.preTokens ? localize('voltAgent.compaction.size', "{0} tokens", formatContextTokens(compaction.preTokens)) : undefined;
 			break;
 		case 'completed':
 			host.setSearchableText(label, auto ? localize('voltAgent.compaction.autoDone', "Context auto-compacted") : localize('voltAgent.compaction.done', "Context compacted"));
-			detail = compaction.preTokens ? localize('voltAgent.compaction.from', "from {0} tokens", formatContextTokens(compaction.preTokens)) : undefined;
+			// "162K → 21K tokens": what the conversation took before, and what it continues from.
+			detail = compaction.preTokens && compaction.postTokens
+				? localize('voltAgent.compaction.drop', "{0} → {1} tokens", formatContextTokens(compaction.preTokens), formatContextTokens(compaction.postTokens))
+				: compaction.preTokens ? localize('voltAgent.compaction.from', "from {0} tokens", formatContextTokens(compaction.preTokens)) : undefined;
 			break;
 		case 'failed':
 			host.setSearchableText(label, localize('voltAgent.compaction.failed', "Couldn't compact context"));

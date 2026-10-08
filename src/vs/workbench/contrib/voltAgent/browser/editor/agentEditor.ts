@@ -70,7 +70,7 @@ import { IVoltSessionContextService } from '../../../../services/voltRuntime/com
 import { IVoltProject, IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
 import { createAccessIcon } from '../chrome/accessIcons.js';
 import { mountAgentQuickOpenActions } from '../chrome/agentViewSidebars.js';
-import { agentMessagePlainText, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
+import { agentMessagePlainText, formatContextTokens, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
 import { AgentContextUsageView, type IAgentCompactState, type IAgentStatusBranch } from '../context/agentContextUsageView.js';
 import { AgentModelPicker, type IModelOption } from '../picker/agentModelPicker.js';
 import { cliLoginForNotice } from '../../../../services/voltRuntime/browser/agents/cliAgents.js';
@@ -109,7 +109,8 @@ import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
-import { COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend } from '../../../../services/voltRuntime/common/compaction.js';
+import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend } from '../../../../services/voltRuntime/common/compaction.js';
+import type { IVoltCompactionPlan } from '../../../../services/voltRuntime/common/runtime.js';
 import type { IVoltEvent } from '../../../../services/voltRuntime/common/events.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
@@ -153,8 +154,9 @@ import { DEFAULT_LABELS_CONTAINER, ResourceLabels } from '../../../../browser/la
 import { chooseFileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
 
 /**
- * The Compact context chip shows from this fill on, when the meter turns amber: before Claude
- * compacts on its own (about 83% of a 200K window), so the user can pick the moment.
+ * The Compact first chip shows from this fill on (setting `volt.agent.compactChipThreshold`), when
+ * the meter turns amber: before Claude compacts on its own (about 83% of a 200K window), so the
+ * user can pick the moment.
  */
 const COMPACT_CHIP_PERCENT = 80;
 /** How long the chip reads "Context compacted" before it goes. */
@@ -638,6 +640,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly compactChipDone = this._register(new MutableDisposable());
 	/** How full the meter last read. */
 	private contextPercent = 0;
+	/** Tokens the meter last read. */
+	private contextUsedTokens = 0;
+	/** The user armed (true) or disarmed (false) "Compact first" for the next send; undefined: the default (armed for old, large chats). */
+	private compactFirst: boolean | undefined;
 	private worktreeSetupCard: AgentWorktreeSetupCard | undefined;
 	private waitingForClone: string | undefined;
 	/** Prompts reach the orchestrator in the order they were sent, even when freezing one takes longer. */
@@ -973,7 +979,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onChangesClick: () => void this.openSessionChanges(),
 			onTerminalClick: () => this.surfaceHost.openTerminal(),
 			onScrollToBottom: () => this.scrollThreadToEnd(),
-			onCompactClick: () => this.compactContext(),
+			onCompactClick: () => this.toggleCompactFirst(),
 			onStatusClick: () => this.scrollThreadToEnd(),
 		}));
 		this.tasksCard = this._register(new AgentTasksCard(() => this.layoutInputEditor()));
@@ -1109,8 +1115,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			isCompacting: () => this.compactionRunning(),
 			compact: () => this.compactContext(),
 			// Nearly out of room: offer Compact context as a chip beside Changes.
-			onDidRefresh: percent => {
+			onDidRefresh: (percent, used) => {
 				this.contextPercent = percent;
+				this.contextUsedTokens = used ?? 0;
 				this.syncCompactChip();
 			},
 		}));
@@ -4876,9 +4883,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.adoptVisibleProject();
 		}
 		this._onDidComposerSend.fire();
-		if (this.compactsBeforeSend(agentText)) {
-			// An old, large chat: compact first, so the prompt does not resend its whole stale history.
-			this.submitToOrchestrator('/compact', undefined, this.currentMode, 'auto');
+		if (this.compactOffered() && this.compactFirstArmed() && !isCompactCommand(agentText)) {
+			// "Compact first": the compaction is its own turn, and the prompt queues behind it.
+			this.compactFirst = undefined;
+			this.compactRequested = true;
+			this.compactRequestTimeout.value = disposableTimeout(() => {
+				this.compactRequested = false;
+				this.syncCompactChip();
+			}, 30_000);
+			this.syncCompactChip();
+			void this.submitToOrchestrator('/compact', undefined, this.currentMode, 'queue');
 		}
 		this.dispatchPrompt(agentText, display);
 	}
@@ -5018,7 +5032,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** Whether the chat's agent offers `/compact`, and why it cannot run right now. */
 	private compactState(): IAgentCompactState | undefined {
-		if (!this.runtime.supportsCommand(this.sessionKey, 'compact') || this.isSubagentChat()) {
+		if (!this.compactPlan() || this.isSubagentChat()) {
 			return undefined;
 		}
 		if (this.compactionRunning()) {
@@ -5059,10 +5073,47 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		return undefined;
 	}
 
+	/** How `/compact` would run for the composer's model: the agent's own, or Volt's handoff summary. */
+	private compactPlan(): IVoltCompactionPlan | undefined {
+		return this.runtime.compactionPlan(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined));
+	}
+
+	/** Whether the next send compacts first: the user's choice, else on for old, large chats (their cache has expired). */
+	private compactFirstArmed(): boolean {
+		return this.compactFirst ?? this.compactsBeforeSend('');
+	}
+
+	/** The chip offers "Compact first" now: the meter is past the threshold, or the chat is old and large. */
+	private compactOffered(): boolean {
+		const state = this.compactState();
+		if (!state || state.blockedReason) {
+			return false;
+		}
+		const threshold = this.configurationService.getValue<number>(COMPACT_CHIP_THRESHOLD_SETTING);
+		const percent = typeof threshold === 'number' && threshold > 0 && threshold <= 100 ? threshold : COMPACT_CHIP_PERCENT;
+		return this.contextPercent >= percent || this.compactsBeforeSend('');
+	}
+
+	private toggleCompactFirst(): void {
+		this.compactFirst = !this.compactFirstArmed();
+		this.syncCompactChip();
+	}
+
+	/** The chip's hover: what compacting will do with this chat on this model. */
+	private compactChipTooltip(armed: boolean, plan: IVoltCompactionPlan | undefined): string {
+		const tokens = formatContextTokens(this.contextUsedTokens);
+		const what = plan?.kind === 'handoff'
+			? localize('voltAgent.compactFirst.handoff', "Volt condenses the {0}-token conversation to about {1} (recent turns verbatim, older turns summarized, tool calls as one-liners, edits as file paths) and starts a fresh {2} session with it. No model call.", tokens, formatContextTokens(plan.tokens ?? 0), plan.label ?? localize('voltAgent.compactFirst.agent', "agent"))
+			: localize('voltAgent.compactFirst.native', "{0} summarizes the {1}-token conversation with its own /compact; your message then runs on the summary.", plan?.label ?? localize('voltAgent.compactFirst.theAgent', "The agent"), tokens);
+		return armed
+			? localize('voltAgent.compactFirst.armed', "Your next message compacts first. {0}\nClick to send with the full history.", what)
+			: localize('voltAgent.compactFirst.offered', "The context is {0}% full. Click to compact before your next message: {1}", Math.round(this.contextPercent), what);
+	}
+
 	/**
-	 * The Compact context chip: offered once the window is nearly full; the dots and "Compacting
-	 * context" from the click (or the agent's own compaction) until it ends; then "Context compacted"
-	 * for a moment.
+	 * The Compact first chip: offered once the window is nearly full (a click arms it for the next
+	 * send), the dots and the token count while a compaction runs, then the drop ("162K → 21K") for
+	 * a moment.
 	 */
 	private syncCompactChip(): void {
 		const chips = this.composerChips;
@@ -5072,13 +5123,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.compactionRunning()) {
 			this.compactChipWasRunning = true;
 			this.compactChipDone.clear();
-			chips.setCompactState('running');
+			const pre = this.lastCompaction()?.preTokens ?? this.contextUsedTokens;
+			chips.setCompactState('running', { ...(pre ? { count: formatContextTokens(pre) } : {}) });
 			return;
 		}
 		if (this.compactChipWasRunning) {
 			this.compactChipWasRunning = false;
-			if (this.lastCompaction()?.status === 'completed') {
-				chips.setCompactState('done');
+			const last = this.lastCompaction();
+			if (last?.status === 'completed') {
+				const drop = last.preTokens && last.postTokens !== undefined ? `${formatContextTokens(last.preTokens)} → ${formatContextTokens(last.postTokens)}` : undefined;
+				chips.setCompactState('done', { ...(drop ? { count: drop } : {}) });
 				this.compactChipDone.value = disposableTimeout(() => {
 					this.compactChipDone.clear();
 					this.syncCompactChip();
@@ -5089,8 +5143,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.compactChipDone.value) {
 			return;
 		}
-		const state = this.contextPercent >= COMPACT_CHIP_PERCENT ? this.compactState() : undefined;
-		chips.setCompactState(state && !state.blockedReason ? 'offered' : 'hidden');
+		if (!this.compactOffered()) {
+			chips.setCompactState('hidden');
+			return;
+		}
+		const armed = this.compactFirstArmed();
+		chips.setCompactState(armed ? 'armed' : 'offered', {
+			...(this.contextUsedTokens ? { count: localize('voltAgent.compactFirst.count', "{0} tokens", formatContextTokens(this.contextUsedTokens)) } : {}),
+			tooltip: this.compactChipTooltip(armed, this.compactPlan()),
+		});
 	}
 
 	/** Forgets the last chat's compaction: the chip and meter describe the chat on screen. */
@@ -5099,9 +5160,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.compactRequestTimeout.clear();
 		this.compactChipWasRunning = false;
 		this.compactChipDone.clear();
+		this.compactFirst = undefined;
 	}
 
-	/** T3's "Resume with less context", done for the user: see `shouldCompactBeforeSend`. */
+	/** T3's "Resume with less context": see `shouldCompactBeforeSend`. */
 	private compactsBeforeSend(text: string): boolean {
 		const last = this.messages.findLast(message => message.kind === 'agent');
 		const state = this.compactState();
