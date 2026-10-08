@@ -70,6 +70,10 @@ export interface IOrchTurn {
 	readonly interrupting?: boolean;
 	/** The running agent reads messages between steps (native loop): reports and Send now go in without stopping it. */
 	readonly steerable?: boolean;
+	/** A turn that continues a chat parked at a usage limit: the automatic resumes sent so far for that stop. */
+	readonly limitProbe?: number;
+	/** That chat's own auto-resume choice, carried so a probe that hits the limit again keeps it. */
+	readonly limitAuto?: boolean;
 }
 
 export interface IOrchQueueItem {
@@ -87,7 +91,7 @@ export interface IOrchQueueItem {
  * Why a thread's queue does not drain on its own: the last turn failed, the user stopped it, Volt
  * restarted, or the chat woke itself up too many times in a row (subagent reports, no user turn).
  */
-export type OrchPause = 'failed' | 'stopped' | 'interrupted' | 'wakeups';
+export type OrchPause = 'failed' | 'stopped' | 'interrupted' | 'wakeups' | 'limit';
 
 export type OrchOutcome = 'done' | 'failed' | 'cancelled' | 'interrupted';
 
@@ -108,6 +112,59 @@ export interface IOrchHandoff {
 	/** The brief the previous model wrote for the next one, when it handed off itself. */
 	readonly brief?: string;
 	readonly by: 'agent' | 'user';
+}
+
+/**
+ * A chat parked at a provider usage limit (see limitRecovery.ts). It waits, paused, until the
+ * reset (or the next probe when no reset is known), then continues where it left off.
+ */
+export interface IOrchLimitPark {
+	/** The turn the limit stopped. */
+	readonly turnId: string;
+	readonly at: number;
+	/** When the provider said the limit resets (epoch ms). */
+	readonly resetAt?: number;
+	/** The provider's sentence ("You've hit your limit · resets 3:40pm"). */
+	readonly message?: string;
+	/** Automatic resumes already sent for this stop (probes, when no reset is known). */
+	readonly probes: number;
+	/** The user's choice for this chat: false cancelled the resume; true asked for it with the setting off. */
+	readonly auto?: boolean;
+	/** Chats waking at the same reset are staggered: this one not before then. */
+	readonly notBefore?: number;
+	/** The stopped turn's composer mode, which the resume keeps. */
+	readonly mode?: string;
+}
+
+/**
+ * Moving a chat to another checkout (a new worktree, the project's main checkout, another
+ * worktree). `target` is the mover's own description; the orchestrator only sequences it: it
+ * waits for the running turn, holds the queue while the files move, and records how it went.
+ */
+export interface IOrchMove {
+	readonly id: string;
+	readonly target: unknown;
+	/** "a new worktree", "the local checkout", "worktree volt/ab12cd34". */
+	readonly label: string;
+	readonly by: 'user' | 'agent';
+	readonly at: number;
+}
+
+export interface IOrchMoveResult {
+	readonly id: string;
+	readonly at: number;
+	readonly ok: boolean;
+	readonly label: string;
+	readonly error?: string;
+	/** Where the chat works now (absent: the project's main checkout). */
+	readonly path?: string;
+	readonly branch?: string;
+	/** From where. */
+	readonly fromPath?: string;
+	readonly fromBranch?: string;
+	/** Files whose uncommitted changes came along. */
+	readonly files?: number;
+	readonly by?: 'user' | 'agent';
 }
 
 export interface IOrchThread {
@@ -137,6 +194,14 @@ export interface IOrchThread {
 	/** A model switch waiting for the active turn to end. */
 	readonly pendingHandoff?: IOrchHandoff;
 	readonly handoffs: readonly IOrchHandoff[];
+	/** Parked at a usage limit, waiting for the reset. */
+	readonly limit?: IOrchLimitPark;
+	/** A move to another checkout waiting for the active turn to end. */
+	readonly pendingMove?: IOrchMove;
+	/** A move under way: nothing starts until it is done. */
+	readonly moving?: IOrchMove;
+	/** How the latest move ended; the next turn opens with it. */
+	readonly lastMove?: IOrchMoveResult;
 }
 
 export type OrchTaskSource = 'volt' | 'harness';
@@ -287,7 +352,8 @@ export type OrchCommandBody =
 	| { readonly type: 'turn.resume'; readonly threadId: string; readonly turnId: string; readonly prompt: IOrchPrompt }
 	/** The runtime started the run for a turn (or one Volt did not dispatch). */
 	| { readonly type: 'run.started'; readonly threadId: string; readonly runId: string; readonly turnId?: string; readonly steerable?: boolean }
-	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string }
+	/** `limit`: the provider refused for a usage limit; the chat parks until the reset instead of failing. */
+	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string; readonly limit?: { readonly resetAt?: number; readonly message: string } }
 	/** A steer could not be delivered (the run ended first): reports go back to pending, a prompt back to the queue's head. */
 	| { readonly type: 'steer.failed'; readonly threadId: string; readonly steerId: string; readonly prompt: IOrchPrompt; readonly taskIds?: readonly string[] }
 	/** The effect that starts a turn failed before the runtime took it. */
@@ -310,6 +376,20 @@ export type OrchCommandBody =
 	| { readonly type: 'file.changed'; readonly threadId: string; readonly path: string }
 	/** Switch a chat to another model, now when idle or when its turn ends. */
 	| { readonly type: 'thread.handoff'; readonly threadId: string; readonly to: string; readonly toLabel: string; readonly reason?: string; readonly brief?: string; readonly by: 'agent' | 'user' }
+	/**
+	 * The clock reached a parked chat's reset (or probe) time. `autoResume` is the setting; each
+	 * chat's own choice wins. Due chats continue one at a time, the rest get later slots.
+	 */
+	| { readonly type: 'limit.tick'; readonly autoResume: boolean }
+	/** Resume a parked chat now (the user's Resume now, or after switching models). */
+	| { readonly type: 'limit.resume'; readonly threadId: string }
+	/** The user's choice for a parked chat: `auto` false cancels its resume; undefined follows the setting. */
+	| { readonly type: 'limit.configure'; readonly threadId: string; readonly auto: boolean | undefined }
+	/** Move the chat to another checkout: now when idle, else when its turn ends (`stop`: stop the turn first). */
+	| { readonly type: 'thread.move'; readonly threadId: string; readonly move: IOrchMove; readonly stop?: boolean }
+	| { readonly type: 'move.cancel'; readonly threadId: string }
+	/** The mover is done (or gave up and rolled back). */
+	| { readonly type: 'move.finished'; readonly threadId: string; readonly result: IOrchMoveResult }
 	/**
 	 * After a restart: nothing that was running is running any more. `resume` picks what continues
 	 * on its own (see `OrchRestartResume`); everything else waits for the user.
@@ -367,6 +447,13 @@ export type OrchEvent =
 	| { readonly type: 'task.pruned'; readonly taskIds: readonly string[] }
 	| { readonly type: 'handoff.requested'; readonly threadId: string; readonly handoff: IOrchHandoff }
 	| { readonly type: 'handoff.applied'; readonly threadId: string; readonly handoff: IOrchHandoff }
+	| { readonly type: 'limit.parked'; readonly threadId: string; readonly limit: IOrchLimitPark }
+	| { readonly type: 'limit.configured'; readonly threadId: string; readonly auto: boolean | undefined }
+	| { readonly type: 'limit.deferred'; readonly threadId: string; readonly notBefore: number }
+	| { readonly type: 'move.requested'; readonly threadId: string; readonly move: IOrchMove }
+	| { readonly type: 'move.dropped'; readonly threadId: string; readonly moveId: string }
+	| { readonly type: 'move.started'; readonly threadId: string; readonly move: IOrchMove }
+	| { readonly type: 'move.finished'; readonly threadId: string; readonly result: IOrchMoveResult }
 	| { readonly type: 'conflict.detected'; readonly rootId: string; readonly conflict: IOrchConflict }
 	| { readonly type: 'conflict.cleared'; readonly rootId: string; readonly path: string };
 
@@ -389,7 +476,9 @@ export type OrchEffect =
 	/** Long polls (`wait_tasks`) waiting on these tasks re-check. */
 	| { readonly kind: 'tasksChanged'; readonly taskIds: readonly string[] }
 	/** A subagent asked for a worktree; the service creates it before its first turn starts. */
-	| { readonly kind: 'prepareWorktree'; readonly taskId: string };
+	| { readonly kind: 'prepareWorktree'; readonly taskId: string }
+	/** Move a chat's checkout (see `IOrchWorkspaceMover`); ends with `move.finished`. */
+	| { readonly kind: 'moveWorkspace'; readonly threadId: string; readonly move: IOrchMove };
 
 //#endregion
 
@@ -460,6 +549,20 @@ export interface IOrchTurnHost {
 	prepareChild?(childId: string, parentId: string): Promise<void> | void;
 }
 
+export interface IOrchMoveRequest {
+	readonly threadId: string;
+	readonly move: IOrchMove;
+	readonly thread: IOrchThread;
+}
+
+/**
+ * Moves a chat's files and binding to another checkout (the chat UI implements it). Resolves with
+ * how it went; it must roll back what it did when it fails, so the chat stays where it was.
+ */
+export interface IOrchWorkspaceMover {
+	move(request: IOrchMoveRequest): Promise<Omit<IOrchMoveResult, 'id' | 'at' | 'label' | 'by'> & { readonly label?: string }>;
+}
+
 export interface IAgentOrchestratorService {
 	readonly _serviceBrand: undefined;
 	/** Fires after each command batch is applied (before effects run). */
@@ -493,6 +596,9 @@ export interface IAgentOrchestratorService {
 	/** Load a chat's persisted orchestration (its root) when it is opened. */
 	ensureThreadLoaded(threadId: string): Promise<void>;
 	setTurnHost(host: IOrchTurnHost): IDisposable;
+	setWorkspaceMover(mover: IOrchWorkspaceMover): IDisposable;
+	/** Whether parked chats resume on their own by default (the setting). */
+	autoResumeDefault(): boolean;
 }
 
 //#endregion

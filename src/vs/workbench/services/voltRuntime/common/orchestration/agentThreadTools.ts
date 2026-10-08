@@ -444,7 +444,7 @@ export function branchSlug(title: string): string {
 
 /** States `thread_wait` stops at: the turn ended, or the chat needs the user. */
 export function isSettledStatus(kind: OrchThreadStatusKind): boolean {
-	return kind === 'idle' || kind === 'failed' || kind === 'interrupted' || kind === 'paused' || kind === 'needsInput' || kind === 'delegating';
+	return kind === 'idle' || kind === 'failed' || kind === 'interrupted' || kind === 'paused' || kind === 'limited' || kind === 'needsInput' || kind === 'delegating';
 }
 
 export interface IThreadLineInfo {

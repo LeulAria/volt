@@ -1042,6 +1042,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			severity: notice.severity,
 			title,
 			...(notice.description ? { description: notice.description } : {}),
+			...(notice.resetAt !== undefined ? { resetAt: notice.resetAt } : {}),
 		});
 	}
 
@@ -1484,6 +1485,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				severity: notice.severity,
 				title: notice.title,
 				...(notice.description ? { description: notice.description } : {}),
+				...(notice.resetAt !== undefined ? { resetAt: notice.resetAt } : {}),
 			});
 		}
 		return events;

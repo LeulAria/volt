@@ -41,13 +41,13 @@ import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runti
 import { IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
 import { IWorkbenchThemeService, ThemeSettings } from '../../../services/themes/common/workbenchThemeService.js';
 import { AGENT_DEFAULT_MODEL_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_PROMPT_HISTORY_SETTING } from '../../voltAgent/common/agentComposerSettings.js';
-import { AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING } from '../../voltAgent/common/agentWorkflowSettings.js';
+import { AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING } from '../../voltAgent/common/agentWorkflowSettings.js';
 import { AGENT_HOME_AUTO_SETTLE_DAYS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING } from '../../voltAgent/common/agentHomeSettings.js';
 
 /** Settings on the Composer page whose rows redraw when they change. */
 /** Settings on the Appearance page whose controls redraw when they change. */
 const APPEARANCE_PAGE_SETTINGS = [ThemeSettings.DETECT_COLOR_SCHEME, ThemeSettings.PREFERRED_DARK_THEME, ThemeSettings.PREFERRED_LIGHT_THEME, ThemeSettings.FILE_ICON_THEME, 'editor.fontSize', 'window.zoomLevel'];
-const COMPOSER_PAGE_SETTINGS = [AGENT_PROMPT_HISTORY_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING, AGENT_HOME_AUTO_SETTLE_DAYS_SETTING];
+const COMPOSER_PAGE_SETTINGS = [AGENT_PROMPT_HISTORY_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING, AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING, AGENT_HOME_AUTO_SETTLE_DAYS_SETTING];
 import { AgentModelPicker } from '../../voltAgent/browser/picker/agentModelPicker.js';
 import { appendSettingsBlock, SettingsStickyHeads } from './settingsStickyHeads.js';
 import { VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
@@ -756,6 +756,12 @@ export class VoltSettingsEditor extends EditorPane {
 				const box = this.selectBox(append(host, $('.volt-settings-select')), resumeOptions, Math.max(0, resumeOptions.findIndex(option => option.detail === resume)), localize('voltSettings.resumeAfterRestart', "Continue after a restart"));
 				this.renderStore.add(box.onDidSelect(e => void this.configurationService.updateValue(AGENT_RESUME_AFTER_RESTART_SETTING, resumeOptions[e.index].detail)));
 			},
+		);
+		this.settingSwitch(
+			workflow,
+			AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING,
+			localize('voltSettings.autoResumeLimit', "Resume chats when usage limits reset"),
+			localize('voltSettings.autoResumeLimitDesc', "A chat stopped by a provider's usage limit waits with a countdown and continues where it left off once the limit resets. Without a reset time, Volt checks again with a growing delay."),
 		);
 		this.settingSwitch(
 			workflow,

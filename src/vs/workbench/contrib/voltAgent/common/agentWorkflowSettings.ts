@@ -8,8 +8,9 @@ import { Extensions, IConfigurationRegistry } from '../../../../platform/configu
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { COMPACT_OLD_THREADS_SETTING } from '../../../services/voltRuntime/common/compaction.js';
 import { ORCH_RESUME_AFTER_RESTART_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { LIMIT_AUTO_RESUME_SETTING } from '../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 
-export { ORCH_RESUME_AFTER_RESTART_SETTING as AGENT_RESUME_AFTER_RESTART_SETTING, COMPACT_OLD_THREADS_SETTING as AGENT_COMPACT_OLD_THREADS_SETTING };
+export { ORCH_RESUME_AFTER_RESTART_SETTING as AGENT_RESUME_AFTER_RESTART_SETTING, COMPACT_OLD_THREADS_SETTING as AGENT_COMPACT_OLD_THREADS_SETTING, LIMIT_AUTO_RESUME_SETTING as AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING };
 
 Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfiguration({
 	id: 'volt.agent.workflow',
@@ -26,6 +27,11 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			],
 			default: 'subagents',
 			description: localize('voltAgent.resumeAfterRestart', "What continues on its own when Volt restarts while agents are working. A turn continues through at most two restarts in a row."),
+		},
+		[LIMIT_AUTO_RESUME_SETTING]: {
+			type: 'boolean',
+			default: true,
+			description: localize('voltAgent.autoResumeAfterLimit', "When a provider's usage limit stops a chat, continue it on its own once the limit resets (\"Continue where you left off\"). Without a reset time, Volt checks again with a growing delay. Each chat's banner can cancel or ask for it."),
 		},
 		[COMPACT_OLD_THREADS_SETTING]: {
 			type: 'boolean',

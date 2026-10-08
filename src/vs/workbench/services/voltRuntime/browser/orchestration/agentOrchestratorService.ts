@@ -22,7 +22,8 @@ import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '..
 import { normalizeVoltMode } from '../../common/modes.js';
 import { AGENT_TASK_TOOLS, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, ORCH_RESUME_AFTER_RESTART_SETTING, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_RESUME_AFTER_RESTART_SETTING, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
+import { ILimitSignal, LIMIT_AUTO_RESUME_SETTING, limitAutoResumes, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
 import { extractRoot, IOrchIndex, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { harnessTaskId, IOrchStep, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
@@ -35,6 +36,8 @@ const MAX_FAN_OUT = 4;
 const CANCEL_SETTLE_MS = 15_000;
 /** A Volt chat id for a subagent's chat; the agent editor reads session ids from this shape. */
 const CHILD_ID_PREFIX = 'agent-';
+/** setTimeout's ceiling is about 24.8 days; the limit timer re-arms at least daily. */
+const LIMIT_TIMER_MAX_MS = 86_400_000;
 
 export class AgentOrchestratorService extends Disposable implements IAgentOrchestratorService {
 
@@ -57,6 +60,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private readonly cancelWatch = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly lastError = new Map<string, string>();
 	private readonly worktreesInFlight = new Set<string>();
+	/** Runs a provider's usage limit stopped, with what it said. */
+	private readonly limitedRuns = new Map<string, ILimitSignal>();
+	private limitTimer: ReturnType<typeof setTimeout> | undefined;
+	private limitTimerAt: number | undefined;
+	private mover: IOrchWorkspaceMover | undefined;
+	private readonly waitingForMover: Extract<OrchEffect, { kind: 'moveWorkspace' }>[] = [];
+	private readonly movesInFlight = new Set<string>();
 	/** `delegate_task` calls seen in a chat's stream, oldest first, waiting for the MCP call that matches. */
 	private readonly delegateCalls = new Map<string, string[]>();
 	/** Harness Task calls that launched asynchronously: their "completed" was the launch, not the end. */
@@ -97,6 +107,17 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 			for (const timer of this.cancelWatch.values()) {
 				clearTimeout(timer);
+			}
+			if (this.limitTimer !== undefined) {
+				clearTimeout(this.limitTimer);
+			}
+		}));
+		// Parked chats wake at their reset: the timer follows the state.
+		this._register(this.onDidChange(() => this.scheduleLimitTick()));
+		this._register(configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(LIMIT_AUTO_RESUME_SETTING)) {
+				this.scheduleLimitTick();
+				this._onDidChange.fire({ threads: Object.values(this.state.threads).filter(thread => thread.limit).map(thread => thread.id), tasks: [] });
 			}
 		}));
 		void this.restore();
@@ -156,6 +177,67 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	isTurnCurrent(threadId: string, turnId: string): boolean {
 		const active = this.state.threads[threadId]?.active;
 		return active?.id === turnId && active.phase !== 'cancelling';
+	}
+
+	setWorkspaceMover(mover: IOrchWorkspaceMover): IDisposable {
+		this.mover = mover;
+		for (const effect of this.waitingForMover.splice(0)) {
+			void this.moveWorkspace(effect);
+		}
+		return toDisposable(() => {
+			if (this.mover === mover) {
+				this.mover = undefined;
+			}
+		});
+	}
+
+	autoResumeDefault(): boolean {
+		return this.configurationService.getValue<boolean>(LIMIT_AUTO_RESUME_SETTING) !== false;
+	}
+
+	/**
+	 * Arms one timer for the earliest parked chat that resumes on its own. When it fires, the
+	 * decider resumes what is due (and staggers the rest), and the next change re-arms it.
+	 */
+	private scheduleLimitTick(): void {
+		const auto = this.autoResumeDefault();
+		let next = Number.POSITIVE_INFINITY;
+		for (const thread of Object.values(this.state.threads)) {
+			if (thread.limit && !thread.active && limitAutoResumes(thread.limit, auto)) {
+				next = Math.min(next, limitDueAt(thread.limit));
+			}
+		}
+		if (!Number.isFinite(next)) {
+			this.clearLimitTimer();
+			return;
+		}
+		if (this.limitTimer !== undefined && this.limitTimerAt === next) {
+			return;
+		}
+		this.clearLimitTimer();
+		const delay = Math.min(Math.max(next - Date.now(), 0), LIMIT_TIMER_MAX_MS);
+		this.limitTimerAt = next;
+		this.limitTimer = setTimeout(() => {
+			this.limitTimer = undefined;
+			this.limitTimerAt = undefined;
+			const step = this.apply({ type: 'limit.tick', autoResume: this.autoResumeDefault() });
+			const resumed = step.envelopes.filter(envelope => envelope.event.type === 'turn.dispatched').map(envelope => (envelope.event as Extract<OrchEvent, { type: 'turn.dispatched' }>).threadId);
+			if (resumed.length) {
+				this.logService.info(`[volt orchestrator] usage limit reset: resuming ${resumed.join(', ')}`);
+			}
+			// Nothing changed (not due yet after a clamp): look again.
+			if (!step.envelopes.length) {
+				this.scheduleLimitTick();
+			}
+		}, delay);
+	}
+
+	private clearLimitTimer(): void {
+		if (this.limitTimer !== undefined) {
+			clearTimeout(this.limitTimer);
+			this.limitTimer = undefined;
+			this.limitTimerAt = undefined;
+		}
 	}
 
 	setTurnHost(host: IOrchTurnHost): IDisposable {
@@ -412,6 +494,33 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			case 'tasksChanged':
 				this._onDidChangeTasks.fire(effect.taskIds);
 				return;
+			case 'moveWorkspace':
+				void this.moveWorkspace(effect);
+				return;
+		}
+	}
+
+	/** Runs the mover for a started move and reports how it went; a missing mover waits for one. */
+	private async moveWorkspace(effect: Extract<OrchEffect, { kind: 'moveWorkspace' }>): Promise<void> {
+		const { threadId, move } = effect;
+		const thread = this.state.threads[threadId];
+		if (thread?.moving?.id !== move.id || this.movesInFlight.has(move.id)) {
+			return;
+		}
+		const mover = this.mover;
+		if (!mover) {
+			this.waitingForMover.push(effect);
+			return;
+		}
+		this.movesInFlight.add(move.id);
+		try {
+			const result = await mover.move({ threadId, move, thread });
+			this.apply({ type: 'move.finished', threadId, result: { ...result, id: move.id, at: Date.now(), label: result.label ?? move.label, by: move.by } });
+		} catch (err) {
+			this.logService.warn('[volt orchestrator] moving the chat failed', err);
+			this.apply({ type: 'move.finished', threadId, result: { id: move.id, at: Date.now(), ok: false, label: move.label, by: move.by, error: err instanceof Error ? err.message : String(err) } });
+		} finally {
+			this.movesInFlight.delete(move.id);
 		}
 	}
 
@@ -552,16 +661,49 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				this.apply({ type: 'run.started', threadId, runId: envelope.runId, ...(turnId ? { turnId } : {}), steerable: this.runtime.canSteer(threadId) });
 				return;
 			}
-			case 'error':
+			case 'error': {
 				this.lastError.set(envelope.runId, event.message);
+				const limit = limitFromError(event.message, Date.now());
+				if (limit) {
+					this.limitedRuns.set(envelope.runId, mergeLimitSignals(this.limitedRuns.get(envelope.runId), limit));
+				}
 				return;
+			}
+			case 'notice': {
+				const limit = limitFromNotice(event, Date.now());
+				if (limit) {
+					this.limitedRuns.set(envelope.runId, mergeLimitSignals(this.limitedRuns.get(envelope.runId), limit));
+				}
+				return;
+			}
 			case 'run.end': {
-				const outcome: OrchOutcome = event.reason === 'done' ? 'done' : event.reason === 'abort' ? 'cancelled' : 'failed';
+				let outcome: OrchOutcome = event.reason === 'done' ? 'done' : event.reason === 'abort' ? 'cancelled' : 'failed';
 				const error = this.lastError.get(envelope.runId);
 				this.lastError.delete(envelope.runId);
-				const reply = outcome === 'done' ? this.lastReply(threadId) : undefined;
+				let reply = outcome === 'done' ? this.lastReply(threadId) : undefined;
+				// Some CLIs end the turn normally with the limit sentence as the whole reply.
+				let limit = this.limitedRuns.get(envelope.runId);
+				this.limitedRuns.delete(envelope.runId);
+				const replyLimit = outcome === 'done' ? limitFromReply(reply, Date.now()) : undefined;
+				if (replyLimit) {
+					limit = mergeLimitSignals(limit, replyLimit);
+				}
+				if (limit && outcome !== 'cancelled') {
+					// Stopped by the provider's usage limit: the chat parks until the reset.
+					outcome = 'failed';
+					reply = undefined;
+				}
 				this.clearCancelWatch(threadId);
-				this.apply({ type: 'run.settled', threadId, runId: envelope.runId, outcome, ...(error && outcome === 'failed' ? { error } : {}), ...(reply !== undefined ? { reply } : {}) });
+				const message = limit && outcome === 'failed' ? limit.message : error;
+				this.apply({
+					type: 'run.settled',
+					threadId,
+					runId: envelope.runId,
+					outcome,
+					...(message && outcome === 'failed' ? { error: message } : {}),
+					...(reply !== undefined ? { reply } : {}),
+					...(limit && outcome === 'failed' ? { limit } : {}),
+				});
 				return;
 			}
 			case 'question.ask':
