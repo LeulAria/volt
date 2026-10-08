@@ -312,12 +312,14 @@ export class AgentScheduleService extends Disposable implements IAgentScheduleSe
 			attachSessionToProject(this.sessionContext, this.workspace, this.history, threadId, project);
 			this.history.open(threadId).setMeta({ title: task.title });
 		}
+		const modelRef = task.modelRef ?? (task.sourceThreadId ? this.orchestrator.getThread(task.sourceThreadId)?.modelRef : undefined);
 		const host: IAgentScheduledRunHost = { scheduled: { id: task.id, title: task.title, ...(hook ? { webhook: true } : {}) } };
 		const prompt: IOrchPrompt = {
 			text: hook ? hook.text : scheduledRunPrompt(task, at),
 			display: { text: hook ? hook.display : task.prompt },
 			mode: task.mode ?? 'Agent',
-			...(task.modelRef ? { modelRef: task.modelRef } : {}),
+			// Never the profile default: a task with no model of its own runs on the chat it came from.
+			...(modelRef ? { modelRef } : {}),
 			host,
 		};
 		// The fire time names the turn, so a run that is retried is not sent twice.

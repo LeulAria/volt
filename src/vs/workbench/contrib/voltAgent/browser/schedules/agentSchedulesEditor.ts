@@ -21,6 +21,7 @@ import { INotificationService } from '../../../../../platform/notification/commo
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { ILayoutService } from '../../../../../platform/layout/browser/layoutService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltRelayService } from '../../../../../platform/voltRelay/common/voltRelay.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
@@ -35,7 +36,7 @@ import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createAgentScrollable } from '../editor/agentScrollable.js';
 import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { showVoltMenu } from '../ui/menu/voltMenu.js';
-import { showAgentScheduleDialog } from './agentScheduleDialog.js';
+import { scheduleModelChoices, showAgentScheduleDialog } from './agentScheduleDialog.js';
 import { connectVoltRelay } from './agentWebhookRelay.js';
 import { formatScheduleWhen } from './agentScheduleFormat.js';
 
@@ -133,6 +134,7 @@ export class AgentSchedulesEditor extends EditorPane {
 		@IVoltRelayService private readonly relay: IVoltRelayService,
 		@IQuickInputService private readonly quickInput: IQuickInputService,
 		@INotificationService private readonly notifications: INotificationService,
+		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 	) {
 		super(AgentSchedulesEditor.ID, group, telemetryService, themeService, storageService);
 		this._register(this.schedules.onDidChange(() => this.render()));
@@ -418,6 +420,7 @@ export class AgentSchedulesEditor extends EditorPane {
 			...(threadId ? { threadId, threadTitle: this.history.get(threadId)?.title } : {}),
 			projectLabel: task ? this.projectLabel(task) : this.sessionContext.activeProject?.displayName,
 			...(!task && this.sessionContext.activeProject ? { projectRoot: this.sessionContext.activeProject.root.toString() } : {}),
+			models: scheduleModelChoices(this.runtime.listCatalog()),
 			relay: this.relay,
 			connectRelay: () => connectVoltRelay(this.relay, this.quickInput, this.notifications),
 			onSave: async input => {

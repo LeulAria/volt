@@ -309,7 +309,7 @@ export function renderWebhookTemplate(template: string, context: IWebhookContext
 			missing.push(path.trim());
 			return fallbackA ?? fallbackB ?? '';
 		}
-		return typeof value === 'object' ? truncate(JSON.stringify(value, null, 2), 4000) : String(value);
+		return typeof value === 'object' ? truncateLines(JSON.stringify(value, null, 2), 4000) : String(value);
 	});
 	return { text, missing };
 }
@@ -347,7 +347,7 @@ export function webhookRunPrompt(task: { readonly title: string; readonly prompt
 	const rendered = renderWebhookTemplate(task.prompt.trim(), context);
 	const what = [context.event, describeWebhookDelivery(context)].filter(Boolean).join(' · ');
 	const header = `[Volt] Webhook task "${task.title}" received ${what ? `${what} ` : 'a delivery '}(delivery ${context.delivery.id}${context.delivery.redeliveryOf ? `, sent again` : ''}) at ${new Date(context.delivery.receivedAt).toISOString()}. The user set this up earlier and is not necessarily watching; do the task and finish with a short report.`;
-	const payload = hasWebhookPlaceholders(task.prompt) ? '' : `\n\n<webhook_payload${context.event ? ` event="${context.event}"` : ''}>\n${truncate(typeof context.payload === 'string' ? context.payload : JSON.stringify(context.payload, null, 2), PAYLOAD_IN_PROMPT)}\n</webhook_payload>`;
+	const payload = hasWebhookPlaceholders(task.prompt) ? '' : `\n\n<webhook_payload${context.event ? ` event="${context.event}"` : ''}>\n${truncateLines(typeof context.payload === 'string' ? context.payload : JSON.stringify(context.payload, null, 2), PAYLOAD_IN_PROMPT)}\n</webhook_payload>`;
 	return { text: `${header}\n\n${rendered.text}${payload}`, display: rendered.text, missing: rendered.missing };
 }
 
@@ -484,6 +484,28 @@ function pickStrings(raw: Record<string, unknown>, keys: readonly string[]): Rec
 
 function text(value: unknown): string {
 	return typeof value === 'string' ? value : typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
+
+/**
+ * Pretty-printed JSON cut to `max` characters, at a line boundary, so every line kept is whole
+ * (a cut mid-string leaves a 400 from the model). Says what was dropped.
+ */
+export function truncateLines(value: string, max: number): string {
+	if (value.length <= max) {
+		return value;
+	}
+	const lines = value.split('\n');
+	const kept: string[] = [];
+	let length = 0;
+	for (const line of lines) {
+		if (length + line.length + 1 > max) {
+			break;
+		}
+		kept.push(line);
+		length += line.length + 1;
+	}
+	const dropped = lines.length - kept.length;
+	return `${kept.join('\n')}\n… (${dropped} more line${dropped === 1 ? '' : 's'} not shown; the payload was longer than ${max} characters)`;
 }
 
 function truncate(value: string, max: number): string {

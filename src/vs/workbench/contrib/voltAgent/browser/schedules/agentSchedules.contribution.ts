@@ -11,6 +11,7 @@ import { InstantiationType, registerSingleton } from '../../../../../platform/in
 import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IVoltRelayService } from '../../../../../platform/voltRelay/common/voltRelay.js';
+import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { ILayoutService } from '../../../../../platform/layout/browser/layoutService.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { Registry } from '../../../../../platform/registry/common/platform.js';
@@ -22,7 +23,7 @@ import { IAgentHistoryService } from '../../../../services/voltRuntime/common/hi
 import { describeSchedule, IAgentScheduleService } from '../../../../services/voltRuntime/common/schedules/agentSchedules.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { NEW_AGENT_SCHEDULE_COMMAND_ID, OPEN_AGENT_SCHEDULES_COMMAND_ID } from './agentScheduleCommands.js';
-import { showAgentScheduleDialog } from './agentScheduleDialog.js';
+import { scheduleModelChoices, showAgentScheduleDialog } from './agentScheduleDialog.js';
 import { AgentScheduleService } from './agentScheduleService.js';
 import { connectVoltRelay } from './agentWebhookRelay.js';
 import { AGENT_SCHEDULES_EDITOR_ID, AgentSchedulesEditor, AgentSchedulesEditorInput, AgentSchedulesEditorInputSerializer } from './agentSchedulesEditor.js';
@@ -97,6 +98,7 @@ registerAction2(class NewAgentScheduleAction extends Action2 {
 		const notificationService = accessor.get(INotificationService);
 		const relay = accessor.get(IVoltRelayService);
 		const quickInput = accessor.get(IQuickInputService);
+		const runtime = accessor.get(IAgentRuntimeService);
 		const threadId = typeof args?.threadId === 'string' ? args.threadId : undefined;
 		const binding = threadId ? sessionContext.bindingFor(threadId) : undefined;
 		const project = (binding ? sessionContext.getProject(binding.projectId) : undefined) ?? sessionContext.activeProject;
@@ -106,6 +108,7 @@ registerAction2(class NewAgentScheduleAction extends Action2 {
 			...(args?.prompt ? { prompt: args.prompt } : {}),
 			...(args?.mode ? { mode: args.mode } : {}),
 			...(args?.modelRef ? { modelRef: args.modelRef } : {}),
+			models: scheduleModelChoices(runtime.listCatalog()),
 			relay,
 			connectRelay: () => connectVoltRelay(relay, quickInput, notificationService),
 			onSave: async input => {

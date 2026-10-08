@@ -7,7 +7,7 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import {
 	describeWebhookDelivery, evaluateWebhookFilters, formatWebhookFilter, IAgentWebhookDelivery, isHandledDelivery, mergeWebhookDeliveries, parseWebhookDelivery, parseWebhookFilter,
-	newWebhookTrigger, parseWebhookTrigger, planWebhookDelivery, recordWebhookDelivery, renderWebhookTemplate, resolveWebhookPath, splitWebhookPath, WEBHOOK_DELIVERIES_KEPT, webhookContext, webhookRunPrompt,
+	newWebhookTrigger, parseWebhookTrigger, planWebhookDelivery, recordWebhookDelivery, renderWebhookTemplate, resolveWebhookPath, splitWebhookPath, WEBHOOK_DELIVERIES_KEPT, webhookContext, webhookRunPrompt, truncateLines,
 } from '../../../common/schedules/agentWebhooks.js';
 
 const PR = {
@@ -85,6 +85,23 @@ suite('Volt webhook triggers', () => {
 		assert.strictEqual(rendered.text, 'Review #12 "Fix login" on pull_request (no milestone)');
 		assert.deepStrictEqual(rendered.missing, ['payload.milestone.title', 'payload.nope']);
 		assert.match(renderWebhookTemplate('{{payload.pull_request.base}}', context).text, /"ref": "main"/);
+	});
+
+	test('run prompt: a long payload is cut at a line boundary, keeping every line whole', () => {
+		const big = { items: Array.from({ length: 800 }, (_, index) => ({ index, title: `item ${index}` })) };
+		const context = webhookContext({ body: JSON.stringify(big), headers: { 'content-type': 'application/json' }, id: 'dlv_big', receivedAt: 0, source: 'local' });
+		const prompt = webhookRunPrompt({ title: 'Big', prompt: 'Summarize' }, context).text;
+		const body = /<webhook_payload[^>]*>\n([\s\S]*)\n<\/webhook_payload>/.exec(prompt)![1];
+		const kept = body.split('\n').filter(line => !line.startsWith('…'));
+		assert.ok(body.includes('… ('), 'says what was dropped');
+		assert.ok(kept.every(line => /^\s*[\[\]{}"0-9a-z:,]/i.test(line) || line === ''), 'every kept line is whole');
+		assert.strictEqual(kept[0], '{');
+		assert.ok(body.length < 12_500);
+	});
+
+	test('truncateLines: short text is untouched, a cut keeps whole lines and counts the rest', () => {
+		assert.strictEqual(truncateLines('a\nb', 10), 'a\nb');
+		assert.strictEqual(truncateLines('aaaa\nbbbb\ncccc', 10), 'aaaa\nbbbb\n… (1 more line not shown; the payload was longer than 10 characters)');
 	});
 
 	test('run prompt: header, rendered template, payload appended only without placeholders', () => {

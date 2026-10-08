@@ -39,10 +39,17 @@ export interface IAgentScheduleDialogOptions {
 	readonly prompt?: string;
 	readonly mode?: string;
 	readonly modelRef?: string;
+	/** Models the task can run on; the Model field is required so a run never falls back to the profile default. */
+	readonly models: readonly { readonly ref: string; readonly label: string }[];
 	/** Shows the webhook URL from the relay; Connect asks for a relay link when it is offline. */
 	readonly relay?: IVoltRelayService;
 	readonly connectRelay?: () => Promise<unknown>;
 	readonly onSave: (input: IAgentScheduleInput) => void | Promise<void>;
+}
+
+/** The models a scheduled run can use: the enabled ones in the catalog. */
+export function scheduleModelChoices(catalog: readonly { readonly ref: string; readonly label: string; readonly enabled: boolean; readonly kind: string }[]): { readonly ref: string; readonly label: string }[] {
+	return catalog.filter(item => item.enabled && item.kind === 'model').map(item => ({ ref: item.ref, label: item.label }));
 }
 
 /** The dialog on screen; opening another replaces it. */
@@ -99,6 +106,15 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 	promptInput.rows = 4;
 	promptInput.placeholder = localize('voltSchedules.promptPlaceholder', "Check the latest CI run on main and fix anything that broke.");
 	promptInput.value = task?.prompt ?? options.prompt ?? '';
+
+	// Which model runs it. Explicit: a run without one used the profile default (a local model that can 400 on a long prompt).
+	const modelChoices = options.models;
+	const modelField = store.add(new VoltSelectField<string>(field(body, localize('voltSchedules.model', "Model")), {
+		options: modelChoices.map(choice => ({ id: choice.ref, label: choice.label })),
+		value: task?.modelRef ?? options.modelRef ?? modelChoices[0]?.ref ?? '',
+		ariaLabel: localize('voltSchedules.model', "Model"),
+	}));
+	const modelOk = () => modelChoices.some(choice => choice.ref === modelField.value);
 
 	// When it starts.
 	let trigger: AgentScheduleTriggerKind = task?.trigger ?? 'schedule';
@@ -297,7 +313,7 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 		const scheduleOk = trigger === 'webhook' || (!!next && at !== undefined);
 		const filtersOk = !!parseFilters();
 		const webhookOk = trigger === 'schedule' || (filtersOk && secretOk());
-		confirm.disabled = !(scheduleOk && webhookOk && !!promptInput.value.trim());
+		confirm.disabled = !(scheduleOk && webhookOk && !!promptInput.value.trim() && modelOk());
 		preview.classList.toggle('error', !scheduleOk || !webhookOk);
 		preview.textContent = !filtersOk
 			? localize('voltSchedules.badFilter', "A line under Only when is not a filter, like payload.action = opened.")
@@ -311,7 +327,7 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 	};
 	const submit = async () => {
 		const next = currentSpec();
-		if ((trigger !== 'webhook' && !next) || !promptInput.value.trim() || !parseFilters() || !secretOk()) {
+		if ((trigger !== 'webhook' && !next) || !promptInput.value.trim() || !parseFilters() || !secretOk() || !modelOk()) {
 			sync();
 			return;
 		}
@@ -324,11 +340,12 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 			...(trigger !== 'schedule' ? { webhook: currentWebhook() } : {}),
 			target: currentTarget(),
 			...(task?.mode ?? options.mode ? { mode: task?.mode ?? options.mode } : {}),
-			...(task?.modelRef ?? options.modelRef ? { modelRef: task?.modelRef ?? options.modelRef } : {}),
+			modelRef: modelField.value,
 			...(options.threadId ? { sourceThreadId: options.threadId } : {}),
 		});
 	};
 
+	store.add(modelField.onDidChange(sync));
 	store.add(timeField.onDidChange(sync));
 	store.add(unitField.onDidChange(sync));
 	store.add(addDisposableListener(amountInput, 'input', sync));
