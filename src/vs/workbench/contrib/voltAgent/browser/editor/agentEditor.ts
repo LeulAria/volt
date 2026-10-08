@@ -997,6 +997,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.followThreadModel();
 				this.syncQueueStack();
 				this.updateSendButton();
+				// A move (Project checkout or a worktree) rebinds the chat without a git event; the footer reads the binding again.
+				this.contextUsageView?.refreshBranch();
 				// Subagent rows and report cards read live task state.
 				if (change.tasks.length) {
 					this.scheduleThreadRender();
