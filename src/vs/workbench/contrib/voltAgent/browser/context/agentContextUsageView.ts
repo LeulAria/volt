@@ -61,6 +61,8 @@ export interface IAgentContextUsageHost {
 	onDidRefresh?(percent: number): void;
 	getPanelAnchor(): { parent: HTMLElement; before: HTMLElement };
 	getBranch(): IAgentStatusBranch;
+	/** The chevron on the branch: move the chat to another checkout. Absent: no chevron. */
+	openMoveMenu?(anchor: HTMLElement): void;
 	onWillOpenPanel?(): void;
 }
 
@@ -113,6 +115,7 @@ export class AgentContextUsageView extends Disposable {
 		this.branchLabel = append(this.branchButton, $('span.label'));
 		this.branchChevron = this.branchButton.appendChild(renderIcon(Codicon.chevronDown));
 		this.branchChevron.classList.add('chevron');
+		this.branchChevron.classList.toggle('is-hidden', !host.openMoveMenu);
 		this.envChip = append(start, $('span.volt-agent-status-env'));
 		this.envIcon = append(this.envChip, $('span.icon'));
 		this.envLabel = append(this.envChip, $('span.label'));
@@ -135,6 +138,11 @@ export class AgentContextUsageView extends Disposable {
 			e.preventDefault();
 			e.stopPropagation();
 			void this.copyBranchName();
+		}));
+		this._register(addDisposableListener(this.branchChevron, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.host.openMoveMenu?.(this.branchButton);
 		}));
 		this._register(addDisposableListener(this.contextButton, 'click', e => {
 			e.preventDefault();

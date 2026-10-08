@@ -15,6 +15,8 @@ export interface IAcpNotice {
 	readonly severity: AcpNoticeSeverity;
 	readonly title: string;
 	readonly description?: string;
+	/** When a usage limit resets (epoch ms), from the provider's rate-limit payload. */
+	readonly resetAt?: number;
 }
 
 export interface IAcpNoticeOptions {
@@ -156,12 +158,14 @@ function rateLimitNotice(meta: unknown, options?: IAcpNoticeOptions): IAcpNotice
 	}
 	const status = readString(info.status)?.toLowerCase();
 	const message = readString(info.message) ?? readString(info.title);
+	// The exact reset, for limit recovery; only a refusal parks the chat.
+	const resetAt = status === 'rejected' ? resetEpoch(info.resetsAt ?? info.resets_at) : undefined;
 	if (message) {
 		if (status === 'allowed' && !LIMIT_FAMILY.test(message)) {
 			return undefined;
 		}
 		const severity: AcpNoticeSeverity = status === 'rejected' || LIMIT_FAMILY.test(message) ? 'error' : 'warning';
-		return notice(severity, message, readString(info.description));
+		return withReset(notice(severity, message, readString(info.description)), resetAt);
 	}
 	if (status !== 'rejected' && status !== 'allowed_warning') {
 		return undefined;
@@ -170,7 +174,16 @@ function rateLimitNotice(meta: unknown, options?: IAcpNoticeOptions): IAcpNotice
 	const title = status === 'rejected'
 		? (resets ? `Usage limit reached · resets ${resets}` : 'Usage limit reached')
 		: (resets ? `Usage limit warning · resets ${resets}` : 'Usage limit warning');
-	return notice(status === 'rejected' ? 'error' : 'warning', title);
+	return withReset(notice(status === 'rejected' ? 'error' : 'warning', title), resetAt);
+}
+
+function withReset(value: IAcpNotice, resetAt: number | undefined): IAcpNotice {
+	return resetAt !== undefined ? { ...value, resetAt } : value;
+}
+
+function resetEpoch(value: unknown): number | undefined {
+	const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN;
+	return Number.isFinite(n) && n > 0 ? (n > 1e12 ? n : n * 1000) : undefined;
 }
 
 function looseStatusNotice(update: Record<string, unknown>): IAcpNotice | undefined {
@@ -252,9 +265,9 @@ function dedupe(notices: readonly IAcpNotice[]): IAcpNotice[] {
 			kept.push(item);
 			continue;
 		}
-		if (item.title.length > kept[match].title.length) {
-			kept[match] = item;
-		}
+		const longer = item.title.length > kept[match].title.length ? item : kept[match];
+		// The wording comes from the longer notice; a reset time from either.
+		kept[match] = withReset(longer, longer.resetAt ?? item.resetAt ?? kept[match].resetAt);
 	}
 	return kept;
 }

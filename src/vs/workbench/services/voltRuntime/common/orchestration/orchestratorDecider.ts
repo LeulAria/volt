@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { buildTaskNotification, isLiveTaskState, isTerminalTaskState, taskNotificationDisplay } from './agentTasks.js';
+import { LIMIT_RESUME_TEXT, LIMIT_STAGGER_MS, limitAutoResumes, limitDueAt, limitResumeDisplay } from './limitRecovery.js';
 import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchState, IOrchTask, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
 import { applyOrchEvent, applyOrchEvents } from './orchestratorProjector.js';
 
@@ -95,7 +96,7 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			if (!thread) {
 				return { events: [] };
 			}
-			if (thread.active || thread.queue.length || liveChildren(state, thread.id).length) {
+			if (thread.active || thread.queue.length || thread.moving || liveChildren(state, thread.id).length) {
 				return { events: [], rejected: 'The chat is still working.' };
 			}
 			return { events: [{ type: 'thread.forgotten', threadId: thread.id }] };
@@ -175,7 +176,7 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			if (!thread) {
 				return { events: [] };
 			}
-			if (thread.active) {
+			if (thread.active || thread.moving) {
 				return { events: [{ type: 'queue.added', threadId: thread.id, item: { id: command.turnId, prompt: command.prompt, at: command.at, kind: 'resume' }, head: true }] };
 			}
 			return { events: [dispatch(thread.id, { id: command.turnId, kind: 'resume', prompt: command.prompt, at: command.at })], outcome: 'started' };
@@ -197,7 +198,7 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			return { events: [{ type: 'queue.added', threadId: thread.id, item: { id: command.steerId, prompt: command.prompt, at: command.at }, head: true }] };
 		}
 		case 'run.settled':
-			return decideRunSettled(state, command.threadId, { runId: command.runId, turnId: command.turnId }, command.outcome, command.at, command.error, command.reply);
+			return decideRunSettled(state, command.threadId, { runId: command.runId, turnId: command.turnId }, command.outcome, command.at, command.error, command.reply, false, command.limit);
 		case 'dispatch.failed': {
 			const thread = state.threads[command.threadId];
 			if (!thread?.active || thread.active.id !== command.turnId) {
@@ -425,7 +426,112 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 		}
 		case 'recover':
 			return decideRecover(state, command.at, command.resume ?? 'off', limits);
+		case 'limit.tick':
+			return decideLimitTick(state, command.at, command.autoResume);
+		case 'limit.resume': {
+			const thread = state.threads[command.threadId];
+			if (!thread?.limit || thread.active) {
+				return { events: [] };
+			}
+			if (thread.moving || thread.blocked) {
+				return { events: [], rejected: 'The chat cannot run right now.' };
+			}
+			return { events: [resumeLimited(state, thread, command.at, true)], outcome: 'started' };
+		}
+		case 'limit.configure': {
+			const thread = state.threads[command.threadId];
+			if (!thread?.limit) {
+				return { events: [], rejected: 'The chat is not waiting for a usage limit.' };
+			}
+			return thread.limit.auto === command.auto ? { events: [] } : { events: [{ type: 'limit.configured', threadId: thread.id, auto: command.auto }] };
+		}
+		case 'thread.move':
+			return decideMove(state, command);
+		case 'move.cancel': {
+			const thread = state.threads[command.threadId];
+			return thread?.pendingMove ? { events: [{ type: 'move.dropped', threadId: thread.id, moveId: thread.pendingMove.id }] } : { events: [] };
+		}
+		case 'move.finished': {
+			const thread = state.threads[command.threadId];
+			if (!thread?.moving || thread.moving.id !== command.result.id) {
+				return { events: [] };
+			}
+			const events: OrchEvent[] = [{ type: 'move.finished', threadId: thread.id, result: command.result }];
+			// Prompts written for the new place must not run in the old one: they wait for the user.
+			if (!command.result.ok && thread.queue.length && !thread.pause) {
+				events.push({ type: 'queue.paused', threadId: thread.id, reason: 'failed' });
+			}
+			return { events };
+		}
 	}
+}
+
+/**
+ * Moving a chat between checkouts. An idle chat moves now. A running turn finishes first: its
+ * agent is writing files in the old checkout, and anything it writes after the files were copied
+ * would be left behind (`stop` ends the turn first instead). The queue waits while files move.
+ */
+function decideMove(state: IOrchState, command: Extract<OrchCommand, { type: 'thread.move' }>): IOrchDecision {
+	const events: OrchEvent[] = [];
+	let thread = state.threads[command.threadId];
+	if (!thread) {
+		thread = newThread(command.threadId, command.at, undefined, {});
+		events.push({ type: 'thread.created', thread });
+	}
+	if (thread.taskId) {
+		return { events: [], rejected: 'A subagent\'s chat works where its task was started; it cannot move on its own.' };
+	}
+	if (thread.moving) {
+		return { events: [], rejected: `This chat is already moving to ${thread.moving.label}.` };
+	}
+	if (thread.active || thread.blocked) {
+		events.push({ type: 'move.requested', threadId: thread.id, move: command.move });
+		if (command.stop && thread.active && thread.active.phase !== 'cancelling') {
+			events.push({ type: 'turn.cancelling', threadId: thread.id, turnId: thread.active.id });
+		}
+		return { events, outcome: 'queued' };
+	}
+	events.push({ type: 'move.started', threadId: thread.id, move: command.move });
+	return { events, outcome: 'started' };
+}
+
+/**
+ * Parked chats whose reset (or next probe) has come continue, one per tick: the first due goes
+ * now, the others get slots `LIMIT_STAGGER_MS` apart, so twenty chats parked on the same account
+ * do not hit the provider in the same second (and the limit again).
+ */
+function decideLimitTick(state: IOrchState, at: number, autoDefault: boolean): IOrchDecision {
+	const due = sortedThreads(state)
+		.filter(thread => thread.limit && !thread.active && !thread.moving && !thread.blocked && !thread.pendingMove
+			&& limitAutoResumes(thread.limit, autoDefault) && limitDueAt(thread.limit) <= at)
+		.sort((a, b) => limitDueAt(a.limit!) - limitDueAt(b.limit!) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+	if (!due.length) {
+		return { events: [] };
+	}
+	const [first, ...rest] = due;
+	const events: OrchEvent[] = [resumeLimited(state, first, at, false)];
+	rest.forEach((thread, index) => {
+		const slot = at + (index + 1) * LIMIT_STAGGER_MS;
+		if ((thread.limit!.notBefore ?? 0) < slot) {
+			events.push({ type: 'limit.deferred', threadId: thread.id, notBefore: slot });
+		}
+	});
+	return { events };
+}
+
+/** The turn that continues a parked chat: "continue where you left off", on the chat's current model. */
+function resumeLimited(state: IOrchState, thread: IOrchThread, at: number, manual: boolean): OrchEvent {
+	const limit = thread.limit!;
+	const base = limit.turnId.replace(/~[lm]\d+$/, '');
+	const probe = manual ? limit.probes : limit.probes + 1;
+	return dispatch(thread.id, {
+		id: manual ? `${base}~m${state.seq + 1}` : `${base}~l${probe}`,
+		kind: 'resume',
+		prompt: { text: LIMIT_RESUME_TEXT, display: limitResumeDisplay(manual), ...(limit.mode ? { mode: limit.mode } : {}) },
+		at,
+		limitProbe: probe,
+		...(limit.auto !== undefined ? { limitAuto: limit.auto } : {}),
+	});
 }
 
 const WORKTREE_BLOCK = 'worktree';
@@ -490,7 +596,7 @@ function decideSubmit(state: IOrchState, threadId: string, item: ISubmitItem, de
 		events.push({ type: 'queue.added', threadId: thread.id, item: queued, ...(delivery === 'now' ? { head: true } : {}) });
 		return { events, outcome: 'queued' };
 	}
-	if (delivery === 'queue' || thread.blocked) {
+	if (delivery === 'queue' || thread.blocked || thread.moving) {
 		events.push({ type: 'queue.added', threadId: thread.id, item: queued });
 		return { events, outcome: 'queued' };
 	}
@@ -542,7 +648,7 @@ function decideNotify(state: IOrchState, threadId: string, item: ISubmitItem, li
 		return { events: [], rejected: `The chat woke itself ${limits.maxWakeups} times in a row; it waits for the user.` };
 	}
 	const active = thread.active;
-	if (interrupt && active && !task && !thread.blocked) {
+	if (interrupt && active && !task && !thread.blocked && !thread.moving) {
 		// Stop what runs and go first: the queue resumes with this turn once the stop lands.
 		if (thread.pause) {
 			events.push({ type: 'queue.resumed', threadId: thread.id });
@@ -553,7 +659,7 @@ function decideNotify(state: IOrchState, threadId: string, item: ISubmitItem, li
 		}
 		return { events, outcome: 'queued' };
 	}
-	if (task || active || thread.pause || thread.blocked || thread.queue.length) {
+	if (task || active || thread.pause || thread.blocked || thread.moving || thread.queue.length) {
 		events.push({ type: 'queue.added', threadId: thread.id, item: { id: item.id, prompt: item.prompt, at: item.at, kind: 'notification' } });
 		return { events, outcome: 'queued' };
 	}
@@ -652,7 +758,7 @@ export function externalTurnId(runId: string): string {
 	return `x-${runId}`;
 }
 
-function decideRunSettled(state: IOrchState, threadId: string, match: { readonly runId?: string; readonly turnId?: string }, outcome: OrchOutcome, at: number, error: string | undefined, reply: string | undefined, superseded = false): IOrchDecision {
+function decideRunSettled(state: IOrchState, threadId: string, match: { readonly runId?: string; readonly turnId?: string }, outcome: OrchOutcome, at: number, error: string | undefined, reply: string | undefined, superseded = false, limit?: { readonly resetAt?: number; readonly message: string }): IOrchDecision {
 	const thread = state.threads[threadId];
 	const active = thread?.active;
 	if (!thread || !active) {
@@ -665,9 +771,28 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 		return { events: [] };
 	}
 	const events: OrchEvent[] = [{ type: 'turn.settled', threadId: thread.id, turnId: active.id, outcome, at, ...(error ? { error } : {}) }];
+	// A usage limit parks the chat until the reset instead of failing it. A subagent's chat fails as
+	// before: its parent hears about it and decides (another model, or wait).
+	const parks = !!limit && outcome === 'failed' && !superseded && !thread.taskId;
 	if (outcome === 'failed' && !superseded) {
 		// The queue waits for the user instead of resending into a failing provider.
-		events.push({ type: 'queue.paused', threadId: thread.id, reason: 'failed' });
+		events.push({ type: 'queue.paused', threadId: thread.id, reason: parks ? 'limit' : 'failed' });
+	}
+	if (parks) {
+		events.push({
+			type: 'limit.parked',
+			threadId: thread.id,
+			limit: {
+				turnId: active.id,
+				at,
+				// A reset at or before the stop is stale: resuming at it would only hit the limit again.
+				...(limit.resetAt !== undefined && limit.resetAt > at ? { resetAt: limit.resetAt } : {}),
+				...(limit.message ? { message: limit.message } : {}),
+				probes: active.limitProbe ?? 0,
+				...(active.limitAuto !== undefined ? { auto: active.limitAuto } : {}),
+				...(active.prompt.mode ? { mode: active.prompt.mode } : {}),
+			},
+		});
 	}
 	// Harness subagents live inside the turn: whatever did not report an end ends with it.
 	for (const task of Object.values(state.tasks)) {
@@ -860,6 +985,10 @@ function decideRecover(state: IOrchState, at: number, resume: OrchRestartResume,
 		for (const input of current.inputs) {
 			push([{ type: 'input.closed', threadId: thread.id, inputId: input.id }]);
 		}
+		if (current.moving) {
+			// The move died with the window part way; the mover rolls back only while it runs.
+			push([{ type: 'move.finished', threadId: thread.id, result: { id: current.moving.id, at, ok: false, label: current.moving.label, by: current.moving.by, error: 'Volt restarted while the chat was moving. Check both checkouts with git status before moving it again.' } }]);
+		}
 		const task = current.taskId ? next.tasks[current.taskId] : undefined;
 		const keepsGoing = continuesAfterRestart(current, task, resume, limits);
 		if (current.active) {
@@ -1033,7 +1162,12 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 			}
 			continue;
 		}
-		if (current.blocked) {
+		if (current.blocked || current.moving) {
+			continue;
+		}
+		if (current.pendingMove) {
+			// The turn it waited for is over: move before anything else runs.
+			push({ type: 'move.started', threadId: current.id, move: current.pendingMove });
 			continue;
 		}
 		if (current.pendingHandoff) {
@@ -1178,6 +1312,11 @@ export function effectsFor(events: readonly OrchEvent[], state: IOrchState): Orc
 			case 'task.waiting':
 			case 'task.restarted':
 				changed.add(event.taskId);
+				break;
+			case 'move.started':
+				if (state.threads[event.threadId]?.moving?.id === event.move.id) {
+					effects.push({ kind: 'moveWorkspace', threadId: event.threadId, move: event.move });
+				}
 				break;
 			case 'task.updated':
 				changed.add(event.taskId);

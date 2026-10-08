@@ -72,6 +72,15 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void;
 	/** Restore the checkout a chat already created, so a reload does not fall through to the open folder. */
 	rememberWorktree(sessionId: string, path: string | undefined, branch: string | undefined): void;
+	/**
+	 * The chat moved to another checkout (`path` undefined: the project's own). Its next turn runs
+	 * there: an ACP agent resumes its session in the new folder when it can, else a fresh one is
+	 * briefed with the conversation. `note` opens that turn for the model; `announce` is the
+	 * transcript notice it starts with. Refused while a turn runs.
+	 */
+	relocate(sessionId: string, path: string | undefined, branch: string | undefined, note: { readonly model: string; readonly announce: string }): boolean;
+	/** The checkout a chat works in now: its worktree, else the project folder. */
+	workingFolder(sessionId: string): string | undefined;
 	send(sessionId: string, request: IVoltSendRequest): Promise<string>;
 	/** A run that takes messages between steps is live in this chat (native loop, or an ACP agent with steering). */
 	canSteer(sessionId: string): boolean;

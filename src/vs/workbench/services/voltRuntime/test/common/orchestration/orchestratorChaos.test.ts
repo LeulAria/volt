@@ -43,6 +43,9 @@ class ChaosWorld {
 	/** Runs the runtime has started and not settled. */
 	readonly runs = new Map<string, IRuntimeRun>();
 	readonly pendingWorktrees = new Set<string>();
+	/** Moves the mover is working on, by thread. */
+	readonly pendingMoves = new Map<string, string>();
+	private moveCounter = 0;
 	readonly history: OrchCommandBody[] = [];
 	private runCounter = 0;
 	private toolCounter = 0;
@@ -94,6 +97,9 @@ class ChaosWorld {
 			}
 			case 'prepareWorktree':
 				this.pendingWorktrees.add(effect.taskId);
+				break;
+			case 'moveWorkspace':
+				this.pendingMoves.set(effect.threadId, effect.move.id);
 				break;
 			case 'steer':
 			case 'tasksChanged':
@@ -147,7 +153,9 @@ class ChaosWorld {
 				const outcome: OrchOutcome = active?.runId === run.runId && active.phase === 'cancelling'
 					? 'cancelled'
 					: this.pick(['done', 'done', 'done', 'done', 'failed', 'cancelled'] as const)!;
-				this.run({ type: 'run.settled', threadId: run.threadId, runId: run.runId, turnId: run.turnId, outcome, reply: `reply ${run.runId}`, ...(outcome === 'failed' ? { error: 'boom' } : {}) });
+				// Some failures are a provider's usage limit: the chat parks until the reset.
+				const limit = outcome === 'failed' && this.chance(0.5) ? { message: 'You\'ve hit your limit', ...(this.chance(0.6) ? { resetAt: this.sim.now + Math.floor(this.random() * 400_000) - 50_000 } : {}) } : undefined;
+				this.run({ type: 'run.settled', threadId: run.threadId, runId: run.runId, turnId: run.turnId, outcome, reply: `reply ${run.runId}`, ...(outcome === 'failed' ? { error: 'boom' } : {}), ...(limit ? { limit } : {}) });
 				if (this.chance(0.1)) {
 					// A duplicate settle arrives late.
 					this.run({ type: 'run.settled', threadId: run.threadId, runId: run.runId, turnId: run.turnId, outcome: 'done' });
@@ -262,19 +270,52 @@ class ChaosWorld {
 			if (threadId) {
 				this.run({ type: 'file.changed', threadId, path: this.pick(FILES)! });
 			}
-		} else if (r < 0.955) {
+		} else if (r < 0.962) {
 			const root = this.pick(ROOTS)!;
 			this.run({ type: 'thread.block', threadId: root, reason: state.threads[root]?.blocked ? undefined : 'cloning' });
-		} else if (r < 0.97) {
+		} else if (r < 0.967) {
+			// The user (or an agent) moves a chat to another checkout, sometimes stopping its turn.
+			const threadId = this.pick(this.chance(0.7) ? ROOTS : this.threads());
+			if (threadId) {
+				const id = `mv${++this.moveCounter}`;
+				this.run({ type: 'thread.move', threadId, move: { id, target: { kind: 'newWorktree' }, label: 'a new worktree', by: this.chance(0.5) ? 'agent' : 'user', at: this.sim.now }, ...(this.chance(0.3) ? { stop: true } : {}) });
+			}
+		} else if (r < 0.972) {
+			// The mover finishes (or rolls back), sometimes late for a move a restart already ended.
+			const entry = this.pick([...this.pendingMoves.entries()]);
+			if (entry) {
+				const [threadId, id] = entry;
+				this.pendingMoves.delete(threadId);
+				this.run({ type: 'move.finished', threadId, result: { id, at: this.sim.now, ok: this.chance(0.75), label: 'x', ...(this.chance(0.5) ? { path: `/wt/${id}` } : {}) } });
+			} else {
+				const threadId = this.pick(this.threads().filter(id => state.threads[id].pendingMove));
+				if (threadId) {
+					this.run({ type: 'move.cancel', threadId });
+				}
+			}
+		} else if (r < 0.978) {
+			// Time passes to parked chats' resets; the user resumes, cancels or opts in.
+			const parked = this.threads().filter(id => state.threads[id].limit);
+			const op = this.random();
+			if (op < 0.6 || !parked.length) {
+				this.sim.now += Math.floor(this.random() * 600_000);
+				this.run({ type: 'limit.tick', autoResume: this.chance(0.8) });
+			} else if (op < 0.8) {
+				this.run({ type: 'limit.resume', threadId: this.pick(parked)! });
+			} else {
+				this.run({ type: 'limit.configure', threadId: this.pick(parked)!, auto: this.pick([true, false, undefined]) });
+			}
+		} else if (r < 0.981) {
 			// A watched pull request changed: Volt wakes the chat (or queues the news behind its work).
 			const threadId = this.pick(this.chance(0.7) ? ROOTS : this.threads());
 			if (threadId) {
 				this.run({ type: 'thread.notify', threadId, turnId: this.sim.nextId('pr'), prompt: prompt(`pr update ${this.history.length}`) });
 			}
-		} else if (r < 0.975) {
+		} else if (r < 0.985) {
 			// A crash: every agent process is gone, then the orchestrator recovers.
 			this.pendingStarts.clear();
 			this.runs.clear();
+			this.pendingMoves.clear();
 			this.run({ type: 'recover', resume: this.pick(['off', 'subagents', 'all'] as const)! });
 		} else if (r < 0.99) {
 			// A retried command id must act at most once.
@@ -329,6 +370,17 @@ class ChaosWorld {
 				this.run({ type: 'queue.hold', threadId: held.id, itemId: held.item.id, held: false });
 				continue;
 			}
+			const moving = [...this.pendingMoves.entries()][0];
+			if (moving) {
+				this.pendingMoves.delete(moving[0]);
+				this.run({ type: 'move.finished', threadId: moving[0], result: { id: moving[1], at: this.sim.now, ok: true, label: 'x' } });
+				continue;
+			}
+			const parked = this.threads().find(id => state.threads[id].limit && !state.threads[id].active && !state.threads[id].moving && !state.threads[id].blocked);
+			if (parked) {
+				this.run({ type: 'limit.resume', threadId: parked });
+				continue;
+			}
 			const blocked = this.threads().find(id => state.threads[id].blocked === 'cloning');
 			if (blocked) {
 				this.run({ type: 'thread.block', threadId: blocked, reason: undefined });
@@ -378,6 +430,18 @@ function checkInvariants(state: IOrchState, limits: IOrchLimits, context: string
 		}
 		if (thread.parentId && !state.threads[thread.parentId]) {
 			fail(`thread ${thread.id} lost its parent ${thread.parentId}`);
+		}
+		if (thread.limit && thread.active) {
+			fail(`thread ${thread.id} is parked at a usage limit and runs a turn`);
+		}
+		if (thread.moving && thread.active && thread.active.kind !== 'external') {
+			fail(`thread ${thread.id} started a turn while its files move`);
+		}
+		if (thread.moving && thread.pendingMove) {
+			fail(`thread ${thread.id} has a move waiting behind a running one`);
+		}
+		if ((thread.limit || thread.moving) && thread.taskId) {
+			fail(`subagent chat ${thread.id} parked or moved on its own`);
 		}
 		const perParent = runningVolt.filter(task => task.parentId === thread.id).length;
 		if (perParent > limits.runningPerParent) {

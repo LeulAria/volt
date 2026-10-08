@@ -65,7 +65,10 @@ import { createReportStackIcon, isLiveSubagentState, renderCursorSubagentRow, re
 import type { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { type IAgentQuestionResponse, questionResponseText } from '../../../../services/voltRuntime/common/questions.js';
 import { AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { agentRunOnStorageKey, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { agentRunOnStorageKey, IAgentWorktreeService, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { IWorkspaceMoveSpec } from '../../../../services/voltRuntime/common/git/workspaceMove.js';
+import { parseWorktreeList } from '../../../../services/voltRuntime/common/orchestration/agentThreadTools.js';
+import { showAgentMoveMenu } from '../orchestration/agentMoveMenu.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IVoltProject, IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
 import { createAccessIcon } from '../chrome/accessIcons.js';
@@ -108,6 +111,7 @@ import { AgentComposerQueue, IAgentComposerQueueState, QueuePause } from '../com
 import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
+import { AgentLimitBanner } from '../composer/agentLimitBanner.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend } from '../../../../services/voltRuntime/common/compaction.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
@@ -632,6 +636,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	/** How full the meter last read. */
 	private contextPercent = 0;
 	private worktreeSetupCard: AgentWorktreeSetupCard | undefined;
+	private limitBanner: AgentLimitBanner | undefined;
 	private waitingForClone: string | undefined;
 	/** Prompts reach the orchestrator in the order they were sent, even when freezing one takes longer. */
 	private submitChain: Promise<unknown> = Promise.resolve();
@@ -774,6 +779,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@IAgentSessionChangesService private readonly sessionChanges: IAgentSessionChangesService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
+		@INotificationService private readonly notificationService: INotificationService,
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
@@ -1024,6 +1031,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onDidChangeHeight: () => this.layoutInputEditor(),
 		}));
 		append(this.composerEl, this.worktreeSetupCard.element);
+		// A chat parked at the provider's usage limit says when it resumes.
+		this.limitBanner = this._register(new AgentLimitBanner({
+			orchestrator: this.orchestrator,
+			switchModel: anchor => this.modelPicker.show(anchor),
+		}));
+		append(this.composerEl, this.limitBanner.element);
 		// Subagents and queued prompts sit right on top of the text area, under the chips (Cursor).
 		append(this.composerEl, this.composerQueue.element);
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
@@ -1097,6 +1110,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			// Above the Changes / Commit & Push chips, which stay on the composer.
 			getPanelAnchor: () => ({ parent: this.composerEl, before: this.composerChips.element }),
 			getBranch: () => this.statusBranch(),
+			openMoveMenu: anchor => void this.openMoveMenu(anchor),
 			onWillOpenPanel: () => this.hidePlusMenu(),
 			getCompactState: () => this.compactState(),
 			isCompacting: () => this.compactionRunning(),
@@ -5995,6 +6009,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		// One pane shows every agent tab: the banner follows the tab's project.
 		this.renderCloneBanner();
 		this.worktreeSetupCard?.setChat(this.sessionKey);
+		this.limitBanner?.setSession((this.input as AgentEditorInput | undefined)?.sessionId);
 		try {
 			await input.ensureLoaded();
 		} catch (err) {
@@ -6386,6 +6401,32 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		const branch = this.landingChrome?.getBranch() ?? {};
 		return { name: branch.name, detached: branch.detached, worktree: false };
+	}
+
+	private async openMoveMenu(anchor: HTMLElement): Promise<void> {
+		const root = this.sessionContext.rootFor(this.sessionKey);
+		if (!root) {
+			return;
+		}
+		const listing = await this.worktrees.git(root.fsPath, ['worktree', 'list', '--porcelain']);
+		if (listing.exitCode !== 0) {
+			this.notificationService.warn(listing.stderr.trim() || localize('voltAgent.move.noWorktrees', "Could not list this project's worktrees."));
+			return;
+		}
+		showAgentMoveMenu(this.contextViewService, anchor, {
+			current: this.runtime.workingFolder(this.sessionKey),
+			worktrees: parseWorktreeList(listing.stdout),
+			onPick: spec => void this.moveChat(spec),
+		});
+	}
+
+	private async moveChat(spec: IWorkspaceMoveSpec): Promise<void> {
+		const result = await this.orchestrator.move(this.sessionKey, spec, { by: 'user' });
+		if (result.outcome === 'rejected') {
+			this.notificationService.warn(result.reason ?? localize('voltAgent.move.rejected', "This chat cannot move now."));
+		} else if (result.outcome === 'queued') {
+			this.notificationService.info(localize('voltAgent.move.queued', "The chat moves when its current turn ends."));
+		}
 	}
 
 	private get sessionKey(): string {

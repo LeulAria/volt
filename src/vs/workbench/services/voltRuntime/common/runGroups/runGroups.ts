@@ -154,6 +154,7 @@ export interface IRunGroup {
 
 /** Lower-case ASCII words joined by `-`, cut at a word boundary when possible. */
 export function slugify(text: string, max: number): string {
+	// allow-any-unicode-next-line
 	const ascii = text.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
 	const words = ascii.split(/[^a-z0-9]+/).filter(Boolean);
 	let slug = '';
@@ -310,7 +311,10 @@ export function runStatus(run: Pick<IRunGroupRun, 'setup'>, thread: IRunThreadVi
 		case 'queued':
 			return 'working';
 		case 'blocked':
+		case 'moving':
 			return 'setup';
+		case 'limited':
+			return 'paused';
 		case 'paused':
 			return thread.status.pause === 'stopped' ? 'stopped' : 'paused';
 		case 'failed':

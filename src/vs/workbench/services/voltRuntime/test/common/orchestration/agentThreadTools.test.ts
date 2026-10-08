@@ -7,7 +7,7 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import { canonicalHostToolName, PREVIEW_HTML_TOOL_NAME, RENDER_HTML_TOOL_NAME, THREAD_TOOL_NAMES, voltHostToolName } from '../../../common/hostTools.js';
 import {
-	agentMessagePrompt, branchSlug, describeModelCatalog, describeThreadLine, forkPrompt, formatTurns, isSettledStatus, isValidBranchName, matchCatalogModel, parseBranchStatus, parseWorkspace,
+	agentMessagePrompt, branchSlug, describeModelCatalog, describeThreadLine, forkPrompt, formatTurns, isSettledStatus, isValidBranchName, matchCatalogModel, parseBranchStatus, parseHandoffArgs, parseWorkspace,
 	parseWorktreeList, sendModeArg, stringList, THREAD_TOOLS, threadIdArg, threadLink,
 } from '../../../common/orchestration/agentThreadTools.js';
 import type { IVoltCatalogItem } from '../../../common/providers.js';
@@ -169,5 +169,26 @@ suite('Volt orchestration tools', () => {
 		assert.deepStrictEqual(parseBranchStatus('## main\n'), { branch: 'main', ahead: 0, behind: 0, detached: false, changes: [] });
 		assert.deepStrictEqual(parseBranchStatus('## HEAD (no branch)\n'), { ahead: 0, behind: 0, detached: true, changes: [] });
 		assert.strictEqual(parseBranchStatus('## No commits yet on main\n').branch, 'main');
+	});
+});
+
+suite('Volt worktree handoff arguments', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('targets map to the checkouts the mover uses; carry defaults to the chat\'s own files', () => {
+		assert.deepStrictEqual(parseHandoffArgs({ target: 'new_worktree' }), { spec: { target: { kind: 'newWorktree' }, carry: 'thread' }, stop: false });
+		assert.deepStrictEqual(parseHandoffArgs({ target: 'new_worktree', branch: ' feat/x ', carry: 'all', stop: true }), { spec: { target: { kind: 'newWorktree', branch: 'feat/x' }, carry: 'all' }, stop: true });
+		assert.deepStrictEqual(parseHandoffArgs({ target: 'local', carry: 'none' }), { spec: { target: { kind: 'local' }, carry: 'none' }, stop: false });
+		assert.deepStrictEqual(parseHandoffArgs({ target: 'existing_worktree', path: '/tmp/wt' }), { spec: { target: { kind: 'worktree', path: '/tmp/wt' }, carry: 'thread' }, stop: false });
+	});
+
+	test('bad arguments are refused before anything moves', () => {
+		assert.ok('error' in parseHandoffArgs({}));
+		assert.ok('error' in parseHandoffArgs({ target: 'elsewhere' }));
+		assert.ok('error' in parseHandoffArgs({ target: 'local', carry: 'everything' }));
+		assert.ok('error' in parseHandoffArgs({ target: 'new_worktree', branch: 'bad..name' }));
+		assert.ok('error' in parseHandoffArgs({ target: 'existing_worktree', path: 'relative/wt' }));
+		assert.ok('error' in parseHandoffArgs({ target: 'existing_worktree' }));
 	});
 });

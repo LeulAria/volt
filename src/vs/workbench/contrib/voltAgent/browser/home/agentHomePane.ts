@@ -38,6 +38,7 @@ import { GroupsOrder, IEditorGroupsService } from '../../../../services/editor/c
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { limitAutoResumes, limitBadgeLabel } from '../../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
@@ -444,7 +445,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			this.renderSecondLine(template, session, context);
 		}
 
-		const badge = sessionShowsStatusBadge(session, this.host.view) ? sessionStatusBadge(session, now, this.host.liveWork(session.id)) : undefined;
+		const badge = sessionShowsStatusBadge(session, this.host.view) ? this.host.limitBadge(session.id) ?? sessionStatusBadge(session, now, this.host.liveWork(session.id)) : undefined;
 		if (badge) {
 			this.renderStatusBadge(template.badge, badge);
 		}
@@ -1098,6 +1099,16 @@ export class AgentHomePane extends Disposable {
 
 	liveWork(sessionId: string): AgentHomeWorkState | undefined {
 		return this.live.get(sessionId);
+	}
+
+	/** A chat parked at a usage limit says when it resumes, and the countdown moves with the clock tick. */
+	limitBadge(sessionId: string): IAgentHomeStatusBadge | undefined {
+		const thread = this.orchestrator.getThread(sessionId);
+		if (!thread?.limit || thread.active) {
+			return undefined;
+		}
+		const auto = limitAutoResumes(thread.limit, this.orchestrator.autoResumeDefault());
+		return { kind: 'limited', label: limitBadgeLabel(thread.limit, Date.now(), auto) };
 	}
 
 	get workingSection(): boolean {
