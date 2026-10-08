@@ -102,7 +102,7 @@ suite('ACP replay', () => {
 			{ get: () => undefined, setAttention: async () => { }, setAgentTitle: async (_id: string, title: string) => { titles.push(title); } } as unknown as IAgentHistoryService,
 			{ stat: () => Promise.reject(new Error('no file service')) } as unknown as IFileService,
 		));
-		const provider = new AcpAgentProvider('claude-code', 'Claude', 'claude', [], undefined as unknown as IVoltStdioService,
+		const provider = new AcpAgentProvider('claude-code', 'Claude', 'claude', [], {} as unknown as IVoltStdioService,
 			undefined as unknown as IWorkspaceContextService, undefined as unknown as IFileService, undefined as unknown as ILogService);
 		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
 		for (const update of updates) {
@@ -171,7 +171,7 @@ suite('ACP replay', () => {
 			{ get: () => undefined, setAttention: async () => { }, setAgentTitle: async () => { } } as unknown as IAgentHistoryService,
 			{ stat: () => Promise.reject(new Error('no file service')) } as unknown as IFileService,
 		));
-		const provider = new AcpAgentProvider('claude-code', 'Claude', 'claude', [], undefined as unknown as IVoltStdioService,
+		const provider = new AcpAgentProvider('claude-code', 'Claude', 'claude', [], {} as unknown as IVoltStdioService,
 			undefined as unknown as IWorkspaceContextService, undefined as unknown as IFileService, undefined as unknown as ILogService);
 		const reply = controller.beginTurn({ turnId: 'turn-1', text: '/compact', mode: 'Agent' });
 		const running = describeSegments(reply.segments);
@@ -218,7 +218,7 @@ suite('ACP replay', () => {
 	});
 
 	test('the run supervisor stays silent on real edit turns', () => {
-		const provider = new AcpAgentProvider('cursor-acp', 'Cursor', 'cursor-agent', [], undefined as unknown as IVoltStdioService,
+		const provider = new AcpAgentProvider('cursor-acp', 'Cursor', 'cursor-agent', [], {} as unknown as IVoltStdioService,
 			undefined as unknown as IWorkspaceContextService, undefined as unknown as IFileService, undefined as unknown as ILogService);
 		for (const turn of [CLAUDE_EDIT_TURN, CURSOR_EDIT_TURN]) {
 			const supervisor = new RunSupervisor({ startedAt: 0 });
