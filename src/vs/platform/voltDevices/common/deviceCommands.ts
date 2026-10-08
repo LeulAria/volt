@@ -312,6 +312,18 @@ export function looksFoldable(name: string): boolean {
 	return /fold|flip|duo/i.test(name);
 }
 
+/**
+ * Why an emulator stopped, from its log: `snapshot` when its Quick Boot snapshot did not load
+ * (booting with -no-snapshot-load fixes it), else the first fatal line, else undefined.
+ */
+export function emulatorFailure(log: string): string | undefined {
+	if (/Failed to load snapshot|error while loading state|Error -?\d+ while loading VM state/i.test(log)) {
+		return 'snapshot';
+	}
+	const fatal = log.split(/\r?\n/).map(line => line.trim()).find(line => /^(FATAL|ERROR)\s*\|/.test(line) || /^PANIC:/.test(line));
+	return fatal?.replace(/^(FATAL|ERROR)\s*\|\s*/, '');
+}
+
 /** `Pixel_9_Pro_Fold` → `Pixel 9 Pro Fold`. */
 export function avdLabel(name: string): string {
 	return name.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();

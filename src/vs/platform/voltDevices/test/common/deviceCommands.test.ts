@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { androidKeycode, androidLaunchArgv, androidSdkCandidates, androidTextChunks, avdLabel, imagePointToInput, iosButtonName, iosInputCommand, isAlreadyBooted, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, parseSshTarget, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simRuntimeLabel, sshCommand, stateForPosture } from '../../common/deviceCommands.js';
+import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidTextChunks, avdLabel, imagePointToInput, iosButtonName, iosInputCommand, isAlreadyBooted, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, parseSshTarget, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simRuntimeLabel, sshCommand, stateForPosture } from '../../common/deviceCommands.js';
 
 const SIMCTL_JSON = JSON.stringify({
 	devices: {
@@ -19,41 +19,44 @@ const SIMCTL_JSON = JSON.stringify({
 	},
 });
 
-const ENUMERATE = `Port:
-    UUID: 34A8D7F2
-    Class: Display
-    Default width: 1179
-Port:
-    UUID: 5DF79380
-    Class: DisplayAdapter
-    Creatable Screen Properties:
-    (101) CarPlay:
-        Screen ID: 101
-        Pixel Size: {720, 480}
-        Preferred UI Scale: 1
-    Connected Screens:
-    (2) TVOut:
-        Screen ID: 2
-        Screen Type: External
-        Pixel Size: {720, 480}
-        Preferred UI Scale: 1
-    (1) LCD:
-        Screen ID: 1
-        Name: LCD
-        Unique ID: PurpleMain
-        Screen Type: Integrated
-        Pixel Size: {1179, 2556}
-        Preferred UI Scale: 3
-        Pixel Format: 'BGRA'
-`;
+const ENUMERATE = [
+	'Port:',
+	'    UUID: 34A8D7F2',
+	'    Class: Display',
+	'    Default width: 1179',
+	'Port:',
+	'    UUID: 5DF79380',
+	'    Class: DisplayAdapter',
+	'    Creatable Screen Properties:',
+	'    (101) CarPlay:',
+	'        Screen ID: 101',
+	'        Pixel Size: {720, 480}',
+	'        Preferred UI Scale: 1',
+	'    Connected Screens:',
+	'    (2) TVOut:',
+	'        Screen ID: 2',
+	'        Screen Type: External',
+	'        Pixel Size: {720, 480}',
+	'        Preferred UI Scale: 1',
+	'    (1) LCD:',
+	'        Screen ID: 1',
+	'        Name: LCD',
+	'        Unique ID: PurpleMain',
+	'        Screen Type: Integrated',
+	'        Pixel Size: {1179, 2556}',
+	'        Preferred UI Scale: 3',
+	'        Pixel Format: \'BGRA\'',
+].join('\n') + '\n';
 
-const PRINT_STATES = `Supported states: [
-  DeviceState{identifier=0, name='CLOSED', app_accessible=true, cancel_when_requester_not_on_top=false},
-  DeviceState{identifier=1, name='HALF_OPENED', app_accessible=true, cancel_when_requester_not_on_top=false},
-  DeviceState{identifier=2, name='OPENED', app_accessible=true, cancel_when_requester_not_on_top=false},
-  DeviceState{identifier=3, name='REAR_DISPLAY_STATE', app_accessible=false, cancel_when_requester_not_on_top=true},
-  DeviceState{identifier=4, name='CONCURRENT_INNER_DEFAULT', app_accessible=true, cancel_when_requester_not_on_top=true},
-]`;
+const PRINT_STATES = [
+	'Supported states: [',
+	'  DeviceState{identifier=0, name=\'CLOSED\', app_accessible=true, cancel_when_requester_not_on_top=false},',
+	'  DeviceState{identifier=1, name=\'HALF_OPENED\', app_accessible=true, cancel_when_requester_not_on_top=false},',
+	'  DeviceState{identifier=2, name=\'OPENED\', app_accessible=true, cancel_when_requester_not_on_top=false},',
+	'  DeviceState{identifier=3, name=\'REAR_DISPLAY_STATE\', app_accessible=false, cancel_when_requester_not_on_top=true},',
+	'  DeviceState{identifier=4, name=\'CONCURRENT_INNER_DEFAULT\', app_accessible=true, cancel_when_requester_not_on_top=true},',
+	']',
+].join('\n') + '\n';
 
 suite('Volt devices: commands and parsers', () => {
 
@@ -162,6 +165,13 @@ suite('Volt devices: commands and parsers', () => {
 		assert.deepStrictEqual(androidTextChunks('x%sy'), ['x%', 'sy']);
 		assert.deepStrictEqual(androidTextChunks(`it's "ok" & done`), [`it's%s"ok"%s&%sdone`]);
 		assert.throws(() => androidTextChunks('héllo'), /plain ASCII/);
+	});
+
+	test('emulator logs: a broken Quick Boot snapshot, a fatal line, or nothing', () => {
+		assert.strictEqual(emulatorFailure(`INFO | boot\nqemu-system-aarch64: error while loading state for instance 0x0 of device 'goldfish_pipe'\nWARNING | Error -5 while loading VM state\nWARNING | Failed to load snapshot 'default_boot'`), 'snapshot');
+		assert.strictEqual(emulatorFailure('INFO | x\nPANIC: Missing emulator engine program for \'x86\' CPU.\n'), 'PANIC: Missing emulator engine program for \'x86\' CPU.');
+		assert.strictEqual(emulatorFailure('INFO | ok\nFATAL | Running multiple emulators with the same AVD is an experimental feature.'), 'Running multiple emulators with the same AVD is an experimental feature.');
+		assert.strictEqual(emulatorFailure('INFO | all good'), undefined);
 	});
 
 	test('Android keys and launch commands', () => {

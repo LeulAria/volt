@@ -9,7 +9,7 @@ import { homedir, tmpdir } from 'os';
 import { basename, delimiter, join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
-import { androidKeycode, androidLaunchArgv, androidSdkCandidates, androidShell, androidTextChunks, avdLabel, ICommand, IAdbDevice, iosInputCommand, IosInputTool, isAlreadyBooted, isAlreadyShutdown, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simctl, sshCommand, stateForPosture } from '../common/deviceCommands.js';
+import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidShell, androidTextChunks, avdLabel, ICommand, IAdbDevice, iosInputCommand, IosInputTool, isAlreadyBooted, isAlreadyShutdown, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simctl, sshCommand, stateForPosture } from '../common/deviceCommands.js';
 import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDeviceRef, IVoltDeviceScreen, IVoltDevicesService, VoltDeviceInput, VoltDevicePosture, VoltDeviceState } from '../common/voltDevices.js';
 
 interface IRunResult {
@@ -30,6 +30,16 @@ const INSTALL_TIMEOUT = 240_000;
 const MAX_BUFFER = 96 * 1024 * 1024;
 
 class ToolMissingError extends Error { }
+
+interface IEmulatorLaunch {
+	readonly logFile: string;
+	/** The emulator's log once it exited. */
+	exitedWith?: string;
+	/** Being stopped to boot cold; `replacedBy` follows. */
+	replacing?: boolean;
+	/** The cold boot that took over after its snapshot failed. */
+	replacedBy?: IEmulatorLaunch;
+}
 
 function text(result: IRunResult): string {
 	return result.stdout.toString('utf8');
@@ -295,10 +305,15 @@ export class VoltDevicesService implements IVoltDevicesService {
 		}
 		const running = await this.adbDevices(host).catch(() => []);
 		let serial = running.find(entry => entry.avd === device.id || entry.device.serial === device.id)?.device.serial;
-		if (!serial) {
-			await this.startEmulator(host, device.id);
-		}
+		let launch = serial ? undefined : await this.startEmulator(host, device.id, false);
 		while (Date.now() < deadline) {
+			while (launch?.replacedBy) {
+				launch = launch.replacedBy;
+			}
+			if (launch?.exitedWith !== undefined && !launch.replacing) {
+				const failure = emulatorFailure(launch.exitedWith);
+				throw new Error(`The ${avdLabel(device.id)} emulator stopped while booting${failure && failure !== 'snapshot' ? `: ${failure}` : ''}. Its log: ${launch.logFile}`);
+			}
 			if (!serial) {
 				serial = (await this.adbDevices(host).catch(() => [])).find(entry => entry.avd === device.id)?.device.serial;
 			}
@@ -313,27 +328,69 @@ export class VoltDevicesService implements IVoltDevicesService {
 		return 'booting';
 	}
 
-	private async startEmulator(host: IVoltDeviceHost, avd: string): Promise<void> {
+	/**
+	 * Starts an emulator detached, so it outlives Volt. Locally its output goes to a log file, and
+	 * the launch watches it: a Quick Boot snapshot that does not load (the emulator was killed
+	 * mid-save) hangs the emulator and then crashes it, so it is stopped and booted cold, once,
+	 * whether or not anyone still waits for the boot. `cold` skips the snapshot.
+	 */
+	private async startEmulator(host: IVoltDeviceHost, avd: string, cold: boolean): Promise<IEmulatorLaunch | undefined> {
+		const args = ['-avd', avd, '-no-boot-anim', ...(cold ? ['-no-snapshot-load'] : [])];
 		if (host.ssh) {
 			// Detached on the remote machine, with every stream closed so ssh does not wait for it.
-			await this.remote(host, `nohup emulator -avd ${shellQuote(avd)} -no-boot-anim >/dev/null 2>&1 </dev/null &`, { timeout: 15_000 });
-			return;
+			await this.remote(host, `nohup emulator ${shellJoin(args)} >/dev/null 2>&1 </dev/null &`, { timeout: 15_000 });
+			return undefined;
 		}
 		const file = await this.androidTool(host, 'emulator');
 		const env = await this.env();
-		// Its output goes to a file: a pipe would fill up and stall it once Volt stops reading.
+		// A file, not a pipe: a pipe fills up and stalls the emulator once Volt stops reading it.
 		const logFile = join(tmpdir(), `volt-emulator-${avd}.log`);
 		const log = await fs.open(logFile, 'w');
-		const started = Date.now();
-		const child = spawn(file, ['-avd', avd, '-no-boot-anim'], { env, detached: true, stdio: ['ignore', log.fd, log.fd] });
+		const launch: IEmulatorLaunch = { logFile };
+		const child = spawn(file, args, { env, detached: true, stdio: ['ignore', log.fd, log.fd] });
 		await log.close();
-		child.on('error', err => this.logService.warn(`[volt-devices] emulator ${avd} failed to start`, err));
+		let watch: ReturnType<typeof setInterval> | undefined;
+		const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
+		child.on('error', err => {
+			this.logService.warn(`[volt-devices] emulator ${avd} failed to start`, err);
+			launch.exitedWith = String(err);
+		});
 		child.on('exit', (code, signal) => {
-			if (Date.now() - started < 30_000) {
-				void fs.readFile(logFile, 'utf8').then(output => this.logService.warn(`[volt-devices] emulator ${avd} exited early (${code ?? signal}); ${logFile}:\n${output.split('\n').slice(-15).join('\n')}`), () => undefined);
-			}
+			clearInterval(watch);
+			void fs.readFile(logFile, 'utf8').catch(() => '').then(output => {
+				if (!launch.replacing) {
+					this.logService.warn(`[volt-devices] emulator ${avd} exited (${code ?? signal}); log: ${logFile}`);
+				}
+				launch.exitedWith = output;
+			});
 		});
 		child.unref();
+		if (!cold) {
+			const started = Date.now();
+			watch = setInterval(() => {
+				if (Date.now() - started > 180_000) {
+					clearInterval(watch);
+					return;
+				}
+				void fs.readFile(logFile, 'utf8').then(async output => {
+					if (launch.replacing || emulatorFailure(output) !== 'snapshot') {
+						return;
+					}
+					launch.replacing = true;
+					clearInterval(watch);
+					this.logService.info(`[volt-devices] ${avd}: its Quick Boot snapshot did not load; booting it cold`);
+					// One emulator per AVD: the hung one goes first.
+					child.kill('SIGKILL');
+					await exited;
+					launch.replacedBy = await this.startEmulator(host, avd, true).catch(err => {
+						launch.replacing = false;
+						launch.exitedWith = String(err);
+						return undefined;
+					});
+				}, () => undefined);
+			}, 2000);
+		}
+		return launch;
 	}
 
 	async shutdown(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<void> {
