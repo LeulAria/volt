@@ -5,6 +5,8 @@
 
 import { Event } from '../../../base/common/event.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
+import type { ISandboxDenial } from '../../voltSandbox/common/sandboxDenials.js';
+import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
 
 export const IVoltStdioService = createDecorator<IVoltStdioService>('voltStdioService');
 export const VOLT_STDIO_CHANNEL_NAME = 'voltStdio';
@@ -14,6 +16,24 @@ export interface IVoltStdioSpawnOptions {
 	args?: string[];
 	cwd?: string;
 	env?: Record<string, string>;
+	/** Run the process tree in the OS sandbox (Seatbelt / Landlock). */
+	sandbox?: IVoltSandboxRequest;
+}
+
+/** Something the OS sandbox of a spawned process did: a denial, or a warning that it is weaker than asked. */
+export interface IVoltSandboxEvent {
+	/** The spawn id. */
+	readonly id: string;
+	readonly denial?: ISandboxDenial;
+	readonly warning?: string;
+}
+
+export interface IVoltSandboxSupportInfo {
+	readonly platform: string;
+	readonly mechanism: 'seatbelt' | 'landlock' | 'bwrap' | 'none';
+	readonly filesystem: boolean;
+	readonly network: boolean;
+	readonly detail: string;
 }
 
 /** One shell command. The caller picks `id` so it can cancel the command or read its job later. */
@@ -83,4 +103,10 @@ export interface IVoltStdioService {
 	/** Waits until the job exits, `until` (a regex source) matches new output, or `timeoutMs` passes. */
 	jobWait(id: string, timeoutMs: number, until?: string, since?: number): Promise<IVoltJobOutput | undefined>;
 	listJobs(): Promise<readonly IVoltJobOutput[]>;
+	/** Denials and warnings of sandboxed spawns. Absent where processes cannot be sandboxed. */
+	readonly onSandboxEvent?: Event<IVoltSandboxEvent>;
+	/** What OS sandboxing this machine offers. */
+	sandboxSupport?(): Promise<IVoltSandboxSupportInfo>;
+	/** Lets a sandboxed process (network off) reach more hosts, without a restart. */
+	allowSandboxDomains?(id: string, domains: readonly string[]): Promise<void>;
 }

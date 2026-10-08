@@ -17,7 +17,9 @@ import { IConfigurationService } from '../../configuration/common/configuration.
 import { ILifecycleMainService } from '../../lifecycle/electron-main/lifecycleMainService.js';
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
-import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
+import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
+import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
+import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxEvent, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -40,6 +42,13 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 	private readonly _onExit = this._register(new Emitter<{ id: string; code: number | null; stderr?: string }>());
 	readonly onData: Event<{ id: string; data: string }> = this._onData.event;
 	readonly onExit: Event<{ id: string; code: number | null; stderr?: string }> = this._onExit.event;
+	private readonly _onSandboxEvent = this._register(new Emitter<IVoltSandboxEvent>());
+	readonly onSandboxEvent: Event<IVoltSandboxEvent> = this._onSandboxEvent.event;
+
+	private readonly sandbox: VoltSandboxLauncher;
+	/** The sandbox of each sandboxed spawn, and the spawn of each sandbox tag. */
+	private readonly sandboxes = new Map<string, ISandboxLaunch>();
+	private readonly sandboxTags = new Map<string, string>();
 
 	/** Foreground commands and background jobs, by caller-chosen id. */
 	private readonly runs = new Map<string, ExecRun>();
@@ -55,8 +64,16 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 		@ILogService private readonly logService: ILogService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ILifecycleMainService lifecycleMainService: ILifecycleMainService,
+		@IEnvironmentMainService environmentMainService: IEnvironmentMainService,
 	) {
 		super();
+		this.sandbox = this._register(new VoltSandboxLauncher(environmentMainService.userDataPath, logService));
+		this._register(this.sandbox.onViolation(e => {
+			const id = this.sandboxTags.get(e.tag);
+			if (id) {
+				this._onSandboxEvent.fire({ id, denial: e.denial });
+			}
+		}));
 		this._register(lifecycleMainService.onWillLoadWindow(e => this.killOwnedBy(windowOwner(e.window.id))));
 		this._register(lifecycleMainService.onBeforeCloseWindow(window => this.killOwnedBy(windowOwner(window.id))));
 		this._register(lifecycleMainService.onWillShutdown(() => this.killAll()));
@@ -69,13 +86,29 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 	/** {@link spawn} on behalf of one window; see {@link owners}. */
 	async spawnFor(owner: string | undefined, options: IVoltStdioSpawnOptions): Promise<string> {
 		const id = generateUuid();
-		const child = spawn(options.command, options.args ?? [], {
+		let command = options.command;
+		let args = options.args ?? [];
+		let sandboxEnv: Record<string, string> = {};
+		const launch = options.sandbox ? await this.sandbox.prepare(command, args, options.sandbox) : undefined;
+		if (launch) {
+			command = launch.command;
+			args = launch.args;
+			sandboxEnv = launch.env;
+			this.sandboxes.set(id, launch);
+			this.sandboxTags.set(launch.tag, id);
+		}
+		const child = spawn(command, args, {
 			cwd: options.cwd,
-			env: { ...await this.env(), ...options.env },
+			env: { ...await this.env(), ...options.env, ...sandboxEnv },
 			stdio: ['pipe', 'pipe', 'pipe'],
 			// Its own process group, so stopping it also stops the workers it starts.
 			detached: process.platform !== 'win32',
 		});
+		if (launch?.warnings.length) {
+			// After the spawn call has answered, so the caller already knows the id.
+			const warnings = launch.warnings;
+			setTimeout(() => warnings.forEach(warning => this._onSandboxEvent.fire({ id, warning })), 250);
+		}
 		this.processes.set(id, child);
 		if (owner) {
 			this.owners.set(id, owner);
@@ -90,6 +123,7 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 		// 'close' waits for stdout to drain; 'exit' can fire while output is still buffered.
 		child.on('close', code => {
 			const stderr = this.stderr.get(id);
+			this.disposeSandbox(id);
 			this.processes.delete(id);
 			this.owners.delete(id);
 			this.stderr.delete(id);
@@ -97,6 +131,26 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 		});
 		child.on('error', err => this.logService.error('[volt-stdio]', err));
 		return id;
+	}
+
+	async sandboxSupport(): Promise<IVoltSandboxSupportInfo> {
+		return this.sandbox.getSupport();
+	}
+
+	async allowSandboxDomains(id: string, domains: readonly string[]): Promise<void> {
+		this.sandboxes.get(id)?.allowDomains(domains);
+	}
+
+	private disposeSandbox(id: string): void {
+		const launch = this.sandboxes.get(id);
+		if (launch) {
+			// A moment for the kernel log to deliver the last denials of a process that just ended.
+			setTimeout(() => {
+				launch.dispose();
+				this.sandboxTags.delete(launch.tag);
+			}, 3_000);
+			this.sandboxes.delete(id);
+		}
 	}
 
 	async write(id: string, data: string): Promise<void> {
@@ -307,6 +361,10 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 			this.processes.delete(id);
 		}
 		this.owners.clear();
+		for (const launch of this.sandboxes.values()) {
+			launch.dispose();
+		}
+		this.sandboxes.clear();
 		for (const run of this.runs.values()) {
 			killTree(run.child);
 		}
