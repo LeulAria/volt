@@ -26,7 +26,7 @@ import { IVoltGitBranches, IVoltGitBranchRef, IVoltGitService } from '../../../.
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { AgentRunOn, agentRunOnStorageKey, AgentWorktreeTarget, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { CLOUD_AUTO, cloudMachineStorageKey, normalizeCloudMachine } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
-import { cpuPressure, describeMachineLoad, IRelayMachine, machineEligibility, memoryPressure } from '../../../../services/voltRuntime/common/relay/relayMachines.js';
+import { canTakeAgent, cpuPressure, describeMachineLoad, IRelayMachine, memoryPressure } from '../../../../services/voltRuntime/common/relay/relayMachines.js';
 import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
 import { VOLT_RELAY_CONNECT_COMMAND_ID } from '../schedules/agentWebhookRelay.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
@@ -659,13 +659,16 @@ type RunOnPick = { readonly runOn: AgentRunOn; readonly machineId?: string } | {
 
 /** One runner in the Cloud section: its load bars, and why it cannot take the chat's agent when it cannot. */
 function cloudRunnerItem(machine: IRelayMachine, item: (machineId: string, label: string, extra?: Partial<IVoltMenuItem<RunOnPick>>) => IVoltMenuItem<RunOnPick>): IVoltMenuItem<RunOnPick> {
-	const eligible = machine.online && (machineEligibility(machine, { agent: 'codex' }).eligible || machineEligibility(machine, { agent: 'claude' }).eligible);
+	const eligible = machine.online && (canTakeAgent(machine, 'codex') || canTakeAgent(machine, 'claude'));
+	const reason = machine.placement?.codex?.reason ?? machine.placement?.claude?.reason;
 	return item(machine.id, machine.name, {
 		icon: Codicon.server,
 		detail: describeMachineLoad(machine),
 		load: { cpu: cpuPressure(machine.load), memory: memoryPressure(machine.load) },
 		disabled: !eligible,
-		tooltip: eligible ? undefined : machine.online ? localize('voltAgent.env.runnerNoAgent', "This runner has no Codex or Claude Code login") : localize('voltAgent.env.runnerOffline', "Offline"),
+		tooltip: eligible ? undefined : !machine.online ? localize('voltAgent.env.runnerOffline', "Offline")
+			: reason ? localize('voltAgent.env.runnerReason', "The relay does not place work here: {0}", reason)
+				: localize('voltAgent.env.runnerNoAgent', "This runner has no Codex or Claude Code login"),
 	});
 }
 

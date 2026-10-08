@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { DEFAULT_MODEL_CAPABILITIES } from '../../common/capabilities.js';
-import { formatPredictionError, resolveTabModel } from '../../common/models/modelAccess.js';
+import { formatPredictionError, resolveRunModelRef, resolveTabModel } from '../../common/models/modelAccess.js';
 import { IVoltCatalogItem } from '../../common/providers.js';
 
 function model(ref: string, enabled = true): IVoltCatalogItem {
@@ -70,5 +70,35 @@ suite('Volt tab model resolution', () => {
 	test('formats OpenAI missing-key JSON', () => {
 		const err = new Error(JSON.stringify({ error: { message: 'You didn\'t provide an API key. You need to provide your API key.' } }));
 		assert.ok(formatPredictionError(err).includes('No API key'));
+	});
+});
+
+suite('Volt run model resolution', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	const local = model('model:p0:gemma4:26b');
+	const gpt = model('model:p1:gpt-5');
+	const grok = agent('agent:p2:grok-4.7');
+
+	test('the run\'s own model wins over the chat and the last pick', () => {
+		assert.strictEqual(resolveRunModelRef({ explicit: gpt.ref, chat: grok.ref, lastUsed: grok.ref }, [local, gpt, grok]), gpt.ref);
+	});
+
+	test('the chat\'s model comes before the last pick', () => {
+		assert.strictEqual(resolveRunModelRef({ chat: grok.ref, lastUsed: gpt.ref }, [local, gpt, grok]), grok.ref);
+	});
+
+	test('the last pick is used when the run and the chat name none', () => {
+		assert.strictEqual(resolveRunModelRef({ lastUsed: gpt.ref }, [local, gpt, grok]), gpt.ref);
+	});
+
+	test('never the first catalog entry: nothing named means no model', () => {
+		assert.strictEqual(resolveRunModelRef({}, [local, gpt, grok]), undefined);
+	});
+
+	test('a named model that is gone or disabled is skipped', () => {
+		assert.strictEqual(resolveRunModelRef({ explicit: 'model:p9:gone', chat: gpt.ref }, [local, gpt]), gpt.ref);
+		assert.strictEqual(resolveRunModelRef({ explicit: gpt.ref, lastUsed: grok.ref }, [model(gpt.ref, false), grok]), grok.ref);
 	});
 });

@@ -21,6 +21,14 @@ export function normalizeAgentRunOn(value: string | undefined): AgentRunOn {
 	return value === 'worktree' || value === 'cloud' ? value : 'same-branch';
 }
 
+/**
+ * Where a prompt runs. The location picked for the project is where a NEW chat starts: a follow-up
+ * in a chat that already has turns stays on the checkout it runs on, so its files and context stay put.
+ */
+export function runOnForPrompt(location: AgentRunOn, chatHasTurns: boolean): AgentRunOn {
+	return location === 'cloud' && chatHasTurns ? 'same-branch' : location;
+}
+
 export function agentRunOnStorageKey(projectId: string | undefined): string {
 	return `volt.agent.runOn.${projectId || 'default'}`;
 }

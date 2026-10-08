@@ -49,7 +49,7 @@ import {
 	resolveMergeMethod,
 } from '../../common/agentPullRequests.js';
 import { openFindingsSorted, reviewSeverityLabel, IReviewFinding } from '../../common/agentPrReview.js';
-import { AGENT_PR_AUTO_REVIEW_SETTING, IAgentPrReviewService } from './agentPullRequestReviewService.js';
+import { AGENT_PR_AUTO_REVIEW_SETTING, AGENT_PR_POST_REVIEW_COMMENTS_SETTING, IAgentPrReviewService } from './agentPullRequestReviewService.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { renderMarkdownInto } from '../blocks/agentBlockRenderers.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
@@ -1024,6 +1024,9 @@ export class AgentPullRequestView extends Disposable {
 		const open = openFindingsSorted(record?.findings ?? []);
 		const title = open.length ? localize('voltPr.reviewCount', "Review ({0})", open.length) : localize('voltPr.reviewTitle', "Review");
 		const section = this.foldSection(parent, 'review', title, header => {
+			if (open.length && this.configurationService.getValue<boolean>(AGENT_PR_POST_REVIEW_COMMENTS_SETTING) === true) {
+				this.button(header, localize('voltPr.postReviewComments', "Post as Review Comments"), () => void this.run(localize('voltPr.postReviewBusy', "Posting…"), () => this.reviews.postFindings(key), false), 'ghost', Codicon.comment);
+			}
 			this.button(header, localize('voltPr.reviewNow', "Review Now"), () => void this.run(localize('voltPr.reviewNowBusy', "Reviewing…"), () => this.reviews.reviewNow(key), false), 'ghost', Codicon.search);
 		});
 		if (!section) {
@@ -1614,6 +1617,7 @@ export class AgentPullRequestView extends Disposable {
 			...(folder ? { folder } : {}),
 			files: load.files,
 		});
+		diff.setFindings(this.reviews.record(prKey(pr.repo, pr.number))?.findings ?? []);
 		syncNote();
 		syncLoading();
 	}

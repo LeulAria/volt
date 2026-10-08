@@ -68,3 +68,11 @@ test('inside a container the cgroup busy fraction is the load, not the shared ho
 	assert.ok(loadScore({ load: shared }) > loadScore({ load: quiet }));
 	assert.ok(loadScore({ load: quiet }) < 0.1);
 });
+
+test('a laptop on battery scores worse than a plugged-in machine, and worse still when nearly empty', () => {
+	const plugged = machine('plugged', { cpu: 0.1, load1: 0, cpus: 4 });
+	const onBattery = machine('battery', { cpu: 0.1, battery: { percent: 60, charging: false } });
+	const nearlyEmpty = machine('empty', { cpu: 0.1, battery: { percent: 10, charging: false } });
+	assert.ok(loadScore(onBattery) > loadScore(plugged) + 0.1);
+	assert.ok(loadScore(nearlyEmpty) > loadScore(onBattery) + 0.2);
+});

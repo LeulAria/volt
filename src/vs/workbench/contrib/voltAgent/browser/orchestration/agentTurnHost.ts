@@ -9,8 +9,10 @@ import { URI } from '../../../../../base/common/uri.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
+import { localize } from '../../../../../nls.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { resolveRunModelRef } from '../../../../services/voltRuntime/common/models/modelAccess.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchStartTurnRequest } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import '../../../../services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
@@ -148,8 +150,21 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			controller.endUnstartedTurn(turn.id, undefined);
 			return undefined;
 		}
-		// An explicit model for prompts the user wrote; the chat's model for everything Volt sends.
-		const ref = turn.prompt.modelRef ?? (turn.kind === 'prompt' && !handoff ? undefined : thread.modelRef);
+		// What the user typed runs on the composer's model (Auto: the runtime's). Everything Volt starts on
+		// its own (schedules, reviews, fixes, notifications, handoffs) names a model, else the chat's, else
+		// the last one the user picked; it never falls back to the catalog's first entry.
+		const typed = turn.kind === 'prompt' && !handoff && !fromThread && !scheduledRunOf(turn.prompt.host);
+		const ref = typed
+			? turn.prompt.modelRef
+			: resolveRunModelRef({ explicit: turn.prompt.modelRef, chat: thread.modelRef, lastUsed: this.runtime.getActiveCatalogRef() }, this.runtime.listCatalog());
+		if (!typed && !ref) {
+			controller.endUnstartedTurn(turn.id, localize('agentTurnHost.noModel', "No model is set for this run. Pick a model for the chat, then send again."));
+			return undefined;
+		}
+		if (typed && ref) {
+			// The model the user sent on is the one the next new chat starts on.
+			void this.runtime.setActiveCatalogRef(ref);
+		}
 		const host = (turn.prompt.host ?? {}) as IAgentPromptHostOptions;
 		const images = imageAttachmentsFromMentions(display?.mentions);
 		const resources = await this.resourcesFor(display);

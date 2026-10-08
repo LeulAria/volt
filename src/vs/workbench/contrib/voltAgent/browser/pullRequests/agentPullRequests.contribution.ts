@@ -42,7 +42,7 @@ import { parseBlobUri, PR_BLOB_SCHEME, PrBlobContentProvider, PrDiffSourceResolv
 import { AgentPullRequestEditor } from './agentPullRequestEditor.js';
 import { AGENT_PULL_REQUEST_EDITOR_ID, AGENT_PULL_REQUEST_SCHEME, AgentPullRequestEditorInput, AgentPullRequestEditorInputSerializer, parsePullRequestUri } from './agentPullRequestEditorInput.js';
 import { AgentPullRequestService, IAgentPullRequestService } from './agentPullRequestService.js';
-import { AGENT_PR_REVIEW_MODEL_SETTING, AGENT_PR_AUTO_REVIEW_SETTING, AgentPullRequestReviewService, IAgentPrReviewService } from './agentPullRequestReviewService.js';
+import { AGENT_PR_POST_REVIEW_COMMENTS_SETTING, AGENT_PR_REVIEW_MODEL_SETTING, AGENT_PR_AUTO_REVIEW_SETTING, AgentPullRequestReviewService, IAgentPrReviewService } from './agentPullRequestReviewService.js';
 import { AUTO_REVIEW_MODES } from '../../common/agentPrReview.js';
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../../platform/configuration/common/configurationRegistry.js';
 import { AgentPullRequestsViewPane } from './agentPullRequestsViewPane.js';
@@ -79,6 +79,11 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			type: 'string',
 			default: '',
 			description: localize('voltPr.reviewModel', "The model that reviews pull requests (its catalog ref). Empty uses the linked chat's model."),
+		},
+		[AGENT_PR_POST_REVIEW_COMMENTS_SETTING]: {
+			type: 'boolean',
+			default: false,
+			description: localize('voltPr.postReviewComments', "Shows Post as Review Comments under a pull request's review, which posts its open findings to GitHub as one review with a comment on each line."),
 		},
 	},
 });

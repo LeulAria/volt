@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { verifySignature } from './signature.mjs';
 import { Store } from './store.mjs';
-import { pickMachine } from './placement.mjs';
+import { ineligibleReason, loadScore, pickMachine } from './placement.mjs';
 import { HttpError, newId, normalizePairingCode, pairingCode, randomToken, redactHeaders, safeEqual, sha256 } from './util.mjs';
 
 export const PROTOCOL_VERSION = 1;
@@ -29,6 +29,8 @@ const PAIRING_TTL_MS = 15 * 60_000;
 const LOG_LIMIT_BYTES = 8 * 1024 * 1024;
 
 const TASK_ACTIVE = new Set(['queued', 'claimed', 'preparing', 'running', 'finishing']);
+/** The agents a cloud task can run, each with its own placement. */
+const PLACEMENT_AGENTS = ['claude', 'codex'];
 const TASK_DONE = new Set(['succeeded', 'failed', 'cancelled']);
 
 /**
@@ -195,11 +197,34 @@ export class Relay {
 		return { ...machine, online: now - machine.at < MACHINE_STALE_MS, lastSeenAt: machine.at, reserved };
 	}
 
+	/**
+	 * What the desktop shows for each machine, decided here and nowhere else: its load score, whether
+	 * it can take each agent's task (and why not), and whether it is the Auto pick for each agent.
+	 */
 	listMachines() {
 		const now = Date.now();
+		const counted = this.placementMachines();
+		const autoPick = Object.fromEntries(PLACEMENT_AGENTS.map(agent => [agent, pickMachine(counted, { agent }, { now }).machineId]));
+		return counted.map(machine => ({
+			...this.machineView(machine, now),
+			score: loadScore(machine),
+			placement: Object.fromEntries(PLACEMENT_AGENTS.map(agent => {
+				const reason = ineligibleReason(machine, { agent }, now);
+				return [agent, { eligible: !reason, reason: reason ?? null }];
+			})),
+			autoPick: Object.fromEntries(PLACEMENT_AGENTS.map(agent => [agent, autoPick[agent] === machine.id])),
+		}));
+	}
+
+	/** The machines Auto placement chooses among; a task already assigned to one counts as running there. */
+	placementMachines() {
+		const active = this.state.tasks.filter(candidate => TASK_ACTIVE.has(candidate.status) && candidate.assignedTo);
 		return this.state.machines
 			.filter(machine => this.state.devices.some(device => device.id === machine.id && !device.revokedAt))
-			.map(machine => this.machineView(machine, now));
+			.map(machine => ({
+				...machine,
+				running: [...new Set([...(machine.running ?? []), ...active.filter(candidate => candidate.assignedTo === machine.id).map(candidate => candidate.id)])],
+			}));
 	}
 
 	//#endregion
@@ -691,16 +716,9 @@ export class Relay {
 	 * another is clearly less loaded.
 	 */
 	autoMachineFor(task, now) {
-		const active = this.state.tasks.filter(candidate => TASK_ACTIVE.has(candidate.status) && candidate.assignedTo);
-		const machines = this.state.machines
-			.filter(machine => this.state.devices.some(device => device.id === machine.id && !device.revokedAt))
-			.map(machine => ({
-				...machine,
-				running: [...new Set([...(machine.running ?? []), ...active.filter(candidate => candidate.assignedTo === machine.id).map(candidate => candidate.id)])],
-			}));
 		const chatId = task.origin?.chatId;
 		const last = chatId ? this.state.tasks.filter(candidate => candidate.id !== task.id && candidate.origin?.chatId === chatId && candidate.assignedTo).at(-1) : undefined;
-		return pickMachine(machines, task, { now, previousId: last?.assignedTo }).machineId;
+		return pickMachine(this.placementMachines(), task, { now, previousId: last?.assignedTo }).machineId;
 	}
 
 	assign(task, device) {

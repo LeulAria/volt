@@ -3004,6 +3004,22 @@
 	color: var(--vscode-descriptionForeground);
 }
 
+/* A review finding's line in the Code diff: a bar in the line-number gutter. */
+.volt-pr-review-marker {
+	width: 3px !important;
+	margin-left: 4px;
+	border-radius: 2px;
+	background: var(--vscode-editorWarning-foreground);
+}
+
+.volt-pr-review-marker.high {
+	background: var(--vscode-editorError-foreground);
+}
+
+.volt-pr-review-marker.low {
+	background: var(--vscode-descriptionForeground);
+}
+
 .volt-pr-review-location {
 	background: none;
 	border: none;

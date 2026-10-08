@@ -1983,3 +1983,16 @@ html.volt-layout-agent-window body {
 .volt-agent-home-row.is-run-member > .meta {
 	font-variant-numeric: tabular-nums;
 }
+
+/* Cloud task rows: the status line takes the task's state (running, done, failed). */
+.volt-agent-home-row.is-cloud.cloud-active > .meta {
+	color: var(--vscode-charts-blue, var(--vscode-focusBorder, #3794ff));
+}
+
+.volt-agent-home-row.is-cloud.cloud-succeeded > .meta {
+	color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #73c991));
+}
+
+.volt-agent-home-row.is-cloud.cloud-failed > .meta {
+	color: var(--vscode-testing-iconFailed, var(--vscode-charts-red, #f14c4c));
+}

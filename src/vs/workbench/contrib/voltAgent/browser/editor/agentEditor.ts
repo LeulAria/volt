@@ -70,7 +70,7 @@ import { createReportStackIcon, isLiveSubagentState, renderCursorSubagentRow, re
 import type { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { type IAgentQuestionResponse, questionResponseText } from '../../../../services/voltRuntime/common/questions.js';
 import { AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { agentRunOnStorageKey, IAgentWorktreeService, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { agentRunOnStorageKey, IAgentWorktreeService, normalizeAgentRunOn, runOnForPrompt } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IWorkspaceMoveSpec } from '../../../../services/voltRuntime/common/git/workspaceMove.js';
 import { parseWorktreeList } from '../../../../services/voltRuntime/common/orchestration/agentThreadTools.js';
 import { showAgentMoveMenu } from '../orchestration/agentMoveMenu.js';
@@ -5307,7 +5307,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		// A scratch folder is not a git repository, so it has no worktrees.
 		const binding = this.sessionContext.bindingFor(this.sessionKey);
 		const scratch = !!binding && !!this.sessionContext.getProject(binding.projectId)?.scratch;
-		const runOn = scratch ? 'same-branch' : normalizeAgentRunOn(this.storageService.get(agentRunOnStorageKey(this.sessionContext.activeProject?.id), StorageScope.APPLICATION));
+		const location = scratch ? 'same-branch' : normalizeAgentRunOn(this.storageService.get(agentRunOnStorageKey(this.sessionContext.activeProject?.id), StorageScope.APPLICATION));
+		// The project's location is where a new chat starts; a follow-up stays on the chat's own checkout.
+		const runOn = runOnForPrompt(location, (this.orchestrator.getThread(this.sessionKey)?.turns ?? 0) > 0);
 		const images = imageAttachmentsFromMentions(display?.mentions);
 		return {
 			text: value,

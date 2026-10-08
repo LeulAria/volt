@@ -15,6 +15,7 @@ import { IDocumentDiffItem, IMultiDiffEditorModel } from '../../../../../editor/
 import { MultiDiffEditorViewModel } from '../../../../../editor/browser/widget/multiDiffEditor/multiDiffEditorViewModel.js';
 import { MultiDiffEditorWidget } from '../../../../../editor/browser/widget/multiDiffEditor/multiDiffEditorWidget.js';
 import { IResourceLabel, IWorkbenchUIElementFactory } from '../../../../../editor/browser/widget/multiDiffEditor/workbenchUIElementFactory.js';
+import { Range } from '../../../../../editor/common/core/range.js';
 import { ITextModel } from '../../../../../editor/common/model.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
@@ -23,6 +24,7 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { IVoltPrFilePatch, IVoltPrRepoRef } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { ResourceLabel } from '../../../../browser/labels.js';
 import { originalFromPatch, parseUnifiedPatch } from '../../common/agentPrDiff.js';
+import { IReviewFinding, reviewSeverityLabel } from '../../common/agentPrReview.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createAgentReviewDiffLook } from '../review/agentChangesEditor.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
@@ -82,6 +84,10 @@ export class AgentPullRequestCodeDiff extends Disposable {
 	private documents = new ValueWithChangeEvent<readonly RefCounted<IDocumentDiffItem>[] | 'loading'>('loading');
 	private loadSeq = 0;
 	private failed: string[] = [];
+	/** The new side of each loaded file, and the review markers set on it. */
+	private readonly modifiedModels = new Map<string, ITextModel>();
+	private readonly markerIds = new Map<ITextModel, string[]>();
+	private findings: readonly IReviewFinding[] = [];
 	private readonly _onDidLoad = this._register(new Emitter<void>());
 	/** Fires when the files of a new source are read (or failed to). */
 	readonly onDidLoad = this._onDidLoad.event;
@@ -126,7 +132,31 @@ export class AgentPullRequestCodeDiff extends Disposable {
 		this.widget.setViewModel(this.viewModel.value);
 		// The last files' models go once nothing shows them.
 		this.loadStore.clear();
+		this.modifiedModels.clear();
+		this.markerIds.clear();
 		void this.load(source, ++this.loadSeq);
+	}
+
+	/** The review's findings, marked on their line of the new side (open findings only). */
+	setFindings(findings: readonly IReviewFinding[]): void {
+		this.findings = findings;
+		this.markFindings();
+	}
+
+	private markFindings(): void {
+		for (const [path, model] of this.modifiedModels) {
+			const decorations = this.findings
+				.filter(finding => finding.file === path && finding.state === 'open' && finding.line >= 1 && finding.line <= model.getLineCount())
+				.map(finding => ({
+					range: new Range(finding.line, 1, finding.line, 1),
+					options: {
+						description: 'volt-pr-review-finding',
+						linesDecorationsClassName: `volt-pr-review-marker ${finding.severity}`,
+						hoverMessage: { value: `${reviewSeverityLabel(finding.severity)}: ${finding.title}` },
+					},
+				}));
+			this.markerIds.set(model, model.deltaDecorations(this.markerIds.get(model) ?? [], decorations));
+		}
 	}
 
 	/** The Viewed boxes read their state again. */
@@ -192,6 +222,9 @@ export class AgentPullRequestCodeDiff extends Disposable {
 			}
 			const original = file.change === 'added' ? undefined : this.createModel(source, file.previousPath ?? file.path, 'original', originalText, store);
 			const modified = file.change === 'deleted' ? undefined : this.createModel(source, file.path, 'modified', modifiedText, store);
+			if (modified) {
+				this.modifiedModels.set(file.path, modified);
+			}
 			const item: IDocumentDiffItem = {
 				original,
 				modified,
@@ -201,6 +234,7 @@ export class AgentPullRequestCodeDiff extends Disposable {
 		});
 		this.failed = failed;
 		this.documents.value = documents;
+		this.markFindings();
 		// Viewed files and long ones start folded, as on GitHub.
 		for (const file of files) {
 			if (this.delegate.viewed(file.path) || file.additions + file.deletions > LARGE_FILE_LINES) {
