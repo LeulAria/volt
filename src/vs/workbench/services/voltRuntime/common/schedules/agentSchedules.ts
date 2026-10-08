@@ -5,6 +5,7 @@
 
 import { Event } from '../../../../../base/common/event.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
+import { AgentScheduleTriggerKind, IAgentWebhookTrigger, parseWebhookTrigger } from './agentWebhooks.js';
 
 /**
  * Scheduled agent tasks: a prompt Volt sends on a clock, either into one chat (a daily "check the
@@ -50,6 +51,8 @@ export interface IAgentScheduleRun {
 	readonly error?: string;
 	/** Started by Run now rather than by the clock. */
 	readonly manual?: boolean;
+	/** Started by a webhook delivery. */
+	readonly webhook?: { readonly deliveryId: string; readonly event?: string };
 }
 
 export interface IAgentSchedule {
@@ -58,6 +61,9 @@ export interface IAgentSchedule {
 	readonly prompt: string;
 	readonly enabled: boolean;
 	readonly schedule: AgentScheduleSpec;
+	/** What starts runs: the clock, a webhook, or both. Absent: the clock. */
+	readonly trigger?: AgentScheduleTriggerKind;
+	readonly webhook?: IAgentWebhookTrigger;
 	readonly target: AgentScheduleTarget;
 	/** Catalog ref; absent: the chat's model (thread target) or the default model (new chats). */
 	readonly modelRef?: string;
@@ -74,6 +80,16 @@ export interface IAgentSchedule {
 }
 
 //#region Schedule math
+
+/** The clock runs this task (Schedule or Both). */
+export function usesClock(task: Pick<IAgentSchedule, 'trigger'>): boolean {
+	return task.trigger !== 'webhook';
+}
+
+/** A webhook starts runs of this task (Webhook or Both, with a hook set up). */
+export function usesWebhook(task: Pick<IAgentSchedule, 'trigger' | 'webhook'>): boolean {
+	return (task.trigger === 'webhook' || task.trigger === 'both') && !!task.webhook;
+}
 
 /** "09:30" → minutes after midnight, or undefined. */
 export function parseTimeOfDay(value: string): number | undefined {
@@ -126,8 +142,8 @@ export type ScheduleDecision =
  * What to do with a task at `now`. A missed interval runs once and starts counting again from
  * now; a fixed time missed by more than the grace is skipped (T3 does the same).
  */
-export function decideScheduleRun(task: Pick<IAgentSchedule, 'enabled' | 'schedule' | 'nextRunAt'>, now: number): ScheduleDecision {
-	if (!task.enabled || task.nextRunAt === undefined || task.nextRunAt > now) {
+export function decideScheduleRun(task: Pick<IAgentSchedule, 'enabled' | 'schedule' | 'nextRunAt' | 'trigger'>, now: number): ScheduleDecision {
+	if (!task.enabled || !usesClock(task) || task.nextRunAt === undefined || task.nextRunAt > now) {
 		return { kind: 'wait' };
 	}
 	const late = now - task.nextRunAt;
@@ -141,7 +157,7 @@ export function decideScheduleRun(task: Pick<IAgentSchedule, 'enabled' | 'schedu
 export function nextDueAt(tasks: readonly IAgentSchedule[]): number | undefined {
 	let next: number | undefined;
 	for (const task of tasks) {
-		if (task.enabled && task.nextRunAt !== undefined && (next === undefined || task.nextRunAt < next)) {
+		if (task.enabled && usesClock(task) && task.nextRunAt !== undefined && (next === undefined || task.nextRunAt < next)) {
 			next = task.nextRunAt;
 		}
 	}
@@ -291,6 +307,8 @@ function parseSchedule(value: unknown): IAgentSchedule | undefined {
 	if (!spec || !target) {
 		return undefined;
 	}
+	const webhook = parseWebhookTrigger(raw.webhook);
+	const trigger = (raw.trigger === 'webhook' || raw.trigger === 'both') && webhook ? raw.trigger : undefined;
 	const runs = Array.isArray(raw.runs) ? raw.runs.map(parseRun).filter((run): run is IAgentScheduleRun => !!run).slice(-SCHEDULE_RUNS_KEPT) : [];
 	return {
 		id: raw.id,
@@ -298,6 +316,8 @@ function parseSchedule(value: unknown): IAgentSchedule | undefined {
 		prompt: raw.prompt,
 		enabled: raw.enabled !== false,
 		schedule: spec,
+		...(trigger ? { trigger } : {}),
+		...(webhook ? { webhook } : {}),
 		target,
 		...(typeof raw.modelRef === 'string' && raw.modelRef ? { modelRef: raw.modelRef } : {}),
 		...(typeof raw.mode === 'string' && raw.mode ? { mode: raw.mode } : {}),
@@ -333,6 +353,7 @@ function parseRun(value: unknown): IAgentScheduleRun | undefined {
 		...(typeof raw.threadId === 'string' ? { threadId: raw.threadId } : {}),
 		...(typeof raw.error === 'string' ? { error: raw.error } : {}),
 		...(raw.manual === true ? { manual: true } : {}),
+		...(raw.webhook && typeof (raw.webhook as { deliveryId?: unknown }).deliveryId === 'string' ? { webhook: { deliveryId: (raw.webhook as { deliveryId: string }).deliveryId, ...(typeof (raw.webhook as { event?: unknown }).event === 'string' ? { event: (raw.webhook as { event: string }).event } : {}) } } : {}),
 	};
 }
 
@@ -346,6 +367,8 @@ export interface IAgentScheduleInput {
 	readonly title?: string;
 	readonly prompt: string;
 	readonly schedule: AgentScheduleSpec;
+	readonly trigger?: AgentScheduleTriggerKind;
+	readonly webhook?: IAgentWebhookTrigger;
 	readonly target: AgentScheduleTarget;
 	readonly modelRef?: string;
 	readonly mode?: string;
@@ -368,6 +391,11 @@ export interface IAgentScheduleService {
 	delete(id: string): Promise<void>;
 	/** Runs it now, off the clock; the next scheduled run stays where it was. */
 	runNow(id: string): Promise<IAgentScheduleRun | undefined>;
+	/**
+	 * A run started by a webhook delivery: `text` is the rendered prompt the agent reads, `display`
+	 * what the transcript shows. `key` names the turn, so a delivery handled twice runs once.
+	 */
+	runFromWebhook(id: string, run: { readonly text: string; readonly display: string; readonly key: string; readonly deliveryId: string; readonly event?: string; readonly at: number }): Promise<IAgentScheduleRun>;
 }
 
 //#endregion

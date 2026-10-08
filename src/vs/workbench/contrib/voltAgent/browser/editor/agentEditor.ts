@@ -385,7 +385,7 @@ export interface IAgentUserMessage {
 	/** The chat moved to another model before this turn: drawn as a "Context handoff" divider above it. */
 	handoff?: { fromLabel?: string; toLabel: string; at: number; by: 'agent' | 'user'; reason?: string };
 	/** Sent by a scheduled task, not typed now: drawn with a "Scheduled" divider above it. */
-	scheduled?: { id: string; title: string };
+	scheduled?: { id: string; title: string; webhook?: boolean };
 	/** Written by another chat's agent (a message, the task it launched, or a fork's first prompt): drawn with a "From" pill that opens that chat. */
 	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork' };
 }
@@ -2551,8 +2551,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private renderScheduledPill(turn: HTMLElement, scheduled: NonNullable<IAgentUserMessage['scheduled']>): void {
 		const divider = append(turn, $('.volt-agent-subagent-of.scheduled'));
 		const pill = append(divider, $('span.volt-agent-subagent-of-pill'));
-		pill.appendChild(renderIcon(Codicon.history));
-		append(pill, $('span.label')).textContent = localize('voltAgent.scheduledRun', "Scheduled");
+		pill.appendChild(renderIcon(scheduled.webhook ? Codicon.plug : Codicon.history));
+		append(pill, $('span.label')).textContent = scheduled.webhook ? localize('voltAgent.webhookRun', "Webhook") : localize('voltAgent.scheduledRun', "Scheduled");
 		append(pill, $('span.parent')).textContent = `· ${scheduled.title}`;
 		pill.setAttribute('role', 'button');
 		pill.tabIndex = 0;

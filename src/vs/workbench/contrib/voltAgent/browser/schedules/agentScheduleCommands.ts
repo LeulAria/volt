@@ -11,7 +11,7 @@ export const NEW_AGENT_SCHEDULE_COMMAND_ID = 'voltAgent.schedules.new';
 
 /** Send options a scheduled run carries in its prompt's `host`: the transcript marks the turn. */
 export interface IAgentScheduledRunHost {
-	readonly scheduled: { readonly id: string; readonly title: string };
+	readonly scheduled: { readonly id: string; readonly title: string; readonly webhook?: boolean };
 }
 
 export function scheduledRunOf(host: unknown): IAgentScheduledRunHost['scheduled'] | undefined {

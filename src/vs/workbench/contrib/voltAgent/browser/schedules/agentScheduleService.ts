@@ -21,12 +21,20 @@ import { IAgentOrchestratorService, IOrchPrompt } from '../../../../services/vol
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import {
 	AgentScheduleTarget, decideScheduleRun, describeSchedule, firstScheduleRun, IAgentSchedule, IAgentScheduleInput, IAgentScheduleRun, IAgentScheduleService,
-	nextDueAt, parseScheduleSpec, parseSchedulesFile, recordScheduleRun, scheduledRunPrompt, SCHEDULES_STATE_VERSION, titleFromPrompt,
+	nextDueAt, parseScheduleSpec, parseSchedulesFile, recordScheduleRun, scheduledRunPrompt, SCHEDULES_STATE_VERSION, titleFromPrompt, usesClock,
 } from '../../../../services/voltRuntime/common/schedules/agentSchedules.js';
 import { IVoltProjectRecord, IVoltSessionContextService, canonicalProjectRoot, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { IAgentScheduledRunHost } from './agentScheduleCommands.js';
+
+interface IWebhookRunInput {
+	readonly text: string;
+	readonly display: string;
+	readonly key: string;
+	readonly deliveryId: string;
+	readonly event?: string;
+}
 
 /** The timer never sleeps longer than this, so a clock change or a machine waking up is noticed. */
 const MAX_TIMER_MS = 5 * 60_000;
@@ -136,13 +144,14 @@ export class AgentScheduleService extends Disposable implements IAgentScheduleSe
 			prompt: input.prompt.trim(),
 			enabled,
 			schedule: input.schedule,
+			...(input.trigger && input.trigger !== 'schedule' && input.webhook ? { trigger: input.trigger, webhook: input.webhook } : {}),
 			target: input.target,
 			...(input.modelRef ? { modelRef: input.modelRef } : {}),
 			...(input.mode ? { mode: input.mode } : {}),
 			createdAt: now,
 			createdBy: input.createdBy ?? 'user',
 			...(input.sourceThreadId ? { sourceThreadId: input.sourceThreadId } : {}),
-			...(enabled && firstScheduleRun(input.schedule, now) !== undefined ? { nextRunAt: firstScheduleRun(input.schedule, now)! } : {}),
+			...(enabled && input.trigger !== 'webhook' && firstScheduleRun(input.schedule, now) !== undefined ? { nextRunAt: firstScheduleRun(input.schedule, now)! } : {}),
 			runs: [],
 			runCount: 0,
 		};
@@ -160,9 +169,12 @@ export class AgentScheduleService extends Disposable implements IAgentScheduleSe
 		const now = Date.now();
 		const schedule = patch.schedule ?? task.schedule;
 		const enabled = patch.enabled ?? task.enabled;
-		const timing = patch.schedule || (patch.enabled !== undefined && patch.enabled !== task.enabled);
-		const { nextRunAt: _next, ...rest } = task;
-		const next = enabled ? (timing ? firstScheduleRun(schedule, now) : task.nextRunAt) : undefined;
+		const trigger = patch.trigger ?? task.trigger ?? 'schedule';
+		const webhook = patch.webhook ?? task.webhook;
+		const clock = usesClock({ trigger });
+		const timing = patch.schedule || (patch.enabled !== undefined && patch.enabled !== task.enabled) || (patch.trigger !== undefined && usesClock(task) !== clock);
+		const { nextRunAt: _next, trigger: _trigger, webhook: _webhook, ...rest } = task;
+		const next = enabled && clock ? (timing ? firstScheduleRun(schedule, now) : task.nextRunAt) : undefined;
 		const updated: IAgentSchedule = {
 			...rest,
 			...(patch.title !== undefined ? { title: patch.title.trim() || titleFromPrompt(patch.prompt ?? task.prompt) } : {}),
@@ -172,6 +184,8 @@ export class AgentScheduleService extends Disposable implements IAgentScheduleSe
 			...(patch.mode !== undefined ? { mode: patch.mode || undefined } : {}),
 			schedule,
 			enabled,
+			...(trigger !== 'schedule' && webhook ? { trigger } : {}),
+			...(webhook ? { webhook } : {}),
 			...(next !== undefined ? { nextRunAt: next } : {}),
 		};
 		this.replace(updated);
@@ -196,6 +210,15 @@ export class AgentScheduleService extends Disposable implements IAgentScheduleSe
 		await this.whenReady;
 		const task = this.get(id);
 		return task ? this.fire(task, Date.now(), true) : undefined;
+	}
+
+	async runFromWebhook(id: string, run: { readonly text: string; readonly display: string; readonly key: string; readonly deliveryId: string; readonly event?: string; readonly at: number }): Promise<IAgentScheduleRun> {
+		await this.whenReady;
+		const task = this.get(id);
+		if (!task) {
+			return { at: run.at, status: 'failed', error: localize('voltSchedules.taskGone', "The scheduled task was deleted."), webhook: { deliveryId: run.deliveryId } };
+		}
+		return this.fire(task, run.at, false, task.nextRunAt, run);
 	}
 
 	private async changed(): Promise<void> {
@@ -240,26 +263,32 @@ export class AgentScheduleService extends Disposable implements IAgentScheduleSe
 	 * One run. The clock's runs record the next run time first and save, then send; Run now leaves
 	 * the next run where it was.
 	 */
-	private async fire(task: IAgentSchedule, at: number, manual: boolean, nextRunAt = task.nextRunAt): Promise<IAgentScheduleRun> {
-		if (this.firing.has(task.id)) {
-			return { at, status: 'skipped', error: 'A run of this task is starting already.', ...(manual ? { manual } : {}) };
+	private async fire(task: IAgentSchedule, at: number, manual: boolean, nextRunAt = task.nextRunAt, hook?: IWebhookRunInput): Promise<IAgentScheduleRun> {
+		// Webhook runs are keyed by delivery: two deliveries may start at once, the same one may not.
+		const firingKey = hook ? `${task.id}:${hook.deliveryId}` : task.id;
+		const webhook = hook ? { webhook: { deliveryId: hook.deliveryId, ...(hook.event ? { event: hook.event } : {}) } } : {};
+		if (this.firing.has(firingKey)) {
+			return { at, status: 'skipped', error: 'A run of this task is starting already.', ...(manual ? { manual } : {}), ...webhook };
 		}
-		this.firing.add(task.id);
-		const pending: IAgentScheduleRun = { at, status: 'queued', ...(manual ? { manual } : {}) };
+		this.firing.add(firingKey);
+		const pending: IAgentScheduleRun = { at, status: 'queued', ...(manual ? { manual } : {}), ...webhook };
 		this.replace(recordScheduleRun(task, pending, nextRunAt));
 		this._onDidChange.fire();
 		await this.save();
 		let run: IAgentScheduleRun;
 		try {
-			run = await this.send(task, at, manual);
+			run = { ...await this.send(task, at, manual, hook), ...webhook };
 		} catch (err) {
-			run = { at, status: 'failed', error: err instanceof Error ? err.message : String(err), ...(manual ? { manual } : {}) };
+			run = { at, status: 'failed', error: err instanceof Error ? err.message : String(err), ...(manual ? { manual } : {}), ...webhook };
 		} finally {
-			this.firing.delete(task.id);
+			this.firing.delete(firingKey);
 		}
 		const current = this.get(task.id);
 		if (current) {
-			this.replace({ ...current, runs: [...current.runs.slice(0, -1), run] });
+			// Replace this run's pending entry (others may have been recorded since).
+			const index = current.runs.lastIndexOf(current.runs.findLast(entry => entry.at === at && entry.status === 'queued' && entry.webhook?.deliveryId === hook?.deliveryId)!);
+			const runs = index >= 0 ? [...current.runs.slice(0, index), run, ...current.runs.slice(index + 1)] : [...current.runs, run];
+			this.replace({ ...current, runs });
 			this._onDidChange.fire();
 			await this.save();
 		}
@@ -269,7 +298,7 @@ export class AgentScheduleService extends Disposable implements IAgentScheduleSe
 		return run;
 	}
 
-	private async send(task: IAgentSchedule, at: number, manual: boolean): Promise<IAgentScheduleRun> {
+	private async send(task: IAgentSchedule, at: number, manual: boolean, hook?: IWebhookRunInput): Promise<IAgentScheduleRun> {
 		const threadId = task.target.kind === 'thread' ? task.target.threadId : `agent-${generateUuid()}`;
 		if (task.target.kind === 'thread') {
 			if (!this.history.get(threadId) && !this.orchestrator.getThread(threadId)) {
@@ -283,16 +312,16 @@ export class AgentScheduleService extends Disposable implements IAgentScheduleSe
 			attachSessionToProject(this.sessionContext, this.workspace, this.history, threadId, project);
 			this.history.open(threadId).setMeta({ title: task.title });
 		}
-		const host: IAgentScheduledRunHost = { scheduled: { id: task.id, title: task.title } };
+		const host: IAgentScheduledRunHost = { scheduled: { id: task.id, title: task.title, ...(hook ? { webhook: true } : {}) } };
 		const prompt: IOrchPrompt = {
-			text: scheduledRunPrompt(task, at),
-			display: { text: task.prompt },
+			text: hook ? hook.text : scheduledRunPrompt(task, at),
+			display: { text: hook ? hook.display : task.prompt },
 			mode: task.mode ?? 'Agent',
 			...(task.modelRef ? { modelRef: task.modelRef } : {}),
 			host,
 		};
 		// The fire time names the turn, so a run that is retried is not sent twice.
-		const result = await this.orchestrator.submit(threadId, prompt, 'auto', `sched-${task.id}-${at}`);
+		const result = await this.orchestrator.submit(threadId, prompt, 'auto', hook ? hook.key : `sched-${task.id}-${at}`);
 		if (result.outcome === 'rejected') {
 			throw new Error(result.reason ?? localize('voltSchedules.rejected', "The chat refused the prompt."));
 		}
