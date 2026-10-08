@@ -6,6 +6,7 @@
 import type { IVoltHostToolInfo, VoltThreadToolName } from '../hostTools.js';
 import type { IVoltCatalogItem } from '../providers.js';
 import type { OrchThreadStatusKind } from './orchestratorViews.js';
+import { IWorkspaceMoveSpec, parseWorkspaceMoveSpec, validateBranchName } from '../git/workspaceMove.js';
 
 /**
  * Orchestration tools: an agent runs other Volt chats the way the user does. It lists and reads
@@ -309,6 +310,24 @@ export const THREAD_TOOLS: readonly IVoltHostToolInfo[] = [
 		description: 'Every git worktree of this chat\'s project (path, branch, HEAD) and the chat that uses each, for workspace {type:"existing_worktree"} in thread_launch.',
 		inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'A project folder path. Default: this chat\'s project.' } } },
 	},
+	{
+		name: 'worktree_handoff',
+		title: 'Moved chat',
+		group: 'threads',
+		description: 'Move a chat to another checkout, keeping its history and sidebar row: a new worktree on a new branch, the project\'s main checkout, or an existing worktree (worktree_list). Its uncommitted changes go with it: carry "thread" (default) moves the files this chat\'s agent changed, "all" every uncommitted change, "none" only the chat. Its next turn runs in the new folder. While a turn is running the move waits for it to end, unless stop is true (that ends the turn first). Without thread_id, this chat.',
+		inputSchema: {
+			type: 'object',
+			required: ['target'],
+			properties: {
+				thread_id: THREAD_ID,
+				target: { type: 'string', enum: ['new_worktree', 'local', 'existing_worktree'], description: 'new_worktree: a new branch and worktree from the project\'s HEAD. local: the project\'s main checkout. existing_worktree: a worktree that already exists (path).' },
+				branch: { type: 'string', description: 'new_worktree: the new branch name (default volt/<id>).' },
+				path: { type: 'string', description: 'existing_worktree: its absolute path.' },
+				carry: { type: 'string', enum: ['thread', 'all', 'none'], description: 'Which uncommitted changes move. Default thread.' },
+				stop: { type: 'boolean', description: 'End the running turn first instead of waiting for it.' },
+			},
+		},
+	},
 ];
 
 export function isThreadTool(name: string): name is VoltThreadToolName {
@@ -415,6 +434,43 @@ export function parseWorkspace(value: unknown): ThreadWorkspace | { readonly err
 		return { type: 'existing_worktree', path, ...(branch ? { branch } : {}) };
 	}
 	return { error: `Unknown workspace type ${JSON.stringify(type)}: use root, worktree or existing_worktree.` };
+}
+
+const HANDOFF_CARRY = ['thread', 'all', 'none'];
+
+/** The arguments of `worktree_handoff`, checked before the move is dispatched. */
+export function parseHandoffArgs(args: Record<string, unknown>): { readonly spec: IWorkspaceMoveSpec; readonly stop: boolean } | { readonly error: string } {
+	const carry = args.carry === undefined ? 'thread' : args.carry;
+	if (typeof carry !== 'string' || !HANDOFF_CARRY.includes(carry)) {
+		return { error: 'carry is thread, all or none.' };
+	}
+	let target: unknown;
+	switch (args.target) {
+		case 'new_worktree': {
+			const branch = stringArg(args.branch, 200);
+			const problem = branch ? validateBranchName(branch) : undefined;
+			if (problem) {
+				return { error: problem };
+			}
+			target = { kind: 'newWorktree', ...(branch ? { branch } : {}) };
+			break;
+		}
+		case 'local':
+			target = { kind: 'local' };
+			break;
+		case 'existing_worktree': {
+			const path = stringArg(args.path, 1000);
+			if (!path || !(path.startsWith('/') || /^[a-z]:[\\/]/i.test(path))) {
+				return { error: 'existing_worktree needs `path`: the worktree\'s absolute path (worktree_list shows them).' };
+			}
+			target = { kind: 'worktree', path };
+			break;
+		}
+		default:
+			return { error: 'target is new_worktree, local or existing_worktree.' };
+	}
+	const spec = parseWorkspaceMoveSpec({ target, carry });
+	return spec ? { spec, stop: args.stop === true } : { error: 'The move target is not valid.' };
 }
 
 /** `git check-ref-format --branch` rules, enough to refuse a name before git does. */

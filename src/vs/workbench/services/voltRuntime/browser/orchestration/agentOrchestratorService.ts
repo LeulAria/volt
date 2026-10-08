@@ -16,13 +16,14 @@ import { InstantiationType, registerSingleton } from '../../../../../platform/in
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IVoltEventEnvelope } from '../../common/events.js';
 import { IAgentWorktreeService } from '../../common/git/agentWorktree.js';
+import { IWorkspaceMoveSpec, workspaceTargetLabel } from '../../common/git/workspaceMove.js';
 import { IAgentWorktreeSetupService } from '../../common/git/worktreeSetupPlan.js';
 import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
 import { normalizeVoltMode } from '../../common/modes.js';
 import { AGENT_TASK_TOOLS, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_RESUME_AFTER_RESTART_SETTING, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchMove, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_RESUME_AFTER_RESTART_SETTING, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
 import { ILimitSignal, LIMIT_AUTO_RESUME_SETTING, limitAutoResumes, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
 import { extractRoot, IOrchIndex, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { harnessTaskId, IOrchStep, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
@@ -156,6 +157,14 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const thread = this.state.threads[threadId];
 		const canSteer = !!thread?.active?.steerable || this.runtime.canSteer(threadId);
 		const step = this.apply({ type: 'thread.submit', threadId, turnId, prompt, delivery, canSteer });
+		const outcome = step.decision.outcome;
+		return outcome ? { outcome } : { outcome: 'rejected', ...(step.decision.rejected ? { reason: step.decision.rejected } : {}) };
+	}
+
+	async move(threadId: string, spec: IWorkspaceMoveSpec, options: { readonly by: 'user' | 'agent'; readonly stop?: boolean }): Promise<IOrchSubmitResult> {
+		await this.ensureThreadLoaded(threadId);
+		const move: IOrchMove = { id: generateUuid(), target: spec, label: workspaceTargetLabel(spec.target), by: options.by, at: Date.now() };
+		const step = this.apply({ type: 'thread.move', threadId, move, ...(options.stop ? { stop: true } : {}) });
 		const outcome = step.decision.outcome;
 		return outcome ? { outcome } : { outcome: 'rejected', ...(step.decision.rejected ? { reason: step.decision.rejected } : {}) };
 	}

@@ -202,6 +202,8 @@ function describeThreadActivity(tool: string, args: Record<string, unknown>): IH
 			return { tool, label: 'Read checkout', detail: chat };
 		case 'worktree_list':
 			return { tool, label: 'Listed worktrees' };
+		case 'worktree_handoff':
+			return { tool, label: 'Moved chat', detail: chat };
 	}
 	return { tool, label: tool };
 }

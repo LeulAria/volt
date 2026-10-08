@@ -8,6 +8,7 @@ import type { IDisposable } from '../../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import type { IVoltModelOptions } from '../models/modelOptions.js';
 import type { AgentTaskDelivery, AgentTaskIsolation, AgentTaskOrigin, AgentTaskRole } from './agentTasks.js';
+import type { IWorkspaceMoveSpec } from '../git/workspaceMove.js';
 
 /**
  * Volt's agent orchestrator: the one owner of what every chat (thread) is doing.
@@ -585,6 +586,9 @@ export interface IAgentOrchestratorService {
 
 	/** `turnId` becomes the transcript id of the user message; callers pass one to correlate. */
 	submit(threadId: string, prompt: IOrchPrompt, delivery: OrchDelivery, turnId?: string): Promise<IOrchSubmitResult>;
+
+	/** Moves the chat to another checkout: now when idle, after the running turn (or at once with `stop`). */
+	move(threadId: string, spec: IWorkspaceMoveSpec, options: { readonly by: 'user' | 'agent'; readonly stop?: boolean }): Promise<IOrchSubmitResult>;
 	/** Wakes the chat with a notification turn (see `thread.notify`). A retried `turnId` is not sent twice. */
 	notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean }): Promise<IOrchSubmitResult>;
 	/** The user's Stop (or Stop all). Agents interrupt chats with `dispatch({ type: 'turn.cancel' })`, which does not fire `onDidStop`. */

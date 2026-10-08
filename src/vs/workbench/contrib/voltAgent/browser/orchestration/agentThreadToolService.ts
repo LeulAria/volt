@@ -21,9 +21,10 @@ import { DEFAULT_ORCH_LIMITS, IAgentOrchestratorService, IOrchPrompt, IOrchThrea
 import { isTerminalTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import {
 	agentMessagePrompt, branchSlug, clip, describeModelCatalog, describeThreadLine, forkPrompt, formatTurns, IThreadLineInfo, IThreadTurnText, isSettledStatus, MAX_LAUNCH_MODELS,
-	matchCatalogModel, numberArg, parseBranchStatus, parseWorkspace, parseWorktreeList, sendModeArg, stringArg, stringList, THREAD_MESSAGE_CHARS, THREAD_READ_CHARS,
+	matchCatalogModel, numberArg, parseBranchStatus, parseHandoffArgs, parseWorkspace, parseWorktreeList, sendModeArg, stringArg, stringList, THREAD_MESSAGE_CHARS, THREAD_READ_CHARS,
 	THREAD_READ_MAX_CHARS, THREAD_REPLY_CHARS, THREAD_TOOLS, THREAD_WAIT_MS, threadIdArg, threadLink, ThreadWorkspace,
 } from '../../../../services/voltRuntime/common/orchestration/agentThreadTools.js';
+import { workspaceTargetLabel } from '../../../../services/voltRuntime/common/git/workspaceMove.js';
 import { threadStatus } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
 import { IAgentRunGroupService } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
@@ -111,6 +112,7 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 				case 'queue_resume': return await this.queueResume(caller, args);
 				case 'worktree_status': return await this.worktreeStatus(caller, args);
 				case 'worktree_list': return await this.worktreeList(caller, args);
+				case 'worktree_handoff': return await this.worktreeHandoff(caller, args);
 			}
 		} catch (err) {
 			this.logService.warn(`[volt threads] ${name} failed`, err);
@@ -1032,6 +1034,25 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 				parsed.changes.length ? `${parsed.changes.length} uncommitted change(s):\n${parsed.changes.slice(0, 40).map(line => `  ${line}`).join('\n')}${parsed.changes.length > 40 ? `\n  …${parsed.changes.length - 40} more` : ''}` : 'No uncommitted changes.',
 				...(project && meta?.worktreePath ? [`Project root: ${project.root.fsPath}`] : []),
 			].join('\n'),
+		};
+	}
+
+	private async worktreeHandoff(caller: ICaller, args: Record<string, unknown>): Promise<IVoltHostToolResult> {
+		const parsed = parseHandoffArgs(args);
+		if ('error' in parsed) {
+			return { error: parsed.error };
+		}
+		const id = await this.target(caller, args.thread_id, { allowSelf: true });
+		const result = await this.orchestrator.move(id, parsed.spec, { by: 'agent', stop: parsed.stop });
+		if (result.outcome === 'rejected') {
+			return { error: result.reason ?? 'The chat cannot move now.' };
+		}
+		const chat = threadLink(id, this.titleOf(id));
+		const where = workspaceTargetLabel(parsed.spec.target);
+		return {
+			text: result.outcome === 'queued'
+				? `${chat} moves to ${where} when its current turn ends. Its next turn runs there.`
+				: `${chat} is moving to ${where}. Its next turn runs there.`,
 		};
 	}
 

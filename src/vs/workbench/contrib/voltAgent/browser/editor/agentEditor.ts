@@ -65,7 +65,10 @@ import { createReportStackIcon, isLiveSubagentState, renderCursorSubagentRow, re
 import type { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { type IAgentQuestionResponse, questionResponseText } from '../../../../services/voltRuntime/common/questions.js';
 import { AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { agentRunOnStorageKey, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { agentRunOnStorageKey, IAgentWorktreeService, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { IWorkspaceMoveSpec } from '../../../../services/voltRuntime/common/git/workspaceMove.js';
+import { parseWorktreeList } from '../../../../services/voltRuntime/common/orchestration/agentThreadTools.js';
+import { showAgentMoveMenu } from '../orchestration/agentMoveMenu.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IVoltProject, IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
 import { createAccessIcon } from '../chrome/accessIcons.js';
@@ -774,6 +777,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@IAgentSessionChangesService private readonly sessionChanges: IAgentSessionChangesService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
+		@INotificationService private readonly notificationService: INotificationService,
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
@@ -1097,6 +1102,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			// Above the Changes / Commit & Push chips, which stay on the composer.
 			getPanelAnchor: () => ({ parent: this.composerEl, before: this.composerChips.element }),
 			getBranch: () => this.statusBranch(),
+			openMoveMenu: anchor => void this.openMoveMenu(anchor),
 			onWillOpenPanel: () => this.hidePlusMenu(),
 			getCompactState: () => this.compactState(),
 			isCompacting: () => this.compactionRunning(),
@@ -6386,6 +6392,32 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		const branch = this.landingChrome?.getBranch() ?? {};
 		return { name: branch.name, detached: branch.detached, worktree: false };
+	}
+
+	private async openMoveMenu(anchor: HTMLElement): Promise<void> {
+		const root = this.sessionContext.rootFor(this.sessionKey);
+		if (!root) {
+			return;
+		}
+		const listing = await this.worktrees.git(root.fsPath, ['worktree', 'list', '--porcelain']);
+		if (listing.exitCode !== 0) {
+			this.notificationService.warn(listing.stderr.trim() || localize('voltAgent.move.noWorktrees', "Could not list this project's worktrees."));
+			return;
+		}
+		showAgentMoveMenu(this.contextViewService, anchor, {
+			current: this.runtime.workingFolder(this.sessionKey),
+			worktrees: parseWorktreeList(listing.stdout),
+			onPick: spec => void this.moveChat(spec),
+		});
+	}
+
+	private async moveChat(spec: IWorkspaceMoveSpec): Promise<void> {
+		const result = await this.orchestrator.move(this.sessionKey, spec, { by: 'user' });
+		if (result.outcome === 'rejected') {
+			this.notificationService.warn(result.reason ?? localize('voltAgent.move.rejected', "This chat cannot move now."));
+		} else if (result.outcome === 'queued') {
+			this.notificationService.info(localize('voltAgent.move.queued', "The chat moves when its current turn ends."));
+		}
 	}
 
 	private get sessionKey(): string {

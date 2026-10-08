@@ -475,6 +475,7 @@ export const THREAD_TOOL_NAMES = [
 	'queue_resume',
 	'worktree_status',
 	'worktree_list',
+	'worktree_handoff',
 ] as const;
 
 export type VoltThreadToolName = typeof THREAD_TOOL_NAMES[number];
