@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { importedMemoryDraft, IVoltMemory, isMemoryToolName, memoryFileName, memorySlug, neutralizeMemoryText, parseMemoryFile, renderMemoryContext, renderMemoryForTool, renderMemoryIndex, serializeMemory, validateMemoryDraft, VOLT_MEMORY_TOOLS } from '../../../common/memory/voltMemory.js';
+import { importedMemoryDraft, IVoltMemory, isMemoryToolName, memoryDescriptionFromReply, memoryFileName, memorySlug, neutralizeMemoryText, parseMemoryFile, renderMemoryContext, renderMemoryForTool, renderMemoryIndex, serializeMemory, validateMemoryDraft, VOLT_MEMORY_TOOLS } from '../../../common/memory/voltMemory.js';
 import { buildAcpLead, IContextPackInput } from '../../../common/harness/contextPack.js';
 import { classifyIntent } from '../../../common/harness/intent.js';
 import { buildDeepseekSystemPrompt } from '../../../common/deepseek/prompt.js';
@@ -31,6 +31,15 @@ suite('Volt memory', () => {
 		});
 		const nested = '---\nname: Terse\ndescription: Keep answers short\nmetadata:\n  type: feedback\n---\nNo summaries.';
 		assert.strictEqual(parseMemoryFile(nested, 'user', 'terse.md')?.type, 'feedback');
+	});
+
+	test('a note saved from a reply is described by its first substantive sentence', () => {
+		assert.strictEqual(memoryDescriptionFromReply("I'll check the repo first. The repo uses pnpm, so install with pnpm."), 'The repo uses pnpm, so install with pnpm.');
+		assert.strictEqual(memoryDescriptionFromReply('Sure, let me look.\n\n## Prefers small diffs\n\nSplit large refactors.'), 'Prefers small diffs');
+		assert.strictEqual(memoryDescriptionFromReply('**Use pnpm** for installs. Never npm.'), 'Use pnpm for installs.');
+		assert.strictEqual(memoryDescriptionFromReply("I'll check the file."), "I'll check the file.", 'falls back to the first sentence');
+		assert.strictEqual(memoryDescriptionFromReply('   '), '');
+		assert.ok(memoryDescriptionFromReply(`The fact is ${'a'.repeat(300)}.`).length <= 140);
 	});
 
 	test('a file without frontmatter is a note named after the file, and an empty file is not one', () => {

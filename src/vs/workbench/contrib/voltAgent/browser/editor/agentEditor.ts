@@ -89,7 +89,7 @@ import { splitModelDisplayName } from '../../../../services/voltRuntime/common/m
 import { IAgentRunGroupService, IRunGroupModel, validateRunSelection } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
-import { IVoltMemoryService, MEMORY_BODY_LIMIT } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
+import { IVoltMemoryService, MEMORY_BODY_LIMIT, memoryDescriptionFromReply } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { OPEN_RUN_GROUP_COMMAND_ID } from '../runGroups/agentRunGroupCommands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
@@ -4323,18 +4323,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!text) {
 			return;
 		}
-		const summary = text.replace(/\s+/g, ' ');
+		const description = memoryDescriptionFromReply(text);
 		const name = await this.quickInputService.input({
 			prompt: localize('voltAgent.rememberPrompt', "Remember this reply in Volt memory"),
 			placeHolder: localize('voltAgent.rememberPlaceholder', "Name the note, e.g. Prefers small diffs"),
-			value: summary.slice(0, 60),
+			value: description.slice(0, 60),
 			validateInput: async value => value.trim() ? undefined : localize('voltAgent.rememberNameRequired', "Write a short name."),
 		});
 		if (name === undefined) {
 			return;
 		}
 		try {
-			const saved = await this.memory.write({ name: name.trim(), description: summary.slice(0, 140), body: text.slice(0, MEMORY_BODY_LIMIT) });
+			const saved = await this.memory.write({ name: name.trim(), description, body: text.slice(0, MEMORY_BODY_LIMIT) });
 			this.notificationService.info(localize('voltAgent.rememberSaved', "Saved \"{0}\" to memory. New chats will recall it.", saved.name));
 		} catch (err) {
 			this.notificationService.error(err instanceof Error ? err.message : String(err));
