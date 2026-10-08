@@ -169,6 +169,17 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return outcome ? { outcome } : { outcome: 'rejected', ...(step.decision.rejected ? { reason: step.decision.rejected } : {}) };
 	}
 
+	async resumeLimit(threadId: string): Promise<IOrchSubmitResult> {
+		await this.ensureThreadLoaded(threadId);
+		const step = this.apply({ type: 'limit.resume', threadId });
+		const outcome = step.decision.outcome;
+		return outcome ? { outcome } : { outcome: 'rejected', ...(step.decision.rejected ? { reason: step.decision.rejected } : {}) };
+	}
+
+	async configureLimit(threadId: string, auto: boolean | undefined): Promise<void> {
+		this.apply({ type: 'limit.configure', threadId, auto });
+	}
+
 	async notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean }): Promise<IOrchSubmitResult> {
 		await this.ensureThreadLoaded(threadId);
 		this.describeThread(threadId, undefined);

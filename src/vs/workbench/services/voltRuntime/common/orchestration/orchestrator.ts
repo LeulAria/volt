@@ -589,6 +589,10 @@ export interface IAgentOrchestratorService {
 
 	/** Moves the chat to another checkout: now when idle, after the running turn (or at once with `stop`). */
 	move(threadId: string, spec: IWorkspaceMoveSpec, options: { readonly by: 'user' | 'agent'; readonly stop?: boolean }): Promise<IOrchSubmitResult>;
+	/** Resumes a chat parked at a usage limit now, without waiting for the reset. */
+	resumeLimit(threadId: string): Promise<IOrchSubmitResult>;
+	/** The chat's own auto-resume choice while parked: false cancels, true asks, undefined follows the setting. */
+	configureLimit(threadId: string, auto: boolean | undefined): Promise<void>;
 	/** Wakes the chat with a notification turn (see `thread.notify`). A retried `turnId` is not sent twice. */
 	notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean }): Promise<IOrchSubmitResult>;
 	/** The user's Stop (or Stop all). Agents interrupt chats with `dispatch({ type: 'turn.cancel' })`, which does not fire `onDidStop`. */

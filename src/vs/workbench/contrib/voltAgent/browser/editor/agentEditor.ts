@@ -111,6 +111,7 @@ import { AgentComposerQueue, IAgentComposerQueueState, QueuePause } from '../com
 import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
+import { AgentLimitBanner } from '../composer/agentLimitBanner.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend } from '../../../../services/voltRuntime/common/compaction.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
@@ -635,6 +636,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	/** How full the meter last read. */
 	private contextPercent = 0;
 	private worktreeSetupCard: AgentWorktreeSetupCard | undefined;
+	private limitBanner: AgentLimitBanner | undefined;
 	private waitingForClone: string | undefined;
 	/** Prompts reach the orchestrator in the order they were sent, even when freezing one takes longer. */
 	private submitChain: Promise<unknown> = Promise.resolve();
@@ -1029,6 +1031,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onDidChangeHeight: () => this.layoutInputEditor(),
 		}));
 		append(this.composerEl, this.worktreeSetupCard.element);
+		// A chat parked at the provider's usage limit says when it resumes.
+		this.limitBanner = this._register(new AgentLimitBanner({
+			orchestrator: this.orchestrator,
+			switchModel: anchor => this.modelPicker.show(anchor),
+		}));
+		append(this.composerEl, this.limitBanner.element);
 		// Subagents and queued prompts sit right on top of the text area, under the chips (Cursor).
 		append(this.composerEl, this.composerQueue.element);
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
@@ -6001,6 +6009,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		// One pane shows every agent tab: the banner follows the tab's project.
 		this.renderCloneBanner();
 		this.worktreeSetupCard?.setChat(this.sessionKey);
+		this.limitBanner?.setSession((this.input as AgentEditorInput | undefined)?.sessionId);
 		try {
 			await input.ensureLoaded();
 		} catch (err) {

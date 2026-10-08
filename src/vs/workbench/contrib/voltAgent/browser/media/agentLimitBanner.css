@@ -1,0 +1,78 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Usage limit reached: the queue card (`.volt-agent-queue-card`, its head, title, amber status and
+ * text buttons) with one primary pill, "Resume now". Only what differs from the queue is here.
+ */
+.volt-agent-limit-banner {
+	max-width: 728px;
+	margin: 0 auto 6px;
+	padding: 6px 6px 6px 10px;
+}
+
+.volt-agent-limit-banner .volt-agent-queue-head {
+	flex-wrap: wrap;
+	row-gap: 6px;
+	margin-bottom: 0;
+	min-height: 26px;
+}
+
+.volt-agent-limit-banner-title {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.volt-agent-limit-banner-detail {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-agent-limit-banner-detail.error {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-agent-limit-banner-primary {
+	border: 0;
+	border-radius: 999px;
+	padding: 3px 12px;
+	background: #f0f0f0;
+	color: #141414;
+	font: inherit;
+	font-size: 13px;
+	font-weight: 300;
+	line-height: 20px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-agent-limit-banner-primary:hover:not(:disabled) {
+	background: #ffffff;
+}
+
+.volt-agent-limit-banner-primary:focus-visible,
+.volt-agent-limit-banner .volt-agent-queue-text-btn:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.volt-agent-limit-banner .volt-agent-queue-text-btn {
+	white-space: nowrap;
+}
+
+/* The light theme's card is light: the pill turns dark. */
+.monaco-workbench.vs .volt-agent-limit-banner-primary,
+.monaco-workbench.hc-light .volt-agent-limit-banner-primary {
+	background: #1f1f1f;
+	color: #f5f5f5;
+}
+
+.monaco-workbench.vs .volt-agent-limit-banner-primary:hover:not(:disabled),
+.monaco-workbench.hc-light .volt-agent-limit-banner-primary:hover:not(:disabled) {
+	background: #000000;
+}
