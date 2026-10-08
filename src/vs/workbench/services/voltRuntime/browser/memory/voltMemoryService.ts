@@ -5,7 +5,7 @@
 
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
-import { joinPath } from '../../../../../base/common/resources.js';
+import { basename, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
@@ -14,7 +14,7 @@ import { ILogService } from '../../../../../platform/log/common/log.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
-import { IVoltMemory, IVoltMemoryDraft, IVoltMemoryService, memoryFileName, memorySlug, MEMORY_TYPES, parseMemoryFile, renderMemoryContext, renderMemoryForTool, renderMemoryIndex, serializeMemory, validateMemoryDraft, VOLT_MEMORY_TOOLS, VoltMemoryScope, VoltMemoryType } from '../../common/memory/voltMemory.js';
+import { importedMemoryDraft, IVoltMemory, IVoltMemoryDraft, IVoltMemoryService, memoryFileName, memorySlug, MEMORY_TYPES, parseMemoryFile, renderMemoryContext, renderMemoryForTool, renderMemoryIndex, serializeMemory, validateMemoryDraft, VOLT_MEMORY_TOOLS, VoltMemoryImport, VoltMemoryScope, VoltMemoryType } from '../../common/memory/voltMemory.js';
 
 const MAX_NOTE_BYTES = 64 * 1024;
 const MAX_NOTES_PER_SCOPE = 500;
@@ -88,6 +88,19 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 		return memory;
 	}
 
+	async importFile(resource: URI, scope: VoltMemoryScope): Promise<VoltMemoryImport> {
+		const content = await this.fileService.readFile(resource, { limits: { size: MAX_NOTE_BYTES } });
+		const draft = importedMemoryDraft(content.value.toString(), basename(resource));
+		if (!draft) {
+			return 'empty';
+		}
+		if (await this.read(draft.name, scope)) {
+			return 'exists';
+		}
+		await this.write({ ...draft, scope });
+		return 'imported';
+	}
+
 	async delete(name: string, scope?: VoltMemoryScope): Promise<boolean> {
 		const note = await this.find(name, scope);
 		if (!note) {
@@ -137,7 +150,7 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 			try {
 				const body = await this.fileService.readFile(file.resource, { limits: { size: MAX_NOTE_BYTES } });
 				const memory = parseMemoryFile(body.value.toString(), scope, file.name);
-				return memory ? { memory, uri: file.resource } : undefined;
+				return memory ? { memory: { ...memory, resource: file.resource }, uri: file.resource } : undefined;
 			} catch (err) {
 				this.logService.warn(`[volt-memory] could not read ${file.resource.toString()}`, err);
 				return undefined;

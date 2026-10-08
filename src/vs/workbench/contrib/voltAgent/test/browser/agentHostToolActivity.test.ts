@@ -99,4 +99,10 @@ suite('Agent host tool activity', () => {
 		assert.strictEqual(isAgentTransportError('RetriableError: [aborted] read ECONNRESET'), true);
 		assert.strictEqual(isAgentTransportError('You have hit your usage limit'), false);
 	});
+
+	test('memory tool calls read as recall and save rows with the note name', () => {
+		assert.deepStrictEqual(describeHostToolActivity('memory_read', undefined, '{"name":"pnpm and small diffs"}'), { tool: 'memory_read', label: 'Recalled memory', detail: 'pnpm and small diffs' });
+		assert.deepStrictEqual(describeHostToolActivity('memory_write', undefined, '{"name":"Prefers small diffs"}'), { tool: 'memory_write', label: 'Saved memory', detail: 'Prefers small diffs' });
+		assert.deepStrictEqual(describeHostToolActivity('memory_list', undefined, '{}'), { tool: 'memory_list', label: 'Checked memories' });
+	});
 });

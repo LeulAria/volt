@@ -80,6 +80,8 @@ import { createBrandIcon, providerFamilyLabel } from '../../../../services/voltR
 import { splitModelDisplayName } from '../../../../services/voltRuntime/common/models/modelOptions.js';
 import { IAgentRunGroupService, IRunGroupModel, validateRunSelection } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
+import { IVoltMemoryService, MEMORY_BODY_LIMIT } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { OPEN_RUN_GROUP_COMMAND_ID } from '../runGroups/agentRunGroupCommands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
@@ -779,6 +781,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
+		@IVoltMemoryService private readonly memory: IVoltMemoryService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super(AgentEditor.ID, group, telemetryService, themeService, storageService);
 		this.markdownRenderer = this.instantiationService.createInstance(MarkdownRenderer, {});
@@ -4211,6 +4216,30 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		render();
 	}
 
+	/** Saves a reply as a user-scope note; every later chat, in any provider, gets it in its memory index. */
+	private async rememberMessage(message: IAgentAssistantMessage): Promise<void> {
+		const text = agentMessagePlainText(message).trim();
+		if (!text) {
+			return;
+		}
+		const summary = text.replace(/\s+/g, ' ');
+		const name = await this.quickInputService.input({
+			prompt: localize('voltAgent.rememberPrompt', "Remember this reply in Volt memory"),
+			placeHolder: localize('voltAgent.rememberPlaceholder', "Name the note, e.g. Prefers small diffs"),
+			value: summary.slice(0, 60),
+			validateInput: async value => value.trim() ? undefined : localize('voltAgent.rememberNameRequired', "Write a short name."),
+		});
+		if (name === undefined) {
+			return;
+		}
+		try {
+			const saved = await this.memory.write({ name: name.trim(), description: summary.slice(0, 140), body: text.slice(0, MEMORY_BODY_LIMIT) });
+			this.notificationService.info(localize('voltAgent.rememberSaved', "Saved \"{0}\" to memory. New chats will recall it.", saved.name));
+		} catch (err) {
+			this.notificationService.error(err instanceof Error ? err.message : String(err));
+		}
+	}
+
 	private renderAgentFooter(turn: HTMLElement, message: IAgentAssistantMessage): void {
 		const footer = append(turn, $('.volt-agent-footer'));
 		const copyLabel = localize('voltAgent.copyMessage', "Copy Message");
@@ -4247,6 +4276,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			e.preventDefault();
 			e.stopPropagation();
 			void this.commandService.executeCommand(NEW_AGENT_COMMAND_ID, { asTab: true });
+		}));
+
+		const rememberLabel = localize('voltAgent.rememberMessage', "Remember");
+		const rememberButton = append(footer, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
+		rememberButton.setAttribute('aria-label', rememberLabel);
+		setAgentTooltip(rememberButton, rememberLabel);
+		rememberButton.appendChild(renderIcon(Codicon.bookmark));
+		this.threadListeners.add(addDisposableListener(rememberButton, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.rememberMessage(message);
 		}));
 
 		const when = message.endedAt ?? message.startedAt;

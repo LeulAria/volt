@@ -23,9 +23,10 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IContextMenuService, IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
-import { IFileService } from '../../../../../platform/files/common/files.js';
+import { IFileService, IFileStat } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
+import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
@@ -36,6 +37,7 @@ import { IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../.
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
+import { IVoltMemoryService, VoltMemoryScope } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
 import { AgentCustomizationKind, AgentCustomizationScanner, AgentCustomizationScope, CONFIG_DIR_PATTERN, CONFIG_DIRS, CUSTOMIZATION_KINDS, IAgentCustomization, kindInfo, newItemLocation, safeItemName } from './agentCustomize.js';
 import { createAgentTitleActionViewItem } from '../editor/agentTitleActions.js';
@@ -142,6 +144,8 @@ export class AgentCustomizeEditor extends EditorPane {
 		@ICommandService private readonly commandService: ICommandService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IVoltMemoryService private readonly memory: IVoltMemoryService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super(AgentCustomizeEditor.ID, group, telemetryService, themeService, storageService);
 		this.scanner = new AgentCustomizationScanner(fileService);
@@ -196,6 +200,7 @@ export class AgentCustomizeEditor extends EditorPane {
 		this.listHost.classList.add('volt-customize-scroll');
 
 		this._register(this.workspaceService.onDidChangeWorkspaceFolders(() => void this.refresh()));
+		this._register(this.memory.onDidChange(() => this.refreshScheduler.schedule()));
 		this._register(this.fileService.onDidFilesChange(e => {
 			const inConfigDir = (uri: URI) => CONFIG_DIR_PATTERN.test(uri.path);
 			if (this.items.some(item => e.contains(item.resource)) || e.rawAdded.some(inConfigDir) || e.rawDeleted.some(inConfigDir)) {
@@ -227,14 +232,28 @@ export class AgentCustomizeEditor extends EditorPane {
 		} catch {
 			home = undefined;
 		}
-		const items = await this.scanner.scan(folders, home);
+		const [scanned, memories] = await Promise.all([this.scanner.scan(folders, home), this.memoryItems(folders)]);
 		if (version !== this.scanVersion) {
 			return;
 		}
-		this.items = items;
+		this.items = [...scanned, ...memories].sort((a, b) => a.name.localeCompare(b.name) || a.source.localeCompare(b.source));
 		this.loading = false;
 		this.watchRoots(folders, home);
 		this.renderList();
+	}
+
+	/** Saved notes from the memory service, listed with the rules and skills; their files open like any other. */
+	private async memoryItems(folders: readonly URI[]): Promise<IAgentCustomization[]> {
+		const memories = await this.memory.list('all');
+		const projectLabel = folders[0] ? basename(folders[0]) : '';
+		return memories.flatMap((memory): IAgentCustomization[] => memory.resource ? [{
+			kind: 'memory',
+			scope: memory.scope === 'user' ? 'user' : 'workspace',
+			name: memory.name,
+			description: memory.description,
+			resource: memory.resource,
+			source: memory.scope === 'user' ? '~' : `${projectLabel}/.volt/memory`,
+		}] : []);
 	}
 
 	/**
@@ -383,6 +402,9 @@ export class AgentCustomizeEditor extends EditorPane {
 		if (!kind) {
 			return;
 		}
+		if (kind === 'memory') {
+			return this.addMemory();
+		}
 		const info = kindInfo(kind);
 		const folders = this.workspaceService.getWorkspace().folders;
 		let base: URI | undefined;
@@ -417,6 +439,118 @@ export class AgentCustomizeEditor extends EditorPane {
 		}
 		await this.editorService.openEditor({ resource: target, options: { pinned: true } });
 		void this.refresh();
+	}
+
+	private async addMemory(): Promise<void> {
+		const choice = await this.quickInputService.pick([
+			{ id: 'new', label: localize('voltCustomize.memoryNew', "New note"), description: localize('voltCustomize.memoryNewHint', "Something Volt should recall in every chat") },
+			{ id: 'import', label: localize('voltCustomize.memoryImport', "Import from another assistant"), description: localize('voltCustomize.memoryImportHint', "Copies CLAUDE.md, AGENTS.md and Claude Code memory notes") },
+		], { placeHolder: localize('voltCustomize.memoryPick', "How do you want to add a memory?") });
+		if (choice?.id === 'new') {
+			await this.newMemory();
+		} else if (choice?.id === 'import') {
+			await this.importMemories();
+		}
+	}
+
+	private async newMemory(): Promise<void> {
+		const name = await this.quickInputService.input({
+			prompt: localize('voltCustomize.memoryName', "What should Volt remember?"),
+			placeHolder: localize('voltCustomize.memoryNamePlaceholder', "e.g. Prefers small diffs"),
+			validateInput: async value => value.trim() ? undefined : localize('voltCustomize.memoryNameRequired', "Write a short name."),
+		});
+		if (name === undefined) {
+			return;
+		}
+		const body = await this.quickInputService.input({
+			prompt: localize('voltCustomize.memoryBody', "The fact, and why it matters"),
+			placeHolder: localize('voltCustomize.memoryBodyPlaceholder', "e.g. Split large refactors; reviews stall otherwise."),
+			validateInput: async value => value.trim() ? undefined : localize('voltCustomize.memoryBodyRequired', "Write the fact to remember."),
+		});
+		if (body === undefined) {
+			return;
+		}
+		try {
+			const saved = await this.memory.write({ name: name.trim(), description: body.replace(/\s+/g, ' ').trim().slice(0, 140), body: body.trim() });
+			const note = await this.memory.read(saved.name, saved.scope);
+			if (note?.resource) {
+				await this.editorService.openEditor({ resource: note.resource, options: { pinned: true } });
+			}
+		} catch (err) {
+			this.notificationService.error(err instanceof Error ? err.message : String(err));
+		}
+	}
+
+	private async importMemories(): Promise<void> {
+		const candidates = await this.importCandidates();
+		if (!candidates.length) {
+			this.notificationService.info(localize('voltCustomize.memoryNoImports', "No CLAUDE.md, AGENTS.md or Claude Code memory notes were found."));
+			return;
+		}
+		const picks = await this.quickInputService.pick(candidates, {
+			canPickMany: true,
+			placeHolder: localize('voltCustomize.memoryPickImports', "Pick the files to copy into Volt memory. The originals stay as they are."),
+		});
+		if (!picks?.length) {
+			return;
+		}
+		let imported = 0;
+		let existing = 0;
+		for (const pick of picks) {
+			try {
+				const result = await this.memory.importFile(pick.resource, pick.scope);
+				if (result === 'imported') {
+					imported++;
+				} else if (result === 'exists') {
+					existing++;
+				}
+			} catch (err) {
+				this.notificationService.warn(localize('voltCustomize.memoryImportFailed', "Couldn't import {0}: {1}", pick.label, err instanceof Error ? err.message : String(err)));
+			}
+		}
+		this.notificationService.info(localize('voltCustomize.memoryImported', "Imported {0} notes. {1} already saved under the same name were left as they are.", imported, existing));
+	}
+
+	/** CLAUDE.md and AGENTS.md in the open folders, and the Claude Code memory notes in the user home. */
+	private async importCandidates(): Promise<(IQuickPickItem & { resource: URI; scope: VoltMemoryScope })[]> {
+		const found: (IQuickPickItem & { resource: URI; scope: VoltMemoryScope })[] = [];
+		for (const folder of this.workspaceService.getWorkspace().folders) {
+			for (const name of ['CLAUDE.md', 'AGENTS.md']) {
+				const resource = joinPath(folder.uri, name);
+				if (await this.fileService.exists(resource)) {
+					found.push({ label: name, description: folder.name, resource, scope: 'project' });
+				}
+			}
+		}
+		let home: URI | undefined;
+		try {
+			home = await this.pathService.userHome();
+		} catch {
+			return found;
+		}
+		const userClaude = joinPath(home, '.claude', 'CLAUDE.md');
+		if (await this.fileService.exists(userClaude)) {
+			found.push({ label: '~/.claude/CLAUDE.md', resource: userClaude, scope: 'user' });
+		}
+		const notes = await this.claudeMemoryNotes(joinPath(home, '.claude', 'projects'));
+		return [...found, ...notes].slice(0, 200);
+	}
+
+	/** Claude Code keeps one `memory/` folder per project; its index file only lists the other notes, so it is skipped. */
+	private async claudeMemoryNotes(projects: URI): Promise<(IQuickPickItem & { resource: URI; scope: VoltMemoryScope })[]> {
+		const dirs = (await this.children(projects)).filter(child => child.isDirectory);
+		const notes = await Promise.all(dirs.map(async dir => (await this.children(joinPath(dir.resource, 'memory')))
+			.filter(child => !child.isDirectory && /\.md$/i.test(child.name) && child.name !== 'MEMORY.md')
+			.map(child => ({ label: child.name, description: `~/.claude/projects/${dir.name}`, resource: child.resource, scope: 'user' as const }))));
+		return notes.flat();
+	}
+
+	private async children(dir: URI): Promise<IFileStat[]> {
+		try {
+			return (await this.fileService.resolve(dir)).children ?? [];
+		} catch {
+			return [];
+		}
 	}
 
 	private async pickKind(): Promise<AgentCustomizationKind | undefined> {

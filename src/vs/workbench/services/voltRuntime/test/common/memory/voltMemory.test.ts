@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { IVoltMemory, isMemoryToolName, memoryFileName, memorySlug, neutralizeMemoryText, parseMemoryFile, renderMemoryContext, renderMemoryForTool, renderMemoryIndex, serializeMemory, validateMemoryDraft, VOLT_MEMORY_TOOLS } from '../../../common/memory/voltMemory.js';
+import { importedMemoryDraft, IVoltMemory, isMemoryToolName, memoryFileName, memorySlug, neutralizeMemoryText, parseMemoryFile, renderMemoryContext, renderMemoryForTool, renderMemoryIndex, serializeMemory, validateMemoryDraft, VOLT_MEMORY_TOOLS } from '../../../common/memory/voltMemory.js';
 import { buildAcpLead, IContextPackInput } from '../../../common/harness/contextPack.js';
 import { classifyIntent } from '../../../common/harness/intent.js';
 import { buildDeepseekSystemPrompt } from '../../../common/deepseek/prompt.js';
@@ -116,5 +116,23 @@ suite('Volt memory', () => {
 		assert.deepStrictEqual(approvals, { memory_list: false, memory_read: false, memory_write: true, memory_delete: true });
 		assert.ok(isMemoryToolName('memory_read'));
 		assert.ok(!isMemoryToolName('memory_drop'));
+	});
+
+	test('a CLAUDE.md or AGENTS.md import is named after its file and described by its first line', () => {
+		assert.deepStrictEqual(importedMemoryDraft('# Build\n\nRun npm test before pushing.\n', 'CLAUDE.md'), {
+			name: 'Imported CLAUDE.md', description: 'Build', type: 'reference', body: '# Build\n\nRun npm test before pushing.',
+		});
+		assert.strictEqual(importedMemoryDraft('   \n', 'AGENTS.md'), undefined);
+	});
+
+	test('a Claude Code memory note keeps its name, description and type', () => {
+		const draft = importedMemoryDraft('---\nname: Use pnpm\ndescription: Install with pnpm\ntype: project\n---\n\nThe repo uses pnpm.\n', 'use-pnpm.md');
+		assert.deepStrictEqual(draft, { name: 'Use pnpm', description: 'Install with pnpm', type: 'project', body: 'The repo uses pnpm.' });
+	});
+
+	test('an oversized import is cut to the body limit with a note that it was', () => {
+		const draft = importedMemoryDraft('x'.repeat(20_000), 'CLAUDE.md');
+		assert.ok(draft && draft.body.length <= 8_000);
+		assert.ok(draft?.body.endsWith('(Truncated when imported.)'));
 	});
 });

@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../../base/common/event.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import type { IVoltHostToolInfo } from '../hostTools.js';
 
@@ -25,6 +26,8 @@ export interface IVoltMemory {
 	readonly type: VoltMemoryType;
 	readonly body: string;
 	readonly scope: VoltMemoryScope;
+	/** The file the note is read from. Set when listed from disk; not part of the note's content. */
+	readonly resource?: URI;
 }
 
 export interface IVoltMemoryDraft {
@@ -41,10 +44,15 @@ export interface IVoltMemoryService {
 	list(scope?: VoltMemoryScope | 'all'): Promise<readonly IVoltMemory[]>;
 	read(name: string, scope?: VoltMemoryScope): Promise<IVoltMemory | undefined>;
 	write(draft: IVoltMemoryDraft): Promise<IVoltMemory>;
+	/** Copies a file another assistant keeps into a note. Never overwrites a note of the same name. */
+	importFile(resource: URI, scope: VoltMemoryScope): Promise<VoltMemoryImport>;
 	delete(name: string, scope?: VoltMemoryScope): Promise<boolean>;
 	/** The bounded `<volt_memory>` block for a new agent process, or undefined when nothing is saved. */
 	context(): Promise<string | undefined>;
 }
+
+/** `exists`: a note with that name is already saved in the scope, so the import leaves both as they are. */
+export type VoltMemoryImport = 'imported' | 'exists' | 'empty';
 
 export const MEMORY_BODY_LIMIT = 8_000;
 const NAME_LIMIT = 80;
@@ -194,6 +202,27 @@ export function validateMemoryDraft(draft: IVoltMemoryDraft): IVoltMemoryValidat
 	}
 	const type = draft.type === undefined ? 'user' : normalizeType(draft.type);
 	return { ok: true, memory: { name, description, type, body, scope: draft.scope ?? 'user' } };
+}
+
+/**
+ * A draft from a file another assistant keeps (CLAUDE.md, AGENTS.md, or a Claude Code memory note).
+ * Only the text is copied; the source file is left as it is. Undefined when the file is empty.
+ */
+export function importedMemoryDraft(text: string, fileName: string): IVoltMemoryDraft | undefined {
+	const parsed = parseMemoryFile(text, 'user', fileName);
+	if (!parsed) {
+		return undefined;
+	}
+	const firstLine = parsed.body.split(/\r?\n/).map(line => line.replace(/^#+\s*/, '').trim()).find(line => !!line) ?? '';
+	const body = parsed.body.length > MEMORY_BODY_LIMIT ? `${parsed.body.slice(0, MEMORY_BODY_LIMIT - 40).trimEnd()}\n\n(Truncated when imported.)` : parsed.body;
+	// A file without a frontmatter name (CLAUDE.md, AGENTS.md) is named by where it came from, so it reads as an import.
+	const named = /^\s*name\s*:/m.test(text);
+	return {
+		name: named ? parsed.name : `Imported ${fileName}`,
+		description: truncate(parsed.description || firstLine || parsed.name, DESCRIPTION_LIMIT),
+		type: parsed.type,
+		body,
+	};
 }
 
 /**
