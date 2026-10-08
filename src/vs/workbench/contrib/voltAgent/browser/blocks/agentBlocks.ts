@@ -1299,7 +1299,7 @@ export function isFileChangeTool(name: string, title?: string, kind?: ToolKind):
 	return MUTATING_TOOL_RE.test(s);
 }
 
-function isHiddenExploreToolBlock(block: AgentBlock): boolean {
+export function isHiddenExploreToolBlock(block: AgentBlock): boolean {
 	return block.type === 'tool' && isExploreTool(block.name, block.title);
 }
 

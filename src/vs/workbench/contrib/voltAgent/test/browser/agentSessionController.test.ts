@@ -6,6 +6,7 @@
 import assert from 'assert';
 import { toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
 import { AgentSessionAttention, AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -73,6 +74,7 @@ suite('Agent session controller', () => {
 			{ getWorkspace: () => ({ folders: [] }) } as unknown as IWorkspaceContextService,
 			{ openSurface: () => undefined } as unknown as IAgentWorkspaceService,
 			history,
+			{ stat: () => Promise.reject(new Error('no file service')) } as unknown as IFileService,
 		));
 		const changes: IAgentSessionChange[] = [];
 		store.add(controller.onDidChange(change => changes.push(change)));

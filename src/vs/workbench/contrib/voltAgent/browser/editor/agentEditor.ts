@@ -510,6 +510,8 @@ export interface IAgentAssistantMessage {
 	usageExcludesPrompt?: boolean;
 	/** On the chat's first reply: its first prompt-side `used` (system prompt, tools and the first message). */
 	tokensBase?: number;
+	/** Characters of tool output the transcript does not keep (reads, plans). Providers without usage are estimated from it. */
+	toolOutputChars?: number;
 	cancelled?: boolean;
 	activity?: IAgentActivity;
 	/** The runtime run that produced this reply; Cursor's error tray calls it the request id. */

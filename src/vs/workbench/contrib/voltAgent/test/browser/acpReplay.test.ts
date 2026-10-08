@@ -100,6 +100,7 @@ suite('ACP replay', () => {
 			{ getWorkspace: () => ({ folders: [] }) } as unknown as IWorkspaceContextService,
 			{ openSurface: () => undefined } as unknown as IAgentWorkspaceService,
 			{ get: () => undefined, setAttention: async () => { }, setAgentTitle: async (_id: string, title: string) => { titles.push(title); } } as unknown as IAgentHistoryService,
+			{ stat: () => Promise.reject(new Error('no file service')) } as unknown as IFileService,
 		));
 		const provider = new AcpAgentProvider('claude-code', 'Claude', 'claude', [], undefined as unknown as IVoltStdioService,
 			undefined as unknown as IWorkspaceContextService, undefined as unknown as IFileService, undefined as unknown as ILogService);
@@ -168,6 +169,7 @@ suite('ACP replay', () => {
 			{ getWorkspace: () => ({ folders: [] }) } as unknown as IWorkspaceContextService,
 			{ openSurface: () => undefined } as unknown as IAgentWorkspaceService,
 			{ get: () => undefined, setAttention: async () => { }, setAgentTitle: async () => { } } as unknown as IAgentHistoryService,
+			{ stat: () => Promise.reject(new Error('no file service')) } as unknown as IFileService,
 		));
 		const provider = new AcpAgentProvider('claude-code', 'Claude', 'claude', [], undefined as unknown as IVoltStdioService,
 			undefined as unknown as IWorkspaceContextService, undefined as unknown as IFileService, undefined as unknown as ILogService);

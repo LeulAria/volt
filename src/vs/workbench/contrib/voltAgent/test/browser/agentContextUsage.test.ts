@@ -22,6 +22,7 @@ import {
 	overheadFromCustomizations,
 	promptBaseTokens,
 	resolveModelContextWindow,
+	toolOutputTokens,
 } from '../../browser/context/agentContextUsage.js';
 import { IAgentCustomization } from '../../browser/customize/agentCustomize.js';
 
@@ -490,6 +491,20 @@ suite('Agent context usage', () => {
 		});
 		assert.strictEqual(snapshot.used, 27_119);
 		assert.ok(snapshot.percent < 3, `${snapshot.percent}%`);
+	});
+
+	test('counts tool output the transcript does not keep when there is no provider usage', () => {
+		assert.strictEqual(toolOutputTokens(undefined), 0);
+		assert.strictEqual(toolOutputTokens(0), 0);
+		assert.strictEqual(toolOutputTokens(4), 1);
+		assert.strictEqual(toolOutputTokens(5), 2);
+		// Three 120 KB file reads (Cursor, no ACP usage) add about 90K tokens, not the 0.2K the text alone gave.
+		const reads = { kind: 'agent' as const, text: 'Read three files.', toolOutputChars: 3 * 120_000 };
+		const plain = { kind: 'agent' as const, text: 'Read three files.' };
+		const withReads = buildContextUsageSnapshot({ messages: [{ kind: 'user', text: 'Read them' }, reads], draft: '', modelWindow: 1_000_000, models: [] });
+		const without = buildContextUsageSnapshot({ messages: [{ kind: 'user', text: 'Read them' }, plain], draft: '', modelWindow: 1_000_000, models: [] });
+		assert.strictEqual(withReads.used - without.used, 90_000);
+		assert.strictEqual(withReads.estimated, true);
 	});
 
 	test('right after compacting, the kept summary sits on the system prompt and tools', () => {
