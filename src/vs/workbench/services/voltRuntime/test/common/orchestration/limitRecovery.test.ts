@@ -7,7 +7,7 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import {
 	epochMs, formatCountdown, isLimitStopText, LIMIT_MAX_PROBES, LIMIT_PROBE_BACKOFF_MS, LIMIT_RESET_GRACE_MS, limitAutoResumes, limitBadgeLabel, limitBannerView, limitDueAt,
-	limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals, nextBannerTick, parseLimitReset,
+	limitFromError, limitFromNotice, limitFromReply, limitParkedClock, mergeLimitSignals, nextBannerTick, parseLimitReset,
 } from '../../../common/orchestration/limitRecovery.js';
 import { noticesFromAcpUpdate } from '../../../common/acpNotices.js';
 
@@ -122,6 +122,29 @@ suite('Volt limit recovery: scheduling and banner', () => {
 		assert.strictEqual(limitBannerView({ at: now - 600_000, resetAt: now - 300_000, probes: 0 }, now, true).detail, 'resuming now…');
 		assert.strictEqual(limitBadgeLabel({ at: now, probes: 0 }, now, true), 'Resumes in 1m');
 		assert.strictEqual(limitBadgeLabel({ at: now, probes: 0 }, now, false), 'Limit reached');
+	});
+
+	test('the banner and the sidebar badge read one parked-until, also after a restart', () => {
+		// Restore the limit from its saved form, as the orchestrator does on start.
+		const parked = { at: NOON_UTC - 60_000, resetAt: NOON_UTC + 3 * 60_000 - LIMIT_RESET_GRACE_MS, probes: 0, notBefore: NOON_UTC + 3 * 60_000 + 15_000 };
+		const restored = JSON.parse(JSON.stringify(parked)) as typeof parked;
+		for (const now of [NOON_UTC, NOON_UTC + 30_000, NOON_UTC + 61_000, NOON_UTC + 4 * 60_000]) {
+			const clock = limitParkedClock(restored, true, now);
+			assert.strictEqual(clock.dueAt, limitDueAt(parked));
+			assert.strictEqual(clock.remainingMs, Math.max(0, clock.dueAt - now));
+			const banner = limitBannerView(restored, now, clock.auto, 'en-US');
+			const badge = limitBadgeLabel(restored, now, clock.auto, 'en-US');
+			const bannerCountdown = /\(in (.+)\)$/.exec(banner.detail)?.[1];
+			const badgeCountdown = /^Resumes in (.+)$/.exec(badge)?.[1];
+			if (badgeCountdown !== undefined) {
+				assert.strictEqual(bannerCountdown, badgeCountdown, `now +${now - NOON_UTC}ms`);
+			}
+			if (clock.remainingMs === 0) {
+				assert.strictEqual(banner.detail, 'resuming now…');
+				assert.strictEqual(badge, 'Resuming');
+			}
+		}
+		assert.strictEqual(limitParkedClock(restored, false, NOON_UTC).auto, false);
 	});
 
 	test('countdowns and their ticks', () => {

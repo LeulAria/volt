@@ -41,7 +41,7 @@ import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browse
 import { cloudTaskStatusText, cloudTaskTone, ICloudTask } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
 import { AgentCloudTaskMenu } from '../cloud/agentCloudTaskMenu.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
-import { limitAutoResumes, limitBadgeLabel } from '../../../../services/voltRuntime/common/orchestration/limitRecovery.js';
+import { limitBadgeLabel, limitParkedClock } from '../../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
@@ -1142,8 +1142,9 @@ export class AgentHomePane extends Disposable {
 		if (!thread?.limit || thread.active) {
 			return undefined;
 		}
-		const auto = limitAutoResumes(thread.limit, this.orchestrator.autoResumeDefault());
-		return { kind: 'limited', label: limitBadgeLabel(thread.limit, Date.now(), auto) };
+		const now = Date.now();
+		const clock = limitParkedClock(thread.limit, this.orchestrator.autoResumeDefault(), now);
+		return { kind: 'limited', label: limitBadgeLabel(thread.limit, now, clock.auto) };
 	}
 
 	get workingSection(): boolean {

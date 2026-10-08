@@ -333,6 +333,24 @@ export function limitBannerView(limit: ILimitPark, now: number, auto: boolean, l
 	};
 }
 
+/**
+ * The parked-until time and the countdown for one parked chat, computed once from one clock reading.
+ * The banner and the sidebar badge both take their numbers from here, so they cannot disagree.
+ */
+export interface ILimitParkedClock {
+	/** The chat resumes on its own (`limitAutoResumes`). */
+	readonly auto: boolean;
+	/** When the chat resumes: the reset plus grace and stagger, or the next probe (`limitDueAt`). */
+	readonly dueAt: number;
+	/** Milliseconds until `dueAt`, 0 once it has passed. */
+	readonly remainingMs: number;
+}
+
+export function limitParkedClock(limit: ILimitPark, autoDefault: boolean, now: number): ILimitParkedClock {
+	const dueAt = limitDueAt(limit);
+	return { auto: limitAutoResumes(limit, autoDefault), dueAt, remainingMs: Math.max(0, dueAt - now) };
+}
+
 /** The sidebar badge: "Resumes 3:40 PM", "Limit · 4m". */
 export function limitBadgeLabel(limit: ILimitPark, now: number, auto: boolean, locale?: string): string {
 	if (!auto) {
