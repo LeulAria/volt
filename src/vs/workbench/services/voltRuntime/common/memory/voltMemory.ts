@@ -237,6 +237,21 @@ function truncate(text: string, max: number): string {
 	return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 }
 
+/** Openers that announce what the reply will do instead of saying a fact: "I'll check the file." */
+const REPLY_PREAMBLE = /^(i'?ll|i will|i'?m going to|i am going to|let me|let'?s|sure|okay|ok|got it|of course|certainly|absolutely|great|thanks)\b/i;
+
+/**
+ * The description for a note saved from a reply: the first sentence that states something, skipping
+ * preambles such as "I'll check the repo." Falls back to the first sentence when all of them are preambles.
+ */
+export function memoryDescriptionFromReply(text: string): string {
+	const sentences = text.split(/\r?\n/)
+		.flatMap(line => line.replace(/[#*_`>]+/g, ' ').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/))
+		.filter(sentence => /[a-z0-9]/i.test(sentence));
+	const substantive = sentences.find(sentence => !REPLY_PREAMBLE.test(sentence)) ?? sentences[0] ?? '';
+	return truncate(substantive, HOOK_CHARS);
+}
+
 /** One line per note, sorted by scope then name; capped by entries and characters. */
 export function renderMemoryIndex(memories: readonly IVoltMemory[]): string[] {
 	const lines: string[] = [];

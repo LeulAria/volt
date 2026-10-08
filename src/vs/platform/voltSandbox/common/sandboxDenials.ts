@@ -83,6 +83,8 @@ export function isNoiseDenial(denial: ISandboxDenial): boolean {
 		|| /\/Library\/(Caches|Saved Application State|HTTPStorages|Preferences)\//.test(target)
 		|| /\/\.DS_Store$/.test(target)
 		|| /^\/private\/var\/db\//.test(target)
+		// libc opens the login-record database on every process start (setutxent), so every sandboxed command logs it.
+		|| /^\/(private\/)?var\/run\/utmpx?$/.test(target)
 		|| /^\/(private\/)?var\/folders\//.test(target);
 }
 

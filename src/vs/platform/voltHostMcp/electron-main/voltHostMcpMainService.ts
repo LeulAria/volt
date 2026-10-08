@@ -296,20 +296,21 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const chunks: Buffer[] = [];
 		let size = 0;
+		let tooLarge = false;
 		req.on('data', chunk => {
-			if (size > limit) {
-				return; // drain the rest so the 413 can be sent
+			if (tooLarge) {
+				return; // drain the rest, so the client finishes writing and can read the 413
 			}
 			const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
 			size += buffer.length;
 			if (size > limit) {
+				tooLarge = true;
 				chunks.length = 0;
-				reject(new Error('too large'));
 				return;
 			}
 			chunks.push(buffer);
 		});
-		req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+		req.on('end', () => tooLarge ? reject(new Error('too large')) : resolve(Buffer.concat(chunks).toString('utf8')));
 		req.on('error', reject);
 	});
 }

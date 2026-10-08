@@ -117,7 +117,8 @@ const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 	},
 	'cursor-acp': {
 		homeDirs: ['.cursor', '.config/cursor', '.local/share/cursor-agent', 'Library/Application Support/Cursor/User/globalStorage'],
-		protectedHome: ['.cursor/mcp.json', '.cursor/hooks.json', '.cursor/hooks', '.cursor/cli-config.json'],
+		// cli-config.json is the CLI's own state (it saves the chosen model), so it stays writable under ~/.cursor.
+		protectedHome: ['.cursor/mcp.json', '.cursor/hooks.json', '.cursor/hooks'],
 		domains: ['cursor.com', '*.cursor.com', 'cursor.sh', '*.cursor.sh', 'cursorapi.com', '*.cursorapi.com'],
 	},
 	grok: {

@@ -9,7 +9,7 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
-import { limitAutoResumes, limitBannerView, limitDueAt, nextBannerTick } from '../../../../services/voltRuntime/common/orchestration/limitRecovery.js';
+import { limitBannerView, limitParkedClock, nextBannerTick } from '../../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 import type { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 
 export interface IAgentLimitBannerServices {
@@ -61,7 +61,8 @@ export class AgentLimitBanner extends Disposable {
 		}
 
 		const now = Date.now();
-		const auto = limitAutoResumes(limit, this.services.orchestrator.autoResumeDefault());
+		const clock = limitParkedClock(limit, this.services.orchestrator.autoResumeDefault(), now);
+		const auto = clock.auto;
 		const view = limitBannerView(limit, now, auto);
 
 		const head = append(this.element, $('.volt-agent-queue-head'));
@@ -79,7 +80,7 @@ export class AgentLimitBanner extends Disposable {
 		this.button(actions, localize('voltAgent.limit.switchModel', "Switch model"), false, button => this.services.switchModel(button));
 
 		// The countdown ticks by the minute, and the banner gives way once the reset passes.
-		const next = nextBannerTick(limitDueAt(limit), now);
+		const next = nextBannerTick(clock.dueAt, now);
 		if (next !== undefined) {
 			this.timer = setTimeout(() => this.render(), next - now);
 		}

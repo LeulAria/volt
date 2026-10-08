@@ -28,6 +28,13 @@ suite('Volt sandbox policy', () => {
 		assert.strictEqual(normalizeSandboxLevel(undefined), 'off');
 	});
 
+	test('cursor: the CLI may save its own settings (cli-config.json) but not its hooks or MCP config', () => {
+		const plan = resolveSandboxPlan({ ...request(), providerId: 'cursor-acp' }, MAC);
+		assert.ok(planAllowsWrite(plan, `${MAC.home}/.cursor/cli-config.json`), 'choosing a model rewrites it');
+		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/hooks.json`));
+		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/mcp.json`));
+	});
+
 	test('workspace-write: workspace, temp and the agent state are writable; nothing else', () => {
 		const plan = resolveSandboxPlan(request(), MAC);
 		assert.ok(planAllowsWrite(plan, '/Users/me/repo/src/a.ts'));
@@ -258,6 +265,9 @@ suite('Volt sandbox denials', () => {
 		assert.ok(isNoiseDenial({ kind: 'write', target: '/dev/dtracehelper', source: 'os' }));
 		assert.ok(isNoiseDenial({ kind: 'write', target: '/Users/me/Library/Caches/com.x/y', source: 'os' }));
 		assert.ok(!isNoiseDenial({ kind: 'write', target: '/Users/me/notes.txt', source: 'os' }));
+		assert.ok(isNoiseDenial({ kind: 'read', target: '/private/var/run/utmpx', source: 'os' }));
+		assert.ok(isNoiseDenial({ kind: 'write', target: '/var/run/utmp', source: 'os' }));
+		assert.ok(!isNoiseDenial({ kind: 'write', target: '/private/var/run/notes.txt', source: 'os' }));
 		assert.strictEqual(describeDenial({ kind: 'write', target: '/Users/me/notes.txt', source: 'os' }, '/Users/me'), 'Sandbox blocked a write to ~/notes.txt');
 		assert.strictEqual(folderToAllow('/Users/me/out/a.txt', false), '/Users/me/out');
 		assert.strictEqual(folderToAllow('/Users/me/out/', true), '/Users/me/out');
