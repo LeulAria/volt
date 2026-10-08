@@ -812,7 +812,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@IAgentSessionChangesService private readonly sessionChanges: IAgentSessionChangesService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentCloudTasksService private readonly cloudTasks: IAgentCloudTasksService,
-		@INotificationService private readonly notificationService: INotificationService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
