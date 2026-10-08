@@ -351,6 +351,40 @@ export function webhookRunPrompt(task: { readonly title: string; readonly prompt
 	return { text: `${header}\n\n${rendered.text}${payload}`, display: rendered.text, missing: rendered.missing };
 }
 
+export interface IWebhookTaskState {
+	readonly title: string;
+	readonly prompt: string;
+	readonly enabled: boolean;
+	readonly webhook?: IAgentWebhookTrigger;
+	readonly runs: readonly { readonly threadId?: string; readonly webhook?: { readonly deliveryId: string } }[];
+}
+
+export type WebhookDeliveryPlan =
+	| { readonly kind: 'run'; readonly text: string; readonly display: string; readonly missing: readonly string[] }
+	| { readonly kind: 'filtered'; readonly note: string }
+	| { readonly kind: 'duplicate'; readonly threadId?: string }
+	| { readonly kind: 'off' }
+	| { readonly kind: 'unknown' };
+
+/** What a delivery does to its task: run it, or say why it does not. Redelivery is never run twice. */
+export function planWebhookDelivery(task: IWebhookTaskState | undefined, context: IWebhookContext): WebhookDeliveryPlan {
+	if (!task?.webhook) {
+		return { kind: 'unknown' };
+	}
+	if (!task.enabled) {
+		return { kind: 'off' };
+	}
+	const done = task.runs.find(run => run.webhook?.deliveryId === context.delivery.id);
+	if (done) {
+		return { kind: 'duplicate', ...(done.threadId ? { threadId: done.threadId } : {}) };
+	}
+	const verdict = evaluateWebhookFilters(task.webhook.filters, context);
+	if (!verdict.pass) {
+		return { kind: 'filtered', note: verdict.reason ?? 'A filter did not match.' };
+	}
+	return { kind: 'run', ...webhookRunPrompt(task, context) };
+}
+
 //#endregion
 
 //#region Deliveries

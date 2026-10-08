@@ -17,8 +17,11 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { ILayoutService } from '../../../../../platform/layout/browser/layoutService.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IVoltRelayService } from '../../../../../platform/voltRelay/common/voltRelay.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
@@ -33,6 +36,7 @@ import { createAgentScrollable } from '../editor/agentScrollable.js';
 import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { showVoltMenu } from '../ui/menu/voltMenu.js';
 import { showAgentScheduleDialog } from './agentScheduleDialog.js';
+import { connectVoltRelay } from './agentWebhookRelay.js';
 import { formatScheduleWhen } from './agentScheduleFormat.js';
 
 export const AGENT_SCHEDULES_EDITOR_ID = 'workbench.editor.voltAgentSchedules';
@@ -107,6 +111,9 @@ export class AgentSchedulesEditor extends EditorPane {
 		@ICommandService private readonly commandService: ICommandService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@ILayoutService private readonly layoutService: ILayoutService,
+		@IVoltRelayService private readonly relay: IVoltRelayService,
+		@IQuickInputService private readonly quickInput: IQuickInputService,
+		@INotificationService private readonly notifications: INotificationService,
 	) {
 		super(AgentSchedulesEditor.ID, group, telemetryService, themeService, storageService);
 		this._register(this.schedules.onDidChange(() => this.render()));
@@ -320,6 +327,8 @@ export class AgentSchedulesEditor extends EditorPane {
 			...(threadId ? { threadId, threadTitle: this.history.get(threadId)?.title } : {}),
 			projectLabel: task ? this.projectLabel(task) : this.sessionContext.activeProject?.displayName,
 			...(!task && this.sessionContext.activeProject ? { projectRoot: this.sessionContext.activeProject.root.toString() } : {}),
+			relay: this.relay,
+			connectRelay: () => connectVoltRelay(this.relay, this.quickInput, this.notifications),
 			onSave: async input => {
 				if (task) {
 					await this.schedules.update(task.id, input);

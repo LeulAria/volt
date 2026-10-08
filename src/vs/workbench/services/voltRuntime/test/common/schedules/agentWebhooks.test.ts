@@ -7,7 +7,7 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import {
 	describeWebhookDelivery, evaluateWebhookFilters, formatWebhookFilter, IAgentWebhookDelivery, isHandledDelivery, mergeWebhookDeliveries, parseWebhookDelivery, parseWebhookFilter,
-	parseWebhookTrigger, recordWebhookDelivery, renderWebhookTemplate, resolveWebhookPath, splitWebhookPath, WEBHOOK_DELIVERIES_KEPT, webhookContext, webhookRunPrompt,
+	newWebhookTrigger, parseWebhookTrigger, planWebhookDelivery, recordWebhookDelivery, renderWebhookTemplate, resolveWebhookPath, splitWebhookPath, WEBHOOK_DELIVERIES_KEPT, webhookContext, webhookRunPrompt,
 } from '../../../common/schedules/agentWebhooks.js';
 
 const PR = {
@@ -134,3 +134,43 @@ suite('Volt webhook triggers', () => {
 		});
 	});
 });
+
+suite('Volt webhook delivery plans', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	const hook = { ...newWebhookTrigger('hook_pr', 'local'), filters: [{ path: 'payload.action', op: 'equals' as const, value: 'opened' }] };
+	const task = { title: 'Review PRs', prompt: 'Review #{{payload.number}}', enabled: true, webhook: hook, runs: [] };
+	const delivery = (id: string, body: string, extra: { event?: string; redeliveryOf?: string } = {}) => webhookContext({ id, body, receivedAt: 1, source: 'relay', ...extra });
+
+	test('a delivery to a task that is gone is unknown', () => {
+		assert.deepStrictEqual(planWebhookDelivery(undefined, delivery('dlv_1', '{}')), { kind: 'unknown' });
+		assert.deepStrictEqual(planWebhookDelivery({ ...task, webhook: undefined }, delivery('dlv_1', '{}')), { kind: 'unknown' });
+	});
+
+	test('a turned-off task does not run', () => {
+		assert.deepStrictEqual(planWebhookDelivery({ ...task, enabled: false }, delivery('dlv_1', '{"action":"opened","number":3}')), { kind: 'off' });
+	});
+
+	test('a filtered delivery is recorded with the reason and does not run', () => {
+		const plan = planWebhookDelivery(task, delivery('dlv_2', '{"action":"closed","number":3}'));
+		assert.strictEqual(plan.kind, 'filtered');
+	});
+
+	test('a delivery that already ran answers with its thread, never a second run', () => {
+		const ran = { ...task, runs: [{ threadId: 'chat-9', webhook: { deliveryId: 'dlv_3' } }] };
+		assert.deepStrictEqual(planWebhookDelivery(ran, delivery('dlv_3', '{"action":"opened","number":3}')), { kind: 'duplicate', threadId: 'chat-9' });
+		assert.deepStrictEqual(planWebhookDelivery(ran, delivery('dlv_4', '{"action":"opened","number":3}')).kind, 'run');
+	});
+
+	test('a matching delivery renders the prompt template with the payload', () => {
+		const plan = planWebhookDelivery(task, delivery('dlv_5', '{"action":"opened","number":12}', { event: 'pull_request' }));
+		assert.strictEqual(plan.kind, 'run');
+		if (plan.kind === 'run') {
+			assert.strictEqual(plan.display, 'Review #12');
+			assert.ok(plan.text.includes('Review #12'));
+			assert.deepStrictEqual(plan.missing, []);
+		}
+	});
+});
+

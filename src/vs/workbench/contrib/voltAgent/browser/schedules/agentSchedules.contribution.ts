@@ -9,6 +9,8 @@ import { Action2, registerAction2 } from '../../../../../platform/actions/common
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
+import { IVoltRelayService } from '../../../../../platform/voltRelay/common/voltRelay.js';
 import { ILayoutService } from '../../../../../platform/layout/browser/layoutService.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { Registry } from '../../../../../platform/registry/common/platform.js';
@@ -22,6 +24,7 @@ import { IVoltSessionContextService } from '../../../../services/voltRuntime/com
 import { NEW_AGENT_SCHEDULE_COMMAND_ID, OPEN_AGENT_SCHEDULES_COMMAND_ID } from './agentScheduleCommands.js';
 import { showAgentScheduleDialog } from './agentScheduleDialog.js';
 import { AgentScheduleService } from './agentScheduleService.js';
+import { connectVoltRelay } from './agentWebhookRelay.js';
 import { AGENT_SCHEDULES_EDITOR_ID, AgentSchedulesEditor, AgentSchedulesEditorInput, AgentSchedulesEditorInputSerializer } from './agentSchedulesEditor.js';
 import { formatScheduleWhen } from './agentScheduleFormat.js';
 
@@ -92,6 +95,8 @@ registerAction2(class NewAgentScheduleAction extends Action2 {
 		const sessionContext = accessor.get(IVoltSessionContextService);
 		const layoutService = accessor.get(ILayoutService);
 		const notificationService = accessor.get(INotificationService);
+		const relay = accessor.get(IVoltRelayService);
+		const quickInput = accessor.get(IQuickInputService);
 		const threadId = typeof args?.threadId === 'string' ? args.threadId : undefined;
 		const binding = threadId ? sessionContext.bindingFor(threadId) : undefined;
 		const project = (binding ? sessionContext.getProject(binding.projectId) : undefined) ?? sessionContext.activeProject;
@@ -101,6 +106,8 @@ registerAction2(class NewAgentScheduleAction extends Action2 {
 			...(args?.prompt ? { prompt: args.prompt } : {}),
 			...(args?.mode ? { mode: args.mode } : {}),
 			...(args?.modelRef ? { modelRef: args.modelRef } : {}),
+			relay,
+			connectRelay: () => connectVoltRelay(relay, quickInput, notificationService),
 			onSave: async input => {
 				const task = await schedules.create(input);
 				notificationService.info(task.nextRunAt !== undefined

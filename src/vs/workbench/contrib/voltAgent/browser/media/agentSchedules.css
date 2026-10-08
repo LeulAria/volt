@@ -56,6 +56,23 @@
 	display: none;
 }
 
+.volt-schedule-block.hidden,
+.volt-schedule-field.hidden {
+	display: none;
+}
+
+.volt-schedule-url-row {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+}
+
+.volt-schedule-url-row .volt-schedule-input {
+	flex: 1;
+	min-width: 0;
+	font-family: var(--monaco-monospace-font, monospace);
+}
+
 .volt-schedule-days {
 	display: flex;
 	gap: 6px;

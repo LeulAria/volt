@@ -129,6 +129,8 @@ import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../platform/voltGit/c
 import { VoltGitMainService } from '../../platform/voltGit/electron-main/voltGitMainService.js';
 import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestMainService } from '../../platform/voltPullRequests/electron-main/voltPullRequestMainService.js';
+import { IVoltRelayService, VOLT_RELAY_CHANNEL_NAME } from '../../platform/voltRelay/common/voltRelay.js';
+import { VoltRelayMainService } from '../../platform/voltRelay/electron-main/voltRelayMainService.js';
 import { IVoltUsageService, VOLT_USAGE_CHANNEL_NAME } from '../../platform/voltUsage/common/voltUsage.js';
 import { IVoltVisualPreviewService, VOLT_VISUAL_PREVIEW_CHANNEL_NAME } from '../../platform/voltVisualPreview/common/voltVisualPreview.js';
 import { VoltVisualPreviewMainService } from '../../platform/voltVisualPreview/electron-main/voltVisualPreviewMainService.js';
@@ -1080,6 +1082,7 @@ export class CodeApplication extends Disposable {
 
 		// Volt usage and limits
 		services.set(IVoltUsageService, new SyncDescriptor(VoltUsageMainService, undefined, true));
+		services.set(IVoltRelayService, new SyncDescriptor(VoltRelayMainService, undefined, true));
 		services.set(IVoltVisualPreviewService, new SyncDescriptor(VoltVisualPreviewMainService, undefined, true));
 
 		// Volt in-app folder picker
@@ -1276,6 +1279,8 @@ export class CodeApplication extends Disposable {
 		// Volt usage and limits
 		const voltUsageChannel = ProxyChannel.fromService(accessor.get(IVoltUsageService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_USAGE_CHANNEL_NAME, voltUsageChannel);
+		const voltRelayChannel = ProxyChannel.fromService(accessor.get(IVoltRelayService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_RELAY_CHANNEL_NAME, voltRelayChannel);
 		const voltVisualPreviewChannel = ProxyChannel.fromService(accessor.get(IVoltVisualPreviewService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_VISUAL_PREVIEW_CHANNEL_NAME, voltVisualPreviewChannel);
 
