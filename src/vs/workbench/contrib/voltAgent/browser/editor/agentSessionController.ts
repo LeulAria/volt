@@ -1123,6 +1123,9 @@ export class AgentSessionController extends Disposable {
 				}
 				break;
 			}
+			case 'model.reported':
+				this.applyReportedModel(last, event);
+				break;
 			case 'context.compaction':
 				this.applyCompaction(last, activity, event);
 				break;
@@ -1256,6 +1259,32 @@ export class AgentSessionController extends Disposable {
 			this.previewTimer = undefined;
 			this.openPreview(url);
 		}, delay);
+	}
+
+	/**
+	 * The divider names the model the provider reports running, not the one requested: Cursor can fall back
+	 * to Composer 2.5 after a plan wall, and the handoff said Claude Haiku.
+	 */
+	private applyReportedModel(last: IAgentAssistantMessage, event: Extract<IVoltEvent, { type: 'model.reported' }>): void {
+		const index = this.host.messages.lastIndexOf(last);
+		const user = this.host.messages[index - 1];
+		if (user?.kind !== 'user' || user.id !== last.id) {
+			return;
+		}
+		const item = this.runtime.listCatalog().find(entry => entry.kind === 'model' && entry.providerId === event.provider && (entry.id === event.model || entry.id.replace(/\[.*\]$/, '') === event.model));
+		const label = item?.label ?? event.model;
+		let changed = false;
+		if (user.contextHandoff && user.contextHandoff.toLabel !== label) {
+			user.contextHandoff = { ...user.contextHandoff, toLabel: label };
+			changed = true;
+		}
+		if (user.handoff && user.handoff.toLabel !== label) {
+			user.handoff = { ...user.handoff, toLabel: label };
+			changed = true;
+		}
+		if (changed) {
+			this.host.recordUser?.(user);
+		}
 	}
 
 	/** Sizes a finished read from disk into the reply's unkept tool output (the whole file: the runtime sends no range). */
