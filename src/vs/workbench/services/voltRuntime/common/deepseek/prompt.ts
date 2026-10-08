@@ -59,6 +59,8 @@ export interface IDeepseekPromptInput {
 	readonly rules?: string;
 	/** Loadable skills index, already wrapped in `<skills>`. */
 	readonly skills?: string;
+	/** Saved notes index, already wrapped in `<volt_memory>`. */
+	readonly memory?: string;
 	/** Tool names actually offered, so the prompt never mentions a tool the model cannot call. */
 	readonly toolNames?: readonly string[];
 }
@@ -168,6 +170,9 @@ export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 	}
 	if (input.skills?.trim()) {
 		sections.push(input.skills.trim());
+	}
+	if (input.memory?.trim()) {
+		sections.push(input.memory.trim());
 	}
 	return sections.join('\n\n');
 }

@@ -166,6 +166,7 @@ suite('Agent runtime orchestration', () => {
 			new NullLogService(),
 			stdio.asService(),
 			stub({ setQuestionHandler: () => { }, setApprover: () => { }, setSessionResolver: () => { }, onDidInvokeTool: Event.None, onDidChangeMcp: Event.None, getMcpServers: () => [], listTools: () => [], invokeTool: async () => ({}) }),
+			stub({ context: async () => undefined }),
 			stub({}),
 			stub({ rootFor: () => undefined }),
 			stub({ open: () => ({ setMeta: () => { } }), setAgentTitle: async () => { } }),

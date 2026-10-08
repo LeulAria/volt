@@ -209,6 +209,9 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.visuals && input.intent.lane !== 'fast') {
 		parts.push(`[Volt] ${VISUAL_REPLIES}`);
 	}
+	if (input.memory?.trim()) {
+		parts.push(input.memory.trim());
+	}
 	const contract = modeContract(input.mode);
 	if (contract) {
 		parts.push(`[Volt mode: ${input.mode}] ${contract}`);

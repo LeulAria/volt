@@ -44,6 +44,7 @@ import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
 import { agentCompactionPrompt, compactedHistory, compactInstructions, isCompactCommand } from '../common/compaction.js';
 import './git/agentWorktreeSetupService.js';
 import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService, VISUAL_TOOL_NAMES } from '../common/hostTools.js';
+import { IVoltMemoryService } from '../common/memory/voltMemory.js';
 import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQuestionResponse } from '../common/questions.js';
 import { AcpAgentProvider, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
 import { AcpLoopDetector } from '../common/harness/acpLoopDetector.js';
@@ -51,6 +52,7 @@ import { LOOP_NOTICE_TITLE } from '../common/harness/supervisor.js';
 import { DeepseekDirective, IDeepseekStep, runDeepseekLoop } from '../common/deepseek/loop.js';
 import { EditBaselineTracker } from './editBaselines.js';
 import './host/hostToolService.js';
+import './memory/voltMemoryService.js';
 import { clearClaudeModelCache } from './agents/claudeCatalog.js';
 import { CLI_AGENT_DEFINITIONS, cliAgentDefinition, detectCliAgent } from './agents/cliAgents.js';
 import { NullVoltStdioService } from './host/nullStdioService.js';
@@ -354,6 +356,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@ILogService private readonly logService: ILogService,
 		@IVoltStdioService private readonly stdio: IVoltStdioService,
 		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
+		@IVoltMemoryService private readonly memory: IVoltMemoryService,
 		@ISearchService private readonly searchService: ISearchService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
@@ -2041,13 +2044,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const images = this.modelImages(request.images);
 		this.syncNativeTranscript(session, state, request.text, images);
 
-		const [projectInstructions, instructions, mcpTools] = await Promise.all([
+		const [projectInstructions, instructions, mcpTools, memoryContext] = await Promise.all([
 			this.workspaceProjectInstructions(root),
 			this.workspaceInstructions(root),
 			// MCP servers get a short, bounded wait: a slow server joins the next run instead of stalling this one.
 			modePolicy(request.mode).allowMcp
 				? this.pathService.userHome().catch(() => undefined).then(home => this.mcpHost.tools(root, home, transcript.length > 1 ? 1_500 : 4_000)).catch(() => [])
 				: Promise.resolve([]),
+			this.memory.context().catch(() => undefined),
 		]);
 		if (!this.isCurrent(session, run)) {
 			return;
@@ -2065,6 +2069,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			projectInstructions,
 			rules: alwaysRules(instructions.rules),
 			skills: instructionsIndex(instructions.skills, instructions.rules),
+			memory: memoryContext,
 			tools,
 		});
 		const selected = tools.filter(tool => turn.toolNames.includes(tool.name));
@@ -2605,9 +2610,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** What `buildAcpLead` reads, and nothing else: the lead is built on every turn's critical path. */
-	private async contextPackInput(session: ISessionState, mode: VoltMode, intent: IIntent): Promise<IContextPackInput> {
+	private async contextPackInput(session: ISessionState, mode: VoltMode, intent: IIntent, withMemory: boolean): Promise<IContextPackInput> {
 		const root = this.executionRoot(session);
 		return {
+			...(withMemory ? { memory: await this.memory.context() } : {}),
 			mode,
 			intent: { ...intent, groups: this.effectiveGroups(session, intent) },
 			runPlan: intent.wantsPreview ? await this.workspaceRunPlan(root) : undefined,
@@ -2649,7 +2655,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					return;
 				}
 				try {
-					if (hasLiveAgent()) {
+					const reusedAgent = hasLiveAgent();
+					if (reusedAgent) {
 						run.metrics.setAgentSource('live');
 					} else {
 						await this.acquireAgent(session, run, provider, profile, item, request, intent, attempt > 0);
@@ -2664,7 +2671,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					if (recap) {
 						session.agentJoinedLate = handle;
 					}
-					const lead = [recap, buildAcpLead(await this.contextPackInput(session, request.mode, intent))].filter(Boolean).join('\n\n') || undefined;
+					const lead = [recap, buildAcpLead(await this.contextPackInput(session, request.mode, intent, !reusedAgent))].filter(Boolean).join('\n\n') || undefined;
 					if (!this.isCurrent(session, run)) {
 						return;
 					}
