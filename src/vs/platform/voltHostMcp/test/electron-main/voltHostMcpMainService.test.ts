@@ -63,7 +63,10 @@ suite('Volt host MCP server', () => {
 		assert.strictEqual(status('POST', '/mcp', { ...ok, host: '127.0.0.1:4001' }), 403, 'other port');
 		assert.strictEqual(status('POST', '/mcp', { ...ok, origin: 'http://localhost:3000' }), 403, 'browser origin, even with the token');
 		assert.strictEqual(status('POST', '/mcp', { ...ok, origin: 'null' }), 403, 'sandboxed page origin');
-		assert.strictEqual(status('POST', '/mcp', { ...ok, 'sec-fetch-mode': 'no-cors' }), 403, 'browser fetch metadata');
+		assert.strictEqual(status('POST', '/mcp', { ...ok, 'sec-fetch-mode': 'no-cors', 'sec-fetch-site': 'cross-site', 'sec-fetch-dest': 'empty' }), 403, 'browser fetch metadata');
+		assert.strictEqual(status('POST', '/mcp', { ...ok, 'sec-fetch-site': 'same-origin' }), 403, 'a browser always sends Sec-Fetch-Site');
+		assert.strictEqual(status('POST', '/mcp', { ...ok, 'sec-fetch-dest': 'document' }), 403, 'a form post from a page');
+		assert.strictEqual(status('POST', '/mcp', { ...ok, 'sec-fetch-mode': 'cors', 'user-agent': 'Cursor/1.0.0', 'accept-language': '*' }), 200, 'Node fetch (cursor-agent) sends Sec-Fetch-Mode alone');
 		assert.strictEqual(status('OPTIONS', '/mcp', ok), 403, 'no CORS preflight');
 		assert.strictEqual(status('POST', '/.well-known/oauth-protected-resource', ok), 404);
 	});
