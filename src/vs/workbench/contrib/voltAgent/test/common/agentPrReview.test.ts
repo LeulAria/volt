@@ -64,6 +64,7 @@ suite('agentPrReview', () => {
 		const findings = [{ file: './src/math.ts', line: 10.4, severity: 'high', title: 'Off-by-one', explanation: 'skips last' }];
 		assert.deepStrictEqual(parseReviewOutput(`Done.\n\`\`\`json\n${JSON.stringify({ findings })}\n\`\`\``), [{ file: 'src/math.ts', line: 10, severity: 'high', title: 'Off-by-one', explanation: 'skips last' }]);
 		assert.deepStrictEqual(parseReviewOutput(JSON.stringify({ findings: [] })), []);
+		assert.deepStrictEqual(parseReviewOutput(`Word counts are short.\n${JSON.stringify({ findings: [{ file: 'a.ts', line: 2, title: 'Short', severity: 'low' }] })}\nDone.`)?.map(finding => finding.title), ['Short']);
 		assert.strictEqual(parseReviewOutput('I found nothing wrong.'), undefined);
 	});
 
@@ -136,7 +137,8 @@ suite('agentPrReview', () => {
 
 	test('the review prompt names the findings file and the repository rules, and cuts a huge diff', () => {
 		const prompt = buildReviewPrompt({ title: 'Add range', base: 'main', head: 'feature', diff: 'x'.repeat(REVIEW_DIFF_MAX_CHARS + 10), rules: 'Flag missing tests.' });
-		assert.ok(prompt.includes('.volt-review/findings.json'));
+		assert.ok(prompt.includes('```json block'));
+		assert.ok(prompt.includes('Do not run commands'));
 		assert.ok(prompt.includes('Flag missing tests.'));
 		assert.ok(prompt.includes('diff cut at'));
 		assert.ok(!buildReviewPrompt({ title: 't', base: 'main', head: 'h', diff: 'small' }).includes('repository asks'));

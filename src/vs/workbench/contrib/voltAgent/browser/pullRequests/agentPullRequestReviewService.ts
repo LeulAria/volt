@@ -102,6 +102,14 @@ export class AgentPullRequestReviewService extends Disposable implements IAgentP
 		this.storeFile = joinPath(environmentService.userRoamingDataHome, 'voltPullRequests', 'reviews.json');
 		this.whenReady = this.load();
 		this._register(this.pullRequests.onDidChangePullRequest(key => void this.maybeReview(key)));
+		// Every sync and link change lands here, so a new head is seen even when no snapshot event was fired for it.
+		this._register(this.pullRequests.onDidChange(chats => {
+			for (const chat of chats) {
+				for (const link of this.pullRequests.links(chat)) {
+					void this.maybeReview(link.key);
+				}
+			}
+		}));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(AGENT_PR_AUTO_REVIEW_SETTING)) {
 				void this.maybeReviewAll();
@@ -223,7 +231,8 @@ export class AgentPullRequestReviewService extends Disposable implements IAgentP
 		let worktreePath: string | undefined;
 		let worktreeBranch: string | undefined;
 		try {
-			const name = `volt-review/${snapshot.number}-${headSha.slice(0, 7)}`;
+			// Unique per run: an earlier run that was cut off may still hold its branch.
+			const name = `volt-review/${snapshot.number}-${headSha.slice(0, 7)}-${startedAt.toString(36)}`;
 			const created = await this.worktrees.create(folder, { kind: 'new', name, from: headSha });
 			worktreePath = created.path;
 			worktreeBranch = created.branch;
@@ -248,9 +257,10 @@ export class AgentPullRequestReviewService extends Disposable implements IAgentP
 			if (outcome.outcome !== 'done') {
 				throw new Error(outcome.error ?? `The review ended as ${outcome.outcome}.`);
 			}
-			const raw = await this.readFindings(worktreePath);
+			// The findings file wins; otherwise the JSON block in the reply (agents often answer without writing files).
+			const raw = (await this.readFindings(worktreePath)) ?? parseReviewOutput(await this.replyOf(reviewChat, turnId) ?? '');
 			if (!raw) {
-				throw new Error(`The review did not write ${REVIEW_FINDINGS_PATH}.`);
+				throw new Error('The review did not return its findings as JSON.');
 			}
 			const findings = mergeReviewFindings(previous?.findings ?? [], raw, headSha);
 			this.put(key, { key, headSha, state: 'done', startedAt, endedAt: Date.now(), model, findings });
@@ -271,6 +281,12 @@ export class AgentPullRequestReviewService extends Disposable implements IAgentP
 		} catch {
 			return undefined;
 		}
+	}
+
+	/** The final reply of a turn, from the chat's transcript. */
+	private async replyOf(threadId: string, turnId: string): Promise<string | undefined> {
+		const transcript = await this.history.open(threadId).load().catch(() => undefined);
+		return transcript?.turns.find(turn => turn.id === turnId)?.assistant?.text;
 	}
 
 	private async readFindings(worktreePath: string): Promise<IRawReviewFinding[] | undefined> {

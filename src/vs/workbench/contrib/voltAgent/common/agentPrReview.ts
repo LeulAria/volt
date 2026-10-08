@@ -107,6 +107,12 @@ function parseJsonObject(text: string): { findings?: unknown } | undefined {
 		candidates.push(fenced[1]);
 	}
 	candidates.push(text.trim());
+	// Prose before or after the object: the outermost braces.
+	const start = text.indexOf('{');
+	const end = text.lastIndexOf('}');
+	if (start !== -1 && end > start) {
+		candidates.push(text.slice(start, end + 1));
+	}
 	for (const candidate of candidates) {
 		try {
 			const value: unknown = JSON.parse(candidate);
@@ -237,9 +243,9 @@ export function buildReviewPrompt(input: { readonly title: string; readonly base
 		'',
 		'Review only the change below for bugs that would hurt users: wrong results, crashes, data loss, security holes, broken edge cases, and tests that no longer test what they claim. Read the surrounding code when a finding depends on it. Do not report style, naming or formatting, and do not report something you cannot point to in a changed line.',
 		'',
-		'Write your findings to `' + REVIEW_FINDINGS_PATH + '` as JSON, creating the folder if needed:',
+		'Do not run commands or edit files: the diff is below and nobody can approve tool calls here. Put your findings in your final reply as one ```json block with this shape:',
 		'{ "findings": [ { "file": "relative/path.ts", "line": 12, "severity": "high" | "medium" | "low", "title": "short title", "explanation": "what is wrong and when it happens", "suggestion": "the fix, optional" } ] }',
-		'Use an empty list when you find nothing. Then reply with one sentence saying how many findings you wrote.',
+		'Use an empty list when you find nothing. Keep the rest of your reply to one sentence.',
 	];
 	if (input.rules?.trim()) {
 		lines.push('', 'The repository asks reviews to follow these rules (.volt/review.md):', input.rules.trim());
