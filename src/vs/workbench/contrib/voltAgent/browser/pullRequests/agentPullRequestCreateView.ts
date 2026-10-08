@@ -233,8 +233,8 @@ export class AgentPullRequestCreateView extends Disposable {
 			this.renderProblem(body);
 			return;
 		}
-		if (repo.provider !== 'github') {
-			this.renderProblem(body, localize('voltPr.create.onlyGithub', "Volt opens pull requests on GitHub and GitHub Enterprise."));
+		if (repo.provider === 'unknown') {
+			this.renderProblem(body, localize('voltPr.create.onlyKnown', "Volt opens pull requests on GitHub, GitLab, Bitbucket, Gitea, Forgejo and Azure DevOps. Sign in to this server first."));
 			return;
 		}
 		if (!repo.branch) {
