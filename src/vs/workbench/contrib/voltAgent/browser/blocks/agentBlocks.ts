@@ -6,6 +6,7 @@
 import { isSubagentToolName } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
 import { sameProviderNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import type { IVoltToolView } from '../../../../services/voltRuntime/common/events.js';
+import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
 import { presentOutput, type OutputView } from '../../../../services/voltRuntime/common/harness/adaptiveOutput.js';
 import { describeHostToolActivity, hostToolCall } from './agentHostToolActivity.js';
 import type { IWorkCounts, ToolKind } from '../../../../services/voltRuntime/common/harness/workLog.js';
@@ -258,7 +259,7 @@ export type AgentSegment =
 	 * Provider or harness status. `supervision` marks a run supervisor's finding (a loop, a stall,
 	 * a budget stop): the transcript draws it as a tray with actions instead of a plain line.
 	 */
-	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind }
+	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind; sandbox?: ISandboxDenial }
 	/** The agent compacted the conversation here: a divider while it summarizes, then what it kept. */
 	| { kind: 'compaction'; compaction: IAgentCompaction };
 
@@ -315,6 +316,11 @@ export function appendProviderNotice(segments: AgentSegment[], notice: { severit
 		return;
 	}
 	segments.push({ kind: 'notice', severity: notice.severity, title, ...(description ? { description } : {}), ...(notice.supervision ? { supervision: notice.supervision } : {}) });
+}
+
+/** Each refusal keeps its own row: it names a different path or host, so it is never merged. */
+export function appendSandboxDenial(segments: AgentSegment[], denial: ISandboxDenial): void {
+	segments.push({ kind: 'notice', severity: 'warning', title: 'Blocked by the sandbox', description: denial.target, sandbox: denial });
 }
 
 /**

@@ -9,6 +9,8 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
+import { IVoltSandboxSettings, withAllowedDomain, withWritableRoot } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
@@ -3750,6 +3752,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private renderProviderNotice(parent: HTMLElement, part: Extract<TranscriptRow, { kind: 'notice' }>, message: IAgentAssistantMessage): void {
+		if (part.sandbox && !message.blockState[`tr:dismiss:${part.id}`]?.expanded) {
+			this.renderSandboxTray(parent, part.sandbox, part.id, message);
+			return;
+		}
 		if (part.supervision && !message.blockState[`tr:dismiss:${part.id}`]?.expanded) {
 			this.renderSupervisionTray(parent, part, part.supervision, message);
 			return;
@@ -3824,6 +3830,56 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			const spec = SUPERVISION_ACTION_LABELS[action];
 			this.appendTrayButton(row, spec.label(), spec.tooltip(), action === 'stop' ? 'secondary' : 'primary', () => this.runSupervisionAction(action, message));
 		}
+	}
+
+	/** A refused write, read, host or launch, with the ways to let this chat through and retry the step. */
+	private renderSandboxTray(parent: HTMLElement, denial: ISandboxDenial, partId: string, message: IAgentAssistantMessage): void {
+		const running = message === this.messages.at(-1) && !!message.activity?.streaming;
+		const tray = append(parent, $('.volt-agent-run-tray.sandbox'));
+		tray.setAttribute('role', 'status');
+		const head = append(tray, $('.volt-agent-run-tray-head'));
+		const icon = append(head, $('span.volt-agent-run-tray-icon'));
+		icon.appendChild(renderIcon(Codicon.shield));
+		this.setSearchableText(append(head, $('span.volt-agent-run-tray-title')), localize('voltAgent.sandbox.title', "Blocked by the sandbox"));
+		const dismiss = append(head, $('button.volt-agent-run-tray-dismiss')) as HTMLButtonElement;
+		dismiss.type = 'button';
+		dismiss.setAttribute('aria-label', localize('voltAgent.tray.dismiss', "Dismiss"));
+		setAgentTooltip(dismiss, localize('voltAgent.tray.dismiss', "Dismiss"));
+		dismiss.appendChild(renderIcon(Codicon.close));
+		this.threadListeners.add(addDisposableListener(dismiss, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			message.blockState[`tr:dismiss:${partId}`] = { expanded: true };
+			this.renderThread(this.stickToBottom);
+		}));
+		this.setSearchableText(append(tray, $('.volt-agent-run-tray-detail')), this.sandboxDetail(denial));
+		if (running) {
+			return;
+		}
+		const row = append(tray, $('.volt-agent-run-tray-actions'));
+		const settings = this.runtime.getSandboxSettings(this.sessionKey);
+		if (denial.kind === 'network') {
+			this.appendTrayButton(row, localize('voltAgent.sandbox.allowHost', "Allow {0}", denial.target), localize('voltAgent.sandbox.allowHost.hint', "Let this chat reach {0} through the sandbox", denial.target), 'primary', () => this.retrySandboxed(withAllowedDomain(settings, denial.target)));
+		} else if (denial.kind === 'write') {
+			const folder = denial.target.slice(0, denial.target.lastIndexOf('/')) || '/';
+			this.appendTrayButton(row, localize('voltAgent.sandbox.allowFolder', "Allow folder"), localize('voltAgent.sandbox.allowFolder.hint', "Let this chat write in {0}", folder), 'primary', () => this.retrySandboxed(withWritableRoot(settings, folder)));
+		}
+		this.appendTrayButton(row, localize('voltAgent.sandbox.outside', "Run outside sandbox"), localize('voltAgent.sandbox.outside.hint', "Turn the sandbox off for this chat and retry the step"), 'secondary', () => this.retrySandboxed({ ...settings, level: 'off' }));
+	}
+
+	private sandboxDetail(denial: ISandboxDenial): string {
+		switch (denial.kind) {
+			case 'network': return localize('voltAgent.sandbox.network', "Network access to {0} was blocked", denial.target);
+			case 'read': return localize('voltAgent.sandbox.read', "Reading {0} was blocked", denial.target);
+			case 'launch': return localize('voltAgent.sandbox.launch', "Opening {0} was blocked", denial.target);
+			default: return localize('voltAgent.sandbox.write', "Writing {0} was blocked", denial.target);
+		}
+	}
+
+	private retrySandboxed(settings: IVoltSandboxSettings): void {
+		void this.runtime.setSandboxSettings(this.sessionKey, settings).then(() => this.continueTurn(
+			localize('voltAgent.sandbox.retry.prompt', "The sandbox blocked your last step. Its settings have changed; retry that step now."),
+			localize('voltAgent.sandbox.retry.display', "Retry")));
 	}
 
 	private runSupervisionAction(action: SupervisionAction, message: IAgentAssistantMessage): void {

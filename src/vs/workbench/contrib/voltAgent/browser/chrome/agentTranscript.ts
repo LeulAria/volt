@@ -8,6 +8,7 @@ import { DELEGATE_TASK_TOOL_NAME } from '../../../../services/voltRuntime/common
 import { basename } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
 import { isSnapshotActivity } from '../preview/browserSnapshot.js';
+import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
 import { AgentBlock, AgentSegment, createPlanBlock, humanTerminalTitle, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPlanTool, IVisualBlock, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
 import { computeChangeStats } from '../review/fileChangePreviewModel.js';
 import { isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
@@ -52,7 +53,7 @@ export type TranscriptRow =
 	| { readonly kind: 'subagent'; readonly id: string; readonly tool: IToolBlock; readonly live: boolean }
 	/** Subagents started one after another: one card ("3 subagents · 2 working"). */
 	| { readonly kind: 'subagents'; readonly id: string; readonly items: readonly { readonly id: string; readonly tool: IToolBlock; readonly live: boolean }[]; readonly live: boolean }
-	| { readonly kind: 'notice'; readonly id: string; readonly severity: 'info' | 'warning' | 'error'; readonly title: string; readonly description?: string; readonly supervision?: SupervisionKind }
+	| { readonly kind: 'notice'; readonly id: string; readonly severity: 'info' | 'warning' | 'error'; readonly title: string; readonly description?: string; readonly supervision?: SupervisionKind; readonly sandbox?: ISandboxDenial }
 	/** A message the user sent into the running turn ("Steer"); the agent read it between steps. */
 	| { readonly kind: 'steer'; readonly id: string; readonly text: string }
 	/** "Compacting context" while the agent summarizes the chat, then "Context compacted". */
@@ -165,7 +166,7 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 			case 'notice':
 				flushReply();
 				flushSteps();
-				rows.push({ kind: 'notice', id: `notice-${textIndex++}`, severity: segment.severity, title: segment.title, ...(segment.description ? { description: segment.description } : {}), ...(segment.supervision ? { supervision: segment.supervision } : {}) });
+				rows.push({ kind: 'notice', id: `notice-${textIndex++}`, severity: segment.severity, title: segment.title, ...(segment.description ? { description: segment.description } : {}), ...(segment.supervision ? { supervision: segment.supervision } : {}), ...(segment.sandbox ? { sandbox: segment.sandbox } : {}) });
 				break;
 			case 'text':
 				for (const chunk of partitionAssistantText(segment.text)) {
