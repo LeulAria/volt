@@ -5,6 +5,7 @@
 
 import { extensionForMime, mimeForExtension } from '../../../../services/voltRuntime/common/history/agentHistoryLog.js';
 import { formatAttachmentSize } from '../../../../services/voltRuntime/common/fileAttachments.js';
+import { formatLineCount } from '../../common/agentPastedText.js';
 import { videoMimeForExtension, VIDEO_EXTENSIONS } from './agentVideoAttachments.js';
 
 /**
@@ -36,10 +37,22 @@ export interface IAgentFilePayload {
 	/** Pasted text folded into a file. */
 	pasted?: boolean;
 	lines?: number;
+	/** A folded paste's guessed language (Monaco id), for the preview and the hover. */
+	language?: string;
+	/** A folded paste's language as the user reads it (`JSON`, `Log`). */
+	languageLabel?: string;
 }
 
 /** A paste this large (UTF-8) becomes a text attachment instead of composer text (T3: 32 KiB). */
 export const LARGE_PASTE_BYTES = 32 * 1024;
+
+/** `volt.agent.composer.largePasteKB`: the fold limit in KiB; 0 keeps every paste inline (up to the composer's own limit). */
+export function largePasteBytes(settingKb: unknown): number {
+	if (typeof settingKb !== 'number' || !Number.isFinite(settingKb) || settingKb < 0) {
+		return LARGE_PASTE_BYTES;
+	}
+	return settingKb === 0 ? Number.POSITIVE_INFINITY : Math.max(1024, Math.round(settingKb * 1024));
+}
 
 /** The longest prompt the composer holds; a paste that would push past it is folded too. */
 export const MAX_COMPOSER_CHARS = 120_000;
@@ -144,7 +157,7 @@ function utf8Length(text: string): number {
  * past {@link MAX_COMPOSER_CHARS}, becomes a text attachment the agent reads with its tools.
  * `replacedChars` is the selection the paste replaces.
  */
-export function shouldFoldPaste(text: string, composerChars: number, replacedChars = 0): boolean {
+export function shouldFoldPaste(text: string, composerChars: number, replacedChars = 0, limitBytes = LARGE_PASTE_BYTES): boolean {
 	if (!text) {
 		return false;
 	}
@@ -152,13 +165,13 @@ export function shouldFoldPaste(text: string, composerChars: number, replacedCha
 		return true;
 	}
 	// A UTF-16 unit is 1 to 3 UTF-8 bytes: most pastes are decided without encoding.
-	if (text.length >= LARGE_PASTE_BYTES) {
+	if (text.length >= limitBytes) {
 		return true;
 	}
-	if (text.length * 3 < LARGE_PASTE_BYTES) {
+	if (text.length * 3 < limitBytes) {
 		return false;
 	}
-	return utf8Length(text) >= LARGE_PASTE_BYTES;
+	return utf8Length(text) >= limitBytes;
 }
 
 /** Lines of pasted text; a trailing newline does not start another. */
@@ -175,8 +188,8 @@ export function countLines(text: string): number {
 	return lines;
 }
 
-/** `41 KB · 812 lines` after a folded paste's chip, `2.1 MB` after a file's. */
+/** `· 41 KB · 1,203 lines` after a folded paste's chip, `2.1 MB` after a file's. */
 export function fileChipDetail(file: Pick<IAgentFilePayload, 'size' | 'lines' | 'pasted'>): string {
 	const size = formatAttachmentSize(file.size);
-	return file.pasted && file.lines !== undefined ? `${size} · ${file.lines} ${file.lines === 1 ? 'line' : 'lines'}` : size;
+	return file.pasted && file.lines !== undefined ? `· ${size} · ${formatLineCount(file.lines)}` : size;
 }

@@ -48,14 +48,18 @@ import { IHistoryService } from '../../../../services/history/common/history.js'
 import { ISearchService } from '../../../../services/search/common/search.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService, IVoltMcpServerStatus } from '../../../../services/voltRuntime/common/runtime.js';
-import { attachmentSavedLine, fileTypeLabel, formatAttachmentSize, MAX_FILE_ATTACHMENT_BYTES } from '../../../../services/voltRuntime/common/fileAttachments.js';
+import { attachmentSavedLine, IVoltResourceAttachment, fileTypeLabel, formatAttachmentSize, MAX_FILE_ATTACHMENT_BYTES } from '../../../../services/voltRuntime/common/fileAttachments.js';
+import { extensionForMime } from '../../../../services/voltRuntime/common/history/agentHistoryLog.js';
 import { searchFilesAndFolders } from '../../../search/browser/searchChatContext.js';
 import { ITerminalService } from '../../../terminal/browser/terminal.js';
 import { compactSessionAge } from '../home/agentHomeModel.js';
 import { AgentMentionMenu, AgentMentionMenuContent, AgentMentionRow, IAgentMentionFileRow, IAgentMentionTreeEntry } from './agentMentionMenu.js';
 import { MentionCodePreview } from './mentionCodePreview.js';
 import { AgentAttachmentStore } from './agentAttachmentStore.js';
-import { attachmentRoute, countLines, fileChipDetail, heicJpegName, IAgentFilePayload, isSendableImageMime, isTextAttachment, PASTED_TEXT_NAME, shouldFoldPaste, storageMime } from './agentFileAttachments.js';
+import { attachmentRoute, countLines, fileChipDetail, heicJpegName, IAgentFilePayload, isSendableImageMime, isTextAttachment, largePasteBytes, PASTED_TEXT_NAME, shouldFoldPaste, storageMime } from './agentFileAttachments.js';
+import { formatLineCount, guessPastedLanguage, pastedFileName } from '../../common/agentPastedText.js';
+import { AGENT_LARGE_PASTE_SETTING } from '../../common/agentComposerSettings.js';
+import { PastedTextPreview } from './agentPastedTextPreview.js';
 import { AgentImageStrip, formatImageSize, imageExtension, imageThumbClass } from './agentImageAttachments.js';
 import { AgentImageViewer, showAgentImageViewer } from './agentImageViewer.js';
 import { citationLabel, IAgentCitation, serializeChatSelection, withCitationComment } from './agentCitation.js';
@@ -172,6 +176,24 @@ export function imageAttachmentsFromMentions(mentions: readonly IAgentDisplayMen
 	return attachments;
 }
 
+/**
+ * The prompt's attached files as ACP resources (saved copies only). A folded paste is marked
+ * `pasted`: the turn host reads its text so agents that take embedded context get it inline.
+ */
+export function resourceAttachmentsFromMentions(mentions: readonly IAgentDisplayMention[] | undefined): (IVoltResourceAttachment & { readonly pasted?: boolean })[] {
+	const resources: (IVoltResourceAttachment & { readonly pasted?: boolean })[] = [];
+	for (const mention of mentions ?? []) {
+		const file = mention.file;
+		if (!file?.path) {
+			continue;
+		}
+		const mime = file.mime.toLowerCase();
+		const mimeType = file.pasted && !(mime.startsWith('text/') || mime === 'application/json') ? 'text/plain' : file.mime;
+		resources.push({ uri: URI.file(file.path).toString(), name: mention.label, mimeType, size: file.size, ...(file.pasted ? { pasted: true } : {}) });
+	}
+	return resources;
+}
+
 /** `screen.mov @ 0:03.5`: the name a video still is sent under. */
 export function videoFrameName(label: string, time: number): string {
 	return `${label} @ ${formatDuration(time, true)}`;
@@ -193,7 +215,7 @@ export function attachmentPathLines(mentions: readonly IAgentDisplayMention[]): 
 		if (mention.file) {
 			files += 1;
 			const file = mention.file;
-			const line = attachmentSavedLine({ kind: 'file', name: mention.label, size: file.size, mime: file.mime, path: file.path, pasted: file.pasted, lines: file.lines }, files);
+			const line = attachmentSavedLine({ kind: 'file', name: mention.label, size: file.size, mime: file.mime, path: file.path, pasted: file.pasted, lines: file.lines, languageLabel: file.languageLabel }, files);
 			if (line) {
 				lines.push(line);
 			}
@@ -212,6 +234,7 @@ export function attachmentPathLines(mentions: readonly IAgentDisplayMention[]): 
 				facts.push(`${video.duration.toFixed(1)}s`);
 			}
 			if (video.trim?.segments.length) {
+				// allow-any-unicode-next-line
 				const parts = video.trim.segments.map(part => `${formatDuration(part.start, true)}–${formatDuration(part.end, true)}`);
 				facts.push(parts.length === 1
 					? `cut from ${parts[0]} of "${video.trim.sourceName}"`
@@ -300,8 +323,9 @@ export function mentionIconClasses(
 	languageService: ILanguageService,
 ): string[] {
 	if (mention.file) {
-		// By the name the user knows (the saved copy is named by its hash).
-		return getIconClasses(modelService, languageService, URI.file(`/${mention.file.name}`), FileKind.FILE);
+		// By the name the user knows (the saved copy is named by its hash); a folded paste by its guessed type.
+		const name = mention.file.pasted ? `pasted-text.${extensionForMime(mention.file.mime)}` : mention.file.name;
+		return getIconClasses(modelService, languageService, URI.file(`/${name}`), FileKind.FILE);
 	}
 	if (mention.kind === 'folder') {
 		return getIconClasses(modelService, languageService, mention.resource, FileKind.FOLDER);
@@ -393,6 +417,7 @@ export class AgentMentionController extends Disposable {
 	onDidHoverMention: ((mention: IAgentMention | undefined) => void) | undefined;
 	onDidRemoveMention: ((mention: IAgentMention) => void) | undefined;
 	private readonly codePreview: MentionCodePreview;
+	private readonly pastePreview: PastedTextPreview;
 
 	constructor(
 		private readonly editor: ICodeEditor,
@@ -418,6 +443,7 @@ export class AgentMentionController extends Disposable {
 		super();
 		this.attachmentStore = instantiationService.createInstance(AgentAttachmentStore);
 		this.codePreview = this._register(instantiationService.createInstance(MentionCodePreview));
+		this.pastePreview = this._register(instantiationService.createInstance(PastedTextPreview));
 		this.mentionMenu = this._register(instantiationService.createInstance(AgentMentionMenu, {
 			anchor: () => this.host.anchor,
 			cursor: () => this.getCursorAnchor(),
@@ -1098,7 +1124,9 @@ export class AgentMentionController extends Disposable {
 			if (this.editor.getSelection() && !this.editor.getSelection()?.isEmpty()) {
 				return;
 			}
-			if (mention.file) {
+			if (mention.file?.pasted) {
+				this.showPastedTextPreview(mention, { x: e.event.posx, y: e.event.posy });
+			} else if (mention.file) {
 				this.openFileAttachment(mention.file);
 			} else if (mention.kind === 'image' && mention.image) {
 				const index = this.imageMentions().indexOf(mention);
@@ -1919,10 +1947,11 @@ export class AgentMentionController extends Disposable {
 	}
 
 	/** A file chip; the copy is saved in the background and a send waits for it (see {@link whenMediaReady}). */
-	private insertFileAttachment(name: string, mime: string | undefined, size: number, replaceRange: IRange, source: Uint8Array | URI, extra?: Pick<IAgentFilePayload, 'pasted' | 'lines'>): void {
+	private insertFileAttachment(name: string, mime: string | undefined, size: number, replaceRange: IRange, source: Uint8Array | URI, extra?: Pick<IAgentFilePayload, 'pasted' | 'lines' | 'language' | 'languageLabel'>): void {
 		const id = `file-${generateUuid()}`;
 		const label = this.uniqueMediaName(name || 'file');
-		const file: IAgentFilePayload = { id, name: label, mime: storageMime(name, mime), size, ...extra };
+		// A folded paste arrives with the type of its guessed language already.
+		const file: IAgentFilePayload = { id, name: label, mime: extra?.pasted && mime ? mime : storageMime(name, mime), size, ...extra };
 		this.insertMention({ id, kind: 'file', label, file }, replaceRange);
 		this.prepareFile(file, source);
 	}
@@ -1963,7 +1992,79 @@ export class AgentMentionController extends Disposable {
 			return;
 		}
 		const bytes = new TextEncoder().encode(text);
-		this.insertFileAttachment(PASTED_TEXT_NAME, 'text/plain', bytes.byteLength, range, bytes, { pasted: true, lines: countLines(text) });
+		const language = guessPastedLanguage(text);
+		// Saved as `….json` / `….log`: the chip's icon, the preview and the agent's tools all see the type.
+		this.insertFileAttachment(PASTED_TEXT_NAME, storageMime(pastedFileName(language), 'text/plain'), bytes.byteLength, range, bytes, { pasted: true, lines: countLines(text), language: language.id, languageLabel: language.label });
+	}
+
+	/** A folded paste's text: from memory while it is being saved, else from its saved copy. */
+	private async pastedText(file: IAgentFilePayload): Promise<string | undefined> {
+		await this.filePreparations.get(file);
+		if (!file.path) {
+			return undefined;
+		}
+		try {
+			return (await this.fileService.readFile(URI.file(file.path))).value.toString();
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** The folded paste's chip goes back to being text in the composer, where it was. */
+	async unfoldPastedText(mention: IAgentMention): Promise<boolean> {
+		const file = mention.file;
+		const model = this.editor.getModel();
+		if (!file?.pasted || !model || !mention.decorationId) {
+			return false;
+		}
+		const text = await this.pastedText(file);
+		const range = text !== undefined && mention.decorationId ? model.getDecorationRange(mention.decorationId) : undefined;
+		if (text === undefined || !range || this.disposed) {
+			return false;
+		}
+		this.pastePreview.hide();
+		this.insertingMention = true;
+		try {
+			const end = text.length ? model.getPositionAt(model.getOffsetAt(range.getStartPosition()) + text.length) : range.getStartPosition();
+			this.editor.executeEdits('volt-agent-paste-unfold', [{ range, text }], [new Selection(end.lineNumber, end.column, end.lineNumber, end.column)]);
+			model.deltaDecorations([mention.decorationId], []);
+			mention.decorationId = undefined;
+			for (const list of [this.mentions, this.mentionCatalog]) {
+				const index = list.indexOf(mention);
+				if (index >= 0) {
+					list.splice(index, 1);
+				}
+			}
+		} finally {
+			this.insertingMention = false;
+		}
+		this.onDidRemoveMention?.(mention);
+		this.editor.focus();
+		return true;
+	}
+
+	/** Click on a folded paste: the text in a preview, with Paste as text, Open in editor and Remove. */
+	private showPastedTextPreview(mention: IAgentMention, anchor: { x: number; y: number }): void {
+		const file = mention.file;
+		if (!file) {
+			return;
+		}
+		void this.pastedText(file).then(text => {
+			if (text === undefined || this.disposed || !this.mentions.includes(mention)) {
+				return;
+			}
+			this.pastePreview.show({
+				title: PASTED_TEXT_NAME,
+				facts: [file.languageLabel && file.language !== 'plaintext' ? file.languageLabel : undefined, formatAttachmentSize(file.size), file.lines !== undefined ? formatLineCount(file.lines) : undefined].filter((part): part is string => !!part),
+				text,
+				language: file.language ?? 'plaintext',
+				anchor,
+				onUnfold: () => void this.unfoldPastedText(mention),
+				onOpen: () => this.openFileAttachment(file),
+				onRemove: () => this.removeMention(mention),
+				onHide: () => this.editor.focus(),
+			});
+		});
 	}
 
 	/** Text opens in an editor; PDFs, archives and the rest in their own app. */
@@ -2326,12 +2427,17 @@ export class AgentMentionController extends Disposable {
 
 	private hoverFor(mention: IAgentMention): MarkdownString {
 		if (mention.kind === 'image' && mention.image) {
+			// allow-any-unicode-next-line
 			return new MarkdownString(localize('voltAgent.imageChipHover', "{0} · {1} — click to open", mention.label, formatImageSize(mention.image.bytes.byteLength)));
 		}
+		if (mention.file?.pasted) {
+			return new MarkdownString(localize('voltAgent.pastedChipHover', "{0} · {1} · {2}. Click to preview it or turn it back into text", mention.label, mention.file.languageLabel ?? localize('voltAgent.pastedTextKind', "Text"), formatAttachmentSize(mention.file.size)));
+		}
 		if (mention.file) {
-			return new MarkdownString(localize('voltAgent.fileChipHover', "{0} · {1} · {2}. Click to open", mention.label, mention.file.pasted ? localize('voltAgent.pastedTextKind', "Text") : fileTypeLabel(mention.file.name, mention.file.mime), formatAttachmentSize(mention.file.size)));
+			return new MarkdownString(localize('voltAgent.fileChipHover', "{0} · {1} · {2}. Click to open", mention.label, fileTypeLabel(mention.file.name, mention.file.mime), formatAttachmentSize(mention.file.size)));
 		}
 		if (mention.kind === 'video' && mention.video) {
+			// allow-any-unicode-next-line
 			return new MarkdownString(localize('voltAgent.videoChipHover', "{0} · {1} — click to trim, cut out parts or pick a frame", mention.label, videoDetail(mention.video)));
 		}
 		if (mention.citation) {
@@ -2565,7 +2671,7 @@ export class AgentMentionController extends Disposable {
 			return;
 		}
 		const replaced = (this.editor.getSelections() ?? []).reduce((sum, selection) => sum + model.getValueLengthInRange(selection), 0);
-		if (!shouldFoldPaste(text, model.getValueLength(), replaced)) {
+		if (!shouldFoldPaste(text, model.getValueLength(), replaced, largePasteBytes(this.configurationService.getValue(AGENT_LARGE_PASTE_SETTING)))) {
 			return;
 		}
 		e.preventDefault();

@@ -30,6 +30,7 @@ import { AgentQuestionDraft, cursorAskQuestionResult, elicitationResult, elicita
 import { mapAcpToolKind } from '../../common/harness/workLog.js';
 import { ACP_IDLE_TIMINGS, ACP_STALL_NOTICE_TITLE, declaredToolWaitMs, IdleWatchdog, IIdleStageInfo, IIdleWatchdogTimings, IWatchdogClock, realWatchdogClock } from '../../common/harness/acpStall.js';
 import { ACP_RUN_BUDGET, IRunSupervisorOptions, RunSupervisor, SupervisorDirective } from '../../common/harness/supervisor.js';
+import { acpResourceBlock, AcpResourcePromptBlock } from '../../common/fileAttachments.js';
 import { isCursorPlanWall, isCursorPlanWallPrefix, isCursorTransientError, nextCursorFallback, normalizeCursorModelId } from '../../common/harness/cursorQuota.js';
 import { accessBridgeFor } from './bridges/accessBridges.js';
 import { AcpJsonRpcClient, AcpRequestAbandonedError, IAcpIncomingRequest } from './acpJsonRpc.js';
@@ -60,6 +61,8 @@ interface IAcpSession {
 	currentModeId?: string;
 	/** The agent accepts `image` prompt blocks (`promptCapabilities.image`). */
 	promptImages?: boolean;
+	/** The agent takes `resource` prompt blocks with the file's text (`promptCapabilities.embeddedContext`). */
+	promptEmbedded?: boolean;
 	/** Slash commands from the agent's last `available_commands_update`, without the slash. */
 	commands?: ReadonlySet<string>;
 	/**
@@ -109,7 +112,7 @@ export interface IAcpSupervisionOptions {
 
 type TurnFollowUp = { readonly reason: 'stall' | 'steer'; readonly prompt: IAcpPromptBlock[] };
 
-type IAcpPromptBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string };
+type IAcpPromptBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string } | AcpResourcePromptBlock;
 
 /** One `send()`: the event queue the generator drains plus the state supervision needs. */
 class AcpPromptTurn {
@@ -557,7 +560,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			agentCapabilities?: {
 				session?: { _meta?: unknown; modes?: { availableModes?: { id: string; name?: string }[] } };
 				mcpCapabilities?: IAcpMcpCapabilities;
-				promptCapabilities?: { image?: boolean };
+				promptCapabilities?: { image?: boolean; embeddedContext?: boolean };
 			};
 			configOptions?: IAcpConfigOption[];
 		};
@@ -591,6 +594,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			modes: created.modes?.availableModes ?? initialized.agentCapabilities?.session?.modes?.availableModes,
 			currentModeId: created.modes?.currentModeId,
 			promptImages: initialized.agentCapabilities?.promptCapabilities?.image === true,
+			promptEmbedded: initialized.agentCapabilities?.promptCapabilities?.embeddedContext === true,
 			setupKey: this.setupKey(req),
 			hostMcp,
 			steering: (initialized as { _meta?: { steering?: { supported?: unknown } } })._meta?.steering?.supported === true,
@@ -1290,6 +1294,12 @@ export class AcpAgentProvider implements IAgentProvider {
 			for (const image of images) {
 				blocks.push({ type: 'image', mimeType: image.mediaType, data: image.data });
 			}
+		}
+		for (const resource of msg.resources ?? []) {
+			blocks.push(acpResourceBlock(resource, !!live.promptEmbedded));
+		}
+		if (msg.resources?.length) {
+			this.logService.info(`[ACP] ${this.id} prompt resources: ${blocks.filter(block => block.type === 'resource' || block.type === 'resource_link').map(block => block.type).join(', ')}`);
 		}
 		return blocks;
 	}

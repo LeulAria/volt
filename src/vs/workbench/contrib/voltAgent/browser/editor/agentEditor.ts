@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentEditor.css';
+import '../media/agentComposerInput.css';
 import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';

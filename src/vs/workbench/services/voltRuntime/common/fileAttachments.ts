@@ -24,6 +24,8 @@ export interface IFileAttachmentInfo {
 	/** Pasted text folded into a file: its line count. */
 	readonly lines?: number;
 	readonly pasted?: boolean;
+	/** A folded paste's guessed language (`JSON`, `Log`); plain text has none. */
+	readonly languageLabel?: string;
 }
 
 /** `812 B`, `41 KB`, `2.1 MB`. */
@@ -52,10 +54,11 @@ export function fileTypeLabel(name: string, mime?: string): string {
 	return subtype && /^[a-z0-9]{1,8}$/.test(subtype) ? subtype.toUpperCase() : 'File';
 }
 
-/** `PDF, 2.1 MB` or, for a folded paste, `pasted text, 41 KB, 812 lines`. */
+/** `PDF, 2.1 MB` or, for a folded paste, `pasted text, JSON, 41 KB, 1,203 lines`. */
 export function fileAttachmentFacts(info: IFileAttachmentInfo): string {
 	if (info.pasted) {
-		return [`pasted text`, formatAttachmentSize(info.size), info.lines !== undefined ? `${info.lines} ${info.lines === 1 ? 'line' : 'lines'}` : undefined].filter(Boolean).join(', ');
+		const kind = info.languageLabel && info.languageLabel !== 'Text' ? info.languageLabel : undefined;
+		return [`pasted text`, kind, formatAttachmentSize(info.size), info.lines !== undefined ? `${info.lines.toLocaleString('en-US')} ${info.lines === 1 ? 'line' : 'lines'}` : undefined].filter(Boolean).join(', ');
 	}
 	return `${fileTypeLabel(info.name, info.mime)}, ${formatAttachmentSize(info.size)}`;
 }
@@ -74,4 +77,49 @@ export function attachmentSavedLine(info: IFileAttachmentInfo, index?: number): 
 		return `[Image${number} "${info.name}" is saved at: ${info.path}]`;
 	}
 	return `[File${number} "${info.name}" (${fileAttachmentFacts(info)}) is saved at: ${info.path}]`;
+}
+
+/**
+ * A file the user attached, as the agent's prompt carries it next to the text: ACP `resource`
+ * (the text itself, for agents with `promptCapabilities.embeddedContext`) or `resource_link`
+ * (a reference every ACP agent must take). The prompt text names the saved path either way.
+ */
+export interface IVoltResourceAttachment {
+	/** `file:///…` of the saved copy. */
+	readonly uri: string;
+	readonly name: string;
+	readonly mimeType?: string;
+	readonly size?: number;
+	/** The file's text, when it should travel inside the prompt (a folded paste). */
+	readonly text?: string;
+}
+
+/** Folded pastes up to this size travel inside the prompt; bigger ones only as a link. */
+export const MAX_EMBEDDED_RESOURCE_CHARS = 512 * 1024;
+
+export type AcpResourcePromptBlock =
+	| { type: 'resource'; resource: { uri: string; mimeType?: string; text: string } }
+	| { type: 'resource_link'; uri: string; name: string; mimeType?: string; size?: number };
+
+/**
+ * The ACP content block for an attachment. Claude and Codex wrap an embedded resource in
+ * `<context ref="…">`, so the model reads the whole paste in this turn without a tool call;
+ * agents without embeddedContext (Cursor) get the link and read the file with their tools.
+ */
+export function acpResourceBlock(resource: IVoltResourceAttachment, embeddedContext: boolean): AcpResourcePromptBlock {
+	if (embeddedContext && resource.text !== undefined && resource.text.length <= MAX_EMBEDDED_RESOURCE_CHARS) {
+		return { type: 'resource', resource: { uri: resource.uri, ...(resource.mimeType ? { mimeType: resource.mimeType } : {}), text: resource.text } };
+	}
+	return { type: 'resource_link', uri: resource.uri, name: resource.name, ...(resource.mimeType ? { mimeType: resource.mimeType } : {}), ...(resource.size !== undefined ? { size: resource.size } : {}) };
+}
+
+/**
+ * For a model Volt runs itself (no ACP): a folded paste's text goes after the prompt the way
+ * Claude's adapter frames embedded resources. Others stay as the saved-path line.
+ */
+export function inlineResourceContext(resources: readonly IVoltResourceAttachment[] | undefined): string {
+	return (resources ?? [])
+		.filter(resource => resource.text !== undefined && resource.text.length <= MAX_EMBEDDED_RESOURCE_CHARS)
+		.map(resource => `<context ref="${resource.uri}">\n${resource.text}\n</context>`)
+		.join('\n');
 }

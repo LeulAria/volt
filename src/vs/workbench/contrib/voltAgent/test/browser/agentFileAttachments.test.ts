@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { attachmentRoute, countLines, fileChipDetail, heicJpegName, isSendableImageMime, isTextAttachment, LARGE_PASTE_BYTES, MAX_COMPOSER_CHARS, shouldFoldPaste, storageMime } from '../../browser/composer/agentFileAttachments.js';
+import { attachmentRoute, countLines, fileChipDetail, heicJpegName, isSendableImageMime, isTextAttachment, LARGE_PASTE_BYTES, largePasteBytes, MAX_COMPOSER_CHARS, shouldFoldPaste, storageMime } from '../../browser/composer/agentFileAttachments.js';
 import { attachmentPathLines, IAgentDisplayMention, imageAttachmentsFromMentions } from '../../browser/composer/agentMentions.js';
 
 suite('Agent file attachments', () => {
@@ -61,13 +61,22 @@ suite('Agent file attachments', () => {
 		// A small paste that would push the composer past the limit; replacing a selection makes room.
 		assert.ok(shouldFoldPaste('hello', MAX_COMPOSER_CHARS - 2));
 		assert.ok(!shouldFoldPaste('hello', MAX_COMPOSER_CHARS - 2, 10));
+		// The limit comes from the setting.
+		assert.ok(shouldFoldPaste('a'.repeat(8 * 1024), 0, 0, largePasteBytes(8)));
+		assert.ok(!shouldFoldPaste('a'.repeat(8 * 1024), 0, 0, largePasteBytes(32)));
+		assert.ok(!shouldFoldPaste('a'.repeat(100 * 1024), 0, 0, largePasteBytes(0)));
+		assert.ok(shouldFoldPaste('a'.repeat(MAX_COMPOSER_CHARS + 1), 0, 0, largePasteBytes(0)));
+		assert.strictEqual(largePasteBytes(undefined), LARGE_PASTE_BYTES);
+		assert.strictEqual(largePasteBytes(-3), LARGE_PASTE_BYTES);
+		assert.strictEqual(largePasteBytes(0.2), 1024);
 	});
 
 	test('counts lines and describes the chip', () => {
 		assert.strictEqual(countLines('a\nb\nc'), 3);
 		assert.strictEqual(countLines('a\nb\n'), 2);
 		assert.strictEqual(countLines(''), 0);
-		assert.strictEqual(fileChipDetail({ size: 41 * 1024, pasted: true, lines: 812 }), '41 KB · 812 lines');
+		assert.strictEqual(fileChipDetail({ size: 41 * 1024, pasted: true, lines: 812 }), '· 41 KB · 812 lines');
+		assert.strictEqual(fileChipDetail({ size: 48 * 1024, pasted: true, lines: 1203 }), '· 48 KB · 1,203 lines');
 		assert.strictEqual(fileChipDetail({ size: 2.1 * 1024 * 1024 }), '2.1 MB');
 	});
 

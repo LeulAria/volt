@@ -16,6 +16,9 @@ export const AGENT_NEW_CHAT_DRAFT_SETTING = 'volt.agent.composer.restoreUnsentDr
 /** The model a new chat starts on (a catalog ref). Empty: the model picked last. A project's own default wins. */
 export const AGENT_DEFAULT_MODEL_SETTING = 'volt.agent.defaultModel';
 
+/** Pastes this large (KiB) become a `Pasted text` attachment instead of composer text. 0 keeps them inline. */
+export const AGENT_LARGE_PASTE_SETTING = 'volt.agent.composer.largePasteKB';
+
 Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfiguration({
 	id: 'volt.agent.composer',
 	title: localize('voltAgent.composerConfigTitle', "Agent Composer"),
@@ -30,6 +33,12 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			type: 'boolean',
 			default: true,
 			description: localize('voltAgent.restoreUnsentDraft', "When a new chat was left with text that was never sent, New Agent opens that chat again with the text still in the composer."),
+		},
+		[AGENT_LARGE_PASTE_SETTING]: {
+			type: 'number',
+			default: 32,
+			minimum: 0,
+			description: localize('voltAgent.largePaste', "Text pasted into the agent composer that is at least this many KB becomes a \"Pasted text\" attachment (click it to preview or turn it back into text). 0 keeps pastes inline. Cmd+Shift+V always pastes as text."),
 		},
 		[AGENT_DEFAULT_MODEL_SETTING]: {
 			type: 'string',
