@@ -510,6 +510,8 @@ export interface IAgentAssistantMessage {
 	usageExcludesPrompt?: boolean;
 	/** On the chat's first reply: its first prompt-side `used` (system prompt, tools and the first message). */
 	tokensBase?: number;
+	/** Characters of tool output the transcript does not keep (reads, plans). Providers without usage are estimated from it. */
+	toolOutputChars?: number;
 	cancelled?: boolean;
 	activity?: IAgentActivity;
 	/** The runtime run that produced this reply; Cursor's error tray calls it the request id. */
@@ -2293,6 +2295,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onAccessDecision: (requestId, effect, scope, pattern) => this.runtime.respondToAccessRequest(requestId, effect, scope, pattern),
 			onBuildPlan: () => this.setMode('Agent'),
 			onBuildCreatedPlan: plan => this.buildCreatedPlan(plan),
+			onBuildPlanInWorktree: plan => this.buildPlanInWorktree(plan, message.id),
+			onEditPlan: () => this.recordReply(message, true, 'done'),
 			onRevisePlan: plan => this.revisePlan(plan),
 			onSavePlan: plan => this.savePlanDocument(plan),
 			streaming: !!message.activity?.streaming,
@@ -5259,6 +5263,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.setMode('Agent');
 		const prompt = createdPlanPrompt(plan);
 		this.enqueueOrSendText(prompt.text, { text: prompt.display });
+	}
+
+	/** Approve a plan in its own worktree chat: it forks from the plan's reply, starts in Agent mode on the composer's model, with the plan as its prompt. */
+	private buildPlanInWorktree(plan: IPlanBlock, turnId: string | undefined): void {
+		const prompt = createdPlanPrompt(plan);
+		// The model the composer shows now runs the worktree chat, so the user can pick another model before approving.
+		const selected = this.selectedModel();
+		const model = selected ? { ref: selected.ref, label: selected.name } : undefined;
+		this.forkService.forkChat(this.sessionKey, { throughTurnId: turnId, workspace: 'worktree', mode: 'Agent', message: prompt.text, open: true, ...(model ? { model } : {}) })
+			.catch(err => this.notificationService.error(localize('voltAgent.planWorktreeFailed', "Could not start the worktree chat: {0}", err instanceof Error ? err.message : String(err))));
 	}
 
 	/** Plan mode again, with the composer ready for the feedback; the agent answers with a new propose_plan. */

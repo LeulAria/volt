@@ -710,9 +710,11 @@ export function cancelAgentBrowserCalls(sessionId: string): void {
 	}
 }
 
-CommandsRegistry.registerCommand(AUTOMATE_BROWSER_COMMAND_ID, (accessor: ServicesAccessor, sessionId: string, tool: VoltBrowserAutomationToolName, args?: Record<string, unknown>, options?: IVoltBrowserAutomationOptions) => {
+CommandsRegistry.registerCommand(AUTOMATE_BROWSER_COMMAND_ID, (accessor: ServicesAccessor, callerId: string, tool: VoltBrowserAutomationToolName, args?: Record<string, unknown>, options?: IVoltBrowserAutomationOptions) => {
 	// The accessor is only valid now, not once the call's turn in the queue comes.
 	const services: IAutomationServices = { workspace: accessor.get(IAgentWorkspaceService), views: accessor.get(IVoltBrowserViews) };
+	// A warm-pool agent calls with its pool id; its browser tab lives under the chat it was given.
+	const sessionId = accessor.get(IAgentRuntimeService).chatFor(callerId);
 	const source = new CancellationTokenSource(options?.token);
 	let calls = inflight.get(sessionId);
 	if (!calls) {
@@ -733,8 +735,8 @@ CommandsRegistry.registerCommand(AUTOMATE_BROWSER_COMMAND_ID, (accessor: Service
 	});
 });
 
-CommandsRegistry.registerCommand(BROWSER_PAGE_URL_COMMAND_ID, (_accessor: ServicesAccessor, sessionId: string): string | undefined => {
-	return agentSessionBrowser(sessionId)?.input.url;
+CommandsRegistry.registerCommand(BROWSER_PAGE_URL_COMMAND_ID, (accessor: ServicesAccessor, sessionId: string): string | undefined => {
+	return agentSessionBrowser(accessor.get(IAgentRuntimeService).chatFor(sessionId))?.input.url;
 });
 
 /**

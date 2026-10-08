@@ -14,6 +14,7 @@ import { fromNow } from '../../../../base/common/date.js';
 import { localize } from '../../../../nls.js';
 import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { defaultButtonStyles } from '../../../../platform/theme/browser/defaultStyles.js';
@@ -47,6 +48,7 @@ export class ConnectedAgentsPage {
 	private readonly mcp: IVoltExternalMcpService | undefined;
 	private readonly configuration: IConfigurationService;
 	private readonly clipboard: IClipboardService;
+	private readonly dialogs: IDialogService;
 	private readonly contextView: IContextViewService;
 
 	constructor(instantiationService: IInstantiationService, private readonly host: IConnectedAgentsPageHost) {
@@ -57,11 +59,12 @@ export class ConnectedAgentsPage {
 			} catch {
 				mcp = undefined; // web: no main process
 			}
-			return { mcp, configuration: accessor.get(IConfigurationService), clipboard: accessor.get(IClipboardService), contextView: accessor.get(IContextViewService) };
+			return { mcp, configuration: accessor.get(IConfigurationService), clipboard: accessor.get(IClipboardService), contextView: accessor.get(IContextViewService), dialogs: accessor.get(IDialogService) };
 		});
 		this.mcp = services.mcp;
 		this.configuration = services.configuration;
 		this.clipboard = services.clipboard;
+		this.dialogs = services.dialogs;
 		this.contextView = services.contextView;
 	}
 
@@ -177,7 +180,21 @@ export class ConnectedAgentsPage {
 			const revoke = host.store.add(new Button(row, { ...defaultButtonStyles, secondary: true }));
 			revoke.label = localize('connectedAgents.revoke', "Revoke");
 			revoke.element.classList.add('revoke');
-			host.store.add(revoke.onDidClick(() => void this.mcp?.revoke(grant.id).then(() => host.rerender())));
+			host.store.add(revoke.onDidClick(() => void this.confirmRevoke(grant, host)));
+		}
+	}
+
+	/** Revoking cuts the agent off at once: the user confirms first, naming the agent. */
+	private async confirmRevoke(grant: IExternalMcpGrantView, host: IConnectedAgentsPageHost): Promise<void> {
+		const { confirmed } = await this.dialogs.confirm({
+			type: 'warning',
+			message: localize('connectedAgents.revokeConfirm', "Revoke {0}?", grant.clientName),
+			detail: localize('connectedAgents.revokeDetail', "It loses access to Volt right away. It can connect again later, but it has to be approved again."),
+			primaryButton: localize({ key: 'connectedAgents.revokeButton', comment: ['&& denotes a mnemonic'] }, "&&Revoke"),
+		});
+		if (confirmed) {
+			await this.mcp?.revoke(grant.id);
+			host.rerender();
 		}
 	}
 

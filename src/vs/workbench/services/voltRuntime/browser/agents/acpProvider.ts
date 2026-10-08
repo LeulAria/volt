@@ -1257,6 +1257,7 @@ export class AcpAgentProvider implements IAgentProvider {
 						turn.assistant = '';
 						turn.usedTools = false;
 						await this.setConfigOption(live, sessionId, modelConfigId, fallback);
+						turn.push({ type: 'model.reported', provider: this.id, model: fallback });
 						turn.push({
 							type: 'retry',
 							attempt: tried.length,
@@ -1293,6 +1294,7 @@ export class AcpAgentProvider implements IAgentProvider {
 					turn.assistant = '';
 					turn.usedTools = false;
 					await this.setConfigOption(live, sessionId, modelConfigId, fallback);
+					turn.push({ type: 'model.reported', provider: this.id, model: fallback });
 					turn.push({
 						type: 'retry',
 						attempt: tried.length,

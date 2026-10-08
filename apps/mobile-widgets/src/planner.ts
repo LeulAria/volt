@@ -189,6 +189,26 @@ export function planActivities(
 	return { actions, ...(nextCheckAt !== undefined ? { nextCheckAt } : {}) };
 }
 
+/**
+ * On app launch iOS still shows the activities the last run started. Only the one matching the best-ranked
+ * running turn stays (none when no tracked activity matches a running turn); every other one ends at once, so
+ * a relaunch never leaves stale rows on the Lock Screen. The regular plan starts the rest.
+ */
+export function planLaunchSweep(tracked: readonly ITrackedActivity[], views: readonly IAgentChatView[]): IPlan {
+	const running = rankActive(views).filter(view => ACTIVE_PHASES.has(view.phase));
+	let kept: ITrackedActivity | undefined;
+	for (const view of running) {
+		kept = tracked.find(activity => activity.chatId === view.chatId);
+		if (kept) {
+			break;
+		}
+	}
+	const actions: ActivityAction[] = tracked
+		.filter(activity => activity !== kept)
+		.map(activity => ({ kind: 'end', activityId: activity.activityId, chatId: activity.chatId, dismissAt: 0 }));
+	return { actions };
+}
+
 /** Applies the plan's outcome to the tracked list (the caller adds started activities when iOS returns their ids). */
 export function applyPlan(tracked: readonly ITrackedActivity[], actions: readonly ActivityAction[], now: number): ITrackedActivity[] {
 	const ended = new Set(actions.filter(action => action.kind === 'end').map(action => action.activityId));

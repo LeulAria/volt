@@ -6,6 +6,7 @@
 import assert from 'assert';
 import { toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
 import { AgentSessionAttention, AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -27,6 +28,10 @@ class FakeRuntime {
 
 	getOrCreateSession() {
 		return { activeRun: { status: this.status } };
+	}
+
+	listCatalog() {
+		return [{ kind: 'model', providerId: 'cursor-acp', id: 'composer-2.5', label: 'Composer 2.5' }];
 	}
 
 	emit(event: IVoltEvent, runId = 'run-1'): void {
@@ -73,11 +78,24 @@ suite('Agent session controller', () => {
 			{ getWorkspace: () => ({ folders: [] }) } as unknown as IWorkspaceContextService,
 			{ openSurface: () => undefined } as unknown as IAgentWorkspaceService,
 			history,
+			{ stat: () => Promise.reject(new Error('no file service')) } as unknown as IFileService,
 		));
 		const changes: IAgentSessionChange[] = [];
 		store.add(controller.onDidChange(change => changes.push(change)));
 		return { runtime, host, controller, records, changes, attention };
 	}
+
+	test('the handoff divider names the model the provider reports running', () => {
+		const { runtime, host } = setup();
+		const user = host.messages[0] as { handoff?: { toLabel: string; by: string; at: number } };
+		user.handoff = { toLabel: 'Claude Haiku 4.5', by: 'user', at: 0 };
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
+		runtime.emit({ type: 'model.reported', provider: 'cursor-acp', model: 'composer-2.5' });
+		assert.strictEqual(user.handoff?.toLabel, 'Composer 2.5');
+		// A later report of the same model leaves the divider alone.
+		runtime.emit({ type: 'model.reported', provider: 'cursor-acp', model: 'composer-2.5' });
+		assert.strictEqual(user.handoff?.toLabel, 'Composer 2.5');
+	});
 
 	test('an approval request needs attention until every approval is answered', () => {
 		const { runtime, attention } = setup();

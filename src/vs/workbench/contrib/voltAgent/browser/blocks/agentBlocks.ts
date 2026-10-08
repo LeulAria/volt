@@ -170,7 +170,7 @@ export function createPlanBlock(partial: Omit<IPlanBlock, 'type' | 'status'> & {
 
 /** The plan tools: cursor-agent's `Create Plan` ({ name, plan, todos }), the native create_plan, and Volt's propose_plan. */
 export function isPlanTool(name: string, title?: string, input?: string): boolean {
-	return /^create[ _-]?plan$/i.test(name.trim()) || /^create[ _-]?plan$/i.test((title ?? '').trim()) || /"_toolName"\s*:\s*"createPlan"/.test(input ?? '') || voltHostToolName(name, title) === PROPOSE_PLAN_TOOL_NAME || /"toolName"\s*:\s*"propose_plan"/.test(input ?? '');
+	return /^create[ _-]?plan$/i.test(name.trim()) || /^create[ _-]?plan$/i.test((title ?? '').trim()) || /^exit[ _-]?plan[ _-]?mode$/i.test(name.trim()) || /^exit[ _-]?plan[ _-]?mode$/i.test((title ?? '').trim()) || /"_toolName"\s*:\s*"createPlan"/.test(input ?? '') || voltHostToolName(name, title) === PROPOSE_PLAN_TOOL_NAME || /"toolName"\s*:\s*"propose_plan"/.test(input ?? '');
 }
 
 /** A plan tool's input. Cursor wraps MCP calls as `{ toolName, args }`, so the arguments are unwrapped first. */
@@ -1299,7 +1299,7 @@ export function isFileChangeTool(name: string, title?: string, kind?: ToolKind):
 	return MUTATING_TOOL_RE.test(s);
 }
 
-function isHiddenExploreToolBlock(block: AgentBlock): boolean {
+export function isHiddenExploreToolBlock(block: AgentBlock): boolean {
 	return block.type === 'tool' && isExploreTool(block.name, block.title);
 }
 

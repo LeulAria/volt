@@ -105,6 +105,8 @@ export type IVoltEvent =
 	 * was on before resumed, and only the turns it missed went to it.
 	 */
 	| { type: 'context.handoff'; reason: HandoffReason; fromLabel?: string; toLabel: string; tokens: number; budget: number; reused: boolean; turns: number; verbatimTurns: number; condensedTurns: number; omittedTurns: number; toolCalls: number; files: number; text: string }
+	/** The provider runs a different model than the one requested (Cursor's silent fallback). */
+	| { type: 'model.reported'; provider: string; model: string }
 	| { type: 'context.compaction'; id: string; status?: VoltCompactionStatus; trigger?: 'manual' | 'auto'; preTokens?: number; postTokens?: number; durationMs?: number; summary?: string; summaryDelta?: string; error?: string }
 	| { type: 'error'; message: string; retryable?: boolean }
 	/** Provider status that is not assistant prose: usage limits, retries, and other ACP notices. */

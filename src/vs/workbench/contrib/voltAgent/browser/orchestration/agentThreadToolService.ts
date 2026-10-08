@@ -687,12 +687,13 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			}
 		}
 		const sourceMeta = this.history.get(sourceId);
+		const mode = options.mode ?? sourceMeta?.mode;
 		// The checkout as it is now: its commits, not uncommitted edits. Merging back diffs from here.
 		const base = await this.headOf(sourceMeta?.worktreePath ?? project?.root.fsPath);
 		handle.setMeta({
 			title,
 			...(model ? { model: model.label } : {}),
-			...(sourceMeta?.mode ? { mode: sourceMeta.mode } : {}),
+			...(mode ? { mode } : {}),
 			forkOf: { id: sourceId, title: sourceTitle, turns: turns.length, ...(base ? { base } : {}) },
 		});
 		await handle.flush();
@@ -723,7 +724,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			const result = await this.orchestrator.submit(forkId, {
 				text: forkPrompt({ id: sourceId, title: sourceTitle }, turns.length, options.message, options.workspace === 'worktree' ? branch : undefined),
 				display: { text: options.message },
-				mode: modeLabel(sourceMeta?.mode),
+				mode: modeLabel(mode),
 				...(model ? { modelRef: model.ref } : {}),
 				...(options.from ? { host: { fromThread: options.from } } : {}),
 			}, 'auto');

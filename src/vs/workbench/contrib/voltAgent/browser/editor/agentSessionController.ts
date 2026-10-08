@@ -5,7 +5,9 @@
 
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { alwaysAllowPattern } from '../../../../services/voltRuntime/common/access/wildcard.js';
 import { mergeToolInput } from '../../../../services/voltRuntime/common/acpToolInput.js';
@@ -15,7 +17,7 @@ import { runStatusLine } from '../../../../services/voltRuntime/common/harness/w
 import { AgentSessionAttention, AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { appendProviderNotice, appendSandboxDenial, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isPlanTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments } from '../blocks/agentBlocks.js';
+import { appendProviderNotice, appendSandboxDenial, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isPlanTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments, isHiddenExploreToolBlock } from '../blocks/agentBlocks.js';
 import { sameHostToolArgs } from '../blocks/agentHostToolActivity.js';
 import { classifySupervisionNotice, stampTodoSteps } from '../chrome/agentTimeline.js';
 import { agentMessagePlainText } from '../context/agentContextUsage.js';
@@ -186,6 +188,7 @@ export class AgentSessionController extends Disposable {
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
 		@IAgentWorkspaceService private readonly agentWorkspace: IAgentWorkspaceService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IFileService private readonly fileService: IFileService,
 	) {
 		super();
 		this._register(runtime.onEvent(host.sessionId, envelope => this.apply(envelope)));
@@ -903,6 +906,15 @@ export class AgentSessionController extends Disposable {
 				if (image) {
 					this.attachSnapshotImage(last, event.callId, image);
 				}
+				// Read and plan output is not kept in the transcript text, but the model read it: the context meter estimates it.
+				const keptInText = block?.type === 'terminal' || (block?.type === 'tool' && !isHiddenExploreToolBlock(block));
+				const outputChars = (event.output || output).length;
+				if (!keptInText && outputChars > 0) {
+					last.toolOutputChars = (last.toolOutputChars ?? 0) + outputChars;
+				} else if (!keptInText) {
+					// Cursor and Grok end a read without its content: the file on disk is what the model received.
+					this.countReadFile(last, event.callId);
+				}
 				if (block?.type === 'terminal') {
 					block.output = unwrapOutputFence(event.output || output);
 					block.status = event.error ? 'error' : 'complete';
@@ -1111,6 +1123,9 @@ export class AgentSessionController extends Disposable {
 				}
 				break;
 			}
+			case 'model.reported':
+				this.applyReportedModel(last, event);
+				break;
 			case 'context.compaction':
 				this.applyCompaction(last, activity, event);
 				break;
@@ -1244,6 +1259,47 @@ export class AgentSessionController extends Disposable {
 			this.previewTimer = undefined;
 			this.openPreview(url);
 		}, delay);
+	}
+
+	/**
+	 * The divider names the model the provider reports running, not the one requested: Cursor can fall back
+	 * to Composer 2.5 after a plan wall, and the handoff said Claude Haiku.
+	 */
+	private applyReportedModel(last: IAgentAssistantMessage, event: Extract<IVoltEvent, { type: 'model.reported' }>): void {
+		const index = this.host.messages.lastIndexOf(last);
+		const user = this.host.messages[index - 1];
+		if (user?.kind !== 'user' || user.id !== last.id) {
+			return;
+		}
+		const item = this.runtime.listCatalog().find(entry => entry.kind === 'model' && entry.providerId === event.provider && (entry.id === event.model || entry.id.replace(/\[.*\]$/, '') === event.model));
+		const label = item?.label ?? event.model;
+		let changed = false;
+		if (user.contextHandoff && user.contextHandoff.toLabel !== label) {
+			user.contextHandoff = { ...user.contextHandoff, toLabel: label };
+			changed = true;
+		}
+		if (user.handoff && user.handoff.toLabel !== label) {
+			user.handoff = { ...user.handoff, toLabel: label };
+			changed = true;
+		}
+		if (changed) {
+			this.host.recordUser?.(user);
+		}
+	}
+
+	/** Sizes a finished read from disk into the reply's unkept tool output (the whole file: the runtime sends no range). */
+	private countReadFile(message: IAgentAssistantMessage, callId: string): void {
+		const item = this.findActivityByCallId(message, callId);
+		const path = item?.kind === 'read' ? item.path ?? item.files?.[0] : undefined;
+		if (!path) {
+			return;
+		}
+		this.fileService.stat(URI.file(path)).then(stat => {
+			if (stat.isFile && stat.size > 0) {
+				message.toolOutputChars = (message.toolOutputChars ?? 0) + stat.size;
+				this.fire({ kind: 'usage' });
+			}
+		}, () => { /* Not a local file: the estimate stays without it. */ });
 	}
 
 	private findActivityByCallId(message: IAgentAssistantMessage, callId: string): IAgentActivityItem | undefined {

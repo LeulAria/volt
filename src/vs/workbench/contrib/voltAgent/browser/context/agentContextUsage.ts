@@ -90,6 +90,8 @@ export interface IContextUsageMessage {
 	readonly usageExcludesPrompt?: boolean;
 	/** The chat's first prompt-side occupancy (system prompt, tools, first message), on its first reply. */
 	readonly tokensBase?: number;
+	/** Tool output the transcript does not keep (file reads): the model read it, so it sits in the context. */
+	readonly toolOutputChars?: number;
 	readonly tokensIn?: number;
 	readonly tokensOut?: number;
 	readonly tokensCache?: number;
@@ -169,7 +171,12 @@ export function estimateTokensFromText(text: string): number {
 }
 
 export function estimateMessageTokens(message: IContextUsageMessage): number {
-	return estimateTokensFromText(messageOccupancyText(message));
+	return estimateTokensFromText(messageOccupancyText(message)) + toolOutputTokens(message.toolOutputChars);
+}
+
+/** Tool output is counted at the same four characters per token as the rest of the transcript. */
+export function toolOutputTokens(chars: number | undefined): number {
+	return chars && chars > 0 ? Math.ceil(chars / 4) : 0;
 }
 
 export function agentMessagePlainText(message: IContextUsageMessage): string {
@@ -221,12 +228,12 @@ export function formatContextPercent(percent: number): string {
 	return `${Math.round(percent)}%`;
 }
 
-/** "28% Full" — the muted line under the popover title. */
+/** "28% Full", the muted line under the popover title. */
 export function formatContextFullLabel(percent: number): string {
 	return `${formatContextPercent(percent)} Full`;
 }
 
-/** "~71.6K / 256K Tokens" — the right side of that same line. */
+/** "~71.6K / 256K Tokens", the right side of that same line. */
 export function formatContextWindowLabel(used: number, limit: number): string {
 	return `~${formatContextTokens(used)} / ${formatContextTokens(limit)} Tokens`;
 }
