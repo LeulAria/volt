@@ -176,6 +176,38 @@
 	direction: rtl;
 }
 
+/* A machine's CPU and memory bars in the Run on menu: thin, muted until they fill up. */
+.volt-menu-load {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	flex-shrink: 0;
+}
+
+.volt-menu-load-bar {
+	display: inline-block;
+	width: 28px;
+	height: 4px;
+	border-radius: 2px;
+	background: var(--vscode-widget-border, rgba(127, 127, 127, 0.25));
+	overflow: hidden;
+}
+
+.volt-menu-load-fill {
+	display: block;
+	height: 100%;
+	border-radius: 2px;
+	background: var(--vscode-charts-blue, #3794ff);
+}
+
+.volt-menu-load-bar.cpu .volt-menu-load-fill {
+	background: var(--vscode-charts-green, #3fb950);
+}
+
+.volt-menu-load-bar.memory .volt-menu-load-fill {
+	background: var(--vscode-charts-purple, #a371f7);
+}
+
 .volt-menu-stats {
 	display: inline-flex;
 	gap: 4px;

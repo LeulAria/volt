@@ -31,10 +31,11 @@ suite('Agent worktrees', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('run target defaults to the same branch and only offers that or a new worktree', () => {
-		assert.deepStrictEqual([...AGENT_RUN_ON_OPTIONS], ['same-branch', 'worktree']);
+	test('run target defaults to the same branch and offers that, a new worktree, or the cloud', () => {
+		assert.deepStrictEqual([...AGENT_RUN_ON_OPTIONS], ['same-branch', 'worktree', 'cloud']);
 		assert.strictEqual(normalizeAgentRunOn(undefined), 'same-branch');
-		assert.strictEqual(normalizeAgentRunOn('cloud'), 'same-branch');
+		assert.strictEqual(normalizeAgentRunOn('cloud'), 'cloud');
+		assert.strictEqual(normalizeAgentRunOn('nowhere'), 'same-branch');
 		assert.strictEqual(normalizeAgentRunOn('worktree'), 'worktree');
 		assert.strictEqual(agentRunOnStorageKey('project-1'), 'volt.agent.runOn.project-1');
 		assert.strictEqual(agentRunOnStorageKey(undefined), 'volt.agent.runOn.default');

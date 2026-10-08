@@ -194,6 +194,7 @@ import './contrib/voltAgent/browser/orchestration/agentWorkspaceMover.js';
 import './contrib/voltAgent/browser/orchestration/agentMoveChat.contribution.js';
 import './services/voltRuntime/electron-browser/voltGit.contribution.js';
 import './services/voltRuntime/electron-browser/voltUsage.contribution.js';
+import './services/voltRuntime/electron-browser/voltRelay.contribution.js';
 import './contrib/voltProjects/electron-browser/voltProjects.contribution.js';
 
 // Volt dev hot reload (VSCODE_DEV only)

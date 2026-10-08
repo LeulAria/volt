@@ -906,6 +906,21 @@ export class AgentModelPicker extends Disposable {
 		return true;
 	}
 
+	/** Shows a chat's own model without making it the default for new chats. False when it is not in the catalog. */
+	showRef(ref: string): boolean {
+		const model = this.catalog.find(option => option.ref === ref);
+		if (!model) {
+			return false;
+		}
+		if (model.ref !== this.currentModel || this.modelAuto) {
+			this.currentModel = model.ref;
+			this.modelAuto = false;
+			this.pickerProviderId = model.family;
+			this.host.onDidChange?.();
+		}
+		return true;
+	}
+
 	private selectModel(model: IModelOption): void {
 		this.currentModel = model.ref;
 		this.setModelAuto(false);

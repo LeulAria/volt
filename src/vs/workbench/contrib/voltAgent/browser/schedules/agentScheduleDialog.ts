@@ -11,6 +11,9 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { AgentScheduleSpec, AgentScheduleTarget, describeSchedule, formatTimeOfDay, IAgentSchedule, IAgentScheduleInput, MIN_SCHEDULE_INTERVAL_MS, nextScheduleRun, parseTimeOfDay } from '../../../../services/voltRuntime/common/schedules/agentSchedules.js';
+import { AgentScheduleTriggerKind, formatWebhookFilter, IAgentWebhookFilter, IAgentWebhookSignature, IAgentWebhookTrigger, newWebhookTrigger, parseWebhookFilter, WebhookSignatureKind } from '../../../../services/voltRuntime/common/schedules/agentWebhooks.js';
+import { IVoltRelayService, IVoltRelayState } from '../../../../../platform/voltRelay/common/voltRelay.js';
+import { generateUuid } from '../../../../../base/common/uuid.js';
 import { formatScheduleWhen } from './agentScheduleFormat.js';
 import { VoltSelectField, VoltTimeField } from '../ui/dateTime/voltDateTimeFields.js';
 import { localeWeekStart, weekdayLabels } from '../ui/dateTime/voltDateTime.js';
@@ -19,6 +22,8 @@ import { createVoltSegmented } from '../ui/segmented/voltSegmented.js';
 type RepeatMode = 'interval' | 'time';
 type IntervalUnit = 'minutes' | 'hours' | 'days';
 type TargetMode = 'thread' | 'new';
+
+const WEBHOOK_ONLY_SCHEDULE: AgentScheduleSpec = { type: 'interval', everyMs: 3_600_000 };
 
 const UNIT_MS: Record<IntervalUnit, number> = { minutes: 60_000, hours: 3_600_000, days: 86_400_000 };
 
@@ -34,6 +39,11 @@ export interface IAgentScheduleDialogOptions {
 	readonly prompt?: string;
 	readonly mode?: string;
 	readonly modelRef?: string;
+	/** Models the task can run on; the Model field is required so a run never falls back to the profile default. */
+	readonly models: readonly { readonly ref: string; readonly label: string }[];
+	/** Shows the webhook URL from the relay; Connect asks for a relay link when it is offline. */
+	readonly relay?: IVoltRelayService;
+	readonly connectRelay?: () => Promise<unknown>;
 	readonly onSave: (input: IAgentScheduleInput) => void | Promise<void>;
 }
 
@@ -75,7 +85,7 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 	title.id = 'volt-schedule-title';
 	title.textContent = task ? localize('voltSchedules.edit', "Edit scheduled task") : localize('voltSchedules.new', "New scheduled task");
 	dialog.setAttribute('aria-labelledby', title.id);
-	append(body, $('p.volt-agent-snooze-subtitle')).textContent = localize('voltSchedules.subtitle', "Volt sends the prompt on this schedule while it is open. A busy chat runs it when its current turn ends.");
+	append(body, $('p.volt-agent-snooze-subtitle')).textContent = localize('voltSchedules.subtitle', "Volt runs the prompt on the schedule, or for each matching webhook delivery. A busy chat runs it when its current turn ends.");
 
 	const closeButton = append(dialog, $('button.volt-agent-snooze-close')) as HTMLButtonElement;
 	closeButton.type = 'button';
@@ -92,11 +102,33 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 	promptInput.placeholder = localize('voltSchedules.promptPlaceholder', "Check the latest CI run on main and fix anything that broke.");
 	promptInput.value = task?.prompt ?? options.prompt ?? '';
 
+	// Which model runs it. Explicit: a run without one used the profile default (a local model that can 400 on a long prompt).
+	const modelChoices = options.models;
+	const modelField = store.add(new VoltSelectField<string>(field(body, localize('voltSchedules.model', "Model")), {
+		options: modelChoices.map(choice => ({ id: choice.ref, label: choice.label })),
+		value: task?.modelRef ?? options.modelRef ?? modelChoices[0]?.ref ?? '',
+		ariaLabel: localize('voltSchedules.model', "Model"),
+	}));
+	const modelOk = () => modelChoices.some(choice => choice.ref === modelField.value);
+
+	// When it starts.
+	let trigger: AgentScheduleTriggerKind = task?.trigger ?? 'schedule';
+	heading(body, localize('voltSchedules.starts', "Starts"));
+	const triggerTabs = createVoltSegmented<AgentScheduleTriggerKind>(append(body, $('.volt-agent-snooze-tabs.volt-schedule-tabs')), [
+		{ id: 'schedule', label: localize('voltSchedules.onSchedule', "On a schedule") },
+		{ id: 'webhook', label: localize('voltSchedules.onWebhook', "On a webhook") },
+		{ id: 'both', label: localize('voltSchedules.onBoth', "Both") },
+	], trigger, next => {
+		trigger = next;
+		sync();
+	}, store, 'fill');
+
 	// How often.
+	const scheduleBlock = append(body, $('.volt-schedule-block'));
 	const spec = task?.schedule;
 	let repeat: RepeatMode = spec?.type === 'interval' ? 'interval' : 'time';
-	heading(body, localize('voltSchedules.repeat', "Repeat"));
-	const repeatTabs = createVoltSegmented<RepeatMode>(append(body, $('.volt-agent-snooze-tabs.volt-schedule-tabs')), [
+	heading(scheduleBlock, localize('voltSchedules.repeat', "Repeat"));
+	const repeatTabs = createVoltSegmented<RepeatMode>(append(scheduleBlock, $('.volt-agent-snooze-tabs.volt-schedule-tabs')), [
 		{ id: 'time', label: localize('voltSchedules.atTime', "At a time") },
 		{ id: 'interval', label: localize('voltSchedules.interval', "Every…") },
 	], repeat, next => {
@@ -104,7 +136,7 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 		sync();
 	}, store, 'fill');
 
-	const timePane = append(body, $('.volt-schedule-pane'));
+	const timePane = append(scheduleBlock, $('.volt-schedule-pane'));
 	const initialMinutes = spec?.type === 'fixed_time' ? parseTimeOfDay(spec.timeOfDay) ?? 540 : 540;
 	const timeField = store.add(new VoltTimeField(field(timePane, localize('voltSchedules.time', "Time")), {
 		value: initialMinutes,
@@ -133,7 +165,7 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 		dayButtons.push(button);
 	});
 
-	const intervalPane = append(body, $('.volt-agent-snooze-fields.volt-schedule-pane'));
+	const intervalPane = append(scheduleBlock, $('.volt-agent-snooze-fields.volt-schedule-pane'));
 	const initialInterval = intervalParts(spec?.type === 'interval' ? spec.everyMs : 3_600_000);
 	const amountInput = append(field(intervalPane, localize('voltSchedules.every', "Every")), $('input.volt-schedule-input')) as HTMLInputElement;
 	amountInput.type = 'text';
@@ -148,6 +180,46 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 		value: initialInterval.unit,
 		ariaLabel: localize('voltSchedules.unit', "Unit"),
 	}));
+
+	// Webhook.
+	const webhookBlock = append(body, $('.volt-schedule-block'));
+	heading(webhookBlock, localize('voltSchedules.webhook', "Webhook"));
+	const hookBase: IAgentWebhookTrigger = task?.webhook ?? newWebhookTrigger(`hook_${generateUuid().replace(/-/g, '')}`, generateUuid().replace(/-/g, ''));
+	let relayState: IVoltRelayState = { status: 'off' };
+	const urlRow = append(field(webhookBlock, localize('voltSchedules.url', "URL")), $('.volt-schedule-url-row'));
+	const urlInput = append(urlRow, $('input.volt-schedule-input')) as HTMLInputElement;
+	urlInput.type = 'text';
+	urlInput.readOnly = true;
+	const copyButton = append(urlRow, $('button.volt-agent-snooze-button')) as HTMLButtonElement;
+	copyButton.type = 'button';
+	copyButton.textContent = localize('voltSchedules.copy', "Copy");
+	const relayNote = append(webhookBlock, $('.volt-schedule-note'));
+	const connectButton = append(webhookBlock, $('button.volt-agent-snooze-button')) as HTMLButtonElement;
+	connectButton.type = 'button';
+	connectButton.textContent = localize('voltSchedules.connectRelay', "Connect to Volt Relay…");
+
+	let signatureKind: WebhookSignatureKind = hookBase.signature.kind;
+	createVoltSegmented<WebhookSignatureKind>(append(field(webhookBlock, localize('voltSchedules.signature', "Signature")), $('.volt-agent-snooze-tabs.volt-schedule-tabs')), [
+		{ id: 'none', label: localize('voltSchedules.sigNone', "None") },
+		{ id: 'github', label: localize('voltSchedules.sigGithub', "GitHub") },
+		{ id: 'generic', label: localize('voltSchedules.sigGeneric', "HMAC header") },
+	], signatureKind, next => {
+		signatureKind = next;
+		sync();
+	}, store, 'fill');
+	const secretField = field(webhookBlock, localize('voltSchedules.secret', "Secret"));
+	const secretInput = append(secretField, $('input.volt-schedule-input')) as HTMLInputElement;
+	secretInput.type = 'password';
+	secretInput.autocomplete = 'off';
+	secretInput.placeholder = hookBase.signature.secret
+		? localize('voltSchedules.secretSaved', "Saved. Type to replace it.")
+		: localize('voltSchedules.secretPlaceholder', "The secret the sender signs with");
+
+	const filtersInput = append(field(webhookBlock, localize('voltSchedules.filters', "Only when")), $('textarea.volt-schedule-input.volt-schedule-prompt')) as HTMLTextAreaElement;
+	filtersInput.rows = 3;
+	filtersInput.placeholder = 'payload.action = opened';
+	filtersInput.value = hookBase.filters.map(formatWebhookFilter).join('\n');
+	append(webhookBlock, $('.volt-schedule-note')).textContent = localize('voltSchedules.webhookNote', "Each line must match. Put {{payload.pull_request.title}} in the prompt to insert a field.");
 
 	// Where.
 	let target: TargetMode = task ? (task.target.kind === 'thread' ? 'thread' : 'new') : options.threadId ? 'thread' : 'new';
@@ -191,7 +263,36 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 		? { kind: 'thread', threadId }
 		: { kind: 'new', ...(task?.target.kind === 'new' && task.target.projectRoot ? { projectRoot: task.target.projectRoot } : options.projectRoot ? { projectRoot: options.projectRoot } : {}) };
 
+	const parseFilters = (): IAgentWebhookFilter[] | undefined => {
+		const parsed = filtersInput.value.split('\n').map(line => line.trim()).filter(Boolean).map(parseWebhookFilter);
+		return parsed.every((filter): filter is IAgentWebhookFilter => !!filter) ? parsed : undefined;
+	};
+	const secretOk = () => signatureKind === 'none' || !!secretInput.value.trim() || !!hookBase.signature.secret;
+	const currentWebhook = (): IAgentWebhookTrigger => {
+		const typed = secretInput.value.trim();
+		const signature: IAgentWebhookSignature = signatureKind === 'none'
+			? { kind: 'none' }
+			: { ...hookBase.signature, kind: signatureKind, ...(typed ? { secret: typed } : {}) };
+		return { ...hookBase, signature, filters: parseFilters() ?? [] };
+	};
+	const hookUrl = (): string => {
+		if (hookBase.relayUrl && (!hookBase.relayId || hookBase.relayId === relayState.relayId)) {
+			return hookBase.relayUrl;
+		}
+		return relayState.localWebhookBase ? `${relayState.localWebhookBase}/h/${hookBase.localToken}` : '';
+	};
+
 	const sync = () => {
+		scheduleBlock.classList.toggle('hidden', trigger === 'webhook');
+		webhookBlock.classList.toggle('hidden', trigger === 'schedule');
+		secretField.classList.toggle('hidden', signatureKind === 'none');
+		const relayOnline = relayState.status === 'online';
+		connectButton.classList.toggle('hidden', relayOnline || !options.connectRelay);
+		relayNote.textContent = relayOnline
+			? localize('voltSchedules.relayOnline', "Works while Volt is closed: the relay holds deliveries until Volt opens.")
+			: localize('voltSchedules.relayOffline', "Connect to Volt Relay for a URL that works while Volt is closed. Until then it answers only while Volt runs.");
+		urlInput.value = hookUrl();
+		urlInput.placeholder = localize('voltSchedules.urlPlaceholder', "Shown after you save");
 		timePane.classList.toggle('hidden', repeat !== 'time');
 		intervalPane.classList.toggle('hidden', repeat !== 'interval');
 		for (const button of dayButtons) {
@@ -204,16 +305,24 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 			? localize('voltSchedules.threadNote', "Each run is a new message in {0}.", options.threadTitle ? `"${options.threadTitle}"` : localize('voltSchedules.theChat', "the chat"))
 			: localize('voltSchedules.newNote', "Each run starts a new chat in {0}.", options.projectLabel ?? localize('voltSchedules.theProject', "the project"));
 		const at = next ? nextScheduleRun(next, Date.now()) : undefined;
-		const ready = !!next && at !== undefined && !!promptInput.value.trim();
-		confirm.disabled = !ready;
-		preview.classList.toggle('error', !next);
-		preview.textContent = next && at !== undefined
-			? localize('voltSchedules.preview', "{0} · next run {1}", describeSchedule(next), formatScheduleWhen(at, Date.now()))
-			: localize('voltSchedules.badInterval', "Runs at most once a minute: enter a whole number.");
+		const scheduleOk = trigger === 'webhook' || (!!next && at !== undefined);
+		const filtersOk = !!parseFilters();
+		const webhookOk = trigger === 'schedule' || (filtersOk && secretOk());
+		confirm.disabled = !(scheduleOk && webhookOk && !!promptInput.value.trim() && modelOk());
+		preview.classList.toggle('error', !scheduleOk || !webhookOk);
+		preview.textContent = !filtersOk
+			? localize('voltSchedules.badFilter', "A line under Only when is not a filter, like payload.action = opened.")
+			: !secretOk()
+				? localize('voltSchedules.needSecret', "Enter the secret the sender signs with, or choose None.")
+				: trigger === 'webhook'
+					? localize('voltSchedules.webhookOnly', "Runs for each delivery that matches.")
+					: next && at !== undefined
+						? localize('voltSchedules.preview', "{0} · next run {1}", describeSchedule(next), formatScheduleWhen(at, Date.now()))
+						: localize('voltSchedules.badInterval', "Runs at most once a minute: enter a whole number.");
 	};
 	const submit = async () => {
 		const next = currentSpec();
-		if (!next || !promptInput.value.trim()) {
+		if ((trigger !== 'webhook' && !next) || !promptInput.value.trim() || !parseFilters() || !secretOk() || !modelOk()) {
 			sync();
 			return;
 		}
@@ -221,14 +330,17 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 		await options.onSave({
 			title: nameInput.value.trim(),
 			prompt: promptInput.value.trim(),
-			schedule: next,
+			trigger,
+			schedule: next ?? task?.schedule ?? WEBHOOK_ONLY_SCHEDULE,
+			...(trigger !== 'schedule' ? { webhook: currentWebhook() } : {}),
 			target: currentTarget(),
 			...(task?.mode ?? options.mode ? { mode: task?.mode ?? options.mode } : {}),
-			...(task?.modelRef ?? options.modelRef ? { modelRef: task?.modelRef ?? options.modelRef } : {}),
+			modelRef: modelField.value,
 			...(options.threadId ? { sourceThreadId: options.threadId } : {}),
 		});
 	};
 
+	store.add(modelField.onDidChange(sync));
 	store.add(timeField.onDidChange(sync));
 	store.add(unitField.onDidChange(sync));
 	store.add(addDisposableListener(amountInput, 'input', sync));
@@ -237,6 +349,21 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 	store.add(addDisposableListener(closeButton, 'click', close));
 	store.add(addDisposableListener(backdrop, 'mousedown', close));
 	store.add(addDisposableListener(confirm, 'click', () => void submit()));
+	store.add(addDisposableListener(copyButton, 'click', () => void navigator.clipboard?.writeText(urlInput.value).catch(() => undefined)));
+	store.add(addDisposableListener(connectButton, 'click', () => void options.connectRelay?.()));
+	store.add(addDisposableListener(secretInput, 'input', sync));
+	store.add(addDisposableListener(filtersInput, 'input', sync));
+	if (options.relay) {
+		const relay = options.relay;
+		void relay.getState().then(state => {
+			relayState = state;
+			sync();
+		});
+		store.add(relay.onDidChangeState(state => {
+			relayState = state;
+			sync();
+		}));
+	}
 	store.add(addDisposableListener(dialog, 'keydown', e => {
 		if (e.key === 'Escape') {
 			e.preventDefault();
@@ -269,7 +396,10 @@ export function showAgentScheduleDialog(host: HTMLElement, options: IAgentSchedu
 	}, true));
 
 	sync();
-	window.requestAnimationFrame(() => repeatTabs.sync());
+	window.requestAnimationFrame(() => {
+		repeatTabs.sync();
+		triggerTabs.sync();
+	});
 	(task ? nameInput : promptInput.value ? nameInput : promptInput).focus();
 	return store;
 }

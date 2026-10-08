@@ -33,6 +33,8 @@ export interface IVoltMenuItem<T> {
 	readonly subtitle?: string;
 	/** Line counts after the label, green and red as in a diff. Zero counts are left out. */
 	readonly stats?: { readonly additions: number; readonly deletions: number };
+	/** Two small bars after the label: CPU and memory, each 0..1 (a machine's load). */
+	readonly load?: { readonly cpu: number; readonly memory: number };
 	readonly icon?: ThemeIcon | (() => HTMLElement | SVGElement);
 	/** Spins the icon (clone in progress). */
 	readonly busy?: boolean;
@@ -967,6 +969,14 @@ function renderItem<T>(host: HTMLElement, item: IVoltMenuItem<T>, matches: IMatc
 		}
 		if (item.stats.deletions > 0) {
 			append(stats, $('span.del')).textContent = `-${item.stats.deletions}`;
+		}
+	}
+	if (item.load) {
+		const load = append(line, $('span.volt-menu-load'));
+		load.title = localize('voltMenu.load', "CPU {0}%, memory {1}%", Math.round(item.load.cpu * 100), Math.round(item.load.memory * 100));
+		for (const [name, level] of [['cpu', item.load.cpu], ['memory', item.load.memory]] as const) {
+			const bar = append(load, $(`span.volt-menu-load-bar.${name}`));
+			append(bar, $('span.volt-menu-load-fill')).style.width = `${Math.round(Math.min(1, Math.max(0, level)) * 100)}%`;
 		}
 	}
 	if (item.detail) {

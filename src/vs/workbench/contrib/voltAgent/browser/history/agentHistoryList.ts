@@ -32,6 +32,7 @@ import { IAgentHistoryService, IAgentSessionMeta } from '../../../../services/vo
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 import { matchesPrQuery } from '../../common/agentPullRequests.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { cloudTaskStatusText, cloudTaskTone, ICloudTask } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { groupSessionsByDate, isDetailedHistoryGroup } from './agentHistoryGroups.js';
 import { createHistoryStatusIcon } from './agentHistoryIcons.js';
@@ -58,6 +59,12 @@ export interface IAgentHistoryListOptions {
 	readonly allWorkspaces?: boolean;
 	/** Root-level rows above the date groups (New Agent, Customize). */
 	readonly actions?: readonly IAgentHistoryAction[];
+	/** Cloud tasks this Volt sent, listed in a Cloud group above the chats. */
+	readonly cloud?: {
+		readonly tasks: () => readonly ICloudTask[];
+		readonly onDidChange: Event<void>;
+		readonly onOpen: (task: ICloudTask) => void;
+	};
 	readonly onOpen: (session: IAgentSessionMeta) => void;
 }
 
@@ -67,7 +74,12 @@ type HistoryGroupElement = { readonly type: 'group'; readonly key: string; reado
 type HistorySessionElement = { readonly type: 'session'; readonly session: IAgentSessionMeta; readonly detailed: boolean };
 type HistoryMoreElement = { readonly type: 'more'; readonly groupKey: string; readonly hidden: number };
 type HistoryMessageElement = { readonly type: 'message'; readonly text: string };
-type HistoryElement = HistoryActionElement | HistoryDividerElement | HistoryGroupElement | HistorySessionElement | HistoryMoreElement | HistoryMessageElement;
+type HistoryCloudElement = { readonly type: 'cloud'; readonly task: ICloudTask };
+type HistoryElement = HistoryActionElement | HistoryDividerElement | HistoryGroupElement | HistorySessionElement | HistoryMoreElement | HistoryMessageElement | HistoryCloudElement;
+
+const CLOUD_GROUP_KEY = 'cloud';
+/** Newest cloud tasks shown in the sidebar; the rest stay in the relay. */
+const CLOUD_ROWS_SHOWN = 10;
 
 const identityProvider: IIdentityProvider<HistoryElement> = {
 	getId(element) {
@@ -78,6 +90,7 @@ const identityProvider: IIdentityProvider<HistoryElement> = {
 			case 'session': return `session:${element.session.id}`;
 			case 'more': return `more:${element.groupKey}`;
 			case 'message': return 'message';
+			case 'cloud': return `cloud:${element.task.id}`;
 		}
 	}
 };
@@ -183,7 +196,7 @@ class AgentHistoryRenderer implements ITreeRenderer<HistoryElement, void, IHisto
 		template.description.style.display = 'none';
 		template.text.removeAttribute('title');
 		template.keybinding.textContent = '';
-		template.container.classList.remove('is-group', 'is-action', 'is-divider', 'is-session', 'is-more', 'is-message', 'is-nested', 'is-pinned', 'has-draft', 'running', 'detailed');
+		template.container.classList.remove('is-group', 'is-action', 'is-divider', 'is-session', 'is-more', 'is-message', 'is-cloud', 'cloud-active', 'cloud-succeeded', 'cloud-failed', 'cloud-muted', 'is-nested', 'is-pinned', 'has-draft', 'running', 'detailed');
 		template.container.classList.toggle('is-nested', node.depth > 1);
 
 		const element = node.element;
@@ -206,7 +219,24 @@ class AgentHistoryRenderer implements ITreeRenderer<HistoryElement, void, IHisto
 			case 'message':
 				this.renderMessage(element, template);
 				break;
+			case 'cloud':
+				this.renderCloud(element, template);
+				break;
 		}
+	}
+
+	private renderCloud(element: HistoryCloudElement, template: IHistoryTemplate): void {
+		const { task } = element;
+		const tone = cloudTaskTone(task);
+		template.container.classList.add('is-cloud', `cloud-${tone}`);
+		template.icon.appendChild(renderIcon(tone === 'active' ? ThemeIcon.modify(Codicon.loading, 'spin')
+			: tone === 'succeeded' ? Codicon.check
+				: tone === 'failed' ? Codicon.error
+					: Codicon.circleSlash));
+		template.name.textContent = task.title;
+		template.description.textContent = cloudTaskStatusText(task);
+		template.description.style.display = '';
+		setAgentTooltip(template.text, `${task.title}\n${task.prompt}`);
 	}
 
 	private renderAction(element: HistoryActionElement, template: IHistoryTemplate): void {
@@ -310,6 +340,7 @@ class AgentHistoryAccessibilityProvider implements IListAccessibilityProvider<Hi
 			case 'session': return element.session.title || localize('voltAgent.history.untitled', "New Agent");
 			case 'more': return localize('voltAgent.history.more', "More");
 			case 'message': return element.text;
+			case 'cloud': return element.task.title;
 		}
 	}
 
@@ -389,6 +420,7 @@ export class AgentHistoryList extends Disposable implements IHistoryRendererHost
 							case 'session': return e.session.title || '';
 							case 'more': return localize('voltAgent.history.more', "More");
 							case 'message': return e.text;
+							case 'cloud': return e.task.title;
 						}
 					}
 				},
@@ -409,6 +441,8 @@ export class AgentHistoryList extends Disposable implements IHistoryRendererHost
 			}
 			if (element.type === 'session') {
 				this.openSession(element.session);
+			} else if (element.type === 'cloud') {
+				this.options.cloud?.onOpen(element.task);
 			} else if (element.type === 'more') {
 				this.showMore(element.groupKey);
 			} else if (element.type === 'action') {
@@ -439,6 +473,9 @@ export class AgentHistoryList extends Disposable implements IHistoryRendererHost
 
 		this.renderScheduler = this._register(new RunOnceScheduler(() => this.render(), 0));
 		this._register(this.history.onDidChange(() => this.renderScheduler.schedule()));
+		if (options.cloud) {
+			this._register(options.cloud.onDidChange(() => this.renderScheduler.schedule()));
+		}
 		this._register(this.sessionContext.onDidChangeActiveProject(() => this.renderScheduler.schedule()));
 		void this.history.whenReady.then(() => this.renderScheduler.schedule());
 		const observer = new ResizeObserver(() => this.layout());
@@ -706,6 +743,16 @@ export class AgentHistoryList extends Disposable implements IHistoryRendererHost
 		}
 		if (actions.length) {
 			children.push({ element: { type: 'divider' }, collapsible: false });
+		}
+
+		const cloudTasks = this.options.cloud?.tasks().slice(0, CLOUD_ROWS_SHOWN) ?? [];
+		if (cloudTasks.length) {
+			children.push({
+				element: { type: 'group', key: CLOUD_GROUP_KEY, label: localize('voltAgent.history.cloud', "Cloud") },
+				collapsible: true,
+				collapsed: this.collapsedGroups.has(CLOUD_GROUP_KEY),
+				children: cloudTasks.map((task): IObjectTreeElement<HistoryElement> => ({ element: { type: 'cloud', task }, collapsible: false })),
+			});
 		}
 
 		if (!sessions.length) {

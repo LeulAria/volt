@@ -14,6 +14,8 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
+import { AgentCloudTaskMenu } from '../cloud/agentCloudTaskMenu.js';
 import { NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { AgentHistoryList } from './agentHistoryList.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
@@ -38,9 +40,11 @@ export class AgentHistoryDrawer extends Disposable {
 		@ICommandService private readonly commandService: ICommandService,
 		@IKeybindingService keybindingService: IKeybindingService,
 		@IStorageService private readonly storageService: IStorageService,
+		@IAgentCloudTasksService private readonly cloud: IAgentCloudTasksService,
 	) {
 		super();
 		this.element = append(container, $('.volt-agent-drawer'));
+		const cloudMenu = instantiationService.createInstance(AgentCloudTaskMenu);
 		this._register(toDisposable(() => this.element.remove()));
 
 		this.header = append(this.element, $('.volt-agent-drawer-header'));
@@ -51,6 +55,11 @@ export class AgentHistoryDrawer extends Disposable {
 			treeView: this.storageService.getBoolean(TREE_VIEW_KEY, StorageScope.PROFILE, true),
 			allWorkspaces: this.storageService.getBoolean(ALL_WORKSPACES_KEY, StorageScope.PROFILE, false),
 			onOpen: (session: IAgentSessionMeta) => void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, session.id),
+			cloud: {
+				tasks: () => this.cloud.tasks,
+				onDidChange: this.cloud.onDidChange,
+				onOpen: task => cloudMenu.show(task, this.element),
+			},
 			actions: [
 				{
 					id: NEW_AGENT_COMMAND_ID,
