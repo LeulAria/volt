@@ -32,6 +32,7 @@ import {
 	isAutoReviewMode,
 	mergeReviewFindings,
 	parseReviewOutput,
+	reviewSeverityLabel,
 	REVIEW_FINDINGS_PATH,
 	shouldAutoReview,
 } from '../../common/agentPrReview.js';
@@ -42,9 +43,12 @@ export const IAgentPrReviewService = createDecorator<IAgentPrReviewService>('age
 
 export const AGENT_PR_AUTO_REVIEW_SETTING = 'volt.pullRequests.autoReview';
 export const AGENT_PR_REVIEW_MODEL_SETTING = 'volt.pullRequests.reviewModel';
+export const AGENT_PR_POST_REVIEW_COMMENTS_SETTING = 'volt.pullRequests.postReviewComments';
 
 /** A review is abandoned after this long; the chat is left for the user to look at. */
 const REVIEW_TIMEOUT_MS = 20 * 60_000;
+/** A review still waiting on an approval after this long fails: nobody is there to answer it. */
+const REVIEW_APPROVAL_WAIT_MS = 30_000;
 const SAVE_DELAY_MS = 400;
 const STORE_VERSION = 1;
 
@@ -66,6 +70,8 @@ export interface IAgentPrReviewService {
 	fixInChat(key: string, finding: IReviewFinding): Promise<void>;
 	/** Dismissed findings stay out of the open list, also after later reviews. */
 	setDismissed(key: string, id: string, dismissed: boolean): void;
+	/** Posts the open findings as one review with a comment on each line (only when the setting allows it). */
+	postFindings(key: string): Promise<void>;
 }
 
 /**
@@ -319,13 +325,28 @@ export class AgentPullRequestReviewService extends Disposable implements IAgentP
 					settled = true;
 					listener.dispose();
 					clearTimeout(timer);
+					clearTimeout(approvalTimer);
 					resolve(value);
 				}
 			};
+			// A review only reads, so an approval it asks for is never answered: it fails instead of waiting.
+			let approvalTimer: ReturnType<typeof setTimeout> | undefined;
 			const check = (): void => {
-				const last = this.orchestrator.getThread(threadId)?.last;
+				const thread = this.orchestrator.getThread(threadId);
+				const last = thread?.last;
 				if (last && last.turnId === turnId) {
 					settle({ outcome: last.outcome, error: last.error });
+					return;
+				}
+				const approvalPending = !!thread?.inputs.some(input => input.kind === 'approval');
+				if (approvalPending && !approvalTimer) {
+					approvalTimer = setTimeout(() => {
+						void this.orchestrator.cancel(threadId).catch(() => undefined);
+						settle({ outcome: 'failed', error: 'The review asked for an approval, which a review does not get. Review again to retry.' });
+					}, REVIEW_APPROVAL_WAIT_MS);
+				} else if (!approvalPending && approvalTimer) {
+					clearTimeout(approvalTimer);
+					approvalTimer = undefined;
 				}
 			};
 			const listener = this.orchestrator.onDidChange(() => check());
@@ -337,6 +358,34 @@ export class AgentPullRequestReviewService extends Disposable implements IAgentP
 					check();
 				}
 			}, err => settle({ outcome: 'failed', error: err instanceof Error ? err.message : String(err) }));
+		});
+	}
+
+	//#region Post
+
+	async postFindings(key: string): Promise<void> {
+		if (this.configurationService.getValue<boolean>(AGENT_PR_POST_REVIEW_COMMENTS_SETTING) !== true) {
+			throw new Error(`Turn on ${AGENT_PR_POST_REVIEW_COMMENTS_SETTING} to post review comments.`);
+		}
+		const record = this.reviews.get(key);
+		const snapshot = this.pullRequests.snapshot(key);
+		if (!record || !snapshot) {
+			throw new Error('Review the pull request first.');
+		}
+		const open = record.findings.filter(finding => finding.state === 'open');
+		if (!open.length) {
+			return;
+		}
+		await this.api.postReview({
+			repo: snapshot.repo,
+			number: snapshot.number,
+			body: `Volt review of ${record.headSha.slice(0, 7)}: ${open.length} ${open.length === 1 ? 'finding' : 'findings'}.`,
+			comments: open.map(finding => ({
+				path: finding.file,
+				line: finding.line,
+				body: `**${reviewSeverityLabel(finding.severity)}: ${finding.title}**\n\n${finding.explanation}${finding.suggestion ? `\n\nSuggested fix: ${finding.suggestion}` : ''}`,
+			})),
+			headOid: record.headSha,
 		});
 	}
 
