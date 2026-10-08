@@ -22,9 +22,11 @@ import { IVoltEvent } from '../../common/events.js';
 import { parseTokenUsage } from '../../common/tokenUsage.js';
 import { VoltMode } from '../../common/modes.js';
 import { IProviderProfile } from '../../common/profiles.js';
-import { IAgentMessage, IAgentProvider, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo } from '../../common/providers.js';
+import { IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo } from '../../common/providers.js';
 import { DEFAULT_ACP_CAPABILITIES } from '../../common/capabilities.js';
-import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltSandboxEvent, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { codexSandboxValue, IVoltSandboxRequest, loopbackPort, sandboxLaunchKey, sandboxStrategy, SandboxStrategy } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
 import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer } from '../../common/hostTools.js';
 import { AgentQuestionDraft, cursorAskQuestionResult, elicitationResult, elicitationToQuestions, IAgentQuestionResponse, parseQuestionDraft } from '../../common/questions.js';
 import { mapAcpToolKind } from '../../common/harness/workLog.js';
@@ -52,6 +54,7 @@ interface IAcpSession {
 	/** The read-only mode switched on for a Plan or Ask turn; undefined while the access policy decides. */
 	voltModeId?: string;
 	policy?: ICompiledPolicy;
+	sandbox?: IAgentSandboxStart;
 	voltSessionId?: string;
 	runId?: string;
 	mode?: VoltMode;
@@ -287,6 +290,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		private readonly hostTools?: IVoltHostToolService,
 	) {
 		this.bridge = accessBridgeFor(id);
+		this.stdio.onSandboxEvent?.(event => this.onSandboxEvent(event));
 	}
 
 	setAccessGate(gate: IAccessGate): void {
@@ -330,8 +334,9 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		const sessionId = live.handle.providerSessionId ?? live.handle.id;
 		const config = this.bridge.translate(policy, { configOptions: live.configOptions, modes: live.modes });
+		const strategy = this.sandboxStrategyOf(live);
 		for (const update of config.configOptions ?? []) {
-			await this.setConfigOption(live, sessionId, update.id, update.value);
+			await this.setConfigOption(live, sessionId, update.id, codexSandboxValue(update.id, update.value, strategy));
 		}
 		if (config.sessionModeId) {
 			await this.setMode(live, sessionId, config.sessionModeId);
@@ -533,6 +538,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			req.modelId ?? '',
 			Object.entries(req.options ?? {}).sort(([x], [y]) => x.localeCompare(y)),
 			this.hostTools?.getMcpServers(req.sessionId) ?? [],
+			sandboxLaunchKey(req.sandbox?.settings),
 		]);
 	}
 
@@ -540,7 +546,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
 		const cwd = req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
 		const env = cliAgentDefinition(this.id)?.acpEnv;
-		const processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}) });
+		const sandbox = this.sandboxRequest(req);
+		const processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}) });
 		const client = new AcpJsonRpcClient(this.stdio, processId);
 		this.bindClientRequests(client);
 		client.whenDead(() => {
@@ -592,6 +599,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			currentModeId: created.modes?.currentModeId,
 			promptImages: initialized.agentCapabilities?.promptCapabilities?.image === true,
 			setupKey: this.setupKey(req),
+			sandbox: req.sandbox,
 			hostMcp,
 			steering: (initialized as { _meta?: { steering?: { supported?: unknown } } })._meta?.steering?.supported === true,
 		};
@@ -626,6 +634,50 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	private hostMcpServers(sessionId: string | undefined, capabilities: IAcpMcpCapabilities | undefined): IVoltMcpServer[] {
 		return acceptedMcpServers(this.hostTools?.getMcpServers(sessionId) ?? [], capabilities);
+	}
+
+	/** The OS wrapper for this agent process; undefined when the chat is unconfined or the agent sandboxes itself. */
+	private sandboxRequest(req: IAgentStartRequest): IVoltSandboxRequest | undefined {
+		const sandbox = req.sandbox;
+		const settings = sandbox?.settings;
+		if (!sandbox || !settings || settings.level === 'off' || sandboxStrategy(this.id, settings.level, this.sandboxPlatform()) !== 'wrap') {
+			return undefined;
+		}
+		return {
+			level: settings.level,
+			network: settings.network,
+			providerId: this.id,
+			workspaceRoots: sandbox.workspaceRoots,
+			...(settings.extraWritableRoots?.length ? { extraWritableRoots: settings.extraWritableRoots } : {}),
+			...(settings.allowedDomains?.length ? { allowedDomains: settings.allowedDomains } : {}),
+			loopbackPorts: (this.hostTools?.getMcpServers(req.sessionId) ?? []).map(server => loopbackPort(server.url)).filter((port): port is number => port !== undefined),
+		};
+	}
+
+	private sandboxStrategyOf(session: IAcpSession): SandboxStrategy {
+		const settings = session.sandbox?.settings;
+		return settings ? sandboxStrategy(this.id, settings.level, this.sandboxPlatform()) : 'none';
+	}
+
+	private sandboxPlatform(): string {
+		return isWindows ? 'win32' : isMacintosh ? 'darwin' : 'linux';
+	}
+
+	private async sandboxBlocks(session: IAcpSession, path: string, access: 'read' | 'write'): Promise<boolean> {
+		return this.stdio.sandboxAllows !== undefined && !await this.stdio.sandboxAllows(session.processId, path, access);
+	}
+
+	private onSandboxEvent(event: IVoltSandboxEvent): void {
+		const session = [...this.sessions.values()].find(candidate => candidate.processId === event.id);
+		const turn = session?.turn && !session.turn.ended ? session.turn : undefined;
+		if (!session || !turn) {
+			return;
+		}
+		if (event.denial) {
+			this.pushActivity(session, turn, { type: 'sandbox.denial', denial: event.denial });
+		} else if (event.warning) {
+			this.pushActivity(session, turn, { type: 'notice', severity: 'warning', title: 'Sandbox', description: event.warning });
+		}
 	}
 
 	private async launchFor(profile: IProviderProfile, args: string[]): Promise<{ command: string; args: string[] }> {
@@ -1561,6 +1613,14 @@ export class AcpAgentProvider implements IAgentProvider {
 			]);
 			if (!allowed) {
 				await client.respondError(req.id, 'Blocked by Volt access policy');
+				return;
+			}
+			const access = write ? 'write' : 'read';
+			if (live && await this.sandboxBlocks(live, uri.fsPath, access)) {
+				if (turn) {
+					this.pushActivity(live, turn, { type: 'sandbox.denial', denial: { kind: access, target: uri.fsPath, source: 'volt' } });
+				}
+				await client.respondError(req.id, `Blocked by Volt sandbox: ${uri.fsPath}`);
 				return;
 			}
 			if (!write) {

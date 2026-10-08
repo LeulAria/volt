@@ -33,8 +33,9 @@ import { DEFAULT_MODEL_CAPABILITIES } from '../common/capabilities.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../common/events.js';
 import { IVoltModelOptions, MODEL_OPTION_REASONING, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
 import { modePolicy, VoltMode } from '../common/modes.js';
-import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
-import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
+import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
+import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
+import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { resolveTabModel } from '../common/models/modelAccess.js';
 import { IAgentRuntimeService, IVoltMcpServerStatus, IVoltTaskModels } from '../common/runtime.js';
 import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
@@ -229,6 +230,8 @@ interface ISessionState extends IVoltSession {
 	agentRef?: string;
 	/** Folder the live agent session was started in. A chat moved to another project needs a new one. */
 	agentCwd?: string;
+	/** Sandbox the live agent process was started under (see sandboxLaunchKey). */
+	agentSandboxKey?: string;
 	/** Last time the live agent started or finished a run; idle agents are let go oldest first. */
 	agentUsedAt?: number;
 	/** One notice after a checkout is created or restored. */
@@ -288,6 +291,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private providerRefresh: Promise<void> | undefined;
 	private providerRefreshAgain = false;
 	private accessMode: VoltAccessMode = DEFAULT_ACCESS_MODE;
+	private sandboxDefaults: IVoltSandboxSettings = DEFAULT_SANDBOX_SETTINGS;
+	private sandboxChats: Record<string, IVoltSandboxSettings> = {};
 	private projectRules: IPermissionRule[] = [];
 	private savedRules: IPermissionRule[] = [];
 	private compiledPolicy: ICompiledPolicy = compilePolicy({});
@@ -423,6 +428,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.agentProviderId = undefined;
 		session.agentRef = undefined;
 		session.agentCwd = undefined;
+		session.agentSandboxKey = undefined;
 		session.agentSynced = 0;
 		this.forgetAliases(session.sessionId);
 		if (handle) {
@@ -709,10 +715,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		const cwd = this.executionRoot(session)?.fsPath;
-		if (session.agentHandle && session.agentRef === item.ref && session.agentCwd === cwd && (provider.isLive?.(session.agentHandle) ?? true)) {
+		if (session.agentHandle && session.agentRef === item.ref && session.agentCwd === cwd && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true)) {
 			return;
 		}
-		const spare = this.spareRequest(provider, profile, item, cwd, undefined);
+		const sandbox = this.sandboxStart(session.sessionId, cwd);
+		const spare = this.spareRequest(provider, profile, item, cwd, undefined, sandbox);
 		if (this.agentPool.has(spare.key)) {
 			return;
 		}
@@ -721,7 +728,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// the provider (its host MCP URL names the chat), which `start` adopts.
 		const perChat = provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'prewarmSpare' | 'hasSpare'>>;
 		if (!this.aliasHost() && perChat.prewarmSpare && perChat.hasSpare) {
-			const request = this.agentStartRequest(session.sessionId, profile, item, cwd, undefined, mode);
+			const request = this.agentStartRequest(session.sessionId, profile, item, cwd, undefined, mode, sandbox);
 			if (!perChat.hasSpare(request)) {
 				void perChat.prewarmSpare(request);
 			}
@@ -730,7 +737,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.agentPool.ensure(spare);
 	}
 
-	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode): IAgentStartRequest {
+	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode, sandbox?: IAgentSandboxStart): IAgentStartRequest {
 		return {
 			sessionId,
 			mode,
@@ -738,22 +745,38 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			cwd,
 			modelId: item.id === profile.providerId ? undefined : item.id,
 			options: this.resolvedOptions(item, options),
+			...(sandbox ? { sandbox } : {}),
 		};
 	}
 
-	/** Pool key: an agent can serve a chat when all of these match. */
-	private poolKey(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined): string {
-		const resolved = this.resolvedOptions(item, options);
-		const sorted = Object.keys(resolved).sort().map(key => [key, resolved[key]]);
-		return JSON.stringify([provider.id, profile.id, item.ref, cwd ?? '', sorted]);
+	private sandboxKey(sessionId: string): string {
+		return sandboxLaunchKey(this.getSandboxSettings(sessionId));
 	}
 
-	private spareRequest(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined): ISpareRequest {
+	/** The chat's sandbox as an agent start asks for it; undefined when the chat runs unconfined. */
+	private sandboxStart(sessionId: string, cwd: string | undefined): IAgentSandboxStart | undefined {
+		const settings = this.getSandboxSettings(sessionId);
+		if (settings.level === 'off') {
+			return undefined;
+		}
+		const session = this.sessions.get(sessionId) as ISessionState | undefined;
+		const project = session ? this.projectRoot(session)?.fsPath : undefined;
+		return { settings, workspaceRoots: sandboxWorkspaceRoots(cwd, project, !!session?.worktreePath) };
+	}
+
+	/** Pool key: an agent can serve a chat when all of these match. */
+	private poolKey(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined): string {
+		const resolved = this.resolvedOptions(item, options);
+		const sorted = Object.keys(resolved).sort().map(key => [key, resolved[key]]);
+		return JSON.stringify([provider.id, profile.id, item.ref, cwd ?? '', sorted, sandboxLaunchKey(sandbox?.settings)]);
+	}
+
+	private spareRequest(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined): ISpareRequest {
 		return {
-			key: this.poolKey(provider, profile, item, cwd, options),
+			key: this.poolKey(provider, profile, item, cwd, options, sandbox),
 			providerId: provider.id,
 			start: async alias => {
-				const handle = await provider.start(this.agentStartRequest(alias, profile, item, cwd, options, 'agent'));
+				const handle = await provider.start(this.agentStartRequest(alias, profile, item, cwd, options, 'agent', sandbox));
 				try {
 					await provider.applyAccessPolicy?.(handle, this.compiledPolicy);
 				} catch (err) {
@@ -770,7 +793,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private async startAgentSession(session: ISessionState, run: IRunState, provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, mode: VoltMode, options: IVoltModelOptions | undefined): Promise<void> {
 		const cwd = this.executionRoot(session)?.fsPath;
 		// The provider adopts a spare it parked for this chat (see prewarmAgent), else starts cold.
-		const handle = await provider.start(this.agentStartRequest(session.sessionId, profile, item, cwd, options, mode));
+		const handle = await provider.start(this.agentStartRequest(session.sessionId, profile, item, cwd, options, mode, this.sandboxStart(session.sessionId, cwd)));
 		if (!this.isCurrent(session, run) && session.agentHandle) {
 			// A newer run already has an agent; this cancelled run's start is not needed.
 			void provider.dispose(handle).catch(() => undefined);
@@ -786,6 +809,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.agentProviderId = provider.id;
 		session.agentRef = item.ref;
 		session.agentCwd = cwd;
+		session.agentSandboxKey = this.sandboxKey(session.sessionId);
 		session.agentUsedAt = Date.now();
 		// A fresh agent process has seen nothing of this conversation yet.
 		session.agentSynced = 0;
@@ -1403,6 +1427,28 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.recompilePolicy();
 		this._onDidChangeAccess.fire();
 		await this.pushPolicyToAgents();
+	}
+
+	getSandboxSettings(sessionId: string): IVoltSandboxSettings {
+		return this.sandboxChats[sessionId] ?? this.sandboxDefaults;
+	}
+
+	async setSandboxSettings(sessionId: string, settings: IVoltSandboxSettings): Promise<void> {
+		this.sandboxChats = { ...this.sandboxChats, [sessionId]: normalizeSandboxSettings(settings) };
+		this.storeSandbox();
+	}
+
+	getDefaultSandboxSettings(): IVoltSandboxSettings {
+		return this.sandboxDefaults;
+	}
+
+	async setDefaultSandboxSettings(settings: IVoltSandboxSettings): Promise<void> {
+		this.sandboxDefaults = normalizeSandboxSettings(settings);
+		this.storeSandbox();
+	}
+
+	private storeSandbox(): void {
+		this.storageService.store(VOLT_SANDBOX_STORAGE_KEY, JSON.stringify({ defaults: this.sandboxDefaults, chats: this.sandboxChats }), StorageScope.APPLICATION, StorageTarget.USER);
 	}
 
 	respondToAccessRequest(requestId: string, effect: Extract<PermissionEffect, 'allow' | 'deny'>, scope: AccessDecisionScope = 'once', pattern?: string): void {
@@ -2582,7 +2628,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const token = run.cancel.token;
 		// Another model from the same CLI is another agent session: restart it; the recap carries the thread over.
 		const hasLiveAgent = () => !!session.agentHandle && session.agentProviderId === provider.id && session.agentRef === item.ref
-			&& session.agentCwd === this.executionRoot(session)?.fsPath && (provider.isLive?.(session.agentHandle) ?? true);
+			&& session.agentCwd === this.executionRoot(session)?.fsPath && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true);
 		// One prompt at a time per agent session: a cancelled turn lets go of the agent before the
 		// next prompt is written, or the agent is replaced.
 		if (previous?.engine === 'agent' && !await this.waitSettled(previous, SETTLE_WAIT_AGENT_MS) && this.isCurrent(session, run) && session.agentHandle) {
@@ -2747,7 +2793,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	/** A warm spare when one fits (or is about to), otherwise a cold start bound to this chat. */
 	private async acquireAgent(session: ISessionState, run: IRunState, provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, request: IVoltSendRequest, intent: IIntent, restart: boolean): Promise<void> {
 		const cwd = this.executionRoot(session)?.fsPath;
-		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options);
+		const sandbox = this.sandboxStart(session.sessionId, cwd);
+		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options, sandbox);
 		run.spare = spareRequest;
 		// A spare's browser tools reach this chat only when the host tool service maps its alias.
 		if (this.aliasHost() || !(intent.wantsPreview || intent.matchesDesign)) {
@@ -2765,7 +2812,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			}
 		}
 		// The provider may hold a spare it parked for this chat (prewarmAgent without alias support).
-		const parked = (provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'hasSpare'>>).hasSpare?.(this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode));
+		const parked = (provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'hasSpare'>>).hasSpare?.(this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode, sandbox));
 		await this.startAgentSession(session, run, provider, profile, item, request.mode, request.options);
 		run.metrics.setAgentSource(restart ? 'restart' : parked ? 'pool' : 'cold');
 	}
@@ -3243,6 +3290,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.modeProfiles = this.readJson(VOLT_MODE_PROFILES_STORAGE_KEY, {});
 		this.modelOptions = this.readJson(VOLT_MODEL_OPTIONS_STORAGE_KEY, {});
 		this.accessMode = normalizeVoltAccessMode(this.storageService.get(VOLT_ACCESS_MODE_STORAGE_KEY, StorageScope.APPLICATION));
+		const storedSandbox = this.readJson<{ defaults?: unknown; chats?: Record<string, unknown> }>(VOLT_SANDBOX_STORAGE_KEY, {});
+		this.sandboxDefaults = normalizeSandboxSettings(storedSandbox.defaults);
+		this.sandboxChats = Object.fromEntries(Object.entries(storedSandbox.chats ?? {}).map(([id, value]) => [id, normalizeSandboxSettings(value)]));
 		this.projectRules = this.readWorkspaceJson(VOLT_ACCESS_PROJECT_RULES_STORAGE_KEY, []);
 		this.savedRules = this.readWorkspaceJson(VOLT_ACCESS_SAVED_RULES_STORAGE_KEY, []);
 		this.recompilePolicy();

@@ -7,7 +7,7 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { bwrapArgs, landlockArgs } from '../../common/landlock.js';
 import { denialKindForOperation, denialsInOutput, describeDenial, folderToAllow, isNoiseDenial } from '../../common/sandboxDenials.js';
-import { agentApiDomains, domainAllowed, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxEnv, sandboxStrategy } from '../../common/sandboxPolicy.js';
+import { agentApiDomains, codexSandboxValue, domainAllowed, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxEnv, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
 import { buildSeatbeltProfile, parseSeatbeltLogLine, sbplRegex, sbplString, seatbeltCommand } from '../../common/seatbelt.js';
 
 const MAC: ISandboxHostInfo = { platform: 'darwin', home: '/Users/me', tmpdir: '/private/var/folders/ab/xyz/T', darwinUserCacheDir: '/private/var/folders/ab/xyz/C', uid: 501 };
@@ -261,5 +261,41 @@ suite('Volt sandbox denials', () => {
 		assert.strictEqual(describeDenial({ kind: 'write', target: '/Users/me/notes.txt', source: 'os' }, '/Users/me'), 'Sandbox blocked a write to ~/notes.txt');
 		assert.strictEqual(folderToAllow('/Users/me/out/a.txt', false), '/Users/me/out');
 		assert.strictEqual(folderToAllow('/Users/me/out/', true), '/Users/me/out');
+	});
+
+	test('per-chat settings: folders and hosts are added once, and the launch key follows them', () => {
+		const base: IVoltSandboxSettings = { level: 'workspace-write', network: false };
+		const withOut = withWritableRoot(base, '/Users/me/out');
+		assert.deepStrictEqual(withOut.extraWritableRoots, ['/Users/me/out']);
+		assert.strictEqual(withWritableRoot(withOut, '/Users/me/out/deep'), withOut, 'a folder already inside a root is not added again');
+		assert.strictEqual(withWritableRoot(base, 'relative/path'), base, 'only absolute folders are accepted');
+		assert.deepStrictEqual(withWritableRoot(withOut, '/Users/me').extraWritableRoots, ['/Users/me'], 'a parent replaces the children it covers');
+
+		const withHost = withAllowedDomain(base, 'API.Example.com');
+		assert.deepStrictEqual(withHost.allowedDomains, ['api.example.com']);
+		assert.strictEqual(withAllowedDomain(withHost, 'api.example.com'), withHost);
+
+		assert.strictEqual(sandboxLaunchKey(undefined), 'off');
+		assert.strictEqual(sandboxLaunchKey({ level: 'off', network: true }), 'off');
+		assert.notStrictEqual(sandboxLaunchKey(base), sandboxLaunchKey(withOut), 'a new writable folder restarts the agent');
+		const ab = { ...base, extraWritableRoots: ['/a', '/b'] };
+		assert.strictEqual(sandboxLaunchKey(ab), sandboxLaunchKey({ ...base, extraWritableRoots: ['/b', '/a'] }), 'root order does not change the key');
+	});
+
+	test('workspace roots: the checkout, plus the main repository git dir for a linked worktree', () => {
+		assert.deepStrictEqual(sandboxWorkspaceRoots('/Users/me/wt', '/Users/me/repo', true), ['/Users/me/wt', '/Users/me/repo/.git']);
+		assert.deepStrictEqual(sandboxWorkspaceRoots('/Users/me/repo', '/Users/me/repo', false), ['/Users/me/repo']);
+		assert.deepStrictEqual(sandboxWorkspaceRoots(undefined, undefined, true), []);
+	});
+
+	test('Codex config values follow the strategy that wraps or keeps its own sandbox', () => {
+		assert.strictEqual(codexSandboxValue('sandbox', 'workspace-write', 'native'), 'workspace-write');
+		assert.strictEqual(codexSandboxValue('sandbox', 'danger-full-access', 'native'), 'workspace-write');
+		assert.strictEqual(codexSandboxValue('sandbox', 'read-only', 'wrap'), 'danger-full-access');
+		assert.strictEqual(codexSandboxValue('mode', 'agent-full-access', 'native'), 'agent');
+		assert.strictEqual(codexSandboxValue('mode', 'agent', 'wrap'), 'agent-full-access');
+		assert.strictEqual(codexSandboxValue('model', 'gpt-5', 'wrap'), 'gpt-5');
+		assert.strictEqual(codexSandboxValue('sandbox', true, 'wrap'), true);
+		assert.strictEqual(codexSandboxValue('sandbox', 'read-only', 'none'), 'read-only');
 	});
 });

@@ -7,6 +7,7 @@ import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import type { IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { VoltAccessMode } from './access/accessModes.js';
 import { AccessDecisionScope, IAccessRequest, IExecutionReceipt, IPermissionRule, PermissionEffect } from './access/accessTypes.js';
 import { IVoltEventEnvelope } from './events.js';
@@ -125,6 +126,11 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 
 	getAccessMode(): VoltAccessMode;
 	setAccessMode(mode: VoltAccessMode): Promise<void>;
+	/** The chat's OS sandbox, or the default for chats that never set one. */
+	getSandboxSettings(sessionId: string): IVoltSandboxSettings;
+	setSandboxSettings(sessionId: string, settings: IVoltSandboxSettings): Promise<void>;
+	getDefaultSandboxSettings(): IVoltSandboxSettings;
+	setDefaultSandboxSettings(settings: IVoltSandboxSettings): Promise<void>;
 	respondToAccessRequest(requestId: string, effect: Extract<PermissionEffect, 'allow' | 'deny'>, scope?: AccessDecisionScope, pattern?: string): void;
 	/** Questions an agent is waiting on in this chat, oldest first. */
 	getPendingQuestions(sessionId: string): readonly IAgentQuestionRequest[];
