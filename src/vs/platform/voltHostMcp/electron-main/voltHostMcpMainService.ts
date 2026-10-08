@@ -52,16 +52,17 @@ function sameSecret(given: string, expected: string): boolean {
 /**
  * Who may talk to a host MCP server: only local agent processes Volt launched.
  * - Host must be loopback with the server's port (DNS rebinding sends a foreign Host).
- * - No browser: web pages, including the in-app browser's own page, always send Origin or
- *   Sec-Fetch-* headers; agent HTTP clients send neither. No CORS headers are ever sent, so a
- *   preflight fails too.
+ * - No browser: a web page's request (including the in-app browser's own page) always carries
+ *   Origin or Sec-Fetch-Site / Sec-Fetch-Dest. Node's fetch (undici), which agents such as
+ *   cursor-agent use, sends Sec-Fetch-Mode alone on every request, so that one header is not a
+ *   browser. No CORS headers are ever sent, so a preflight fails too.
  * - The bearer token Volt handed the agent in its MCP server config.
  */
 export function checkHostMcpRequest(method: string | undefined, path: string | undefined, headers: http.IncomingHttpHeaders, port: number, token: string): HostMcpRequestVerdict {
 	if (!isLoopbackHost(headers.host, port)) {
 		return { ok: false, status: 403, message: 'Host not allowed' };
 	}
-	if (headers.origin !== undefined || headers['sec-fetch-mode'] !== undefined || headers['sec-fetch-site'] !== undefined) {
+	if (headers.origin !== undefined || headers['sec-fetch-site'] !== undefined || headers['sec-fetch-dest'] !== undefined) {
 		return { ok: false, status: 403, message: 'Browser requests are not allowed' };
 	}
 	if (method === 'OPTIONS') {
