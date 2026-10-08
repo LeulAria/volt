@@ -878,6 +878,7 @@ export class AgentSessionController extends Disposable {
 					if (item) {
 						const input = mergeToolInput(item.input, event.delta);
 						applyExploreInputToActivity(item, item.toolName ?? item.label, item.toolTitle, input);
+						this.promoteToPlanCard(last, event.callId, item.toolName ?? '', item.toolTitle, input);
 					}
 				}
 				break;
@@ -891,6 +892,7 @@ export class AgentSessionController extends Disposable {
 				if (item && event.title && event.title !== item.toolTitle) {
 					item.toolTitle = event.title;
 					applyExploreInputToActivity(item, item.toolName ?? item.label, event.title, item.input);
+					this.promoteToPlanCard(last, event.callId, item.toolName ?? '', event.title, item.input);
 				}
 				break;
 			}
@@ -929,6 +931,10 @@ export class AgentSessionController extends Disposable {
 					if (event.view) {
 						item.view = event.view;
 					}
+				}
+				const done = this.findActivityByCallId(last, event.callId);
+				if (done) {
+					this.promoteToPlanCard(last, event.callId, done.toolName ?? '', event.title ?? done.toolTitle, done.input);
 				}
 				this.settleCall(activity, event.callId);
 				break;
@@ -1233,6 +1239,29 @@ export class AgentSessionController extends Disposable {
 			}
 		}
 		return message.activity?.items.find(item => item.callId === callId);
+	}
+
+	/**
+	 * Cursor starts an MCP call as a generic row and names it only later, so a plan tool may first show
+	 * as an activity row. Once its name or arguments say it is a plan, the row becomes the plan card.
+	 */
+	private promoteToPlanCard(last: IAgentAssistantMessage, callId: string, name: string, title: string | undefined, input: string | undefined): void {
+		if (!isPlanTool(name, title, input) || findBlockByCallId(last.segments, callId)) {
+			return;
+		}
+		const index = last.segments.findIndex(segment => segment.kind === 'activity' && segment.item.callId === callId);
+		if (index === -1) {
+			return;
+		}
+		const id = `tool-${callId}`;
+		const parsed = parsePlanToolInput(input);
+		last.segments[index] = { kind: 'block', block: createPlanBlock({ id, callId, input, name: parsed.name, markdown: parsed.plan ?? '', openQuestions: parsed.openQuestions }) };
+		last.blockState[id] = last.blockState[id] ?? { expanded: false };
+		const items = last.activity?.items;
+		const at = items?.findIndex(item => item.callId === callId) ?? -1;
+		if (items && at !== -1) {
+			items.splice(at, 1);
+		}
 	}
 
 	private planFromInput(id: string, callId: string, input: string | undefined): IPlanBlock {
