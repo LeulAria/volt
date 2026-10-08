@@ -179,8 +179,10 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 				if (entry.model !== undefined) {
 					model = entry.model;
 				}
-				if (entry.worktreePath) {
+				// An empty path is a move back to the project's own checkout: it clears the binding.
+				if (entry.worktreePath !== undefined) {
 					worktreePath = entry.worktreePath;
+					worktreeBranch = entry.worktreePath ? worktreeBranch : '';
 				}
 				if (entry.worktreeBranch) {
 					worktreeBranch = entry.worktreeBranch;
@@ -201,7 +203,7 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 /** Records needed to reproduce a transcript without superseded entries. */
 export function compactRecords(transcript: IAgentSessionTranscript): AgentHistoryRecord[] {
 	const records: AgentHistoryRecord[] = [transcript.header];
-	if (transcript.title !== undefined || transcript.agentTitle || transcript.mode !== undefined || transcript.model !== undefined || transcript.worktreePath || transcript.worktreeBranch) {
+	if (transcript.title !== undefined || transcript.agentTitle || transcript.mode !== undefined || transcript.model !== undefined || transcript.worktreePath !== undefined || transcript.worktreeBranch) {
 		records.push({
 			type: 'meta',
 			at: transcript.header.createdAt,
@@ -209,7 +211,7 @@ export function compactRecords(transcript: IAgentSessionTranscript): AgentHistor
 			...(transcript.agentTitle ? { agentTitle: transcript.agentTitle } : {}),
 			mode: transcript.mode,
 			model: transcript.model,
-			...(transcript.worktreePath ? { worktreePath: transcript.worktreePath } : {}),
+			...(transcript.worktreePath !== undefined ? { worktreePath: transcript.worktreePath } : {}),
 			...(transcript.worktreeBranch ? { worktreeBranch: transcript.worktreeBranch } : {}),
 		});
 	}
@@ -322,8 +324,9 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 		attention: previous?.attention,
 		mode: transcript.mode ?? previous?.mode,
 		model: transcript.model ?? previous?.model,
-		worktreePath: transcript.worktreePath ?? previous?.worktreePath,
-		worktreeBranch: transcript.worktreeBranch ?? previous?.worktreeBranch,
+		// '' in the log: the chat moved back to the project's checkout.
+		worktreePath: transcript.worktreePath !== undefined ? transcript.worktreePath || undefined : previous?.worktreePath,
+		worktreeBranch: transcript.worktreePath === '' ? undefined : transcript.worktreeBranch || previous?.worktreeBranch,
 		parentId: transcript.header.parentId ?? previous?.parentId,
 		subagent: transcript.header.subagent || previous?.subagent || undefined,
 	};

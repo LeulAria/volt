@@ -162,6 +162,10 @@ export async function ensureAgentWorktree(input: {
 	readonly path: string;
 	readonly branch: string;
 }): Promise<boolean> {
+	// A checkout that is there needs nothing, whoever made it (a chat may move into the user's own worktree).
+	if (await input.files.exists(input.path)) {
+		return false;
+	}
 	if (!isManagedWorktree(input.path, input.worktreesRoot)) {
 		throw new AgentWorktreeError('Refusing to restore a worktree Volt did not create.');
 	}

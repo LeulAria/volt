@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import {
-	cleanupPlan, describeMoveResult, moveRollback, parseStatusZ, parseWorkspaceMoveSpec, planCarry, presentAfterMove, shouldRemoveOldWorktree, validateBranchName, workspaceMoveNote,
+	cleanupPlan, describeMoveResult, moveRollback, parseIndexEntries, parseStatusZ, parseWorkspaceMoveSpec, planCarry, presentAfterMove, shouldRemoveOldWorktree, validateBranchName, workspaceMoveNote,
 } from '../../../common/git/workspaceMove.js';
 
 /** `git status --porcelain=v1 -z --untracked-files=all` of a checkout with every kind of change. */
@@ -120,5 +120,29 @@ suite('Volt workspace move: rollback and text', () => {
 		assert.match(note, /1 other uncommitted file stayed/);
 		assert.strictEqual(describeMoveResult({ ok: true, worktree: true, branch: 'volt/x', files: 3 }), 'Moved to worktree volt/x · 3 files');
 		assert.strictEqual(describeMoveResult({ ok: true, worktree: false, branch: 'main' }), 'Moved to local (main)');
+	});
+});
+
+suite('Volt workspace move: index entries', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('staged blobs are read per path, stage 0 only, paths with spaces kept whole', () => {
+		const output = [
+			'100644 1111111111111111111111111111111111111111 0\ta.txt',
+			'100755 2222222222222222222222222222222222222222 0\tbin tools/run.sh',
+			'100644 3333333333333333333333333333333333333333 1\tconflict.txt',
+			'100644 4444444444444444444444444444444444444444 2\tconflict.txt',
+			'',
+		].join('\0');
+		const entries = parseIndexEntries(output);
+		assert.strictEqual(entries.size, 2);
+		assert.deepStrictEqual(entries.get('a.txt'), { mode: '100644', blob: '1111111111111111111111111111111111111111' });
+		assert.deepStrictEqual(entries.get('bin tools/run.sh'), { mode: '100755', blob: '2222222222222222222222222222222222222222' });
+		assert.strictEqual(entries.has('conflict.txt'), false);
+	});
+
+	test('empty output means nothing is staged', () => {
+		assert.strictEqual(parseIndexEntries('').size, 0);
 	});
 });

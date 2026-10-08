@@ -142,6 +142,13 @@ export interface IAgentProvider {
 	 */
 	listModels?(profile: IProviderProfile): Promise<IModelInfo[]>;
 	start(req: IAgentStartRequest): Promise<IAgentSessionHandle>;
+	/**
+	 * The same agent conversation, continued in another folder (`req.cwd`): the chat moved to
+	 * another checkout, and an agent's working directory is fixed per session. A new agent process
+	 * resumes the session there (ACP `session/resume`) and `session` is let go. Undefined when the
+	 * agent cannot resume; the caller then starts a fresh session briefed with a recap.
+	 */
+	resumeIn?(session: IAgentSessionHandle, req: IAgentStartRequest): Promise<IAgentSessionHandle | undefined>;
 	/** False when the CLI process has already exited and the next send must start a new session. */
 	isLive?(session: IAgentSessionHandle): boolean;
 	send(session: IAgentSessionHandle, msg: IAgentMessage, profile: IProviderProfile, token: CancellationToken): AsyncIterable<IVoltEvent>;

@@ -75,6 +75,8 @@ interface IAcpSession {
 	hostMcp?: { readonly sessionId?: string; readonly capabilities?: IAcpMcpCapabilities; readonly servers: string };
 	/** The agent takes `_session/steering`: a message goes into the running turn without stopping it (Claude, Codex). */
 	steering?: boolean;
+	/** The agent takes `session/resume` (`sessionCapabilities.resume`): the conversation can continue in another folder. */
+	resumable?: boolean;
 	/** The harness's own subagents of this session, by child session id (native) or Task call id (Cursor). */
 	children?: Map<string, IAcpChild>;
 	/** Tool calls that only control a native subagent (Claude's Agent call): their updates are not tool rows. */
@@ -440,6 +442,35 @@ export class AcpAgentProvider implements IAgentProvider {
 	}
 
 	/**
+	 * Moves a session to another folder without losing what the agent knows: a new process in
+	 * `req.cwd` resumes the conversation (`session/resume`, which Claude's and Codex's adapters
+	 * advertise as `sessionCapabilities.resume`; both find their transcript by session id, not by
+	 * folder). `session/load` is not used: it replays the whole history as updates. The old process
+	 * goes only once the new one has the session.
+	 */
+	async resumeIn(session: IAgentSessionHandle, req: IAgentStartRequest): Promise<IAgentSessionHandle | undefined> {
+		const old = this.sessions.get(session.id);
+		if (!old || old.turn || !old.resumable || old.client.isDead) {
+			return undefined;
+		}
+		let live: IAcpSession;
+		try {
+			live = await this.createSession(req, old.handle.providerSessionId ?? old.handle.id);
+		} catch (err) {
+			this.logService.info(`[ACP] ${this.id} could not resume ${session.id} in ${req.cwd}: ${err instanceof Error ? err.message : String(err)}`);
+			return undefined;
+		}
+		// The ids may match: drop the old entry before the new one takes the key.
+		if (this.sessions.get(session.id) === old) {
+			this.sessions.delete(session.id);
+		}
+		this.sessions.set(live.handle.id, live);
+		live.commands = old.commands;
+		void this.stopSession(old);
+		return live.handle;
+	}
+
+	/**
 	 * Starts a session for `req` ahead of time (spawn, `initialize`, `session/new`, model and
 	 * options) and parks it. The next {@link start} with the same setup adopts it instantly instead
 	 * of paying the cold start (about 5 s for cursor-agent's `session/new` alone). One spare per
@@ -536,7 +567,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		]);
 	}
 
-	private async createSession(req: IAgentStartRequest): Promise<IAcpSession> {
+	/** Spawns the agent and opens a session; with `resume`, continues that session (in `req.cwd`) instead of a new one. */
+	private async createSession(req: IAgentStartRequest, resume?: string): Promise<IAcpSession> {
 		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
 		const cwd = req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
 		const env = cliAgentDefinition(this.id)?.acpEnv;
@@ -556,6 +588,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		let initialized: {
 			agentCapabilities?: {
 				session?: { _meta?: unknown; modes?: { availableModes?: { id: string; name?: string }[] } };
+				sessionCapabilities?: { resume?: unknown };
 				mcpCapabilities?: IAcpMcpCapabilities;
 				promptCapabilities?: { image?: boolean };
 			};
@@ -572,7 +605,15 @@ export class AcpAgentProvider implements IAgentProvider {
 			const capabilities = initialized.agentCapabilities?.mcpCapabilities;
 			const mcpServers = this.hostMcpServers(req.sessionId, capabilities);
 			hostMcp = { sessionId: req.sessionId, capabilities, servers: JSON.stringify(mcpServers) };
-			created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers }, ACP_SESSION_NEW_TIMEOUT_MS);
+			if (resume) {
+				if (!initialized.agentCapabilities?.sessionCapabilities?.resume) {
+					throw new Error('the agent cannot resume sessions');
+				}
+				const resumed = await client.request<Partial<ISessionNewResponse>>('session/resume', { sessionId: resume, cwd: cwd ?? '', mcpServers }, ACP_SESSION_NEW_TIMEOUT_MS);
+				created = { ...resumed, sessionId: resumed?.sessionId ?? resume };
+			} else {
+				created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers }, ACP_SESSION_NEW_TIMEOUT_MS);
+			}
 		} catch (err) {
 			client.dispose();
 			void this.stdio.kill(processId);
@@ -594,6 +635,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			setupKey: this.setupKey(req),
 			hostMcp,
 			steering: (initialized as { _meta?: { steering?: { supported?: unknown } } })._meta?.steering?.supported === true,
+			resumable: !!initialized.agentCapabilities?.sessionCapabilities?.resume,
 		};
 		// One listener for the life of the session; it routes to whichever turn is current.
 		client.handleNotifications(note => {

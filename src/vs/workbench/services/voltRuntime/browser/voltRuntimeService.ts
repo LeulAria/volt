@@ -233,6 +233,8 @@ interface ISessionState extends IVoltSession {
 	agentUsedAt?: number;
 	/** One notice after a checkout is created or restored. */
 	announceWorktree?: boolean;
+	/** The chat moved to another checkout: the next turn opens with this note and notice. */
+	moved?: { readonly model: string; readonly announce: string; readonly announced?: boolean };
 	/** A title was requested from the first message; set once it landed, so the agent's own titles stop replacing it. */
 	titleState?: 'pending' | 'done';
 }
@@ -472,6 +474,26 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const session = this.getOrCreateSession(sessionId) as ISessionState;
 		session.worktreePath = path;
 		session.worktreeBranch = branch;
+	}
+
+	relocate(sessionId: string, path: string | undefined, branch: string | undefined, note: { readonly model: string; readonly announce: string }): boolean {
+		const session = this.getOrCreateSession(sessionId) as ISessionState;
+		if (session.run && !session.run.ended) {
+			return false;
+		}
+		session.worktreePath = path || undefined;
+		session.worktreeBranch = path ? branch : undefined;
+		session.announceWorktree = false;
+		session.moved = note;
+		this.history.open(sessionId).setMeta({ worktreePath: path ?? '', ...(path && branch ? { worktreeBranch: branch } : {}) });
+		// The live agent keeps its folder until the next turn, which resumes it in the new one (see executeAgent).
+		this.logService.info(`[volt] ${sessionId} now works in ${path ?? 'the project checkout'}`);
+		return true;
+	}
+
+	workingFolder(sessionId: string): string | undefined {
+		const session = this.getOrCreateSession(sessionId) as ISessionState;
+		return this.executionRoot(session)?.fsPath;
 	}
 
 	supportsCommand(sessionId: string, name: string): boolean {
@@ -1895,6 +1917,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	private noteWorktree(session: ISessionState, runId: string): void {
+		if (session.moved && !session.moved.announced) {
+			session.moved = { ...session.moved, announced: true };
+			this.emit(session, runId, { type: 'notice', severity: 'info', title: session.moved.announce, ...(session.worktreePath ? { description: session.worktreePath } : {}) });
+			return;
+		}
 		if (!session.announceWorktree || !session.worktreeBranch || !session.worktreePath) {
 			return;
 		}
@@ -2009,8 +2036,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		state.instructions = instructions;
 		const facts = this.environmentFacts(root);
 		const tools = [...this.workspaceTools(session, state), ...mcpTools];
+		// After a move the model reads where it works now before the prompt.
+		const moved = session.moved?.model;
+		session.moved = undefined;
 		const turn = nativeModelTurn({
-			text: request.text,
+			text: moved ? `${moved}\n\n${request.text}` : request.text,
 			mode: request.mode,
 			cwd,
 			platform: facts.platform,
@@ -2605,6 +2635,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				try {
 					if (hasLiveAgent()) {
 						run.metrics.setAgentSource('live');
+					} else if (attempt === 0 && await this.resumeAgentElsewhere(session, run, provider, profile, item, request)) {
+						run.metrics.setAgentSource('live');
 					} else {
 						await this.acquireAgent(session, run, provider, profile, item, request, intent, attempt > 0);
 					}
@@ -2618,7 +2650,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					if (recap) {
 						session.agentJoinedLate = handle;
 					}
-					const lead = [recap, buildAcpLead(await this.contextPackInput(session, request.mode, intent))].filter(Boolean).join('\n\n') || undefined;
+					// After a move: the conversation so far happened in the old folder.
+					const moved = session.moved?.model;
+					const lead = [recap, moved, buildAcpLead(await this.contextPackInput(session, request.mode, intent))].filter(Boolean).join('\n\n') || undefined;
+					if (moved && session.moved?.model === moved) {
+						session.moved = undefined;
+					}
 					if (!this.isCurrent(session, run)) {
 						return;
 					}
@@ -2745,6 +2782,27 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** A warm spare when one fits (or is about to), otherwise a cold start bound to this chat. */
+	/** After a move the same agent conversation continues in the new folder; the agent keeps what it has seen. */
+	private async resumeAgentElsewhere(session: ISessionState, run: IRunState, provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, request: IVoltSendRequest): Promise<boolean> {
+		const handle = session.agentHandle;
+		const cwd = this.executionRoot(session)?.fsPath;
+		if (!handle || !provider.resumeIn || session.agentProviderId !== provider.id || session.agentRef !== item.ref || session.agentCwd === cwd) {
+			return false;
+		}
+		const resumed = await provider.resumeIn(handle, this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode));
+		if (!resumed || !this.isCurrent(session, run)) {
+			if (resumed) {
+				void provider.dispose(resumed).catch(() => undefined);
+			}
+			return false;
+		}
+		session.agentHandle = resumed;
+		session.agentCwd = cwd;
+		session.agentUsedAt = Date.now();
+		await provider.applyAccessPolicy?.(resumed, this.compiledPolicy);
+		return true;
+	}
+
 	private async acquireAgent(session: ISessionState, run: IRunState, provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, request: IVoltSendRequest, intent: IIntent, restart: boolean): Promise<void> {
 		const cwd = this.executionRoot(session)?.fsPath;
 		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options);

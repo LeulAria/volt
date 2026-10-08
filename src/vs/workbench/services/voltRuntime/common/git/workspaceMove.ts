@@ -134,6 +134,22 @@ export function entryPaths(entry: IStatusEntry): string[] {
 	return entry.origPath && entry.x === 'R' ? [entry.origPath, entry.path] : [entry.path];
 }
 
+/** `git ls-files -s -z`: the staged mode and blob of each path (stage 0 only). */
+export function parseIndexEntries(output: string): Map<string, { readonly mode: string; readonly blob: string }> {
+	const entries = new Map<string, { readonly mode: string; readonly blob: string }>();
+	for (const record of output.split('\0')) {
+		const tab = record.indexOf('\t');
+		if (tab < 0) {
+			continue;
+		}
+		const [mode, blob, stage] = record.slice(0, tab).split(' ');
+		if (stage === '0' && mode && blob) {
+			entries.set(record.slice(tab + 1), { mode, blob });
+		}
+	}
+	return entries;
+}
+
 //#endregion
 
 //#region Plan
