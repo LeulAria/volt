@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { activityContentState, chatView, type IAgentChatView } from '../src/agentState.ts';
-import { applyPlan, DEFAULT_PLAN_OPTIONS, planActivities, type ITrackedActivity } from '../src/planner.ts';
+import { applyPlan, DEFAULT_PLAN_OPTIONS, planActivities, planLaunchSweep, type ITrackedActivity } from '../src/planner.ts';
 import { emptyStepState, foldStep } from '../src/steps.ts';
 import { meta, NOW, running, thread } from './fixtures.ts';
 
@@ -94,4 +94,29 @@ test('applyPlan drops ended activities and records updates', () => {
 	assert.equal(next.length, 1);
 	assert.equal(next[0].state.step, 'X');
 	assert.equal(next[0].sentAt, NOW);
+});
+
+test('a launch keeps only the activity of the best-ranked running turn and ends the rest', () => {
+	const running1 = working('a', 1000);
+	const finished = chatView('b', { meta: meta('b', { status: 'done' }), thread: thread('b', { last: { turnId: 't', kind: 'prompt', outcome: 'done', at: NOW } }) }, NOW)!;
+	const second = working('c', 3000);
+	const list = [tracked(running1), tracked(finished), tracked(second), tracked(working('gone', 5000))];
+	const plan = planLaunchSweep(list, [running1, finished, second]);
+	assert.deepEqual(plan.actions.map(a => [a.kind, a.kind === 'end' ? a.activityId : '']), [
+		['end', 'act-b'],
+		['end', 'act-c'],
+		['end', 'act-gone'],
+	]);
+	assert.ok(plan.actions.every(a => a.kind === 'end' && a.dismissAt === 0));
+});
+
+test('a launch ends every stale activity when no tracked chat is running, and keeps one per running chat', () => {
+	const finished = chatView('b', { meta: meta('b', { status: 'done' }), thread: thread('b', { last: { turnId: 't', kind: 'prompt', outcome: 'done', at: NOW } }) }, NOW)!;
+	const none = planLaunchSweep([tracked(finished), tracked(working('gone', 1000))], [finished]);
+	assert.deepEqual(none.actions.map(a => a.kind), ['end', 'end']);
+
+	// Two activities for the running chat (an earlier launch raced a start): keep one, end the duplicate.
+	const view = working('a', 1000);
+	const dup = planLaunchSweep([tracked(view), { ...tracked(view), activityId: 'act-a-2' }], [view]);
+	assert.deepEqual(dup.actions.map(a => a.kind === 'end' ? a.activityId : ''), ['act-a-2']);
 });
