@@ -353,3 +353,53 @@
 .volt-schedules-empty-text {
 	font-size: 12.5px;
 }
+
+.volt-schedules-deliveries {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-top: 8px;
+}
+
+.volt-schedules-deliveries-title {
+	font-size: 11px;
+	opacity: 0.7;
+}
+
+.volt-schedules-delivery {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+}
+
+.volt-schedules-delivery-status {
+	font-weight: 600;
+}
+
+.volt-schedules-delivery.status-failed .volt-schedules-delivery-status,
+.volt-schedules-delivery.status-filtered .volt-schedules-delivery-status {
+	opacity: 0.75;
+}
+
+.volt-schedules-delivery-detail,
+.volt-schedules-delivery-note {
+	opacity: 0.7;
+}
+
+.volt-schedules-delivery-redeliver {
+	margin-left: auto;
+	padding: 1px 8px;
+	border: 1px solid var(--vscode-widget-border, transparent);
+	border-radius: 4px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 11.5px;
+	cursor: pointer;
+}
+
+.volt-schedules-delivery-redeliver:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}

@@ -29,7 +29,7 @@ import { IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../.
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { describeSchedule, IAgentSchedule, IAgentScheduleService } from '../../../../services/voltRuntime/common/schedules/agentSchedules.js';
+import { describeSchedule, IAgentSchedule, IAgentScheduleService, usesClock, usesWebhook } from '../../../../services/voltRuntime/common/schedules/agentSchedules.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createAgentScrollable } from '../editor/agentScrollable.js';
@@ -41,6 +41,25 @@ import { formatScheduleWhen } from './agentScheduleFormat.js';
 
 export const AGENT_SCHEDULES_EDITOR_ID = 'workbench.editor.voltAgentSchedules';
 const AGENT_SCHEDULES_INPUT_ID = 'workbench.input.voltAgentSchedules';
+
+interface IRelayDelivery {
+	readonly id: string;
+	readonly status: string;
+	readonly receivedAt: number;
+	readonly event?: string;
+	readonly redeliveryOf?: string;
+	readonly result?: { readonly threadId?: string; readonly error?: string; readonly note?: string };
+}
+
+function deliveryStatusLabel(status: string): string {
+	switch (status) {
+		case 'held': return localize('voltSchedules.deliveryHeld', "Held until Volt opens");
+		case 'ran': return localize('voltSchedules.deliveryRan', "Ran");
+		case 'filtered': return localize('voltSchedules.deliveryFiltered', "Filtered out");
+		case 'failed': return localize('voltSchedules.deliveryFailed', "Failed");
+		default: return status;
+	}
+}
 
 export class AgentSchedulesEditorInput extends EditorInput {
 
@@ -117,6 +136,7 @@ export class AgentSchedulesEditor extends EditorPane {
 	) {
 		super(AgentSchedulesEditor.ID, group, telemetryService, themeService, storageService);
 		this._register(this.schedules.onDidChange(() => this.render()));
+		this._register(this.relay.onDidChangeState(() => this.render()));
 	}
 
 	protected override createEditor(parent: HTMLElement): void {
@@ -213,7 +233,9 @@ export class AgentSchedulesEditor extends EditorPane {
 		const main = append(row, $('.volt-schedules-main'));
 		const top = append(main, $('.volt-schedules-line'));
 		append(top, $('span.volt-schedules-name')).textContent = task.title;
-		append(top, $('span.volt-schedules-cadence')).textContent = describeSchedule(task.schedule);
+		if (usesClock(task)) {
+			append(top, $('span.volt-schedules-cadence')).textContent = describeSchedule(task.schedule);
+		}
 
 		const meta = append(main, $('.volt-schedules-line.meta'));
 		const where = append(meta, $('span.volt-schedules-where'));
@@ -235,7 +257,7 @@ export class AgentSchedulesEditor extends EditorPane {
 			? localize('voltSchedules.paused', "Paused")
 			: task.nextRunAt !== undefined
 				? localize('voltSchedules.nextRun', "Next {0}", formatScheduleWhen(task.nextRunAt, now))
-				: localize('voltSchedules.noNext', "Not scheduled");
+				: usesClock(task) ? localize('voltSchedules.noNext', "Not scheduled") : localize('voltSchedules.onWebhookOnly', "On webhook");
 		const last = task.runs.at(-1);
 		if (last) {
 			append(meta, $('span.volt-schedules-dot')).textContent = '·';
@@ -257,6 +279,8 @@ export class AgentSchedulesEditor extends EditorPane {
 		}
 		const prompt = append(main, $('.volt-schedules-prompt'));
 		prompt.textContent = task.prompt;
+
+		this.renderDeliveries(main, task);
 
 		const actions = append(row, $('.volt-schedules-actions'));
 		const run = this.iconButton(actions, Codicon.play, localize('voltSchedules.runNow', "Run now"));
@@ -299,6 +323,73 @@ export class AgentSchedulesEditor extends EditorPane {
 				},
 			});
 		}));
+	}
+
+	private renderDeliveries(parent: HTMLElement, task: IAgentSchedule): void {
+		if (!task.webhook || !usesWebhook(task)) {
+			return;
+		}
+		const box = append(parent, $('.volt-schedules-deliveries'));
+		append(box, $('.volt-schedules-deliveries-title')).textContent = localize('voltSchedules.deliveries', "Deliveries");
+		const list = append(box, $('.volt-schedules-delivery-list'));
+		const note = append(box, $('.volt-schedules-delivery-note'));
+		const hookId = task.webhook.id;
+		void this.loadDeliveries(hookId).then(rows => {
+			if (rows === undefined) {
+				note.textContent = localize('voltSchedules.deliveriesOffline', "Connect to Volt Relay to see deliveries that arrive while Volt is closed.");
+			} else if (!rows.length) {
+				note.textContent = localize('voltSchedules.noDeliveries', "No deliveries yet.");
+			}
+			for (const delivery of rows ?? []) {
+				this.renderDelivery(list, delivery);
+			}
+		}, err => {
+			note.textContent = localize('voltSchedules.deliveriesFailed', "Could not load deliveries: {0}", err instanceof Error ? err.message : String(err));
+		});
+	}
+
+	private async loadDeliveries(hookId: string): Promise<IRelayDelivery[] | undefined> {
+		if ((await this.relay.getState()).status !== 'online') {
+			return undefined;
+		}
+		const reply = await this.relay.request<{ deliveries: IRelayDelivery[] }>('GET', `/deliveries?hook=${encodeURIComponent(hookId)}&limit=8`);
+		return [...reply.deliveries].reverse();
+	}
+
+	private renderDelivery(list: HTMLElement, delivery: IRelayDelivery): void {
+		const row = append(list, $('.volt-schedules-delivery'));
+		row.classList.add(`status-${delivery.status}`);
+		append(row, $('span.volt-schedules-delivery-when')).textContent = formatScheduleWhen(delivery.receivedAt, Date.now());
+		append(row, $('span.volt-schedules-delivery-status')).textContent = deliveryStatusLabel(delivery.status);
+		if (delivery.event) {
+			append(row, $('span.volt-schedules-delivery-event')).textContent = delivery.event;
+		}
+		const detail = delivery.result?.error ?? delivery.result?.note;
+		if (detail) {
+			append(row, $('span.volt-schedules-delivery-detail')).textContent = detail;
+		}
+		if (delivery.result?.threadId) {
+			const threadId = delivery.result.threadId;
+			const link = append(row, $('a.volt-schedules-link')) as HTMLAnchorElement;
+			link.textContent = localize('voltSchedules.deliveryChat', "Open chat");
+			link.tabIndex = 0;
+			this.renderStore.add(addDisposableListener(link, 'click', () => void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, threadId)));
+		}
+		if (delivery.status !== 'held') {
+			const again = append(row, $('button.volt-schedules-delivery-redeliver')) as HTMLButtonElement;
+			again.type = 'button';
+			again.textContent = localize('voltSchedules.redeliver', "Redeliver");
+			this.renderStore.add(addDisposableListener(again, 'click', () => void this.redeliver(delivery.id)));
+		}
+	}
+
+	private async redeliver(id: string): Promise<void> {
+		try {
+			await this.relay.request('POST', `/deliveries/${encodeURIComponent(id)}/redeliver`);
+			this.render();
+		} catch (err) {
+			this.notifications.error(localize('voltSchedules.redeliverFailed', "Could not send it again: {0}", err instanceof Error ? err.message : String(err)));
+		}
 	}
 
 	private iconButton(parent: HTMLElement, icon: ThemeIcon, label: string): HTMLButtonElement {
