@@ -18,7 +18,7 @@ import { IFileService, IFileStat } from '../../../../../platform/files/common/fi
  * too so an existing project is understood without migration.
  */
 
-export type AgentCustomizationKind = 'rule' | 'skill' | 'subagent' | 'command' | 'hook' | 'mcp';
+export type AgentCustomizationKind = 'rule' | 'skill' | 'subagent' | 'command' | 'hook' | 'mcp' | 'memory';
 export type AgentCustomizationScope = 'workspace' | 'user';
 
 export interface IAgentCustomization {
@@ -70,6 +70,12 @@ export const CUSTOMIZATION_KINDS: readonly IAgentCustomizationKindInfo[] = [
 		kind: 'hook', label: localize('voltCustomize.hook', "Hook"), plural: localize('voltCustomize.hooks', "Hooks"), icon: Codicon.plug,
 		newItemDir: undefined, newItemFile: () => 'hooks.json',
 		template: () => `{\n\t"version": 1,\n\t"hooks": {\n\t\t"beforeShellExecution": [],\n\t\t"afterFileEdit": []\n\t}\n}\n`,
+	},
+	{
+		// Saved notes come from the memory service, not from a scan: see the Customize editor.
+		kind: 'memory', label: localize('voltCustomize.memory', "Memory"), plural: localize('voltCustomize.memories', "Memories"), icon: Codicon.bookmark,
+		newItemDir: undefined, newItemFile: name => `${name}.md`,
+		template: name => `---\nname: ${name}\ndescription: When this note is relevant.\ntype: user\n---\n\nThe fact to remember, and why it matters.\n`,
 	},
 	{
 		kind: 'mcp', label: localize('voltCustomize.mcp', "MCP"), plural: localize('voltCustomize.mcps', "MCPs"), icon: Codicon.server,

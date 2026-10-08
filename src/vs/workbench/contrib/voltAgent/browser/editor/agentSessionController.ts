@@ -15,7 +15,7 @@ import { runStatusLine } from '../../../../services/voltRuntime/common/harness/w
 import { AgentSessionAttention, AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { appendProviderNotice, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isPlanTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments } from '../blocks/agentBlocks.js';
+import { appendProviderNotice, appendSandboxDenial, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isPlanTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments } from '../blocks/agentBlocks.js';
 import { sameHostToolArgs } from '../blocks/agentHostToolActivity.js';
 import { classifySupervisionNotice, stampTodoSteps } from '../chrome/agentTimeline.js';
 import { agentMessagePlainText } from '../context/agentContextUsage.js';
@@ -1127,6 +1127,9 @@ export class AgentSessionController extends Disposable {
 			}
 			case 'notice':
 				this.showProviderNotice(last, activity, event.severity, event.title, event.description);
+				break;
+			case 'sandbox.denial':
+				appendSandboxDenial(last.segments, event.denial);
 				break;
 			case 'retry':
 				this.showProviderNotice(last, activity, 'warning', event.message);

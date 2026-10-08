@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { isMemoryToolName } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, THREAD_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /** How one of Volt's own MCP tools reads in the activity trail, the way Cursor words its browser actions. */
@@ -79,6 +80,14 @@ export function describeHostToolActivity(name: string | undefined, title: string
 	}
 	if ((THREAD_TOOL_NAMES as readonly string[]).includes(tool)) {
 		return describeThreadActivity(tool, args);
+	}
+	if (isMemoryToolName(tool)) {
+		switch (tool) {
+			case 'memory_list': return { tool, label: 'Checked memories' };
+			case 'memory_read': return { tool, label: 'Recalled memory', detail: text(args.name, 80) };
+			case 'memory_write': return { tool, label: 'Saved memory', detail: text(args.name, 80) };
+			default: return { tool, label: 'Deleted memory', detail: text(args.name, 80) };
+		}
 	}
 	const device = describeDeviceActivity(tool, args);
 	if (device) {

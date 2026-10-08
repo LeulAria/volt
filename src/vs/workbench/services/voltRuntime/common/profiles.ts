@@ -45,6 +45,7 @@ export const VOLT_PROFILES_STORAGE_KEY = 'volt.runtime.profiles';
 export const VOLT_ENABLED_MODELS_STORAGE_KEY = 'volt.runtime.enabledModels';
 export const VOLT_TASK_MODELS_STORAGE_KEY = 'volt.runtime.taskModels';
 export const VOLT_MODE_PROFILES_STORAGE_KEY = 'volt.runtime.modeProfiles';
+export const VOLT_SANDBOX_STORAGE_KEY = 'volt.runtime.sandbox';
 export const VOLT_HEALTH_INTERVAL_STORAGE_KEY = 'volt.runtime.healthInterval';
 export const VOLT_SEED_VERSION_STORAGE_KEY = 'volt.runtime.seedVersion';
 export const VOLT_CATALOG_STORAGE_KEY = 'volt.runtime.catalog';

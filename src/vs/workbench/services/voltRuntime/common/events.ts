@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { URI } from '../../../../base/common/uri.js';
+import type { ISandboxDenial } from '../../../../platform/voltSandbox/common/sandboxDenials.js';
 import { IAccessRequest } from './access/accessTypes.js';
 import type { HandoffReason } from './contextHandoff.js';
 import type { VoltLane } from './harness/lanes.js';
@@ -109,6 +110,10 @@ export type IVoltEvent =
 	/** Provider status that is not assistant prose: usage limits, retries, and other ACP notices. */
 	/** `resetAt`: when a usage limit resets (epoch ms), from the provider's structured rate-limit data. */
 	| { type: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; resetAt?: number }
+	/** The chat's OS sandbox stopped something the agent tried (a write outside the workspace, a host while network is off). */
+	| { type: 'sandbox.denial'; denial: ISandboxDenial }
+	/** A memory was saved, read or deleted through Volt's memory tools: the transcript shows a recall chip. */
+	| { type: 'memory'; action: 'read' | 'write' | 'delete' | 'list'; names: readonly string[]; scope?: 'user' | 'project' }
 	/** Provider stream is being retried. Live-only in spirit; persisted so the trace shows the stall. */
 	| { type: 'retry'; attempt: number; delayMs: number; message: string }
 	| { type: 'finish'; reason: 'stop' | 'tool_calls' | 'length' | 'error' | 'abort' }

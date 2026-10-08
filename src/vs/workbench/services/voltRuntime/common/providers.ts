@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import type { ICompiledPolicy } from './access/accessTypes.js';
 import { IProviderCapabilities } from './capabilities.js';
@@ -113,6 +114,15 @@ export interface IAgentStartRequest {
 	/** Model the user picked from this agent's catalog, when it exposes one. */
 	modelId?: string;
 	options?: IVoltModelOptions;
+	/** The chat's OS sandbox. Absent or `off`: the agent runs unconfined. */
+	sandbox?: IAgentSandboxStart;
+}
+
+/** What an agent provider needs to start its process in the OS sandbox. */
+export interface IAgentSandboxStart {
+	readonly settings: IVoltSandboxSettings;
+	/** The chat's checkout (and the main repository's `.git` for a linked worktree). */
+	readonly workspaceRoots: readonly string[];
 }
 
 export interface IAgentSessionHandle {

@@ -10,6 +10,8 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
+import { describeSandbox, IVoltSandboxSettings, VoltSandboxLevel, withAllowedDomain, withWritableRoot } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
@@ -84,6 +86,8 @@ import { createBrandIcon, providerFamilyLabel } from '../../../../services/voltR
 import { splitModelDisplayName } from '../../../../services/voltRuntime/common/models/modelOptions.js';
 import { IAgentRunGroupService, IRunGroupModel, validateRunSelection } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
+import { IVoltMemoryService, MEMORY_BODY_LIMIT } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { OPEN_RUN_GROUP_COMMAND_ID } from '../runGroups/agentRunGroupCommands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
@@ -808,6 +812,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
+		@IVoltMemoryService private readonly memory: IVoltMemoryService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
 	) {
 		super(AgentEditor.ID, group, telemetryService, themeService, storageService);
 		this.markdownRenderer = this.instantiationService.createInstance(MarkdownRenderer, {});
@@ -1278,7 +1284,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.accessButton.appendChild(createAccessIcon(option.id));
 		append(this.accessButton, $('span.volt-agent-access-label')).textContent = option.label;
 		this.accessButton.appendChild(createChevronIcon());
-		setAgentTooltip(this.accessButton, option.description);
+		const sandbox = this.runtime.getSandboxSettings(this.sessionKey);
+		setAgentTooltip(this.accessButton, this.activeIsAgent() && sandbox.level !== 'off' ? `${option.description}\n${describeSandbox(sandbox)}` : option.description);
 		this.animateChipWidth(this.accessButton, fromWidth);
 	}
 
@@ -1321,12 +1328,70 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 						this.contextViewService.hideContextView();
 					}));
 				}
+				if (this.activeIsAgent()) {
+					this.appendSandboxSection(list, store);
+				}
 				this.bindDropdownDismiss(store, menu, this.accessButton);
 				store.add(toDisposable(() => menu.remove()));
 				scheduleAtNextAnimationFrame(getWindow(menu), () => scroll.scanDomNode());
 				return store;
 			}
 		});
+	}
+
+	/** Agents run inside the chat's OS sandbox: its level, and whether the network stays reachable. */
+	private appendSandboxSection(list: HTMLElement, store: DisposableStore): void {
+		const settings = this.runtime.getSandboxSettings(this.sessionKey);
+		append(list, $('div.volt-agent-dropdown-separator'));
+		append(list, $('div.volt-agent-dropdown-heading')).textContent = localize('voltAgent.sandbox.heading', "Sandbox");
+		const levels: readonly { readonly level: VoltSandboxLevel; readonly icon: typeof Codicon.edit; readonly label: string; readonly description: string }[] = [
+			{ level: 'off', icon: Codicon.circleSlash, label: localize('voltAgent.sandbox.off', "Off"), description: localize('voltAgent.sandbox.off.desc', "The agent runs with your permissions") },
+			{ level: 'workspace-write', icon: Codicon.edit, label: localize('voltAgent.sandbox.workspace', "Workspace write"), description: localize('voltAgent.sandbox.workspace.desc', "Writes stay in this project, its worktree and temp folders") },
+			{ level: 'read-only', icon: Codicon.lock, label: localize('voltAgent.sandbox.readOnly', "Read-only"), description: localize('voltAgent.sandbox.readOnly.desc', "Nothing is written except temp folders and folders you allow") },
+		];
+		for (const option of levels) {
+			const item = append(list, $('button.volt-agent-dropdown-item.access')) as HTMLButtonElement;
+			if (option.level === settings.level) {
+				item.classList.add('active');
+			}
+			append(item, $('span.icon')).appendChild(renderIcon(option.icon));
+			const copy = append(item, $('span.copy'));
+			append(copy, $('span.label')).textContent = option.label;
+			append(copy, $('span.desc')).textContent = option.description;
+			store.add(addDisposableListener(item, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.chooseSandbox({ ...settings, level: option.level });
+			}));
+		}
+		if (settings.level === 'off') {
+			return;
+		}
+		const network = append(list, $('button.volt-agent-dropdown-item.access')) as HTMLButtonElement;
+		if (settings.network) {
+			network.classList.add('active');
+		}
+		append(network, $('span.icon')).appendChild(renderIcon(Codicon.globe));
+		const copy = append(network, $('span.copy'));
+		append(copy, $('span.label')).textContent = localize('voltAgent.sandbox.networkAccess', "Network access");
+		append(copy, $('span.desc')).textContent = settings.network
+			? localize('voltAgent.sandbox.network.on', "The agent can reach the internet")
+			: localize('voltAgent.sandbox.network.off', "Only the agent's own API and the hosts you allow");
+		store.add(addDisposableListener(network, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.chooseSandbox({ ...settings, network: !settings.network });
+		}));
+	}
+
+	private chooseSandbox(settings: IVoltSandboxSettings): void {
+		void this.runtime.setSandboxSettings(this.sessionKey, settings);
+		this.updateAccessButton();
+		this.contextViewService.hideContextView();
+	}
+
+	private activeIsAgent(): boolean {
+		return this.runtime.listCatalog().find(item => item.ref === this.currentModel)?.kind === 'agent';
 	}
 
 	private updateModeButton(): void {
@@ -3846,6 +3911,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private renderProviderNotice(parent: HTMLElement, part: Extract<TranscriptRow, { kind: 'notice' }>, message: IAgentAssistantMessage): void {
+		if (part.sandbox && !message.blockState[`tr:dismiss:${part.id}`]?.expanded) {
+			this.renderSandboxTray(parent, part.sandbox, part.id, message);
+			return;
+		}
 		if (part.supervision && !message.blockState[`tr:dismiss:${part.id}`]?.expanded) {
 			this.renderSupervisionTray(parent, part, part.supervision, message);
 			return;
@@ -3920,6 +3989,56 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			const spec = SUPERVISION_ACTION_LABELS[action];
 			this.appendTrayButton(row, spec.label(), spec.tooltip(), action === 'stop' ? 'secondary' : 'primary', () => this.runSupervisionAction(action, message));
 		}
+	}
+
+	/** A refused write, read, host or launch, with the ways to let this chat through and retry the step. */
+	private renderSandboxTray(parent: HTMLElement, denial: ISandboxDenial, partId: string, message: IAgentAssistantMessage): void {
+		const running = message === this.messages.at(-1) && !!message.activity?.streaming;
+		const tray = append(parent, $('.volt-agent-run-tray.sandbox'));
+		tray.setAttribute('role', 'status');
+		const head = append(tray, $('.volt-agent-run-tray-head'));
+		const icon = append(head, $('span.volt-agent-run-tray-icon'));
+		icon.appendChild(renderIcon(Codicon.shield));
+		this.setSearchableText(append(head, $('span.volt-agent-run-tray-title')), localize('voltAgent.sandbox.title', "Blocked by the sandbox"));
+		const dismiss = append(head, $('button.volt-agent-run-tray-dismiss')) as HTMLButtonElement;
+		dismiss.type = 'button';
+		dismiss.setAttribute('aria-label', localize('voltAgent.tray.dismiss', "Dismiss"));
+		setAgentTooltip(dismiss, localize('voltAgent.tray.dismiss', "Dismiss"));
+		dismiss.appendChild(renderIcon(Codicon.close));
+		this.threadListeners.add(addDisposableListener(dismiss, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			message.blockState[`tr:dismiss:${partId}`] = { expanded: true };
+			this.renderThread(this.stickToBottom);
+		}));
+		this.setSearchableText(append(tray, $('.volt-agent-run-tray-detail')), this.sandboxDetail(denial));
+		if (running) {
+			return;
+		}
+		const row = append(tray, $('.volt-agent-run-tray-actions'));
+		const settings = this.runtime.getSandboxSettings(this.sessionKey);
+		if (denial.kind === 'network') {
+			this.appendTrayButton(row, localize('voltAgent.sandbox.allowHost', "Allow {0}", denial.target), localize('voltAgent.sandbox.allowHost.hint', "Let this chat reach {0} through the sandbox", denial.target), 'primary', () => this.retrySandboxed(withAllowedDomain(settings, denial.target)));
+		} else if (denial.kind === 'write') {
+			const folder = denial.target.slice(0, denial.target.lastIndexOf('/')) || '/';
+			this.appendTrayButton(row, localize('voltAgent.sandbox.allowFolder', "Allow folder"), localize('voltAgent.sandbox.allowFolder.hint', "Let this chat write in {0}", folder), 'primary', () => this.retrySandboxed(withWritableRoot(settings, folder)));
+		}
+		this.appendTrayButton(row, localize('voltAgent.sandbox.outside', "Run outside sandbox"), localize('voltAgent.sandbox.outside.hint', "Turn the sandbox off for this chat and retry the step"), 'secondary', () => this.retrySandboxed({ ...settings, level: 'off' }));
+	}
+
+	private sandboxDetail(denial: ISandboxDenial): string {
+		switch (denial.kind) {
+			case 'network': return localize('voltAgent.sandbox.network', "Network access to {0} was blocked", denial.target);
+			case 'read': return localize('voltAgent.sandbox.read', "Reading {0} was blocked", denial.target);
+			case 'launch': return localize('voltAgent.sandbox.launch', "Opening {0} was blocked", denial.target);
+			default: return localize('voltAgent.sandbox.write', "Writing {0} was blocked", denial.target);
+		}
+	}
+
+	private retrySandboxed(settings: IVoltSandboxSettings): void {
+		void this.runtime.setSandboxSettings(this.sessionKey, settings).then(() => this.continueTurn(
+			localize('voltAgent.sandbox.retry.prompt', "The sandbox blocked your last step. Its settings have changed; retry that step now."),
+			localize('voltAgent.sandbox.retry.display', "Retry")));
 	}
 
 	private runSupervisionAction(action: SupervisionAction, message: IAgentAssistantMessage): void {
@@ -4192,6 +4311,30 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		render();
 	}
 
+	/** Saves a reply as a user-scope note; every later chat, in any provider, gets it in its memory index. */
+	private async rememberMessage(message: IAgentAssistantMessage): Promise<void> {
+		const text = agentMessagePlainText(message).trim();
+		if (!text) {
+			return;
+		}
+		const summary = text.replace(/\s+/g, ' ');
+		const name = await this.quickInputService.input({
+			prompt: localize('voltAgent.rememberPrompt', "Remember this reply in Volt memory"),
+			placeHolder: localize('voltAgent.rememberPlaceholder', "Name the note, e.g. Prefers small diffs"),
+			value: summary.slice(0, 60),
+			validateInput: async value => value.trim() ? undefined : localize('voltAgent.rememberNameRequired', "Write a short name."),
+		});
+		if (name === undefined) {
+			return;
+		}
+		try {
+			const saved = await this.memory.write({ name: name.trim(), description: summary.slice(0, 140), body: text.slice(0, MEMORY_BODY_LIMIT) });
+			this.notificationService.info(localize('voltAgent.rememberSaved', "Saved \"{0}\" to memory. New chats will recall it.", saved.name));
+		} catch (err) {
+			this.notificationService.error(err instanceof Error ? err.message : String(err));
+		}
+	}
+
 	private renderAgentFooter(turn: HTMLElement, message: IAgentAssistantMessage): void {
 		const footer = append(turn, $('.volt-agent-footer'));
 		const copyLabel = localize('voltAgent.copyMessage', "Copy Message");
@@ -4232,6 +4375,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.forkFromTurn(turnId);
 			}));
 		}
+
+		const rememberLabel = localize('voltAgent.rememberMessage', "Remember");
+		const rememberButton = append(footer, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
+		rememberButton.setAttribute('aria-label', rememberLabel);
+		setAgentTooltip(rememberButton, rememberLabel);
+		rememberButton.appendChild(renderIcon(Codicon.bookmark));
+		this.threadListeners.add(addDisposableListener(rememberButton, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.rememberMessage(message);
+		}));
 
 		const when = message.endedAt ?? message.startedAt;
 		if (when) {
