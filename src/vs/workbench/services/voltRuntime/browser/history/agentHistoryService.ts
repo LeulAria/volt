@@ -22,6 +22,7 @@ import {
 	AgentHistoryEntry,
 	AgentHistoryRecord,
 	AgentSessionAttention,
+	IAgentForkOrigin,
 	IAgentHistoryIndex,
 	IAgentHistoryListOptions,
 	IAgentHistoryService,
@@ -231,7 +232,7 @@ class SessionHandle implements IAgentSessionHandle {
 		this.append({ type: 'truncate', at: Date.now(), from: fromTurn });
 	}
 
-	setMeta(meta: { title?: string; agentTitle?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string }): void {
+	setMeta(meta: { title?: string; agentTitle?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string; forkOf?: IAgentForkOrigin }): void {
 		this.append({ type: 'meta', at: Date.now(), ...meta });
 	}
 

@@ -176,6 +176,8 @@ function describeThreadActivity(tool: string, args: Record<string, unknown>): IH
 			return { tool, label: 'Stopped chat', detail: text(args.reason, 60) ?? chat };
 		case 'thread_fork':
 			return { tool, label: chat ? 'Forked chat' : 'Forked this chat', detail: [text(args.title, 50), text(args.model, 40)].filter(Boolean).join(' · ') || undefined };
+		case 'thread_merge_back':
+			return { tool, label: args.apply === true ? 'Merged chat back' : 'Sent fork summary', detail: chat };
 		case 'thread_launch': {
 			const models = Array.isArray(args.models) ? args.models.length : 0;
 			return { tool, label: models > 1 ? `Launched ${models} chats` : 'Launched chat', detail: text(args.title, 60) };

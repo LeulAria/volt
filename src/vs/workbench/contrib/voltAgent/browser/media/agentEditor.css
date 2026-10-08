@@ -3059,6 +3059,28 @@ pre.volt-agent-searchable {
 	cursor: default;
 }
 
+/* The live token count beside "Compact first" / "Compacting" / "Compacted". */
+.volt-agent-composer-chip-count {
+	font-weight: 300;
+	opacity: 0.72;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-composer-chip-count:empty {
+	display: none;
+}
+
+/* Armed: the next send compacts first. Amber, like the meter at this fill. */
+.volt-agent-composer-chip.compact.armed {
+	color: var(--vscode-editorWarning-foreground);
+	border-color: color-mix(in srgb, var(--vscode-editorWarning-foreground) 45%, transparent);
+	background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 8%, transparent);
+}
+
+.volt-agent-composer-chip.compact.armed .volt-agent-composer-chip-count {
+	opacity: 0.85;
+}
+
 .volt-agent-composer-chip-chevron {
 	font-size: 12px !important;
 	width: 12px !important;

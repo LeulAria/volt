@@ -47,10 +47,17 @@ export interface IAgentComposerChipStatus {
 }
 
 /**
- * The Compact context chip: hidden, offered (the window is nearly full), running (the dots stand in
- * for its icon until the agent is done), or done (a check for a moment before it goes).
+ * The "Compact first" chip: hidden, offered (the window is nearly full; a click arms it), armed (the
+ * next send compacts first; a click disarms it), running (the dots stand in for its icon until the
+ * agent is done), or done (a check and the token drop for a moment before it goes).
  */
-export type AgentCompactChipState = 'hidden' | 'offered' | 'running' | 'done';
+export type AgentCompactChipState = 'hidden' | 'offered' | 'armed' | 'running' | 'done';
+
+/** What the chip says besides its state: the live token count ("162K", "162K → 21K") and its hover. */
+export interface IAgentCompactChipDetail {
+	readonly count?: string;
+	readonly tooltip?: string;
+}
 
 export interface IAgentComposerChipsOptions {
 	onStatusClick?: () => void;
@@ -124,6 +131,8 @@ export class AgentComposerChips extends Disposable {
 	private readonly compactChip: HTMLButtonElement;
 	private readonly compactLabelEl: HTMLElement;
 	private compactState: AgentCompactChipState = 'hidden';
+	private compactDetail: IAgentCompactChipDetail = {};
+	private readonly compactCountEl: HTMLElement;
 	private readonly scrollChip: HTMLButtonElement;
 	private scrolledUp = false;
 	private readonly scrollExit = this._register(new MutableDisposable());
@@ -167,7 +176,8 @@ export class AgentComposerChips extends Disposable {
 		this.compactChip.appendChild(createCompactIcon(this.compactChip.ownerDocument));
 		append(this.compactChip, $('span.volt-agent-composer-chip-done')).appendChild(renderIcon(Codicon.check));
 		this.compactLabelEl = append(this.compactChip, $('span.volt-agent-composer-chip-label'));
-		this.compactLabelEl.textContent = localize('voltAgent.compactContext', "Compact context");
+		this.compactLabelEl.textContent = localize('voltAgent.compactFirst', "Compact first");
+		this.compactCountEl = append(this.compactChip, $('span.volt-agent-composer-chip-count'));
 		this.renderCompactChip();
 
 		this.changesChip = append(this.element, $('button.volt-agent-composer-chip.changes.volt-browser-dock-chip')) as HTMLButtonElement;
@@ -247,7 +257,7 @@ export class AgentComposerChips extends Disposable {
 		this._register(addDisposableListener(this.compactChip, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
-			if (this.compactState === 'offered') {
+			if (this.compactState === 'offered' || this.compactState === 'armed') {
 				this.options.onCompactClick?.();
 			}
 		}));
@@ -338,32 +348,43 @@ export class AgentComposerChips extends Disposable {
 		this.render();
 	}
 
-	/** Shows the Compact context chip as an offer, while the agent compacts, or just after; or hides it. */
-	setCompactState(state: AgentCompactChipState): void {
+	/** Shows the Compact first chip as an offer, armed, while the agent compacts, or just after; or hides it. */
+	setCompactState(state: AgentCompactChipState, detail: IAgentCompactChipDetail = {}): void {
 		const next = this.options.onCompactClick ? state : 'hidden';
-		if (this.compactState === next) {
+		if (this.compactState === next && this.compactDetail.count === detail.count && this.compactDetail.tooltip === detail.tooltip) {
 			return;
 		}
+		const changed = this.compactState !== next;
 		this.compactState = next;
+		this.compactDetail = detail;
 		this.renderCompactChip();
-		this.render();
+		if (changed) {
+			this.render();
+		}
 	}
 
 	private renderCompactChip(): void {
 		const state = this.compactState;
 		this.compactChip.classList.toggle('working', state === 'running');
 		this.compactChip.classList.toggle('done', state === 'done');
-		this.compactChip.setAttribute('aria-disabled', String(state !== 'offered'));
+		this.compactChip.classList.toggle('armed', state === 'armed');
+		this.compactChip.setAttribute('aria-disabled', String(state !== 'offered' && state !== 'armed'));
+		if (state === 'offered' || state === 'armed') {
+			this.compactChip.setAttribute('aria-pressed', String(state === 'armed'));
+		} else {
+			this.compactChip.removeAttribute('aria-pressed');
+		}
 		this.compactLabelEl.textContent = state === 'running'
-			? localize('voltAgent.compaction.running', "Compacting context")
+			? localize('voltAgent.compaction.runningShort', "Compacting")
 			: state === 'done'
-				? localize('voltAgent.compaction.done', "Context compacted")
-				: localize('voltAgent.compactContext', "Compact context");
-		setAgentTooltip(this.compactChip, state === 'running'
+				? localize('voltAgent.compaction.doneShort', "Compacted")
+				: localize('voltAgent.compactFirst', "Compact first");
+		this.compactCountEl.textContent = this.compactDetail.count ? `· ${this.compactDetail.count}` : '';
+		setAgentTooltip(this.compactChip, this.compactDetail.tooltip ?? (state === 'running'
 			? localize('voltAgent.compactingTooltip', "The agent is summarizing the conversation so far. The summary replaces it in the context window.")
 			: state === 'done'
 				? localize('voltAgent.compactedTooltip', "The conversation was summarized; the agent continues from the summary.")
-				: localize('voltAgent.compactContextNearlyFull', "The context window is nearly full. Compact it to keep going."));
+				: localize('voltAgent.compactContextNearlyFull', "The context window is nearly full. Compact it to keep going.")));
 	}
 
 	hasVisibleChips(): boolean {

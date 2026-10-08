@@ -9,6 +9,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { VoltAccessMode } from './access/accessModes.js';
 import { AccessDecisionScope, IAccessRequest, IExecutionReceipt, IPermissionRule, PermissionEffect } from './access/accessTypes.js';
+import type { IHandoffActivity } from './contextHandoff.js';
 import { IVoltEventEnvelope } from './events.js';
 import { VoltMode } from './modes.js';
 import { IVoltModelOptions } from './models/modelOptions.js';
@@ -46,6 +47,23 @@ export interface IVoltMcpServerStatus {
 	readonly state: 'idle' | 'connecting' | 'ready' | 'error';
 }
 
+/** A message of a chat's model transcript as history restores it. */
+export interface IVoltSeedMessage {
+	readonly role: 'user' | 'assistant';
+	readonly content: string;
+	readonly model?: string;
+	readonly activity?: IHandoffActivity;
+	readonly compacted?: boolean;
+}
+
+export interface IVoltCompactionPlan {
+	readonly kind: 'native' | 'handoff';
+	/** `handoff`: estimated tokens the conversation compacts to. */
+	readonly tokens?: number;
+	/** The model the chat compacts for. */
+	readonly label?: string;
+}
+
 export interface IAgentRuntimeService extends IVoltModelAccess {
 	readonly _serviceBrand: undefined;
 	readonly onDidChangeCatalog: Event<void>;
@@ -54,8 +72,17 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	readonly onDidChangeAccess: Event<void>;
 
 	getOrCreateSession(key: string): IVoltSession;
-	/** Restore a session's model transcript from durable history when it has none yet. */
-	seedSession(key: string, messages: readonly { role: 'user' | 'assistant'; content: string }[]): void;
+	/**
+	 * Restore a session's model transcript from durable history when it has none yet. `forkedFrom`
+	 * marks a fork, so its first agent is briefed as one.
+	 */
+	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: { readonly forkedFrom?: string }): void;
+	/**
+	 * How `/compact` would run in this chat on `providerRef` now: the agent's own (`native`: Claude
+	 * Code's `/compact`, Codex's, or Volt's summarizer for native models), or Volt's handoff summary
+	 * and a fresh session (`handoff`, with its estimated size). Undefined when there is nothing to compact.
+	 */
+	compactionPlan(sessionId: string, providerRef: string | undefined): IVoltCompactionPlan | undefined;
 	/**
 	 * The user rewrote history: keep only the first `userTurns` user messages (and the replies
 	 * between them). Model-side transcripts are cut to match, so the old turns are forgotten.

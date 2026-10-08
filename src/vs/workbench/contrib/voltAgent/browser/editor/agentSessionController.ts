@@ -1107,6 +1107,17 @@ export class AgentSessionController extends Disposable {
 			case 'context.compaction':
 				this.applyCompaction(last, activity, event);
 				break;
+			case 'context.handoff': {
+				// Kept on the prompt the handoff went out with: its divider shows what was sent.
+				const index = this.host.messages.lastIndexOf(last);
+				const user = this.host.messages[index - 1];
+				if (user?.kind === 'user' && user.id === last.id) {
+					const { type: _type, ...info } = event;
+					user.contextHandoff = info;
+					this.host.recordUser?.(user);
+				}
+				break;
+			}
 			case 'notice':
 				this.showProviderNotice(last, activity, event.severity, event.title, event.description);
 				break;

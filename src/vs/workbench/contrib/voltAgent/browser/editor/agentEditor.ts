@@ -24,6 +24,7 @@ import { ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
 import { EditorExtensionsRegistry } from '../../../../../editor/browser/editorExtensions.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { preloadMarkdownExtras } from '../blocks/agentMarkdown.js';
+import { IAgentChatForkService } from '../orchestration/agentChatFork.js';
 import { buildTranscriptRows, hasSignInNotice, ITranscriptSteer, TranscriptRow, withoutFailureNotice } from '../chrome/agentTranscript.js';
 import { fallbackSubagentView, ITranscriptHost, renderTranscript, tickElapsed } from '../chrome/agentTranscriptView.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
@@ -56,7 +57,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ACCESS_MODE_OPTIONS, accessModeOption } from '../../../../services/voltRuntime/common/access/accessModes.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
-import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, type IVoltCompactionPlan } from '../../../../services/voltRuntime/common/runtime.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchQueueItem, OrchDelivery } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentPromptHostOptions, stashTurnDisplay } from '../orchestration/agentTurnHost.js';
 import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
@@ -73,7 +74,7 @@ import { IVoltSessionContextService } from '../../../../services/voltRuntime/com
 import { IVoltProject, IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
 import { createAccessIcon } from '../chrome/accessIcons.js';
 import { mountAgentQuickOpenActions } from '../chrome/agentViewSidebars.js';
-import { agentMessagePlainText, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
+import { agentMessagePlainText, formatContextTokens, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
 import { AgentContextUsageView, type IAgentCompactState, type IAgentStatusBranch } from '../context/agentContextUsageView.js';
 import { AgentModelPicker, type IModelOption } from '../picker/agentModelPicker.js';
 import { cliLoginForNotice } from '../../../../services/voltRuntime/browser/agents/cliAgents.js';
@@ -113,7 +114,8 @@ import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { AgentLimitBanner } from '../composer/agentLimitBanner.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
-import { COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend } from '../../../../services/voltRuntime/common/compaction.js';
+import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend, shouldOfferCompactChip } from '../../../../services/voltRuntime/common/compaction.js';
+import type { IVoltEvent } from '../../../../services/voltRuntime/common/events.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
@@ -131,6 +133,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { AgentThreadView } from './agentThreadView.js';
 import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
+import { renderHandoffDivider } from '../chrome/agentHandoffDivider.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { NEW_AGENT_SCHEDULE_COMMAND_ID, OPEN_AGENT_SCHEDULES_COMMAND_ID } from '../schedules/agentScheduleCommands.js';
 import { createModeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
@@ -155,8 +158,9 @@ import { DEFAULT_LABELS_CONTAINER, ResourceLabels } from '../../../../browser/la
 import { chooseFileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
 
 /**
- * The Compact context chip shows from this fill on, when the meter turns amber: before Claude
- * compacts on its own (about 83% of a 200K window), so the user can pick the moment.
+ * The Compact first chip shows from this fill on (setting `volt.agent.compactChipThreshold`), when
+ * the meter turns amber: before Claude compacts on its own (about 83% of a 200K window), so the
+ * user can pick the moment.
  */
 const COMPACT_CHIP_PERCENT = 80;
 /** How long the chip reads "Context compacted" before it goes. */
@@ -388,11 +392,16 @@ export interface IAgentUserMessage {
 	taskIds?: string[];
 	/** The chat moved to another model before this turn: drawn as a "Context handoff" divider above it. */
 	handoff?: { fromLabel?: string; toLabel: string; at: number; by: 'agent' | 'user'; reason?: string };
+	/** What Volt handed the session that answered this turn (it had not seen the conversation, or missed turns of it). */
+	contextHandoff?: IAgentContextHandoffInfo;
 	/** Sent by a scheduled task, not typed now: drawn with a "Scheduled" divider above it. */
 	scheduled?: { id: string; title: string };
 	/** Written by another chat's agent (a message, the task it launched, or a fork's first prompt): drawn with a "From" pill that opens that chat. */
-	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork' };
+	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork' | 'merge' };
 }
+
+/** A `context.handoff` as the transcript keeps it: the divider's numbers and the text that was sent. */
+export type IAgentContextHandoffInfo = Omit<Extract<IVoltEvent, { type: 'context.handoff' }>, 'type'>;
 
 export interface IAgentPromptDisplay {
 	text: string;
@@ -635,6 +644,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly compactChipDone = this._register(new MutableDisposable());
 	/** How full the meter last read. */
 	private contextPercent = 0;
+	/** Tokens the meter last read. */
+	private contextUsedTokens = 0;
+	/** The user armed (true) or disarmed (false) "Compact first" for the next send; undefined: the default (armed for old, large chats). */
+	private compactFirst: boolean | undefined;
 	private worktreeSetupCard: AgentWorktreeSetupCard | undefined;
 	private limitBanner: AgentLimitBanner | undefined;
 	private waitingForClone: string | undefined;
@@ -769,6 +782,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@ICommandService private readonly commandService: ICommandService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
+		@IAgentChatForkService private readonly forkService: IAgentChatForkService,
+		@INotificationService private readonly notificationService: INotificationService,
 		@IAgentWorktreeSetupService private readonly worktreeSetup: IAgentWorktreeSetupService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
@@ -780,7 +795,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
-		@INotificationService private readonly notificationService: INotificationService,
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
@@ -973,7 +987,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onChangesClick: () => void this.openSessionChanges(),
 			onTerminalClick: () => this.surfaceHost.openTerminal(),
 			onScrollToBottom: () => this.scrollThreadToEnd(),
-			onCompactClick: () => this.compactContext(),
+			onCompactClick: () => this.toggleCompactFirst(),
 			onStatusClick: () => this.scrollThreadToEnd(),
 		}));
 		this.tasksCard = this._register(new AgentTasksCard(() => this.layoutInputEditor()));
@@ -1116,8 +1130,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			isCompacting: () => this.compactionRunning(),
 			compact: () => this.compactContext(),
 			// Nearly out of room: offer Compact context as a chip beside Changes.
-			onDidRefresh: percent => {
+			onDidRefresh: (percent, used) => {
 				this.contextPercent = percent;
+				this.contextUsedTokens = used ?? 0;
 				this.syncCompactChip();
 			},
 		}));
@@ -2395,6 +2410,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					this.tailFrom = tailFrom;
 				}
 			}
+			if (index === 0) {
+				this.renderForkOrigin(exchange);
+			}
 			this.renderThreadMessage(exchange, message, index);
 		}
 		this.renderingTail = false;
@@ -2435,17 +2453,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				turn.classList.add('editing');
 				this.renderRedoCheckpoint(append(turn, $('.volt-agent-edit-slot')), message);
 			} else if (message.origin === 'notification') {
-				if (message.handoff) {
-					this.renderHandoffDivider(turn, message.handoff);
-				}
+				renderHandoffDivider(turn, message, this.threadListeners);
 				this.renderNotificationTurn(turn, message);
 			} else if (isBareCompactCommand(message) && !message.handoff && this.replyCompacts(index)) {
 				// Compact context, from the chip or typed alone: the reply's divider says it all.
 				turn.classList.add('compact-command');
 			} else {
-				if (message.handoff) {
-					this.renderHandoffDivider(turn, message.handoff);
-				}
+				renderHandoffDivider(turn, message, this.threadListeners);
 				if (message.origin === 'brief') {
 					this.renderSubagentOfPill(turn);
 				}
@@ -2502,22 +2516,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
-	/** "Context handoff · Claude Opus 5.5 → GPT-6": the chat moved to another model before this turn. */
-	private renderHandoffDivider(turn: HTMLElement, handoff: NonNullable<IAgentUserMessage['handoff']>): void {
-		const divider = append(turn, $('.volt-agent-handoff'));
-		const pill = append(divider, $('span.volt-agent-handoff-pill'));
-		pill.appendChild(renderIcon(Codicon.arrowSwap));
-		append(pill, $('span.label')).textContent = localize('voltAgent.handoff', "Context handoff");
-		if (handoff.fromLabel) {
-			append(pill, $('span.from')).textContent = handoff.fromLabel;
-			pill.appendChild(renderIcon(Codicon.arrowRight));
-		}
-		append(pill, $('span.to')).textContent = handoff.toLabel;
-		setAgentTooltip(pill, handoff.by === 'agent'
-			? (handoff.reason ? localize('voltAgent.handoff.agentReason', "The agent handed the chat over: {0}", handoff.reason) : localize('voltAgent.handoff.agent', "The agent handed the chat over with a brief"))
-			: localize('voltAgent.handoff.user', "You switched models; the conversation so far went with it"));
-	}
-
 	/** The top of a subagent's chat: whose subagent it is, a click away from the parent. */
 	private renderSubagentOfPill(turn: HTMLElement): void {
 		const thread = this.orchestrator.getThread(this.sessionKey);
@@ -2540,10 +2538,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private renderFromThreadPill(turn: HTMLElement, from: NonNullable<IAgentUserMessage['fromThread']>): void {
 		const divider = append(turn, $('.volt-agent-subagent-of.from-thread'));
 		const pill = append(divider, $('span.volt-agent-subagent-of-pill'));
-		pill.appendChild(renderIcon(from.kind === 'fork' ? Codicon.repoForked : from.kind === 'launch' ? Codicon.rocket : Codicon.commentDiscussion));
+		pill.appendChild(renderIcon(from.kind === 'fork' ? Codicon.repoForked : from.kind === 'merge' ? Codicon.gitMerge : from.kind === 'launch' ? Codicon.rocket : Codicon.commentDiscussion));
 		append(pill, $('span.label')).textContent = from.kind === 'fork'
 			? localize('voltAgent.fromThread.fork', "Forked by")
-			: from.kind === 'launch' ? localize('voltAgent.fromThread.launch', "Started by") : localize('voltAgent.fromThread.message', "From");
+			: from.kind === 'merge' ? localize('voltAgent.fromThread.merge', "Merged back by")
+				: from.kind === 'launch' ? localize('voltAgent.fromThread.launch', "Started by") : localize('voltAgent.fromThread.message', "From");
 		append(pill, $('span.parent')).textContent = `· ${this.history.get(from.id)?.title || from.title}`;
 		pill.setAttribute('role', 'button');
 		pill.tabIndex = 0;
@@ -2559,6 +2558,61 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				open(e);
 			}
 		}));
+	}
+
+	private forkFromTurn(turnId: string): void {
+		this.forkService.forkChat(this.sessionKey, { throughTurnId: turnId, workspace: 'worktree', open: true })
+			.catch(err => this.notificationService.error(localize('voltAgent.forkFailed', "Could not fork this chat: {0}", err instanceof Error ? err.message : String(err))));
+	}
+
+	/** On a forked chat's first turn: where it came from, and a way to merge its changes back. */
+	private renderForkOrigin(exchange: HTMLElement): void {
+		const origin = this.history.get(this.sessionKey)?.forkOf;
+		if (!origin) {
+			return;
+		}
+		const divider = append(exchange, $('.volt-agent-subagent-of.fork-origin'));
+		const from = append(divider, $('span.volt-agent-subagent-of-pill'));
+		from.appendChild(renderIcon(Codicon.repoForked));
+		append(from, $('span.label')).textContent = localize('voltAgent.forkOrigin.from', "Forked from");
+		append(from, $('span.parent')).textContent = `· ${this.history.get(origin.id)?.title || origin.title}`;
+		from.setAttribute('role', 'button');
+		from.tabIndex = 0;
+		setAgentTooltip(from, localize('voltAgent.forkOrigin.open', "Open the chat this was forked from."));
+		const openParent = (e: UIEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, origin.id);
+		};
+		this.threadListeners.add(addDisposableListener(from, 'click', openParent));
+		this.threadListeners.add(addDisposableListener(from, 'keydown', e => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				openParent(e);
+			}
+		}));
+
+		const merge = append(divider, $('span.volt-agent-subagent-of-pill'));
+		merge.appendChild(renderIcon(Codicon.gitMerge));
+		append(merge, $('span.label')).textContent = localize('voltAgent.forkOrigin.merge', "Merge back");
+		merge.setAttribute('role', 'button');
+		merge.tabIndex = 0;
+		setAgentTooltip(merge, localize('voltAgent.forkOrigin.mergeTip', "Merge this chat's changes into the chat it was forked from, and tell that chat."));
+		const mergeBack = (e: UIEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.mergeBackToParent();
+		};
+		this.threadListeners.add(addDisposableListener(merge, 'click', mergeBack));
+		this.threadListeners.add(addDisposableListener(merge, 'keydown', e => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				mergeBack(e);
+			}
+		}));
+	}
+
+	private mergeBackToParent(): void {
+		this.forkService.mergeBack(this.sessionKey, { apply: true })
+			.catch(err => this.notificationService.error(localize('voltAgent.mergeBackFailed', "Could not merge this chat back: {0}", err instanceof Error ? err.message : String(err))));
 	}
 
 	/** "Scheduled · Daily CI check" above a prompt a scheduled task sent; a click opens the task list. */
@@ -4138,15 +4192,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			});
 		}));
 
-		const forkButton = append(footer, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
-		forkButton.setAttribute('aria-label', forkLabel);
-		setAgentTooltip(forkButton, forkLabel);
-		forkButton.appendChild(createForkIcon());
-		this.threadListeners.add(addDisposableListener(forkButton, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			void this.commandService.executeCommand(NEW_AGENT_COMMAND_ID, { asTab: true });
-		}));
+		if (message.id) {
+			const turnId = message.id;
+			const forkButton = append(footer, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
+			forkButton.setAttribute('aria-label', forkLabel);
+			setAgentTooltip(forkButton, forkLabel);
+			forkButton.appendChild(createForkIcon());
+			this.threadListeners.add(addDisposableListener(forkButton, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.forkFromTurn(turnId);
+			}));
+		}
 
 		const when = message.endedAt ?? message.startedAt;
 		if (when) {
@@ -4903,9 +4960,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.adoptVisibleProject();
 		}
 		this._onDidComposerSend.fire();
-		if (this.compactsBeforeSend(agentText)) {
-			// An old, large chat: compact first, so the prompt does not resend its whole stale history.
-			this.submitToOrchestrator('/compact', undefined, this.currentMode, 'auto');
+		if (this.compactOffered() && this.compactFirstArmed() && !isCompactCommand(agentText)) {
+			// "Compact first": the compaction is its own turn, and the prompt queues behind it.
+			this.compactFirst = undefined;
+			this.compactRequested = true;
+			this.compactRequestTimeout.value = disposableTimeout(() => {
+				this.compactRequested = false;
+				this.syncCompactChip();
+			}, 30_000);
+			this.syncCompactChip();
+			void this.submitToOrchestrator('/compact', undefined, this.currentMode, 'queue');
 		}
 		this.dispatchPrompt(agentText, display);
 	}
@@ -5045,7 +5109,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** Whether the chat's agent offers `/compact`, and why it cannot run right now. */
 	private compactState(): IAgentCompactState | undefined {
-		if (!this.runtime.supportsCommand(this.sessionKey, 'compact') || this.isSubagentChat()) {
+		if (!this.compactPlan() || this.isSubagentChat()) {
 			return undefined;
 		}
 		if (this.compactionRunning()) {
@@ -5086,10 +5150,49 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		return undefined;
 	}
 
+	/** How `/compact` would run for the composer's model: the agent's own, or Volt's handoff summary. */
+	private compactPlan(): IVoltCompactionPlan | undefined {
+		return this.runtime.compactionPlan(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined));
+	}
+
+	/** Whether the next send compacts first: the user's choice, else on for old, large chats (their cache has expired). */
+	private compactFirstArmed(): boolean {
+		return this.compactFirst ?? this.compactsBeforeSend('');
+	}
+
+	/** The chip offers "Compact first" now: the meter is past the threshold, or the chat is old and large. */
+	private compactOffered(): boolean {
+		const state = this.compactState();
+		if (!state || state.blockedReason) {
+			return false;
+		}
+		const threshold = this.configurationService.getValue<number>(COMPACT_CHIP_THRESHOLD_SETTING);
+		const percent = typeof threshold === 'number' && threshold > 0 && threshold <= 100 ? threshold : COMPACT_CHIP_PERCENT;
+		const plan = this.compactPlan();
+		return shouldOfferCompactChip({ usedTokens: this.contextUsedTokens, percentFull: this.contextPercent, thresholdPercent: percent, compactedTokens: plan?.kind === 'handoff' ? plan.tokens : undefined })
+			|| this.compactsBeforeSend('');
+	}
+
+	private toggleCompactFirst(): void {
+		this.compactFirst = !this.compactFirstArmed();
+		this.syncCompactChip();
+	}
+
+	/** The chip's hover: what compacting will do with this chat on this model. */
+	private compactChipTooltip(armed: boolean, plan: IVoltCompactionPlan | undefined): string {
+		const tokens = formatContextTokens(this.contextUsedTokens);
+		const what = plan?.kind === 'handoff'
+			? localize('voltAgent.compactFirst.handoff', "Volt condenses the {0}-token conversation to about {1} (recent turns verbatim, older turns summarized, tool calls as one-liners, edits as file paths) and starts a fresh {2} session with it. No model call.", tokens, formatContextTokens(plan.tokens ?? 0), plan.label ?? localize('voltAgent.compactFirst.agent', "agent"))
+			: localize('voltAgent.compactFirst.native', "{0} summarizes the {1}-token conversation with its own /compact; your message then runs on the summary.", plan?.label ?? localize('voltAgent.compactFirst.theAgent', "The agent"), tokens);
+		return armed
+			? localize('voltAgent.compactFirst.armed', "Your next message compacts first. {0}\nClick to send with the full history.", what)
+			: localize('voltAgent.compactFirst.offered', "The context is {0}% full. Click to compact before your next message: {1}", Math.round(this.contextPercent), what);
+	}
+
 	/**
-	 * The Compact context chip: offered once the window is nearly full; the dots and "Compacting
-	 * context" from the click (or the agent's own compaction) until it ends; then "Context compacted"
-	 * for a moment.
+	 * The Compact first chip: offered once the window is nearly full (a click arms it for the next
+	 * send), the dots and the token count while a compaction runs, then the drop ("162K → 21K") for
+	 * a moment.
 	 */
 	private syncCompactChip(): void {
 		const chips = this.composerChips;
@@ -5099,13 +5202,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.compactionRunning()) {
 			this.compactChipWasRunning = true;
 			this.compactChipDone.clear();
-			chips.setCompactState('running');
+			const pre = this.lastCompaction()?.preTokens ?? this.contextUsedTokens;
+			chips.setCompactState('running', { ...(pre ? { count: formatContextTokens(pre) } : {}) });
 			return;
 		}
 		if (this.compactChipWasRunning) {
 			this.compactChipWasRunning = false;
-			if (this.lastCompaction()?.status === 'completed') {
-				chips.setCompactState('done');
+			const last = this.lastCompaction();
+			if (last?.status === 'completed') {
+				const drop = last.preTokens && last.postTokens !== undefined ? `${formatContextTokens(last.preTokens)} → ${formatContextTokens(last.postTokens)}` : undefined;
+				chips.setCompactState('done', { ...(drop ? { count: drop } : {}) });
 				this.compactChipDone.value = disposableTimeout(() => {
 					this.compactChipDone.clear();
 					this.syncCompactChip();
@@ -5116,8 +5222,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.compactChipDone.value) {
 			return;
 		}
-		const state = this.contextPercent >= COMPACT_CHIP_PERCENT ? this.compactState() : undefined;
-		chips.setCompactState(state && !state.blockedReason ? 'offered' : 'hidden');
+		if (!this.compactOffered()) {
+			chips.setCompactState('hidden');
+			return;
+		}
+		const armed = this.compactFirstArmed();
+		chips.setCompactState(armed ? 'armed' : 'offered', {
+			...(this.contextUsedTokens ? { count: localize('voltAgent.compactFirst.count', "{0} tokens", formatContextTokens(this.contextUsedTokens)) } : {}),
+			tooltip: this.compactChipTooltip(armed, this.compactPlan()),
+		});
 	}
 
 	/** Forgets the last chat's compaction: the chip and meter describe the chat on screen. */
@@ -5126,9 +5239,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.compactRequestTimeout.clear();
 		this.compactChipWasRunning = false;
 		this.compactChipDone.clear();
+		this.compactFirst = undefined;
 	}
 
-	/** T3's "Resume with less context", done for the user: see `shouldCompactBeforeSend`. */
+	/** T3's "Resume with less context": see `shouldCompactBeforeSend`. */
 	private compactsBeforeSend(text: string): boolean {
 		const last = this.messages.findLast(message => message.kind === 'agent');
 		const state = this.compactState();
