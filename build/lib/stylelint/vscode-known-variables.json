@@ -1040,6 +1040,8 @@
 		"--volt-pr-del",
 		"--volt-pr-draft",
 		"--volt-pr-label",
+		"--volt-pr-merge-accent",
+		"--volt-pr-merge-accent-hover",
 		"--volt-pr-merged",
 		"--volt-pr-muted",
 		"--volt-pr-open",

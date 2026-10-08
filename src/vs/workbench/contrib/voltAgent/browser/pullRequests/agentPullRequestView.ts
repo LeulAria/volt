@@ -18,6 +18,7 @@ import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.j
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { prKey } from '../../../../../platform/voltPullRequests/common/voltPullRequestParse.js';
 import {
 	IVoltPrCheck,
@@ -25,6 +26,7 @@ import {
 	IVoltPrFilePatch,
 	IVoltPrReview,
 	IVoltPrReviewThread,
+	IVoltPrStackView,
 	IVoltPullRequestDetail,
 	VoltPrMergeMethod,
 	voltPrErrorCode,
@@ -116,6 +118,7 @@ export class AgentPullRequestView extends Disposable {
 	private readonly codeDiffWidget = this._register(new MutableDisposable<AgentPullRequestCodeDiff>());
 	private readonly patches = new Map<string, IPatchLoad>();
 	private readonly patchLoads = new Set<string>();
+	private stackView: IVoltPrStackView | undefined;
 	private composeOpen = false;
 	private composeMode: 'comment' | 'review' = 'comment';
 	private reviewEvent: 'comment' | 'approve' | 'requestChanges' = 'comment';
@@ -133,6 +136,7 @@ export class AgentPullRequestView extends Disposable {
 		@ILanguageService private readonly languageService: ILanguageService,
 		@IHostService private readonly hostService: IHostService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
 	) {
 		super();
 		this.element = append(parent, $('.volt-pr-view'));
@@ -283,6 +287,9 @@ export class AgentPullRequestView extends Disposable {
 			this.detailSignature = signature;
 			this.detail = detail;
 			this.error = undefined;
+			if (!unchanged) {
+				void this.readStack(detail.headRefName);
+			}
 		} catch (err) {
 			if (seq !== this.loadSeq) {
 				return;
@@ -596,7 +603,7 @@ export class AgentPullRequestView extends Disposable {
 					{ id: 'layers', title: localize('voltPr.stackLayers', "Layers, top first"), items: layers },
 					{
 						id: 'actions', items: [
-							{ id: 'rebase', label: localize('voltPr.rebaseStack', "Rebase Stack ({0})", open.length), icon: Codicon.sync, disabled: !open.length, data: { kind: 'rebase' } },
+							{ id: 'rebase', label: localize('voltPr.rebaseStack', "Update Branches on GitHub ({0})", open.length), icon: Codicon.sync, disabled: !open.length, data: { kind: 'rebase' } },
 							{ id: 'merge', label: localize('voltPr.mergeStack', "Merge Stack up to #{0}", pr.number), icon: Codicon.gitMerge, disabled: !isOpenState(pr.state), data: { kind: 'merge' } },
 						],
 					},
@@ -614,6 +621,112 @@ export class AgentPullRequestView extends Disposable {
 					}
 				},
 			});
+		});
+	}
+
+	/** The stack this branch sits in, read from the chat's folder: layers top first, each with its pull request. */
+	private renderStack(parent: HTMLElement, pr: IVoltPullRequestDetail): void {
+		const sessionId = this.sessionId;
+		const folder = sessionId ? this.pullRequests.folderFor(sessionId) : undefined;
+		const view = this.stackView;
+		if (!sessionId || !folder || !view || view.stack.current !== pr.headRefName) {
+			return;
+		}
+		const checkedOut = view.checkedOut === pr.headRefName;
+		const layers = [...view.layers].reverse();
+		if (!layers.length && !checkedOut) {
+			return;
+		}
+		const section = this.foldSection(parent, 'stack', layers.length ? localize('voltPr.stackCount', "Stack ({0})", layers.length) : localize('voltPr.stackTitle', "Stack"), header => {
+			if (layers.length) {
+				this.button(header, localize('voltPr.restackShort', "Restack"), () => void this.restackStack(folder, pr.headRefName), 'ghost', Codicon.sync);
+			}
+			if (checkedOut) {
+				this.button(header, localize('voltPr.stackNewShort', "Stack Branch"), () => void this.stackNewBranch(folder), 'ghost', Codicon.layers);
+			}
+		});
+		if (!section) {
+			return;
+		}
+		if (!layers.length) {
+			section.appendChild(renderIcon(Codicon.layers));
+			append(section, $('span.muted')).textContent = localize('voltPr.notStacked', "Not stacked. Stack Branch adds a layer on top of this branch, and its pull request targets this branch.");
+			return;
+		}
+		const list = append(section, $('ol.volt-pr-stack'));
+		for (const { layer, pullRequest } of layers) {
+			const row = append(list, $('li.volt-pr-stack-layer'));
+			row.classList.toggle('current', layer.branch === pr.headRefName);
+			row.appendChild(renderIcon(pullRequest ? prStateIcon(pullRequest.state) : Codicon.gitBranch));
+			append(row, $('span.volt-pr-stack-name')).textContent = pullRequest ? `#${pullRequest.number} ${pullRequest.title}` : layer.branch;
+			append(row, $('span.muted')).textContent = `← ${layer.parent}`;
+			const chips = append(row, $('span.volt-pr-stack-chips'));
+			const chip = (label: string, warning: boolean) => {
+				append(chips, $(warning ? 'span.volt-pr-stack-chip.warning' : 'span.volt-pr-stack-chip')).textContent = label;
+			};
+			if (layer.needsRestack) {
+				chip(localize('voltPr.stackNeedsRestack', "needs restack"), true);
+			}
+			if (layer.dirty) {
+				chip(localize('voltPr.stackDirty', "uncommitted changes"), true);
+			}
+			if (layer.rebaseInProgress) {
+				chip(localize('voltPr.stackRebasing', "rebase waiting"), true);
+			}
+			if (layer.unpushed) {
+				chip(localize('voltPr.stackUnpushed', "not pushed"), false);
+			}
+			if (pullRequest && pullRequest.baseRefName !== layer.parent) {
+				chip(localize('voltPr.stackRetarget', "base is {0}", pullRequest.baseRefName), true);
+			}
+			if (pullRequest && pullRequest.number !== pr.number) {
+				this.onClick(row, () => void this.instantiationService.invokeFunction(accessor => openPullRequest(accessor, { kind: 'pr', repo: pullRequest.repo, number: pullRequest.number }, sessionId)));
+			}
+		}
+	}
+
+	private async readStack(branch: string): Promise<void> {
+		const sessionId = this.sessionId;
+		const folder = sessionId ? this.pullRequests.folderFor(sessionId) : undefined;
+		if (!folder) {
+			return;
+		}
+		this.stackView = await this.pullRequests.stack(folder, branch).catch(() => undefined);
+		this.renderSoon();
+	}
+
+	private async restackStack(folder: string, branch: string): Promise<void> {
+		const { confirmed } = await this.dialogService.confirm({
+			message: localize('voltPr.confirmRestack', "Restack the stack?"),
+			detail: localize('voltPr.confirmRestackDetail', "Each layer above a parent that changed moves onto it. The moved layers are pushed with --force-with-lease, and nothing else is rewritten."),
+			primaryButton: localize('voltPr.restackButton', "Restack"),
+		});
+		if (!confirmed) {
+			return;
+		}
+		await this.run(localize('voltPr.restackBusy', "Restacking the stack…"), async () => {
+			const outcome = await this.pullRequests.restack(folder, branch, false);
+			if (outcome.stopped) {
+				this.notificationService.warn(localize('voltPr.restackStopped', "Restack stopped at {0}: {1}", outcome.stopped.branch, outcome.stopped.message));
+			} else if (outcome.pushFailures.length) {
+				this.notificationService.warn(localize('voltPr.restackPushFailed', "Restacked locally, but the remote refused {0} push(es) because someone else pushed. Pull, then restack again.", outcome.pushFailures.length));
+			} else {
+				this.notificationService.info(outcome.restacked.length ? localize('voltPr.restacked', "Restacked {0} layer(s) and pushed them.", outcome.restacked.length) : localize('voltPr.restackUpToDate', "The stack is up to date."));
+			}
+		});
+	}
+
+	private async stackNewBranch(folder: string): Promise<void> {
+		const title = await this.quickInputService.input({
+			prompt: localize('voltPr.stackTitlePrompt', "Name the new layer"),
+			placeHolder: localize('voltPr.stackTitleHint', "What this change does. It becomes the branch name."),
+		});
+		if (!title?.trim()) {
+			return;
+		}
+		await this.run(localize('voltPr.stackBusy', "Stacking a branch…"), async () => {
+			const made = await this.pullRequests.stackNewBranch(folder, title.trim());
+			this.notificationService.info(localize('voltPr.stacked', "Checked out {0} on top of {1}. Commit, then open its pull request against {1}.", made.branch, made.parent));
 		});
 	}
 
@@ -821,6 +934,8 @@ export class AgentPullRequestView extends Disposable {
 		this.renderReviewers(meta, pr);
 		this.renderLabels(meta, pr);
 		this.renderMergeNotice(body, pr);
+
+		this.renderStack(body, pr);
 
 		const description = this.foldSection(body, 'description', localize('voltPr.description', "Description"));
 		if (description) {

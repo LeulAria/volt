@@ -125,24 +125,6 @@ export function childrenOf(branches: ReadonlyMap<string, IVoltStackBranchState>)
 	return out;
 }
 
-/** Every branch stacked on `branch`, directly or not, nearest first. */
-export function descendantsOf(branches: ReadonlyMap<string, IVoltStackBranchState>, branch: string): string[] {
-	const children = childrenOf(branches);
-	const out: string[] = [];
-	const queue = [...children.get(branch) ?? []];
-	const seen = new Set<string>([branch]);
-	while (queue.length) {
-		const next = queue.shift()!;
-		if (seen.has(next)) {
-			continue;
-		}
-		seen.add(next);
-		out.push(next);
-		queue.push(...children.get(next) ?? []);
-	}
-	return out;
-}
-
 /** One rebase of a restack: `git rebase --onto <onto> <upstream> <branch>`. */
 export interface IVoltRestackStep {
 	readonly branch: string;
@@ -150,14 +132,6 @@ export interface IVoltRestackStep {
 	readonly onto: string;
 	/** The commit the layer's own commits start after: the recorded parent commit, else the fork point. */
 	readonly upstream: string;
-}
-
-/**
- * Rebases run together: one `git rebase --update-refs` of the top branch moves the layers below it
- * too. A group of one is a plain rebase.
- */
-export interface IVoltRestackGroup {
-	readonly steps: readonly IVoltRestackStep[];
 }
 
 export interface IVoltRestackLayerInput {
@@ -214,35 +188,6 @@ export function planRestack(layers: readonly IVoltRestackLayerInput[], options: 
 		moved.add(layer.branch);
 	}
 	return steps;
-}
-
-/**
- * Joins consecutive steps into one `--update-refs` rebase where git does exactly what the cascade
- * would: the upper layer sits right on the lower one's current tip (its recorded parent commit is
- * that tip), and the lower branch is not checked out anywhere (git leaves checked out branches
- * alone in `--update-refs`). `otherRefsInRange` names steps whose commits other local branches point
- * into; those would be moved too, so they rebase on their own.
- */
-export function groupRestackSteps(steps: readonly IVoltRestackStep[], layers: ReadonlyMap<string, Pick<IVoltRestackLayerInput, 'oid' | 'parentOid' | 'worktree'>>, otherRefsInRange: ReadonlySet<string> = new Set()): IVoltRestackGroup[] {
-	const groups: IVoltRestackStep[][] = [];
-	for (const step of steps) {
-		const current = groups.at(-1);
-		const below = current?.at(-1);
-		const lower = below ? layers.get(below.branch) : undefined;
-		const self = layers.get(step.branch);
-		const joins = !!below && !!lower && !!self
-			&& step.onto === below.branch
-			&& step.upstream === lower.oid
-			&& !lower.worktree
-			&& !otherRefsInRange.has(below.branch)
-			&& !otherRefsInRange.has(step.branch);
-		if (joins) {
-			current!.push(step);
-		} else {
-			groups.push([step]);
-		}
-	}
-	return groups.map(group => ({ steps: group }));
 }
 
 /**

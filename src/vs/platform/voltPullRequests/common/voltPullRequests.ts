@@ -5,6 +5,7 @@
 
 import { Event } from '../../../base/common/event.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
+import { IVoltRestackResult, IVoltStack, IVoltStackLayer } from './voltPrStacks.js';
 
 /**
  * Pull requests for agent chats: read, create, review and merge them on the code host.
@@ -502,6 +503,25 @@ export function voltPrErrorMessage(err: unknown): string {
 	return message.replace(/^\[\w+\]\s*/, '');
 }
 
+/** One layer of a stack and the pull request its branch has, if any. */
+export interface IVoltPrStackLayerView {
+	readonly layer: IVoltStackLayer;
+	readonly pullRequest?: IVoltPullRequest;
+}
+
+export interface IVoltPrStackView {
+	readonly stack: IVoltStack;
+	/** Bottom first, like `stack.layers`. */
+	readonly layers: readonly IVoltPrStackLayerView[];
+	/** The branch the work tree has checked out: a new layer is stacked on it. */
+	readonly checkedOut?: string;
+}
+
+export interface IVoltPrRestackOutcome extends IVoltRestackResult {
+	/** Children of merged pull requests that now sit on the merged one's parent, and their new base. */
+	readonly retargeted: readonly { readonly branch: string; readonly to: string }[];
+}
+
 export interface IVoltPullRequestService {
 	readonly _serviceBrand: undefined;
 	/** Fires when signed-in accounts may have changed (after a login or a token failure). */
@@ -578,4 +598,13 @@ export interface IVoltPullRequestService {
 	signInHost(request: IVoltPrSignInRequest): Promise<IVoltPrAccount>;
 	/** What the host is and who Volt reads it as (probing an unknown host once). */
 	hostInfo(host: string): Promise<IVoltPrHostInfo>;
+	/** The stack the branch (the checked out one by default) is in, bottom first, with each layer's pull request. */
+	stack(request: { readonly folder: string; readonly branch?: string }): Promise<IVoltPrStackView | undefined>;
+	/** Creates a layer on the checked out branch, named from `title`, and checks it out. */
+	stackNewBranch(request: { readonly folder: string; readonly title: string }): Promise<{ readonly branch: string; readonly parent: string }>;
+	/**
+	 * Moves the layers above whatever changed: a parent that was amended, rebased or squash-merged.
+	 * Children of a merged pull request first sit on its parent (and their pull requests target it).
+	 */
+	restack(request: { readonly folder: string; readonly branch?: string; readonly syncTrunk?: boolean }): Promise<IVoltPrRestackOutcome>;
 }

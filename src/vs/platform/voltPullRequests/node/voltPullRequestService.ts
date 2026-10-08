@@ -28,7 +28,9 @@ import {
 } from '../common/voltPullRequestParse.js';
 import { splitUnifiedDiff } from '../common/hosts/hostParse.js';
 import { pullRequestHeadRef, repositoryWebUrl } from '../common/voltPrHosts.js';
+import { isStackTrunk, IVoltRestackResult, stackBranchName } from '../common/voltPrStacks.js';
 import { findingsAsComment, IVoltPrHostClient, parseCommitPathRef } from './hosts/voltPrHostClient.js';
+import { readBranchStates, readStack, recordParent, restackStack, retargetChildren, IStackContext, StackGit } from './voltPrStackGit.js';
 import { VoltPrFetch } from './hosts/voltPrHttp.js';
 import { VoltPrHostRegistry } from './hosts/voltPrHostRegistry.js';
 import {
@@ -46,6 +48,9 @@ import {
 	IVoltPrFile,
 	IVoltPrFilePatch,
 	IVoltPrHostCredential,
+	IVoltPrRestackOutcome,
+	IVoltPrStackView,
+	IVoltPrStackLayerView,
 	IVoltPrHostInfo,
 	IVoltPrLineComment,
 	IVoltPrListRequest,
@@ -1273,6 +1278,104 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		const created = await this.run('git', ['checkout', '-b', request.name], { cwd: request.folder, timeoutMs: 30_000 });
 		if (created.code !== 0) {
 			throw new VoltPrError('failed', `git checkout -b ${request.name} failed: ${ghErrorText(created.stderr)}`);
+		}
+	}
+
+	//#endregion
+
+	//#region Stacks
+
+	async stack(request: { readonly folder: string; readonly branch?: string }): Promise<IVoltPrStackView | undefined> {
+		const status = await this.gitStatus(request.folder);
+		if (!status) {
+			return undefined;
+		}
+		const context = this.stackContext(status.root, status.defaultBranch, status.remote);
+		const stack = await readStack(context, request.branch ?? status.branch);
+		const repo = await this.resolveRepo(request.folder);
+		const layers: IVoltPrStackLayerView[] = [];
+		for (const layer of stack.layers) {
+			const prs = repo ? await this.forBranchOrNone(repo, layer.branch) : [];
+			layers.push({ layer, pullRequest: prs.find(isOpen) ?? prs[0] });
+		}
+		return { stack, layers, checkedOut: status.branch };
+	}
+
+	async stackNewBranch(request: { readonly folder: string; readonly title: string }): Promise<{ readonly branch: string; readonly parent: string }> {
+		const status = await this.gitStatus(request.folder);
+		if (!status?.branch || !status.head) {
+			throw new VoltPrError('failed', 'Check out a branch with a commit to stack on.');
+		}
+		const parent = status.branch;
+		const parentOid = status.head;
+		const context = this.stackContext(status.root, status.defaultBranch, status.remote);
+		return this.gitQueue.queue(status.root, async () => {
+			const branch = stackBranchName(request.title, new Set((await readBranchStates(context)).keys()));
+			const created = await this.run('git', ['checkout', '-b', branch], { cwd: status.root, timeoutMs: 30_000 });
+			if (created.code !== 0) {
+				throw new VoltPrError('failed', `git checkout -b ${branch} failed: ${ghErrorText(created.stderr)}`);
+			}
+			await recordParent(context, branch, parent, parentOid);
+			return { branch, parent };
+		});
+	}
+
+	async restack(request: { readonly folder: string; readonly branch?: string; readonly syncTrunk?: boolean }): Promise<IVoltPrRestackOutcome> {
+		const status = await this.gitStatus(request.folder);
+		if (!status?.branch) {
+			throw new VoltPrError('failed', 'Check out a branch in the stack first.');
+		}
+		const context = this.stackContext(status.root, status.defaultBranch, status.remote);
+		const current = request.branch ?? status.branch;
+		const repo = await this.resolveRepo(request.folder);
+		return this.gitQueue.queue(status.root, async () => {
+			const retargeted: { branch: string; to: string }[] = [];
+			if (repo) {
+				const handled = new Set<string>();
+				for (const layer of (await readStack(context, current)).layers) {
+					const parent = layer.parent;
+					if (isStackTrunk(parent, context.trunk) || handled.has(parent)) {
+						continue;
+					}
+					handled.add(parent);
+					if (!(await this.forBranchOrNone(repo, parent)).some(pr => pr.state === 'merged')) {
+						continue;
+					}
+					for (const move of await retargetChildren(context, parent)) {
+						retargeted.push({ branch: move.branch, to: move.to });
+						const open = (await this.forBranchOrNone(repo, move.branch)).find(isOpen);
+						if (open) {
+							await this.setBase({ repo, number: open.number, base: move.to });
+						}
+					}
+				}
+			}
+			const syncTrunk = !!request.syncTrunk || retargeted.some(move => isStackTrunk(move.to, context.trunk));
+			if (syncTrunk && context.remote) {
+				const fetched = await this.run('git', ['-c', 'credential.interactive=never', 'fetch', '--quiet', context.remote, context.trunk], { cwd: status.root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
+				if (fetched.code !== 0) {
+					throw new VoltPrError('network', `git fetch failed: ${ghErrorText(fetched.stderr)}`);
+				}
+			}
+			const result: IVoltRestackResult = await restackStack(context, current, { syncTrunk });
+			return { ...result, retargeted };
+		});
+	}
+
+	private stackContext(root: string, trunk: string | undefined, remote: string | undefined): IStackContext {
+		const git: StackGit = (args, cwd) => this.run('git', args, { cwd, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
+		return { git, root, trunk: trunk ?? 'main', remote };
+	}
+
+	/** Pull requests for a branch; none when the host can't answer (no sign-in yet), since a stack view still works without them. */
+	private async forBranchOrNone(repo: IVoltPrRepo, branch: string): Promise<IVoltPullRequest[]> {
+		try {
+			return await this.forBranch({ repo, branch });
+		} catch (err) {
+			if (voltPrErrorCode(err) === 'failed') {
+				throw err;
+			}
+			return [];
 		}
 	}
 
