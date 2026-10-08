@@ -1042,3 +1042,13 @@ button.volt-agent-work-agent:hover { background: color-mix(in srgb, var(--vscode
 .volt-tr-subagent-stop:hover {
 	background: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
 }
+
+/* "Started by · Claude Code  external": a prompt an agent outside Volt sent over the OAuth MCP server. */
+.volt-agent-subagent-of.from-thread.external .volt-agent-subagent-of-pill .volt-agent-external-tag {
+	padding: 0 6px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+	font-size: 11px;
+	line-height: 16px;
+}

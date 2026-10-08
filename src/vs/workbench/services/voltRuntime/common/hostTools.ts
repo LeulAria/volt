@@ -113,6 +113,17 @@ export interface IVoltHostToolCall {
 	readonly cwd?: string;
 	/** `native`: Volt's own loop, which draws its own tool rows, so no `onDidInvokeTool` event. Default `mcp`. */
 	readonly source?: 'mcp' | 'native';
+	/** An agent outside Volt called it over the OAuth MCP server (no chat; `sessionId` is unset). */
+	readonly external?: IVoltExternalCaller;
+}
+
+/** Who an outside agent is, from the grant the user approved. */
+export interface IVoltExternalCaller {
+	readonly grantId: string;
+	readonly clientId: string;
+	/** The name it registered with (unverified), e.g. "Claude Code". */
+	readonly name: string;
+	readonly scopes: readonly string[];
 }
 
 /** What the host tools need to know about a chat they serve. */
@@ -389,13 +400,16 @@ export const VOLT_HOST_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: BROWSER_SCREENSHOT_TOOL_NAME,
 		title: 'Took screenshot',
 		group: 'browser',
-		description: 'Take a screenshot of the current page (or one element) in the in-app browser to check how it looks. One image pixel is one CSS pixel up to max_side. Use browser_snapshot to find elements to act on, and browser_compare_image to check a page against a design image.',
+		description: 'Take a screenshot of the current page (or one element) in the in-app browser to check how it looks. One image pixel is one CSS pixel up to max_side. The result lists the interactive elements in the image with refs and their boxes in image pixels, so you can act on what you see by ref; a follow-up screenshot of the same page lists only the changes. Use browser_compare_image to check a page against a design image.',
 		inputSchema: {
 			type: 'object',
 			properties: {
 				ref: { ...REF, description: 'Optional element ref: capture only this element.' },
 				format: { type: 'string', enum: ['jpeg', 'png', 'webp'], description: 'Default jpeg (smallest). png for pixel-exact checks.' },
 				max_side: { type: 'number', description: 'Longest side in pixels, 256-2560. Default 1280.' },
+				ax: { type: 'string', enum: ['auto', 'full', 'off'], description: 'Element list: auto (default: full on the first capture of a page, changes after that), full, or off.' },
+				max_elements: { type: 'number', description: 'Most elements to list, 5-200. Default 60.' },
+				marks: { type: 'boolean', description: 'Draw a red outline and its ref on each listed element in the image.' },
 			},
 		},
 	},

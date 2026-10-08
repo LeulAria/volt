@@ -1,0 +1,236 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Consent for an outside agent (OAuth MCP) and the Connected agents settings page. The dialog
+ * lives in the opaque .volt-modal panel; nothing here is see-through and no backdrop-filter. */
+
+.volt-modal.volt-external-mcp-consent {
+	height: auto !important;
+	max-height: calc(100% - 48px);
+}
+
+.volt-external-mcp-consent .volt-modal-body {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.volt-external-mcp-consent-content {
+	padding: 22px 22px 14px;
+	overflow-y: auto;
+	min-height: 0;
+}
+
+.volt-external-mcp-consent-content .head {
+	display: flex;
+	gap: 12px;
+	align-items: flex-start;
+}
+
+.volt-external-mcp-consent-content .mark {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	flex-shrink: 0;
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-external-mcp-consent-content .mark .codicon {
+	font-size: 18px;
+}
+
+.volt-external-mcp-consent-content h2 {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+	line-height: 20px;
+	overflow-wrap: anywhere;
+}
+
+.volt-external-mcp-consent-content .meta {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	margin-top: 4px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-external-mcp-unverified,
+.volt-external-mcp-consent-content .meta .unverified {
+	padding: 0 7px;
+	border-radius: 999px;
+	line-height: 18px;
+	font-size: 11px;
+	background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #d29922) 16%, transparent);
+	color: var(--vscode-editorWarning-foreground, #d29922);
+}
+
+.volt-external-mcp-consent-content .lead,
+.volt-external-mcp-consent-content .fine {
+	margin: 14px 0 0;
+	font-size: 12.5px;
+	line-height: 18px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-external-mcp-consent-content .fine {
+	margin-top: 16px;
+	font-size: 12px;
+}
+
+.volt-external-mcp-consent-content .section {
+	margin: 18px 0 8px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-external-mcp-consent-content .scopes {
+	display: flex;
+	flex-direction: column;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	border-radius: 10px;
+	overflow: hidden;
+}
+
+.volt-external-mcp-consent-content .scope {
+	display: flex;
+	gap: 10px;
+	align-items: flex-start;
+	padding: 10px 12px;
+	cursor: pointer;
+}
+
+.volt-external-mcp-consent-content .scope + .scope {
+	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.volt-external-mcp-consent-content .scope input {
+	margin: 2px 0 0;
+	accent-color: var(--vscode-button-background);
+}
+
+.volt-external-mcp-consent-content .scope .title {
+	font-size: 13px;
+	font-weight: 500;
+}
+
+.volt-external-mcp-consent-content .scope .detail {
+	margin-top: 1px;
+	font-size: 12px;
+	line-height: 17px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-external-mcp-consent-content .redirect code,
+.volt-external-mcp-code {
+	display: block;
+	padding: 8px 10px;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 17px;
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+	user-select: text;
+}
+
+.volt-external-mcp-consent-content .redirect .hint {
+	margin-top: 6px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* Settings > Connected agents */
+
+.volt-external-mcp-snippet {
+	display: flex;
+	gap: 8px;
+	align-items: flex-start;
+	margin: 6px 0 12px;
+}
+
+.volt-external-mcp-snippet .volt-external-mcp-code {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-external-mcp-snippet-title {
+	margin-top: 10px;
+	font-size: 12.5px;
+	font-weight: 500;
+}
+
+.volt-external-mcp-copy {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	flex-shrink: 0;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+}
+
+.volt-external-mcp-copy:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-external-mcp-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-external-mcp-status .dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
+}
+
+.volt-external-mcp-status.on .dot {
+	background: var(--vscode-testing-iconPassed, #3fb950);
+}
+
+.volt-external-mcp-status.error .dot {
+	background: var(--vscode-errorForeground);
+}
+
+.volt-external-mcp-grant .title {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.volt-external-mcp-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 4px;
+}
+
+.volt-external-mcp-chip {
+	padding: 0 7px;
+	border-radius: 999px;
+	line-height: 18px;
+	font-size: 11px;
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 75%, transparent);
+}

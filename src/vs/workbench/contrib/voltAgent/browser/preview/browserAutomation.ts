@@ -14,6 +14,7 @@ import { decodeDataUrl, encodeImage, ImageFormat, scaleScreenshot } from '../../
 import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostToolResult, IVoltHostToolService, VoltBrowserAutomationToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 import { VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { diffAx, formatAxLine, IAxItem, placeOnImage, readingOrder, strokeBoxes } from '../../../../services/voltRuntime/common/tools/axAnnotations.js';
 import { clampRect, compareImages, compareLayout, cropImage, describeComparison, describeLayout, diffHeatmap, parseRect, sideBySide } from '../../../../services/voltRuntime/common/tools/imageAnalysis.js';
 import { agentSessionBrowser } from '../workspace/agentSurfaceHost.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
@@ -27,6 +28,7 @@ interface IPageSnapshot {
 	yaml: string;
 	error?: string;
 	viewport?: { width: number; height: number; scrollY: number; scrollHeight: number; scrollWidth: number };
+	items?: IAxItem[];
 }
 
 interface ITarget {
@@ -239,13 +241,16 @@ interface IShot {
 	readonly image: string;
 	readonly width: number;
 	readonly height: number;
+	/** Interactive elements inside the image, boxes in image pixels. */
+	readonly items?: IAxItem[];
 }
 
 /**
  * A screenshot sized for the model: CSS pixels (not Retina device pixels), at most `max_side`
  * (default 1280) on the longest side, JPEG unless asked otherwise. With `ref`, only that element.
+ * With `withItems`, also the interactive elements that land in the image, with their refs.
  */
-async function screenshot(view: VoltBrowserView, args: Record<string, unknown>, token: CancellationToken): Promise<IShot | undefined> {
+async function screenshot(view: VoltBrowserView, args: Record<string, unknown>, token: CancellationToken, withItems = false): Promise<IShot | undefined> {
 	// Web fonts and the first paint land after `load`; a capture before them comes back flat.
 	await raceTimeout(view.runScript(PAINTED_SCRIPT), 3000);
 	const ref = str(args.ref);
@@ -256,6 +261,7 @@ async function screenshot(view: VoltBrowserView, args: Record<string, unknown>, 
 	if (rect) {
 		await timeout(60);
 	}
+	const page = withItems ? await raceTimeout(view.runScript<IPageSnapshot>(snapshotScript({ interactive: true, items: true })), SCRIPT_TIMEOUT_MS).catch(() => undefined) : undefined;
 	let image = await view.captureSnapshot();
 	if (image && await isFlatImage(image)) {
 		await timeout(400);
@@ -268,9 +274,16 @@ async function screenshot(view: VoltBrowserView, args: Record<string, unknown>, 
 	const cssWidth = rect?.viewportWidth ?? await raceTimeout(view.runScript<number>('innerWidth'), 2000).catch(() => undefined);
 	const format: ImageFormat = args.format === 'png' || args.format === 'webp' ? args.format : 'jpeg';
 	const maxSide = Math.max(256, Math.min(2560, num(args.max_side) ?? 1280));
+	const crop = rect && rect.w > 0 && rect.h > 0 ? rect : undefined;
 	try {
-		const shot = await scaleScreenshot(image, { maxSide, targetWidth: typeof cssWidth === 'number' ? cssWidth : undefined, format, crop: rect && rect.w > 0 && rect.h > 0 ? rect : undefined });
-		return { image: shot.dataUrl, width: shot.width, height: shot.height };
+		const shot = await scaleScreenshot(image, { maxSide, targetWidth: typeof cssWidth === 'number' ? cssWidth : undefined, format, crop });
+		const items = page?.items && page.viewport && shot.width ? placeOnImage(page.items, {
+			origin: crop ? { x: crop.x, y: crop.y } : { x: 0, y: 0 },
+			scale: shot.width / (crop ? crop.w : page.viewport.width),
+			width: shot.width,
+			height: shot.height,
+		}) : undefined;
+		return { image: shot.dataUrl, width: shot.width, height: shot.height, items };
 	} catch {
 		return { image, width: 0, height: 0 };
 	}
@@ -447,6 +460,54 @@ async function automate(services: IAutomationServices, sessionId: string, tool: 
 	}
 }
 
+const DEFAULT_LISTED_ELEMENTS = 60;
+
+/** The elements listed with the last screenshot of each view; refs are stable per element, so a follow-up can diff by ref. */
+const lastListing = new WeakMap<VoltBrowserView, { url: string; items: IAxItem[] }>();
+
+/**
+ * Lists the interactive elements a screenshot shows. The first capture of a page lists them all up
+ * to `max_elements`; a later capture of the same page lists only what was added, changed or removed.
+ * `ax: "full"` forces the full list.
+ */
+function elementListing(view: VoltBrowserView, shot: IShot, args: Record<string, unknown>): { lines: string[]; listed: IAxItem[] } {
+	if (!shot.items) {
+		return { lines: [], listed: [] };
+	}
+	const budget = Math.max(5, Math.min(200, num(args.max_elements) ?? DEFAULT_LISTED_ELEMENTS));
+	const ordered = readingOrder(shot.items);
+	const listed = ordered.slice(0, budget);
+	const previous = lastListing.get(view);
+	lastListing.set(view, { url: view.pageUrl, items: shot.items });
+	const more = ordered.length > listed.length ? [`- …${ordered.length - listed.length} more in view (raise max_elements)`] : [];
+	if (!previous || previous.url !== view.pageUrl || args.ax === 'full') {
+		const header = '### Elements in the screenshot (box = x, y, w, h in image pixels; pass a ref to browser_click, browser_type, …)';
+		return { lines: [header, ...(listed.length ? listed.map(formatAxLine) : ['- (no interactive elements in view)']), ...more], listed };
+	}
+	const diff = diffAx(previous.items, shot.items);
+	const lines = [`### Changes since the last screenshot (${diff.unchanged} unchanged)`];
+	if (!diff.added.length && !diff.changed.length && !diff.removed.length) {
+		lines.push('- No element was added, changed or removed. Positions are in the image.');
+	}
+	if (diff.added.length) {
+		lines.push('- Added:', ...readingOrder(diff.added).slice(0, budget).map(item => `  ${formatAxLine(item)}`));
+	}
+	if (diff.changed.length) {
+		lines.push('- Changed:', ...readingOrder(diff.changed).slice(0, budget).map(item => `  ${formatAxLine(item)}`));
+	}
+	if (diff.removed.length) {
+		lines.push(`- Removed: ${diff.removed.map(item => item.ref).join(', ')}`);
+	}
+	return { lines, listed };
+}
+
+/** The screenshot with a numbered outline (its ref) around each listed element. */
+async function markedImage(shot: IShot, listed: readonly IAxItem[], format: ImageFormat): Promise<string> {
+	const image = await decodeDataUrl(shot.image, { width: shot.width, height: shot.height });
+	const stroked = strokeBoxes(image, listed.map(item => item.box));
+	return encodeImage(stroked, format, 0.8, listed.map(item => ({ x: item.box[0], y: item.box[1], text: item.ref })));
+}
+
 async function act(view: VoltBrowserView, tool: VoltBrowserAutomationToolName, args: Record<string, unknown>, normalized: string | undefined, opened: boolean, ctx: ICallContext): Promise<IVoltHostToolResult> {
 	const { token } = ctx;
 	const ref = str(args.ref);
@@ -613,12 +674,15 @@ async function act(view: VoltBrowserView, tool: VoltBrowserAutomationToolName, a
 			cancelled(token);
 			return { text: [...action('reload', {}), '', ...await pageState(view)].join('\n') };
 		case 'browser_screenshot': {
-			const shot = await screenshot(view, args, token);
+			const shot = await screenshot(view, args, token, args.ax !== 'off');
 			if (!shot) {
 				return { error: 'The page could not be captured yet.' };
 			}
 			const details = { Element: ref ? (element ?? ref) : undefined, Size: shot.width ? `${shot.width}×${shot.height}` : undefined };
-			return { text: [...action('screenshot', details), '', ...await pageState(view, false)].join('\n'), image: shot.image };
+			const listing = elementListing(view, shot, args);
+			const format: ImageFormat = args.format === 'png' || args.format === 'webp' ? args.format : 'jpeg';
+			const image = args.marks === true && listing.listed.length ? await markedImage(shot, listing.listed, format) : shot.image;
+			return { text: [...action('screenshot', details), '', ...await pageState(view, false), '', ...listing.lines].join('\n'), image };
 		}
 		case BROWSER_COMPARE_IMAGE_TOOL_NAME:
 			return compare(view, args, ctx);

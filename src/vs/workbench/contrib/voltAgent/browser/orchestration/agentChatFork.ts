@@ -19,7 +19,7 @@ export interface IAgentForkChatOptions {
 	readonly message?: string;
 	readonly open?: boolean;
 	/** The chat whose agent asked for the fork; its message is shown as that chat's. */
-	readonly from?: { readonly id: string; readonly title: string; readonly kind: 'fork' };
+	readonly from?: { readonly id: string; readonly title: string; readonly kind: 'fork'; readonly external?: boolean };
 }
 
 export interface IAgentForkChatResult {

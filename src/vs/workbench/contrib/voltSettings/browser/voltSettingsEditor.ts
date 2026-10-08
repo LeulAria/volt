@@ -55,8 +55,9 @@ import { renderProjectsSection, renderStorageSection } from '../../voltSetup/bro
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { AppearancePage } from './appearancePage.js';
 import { ProvidersPage } from './providersPage.js';
+import { ConnectedAgentsPage } from './connectedAgentsPage.js';
 
-type SettingsSection = 'general' | 'appearance' | 'providers' | 'modes' | 'composer' | 'tab' | 'security' | 'projects' | 'storage';
+type SettingsSection = 'general' | 'appearance' | 'providers' | 'modes' | 'composer' | 'tab' | 'security' | 'connected' | 'projects' | 'storage';
 
 /** The Modes nav glyph (a small robot face), drawn in currentColor like the codicons beside it. */
 function createModesIcon(): SVGElement {
@@ -84,6 +85,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; svg?: () 
 	{ id: 'composer', label: localize('voltSettings.composer', "Composer"), icon: Codicon.commentDiscussion, group: 1 },
 	{ id: 'tab', label: localize('voltSettings.tab', "Tab & Prediction"), icon: Codicon.keyboard, group: 1 },
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield, group: 2 },
+	{ id: 'connected', label: localize('voltSettings.connectedAgents', "Connected agents"), icon: Codicon.link, group: 2 },
 	{ id: 'projects', label: localize('voltSettings.projects', "Projects"), icon: Codicon.repo, group: 2 },
 	{ id: 'storage', label: localize('voltSettings.storage', "Storage"), icon: Codicon.database, group: 2 },
 ];
@@ -147,6 +149,7 @@ export class VoltSettingsEditor extends EditorPane {
 	private renderedSection: SettingsSection | undefined;
 	private providers!: ProvidersPage;
 	private appearance!: AppearancePage;
+	private connectedAgents!: ConnectedAgentsPage;
 	private readonly renderStore = this._register(new DisposableStore());
 	private readonly scrollSync = this._register(new MutableDisposable());
 
@@ -269,6 +272,22 @@ export class VoltSettingsEditor extends EditorPane {
 		});
 		this._register(toDisposable(() => this.providers.dispose()));
 		this.appearance = new AppearancePage(this.instantiationService, this.renderStore, () => this.section === 'appearance');
+		this.connectedAgents = new ConnectedAgentsPage(this.instantiationService, {
+			store: this.renderStore,
+			target: () => this.target,
+			sectionLabel: label => this.sectionLabel(label),
+			settingsGroup: () => this.settingsGroup(),
+			settingRow: (parent, title, desc, render) => this.settingRow(parent, title, desc, render),
+			empty: text => this.empty(text),
+			switch: (parent, on, label, onClick) => this.switch(parent, on, label, onClick),
+			inputBoxStyles: () => this.inputBoxStyles(),
+			rerender: () => this.renderContent(),
+		});
+		this._register(this.connectedAgents.onDidChange(() => {
+			if (this.section === 'connected') {
+				this.renderContent();
+			}
+		}));
 		this.renderContent();
 	}
 
@@ -369,6 +388,15 @@ export class VoltSettingsEditor extends EditorPane {
 			case 'security':
 				this.renderSecurity();
 				break;
+			case 'connected': {
+				this.pageHead(
+					localize('voltSettings.connectedAgents', "Connected agents"),
+					localize('voltSettings.connectedAgentsLead', "Let Claude Code, Codex, Cursor and other agents outside Volt run your chats over MCP, and see or revoke the ones you allowed."),
+				);
+				const generation = this.renderGeneration;
+				pending = this.connectedAgents.render(() => generation === this.renderGeneration && this.section === 'connected').finally(() => this.scheduleScrollSync());
+				break;
+			}
 			case 'projects':
 				this.pageHead(localize('voltSettings.projects', "Projects"), localize('voltSettings.projectsLead', "What new chats in each project start with, its worktree setup and its agents' environment."));
 				renderProjectsSection(this.target, this.instantiationService, this.renderStore, this.search.trim().toLowerCase());
