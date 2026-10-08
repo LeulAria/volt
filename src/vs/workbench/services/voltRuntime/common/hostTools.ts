@@ -113,6 +113,17 @@ export interface IVoltHostToolCall {
 	readonly cwd?: string;
 	/** `native`: Volt's own loop, which draws its own tool rows, so no `onDidInvokeTool` event. Default `mcp`. */
 	readonly source?: 'mcp' | 'native';
+	/** An agent outside Volt called it over the OAuth MCP server (no chat; `sessionId` is unset). */
+	readonly external?: IVoltExternalCaller;
+}
+
+/** Who an outside agent is, from the grant the user approved. */
+export interface IVoltExternalCaller {
+	readonly grantId: string;
+	readonly clientId: string;
+	/** The name it registered with (unverified), e.g. "Claude Code". */
+	readonly name: string;
+	readonly scopes: readonly string[];
 }
 
 /** What the host tools need to know about a chat they serve. */

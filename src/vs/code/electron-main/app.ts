@@ -125,6 +125,8 @@ import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../platform/voltS
 import { createVoltStdioChannel, VoltStdioMainService } from '../../platform/voltStdio/electron-main/voltStdioMainService.js';
 import { IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../platform/voltHostMcp/common/voltHostMcp.js';
 import { VoltHostMcpMainService } from '../../platform/voltHostMcp/electron-main/voltHostMcpMainService.js';
+import { IVoltExternalMcpService, VOLT_EXTERNAL_MCP_CHANNEL_NAME } from '../../platform/voltExternalMcp/common/voltExternalMcp.js';
+import { VoltExternalMcpMainService } from '../../platform/voltExternalMcp/electron-main/voltExternalMcpMainService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../platform/voltGit/common/voltGit.js';
 import { VoltGitMainService } from '../../platform/voltGit/electron-main/voltGitMainService.js';
 import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../platform/voltPullRequests/common/voltPullRequests.js';
@@ -1074,6 +1076,9 @@ export class CodeApplication extends Disposable {
 		// Volt host MCP (questions and in-app browser tools for launched agents)
 		services.set(IVoltHostMcpService, new SyncDescriptor(VoltHostMcpMainService, undefined, false /* proxied to other processes */));
 
+		// Volt orchestrator as an OAuth MCP server for outside agents
+		services.set(IVoltExternalMcpService, new SyncDescriptor(VoltExternalMcpMainService, undefined, false /* proxied to other processes */));
+
 		// Volt agent change capture
 		services.set(IVoltGitService, new SyncDescriptor(VoltGitMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltPullRequestService, new SyncDescriptor(VoltPullRequestMainService, undefined, false /* proxied to other processes */));
@@ -1266,6 +1271,8 @@ export class CodeApplication extends Disposable {
 		// Volt host MCP
 		const voltHostMcpChannel = ProxyChannel.fromService(accessor.get(IVoltHostMcpService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_HOST_MCP_CHANNEL_NAME, voltHostMcpChannel);
+		const voltExternalMcpChannel = ProxyChannel.fromService(accessor.get(IVoltExternalMcpService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_EXTERNAL_MCP_CHANNEL_NAME, voltExternalMcpChannel);
 
 		// Volt agent change capture
 		const voltGitChannel = ProxyChannel.fromService(accessor.get(IVoltGitService), disposables);

@@ -88,6 +88,7 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { ISearchService } from '../../../../services/search/common/search.js';
 import { searchFilesAndFolders } from '../../../search/browser/searchChatContext.js';
 import { AGENT_EDITOR_LINE_NUMBERS_SETTING, AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from './agentEditorInput.js';
+import { OPEN_CONNECTED_AGENTS_COMMAND_ID } from '../orchestration/agentExternalCaller.js';
 import { createAgentTitleActionViewItem } from './agentTitleActions.js';
 import { IAction } from '../../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
@@ -387,7 +388,7 @@ export interface IAgentUserMessage {
 	/** Sent by a scheduled task, not typed now: drawn with a "Scheduled" divider above it. */
 	scheduled?: { id: string; title: string };
 	/** Written by another chat's agent (a message, the task it launched, or a fork's first prompt): drawn with a "From" pill that opens that chat. */
-	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork' };
+	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork'; external?: boolean };
 }
 
 export interface IAgentPromptDisplay {
@@ -2530,14 +2531,21 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		append(pill, $('span.label')).textContent = from.kind === 'fork'
 			? localize('voltAgent.fromThread.fork', "Forked by")
 			: from.kind === 'launch' ? localize('voltAgent.fromThread.launch', "Started by") : localize('voltAgent.fromThread.message', "From");
-		append(pill, $('span.parent')).textContent = `· ${this.history.get(from.id)?.title || from.title}`;
+		append(pill, $('span.parent')).textContent = `· ${from.external ? from.title : this.history.get(from.id)?.title || from.title}`;
+		if (from.external) {
+			// An agent outside Volt (Claude Code, Codex, …) the user connected: there is no chat to open.
+			divider.classList.add('external');
+			append(pill, $('span.volt-agent-external-tag')).textContent = localize('voltAgent.fromThread.externalTag', "external");
+		}
 		pill.setAttribute('role', 'button');
 		pill.tabIndex = 0;
-		setAgentTooltip(pill, localize('voltAgent.fromThread.open', "Written by the agent of another chat, not by you. Click to open that chat."));
+		setAgentTooltip(pill, from.external
+			? localize('voltAgent.fromThread.external', "Written by {0}, an agent outside Volt that you connected, not by you. Click to see or revoke connected agents.", from.title)
+			: localize('voltAgent.fromThread.open', "Written by the agent of another chat, not by you. Click to open that chat."));
 		const open = (e: UIEvent) => {
 			e.preventDefault();
 			e.stopPropagation();
-			void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, from.id);
+			void this.commandService.executeCommand(from.external ? OPEN_CONNECTED_AGENTS_COMMAND_ID : OPEN_AGENT_COMMAND_ID, from.id);
 		};
 		this.threadListeners.add(addDisposableListener(pill, 'click', open));
 		this.threadListeners.add(addDisposableListener(pill, 'keydown', e => {

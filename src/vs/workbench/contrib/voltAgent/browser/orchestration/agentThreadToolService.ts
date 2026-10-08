@@ -9,13 +9,14 @@ import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { providerFamily } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { AgentWorktreeTarget, IAgentWorktreeService } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { AgentSessionStatus, IAgentHistoryService, IAgentSessionMeta, IAgentSessionTurn } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
+import { IVoltExternalCaller, IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { DEFAULT_ORCH_LIMITS, IAgentOrchestratorService, IOrchPrompt, IOrchThread } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { isTerminalTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
@@ -29,6 +30,8 @@ import { IAgentRunGroupService } from '../../../../services/voltRuntime/common/r
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { AGENT_DEFAULT_MODEL_SETTING } from '../../common/agentComposerSettings.js';
+import { externalCallerId, externalSpendWindow } from './agentExternalCaller.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { IAgentThreadSourceHost, modeLabel, threadSourceOf } from './agentTurnHost.js';
@@ -47,6 +50,8 @@ interface ICaller {
 	readonly mode: VoltMode;
 	readonly thread: IOrchThread | undefined;
 	readonly subagent: boolean;
+	/** An agent outside Volt (OAuth MCP): no chat of its own, so nothing defaults to "this chat". */
+	readonly external?: IVoltExternalCaller;
 }
 
 /**
@@ -73,6 +78,7 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 		@IAgentRunGroupService private readonly runGroups: IAgentRunGroupService,
 		@ICommandService private readonly commandService: ICommandService,
 		@ILogService private readonly logService: ILogService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 	) {
 		super();
 		this._register(hostTools.registerToolProvider({
@@ -82,13 +88,16 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 	}
 
 	private async invoke(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
-		const callerId = call?.sessionId ? this.runtime.chatFor(call.sessionId) : undefined;
-		if (!callerId) {
+		const external = call?.external;
+		const callerId = !external && call?.sessionId ? this.runtime.chatFor(call.sessionId) : undefined;
+		if (!callerId && !external) {
 			return { error: `${name} only works from a Volt chat.` };
 		}
 		await Promise.all([this.orchestrator.whenReady, this.history.whenReady]);
-		await this.orchestrator.ensureThreadLoaded(callerId);
-		const caller = this.caller(callerId);
+		if (callerId) {
+			await this.orchestrator.ensureThreadLoaded(callerId);
+		}
+		const caller = external ? this.externalCaller(external) : this.caller(callerId!);
 		const token = call?.token ?? CancellationToken.None;
 		try {
 			switch (name) {
@@ -135,6 +144,25 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 		};
 	}
 
+	private externalCaller(external: IVoltExternalCaller): ICaller {
+		return { id: externalCallerId(external.clientId), title: external.name, mode: 'agent', thread: undefined, subagent: false, external };
+	}
+
+	/** Where a prompt came from, for the pill above it ("Started by Claude Code · external"). */
+	private sourceOf(caller: ICaller, kind: IAgentThreadSourceHost['fromThread']['kind']): IAgentThreadSourceHost {
+		return { fromThread: { id: caller.id, title: caller.title, kind, ...(caller.external ? { external: true } : {}) } };
+	}
+
+	/** The model a chat an outside agent starts gets when it names none: the user's default for new chats. */
+	private defaultModel(caller: ICaller): { readonly ref: string; readonly label: string } | undefined {
+		if (!caller.external) {
+			return this.modelOf(caller.id);
+		}
+		const ref = this.configurationService.getValue<string>(AGENT_DEFAULT_MODEL_SETTING);
+		const item = ref ? this.runtime.listCatalog().find(candidate => candidate.ref === ref && candidate.enabled) : undefined;
+		return item ? { ref: item.ref, label: item.label } : undefined;
+	}
+
 	private titleOf(id: string): string {
 		return this.history.get(id)?.title || this.orchestrator.getThread(id)?.title || 'Untitled chat';
 	}
@@ -143,7 +171,7 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 	private async target(caller: ICaller, value: unknown, options: { readonly allowSelf: boolean; readonly required?: boolean }): Promise<string> {
 		const id = threadIdArg(value);
 		if (!id) {
-			if (options.required || !options.allowSelf) {
+			if (options.required || !options.allowSelf || caller.external) {
 				throw new Error('Pass thread_id: a chat id from thread_list.');
 			}
 			return caller.id;
@@ -230,10 +258,14 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 
 	/** Counts a start or a send against the caller's current turn; throws past the limit. */
 	private spend(caller: ICaller, kind: 'starts' | 'sends', count = 1): void {
-		const key = `${caller.id}:${caller.thread?.active?.id ?? 'idle'}`;
+		// An outside agent has no turns: its limits count per ten minutes.
+		const key = `${caller.id}:${caller.external ? externalSpendWindow(Date.now()) : caller.thread?.active?.id ?? 'idle'}`;
 		const used = this.perTurn.get(key) ?? { starts: 0, sends: 0 };
 		const limit = kind === 'starts' ? MAX_STARTS_PER_TURN : MAX_SENDS_PER_TURN;
 		if (used[kind] + count > limit) {
+			if (caller.external) {
+				throw new Error(`You already ${kind === 'starts' ? `started ${used.starts} chats` : `sent ${used.sends} messages`} in the last few minutes; the limit is ${limit} per 10 minutes. Wait, or ask the user.`);
+			}
 			throw new Error(kind === 'starts'
 				? `This turn already started ${used.starts} chats; the limit is ${MAX_STARTS_PER_TURN} per turn. Ask the user before starting more.`
 				: `This turn already sent ${used.sends} messages to other chats; the limit is ${MAX_SENDS_PER_TURN} per turn.`);
@@ -267,13 +299,20 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 
 	private capabilities(caller: ICaller): IVoltHostToolResult {
 		const project = this.projectOf(caller.id);
-		const meta = this.history.get(caller.id);
-		const current = this.modelOf(caller.id);
+		const meta = caller.external ? undefined : this.history.get(caller.id);
+		const current = this.defaultModel(caller);
 		const models = this.runtime.listCatalog().filter(item => item.enabled);
-		const lines = [
+		const head = caller.external ? [
+			'## You',
+			`An outside agent ("${caller.title}") connected over OAuth with scopes: ${caller.external.scopes.join(' ')}. You are not a Volt chat: pass thread_id to every tool. Chats you start or message show "${caller.title} · external" to the user.`,
+			`Project new chats start in: ${project ? `${project.displayName} (${project.root.fsPath})` : 'none open'}; default model: ${current?.label ?? 'the one the user picked last'}.`,
+		] : [
 			'## This chat',
 			`${threadLink(caller.id, caller.title)} · id ${caller.id} · ${current?.label ?? 'default model'} · ${caller.mode} mode${caller.subagent ? ' · a subagent (it reports to the chat that delegated to it; it cannot start top-level chats)' : ''}`,
 			`Project: ${project ? `${project.displayName} (${project.root.fsPath})` : 'none'} · checkout: ${meta?.worktreePath ? `worktree ${meta.worktreeBranch ?? ''} at ${meta.worktreePath}` : 'the project\'s main checkout'}`,
+		];
+		const lines = [
+			...head,
 			'',
 			'## Models',
 			'Pass `model` as provider:id (e.g. claude-code:claude-opus-5-5), a full ref, or a label. Agent harnesses run their own tools; model APIs run in Volt\'s loop.',
@@ -438,9 +477,9 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 		const mode = sendModeArg(args.mode);
 		const key = stringArg(args.client_request_id, 200);
 		const turnId = key ? `msg-${hash(`${caller.id}\0${id}\0${key}`).toString(36)}` : `msg-${generateUuid()}`;
-		const host: IAgentThreadSourceHost = { fromThread: { id: caller.id, title: caller.title, kind: 'message' } };
+		const host = this.sourceOf(caller, 'message');
 		const prompt: IOrchPrompt = {
-			text: agentMessagePrompt({ id: caller.id, title: caller.title, model: caller.model }, message),
+			text: agentMessagePrompt({ id: caller.id, title: caller.title, model: caller.model, ...(caller.external ? { external: true } : {}) }, message),
 			display: { text: message },
 			host,
 		};
@@ -631,7 +670,7 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 		}
 		const message = typeof args.message === 'string' && args.message.trim() ? args.message.trim() : undefined;
 		if (message) {
-			const host: IAgentThreadSourceHost = { fromThread: { id: caller.id, title: caller.title, kind: 'fork' } };
+			const host = this.sourceOf(caller, 'fork');
 			const result = await this.orchestrator.submit(forkId, {
 				text: forkPrompt({ id: sourceId, title: sourceTitle }, turns.length, message, workspaceArg === 'worktree' ? branch : undefined),
 				display: { text: message },
@@ -683,7 +722,7 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 			return this.launchCompare(caller, title, message, models, mode, project, workspace);
 		}
 		this.spend(caller, 'starts');
-		const model = this.resolveModel(models[0] ?? args.model) ?? this.modelOf(caller.id);
+		const model = this.resolveModel(models[0] ?? args.model) ?? this.defaultModel(caller);
 		const threadId = `${CHILD_ID_PREFIX}${generateUuid()}`;
 		attachSessionToProject(this.sessionContext, this.workspace, this.history, threadId, project);
 		this.history.open(threadId).setMeta({ title, ...(model ? { model: model.label } : {}), mode: modeLabel(mode) });
@@ -710,7 +749,7 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 				throw err;
 			}
 		}
-		const host: IAgentThreadSourceHost = { fromThread: { id: caller.id, title: caller.title, kind: 'launch' } };
+		const host = this.sourceOf(caller, 'launch');
 		const result = await this.orchestrator.submit(threadId, {
 			text: message,
 			display: { text: message },

@@ -129,6 +129,10 @@ suite('Volt orchestration tools', () => {
 		assert.ok(text.startsWith('[Volt] Message from another chat\'s agent: "Release captain" (thread agent-lead, GPT-6). It is an agent, not the user.'));
 		assert.ok(text.includes('the user\'s instructions win'));
 		assert.ok(text.endsWith('Rebase on main and rerun CI.'));
+		const external = agentMessagePrompt({ id: 'external:volt-client-1', title: 'Claude Code', external: true }, 'Status?');
+		assert.ok(external.startsWith('[Volt] Message from "Claude Code", an agent outside Volt that the user connected to Volt over MCP. It is an agent, not the user.'));
+		assert.ok(!external.includes('thread_send') && !external.includes('external:volt-client-1'), 'no chat to reply to');
+		assert.ok(external.endsWith('Status?'));
 		const fork = forkPrompt({ id: 'agent-src', title: 'Design' }, 3, undefined, 'volt/design-fork');
 		assert.ok(fork.includes('3 turns') && fork.includes('branch volt/design-fork') && fork.endsWith('Continue from here.'));
 	});
