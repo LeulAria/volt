@@ -9,8 +9,8 @@ import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
-import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { providerFamily } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { AgentWorktreeTarget, IAgentWorktreeService } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
@@ -24,6 +24,7 @@ import {
 	matchCatalogModel, numberArg, parseBranchStatus, parseWorkspace, parseWorktreeList, sendModeArg, stringArg, stringList, THREAD_MESSAGE_CHARS, THREAD_READ_CHARS,
 	THREAD_READ_MAX_CHARS, THREAD_REPLY_CHARS, THREAD_TOOLS, THREAD_WAIT_MS, threadIdArg, threadLink, ThreadWorkspace,
 } from '../../../../services/voltRuntime/common/orchestration/agentThreadTools.js';
+import { mergeBackNotice, MergeBackOutcome, turnsThroughId } from '../../../../services/voltRuntime/common/orchestration/chatForks.js';
 import { threadStatus } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
 import { IAgentRunGroupService } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
@@ -31,6 +32,7 @@ import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService } 
 import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
+import { IAgentChatForkService, IAgentForkChatOptions, IAgentForkChatResult, IAgentMergeBackResult } from './agentChatFork.js';
 import { IAgentThreadSourceHost, modeLabel, threadSourceOf } from './agentTurnHost.js';
 
 /** Chats an agent may start (launch or fork) in one of its turns: a runaway loop stops here. */
@@ -54,9 +56,9 @@ interface ICaller {
  * on Volt's MCP server. Every action goes through the same seams the UI uses: the orchestrator for
  * turns and queues, the history for transcripts and the sidebar, the worktree service for checkouts.
  */
-export class AgentThreadToolService extends Disposable implements IWorkbenchContribution {
+export class AgentThreadToolService extends Disposable implements IAgentChatForkService {
 
-	static readonly ID = 'workbench.contrib.voltAgentThreadTools';
+	declare readonly _serviceBrand: undefined;
 
 	/** Starts and sends per caller turn (`<chat>:<turn>`), for the per-turn limits. */
 	private readonly perTurn = new Map<string, { starts: number; sends: number }>();
@@ -100,6 +102,7 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 				case 'thread_wait': return await this.waitTool(caller, args, token);
 				case 'thread_interrupt': return await this.interrupt(caller, args);
 				case 'thread_fork': return await this.fork(caller, args);
+				case 'thread_merge_back': return await this.mergeBackTool(caller, args);
 				case 'thread_launch': return await this.launch(caller, args);
 				case 'thread_update': return await this.update(caller, args);
 				case 'thread_configure': return await this.configure(caller, args);
@@ -566,23 +569,63 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 	private async fork(caller: ICaller, args: Record<string, unknown>): Promise<IVoltHostToolResult> {
 		this.refuseSubagent(caller, 'fork chats');
 		const sourceId = await this.target(caller, args.thread_id, { allowSelf: true });
-		const source = this.orchestrator.getThread(sourceId);
-		const all = (await this.history.open(sourceId).load()).turns;
-		// The running turn is not finished: by default the fork stops before it.
-		const finished = source?.active && all.at(-1)?.id === source.active.id ? all.slice(0, -1) : all;
+		const { finished } = await this.finishedTurns(sourceId);
 		const at = numberArg(args.at_turn, 1, Math.max(1, finished.length)) ?? finished.length;
-		const turns = finished.slice(0, at);
-		if (!turns.length) {
+		if (!finished.slice(0, at).length) {
 			return { error: 'That chat has no finished turn to fork from yet.' };
 		}
-		const workspaceArg = stringArg(args.workspace, 20) ?? 'same';
-		if (workspaceArg !== 'same' && workspaceArg !== 'worktree') {
+		const workspace = stringArg(args.workspace, 20) ?? 'same';
+		if (workspace !== 'same' && workspace !== 'worktree') {
 			return { error: 'workspace is "same" or "worktree".' };
 		}
 		this.spend(caller, 'starts');
-		const model = this.resolveModel(args.model) ?? this.modelOf(sourceId);
+		const title = stringArg(args.title, 120);
+		const message = typeof args.message === 'string' && args.message.trim() ? args.message.trim() : undefined;
+		const fork = await this.forkChat(sourceId, {
+			atTurns: at,
+			...(title ? { title } : {}),
+			model: this.resolveModel(args.model),
+			workspace,
+			message,
+			open: args.open === true,
+			from: { id: caller.id, title: caller.title, kind: 'fork' },
+		});
+		if (fork.refused) {
+			return { error: `Forked, but the message was refused: ${fork.refused}` };
+		}
+		return {
+			text: [
+				`Forked ${threadLink(fork.sourceId, fork.sourceTitle)} at turn ${fork.forkedAtTurns} of ${fork.totalTurns} into ${threadLink(fork.forkId, fork.title)} (id ${fork.forkId})${fork.model ? ` on ${fork.model}` : ''}.`,
+				workspace === 'worktree' ? `It works in its own worktree on branch ${fork.branch}; its setup runs before its first turn.` : fork.branch ? `It shares the source's worktree (branch ${fork.branch}): both chats edit the same files.` : 'It works in the project\'s main checkout.',
+				message ? 'Your message was sent; follow it with thread_wait or thread_read.' : 'It is idle until someone sends it a message (thread_send).',
+			].join('\n'),
+		};
+	}
+
+	private async mergeBackTool(caller: ICaller, args: Record<string, unknown>): Promise<IVoltHostToolResult> {
+		this.refuseSubagent(caller, 'merge chats back');
+		const forkId = await this.target(caller, args.thread_id, { allowSelf: true });
+		this.spend(caller, 'sends');
+		const result = await this.mergeBack(forkId, { apply: args.apply === true });
+		const { outcome } = result;
+		const state = outcome.kind === 'merged' ? `merged as commit ${outcome.commit}`
+			: outcome.kind === 'failed' ? `not merged: ${outcome.reason}`
+				: outcome.kind;
+		return { text: `Told ${threadLink(result.parentId, result.parentTitle)} about this fork (${state}).` };
+	}
+
+	async forkChat(sourceId: string, options: IAgentForkChatOptions): Promise<IAgentForkChatResult> {
+		const { all, finished } = await this.finishedTurns(sourceId);
+		const at = options.throughTurnId !== undefined
+			? turnsThroughId(finished.map(turn => turn.id), options.throughTurnId)
+			: Math.min(options.atTurns ?? finished.length, finished.length);
+		const turns = finished.slice(0, at);
+		if (!turns.length) {
+			throw new Error('That chat has no finished turn to fork from yet.');
+		}
 		const sourceTitle = this.titleOf(sourceId);
-		const title = stringArg(args.title, 120) ?? `${sourceTitle} · fork`;
+		const model = options.model ?? this.modelOf(sourceId);
+		const title = options.title ?? `${sourceTitle} · fork`;
 		const forkId = `${CHILD_ID_PREFIX}${generateUuid()}`;
 		const project = this.projectOf(sourceId);
 		if (project) {
@@ -603,7 +646,14 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 			}
 		}
 		const sourceMeta = this.history.get(sourceId);
-		handle.setMeta({ title, ...(model ? { model: model.label } : {}), ...(sourceMeta?.mode ? { mode: sourceMeta.mode } : {}) });
+		// The checkout as it is now: its commits, not uncommitted edits. Merging back diffs from here.
+		const base = await this.headOf(sourceMeta?.worktreePath ?? project?.root.fsPath);
+		handle.setMeta({
+			title,
+			...(model ? { model: model.label } : {}),
+			...(sourceMeta?.mode ? { mode: sourceMeta.mode } : {}),
+			forkOf: { id: sourceId, title: sourceTitle, turns: turns.length, ...(base ? { base } : {}) },
+		});
 		await handle.flush();
 		await this.history.rename(forkId, title);
 		// The fork's first prompt carries the copied conversation to its agent as a recap.
@@ -613,14 +663,12 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 		]));
 		await this.orchestrator.dispatch({ type: 'thread.upsert', threadId: forkId, title, ...(model ? { modelRef: model.ref, modelLabel: model.label } : {}) });
 		let branch: string | undefined;
-		if (workspaceArg === 'worktree') {
+		if (options.workspace === 'worktree') {
 			const root = project?.root.fsPath;
 			if (!root) {
-				return { error: 'The chat has no project folder to make a worktree from.' };
+				throw new Error('The chat has no project folder to make a worktree from.');
 			}
-			// From the source's checkout as it is now (its commits, not uncommitted edits).
-			const from = (await this.worktrees.git(sourceMeta?.worktreePath ?? root, ['rev-parse', 'HEAD'])).stdout.trim() || undefined;
-			const created = await this.createWorktree(forkId, root, { kind: 'new', name: `volt/${branchSlug(title)}-${forkId.slice(-4)}`, ...(from ? { from } : {}) });
+			const created = await this.createWorktree(forkId, root, { kind: 'new', name: `volt/${branchSlug(title)}-${forkId.slice(-4)}`, ...(base ? { from: base } : {}) });
 			branch = created.branch;
 			void this.runSetup(forkId, root, created.path, created.branch);
 		} else if (sourceMeta?.worktreePath && sourceMeta.worktreeBranch) {
@@ -629,30 +677,102 @@ export class AgentThreadToolService extends Disposable implements IWorkbenchCont
 			this.history.open(forkId).setMeta({ worktreePath: sourceMeta.worktreePath, worktreeBranch: sourceMeta.worktreeBranch });
 			branch = sourceMeta.worktreeBranch;
 		}
-		const message = typeof args.message === 'string' && args.message.trim() ? args.message.trim() : undefined;
-		if (message) {
-			const host: IAgentThreadSourceHost = { fromThread: { id: caller.id, title: caller.title, kind: 'fork' } };
+		let refused: string | undefined;
+		if (options.message) {
 			const result = await this.orchestrator.submit(forkId, {
-				text: forkPrompt({ id: sourceId, title: sourceTitle }, turns.length, message, workspaceArg === 'worktree' ? branch : undefined),
-				display: { text: message },
+				text: forkPrompt({ id: sourceId, title: sourceTitle }, turns.length, options.message, options.workspace === 'worktree' ? branch : undefined),
+				display: { text: options.message },
 				mode: modeLabel(sourceMeta?.mode),
 				...(model ? { modelRef: model.ref } : {}),
-				host,
+				...(options.from ? { host: { fromThread: options.from } } : {}),
 			}, 'auto');
 			if (result.outcome === 'rejected') {
-				return { error: `Forked, but the message was refused: ${result.reason ?? ''}` };
+				refused = result.reason ?? '';
 			}
 		}
-		if (args.open === true) {
+		if (options.open) {
 			this.open(forkId);
 		}
 		return {
-			text: [
-				`Forked ${threadLink(sourceId, sourceTitle)} at turn ${turns.length} of ${all.length} into ${threadLink(forkId, title)} (id ${forkId})${model ? ` on ${model.label}` : ''}.`,
-				workspaceArg === 'worktree' ? `It works in its own worktree on branch ${branch}; its setup runs before its first turn.` : branch ? `It shares the source's worktree (branch ${branch}): both chats edit the same files.` : 'It works in the project\'s main checkout, like the source.',
-				message ? 'Your message was sent; follow it with thread_wait or thread_read.' : 'It is idle until someone sends it a message (thread_send).',
-			].join('\n'),
+			forkId,
+			title,
+			sourceId,
+			sourceTitle,
+			branch,
+			forkedAtTurns: turns.length,
+			totalTurns: all.length,
+			model: model?.label,
+			refused,
 		};
+	}
+
+	async mergeBack(forkId: string, options: { readonly apply: boolean }): Promise<IAgentMergeBackResult> {
+		const fork = this.history.get(forkId);
+		const origin = fork?.forkOf;
+		if (!origin) {
+			throw new Error('This chat was not forked from another chat, so it has nothing to merge back.');
+		}
+		const parentId = origin.id;
+		if (!this.history.get(parentId) && !this.orchestrator.getThread(parentId)) {
+			throw new Error('The chat this was forked from no longer exists.');
+		}
+		const parentTitle = this.titleOf(parentId);
+		const parentPath = this.history.get(parentId)?.worktreePath ?? this.projectOf(parentId)?.root.fsPath;
+		const forkTitle = this.titleOf(forkId);
+		const forkPath = fork?.worktreePath ?? this.projectOf(forkId)?.root.fsPath;
+		let diffStat = '';
+		let outcome: MergeBackOutcome = { kind: 'shared' };
+		if (forkPath && parentPath && forkPath !== parentPath) {
+			diffStat = (await this.worktrees.git(forkPath, ['diff', '--stat', origin.base ?? 'HEAD'])).stdout;
+			outcome = options.apply && fork?.worktreeBranch
+				? await this.mergeFork({ parentPath, forkPath, forkBranch: fork.worktreeBranch, forkTitle })
+				: { kind: 'summary' };
+		}
+		const reply = (await this.history.open(forkId).load()).turns.at(-1)?.assistant?.text;
+		const text = mergeBackNotice({ forkId, forkTitle, forkedAtTurns: origin.turns, diffStat, reply, outcome });
+		const result = await this.orchestrator.notify(parentId, {
+			text,
+			display: { text },
+			host: { fromThread: { id: forkId, title: forkTitle, kind: 'merge' } },
+		}, `merge-${forkId}-${generateUuid()}`);
+		if (result.outcome === 'rejected') {
+			throw new Error(`The merge is done, but ${parentTitle} refused the notice: ${result.reason ?? ''}`);
+		}
+		return { parentId, parentTitle, outcome };
+	}
+
+	/** Commits what the fork has not committed, then merges its branch into the parent's checkout. */
+	private mergeFork(input: { readonly parentPath: string; readonly forkPath: string; readonly forkBranch: string; readonly forkTitle: string }): Promise<MergeBackOutcome> {
+		return this.worktrees.serialize(input.parentPath, async (): Promise<MergeBackOutcome> => {
+			if ((await this.worktrees.git(input.forkPath, ['status', '--porcelain'])).stdout.trim()) {
+				await this.worktrees.git(input.forkPath, ['add', '-A']);
+				const commit = await this.worktrees.git(input.forkPath, ['commit', '-m', `Changes from "${input.forkTitle}"`]);
+				if (commit.exitCode !== 0) {
+					return { kind: 'failed', reason: firstLine(commit.stderr || commit.stdout) };
+				}
+			}
+			const before = (await this.worktrees.git(input.parentPath, ['rev-parse', 'HEAD'])).stdout.trim();
+			const merge = await this.worktrees.git(input.parentPath, ['merge', '--no-ff', '-m', `Merge "${input.forkTitle}" (${input.forkBranch})`, input.forkBranch]);
+			if (merge.exitCode !== 0) {
+				const conflicts = (await this.worktrees.git(input.parentPath, ['diff', '--name-only', '--diff-filter=U'])).stdout.trim();
+				await this.worktrees.git(input.parentPath, ['merge', '--abort']);
+				return conflicts ? { kind: 'conflict' } : { kind: 'failed', reason: firstLine(merge.stderr || merge.stdout) };
+			}
+			const after = (await this.worktrees.git(input.parentPath, ['rev-parse', 'HEAD'])).stdout.trim();
+			return after === before ? { kind: 'nothing' } : { kind: 'merged', commit: after.slice(0, 7) };
+		});
+	}
+
+	private async finishedTurns(sourceId: string): Promise<{ readonly all: readonly IAgentSessionTurn[]; readonly finished: readonly IAgentSessionTurn[] }> {
+		const all = (await this.history.open(sourceId).load()).turns;
+		// The running turn is not finished: a fork stops before it.
+		const source = this.orchestrator.getThread(sourceId);
+		const finished = source?.active && all.at(-1)?.id === source.active.id ? all.slice(0, -1) : all;
+		return { all, finished };
+	}
+
+	private async headOf(cwd: string | undefined): Promise<string | undefined> {
+		return cwd ? (await this.worktrees.git(cwd, ['rev-parse', 'HEAD'])).stdout.trim() || undefined : undefined;
 	}
 
 	private async launch(caller: ICaller, args: Record<string, unknown>): Promise<IVoltHostToolResult> {
@@ -1083,4 +1203,8 @@ function indent(text: string): string {
 	return text.split('\n').map(line => `    ${line}`).join('\n');
 }
 
-registerWorkbenchContribution2(AgentThreadToolService.ID, AgentThreadToolService, WorkbenchPhase.BlockRestore);
+function firstLine(text: string): string {
+	return text.trim().split('\n')[0] ?? '';
+}
+
+registerSingleton(IAgentChatForkService, AgentThreadToolService, InstantiationType.Eager);

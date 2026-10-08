@@ -464,6 +464,7 @@ export const THREAD_TOOL_NAMES = [
 	'thread_wait',
 	'thread_interrupt',
 	'thread_fork',
+	'thread_merge_back',
 	'thread_launch',
 	'thread_update',
 	'thread_configure',

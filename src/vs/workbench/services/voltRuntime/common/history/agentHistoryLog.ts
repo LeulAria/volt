@@ -12,6 +12,7 @@ import {
 	AgentSessionStatus,
 	IAgentAssistantEntry,
 	IAgentHistoryIndex,
+	IAgentForkOrigin,
 	IAgentSessionHeader,
 	IAgentSessionMeta,
 	IAgentSessionSearchOptions,
@@ -141,6 +142,7 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 	let model: string | undefined;
 	let worktreePath: string | undefined;
 	let worktreeBranch: string | undefined;
+	let forkOf: IAgentForkOrigin | undefined;
 	for (const entry of entries) {
 		switch (entry.type) {
 			case 'user': {
@@ -185,6 +187,9 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 				if (entry.worktreeBranch) {
 					worktreeBranch = entry.worktreeBranch;
 				}
+				if (entry.forkOf) {
+					forkOf = entry.forkOf;
+				}
 				break;
 		}
 	}
@@ -195,13 +200,13 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 			folded.push({ id, user: turn.user, assistant: turn.assistant });
 		}
 	}
-	return { header, turns: folded, title, ...(agentTitle ? { agentTitle } : {}), mode, model, worktreePath, worktreeBranch };
+	return { header, turns: folded, title, ...(agentTitle ? { agentTitle } : {}), mode, model, worktreePath, worktreeBranch, ...(forkOf ? { forkOf } : {}) };
 }
 
 /** Records needed to reproduce a transcript without superseded entries. */
 export function compactRecords(transcript: IAgentSessionTranscript): AgentHistoryRecord[] {
 	const records: AgentHistoryRecord[] = [transcript.header];
-	if (transcript.title !== undefined || transcript.agentTitle || transcript.mode !== undefined || transcript.model !== undefined || transcript.worktreePath || transcript.worktreeBranch) {
+	if (transcript.title !== undefined || transcript.agentTitle || transcript.mode !== undefined || transcript.model !== undefined || transcript.worktreePath || transcript.worktreeBranch || transcript.forkOf) {
 		records.push({
 			type: 'meta',
 			at: transcript.header.createdAt,
@@ -211,6 +216,7 @@ export function compactRecords(transcript: IAgentSessionTranscript): AgentHistor
 			model: transcript.model,
 			...(transcript.worktreePath ? { worktreePath: transcript.worktreePath } : {}),
 			...(transcript.worktreeBranch ? { worktreeBranch: transcript.worktreeBranch } : {}),
+			...(transcript.forkOf ? { forkOf: transcript.forkOf } : {}),
 		});
 	}
 	for (const turn of transcript.turns) {
@@ -324,6 +330,7 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 		model: transcript.model ?? previous?.model,
 		worktreePath: transcript.worktreePath ?? previous?.worktreePath,
 		worktreeBranch: transcript.worktreeBranch ?? previous?.worktreeBranch,
+		forkOf: transcript.forkOf ?? previous?.forkOf,
 		parentId: transcript.header.parentId ?? previous?.parentId,
 		subagent: transcript.header.subagent || previous?.subagent || undefined,
 	};

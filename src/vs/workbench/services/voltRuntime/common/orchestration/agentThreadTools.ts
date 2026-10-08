@@ -183,6 +183,20 @@ export const THREAD_TOOLS: readonly IVoltHostToolInfo[] = [
 		},
 	},
 	{
+		name: 'thread_merge_back',
+		title: 'Merged back',
+		group: 'threads',
+		approvalInReadOnlyModes: CHANGES_CHATS,
+		description: 'Tell the chat this one was forked from what this fork changed (the diff stat, its last reply) and where that leaves the changes. Default: the notice only, the changes stay in this fork\'s worktree. apply: true also commits the fork\'s pending edits and merges its branch into the parent\'s checkout; a conflict is aborted and reported, not left in the parent. Without thread_id, merges this chat back.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				thread_id: THREAD_ID,
+				apply: { type: 'boolean', description: 'Merge the fork\'s branch into the parent\'s checkout. Default false.' },
+			},
+		},
+	},
+	{
 		name: 'thread_launch',
 		title: 'Launched chat',
 		group: 'threads',

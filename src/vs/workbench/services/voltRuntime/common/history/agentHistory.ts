@@ -88,6 +88,14 @@ export interface IAgentTruncateEntry {
 	readonly from: string;
 }
 
+/** The chat a fork was copied from, and the commit its checkout started at. */
+export interface IAgentForkOrigin {
+	readonly id: string;
+	readonly title: string;
+	readonly turns: number;
+	readonly base?: string;
+}
+
 /** Session-level metadata changes. */
 export interface IAgentMetaEntry {
 	readonly type: 'meta';
@@ -100,6 +108,7 @@ export interface IAgentMetaEntry {
 	/** Checkout created for a New Worktree chat. Absent when the chat runs on the open branch. */
 	readonly worktreePath?: string;
 	readonly worktreeBranch?: string;
+	readonly forkOf?: IAgentForkOrigin;
 }
 
 export type AgentHistoryEntry = IAgentUserEntry | IAgentAssistantEntry | IAgentTruncateEntry | IAgentMetaEntry;
@@ -121,6 +130,7 @@ export interface IAgentSessionTranscript {
 	readonly model?: string;
 	readonly worktreePath?: string;
 	readonly worktreeBranch?: string;
+	readonly forkOf?: IAgentForkOrigin;
 }
 
 /** Composer state kept beside the log so unsent work survives restarts. */
@@ -186,6 +196,7 @@ export interface IAgentSessionMeta {
 	readonly model?: string;
 	readonly worktreePath?: string;
 	readonly worktreeBranch?: string;
+	readonly forkOf?: IAgentForkOrigin;
 	/** Side chat: the chat whose tools it was opened in. Listed under that chat. */
 	readonly parentId?: string;
 	/** A subagent's chat: reached from its parent, never listed in the sidebar. */
@@ -248,7 +259,7 @@ export interface IAgentSessionHandle {
 	appendUser(turn: string, text: string, message: unknown): void;
 	appendAssistant(entry: IAgentSessionAppendAssistant): void;
 	truncate(fromTurn: string): void;
-	setMeta(meta: { title?: string; agentTitle?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string }): void;
+	setMeta(meta: { title?: string; agentTitle?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string; forkOf?: IAgentForkOrigin }): void;
 	saveDraft(draft: Omit<IAgentSessionDraft, 'updatedAt'> | undefined): void;
 
 	/** Durability barrier: every accepted append is on disk when this resolves. */

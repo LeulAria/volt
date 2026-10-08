@@ -24,6 +24,7 @@ import { ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
 import { EditorExtensionsRegistry } from '../../../../../editor/browser/editorExtensions.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { preloadMarkdownExtras } from '../blocks/agentMarkdown.js';
+import { IAgentChatForkService } from '../orchestration/agentChatFork.js';
 import { buildTranscriptRows, hasSignInNotice, ITranscriptSteer, TranscriptRow, withoutFailureNotice } from '../chrome/agentTranscript.js';
 import { fallbackSubagentView, ITranscriptHost, renderTranscript, tickElapsed } from '../chrome/agentTranscriptView.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
@@ -56,7 +57,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ACCESS_MODE_OPTIONS, accessModeOption } from '../../../../services/voltRuntime/common/access/accessModes.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
-import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, type IVoltCompactionPlan } from '../../../../services/voltRuntime/common/runtime.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchQueueItem, OrchDelivery } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentPromptHostOptions, stashTurnDisplay } from '../orchestration/agentTurnHost.js';
 import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
@@ -110,7 +111,6 @@ import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend } from '../../../../services/voltRuntime/common/compaction.js';
-import type { IVoltCompactionPlan } from '../../../../services/voltRuntime/common/runtime.js';
 import type { IVoltEvent } from '../../../../services/voltRuntime/common/events.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
@@ -393,7 +393,7 @@ export interface IAgentUserMessage {
 	/** Sent by a scheduled task, not typed now: drawn with a "Scheduled" divider above it. */
 	scheduled?: { id: string; title: string };
 	/** Written by another chat's agent (a message, the task it launched, or a fork's first prompt): drawn with a "From" pill that opens that chat. */
-	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork' };
+	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork' | 'merge' };
 }
 
 /** A `context.handoff` as the transcript keeps it: the divider's numbers and the text that was sent. */
@@ -777,6 +777,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@ICommandService private readonly commandService: ICommandService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
+		@IAgentChatForkService private readonly forkService: IAgentChatForkService,
+		@INotificationService private readonly notificationService: INotificationService,
 		@IAgentWorktreeSetupService private readonly worktreeSetup: IAgentWorktreeSetupService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
@@ -2395,6 +2397,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					this.tailFrom = tailFrom;
 				}
 			}
+			if (index === 0) {
+				this.renderForkOrigin(exchange);
+			}
 			this.renderThreadMessage(exchange, message, index);
 		}
 		this.renderingTail = false;
@@ -2520,10 +2525,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private renderFromThreadPill(turn: HTMLElement, from: NonNullable<IAgentUserMessage['fromThread']>): void {
 		const divider = append(turn, $('.volt-agent-subagent-of.from-thread'));
 		const pill = append(divider, $('span.volt-agent-subagent-of-pill'));
-		pill.appendChild(renderIcon(from.kind === 'fork' ? Codicon.repoForked : from.kind === 'launch' ? Codicon.rocket : Codicon.commentDiscussion));
+		pill.appendChild(renderIcon(from.kind === 'fork' ? Codicon.repoForked : from.kind === 'merge' ? Codicon.gitMerge : from.kind === 'launch' ? Codicon.rocket : Codicon.commentDiscussion));
 		append(pill, $('span.label')).textContent = from.kind === 'fork'
 			? localize('voltAgent.fromThread.fork', "Forked by")
-			: from.kind === 'launch' ? localize('voltAgent.fromThread.launch', "Started by") : localize('voltAgent.fromThread.message', "From");
+			: from.kind === 'merge' ? localize('voltAgent.fromThread.merge', "Merged back by")
+				: from.kind === 'launch' ? localize('voltAgent.fromThread.launch', "Started by") : localize('voltAgent.fromThread.message', "From");
 		append(pill, $('span.parent')).textContent = `· ${this.history.get(from.id)?.title || from.title}`;
 		pill.setAttribute('role', 'button');
 		pill.tabIndex = 0;
@@ -2539,6 +2545,61 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				open(e);
 			}
 		}));
+	}
+
+	private forkFromTurn(turnId: string): void {
+		this.forkService.forkChat(this.sessionKey, { throughTurnId: turnId, workspace: 'worktree', open: true })
+			.catch(err => this.notificationService.error(localize('voltAgent.forkFailed', "Could not fork this chat: {0}", err instanceof Error ? err.message : String(err))));
+	}
+
+	/** On a forked chat's first turn: where it came from, and a way to merge its changes back. */
+	private renderForkOrigin(exchange: HTMLElement): void {
+		const origin = this.history.get(this.sessionKey)?.forkOf;
+		if (!origin) {
+			return;
+		}
+		const divider = append(exchange, $('.volt-agent-subagent-of.fork-origin'));
+		const from = append(divider, $('span.volt-agent-subagent-of-pill'));
+		from.appendChild(renderIcon(Codicon.repoForked));
+		append(from, $('span.label')).textContent = localize('voltAgent.forkOrigin.from', "Forked from");
+		append(from, $('span.parent')).textContent = `· ${this.history.get(origin.id)?.title || origin.title}`;
+		from.setAttribute('role', 'button');
+		from.tabIndex = 0;
+		setAgentTooltip(from, localize('voltAgent.forkOrigin.open', "Open the chat this was forked from."));
+		const openParent = (e: UIEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, origin.id);
+		};
+		this.threadListeners.add(addDisposableListener(from, 'click', openParent));
+		this.threadListeners.add(addDisposableListener(from, 'keydown', e => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				openParent(e);
+			}
+		}));
+
+		const merge = append(divider, $('span.volt-agent-subagent-of-pill'));
+		merge.appendChild(renderIcon(Codicon.gitMerge));
+		append(merge, $('span.label')).textContent = localize('voltAgent.forkOrigin.merge', "Merge back");
+		merge.setAttribute('role', 'button');
+		merge.tabIndex = 0;
+		setAgentTooltip(merge, localize('voltAgent.forkOrigin.mergeTip', "Merge this chat's changes into the chat it was forked from, and tell that chat."));
+		const mergeBack = (e: UIEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.mergeBackToParent();
+		};
+		this.threadListeners.add(addDisposableListener(merge, 'click', mergeBack));
+		this.threadListeners.add(addDisposableListener(merge, 'keydown', e => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				mergeBack(e);
+			}
+		}));
+	}
+
+	private mergeBackToParent(): void {
+		this.forkService.mergeBack(this.sessionKey, { apply: true })
+			.catch(err => this.notificationService.error(localize('voltAgent.mergeBackFailed', "Could not merge this chat back: {0}", err instanceof Error ? err.message : String(err))));
 	}
 
 	/** "Scheduled · Daily CI check" above a prompt a scheduled task sent; a click opens the task list. */
@@ -4118,15 +4179,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			});
 		}));
 
-		const forkButton = append(footer, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
-		forkButton.setAttribute('aria-label', forkLabel);
-		setAgentTooltip(forkButton, forkLabel);
-		forkButton.appendChild(createForkIcon());
-		this.threadListeners.add(addDisposableListener(forkButton, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			void this.commandService.executeCommand(NEW_AGENT_COMMAND_ID, { asTab: true });
-		}));
+		if (message.id) {
+			const turnId = message.id;
+			const forkButton = append(footer, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
+			forkButton.setAttribute('aria-label', forkLabel);
+			setAgentTooltip(forkButton, forkLabel);
+			forkButton.appendChild(createForkIcon());
+			this.threadListeners.add(addDisposableListener(forkButton, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.forkFromTurn(turnId);
+			}));
+		}
 
 		const when = message.endedAt ?? message.startedAt;
 		if (when) {

@@ -40,15 +40,16 @@ export interface IAgentPromptHostOptions {
 
 /**
  * A prompt another chat's agent sent (thread_send), started (thread_launch) or forked into
- * (thread_fork), carried as `host`: the transcript shows it as that chat's message, not the user's.
+ * (thread_fork), or a fork's changes merged back into it (thread_merge_back), carried as `host`: the
+ * transcript shows it as that chat's message, not the user's.
  */
 export interface IAgentThreadSourceHost {
-	readonly fromThread: { readonly id: string; readonly title: string; readonly kind: 'message' | 'launch' | 'fork' };
+	readonly fromThread: { readonly id: string; readonly title: string; readonly kind: 'message' | 'launch' | 'fork' | 'merge' };
 }
 
 export function threadSourceOf(host: unknown): IAgentThreadSourceHost['fromThread'] | undefined {
 	const from = (host as Partial<IAgentThreadSourceHost> | undefined)?.fromThread;
-	return from && typeof from.id === 'string' && typeof from.title === 'string' ? { id: from.id, title: from.title, kind: from.kind === 'launch' || from.kind === 'fork' ? from.kind : 'message' } : undefined;
+	return from && typeof from.id === 'string' && typeof from.title === 'string' ? { id: from.id, title: from.title, kind: from.kind === 'launch' || from.kind === 'fork' || from.kind === 'merge' ? from.kind : 'message' } : undefined;
 }
 
 /** The composer's mode labels; the runtime's modes are their lower-case forms. */
