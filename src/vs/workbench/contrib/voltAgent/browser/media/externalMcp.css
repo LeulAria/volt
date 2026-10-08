@@ -219,6 +219,12 @@
 	align-items: center;
 }
 
+/* The name is one line: the flex title shrank it, so every word wrapped on its own line. */
+.volt-external-mcp-grant .title .name {
+	flex-shrink: 0;
+	white-space: nowrap;
+}
+
 .volt-external-mcp-chips {
 	display: flex;
 	flex-wrap: wrap;
