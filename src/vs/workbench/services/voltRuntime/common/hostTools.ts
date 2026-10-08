@@ -8,6 +8,7 @@ import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
+import { isMemoryToolName } from './memory/voltMemory.js';
 import type { VoltMode } from './modes.js';
 import type { AgentQuestionDraft, IAgentQuestionResponse } from './questions.js';
 import type { IRgbaImage } from './tools/imageAnalysis.js';
@@ -73,7 +74,7 @@ export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
  * and Android emulators. `capture`: screenshots and recordings of windows. An agent can be
  * handed a subset (`getMcpServers(sessionId, { groups })`) to keep its tool list short.
  */
-export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture';
+export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture' | 'memory';
 
 export interface IVoltHostToolInfo {
 	readonly name: string;
@@ -488,7 +489,7 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (SCHEDULE_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id)) {
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (SCHEDULE_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id)) {
 				return canonicalHostToolName(id);
 			}
 		}
