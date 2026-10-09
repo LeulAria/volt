@@ -39,6 +39,11 @@ export interface IVoltCaptureService {
 	capture(sourceId: string, maxSide?: number): Promise<IVoltCaptureImage>;
 	/** The source id of the window that hosts `windowId` (a Volt window), for recording itself. */
 	sourceIdOfWindow(windowId: number): Promise<string | undefined>;
+	/**
+	 * Lets the next `getDisplayMedia` call from a Volt window capture that window's own page, which
+	 * works without the OS screen recording permission. Expires after a few seconds.
+	 */
+	allowOwnDisplayCapture(): Promise<void>;
 }
 
 /** `window:1234:0` → `1234`: the CGWindowID (macOS), HWND (Windows) or X window id (Linux). */

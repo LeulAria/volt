@@ -147,13 +147,28 @@ export class VoltWindowCaptureService extends Disposable implements IVoltWindowC
 		return joinPath(this.environmentService.userHome, isMacintosh ? 'Movies' : 'Videos', 'Volt Recordings');
 	}
 
+	private async recordOwnWindow(): Promise<MediaStream | undefined> {
+		try {
+			await this.capture.allowOwnDisplayCapture();
+			return await mainWindow.navigator.mediaDevices.getDisplayMedia({ audio: false, video: true });
+		} catch {
+			return undefined;
+		}
+	}
+
 	async startRecording(source: IVoltCaptureSource, options: { readonly maxSeconds: number; readonly by: 'agent' | 'user'; readonly sessionId?: string }): Promise<IVoltRecording> {
 		const video: IDesktopVideoConstraints = { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: source.id, maxWidth: 2560, maxHeight: 1600, maxFrameRate: 30 } };
 		let stream: MediaStream;
 		try {
 			stream = await mainWindow.navigator.mediaDevices.getUserMedia({ audio: false, video: video as unknown as MediaTrackConstraints });
 		} catch (err) {
-			throw new Error(`Could not start recording ${source.name}: ${err instanceof Error ? err.message : String(err)}${isMacintosh && !source.own ? '. Allow Volt in System Settings > Privacy & Security > Screen & System Audio Recording.' : ''}`);
+			// This window can always record itself: Electron grants its own page without the OS permission.
+			const own = source.own && await this.capture.sourceIdOfWindow(this.nativeHostService.windowId) === source.id;
+			const ownStream = own ? await this.recordOwnWindow() : undefined;
+			if (!ownStream) {
+				throw new Error(`Could not start recording ${source.name}: ${err instanceof Error ? err.message : String(err)}${isMacintosh ? '. Allow Volt in System Settings > Privacy & Security > Screen & System Audio Recording.' : ''}`);
+			}
+			stream = ownStream;
 		}
 		const mimeType = RECORDER_TYPES.find(type => MediaRecorder.isTypeSupported(type)) ?? '';
 		const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });

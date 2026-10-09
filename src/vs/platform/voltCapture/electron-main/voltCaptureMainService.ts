@@ -4,28 +4,47 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { execFile } from 'child_process';
-import { BrowserWindow, desktopCapturer, nativeImage, type DesktopCapturerSource, type NativeImage } from 'electron';
+import { BrowserWindow, desktopCapturer, nativeImage, session, type DesktopCapturerSource, type NativeImage, type WebContents } from 'electron';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
+import { IWindowsMainService } from '../../windows/electron-main/windows.js';
 import { fitSize, IVoltCaptureImage, IVoltCaptureService, IVoltCaptureSource, platformCaptureCommand } from '../common/voltCapture.js';
 
 const DEFAULT_MAX_SIDE = 1920;
+
+interface IOwnWindow {
+	readonly window: BrowserWindow;
+	readonly page: WebContents;
+}
 
 export class VoltCaptureMainService implements IVoltCaptureService {
 
 	declare readonly _serviceBrand: undefined;
 
-	constructor(@ILogService private readonly logService: ILogService) { }
+	constructor(
+		@ILogService private readonly logService: ILogService,
+		@IWindowsMainService private readonly windowsMainService: IWindowsMainService,
+	) { }
 
-	private ownSourceIds(): Map<string, BrowserWindow> {
-		const own = new Map<string, BrowserWindow>();
+	/** Volt's own windows by media source id. A code window's page lives in a view, not in `win.webContents`. */
+	private ownSourceIds(): Map<string, IOwnWindow> {
+		const own = new Map<string, IOwnWindow>();
+		const windows = new Map<BrowserWindow, WebContents>();
 		for (const window of BrowserWindow.getAllWindows()) {
+			windows.set(window, window.webContents);
+		}
+		for (const codeWindow of this.windowsMainService.getWindows()) {
+			if (codeWindow.win) {
+				windows.set(codeWindow.win, codeWindow.webContents);
+			}
+		}
+		for (const [window, page] of windows) {
 			if (!window.isDestroyed()) {
 				try {
-					own.set(window.getMediaSourceId(), window);
+					own.set(window.getMediaSourceId(), { window, page });
 				} catch {
 					// a window without a native handle yet
 				}
@@ -34,7 +53,7 @@ export class VoltCaptureMainService implements IVoltCaptureService {
 		return own;
 	}
 
-	private toSource(source: DesktopCapturerSource, own: Map<string, BrowserWindow>): IVoltCaptureSource {
+	private toSource(source: DesktopCapturerSource, own: Map<string, IOwnWindow>): IVoltCaptureSource {
 		return {
 			id: source.id,
 			name: source.name || (source.id.startsWith('screen:') ? 'Screen' : 'Window'),
@@ -54,7 +73,7 @@ export class VoltCaptureMainService implements IVoltCaptureService {
 		const listed = sources.map(source => this.toSource(source, own));
 		// Without the screen recording permission the OS may hide even our own windows; they are always capturable.
 		if (kinds.includes('window')) {
-			for (const [id, window] of own) {
+			for (const [id, { window }] of own) {
 				if (!listed.some(source => source.id === id)) {
 					listed.push({ id, name: window.getTitle() || 'Volt', kind: 'window', own: true });
 				}
@@ -63,20 +82,41 @@ export class VoltCaptureMainService implements IVoltCaptureService {
 		return listed;
 	}
 
+	private ownCaptureUntil = 0;
+	private displayHandlerInstalled = false;
+
+	async allowOwnDisplayCapture(): Promise<void> {
+		this.ownCaptureUntil = Date.now() + 5000;
+		if (this.displayHandlerInstalled) {
+			return;
+		}
+		this.displayHandlerInstalled = true;
+		// Without an armed request nothing is granted, which is what Electron does without a handler.
+		session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+			if (Date.now() <= this.ownCaptureUntil && request.frame) {
+				this.ownCaptureUntil = 0;
+				callback({ video: request.frame });
+			} else {
+				callback({});
+			}
+		});
+	}
+
 	async sourceIdOfWindow(windowId: number): Promise<string | undefined> {
-		const window = BrowserWindow.fromId(windowId);
+		// The renderer's window id is the code window's, which is not always the BrowserWindow's.
+		const window = this.windowsMainService.getWindowById(windowId)?.win ?? BrowserWindow.fromId(windowId);
 		return window && !window.isDestroyed() ? window.getMediaSourceId() : undefined;
 	}
 
 	async capture(sourceId: string, maxSide = DEFAULT_MAX_SIDE): Promise<IVoltCaptureImage> {
 		const side = Math.max(256, Math.min(4096, Math.round(maxSide)));
 		const own = this.ownSourceIds();
-		const window = own.get(sourceId);
+		const ours = own.get(sourceId);
 		// Volt's own windows: their page, no OS permission needed.
-		if (window) {
-			const image = await window.webContents.capturePage();
+		if (ours) {
+			const image = await ours.page.capturePage();
 			if (!image.isEmpty()) {
-				return this.result(image, side, { id: sourceId, name: window.getTitle() || 'Volt', kind: 'window', own: true }, 'capturePage');
+				return this.result(image, side, { id: sourceId, name: ours.window.getTitle() || 'Volt', kind: 'window', own: true }, 'capturePage');
 			}
 		}
 		let source: IVoltCaptureSource | undefined;
