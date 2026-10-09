@@ -9,7 +9,7 @@ import { basename } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
 import { isSnapshotActivity } from '../preview/browserSnapshot.js';
 import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
-import { AgentBlock, AgentSegment, createPlanBlock, humanTerminalTitle, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPlanTool, IVisualBlock, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
+import { AgentBlock, AgentSegment, createPlanBlock, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPlanTool, IVisualBlock, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
 import { computeChangeStats } from '../review/fileChangePreviewModel.js';
 import { isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
@@ -182,7 +182,9 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 				flushReply();
 				const block = segment.block;
 				if (block.type === 'terminal') {
-					pending.push(runStep(block));
+					// A command is its own card (title, command names, output tail), not a "Ran 1 command" fold.
+					flushSteps();
+					rows.push({ kind: 'block', block });
 				} else if (block.type === 'file' && isPlanTool(block.path, undefined, block.input)) {
 					// Older chats recorded cursor-agent's plan tool as an edit to a file named "Create Plan".
 					flushSteps();
@@ -393,18 +395,6 @@ function cleanDetail(detail: string | undefined): string | undefined {
 	return detail?.replace(/\s+in\s+\S*[*?{}"'][^\s]*$/, '');
 }
 
-/** "Ran <description>": Cursor labels commands by what they are for, falling back to the command. */
-function runStep(block: ITerminalBlock): ITranscriptStep {
-	const title = humanTerminalTitle(block.title, block.command);
-	return {
-		id: block.id,
-		kind: 'run',
-		action: localize('voltAgent.step.ran', "Ran"),
-		detail: title || block.command,
-		terminal: block,
-	};
-}
-
 /** Diff stats per edit block, recomputed only when its content changes (the live turn re-renders every frame). */
 const editStats = new WeakMap<IFileChangeBlock, { key: string; additions: number; deletions: number }>();
 
@@ -526,7 +516,7 @@ function countList(entries: ReadonlyArray<[number, string, string]>): string {
  * answer goes inside, the trailing answer stays visible. Turns without tool work stay flat.
  */
 export function splitWorkedRows(rows: readonly TranscriptRow[]): { work: TranscriptRow[]; answer: TranscriptRow[] } {
-	if (!rows.some(row => row.kind === 'steps' || row.kind === 'subagent' || row.kind === 'subagents')) {
+	if (!rows.some(row => row.kind === 'steps' || row.kind === 'subagent' || row.kind === 'subagents' || isTerminalRow(row))) {
 		return { work: [], answer: [...rows] };
 	}
 	let start = rows.length;
@@ -543,11 +533,15 @@ function isVisualRow(row: TranscriptRow): boolean {
 	return row.kind === 'block' && row.block.type === 'visual';
 }
 
+function isTerminalRow(row: TranscriptRow): boolean {
+	return row.kind === 'block' && row.block.type === 'terminal';
+}
+
 function isAnswerRow(row: TranscriptRow): boolean {
 	if (row.kind === 'markdown') {
 		return true;
 	}
-	return row.kind === 'block' && row.block.type !== 'approval';
+	return row.kind === 'block' && row.block.type !== 'approval' && row.block.type !== 'terminal';
 }
 
 function joinText(left: string, right: string): string {

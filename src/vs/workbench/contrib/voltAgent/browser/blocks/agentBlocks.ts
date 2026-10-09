@@ -502,8 +502,9 @@ export function terminalCommandLabels(command: string): string[] {
 	const names: string[] = [];
 	const seen = new Set<string>();
 	for (const part of stripPrompt(command).split(/\s*(?:&&|\|\||[;|])\s*/)) {
-		const name = firstCommandName(part);
-		if (!name || NOISE_COMMANDS.has(name) || seen.has(name)) {
+		// `for i in 1 2; do sleep 1; done` names sleep, not "for, done".
+		const name = firstCommandName(part.replace(SHELL_KEYWORD_PREFIX_RE, ''));
+		if (!name || NOISE_COMMANDS.has(name) || SHELL_KEYWORDS.has(name) || seen.has(name)) {
 			continue;
 		}
 		seen.add(name);
@@ -709,6 +710,8 @@ function stripPrompt(command: string): string {
 }
 
 const GENERIC_SHELL_TITLE_RE = /^(bash|sh|zsh|fish|shell|terminal|cmd|command|exec|execute|run|process|stdout|run_terminal_cmd|run_command|shell_command)$/i;
+const SHELL_KEYWORDS = new Set(['for', 'while', 'until', 'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'case', 'esac', 'in', 'select', 'function', '{', '}', '!']);
+const SHELL_KEYWORD_PREFIX_RE = /^(?:(?:do|then|else|elif|!)\s+)+/;
 const NOISE_COMMANDS = new Set(['echo', 'printf', 'true', 'false', ':', 'tee', 'xargs', 'awk', 'sed', 'tr', 'cut', 'uniq', 'wc']);
 
 export function createTerminalBlock(partial: Omit<ITerminalBlock, 'type' | 'status' | 'expanded'> & { status?: AgentBlockStatus; expanded?: boolean }): ITerminalBlock {

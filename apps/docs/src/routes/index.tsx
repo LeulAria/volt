@@ -188,9 +188,9 @@ function Home() {
         <FeatureBento />
         <SectionRule className="mt-24 md:mt-32" />
         <Capabilities />
-        <SectionRule className="mt-24 md:mt-32" />
+        <SectionRule className="-mt-px" />
         <Models />
-        <SectionRule className="mt-24 md:mt-32" />
+        <SectionRule className="-mt-px" />
         <ClosingCta />
         <SectionRule />
         <SiteFooter />

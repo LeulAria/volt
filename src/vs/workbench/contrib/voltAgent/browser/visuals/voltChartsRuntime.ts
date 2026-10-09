@@ -525,6 +525,11 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 	}
 
 	/** The resolved monospace family (`--vc-mono` can hold var() chains a canvas cannot read). */
+	/** Axis numbers and times are set in the mono face, small and quiet, like a terminal readout. */
+	function axisFont(host: Element): string {
+		return `400 10.5px ${monoFamily(host)}`;
+	}
+
 	function monoFamily(host: Element): string {
 		const probe = doc.createElement('span');
 		probe.style.cssText = 'position:absolute;visibility:hidden;font-family:var(--vc-mono)';
@@ -1595,6 +1600,8 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 	--vc-surface:var(--popover,var(--vscode-editorHoverWidget-background,var(--vscode-editorWidget-background,var(--vc-bg))));
 	--vc-hair:color-mix(in srgb,var(--vc-fg) 10%,transparent);
 	--vc-grid:color-mix(in srgb,var(--vc-fg) 6%,transparent);
+	--vc-grid-dot:color-mix(in srgb,var(--vc-fg) 13%,transparent);
+	--vc-axis-ink:color-mix(in srgb,var(--vc-fg) 42%,transparent);
 	--vc-zero:color-mix(in srgb,var(--vc-fg) 18%,transparent);
 	--vc-focus:var(--ring,var(--vscode-focusBorder,var(--vc-accent)));
 	--vc-mono:var(--font-mono,var(--volt-code-font,var(--vscode-editor-font-family,ui-monospace,Menlo,monospace)));
@@ -1627,7 +1634,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 	--vc-shadow:0 10px 28px -8px rgba(0,0,0,.5),0 2px 8px -2px rgba(0,0,0,.3);
 	position:relative;color:var(--vc-fg);font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased;min-width:0;
 }
-.vc-root.vc-light{--vc-seg-on:var(--vc-bg);--vc-seg-track:color-mix(in srgb,var(--vc-fg) 8%,transparent);--vc-shadow:0 10px 28px -8px rgba(0,0,0,.18),0 2px 8px -2px rgba(0,0,0,.1);--vc-grid:color-mix(in srgb,var(--vc-fg) 7%,transparent);}
+.vc-root.vc-light{--vc-seg-on:var(--vc-bg);--vc-seg-track:color-mix(in srgb,var(--vc-fg) 8%,transparent);--vc-shadow:0 10px 28px -8px rgba(0,0,0,.18),0 2px 8px -2px rgba(0,0,0,.1);--vc-grid:color-mix(in srgb,var(--vc-fg) 7%,transparent);--vc-grid-dot:color-mix(in srgb,var(--vc-fg) 16%,transparent);--vc-axis-ink:color-mix(in srgb,var(--vc-fg) 50%,transparent);}
 .vc-root *{box-sizing:border-box}
 .vc-root button{font:inherit}
 .vc-visual-head{margin:0 0 18px}
@@ -1672,7 +1679,8 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 .vc-grid line{stroke:var(--vc-grid);shape-rendering:crispEdges}
 .vc-grid line.vc-zero{stroke:var(--vc-zero)}
 .vc-tick{transition:opacity ${TWEEN_MS}ms ease}
-.vc-axis text,.vc-tick text{fill:var(--vc-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.vc-axis text,.vc-tick text{fill:var(--vc-axis-ink);font-family:var(--vc-mono);font-size:10.5px;letter-spacing:.01em;font-variant-numeric:tabular-nums}
+.vc-axis text.vc-cat{fill:var(--vc-muted);font-family:inherit;font-size:11px;letter-spacing:0}
 .vc-s{transition:opacity 180ms ease}
 .vc-dim .vc-s:not(.vc-on){opacity:.18}
 .vc-line{fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
@@ -2872,7 +2880,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				min = Math.min(min, 0);
 				max = Math.max(max, 0);
 			}
-			const count = clamp(Math.round(plotHeight / 52), 2, 6);
+			const count = clamp(Math.round(plotHeight / 42), 2, 6);
 			const integer = metric.unit.kind === 'count' || metric.unit.kind === 'tokens';
 			const share = model.type === 'share';
 			const ticks = share
@@ -3023,12 +3031,12 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		private computeBox(frame: IFrame & { ticks: INiceScale }, height: number, top: number, bottom: number): IBox {
 			const width = this.width;
 			const compactAxis = this.compactAxis();
-			const font = `400 11px ${win.getComputedStyle(this.element).fontFamily || 'system-ui'}`;
+			const font = axisFont(this.element);
 			let labelWidth = 0;
 			for (const value of frame.ticks.values) {
 				labelWidth = Math.max(labelWidth, textWidth(formatTick(value, frame.ticks.step, frame.unit), font));
 			}
-			const left = compactAxis ? 0 : Math.ceil(labelWidth) + 10;
+			const left = compactAxis ? 0 : Math.ceil(labelWidth) + 16;
 			let right = this.bars ? 2 : 6;
 			const endLabels = this.endLabelsWanted();
 			if (endLabels) {
@@ -3101,7 +3109,8 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		private drawXAxis(frame: IFrame, box: IBox, sx: IScale): void {
 			this.xAxisLayer.replaceChildren();
 			const model = this.model;
-			const font = `400 11px ${win.getComputedStyle(this.element).fontFamily || 'system-ui'}`;
+			const category = model.xKind === 'category';
+			const font = category ? `400 11px ${win.getComputedStyle(this.element).fontFamily || 'system-ui'}` : axisFont(this.element);
 			let ticks: ITick[] = [];
 			const plotWidth = box.right - box.left;
 			const lo = sx.inv(box.left);
@@ -3123,7 +3132,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				ticks = scale.values.filter(value => value >= frame.x0 && value <= frame.x1).map(value => ({ value, label: formatTick(value, scale.step, model.xUnit) }));
 			}
 			let lastEnd = -Infinity;
-			const y = box.bottom + 16;
+			const y = box.bottom + 18;
 			for (const tick of ticks) {
 				const x = sx(tick.value);
 				if (x < box.left - 1 || x > box.right + 1) {
@@ -3143,7 +3152,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 					continue;
 				}
 				lastEnd = start + width;
-				const text = s('text', { x: anchor === 'start' ? start : anchor === 'end' ? box.width : x, y, 'text-anchor': anchor }, this.xAxisLayer);
+				const text = s('text', { x: anchor === 'start' ? start : anchor === 'end' ? box.width : x, y, 'text-anchor': anchor, class: category ? 'vc-cat' : undefined }, this.xAxisLayer);
 				text.textContent = tick.label;
 				text.dataset.cx = String(x);
 			}
@@ -3384,7 +3393,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				if (compactAxis) {
 					setAttrs(text, { x: box.left, y: -5, 'text-anchor': 'start', 'dominant-baseline': 'auto' });
 				} else {
-					setAttrs(text, { x: box.left - 9, y: 0, 'text-anchor': 'end', 'dominant-baseline': 'central' });
+					setAttrs(text, { x: 0, y: 0, 'text-anchor': 'start', 'dominant-baseline': 'central' });
 				}
 			}
 		}
@@ -3997,7 +4006,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 
 		/** Narrow plots put y labels inside, over the grid; bars would cover them there, so bars keep a gutter. */
 		private compactAxis(): boolean {
-			return this.width < 400 && !this.bars;
+			return this.width < 200 && !this.bars;
 		}
 
 		private xLabel(x: number): string {
@@ -7186,9 +7195,9 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			const lo = Math.min(...this.candles.map(candle => candle.low));
 			const hi = Math.max(...this.candles.map(candle => candle.high));
 			const ticks = niceScale(lo, hi, 4, false);
-			const font = `400 11px ${win.getComputedStyle(this.element).fontFamily || 'system-ui'}`;
+			const font = axisFont(this.element);
 			const labelWidth = Math.max(0, ...ticks.values.map(value => textWidth(formatTick(value, ticks.step, this.unit), font)));
-			const box: IBox = { width, height, left: width < 400 ? 0 : Math.ceil(labelWidth) + 10, right: width - 4, top: 10, bottom: height - 24 };
+			const box: IBox = { width, height, left: width < 200 ? 0 : Math.ceil(labelWidth) + 16, right: width - 4, top: 10, bottom: height - 24 };
 			this.box = box;
 			const slot = (box.right - box.left) / Math.max(1, n);
 			const sx = (index: number) => box.left + (index + 0.5) * slot;
@@ -7209,14 +7218,14 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				const y = crisp(sy(value));
 				s('line', { x1: box.left, x2: box.right, y1: y, y2: y, class: value === ticks.values[0] ? 'vc-zero' : undefined }, grid);
 				if (box.left > 0) {
-					s('text', { x: box.left - 8, y, 'text-anchor': 'end', 'dominant-baseline': 'central' }, axis).textContent = formatTick(value, ticks.step, this.unit);
+					s('text', { x: 0, y, 'text-anchor': 'start', 'dominant-baseline': 'central' }, axis).textContent = formatTick(value, ticks.step, this.unit);
 				}
 			}
 			drawBands(s('g', {}, this.svg), this.look.bands, box, sy, this.unit);
 			const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((box.right - box.left) / 80))));
 			const grain = this.time ? grainOf(this.candles.map(candle => candle.x)) : 'day';
 			for (let index = 0; index < n; index += every) {
-				const label = s('text', { x: sx(index), y: height - 6, 'text-anchor': 'middle' }, axis);
+				const label = s('text', { x: sx(index), y: height - 6, 'text-anchor': 'middle', class: this.time ? undefined : 'vc-cat' }, axis);
 				label.textContent = this.time ? formatTimePoint(this.candles[index].x, grain, this.zone) : this.categories[index];
 				label.dataset.cx = String(sx(index));
 			}
@@ -7343,7 +7352,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 .vc-tip-hero{font-size:18px;line-height:23px}
 .vc-tip-row{gap:8px}
 .vc-cartesian:not(.vc-bars) .vc-tip .vc-swatch:not(.vc-dash){width:10px;height:2.5px;border-radius:2px}
-.vc-grid-dashed line:not(.vc-zero){stroke-dasharray:3 4}
+.vc-grid-dashed line:not(.vc-zero){stroke:var(--vc-grid-dot);stroke-dasharray:1 3}
 .vc-grid-none line:not(.vc-zero){display:none}
 .vc-line.vc-nostroke{stroke-opacity:0}
 .vc-refband line{stroke:var(--vc-muted);stroke-dasharray:4 4;stroke-opacity:.6}

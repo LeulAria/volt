@@ -8,6 +8,7 @@ import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
+import { withWorkingGitOnPath } from '../../voltGit/node/gitExecutable.js';
 import { IVoltCloudSourceSummary, VoltCloudSourceMode } from '../common/voltRelay.js';
 
 /**
@@ -22,9 +23,10 @@ export interface IGitResult {
 	readonly stderr: string;
 }
 
-export function git(cwd: string, args: readonly string[], env?: NodeJS.ProcessEnv, timeoutMs = 5 * 60_000): Promise<IGitResult> {
+export async function git(cwd: string, args: readonly string[], env?: NodeJS.ProcessEnv, timeoutMs = 5 * 60_000): Promise<IGitResult> {
+	const baseEnv = await withWorkingGitOnPath(process.env);
 	return new Promise(resolve => {
-		execFile('git', [...args], { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...env }, maxBuffer: 256 * 1024 * 1024, timeout: timeoutMs }, (err, stdout, stderr) => {
+		execFile('git', [...args], { cwd, env: { ...baseEnv, GIT_TERMINAL_PROMPT: '0', ...env }, maxBuffer: 256 * 1024 * 1024, timeout: timeoutMs }, (err, stdout, stderr) => {
 			const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : 1) : 0;
 			resolve({ code, stdout: String(stdout), stderr: String(stderr || (err && !stderr ? err.message : '')) });
 		});

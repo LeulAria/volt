@@ -14,6 +14,7 @@ import { Disposable } from '../../../base/common/lifecycle.js';
 import { dirname, isAbsolute, join, resolve } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
+import { withWorkingGitOnPath } from './gitExecutable.js';
 import {
 	IVoltGitApplyResult,
 	IVoltGitBranchRef,
@@ -705,7 +706,7 @@ export class VoltGitService extends Disposable implements IVoltGitService {
 	}
 
 	private async env(extra: Record<string, string> | undefined): Promise<NodeJS.ProcessEnv> {
-		this.baseEnv ??= this.resolveEnv().then(resolved => {
+		this.baseEnv ??= this.resolveEnv().then(withWorkingGitOnPath).then(resolved => {
 			const env: NodeJS.ProcessEnv = { ...resolved };
 			for (const key of SCRUBBED_ENV) {
 				delete env[key];

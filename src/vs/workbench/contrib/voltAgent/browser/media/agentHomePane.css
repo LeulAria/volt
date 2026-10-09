@@ -599,13 +599,20 @@
 	opacity: 1;
 }
 
-.volt-agent-home-row.is-section,
-.volt-agent-home-row.is-group {
+.volt-agent-home-row.is-section {
 	font-size: 11px;
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
 	opacity: 0.65;
+}
+
+/* Group headers are VS Code pane headers (paneview.css): 11px bold uppercase in the section-header color. */
+.volt-agent-home-row.is-group {
+	font-size: 11px;
+	font-weight: bold;
+	text-transform: uppercase;
+	color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-foreground));
 }
 
 .volt-agent-home-row.is-section > .name,
@@ -703,9 +710,11 @@
 	display: flex;
 }
 
+/* The pane header's chevron: a full 16px codicon in the icon color. */
 .volt-agent-home-row.is-group > .icon .codicon {
-	font-size: 14px;
-	opacity: 0.85;
+	font-size: 16px;
+	color: var(--vscode-icon-foreground);
+	opacity: 1;
 }
 
 /* Folder / bucket: default folder glyph; hover swaps to expand/collapse chevron only. */
@@ -1883,50 +1892,14 @@ html.volt-layout-agent-window body {
 	font-size: 11px;
 }
 
-/* Working header: a sentence-case label, a rule across the row, the fold chevron last.
- * Settled and Snoozed keep the VS Code pane section header look of the other group headers
- * (leading chevron, small uppercase label); Snoozed only tints its label blue. */
-.volt-agent-home-row.is-group.group-working {
-	font-size: 12px;
-	font-weight: 500;
-	text-transform: none;
-	letter-spacing: 0;
-	opacity: 1;
-	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
-}
-
+/* Group headers keep the VS Code pane section header look (leading chevron, small uppercase
+ * label); Snoozed only tints its label blue. */
 .volt-agent-home-row.is-group.group-snooze {
 	color: var(--vscode-charts-blue, #3794ff);
 }
 
-.volt-agent-home-row.is-group.group-working > .name {
-	flex: none;
-	order: 0;
-}
-
-.volt-agent-home-row.is-group.group-working::after {
-	content: '';
-	flex: 1;
-	order: 1;
-	height: 1px;
-	background: currentColor;
-	opacity: 0.25;
-}
-
-.volt-agent-home-row.is-group.group-working > .icon {
-	order: 2;
-}
-
-.volt-agent-home-row.is-group.group-settled > .meta,
-.volt-agent-home-row.is-group.group-snooze > .meta {
+.volt-agent-home-row.is-group > .meta {
 	display: none;
-}
-
-/* Working counts the chats it folds away, right after its label. */
-.volt-agent-home-row.is-group.group-working > .meta {
-	order: 0;
-	margin-left: -2px;
-	font-variant-numeric: tabular-nums;
 }
 
 /* Snoozed tabs sit back until hovered; the countdown is blue, and hover swaps it for the bell. */

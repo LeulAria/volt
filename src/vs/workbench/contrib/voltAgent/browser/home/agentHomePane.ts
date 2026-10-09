@@ -260,13 +260,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.container.classList.toggle('collapsed', !!node.collapsed);
 
 		const element = node.element;
-		// Group headers: collapsed left / expanded down. Folder rows keep collapsed right.
-		// Working puts a trailing chevron after its rule: down to open, up to fold. Settled / Snoozed
-		// lead with a pane-header chevron like the other group headers: right when folded, down when open.
-		const collapsedChevron = element.type === 'bucket' ? Codicon.chevronLeft : Codicon.chevronRight;
-		const chevron = element.type === 'group' && element.id === 'working'
-			? (node.collapsed ? Codicon.chevronDown : Codicon.chevronUp)
-			: (node.collapsed ? collapsedChevron : Codicon.chevronDown);
+		// Headers and folders lead with the VS Code pane-header chevron: right when folded, down when open.
+		const chevron = node.collapsed ? Codicon.chevronRight : Codicon.chevronDown;
 		template.twist.replaceChildren(renderIcon(chevron));
 		switch (element.type) {
 			case 'newChat':
@@ -413,10 +408,9 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		if (element.filter) {
 			this.renderFilter(template);
 		}
-		this.renderAdd(template, element);
 	}
 
-	/** + on project rows (hover-only via CSS) and group headers (always visible); start rules live in {@link agentHomeAddStart}. */
+	/** + on project rows (hover-only via CSS); start rules live in {@link agentHomeAddStart}. */
 	private renderAdd(template: IHomeTemplate, element: AgentHomeElement): void {
 		const start = agentHomeAddStart(element);
 		if (!start) {
@@ -438,7 +432,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		}));
 	}
 
-	/** Working: the label, its folded-chat count, a rule and a trailing chevron. Settled / Snoozed: a pane section header (leading chevron, uppercase label). */
+	/** Working / Settled / Snoozed: a pane section header (leading chevron, uppercase label). */
 	private renderGroup(element: Extract<AgentHomeElement, { type: 'group' }>, template: IHomeTemplate): void {
 		template.container.classList.add('is-group', 'is-collapsible', `group-${element.id}`);
 		template.name.textContent = agentHomeGroupLabel(element.id);

@@ -4,14 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
-import { parseCodeCitation } from '../../browser/blocks/agentCodeBlock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { AgentSegment, appendProviderNotice, createFileChangeBlock, createTerminalBlock, IFileChangeBlock, isLikelyFilePath } from '../../browser/blocks/agentBlocks.js';
-import { classifyDiffLine, looksLikeUnifiedDiff } from '../../browser/blocks/agentCodeBlock.js';
+import { AgentSegment, appendProviderNotice, createApprovalBlock, createFileChangeBlock, createTerminalBlock, IFileChangeBlock, isLikelyFilePath, terminalCommandLabels } from '../../browser/blocks/agentBlocks.js';
+import { classifyDiffLine, looksLikeUnifiedDiff, parseCodeCitation } from '../../browser/blocks/agentCodeBlock.js';
 import { markupToFragment } from '../../browser/blocks/agentMarkupDom.js';
 import { normalizeMathDelimiters } from '../../browser/blocks/agentMarkdown.js';
 import { IBlockRenderContext, renderAgentBlock } from '../../browser/blocks/agentBlockRenderers.js';
-import { createApprovalBlock } from '../../browser/blocks/agentBlocks.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { buildTranscriptRows, formatThoughtDuration, hasSignInNotice, splitWorkedRows, stepsGroupTitle, subagentStatus, TranscriptRow, withoutFailureNotice } from '../../browser/chrome/agentTranscript.js';
 import { queueSendNowLabels } from '../../browser/composer/agentComposerQueue.js';
@@ -70,31 +68,40 @@ suite('Agent transcript (Cursor rows)', () => {
 		assert.strictEqual(stepsGroupTitle(group.steps, true).action, 'Exploring');
 	});
 
-	test('edits lead the title, then exploration and commands, with summed stats', () => {
+	test('edits lead the title, then exploration, with summed stats; commands are their own cards', () => {
 		const rows = buildTranscriptRows([
 			run('t1', 'npm test', 'Test suite to see failure'),
 			read('README.md'),
 			{ kind: 'block', block: edit('/repo/src/stats.js', 'a\nsort()\nc\n', 'a\nsort((a, b) => a - b)\nc\n') },
 			run('t2', 'npm test', 'Re-run tests after median fix'),
 		], undefined, false);
-		const group = rows[0] as Extract<TranscriptRow, { kind: 'steps' }>;
-		assert.deepStrictEqual(stepsGroupTitle(group.steps, false), { action: 'Edited', detail: 'stats.js, explored 1 file, ran 2 commands', additions: 1, deletions: 1 });
+		assert.deepStrictEqual(kinds(rows), ['block', 'steps', 'block']);
+		const group = rows[1] as Extract<TranscriptRow, { kind: 'steps' }>;
+		assert.deepStrictEqual(stepsGroupTitle(group.steps, false), { action: 'Edited', detail: 'stats.js, explored 1 file', additions: 1, deletions: 1 });
 		assert.deepStrictEqual(group.steps.map(step => `${step.action} ${step.detail}`), [
-			'Ran Test suite to see failure',
 			'Read README.md L1-20',
 			'Edited stats.js',
-			'Ran Re-run tests after median fix',
 		]);
 	});
 
-	test('only commands read "Ran N commands"; web lookups count as searches', () => {
+	test('commands are cards, not a "Ran N commands" fold; web lookups count as searches', () => {
 		const rows = buildTranscriptRows([
 			run('t1', 'node -e 1'), run('t2', 'node -e 2'),
 			{ kind: 'text', text: 'done' },
 			{ kind: 'activity', item: { kind: 'browser', label: 'Searched web', detail: 'node lts' } },
 		], undefined, false);
-		assert.deepStrictEqual(stepsGroupTitle((rows[0] as Extract<TranscriptRow, { kind: 'steps' }>).steps, false).detail, '2 commands');
-		assert.deepStrictEqual(stepsGroupTitle((rows[2] as Extract<TranscriptRow, { kind: 'steps' }>).steps, false), { action: 'Explored', detail: '1 search', additions: 0, deletions: 0 });
+		assert.deepStrictEqual(rows.map(row => row.kind === 'block' ? row.block.type : row.kind), ['terminal', 'terminal', 'markdown', 'steps']);
+		assert.deepStrictEqual(stepsGroupTitle((rows[3] as Extract<TranscriptRow, { kind: 'steps' }>).steps, false), { action: 'Explored', detail: '1 search', additions: 0, deletions: 0 });
+		// A command before the answer is work: it folds under "Worked for" with the rest.
+		const { work, answer } = splitWorkedRows(buildTranscriptRows([run('t1', 'node -e 1'), { kind: 'text', text: 'done' }], undefined, false));
+		assert.deepStrictEqual(kinds(work), ['block']);
+		assert.deepStrictEqual(kinds(answer), ['markdown']);
+	});
+
+	test('a command card names the programs a loop runs, not its keywords', () => {
+		assert.deepStrictEqual(terminalCommandLabels('for i in 1 2 3; do echo line $i; sleep 2; done'), ['sleep']);
+		assert.deepStrictEqual(terminalCommandLabels('if [ -f x ]; then rm x; fi'), ['rm']);
+		assert.deepStrictEqual(terminalCommandLabels('python3 a.py | head; gh repo list'), ['python3', 'gh']);
 	});
 
 	test('the newest group is live while streaming', () => {

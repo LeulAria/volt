@@ -9,6 +9,7 @@ import { SequencerByKey } from '../../../base/common/async.js';
 import { Emitter } from '../../../base/common/event.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { ILogService } from '../../log/common/log.js';
+import { withWorkingGitOnPath } from '../../voltGit/node/gitExecutable.js';
 import {
 	apiHost,
 	classifyGhError,
@@ -1483,7 +1484,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	private async env(extra: Record<string, string> | undefined): Promise<NodeJS.ProcessEnv> {
-		this.baseEnv ??= this.resolveEnv().then(resolved => {
+		this.baseEnv ??= this.resolveEnv().then(withWorkingGitOnPath).then(resolved => {
 			const env: NodeJS.ProcessEnv = { ...resolved };
 			for (const key of [...SCRUBBED_ENV, ...SCRUBBED_GH_ENV]) {
 				delete env[key];

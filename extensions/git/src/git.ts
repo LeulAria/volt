@@ -131,6 +131,27 @@ function findGitDarwin(onValidate: (path: string) => boolean): Promise<IGit> {
 	});
 }
 
+// /usr/bin/git is an xcrun shim that refuses to run until the Xcode license is
+// accepted (common right after an Xcode update). The binaries behind it run
+// fine, so try them, and Homebrew's, directly.
+async function findGitDarwinFallback(onValidate: (path: string) => boolean): Promise<IGit> {
+	const candidates = ['/opt/homebrew/bin/git', '/usr/local/bin/git'];
+	const developerDir = await new Promise<string | undefined>(c => cp.exec('xcode-select -p', (err, stdout) => c(err ? undefined : stdout.toString().trim())));
+	if (developerDir) {
+		candidates.push(path.join(developerDir, 'usr', 'bin', 'git'));
+	}
+	candidates.push('/Library/Developer/CommandLineTools/usr/bin/git');
+
+	for (const candidate of candidates) {
+		try {
+			return await findSpecificGit(candidate, onValidate);
+		} catch {
+			// try the next one
+		}
+	}
+	throw new Error('No working git found in Homebrew, Xcode or Command Line Tools');
+}
+
 function findSystemGitWin32(base: string, onValidate: (path: string) => boolean): Promise<IGit> {
 	if (!base) {
 		return Promise.reject<IGit>('Not found');
@@ -164,7 +185,10 @@ export async function findGit(hints: string[], onValidate: (path: string) => boo
 
 	try {
 		switch (process.platform) {
-			case 'darwin': return await findGitDarwin(onValidate);
+			case 'darwin': return await findGitDarwin(onValidate).catch(err => {
+				logger.info(`${err.message}. Trying git binaries directly.`);
+				return findGitDarwinFallback(onValidate);
+			});
 			case 'win32': return await findGitWin32(onValidate);
 			default: return await findSpecificGit('git', onValidate);
 		}

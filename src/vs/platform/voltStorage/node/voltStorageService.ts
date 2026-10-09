@@ -8,6 +8,7 @@ import { createHash } from 'crypto';
 import { Dirent, promises as fs } from 'fs';
 import { basename, dirname, isAbsolute, join, normalize, resolve } from '../../../base/common/path.js';
 import { ILogService } from '../../log/common/log.js';
+import { withWorkingGitOnPath } from '../../voltGit/node/gitExecutable.js';
 import {
 	IVoltProjectStorageRequest,
 	IVoltStorageCleanResult,
@@ -480,7 +481,7 @@ export class VoltStorageService implements IVoltStorageService {
 	//#endregion
 
 	private async git(cwd: string, args: readonly string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-		const env = await this.getEnv().catch(() => process.env);
+		const env = await withWorkingGitOnPath(await this.getEnv().catch(() => process.env));
 		return new Promise(resolvePromise => {
 			execFile('git', [...args], { cwd, env: { ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }, timeout: GIT_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
 				const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : 1) : 0;
