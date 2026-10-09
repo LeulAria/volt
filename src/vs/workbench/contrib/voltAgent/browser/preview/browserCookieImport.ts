@@ -21,7 +21,9 @@ export function cookieImportSummary(source: IVoltCookieSource, result: IVoltCook
 	if (!result.imported) {
 		return result.warnings[0] ?? localize('voltCookies.none', "No cookies to import from {0}.", source.browserLabel);
 	}
-	return localize('voltCookies.done', "Imported {0} cookies for {1} sites from {2}.", result.imported, result.sites, source.browserLabel);
+	const cookies = result.imported === 1 ? localize('voltCookies.oneCookie', "1 cookie") : localize('voltCookies.manyCookies', "{0} cookies", result.imported);
+	const sites = result.sites === 1 ? localize('voltCookies.oneSite', "1 site") : localize('voltCookies.manySites', "{0} sites", result.sites);
+	return localize('voltCookies.done', "Imported {0} for {1} from {2}.", cookies, sites, source.browserLabel);
 }
 
 function profileName(source: IVoltCookieSource): string {

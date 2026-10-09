@@ -58,7 +58,9 @@ export interface ICookieReaderEnv {
 }
 
 export function defaultReaderEnv(): ICookieReaderEnv {
-	return { platform: process.platform, home: homedir(), env: process.env };
+	// Dev builds only: VOLT_COOKIE_IMPORT_HOME points the reader at a test home folder, so the import can be tried on a fake profile.
+	const home = process.env['VSCODE_DEV'] && process.env['VOLT_COOKIE_IMPORT_HOME'] || homedir();
+	return { platform: process.platform, home, env: process.env };
 }
 
 /** Where a platform keeps per-user app data for Chromium browsers. */
