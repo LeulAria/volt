@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, getWindow, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow, isHTMLElement, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
@@ -147,21 +147,28 @@ export function renderCodeCard(parent: HTMLElement, language: string | undefined
 	if (citation) {
 		renderCitationHeader(shell.card, citation, options);
 	}
-	if (mountMonacoCode(shell.scroll, text, lang, options)) {
-		shell.card.classList.add('has-editor');
-		return shell.card;
+	const codeEl = renderHighlightedCode(shell.card, shell.scroll, lang, text, options);
+	if (options.instantiationService) {
+		// Indent like the editor that replaces it, so the swap does not shift the code sideways.
+		codeEl.style.tabSize = '4';
+		deferMonacoMount(shell.card, shell.scroll, codeEl, text, lang, options);
 	}
-	const codeEl = append(shell.scroll, $('code.volt-md-code.volt-agent-searchable'));
+	return shell.card;
+}
+
+/** Highlighted lines as plain DOM: the card body until (or instead of) its Monaco editor. */
+function renderHighlightedCode(card: HTMLElement, scroll: HTMLElement, lang: string, text: string, options: ICodeCardOptions): HTMLElement {
+	const codeEl = append(scroll, $('code.volt-md-code.volt-agent-searchable'));
 	const key = `${lang}\n${text}`;
 	const cached = highlightCache.get(key);
 	if (cached) {
 		appendLines(codeEl, cloneLines(cached));
-		return shell.card;
+		return codeEl;
 	}
 	appendLines(codeEl, provisionalLines(lang, text));
 	if (options.languageService && lang) {
 		highlight(options.languageService, lang, text).then(lines => {
-			if (!shell.card.isConnected) {
+			if (!card.isConnected || !codeEl.isConnected) {
 				return;
 			}
 			codeEl.replaceChildren();
@@ -169,7 +176,54 @@ export function renderCodeCard(parent: HTMLElement, language: string | undefined
 			options.onDidChangeSize?.();
 		}, () => { /* keep plain text */ });
 	}
-	return shell.card;
+	return codeEl;
+}
+
+/** How long a card must stay near the viewport before it gets its editor; a streamed reply is redrawn every 50 ms, so its cards never do. */
+const MONACO_MOUNT_DELAY_MS = 150;
+
+/**
+ * A read-only Monaco editor per code card costs a text model, tokenization, a view with its own
+ * DOM, listeners and a ResizeObserver (a 60-turn chat with two blocks a turn made 120 of them: +76k
+ * DOM nodes, 5 s to render). Cards start as highlighted lines and get their editor only once they
+ * have been on or near screen for a moment.
+ */
+function deferMonacoMount(card: HTMLElement, scroll: HTMLElement, codeEl: HTMLElement, text: string, lang: string, options: ICodeCardOptions): void {
+	const win = getWindow(card);
+	const mount = () => {
+		if (!card.isConnected || options.store.isDisposed) {
+			return;
+		}
+		if (mountMonacoCode(scroll, text, lang, options)) {
+			codeEl.remove();
+			card.classList.add('has-editor');
+			options.onDidChangeSize?.();
+		}
+	};
+	if (typeof win.IntersectionObserver !== 'function') {
+		mount();
+		return;
+	}
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const observer = new win.IntersectionObserver(entries => {
+		if (entries.some(entry => entry.isIntersecting)) {
+			timer ??= setTimeout(() => {
+				timer = undefined;
+				observer.disconnect();
+				mount();
+			}, MONACO_MOUNT_DELAY_MS);
+		} else if (timer !== undefined) {
+			clearTimeout(timer);
+			timer = undefined;
+		}
+	}, { rootMargin: '400px 0px' });
+	observer.observe(card);
+	options.store.add(toDisposable(() => {
+		observer.disconnect();
+		if (timer !== undefined) {
+			clearTimeout(timer);
+		}
+	}));
 }
 
 /** The header on a cited snippet: file icon, name, "Ln a-b"; clicking opens the file there. */
@@ -679,7 +733,29 @@ function htmlToLines(html: string): Node[][] {
 		}
 		lines[lines.length - 1].push(child);
 	}
-	return lines;
+	return lines.map(compactTokens);
+}
+
+/**
+ * The tokenizer emits a span per token, whitespace included, so a code line of ten words is twenty
+ * spans. Whitespace joins the span before it (unless that one is underlined or struck through) and
+ * neighbours with the same classes merge: the same colours with about half the DOM nodes.
+ */
+export function compactTokens(nodes: Node[]): Node[] {
+	const out: Node[] = [];
+	for (const node of nodes) {
+		const previous = out.at(-1);
+		if (isHTMLElement(previous) && isHTMLElement(node) && previous.tagName === 'SPAN' && node.tagName === 'SPAN' && previous.childElementCount === 0 && node.childElementCount === 0) {
+			const text = node.textContent ?? '';
+			const decorated = /\bmtk[us]\b/.test(previous.className);
+			if (previous.className === node.className || (!text.trim() && !decorated)) {
+				previous.textContent = (previous.textContent ?? '') + text;
+				continue;
+			}
+		}
+		out.push(node);
+	}
+	return out;
 }
 
 /** While a new highlight is pending, reuse the colours of the lines that have not changed since the last one. */
