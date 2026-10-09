@@ -25,7 +25,7 @@ import { extractToolImage } from '../preview/browserSnapshot.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { computeChangeStats, fileChangeVerb, parseToolFileChange } from '../review/fileChangePreviewModel.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
-import type { IAgentActivity, IAgentAssistantMessage, IAgentMessage, IAgentPromptDisplay, IAgentUserMessage } from './agentEditor.js';
+import type { IAgentActivity, IAgentAssistantMessage, IAgentMessage, IAgentPromptDisplay, IAgentTurnSpend, IAgentUserMessage } from './agentEditor.js';
 
 /**
  * How often a streaming reply is snapshotted into history. Each snapshot rewrites the session log,
@@ -66,6 +66,21 @@ export interface IAgentSessionChange {
 	readonly aborted?: boolean;
 	/** The run ended in an error: queued prompts wait for the user instead of going to a failing provider. */
 	readonly failed?: boolean;
+}
+
+/**
+ * The agent's running cost after the last earlier reply that reported one, the floor this reply's
+ * cost grows from. A model switch inside the same agent keeps its session (and its total).
+ */
+function previousSessionCost(messages: readonly IAgentMessage[], reply: IAgentAssistantMessage): number | undefined {
+	const at = messages.indexOf(reply);
+	for (let i = (at === -1 ? messages.length : at) - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message.kind === 'agent' && message.sessionCostUsd !== undefined) {
+			return message.sessionCostUsd;
+		}
+	}
+	return undefined;
 }
 
 /** Closes a reply's open cards. `stopped`: the user stopped the turn, so running calls read "Stopped". */
@@ -180,6 +195,11 @@ export class AgentSessionController extends Disposable {
 	 * after compacting, without the system prompt and tools that still come first.
 	 */
 	private compactedTo: number | undefined;
+	/** The reply's spend and reported cost from its earlier runs; this run adds to them. */
+	private runSpendBase: IAgentTurnSpend | undefined;
+	private runCostBase = 0;
+	/** The agent's session cost before this run, so the run costs the growth past it. */
+	private sessionCostBase: number | undefined;
 
 	constructor(
 		private host: IAgentSessionHost,
@@ -452,6 +472,44 @@ export class AgentSessionController extends Disposable {
 		if (event.cache !== undefined && Number.isFinite(event.cache) && event.cache >= 0) {
 			last.tokensCache = event.cache;
 		}
+		this.applySpend(event, last);
+	}
+
+	/** Who answers this run, and what the reply had spent before it (a continued turn runs again). */
+	private beginRunSpend(last: IAgentAssistantMessage, providerRef: string | undefined): void {
+		if (providerRef) {
+			const item = this.runtime.listCatalog().find(candidate => candidate.ref === providerRef);
+			last.model = { ref: providerRef, ...(item ? { id: item.id, label: item.label } : {}) };
+		}
+		this.runSpendBase = last.spend ? { ...last.spend } : undefined;
+		this.runCostBase = last.costUsd ?? 0;
+		this.sessionCostBase = last.sessionCostUsd ?? previousSessionCost(this.host.messages, last);
+	}
+
+	/**
+	 * Billing for the Session Usage panel. A report with `used` covers one model call (native loop),
+	 * so those add up; one without it is the agent's total for the turn (ACP's prompt response) and
+	 * replaces the run's sum. Claude's session cost is cumulative: the run costs its growth, or all
+	 * of it when it shrank (the agent started a new session).
+	 */
+	private applySpend(event: Extract<IVoltEventEnvelope['event'], { type: 'usage' }>, last: IAgentAssistantMessage): void {
+		const count = (value: number | undefined) => value !== undefined && Number.isFinite(value) && value > 0 ? value : 0;
+		const spent: IAgentTurnSpend = { input: count(event.input), output: count(event.output), cacheRead: count(event.cache), cacheWrite: count(event.cacheWrite) };
+		if (spent.input + spent.output + spent.cacheRead + spent.cacheWrite > 0) {
+			const base = event.used === undefined ? this.runSpendBase : last.spend ?? this.runSpendBase;
+			last.spend = {
+				input: (base?.input ?? 0) + spent.input,
+				output: (base?.output ?? 0) + spent.output,
+				cacheRead: (base?.cacheRead ?? 0) + spent.cacheRead,
+				cacheWrite: (base?.cacheWrite ?? 0) + spent.cacheWrite,
+			};
+		}
+		if (event.costUsd !== undefined && Number.isFinite(event.costUsd) && event.costUsd >= 0) {
+			const before = this.sessionCostBase ?? 0;
+			const grew = event.costUsd >= before ? event.costUsd - before : event.costUsd;
+			last.costUsd = Math.round((this.runCostBase + grew) * 1e6) / 1e6;
+			last.sessionCostUsd = event.costUsd;
+		}
 	}
 
 	/**
@@ -655,6 +713,7 @@ export class AgentSessionController extends Disposable {
 				this.lastTextId = undefined;
 				this.runReportedUsed = false;
 				this.compactedTo = undefined;
+				this.beginRunSpend(last, event.providerRef);
 				last.runId = envelope.runId;
 				last.outcome = undefined;
 				last.failure = undefined;

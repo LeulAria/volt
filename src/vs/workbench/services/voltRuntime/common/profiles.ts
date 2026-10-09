@@ -43,6 +43,8 @@ export interface IProviderProfileDraft {
 
 export const VOLT_PROFILES_STORAGE_KEY = 'volt.runtime.profiles';
 export const VOLT_ENABLED_MODELS_STORAGE_KEY = 'volt.runtime.enabledModels';
+/** Models the user turned off. Empty means nothing is hidden (an empty enabled-list still means show all). */
+export const VOLT_DISABLED_MODELS_STORAGE_KEY = 'volt.runtime.disabledModels';
 export const VOLT_TASK_MODELS_STORAGE_KEY = 'volt.runtime.taskModels';
 export const VOLT_MODE_PROFILES_STORAGE_KEY = 'volt.runtime.modeProfiles';
 export const VOLT_SANDBOX_STORAGE_KEY = 'volt.runtime.sandbox';

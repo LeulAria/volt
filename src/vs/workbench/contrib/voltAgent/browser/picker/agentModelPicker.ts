@@ -20,6 +20,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../../pla
 import { defaultInputBoxStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
 import { editorWidgetBackground } from '../../../../../platform/theme/common/colorRegistry.js';
 import { modelEditSections, modelHoverCard } from '../../../../services/voltRuntime/common/models/harnessCatalog.js';
+import { enabledProfileIds, isPickerModelVisible } from '../../../../services/voltRuntime/common/models/modelVisibility.js';
 import { compactEffortLabel, describeModelOptions, MODEL_OPTION_CONTEXT, MODEL_OPTION_FAST, MODEL_OPTION_REASONING, optionValue, splitModelDisplayName, type IModelOptionDescriptor, type IVoltModelOptions } from '../../../../services/voltRuntime/common/models/modelOptions.js';
 import type { IVoltCatalogItem } from '../../../../services/voltRuntime/common/providers.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
@@ -177,6 +178,10 @@ export class AgentModelPicker extends Disposable {
 			this.syncCatalog();
 			this.host.onDidChange?.();
 		}));
+		this._register(this.runtime.onDidChangeProfiles(() => {
+			this.syncCatalog();
+			this.host.onDidChange?.();
+		}));
 		this._register(this.runtime.onDidChangeActiveCatalog(() => {
 			this.syncCatalog();
 			this.host.onDidChange?.();
@@ -188,8 +193,10 @@ export class AgentModelPicker extends Disposable {
 	}
 
 	syncCatalog(): void {
-		this.catalog = this.runtime.listCatalog()
-			.filter(item => item.enabled)
+		const profiles = enabledProfileIds(this.runtime.listProfiles());
+		const all = this.runtime.listCatalog();
+		this.catalog = all
+			.filter(item => isPickerModelVisible(item, profiles))
 			.map(catalogToOption)
 			.filter(option => option.name.trim().toLowerCase() !== 'auto');
 		const binding = this.host.binding;
@@ -199,6 +206,8 @@ export class AgentModelPicker extends Disposable {
 			return;
 		}
 		const persisted = this.runtime.getActiveCatalogRef();
+		const persistedItem = persisted ? all.find(item => item.ref === persisted) : undefined;
+		const persistedHidden = !!persistedItem && !isPickerModelVisible(persistedItem, profiles);
 		if (persisted && this.catalog.some(item => item.ref === persisted)) {
 			this.currentModel = persisted;
 		}
@@ -206,6 +215,13 @@ export class AgentModelPicker extends Disposable {
 			// Only shown, never saved: a saved pick is the last model the user chose, and Volt's own runs
 			// start on it, so the first catalog entry must not become that choice by default.
 			this.currentModel = this.catalog[0]?.ref ?? '';
+		}
+		// The saved model was turned off (its switch, or its whole provider). Move the chat
+		// onto one that is still shown. A model that is merely missing while the catalog
+		// loads stays saved, so a new window lands on it once it shows up.
+		if (persistedHidden && this.currentModel !== persisted) {
+			void this.runtime.setActiveCatalogRef(this.currentModel || undefined);
+			return;
 		}
 	}
 
@@ -413,9 +429,19 @@ export class AgentModelPicker extends Disposable {
 				search.setAttribute('aria-expanded', 'true');
 
 				const tabBar = append(panel, $('.volt-agent-picker-tabbar'));
+				const scrollLeftBtn = append(tabBar, $('button.volt-agent-picker-scroll.left.is-hidden')) as HTMLButtonElement;
+				scrollLeftBtn.type = 'button';
+				scrollLeftBtn.appendChild(renderIcon(Codicon.chevronLeft));
+				scrollLeftBtn.setAttribute('aria-label', localize('voltAgent.providersPrevious', "Show previous providers"));
+				setAgentTooltip(scrollLeftBtn, localize('voltAgent.providersPrevious', "Show previous providers"));
 				const tabs = append(tabBar, $('.volt-agent-provider-tabs'));
 				tabs.setAttribute('role', 'tablist');
 				tabs.setAttribute('aria-label', localize('voltAgent.providers', "Providers"));
+				const scrollRightBtn = append(tabBar, $('button.volt-agent-picker-scroll.right.is-hidden')) as HTMLButtonElement;
+				scrollRightBtn.type = 'button';
+				scrollRightBtn.appendChild(renderIcon(Codicon.chevronRight));
+				scrollRightBtn.setAttribute('aria-label', localize('voltAgent.providersNext', "Show more providers"));
+				setAgentTooltip(scrollRightBtn, localize('voltAgent.providersNext', "Show more providers"));
 				// Outside the scrolling tab strip, so it stays put however many providers there are.
 				const multiHost = this.host.multi;
 				let multiToggle: HTMLButtonElement | undefined;
@@ -447,6 +473,66 @@ export class AgentModelPicker extends Disposable {
 					this.contextViewService.hideContextView();
 					void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
 				}));
+
+				const TAB_SCROLL_EPS = 1;
+				const scrollTabsBy = (direction: -1 | 1) => {
+					const max = Math.max(0, tabs.scrollWidth - tabs.clientWidth);
+					const step = Math.max(36, tabs.clientWidth);
+					const next = Math.min(max, Math.max(0, tabs.scrollLeft + direction * step));
+					tabs.scrollTo({ left: next, behavior: 'smooth' });
+				};
+				const bindScrollBtn = (button: HTMLButtonElement, direction: -1 | 1) => {
+					store.add(addDisposableListener(button, 'mousedown', e => e.stopPropagation()));
+					store.add(addDisposableListener(button, 'click', e => {
+						e.preventDefault();
+						e.stopPropagation();
+						scrollTabsBy(direction);
+					}));
+				};
+				bindScrollBtn(scrollLeftBtn, -1);
+				bindScrollBtn(scrollRightBtn, 1);
+				const syncTabScroll = () => {
+					if (tabs.clientWidth <= 0) {
+						return;
+					}
+					for (let pass = 0; pass < 4; pass++) {
+						const max = Math.max(0, tabs.scrollWidth - tabs.clientWidth);
+						const showLeft = tabs.scrollLeft > TAB_SCROLL_EPS;
+						const showRight = max > TAB_SCROLL_EPS && tabs.scrollLeft < max - TAB_SCROLL_EPS;
+						const leftMatches = scrollLeftBtn.classList.contains('is-hidden') === !showLeft;
+						const rightMatches = scrollRightBtn.classList.contains('is-hidden') === !showRight;
+						if (leftMatches && rightMatches) {
+							break;
+						}
+						scrollLeftBtn.classList.toggle('is-hidden', !showLeft);
+						scrollRightBtn.classList.toggle('is-hidden', !showRight);
+					}
+				};
+				const revealActiveProvider = () => {
+					const active = tabs.querySelector('.volt-agent-provider-tab.active');
+					if (!isHTMLElement(active)) {
+						return;
+					}
+					const view = tabs.getBoundingClientRect();
+					const tab = active.getBoundingClientRect();
+					if (tab.left < view.left - TAB_SCROLL_EPS) {
+						tabs.scrollLeft -= view.left - tab.left;
+					} else if (tab.right > view.right + TAB_SCROLL_EPS) {
+						tabs.scrollLeft += tab.right - view.right;
+					}
+				};
+				const updateTabScroll = () => {
+					revealActiveProvider();
+					syncTabScroll();
+					scheduleAtNextAnimationFrame(getWindow(tabs), () => {
+						revealActiveProvider();
+						syncTabScroll();
+					});
+				};
+				store.add(addDisposableListener(tabs, 'scroll', () => syncTabScroll()));
+				const tabResize = new (getWindow(tabs).ResizeObserver)(() => syncTabScroll());
+				tabResize.observe(tabs);
+				store.add(toDisposable(() => tabResize.disconnect()));
 
 				const body = append(panel, $('.volt-agent-picker-body'));
 				const listHost = append(body, $('.volt-agent-picker-list'));
@@ -618,6 +704,7 @@ export class AgentModelPicker extends Disposable {
 						for (let i = 0; i < 4; i++) {
 							append(tabs, $('.volt-agent-provider-tab.skeleton'));
 						}
+						updateTabScroll();
 						return;
 					}
 					const addTab = (id: string, label: string, icon: HTMLElement) => {
@@ -645,6 +732,7 @@ export class AgentModelPicker extends Disposable {
 					for (const group of groups) {
 						addTab(group.family, group.label, createBrandIcon(group.family, 16));
 					}
+					updateTabScroll();
 				};
 
 				const renderList = () => {

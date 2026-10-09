@@ -550,7 +550,10 @@ function setFrameFullscreen(frame: ILiveFrame, on: boolean, win: CodeWindow): bo
 	} catch {
 		// Not connected: stay inline.
 	}
-	const close = append(element, $('button.volt-agent-visual-fullscreen-close')) as HTMLButtonElement;
+	// A bar above the page (its title and the exit button), so nothing covers the page's own controls.
+	const bar = append(element, $('.volt-agent-visual-fullscreen-bar'));
+	append(bar, $('span.volt-agent-visual-fullscreen-title')).textContent = frame.title;
+	const close = append(bar, $('button.volt-agent-visual-fullscreen-close')) as HTMLButtonElement;
 	close.type = 'button';
 	close.setAttribute('aria-label', localize('voltVisual.exitFullscreen', "Exit Full Screen"));
 	close.appendChild(renderIcon(Codicon.screenNormal));
@@ -566,7 +569,7 @@ function setFrameFullscreen(frame: ILiveFrame, on: boolean, win: CodeWindow): bo
 		}
 	}, true));
 	store.add(toDisposable(() => {
-		close.remove();
+		bar.remove();
 		try {
 			element.hidePopover?.();
 		} catch {
@@ -649,6 +652,19 @@ function toolbarButton(parent: HTMLElement, icon: ThemeIconLike, label: string, 
 
 type ThemeIconLike = Parameters<typeof renderIcon>[0];
 
+/**
+ * Mounts the loaded visual next to its skeleton, then drops the skeleton. Emptying the body first
+ * shrinks the transcript for a moment: the layout read while mounting then clamps its scrollTop
+ * (to 0 in a short chat), and the scroll event that follows stops the chat following the reply.
+ */
+function replaceBody(body: HTMLElement, mount: () => void): void {
+	const old = Array.from(body.childNodes);
+	mount();
+	for (const node of old) {
+		node.remove();
+	}
+}
+
 /** Without a title row on top, the hover chip would sit on the chart's own switchers: lift it above. */
 function placeActions(wrap: HTMLElement, body: HTMLElement): void {
 	const titled = !!body.querySelector('.vc-visual-title') || !!body.querySelector('.vc-blocks > .vc-block:first-child > .vc-head:first-child, .vc-blocks > .vc-block:first-child > .vc-variant-head:first-child > .vc-head');
@@ -680,8 +696,7 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 				append(body, $('.volt-agent-visual-missing')).textContent = localize('voltVisual.missing', "This chart is no longer stored.");
 				return;
 			}
-			body.replaceChildren();
-			mountChart(body, key, spec, ctx);
+			replaceBody(body, () => mountChart(body, key, spec, ctx));
 			placeActions(wrap, body);
 		};
 		if (live) {
@@ -718,12 +733,12 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 				// Redrawn away while loading; the new row loads it.
 				return;
 			}
-			body.replaceChildren();
 			if (html === undefined) {
+				body.replaceChildren();
 				append(body, $('.volt-agent-visual-missing')).textContent = localize('voltVisual.pageMissing', "This page is no longer stored.");
 				return;
 			}
-			mountFrame(body, key, title, html, block.height, ctx, sizing);
+			replaceBody(body, () => mountFrame(body, key, title, html, block.height, ctx, sizing));
 		});
 		whenNearScreen(wrap, load, ctx.store);
 	}

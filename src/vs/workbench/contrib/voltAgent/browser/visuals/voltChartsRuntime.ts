@@ -629,6 +629,12 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			if (kind) {
 				return { kind, prefix: '', suffix: '' };
 			}
+			// "$k", "EUR M", "$bn": a currency in thousands or millions reads "$148k", not "148 $k".
+			// allow-any-unicode-next-line
+			const scaled = /^\s*([$€£¥₹])\s*(k|m|mm|b|bn|t)\s*$/i.exec(value);
+			if (scaled) {
+				return { kind: 'custom', prefix: scaled[1], suffix: scaled[2].length > 1 ? scaled[2] : scaled[2].toUpperCase() === 'K' ? 'k' : scaled[2].toUpperCase() };
+			}
 			if (SAFE_AFFIX.test(value)) {
 				return { kind: 'custom', prefix: '', suffix: value.startsWith(' ') || value.length > 1 ? ` ${value.trim()}` : value };
 			}
@@ -4190,6 +4196,63 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 
 	//#region Heatmap
 
+	/**
+	 * Rows, columns and values[row][column] from the documented shape or the ones models also send:
+	 * `x`/`y` axes with `categories` (or label arrays), or top-level `categories` for the columns,
+	 * plus a `data` matrix, one `series` per row, or `data` as `{ x, y, value }` cells.
+	 */
+	function heatmapGrid(spec: Record<string, unknown>): { rows: unknown[]; columns: unknown[]; values: unknown[] } {
+		const labels = (...candidates: unknown[]): unknown[] | undefined => {
+			for (const candidate of candidates) {
+				const list = isRecord(candidate) ? candidate.categories ?? candidate.labels ?? candidate.values : candidate;
+				if (Array.isArray(list) && list.length) {
+					return list;
+				}
+			}
+			return undefined;
+		};
+		const rows = labels(spec.rows, spec.y, spec.yLabels, spec.rowLabels);
+		const columns = labels(spec.columns, spec.x, spec.categories, spec.xLabels, spec.columnLabels, spec.cols);
+		const matrix = [spec.values, spec.matrix, spec.z, spec.data].find(candidate => Array.isArray(candidate) && candidate.length && candidate.every(Array.isArray));
+		if (Array.isArray(matrix)) {
+			return { rows: rows ?? [], columns: columns ?? [], values: matrix };
+		}
+		const series = Array.isArray(spec.series) ? spec.series.filter(item => isRecord(item) && Array.isArray(item.data)) as Record<string, unknown>[] : [];
+		if (series.length) {
+			return { rows: rows ?? series.map(item => item.name ?? item.label), columns: columns ?? [], values: series.map(item => item.data) };
+		}
+		const cells = (Array.isArray(spec.data) ? spec.data : Array.isArray(spec.values) ? spec.values : []).filter(isRecord);
+		if (!cells.length) {
+			return { rows: rows ?? [], columns: columns ?? [], values: [] };
+		}
+		const rowKeys = rows ? rows.map(item => String(item)) : [];
+		const columnKeys = columns ? columns.map(item => String(item)) : [];
+		const placed: { row: string; column: string; value: unknown }[] = [];
+		for (const cell of cells) {
+			const row = cell.y ?? cell.row;
+			const column = cell.x ?? cell.column ?? cell.col;
+			if (row === undefined || column === undefined) {
+				continue;
+			}
+			placed.push({ row: String(row), column: String(column), value: cell.value ?? cell.v ?? cell.z ?? cell.count });
+			if (!rows && !rowKeys.includes(String(row))) {
+				rowKeys.push(String(row));
+			}
+			if (!columns && !columnKeys.includes(String(column))) {
+				columnKeys.push(String(column));
+			}
+		}
+		const values = rowKeys.map(() => columnKeys.map(() => undefined as unknown));
+		for (const { row, column, value } of placed) {
+			const r = rowKeys.indexOf(row);
+			const c = columnKeys.indexOf(column);
+			if (r >= 0 && c >= 0) {
+				values[r][c] = value;
+			}
+		}
+		return { rows: rows ?? rowKeys, columns: columns ?? columnKeys, values };
+	}
+
 	class HeatmapBlock implements IBlock {
 		readonly element: HTMLElement;
 		private readonly plot: HTMLElement;
@@ -4212,9 +4275,10 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		constructor(parent: HTMLElement, spec: Record<string, unknown>, private readonly ctx: IContext, problems: string[], where: string) {
 			this.element = h('div', 'vc-block', parent);
 			blockHead(this.element, spec.title, spec.subtitle);
-			this.rows = (Array.isArray(spec.rows) ? spec.rows : []).map(item => str(item, 40) ?? '').slice(0, 60);
-			this.columns = (Array.isArray(spec.columns) ? spec.columns : []).map(item => str(item, 40) ?? '').slice(0, 200);
-			const raw = Array.isArray(spec.values) ? spec.values : [];
+			const grid = heatmapGrid(spec);
+			this.rows = grid.rows.map(item => str(item, 40) ?? '').slice(0, 60);
+			this.columns = grid.columns.map(item => str(item, 40) ?? '').slice(0, 200);
+			const raw = grid.values;
 			this.values = this.rows.map((_, row) => this.columns.map((__, column) => {
 				const line = raw[row];
 				const value = Array.isArray(line) ? line[column] : undefined;
@@ -4956,14 +5020,36 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		readonly detail?: string;
 	}
 
+	/**
+	 * The `{ label, value }` items of a part-of-whole chart (donut, ranked, funnel): `data` as
+	 * documented, or the cartesian shapes models also send: one series of `{ x, y }` points or of
+	 * numbers over `categories`, several series (one part each, summed), or `labels` + `values`.
+	 */
+	function partsData(spec: Record<string, unknown>): unknown[] {
+		const names = [spec.categories, spec.labels, isRecord(spec.x) ? spec.x.categories : undefined].find(Array.isArray) as unknown[] | undefined;
+		const zip = (values: unknown[]) => names ? values.map((value, index) => ({ label: names[index], value })) : [];
+		if (Array.isArray(spec.data) && spec.data.length) {
+			return spec.data.some(isRecord) ? spec.data : zip(spec.data);
+		}
+		const series = Array.isArray(spec.series) ? spec.series.filter(isRecord) : [];
+		if (series.length === 1 && Array.isArray(series[0].data)) {
+			return series[0].data.some(isRecord) ? series[0].data : zip(series[0].data);
+		}
+		if (series.length > 1) {
+			return series.map(item => ({ ...item, label: item.label ?? item.name, value: isNum(item.value) ? item.value : Array.isArray(item.data) ? item.data.reduce((sum: number, datum) => sum + (isNum(datum) ? datum : isRecord(datum) && isNum(datum.y) ? datum.y : 0), 0) : undefined }));
+		}
+		return Array.isArray(spec.values) ? zip(spec.values) : [];
+	}
+
 	function readParts(raw: unknown, problems: string[], where: string): IPart[] {
 		const list = (Array.isArray(raw) ? raw : []).filter(isRecord).slice(0, 500);
 		if (!list.length) {
 			problems.push(`${where}: give "data": [{ "label": "...", "value": 12 }].`);
 		}
 		return list.flatMap((item, index) => {
-			const label = str(item.label ?? item.name, 200);
-			const value = isNum(item.value) ? item.value : Number.NaN;
+			const label = str(item.label ?? item.name ?? item.x ?? item.category, 200);
+			const amount = item.value ?? item.y ?? item.count;
+			const value = isNum(amount) ? amount : Number.NaN;
 			if (!label || !Number.isFinite(value)) {
 				problems.push(`${where}: item ${index + 1} needs a "label" and a numeric "value".`);
 				return [];
@@ -4996,6 +5082,8 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		private readonly fillStyle: 'solid' | 'gradient' | 'pattern';
 		private readonly grow: boolean;
 		private readonly centerValueSpec?: string;
+		/** The values are already shares of the whole (percents summing to 100). */
+		private readonly sharesGiven: boolean;
 		private geometry: { start: number; end: number }[] = [];
 		private arcs: SVGPathElement[] = [];
 		private items: HTMLElement[] = [];
@@ -5007,7 +5095,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		constructor(parent: HTMLElement, spec: Record<string, unknown>, private readonly ctx: IContext, problems: string[], where: string) {
 			this.element = h('div', 'vc-block', parent);
 			blockHead(this.element, spec.title, spec.subtitle);
-			this.parts = readParts(spec.data, problems, where).filter(part => part.value > 0).sort((a, b) => b.value - a.value);
+			this.parts = readParts(partsData(spec), problems, where).filter(part => part.value > 0).sort((a, b) => b.value - a.value);
 			if (this.parts.length > 12) {
 				const rest = this.parts.splice(11);
 				this.parts.push({ label: ctx.strings.other, value: rest.reduce((sum, part) => sum + part.value, 0), color: 'var(--vc-other)' });
@@ -5026,6 +5114,8 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			this.list.setAttribute('role', 'list');
 			this.centerValue = s('text', { class: 'vc-donut-center-value', 'text-anchor': 'middle' });
 			this.centerLabel = s('text', { class: 'vc-donut-center-label', 'text-anchor': 'middle' });
+			// Values that are already shares of the whole (percents summing to 100) would print twice.
+			const sharesGiven = this.sharesGiven = (this.unit.kind === 'percent' && Math.abs(this.total - 100) < 0.5) || (this.unit.kind === 'ratio' && Math.abs(this.total - 1) < 0.005);
 			this.parts.forEach((part, index) => {
 				const item = h('div', 'vc-donut-item', this.list);
 				item.tabIndex = 0;
@@ -5034,7 +5124,9 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				swatch.style.background = part.color;
 				h('span', 'vc-tip-name', item, part.label);
 				h('span', 'vc-tip-value', item, formatValue(part.value, this.unit));
-				h('span', 'vc-donut-share', item, formatPercent((part.value / (this.total || 1)) * 100));
+				if (!sharesGiven) {
+					h('span', 'vc-donut-share', item, formatPercent((part.value / (this.total || 1)) * 100));
+				}
 				item.addEventListener('pointerenter', () => this.setActive(index));
 				item.addEventListener('pointerleave', () => this.setActive(-1));
 				item.addEventListener('focus', () => this.setActive(index));
@@ -5124,12 +5216,13 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				this.centerLabel.textContent = '';
 				return;
 			}
-			const part = this.parts[this.active];
-			if (!part && this.centerValueSpec !== undefined) {
+			if (!this.parts[this.active] && this.centerValueSpec !== undefined) {
 				this.centerValue.textContent = this.centerValueSpec;
 				this.centerLabel.textContent = this.centerText;
 				return;
 			}
+			// Shares always total 100%, which says nothing: at rest the middle names the largest part.
+			const part = this.parts[this.active] ?? (this.sharesGiven ? this.parts[0] : undefined);
 			this.centerValue.textContent = part ? formatPercent((part.value / (this.total || 1)) * 100) : formatValue(this.total, this.unit);
 			this.centerLabel.textContent = part ? ellipsize(part.label, '400 11px system-ui', this.size * 0.5) : this.centerText;
 		}
@@ -5176,7 +5269,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		constructor(parent: HTMLElement, spec: Record<string, unknown>, private readonly ctx: IContext, problems: string[], where: string) {
 			this.element = h('div', 'vc-block', parent);
 			blockHead(this.element, spec.title, spec.subtitle);
-			this.parts = readParts(spec.data, problems, where).sort((a, b) => b.value - a.value);
+			this.parts = readParts(partsData(spec), problems, where).sort((a, b) => b.value - a.value);
 			this.unit = resolveUnit(spec.unit, `${str(spec.title) ?? ''} ${str(spec.subtitle) ?? ''}`, this.parts.map(part => part.value));
 			this.limit = isNum(spec.limit) ? clamp(Math.round(spec.limit), 1, 500) : 10;
 			this.heat = spec.color === 'heat' || spec.colors === 'heat';
@@ -6172,7 +6265,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		constructor(parent: HTMLElement, spec: Record<string, unknown>, private readonly ctx: IContext, problems: string[], where: string) {
 			this.element = h('div', 'vc-block', parent);
 			blockHead(this.element, spec.title, spec.subtitle);
-			this.parts = readParts(spec.data, problems, where).filter(part => part.value >= 0).slice(0, 12);
+			this.parts = readParts(partsData(spec), problems, where).filter(part => part.value >= 0).slice(0, 12);
 			this.unit = resolveUnit(spec.unit, `${str(spec.title) ?? ''} ${str(spec.subtitle) ?? ''}`, this.parts.map(part => part.value));
 			this.color = cssColor(spec.color) ?? 'var(--vc-accent)';
 			const values = this.parts.map(part => part.value).filter(value => value > 0);
@@ -7802,20 +7895,20 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			case 'stats':
 				return Array.isArray(spec.items) ? spec.items.filter(isRecord).length : 0;
 			case 'heatmap':
-				return Array.isArray(spec.values) ? spec.values.reduce((sum: number, row) => sum + finite(row), 0) : 0;
+				return heatmapGrid(spec).values.reduce((sum: number, row) => sum + finite(row), 0);
 			case 'treemap': {
 				const leaves = (node: unknown): number => !isRecord(node) ? 0 : Array.isArray(node.children) && node.children.length ? node.children.reduce((sum: number, child) => sum + leaves(child), 0) : (isNum(node.value) && node.value > 0 ? 1 : 0);
 				return Array.isArray(spec.data) ? spec.data.reduce((sum: number, node) => sum + leaves(node), 0) : leaves(spec.data);
 			}
 			case 'donut':
 			case 'ranked':
-				return Array.isArray(spec.data) ? spec.data.filter(item => isRecord(item) && isNum(item.value)).length : 0;
+			case 'funnel':
+				return readParts(partsData(spec), [], '').length;
 			case 'cumulative':
 				return finite(spec.values);
 			case 'gauge':
 				return Array.isArray(spec.data) ? spec.data.filter(item => isRecord(item) && isNum(item.value)).length : isNum(spec.value) ? 1 : 0;
 			case 'rings':
-			case 'funnel':
 			case 'candlestick':
 				return Array.isArray(spec.data) ? spec.data.filter(item => isRecord(item) || Array.isArray(item)).length : 0;
 			case 'radar':
@@ -7835,7 +7928,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 		}
 	}
 
-	function inspect(input: unknown): { problems: string[]; charts: number; points: number } {
+	function inspect(input: unknown): { problems: string[]; charts: number; points: number; empty: number } {
 		const problems: string[] = [];
 		const visual = parseVisual(input, problems);
 		const host = doc.createElement('div');
@@ -7849,7 +7942,14 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			}
 			points += count;
 		});
-		return { problems: [...new Set(problems)], charts: visual.charts.length, points };
+		// Charts that would draw as an empty card, counting each chart of a row and each variant.
+		const empty = flattenCharts(visual.charts).filter(chart => !countData(chart));
+		for (const chart of empty) {
+			if (typeof chart.title === 'string') {
+				problems.push(`"${chart.title}": has no values to draw.`);
+			}
+		}
+		return { problems: [...new Set(problems)], charts: visual.charts.length, points, empty: empty.length };
 	}
 
 	function csvCell(value: unknown): string {
@@ -7877,9 +7977,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			if (type === 'stats') {
 				table(chart.title, [['label', 'value'], ...(Array.isArray(chart.items) ? chart.items.filter(isRecord).map(item => [item.label, item.value]) : [])]);
 			} else if (type === 'heatmap') {
-				const columns = Array.isArray(chart.columns) ? chart.columns : [];
-				const rows = Array.isArray(chart.rows) ? chart.rows : [];
-				const values = Array.isArray(chart.values) ? chart.values : [];
+				const { rows, columns, values } = heatmapGrid(chart);
 				table(chart.title, [['', ...columns], ...rows.map((row, index) => [row, ...(Array.isArray(values[index]) ? values[index] : [])])]);
 			} else if (type === 'treemap') {
 				const root = readTree(chart.data, [], '');
@@ -7888,7 +7986,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				walk(root);
 				table(chart.title, rows);
 			} else if (type === 'donut' || type === 'ranked') {
-				table(chart.title, [['label', 'value'], ...readParts(chart.data, [], '').map(part => [part.label, part.value])]);
+				table(chart.title, [['label', 'value'], ...readParts(partsData(chart), [], '').map(part => [part.label, part.value])]);
 			} else if (type === 'sunburst') {
 				const root = readTree(chart.data, [], '');
 				const rows: unknown[][] = [['path', 'value']];
@@ -7984,5 +8082,5 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 
 /** What the workbench gets from `voltChartsRuntime`: the public API plus `inspect`, which the host tools use. */
 export type IVoltChartsRuntime = IVoltChartsApi & {
-	inspect(visual: unknown): { problems: string[]; charts: number; points: number };
+	inspect(visual: unknown): { problems: string[]; charts: number; points: number; empty: number };
 };

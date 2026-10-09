@@ -11,8 +11,10 @@ import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '..
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { IVoltTokenRates, IVoltUsageService } from '../../../../../platform/voltUsage/common/voltUsage.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
 import { IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
@@ -30,6 +32,9 @@ import {
 	overheadFromCustomizations,
 } from './agentContextUsage.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { formatCost } from '../usage/agentUsageFormat.js';
+import { buildSessionUsage, ISessionUsageMessage, ISessionUsageModelRef, ISessionUsageOptions, ISessionUsageSummary, sessionModelIds } from './agentSessionUsage.js';
+import { AgentSessionUsagePanel, createSessionUsageIcon } from './agentSessionUsagePanel.js';
 
 const RING_RADIUS = 7.25;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
@@ -64,6 +69,13 @@ export interface IAgentContextUsageHost {
 	/** The chevron on the branch: move the chat to another checkout. Absent: no chevron. */
 	openMoveMenu?(anchor: HTMLElement): void;
 	onWillOpenPanel?(): void;
+	/** The transcript, for the Session Usage panel (each reply's model, tokens and cost). */
+	getSessionMessages?(): readonly ISessionUsageMessage[];
+	/** The chat's model: replies recorded before turns kept their model are counted under it. */
+	getSessionModel?(): ISessionUsageModelRef | undefined;
+	/** Today's catalog entry for a model ref. */
+	describeModel?(ref: string): { readonly id?: string; readonly label?: string } | undefined;
+	revealTurn?(turnId: string): void;
 }
 
 export class AgentContextUsageView extends Disposable {
@@ -82,6 +94,8 @@ export class AgentContextUsageView extends Disposable {
 	private readonly envChip: HTMLElement;
 	private readonly envIcon: HTMLElement;
 	private readonly envLabel: HTMLElement;
+	private readonly sessionButton: HTMLButtonElement;
+	private readonly sessionLabel: HTMLElement;
 	private readonly contextButton: HTMLButtonElement;
 	private readonly ringFill: SVGCircleElement;
 	private readonly percentLabel: HTMLElement;
@@ -94,6 +108,12 @@ export class AgentContextUsageView extends Disposable {
 	private overheadGen = 0;
 	private popup: IContextPopupRefs | undefined;
 	private panelEl: HTMLElement | undefined;
+	private readonly sessionStore = this._register(new DisposableStore());
+	private sessionPanel: AgentSessionUsagePanel | undefined;
+	private sessionPanelEl: HTMLElement | undefined;
+	/** List prices by model id, filled from the usage service; null when the price is unknown. */
+	private readonly rates = new Map<string, IVoltTokenRates | null>();
+	private readonly ratesPending = new Set<string>();
 
 	constructor(
 		private readonly host: IAgentContextUsageHost,
@@ -103,6 +123,7 @@ export class AgentContextUsageView extends Disposable {
 		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
 		@IClipboardService private readonly clipboardService: IClipboardService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) {
 		super();
 		this.scanner = new AgentCustomizationScanner(fileService);
@@ -119,6 +140,11 @@ export class AgentContextUsageView extends Disposable {
 		this.envChip = append(start, $('span.volt-agent-status-env'));
 		this.envIcon = append(this.envChip, $('span.icon'));
 		this.envLabel = append(this.envChip, $('span.label'));
+
+		this.sessionButton = append(this.element, $('button.volt-agent-session-usage')) as HTMLButtonElement;
+		this.sessionButton.type = 'button';
+		this.sessionButton.appendChild(createSessionUsageIcon(this.sessionButton.ownerDocument));
+		this.sessionLabel = append(this.sessionButton, $('span.label'));
 
 		this.contextButton = append(this.element, $('button.volt-agent-context-meter')) as HTMLButtonElement;
 		this.contextButton.type = 'button';
@@ -144,6 +170,16 @@ export class AgentContextUsageView extends Disposable {
 			e.stopPropagation();
 			this.host.openMoveMenu?.(this.branchButton);
 		}));
+		this._register(addDisposableListener(this.sessionButton, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (this.sessionPanel) {
+				this.hideSessionPanel();
+			} else {
+				this.showSessionPanel();
+			}
+			this.sessionButton.blur();
+		}));
 		this._register(addDisposableListener(this.contextButton, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -162,6 +198,7 @@ export class AgentContextUsageView extends Disposable {
 		const hasChat = this.host.getUsageInput().messages.length > 0;
 		this.contextButton.hidden = !hasChat;
 		this.contextButton.classList.toggle('empty', !hasChat);
+		this.refreshSession(hasChat);
 		if (!hasChat) {
 			this.hidePanel();
 			this.host.onDidRefresh?.(0);
@@ -310,6 +347,7 @@ export class AgentContextUsageView extends Disposable {
 			return;
 		}
 		this.host.onWillOpenPanel?.();
+		this.hideSessionPanel();
 		this.panelStore.clear();
 		this.panelEl?.remove();
 		this.open = true;
@@ -387,6 +425,128 @@ export class AgentContextUsageView extends Disposable {
 			}
 		}));
 		this.contextButton.setAttribute('aria-expanded', 'true');
+	}
+
+	private sessionOptions(): ISessionUsageOptions {
+		return {
+			rates: id => this.rates.get(id) ?? undefined,
+			describe: ref => this.host.describeModel?.(ref),
+			fallbackModel: this.host.getSessionModel?.(),
+		};
+	}
+
+	private sessionSummary(): ISessionUsageSummary | undefined {
+		const messages = this.host.getSessionMessages?.();
+		if (!messages) {
+			return undefined;
+		}
+		const options = this.sessionOptions();
+		this.loadRates(sessionModelIds(messages, options));
+		return buildSessionUsage(messages, options);
+	}
+
+	/** Asks the usage service (main process, LiteLLM's list) for prices not seen yet, then repaints. */
+	private loadRates(ids: readonly string[]): void {
+		const missing = ids.filter(id => !this.rates.has(id) && !this.ratesPending.has(id));
+		if (!missing.length) {
+			return;
+		}
+		const usage = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltUsageService));
+		if (!usage) {
+			missing.forEach(id => this.rates.set(id, null));
+			return;
+		}
+		missing.forEach(id => this.ratesPending.add(id));
+		usage.getModelRates(missing).then(rates => {
+			for (const id of missing) {
+				this.rates.set(id, rates[id] ?? null);
+			}
+		}, () => {
+			missing.forEach(id => this.rates.set(id, null));
+		}).finally(() => {
+			missing.forEach(id => this.ratesPending.delete(id));
+			if (!this._store.isDisposed) {
+				this.refresh();
+			}
+		});
+	}
+
+	/** The chart button beside the meter: the session's cost when it has one. */
+	private refreshSession(hasChat: boolean): void {
+		const summary = hasChat ? this.sessionSummary() : undefined;
+		const show = !!summary && summary.turns.length > 0;
+		this.sessionButton.hidden = !show;
+		if (!summary || !show) {
+			this.hideSessionPanel();
+			return;
+		}
+		const priced = summary.turns.length > summary.unpricedTurns;
+		this.sessionLabel.textContent = priced ? formatCost(summary.costUsd) : '';
+		this.sessionLabel.hidden = !priced;
+		const tokens = formatContextTokens(summary.total);
+		const detail = priced
+			? localize('voltAgent.sessionUsage.button', "Session usage: {0} tokens · {1}", tokens, formatCost(summary.costUsd))
+			: localize('voltAgent.sessionUsage.buttonTokens', "Session usage: {0} tokens", tokens);
+		this.sessionButton.setAttribute('aria-label', detail);
+		this.sessionButton.setAttribute('aria-expanded', String(!!this.sessionPanel));
+		setAgentTooltip(this.sessionButton, detail);
+		this.sessionPanel?.update(summary);
+	}
+
+	/** Closes whichever card is open: Context Usage or Session Usage. */
+	hidePanels(): void {
+		this.hidePanel();
+		this.hideSessionPanel();
+	}
+
+	hideSessionPanel(): void {
+		if (!this.sessionPanel) {
+			return;
+		}
+		this.sessionStore.clear();
+	}
+
+	private showSessionPanel(): void {
+		const summary = this.sessionSummary();
+		if (!summary) {
+			return;
+		}
+		this.host.onWillOpenPanel?.();
+		this.hidePanel();
+		this.sessionStore.clear();
+
+		const panelEl = $('.volt-agent-context-panel');
+		const { parent, before } = this.host.getPanelAnchor();
+		parent.insertBefore(panelEl, before);
+		const panel = this.sessionStore.add(new AgentSessionUsagePanel(panelEl, {
+			close: () => this.hideSessionPanel(),
+			revealTurn: turnId => this.host.revealTurn?.(turnId),
+		}));
+		this.sessionPanel = panel;
+		this.sessionPanelEl = panelEl;
+		panel.update(summary);
+
+		this.sessionStore.add(addDisposableListener(getWindow(panelEl).document, 'mousedown', e => {
+			if (!(e.target instanceof Node) || panelEl.contains(e.target) || this.sessionButton.contains(e.target)) {
+				return;
+			}
+			this.hideSessionPanel();
+		}, true));
+		this.sessionStore.add(addDisposableListener(getWindow(panelEl), 'keydown', e => {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				this.hideSessionPanel();
+			}
+		}));
+		this.sessionStore.add(toDisposable(() => {
+			panelEl.remove();
+			if (this.sessionPanelEl === panelEl) {
+				this.sessionPanelEl = undefined;
+				this.sessionPanel = undefined;
+				this.sessionButton.setAttribute('aria-expanded', 'false');
+			}
+		}));
+		this.sessionButton.setAttribute('aria-expanded', 'true');
 	}
 
 	private fillPopup(popup: IContextPopupRefs, snapshot: IContextUsageSnapshot): void {

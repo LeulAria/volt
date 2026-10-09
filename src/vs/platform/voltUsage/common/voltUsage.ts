@@ -114,10 +114,20 @@ export interface IVoltUsageLimitGroup {
 	readonly checkedAt: number;
 }
 
+/** A model's standard list price, in US dollars per token. */
+export interface IVoltTokenRates {
+	readonly input: number;
+	readonly output: number;
+	readonly cacheRead: number;
+	readonly cacheWrite: number;
+}
+
 export interface IVoltUsageService {
 	readonly _serviceBrand: undefined;
 	/** Usage history for the last {@link VOLT_USAGE_HISTORY_DAYS} days. Cached briefly unless `force`. */
 	getUsage(force?: boolean): Promise<IVoltUsageSnapshot>;
 	/** Live rate limits per provider the user is signed in to. */
 	getLimits(force?: boolean): Promise<readonly IVoltUsageLimitGroup[]>;
+	/** List prices for model ids (`claude-opus-5`, `gpt-6-sol`), from the same table as the usage page; null when unknown. */
+	getModelRates(models: readonly string[]): Promise<Record<string, IVoltTokenRates | null>>;
 }

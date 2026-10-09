@@ -229,6 +229,20 @@ function draw(host: HTMLElement, source: string, options: IMermaidOptions): void
 	const content = append(shell.scroll, $('.volt-md-mermaid-content'));
 	content.appendChild(svg);
 	svg.classList.add('volt-md-mermaid-svg');
+	// The CSS shrinks a wide diagram to the column while it stays readable; wider ones scroll, and
+	// the faded edge says there is more.
+	const naturalWidth = svg.viewBox?.baseVal?.width || parseFloat(svg.getAttribute('width') ?? '');
+	if (naturalWidth > 0) {
+		svg.style.setProperty('--volt-md-mermaid-width', `${naturalWidth}px`);
+	}
+	const scroll = shell.scroll;
+	const updateEdges = () => {
+		scroll.classList.toggle('volt-md-scroll-more-left', scroll.scrollLeft > 1);
+		scroll.classList.toggle('volt-md-scroll-more-right', scroll.scrollLeft + scroll.clientWidth < scroll.scrollWidth - 1);
+	};
+	scroll.addEventListener('scroll', updateEdges, { passive: true });
+	scroll.addEventListener('pointerenter', updateEdges);
+	doc.defaultView?.requestAnimationFrame(updateEdges);
 }
 
 function renderLegacyDiagram(doc: Document, source: string): SVGSVGElement | undefined {

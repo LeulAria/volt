@@ -125,7 +125,7 @@ suite('Agent visuals', () => {
 	});
 
 	test('renders every chart type without throwing', () => {
-		render({
+		const everything = {
 			title: 'Everything',
 			charts: [
 				{ type: 'share', x: { start: '2026-07-06', step: 'day' }, series: [{ name: 'A', data: [1, 2, 3] }, { name: 'Other', data: [3, 2, 1] }], annotations: [{ x: '2026-07-07', label: 'Ship' }] },
@@ -136,7 +136,10 @@ suite('Agent visuals', () => {
 				{ type: 'row', charts: [{ type: 'donut', data: [{ label: 'a', value: 2 }, { label: 'b', value: 1 }] }, { type: 'ranked', data: [{ label: 'src/a.ts', value: 4 }] }] },
 				{ type: 'cumulative', values: [100, 50, 10, 5, 1, 1, 1, 1, 1, 1], entity: 'installs', measure: 'turns' },
 			],
-		});
+		};
+		render(everything);
+		assert.strictEqual(charts.inspect(everything).empty, 0, 'no chart reads as empty');
+		assert.strictEqual(charts.inspect({ type: 'row', charts: [{ type: 'donut', data: [{ label: 'a', value: 1 }] }, { type: 'heatmap', rows: ['Mon'] }] }).empty, 1, 'an empty chart inside a row counts');
 		assert.strictEqual(host.querySelector('.vc-visual-title')?.textContent, 'Everything');
 		assert.ok(host.querySelectorAll('.vc-tile').length >= 2);
 		assert.ok(host.querySelectorAll('.vc-heat-cell').length === 2);
@@ -168,6 +171,14 @@ suite('Agent visuals', () => {
 		const sankeyNodes = [...host.querySelectorAll<SVGRectElement>('.vc-sk-node')];
 		const xOf = (index: number) => Number(sankeyNodes[index].getAttribute('x'));
 		assert.ok(xOf(0) < xOf(1) && xOf(1) < xOf(3), 'authors, then commit types, then packages');
+		const showcase = charts.inspect({
+			charts: [
+				{ type: 'gauge', value: 4, max: 10 }, { type: 'rings', data: [{ label: 'web', value: 50 }] }, { type: 'radar', axes: ['a', 'b', 'c'], series: [{ name: 's', data: [1, 2, 3] }] },
+				{ type: 'funnel', data: [{ label: 'a', value: 5 }, { label: 'b', value: 2 }] }, { type: 'sunburst', data: { name: 'r', children: [{ name: 'a', value: 1 }] } },
+				{ type: 'sankey', links: [{ source: 'a', target: 'b', value: 1 }] }, { type: 'candlestick', data: [['2026-10-01', 1, 2, 0.5, 1.5]] }, { type: 'stats', items: [{ label: 'a', value: 1 }] },
+			],
+		});
+		assert.strictEqual(showcase.empty, 0, showcase.problems.join('\n'));
 		const inspect = charts.inspect({ charts: [{ type: 'sankey', links: [] }, { type: 'radar', axes: ['a', 'b'], series: [{ name: 's', data: [1, 2] }] }] });
 		assert.ok(inspect.problems.some(problem => problem.includes('"links"')), inspect.problems.join('\n'));
 		assert.ok(inspect.problems.some(problem => problem.includes('3 or more')), inspect.problems.join('\n'));
@@ -434,6 +445,48 @@ suite('Agent visuals', () => {
 		assert.ok(/url\(/.test(pie.querySelector('.vc-arc')?.getAttribute('style') ?? ''));
 		assert.ok(!/url\(/.test(host.querySelector('.vc-candle-body')?.getAttribute('style') ?? ''), 'solid bodies');
 		assert.ok(host.querySelector('.vc-refband'));
+	});
+
+	test('reads the heatmap and donut shapes models send and prints donut shares once', () => {
+		const matrix = [[1, 2, 3], [4, 5, 6]];
+		const shapes = [
+			{ type: 'heatmap', x: { categories: ['a', 'b', 'c'] }, y: { categories: ['Mon', 'Tue'] }, data: matrix },
+			{ type: 'heatmap', rows: ['Mon', 'Tue'], categories: ['a', 'b', 'c'], x: { type: 'category' }, data: matrix },
+			{ type: 'heatmap', categories: ['a', 'b', 'c'], series: [{ name: 'Mon', data: matrix[0] }, { name: 'Tue', data: matrix[1] }] },
+			{ type: 'heatmap', data: [{ x: 'a', y: 'Mon', value: 1 }, { x: 'b', y: 'Mon', value: 2 }, { x: 'c', y: 'Mon', value: 3 }, { x: 'a', y: 'Tue', value: 4 }, { x: 'b', y: 'Tue', value: 5 }, { x: 'c', y: 'Tue', value: 6 }] },
+		];
+		for (const shape of shapes) {
+			const result = charts.inspect({ charts: [shape] });
+			assert.deepStrictEqual({ points: result.points, problems: result.problems }, { points: 6, problems: [] }, JSON.stringify(shape));
+		}
+		render({ charts: shapes });
+		assert.strictEqual(host.querySelectorAll('.vc-heat-cell').length, 24);
+
+		render({
+			charts: [
+				{ type: 'donut', unit: '%', data: [{ label: 'a', value: 60 }, { label: 'b', value: 40 }] },
+				{ type: 'donut', unit: 'visits', data: [{ label: 'a', value: 300 }, { label: 'b', value: 100 }] },
+			],
+		});
+		const [given, counted] = [...host.querySelectorAll('.vc-donut-list')];
+		const points = [{ x: 'Search', y: 3 }, { x: 'Direct', y: 1 }];
+		for (const shape of [
+			{ type: 'donut', series: [{ name: 'Sessions', data: points }] },
+			{ type: 'donut', categories: ['Search', 'Direct'], series: [{ name: 'Sessions', data: [3, 1] }] },
+			{ type: 'donut', series: [{ name: 'Search', data: [1, 2] }, { name: 'Direct', data: [1] }] },
+			{ type: 'pie', labels: ['Search', 'Direct'], values: [3, 1] },
+		]) {
+			const result = charts.inspect({ charts: [shape] });
+			assert.deepStrictEqual({ points: result.points, problems: result.problems }, { points: 2, problems: [] }, JSON.stringify(shape));
+		}
+		assert.strictEqual(given.querySelectorAll('.vc-donut-share').length, 0, 'percents that sum to 100 are the shares');
+		assert.deepStrictEqual([...counted.querySelectorAll('.vc-donut-share')].map(share => share.textContent), ['75%', '25%']);
+		assert.strictEqual(given.parentElement?.querySelector('.vc-donut-center-value')?.textContent, '60%', 'shares rest on the largest part, not "100%"');
+		assert.strictEqual(counted.parentElement?.querySelector('.vc-donut-center-value')?.textContent, '400 visits', 'counts rest on their total');
+
+		render({ charts: [{ type: 'bar', unit: '$k', categories: ['May', 'Jun'], series: [{ name: 'MRR', data: [148, 212] }] }] });
+		const bars = [...host.querySelectorAll('.vc-root')].pop()!;
+		assert.ok([...bars.querySelectorAll('.vc-tick')].some(tick => /^\$\d+k$/.test(tick.textContent ?? '')), [...bars.querySelectorAll('.vc-tick')].map(tick => tick.textContent).join(' '));
 	});
 
 	test('three small charts share a row instead of wrapping, and narrow bars keep their axis labels clear', () => {

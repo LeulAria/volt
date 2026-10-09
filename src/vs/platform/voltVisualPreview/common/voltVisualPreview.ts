@@ -22,6 +22,8 @@ export interface IVoltVisualPreviewRequest {
 	readonly measureWidths?: readonly number[];
 	/** Skip the screenshot: only heights and console output. */
 	readonly measureOnly?: boolean;
+	/** Opaque color behind the page (the chat surface): pages leave their own background transparent. */
+	readonly background?: { readonly r: number; readonly g: number; readonly b: number };
 }
 
 export interface IVoltVisualConsoleMessage {

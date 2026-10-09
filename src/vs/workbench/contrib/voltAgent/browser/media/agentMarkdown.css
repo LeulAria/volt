@@ -455,7 +455,7 @@
 	position: relative;
 }
 
-/* Cursor's header on a cited snippet (```12:40:src/app.ts): 31px, 6px 10px, icon + name + "Ln a–b". */
+/* Cursor's header on a cited snippet (```12:40:src/app.ts): 31px, 6px 10px, icon + name + "Ln a-b". */
 .volt-md-code-citation {
 	display: flex;
 	align-items: center;
@@ -741,14 +741,30 @@ code.volt-md-code.volt-md-diff {
 .volt-md-mermaid-content {
 	display: flex;
 	justify-content: center;
-	min-width: max-content;
+	min-width: min-content;
 	padding: 8px 0;
 }
 
-.volt-md-mermaid-svg {
+/* Wide diagrams shrink to the column down to 55% (text stays readable), then scroll sideways. */
+.volt-md-mermaid-content > .volt-md-mermaid-svg {
 	display: block;
+	flex: none;
 	max-width: none;
+	width: min(100%, var(--volt-md-mermaid-width, 100%));
+	min-width: calc(var(--volt-md-mermaid-width, 0px) * 0.55);
 	height: auto;
+}
+
+.volt-md-code-block.mermaid .volt-md-code-scroll.volt-md-scroll-more-right {
+	mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+}
+
+.volt-md-code-block.mermaid .volt-md-code-scroll.volt-md-scroll-more-left {
+	mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent);
+}
+
+.volt-md-code-block.mermaid .volt-md-code-scroll.volt-md-scroll-more-left.volt-md-scroll-more-right {
+	mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
 }
 
 /* Thinking text keeps its own quieter scale. */

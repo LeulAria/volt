@@ -34,7 +34,8 @@ import { DEFAULT_MODEL_CAPABILITIES } from '../common/capabilities.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../common/events.js';
 import { IVoltModelOptions, MODEL_OPTION_REASONING, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
 import { modePolicy, VoltMode } from '../common/modes.js';
-import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
+import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/modelVisibility.js';
+import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { resolveTabModel } from '../common/models/modelAccess.js';
@@ -117,7 +118,7 @@ const RECEIPT_LIMIT = 500;
 const TAB_PREDICTION_SESSION_ID = 'volt-tab-prediction';
 
 /** Bumped whenever the built-in profile list changes so existing installs pick it up. */
-const CLI_SEED_VERSION = 3;
+const CLI_SEED_VERSION = 4;
 
 /** Idle chat agents kept warm per window, most recently used first. */
 const MAX_IDLE_AGENTS = 3;
@@ -302,6 +303,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly agentProviders = new Map<string, IAgentProvider>();
 	private profiles: IProviderProfile[] = [];
 	private enabled = new Set<string>();
+	/** Models turned off in Settings. Survives a catalog refresh, unlike deleting from an empty whitelist. */
+	private disabled = new Set<string>();
 	private taskModels: IVoltTaskModels = {};
 	private activeCatalogRef: string | undefined;
 	private modeProfiles: Partial<Record<VoltMode, string>> = {};
@@ -1186,18 +1189,22 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	async setModelEnabled(ref: string, enabled: boolean): Promise<void> {
-		if (enabled) {
-			this.enabled.add(ref);
-		} else {
-			this.enabled.delete(ref);
-		}
-		this.storageService.store(VOLT_ENABLED_MODELS_STORAGE_KEY, JSON.stringify([...this.enabled]), StorageScope.APPLICATION, StorageTarget.USER);
-		this.catalog = this.catalog.map(item => item.ref === ref ? { ...item, enabled } : item);
+		const next = setCatalogModelEnabled(ref, enabled, this.disabled, this.enabled);
+		this.disabled = new Set(next.hidden);
+		this.enabled = new Set(next.whitelist);
+		this.storageService.store(VOLT_DISABLED_MODELS_STORAGE_KEY, JSON.stringify(next.hidden), StorageScope.APPLICATION, StorageTarget.USER);
+		this.storageService.store(VOLT_ENABLED_MODELS_STORAGE_KEY, JSON.stringify(next.whitelist), StorageScope.APPLICATION, StorageTarget.USER);
+		this.catalog = this.catalog.map(item => item.ref === ref ? { ...item, enabled: this.isModelShown(item.ref) } : item);
 		this._onDidChangeCatalog.fire();
 	}
 
 	isModelEnabled(ref: string): boolean {
-		return this.enabled.has(ref);
+		return this.isModelShown(ref);
+	}
+
+	/** Empty whitelist means show all, except models the user explicitly hid. */
+	private isModelShown(ref: string): boolean {
+		return isCatalogModelEnabled(ref, this.disabled, this.enabled);
 	}
 
 	getTaskModels(): IVoltTaskModels {
@@ -1341,17 +1348,36 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return this.catalogRefresh;
 	}
 
+	/** Runs again when a provider is switched off mid-probe, so that probe cannot put its models back. */
+	private async doRefreshCatalog(): Promise<void> {
+		let stamp = '';
+		do {
+			stamp = this.profileEnabledStamp();
+			await this.refreshCatalogOnce();
+		} while (this.profileEnabledStamp() !== stamp);
+	}
+
+	private profileEnabledStamp(): string {
+		return this.profiles.map(profile => `${profile.id}:${profile.enabled ? 1 : 0}`).join('\n');
+	}
+
 	/**
 	 * Providers are queried in parallel and the picker is updated as each one answers, so the
 	 * first CLI to respond is visible immediately instead of waiting on the slowest probe.
+	 * Profiles that are off are dropped here. Leaving their previous rows in place is what
+	 * kept a disabled agent in the chat model picker.
 	 */
-	private async doRefreshCatalog(): Promise<void> {
+	private async refreshCatalogOnce(): Promise<void> {
 		this.catalogLoading = true;
 		if (!this.catalog.length) {
 			this._onDidChangeCatalog.fire();
 		}
+		const enabledIds = new Set(this.profiles.filter(profile => profile.enabled).map(profile => profile.id));
 		const byProfile = new Map<string, IVoltCatalogItem[]>();
 		for (const item of this.catalog) {
+			if (!enabledIds.has(item.profileId)) {
+				continue;
+			}
 			const existing = byProfile.get(item.profileId) ?? [];
 			existing.push(item);
 			byProfile.set(item.profileId, existing);
@@ -1360,6 +1386,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.catalog = [...byProfile.values()].flat();
 			this._onDidChangeCatalog.fire();
 		};
+		publish();
 		await Promise.all(this.profiles.filter(profile => profile.enabled).map(async profile => {
 			byProfile.set(profile.id, await this.catalogForProfile(profile));
 			publish();
@@ -1390,7 +1417,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					id: model.id,
 					label: model.label,
 					qualifier: profile.label,
-					enabled: this.enabled.size ? this.enabled.has(ref) : true,
+					enabled: this.isModelShown(ref),
 					capabilities: model.capabilities,
 					...(model.optionDescriptors ? { optionDescriptors: model.optionDescriptors } : {}),
 					...(model.description ? { description: model.description } : {}),
@@ -1421,7 +1448,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					id: model.id,
 					label: model.label,
 					qualifier: model.label.toLowerCase().includes(label.toLowerCase()) ? undefined : label,
-					enabled: this.enabled.size ? this.enabled.has(ref) : true,
+					enabled: this.isModelShown(ref),
 					capabilities: model.capabilities,
 					...(model.optionDescriptors ? { optionDescriptors: model.optionDescriptors } : {}),
 					...(model.detail ? { detail: model.detail } : {}),
@@ -1506,6 +1533,13 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.profiles = this.profiles.map(p => p.id === profileId ? { ...p, enabled } : p);
 		this.saveProfiles();
 		this._onDidChangeProfiles.fire();
+		if (!enabled) {
+			const next = this.catalog.filter(item => item.profileId !== profileId);
+			if (next.length !== this.catalog.length) {
+				this.catalog = next;
+				this._onDidChangeCatalog.fire();
+			}
+		}
 		await this.refreshCatalog();
 		this._onDidChangeProviderStatus.fire();
 	}
@@ -1943,7 +1977,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			startedAt: Date.now(),
 			providerRef: session.providerRef,
 		};
-		this.emit(session, runId, { type: 'run.start', runId, mode });
+		this.emit(session, runId, { type: 'run.start', runId, mode, ...(session.providerRef ? { providerRef: session.providerRef } : {}) });
 		return run;
 	}
 
@@ -3635,6 +3669,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		this.ensureCliProfiles();
 		this.enabled = new Set(this.readJson<string[]>(VOLT_ENABLED_MODELS_STORAGE_KEY, []));
+		this.disabled = new Set(this.readJson<string[]>(VOLT_DISABLED_MODELS_STORAGE_KEY, []));
 		this.taskModels = this.readJson(VOLT_TASK_MODELS_STORAGE_KEY, {});
 		this.modeProfiles = this.readJson(VOLT_MODE_PROFILES_STORAGE_KEY, {});
 		this.modelOptions = this.readJson(VOLT_MODEL_OPTIONS_STORAGE_KEY, {});
@@ -3647,7 +3682,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.recompilePolicy();
 		const revision = this.storageService.getNumber(VOLT_CATALOG_REVISION_STORAGE_KEY, StorageScope.APPLICATION) ?? 0;
 		const cached = revision >= VOLT_CATALOG_REVISION ? this.readJson<IVoltCatalogItem[]>(VOLT_CATALOG_STORAGE_KEY, []) : [];
-		this.catalog = Array.isArray(cached) ? cached : [];
+		const enabledIds = new Set(this.profiles.filter(profile => profile.enabled).map(profile => profile.id));
+		this.catalog = (Array.isArray(cached) ? cached : [])
+			.filter(item => enabledIds.has(item.profileId))
+			.map(item => ({ ...item, enabled: this.isModelShown(item.ref) }));
 		if (revision < VOLT_CATALOG_REVISION && this.enabled.size) {
 			this.enabled = new Set();
 			this.storageService.store(VOLT_ENABLED_MODELS_STORAGE_KEY, '[]', StorageScope.APPLICATION, StorageTarget.USER);
@@ -3717,8 +3755,19 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * endpoint is never overwritten.
 	 */
 	private ensureCliProfiles(): void {
-		if ((this.storageService.getNumber(VOLT_SEED_VERSION_STORAGE_KEY, StorageScope.APPLICATION) ?? 0) >= CLI_SEED_VERSION) {
+		const stored = this.storageService.getNumber(VOLT_SEED_VERSION_STORAGE_KEY, StorageScope.APPLICATION) ?? 0;
+		if (stored >= CLI_SEED_VERSION) {
 			return;
+		}
+		let migrated = false;
+		if (stored < 4) {
+			this.profiles = this.profiles.map(profile => {
+				if (profile.providerId !== 'grok' || profile.args?.length !== 1 || profile.args[0] !== 'acp') {
+					return profile;
+				}
+				migrated = true;
+				return { ...profile, args: ['agent', 'stdio'] };
+			});
 		}
 		const missing = (providerId: string) => !this.profiles.some(profile => profile.providerId === providerId);
 		const added: IProviderProfile[] = CLI_AGENT_DEFINITIONS
@@ -3738,6 +3787,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		added.push(...this.seedProfiles().filter(profile => missing(profile.providerId)));
 		if (added.length) {
 			this.profiles = [...this.profiles, ...added];
+		}
+		if (added.length || migrated) {
 			this.saveProfiles();
 		}
 		this.storageService.store(VOLT_SEED_VERSION_STORAGE_KEY, CLI_SEED_VERSION, StorageScope.APPLICATION, StorageTarget.USER);

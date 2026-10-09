@@ -145,6 +145,10 @@ export class VoltVisualPreviewMainService implements IVoltVisualPreviewService {
 			await step('enable', cdp.sendCommand('Runtime.enable'));
 			await step('log', cdp.sendCommand('Log.enable'));
 			await step('viewport', cdp.sendCommand('Emulation.setDeviceMetricsOverride', { width, height: 800, deviceScaleFactor: 1, mobile: false }));
+			if (request.background) {
+				// Without it a transparent page is captured on white: a dark-theme page then looks washed out.
+				await step('background', cdp.sendCommand('Emulation.setDefaultBackgroundColorOverride', { color: { ...request.background, a: 1 } }));
+			}
 			await step('load', Promise.race([
 				win.loadFile(file),
 				new Promise((_, reject) => setTimeout(() => reject(new Error('The page took more than 15s to load.')), LOAD_TIMEOUT_MS)),

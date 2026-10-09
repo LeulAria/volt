@@ -40,7 +40,8 @@ export type IVoltToolView =
 export type VoltCompactionStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
 export type IVoltEvent =
-	| { type: 'run.start'; runId: string; mode: VoltMode }
+	/** `providerRef` is the catalog model the run uses. */
+	| { type: 'run.start'; runId: string; mode: VoltMode; providerRef?: string }
 	/** Which lane the intent router chose and why. Emitted once per run right after run.start. */
 	| { type: 'lane'; lane: VoltLane; signals: readonly string[]; wantsPreview: boolean; wantsWeb: boolean }
 	| { type: 'lifecycle'; phase: TaskPhase }

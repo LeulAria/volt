@@ -37,7 +37,7 @@ import { isCursorPlanWall, isCursorPlanWallPrefix, isCursorTransientError, nextC
 import { accessBridgeFor } from './bridges/accessBridges.js';
 import { AcpJsonRpcClient, AcpRequestAbandonedError, IAcpIncomingRequest } from './acpJsonRpc.js';
 import { listClaudeModels } from './claudeCatalog.js';
-import { acpLaunchFor, cliAgentDefinition, listAntigravityModels, listOpenCodeModels } from './cliAgents.js';
+import { acpLaunchFor, cliAgentDefinition, listAntigravityModels, listGrokModels, listOpenCodeModels } from './cliAgents.js';
 import { listCodexModels } from './codexAppServer.js';
 import { resolveAntigravityCliModelLabel } from '../../common/models/antigravityModels.js';
 import { IModelOptionDescriptor, MODEL_OPTION_REASONING, unionDescriptors } from '../../common/models/modelOptions.js';
@@ -396,6 +396,10 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (this.id === 'opencode') {
 			const listed = await this.probeAcpModels(profile);
 			return listed.length ? listed : listOpenCodeModels(this.stdio, profile.command || this.defaultCommand).catch(() => []);
+		}
+		if (this.id === 'grok') {
+			const listed = await this.probeAcpModels(profile);
+			return listed.length ? listed : listGrokModels(this.stdio, profile.command || this.defaultCommand).catch(() => []);
 		}
 		return this.probeAcpModels(profile);
 	}

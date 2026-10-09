@@ -39,7 +39,15 @@ export class WebviewProtocolProvider implements IDisposable {
 				const url = FileAccess.asFileUri(relativeResourcePath);
 
 				const content = await this._fileService.readFile(url);
-				return new Response(content.value.buffer.buffer as ArrayBuffer, {
+				// Exactly the file's bytes. A small file's Buffer is a slice of Node's shared pool, and
+				// `.buffer` is the whole pool: fake.html then carried stale IPC and log bytes, and once an
+				// agent page had passed through the pool its scripts ran in fake.html before the real
+				// content was written over it (whose top-level `const`s then failed as redeclared).
+				// (A Node Buffer's slice() is a view of the same pool, so copy into a new array.)
+				const bytes = content.value.buffer;
+				const exact = new Uint8Array(bytes.byteLength);
+				exact.set(bytes);
+				return new Response(exact.buffer, {
 					headers: {
 						'Content-Type': entry.mime,
 						...COI.getHeadersFromQuery(request.url),

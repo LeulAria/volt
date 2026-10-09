@@ -6,7 +6,7 @@
 import { homedir } from 'os';
 import { join } from '../../../base/common/path.js';
 import { ILogService } from '../../log/common/log.js';
-import { IVoltUsageActivity, IVoltUsageBucket, IVoltUsageLimitGroup, IVoltUsageNote, IVoltUsageService, IVoltUsageSnapshot, VOLT_USAGE_HISTORY_DAYS, VoltUsageProvider } from '../common/voltUsage.js';
+import { IVoltTokenRates, IVoltUsageActivity, IVoltUsageBucket, IVoltUsageLimitGroup, IVoltUsageNote, IVoltUsageService, IVoltUsageSnapshot, VOLT_USAGE_HISTORY_DAYS, VoltUsageProvider } from '../common/voltUsage.js';
 import { ClaudeLimitsReader, cursorRateModel, ICursorUsage, readCodexLimits, readCursorLimits, readCursorUsage } from './usageAccounts.js';
 import { UsagePricing } from './usagePricing.js';
 import { billOncePerResponse, ICodexRateLimitSample, IParsedTranscript, ITranscriptFile, IUsageRecord, listTranscripts, parseTranscript } from './usageTranscripts.js';
@@ -89,6 +89,16 @@ export class VoltUsageService implements IVoltUsageService {
 		}
 		this.limitsReading ??= this.readLimits().finally(() => this.limitsReading = undefined);
 		return this.limitsReading;
+	}
+
+	async getModelRates(models: readonly string[]): Promise<Record<string, IVoltTokenRates | null>> {
+		await this.pricing.ensureLoaded();
+		const rates: Record<string, IVoltTokenRates | null> = {};
+		for (const model of models) {
+			const rate = this.pricing.rate(model);
+			rates[model] = rate ? { input: rate.input, output: rate.output, cacheRead: rate.cacheRead, cacheWrite: rate.cacheWrite } : null;
+		}
+		return rates;
 	}
 
 	private async readLimits(): Promise<readonly IVoltUsageLimitGroup[]> {

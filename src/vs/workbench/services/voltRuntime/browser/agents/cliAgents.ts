@@ -7,6 +7,7 @@ import { decodeBase64 } from '../../../../../base/common/buffer.js';
 import { isWindows } from '../../../../../base/common/platform.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { antigravityModelsToInfo, parseAntigravityModelLines } from '../../common/models/antigravityModels.js';
+import { grokModelsToInfo, IGrokCachedModel, parseGrokModelLines } from '../../common/models/grokModels.js';
 import { parseOpenCodeModelLines } from '../../common/models/harnessCatalog.js';
 import { isSignInNotice } from '../../common/acpNotices.js';
 import { providerFamily } from '../providers/providerBrands.js';
@@ -103,14 +104,26 @@ export async function runCli(stdio: IVoltStdioService, command: string, args: re
 }
 
 /**
+ * Grok's ACP server is `grok agent stdio`. Profiles saved before that was known still
+ * say `acp`, which prints the TUI help and never lists a model.
+ */
+export function grokAcpArgs(args: readonly string[]): string[] {
+	if (args.length === 0 || (args.length === 1 && args[0] === 'acp')) {
+		return ['agent', 'stdio'];
+	}
+	return [...args];
+}
+
+/**
  * What to spawn for an ACP session. A profile still pointing at the bare CLI of an agent that
  * needs an adapter (including stored `claude acp` and `codex acp` profiles) launches the adapter
- * instead; a custom command is left alone.
+ * instead; a custom command is left alone. Stored `grok acp` is rewritten to `grok agent stdio`.
  */
 export function acpLaunchFor(def: ICliAgentDefinition | undefined, command: string, args: readonly string[], adapterOnPath: boolean): { command: string; args: string[] } {
+	const launchArgs = def?.id === 'grok' ? grokAcpArgs(args) : args;
 	const adapter = def?.acpAdapter;
 	if (!adapter || !def.commands.includes(command)) {
-		return { command, args: [...args] };
+		return { command, args: [...launchArgs] };
 	}
 	if (adapterOnPath) {
 		return { command: adapter.command, args: [] };
@@ -204,6 +217,34 @@ async function probeMuseAuth(stdio: IVoltStdioService): Promise<{ account?: stri
 	return probeHomeConfig(stdio, '.config/muse/settings.json', 'muse', 'Muse Code');
 }
 
+async function probeGrokAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
+	return probeHomeConfig(stdio, '.grok/auth.json', 'grok.com', 'Signed in');
+}
+
+/** `grok models`, enriched from the CLI's model cache when it has effort and context. */
+export async function listGrokModels(stdio: IVoltStdioService, command: string): Promise<IModelInfo[]> {
+	const [output, cache] = await Promise.all([
+		runCli(stdio, command, ['models'], MODEL_LIST_TIMEOUT_MS),
+		readHomeJson<{ models?: Record<string, { info?: { name?: string; description?: string; context_window?: number; hidden?: boolean; reasoning_effort?: string; reasoning_efforts?: { value?: string; default?: boolean }[] } }> }>(stdio, '.grok/models_cache.json'),
+	]);
+	const cached: Record<string, IGrokCachedModel> = {};
+	for (const [id, entry] of Object.entries(cache?.models ?? {})) {
+		const info = entry?.info;
+		if (!info || info.hidden) {
+			continue;
+		}
+		const efforts = (info.reasoning_efforts ?? []).flatMap(effort => effort.value ? [effort.value] : []);
+		cached[id] = {
+			name: info.name,
+			description: info.description,
+			contextWindow: info.context_window,
+			defaultEffort: info.reasoning_effort,
+			...(efforts.length ? { efforts } : {}),
+		};
+	}
+	return grokModelsToInfo(parseGrokModelLines(output ?? ''), cached);
+}
+
 /** Synara's discovery path: `agy models` rather than a throwaway ACP session. */
 export async function listAntigravityModels(stdio: IVoltStdioService, command: string): Promise<IModelInfo[]> {
 	const output = await runCli(stdio, command, ['models'], MODEL_LIST_TIMEOUT_MS);
@@ -260,8 +301,10 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 		label: 'Grok',
 		commands: ['grok'],
 		versionArgs: ['--version'],
-		acpArgs: ['acp'],
+		// `grok acp` is not a command. ACP is `grok agent stdio`.
+		acpArgs: ['agent', 'stdio'],
 		earlyAccess: true,
+		probeAuth: probeGrokAuth,
 	},
 	{
 		id: 'opencode',

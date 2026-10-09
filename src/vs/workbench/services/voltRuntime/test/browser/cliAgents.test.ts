@@ -8,7 +8,7 @@ import { Emitter } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltExecResult, IVoltJobOutput, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../../platform/voltStdio/common/voltStdio.js';
-import { acpLaunchFor, cliAgentDefinition, cliLoginForNotice, runCli } from '../../browser/agents/cliAgents.js';
+import { acpLaunchFor, cliAgentDefinition, cliLoginForNotice, grokAcpArgs, runCli } from '../../browser/agents/cliAgents.js';
 
 /** Emits the process output from inside spawn(), before the caller learns the id: the IPC race. */
 class FastStdio implements IVoltStdioService {
@@ -74,6 +74,14 @@ suite('runCli', () => {
 		const viaNpx = acpLaunchFor(codex, 'codex', ['acp'], false);
 		assert.ok(/^npx(\.cmd)?$/.test(viaNpx.command));
 		assert.deepStrictEqual(viaNpx.args, ['-y', '@agentclientprotocol/codex-acp@1.13.1']);
+	});
+
+	test('Grok launches `agent stdio`, never the old `grok acp` profile args', () => {
+		const grok = cliAgentDefinition('grok');
+		assert.deepStrictEqual(grok?.acpArgs, ['agent', 'stdio']);
+		assert.deepStrictEqual(acpLaunchFor(grok, 'grok', ['acp'], false), { command: 'grok', args: ['agent', 'stdio'] });
+		assert.deepStrictEqual(acpLaunchFor(grok, 'grok', [], false), { command: 'grok', args: ['agent', 'stdio'] });
+		assert.deepStrictEqual(grokAcpArgs(['agent', 'stdio', '--debug']), ['agent', 'stdio', '--debug']);
 	});
 
 	test('custom commands and agents without an adapter are left alone', () => {

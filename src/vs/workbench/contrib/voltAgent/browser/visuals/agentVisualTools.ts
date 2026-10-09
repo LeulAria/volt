@@ -5,6 +5,7 @@
 
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
+import { Color } from '../../../../../base/common/color.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -156,6 +157,12 @@ export class AgentVisualToolProvider extends Disposable implements IVoltHostTool
 		if (!report.charts || !report.points) {
 			return { error: `Nothing to draw. ${report.problems.join(' ')}`.trim() };
 		}
+		// A chart that would draw as an empty card is not shown at all: the agent fixes it and sends
+		// the whole visual again, so the user sees one complete dashboard rather than a broken card
+		// followed by a redraw.
+		if (report.empty) {
+			return { error: `Nothing was shown: ${report.problems.join(' ')} Fix those charts and call this tool again with every chart.`.trim() };
+		}
 		const json = JSON.stringify(visual);
 		if (json.length > MAX_SPEC_CHARS) {
 			return { error: `The spec is ${formatMib(json.length)}; the limit is ${formatMib(MAX_SPEC_CHARS)}. Aggregate or sample the data first.` };
@@ -233,7 +240,7 @@ export class AgentVisualToolProvider extends Disposable implements IVoltHostTool
 		if ('error' in inlined) {
 			return { error: inlined.error };
 		}
-		const result = await this.preview.capture({ html: this.previewPage(inlined.html), width });
+		const result = await this.preview.capture({ html: this.previewPage(inlined.html), width, background: this.previewBackground() });
 		const report = {
 			width: result.width,
 			contentHeight: result.contentHeight,
@@ -254,6 +261,15 @@ export class AgentVisualToolProvider extends Disposable implements IVoltHostTool
 			vscode[`--${key}`] = String(value);
 		}
 		return buildVisualPage(html, { themeCss: visualThemeCss(theme, vscode), kind: themeKind(theme), preview: true });
+	}
+
+	/** What the page sits on in the chat (`--background`), made opaque for the screenshot. */
+	private previewBackground(): { r: number; g: number; b: number } {
+		const theme = this.themeService.getColorTheme();
+		const fallback = Color.fromHex(themeKind(theme) === 'light' ? '#ffffff' : '#1e1e1e');
+		const editor = theme.getColor('editor.background')?.makeOpaque(fallback) ?? fallback;
+		const { r, g, b } = (theme.getColor('sideBar.background') ?? editor).makeOpaque(editor).rgba;
+		return { r, g, b };
 	}
 
 	private async inlineImages(html: string, strict: boolean): Promise<{ html: string; missing: string[] } | { error: string }> {

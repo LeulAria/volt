@@ -31,7 +31,7 @@ class FakeRuntime {
 	}
 
 	listCatalog() {
-		return [{ kind: 'model', providerId: 'cursor-acp', id: 'composer-2.5', label: 'Composer 2.5' }];
+		return [{ kind: 'model', providerId: 'cursor-acp', id: 'composer-2.5', label: 'Composer 2.5' }, { ref: 'claude:opus', id: 'claude-opus-5', label: 'Opus 5' }];
 	}
 
 	emit(event: IVoltEvent, runId = 'run-1'): void {
@@ -306,5 +306,30 @@ suite('Agent session controller', () => {
 		assert.strictEqual(reply.outcome, undefined);
 		assert.strictEqual(reply.failure, undefined);
 		assert.strictEqual(reply.runId, 'run-2');
+	});
+
+	test('a turn keeps its model, sums per-call usage, and costs the growth of the agent\'s session total', () => {
+		const { runtime, host } = setup();
+		host.messages.unshift({ kind: 'agent', id: 'turn-0', title: '', steps: [], segments: [], blockState: {}, sessionCostUsd: 0.5 } as IAgentAssistantMessage);
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent', providerRef: 'claude:opus' });
+		// Native loop: one report per model call, each with `used`.
+		runtime.emit({ type: 'usage', input: 100, output: 10, cache: 1000, used: 1100 });
+		runtime.emit({ type: 'usage', input: 50, output: 20, cache: 1200, cacheWrite: 30, used: 1280 });
+		runtime.emit({ type: 'usage', input: 0, output: 0, used: 1300, costUsd: 0.62 });
+		const reply = host.messages.at(-1) as IAgentAssistantMessage;
+		assert.deepStrictEqual(reply.model, { ref: 'claude:opus', id: 'claude-opus-5', label: 'Opus 5' });
+		assert.deepStrictEqual(reply.spend, { input: 150, output: 30, cacheRead: 2200, cacheWrite: 30 });
+		assert.strictEqual(reply.costUsd, 0.12);
+		assert.strictEqual(reply.sessionCostUsd, 0.62);
+	});
+
+	test('an ACP turn total replaces the run\'s per-call sum instead of adding to it', () => {
+		const { runtime, host } = setup();
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
+		runtime.emit({ type: 'usage', input: 0, output: 0, used: 5000, size: 200000 });
+		runtime.emit({ type: 'usage', input: 40, output: 300, cache: 9000, cacheWrite: 500 });
+		const reply = host.messages.at(-1) as IAgentAssistantMessage;
+		assert.deepStrictEqual(reply.spend, { input: 40, output: 300, cacheRead: 9000, cacheWrite: 500 });
+		assert.strictEqual(reply.costUsd, undefined);
 	});
 });

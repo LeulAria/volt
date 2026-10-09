@@ -512,6 +512,14 @@ export interface IAgentAssistantMessage {
 	tokensBase?: number;
 	/** Characters of tool output the transcript does not keep (reads, plans). Providers without usage are estimated from it. */
 	toolOutputChars?: number;
+	/** The model that answered: catalog ref, model id (for prices) and its label when the turn ran. */
+	model?: IAgentTurnModel;
+	/** Tokens the turn was billed for, every model call summed (the Session Usage panel). */
+	spend?: IAgentTurnSpend;
+	/** What the agent said the turn cost (the growth of Claude's session total), in US dollars. */
+	costUsd?: number;
+	/** The agent's running session cost after this turn; the next turn's cost is the growth past it. */
+	sessionCostUsd?: number;
 	cancelled?: boolean;
 	activity?: IAgentActivity;
 	/** The runtime run that produced this reply; Cursor's error tray calls it the request id. */
@@ -522,6 +530,20 @@ export interface IAgentAssistantMessage {
 	failure?: { message: string; retryable?: boolean };
 	/** Messages the user steered the running agent with, and where in the reply they landed. */
 	steers?: ITranscriptSteer[];
+}
+
+export interface IAgentTurnModel {
+	ref: string;
+	id?: string;
+	label?: string;
+}
+
+/** `input` is uncached prompt tokens; cache reads and writes are the rest of the prompt. */
+export interface IAgentTurnSpend {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
 }
 
 /** A prompt waiting behind the running turn. It keeps the mode it was queued in. */
@@ -1157,6 +1179,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			getBranch: () => this.statusBranch(),
 			openMoveMenu: anchor => void this.openMoveMenu(anchor),
 			onWillOpenPanel: () => this.hidePlusMenu(),
+			getSessionMessages: () => this.messages,
+			getSessionModel: () => {
+				const item = this.runtime.listCatalog().find(candidate => candidate.ref === this.currentModel);
+				return this.currentModel ? { ref: this.currentModel, ...(item ? { id: item.id, label: item.label } : {}) } : undefined;
+			},
+			describeModel: ref => {
+				const item = this.runtime.listCatalog().find(candidate => candidate.ref === ref);
+				return item ? { id: item.id, label: item.label } : undefined;
+			},
+			revealTurn: turnId => {
+				const index = this.messages.findIndex(message => message.kind === 'user' && message.id === turnId);
+				this.userTurnAt(index)?.scrollIntoView({ block: 'start', inline: 'nearest' });
+			},
 			getCompactState: () => this.compactState(),
 			isCompacting: () => this.compactionRunning(),
 			compact: () => this.compactContext(),
@@ -1937,7 +1972,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		this.tooltip.hide();
-		this.contextUsageView?.hidePanel();
+		this.contextUsageView?.hidePanels();
 		const edit = source === 'edit' && !!this.editInputBox;
 		const anchor = edit && this.editInputBox ? this.editInputBox : this.inputBox;
 		const focusComposer = () => edit ? this.editEditor?.focus() : this.inputEditor?.focus();
@@ -3299,7 +3334,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		this.ensureEditComposer();
-		this.contextUsageView?.hidePanel();
+		this.contextUsageView?.hidePanels();
 		this.hidePlusMenu();
 		this.threadScrollFrozen = true;
 		this.stickToBottom = false;
@@ -3734,6 +3769,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.threadScroll.setScrollPosition({ scrollTop: scrollHeight });
 			this.stickToBottom = true;
 			this.composerChips?.setScrolledUp(false);
+		}
+		// A redraw empties the thread for a moment, so the browser clamps the element's scrollTop (to 0
+		// in a short chat). The scrollable never moved, so it never writes it back; left alone, the
+		// clamp's scroll event reaches AgentThreadView's native-scroll catch-up as a scroll to the top,
+		// and the chat stops following the reply.
+		const scrollTop = this.threadScroll.getScrollPosition().scrollTop;
+		if (Math.abs(this.threadInner.scrollTop - scrollTop) > 1) {
+			this.threadInner.scrollTop = scrollTop;
 		}
 		this.threadView.syncStuckTurns();
 	}
@@ -4218,13 +4261,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		svg.removeAttribute('width');
 		svg.removeAttribute('height');
 		holder.appendChild(svg);
-		this.showPreviewOverlay(localize('voltAgent.diagram', "Diagram"), holder);
+		this.showPreviewOverlay(localize('voltAgent.diagram', "Diagram"), holder, true);
 	}
 
 	private showPreviewOverlay(label: string, content: HTMLElement, wide = false): void {
 		this.dismissSnapshotPreview();
 		const win = getWindow(this.container);
-		const overlay = append(win.document.body, $('.volt-agent-snapshot-overlay'));
+		// Inside the workbench, not on <body>: the theme variables and UI font are set on
+		// .monaco-workbench, and a diagram cloned out of the chat draws with them.
+		const host = this.container.closest<HTMLElement>('.monaco-workbench') ?? win.document.body;
+		const overlay = append(host, $('.volt-agent-snapshot-overlay'));
 		overlay.tabIndex = -1;
 		overlay.setAttribute('role', 'dialog');
 		overlay.setAttribute('aria-modal', 'true');

@@ -121,10 +121,35 @@ export function withPageData(html: string, data: unknown): string {
 	return tag + html;
 }
 
-export function buildVisualPage(html: string, options: IVisualPageOptions): string {
-	const scan = blankNonMarkup(html);
+/**
+ * Removes the page's own charset declarations (`<meta charset>`, `<meta http-equiv="Content-Type">`)
+ * from its markup: Volt declares UTF-8 first. Left in place, the page's tag would sit hundreds of
+ * KB in, after the injected head and far past the 1024 bytes a browser scans for it, which can make
+ * a page loaded from a file (html_preview's offscreen window) decode again from the start.
+ */
+function stripCharsetMeta(html: string, scan: string): { html: string; scan: string } {
+	const cuts: [number, number][] = [];
+	for (const match of scan.matchAll(/<meta\b[^>]*?\b(?:charset\s*=|http-equiv\s*=\s*["']?content-type)[^>]*>/gi)) {
+		cuts.push([match.index, match.index + match[0].length]);
+	}
+	if (!cuts.length) {
+		return { html, scan };
+	}
+	let outHtml = '';
+	let outScan = '';
+	let at = 0;
+	for (const [start, end] of cuts) {
+		outHtml += html.slice(at, start);
+		outScan += scan.slice(at, start);
+		at = end;
+	}
+	return { html: outHtml + html.slice(at), scan: outScan + scan.slice(at) };
+}
+
+export function buildVisualPage(source: string, options: IVisualPageOptions): string {
+	const { html, scan } = stripCharsetMeta(source, blankNonMarkup(source));
 	const head = [
-		/<meta\s[^>]*charset/i.test(scan.slice(0, 4096)) ? '' : '<meta charset="utf-8">',
+		'<meta charset="utf-8">',
 		/<meta\s[^>]*name\s*=\s*["']?viewport/i.test(scan) ? '' : '<meta name="viewport" content="width=device-width, initial-scale=1">',
 		`<style id="volt-visual-base">${BASE_CSS}</style>`,
 		`<style id="volt-visual-theme">${options.themeCss.replace(/<\//g, '<\\/')}</style>`,
