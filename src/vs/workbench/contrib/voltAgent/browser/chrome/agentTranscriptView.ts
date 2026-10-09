@@ -13,13 +13,14 @@ import { localize } from '../../../../../nls.js';
 import { AgentBlock, IAgentActivityItem, IToolBlock } from '../blocks/agentBlocks.js';
 import { formatContextTokens } from '../context/agentContextUsage.js';
 import { createCompactIcon } from '../context/agentContextUsageView.js';
-import { appendHighlightedShell, IBlockRenderContext, renderMarkdownInto } from '../blocks/agentBlockRenderers.js';
-import { highlightCodeLines } from '../blocks/agentCodeBlock.js';
+import { appendHighlightedShell, IBlockRenderContext, renderMarkdownInto, StreamingMarkdownView } from '../blocks/agentBlockRenderers.js';
+import { highlightCodeLines, runnableShellCommand } from '../blocks/agentCodeBlock.js';
 import { computeFileChangePreview, IFileChangePreviewLine } from '../review/fileChangePreviewModel.js';
 import { fileChangeSource, formatElapsed, ITodoChecklist } from './agentTimeline.js';
 import { ITranscriptStep, splitWorkedRows, stepsGroupTitle, subagentStatus, TranscriptRow } from './agentTranscript.js';
 import { ISubagentRowOptions, ISubagentView, renderCursorSubagentRow } from './agentSubagents.js';
 import type { AgentTooltip } from './agentTooltip.js';
+import { hashString, reconcileChildren, TranscriptRowCache } from './agentTranscriptReuse.js';
 
 /** What the transcript needs from the editor that owns it. */
 export interface ITranscriptHost {
@@ -43,6 +44,8 @@ export interface ITranscriptHost {
 	openSubagent?(view: ISubagentView): void;
 	stopSubagent?(view: ISubagentView): void;
 	readonly subagentTooltip?: AgentTooltip;
+	/** The same host with every listener (and the block context's store) going to `store`: a cached row owns its listeners. */
+	withStore?(store: DisposableStore): ITranscriptHost;
 }
 
 export interface ITranscriptRenderOptions {
@@ -59,6 +62,14 @@ export interface ITranscriptRenderOptions {
 	readonly todos?: ITodoChecklist;
 	/** When the running turn started: the live line shows a ticking elapsed time. */
 	readonly elapsedSince?: number;
+	/**
+	 * Rows of this reply drawn by the last pass. With it, `parent` may still hold the last pass's
+	 * nodes: unchanged rows stay where they are (no move, no restyle), changed ones are drawn again,
+	 * and nodes no longer wanted go to `stale` (or are removed) once the new ones are in.
+	 */
+	readonly reuse?: TranscriptRowCache;
+	/** Collects nodes to remove after the caller has adopted live pages out of them. */
+	readonly stale?: Node[];
 }
 
 /** Class of the live elapsed label; the editor's one-second clock refreshes every element with it. */
@@ -67,6 +78,49 @@ export const ELAPSED_CLASS = 'volt-tr-elapsed';
 /** Renders the rows; returns the reply elements so the caller can fade new text in. */
 export function renderTranscript(parent: HTMLElement, rows: readonly TranscriptRow[], host: ITranscriptHost, options: ITranscriptRenderOptions): HTMLElement[] {
 	const replies: HTMLElement[] = [];
+	if (!options.reuse) {
+		renderRows(parent, rows, host, options, replies, { keys: new Map(), kept: new Map() });
+		return replies;
+	}
+	// New nodes are drawn off-document; kept ones are marked by placeholders and never leave `parent`.
+	const scratch = parent.ownerDocument.createElement('div');
+	const pass: IRowPass = { keys: new Map(), kept: new Map() };
+	try {
+		renderRows(scratch, rows, host, options, replies, pass);
+	} finally {
+		options.reuse.sweep();
+	}
+	const desired: Node[] = [];
+	for (const node of Array.from(scratch.childNodes)) {
+		const kept = pass.kept.get(node);
+		desired.push(...(kept ?? [node]));
+	}
+	const stale = reconcileChildren(parent, desired);
+	if (options.stale) {
+		options.stale.push(...stale);
+	} else {
+		for (const node of stale) {
+			node.parentNode?.removeChild(node);
+		}
+	}
+	return replies;
+}
+
+interface IRowPass {
+	/** How often each row key came up in this pass, so repeats get keys of their own. */
+	readonly keys: Map<string, number>;
+	/** Placeholder in the scratch parent -> the kept nodes it stands for. */
+	readonly kept: Map<Node, readonly Node[]>;
+}
+
+/** Marks where kept nodes go: they stay in the document while the rest of the pass is drawn. */
+function keep(parent: HTMLElement, nodes: readonly Node[], pass: IRowPass): void {
+	const marker = parent.ownerDocument.createComment('');
+	parent.appendChild(marker);
+	pass.kept.set(marker, nodes);
+}
+
+function renderRows(parent: HTMLElement, rows: readonly TranscriptRow[], host: ITranscriptHost, options: ITranscriptRenderOptions, replies: HTMLElement[], pass: IRowPass): HTMLElement[] {
 	if (!options.streaming && options.workedMs !== undefined) {
 		const { work, answer } = splitWorkedRows(rows);
 		if (work.length) {
@@ -74,11 +128,11 @@ export function renderTranscript(parent: HTMLElement, rows: readonly TranscriptR
 			renderWorkedHeader(parent, options.workedMs, open, host);
 			if (open) {
 				for (const row of work) {
-					renderRow(parent, row, host, options, replies);
+					renderRowReusing(parent, row, host, options, replies, pass);
 				}
 			}
 			for (const row of answer) {
-				renderRow(parent, row, host, options, replies);
+				renderRowReusing(parent, row, host, options, replies, pass);
 			}
 			if (options.todos) {
 				renderTodoChecklist(parent, options.todos, false, host);
@@ -87,7 +141,7 @@ export function renderTranscript(parent: HTMLElement, rows: readonly TranscriptR
 		}
 	}
 	for (const row of rows) {
-		renderRow(parent, row, host, options, replies);
+		renderRowReusing(parent, row, host, options, replies, pass);
 	}
 	if (options.todos) {
 		renderTodoChecklist(parent, options.todos, options.streaming, host);
@@ -236,9 +290,78 @@ function renderCompactionRow(parent: HTMLElement, row: Extract<TranscriptRow, { 
 	}
 }
 
-function renderRow(parent: HTMLElement, row: TranscriptRow, host: ITranscriptHost, options: ITranscriptRenderOptions, replies: HTMLElement[]): void {
+/**
+ * What a row's DOM depends on, or undefined for rows that are always drawn again: live ones
+ * (shimmer, clocks), subagents (orchestrator state), notices (editor listeners) and visuals
+ * (moved by their own parking).
+ */
+function rowSignature(row: TranscriptRow, host: ITranscriptHost, options: ITranscriptRenderOptions): string | undefined {
+	switch (row.kind) {
+		case 'markdown':
+		case 'subagent':
+		case 'subagents':
+		case 'notice':
+			return undefined;
+		case 'steps':
+		case 'thought':
+			return row.live ? undefined : hashString(JSON.stringify([row, host.isExpanded(row.id) ?? null]));
+		case 'compaction':
+			return row.compaction.status === 'running' ? undefined : hashString(JSON.stringify([row, host.isExpanded(row.id) ?? null]));
+		case 'steer':
+			return hashString(JSON.stringify(row));
+		case 'block': {
+			const block = row.block;
+			if (block.type === 'visual') {
+				return undefined;
+			}
+			// Shell code gets its Run button and terminals drop their shimmer once the reply is done.
+			const dependsOnStreaming = block.type === 'terminal' || (block.type === 'code' && runnableShellCommand(block.language, block.code) !== undefined);
+			return hashString(JSON.stringify([block, host.ctx.blockState[block.id] ?? null, dependsOnStreaming && options.streaming]));
+		}
+	}
+}
+
+/** Draws a row, or moves in the nodes the last pass drew for it when nothing it depends on changed. */
+function renderRowReusing(parent: HTMLElement, row: TranscriptRow, host: ITranscriptHost, options: ITranscriptRenderOptions, replies: HTMLElement[], pass: IRowPass): void {
+	const cache = options.reuse;
+	const signature = cache && host.withStore ? rowSignature(row, host, options) : undefined;
+	if (!cache || !host.withStore || signature === undefined) {
+		renderRow(parent, row, host, options, replies, pass);
+		return;
+	}
+	const base = `${row.kind}:${row.kind === 'block' ? row.block.id : row.id}`;
+	const seen = pass.keys.get(base) ?? 0;
+	pass.keys.set(base, seen + 1);
+	const key = seen ? `${base}#${seen}` : base;
+	const hit = cache.take(key, signature);
+	if (hit) {
+		keep(parent, hit.nodes, pass);
+		replies.push(...hit.replies);
+		return;
+	}
+	const store = new DisposableStore();
+	const last = parent.lastChild;
+	const rowReplies: HTMLElement[] = [];
+	renderRow(parent, row, host.withStore(store), options, rowReplies, pass);
+	const nodes: Node[] = [];
+	for (let node = last ? last.nextSibling : parent.firstChild; node; node = node.nextSibling) {
+		nodes.push(node);
+	}
+	cache.put(key, signature, nodes, rowReplies, store);
+	replies.push(...rowReplies);
+}
+
+function renderRow(parent: HTMLElement, row: TranscriptRow, host: ITranscriptHost, options: ITranscriptRenderOptions, replies: HTMLElement[], pass: IRowPass): void {
 	switch (row.kind) {
 		case 'markdown': {
+			if (options.reuse) {
+				// The streaming answer: one view per row that redraws only the pieces that changed.
+				const view = options.reuse.view(`md:${row.id}`, () => new StreamingMarkdownView());
+				keep(parent, [view.element], pass);
+				view.update(row.content, host.ctx);
+				replies.push(view.element);
+				return;
+			}
 			const reply = append(parent, $('.volt-agent-reply'));
 			renderMarkdownInto(reply, row.content, host.ctx);
 			replies.push(reply);

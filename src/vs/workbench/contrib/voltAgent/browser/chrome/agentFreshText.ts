@@ -81,7 +81,8 @@ function wrapFreshText(roots: readonly HTMLElement[], chunks: readonly IChunk[],
 			const length = node.nodeValue?.length ?? 0;
 			// Chips (inline code, file paths), links, quotes and math render as they are; only prose fades in.
 			// The line breaks between table parts stay bare: a span in a row becomes an extra cell.
-			if (!node.parentElement?.closest(FRESH_TEXT_SKIP) && !TABLE_PARTS.has(node.parentElement?.tagName ?? '')) {
+			// Rows kept from the last redraw already carry their fade (still running at the right point).
+			if (!node.parentElement?.closest(FRESH_TEXT_SKIP) && !TABLE_PARTS.has(node.parentElement?.tagName ?? '') && !node.parentElement?.classList.contains(FRESH_TEXT_CLASS)) {
 				nodes.push({ node: node as Text, start: offset });
 			}
 			offset += length;

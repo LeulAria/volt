@@ -53,6 +53,7 @@ import { formatAttachmentSize } from '../../../../services/voltRuntime/common/fi
 import { FileChangePreview } from '../review/fileChangePreview.js';
 import { chooseFileChangeDiffStyle, formatChangeStats, type FileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
 import { fileChangeGroupTitle, fileChangeSource, ThreadPart } from '../chrome/agentTimeline.js';
+import { splitMarkdownChunks } from '../chrome/agentTranscriptReuse.js';
 
 export interface IBlockRenderContext {
 	readonly markdownRenderer: MarkdownRenderer;
@@ -307,8 +308,18 @@ function codeCardOptions(ctx: IBlockRenderContext): ICodeCardOptions {
 }
 
 export function renderMarkdownInto(parent: HTMLElement, text: string, ctx: IBlockRenderContext, extraClass?: string): void {
+	const element = renderMarkdownElement(parent, text, ctx);
+	element.classList.add('volt-agent-markdown', 'volt-agent-searchable');
+	if (extraClass) {
+		element.classList.add(extraClass);
+	}
+	parent.appendChild(element);
+}
+
+/** Markdown rendered and decorated (pills, task markers, favicons, footnotes, table wraps), not yet attached. Disposed with `ctx.store`. */
+function renderMarkdownElement(parent: HTMLElement, text: string, ctx: IBlockRenderContext, footnoteNumbers?: Map<string, number>): HTMLElement {
 	const result = ctx.markdownRenderer.render(new MarkdownString(linkifyPreviewUrls(normalizeMathDelimiters(text))), {
-		...agentMarkdownRenderOptions(getWindow(parent), { ...codeCardOptions(ctx), onExpandDiagram: ctx.onExpandDiagram, visualHost: ctx }),
+		...agentMarkdownRenderOptions(getWindow(parent), { ...codeCardOptions(ctx), onExpandDiagram: ctx.onExpandDiagram, visualHost: ctx, footnoteNumbers }),
 		fillInIncompleteTokens: true,
 		asyncRenderCallback: ctx.onScroll,
 		actionHandler: link => {
@@ -318,15 +329,69 @@ export function renderMarkdownInto(parent: HTMLElement, text: string, ctx: IBloc
 			}
 		},
 	});
-	result.element.classList.add('volt-agent-markdown', 'volt-agent-searchable');
-	if (extraClass) {
-		result.element.classList.add(extraClass);
-	}
 	decorateMarkdownPills(result.element, ctx);
 	decorateAgentMarkdown(result.element, ctx.store);
 	wrapMarkdownTables(result.element, ctx);
-	parent.appendChild(result.element);
 	ctx.store.add(result);
+	return result.element;
+}
+
+interface IMarkdownChunk {
+	readonly raw: string;
+	readonly element: HTMLElement;
+	readonly store: DisposableStore;
+}
+
+/**
+ * The markdown of a reply that is still streaming. Re-rendering the whole text on every frame
+ * re-parsed and re-sanitized everything already shown, so the cost of a frame grew with the
+ * reply. The text is cut into top-level pieces (`splitMarkdownChunks`); pieces that did not change
+ * keep their DOM, and only the changed tail (usually the paragraph being written) is rendered
+ * again. Each piece is a `display: contents` box, so spacing matches a single rendered block.
+ */
+export class StreamingMarkdownView implements IDisposable {
+
+	readonly element: HTMLElement;
+	private readonly markdown: HTMLElement;
+	private chunks: IMarkdownChunk[] = [];
+	private text: string | undefined;
+	/** One numbering for the reply's footnotes, so a note rendered in a later piece keeps its number. */
+	private readonly footnotes = new Map<string, number>();
+
+	constructor(className = 'volt-agent-reply') {
+		this.element = $(`.${className}`);
+		this.markdown = append(this.element, $('.volt-agent-markdown.volt-agent-searchable.volt-md-chunked'));
+	}
+
+	update(text: string, ctx: IBlockRenderContext): void {
+		if (text === this.text) {
+			return;
+		}
+		this.text = text;
+		const pieces = splitMarkdownChunks(text);
+		let keep = 0;
+		while (keep < this.chunks.length && keep < pieces.length && this.chunks[keep].raw === pieces[keep]) {
+			keep++;
+		}
+		for (const chunk of this.chunks.splice(keep)) {
+			chunk.element.remove();
+			chunk.store.dispose();
+		}
+		for (let i = keep; i < pieces.length; i++) {
+			const store = new DisposableStore();
+			const element = renderMarkdownElement(this.markdown, pieces[i], { ...ctx, store }, this.footnotes);
+			element.classList.add('volt-md-chunk');
+			this.markdown.appendChild(element);
+			this.chunks.push({ raw: pieces[i], element, store });
+		}
+	}
+
+	dispose(): void {
+		for (const chunk of this.chunks) {
+			chunk.store.dispose();
+		}
+		this.chunks = [];
+	}
 }
 
 function renderMarkdownBlock(parent: HTMLElement, block: IMarkdownBlock, ctx: IBlockRenderContext): void {
@@ -357,7 +422,9 @@ function renderCodeBlock(parent: HTMLElement, block: ICodeBlock, ctx: IBlockRend
 		}, ctx, 'card');
 		return;
 	}
-	renderCodeCard(wrap, block.language, block.code, codeCardOptions(ctx));
+	const options = codeCardOptions(ctx);
+	// A fence still streaming grows every frame: highlighted lines, and the editor once it closes.
+	renderCodeCard(wrap, block.language, block.code, block.status === 'streaming' ? { ...options, instantiationService: undefined } : options);
 }
 
 function isExpanded(block: { id: string; expanded?: boolean }, ctx: IBlockRenderContext): boolean {

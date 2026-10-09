@@ -113,6 +113,7 @@ import { openAgentPanel } from '../workspace/agentPanels.js';
 import { AgentComposerChips, shouldOfferScrollToBottom } from '../composer/agentComposerChips.js';
 import { AgentPendingChanges, MINI_FILE_DIFF_VIEWER_ENABLED } from '../composer/agentPendingChanges.js';
 import { FRESH_TEXT_CLASS, FreshTextTracker } from '../chrome/agentFreshText.js';
+import { reconcileChildren, TranscriptReuse } from '../chrome/agentTranscriptReuse.js';
 import { IAgentPendingFile } from '../review/agentEditsService.js';
 import { AgentComposerLists } from '../composer/agentComposerLists.js';
 import { AgentPromptHistoryNavigator, IAgentPromptHistoryEntry, readStoredPrompts, rememberPrompt } from '../composer/agentPromptHistory.js';
@@ -262,6 +263,8 @@ interface IStashedThread {
 	readonly tailExchange: HTMLElement | undefined;
 	readonly tailFrom: number;
 	readonly renderedCount: number;
+	/** Cached rows of the parked tail; their listeners live with them. */
+	readonly reuse: TranscriptReuse;
 	/** The chat changed while parked (a run kept going); its last exchange needs a redraw. */
 	stale: boolean;
 	readonly watch: DisposableStore;
@@ -762,6 +765,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private get threadListeners(): DisposableStore {
 		return this.renderingTail ? this.tailListeners : this.settledListeners;
 	}
+	/** Rows of the live exchange kept between streaming redraws (see agentTranscriptReuse.ts). */
+	private reuse = new TranscriptReuse();
+	/** Each drawn reply's turn element, so a streaming redraw can update it in place. */
+	private readonly agentTurnElements = new WeakMap<IAgentAssistantMessage, HTMLElement>();
+	/** Nodes a tail redraw replaced; removed once live pages have been moved out of them. */
+	private tailStale: Node[] | undefined;
 	private tailExchange: HTMLElement | undefined;
 	private tailFrom = -1;
 	private renderedCount = 0;
@@ -2508,6 +2517,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private renderThread(scrollToEnd = false): void {
 		this.settledListeners.clear();
 		this.tailListeners.clear();
+		this.reuse.dispose();
+		this.reuse = new TranscriptReuse();
 		this.renderingTail = false;
 		this.tailExchange = undefined;
 		this.tailFrom = -1;
@@ -2605,6 +2616,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.renderUserTurn(turn, message, index);
 			}
 		} else {
+			this.agentTurnElements.set(message, turn);
 			this.renderAgentTurn(turn, message);
 		}
 	}
@@ -2824,19 +2836,41 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.tailListeners.clear();
 		this.renderingTail = true;
-		const fresh = $('.volt-agent-exchange');
+		// The exchange is updated in place: a reply already on screen keeps its turn element and only
+		// its changed rows are drawn again (moving or replacing finished rows restyled them all and
+		// restarted their fades). Other turns are drawn off-document and swapped in.
+		const scratch = $('.volt-agent-exchange');
+		const desired: Node[] = [];
+		const stale: Node[] = [];
+		const origin = exchange.querySelector(':scope > .volt-agent-subagent-of.fork-origin');
+		if (origin && this.tailFrom === 0) {
+			desired.push(origin);
+		}
+		this.tailStale = stale;
 		try {
 			for (let index = this.tailFrom; index < this.messages.length; index++) {
-				this.renderThreadMessage(fresh, this.messages[index], index);
+				const message = this.messages[index];
+				const turn = message.kind === 'agent' ? this.agentTurnElements.get(message) : undefined;
+				if (message.kind === 'agent' && turn?.parentNode === exchange) {
+					this.renderAgentTurn(turn, message);
+					desired.push(turn);
+					continue;
+				}
+				const from = scratch.childNodes.length;
+				this.renderThreadMessage(scratch, message, index);
+				desired.push(...Array.from(scratch.childNodes).slice(from));
 			}
 		} finally {
 			this.renderingTail = false;
+			this.tailStale = undefined;
 		}
-		// Fresh goes in before the old exchange leaves, so a live page can move across without reloading.
-		exchange.before(fresh);
-		adoptVisualFrames(fresh);
-		exchange.remove();
-		this.tailExchange = fresh;
+		this.reuse.retain(new Set(this.messages.slice(this.tailFrom)));
+		stale.push(...reconcileChildren(exchange, desired));
+		// Live pages move out of the rows they were in before those rows go.
+		adoptVisualFrames(exchange);
+		for (const node of stale) {
+			node.parentNode?.removeChild(node);
+		}
 		this.syncThreadScroll(scrollToEnd);
 		if (this.findWidget?.isVisible()) {
 			this.applyFindHighlights(false);
@@ -2870,6 +2904,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			tailExchange: this.tailExchange,
 			tailFrom: this.tailFrom,
 			renderedCount: this.renderedCount,
+			reuse: this.reuse,
 			// A redraw still queued means the nodes are behind the messages.
 			stale: this.renderHandle !== undefined || !!this.renderDelay,
 			watch: new DisposableStore(),
@@ -2879,6 +2914,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.stashedThreads.set(input.sessionId, entry);
 		this.settledListeners = new DisposableStore();
 		this.tailListeners = new DisposableStore();
+		this.reuse = new TranscriptReuse();
 		this.tailExchange = undefined;
 		this.tailFrom = -1;
 		this.renderedCount = 0;
@@ -2901,12 +2937,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (entry.input !== input || entry.messages !== input.messages || entry.renderedCount > input.messages.length) {
 			entry.settled.dispose();
 			entry.tail.dispose();
+			entry.reuse.dispose();
 			return undefined;
 		}
 		this.settledListeners.dispose();
 		this.tailListeners.dispose();
+		this.reuse.dispose();
 		this.settledListeners = entry.settled;
 		this.tailListeners = entry.tail;
+		this.reuse = entry.reuse;
 		this.threadInner.replaceChildren(entry.nodes);
 		adoptVisualFrames(this.threadInner);
 		this.tailExchange = entry.tailExchange;
@@ -2924,6 +2963,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		entry.watch.dispose();
 		entry.settled.dispose();
 		entry.tail.dispose();
+		entry.reuse.dispose();
 	}
 
 	private publishSessionChanges(): void {
@@ -3788,7 +3828,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private renderAgentTurn(turn: HTMLElement, message: IAgentAssistantMessage): void {
 		const streaming = !!message.activity?.streaming;
-		const body = append(turn, $('.volt-agent-thread-body'));
+		// Redrawn in place (a streaming redraw): the rows are reconciled, everything around them is drawn again.
+		const existing = turn.querySelector<HTMLElement>(':scope > .volt-agent-thread-body');
+		if (existing) {
+			for (const child of Array.from(turn.childNodes)) {
+				if (child !== existing) {
+					child.remove();
+				}
+			}
+		}
+		const body = existing ?? append(turn, $('.volt-agent-thread-body'));
 		const ctx = this.blockRenderContext(message);
 		// A finished turn lists its files once, in the end card (Cursor's "1 File Changed"), not per edit.
 		const changedFiles = streaming ? [] : turnFileChanges(message.segments);
@@ -3799,6 +3848,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		// A failed turn shows its error once, in the tray at its end.
 		const rows = !streaming && message.outcome === 'failed' ? withoutFailureNotice(built, message.failure?.message) : built;
 		const replies = renderTranscript(body, rows, this.transcriptHost(message, ctx), {
+			reuse: this.renderingTail ? this.reuse.for(message) : undefined,
+			stale: this.tailStale,
 			streaming,
 			status: streaming ? this.liveStatusPhrase(message) : undefined,
 			workedMs: !streaming && message.startedAt && message.endedAt ? message.endedAt - message.startedAt : undefined,
@@ -3866,10 +3917,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		return lines.phrase;
 	}
 
-	private transcriptHost(message: IAgentAssistantMessage, ctx: IBlockRenderContext): ITranscriptHost {
+	private transcriptHost(message: IAgentAssistantMessage, ctx: IBlockRenderContext, store: DisposableStore = this.threadListeners): ITranscriptHost {
 		return {
-			store: this.threadListeners,
+			store,
 			ctx,
+			withStore: rowStore => this.transcriptHost(message, { ...ctx, store: rowStore }, rowStore),
 			isExpanded: id => message.blockState[`tr:${id}`]?.expanded,
 			setExpanded: (id, expanded) => {
 				message.blockState[`tr:${id}`] = { expanded };
@@ -3889,7 +3941,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			renderBlock: (parent, block) => renderAgentBlock(parent, block, ctx),
 			renderNotice: (parent, row) => this.renderProviderNotice(parent, row, message),
 			setSearchableText: (el, text) => this.setSearchableText(el, text),
-			bindSearchHits: (el, files) => this.threadListeners.add(this.exploreHitsTooltip.bind(el, () => files.map(path => ({
+			bindSearchHits: (el, files) => store.add(this.exploreHitsTooltip.bind(el, () => files.map(path => ({
 				label: basename(path),
 				detail: tooltipDir(path),
 				onClick: () => void this.openWorkspaceFile(path),
@@ -6765,6 +6817,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.settledListeners.dispose();
 		this.tailListeners.dispose();
+		this.reuse.dispose();
 		this.eventDisposable?.dispose();
 		this.clockTimer?.dispose();
 		this.statusRotateTimer?.dispose();
