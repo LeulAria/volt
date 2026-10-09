@@ -3,6 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { addDisposableListener, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { IDisposable } from '../../../../../base/common/lifecycle.js';
+
 /** How long streamed text takes to fade from the accent color to the normal text color. */
 export const FRESH_TEXT_FADE_MS = 1100;
 
@@ -59,6 +62,20 @@ export class FreshTextTracker {
 		}
 		wrapFreshText(roots, reply.chunks, now);
 	}
+}
+
+/**
+ * Unwraps each fade span under `root` once its fade ends. Rows kept between redraws keep their
+ * spans, and a finished fade still holds its animation (fill mode `both`): a long chat piled up
+ * thousands of them, each one applied on every style pass.
+ */
+export function settleFreshText(root: HTMLElement): IDisposable {
+	return addDisposableListener(root, 'animationend', e => {
+		const span = e.target;
+		if (isHTMLElement(span) && span.classList.contains(FRESH_TEXT_CLASS) && e.animationName === FRESH_TEXT_CLASS) {
+			span.replaceWith(...span.childNodes);
+		}
+	});
 }
 
 const TABLE_PARTS = new Set(['TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'COLGROUP']);

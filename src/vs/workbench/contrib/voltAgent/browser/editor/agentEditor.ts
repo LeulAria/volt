@@ -112,7 +112,7 @@ import { AgentSurfaceHost, agentSideChatParents, revealAgentSideChat } from '../
 import { openAgentPanel } from '../workspace/agentPanels.js';
 import { AgentComposerChips, shouldOfferScrollToBottom } from '../composer/agentComposerChips.js';
 import { AgentPendingChanges, MINI_FILE_DIFF_VIEWER_ENABLED } from '../composer/agentPendingChanges.js';
-import { FRESH_TEXT_CLASS, FreshTextTracker } from '../chrome/agentFreshText.js';
+import { FRESH_TEXT_CLASS, FreshTextTracker, settleFreshText } from '../chrome/agentFreshText.js';
 import { reconcileChildren, TranscriptReuse } from '../chrome/agentTranscriptReuse.js';
 import { IAgentPendingFile } from '../review/agentEditsService.js';
 import { AgentComposerLists } from '../composer/agentComposerLists.js';
@@ -263,6 +263,7 @@ interface IStashedThread {
 	readonly tailExchange: HTMLElement | undefined;
 	readonly tailFrom: number;
 	readonly renderedCount: number;
+	readonly settledMessages: readonly IAgentMessage[];
 	/** Cached rows of the parked tail; their listeners live with them. */
 	readonly reuse: TranscriptReuse;
 	/** The chat changed while parked (a run kept going); its last exchange needs a redraw. */
@@ -774,6 +775,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private tailExchange: HTMLElement | undefined;
 	private tailFrom = -1;
 	private renderedCount = 0;
+	/** The messages drawn above the live exchange, so a new turn can tell they are unchanged and keep their DOM. */
+	private settledMessages: readonly IAgentMessage[] = [];
 	private readonly thinkingStore = this._register(new DisposableStore());
 	private readonly exploreHitsTooltip = this._register(new AgentTooltip());
 	private readonly markdownRenderer: MarkdownRenderer;
@@ -922,6 +925,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.threadView = this._register(new AgentThreadView());
 		this.threadEl = this.threadView.element;
 		this.threadInner = this.threadView.inner;
+		this._register(settleFreshText(this.threadInner));
 		// Live agent pages wait here (still loaded) while the thread is redrawn around them.
 		this.visualParking = append(this.threadEl, $('.volt-agent-visual-parking'));
 		// `has-turns` stands in for `.volt-agent-editor:has(.volt-agent-turn)`: a :has() on the chat restyles
@@ -1830,7 +1834,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.syncComposerPlacement();
 		const stashed = this.adoptStashedThread(input);
-		if (!stashed || (stashed.stale && !this.canRenderTail())) {
+		if (!stashed || (stashed.stale && !this.canRenderTail() && !this.canAppendThread())) {
 			this.renderThread(followTail);
 		} else {
 			if (stashed.stale) {
@@ -2523,6 +2527,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.tailExchange = undefined;
 		this.tailFrom = -1;
 		this.renderedCount = this.messages.length;
+		this.settledMessages = [];
 		parkVisualFrames(this.threadInner, this.visualParking);
 		this.threadInner.replaceChildren();
 		if (!this.messages.length) {
@@ -2542,6 +2547,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		const tailFrom = this.lastExchangeStart();
+		this.settledMessages = this.messages.slice(0, Math.max(0, tailFrom));
 		let exchange: HTMLElement | undefined;
 		for (const [index, message] of this.messages.entries()) {
 			if (startsExchange(message) || !exchange) {
@@ -2566,6 +2572,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** Layout and bookkeeping once `threadInner` holds the whole thread, freshly built or taken back from the stash. */
 	private finishThreadRender(scrollToEnd: boolean): void {
+		this.syncStreamingClass();
 		this.turnNav.setTurns(this.navTurns());
 		this.syncComposerPlacement();
 		this.syncThreadScroll(scrollToEnd);
@@ -2831,10 +2838,82 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private renderThreadTail(scrollToEnd: boolean): void {
 		const exchange = this.tailExchange;
 		if (!exchange || !this.canRenderTail()) {
-			this.renderThread(scrollToEnd);
+			if (this.canAppendThread()) {
+				this.appendThread();
+				this.finishThreadRender(scrollToEnd);
+			} else {
+				this.renderThread(scrollToEnd);
+			}
 			return;
 		}
 		this.tailListeners.clear();
+		this.redrawExchange(exchange, this.tailFrom, this.messages.length);
+		this.reuse.retain(new Set(this.messages.slice(this.tailFrom)));
+		this.syncStreamingClass();
+		this.syncThreadScroll(scrollToEnd);
+		if (this.findWidget?.isVisible()) {
+			this.applyFindHighlights(false);
+		}
+		this.refreshContextUsage();
+		this.publishSessionChanges();
+		this.syncTasksCard();
+	}
+
+	/**
+	 * A new turn keeps the thread above it: the exchanges before the live one are untouched, the
+	 * live one is redrawn in place (its reply is no longer the last), and the turns after it are
+	 * appended. Rebuilding the whole thread here cost ~0.4 s at 20 turns. False when the drawn
+	 * thread no longer matches the messages above the live exchange (a regenerate or an edit).
+	 */
+	private canAppendThread(): boolean {
+		const exchange = this.tailExchange;
+		const from = this.tailFrom;
+		return !!exchange && exchange.parentNode === this.threadInner && !exchange.nextSibling && this.editingUserIndex === undefined
+			&& from >= 0 && from < this.messages.length && (from === 0 || startsExchange(this.messages[from]))
+			&& this.settledMessages.length === from && this.settledMessages.every((message, index) => this.messages[index] === message);
+	}
+
+	private appendThread(): void {
+		const exchange = this.tailExchange!;
+		const starts = [this.tailFrom];
+		for (let index = this.tailFrom + 1; index < this.messages.length; index++) {
+			if (startsExchange(this.messages[index])) {
+				starts.push(index);
+			}
+		}
+		this.tailListeners.clear();
+		this.redrawExchange(exchange, this.tailFrom, starts[1] ?? this.messages.length);
+		this.reuse.retain(new Set(this.messages.slice(this.tailFrom, starts[1])));
+		if (starts.length > 1) {
+			// The old live exchange is settled now: its listeners and cached rows stay until the next full render.
+			this.settledListeners.add(this.tailListeners);
+			this.settledListeners.add(this.reuse);
+			this.tailListeners = new DisposableStore();
+			this.reuse = new TranscriptReuse();
+			for (let k = 1; k < starts.length; k++) {
+				const last = k === starts.length - 1;
+				const element = append(this.threadInner, $('.volt-agent-exchange'));
+				this.renderingTail = last;
+				try {
+					for (let index = starts[k]; index < (starts[k + 1] ?? this.messages.length); index++) {
+						this.renderThreadMessage(element, this.messages[index], index);
+					}
+				} finally {
+					this.renderingTail = false;
+				}
+				adoptVisualFrames(element);
+				if (last) {
+					this.tailExchange = element;
+					this.tailFrom = starts[k];
+				}
+			}
+			this.settledMessages = this.messages.slice(0, this.tailFrom);
+		}
+		this.renderedCount = this.messages.length;
+	}
+
+	/** Redraws messages `from`..`to` into `exchange`, which is on screen, as the live exchange. */
+	private redrawExchange(exchange: HTMLElement, from: number, to: number): void {
 		this.renderingTail = true;
 		// The exchange is updated in place: a reply already on screen keeps its turn element and only
 		// its changed rows are drawn again (moving or replacing finished rows restyled them all and
@@ -2843,12 +2922,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const desired: Node[] = [];
 		const stale: Node[] = [];
 		const origin = exchange.querySelector(':scope > .volt-agent-subagent-of.fork-origin');
-		if (origin && this.tailFrom === 0) {
+		if (origin && from === 0) {
 			desired.push(origin);
 		}
 		this.tailStale = stale;
 		try {
-			for (let index = this.tailFrom; index < this.messages.length; index++) {
+			for (let index = from; index < to; index++) {
 				const message = this.messages[index];
 				const turn = message.kind === 'agent' ? this.agentTurnElements.get(message) : undefined;
 				if (message.kind === 'agent' && turn?.parentNode === exchange) {
@@ -2864,20 +2943,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.renderingTail = false;
 			this.tailStale = undefined;
 		}
-		this.reuse.retain(new Set(this.messages.slice(this.tailFrom)));
 		stale.push(...reconcileChildren(exchange, desired));
 		// Live pages move out of the rows they were in before those rows go.
 		adoptVisualFrames(exchange);
 		for (const node of stale) {
 			node.parentNode?.removeChild(node);
 		}
-		this.syncThreadScroll(scrollToEnd);
-		if (this.findWidget?.isVisible()) {
-			this.applyFindHighlights(false);
-		}
-		this.refreshContextUsage();
-		this.publishSessionChanges();
-		this.syncTasksCard();
 	}
 
 	/** Parks the shown chat's thread (nodes and listeners) so showing it again is a DOM move, not a rebuild. */
@@ -2904,6 +2975,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			tailExchange: this.tailExchange,
 			tailFrom: this.tailFrom,
 			renderedCount: this.renderedCount,
+			settledMessages: this.settledMessages,
 			reuse: this.reuse,
 			// A redraw still queued means the nodes are behind the messages.
 			stale: this.renderHandle !== undefined || !!this.renderDelay,
@@ -2918,6 +2990,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.tailExchange = undefined;
 		this.tailFrom = -1;
 		this.renderedCount = 0;
+		this.settledMessages = [];
 		for (const sessionId of this.stashedThreads.keys()) {
 			if (this.stashedThreads.size <= MAX_STASHED_THREADS) {
 				break;
@@ -2951,6 +3024,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.tailExchange = entry.tailExchange;
 		this.tailFrom = entry.tailFrom;
 		this.renderedCount = entry.renderedCount;
+		this.settledMessages = entry.settledMessages;
 		return { stale: entry.stale };
 	}
 
@@ -3074,7 +3148,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				e.stopPropagation();
 				this.stopAndEditPrompt();
 			}));
-		} else if (message.id && !this.isStreaming() && hasCommand(CHECKPOINT_RESTORE_COMMAND)) {
+		} else if (message.id && hasCommand(CHECKPOINT_RESTORE_COMMAND)) {
+			// Drawn even while a run streams (hidden then, see syncStreamingClass): a settled message is not redrawn when the run ends.
 			const turnId = message.id;
 			const restore = append(bubble, $('button.volt-agent-user-restore')) as HTMLButtonElement;
 			restore.type = 'button';
@@ -3087,7 +3162,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				void this.restoreCheckpoint(turnId);
 			}));
 		}
-		if (message.id && !this.isStreaming() && !this.isSubagentChat()) {
+		if (message.id && !this.isSubagentChat()) {
 			const turnId = message.id;
 			const rewind = append(bubble, $('button.volt-agent-user-restore.volt-agent-user-rewind')) as HTMLButtonElement;
 			rewind.type = 'button';
@@ -6219,6 +6294,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	/** A turn is live: its reply streams, or the orchestrator is starting one for this chat. */
+	/** Checkpoint restore and rewind are off while a run streams; one class hides them on every message. */
+	private syncStreamingClass(): void {
+		this.threadInner.classList.toggle('streaming', this.isStreaming());
+	}
+
 	private isStreaming(): boolean {
 		const last = this.messages.at(-1);
 		if (last?.kind === 'agent' && !!last.activity?.streaming) {
@@ -6261,7 +6341,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					// A turn this panel sent, or one the orchestrator started (queue, subagent report).
 					this._onDidChangeDock.fire();
 					this.stickToBottom = true;
-					this.renderThread(true);
+					if (this.canAppendThread()) {
+						this.appendThread();
+						this.finishThreadRender(true);
+					} else {
+						this.renderThread(true);
+					}
 					this.scrollThreadToEnd();
 					this.updateSendButton();
 					this.syncQueueStack();

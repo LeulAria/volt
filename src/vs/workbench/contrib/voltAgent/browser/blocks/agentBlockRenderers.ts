@@ -360,7 +360,7 @@ export class StreamingMarkdownView implements IDisposable {
 
 	constructor(className = 'volt-agent-reply') {
 		this.element = $(`.${className}`);
-		this.markdown = append(this.element, $('.volt-agent-markdown.volt-agent-searchable.volt-md-chunked'));
+		this.markdown = append(this.element, $('.rendered-markdown.volt-agent-markdown.volt-agent-searchable.volt-md-chunked'));
 	}
 
 	update(text: string, ctx: IBlockRenderContext): void {

@@ -211,6 +211,7 @@ function draw(host: HTMLElement, source: string, options: IMermaidOptions): void
 		const root = fragment.firstElementChild;
 		if (root && root.nodeName.toLowerCase() === 'svg') {
 			svg = root as SVGSVGElement;
+			hoistDiagramStyles(svg);
 		}
 	}
 	svg ??= markup === undefined ? undefined : renderLegacyDiagram(doc, source);
@@ -243,6 +244,61 @@ function draw(host: HTMLElement, source: string, options: IMermaidOptions): void
 	scroll.addEventListener('scroll', updateEdges, { passive: true });
 	scroll.addEventListener('pointerenter', updateEdges);
 	doc.defaultView?.requestAnimationFrame(updateEdges);
+}
+
+const DIAGRAM_SCOPE = '.volt-md-mermaid-svg';
+const hoistedStyles = new WeakMap<Document, Set<string>>();
+
+/**
+ * beautiful-mermaid puts a <style> in every diagram with rules for bare `svg` and `text`. In the
+ * document those applied to every SVG in the window, and inserting a diagram restyled all of them:
+ * a diagram redrawn while its fence streams cost a whole-window style pass per frame in a long chat.
+ * The rules move, once per distinct sheet, into one document stylesheet scoped to diagrams.
+ */
+function hoistDiagramStyles(svg: SVGSVGElement): void {
+	const doc = svg.ownerDocument;
+	const win = doc.defaultView;
+	let seen = hoistedStyles.get(doc);
+	if (!seen) {
+		seen = new Set();
+		hoistedStyles.set(doc, seen);
+	}
+	for (const style of Array.from(svg.querySelectorAll('style'))) {
+		const text = style.textContent ?? '';
+		style.remove();
+		if (!win || seen.has(text)) {
+			continue;
+		}
+		seen.add(text);
+		const sheet = new win.CSSStyleSheet();
+		try {
+			sheet.replaceSync(text);
+		} catch {
+			continue;
+		}
+		const element = doc.createElement('style');
+		element.className = 'volt-md-mermaid-styles';
+		element.textContent = Array.from(sheet.cssRules, scopeDiagramRule).join('\n');
+		doc.head.appendChild(element);
+	}
+}
+
+function scopeDiagramRule(rule: CSSRule): string {
+	if ('selectorText' in rule && 'style' in rule) {
+		const styleRule = rule as CSSStyleRule;
+		// Selectors here are plain (`svg`, `text`, `.node rect`); none has a comma inside parentheses.
+		const selectors = styleRule.selectorText.split(',').map(selector => {
+			const trimmed = selector.trim();
+			return /^svg\b/.test(trimmed) ? trimmed.replace(/^svg/, DIAGRAM_SCOPE) : `${DIAGRAM_SCOPE} ${trimmed}`;
+		});
+		return `${selectors.join(', ')} { ${styleRule.style.cssText} }`;
+	}
+	if ('cssRules' in rule && 'conditionText' in rule) {
+		// @media / @supports: the same prelude around scoped rules.
+		const grouping = rule as unknown as CSSGroupingRule;
+		return `${rule.cssText.slice(0, rule.cssText.indexOf('{'))}{ ${Array.from(grouping.cssRules, scopeDiagramRule).join('\n')} }`;
+	}
+	return rule.cssText;
 }
 
 function renderLegacyDiagram(doc: Document, source: string): SVGSVGElement | undefined {
