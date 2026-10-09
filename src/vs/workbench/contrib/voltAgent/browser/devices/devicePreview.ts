@@ -25,8 +25,13 @@ import { createVoltSegmented, IVoltSegmented } from '../ui/segmented/voltSegment
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { IAgentDevicesService, IDeviceShot, IDeviceTarget } from './agentDevicesService.js';
 
-/** The preview refreshes this often while on screen (plus right after every action). */
-const POLL_MS = 350;
+/** The preview refreshes this often while on screen and nothing happens (it streams while someone interacts). */
+const IDLE_POLL_MS = 500;
+/** After a tap, a swipe or an agent action the preview streams: captures run back to back, up to three overlapping (an adb capture takes ~300 ms; three in flight give ~5 frames a second). */
+const ACTIVE_MS = 5000;
+const MAX_IN_FLIGHT = 3;
+/** Captures slower than this run one at a time: an overloaded emulator must not get more work. */
+const SLOW_CAPTURE_MS = 1000;
 /** The most a half-open device's right half leans back in 3D, in degrees. */
 const MAX_LEAN = 65;
 const PREVIEW_MAX_SIDE = 1400;
@@ -100,7 +105,11 @@ export class DevicePreview extends Disposable {
 	private screens: HTMLImageElement[] = [];
 	private frameKey = '';
 	private visible = false;
-	private polling = false;
+	private inFlight = 0;
+	private captureSeq = 0;
+	private appliedSeq = 0;
+	private captureMs = 300;
+	private activeUntil = 0;
 	private pollTimer: number | undefined;
 	private busy: string | undefined;
 	private threeD = false;
@@ -176,7 +185,8 @@ export class DevicePreview extends Disposable {
 				if (activity.by === 'agent') {
 					this.flashAgent();
 				}
-				this.refreshSoon(150);
+				this.stream();
+				this.refreshSoon(60);
 			}
 		}));
 		this._register({
@@ -523,32 +533,54 @@ export class DevicePreview extends Disposable {
 		this.pollTimer = win.setTimeout(() => void this.poll(), delay);
 	}
 
-	/** One screenshot at a time, then the next after `POLL_MS`, only while visible and booted. */
+	/** Keeps the preview streaming for a few seconds (the user or the agent is interacting). */
+	private stream(): void {
+		this.activeUntil = Date.now() + ACTIVE_MS;
+	}
+
+	/**
+	 * Captures while visible and booted: every `IDLE_POLL_MS` when nothing happens, back to back
+	 * (overlapping, so a slow adb capture does not cap the frame rate) while interacting.
+	 */
 	private async poll(): Promise<void> {
 		const target = this.target;
-		if (!this.visible || this.polling || this.element.ownerDocument.visibilityState === 'hidden') {
+		if (!this.visible || this.element.ownerDocument.visibilityState === 'hidden' || !target || target.device.state !== 'booted') {
 			this.renderMessage();
 			return;
 		}
-		if (!target || target.device.state !== 'booted') {
-			this.renderMessage();
+		if (this.inFlight >= (this.captureMs > SLOW_CAPTURE_MS ? 1 : MAX_IN_FLIGHT)) {
 			return;
 		}
-		this.polling = true;
+		this.inFlight++;
+		const seq = ++this.captureSeq;
+		const started = Date.now();
+		let failed = false;
+		if (started < this.activeUntil) {
+			// The next capture starts a third of the way through this one.
+			this.refreshSoon(Math.max(40, this.captureMs / MAX_IN_FLIGHT));
+		}
 		try {
 			const shot = await this.devices.screenshot(target, PREVIEW_MAX_SIDE, 'user');
-			if (this.target === target) {
+			// Captures can finish out of order: never show an older one over a newer one.
+			if (this.target === target && seq > this.appliedSeq) {
+				this.appliedSeq = seq;
 				this.applyShot(shot);
 			}
 		} catch (err) {
+			failed = true;
 			if (this.target === target) {
 				this.renderMessage(err instanceof Error ? err.message : String(err));
 			}
 		} finally {
-			this.polling = false;
+			this.inFlight--;
+			this.captureMs = Date.now() - started;
 		}
 		if (this.visible && this.target === target) {
-			this.refreshSoon(POLL_MS);
+			// A failing capture is retried at the idle pace, not in a tight loop.
+			const active = Date.now() < this.activeUntil && !failed;
+			if (active || !this.inFlight) {
+				this.refreshSoon(active ? 0 : IDLE_POLL_MS);
+			}
 		}
 	}
 
@@ -687,6 +719,7 @@ export class DevicePreview extends Disposable {
 			return;
 		}
 		this.stage.focus();
+		this.stream();
 		const screen = this.isOnScreen(e);
 		const target = this.target;
 		const store = new DisposableStore();

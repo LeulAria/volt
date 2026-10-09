@@ -194,9 +194,12 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 	}
 
 	async screenshot(target: IDeviceTarget, maxSide: number, by: 'agent' | 'user'): Promise<IDeviceShot> {
-		const screen = await this.devices.screenshot(target.host, target.device);
-		const full = `data:image/png;base64,${screen.pngBase64}`;
-		const shot = maxSide > 0 ? await scaleScreenshot(full, { maxSide, format: 'jpeg', quality: 0.82 }) : { dataUrl: full, width: screen.width, height: screen.height };
+		const screen = await this.devices.screenshot(target.host, target.device, maxSide);
+		const full = `data:image/${screen.format ?? 'png'};base64,${screen.imageBase64}`;
+		// The main process already shrank it when it knows the size; else scale here.
+		const shot = screen.imageWidth && screen.imageHeight
+			? { dataUrl: full, width: screen.imageWidth, height: screen.imageHeight }
+			: maxSide > 0 ? await scaleScreenshot(full, { maxSide, format: 'jpeg', quality: 0.82 }) : { dataUrl: full, width: screen.width, height: screen.height };
 		const geometry = { width: screen.width, height: screen.height, scale: screen.scale };
 		this.shots.set(`${this.keyOf(target)}|${by}`, { image: { width: shot.width, height: shot.height }, screen: geometry });
 		return { dataUrl: shot.dataUrl, width: shot.width, height: shot.height, screen: geometry };
@@ -287,8 +290,14 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 			const sameIds = new Set(match.candidates.map(device => device.id)).size < match.candidates.length;
 			throw new Error(`"${query}" matches several devices; pass ${sameIds ? '`host` (the same simulator is on several machines)' : 'one id'}:\n${match.candidates.map(device => describeDevice(device, scoped.find(entry => entry.devices.includes(device))?.host.label ?? '')).join('\n')}`);
 		}
+		const available = scoped.flatMap(entry => entry.devices.map(device => describeDevice(device, entry.host.label)));
+		// Apple ships no foldable iPhone simulator: point at the foldables that exist instead of a dead end.
+		const foldables = scoped.flatMap(entry => entry.devices.filter(device => device.foldable).map(device => describeDevice(device, entry.host.label)));
+		const foldHint = query && /fold|flip|duo/i.test(query)
+			? `\nThere is no foldable iPhone simulator.${foldables.length ? ` Foldable devices that exist here:\n${foldables.join('\n')}` : ' No foldable Android emulator is installed either (Android Studio > Device Manager > Pixel 9 Pro Fold).'}`
+			: '';
 		throw new Error(query
-			? `No device matches "${query}". Call device_list to see the devices.${problems.length ? `\n${problems.join('\n')}` : ''}`
+			? `No device matches "${query}".${available.length ? ` Devices:\n${available.join('\n')}` : ' There are no simulators or emulators.'}${foldHint}${problems.length ? `\n${problems.join('\n')}` : ''}`
 			: `No device is booted. Pass \`device\` (see device_list), or boot one with device_boot.${problems.length ? `\n${problems.join('\n')}` : ''}`);
 	}
 

@@ -160,8 +160,16 @@ export function parseSimctlScreen(output: string): { width: number; height: numb
 	return { width: Number(size[1]), height: Number(size[2]), scale: scale ? Number(scale[1]) : 1 };
 }
 
-export function simctl(...args: string[]): ICommand {
-	return { file: 'xcrun', args: ['simctl', ...args] };
+/**
+ * The simctl that Xcode's own `simctl` script runs. `xcrun` refuses to run any tool until the user
+ * has accepted a new Xcode's license (needs sudo), but this binary does not look at the license:
+ * Volt falls back to it so the simulators that are installed still work.
+ */
+export const SYSTEM_SIMCTL = '/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl';
+
+/** What `xcrun` prints until the license of the selected Xcode is accepted. */
+export function isXcodeLicenseError(stderr: string): boolean {
+	return /not agreed to the Xcode license/i.test(stderr);
 }
 
 /** `simctl boot` on a booted device: already where we want it. */
@@ -320,6 +328,10 @@ export function emulatorFailure(log: string): string | undefined {
 	if (/Failed to load snapshot|error while loading state|Error -?\d+ while loading VM state/i.test(log)) {
 		return 'snapshot';
 	}
+	// A restored snapshot whose graphics state is broken boots to white frames and floods the log with GL errors.
+	if ((log.match(/gfxstream.*error 0x50\d/gi)?.length ?? 0) >= 5) {
+		return 'snapshot';
+	}
 	const fatal = log.split(/\r?\n/).map(line => line.trim()).find(line => /^(FATAL|ERROR)\s*\|/.test(line) || /^PANIC:/.test(line));
 	return fatal?.replace(/^(FATAL|ERROR)\s*\|\s*/, '');
 }
@@ -472,6 +484,87 @@ export function pngSize(bytes: Uint8Array): { width: number; height: number } | 
 	}
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+
+/** Width and height of a JPEG, from its first start-of-frame marker. */
+export function jpegSize(bytes: Uint8Array): { width: number; height: number } | undefined {
+	if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+		return undefined;
+	}
+	let i = 2;
+	while (i + 9 < bytes.length) {
+		if (bytes[i] !== 0xff) {
+			i++;
+			continue;
+		}
+		const marker = bytes[i + 1];
+		if (marker === 0xff) {
+			i++;
+			continue;
+		}
+		// Standalone markers have no length.
+		if (marker === 0x01 || marker >= 0xd0 && marker <= 0xd8) {
+			i += 2;
+			continue;
+		}
+		const length = bytes[i + 2] << 8 | bytes[i + 3];
+		const startOfFrame = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+		if (startOfFrame) {
+			return { height: bytes[i + 5] << 8 | bytes[i + 6], width: bytes[i + 7] << 8 | bytes[i + 8] };
+		}
+		i += 2 + length;
+	}
+	return undefined;
+}
+
+/**
+ * `adb exec-out "screencap | gzip -1"`: the gzip stream, after the warning line screencap prints
+ * first when the device has several displays. Compressing on the device is several times
+ * cheaper than the PNG that `screencap -p` makes there.
+ */
+export function gzipFrom(bytes: Uint8Array): Uint8Array | undefined {
+	const limit = Math.min(bytes.length - 3, 2048);
+	for (let i = 0; i <= limit; i++) {
+		if (bytes[i] === 0x1f && bytes[i + 1] === 0x8b && bytes[i + 2] === 0x08) {
+			return i === 0 ? bytes : bytes.subarray(i);
+		}
+	}
+	return undefined;
+}
+
+export interface IRawFrame {
+	readonly width: number;
+	readonly height: number;
+	/** width x height x 4 bytes, R G B A. */
+	readonly rgba: Uint8Array;
+}
+
+/** What `screencap` prints without `-p`: a 12 or 16 byte header (width, height, format, colour space) and RGBA pixels. */
+export function parseRawFrame(raw: Uint8Array): IRawFrame | undefined {
+	if (raw.length < 12) {
+		return undefined;
+	}
+	const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+	const width = view.getUint32(0, true);
+	const height = view.getUint32(4, true);
+	const format = view.getUint32(8, true);
+	const pixels = width * height * 4;
+	const header = raw.length - pixels;
+	// 1 is RGBA_8888, 2 RGBX_8888: four bytes a pixel either way.
+	if (!width || !height || (format !== 1 && format !== 2) || (header !== 12 && header !== 16)) {
+		return undefined;
+	}
+	return { width, height, rgba: raw.subarray(header) };
+}
+
+/** `width` x `height` shrunk so the longer side is at most `maxSide` (0: unchanged). */
+export function fitWithin(width: number, height: number, maxSide: number): { width: number; height: number } {
+	const longest = Math.max(width, height);
+	if (maxSide <= 0 || longest <= maxSide) {
+		return { width, height };
+	}
+	const ratio = maxSide / longest;
+	return { width: Math.max(1, Math.round(width * ratio)), height: Math.max(1, Math.round(height * ratio)) };
 }
 
 /**

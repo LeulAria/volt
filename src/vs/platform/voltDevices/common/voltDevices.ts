@@ -67,11 +67,15 @@ export type VoltDeviceInput =
 	| { readonly kind: 'button'; readonly button: VoltDeviceButton };
 
 export interface IVoltDeviceScreen {
-	/** Base64 PNG: a VSBuffer inside an object does not survive the IPC channel. */
-	readonly pngBase64: string;
-	/** Pixel size of the PNG. */
+	/** The image, base64: a VSBuffer inside an object does not survive the IPC channel. PNG unless `format` says otherwise. */
+	readonly imageBase64: string;
+	readonly format?: 'png' | 'jpeg';
+	/** Pixel size of the screen (and of the image, unless `imageWidth` says it was shrunk). */
 	readonly width: number;
 	readonly height: number;
+	/** Set when the image is a scaled copy of the screen (the caller asked for `maxSide`). */
+	readonly imageWidth?: number;
+	readonly imageHeight?: number;
 	/**
 	 * Screen pixels per input unit: input on iOS is in points (2 or 3 px each), on Android in
 	 * pixels (1).
@@ -95,7 +99,8 @@ export interface IVoltDevicesService {
 	/** Boots the device and waits until it is ready, up to `timeoutMs`. Resolves with its state then. */
 	boot(host: IVoltDeviceHost, device: IVoltDeviceRef, timeoutMs?: number): Promise<VoltDeviceState>;
 	shutdown(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<void>;
-	screenshot(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<IVoltDeviceScreen>;
+	/** `maxSide` > 0 asks for a JPEG no bigger than that, which is much cheaper to make and to send than the full-size PNG. */
+	screenshot(host: IVoltDeviceHost, device: IVoltDeviceRef, maxSide?: number): Promise<IVoltDeviceScreen>;
 	/** Coordinates are in input units (see `IVoltDeviceScreen.scale`). */
 	input(host: IVoltDeviceHost, device: IVoltDeviceRef, input: VoltDeviceInput): Promise<void>;
 	/** A `.app` (iOS simulator) or `.apk` (Android) on this machine; copied over first for a remote host. */

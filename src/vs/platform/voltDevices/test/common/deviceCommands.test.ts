@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidTextChunks, avdLabel, imagePointToInput, iosButtonName, iosInputCommand, isAlreadyBooted, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, parseSshTarget, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simRuntimeLabel, sshCommand, stateForPosture } from '../../common/deviceCommands.js';
+import { androidKeycode, androidLaunchArgv, fitWithin, gzipFrom, jpegSize, parseRawFrame, emulatorFailure, androidSdkCandidates, androidTextChunks, avdLabel, imagePointToInput, iosButtonName, iosInputCommand, isAlreadyBooted, isXcodeLicenseError, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, parseSshTarget, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simRuntimeLabel, sshCommand, stateForPosture } from '../../common/deviceCommands.js';
 
 const SIMCTL_JSON = JSON.stringify({
 	devices: {
@@ -172,6 +172,10 @@ suite('Volt devices: commands and parsers', () => {
 		assert.strictEqual(emulatorFailure('INFO | x\nPANIC: Missing emulator engine program for \'x86\' CPU.\n'), 'PANIC: Missing emulator engine program for \'x86\' CPU.');
 		assert.strictEqual(emulatorFailure('INFO | ok\nFATAL | Running multiple emulators with the same AVD is an experimental feature.'), 'Running multiple emulators with the same AVD is an experimental feature.');
 		assert.strictEqual(emulatorFailure('INFO | all good'), undefined);
+		// A restored snapshot with broken graphics boots to white frames and floods the log with GL errors.
+		const glErrors = Array.from({ length: 6 }, () => '/Volumes/x/gfxstream/host/gl/GLESv2Imp.cpp:glUniformMatrix3fv:4047 error 0x502').join('\n');
+		assert.strictEqual(emulatorFailure(`INFO | ok\n${glErrors}`), 'snapshot');
+		assert.strictEqual(emulatorFailure('INFO | ok\n/Volumes/x/gfxstream/host/gl/GLESv2Imp.cpp:glUniformMatrix3fv:4047 error 0x502'), undefined);
 	});
 
 	test('Android keys and launch commands', () => {
@@ -220,5 +224,41 @@ suite('Volt devices: commands and parsers', () => {
 		assert.deepStrictEqual(imagePointToInput(236, 512, { width: 472, height: 1024 }, { width: 1179, height: 2556, scale: 3 }), { x: 197, y: 426 });
 		// Android takes pixels; points outside the image clamp to the screen.
 		assert.deepStrictEqual(imagePointToInput(600, -5, { width: 500, height: 1000 }, { width: 1080, height: 2160, scale: 1 }), { x: 1079, y: 0 });
+	});
+
+	test('an Xcode whose license is not accepted is recognised, so simctl can run directly', () => {
+		assert.strictEqual(isXcodeLicenseError(`You have not agreed to the Xcode license agreements. Please run 'sudo xcodebuild -license' from within a Terminal window to review and agree to the Xcode and Apple SDKs license.`), true);
+		assert.strictEqual(isXcodeLicenseError('Invalid device: nope'), false);
+	});
+
+	test('a raw capture is found after the multi-display warning and parsed with either header size', () => {
+		const warning = Buffer.from('[Warning] Multiple displays were found\n');
+		const gz = Buffer.from([0x1f, 0x8b, 0x08, 0x00, 1, 2, 3]);
+		assert.deepStrictEqual(Array.from(gzipFrom(Buffer.concat([warning, gz]))!), Array.from(gz));
+		assert.deepStrictEqual(Array.from(gzipFrom(gz)!), Array.from(gz));
+		assert.strictEqual(gzipFrom(Buffer.from('gzip: not found\n')), undefined);
+
+		const raw = (headerWords: number[], width: number, height: number) => {
+			const header = Buffer.alloc(headerWords.length * 4);
+			headerWords.forEach((word, i) => header.writeUInt32LE(word, i * 4));
+			return Buffer.concat([header, Buffer.alloc(width * height * 4, 7)]);
+		};
+		const withColorSpace = parseRawFrame(raw([2, 3, 1, 1], 2, 3))!;
+		assert.deepStrictEqual([withColorSpace.width, withColorSpace.height, withColorSpace.rgba.length], [2, 3, 24]);
+		assert.strictEqual(parseRawFrame(raw([2, 3, 1], 2, 3))!.rgba.length, 24);
+		// Not a frame: a PNG, a wrong format, a truncated body.
+		assert.strictEqual(parseRawFrame(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])), undefined);
+		assert.strictEqual(parseRawFrame(raw([2, 3, 9, 1], 2, 3)), undefined);
+		assert.strictEqual(parseRawFrame(raw([2, 3, 1, 1], 2, 3).subarray(0, 30)), undefined);
+	});
+
+	test('frames shrink to fit, and JPEG sizes are read', () => {
+		assert.deepStrictEqual(fitWithin(2076, 2152, 1024), { width: 988, height: 1024 });
+		assert.deepStrictEqual(fitWithin(1000, 500, 1024), { width: 1000, height: 500 });
+		assert.deepStrictEqual(fitWithin(1000, 500, 0), { width: 1000, height: 500 });
+		// SOI, an APP0 segment, then SOF0 for 640x480.
+		const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0, 0, 0xff, 0xc0, 0x00, 0x11, 8, 0x01, 0xe0, 0x02, 0x80, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
+		assert.deepStrictEqual(jpegSize(jpeg), { width: 640, height: 480 });
+		assert.strictEqual(jpegSize(Buffer.from('not a jpeg')), undefined);
 	});
 });

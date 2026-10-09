@@ -5,11 +5,13 @@
 
 import { execFile, spawn } from 'child_process';
 import { promises as fs } from 'fs';
+import { gunzipSync } from 'zlib';
 import { homedir, tmpdir } from 'os';
 import { basename, delimiter, join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
-import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidShell, androidTextChunks, avdLabel, ICommand, IAdbDevice, iosInputCommand, IosInputTool, isAlreadyBooted, isAlreadyShutdown, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simctl, sshCommand, stateForPosture } from '../common/deviceCommands.js';
+import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidShell, androidTextChunks, avdLabel, fitWithin, gzipFrom, ICommand, IAdbDevice, IRawFrame, iosInputCommand, IosInputTool, isAlreadyBooted, isAlreadyShutdown, isXcodeLicenseError, jpegSize, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseRawFrame, parseSimctlDevices, parseSimctlScreen, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, SYSTEM_SIMCTL, sshCommand, stateForPosture } from '../common/deviceCommands.js';
+import { downscale, encodePng } from './frameEncoding.js';
 import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDeviceRef, IVoltDeviceScreen, IVoltDevicesService, VoltDeviceInput, VoltDevicePosture, VoltDeviceState } from '../common/voltDevices.js';
 
 interface IRunResult {
@@ -26,6 +28,8 @@ interface IRunOptions {
 
 const LIST_TIMEOUT = 20_000;
 const ACTION_TIMEOUT = 30_000;
+/** A capture that takes this long is stuck; the next one gets a fresh try. */
+const SCREENSHOT_TIMEOUT = 10_000;
 const INSTALL_TIMEOUT = 240_000;
 const MAX_BUFFER = 96 * 1024 * 1024;
 
@@ -39,6 +43,8 @@ interface IEmulatorLaunch {
 	replacing?: boolean;
 	/** The cold boot that took over after its snapshot failed. */
 	replacedBy?: IEmulatorLaunch;
+	/** Android reported the boot as done, and the launch waited a moment for a snapshot failure to show. */
+	settled?: boolean;
 }
 
 function text(result: IRunResult): string {
@@ -63,10 +69,21 @@ export class VoltDevicesService implements IVoltDevicesService {
 	private readonly iosTools = new Map<string, IosInputTool | null>();
 	private readonly toolPaths = new Map<string, string | null>();
 	private readonly adbServers = new Map<string, Promise<unknown>>();
+	/** Hosts whose `xcrun` refused to run until Xcode's license is accepted, and until when simctl runs directly. */
+	private readonly licenseBlockedUntil = new Map<string, number>();
+	/** The adb serial of each running emulator, so a tap does not list every device first. */
+	private readonly serials = new Map<string, string>();
+	/** Hosts whose devices cannot gzip a capture on the device; they make PNGs there instead. */
+	private readonly noRawCapture = new Set<string>();
 
+	/**
+	 * `encodeJpeg` turns RGBA pixels into a JPEG of the given size (the main process has a native
+	 * one); without it, previews fall back to a shrunk PNG made here.
+	 */
 	constructor(
 		private readonly env: () => Promise<NodeJS.ProcessEnv>,
 		protected readonly logService: ILogService,
+		private readonly encodeJpeg?: (frame: IRawFrame, width: number, height: number) => Buffer | undefined,
 	) { }
 
 	//#region Running commands
@@ -180,6 +197,36 @@ export class VoltDevicesService implements IVoltDevicesService {
 
 	//#endregion
 
+	//#region simctl
+
+	/**
+	 * `xcrun` refuses every tool after Xcode updates until its license is accepted with sudo, which
+	 * Volt cannot do. simctl itself does not care, so run its system binary instead of failing.
+	 */
+	private async simctlRun(host: IVoltDeviceHost, args: readonly string[], options: IRunOptions = {}): Promise<IRunResult> {
+		if (this.licenseBlocked(host)) {
+			return this.run(host, [SYSTEM_SIMCTL, ...args], options);
+		}
+		try {
+			const result = await this.run(host, ['xcrun', 'simctl', ...args], options);
+			if (result.code === 0 || !isXcodeLicenseError(result.stderr)) {
+				return result;
+			}
+		} catch (err) {
+			if (!(err instanceof Error && isXcodeLicenseError(err.message))) {
+				throw err;
+			}
+		}
+		this.licenseBlockedUntil.set(host.id, Date.now() + 30_000);
+		return this.run(host, [SYSTEM_SIMCTL, ...args], options);
+	}
+
+	private licenseBlocked(host: IVoltDeviceHost): boolean {
+		return (this.licenseBlockedUntil.get(host.id) ?? 0) > Date.now();
+	}
+
+	//#endregion
+
 	//#region Listing
 
 	async listDevices(host: IVoltDeviceHost): Promise<IVoltDeviceList> {
@@ -197,6 +244,9 @@ export class VoltDevicesService implements IVoltDevicesService {
 				return [];
 			}),
 		]);
+		if (this.licenseBlocked(host)) {
+			problems.push('iOS: Xcode\'s license is not accepted, so only the simulators that are already installed are listed. For simulators from a newer Xcode (such as iPhone Fold), run `sudo xcodebuild -license accept` and `sudo xcodebuild -runFirstLaunch` in Terminal.');
+		}
 		return { devices: [...ios, ...android], problems };
 	}
 
@@ -212,7 +262,7 @@ export class VoltDevicesService implements IVoltDevicesService {
 		if (!host.ssh && process.platform !== 'darwin') {
 			throw new ToolMissingError('xcrun not found');
 		}
-		const result = await this.run(host, ['xcrun', 'simctl', 'list', 'devices', '--json'], { timeout: LIST_TIMEOUT });
+		const result = await this.simctlRun(host, ['list', 'devices', '--json'], { timeout: LIST_TIMEOUT });
 		return parseSimctlDevices(text(result), host.id);
 	}
 
@@ -286,8 +336,17 @@ export class VoltDevicesService implements IVoltDevicesService {
 		}
 	}
 
-	/** The adb serial of a running Android device: its AVD name or serial. Throws when it is not running. */
+	/**
+	 * The adb serial of a running Android device: its AVD name or serial. Throws when it is not
+	 * running. The answer is remembered (listing every device before each tap made the preview
+	 * lag); `withSerial` forgets it when a command on it fails.
+	 */
 	private async serial(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<string> {
+		const key = `${host.id}:${device.id}`;
+		const known = this.serials.get(key);
+		if (known) {
+			return known;
+		}
 		const running = await this.adbDevices(host);
 		const match = running.find(entry => entry.avd === device.id || entry.device.serial === device.id);
 		if (!match) {
@@ -299,7 +358,21 @@ export class VoltDevicesService implements IVoltDevicesService {
 		if (match.device.state !== 'booted') {
 			throw new Error(`${match.device.serial} is ${match.device.state}.`);
 		}
+		this.serials.set(key, match.device.serial);
 		return match.device.serial;
+	}
+
+	/** Runs `fn` with the device's serial; when that fails with a remembered serial, looks it up again once. */
+	private async withSerial<T>(host: IVoltDeviceHost, device: IVoltDeviceRef, fn: (serial: string) => Promise<T>): Promise<T> {
+		const key = `${host.id}:${device.id}`;
+		try {
+			return await fn(await this.serial(host, device));
+		} catch (err) {
+			if (!this.serials.delete(key)) {
+				throw err;
+			}
+			return fn(await this.serial(host, device));
+		}
 	}
 
 	//#endregion
@@ -309,15 +382,16 @@ export class VoltDevicesService implements IVoltDevicesService {
 	async boot(host: IVoltDeviceHost, device: IVoltDeviceRef, timeoutMs = 120_000): Promise<VoltDeviceState> {
 		const deadline = Date.now() + timeoutMs;
 		if (device.platform === 'ios') {
-			const booted = await this.run(host, ['xcrun', 'simctl', 'boot', device.id], { allowFail: true, timeout: ACTION_TIMEOUT });
+			const booted = await this.simctlRun(host, ['boot', device.id], { allowFail: true, timeout: ACTION_TIMEOUT });
 			if (booted.code !== 0 && !isAlreadyBooted(booted.stderr)) {
 				throw new Error(firstLine(booted.stderr) || `Could not boot ${device.id}`);
 			}
 			// bootstatus returns once SpringBoard is up.
 			const wait = Math.max(1000, deadline - Date.now());
-			const status = await this.run(host, ['xcrun', 'simctl', 'bootstatus', device.id], { allowFail: true, timeout: wait }).catch(() => undefined);
+			const status = await this.simctlRun(host, ['bootstatus', device.id], { allowFail: true, timeout: wait }).catch(() => undefined);
 			return status?.code === 0 ? 'booted' : 'booting';
 		}
+		this.serials.delete(`${host.id}:${device.id}`);
 		const running = await this.adbDevices(host).catch(() => []);
 		let serial = running.find(entry => entry.avd === device.id || entry.device.serial === device.id)?.device.serial;
 		let launch = serial ? undefined : await this.startEmulator(host, device.id, false);
@@ -335,10 +409,16 @@ export class VoltDevicesService implements IVoltDevicesService {
 			if (serial) {
 				const done = await this.run(host, ['adb', '-s', serial, 'shell', 'getprop', 'sys.boot_completed'], { timeout: 5000, allowFail: true }).catch(() => undefined);
 				if (done && text(done).trim() === '1') {
+					if (launch && !launch.settled) {
+						// A Quick Boot snapshot with broken graphics reports booted, then logs GL errors: give the watcher a look.
+						launch.settled = true;
+						await new Promise(resolve => setTimeout(resolve, 2500));
+						continue;
+					}
 					return 'booted';
 				}
 			}
-			await new Promise(resolve => setTimeout(resolve, 1500));
+			await new Promise(resolve => setTimeout(resolve, 500));
 		}
 		return 'booting';
 	}
@@ -410,7 +490,7 @@ export class VoltDevicesService implements IVoltDevicesService {
 
 	async shutdown(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<void> {
 		if (device.platform === 'ios') {
-			const result = await this.run(host, ['xcrun', 'simctl', 'shutdown', device.id], { allowFail: true });
+			const result = await this.simctlRun(host, ['shutdown', device.id], { allowFail: true });
 			if (result.code !== 0 && !isAlreadyShutdown(result.stderr)) {
 				throw new Error(firstLine(result.stderr) || `Could not shut down ${device.id}`);
 			}
@@ -420,6 +500,7 @@ export class VoltDevicesService implements IVoltDevicesService {
 		if (!serial.startsWith('emulator-')) {
 			throw new Error('Volt only shuts down emulators, not physical devices.');
 		}
+		this.serials.delete(`${host.id}:${device.id}`);
 		await this.run(host, ['adb', '-s', serial, 'emu', 'kill']);
 	}
 
@@ -427,32 +508,83 @@ export class VoltDevicesService implements IVoltDevicesService {
 
 	//#region Screen
 
-	async screenshot(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<IVoltDeviceScreen> {
-		let png: Buffer;
-		let scale = 1;
+	async screenshot(host: IVoltDeviceHost, device: IVoltDeviceRef, maxSide = 0): Promise<IVoltDeviceScreen> {
 		if (device.platform === 'ios') {
-			png = await this.iosScreenshot(host, device.id);
-			scale = (await this.iosScreen(host, device.id))?.scale ?? 1;
-		} else {
-			const serial = await this.serial(host, device);
-			png = Buffer.from(pngFrom((await this.run(host, ['adb', '-s', serial, 'exec-out', 'screencap', '-p'], { timeout: ACTION_TIMEOUT })).stdout));
+			// A JPEG is made, read and sent several times cheaper than the PNG.
+			const format = maxSide > 0 ? 'jpeg' : 'png';
+			const image = await this.iosScreenshot(host, device.id, format);
+			const size = format === 'jpeg' ? jpegSize(image) : pngSize(image);
+			if (!size) {
+				throw new Error('The simulator did not return a screenshot. Is it booted?');
+			}
+			const scale = (await this.iosScreen(host, device.id))?.scale ?? 1;
+			return { imageBase64: image.toString('base64'), format, width: size.width, height: size.height, scale };
 		}
-		const size = pngSize(png);
-		if (!size) {
-			throw new Error('The device did not return a screenshot. Is it booted and unlocked?');
+		return this.withSerial(host, device, serial => this.androidScreenshot(host, serial, maxSide));
+	}
+
+	private async androidScreenshot(host: IVoltDeviceHost, serial: string, maxSide: number): Promise<IVoltDeviceScreen> {
+		const frame = this.noRawCapture.has(host.id) ? undefined : await this.androidFrame(host, serial);
+		if (!frame) {
+			const png = Buffer.from(pngFrom((await this.run(host, ['adb', '-s', serial, 'exec-out', 'screencap', '-p'], { timeout: SCREENSHOT_TIMEOUT })).stdout));
+			const size = pngSize(png);
+			if (!size) {
+				throw new Error('The device did not return a screenshot. Is it booted and unlocked?');
+			}
+			return { imageBase64: png.toString('base64'), format: 'png', width: size.width, height: size.height, scale: 1 };
 		}
-		return { pngBase64: png.toString('base64'), width: size.width, height: size.height, scale };
+		const fit = fitWithin(frame.width, frame.height, maxSide);
+		if (fit.width === frame.width && fit.height === frame.height) {
+			return { imageBase64: encodePng(frame).toString('base64'), format: 'png', width: frame.width, height: frame.height, scale: 1 };
+		}
+		const jpeg = this.encodeJpeg?.(frame, fit.width, fit.height);
+		const small = jpeg ? undefined : downscale(frame, fit.width, fit.height);
+		return {
+			imageBase64: (jpeg ?? encodePng(small!)).toString('base64'),
+			format: jpeg ? 'jpeg' : 'png',
+			width: frame.width,
+			height: frame.height,
+			imageWidth: fit.width,
+			imageHeight: fit.height,
+			scale: 1,
+		};
+	}
+
+	/**
+	 * The screen as RGBA pixels. The device gzips the raw capture: a PNG made on the emulator's own
+	 * CPU took several seconds on a busy screen, the gzip a fraction of that. Undefined when the
+	 * device cannot (no gzip), after which this host uses PNGs.
+	 */
+	private async androidFrame(host: IVoltDeviceHost, serial: string): Promise<IRawFrame | undefined> {
+		const result = await this.run(host, ['adb', '-s', serial, 'exec-out', 'screencap | gzip -1'], { timeout: SCREENSHOT_TIMEOUT });
+		const gzip = gzipFrom(result.stdout);
+		if (!gzip) {
+			this.logService.warn(`[volt-devices] ${serial} did not return a gzipped raw capture; using PNG captures on ${host.label}`);
+			this.noRawCapture.add(host.id);
+			return undefined;
+		}
+		let frame: IRawFrame | undefined;
+		try {
+			frame = parseRawFrame(gunzipSync(gzip));
+		} catch {
+			// cut short: handled below
+		}
+		if (!frame) {
+			throw new Error('The device returned an unreadable screen capture. Try again.');
+		}
+		return frame;
 	}
 
 	/** simctl writes screenshots only to a file (`-` in Xcode 26 makes a file named "-"). */
-	private async iosScreenshot(host: IVoltDeviceHost, udid: string): Promise<Buffer> {
+	private async iosScreenshot(host: IVoltDeviceHost, udid: string, type: 'png' | 'jpeg'): Promise<Buffer> {
 		if (host.ssh) {
-			const script = `f=$(mktemp /tmp/volt-shot.XXXXXX) || exit 1; xcrun simctl io ${shellQuote(udid)} screenshot --type=png "$f" >/dev/null 2>&1 && cat "$f"; s=$?; rm -f "$f"; exit $s`;
+			const shoot = (tool: string) => `${tool} io ${shellQuote(udid)} screenshot --type=${type} "$f" >/dev/null 2>&1`;
+			const script = `f=$(mktemp /tmp/volt-shot.XXXXXX) || exit 1; { ${shoot('xcrun simctl')} || ${shoot(shellQuote(SYSTEM_SIMCTL))}; } && cat "$f"; s=$?; rm -f "$f"; exit $s`;
 			return (await this.remote(host, script, { timeout: ACTION_TIMEOUT })).stdout;
 		}
-		const file = join(tmpdir(), `volt-shot-${generateUuid()}.png`);
+		const file = join(tmpdir(), `volt-shot-${generateUuid()}.${type === 'jpeg' ? 'jpg' : 'png'}`);
 		try {
-			await this.exec(simctl('io', udid, 'screenshot', '--type=png', file));
+			await this.simctlRun(host, ['io', udid, 'screenshot', `--type=${type}`, file]);
 			return await fs.readFile(file);
 		} finally {
 			await fs.rm(file, { force: true });
@@ -465,7 +597,7 @@ export class VoltDevicesService implements IVoltDevicesService {
 		if (cached) {
 			return cached;
 		}
-		const result = await this.run(host, ['xcrun', 'simctl', 'io', udid, 'enumerate'], { timeout: 10_000, allowFail: true }).catch(() => undefined);
+		const result = await this.simctlRun(host, ['io', udid, 'enumerate'], { timeout: 10_000, allowFail: true }).catch(() => undefined);
 		const screen = result ? parseSimctlScreen(text(result)) : undefined;
 		if (screen) {
 			this.iosScreens.set(key, screen);
@@ -489,7 +621,10 @@ export class VoltDevicesService implements IVoltDevicesService {
 			await this.run(host, [command.file, ...command.args]);
 			return;
 		}
-		const serial = await this.serial(host, device);
+		await this.withSerial(host, device, serial => this.androidInput(host, serial, input));
+	}
+
+	private async androidInput(host: IVoltDeviceHost, serial: string, input: VoltDeviceInput): Promise<void> {
 		const shell = (argv: readonly string[]) => this.run(host, ['adb', '-s', serial, 'shell', androidShell(argv)]);
 		const r = (value: number) => String(Math.round(value));
 		switch (input.kind) {
@@ -553,7 +688,7 @@ export class VoltDevicesService implements IVoltDevicesService {
 		}
 		try {
 			if (device.platform === 'ios') {
-				await this.run(host, ['xcrun', 'simctl', 'install', device.id, target], { timeout: INSTALL_TIMEOUT });
+				await this.simctlRun(host, ['install', device.id, target], { timeout: INSTALL_TIMEOUT });
 			} else {
 				const serial = await this.serial(host, device);
 				const result = await this.run(host, ['adb', '-s', serial, 'install', '-r', target], { timeout: INSTALL_TIMEOUT });
@@ -576,7 +711,7 @@ export class VoltDevicesService implements IVoltDevicesService {
 		}
 		if (device.platform === 'ios') {
 			const isUrl = /^[a-z][a-z0-9+.-]*:/i.test(value);
-			await this.run(host, isUrl ? ['xcrun', 'simctl', 'openurl', device.id, value] : ['xcrun', 'simctl', 'launch', device.id, value]);
+			await this.simctlRun(host, isUrl ? ['openurl', device.id, value] : ['launch', device.id, value]);
 			return;
 		}
 		const serial = await this.serial(host, device);
