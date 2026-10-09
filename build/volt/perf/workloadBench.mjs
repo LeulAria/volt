@@ -6,7 +6,8 @@
 // Multi-chat / browser / terminal workload with process-tree memory, renderer heap, latency and
 // main-thread responsiveness, followed by a close-everything step that checks what is released.
 // Usage: node build/volt/perf/workloadBench.mjs --app dev|<path/to/VOLT.app> --fixtures <agentSessions dir>
-//        [--chats 20] [--browsers 4] [--terminals 4] [--url http://127.0.0.1:9958/] [--port 9932] [--out file.json]
+//        [--chats 20] [--browsers 4] [--terminals 4] [--url http://127.0.0.1:9958/] [--port 9932] [--out file.json] [--hold]
+// --hold leaves the instance running (e.g. for build/volt/perf/heapRetainers.mjs).
 // The page at --url should exist (any local page; the bench uses a 3,000-row table with a canvas animation).
 
 import * as fs from 'node:fs';
@@ -24,6 +25,7 @@ const { values: opts } = parseArgs({
 		terminals: { type: 'string', default: '4' },
 		url: { type: 'string', default: 'http://127.0.0.1:9958/' },
 		settle: { type: 'string', default: '8000' },
+		hold: { type: 'boolean', default: false },
 		out: { type: 'string' },
 	}
 });
@@ -144,7 +146,9 @@ try {
 	result.samples.push(await sample('closed + 30s', instance, client));
 	await client.close();
 } finally {
-	await stop(instance);
+	if (!opts.hold) {
+		await stop(instance);
+	}
 }
 
 const opened = result.chatOpenMs.filter(ms => typeof ms === 'number');

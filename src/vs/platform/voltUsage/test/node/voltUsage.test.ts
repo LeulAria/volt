@@ -10,7 +10,7 @@ import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { claudeWindows, codexGroup, cursorRateModel, cursorWindows } from '../../node/usageAccounts.js';
 import { parseRateTable, rateKey, UsagePricing } from '../../node/usagePricing.js';
-import { billOncePerResponse, parseClaudeLine, parseTranscript } from '../../node/usageTranscripts.js';
+import { billOncePerResponse, ownString, parseClaudeLine, parseTranscript } from '../../node/usageTranscripts.js';
 
 suite('Volt usage', () => {
 
@@ -60,6 +60,23 @@ suite('Volt usage', () => {
 			const parsed = await parseTranscript({ path, provider: 'codex', mtimeMs: 0, size: 0 });
 			assert.deepStrictEqual(parsed.records.map(r => [r.model, r.uncached, r.cached, r.output, r.speed]), [['gpt-6-astra', 60, 40, 5, 'fast'], ['gpt-6-astra', 260, 40, 5, 'fast']]);
 			assert.strictEqual(codexGroup(parsed.rateLimits!.raw, 0).windows[0].usedPercent, 3);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test('Claude activity lists each session once and its hours, as standalone strings', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'volt-usage-'));
+		try {
+			const line = (session: string, ts: string) => JSON.stringify({ type: 'user', sessionId: session, timestamp: ts, message: { role: 'user', content: 'x'.repeat(200) } });
+			const path = join(dir, 'session.jsonl');
+			await writeFile(path, [line('s-1', '2026-10-03T09:10:00.000Z'), line('s-1', '2026-10-03T09:50:00.000Z'), line('s-2', '2026-10-03T11:00:00.000Z')].join('\n'));
+			const parsed = await parseTranscript({ path, provider: 'claude', mtimeMs: 0, size: 0 });
+			assert.deepStrictEqual(parsed.activity?.sessionIds, ['s-1', 's-2']);
+			assert.deepStrictEqual(parsed.activity?.hours, [Date.parse('2026-10-03T09:00:00.000Z'), Date.parse('2026-10-03T11:00:00.000Z')]);
+			const big = `"sessionId":"${'a'.repeat(36)}"${' '.repeat(1000)}`;
+			const copy = ownString(big.slice(13, 49));
+			assert.strictEqual(copy, 'a'.repeat(36));
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
