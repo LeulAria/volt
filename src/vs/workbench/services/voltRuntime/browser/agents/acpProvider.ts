@@ -102,7 +102,7 @@ interface IAcpChild {
 interface IAcpSpare {
 	readonly key: string;
 	/** The chat the spare was started for (its host MCP URL names it). */
-	readonly sessionId: string;
+	readonly sessionId: string | undefined;
 	readonly startedAt: number;
 	readonly session: Promise<IAcpSession>;
 	expiry?: ReturnType<typeof setTimeout>;

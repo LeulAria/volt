@@ -187,7 +187,8 @@ class BrowserWebSocket extends Disposable implements IWebSocket {
 			return;
 		}
 		this.traceSocketEvent(SocketDiagnosticsEventType.Write, data);
-		this._socket.send(data);
+		// The bytes never live in a SharedArrayBuffer; TypeScript 6 only narrows WebSocket.send to ArrayBuffer-backed views.
+		this._socket.send(data as ArrayBuffer | ArrayBufferView<ArrayBuffer>);
 	}
 
 	close(): void {

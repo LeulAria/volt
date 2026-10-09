@@ -37,9 +37,10 @@ import { IMultiDiffEditorHeader, IMultiDiffEditorLook, setMultiDiffEditorLookPro
 import { MultiDiffEditorInput } from '../../../multiDiffEditor/browser/multiDiffEditorInput.js';
 import { VIEWLET_ID as SCM_VIEWLET_ID } from '../../../scm/common/scm.js';
 import { AGENT_EDITOR_ID } from '../editor/agentEditorInput.js';
-import { AgentChangesScope, IAgentChangesTurn } from './agentSessionChanges.js';
+import { AgentChangesScope } from './agentSessionChanges.js';
 import { getAgentChangesSourceUri, parseAgentChangesSourceUri } from './agentSessionChangesService.js';
-import { AgentChangesHeader, AgentChangesHeaderTarget, getAgentCommitDiffTarget } from './agentChangesHeader.js';
+import { AgentChangesHeader, AgentChangesHeaderTarget, agentChangesScopeLabel, getAgentCommitDiffTarget } from './agentChangesHeader.js';
+
 import { AgentScmRepositoryFocus } from './agentScmRepository.js';
 import { setAgentChangesSession } from './agentTurnsView.js';
 
@@ -170,24 +171,6 @@ export class AgentReviewDiffLookContribution extends Disposable {
 	}
 }
 
-export function agentChangesScopeLabel(scope: AgentChangesScope, turn?: IAgentChangesTurn): string {
-	switch (scope) {
-		case 'pending':
-			return localize('voltAgent.changes.pending', "Pending Changes");
-		case 'lastTurn':
-			return localize('voltAgent.changes.lastTurn', "Last Agent Turn");
-		case 'staged':
-			return localize('voltAgent.changes.staged', "Staged");
-		case 'unstaged':
-			return localize('voltAgent.changes.unstaged', "Unstaged");
-		case 'uncommitted':
-			return localize('voltAgent.changes.uncommitted', "Uncommitted");
-		default:
-			return turn
-				? localize('voltAgent.changes.turnNumber', "Turn {0}", turn.number)
-				: localize('voltAgent.changes.turn', "Turn");
-	}
-}
 
 /**
  * Marks `host` `all-panes-collapsed` while every view of the side bar lent into it is collapsed, for

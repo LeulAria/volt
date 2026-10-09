@@ -249,3 +249,6 @@ export function summarizeResult(result: IAgentGitActionResult): { readonly title
 	}
 	return { title: localize('voltGit.done.nothing', "Nothing to do") };
 }
+
+/** Shows the agent tools area's Source Control view. */
+export const SHOW_AGENT_SCM_COMMAND_ID = 'workbench.action.voltAgentTools.showSourceControl';
