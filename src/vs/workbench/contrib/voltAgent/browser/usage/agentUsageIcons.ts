@@ -64,12 +64,29 @@ export function createPaceIcon(ahead: boolean): HTMLElement {
 	return svgIcon(ahead ? 'pace-up' : 'pace-down', [ahead ? PACE_UP_PATH : PACE_DOWN_PATH], { size: 15, strokeWidth: 1.8 });
 }
 
-/** Spoke opacities for the refresh spinner, brightest at 180° and fading back toward the top. */
+/**
+ * Starts or stops a {@link createRefreshSpinner}'s SMIL clock. Callers keep the spinner mounted and
+ * fade it in, but a running SMIL animation makes the renderer draw a frame on every vsync even at
+ * opacity 0, so pause it whenever it is not shown.
+ */
+export function setRefreshSpinnerRunning(spinner: Element, running: boolean): void {
+	const svg = spinner as SVGSVGElement;
+	if (typeof svg.pauseAnimations !== 'function' || svg.animationsPaused() === !running) {
+		return;
+	}
+	if (running) {
+		svg.unpauseAnimations();
+	} else {
+		svg.pauseAnimations();
+	}
+}
+
+/** Spoke opacities for the refresh spinner, brightest at 180 degrees and fading back toward the top. */
 const REFRESH_SPINNER_OPACITY = [0.14, 0.29, 0.43, 0.57, 0.71, 0.86, 1];
 
 /**
  * Activity spinner shown in place of the usage refresh icon while a reload is in flight.
- * Twelve discrete 30° steps over 0.75s, same motion as the system activity indicator.
+ * Twelve discrete 30-degree steps over 0.75s, same motion as the system activity indicator.
  */
 export function createRefreshSpinner(): SVGElement {
 	const svg = document.createElementNS(SVG_NS, 'svg');
@@ -101,5 +118,7 @@ export function createRefreshSpinner(): SVGElement {
 	spin.setAttribute('values', '0 12 12;30 12 12;60 12 12;90 12 12;120 12 12;150 12 12;180 12 12;210 12 12;240 12 12;270 12 12;300 12 12;330 12 12;360 12 12');
 	group.appendChild(spin);
 	svg.appendChild(group);
+	// Paused until a caller shows it (setRefreshSpinnerRunning).
+	svg.pauseAnimations();
 	return svg;
 }

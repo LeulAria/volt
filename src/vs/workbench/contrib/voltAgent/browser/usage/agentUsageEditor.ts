@@ -42,7 +42,7 @@ import { showUsageModelDialog } from './agentUsageModelDialog.js';
 import { copyUsagePage } from './agentUsagePageMirror.js';
 import { costTypeSegments, hasFasterSpeeds, renderShareBar, speedCostSegments, tokenTypeSegments } from './agentUsageShareBar.js';
 import { formatCost, formatDay, formatDuration, formatPercent, formatResetTime, formatShare, formatSlot, formatTokens } from './agentUsageFormat.js';
-import { createPaceIcon, createRefreshSpinner, createResetIcon, createTicketIcon } from './agentUsageIcons.js';
+import { createPaceIcon, createRefreshSpinner, createResetIcon, createTicketIcon, setRefreshSpinnerRunning } from './agentUsageIcons.js';
 import { IUsageModelRow, IUsageSummary, IUsageTotals, limitPace, metricValue, placeholderLimits, placeholderUsage, summarizeUsage, UsageMetric, UsageRange, UsageView } from './agentUsageModel.js';
 
 export const AGENT_USAGE_EDITOR_ID = 'workbench.editor.voltUsage';
@@ -159,6 +159,7 @@ export class AgentUsageEditor extends EditorPane {
 	private viewSegment!: IVoltSegmented<UsageView>;
 	private rangeSegment!: IVoltSegmented<UsageRange>;
 	private refreshButton!: HTMLButtonElement;
+	private refreshSpinner!: SVGElement;
 	private headerBackdrop!: HTMLElement;
 	/** A copy of the page for the header's blurred backdrop; dropped whenever the page changes. */
 	private headerMirror: HTMLElement | undefined;
@@ -233,7 +234,7 @@ export class AgentUsageEditor extends EditorPane {
 		this.refreshButton = append(this.rangeBar, $('button.volt-usage-refresh')) as HTMLButtonElement;
 		this.refreshButton.type = 'button';
 		this.refreshButton.appendChild(renderIcon(Codicon.refresh));
-		this.refreshButton.appendChild(createRefreshSpinner());
+		this.refreshSpinner = this.refreshButton.appendChild(createRefreshSpinner());
 		const refreshLabel = localize('voltUsage.refresh', "Refresh");
 		this.refreshButton.setAttribute('aria-label', refreshLabel);
 		setAgentTooltip(this.refreshButton, refreshLabel);
@@ -427,6 +428,7 @@ export class AgentUsageEditor extends EditorPane {
 		this.loadingLimits = true;
 		if (!quiet) {
 			this.refreshButton.classList.add('spinning');
+			setRefreshSpinnerRunning(this.refreshSpinner, true);
 			this.refreshButton.setAttribute('aria-busy', 'true');
 		}
 		if (!this.snapshot || !this.limits) {
@@ -473,6 +475,7 @@ export class AgentUsageEditor extends EditorPane {
 		await Promise.allSettled([usage, limits]);
 		if (version === this.loadVersion) {
 			this.refreshButton.classList.remove('spinning');
+			setRefreshSpinnerRunning(this.refreshSpinner, false);
 			this.refreshButton.removeAttribute('aria-busy');
 		}
 	}
