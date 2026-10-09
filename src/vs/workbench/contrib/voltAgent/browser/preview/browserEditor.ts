@@ -2359,19 +2359,7 @@ export class VoltBrowserView extends Disposable {
 		pill.type = 'button';
 		pill.appendChild(createPointerIcon());
 		append(pill, $('span')).textContent = localize('voltBrowser.takeControl', "Take control");
-		const place = (e: PointerEvent) => {
-			const box = lock.getBoundingClientRect();
-			const width = pill.offsetWidth || 120;
-			const height = pill.offsetHeight || 36;
-			const left = Math.min(Math.max(8, e.clientX - box.left - width / 2), box.width - width - 8);
-			const top = Math.min(Math.max(8, e.clientY - box.top - height / 2), box.height - height - 8);
-			pill.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
-			lock.classList.add('hovering');
-		};
 		const store = new DisposableStore();
-		store.add(addDisposableListener(lock, 'pointermove', place));
-		store.add(addDisposableListener(lock, 'pointerenter', place));
-		store.add(addDisposableListener(lock, 'pointerleave', () => lock.classList.remove('hovering')));
 		store.add(addDisposableListener(lock, 'pointerdown', e => {
 			e.preventDefault();
 			e.stopPropagation();

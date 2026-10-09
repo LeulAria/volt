@@ -35,11 +35,12 @@ export async function keepUserFocus<T>(doc: Document, work: () => Promise<T>): P
 			(before as HTMLElement).focus({ preventScroll: true });
 		}
 	};
-	const listener = addDisposableListener(doc, 'focusin', () => restore(), true);
-	// A guest page taking focus shows up in the embedder as the <webview> becoming active, which
-	// may not fire focusin on every Chromium path: also check after each event loop turn.
+	// A <webview> taking focus fires `focus` (not `focusin`) on its element; capturing it at the
+	// document puts focus back before anything the user types can reach the page.
+	const listener = addDisposableListener(doc, 'focus', () => restore(), true);
+	// A fallback for any other path (a guest process grabbing focus without an event).
 	const win = doc.defaultView;
-	const interval = win?.setInterval(restore, 50);
+	const interval = win?.setInterval(restore, 30);
 	try {
 		return await work();
 	} finally {
