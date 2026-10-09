@@ -20,7 +20,7 @@ import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/ru
 import { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { AgentRunOn, AgentWorktreeTarget } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
-import { imageAttachmentsFromMentions, resourceAttachmentsFromMentions } from '../composer/agentMentions.js';
+import { imageAttachmentsFromMentions, resourceAttachmentsFromMentions } from '../composer/agentMentionImages.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IVoltResourceAttachment, MAX_EMBEDDED_RESOURCE_CHARS } from '../../../../services/voltRuntime/common/fileAttachments.js';
 import type { IAgentPromptDisplay, IAgentUserMessage } from '../editor/agentEditor.js';

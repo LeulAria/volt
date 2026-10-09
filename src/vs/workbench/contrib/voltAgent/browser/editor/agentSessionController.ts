@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -43,6 +43,37 @@ export interface IAgentSessionHost {
 	recordUser?(message: IAgentUserMessage): void;
 	recordMode?(mode: string): void;
 }
+
+/**
+ * What views, the editor input and the turn host use of a chat's session controller. In a window
+ * running against the Volt agent server it mirrors the server's controller (same messages, same
+ * change kinds); in-process and on the server it is {@link AgentSessionController}.
+ */
+export interface IAgentSessionControl extends IDisposable {
+	readonly onDidChange: Event<IAgentSessionChange>;
+	readonly onDidBecomeIdle: Event<void>;
+	readonly isRunning: boolean;
+	setHost(host: IAgentSessionHost): void;
+	skipCurrentRun(): void;
+	beginTurn(spec: IAgentTurnSpec): IAgentAssistantMessage;
+	endUnstartedTurn(turnId: string, failure: string | undefined): void;
+	recordSteer(text: string): boolean;
+	/**
+	 * Where the transcript comes from when another process owns it (the agent server): the input
+	 * loads it through this instead of reading the history log.
+	 */
+	loadTranscript?(): Promise<{ readonly messages: IAgentMessage[]; readonly contextUsed?: number; readonly contextWindow?: number }>;
+	/**
+	 * Set when another process owns the transcript: a view's own change to the transcript (a stopped
+	 * reply, an edited plan, a cut before an edited prompt) goes to that owner, which records it.
+	 */
+	forwardRecord?(record: AgentSessionRecord): void;
+}
+
+/** A change a view made to a chat's transcript, see {@link IAgentSessionControl.forwardRecord}. */
+export type AgentSessionRecord =
+	| { readonly kind: 'assistant'; readonly message: IAgentAssistantMessage; readonly final: boolean; readonly status: AgentSessionStatus }
+	| { readonly kind: 'truncate'; readonly messageId: string };
 
 /** One turn the orchestrator starts: what the transcript shows and what the model reads. */
 export interface IAgentTurnSpec {
@@ -162,7 +193,7 @@ export function hasVisibleReply(message: IAgentAssistantMessage): boolean {
  * so switching chats or closing a busy panel never drops tool cards, approvals,
  * or the final reply. A panel only listens to redraw.
  */
-export class AgentSessionController extends Disposable {
+export class AgentSessionController extends Disposable implements IAgentSessionControl {
 
 	private readonly _onDidChange = this._register(new Emitter<IAgentSessionChange>());
 	readonly onDidChange: Event<IAgentSessionChange> = this._onDidChange.event;

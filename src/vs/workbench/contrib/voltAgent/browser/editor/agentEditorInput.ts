@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -19,7 +20,7 @@ import { isCompactCommand } from '../../../../services/voltRuntime/common/compac
 import { handoffActivityOf } from '../blocks/agentHandoffActivity.js';
 import type { IAgentAssistantMessage, IAgentMessage, IAgentPromptDisplay, IAgentUserMessage } from './agentEditor.js';
 import { AgentHistoryCodec, assistantSummary, userMessageText } from '../history/agentHistoryCodec.js';
-import { AgentSessionController } from './agentSessionController.js';
+import { AgentSessionController, IAgentSessionControl } from './agentSessionController.js';
 import type { IAgentDisplayMention } from '../composer/agentMentions.js';
 
 const AgentEditorIcon = registerIcon('volt-agent-editor-label-icon', Codicon.robot, localize('voltAgentEditorLabelIcon', 'Icon of the New Agent editor tab.'));
@@ -37,7 +38,6 @@ export const EXPORT_AGENT_TRANSCRIPT_COMMAND_ID = 'workbench.action.voltAgent.ex
 export const OPEN_AGENT_SETTINGS_COMMAND_ID = 'workbench.action.voltAgent.openSettings';
 export const OPEN_AGENT_CUSTOMIZE_COMMAND_ID = 'workbench.action.voltAgent.customize';
 export const OPEN_AGENT_SIDE_PANEL_COMMAND_ID = 'workbench.action.openAgentSidePanel';
-export { AGENT_SIDE_PANEL_ID } from '../../../../browser/parts/titlebar/agentLayoutChrome.js';
 export const AGENT_SIDE_PANEL_VIEW_ID = 'workbench.panel.voltAgent.view';
 
 export const AGENT_SUBMIT_COMMAND_ID = 'workbench.action.voltAgent.submit';
@@ -61,6 +61,21 @@ const runningDetached = new Map<string, AgentEditorInput>();
 
 /** Inputs alive now, by chat: the newest one owns the chat's transcript and controller. */
 const liveInputs = new Map<string, AgentEditorInput>();
+
+/**
+ * Makes the controller of a new input. A window running its agents in the Volt agent server
+ * installs one that mirrors the server's controller; undefined runs the chat in this process.
+ */
+export type AgentSessionControlFactory = (input: AgentEditorInput, instantiationService: IInstantiationService) => IAgentSessionControl | undefined;
+let controlFactory: AgentSessionControlFactory | undefined;
+
+export function setAgentSessionControlFactory(factory: AgentSessionControlFactory | undefined): void {
+	controlFactory = factory;
+}
+
+const onDidCreateInputEmitter = new Emitter<AgentEditorInput>();
+/** Every new agent input (the agent server publishes their transcripts). */
+export const onDidCreateAgentEditorInput: Event<AgentEditorInput> = onDidCreateInputEmitter.event;
 
 export interface IAgentQueuedPrompt {
 	id: string;
@@ -106,7 +121,7 @@ export class AgentEditorInput extends EditorInput {
 	private partialTimer: ReturnType<typeof setTimeout> | undefined;
 	private draftTimer: ReturnType<typeof setTimeout> | undefined;
 	/** Reduces and records this chat's run events, whether or not a panel shows it. */
-	private _controller: AgentSessionController;
+	private _controller: IAgentSessionControl;
 	private detached = false;
 	private adopted = false;
 
@@ -131,7 +146,7 @@ export class AgentEditorInput extends EditorInput {
 			runningDetached.delete(this.sessionId);
 			this._controller = running.handOver(this);
 		} else {
-			this._controller = instantiationService.createInstance(AgentSessionController, this);
+			this._controller = controlFactory?.(this, instantiationService) ?? instantiationService.createInstance(AgentSessionController, this);
 		}
 		liveInputs.set(this.sessionId, this);
 		this.lastTitle = historyService.get(this.sessionId)?.title || undefined;
@@ -142,9 +157,10 @@ export class AgentEditorInput extends EditorInput {
 				this._onDidChangeLabel.fire();
 			}
 		}));
+		onDidCreateInputEmitter.fire(this);
 	}
 
-	get controller(): AgentSessionController {
+	get controller(): IAgentSessionControl {
 		return this._controller;
 	}
 
@@ -183,7 +199,7 @@ export class AgentEditorInput extends EditorInput {
 	}
 
 	/** Gives a reopened input the live transcript, history log, and controller of the run still going here. */
-	private handOver(next: AgentEditorInput): AgentSessionController {
+	private handOver(next: AgentEditorInput): IAgentSessionControl {
 		this.adopted = true;
 		next.messages = this.messages;
 		next.contextUsed = this.contextUsed;
@@ -218,6 +234,9 @@ export class AgentEditorInput extends EditorInput {
 
 	private async doLoad(): Promise<void> {
 		await this.historyService.whenReady;
+		if (this._controller.loadTranscript) {
+			return this.loadFromController(this._controller.loadTranscript.bind(this._controller));
+		}
 		if (!this.historyService.has(this.sessionId)) {
 			return;
 		}
@@ -278,6 +297,31 @@ export class AgentEditorInput extends EditorInput {
 		}
 	}
 
+	/**
+	 * Another process owns the transcript (the agent server) and has already seeded the model's
+	 * transcript and worktree; the draft and queue are still this window's.
+	 */
+	private async loadFromController(load: () => Promise<{ readonly messages: IAgentMessage[]; readonly contextUsed?: number; readonly contextWindow?: number }>): Promise<void> {
+		const [transcript, draft] = await Promise.all([
+			load(),
+			this.historyService.has(this.sessionId) ? this.history.loadDraft() : Promise.resolve(undefined),
+		]);
+		if (this.isDisposed()) {
+			return;
+		}
+		this.messages = transcript.messages;
+		this.contextUsed = transcript.contextUsed;
+		this.contextWindow = transcript.contextWindow;
+		this.restoredMode = this.historyService.get(this.sessionId)?.mode;
+		if (draft && !this.draft.trim() && !this.promptQueue.length) {
+			this.draft = draft.text;
+			this.draftMentions = (await this.codec.thawMentions(draft.mentions)) ?? [];
+			this.promptQueue = await this.thawQueue(draft.queue);
+			this.hasUnsavedContent = !!this.draft.trim();
+			this.lastDraftSignature = this.draftSignature();
+		}
+	}
+
 	private async thawQueue(stored: unknown[] | undefined): Promise<IAgentQueuedPrompt[]> {
 		if (!Array.isArray(stored)) {
 			return [];
@@ -310,6 +354,11 @@ export class AgentEditorInput extends EditorInput {
 		if (!turn) {
 			return;
 		}
+		if (this._controller.forwardRecord) {
+			// The owner of the transcript records it (and throttles partial snapshots).
+			this._controller.forwardRecord({ kind: 'assistant', message, final, status });
+			return;
+		}
 		if (this.partialTimer !== undefined) {
 			clearTimeout(this.partialTimer);
 			this.partialTimer = undefined;
@@ -340,6 +389,10 @@ export class AgentEditorInput extends EditorInput {
 
 	recordTruncate(message: IAgentMessage | undefined): void {
 		const turn = message?.id;
+		if (turn && this._controller.forwardRecord) {
+			this._controller.forwardRecord({ kind: 'truncate', messageId: turn });
+			return;
+		}
 		if (turn) {
 			const handle = this.history;
 			this.sequence(async () => handle.truncate(turn));

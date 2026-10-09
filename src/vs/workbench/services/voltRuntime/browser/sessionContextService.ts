@@ -197,6 +197,11 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 		return this.projectMap.get(id);
 	}
 
+	/** Every project (scratch folders included) and every chat's project, for the agent server to mirror to its clients. */
+	exportState(): { readonly projects: readonly IVoltProjectRecord[]; readonly bindings: Readonly<Record<string, string>> } {
+		return { projects: [...this.projectMap.values()], bindings: Object.fromEntries(this.bindings) };
+	}
+
 	registerProject(root: URI, displayName?: string): IVoltProjectRecord {
 		return this.addProject(root, displayName, false);
 	}

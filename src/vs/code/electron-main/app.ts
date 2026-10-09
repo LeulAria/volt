@@ -124,6 +124,8 @@ import { NativeWebContentExtractorService } from '../../platform/webContentExtra
 import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../platform/voltStdio/common/voltStdio.js';
 import { createVoltStdioChannel, VoltStdioMainService } from '../../platform/voltStdio/electron-main/voltStdioMainService.js';
 import { IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../platform/voltHostMcp/common/voltHostMcp.js';
+import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME } from '../../platform/voltAgentServer/common/agentServerService.js';
+import { VoltAgentServerMainService } from '../../platform/voltAgentServer/electron-main/agentServerMainService.js';
 import { VoltHostMcpMainService } from '../../platform/voltHostMcp/electron-main/voltHostMcpMainService.js';
 import { IVoltExternalMcpService, VOLT_EXTERNAL_MCP_CHANNEL_NAME } from '../../platform/voltExternalMcp/common/voltExternalMcp.js';
 import { VoltExternalMcpMainService } from '../../platform/voltExternalMcp/electron-main/voltExternalMcpMainService.js';
@@ -1080,6 +1082,9 @@ export class CodeApplication extends Disposable {
 		// Volt host MCP (questions and in-app browser tools for launched agents)
 		services.set(IVoltHostMcpService, new SyncDescriptor(VoltHostMcpMainService, undefined, false /* proxied to other processes */));
 
+		// Volt agent server (keeps the profile's agents running outside the windows)
+		services.set(IVoltAgentServerMainService, new SyncDescriptor(VoltAgentServerMainService, undefined, true));
+
 		// Volt orchestrator as an OAuth MCP server for outside agents
 		services.set(IVoltExternalMcpService, new SyncDescriptor(VoltExternalMcpMainService, undefined, false /* proxied to other processes */));
 
@@ -1273,6 +1278,9 @@ export class CodeApplication extends Disposable {
 		// Volt ACP stdio
 		const voltStdioChannel = createVoltStdioChannel(accessor.get(IVoltStdioService) as VoltStdioMainService, disposables);
 		mainProcessElectronServer.registerChannel(VOLT_STDIO_CHANNEL_NAME, voltStdioChannel);
+
+		// Volt agent server
+		mainProcessElectronServer.registerChannel(VOLT_AGENT_SERVER_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltAgentServerMainService), disposables));
 
 		// Volt host MCP
 		const voltHostMcpChannel = ProxyChannel.fromService(accessor.get(IVoltHostMcpService), disposables);

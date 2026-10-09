@@ -5,6 +5,9 @@
 
 import { $ } from '../../../../../base/browser/dom.js';
 import { renderAntigravityBrand } from './antigravityIcon.js';
+import { providerFamily } from './providerFamily.js';
+
+export { providerFamily };
 
 export interface IProviderBrandPath {
 	readonly d: string;
@@ -116,35 +119,6 @@ export const PROVIDER_BRANDS: Record<string, IProviderBrand> = {
 	},
 };
 
-/**
- * Providers that share a rail entry in the picker. Codex is OpenAI's CLI, so an API key
- * connection to OpenAI belongs on the same tab rather than beside a duplicate icon, and every
- * on-device runtime collapses into one "Local" tab.
- */
-const PROVIDER_FAMILIES: Record<string, string> = {
-	codex: 'codex',
-	openai: 'codex',
-	claude: 'claude',
-	'claude-code': 'claude',
-	anthropic: 'claude',
-	cursor: 'cursor',
-	'cursor-acp': 'cursor',
-	grok: 'grok',
-	xai: 'grok',
-	opencode: 'opencode',
-	antigravity: 'antigravity',
-	agy: 'antigravity',
-	gemini: 'antigravity',
-	'gemini-cli': 'antigravity',
-	'gemini-acp': 'antigravity',
-	kimi: 'kimi',
-	muse: 'muse',
-	ollama: 'local',
-	lmstudio: 'local',
-	'openai-compat': 'local',
-	openrouter: 'openrouter',
-};
-
 const FAMILY_LABELS: Record<string, string> = {
 	codex: 'Codex',
 	claude: 'Claude',
@@ -158,10 +132,6 @@ const FAMILY_LABELS: Record<string, string> = {
 	openrouter: 'OpenRouter',
 };
 
-/** Rail identity for a provider: several provider ids can collapse onto one family. */
-export function providerFamily(providerId: string): string {
-	return PROVIDER_FAMILIES[providerId] ?? providerId;
-}
 
 export function providerFamilyLabel(providerId: string): string {
 	const family = providerFamily(providerId);

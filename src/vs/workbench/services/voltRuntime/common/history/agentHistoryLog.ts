@@ -5,6 +5,8 @@
 
 import { fuzzyScore } from '../../../../../base/common/filters.js';
 import { escapeRegExpCharacters } from '../../../../../base/common/strings.js';
+import { basename } from '../../../../../base/common/resources.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import {
 	AGENT_HISTORY_FORMAT_VERSION,
 	AgentHistoryEntry,
@@ -12,12 +14,14 @@ import {
 	AgentSessionStatus,
 	IAgentAssistantEntry,
 	IAgentHistoryIndex,
+	IAgentHistoryListOptions,
 	IAgentForkOrigin,
 	IAgentSessionHeader,
 	IAgentSessionMeta,
 	IAgentSessionSearchOptions,
 	IAgentSessionTranscript,
 	IAgentSessionTurn,
+	IAgentSessionWorkspace,
 	IAgentUserEntry,
 } from './agentHistory.js';
 
@@ -626,3 +630,36 @@ export function renderTranscriptMarkdown(title: string, transcript: IAgentSessio
 }
 
 //#endregion
+
+/** Whether a chat belongs in a history listing: it has a turn or a draft, and passes the filters. */
+export function matchesHistoryListOptions(meta: IAgentSessionMeta, options?: IAgentHistoryListOptions): boolean {
+	if (meta.turnCount === 0 && !meta.hasDraft) {
+		return false;
+	}
+	if (!options?.includeArchived && meta.archived) {
+		return false;
+	}
+	if (options?.workspaceId && meta.workspaceId !== options.workspaceId) {
+		return false;
+	}
+	return true;
+}
+
+/** The workspace a window records in the chats it starts. */
+export function describeWorkspace(workspaceContextService: IWorkspaceContextService): IAgentSessionWorkspace {
+	const workspace = workspaceContextService.getWorkspace();
+	const folders = workspace.folders.map(folder => folder.uri.fsPath);
+	const label = workspace.folders[0]?.name
+		|| (workspace.configuration ? basename(workspace.configuration).replace(/\.code-workspace$/, '') : '')
+		|| 'Untitled';
+	return { id: workspace.id, label, folders };
+}
+
+/** {@link AgentHistoryService.exportState}: what the agent server mirrors to its clients. */
+export interface IAgentHistoryExport {
+	readonly sessions: readonly IAgentSessionMeta[];
+	readonly onDisk: readonly string[];
+	readonly pinnedWorkspaces: Readonly<Record<string, IAgentSessionWorkspace>>;
+	readonly pinnedParents: Readonly<Record<string, string>>;
+	readonly pinnedSubagents: readonly string[];
+}

@@ -1129,6 +1129,26 @@ export default tseslint.config(
 					]
 				},
 				{
+					// The Volt agent server hosts the agent runtime and the chat session controller in Node.
+					// They live in browser folders (the window ran them first) but touch no DOM; the server
+					// loads exactly these modules, nothing else from browser layers.
+					'target': 'src/vs/server/node/voltAgent/**',
+					'layer': 'node',
+					'restrictions': [
+						'vs/base/~',
+						'vs/base/parts/*/~',
+						'vs/platform/*/~',
+						'vs/editor/common/**',
+						'vs/workbench/~',
+						'vs/workbench/services/*/~',
+						'vs/workbench/contrib/*/~',
+						'vs/server/~',
+						'vs/workbench/services/voltRuntime/browser/**',
+						'vs/workbench/contrib/voltAgent/browser/**',
+						'minimist',
+					]
+				},
+				{
 					'target': 'src/vs/server/~',
 					'restrictions': [
 						'vs/base/~',
@@ -1252,7 +1272,7 @@ export default tseslint.config(
 					]
 				},
 				{
-					'target': 'src/{bootstrap-cli.ts,bootstrap-esm.ts,bootstrap-fork.ts,bootstrap-import.ts,bootstrap-meta.ts,bootstrap-node.ts,bootstrap-server.ts,cli.ts,main.ts,server-cli.ts,server-main.ts}',
+					'target': 'src/{bootstrap-cli.ts,bootstrap-esm.ts,bootstrap-fork.ts,bootstrap-import.ts,bootstrap-meta.ts,bootstrap-node.ts,bootstrap-server.ts,cli.ts,main.ts,server-cli.ts,server-main.ts,volt-agent-server-main.ts}',
 					'restrictions': [
 						'vs/**/common/*',
 						'vs/**/node/*',
@@ -1463,6 +1483,14 @@ export default tseslint.config(
 			'@typescript-eslint/prefer-optional-chain': 'warn',
 			'@typescript-eslint/prefer-readonly': 'warn',
 			'@typescript-eslint/consistent-generic-constructors': ['warn', 'constructor'],
+		}
+	},
+	// The Volt agent server runs DOM-free browser-layer modules in Node; its import patterns above
+	// list exactly which ones.
+	{
+		files: ['src/vs/server/node/voltAgent/**/*.ts'],
+		rules: {
+			'local/code-layering': 'off',
 		}
 	},
 );
