@@ -1,4 +1,8 @@
 "use strict";
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -47,10 +51,6 @@ exports.scanBuiltinExtensions = scanBuiltinExtensions;
 exports.translatePackageJSON = translatePackageJSON;
 exports.webpackExtensions = webpackExtensions;
 exports.buildExtensionMedia = buildExtensionMedia;
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
 const event_stream_1 = __importDefault(require("event-stream"));
 const fs_1 = __importDefault(require("fs"));
 const child_process_1 = __importDefault(require("child_process"));
@@ -397,6 +397,33 @@ function packageAllLocalExtensionsStream(forWeb, disableMangle) {
         packageNativeLocalExtensionsStream(forWeb, disableMangle)
     ]);
 }
+let extensionShards;
+/**
+ * VOLT_EXTENSIONS_SHARD=<index>/<count> builds one share of the local extensions, so several
+ * processes can bundle them at once. Extensions are balanced by their number of TypeScript files
+ * (largest first, each to the lightest shard), which is the same split in every process.
+ */
+function inExtensionShard(name) {
+    const match = /^(\d+)\/(\d+)$/.exec(process.env.VOLT_EXTENSIONS_SHARD ?? '');
+    if (!match) {
+        return true;
+    }
+    const [index, count] = [Number(match[1]), Number(match[2])];
+    if (!extensionShards) {
+        const weights = glob_1.default.sync('extensions/*/package.json')
+            .map(manifestPath => path_1.default.basename(path_1.default.dirname(manifestPath)))
+            .map(extension => ({ extension, weight: glob_1.default.sync(`extensions/${extension}/**/*.ts`, { cwd: root, ignore: ['**/node_modules/**', '**/*.d.ts'] }).length }))
+            .sort((a, b) => b.weight - a.weight || a.extension.localeCompare(b.extension));
+        const loads = new Array(count).fill(0);
+        extensionShards = new Map();
+        for (const { extension, weight } of weights) {
+            const lightest = loads.indexOf(Math.min(...loads));
+            loads[lightest] += weight + 1;
+            extensionShards.set(extension, lightest);
+        }
+    }
+    return (extensionShards.get(name) ?? 0) === index;
+}
 /**
  * @param forWeb build the extensions that have web targets
  * @param disableMangle disable the mangler
@@ -414,7 +441,8 @@ function doPackageLocalExtensionsStream(forWeb, disableMangle, native) {
         .filter(({ name }) => native ? nativeExtensionsSet.has(name) : !nativeExtensionsSet.has(name))
         .filter(({ name }) => excludedExtensions.indexOf(name) === -1)
         .filter(({ name }) => builtInExtensions.every(b => b.name !== name))
-        .filter(({ manifestPath }) => (forWeb ? isWebExtension(require(manifestPath)) : true)));
+        .filter(({ manifestPath }) => (forWeb ? isWebExtension(require(manifestPath)) : true))
+        .filter(extension => inExtensionShard(extension.name)));
     const localExtensionsStream = minifyExtensionResources(event_stream_1.default.merge(...localExtensionsDescriptions.map(extension => {
         return fromLocal(extension.path, forWeb, disableMangle)
             .pipe((0, gulp_rename_1.default)(p => p.dirname = `extensions/${extension.name}/${p.dirname}`));

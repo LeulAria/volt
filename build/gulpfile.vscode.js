@@ -6,6 +6,8 @@
 'use strict';
 
 const gulp = require('gulp');
+const cp = require('child_process');
+const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const es = require('event-stream');
@@ -31,7 +33,7 @@ const { config } = require('./lib/electron');
 const createAsar = require('./lib/asar').createAsar;
 const minimist = require('minimist');
 const { compileBuildWithoutManglingTask, compileBuildWithManglingTask } = require('./gulpfile.compile');
-const { compileNonNativeExtensionsBuildTask, compileNativeExtensionsBuildTask, compileAllExtensionsBuildTask, compileExtensionMediaBuildTask, cleanExtensionsBuildTask } = require('./gulpfile.extensions');
+const { bundleMarketplaceExtensionsBuildTask, compileNonNativeExtensionsBuildTask, compileNativeExtensionsBuildTask, compileAllExtensionsBuildTask, compileExtensionMediaBuildTask, cleanExtensionsBuildTask } = require('./gulpfile.extensions');
 const { promisify } = require('util');
 const glob = promisify(require('glob'));
 const rcedit = promisify(require('rcedit'));
@@ -471,6 +473,26 @@ function patchWin32DependenciesTask(destinationFolderName) {
 	};
 }
 
+/**
+ * Bundles the non-native built-in extensions in several gulp processes at once, each taking a
+ * share of them (VOLT_EXTENSIONS_SHARD). VOLT_EXTENSIONS_SHARDS sets the count (default: half the cores, at most 4).
+ */
+function bundleNonNativeExtensionsInChildProcesses() {
+	const count = Math.max(1, Number(process.env.VOLT_EXTENSIONS_SHARDS) || Math.min(4, Math.floor(os.availableParallelism() / 2)));
+	const runShard = (/** @type {number} */ index) => new Promise((resolve, reject) => {
+		const child = cp.spawn(process.execPath, [...process.execArgv, require.resolve('gulp/bin/gulp.js'), 'bundle-non-native-extensions-build'], {
+			cwd: root,
+			stdio: 'inherit',
+			env: { ...process.env, VOLT_EXTENSIONS_SHARD: `${index}/${count}` }
+		});
+		child.on('error', reject);
+		child.on('exit', code => code === 0 ? resolve(undefined) : reject(new Error(`extension bundle shard ${index}/${count} exited with ${code}`)));
+	});
+	const fn = () => Promise.all(Array.from({ length: count }, (_, index) => runShard(index)));
+	fn.taskName = `bundle-non-native-extensions-build (${count} processes)`;
+	return fn;
+}
+
 const buildRoot = path.dirname(root);
 
 const BUILD_TARGETS = [
@@ -492,26 +514,32 @@ BUILD_TARGETS.forEach(buildTarget => {
 		const sourceFolderName = `out-vscode${dashed(minified)}`;
 		const destinationFolderName = `VSCode${dashed(platform)}${dashed(arch)}`;
 
-		const tasks = [
-			compileNativeExtensionsBuildTask,
+		const packageTasks = [
 			util.rimraf(path.join(buildRoot, destinationFolderName)),
 			packageTask(platform, arch, sourceFolderName, destinationFolderName, opts)
 		];
 
 		if (platform === 'win32') {
-			tasks.push(patchWin32DependenciesTask(destinationFolderName));
+			packageTasks.push(patchWin32DependenciesTask(destinationFolderName));
 		}
 
-		const vscodeTaskCI = task.define(`vscode${dashed(platform)}${dashed(arch)}${dashed(minified)}-ci`, task.series(...tasks));
+		const vscodeTaskCI = task.define(`vscode${dashed(platform)}${dashed(arch)}${dashed(minified)}-ci`, task.series(compileNativeExtensionsBuildTask, ...packageTasks));
 		gulp.task(vscodeTaskCI);
 
+		// The core (compile, then bundle/minify) and the built-in extensions share no inputs or
+		// outputs, so they build side by side. Webpack runs in separate gulp processes so both use
+		// their own CPUs instead of taking turns on one event loop. VOLT_BUILD_SERIAL=1 builds in one process.
 		const vscodeTask = task.define(`vscode${dashed(platform)}${dashed(arch)}${dashed(minified)}`, task.series(
-			minified ? compileBuildWithManglingTask : compileBuildWithoutManglingTask,
-			cleanExtensionsBuildTask,
-			compileNonNativeExtensionsBuildTask,
-			compileExtensionMediaBuildTask,
-			minified ? minifyVSCodeTask : bundleVSCodeTask,
-			vscodeTaskCI
+			task.parallel(
+				task.series(
+					minified ? compileBuildWithManglingTask : compileBuildWithoutManglingTask,
+					minified ? minifyVSCodeTask : bundleVSCodeTask
+				),
+				process.env.VOLT_BUILD_SERIAL
+					? task.series(cleanExtensionsBuildTask, compileNonNativeExtensionsBuildTask, compileExtensionMediaBuildTask, compileNativeExtensionsBuildTask)
+					: task.series(cleanExtensionsBuildTask, bundleMarketplaceExtensionsBuildTask, bundleNonNativeExtensionsInChildProcesses(), compileExtensionMediaBuildTask, compileNativeExtensionsBuildTask)
+			),
+			...packageTasks
 		));
 		gulp.task(vscodeTask);
 

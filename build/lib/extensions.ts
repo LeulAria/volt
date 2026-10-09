@@ -412,6 +412,35 @@ export function packageAllLocalExtensionsStream(forWeb: boolean, disableMangle: 
 	]);
 }
 
+let extensionShards: Map<string, number> | undefined;
+
+/**
+ * VOLT_EXTENSIONS_SHARD=<index>/<count> builds one share of the local extensions, so several
+ * processes can bundle them at once. Extensions are balanced by their number of TypeScript files
+ * (largest first, each to the lightest shard), which is the same split in every process.
+ */
+function inExtensionShard(name: string): boolean {
+	const match = /^(\d+)\/(\d+)$/.exec(process.env.VOLT_EXTENSIONS_SHARD ?? '');
+	if (!match) {
+		return true;
+	}
+	const [index, count] = [Number(match[1]), Number(match[2])];
+	if (!extensionShards) {
+		const weights = (<string[]>glob.sync('extensions/*/package.json'))
+			.map(manifestPath => path.basename(path.dirname(manifestPath)))
+			.map(extension => ({ extension, weight: glob.sync(`extensions/${extension}/**/*.ts`, { cwd: root, ignore: ['**/node_modules/**', '**/*.d.ts'] }).length }))
+			.sort((a, b) => b.weight - a.weight || a.extension.localeCompare(b.extension));
+		const loads = new Array<number>(count).fill(0);
+		extensionShards = new Map();
+		for (const { extension, weight } of weights) {
+			const lightest = loads.indexOf(Math.min(...loads));
+			loads[lightest] += weight + 1;
+			extensionShards.set(extension, lightest);
+		}
+	}
+	return (extensionShards.get(name) ?? 0) === index;
+}
+
 /**
  * @param forWeb build the extensions that have web targets
  * @param disableMangle disable the mangler
@@ -431,6 +460,7 @@ function doPackageLocalExtensionsStream(forWeb: boolean, disableMangle: boolean,
 			.filter(({ name }) => excludedExtensions.indexOf(name) === -1)
 			.filter(({ name }) => builtInExtensions.every(b => b.name !== name))
 			.filter(({ manifestPath }) => (forWeb ? isWebExtension(require(manifestPath)) : true))
+			.filter(extension => inExtensionShard(extension.name))
 	);
 	const localExtensionsStream = minifyExtensionResources(
 		es.merge(

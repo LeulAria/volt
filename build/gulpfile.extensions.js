@@ -253,9 +253,14 @@ const bundleMarketplaceExtensionsBuildTask = task.define('bundle-marketplace-ext
  * Compiles the non-native extensions for the build
  * @note this does not clean the directory ahead of it. See {@link cleanExtensionsBuildTask} for that.
  */
+const bundleNonNativeExtensionsBuildTask = task.define('bundle-non-native-extensions-build', () => ext.packageNonNativeLocalExtensionsStream(false, false).pipe(gulp.dest('.build')));
+gulp.task(bundleMarketplaceExtensionsBuildTask);
+gulp.task(bundleNonNativeExtensionsBuildTask);
+exports.bundleMarketplaceExtensionsBuildTask = bundleMarketplaceExtensionsBuildTask;
+
 const compileNonNativeExtensionsBuildTask = task.define('compile-non-native-extensions-build', task.series(
 	bundleMarketplaceExtensionsBuildTask,
-	task.define('bundle-non-native-extensions-build', () => ext.packageNonNativeLocalExtensionsStream(false, false).pipe(gulp.dest('.build')))
+	bundleNonNativeExtensionsBuildTask
 ));
 gulp.task(compileNonNativeExtensionsBuildTask);
 exports.compileNonNativeExtensionsBuildTask = compileNonNativeExtensionsBuildTask;

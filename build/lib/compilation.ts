@@ -121,7 +121,19 @@ export function transpileTask(src: string, out: string, esbuild?: boolean): task
 	return task;
 }
 
-export function compileTask(src: string, out: string, build: boolean, options: { disableMangle?: boolean; preserveEnglish?: boolean } = {}): task.StreamTask {
+export function compileTask(src: string, out: string, build: boolean, options: { disableMangle?: boolean; preserveEnglish?: boolean } = {}): task.StreamTask | task.PromiseTask {
+
+	// VOLT_BUILD_IGNORE_TYPE_ERRORS=1: report type errors but still package. Mangling needs a clean type check, so it is off too.
+	const ignoreTypeErrors = !!process.env.VOLT_BUILD_IGNORE_TYPE_ERRORS;
+	const mangle = build && !options.disableMangle && !ignoreTypeErrors;
+	// Without mangling, product builds type-check and emit with tsgo (the native TypeScript
+	// compiler, ~6 s for src); VOLT_BUILD_ENGINE=tsc keeps the single-threaded TypeScript
+	// emitter. Mangling rewrites TypeScript through the language service, so it stays on tsc.
+	if (build && !mangle && process.env.VOLT_BUILD_ENGINE !== 'tsc') {
+		const fast: task.PromiseTask = fastProductCompile(src, out, { ignoreTypeErrors, preserveEnglish: !!options.preserveEnglish });
+		fast.taskName = `compile-${path.basename(src)}`;
+		return fast;
+	}
 
 	const task = () => {
 
@@ -129,8 +141,6 @@ export function compileTask(src: string, out: string, build: boolean, options: {
 			throw new Error('compilation requires 4GB of RAM');
 		}
 
-		// VOLT_BUILD_IGNORE_TYPE_ERRORS=1: report type errors but still package. Mangling needs a clean type check, so it is off too.
-		const ignoreTypeErrors = !!process.env.VOLT_BUILD_IGNORE_TYPE_ERRORS;
 		const compile = createCompile(src, { build, emitError: !ignoreTypeErrors, transpileOnly: false, preserveEnglish: !!options.preserveEnglish });
 		const srcPipe = gulp.src(`${src}/**`, { base: `${src}` });
 		const generator = new MonacoGenerator(false);
@@ -140,7 +150,7 @@ export function compileTask(src: string, out: string, build: boolean, options: {
 
 		// mangle: TypeScript to TypeScript
 		let mangleStream = es.through();
-		if (build && !options.disableMangle && !ignoreTypeErrors) {
+		if (mangle) {
 			let ts2tsMangler = new Mangler(compile.projectPath, (...data) => fancyLog(ansiColors.blue('[mangler]'), ...data), { mangleExports: true, manglePrivateFields: true });
 			const newContentsByFileName = ts2tsMangler.computeNewFileContents(new Set(['saveState']));
 			mangleStream = es.through(async function write(data: File & { sourceMap?: RawSourceMap }) {
@@ -170,6 +180,139 @@ export function compileTask(src: string, out: string, build: boolean, options: {
 
 	task.taskName = `compile-${path.basename(src)}`;
 	return task;
+}
+
+/**
+ * Product compile with tsgo: one native compiler run type-checks src and emits JavaScript and source
+ * maps into a scratch folder (same output as the TypeScript emitter, const enums inlined), then the
+ * usual steps run on it: NLS, source maps, resources, the import cycle check. Type errors and cycles
+ * fail the task unless VOLT_BUILD_IGNORE_TYPE_ERRORS is set.
+ */
+function fastProductCompile(src: string, out: string, options: { ignoreTypeErrors: boolean; preserveEnglish: boolean }): () => Promise<void> {
+	return async () => {
+		const started = Date.now();
+		const root = path.join(__dirname, '../..');
+		const srcRoot = path.join(root, src);
+		const emitDir = path.join(root, '.build', `tsgo-${path.basename(out)}`);
+		const generator = new MonacoGenerator(false);
+		if (src === 'src') {
+			generator.execute();
+		}
+		await fs.promises.rm(emitDir, { recursive: true, force: true });
+		const typeErrors = await runTsgo(path.join(srcRoot, 'tsconfig.json'), [
+			'--outDir', emitDir, '--rootDir', srcRoot, '--sourceMap', '--inlineSources',
+			'--sourceRoot', util.toFileUri(srcRoot), '--newLine', 'lf', '--noEmitOnError', 'false',
+		]);
+		fancyLog(`tsgo checked and emitted ${src} after ${ansiColors.magenta(`${Date.now() - started} ms`)}`);
+
+		const bom = require('gulp-bom') as typeof import('gulp-bom');
+		const sourcemaps = require('gulp-sourcemaps') as typeof import('gulp-sourcemaps');
+		const isUtf8Test = (f: File) => /(\/|\\)test(\/|\\).*utf8/.test(f.path);
+		const cycles = new ImportCycleCollector(srcRoot);
+		const emitted = gulp.src(`${emitDir}/**/*.js`, { base: emitDir })
+			// only modules compiled from TypeScript; .js under src is copied below as it is
+			.pipe(util.filter(file => fs.existsSync(path.join(srcRoot, file.relative.replace(/\.js$/, '.ts')))))
+			.pipe(es.map<File & { sourceMap?: RawSourceMap }, File | undefined>((file, cb): File | undefined => {
+				fs.readFile(`${file.path}.map`, 'utf8', (err, text) => {
+					if (err) {
+						cb(err);
+						return;
+					}
+					const map = JSON.parse(text) as RawSourceMap;
+					delete map.sourceRoot;
+					file.sourceMap = map;
+					cycles.add(file);
+					cb(undefined, file);
+				});
+				return undefined;
+			}))
+			.pipe(nls.nls({ preserveEnglish: options.preserveEnglish }))
+			.pipe(sourcemaps.write('.', { addComment: false, includeContent: true, sourceRoot: util.toFileUri(srcRoot) }));
+		const resources = gulp.src([`${src}/**`, `!${src}/**/*.ts`], { base: src, nodir: true })
+			.pipe(generator.stream);
+		await new Promise<void>((resolve, reject) => {
+			es.merge(emitted, resources)
+				.pipe(util.$if(isUtf8Test, bom()))
+				.pipe(gulp.dest(out))
+				.on('error', reject)
+				.on('finish', () => resolve());
+		});
+
+		const errors = [...typeErrors, ...cycles.errors()];
+		for (const error of errors) {
+			fancyLog(ansiColors.red('Error'), error);
+		}
+		fancyLog(`Finished compilation (tsgo) with ${errors.length} errors after ${ansiColors.magenta(`${Date.now() - started} ms`)}`);
+		if (errors.length && !options.ignoreTypeErrors) {
+			throw new Error(`Found ${errors.length} errors`);
+		}
+	};
+}
+
+/** Runs tsgo on the project with extra arguments; resolves with one entry per diagnostic. */
+function runTsgo(projectPath: string, args: string[]): Promise<string[]> {
+	const cp = require('child_process') as typeof import('child_process');
+	const root = path.join(__dirname, '../..');
+	const tsgo = path.join(path.dirname(require.resolve('@typescript/native-preview/package.json', { paths: [root] })), 'bin', 'tsgo');
+	return new Promise(resolve => {
+		const child = cp.spawn(process.execPath, [tsgo, '--project', projectPath, '--skipLibCheck', '--pretty', 'false', ...args], { cwd: root });
+		let output = '';
+		child.stdout.on('data', chunk => output += chunk);
+		child.stderr.on('data', chunk => output += chunk);
+		child.on('error', err => resolve([`tsgo failed to start: ${err.message}`]));
+		child.on('close', code => {
+			const errors: string[] = [];
+			for (const line of output.split(/\r?\n/)) {
+				if (/^\S.*\(\d+,\d+\): error /.test(line) || /^error /.test(line)) {
+					errors.push(line);
+				} else if (errors.length && /^\s+\S/.test(line)) {
+					errors[errors.length - 1] += `\n${line}`;
+				}
+			}
+			if (code && !errors.length) {
+				errors.push(`tsgo exited with ${code}: ${output.trim().slice(0, 2000)}`);
+			}
+			resolve(errors);
+		});
+	});
+}
+
+/** Relative-import cycles between emitted modules (type-only imports are gone), as the TypeScript builder checks after emit. */
+class ImportCycleCollector {
+	private readonly sources = new Map<string, string>();
+
+	constructor(private readonly root: string) { }
+
+	add(file: File): void {
+		if (file.contents && /\.js$/.test(file.path)) {
+			this.sources.set(path.join(this.root, file.relative), file.contents.toString());
+		}
+	}
+
+	errors(): string[] {
+		const tsutils = require('./tsb/utils') as typeof import('./tsb/utils');
+		const graph = new tsutils.graph.Graph<string>();
+		for (const [file, text] of this.sources) {
+			graph.lookupOrInsertNode(file);
+			for (const ref of ts.preProcessFile(text, true).importedFiles) {
+				if (!ref.fileName.startsWith('.') || ref.fileName.endsWith('.css')) {
+					continue;
+				}
+				const base = path.resolve(path.dirname(file), ref.fileName.replace(/\.js$/, ''));
+				const target = [`${base}.js`, path.join(base, 'index.js')].find(candidate => this.sources.has(candidate));
+				if (target) {
+					graph.inertEdge(file, target);
+				}
+			}
+		}
+		const errors: string[] = [];
+		for (const [, cycle] of graph.findCycles([...this.sources.keys()].sort((a, b) => a.localeCompare(b)))) {
+			if (cycle) {
+				errors.push(`CYCLIC dependency: ${cycle.map(file => path.relative(this.root, file).replace(/\.js$/, '.ts')).join(' -> ')}`);
+			}
+		}
+		return errors;
+	}
 }
 
 export function watchTask(out: string, build: boolean, srcPath: string = 'src'): task.StreamTask {
