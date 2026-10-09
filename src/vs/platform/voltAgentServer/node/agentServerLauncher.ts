@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import * as http from 'http';
 import { homedir, networkInterfaces } from 'os';
@@ -15,6 +15,8 @@ import { installLaunchdJob, restartLaunchdJob, uninstallLaunchdJob } from './lau
 
 const START_TIMEOUT_MS = 30_000;
 const STOP_TIMEOUT_MS = 5_000;
+/** How long a server that is alive but does not answer gets before it counts as stuck. */
+const UNRESPONSIVE_GRACE_MS = 20_000;
 
 /** The address phones reach this Mac at: the first private IPv4 address on a real interface. */
 export function localNetworkAddress(): string | undefined {
@@ -67,7 +69,10 @@ export class AgentServerLauncher {
 	}
 
 	private async doEnsure(): Promise<IVoltAgentServerEndpoint> {
-		const running = await this.healthy();
+		let running = await this.healthy();
+		if (!running) {
+			running = await this.settleUnresponsive();
+		}
 		const network = await this.networkAccess();
 		const sameBuild = !!running && running.appRoot === this.appRoot && (running.commit ?? undefined) === (this.options.commit ?? undefined);
 		if (running && sameBuild && (running.host !== '127.0.0.1') === network) {
@@ -200,6 +205,41 @@ export class AgentServerLauncher {
 		return !protectedRoots.some(root => (this.appRoot + sep).startsWith(root));
 	}
 
+	/**
+	 * A server process that is alive but does not answer must not get a second server next to it:
+	 * both would run the same chats and write the same history. It may be suspended (the Mac is
+	 * waking up, a debugger, `kill -STOP`) or busy; wait for it. A suspended one is left alone (the
+	 * caller retries later); one that stays stuck while running is killed, so a new one can start.
+	 */
+	private async settleUnresponsive(): Promise<IAgentServerRuntimeInfo | undefined> {
+		const info = await readAgentServerRuntime(this.paths);
+		if (!info || !isProcessAlive(info.pid)) {
+			return undefined;
+		}
+		const deadline = Date.now() + UNRESPONSIVE_GRACE_MS;
+		while (Date.now() < deadline) {
+			await new Promise(resolve => setTimeout(resolve, 500));
+			if (!isProcessAlive(info.pid)) {
+				return undefined;
+			}
+			const answering = await this.healthy();
+			if (answering) {
+				return answering;
+			}
+		}
+		if (await isProcessSuspended(info.pid)) {
+			this.options.log(`[volt agent server] the server (pid ${info.pid}) is suspended; waiting for it instead of starting another`);
+			throw new Error(`The Volt agent server (pid ${info.pid}) is suspended.`);
+		}
+		this.options.log(`[volt agent server] the server (pid ${info.pid}) has not answered for ${UNRESPONSIVE_GRACE_MS / 1000}s; replacing it`);
+		try {
+			process.kill(info.pid, 'SIGKILL');
+		} catch {
+			// gone meanwhile
+		}
+		return undefined;
+	}
+
 	/** The server described by runtime.json, if it is alive and answers with our token. */
 	private async healthy(): Promise<IAgentServerRuntimeInfo | undefined> {
 		const [info, token] = await Promise.all([readAgentServerRuntime(this.paths), readAgentServerToken(this.paths)]);
@@ -253,4 +293,12 @@ export class AgentServerLauncher {
 			pairingUrl: lan ? `http://${lan}:${info.port}/#token=${token}` : undefined,
 		};
 	}
+}
+
+/** Whether the process is stopped (`T` in ps: SIGSTOP, a debugger), not merely slow. */
+function isProcessSuspended(pid: number): Promise<boolean> {
+	if (process.platform === 'win32') {
+		return Promise.resolve(false);
+	}
+	return new Promise(resolve => execFile('ps', ['-o', 'stat=', '-p', String(pid)], (err, stdout) => resolve(!err && stdout.trim().startsWith('T'))));
 }
