@@ -9,7 +9,7 @@ import { homedir, tmpdir } from 'os';
 import { basename, delimiter, join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
-import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidShell, androidTextChunks, avdLabel, ICommand, IAdbDevice, iosInputCommand, IosInputTool, isAlreadyBooted, isAlreadyShutdown, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simctl, sshCommand, stateForPosture } from '../common/deviceCommands.js';
+import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidShell, androidTextChunks, avdLabel, ICommand, IAdbDevice, iosInputCommand, IosInputTool, isAlreadyBooted, isAlreadyShutdown, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simctl, sshCommand, stateForPosture } from '../common/deviceCommands.js';
 import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDeviceRef, IVoltDeviceScreen, IVoltDevicesService, VoltDeviceInput, VoltDevicePosture, VoltDeviceState } from '../common/voltDevices.js';
 
 interface IRunResult {
@@ -62,6 +62,7 @@ export class VoltDevicesService implements IVoltDevicesService {
 	private readonly iosScreens = new Map<string, { width: number; height: number; scale: number }>();
 	private readonly iosTools = new Map<string, IosInputTool | null>();
 	private readonly toolPaths = new Map<string, string | null>();
+	private readonly adbServers = new Map<string, Promise<unknown>>();
 
 	constructor(
 		private readonly env: () => Promise<NodeJS.ProcessEnv>,
@@ -247,8 +248,22 @@ export class VoltDevicesService implements IVoltDevicesService {
 		return devices.sort((a, b) => Number(b.state === 'booted') - Number(a.state === 'booted') || a.name.localeCompare(b.name, undefined, { numeric: true }));
 	}
 
+	/**
+	 * adb starts its daemon on first use, and two commands racing to start it make one of them fail
+	 * ("daemon not running; starting now"): start it once per host before anything else asks.
+	 */
+	private adbServer(host: IVoltDeviceHost): Promise<unknown> {
+		let started = this.adbServers.get(host.id);
+		if (!started) {
+			started = this.run(host, ['adb', 'start-server'], { timeout: ACTION_TIMEOUT, allowFail: true }).catch(() => undefined);
+			this.adbServers.set(host.id, started);
+		}
+		return started;
+	}
+
 	/** Every adb device, with the AVD name of the emulators. */
 	private async adbDevices(host: IVoltDeviceHost): Promise<{ device: IAdbDevice; avd?: string }[]> {
+		await this.adbServer(host);
 		const devices = parseAdbDevices(text(await this.run(host, ['adb', 'devices', '-l'], { timeout: LIST_TIMEOUT })));
 		return Promise.all(devices.map(async device => {
 			if (!device.emulator || device.state === 'offline') {
@@ -420,7 +435,7 @@ export class VoltDevicesService implements IVoltDevicesService {
 			scale = (await this.iosScreen(host, device.id))?.scale ?? 1;
 		} else {
 			const serial = await this.serial(host, device);
-			png = (await this.run(host, ['adb', '-s', serial, 'exec-out', 'screencap', '-p'], { timeout: ACTION_TIMEOUT })).stdout;
+			png = Buffer.from(pngFrom((await this.run(host, ['adb', '-s', serial, 'exec-out', 'screencap', '-p'], { timeout: ACTION_TIMEOUT })).stdout));
 		}
 		const size = pngSize(png);
 		if (!size) {

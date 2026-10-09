@@ -451,6 +451,20 @@ export function androidSdkCandidates(platform: NodeJS.Platform | string, env: Re
 
 //#region Images and coordinates
 
+/**
+ * The PNG inside tool output. `screencap` on a device with several displays prints a warning
+ * line ahead of the image bytes, so the PNG starts after the first signature found near the top.
+ */
+export function pngFrom(bytes: Uint8Array): Uint8Array {
+	const limit = Math.min(bytes.length - 8, 4096);
+	for (let i = 0; i <= limit; i++) {
+		if (bytes[i] === 0x89 && bytes[i + 1] === 0x50 && bytes[i + 2] === 0x4e && bytes[i + 3] === 0x47 && bytes[i + 4] === 0x0d && bytes[i + 5] === 0x0a && bytes[i + 6] === 0x1a && bytes[i + 7] === 0x0a) {
+			return i === 0 ? bytes : bytes.subarray(i);
+		}
+	}
+	return bytes;
+}
+
 /** Width and height from a PNG's IHDR chunk; undefined when the bytes are not a PNG. */
 export function pngSize(bytes: Uint8Array): { width: number; height: number } | undefined {
 	if (bytes.length < 24 || bytes[0] !== 0x89 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47) {

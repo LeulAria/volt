@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidTextChunks, avdLabel, imagePointToInput, iosButtonName, iosInputCommand, isAlreadyBooted, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, parseSshTarget, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simRuntimeLabel, sshCommand, stateForPosture } from '../../common/deviceCommands.js';
+import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidTextChunks, avdLabel, imagePointToInput, iosButtonName, iosInputCommand, isAlreadyBooted, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, parseSshTarget, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simRuntimeLabel, sshCommand, stateForPosture } from '../../common/deviceCommands.js';
 
 const SIMCTL_JSON = JSON.stringify({
 	devices: {
@@ -206,6 +206,15 @@ suite('Volt devices: commands and parsers', () => {
 		new DataView(header.buffer).setUint32(20, 2556);
 		assert.deepStrictEqual(pngSize(header), { width: 1179, height: 2556 });
 		assert.strictEqual(pngSize(new Uint8Array(30)), undefined);
+
+		// screencap on a foldable prints a warning line before the image.
+		const warning = new TextEncoder().encode('[Warning: Multiple displays were found, but no display id was specified]\n');
+		const withWarning = new Uint8Array(warning.length + header.length);
+		withWarning.set(warning);
+		withWarning.set(header, warning.length);
+		assert.deepStrictEqual(pngSize(pngFrom(withWarning)), { width: 1179, height: 2556 });
+		assert.strictEqual(pngFrom(header), header);
+		assert.strictEqual(pngSize(pngFrom(warning)), undefined);
 
 		// An agent saw a 472×1024 copy of a 1179×2556 @3x iPhone screen: its (236, 512) is the center in points.
 		assert.deepStrictEqual(imagePointToInput(236, 512, { width: 472, height: 1024 }, { width: 1179, height: 2556, scale: 3 }), { x: 197, y: 426 });
