@@ -1,0 +1,405 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Scheduled tasks: the New/Edit dialog (on the Custom snooze dialog's opaque card) and the page.
+ * Nothing here is see-through over the window or blurs (volt-transparent-window skill). */
+
+.volt-schedule-dialog {
+	width: min(460px, 100%);
+}
+
+.volt-schedule-field {
+	margin-bottom: 12px;
+}
+
+.volt-schedule-heading {
+	display: block;
+	margin-bottom: 6px;
+}
+
+.volt-schedule-input {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 34px;
+	padding: 7px 10px;
+	border-radius: 8px;
+	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 13px;
+	outline: none;
+}
+
+.volt-schedule-input:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-schedule-input.invalid {
+	border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+}
+
+.volt-schedule-prompt {
+	resize: vertical;
+	min-height: 84px;
+	max-height: 240px;
+	line-height: 18px;
+}
+
+.volt-schedule-tabs {
+	margin-bottom: 12px;
+}
+
+.volt-schedule-pane.hidden {
+	display: none;
+}
+
+.volt-schedule-block.hidden,
+.volt-schedule-field.hidden {
+	display: none;
+}
+
+.volt-schedule-url-row {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+}
+
+.volt-schedule-url-row .volt-schedule-input {
+	flex: 1;
+	min-width: 0;
+	font-family: var(--monaco-monospace-font, monospace);
+}
+
+.volt-schedule-days {
+	display: flex;
+	gap: 6px;
+}
+
+.volt-schedule-day {
+	flex: 1;
+	height: 30px;
+	padding: 0;
+	border-radius: 8px;
+	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-schedule-day:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.volt-schedule-day.on {
+	border-color: transparent;
+	background: color-mix(in srgb, var(--vscode-button-background, #4f6ff0) 85%, transparent);
+	color: var(--vscode-button-foreground, #fff);
+}
+
+.volt-schedule-note {
+	font-size: 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+/* The Scheduled Tasks page. */
+.volt-schedules {
+	position: relative;
+	outline: none;
+}
+
+.volt-schedules-content {
+	max-width: 760px;
+	margin: 0 auto;
+	padding: 36px 32px 48px;
+	box-sizing: border-box;
+}
+
+.volt-schedules-head {
+	display: flex;
+	align-items: flex-start;
+	gap: 16px;
+	margin-bottom: 20px;
+}
+
+.volt-schedules-titles {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-schedules-title {
+	margin: 0;
+	font-size: 20px;
+	font-weight: 600;
+	line-height: 28px;
+}
+
+.volt-schedules-subtitle {
+	margin: 4px 0 0;
+	font-size: 12.5px;
+	line-height: 18px;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+.volt-schedules-new {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 30px;
+	padding: 0 12px;
+	border-radius: 8px;
+	border: 0;
+	background: var(--vscode-button-background, #4f6ff0);
+	color: var(--vscode-button-foreground, #fff);
+	font: inherit;
+	font-size: 12.5px;
+	font-weight: 500;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.volt-schedules-new:hover {
+	background: var(--vscode-button-hoverBackground, #5d7cf5);
+}
+
+.volt-schedules-list {
+	display: flex;
+	flex-direction: column;
+	border-radius: 12px;
+	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+	overflow: hidden;
+}
+
+.volt-schedules-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 14px;
+	padding: 14px 16px;
+	transition: background-color 400ms ease;
+}
+
+.volt-schedules-row + .volt-schedules-row {
+	border-top: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+}
+
+.volt-schedules-row.flash {
+	background: color-mix(in srgb, var(--vscode-focusBorder) 14%, transparent);
+}
+
+.volt-schedules-row.paused .volt-schedules-main {
+	opacity: 0.55;
+}
+
+.volt-schedules-main {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.volt-schedules-line {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-schedules-name {
+	font-size: 13.5px;
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-schedules-cadence {
+	font-size: 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 60%, transparent);
+	white-space: nowrap;
+}
+
+.volt-schedules-line.meta {
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	font-variant-numeric: tabular-nums;
+	flex-wrap: wrap;
+}
+
+.volt-schedules-where {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+
+.volt-schedules-where .codicon {
+	font-size: 12px;
+}
+
+.volt-schedules-link,
+.volt-schedules-last.clickable {
+	cursor: pointer;
+}
+
+.volt-schedules-link:hover,
+.volt-schedules-last.clickable:hover {
+	color: var(--vscode-foreground);
+	text-decoration: underline;
+}
+
+.volt-schedules-last.status-failed {
+	color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.volt-schedules-prompt {
+	margin-top: 2px;
+	font-size: 12.5px;
+	line-height: 18px;
+	color: color-mix(in srgb, var(--vscode-foreground) 75%, transparent);
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	white-space: pre-wrap;
+}
+
+.volt-schedules-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.volt-schedules-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+	cursor: pointer;
+}
+
+.volt-schedules-icon:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-schedules-switch {
+	position: relative;
+	width: 30px;
+	height: 18px;
+	padding: 0;
+	border: 0;
+	border-radius: 9px;
+	background: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+	cursor: pointer;
+	transition: background-color 120ms ease;
+}
+
+.volt-schedules-switch .thumb {
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: #fff;
+	transition: transform 120ms ease;
+}
+
+.volt-schedules-switch.on {
+	background: var(--vscode-button-background, #4f6ff0);
+}
+
+.volt-schedules-switch.on .thumb {
+	transform: translateX(12px);
+}
+
+.volt-schedules-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	padding: 56px 24px;
+	border-radius: 12px;
+	border: 1px dashed var(--vscode-widget-border, rgba(255, 255, 255, 0.12));
+	text-align: center;
+	color: color-mix(in srgb, var(--vscode-foreground) 60%, transparent);
+}
+
+.volt-schedules-empty .codicon {
+	font-size: 22px;
+	margin-bottom: 4px;
+}
+
+.volt-schedules-empty-title {
+	font-size: 13.5px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+}
+
+.volt-schedules-empty-text {
+	font-size: 12.5px;
+}
+
+.volt-schedules-deliveries {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-top: 8px;
+}
+
+.volt-schedules-deliveries-title {
+	font-size: 11px;
+	opacity: 0.7;
+}
+
+.volt-schedules-delivery {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+}
+
+.volt-schedules-delivery-status {
+	font-weight: 600;
+}
+
+.volt-schedules-delivery.status-failed .volt-schedules-delivery-status,
+.volt-schedules-delivery.status-filtered .volt-schedules-delivery-status {
+	opacity: 0.75;
+}
+
+.volt-schedules-delivery-detail,
+.volt-schedules-delivery-note {
+	opacity: 0.7;
+}
+
+.volt-schedules-delivery-redeliver {
+	margin-left: auto;
+	padding: 1px 8px;
+	border: 1px solid var(--vscode-widget-border, transparent);
+	border-radius: 4px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 11.5px;
+	cursor: pointer;
+}
+
+.volt-schedules-delivery-redeliver:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}

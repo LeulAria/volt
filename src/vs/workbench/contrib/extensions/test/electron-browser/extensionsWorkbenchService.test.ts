@@ -112,7 +112,7 @@ suite('ExtensionsWorkbenchServiceTest', () => {
 				local.publisherId = metadata.publisherId!;
 				return local;
 			},
-			async canInstall() { return true; },
+			async canInstall(): Promise<true> { return true; },
 			getTargetPlatform: async () => getTargetPlatform(platform, arch),
 			async resetPinnedStateForAllUserExtensions(pinned: boolean) { }
 		});

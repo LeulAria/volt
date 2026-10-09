@@ -4,10 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentMarkdown.css';
-import { $, addDisposableListener, append, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, clearNode, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
-import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
 import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
@@ -19,7 +20,7 @@ import { IModelService } from '../../../../../editor/common/services/model.js';
 import { getIconClasses } from '../../../../../editor/common/services/getIconClasses.js';
 import { FileKind } from '../../../../../platform/files/common/files.js';
 import { createAgentScrollable } from '../editor/agentScrollable.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { bindTruncatedHoverTooltip, setAgentTooltip } from '../chrome/agentTooltip.js';
 import {
 	AgentBlock,
 	classifyTableCell,
@@ -43,10 +44,12 @@ import {
 	terminalCommandLabels,
 } from './agentBlocks.js';
 import { renderMermaidDiagram } from './agentMermaid.js';
+import { mountChart, renderVisualBlock } from '../visuals/agentVisuals.js';
 import { highlight, ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
-import { agentMarkdownRenderOptions, decorateAgentMarkdown, normalizeMathDelimiters } from './agentMarkdown.js';
+import { agentMarkdownRenderOptions, decorateAgentMarkdown, fenceChartSpec, normalizeMathDelimiters, renderFenceChart } from './agentMarkdown.js';
 import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../preview/localPreview.js';
 import { AccessDecisionScope } from '../../../../services/voltRuntime/common/access/accessTypes.js';
+import { formatAttachmentSize } from '../../../../services/voltRuntime/common/fileAttachments.js';
 import { FileChangePreview } from '../review/fileChangePreview.js';
 import { chooseFileChangeDiffStyle, formatChangeStats, type FileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
 import { fileChangeGroupTitle, fileChangeSource, ThreadPart } from '../chrome/agentTimeline.js';
@@ -69,12 +72,30 @@ export interface IBlockRenderContext {
 	readonly onBuildPlan?: () => void;
 	/** Build a plan the agent wrote with its plan tool: switch to Agent and ask for it. */
 	readonly onBuildCreatedPlan?: (plan: IPlanBlock) => void;
+	/** Ask for changes to a plan: the composer takes the feedback, and the agent proposes again. */
+	readonly onRevisePlan?: (plan: IPlanBlock) => void;
+	/** Build a plan in a new chat on its own worktree: the chat forks from this reply and starts with the plan. */
+	readonly onBuildPlanInWorktree?: (plan: IPlanBlock) => void;
+	/** An inline edit of a plan was saved: the reply is recorded again so the edit survives a reload. */
+	readonly onEditPlan?: (plan: IPlanBlock) => void;
+	/** Save a plan under `.volt/plans` and resolve to its path. */
+	readonly onSavePlan?: (plan: IPlanBlock) => Promise<string | undefined>;
 	/** When false, a still-running command must not keep the streaming shimmer. */
 	readonly streaming?: boolean;
 	/** Highlights code cards. Without it they render as plain text. */
 	readonly languageService?: ILanguageService;
 	/** Opens a Mermaid diagram larger. */
 	readonly onExpandDiagram?: (svg: SVGSVGElement, source: string) => void;
+	/** A page under the pointer took a wheel event: scroll the transcript instead. */
+	readonly onWheel?: (event: IMouseWheelEvent) => void;
+	/** Shows a chart or page full size; `store` is disposed when it closes. */
+	readonly onExpandVisual?: (title: string, content: HTMLElement, store: IDisposable) => void;
+	/** The chat being drawn (pages keep the state they set for its next turn). */
+	readonly sessionId?: string;
+	/** A page asked to send a message as the user (`send`), or to put one in the composer. */
+	readonly onPagePrompt?: (text: string, page: string, send: boolean) => void;
+	/** Runs a reply's shell block in the chat's terminal. */
+	readonly onRunInTerminal?: (command: string) => void;
 }
 
 export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IBlockRenderContext): void {
@@ -98,9 +119,14 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 			renderCardsBlock(parent, block, ctx);
 			return;
 		case 'chart':
-			renderChartBlock(parent, block);
+			renderChartBlock(parent, block, ctx);
 			return;
 		case 'mermaid':
+			// A data chart written as mermaid (xychart-beta) draws as a native Volt chart.
+			if (fenceChartSpec('mermaid', block.source, block.status === 'streaming')) {
+				renderFenceChart(append(parent, $('.volt-agent-block.volt-agent-fence-chart')), 'mermaid', block.source, ctx, block.status === 'streaming');
+				return;
+			}
 			renderMermaidDiagram(parent, block.source, { ...codeCardOptions(ctx), onExpand: ctx.onExpandDiagram });
 			return;
 		case 'tool':
@@ -116,39 +142,116 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 			renderApprovalBlock(parent, block, ctx);
 			return;
 		case 'answers':
-			renderAnswersBlock(parent, block);
+			renderAnswersBlock(parent, block, ctx);
 			return;
 		case 'plan':
 			renderPlanBlock(parent, block, ctx);
+			return;
+		case 'visual':
+			renderVisualBlock(parent, block, ctx);
 	}
 }
 
-/** cursor-agent's plan, as the plan card Cursor shows: title, the plan, Build. */
+/**
+ * A plan for approval, as Cursor draws its plan card: title, the plan, then the actions. Volt's plans
+ * also list their open questions and can be revised, edited in place, or saved as a document.
+ */
 function renderPlanBlock(parent: HTMLElement, block: IPlanBlock, ctx: IBlockRenderContext): void {
 	const wrap = append(parent, $('.volt-agent-block.approval.question.plan'));
 	append(wrap, $('.volt-agent-approval-title')).textContent = block.name
 		? localize('voltAgent.plan.named', "Plan: {0}", block.name)
 		: localize('voltAgent.plan.title', "Plan");
 	const body = append(wrap, $('.volt-agent-approval-plan'));
-	if (block.markdown) {
-		renderMarkdownInto(body, block.markdown, ctx);
-	} else {
-		body.textContent = localize('voltAgent.plan.writing', "Writing the plan…");
-	}
-	if (block.status !== 'complete' || !ctx.onBuildCreatedPlan) {
-		return;
-	}
+	const savedLine = append(wrap, $('.volt-agent-plan-saved.hidden'));
 	const actions = append(wrap, $('.volt-agent-approval-actions'));
-	const build = append(actions, $('button.volt-agent-approval-btn.primary')) as HTMLButtonElement;
-	build.textContent = localize('voltAgent.plan.build', "Build");
-	ctx.store.add(addDisposableListener(build, 'click', e => {
-		e.preventDefault();
-		ctx.onBuildCreatedPlan?.(block);
-	}));
+	let editor: HTMLTextAreaElement | undefined;
+
+	const renderBody = () => {
+		clearNode(body);
+		if (block.markdown) {
+			renderMarkdownInto(body, block.markdown, ctx);
+		} else {
+			body.textContent = localize('voltAgent.plan.writing', "Writing the plan…");
+		}
+		if (block.openQuestions?.length) {
+			const questions = append(body, $('.volt-agent-plan-questions'));
+			append(questions, $('.volt-agent-plan-questions-title')).textContent = localize('voltAgent.plan.openQuestions', "Open questions");
+			const list = append(questions, $('ul'));
+			for (const question of block.openQuestions) {
+				append(list, $('li')).textContent = question;
+			}
+		}
+	};
+
+	const button = (label: string, className: string, onClick: () => void) => {
+		const element = append(actions, $(`button.volt-agent-approval-btn${className}`)) as HTMLButtonElement;
+		element.textContent = label;
+		ctx.store.add(addDisposableListener(element, 'click', e => {
+			e.preventDefault();
+			onClick();
+		}));
+		return element;
+	};
+
+	const renderActions = () => {
+		clearNode(actions);
+		if (block.status !== 'complete' || !ctx.onBuildCreatedPlan) {
+			return;
+		}
+		if (editor) {
+			button(localize('voltAgent.plan.saveEdit', "Save edit"), '.primary', () => {
+				block.markdown = editor?.value.trim() ?? block.markdown;
+				editor = undefined;
+				renderBody();
+				renderActions();
+				ctx.onEditPlan?.(block);
+			});
+			button(localize('voltAgent.plan.cancelEdit', "Cancel"), '', () => {
+				editor = undefined;
+				renderBody();
+				renderActions();
+			});
+			return;
+		}
+		button(localize('voltAgent.plan.approveImplement', "Approve & implement"), '.primary', () => ctx.onBuildCreatedPlan?.(block));
+		if (ctx.onBuildPlanInWorktree) {
+			button(localize('voltAgent.plan.approveWorktree', "Approve in a new worktree chat"), '', () => ctx.onBuildPlanInWorktree?.(block));
+		}
+		if (ctx.onRevisePlan) {
+			button(localize('voltAgent.plan.revise', "Revise"), '', () => ctx.onRevisePlan?.(block));
+		}
+		button(localize('voltAgent.plan.edit', "Edit"), '', () => {
+			clearNode(body);
+			editor = append(body, $('textarea.volt-agent-plan-editor')) as HTMLTextAreaElement;
+			editor.value = block.markdown;
+			editor.rows = Math.min(24, Math.max(8, block.markdown.split('\n').length));
+			renderActions();
+			editor.focus();
+		});
+		if (ctx.onSavePlan) {
+			button(localize('voltAgent.plan.save', "Save to .volt/plans"), '', async () => {
+				const path = await ctx.onSavePlan?.(block);
+				if (path) {
+					savedLine.classList.remove('hidden');
+					clearNode(savedLine);
+					const link = append(savedLine, $('a.volt-agent-plan-saved-link')) as HTMLAnchorElement;
+					link.textContent = path;
+					link.href = '#';
+					ctx.store.add(addDisposableListener(link, 'click', e => {
+						e.preventDefault();
+						ctx.onOpenPath?.(path);
+					}));
+				}
+			});
+		}
+	};
+
+	renderBody();
+	renderActions();
 }
 
 /** Cursor's "Answers" card: each question in muted text over the user's answer, with hairlines between. */
-function renderAnswersBlock(parent: HTMLElement, block: IAnswersBlock): void {
+function renderAnswersBlock(parent: HTMLElement, block: IAnswersBlock, ctx: IBlockRenderContext): void {
 	const card = append(parent, $('.volt-agent-answers'));
 	const header = append(card, $('.volt-agent-answers-header'));
 	append(header, $('span.volt-agent-answers-icon')).appendChild(renderIcon(Codicon.commentDiscussion));
@@ -164,7 +267,28 @@ function renderAnswersBlock(parent: HTMLElement, block: IAnswersBlock): void {
 		}
 		const row = append(body, $('.volt-agent-answers-pair'));
 		append(row, $('.volt-agent-answers-question.volt-agent-searchable')).textContent = pair.question;
-		append(row, $('.volt-agent-answers-answer.volt-agent-searchable')).textContent = pair.answer;
+		if (pair.answer) {
+			append(row, $('.volt-agent-answers-answer.volt-agent-searchable')).textContent = pair.answer;
+		}
+		const files = pair.attachments;
+		if (files?.length) {
+			const list = append(row, $('.volt-agent-answers-files'));
+			for (const file of files) {
+				const chip = append(list, $('span.volt-agent-answers-file'));
+				chip.appendChild(renderIcon(file.kind === 'image' ? Codicon.fileMedia : Codicon.file));
+				append(chip, $('span.volt-agent-answers-file-name.volt-agent-searchable')).textContent = file.name;
+				append(chip, $('span.volt-agent-answers-file-size')).textContent = formatAttachmentSize(file.size);
+				const path = file.path;
+				if (path && ctx.onOpenPath) {
+					chip.classList.add('openable');
+					chip.title = path;
+					ctx.store.add(addDisposableListener(chip, 'click', e => {
+						e.preventDefault();
+						ctx.onOpenPath?.(path);
+					}));
+				}
+			}
+		}
 	});
 }
 
@@ -172,16 +296,19 @@ function codeCardOptions(ctx: IBlockRenderContext): ICodeCardOptions {
 	return {
 		store: ctx.store,
 		languageService: ctx.languageService,
+		instantiationService: ctx.instantiationService,
 		onCopyText: ctx.onCopyText,
 		onDidChangeSize: ctx.onScroll,
 		onOpenPath: ctx.onOpenPath,
+		// Only finished replies: a block still streaming may not be the whole command yet.
+		...(ctx.onRunInTerminal && !ctx.streaming ? { onRunInTerminal: ctx.onRunInTerminal } : {}),
 		fileIconClasses: path => ctx.instantiationService.invokeFunction(accessor => getIconClasses(accessor.get(IModelService), accessor.get(ILanguageService), URI.file(path), FileKind.FILE)),
 	};
 }
 
 export function renderMarkdownInto(parent: HTMLElement, text: string, ctx: IBlockRenderContext, extraClass?: string): void {
 	const result = ctx.markdownRenderer.render(new MarkdownString(linkifyPreviewUrls(normalizeMathDelimiters(text))), {
-		...agentMarkdownRenderOptions(getWindow(parent), { ...codeCardOptions(ctx), onExpandDiagram: ctx.onExpandDiagram }),
+		...agentMarkdownRenderOptions(getWindow(parent), { ...codeCardOptions(ctx), onExpandDiagram: ctx.onExpandDiagram, visualHost: ctx }),
 		fillInIncompleteTokens: true,
 		asyncRenderCallback: ctx.onScroll,
 		actionHandler: link => {
@@ -208,6 +335,11 @@ function renderMarkdownBlock(parent: HTMLElement, block: IMarkdownBlock, ctx: IB
 }
 
 function renderCodeBlock(parent: HTMLElement, block: ICodeBlock, ctx: IBlockRenderContext): void {
+	if (fenceChartSpec(block.language, block.code, block.status === 'streaming')) {
+		// ```volt-chart: the chart itself (a skeleton while its JSON streams in).
+		renderFenceChart(append(parent, $('.volt-agent-block.volt-agent-fence-chart')), block.language, block.code, ctx, block.status === 'streaming');
+		return;
+	}
 	const wrap = append(parent, $('.volt-agent-block.code'));
 	// A whole file the reply shows ("Grok created src/array.js:") reads as that file, the way an
 	// edit is drawn. Streaming fences stay code cards: the file card is a diff editor per frame.
@@ -518,30 +650,17 @@ function renderCardsBlock(parent: HTMLElement, block: ICardsBlock, ctx: IBlockRe
 	}
 }
 
-function renderChartBlock(parent: HTMLElement, block: IChartBlock): void {
-	const wrap = append(parent, $('.volt-agent-block.chart.volt-agent-chart'));
-	if (block.title) {
-		const title = append(wrap, $('.volt-agent-chart-title.volt-agent-searchable'));
-		title.textContent = block.title;
-	}
-	const max = Math.max(...block.values, 0.0001);
-	for (const [index, label] of block.labels.entries()) {
-		const row = append(wrap, $('.volt-agent-chart-row'));
-		const name = append(row, $('span.volt-agent-chart-label.volt-agent-searchable'));
-		name.textContent = label;
-		const track = append(row, $('.volt-agent-chart-track'));
-		const bar = append(track, $('.volt-agent-chart-bar'));
-		bar.style.width = `${Math.max(4, (block.values[index] / max) * 100)}%`;
-		const value = append(row, $('span.volt-agent-chart-value.volt-agent-searchable'));
-		value.textContent = `${formatChartValue(block.values[index])}${block.unit ?? ''}`;
-	}
-}
-
-function formatChartValue(value: number): string {
-	if (Number.isInteger(value)) {
-		return String(value);
-	}
-	return String(Math.round(value * 100) / 100);
+/** The native loop's bar list, drawn by the chart engine as a ranked chart. */
+function renderChartBlock(parent: HTMLElement, block: IChartBlock, ctx: IBlockRenderContext): void {
+	const wrap = append(parent, $('.volt-agent-block.chart.volt-agent-chart.engine'));
+	const spec = {
+		type: 'ranked',
+		title: block.title,
+		unit: block.unit ? { suffix: block.unit } : undefined,
+		limit: 20,
+		data: block.labels.map((label, index) => ({ label, value: block.values[index] ?? 0 })),
+	};
+	mountChart(wrap, `${block.id}:${block.labels.length}:${block.values.join(',')}`, spec, ctx);
 }
 
 function renderErrorBlock(parent: HTMLElement, block: IErrorBlock): void {
@@ -1044,6 +1163,9 @@ function decorateMarkdownPills(root: HTMLElement, ctx: IBlockRenderContext): voi
 		highlightInlineCode(code, text, ctx);
 	}
 	for (const link of root.querySelectorAll('a')) {
+		// The renderer sets title=href; the agent tooltip below (or the chip inside) says it once.
+		const title = link.getAttribute('title');
+		link.removeAttribute('title');
 		if (link.querySelector('code')) {
 			continue;
 		}
@@ -1052,11 +1174,13 @@ function decorateMarkdownPills(root: HTMLElement, ctx: IBlockRenderContext): voi
 		const url = extractHttpUrl(href) || extractHttpUrl(text);
 		if (url) {
 			bindUrlOpen(link, url, ctx);
-			continue;
-		}
-		if (isPathLike(text) || isPathLike(href)) {
+		} else if (isPathLike(text) || isPathLike(href)) {
 			link.classList.add('volt-agent-path-link');
 			bindPathOpen(link, parseFileTarget(text) ?? parseFileTarget(href), ctx);
+		}
+		// An explicit markdown title (`[x](url "Title")`) still shows, styled; the default one is the href.
+		if (title && title !== text && title !== href && !/^[a-z][\w+.-]*:/i.test(title) && !isPathLike(title)) {
+			setAgentTooltip(link, title);
 		}
 	}
 }
@@ -1110,7 +1234,14 @@ function bindUrlOpen(el: HTMLElement, url: string, ctx: IBlockRenderContext): vo
 		return;
 	}
 	el.classList.add('clickable');
-	setAgentTooltip(el, url);
+	// A link or chip that already reads as the URL needs no tooltip repeating it.
+	const text = (el.textContent ?? '').trim();
+	if (text !== url && text.replace(/\/$/, '') !== url.replace(/\/$/, '')) {
+		setAgentTooltip(el, url);
+	} else {
+		// Unless the chip is cut off with an ellipsis.
+		ctx.store.add(bindTruncatedHoverTooltip(el, url));
+	}
 	ctx.store.add(addDisposableListener(el, 'click', e => {
 		e.preventDefault();
 		e.stopPropagation();

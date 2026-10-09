@@ -35,6 +35,9 @@ export default defineConfig({
           path: "/docs",
         },
         {
+          path: "/download",
+        },
+        {
           path: "/api/search",
         },
         {

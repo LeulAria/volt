@@ -391,6 +391,59 @@
 	margin-top: 0;
 }
 
+.volt-agent-approval-plan .volt-agent-plan-questions {
+	margin-top: 12px;
+	padding-top: 8px;
+	border-top: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-agent-approval-plan .volt-agent-plan-questions-title {
+	font-weight: 600;
+	margin-bottom: 4px;
+}
+
+.volt-agent-approval-plan .volt-agent-plan-questions ul {
+	margin: 0;
+	padding-left: 18px;
+}
+
+.volt-agent-approval-plan .volt-agent-plan-editor {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 160px;
+	max-height: 420px;
+	resize: vertical;
+	padding: 8px;
+	border: 1px solid var(--vscode-input-border, var(--vscode-widget-border));
+	border-radius: 4px;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+.volt-agent-plan-saved {
+	margin: -4px 0 10px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-agent-plan-saved.hidden {
+	display: none;
+}
+
+.volt-agent-plan-saved-link {
+	color: var(--vscode-textLink-foreground);
+	text-decoration: none;
+}
+
+.volt-agent-plan-saved-link:hover {
+	text-decoration: underline;
+}
+
 .volt-agent-approval-btn.primary {
 	background: var(--vscode-button-background);
 	color: var(--vscode-button-foreground);

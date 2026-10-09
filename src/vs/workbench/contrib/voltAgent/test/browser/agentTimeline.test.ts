@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { createFileChangeBlock, createTerminalBlock } from '../../browser/blocks/agentBlocks.js';
-import { buildThreadParts, classifySupervisionNotice, createdPlanPrompt, failureTitle, fileChangeGroupTitle, formatElapsed, isProcessNarration, looksLikeAnswerForm, partitionAssistantText, runEndTray, STATUS_ROTATE_MS, streamingActivityLines, supervisionActions, todoChecklist, visibleReplyParts } from '../../browser/chrome/agentTimeline.js';
+import { buildThreadParts, classifySupervisionNotice, composerTasks, createdPlanPrompt, failureTitle, fileChangeGroupTitle, formatElapsed, isProcessNarration, looksLikeAnswerForm, partitionAssistantText, runEndTray, STATUS_ROTATE_MS, stampTodoSteps, streamingActivityLines, supervisionActions, tasksCard, todoChecklist, visibleReplyParts } from '../../browser/chrome/agentTimeline.js';
 
 suite('Agent timeline', () => {
 
@@ -383,6 +383,69 @@ suite('Agent run state', () => {
 		assert.strictEqual(live.current, 'Add 404 test');
 		assert.strictEqual(todoChecklist(steps.map(step => ({ ...step, state: 'done' as const })), false)?.title, '3 of 3 To-dos Completed');
 		assert.strictEqual(todoChecklist([], true), undefined);
+	});
+
+	test('to-dos keep when they started and finished across updates', () => {
+		const first = stampTodoSteps([], [
+			{ label: 'Verify setup', state: 'current' },
+			{ label: 'Run tasks', state: 'pending' },
+		], 1_000);
+		assert.deepStrictEqual(first, [
+			{ label: 'Verify setup', state: 'current', startedAt: 1_000 },
+			{ label: 'Run tasks', state: 'pending' },
+		]);
+		const second = stampTodoSteps(first, [
+			{ label: 'Verify setup', state: 'done' },
+			{ label: 'Run tasks', state: 'current' },
+		], 93_000);
+		assert.deepStrictEqual(second, [
+			{ label: 'Verify setup', state: 'done', startedAt: 1_000, endedAt: 93_000 },
+			{ label: 'Run tasks', state: 'current', startedAt: 93_000 },
+		]);
+		// A later update repeats the list: the times stay those first seen.
+		assert.deepStrictEqual(stampTodoSteps(second, [
+			{ label: 'Verify setup', state: 'done' },
+			{ label: 'Run tasks', state: 'current' },
+		], 120_000), second);
+		// Claude shows the to-do in progress by its "active" name, then done by its own name again.
+		const renamed = stampTodoSteps(
+			stampTodoSteps([], [{ label: 'Run tasks', state: 'pending' }, { label: 'Rerun', state: 'pending' }], 0),
+			[{ label: 'Running tasks', state: 'current' }, { label: 'Rerun', state: 'pending' }], 10_000);
+		assert.deepStrictEqual(stampTodoSteps(renamed, [{ label: 'Run tasks', state: 'done' }, { label: 'Rerun', state: 'pending' }], 70_000)[0],
+			{ label: 'Run tasks', state: 'done', startedAt: 10_000, endedAt: 70_000 });
+		// Done without ever showing in progress: no start, so no duration.
+		assert.deepStrictEqual(stampTodoSteps([], [{ label: 'Quick', state: 'done' }], 5_000), [{ label: 'Quick', state: 'done', endedAt: 5_000 }]);
+	});
+
+	test('the Tasks card shows progress, the current to-do and times', () => {
+		const card = tasksCard([
+			{ label: 'Verify setup', state: 'done', startedAt: 0, endedAt: 92_000 },
+			{ label: 'Run tasks', state: 'current', startedAt: 92_000 },
+			{ label: 'Implement', state: 'pending' },
+			{ label: 'Rerun', state: 'pending' },
+		], true)!;
+		assert.strictEqual(card.done, 1);
+		assert.strictEqual(card.total, 4);
+		assert.strictEqual(card.current, 'Run tasks');
+		assert.deepStrictEqual(card.items.map(item => item.time), ['1m 32s', 'now', undefined, undefined]);
+		// A stopped run's to-do in progress is not "now".
+		assert.strictEqual(tasksCard([{ label: 'Run tasks', state: 'current', startedAt: 1 }], false)?.items[0].time, undefined);
+		assert.strictEqual(tasksCard([{ label: 'All', state: 'done' }], false)?.current, undefined);
+		assert.strictEqual(tasksCard([{ label: '  ', state: 'pending' }], true), undefined);
+	});
+
+	test('the Tasks card follows the latest list while it matters', () => {
+		const open = [{ label: 'A', state: 'done' as const }, { label: 'B', state: 'current' as const }];
+		const finished = [{ label: 'A', state: 'done' as const }, { label: 'B', state: 'done' as const }];
+		const user = { kind: 'user' };
+		const agent = (steps: { label: string; state: 'done' | 'current' | 'pending' }[], streaming = false) => ({ kind: 'agent', steps, activity: { streaming } });
+		assert.strictEqual(composerTasks([user, agent(open, true)])?.live, true);
+		assert.strictEqual(composerTasks([user, agent(finished, true)])?.done, 2, 'stays while the turn runs');
+		assert.strictEqual(composerTasks([user, agent(finished)]), undefined, 'a finished list leaves');
+		assert.strictEqual(composerTasks([user, agent(open)])?.live, false, 'a stopped run keeps its open to-dos');
+		assert.strictEqual(composerTasks([user, agent(open), user, agent([], true)])?.current, 'B', 'a later run works through the same list');
+		assert.strictEqual(composerTasks([user, agent(open), user, agent([])]), undefined, 'an older list stays in its turn');
+		assert.strictEqual(composerTasks([user, agent([], true)]), undefined);
 	});
 
 	test('elapsed time keeps a steady width', () => {

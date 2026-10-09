@@ -47,16 +47,22 @@ export interface IAgentStatusBranch {
 export interface IAgentCompactState {
 	/** Why the button is disabled right now (a run is going), else undefined. */
 	readonly blockedReason?: string;
+	/** The agent is compacting right now. */
+	readonly running?: boolean;
 }
 
 export interface IAgentContextUsageHost {
 	getUsageInput(): Omit<IContextUsageInput, 'overhead'>;
 	getCompactState?(): IAgentCompactState | undefined;
+	/** A compaction is under way (asked for, or the agent's own): the ring turns while it runs. */
+	isCompacting?(): boolean;
 	compact?(): void;
 	/** After every repaint, with how full the window is (0 without a chat). */
-	onDidRefresh?(percent: number): void;
+	onDidRefresh?(percent: number, used?: number): void;
 	getPanelAnchor(): { parent: HTMLElement; before: HTMLElement };
 	getBranch(): IAgentStatusBranch;
+	/** The chevron on the branch: move the chat to another checkout. Absent: no chevron. */
+	openMoveMenu?(anchor: HTMLElement): void;
 	onWillOpenPanel?(): void;
 }
 
@@ -109,6 +115,7 @@ export class AgentContextUsageView extends Disposable {
 		this.branchLabel = append(this.branchButton, $('span.label'));
 		this.branchChevron = this.branchButton.appendChild(renderIcon(Codicon.chevronDown));
 		this.branchChevron.classList.add('chevron');
+		this.branchChevron.classList.toggle('is-hidden', !host.openMoveMenu);
 		this.envChip = append(start, $('span.volt-agent-status-env'));
 		this.envIcon = append(this.envChip, $('span.icon'));
 		this.envLabel = append(this.envChip, $('span.label'));
@@ -131,6 +138,11 @@ export class AgentContextUsageView extends Disposable {
 			e.preventDefault();
 			e.stopPropagation();
 			void this.copyBranchName();
+		}));
+		this._register(addDisposableListener(this.branchChevron, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.host.openMoveMenu?.(this.branchButton);
 		}));
 		this._register(addDisposableListener(this.contextButton, 'click', e => {
 			e.preventDefault();
@@ -162,17 +174,22 @@ export class AgentContextUsageView extends Disposable {
 		const ratio = Math.min(1, snapshot.used / Math.max(snapshot.limit, 1));
 		this.ringFill.setAttribute('stroke-dasharray', `${RING_CIRCUMFERENCE}`);
 		this.ringFill.setAttribute('stroke-dashoffset', `${RING_CIRCUMFERENCE * (1 - ratio)}`);
-		this.contextButton.classList.toggle('warn', snapshot.percent >= 80);
-		this.contextButton.classList.toggle('critical', snapshot.percent >= 95);
+		const compacting = !!this.host.isCompacting?.();
+		this.contextButton.classList.toggle('warn', snapshot.percent >= 80 && !compacting);
+		this.contextButton.classList.toggle('critical', snapshot.percent >= 95 && !compacting);
+		this.contextButton.classList.toggle('compacting', compacting);
 		this.percentLabel.textContent = percent;
 		this.tokensLabel.textContent = localize('voltAgent.contextUsedShort', "{0}/{1}", used, limit);
-		this.contextButton.setAttribute('aria-label', localize('voltAgent.contextUsageDetail', "Context usage: {0} / {1}", used, limit));
+		const detail = compacting
+			? localize('voltAgent.contextUsageCompacting', "Compacting context · {0} / {1}", used, limit)
+			: localize('voltAgent.contextUsageDetail', "Context usage: {0} / {1}", used, limit);
+		this.contextButton.setAttribute('aria-label', detail);
 		this.contextButton.setAttribute('aria-expanded', String(this.open));
-		setAgentTooltip(this.contextButton, localize('voltAgent.contextUsageDetail', "Context usage: {0} / {1}", used, limit));
+		setAgentTooltip(this.contextButton, detail);
 		if (this.open && this.popup) {
 			this.fillPopup(this.popup, snapshot);
 		}
-		this.host.onDidRefresh?.(snapshot.percent);
+		this.host.onDidRefresh?.(snapshot.percent, snapshot.used);
 	}
 
 	private snapshot(): IContextUsageSnapshot {
@@ -322,7 +339,7 @@ export class AgentContextUsageView extends Disposable {
 		const compact = append(panel, $('button.volt-agent-context-compact')) as HTMLButtonElement;
 		compact.type = 'button';
 		compact.appendChild(createCompactIcon(compact.ownerDocument));
-		append(compact, $('span')).textContent = localize('voltAgent.compactContext', "Compact context");
+		const compactLabel = append(compact, $('span'));
 		const compactNote = append(panel, $('.volt-agent-context-compact-note'));
 		this.panelStore.add(addDisposableListener(compact, 'click', e => {
 			e.preventDefault();
@@ -340,6 +357,7 @@ export class AgentContextUsageView extends Disposable {
 			bar,
 			list,
 			compact,
+			compactLabel,
 			compactNote,
 		};
 		this.fillPopup(this.popup, this.snapshot());
@@ -400,8 +418,14 @@ export class AgentContextUsageView extends Disposable {
 		const compactState = this.host.compact ? this.host.getCompactState?.() : undefined;
 		popup.compact.hidden = !compactState;
 		popup.compact.disabled = !!compactState?.blockedReason;
-		popup.compactNote.hidden = !compactState?.blockedReason;
-		popup.compactNote.textContent = compactState?.blockedReason ?? '';
+		popup.compact.classList.toggle('running', !!compactState?.running);
+		popup.compactLabel.textContent = compactState?.running
+			? localize('voltAgent.compaction.running', "Compacting context")
+			: localize('voltAgent.compactContext', "Compact context");
+		// While it runs the button says so; the note is for why it cannot start.
+		const note = compactState?.running ? undefined : compactState?.blockedReason;
+		popup.compactNote.hidden = !note;
+		popup.compactNote.textContent = note ?? '';
 	}
 
 	private createRing(parent: HTMLElement): SVGCircleElement {
@@ -486,5 +510,6 @@ interface IContextPopupRefs {
 	bar: HTMLElement;
 	list: HTMLElement;
 	compact: HTMLButtonElement;
+	compactLabel: HTMLElement;
 	compactNote: HTMLElement;
 }

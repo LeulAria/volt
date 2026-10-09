@@ -52,16 +52,17 @@ function sameSecret(given: string, expected: string): boolean {
 /**
  * Who may talk to a host MCP server: only local agent processes Volt launched.
  * - Host must be loopback with the server's port (DNS rebinding sends a foreign Host).
- * - No browser: web pages, including the in-app browser's own page, always send Origin or
- *   Sec-Fetch-* headers; agent HTTP clients send neither. No CORS headers are ever sent, so a
- *   preflight fails too.
+ * - No browser: a web page's request (including the in-app browser's own page) always carries
+ *   Origin or Sec-Fetch-Site / Sec-Fetch-Dest. Node's fetch (undici), which agents such as
+ *   cursor-agent use, sends Sec-Fetch-Mode alone on every request, so that one header is not a
+ *   browser. No CORS headers are ever sent, so a preflight fails too.
  * - The bearer token Volt handed the agent in its MCP server config.
  */
 export function checkHostMcpRequest(method: string | undefined, path: string | undefined, headers: http.IncomingHttpHeaders, port: number, token: string): HostMcpRequestVerdict {
 	if (!isLoopbackHost(headers.host, port)) {
 		return { ok: false, status: 403, message: 'Host not allowed' };
 	}
-	if (headers.origin !== undefined || headers['sec-fetch-mode'] !== undefined || headers['sec-fetch-site'] !== undefined) {
+	if (headers.origin !== undefined || headers['sec-fetch-site'] !== undefined || headers['sec-fetch-dest'] !== undefined) {
 		return { ok: false, status: 403, message: 'Browser requests are not allowed' };
 	}
 	if (method === 'OPTIONS') {
@@ -217,16 +218,17 @@ export class VoltHostMcpMainService extends Disposable implements IVoltHostMcpSe
 					protocolVersion: (message.params as { protocolVersion?: string } | undefined)?.protocolVersion ?? '2025-03-26',
 					capabilities: { tools: { listChanged: false } },
 					serverInfo: { name: 'volt', title: 'Volt', version: '0.1.0' },
-					instructions: 'Volt tools: ask_question asks the user multiple-choice questions in Volt. browser_* tools drive the in-app browser beside this chat (navigate, snapshot, click by ref, type, resize, screenshot, console, network) to preview and test web pages. To build a page from a design image: image_inspect reads exact colours, block bounds and text bands from the image; browser_compare_image renders the page at the image size and returns the mismatch and the regions to fix. Use them instead of writing image-decoding or headless-Chrome scripts. Pull requests: when you create or work on a pull request, call link_pull_request so it shows on this chat (for a stack, every layer). When asked to monitor, watch or babysit a pull request, call watch_pull_request and end your turn: Volt wakes you when checks fail or pass, a review or comment comes in, or the branch conflicts.',
+					instructions: 'Volt tools: ask_question asks the user multiple-choice questions in Volt. browser_* tools drive the in-app browser beside this chat (navigate, snapshot, click by ref, type, resize, screenshot, console, network) to preview and test web pages. To build a page from a design image: image_inspect reads exact colours, block bounds and text bands from the image; browser_compare_image renders the page at the image size and returns the mismatch and the regions to fix. Use them instead of writing image-decoding or headless-Chrome scripts. Pull requests: when you create or work on a pull request, call link_pull_request so it shows on this chat (for a stack, every layer). Stacked pull requests: stack_branch makes a layer on the checked out branch, stack_status shows the stack, and restack_stack moves the layers above a changed or merged parent and pushes them (follow its prompt when it stops on a conflict). When asked to monitor, watch or babysit a pull request, call watch_pull_request and end your turn: Volt wakes you when checks fail or pass, a review or comment comes in, or the branch conflicts. Visual replies: when a chart, dashboard, table, diagram or mockup would say more than prose, show it in the reply. For data, call render_chart with a JSON spec: Volt draws it natively in the user\'s theme with hover, tooltips and keyboard reading, and it takes seconds. Every data chart (bar, line, pie, scatter, ...) goes through render_chart (or, in plain markdown, a ```volt-chart fence holding the same JSON spec); never draw data with mermaid xychart-beta or pie, or with ASCII bars. Mermaid fences are for diagrams only (flowcharts, sequence, state). For anything else (dashboards, mockups, reports, diagrams, interactive explainers), write a self-contained HTML page, check it with html_preview, then publish it with html_render. Call these before your final text; the reader already sees the visual, so do not describe or restate it. Orchestration: you can run other Volt chats. orchestrator_capabilities lists models and what you may do; thread_list / thread_search / thread_read read any chat; thread_send messages one (wait=true returns its reply); thread_wait waits for chats to finish; thread_launch starts a new top-level chat (any model, its own worktree with workspace.type=worktree, several models at once with models); thread_fork copies a chat\'s conversation into a new chat to try another direction or model; queue_* manage a chat\'s queued messages; delegate_task runs a subagent whose report comes back to you. Link chats you mention as [title](volt://session/<id>).',
 				});
 			case 'ping':
 				return ok(id, {});
 			case 'tools/list':
-				return ok(id, { tools: this.toolsFor(serverId, groups).map(({ group: _group, ...tool }) => tool) });
+				return ok(id, { tools: this.toolsFor(serverId, groups).map(({ group: _group, aliases: _aliases, ...tool }) => tool) });
 			case 'tools/call': {
 				const params = (message.params ?? {}) as { name?: string; arguments?: unknown };
 				const name = params.name ?? '';
-				if (!this.toolsFor(serverId, groups).some(tool => tool.name === name)) {
+				// An agent that listed tools before a rename may call the earlier name; the window maps it.
+				if (!this.toolsFor(serverId, groups).some(tool => tool.name === name || tool.aliases?.includes(name))) {
 					return ok(id, { content: [{ type: 'text', text: `Unknown tool ${name}` }], isError: true });
 				}
 				const result = await this.call(serverId, sessionId, name, params.arguments ?? {}, res);
@@ -294,20 +296,21 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const chunks: Buffer[] = [];
 		let size = 0;
+		let tooLarge = false;
 		req.on('data', chunk => {
-			if (size > limit) {
-				return; // drain the rest so the 413 can be sent
+			if (tooLarge) {
+				return; // drain the rest, so the client finishes writing and can read the 413
 			}
 			const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
 			size += buffer.length;
 			if (size > limit) {
+				tooLarge = true;
 				chunks.length = 0;
-				reject(new Error('too large'));
 				return;
 			}
 			chunks.push(buffer);
 		});
-		req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+		req.on('end', () => tooLarge ? reject(new Error('too large')) : resolve(Buffer.concat(chunks).toString('utf8')));
 		req.on('error', reject);
 	});
 }

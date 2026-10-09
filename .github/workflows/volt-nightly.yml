@@ -1,0 +1,50 @@
+name: Volt Nightly
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # 03:00 UTC every day
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Targets (comma-separated) or "all"'
+        default: all
+      publish:
+        description: Publish the release and update the feed
+        type: boolean
+        default: true
+
+concurrency:
+  group: volt-release-nightly
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    name: Changed since the last nightly?
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          LAST=$(gh api "repos/${{ github.repository }}/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || true)
+          if [ "$EVENT" = "schedule" ] && [ "$LAST" = "${{ github.sha }}" ]; then
+            echo "Nightly already built for ${{ github.sha }}"; echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    uses: ./.github/workflows/volt-build.yml
+    secrets: inherit
+    with:
+      channel: nightly
+      platforms: ${{ inputs.platforms || 'all' }}
+      publish: ${{ github.event_name == 'schedule' || inputs.publish }}

@@ -19,20 +19,20 @@ import { ITerminalService } from '../../../terminal/browser/terminal.js';
 import { TerminalCommandId } from '../../../terminal/common/terminal.js';
 import { openAgentChanges } from '../review/agentChangesEditor.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
-import { isAgentChangesShown, isAgentScmShown, onDidChangeAgentToolEditors, SHOW_AGENT_SCM_COMMAND_ID } from '../workspace/agentSurfaceHost.js';
+import { isAgentChangesShown, isAgentScmShown, onDidChangeAgentToolEditors } from '../workspace/agentSurfaceHost.js';
 import { AgentFilesSidebar } from '../workspace/agentFilesSidebar.js';
 import { AGENT_TOOLS_VISIBILITY_EVENT } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createCompactIcon } from '../context/agentContextUsageView.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
-import { CREATE_PULL_REQUEST_COMMAND_ID, OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
-import { currentLink, IAgentPrLink, isOpenState, isTrunkBranch } from '../../common/agentPullRequests.js';
+import { AgentPullRequestHoverCard } from '../pullRequests/agentPullRequestHoverCard.js';
+import { SHOW_PULL_REQUESTS_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
+import { AgentGitActionsControl } from '../pullRequests/agentGitActionsControl.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { currentLink, IAgentPrLink, isOpenState } from '../../common/agentPullRequests.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 
-const DOT_RING = [0, 1, 2, 5, 8, 7, 6, 3];
-const DOT_TRAIL = 2;
-const DOT_SPEED = 90;
 /** A reader this close to the last line is at the end, so the arrow stays hidden. */
 export const SCROLL_END_SLACK_PX = 96;
 
@@ -44,6 +44,19 @@ export function shouldOfferScrollToBottom(hasMessages: boolean, distanceFromBott
 export interface IAgentComposerChipStatus {
 	label: string;
 	working: boolean;
+}
+
+/**
+ * The "Compact first" chip: hidden, offered (the window is nearly full; a click arms it), armed (the
+ * next send compacts first; a click disarms it), running (the dots stand in for its icon until the
+ * agent is done), or done (a check and the token drop for a moment before it goes).
+ */
+export type AgentCompactChipState = 'hidden' | 'offered' | 'armed' | 'running' | 'done';
+
+/** What the chip says besides its state: the live token count ("162K", "162K → 21K") and its hover. */
+export interface IAgentCompactChipDetail {
+	readonly count?: string;
+	readonly tooltip?: string;
 }
 
 export interface IAgentComposerChipsOptions {
@@ -63,40 +76,35 @@ interface IGitShortStat {
 	deletions: number;
 }
 
-export function createThinkingDots(): { root: HTMLElement; cells: HTMLElement[] } {
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/**
+ * Cursor's in-progress loader for pills (DotGridLoader, sine_3x3): nine dots on a 3x3 grid, same
+ * geometry (r 1.125 on a 4 pitch in a 10.5 box). The wave is CSS keyframes per dot (browserEditor.css).
+ */
+export function createThinkingDots(): HTMLElement {
 	const root = $('span.volt-browser-dock-dots');
 	root.setAttribute('aria-hidden', 'true');
-	const cells: HTMLElement[] = [];
-	for (let i = 0; i < 9; i++) {
-		cells.push(append(root, $('span.volt-browser-dock-dot')));
+	const svg = root.ownerDocument.createElementNS(SVG_NS, 'svg');
+	svg.setAttribute('viewBox', '0 0 10.5 10.5');
+	svg.setAttribute('focusable', 'false');
+	for (let index = 0; index < 9; index++) {
+		const dot = root.ownerDocument.createElementNS(SVG_NS, 'circle');
+		dot.setAttribute('cx', String(1.25 + (index % 3) * 4));
+		dot.setAttribute('cy', String(1.25 + Math.floor(index / 3) * 4));
+		dot.setAttribute('r', '1.125');
+		dot.setAttribute('class', `volt-browser-dock-dot d${index + 1}`);
+		svg.appendChild(dot);
 	}
-	return { root, cells };
+	root.appendChild(svg);
+	return root;
 }
-
-/** One frame of the dots' spin: a short bright trail runs around the ring of the 3x3 grid. */
-export function paintThinkingDots(cells: readonly HTMLElement[], step: number): void {
-	for (const [index, cell] of cells.entries()) {
-		let opacity = index === 4 ? 0.16 : 0.1;
-		const ring = DOT_RING.indexOf(index);
-		if (ring >= 0) {
-			const distance = (ring - (step % DOT_RING.length) + DOT_RING.length) % DOT_RING.length;
-			if (distance <= DOT_TRAIL) {
-				opacity = 1 - distance / (DOT_TRAIL + 1);
-			}
-		}
-		cell.style.opacity = String(opacity);
-	}
-}
-
-/** How often the dots step, in ms. */
-export const THINKING_DOTS_SPEED = DOT_SPEED;
 
 export class AgentComposerChips extends Disposable {
 
 	readonly element: HTMLElement;
 
 	private readonly statusChip: HTMLButtonElement;
-	private readonly chipDots: HTMLElement[];
 	private readonly chipLabelEl: HTMLElement;
 	private readonly changesChip: HTMLButtonElement;
 	private readonly changesLabelEl: HTMLElement;
@@ -104,7 +112,11 @@ export class AgentComposerChips extends Disposable {
 	private readonly changesDelEl: HTMLElement;
 	private readonly terminalsChip: HTMLButtonElement;
 	private readonly terminalsLabelEl: HTMLElement;
-	private readonly commitChip: HTMLButtonElement;
+	/** Commit, Push & PR: T3 Code's git actions, the next step for the chat's branch. */
+	private readonly gitControl: AgentGitActionsControl;
+	private gitVisible = false;
+	/** A new chat with no messages yet: Commit, Push & PR waits for the first prompt. */
+	private newChat = false;
 	/** The chat's pull request (state, number, checks), or Create PR on a feature branch without one. */
 	private readonly prChip: HTMLButtonElement;
 	private readonly prIcon: HTMLElement;
@@ -112,10 +124,15 @@ export class AgentComposerChips extends Disposable {
 	private readonly prChecks: HTMLElement;
 	private readonly prExit = this._register(new MutableDisposable());
 	private readonly pullRequests: IAgentPullRequestService | undefined;
-	private pr: { readonly kind: 'link'; readonly link: IAgentPrLink } | { readonly kind: 'create' } | undefined;
+	/** State, checks and size of the chat's pull request, with Merge when it is ready, over the chip. */
+	private readonly prHoverCard: AgentPullRequestHoverCard | undefined;
+	private pr: { readonly kind: 'link'; readonly link: IAgentPrLink } | undefined;
 	private prGen = 0;
 	private readonly compactChip: HTMLButtonElement;
-	private offerCompact = false;
+	private readonly compactLabelEl: HTMLElement;
+	private compactState: AgentCompactChipState = 'hidden';
+	private compactDetail: IAgentCompactChipDetail = {};
+	private readonly compactCountEl: HTMLElement;
 	private readonly scrollChip: HTMLButtonElement;
 	private scrolledUp = false;
 	private readonly scrollExit = this._register(new MutableDisposable());
@@ -132,8 +149,6 @@ export class AgentComposerChips extends Disposable {
 	private runningTerminals = 0;
 	private refreshHandle: number | undefined;
 	private refreshGen = 0;
-	private dotsTimer: number | undefined;
-	private dotsStep = 0;
 
 	constructor(
 		private readonly options: IAgentComposerChipsOptions,
@@ -145,22 +160,25 @@ export class AgentComposerChips extends Disposable {
 		@IEditorService private readonly editorService: IEditorService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
+		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
 	) {
 		super();
 		this.element = $(options.dock ? '.volt-agent-composer-chips.volt-browser-dock-chips' : '.volt-agent-composer-chips');
 
 		this.statusChip = append(this.element, $('button.volt-agent-composer-chip.status.volt-browser-dock-chip')) as HTMLButtonElement;
 		this.statusChip.type = 'button';
-		const dots = createThinkingDots();
-		this.chipDots = dots.cells;
-		append(this.statusChip, dots.root);
+		append(this.statusChip, createThinkingDots());
 		this.chipLabelEl = append(this.statusChip, $('span.volt-agent-composer-chip-label.volt-browser-dock-chip-label'));
 
 		this.compactChip = append(this.element, $('button.volt-agent-composer-chip.compact.volt-browser-dock-chip.hidden')) as HTMLButtonElement;
 		this.compactChip.type = 'button';
+		append(this.compactChip, createThinkingDots());
 		this.compactChip.appendChild(createCompactIcon(this.compactChip.ownerDocument));
-		append(this.compactChip, $('span.volt-agent-composer-chip-label')).textContent = localize('voltAgent.compactContext', "Compact context");
-		setAgentTooltip(this.compactChip, localize('voltAgent.compactContextNearlyFull', "The context window is nearly full. Compact it to keep going."));
+		append(this.compactChip, $('span.volt-agent-composer-chip-done')).appendChild(renderIcon(Codicon.check));
+		this.compactLabelEl = append(this.compactChip, $('span.volt-agent-composer-chip-label'));
+		this.compactLabelEl.textContent = localize('voltAgent.compactFirst', "Compact first");
+		this.compactCountEl = append(this.compactChip, $('span.volt-agent-composer-chip-count'));
+		this.renderCompactChip();
 
 		this.changesChip = append(this.element, $('button.volt-agent-composer-chip.changes.volt-browser-dock-chip')) as HTMLButtonElement;
 		this.changesChip.type = 'button';
@@ -174,16 +192,27 @@ export class AgentComposerChips extends Disposable {
 		append(this.terminalsChip, $('span.volt-agent-composer-chip-dot'));
 		this.terminalsLabelEl = append(this.terminalsChip, $('span.volt-agent-composer-chip-label'));
 
-		this.commitChip = append(this.element, $('button.volt-agent-composer-chip.commit.volt-browser-dock-chip')) as HTMLButtonElement;
-		this.commitChip.type = 'button';
-		append(this.commitChip, $('span.volt-agent-composer-chip-label')).textContent = localize('voltAgent.commitAndPush', "Commit & Push");
+		this.pullRequests = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
+		this.gitControl = this._register(this.instantiationService.createInstance(AgentGitActionsControl, this.element, {
+			look: 'chip',
+			target: () => {
+				const folder = this.gitFolder();
+				return { ...(this.sessionId ? { sessionId: this.sessionId } : {}), ...(folder ? { folder } : {}) };
+			},
+			onDidChangeVisibility: visible => {
+				this.gitVisible = visible;
+				this.render();
+			},
+		}));
 
 		this.prChip = append(this.element, $('button.volt-agent-composer-chip.pr.volt-browser-dock-chip.hidden')) as HTMLButtonElement;
 		this.prChip.type = 'button';
 		this.prIcon = append(this.prChip, $('span.volt-agent-composer-chip-pr-icon'));
 		this.prLabel = append(this.prChip, $('span.volt-agent-composer-chip-label'));
 		this.prChecks = append(this.prChip, $('span.volt-agent-composer-chip-pr-checks'));
-		this.pullRequests = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
+		this.prHoverCard = this.pullRequests
+			? this._register(this.instantiationService.createInstance(AgentPullRequestHoverCard, this.prChip, () => this.pr?.link))
+			: undefined;
 
 		this.scrollChip = append(this.element, $('button.volt-agent-composer-chip.scroll-bottom.hidden')) as HTMLButtonElement;
 		this.scrollChip.type = 'button';
@@ -228,29 +257,27 @@ export class AgentComposerChips extends Disposable {
 		this._register(addDisposableListener(this.compactChip, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
-			this.options.onCompactClick?.();
+			if (this.compactState === 'offered' || this.compactState === 'armed') {
+				this.options.onCompactClick?.();
+			}
 		}));
-		this._register(addDisposableListener(this.commitChip, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			// Source Control in the tools commits and pushes; the chips step aside while it shows.
-			void this.commandService.executeCommand(SHOW_AGENT_SCM_COMMAND_ID);
-		}));
-
+		// The chat's pull request: the right sidebar's Pull Requests tab, where its row opens it.
 		this._register(addDisposableListener(this.prChip, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
-			const pr = this.pr;
-			if (pr?.kind === 'link') {
-				void this.commandService.executeCommand(OPEN_PULL_REQUEST_COMMAND_ID, { host: pr.link.repo.host, owner: pr.link.repo.owner, name: pr.link.repo.name, number: pr.link.number }, this.sessionId);
-			} else if (pr?.kind === 'create') {
-				void this.commandService.executeCommand(CREATE_PULL_REQUEST_COMMAND_ID, this.sessionId);
+			if (this.pr) {
+				void this.commandService.executeCommand(SHOW_PULL_REQUESTS_COMMAND_ID, this.sessionId);
 			}
 		}));
 		if (this.pullRequests) {
 			this._register(this.pullRequests.onDidChange(sessionIds => {
 				if (this.sessionId && sessionIds.includes(this.sessionId)) {
 					void this.refreshPullRequest();
+				}
+			}));
+			this._register(this.pullRequests.onDidChangeOrigin(folder => {
+				if (folder === this.gitFolder()) {
+					this.render();
 				}
 			}));
 		}
@@ -296,6 +323,15 @@ export class AgentComposerChips extends Disposable {
 		}
 	}
 
+	/** Hides Commit, Push & PR while the chat has no messages yet. */
+	setNewChat(newChat: boolean): void {
+		if (this.newChat === newChat) {
+			return;
+		}
+		this.newChat = newChat;
+		this.render();
+	}
+
 	setHostOpen(open: boolean): void {
 		if (this.hostOpen === open) {
 			return;
@@ -312,18 +348,51 @@ export class AgentComposerChips extends Disposable {
 		this.render();
 	}
 
-	/** Shows or hides the Compact context chip. */
-	setCompactOffered(offer: boolean): void {
-		const next = offer && !!this.options.onCompactClick;
-		if (this.offerCompact === next) {
+	/** Shows the Compact first chip as an offer, armed, while the agent compacts, or just after; or hides it. */
+	setCompactState(state: AgentCompactChipState, detail: IAgentCompactChipDetail = {}): void {
+		const next = this.options.onCompactClick ? state : 'hidden';
+		if (this.compactState === next && this.compactDetail.count === detail.count && this.compactDetail.tooltip === detail.tooltip) {
 			return;
 		}
-		this.offerCompact = next;
-		this.render();
+		const changed = this.compactState !== next;
+		this.compactState = next;
+		this.compactDetail = detail;
+		this.renderCompactChip();
+		if (changed) {
+			this.render();
+		}
+	}
+
+	private renderCompactChip(): void {
+		const state = this.compactState;
+		this.compactChip.classList.toggle('working', state === 'running');
+		this.compactChip.classList.toggle('done', state === 'done');
+		this.compactChip.classList.toggle('armed', state === 'armed');
+		this.compactChip.setAttribute('aria-disabled', String(state !== 'offered' && state !== 'armed'));
+		if (state === 'offered' || state === 'armed') {
+			this.compactChip.setAttribute('aria-pressed', String(state === 'armed'));
+		} else {
+			this.compactChip.removeAttribute('aria-pressed');
+		}
+		this.compactLabelEl.textContent = state === 'running'
+			? localize('voltAgent.compaction.runningShort', "Compacting")
+			: state === 'done'
+				? localize('voltAgent.compaction.doneShort', "Compacted")
+				: localize('voltAgent.compactFirst', "Compact first");
+		this.compactCountEl.textContent = this.compactDetail.count ? `· ${this.compactDetail.count}` : '';
+		setAgentTooltip(this.compactChip, this.compactDetail.tooltip ?? (state === 'running'
+			? localize('voltAgent.compactingTooltip', "The agent is summarizing the conversation so far. The summary replaces it in the context window.")
+			: state === 'done'
+				? localize('voltAgent.compactedTooltip', "The conversation was summarized; the agent continues from the summary.")
+				: localize('voltAgent.compactContextNearlyFull', "The context window is nearly full. Compact it to keep going.")));
 	}
 
 	hasVisibleChips(): boolean {
-		return this.hostOpen && (this.hasStatus() || this.hasChanges || this.runningTerminals > 0 || this.offerCompact || !!this.pr);
+		return this.hostOpen && (this.hasStatus() || this.hasChanges || this.showsGit() || this.runningTerminals > 0 || this.compactState !== 'hidden' || !!this.pr);
+	}
+
+	private showsGit(): boolean {
+		return this.gitVisible && !this.newChat;
 	}
 
 	private hasStatus(): boolean {
@@ -378,6 +447,7 @@ export class AgentComposerChips extends Disposable {
 		const gen = ++this.refreshGen;
 		const runningTerminals = this.terminalService.instances.filter(instance => instance.hasChildProcesses).length;
 		void this.refreshPullRequest();
+		void this.gitControl.refresh();
 		if (this.sessionId) {
 			const stats = this.changesService.getStats(this.sessionId, 'uncommitted');
 			if (gen !== this.refreshGen) {
@@ -431,14 +501,6 @@ export class AgentComposerChips extends Disposable {
 			const link = currentLink(service.links(sessionId));
 			if (link) {
 				next = { kind: 'link', link };
-			} else {
-				const repo = await service.repoFor(sessionId);
-				if (gen !== this.prGen) {
-					return;
-				}
-				if (repo?.provider === 'github' && repo.branch && !isTrunkBranch(repo.branch)) {
-					next = { kind: 'create' };
-				}
 			}
 		}
 		if (gen !== this.prGen) {
@@ -448,22 +510,22 @@ export class AgentComposerChips extends Disposable {
 		this.render();
 	}
 
+	/** The folder the chat's agent works in (its worktree), else the window's. */
+	private gitFolder(): string | undefined {
+		return (this.sessionId ? this.pullRequests?.folderFor(this.sessionId) : undefined) ?? this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath;
+	}
+
 	private renderPullRequestChip(): boolean {
 		const pr = this.pr;
-		if (!pr) {
+		// A repository without an `origin` remote shows no pull request, even one linked before.
+		const folder = this.gitFolder();
+		if (!pr || !folder || !this.pullRequests?.hasOrigin(folder)) {
+			this.prHoverCard?.hide();
 			return false;
 		}
 		this.prIcon.replaceChildren();
 		this.prChecks.className = 'volt-agent-composer-chip-pr-checks';
-		this.prChip.classList.remove('state-open', 'state-draft', 'state-merged', 'state-closed', 'create');
-		if (pr.kind === 'create') {
-			this.prChip.classList.add('create');
-			this.prIcon.appendChild(renderIcon(Codicon.gitPullRequestCreate));
-			this.prLabel.textContent = localize('voltAgent.createPr', "Create PR");
-			setAgentTooltip(this.prChip, localize('voltAgent.createPrTip', "Open a pull request from this branch"));
-			this.prChecks.classList.add('hidden');
-			return true;
-		}
+		this.prChip.classList.remove('state-open', 'state-draft', 'state-merged', 'state-closed');
 		const snapshot = pr.link.snapshot;
 		const state = snapshot?.state ?? 'open';
 		this.prChip.classList.add(`state-${state}`);
@@ -474,37 +536,35 @@ export class AgentComposerChips extends Disposable {
 		if (checks !== 'none') {
 			this.prChecks.classList.add(`check-${checks}`);
 		}
-		setAgentTooltip(this.prChip, snapshot
-			? `${snapshot.title}\n${snapshot.headRefName} → ${snapshot.baseRefName}${pr.link.watch ? `\n${localize('voltAgent.prWatching', "Watching for checks, reviews and conflicts")}` : ''}`
-			: localize('voltAgent.prNumber', "Pull request #{0}", pr.link.number));
+		// With a snapshot the hover card tells the rest (state, checks, size, Merge).
+		setAgentTooltip(this.prChip, snapshot && this.prHoverCard ? undefined : localize('voltAgent.prNumber', "Pull request #{0}", pr.link.number));
+		this.prHoverCard?.update();
 		return true;
 	}
 
 	private render(): void {
 		const showPr = this.renderPullRequestChip();
-		const showStatus = this.hasStatus();
+		// While it compacts, the Compact chip carries the run's status: no second "Compacting context" beside it.
+		const showStatus = this.hasStatus() && this.compactState !== 'running';
+		const showCompact = this.compactState !== 'hidden';
 		const showChanges = this.hasChanges && !(this.sessionId && isAgentChangesShown(this.sessionId));
 		const showTerminals = this.runningTerminals > 0;
-		const showCommit = this.hasChanges && !(this.sessionId && isAgentScmShown(this.sessionId));
+		// Steps aside while Source Control shows this chat's changes in the right panel.
+		const showCommit = this.gitVisible && !this.newChat && !(this.sessionId && isAgentScmShown(this.sessionId));
 		const showScroll = this.scrolledUp && !!this.options.onScrollToBottom;
 		this.updateScrollChip(showScroll);
 		// Before the row's visibility: a chip starting its exit keeps the row up until it is gone.
 		this.toggleChip(this.changesChip, showChanges, this.changesExit);
-		this.toggleChip(this.commitChip, showCommit, this.commitExit);
+		this.toggleChip(this.gitControl.element, showCommit, this.commitExit);
 		this.toggleChip(this.prChip, showPr, this.prExit);
-		const visible = this.hostOpen && (showStatus || this.offerCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
+		const visible = this.hostOpen && (showStatus || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
 		this.element.classList.toggle('is-visible', visible);
 
 		this.statusChip.classList.toggle('hidden', !showStatus);
 		this.statusChip.classList.toggle('working', this.status.working);
 		this.chipLabelEl.textContent = this.status.label;
-		if (this.status.working) {
-			this.startDots();
-		} else {
-			this.stopDots();
-		}
 
-		this.compactChip.classList.toggle('hidden', !this.offerCompact);
+		this.compactChip.classList.toggle('hidden', !showCompact);
 
 		this.changesAddEl.textContent = this.insertions > 0 ? `+${this.insertions}` : '';
 		this.changesDelEl.textContent = this.deletions > 0 ? `-${this.deletions}` : '';
@@ -519,7 +579,7 @@ export class AgentComposerChips extends Disposable {
 
 	/** No status, changes, or terminal chip sits beside the arrow. */
 	private scrollChipIsAlone(): boolean {
-		return !this.hasStatus() && !this.hasChanges && this.runningTerminals <= 0 && !this.offerCompact && !this.pr;
+		return !this.hasStatus() && !this.hasChanges && !this.showsGit() && this.runningTerminals <= 0 && this.compactState === 'hidden' && !this.pr;
 	}
 
 	private updateScrollChip(show: boolean): void {
@@ -593,36 +653,12 @@ export class AgentComposerChips extends Disposable {
 		}, 180);
 	}
 
-	private startDots(): void {
-		if (this.dotsTimer !== undefined) {
-			return;
-		}
-		this.paintDots();
-		this.dotsTimer = getWindow(this.element).setInterval(() => {
-			this.dotsStep++;
-			this.paintDots();
-		}, DOT_SPEED);
-	}
-
-	private stopDots(): void {
-		if (this.dotsTimer === undefined) {
-			return;
-		}
-		getWindow(this.element).clearInterval(this.dotsTimer);
-		this.dotsTimer = undefined;
-	}
-
-	private paintDots(): void {
-		paintThinkingDots(this.chipDots, this.dotsStep);
-	}
-
 	override dispose(): void {
 		const win = getWindow(this.element);
 		if (this.refreshHandle !== undefined) {
 			win.clearTimeout(this.refreshHandle);
 			this.refreshHandle = undefined;
 		}
-		this.stopDots();
 		super.dispose();
 	}
 }

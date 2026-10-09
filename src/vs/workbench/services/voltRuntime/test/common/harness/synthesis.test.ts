@@ -18,8 +18,6 @@ suite('Volt result synthesis', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	const checks: IProjectChecks = { test: 'npm test', typecheck: 'npx tsc --noEmit' };
-
 	test('reports a verified run as done and names the gate that passed', () => {
 		const outcome = synthesize(scenario('fix the login bug so the tests pass', store => {
 			record(store, 1, 'edit_file', { path: 'src/login.ts' }, 'edit');
@@ -172,7 +170,7 @@ suite('Volt result synthesis', () => {
 function scenario(
 	text: string,
 	fill: (store: EvidenceStore) => void,
-	overrides: Partial<ISynthesisInput> & { checks?: IProjectChecks } = {},
+	overrides: Partial<ISynthesisInput> & { checks?: IProjectChecks; readOnly?: boolean } = {},
 ): ISynthesisInput {
 	const checks = overrides.checks ?? { test: 'npm test', typecheck: 'npx tsc --noEmit' };
 	const intel = analyzeTask(text, classifyIntent(text, 'agent', { hasWorkspace: true }));

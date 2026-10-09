@@ -14,6 +14,8 @@ import { Action2, registerAction2 } from '../../../../../platform/actions/common
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contextkey.js';
+import { EditorContextKeys } from '../../../../../editor/common/editorContextKeys.js';
+import { CONTEXT_IN_AGENT_INPUT } from '../editor/agentFindWidget.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { GroupsOrder, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
@@ -29,12 +31,22 @@ import { AgentNavHistory, agentSidebarNavDragClearance } from './agentNavHistory
 export const AGENT_NAV_BACK_COMMAND_ID = 'workbench.action.voltAgent.goBack';
 export const AGENT_NAV_FORWARD_COMMAND_ID = 'workbench.action.voltAgent.goForward';
 
-const agentLayoutWhen = ContextKeyExpr.and(LayoutModeContext.isEqualTo('agent'));
+/**
+ * Agent layout, and not typing in a code editor (where ⌘[ / ⌘] outdent and indent) or a terminal
+ * (where Ctrl+[ is Escape). The chat composer is a code editor but has no indentation to change,
+ * so there the keys go back and forward like everywhere else in the window.
+ */
+const agentNavWhen = ContextKeyExpr.and(
+	LayoutModeContext.isEqualTo('agent'),
+	ContextKeyExpr.or(EditorContextKeys.textInputFocus.negate(), CONTEXT_IN_AGENT_INPUT),
+	ContextKeyExpr.not('terminalFocus'),
+);
 
 let navigation: AgentNavContribution | undefined;
 
-function navShortcut(key: string): string {
-	return formatAgentTooltipShortcut(isMacintosh ? { meta: true, key } : { ctrl: true, key });
+/** ⌘[ / ⌘] on macOS, Alt+← / Alt+→ elsewhere (as the IDE's own back and forward). */
+function navShortcut(key: '[' | ']'): string {
+	return formatAgentTooltipShortcut(isMacintosh ? { meta: true, key } : { alt: true, key: key === '[' ? '\u2190' : '\u2192' });
 }
 
 function navKey(editor: EditorInput): string {
@@ -115,7 +127,7 @@ class AgentNavContribution extends Disposable {
 		}
 		const titlebar = this.layoutService.getContainer(mainWindow, Parts.TITLEBAR_PART);
 		const left = titlebar?.querySelector('.titlebar-left');
-		if (left && !left.querySelector(':scope > .volt-agent-nav-titlebar')) {
+		if (isHTMLElement(left) && !left.querySelector(':scope > .volt-agent-nav-titlebar')) {
 			const nav = this.mountPair(left, true);
 			const header = left.querySelector('.volt-agent-primary-header');
 			if (header) {
@@ -124,7 +136,7 @@ class AgentNavContribution extends Disposable {
 		}
 	}
 
-	private mountPair(parent: Element, titlebar: boolean): HTMLElement {
+	private mountPair(parent: HTMLElement, titlebar: boolean): HTMLElement {
 		const nav = append(parent, $(titlebar ? '.volt-agent-nav.volt-agent-nav-titlebar' : '.volt-agent-nav'));
 		const back = this.button(nav, 'back', localize('voltAgent.goBack', "Go Back"), '[');
 		const forward = this.button(nav, 'forward', localize('voltAgent.goForward', "Go Forward"), ']');
@@ -134,7 +146,7 @@ class AgentNavContribution extends Disposable {
 		return nav;
 	}
 
-	private button(parent: HTMLElement, direction: 'back' | 'forward', label: string, key: string): HTMLButtonElement {
+	private button(parent: HTMLElement, direction: 'back' | 'forward', label: string, key: '[' | ']'): HTMLButtonElement {
 		const button = append(parent, $('button.volt-agent-nav-button.volt-titlebar-control')) as HTMLButtonElement;
 		button.type = 'button';
 		button.appendChild(arrowIcon(direction));
@@ -180,7 +192,7 @@ class AgentNavContribution extends Disposable {
 	}
 
 	private async reveal(editor: EditorInput): Promise<void> {
-		if (editor.isDisposed) {
+		if (editor.isDisposed()) {
 			if (editor instanceof AgentEditorInput) {
 				await openAgentPanel(this.editorGroupsService, this.instantiationService, editor.sessionId, { preserveFocus: true });
 			} else if (editor instanceof VoltSettingsEditorInput) {
@@ -222,8 +234,10 @@ registerAction2(class AgentNavBackAction extends Action2 {
 			f1: true,
 			keybinding: {
 				weight: KeybindingWeight.WorkbenchContrib + 50,
-				when: agentLayoutWhen,
-				primary: KeyMod.CtrlCmd | KeyCode.BracketLeft,
+				when: agentNavWhen,
+				primary: KeyMod.Alt | KeyCode.LeftArrow,
+				secondary: [KeyMod.CtrlCmd | KeyCode.BracketLeft],
+				mac: { primary: KeyMod.CtrlCmd | KeyCode.BracketLeft },
 			},
 		});
 	}
@@ -240,8 +254,10 @@ registerAction2(class AgentNavForwardAction extends Action2 {
 			f1: true,
 			keybinding: {
 				weight: KeybindingWeight.WorkbenchContrib + 50,
-				when: agentLayoutWhen,
-				primary: KeyMod.CtrlCmd | KeyCode.BracketRight,
+				when: agentNavWhen,
+				primary: KeyMod.Alt | KeyCode.RightArrow,
+				secondary: [KeyMod.CtrlCmd | KeyCode.BracketRight],
+				mac: { primary: KeyMod.CtrlCmd | KeyCode.BracketRight },
 			},
 		});
 	}

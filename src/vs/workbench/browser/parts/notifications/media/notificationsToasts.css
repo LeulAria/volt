@@ -37,7 +37,32 @@
 .monaco-workbench > .notifications-toasts .notification-toast-container > .notification-toast .monaco-scrollable-element,
 .monaco-workbench > .notifications-toasts .notification-toast-container > .notification-toast .monaco-list:not(.element-focused):focus:before,
 .monaco-workbench > .notifications-toasts .notification-toast-container > .notification-toast .monaco-list-row {
-	border-radius: 4px;
+	border-radius: 5px;
+}
+
+/*
+ * Volt: a frosted toast. The toast paints the notification background at 80% and blurs what is
+ * behind it; the list inside is see-through so only one layer paints.
+ */
+.monaco-workbench > .notifications-toasts .notification-toast-container > .notification-toast {
+	background: color-mix(in srgb, var(--vscode-notifications-background) 80%, transparent);
+	-webkit-backdrop-filter: blur(20px) saturate(1.4);
+	backdrop-filter: blur(20px) saturate(1.4);
+}
+
+.monaco-workbench > .notifications-toasts .notification-toast .notifications-list-container,
+.monaco-workbench > .notifications-toasts .notification-toast .monaco-list-rows {
+	background: transparent;
+}
+
+/*
+ * The agent layout window is transparent (macOS vibrancy): backdrop-filter there makes Chromium
+ * stop clearing old pixels (black sidebar, scroll trails). Keep the toast flat and more opaque.
+ */
+.monaco-workbench.volt-layout-agent > .notifications-toasts .notification-toast-container > .notification-toast {
+	background: color-mix(in srgb, var(--vscode-notifications-background) 94%, transparent);
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
 }
 
 .monaco-workbench.reduce-motion > .notifications-toasts .notification-toast-container > .notification-toast {

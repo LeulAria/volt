@@ -5,14 +5,16 @@
 
 import { Event } from '../../../base/common/event.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
+import { IVoltRestackResult, IVoltStack, IVoltStackLayer } from './voltPrStacks.js';
 
 /**
  * Pull requests for agent chats: read, create, review and merge them on the code host.
  *
- * The desktop service runs in the main process and talks to GitHub (github.com and Enterprise
- * hosts) through the GitHub CLI, so it uses the accounts the user already signed in with
- * (`gh auth login`), several per host included. Other hosts are recognized from the remote and
- * reported as unsupported rather than guessed at.
+ * The desktop service runs in the main process. GitHub (github.com and Enterprise hosts) goes
+ * through the GitHub CLI, so it uses the accounts the user already signed in with (`gh auth login`),
+ * several per host included. GitLab, Bitbucket, Gitea / Forgejo and Azure DevOps go through their
+ * REST APIs with a token: one the user gave Volt (kept in Volt's secret storage), else the host's
+ * CLI login (glab, tea, az) or its usual environment variable.
  */
 
 export const IVoltPullRequestService = createDecorator<IVoltPullRequestService>('voltPullRequestService');
@@ -49,6 +51,10 @@ export interface IVoltPrRepo extends IVoltPrRepoRef {
 export interface IVoltPrAccount {
 	readonly host: string;
 	readonly login: string;
+	/** Absent for GitHub CLI accounts. */
+	readonly provider?: VoltPrProvider;
+	/** Where the login comes from: the GitHub CLI, a token given to Volt, another CLI, an environment variable. */
+	readonly source?: VoltPrAuthSource;
 	/** The host's default account in the GitHub CLI. */
 	readonly active: boolean;
 	/** False when the CLI holds a token that no longer works. */
@@ -126,8 +132,10 @@ export interface IVoltPullRequest {
 	readonly key: string;
 	readonly repo: IVoltPrRepoRef;
 	readonly number: number;
-	/** GraphQL node id. */
+	/** GraphQL node id (or the host's own id). */
 	readonly id: string;
+	/** The kind of host; absent means GitHub. GitLab calls these merge requests (`!12`). */
+	readonly provider?: VoltPrProvider;
 	readonly title: string;
 	readonly url: string;
 	readonly state: VoltPrState;
@@ -248,6 +256,45 @@ export interface IVoltPullRequestDetail extends IVoltPullRequest {
 	readonly repoLabels: readonly IVoltPrLabel[];
 }
 
+export type VoltPrAuthSource = 'gh' | 'volt' | 'cli' | 'env';
+
+/** A token the user gave Volt for a host (kept in Volt's secret storage, handed to the main process). */
+export interface IVoltPrHostCredential {
+	/** `gitlab.com`, `git.corp:8443`, `dev.azure.com`. */
+	readonly host: string;
+	readonly provider: VoltPrProvider;
+	readonly token: string;
+	/** The web UI's root when it is not `https://<host>` (another port, a path, plain http). */
+	readonly webUrl?: string;
+	/** Bitbucket API tokens and app passwords sign in with a username (or the Atlassian email). */
+	readonly username?: string;
+	/** The account the token belongs to, as the host reported it at sign-in. */
+	readonly login?: string;
+}
+
+export interface IVoltPrSignInRequest {
+	readonly host: string;
+	readonly provider: VoltPrProvider;
+	readonly token: string;
+	readonly webUrl?: string;
+	readonly username?: string;
+	/** Azure DevOps: an organization/project to check the token against (tokens are per organization). */
+	readonly owner?: string;
+}
+
+/** What Volt knows about a code host: what it is, where it lives, and who it is signed in as. */
+export interface IVoltPrHostInfo {
+	readonly host: string;
+	readonly provider: VoltPrProvider;
+	/** Gitea and Forgejo share an API; the version endpoint says which one it is. */
+	readonly flavor?: 'gitea' | 'forgejo';
+	readonly webUrl: string;
+	readonly apiUrl?: string;
+	readonly auth?: { readonly source: VoltPrAuthSource; readonly login?: string };
+	/** How it was recognized: its name, a setting, a sign-in, an answer from the server, or not at all. */
+	readonly detectedBy: 'name' | 'setting' | 'signIn' | 'probe' | 'gh' | 'unknown';
+}
+
 /** Which account reads a repository: the host's active one unless the user picked another. */
 export interface IVoltPrAuth {
 	readonly account?: string;
@@ -330,6 +377,86 @@ export interface IVoltBranchSummary {
 	readonly template?: string;
 }
 
+/** One changed file of a pull request (or of one of its commits) with its patch, for the inline diff. */
+export interface IVoltPrFilePatch {
+	readonly path: string;
+	readonly previousPath?: string;
+	readonly change: VoltPrFileChange;
+	readonly additions: number;
+	readonly deletions: number;
+	/** Unified hunks; undefined for binary files and patches GitHub leaves out as too large. */
+	readonly patch?: string;
+	/** The file's blob on the new side; undefined for a deleted file. */
+	readonly blob?: string;
+}
+
+/** A comment on a line of a pull request's new side. */
+export interface IVoltPrLineComment {
+	readonly path: string;
+	readonly line: number;
+	readonly body: string;
+}
+
+export type VoltGitFileStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
+
+export interface IVoltGitStatusFile {
+	readonly path: string;
+	readonly previousPath?: string;
+	readonly status: VoltGitFileStatus;
+	readonly additions: number;
+	readonly deletions: number;
+}
+
+/** Where a work tree stands against its remote: what Commit, Push and Create PR can do from here. */
+export interface IVoltGitStatus {
+	readonly root: string;
+	/** The checked out branch; undefined when HEAD is detached or unborn. */
+	readonly branch?: string;
+	/** The commit HEAD points at; undefined before the first commit. */
+	readonly head?: string;
+	/** The remote pushes go to (the upstream's, else `origin`); undefined without remotes. */
+	readonly remote?: string;
+	/** Every remote's name (`origin`, `upstream`). */
+	readonly remotes: readonly string[];
+	/** The branch's upstream on that remote, when it has one. */
+	readonly upstream?: string;
+	readonly ahead: number;
+	readonly behind: number;
+	/** The remote's default branch (`main`), when it is known. */
+	readonly defaultBranch?: string;
+	readonly isDefaultBranch: boolean;
+	/** Commits on this branch the remote's default branch does not have. */
+	readonly aheadOfDefault?: number;
+	/** Uncommitted changes, staged or not, untracked files included. */
+	readonly files: readonly IVoltGitStatusFile[];
+	readonly insertions: number;
+	readonly deletions: number;
+}
+
+/** A work tree's remotes, read cheaply to decide whether pull request features apply. */
+export interface IVoltRepoRemotes {
+	/** The work tree's top folder. */
+	readonly root: string;
+	/** The repository's config file (the main repository's for a linked worktree): remotes change there. */
+	readonly configFile: string;
+	readonly remotes: readonly string[];
+}
+
+export interface IVoltGitCommitRequest {
+	readonly folder: string;
+	readonly message: string;
+	/** Commit only these paths; every change when undefined. */
+	readonly paths?: readonly string[];
+	/** Create and check out this branch first; the changes come along. */
+	readonly newBranch?: string;
+}
+
+export interface IVoltGitCommitResult {
+	readonly sha: string;
+	readonly branch?: string;
+	readonly subject: string;
+}
+
 export type VoltPrErrorCode =
 	/** The GitHub CLI is not installed. */
 	| 'noCli'
@@ -376,6 +503,25 @@ export function voltPrErrorMessage(err: unknown): string {
 	return message.replace(/^\[\w+\]\s*/, '');
 }
 
+/** One layer of a stack and the pull request its branch has, if any. */
+export interface IVoltPrStackLayerView {
+	readonly layer: IVoltStackLayer;
+	readonly pullRequest?: IVoltPullRequest;
+}
+
+export interface IVoltPrStackView {
+	readonly stack: IVoltStack;
+	/** Bottom first, like `stack.layers`. */
+	readonly layers: readonly IVoltPrStackLayerView[];
+	/** The branch the work tree has checked out: a new layer is stacked on it. */
+	readonly checkedOut?: string;
+}
+
+export interface IVoltPrRestackOutcome extends IVoltRestackResult {
+	/** Children of merged pull requests that now sit on the merged one's parent, and their new base. */
+	readonly retargeted: readonly { readonly branch: string; readonly to: string }[];
+}
+
 export interface IVoltPullRequestService {
 	readonly _serviceBrand: undefined;
 	/** Fires when signed-in accounts may have changed (after a login or a token failure). */
@@ -384,6 +530,8 @@ export interface IVoltPullRequestService {
 	accounts(host?: string): Promise<IVoltPrAccount[]>;
 	/** Undefined when the folder is not in a git work tree or has no remote on a known host. */
 	resolveRepo(folder: string): Promise<IVoltPrRepo | undefined>;
+	/** The folder's remotes; undefined outside a git repository. */
+	repoRemotes(folder: string): Promise<IVoltRepoRemotes | undefined>;
 	list(request: IVoltPrListRequest): Promise<IVoltPullRequest[]>;
 	/** Pull requests whose head is the branch, newest first. */
 	forBranch(request: IVoltPrBranchRequest): Promise<IVoltPullRequest[]>;
@@ -418,9 +566,45 @@ export interface IVoltPullRequestService {
 	push(request: { readonly folder: string; readonly remote?: string }): Promise<IVoltPrPushResult>;
 	/** Branches on the remote, for the base picker. */
 	remoteBranches(request: IVoltPrAuth & { readonly repo: IVoltPrRepoRef }): Promise<string[]>;
-	describeChanges(request: { readonly folder: string }): Promise<IVoltChangesSummary>;
+	/** What a commit would hold: the staged changes, else everything; or exactly `paths` against HEAD. */
+	describeChanges(request: { readonly folder: string; readonly paths?: readonly string[] }): Promise<IVoltChangesSummary>;
 	/** `base` is a branch name; its remote-tracking branch is used when there is one. */
 	describeBranch(request: { readonly folder: string; readonly base: string }): Promise<IVoltBranchSummary>;
+	/**
+	 * Changed files with patches: the whole pull request, or one of its commits. With `folder` (a
+	 * local clone), hosts other than GitHub read them from git there, blobs included.
+	 */
+	filePatches(request: IVoltPrRequest & { readonly commit?: string; readonly folder?: string }): Promise<IVoltPrFilePatch[]>;
+	/**
+	 * Posts a review with comments on lines of the new side (Volt's review findings). Hosts without
+	 * line comments in their API get one comment with every finding.
+	 */
+	postReview(request: IVoltPrRequest & { readonly body: string; readonly comments: readonly IVoltPrLineComment[]; readonly headOid?: string }): Promise<{ readonly posted: number; readonly url?: string }>;
+	/** A file's text by blob id: from the clone at `folder` when it has the blob, else from the host. */
+	readBlob(request: IVoltPrAuth & { readonly repo: IVoltPrRepoRef; readonly sha: string; readonly folder?: string }): Promise<string>;
+	/** Branch, upstream, default branch and uncommitted files of the work tree at `folder`. */
+	gitStatus(folder: string): Promise<IVoltGitStatus | undefined>;
+	/** Stages (all, or `paths`) and commits; optionally on a new branch. */
+	commit(request: IVoltGitCommitRequest): Promise<IVoltGitCommitResult>;
+	/** Fast-forwards the branch to its upstream. */
+	pull(folder: string): Promise<{ readonly updated: boolean; readonly branch: string; readonly upstream: string }>;
+	/** Creates and checks out `name` at HEAD; uncommitted changes come along. */
+	checkoutNewBranch(request: { readonly folder: string; readonly name: string }): Promise<void>;
 	/** Forget cached accounts and tokens (after the user signed in or out in a terminal). */
 	refreshAccounts(): Promise<void>;
+	/** The tokens the user gave Volt, every host (replaces the previous set). */
+	setHostCredentials(credentials: readonly IVoltPrHostCredential[]): Promise<void>;
+	/** Checks a token against its host and returns the account it belongs to; the caller keeps it. */
+	signInHost(request: IVoltPrSignInRequest): Promise<IVoltPrAccount>;
+	/** What the host is and who Volt reads it as (probing an unknown host once). */
+	hostInfo(host: string): Promise<IVoltPrHostInfo>;
+	/** The stack the branch (the checked out one by default) is in, bottom first, with each layer's pull request. */
+	stack(request: { readonly folder: string; readonly branch?: string }): Promise<IVoltPrStackView | undefined>;
+	/** Creates a layer on the checked out branch, named from `title`, and checks it out. */
+	stackNewBranch(request: { readonly folder: string; readonly title: string }): Promise<{ readonly branch: string; readonly parent: string }>;
+	/**
+	 * Moves the layers above whatever changed: a parent that was amended, rebased or squash-merged.
+	 * Children of a merged pull request first sit on its parent (and their pull requests target it).
+	 */
+	restack(request: { readonly folder: string; readonly branch?: string; readonly syncTrunk?: boolean }): Promise<IVoltPrRestackOutcome>;
 }

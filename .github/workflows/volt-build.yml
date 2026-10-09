@@ -1,0 +1,622 @@
+name: Volt Build
+
+# Reusable release pipeline, called by volt-nightly.yml, volt-beta.yml and volt-stable.yml.
+# Mirrors VS Code's product build: one Linux job compiles and minifies the platform-independent
+# output, then each platform/arch job installs native node_modules, packages, signs and uploads.
+# The publish job creates the GitHub Release and updates the update feed (branch volt-update-feed).
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: stable, beta or nightly
+        type: string
+        required: true
+      version:
+        description: Release version (empty = derive from package.json, the tag or the date)
+        type: string
+        default: ''
+      platforms:
+        description: 'Comma-separated targets or "all": darwin-x64,darwin-arm64,darwin-universal,linux-x64,linux-arm64,linux-armhf,win32-x64,win32-arm64'
+        type: string
+        default: all
+      publish:
+        description: Publish a GitHub Release and update the feed
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  VOLT_BUILD_IGNORE_TYPE_ERRORS: '1'
+  VOLT_LINUX_DEPS_WARN_ONLY: '1'
+  VSCODE_QUALITY: ${{ inputs.channel }}
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      darwin: ${{ steps.meta.outputs.darwin }}
+      linux: ${{ steps.meta.outputs.linux }}
+      win32: ${{ steps.meta.outputs.win32 }}
+      universal: ${{ steps.meta.outputs.universal }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compute version, tag and matrix
+        id: meta
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          PLATFORMS: ${{ inputs.platforms }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: node build/volt/release/prepare.mjs >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          echo "### Volt ${{ inputs.channel }} ${{ steps.meta.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tag: \`${{ steps.meta.outputs.tag }}\` · publish: ${{ inputs.publish }}" >> "$GITHUB_STEP_SUMMARY"
+
+  compile:
+    name: Compile
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      VSCODE_ARCH: x64
+      NPM_ARCH: x64
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Install system dependencies
+        run: |
+          set -e
+          ./build/azure-pipelines/linux/apt-retry.sh sudo apt-get update
+          ./build/azure-pipelines/linux/apt-retry.sh sudo apt-get install -y pkg-config libxkbfile-dev libkrb5-dev libsecret-1-dev libgbm1
+
+      - name: Prepare node_modules cache key
+        run: mkdir -p .build && node build/azure-pipelines/common/computeNodeModulesCacheKey.js compile $(node -p process.arch) > .build/packagelockhash
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache/restore@v4
+        with:
+          path: .build/node_modules_cache
+          key: "volt-node_modules-compile-${{ hashFiles('.build/packagelockhash') }}"
+
+      - name: Extract node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        run: tar -xzf .build/node_modules_cache/cache.tgz
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          for i in {1..5}; do
+            npm ci && break
+            if [ $i -eq 5 ]; then echo "npm ci failed too many times" >&2; exit 1; fi
+            echo "npm ci failed $i, retrying..."
+          done
+        env:
+          npm_config_arch: ${{ env.NPM_ARCH }}
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          node build/azure-pipelines/common/listNodeModules.js .build/node_modules_list.txt
+          mkdir -p .build/node_modules_cache
+          tar -czf .build/node_modules_cache/cache.tgz --files-from .build/node_modules_list.txt
+
+      - uses: actions/cache/save@v4
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        with:
+          path: .build/node_modules_cache
+          key: "volt-node_modules-compile-${{ hashFiles('.build/packagelockhash') }}"
+
+      - name: Mix in ${{ inputs.channel }}
+        run: node build/volt/mixin-quality.mjs --channel ${{ inputs.channel }} --version ${{ needs.prepare.outputs.version }}
+
+      - name: Prepare built-in extensions cache key
+        run: node build/azure-pipelines/common/computeBuiltInDepsCacheKey.js > .build/builtindepshash
+
+      - name: Restore built-in extensions cache
+        id: cache-builtin-extensions
+        uses: actions/cache@v4
+        with:
+          enableCrossOsArchive: true
+          path: .build/builtInExtensions
+          key: "volt-builtin-extensions-${{ hashFiles('.build/builtindepshash') }}"
+
+      - name: Download built-in extensions
+        if: steps.cache-builtin-extensions.outputs.cache-hit != 'true'
+        run: node build/lib/builtInExtensions.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compile and minify
+        run: |
+          set -e
+          npm run gulp compile-build-with-mangling
+          npm run gulp minify-vscode
+          npm run gulp extensions-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pack compilation
+        run: tar -czf compilation.tar.gz out-build out-vscode-min .build/extensions
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compilation
+          path: compilation.tar.gz
+          retention-days: 3
+          compression-level: 0
+
+  darwin:
+    name: macOS ${{ matrix.arch }}
+    needs: [prepare, compile]
+    if: needs.prepare.outputs.darwin != '[]'
+    runs-on: macos-15
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(needs.prepare.outputs.darwin) }}
+    env:
+      VSCODE_ARCH: ${{ matrix.arch }}
+      VOLT_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+
+      - name: Python setuptools (node-gyp)
+        run: python3 -m pip install --break-system-packages setuptools
+
+      - name: Prepare node_modules cache key
+        run: mkdir -p .build && node build/azure-pipelines/common/computeNodeModulesCacheKey.js darwin ${{ matrix.arch }} $(node -p process.arch) > .build/packagelockhash
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache/restore@v4
+        with:
+          path: .build/node_modules_cache
+          key: "volt-node_modules-darwin-${{ matrix.arch }}-${{ hashFiles('.build/packagelockhash') }}"
+
+      - name: Extract node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        run: tar -xzf .build/node_modules_cache/cache.tgz
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          c++ --version
+          for i in {1..5}; do
+            npm ci && break
+            if [ $i -eq 5 ]; then echo "npm ci failed too many times" >&2; exit 1; fi
+            echo "npm ci failed $i, retrying..."
+          done
+        env:
+          npm_config_arch: ${{ matrix.arch }}
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          node build/azure-pipelines/common/listNodeModules.js .build/node_modules_list.txt
+          mkdir -p .build/node_modules_cache
+          tar -czf .build/node_modules_cache/cache.tgz --files-from .build/node_modules_list.txt
+
+      - uses: actions/cache/save@v4
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        with:
+          path: .build/node_modules_cache
+          key: "volt-node_modules-darwin-${{ matrix.arch }}-${{ hashFiles('.build/packagelockhash') }}"
+
+      - name: Mix in ${{ inputs.channel }}
+        run: node build/volt/mixin-quality.mjs --channel ${{ inputs.channel }} --version "$VOLT_VERSION"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: compilation
+
+      - name: Extract compilation
+        run: tar -xzf compilation.tar.gz && rm compilation.tar.gz
+
+      - name: Package
+        run: npm run gulp vscode-darwin-${{ matrix.arch }}-min-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Archive unsigned app (for the universal build)
+        run: |
+          set -e
+          cd ../VSCode-darwin-${{ matrix.arch }}
+          zip -r -X -y -q "$GITHUB_WORKSPACE/unsigned-darwin-${{ matrix.arch }}.zip" *
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-darwin-${{ matrix.arch }}
+          path: unsigned-darwin-${{ matrix.arch }}.zip
+          retention-days: 3
+          compression-level: 0
+
+      - name: Sign, notarize and package
+        run: build/volt/release/darwin-package.sh "${{ matrix.arch }}"
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: volt-darwin-${{ matrix.arch }}
+          path: .build/volt-assets/*
+          retention-days: 7
+          compression-level: 0
+
+  darwin-universal:
+    name: macOS universal
+    needs: [prepare, darwin]
+    if: needs.prepare.outputs.universal == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      VSCODE_ARCH: universal
+      VOLT_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install build dependencies
+        working-directory: build
+        run: npm ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mix in ${{ inputs.channel }}
+        run: node build/volt/mixin-quality.mjs --channel ${{ inputs.channel }} --version "$VOLT_VERSION"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: unsigned-darwin-*
+          merge-multiple: true
+
+      - name: Create universal app
+        run: |
+          set -e
+          BUILD_DIR="$(dirname "$GITHUB_WORKSPACE")"
+          unzip -q unsigned-darwin-x64.zip -d "$BUILD_DIR/VSCode-darwin-x64" &
+          unzip -q unsigned-darwin-arm64.zip -d "$BUILD_DIR/VSCode-darwin-arm64" &
+          wait
+          node build/darwin/create-universal-app.js "$BUILD_DIR"
+
+      - name: Sign, notarize and package
+        run: build/volt/release/darwin-package.sh universal
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: volt-darwin-universal
+          path: .build/volt-assets/*
+          retention-days: 7
+          compression-level: 0
+
+  linux:
+    name: Linux ${{ matrix.arch }}
+    needs: [prepare, compile]
+    if: needs.prepare.outputs.linux != '[]'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(needs.prepare.outputs.linux) }}
+    env:
+      VSCODE_ARCH: ${{ matrix.arch }}
+      NPM_ARCH: ${{ matrix.arch == 'armhf' && 'arm' || matrix.arch }}
+      VOLT_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Install system dependencies
+        run: |
+          set -e
+          ./build/azure-pipelines/linux/apt-retry.sh sudo apt-get update
+          ./build/azure-pipelines/linux/apt-retry.sh sudo apt-get install -y pkg-config libxkbfile-dev libkrb5-dev libgbm1 rpm fakeroot dpkg-dev
+
+      - name: Prepare node_modules cache key
+        run: mkdir -p .build && node build/azure-pipelines/common/computeNodeModulesCacheKey.js linux ${{ matrix.arch }} $(node -p process.arch) > .build/packagelockhash
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache/restore@v4
+        with:
+          path: .build/node_modules_cache
+          key: "volt-node_modules-linux-${{ matrix.arch }}-${{ hashFiles('.build/packagelockhash') }}"
+
+      - name: Extract node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        run: tar -xzf .build/node_modules_cache/cache.tgz
+
+      - name: Install build dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        working-directory: build
+        run: npm ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          source ./build/azure-pipelines/linux/setup-env.sh
+          for i in {1..5}; do
+            npm ci && break
+            if [ $i -eq 5 ]; then echo "npm ci failed too many times" >&2; exit 1; fi
+            echo "npm ci failed $i, retrying..."
+          done
+        env:
+          npm_config_arch: ${{ env.NPM_ARCH }}
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          node build/azure-pipelines/common/listNodeModules.js .build/node_modules_list.txt
+          mkdir -p .build/node_modules_cache
+          tar -czf .build/node_modules_cache/cache.tgz --files-from .build/node_modules_list.txt
+
+      - uses: actions/cache/save@v4
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        with:
+          path: .build/node_modules_cache
+          key: "volt-node_modules-linux-${{ matrix.arch }}-${{ hashFiles('.build/packagelockhash') }}"
+
+      - name: Mix in ${{ inputs.channel }}
+        run: node build/volt/mixin-quality.mjs --channel ${{ inputs.channel }} --version "$VOLT_VERSION"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: compilation
+
+      - name: Extract compilation
+        run: tar -xzf compilation.tar.gz && rm compilation.tar.gz
+
+      - name: Package
+        run: |
+          set -e
+          npm run gulp vscode-linux-${{ matrix.arch }}-min-ci
+          npm run gulp vscode-linux-${{ matrix.arch }}-prepare-deb
+          npm run gulp vscode-linux-${{ matrix.arch }}-build-deb
+          npm run gulp vscode-linux-${{ matrix.arch }}-prepare-rpm
+          npm run gulp vscode-linux-${{ matrix.arch }}-build-rpm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Collect assets
+        run: build/volt/release/linux-package.sh "${{ matrix.arch }}"
+        env:
+          CHANNEL: ${{ inputs.channel }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: volt-linux-${{ matrix.arch }}
+          path: .build/volt-assets/*
+          retention-days: 7
+          compression-level: 0
+
+  win32:
+    name: Windows ${{ matrix.arch }}
+    needs: [prepare, compile]
+    if: needs.prepare.outputs.win32 != '[]'
+    runs-on: windows-2022
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(needs.prepare.outputs.win32) }}
+    env:
+      VSCODE_ARCH: ${{ matrix.arch }}
+      VOLT_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+
+      - name: Prepare node_modules cache key
+        shell: pwsh
+        run: |
+          mkdir .build -ea 0
+          node build/azure-pipelines/common/computeNodeModulesCacheKey.js win32 ${{ matrix.arch }} $(node -p process.arch) > .build/packagelockhash
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache/restore@v4
+        with:
+          path: .build/node_modules_cache
+          key: "volt-node_modules-win32-${{ matrix.arch }}-${{ hashFiles('.build/packagelockhash') }}"
+
+      - name: Extract node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit == 'true'
+        shell: pwsh
+        run: 7z.exe x .build/node_modules_cache/cache.7z -aoa
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          . build/azure-pipelines/win32/exec.ps1
+          $ErrorActionPreference = "Stop"
+          for ($i = 1; $i -le 5; $i++) {
+            try { exec { npm ci }; break }
+            catch {
+              if ($i -eq 5) { Write-Error "npm ci failed after 5 attempts"; throw }
+              Write-Host "npm ci failed attempt $i, retrying..."
+              Start-Sleep -Seconds 2
+            }
+          }
+        env:
+          npm_config_arch: ${{ matrix.arch }}
+          npm_config_foreground_scripts: 'true'
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save node_modules cache
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          . build/azure-pipelines/win32/exec.ps1
+          $ErrorActionPreference = "Stop"
+          exec { node build/azure-pipelines/common/listNodeModules.js .build/node_modules_list.txt }
+          exec { mkdir -Force .build/node_modules_cache }
+          exec { 7z.exe a .build/node_modules_cache/cache.7z -mx3 `@.build/node_modules_list.txt }
+
+      - uses: actions/cache/save@v4
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        with:
+          path: .build/node_modules_cache
+          key: "volt-node_modules-win32-${{ matrix.arch }}-${{ hashFiles('.build/packagelockhash') }}"
+
+      - name: Mix in ${{ inputs.channel }}
+        shell: pwsh
+        run: node build/volt/mixin-quality.mjs --channel ${{ inputs.channel }} --version "$env:VOLT_VERSION"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: compilation
+
+      - name: Extract compilation
+        shell: bash
+        run: tar -xzf compilation.tar.gz && rm compilation.tar.gz
+
+      - name: Package
+        shell: pwsh
+        run: |
+          . build/azure-pipelines/win32/exec.ps1
+          $ErrorActionPreference = "Stop"
+          exec { npm run gulp "vscode-win32-${{ matrix.arch }}-min-ci" }
+          exec { npm run gulp "vscode-win32-${{ matrix.arch }}-inno-updater" }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign app
+        shell: pwsh
+        run: build/volt/release/win32-sign.ps1 -Path "..\VSCode-win32-${{ matrix.arch }}" -Recurse
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+
+      - name: Build setups
+        shell: pwsh
+        run: |
+          . build/azure-pipelines/win32/exec.ps1
+          $ErrorActionPreference = "Stop"
+          exec { npm run gulp "vscode-win32-${{ matrix.arch }}-system-setup" }
+          exec { npm run gulp "vscode-win32-${{ matrix.arch }}-user-setup" }
+
+      - name: Sign setups and collect assets
+        shell: pwsh
+        run: build/volt/release/win32-package.ps1 -Arch "${{ matrix.arch }}" -Channel "${{ inputs.channel }}" -Version "$env:VOLT_VERSION"
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: volt-win32-${{ matrix.arch }}
+          path: .build/volt-assets/*
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    name: Publish
+    needs: [prepare, compile, darwin, darwin-universal, linux, win32]
+    if: ${{ !cancelled() && inputs.publish && needs.compile.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: volt-*
+          path: assets
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -la assets
+
+      - name: Create or update the release
+        run: node build/volt/release/publish.mjs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+          ASSETS_DIR: assets
+
+      - name: Fail if a platform failed
+        if: needs.darwin.result == 'failure' || needs.darwin-universal.result == 'failure' || needs.linux.result == 'failure' || needs.win32.result == 'failure'
+        run: |
+          echo "Published the platforms that built; at least one platform failed." >&2
+          exit 1

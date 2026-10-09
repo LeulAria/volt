@@ -8,14 +8,25 @@ import { basename, dirname, isAbsolute, join, normalize, relative } from '../../
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 
-/** Where a new chat runs. Same branch uses the open checkout. */
-export type AgentRunOn = 'same-branch' | 'worktree';
+/**
+ * Where a new chat runs. Same branch uses the open checkout. Cloud sends the task to a Volt Relay
+ * runner (see cloud/cloudTasks.ts for the machine choice).
+ */
+export type AgentRunOn = 'same-branch' | 'worktree' | 'cloud';
 
-export const AGENT_RUN_ON_OPTIONS = ['same-branch', 'worktree'] as const;
+export const AGENT_RUN_ON_OPTIONS = ['same-branch', 'worktree', 'cloud'] as const;
 
 /** Missing or unknown values stay on the open checkout. */
 export function normalizeAgentRunOn(value: string | undefined): AgentRunOn {
-	return value === 'worktree' ? 'worktree' : 'same-branch';
+	return value === 'worktree' || value === 'cloud' ? value : 'same-branch';
+}
+
+/**
+ * Where a prompt runs. The location picked for the project is where a NEW chat starts: a follow-up
+ * in a chat that already has turns stays on the checkout it runs on, so its files and context stay put.
+ */
+export function runOnForPrompt(location: AgentRunOn, chatHasTurns: boolean): AgentRunOn {
+	return location === 'cloud' && chatHasTurns ? 'same-branch' : location;
 }
 
 export function agentRunOnStorageKey(projectId: string | undefined): string {
@@ -162,6 +173,10 @@ export async function ensureAgentWorktree(input: {
 	readonly path: string;
 	readonly branch: string;
 }): Promise<boolean> {
+	// A checkout that is there needs nothing, whoever made it (a chat may move into the user's own worktree).
+	if (await input.files.exists(input.path)) {
+		return false;
+	}
 	if (!isManagedWorktree(input.path, input.worktreesRoot)) {
 		throw new AgentWorktreeError('Refusing to restore a worktree Volt did not create.');
 	}
@@ -188,6 +203,8 @@ export async function removeAgentWorktree(input: {
 	readonly branch: string;
 	readonly deleteBranch: boolean;
 	readonly force: boolean;
+	/** The caller made this branch (a run group's `volt/<task>-<model>`): it may go even though it is not `volt/<id>`. */
+	readonly ownsBranch?: boolean;
 }): Promise<WorktreeRemoval> {
 	if (!isManagedWorktree(input.path, input.worktreesRoot)) {
 		return 'refused';
@@ -213,6 +230,7 @@ async function removeLocked(input: {
 	readonly branch: string;
 	readonly deleteBranch: boolean;
 	readonly force: boolean;
+	readonly ownsBranch?: boolean;
 }): Promise<WorktreeRemoval> {
 	const exists = await input.files.exists(input.path);
 	if (exists && !input.force) {
@@ -236,7 +254,7 @@ async function removeLocked(input: {
 		}
 	}
 	// A branch the user picked for the worktree is theirs; only Volt's own go with the chat.
-	const deleteBranch = input.deleteBranch && isManagedBranch(input.branch);
+	const deleteBranch = input.deleteBranch && (isManagedBranch(input.branch) || !!input.ownsBranch);
 	if (deleteBranch) {
 		await input.run(input.repoRoot, ['branch', '-D', input.branch]);
 	}
@@ -418,4 +436,19 @@ export interface IAgentWorktreeService {
 	ensure(repoRoot: string, path: string, branch: string): Promise<boolean>;
 	pruneArchived(): Promise<void>;
 	removeForDeletedChat(repoRoot: string | undefined, path: string | undefined, branch: string | undefined): Promise<void>;
+	/**
+	 * Removes a checkout Volt made. A dirty one stays unless `force`. `ownsBranch`: the caller made
+	 * the branch too, so `deleteBranch` may delete it whatever its name.
+	 */
+	remove(repoRoot: string, path: string, branch: string, options: { readonly deleteBranch: boolean; readonly force: boolean; readonly ownsBranch?: boolean }): Promise<WorktreeRemoval>;
+	/** Runs git in `cwd` (never throws; a failure is a non-zero exit code). */
+	git(cwd: string, args: readonly string[]): Promise<IGitRunResult>;
+	/** Runs `work` while no other worktree change of the same repository runs. */
+	serialize<T>(repoRoot: string, work: () => Promise<T>): Promise<T>;
+}
+
+/** Same queue key as worktree creation and removal: the repository's common git dir. */
+export async function serializeForRepo<T>(run: GitRunner, repoRoot: string, work: () => Promise<T>): Promise<T> {
+	const commonDir = await gitCommonDir(run, repoRoot);
+	return withRepoQueue(commonDir, work);
 }

@@ -63,6 +63,18 @@ export interface IAgentPrLink {
 	readonly notifiedAt?: number;
 }
 
+/** The remote pull requests go through: Volt reads and opens them against `origin`. */
+export const PR_REMOTE = 'origin';
+
+/**
+ * Whether a folder gets pull request features (the Pull Requests tab, the dock row, the PR chip,
+ * Create PR): only a git repository with an `origin` remote. Not read yet (undefined) shows none,
+ * so a local-only repository never flashes them.
+ */
+export function showsPullRequests(remotes: readonly string[] | undefined): boolean {
+	return !!remotes?.includes(PR_REMOTE);
+}
+
 export function isOpenState(state: VoltPrState | undefined): boolean {
 	return state === 'open' || state === 'draft';
 }
@@ -501,6 +513,8 @@ export interface IAgentPrSettleContext {
 	readonly settled?: boolean;
 	readonly snoozed?: boolean;
 	readonly archived?: boolean;
+	/** The user turned automatic settling off for this chat. */
+	readonly autoSettle?: false;
 	/** A turn is running or queued, or the agent waits on the user. */
 	readonly busy: boolean;
 }
@@ -512,7 +526,7 @@ export interface IAgentPrSettleContext {
  */
 export function shouldSettleForPullRequests(links: readonly IAgentPrLink[] | undefined, chat: IAgentPrSettleContext, settleOnMerge = true): boolean {
 	const visible = visibleLinks(links);
-	if (!visible.length || chat.pinned || chat.settled || chat.snoozed || chat.archived || chat.busy) {
+	if (!visible.length || chat.pinned || chat.settled || chat.snoozed || chat.archived || chat.busy || chat.autoSettle === false) {
 		return false;
 	}
 	if (!visible.every(link => link.snapshot && isTerminalState(link.snapshot.state))) {
@@ -722,6 +736,16 @@ export function blockedReason(pr: IVoltPullRequest): string | undefined {
 		return 'Awaiting review';
 	}
 	return pr.mergeState === 'clean' ? 'Ready to merge' : undefined;
+}
+
+/** Nothing stands between the pull request and a merge: the chip's hover card and the side panel offer Merge. */
+export function isReadyToMerge(pr: IVoltPullRequest): boolean {
+	return pr.state === 'open'
+		&& pr.mergeable === 'mergeable'
+		&& (pr.mergeState === 'clean' || pr.mergeState === 'hasHooks' || pr.mergeState === 'unstable')
+		&& pr.checks.state !== 'failure'
+		&& pr.checks.state !== 'pending'
+		&& pr.reviewDecision !== 'changesRequested';
 }
 
 //#endregion

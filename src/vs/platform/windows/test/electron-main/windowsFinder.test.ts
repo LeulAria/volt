@@ -61,6 +61,7 @@ suite('WindowsFinder', () => {
 
 			ready(): Promise<ICodeWindow> { throw new Error('Method not implemented.'); }
 			setReady(): void { throw new Error('Method not implemented.'); }
+			setTransparentChrome(): void { }
 			whenRestored(): Promise<ICodeWindow> { throw new Error('Method not implemented.'); }
 			setRestored(): void { throw new Error('Method not implemented.'); }
 			setBackgrounded(backgrounded: boolean): void { throw new Error('Method not implemented.'); }

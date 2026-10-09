@@ -4,10 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { URI } from '../../../../base/common/uri.js';
+import type { ISandboxDenial } from '../../../../platform/voltSandbox/common/sandboxDenials.js';
 import { IAccessRequest } from './access/accessTypes.js';
+import type { HandoffReason } from './contextHandoff.js';
 import type { VoltLane } from './harness/lanes.js';
 import type { TaskPhase } from './harness/lifecycle.js';
 import type { ToolKind } from './harness/workLog.js';
+import type { IVoltVisualRef } from './hostTools.js';
 import { VoltMode } from './modes.js';
 import type { IAgentAnsweredQuestion, IAgentQuestionRequest, IAgentQuestionResponse } from './questions.js';
 
@@ -32,6 +35,9 @@ export type IVoltToolView =
 	| { readonly card: 'read'; readonly path: string; readonly lines: readonly { readonly number: number; readonly text: string }[]; readonly totalLines: number }
 	| { readonly card: 'web'; readonly kind: 'search'; readonly sources: readonly { readonly url: string; readonly title?: string }[]; readonly answer?: string }
 	| { readonly card: 'web'; readonly kind: 'fetch'; readonly url: string; readonly statusCode: number };
+
+/** Where a context compaction is: summarizing, or how it ended. */
+export type VoltCompactionStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
 export type IVoltEvent =
 	| { type: 'run.start'; runId: string; mode: VoltMode }
@@ -79,15 +85,37 @@ export type IVoltEvent =
 	/** `answers` is what the transcript's Answers card lists (empty when skipped or dismissed). */
 	| { type: 'question.resolved'; requestId: string; outcome: IAgentQuestionResponse['outcome']; answers: readonly IAgentAnsweredQuestion[]; note?: string }
 	/** One of Volt's own MCP tools ran for this chat; its full result, which some agents do not echo back. */
-	| { type: 'host.tool'; name: string; args: Record<string, unknown>; text?: string; image?: string; error?: string }
+	| { type: 'host.tool'; name: string; args: Record<string, unknown>; text?: string; image?: string; error?: string; visual?: IVoltVisualRef }
 	/**
 	 * `input` is uncached prompt tokens, `cache` is prompt tokens read from the provider cache,
 	 * and `cacheWrite` is prompt tokens written to it. `used` is the whole prompt the model saw.
+	 * `costUsd` is the agent's own running total for its session (Claude's ACP `usage_update.cost`).
 	 */
-	| { type: 'usage'; input: number; output: number; used?: number; cache?: number; cacheWrite?: number; size?: number }
+	| { type: 'usage'; input: number; output: number; used?: number; cache?: number; cacheWrite?: number; size?: number; costUsd?: number }
+	/**
+	 * The agent compacted the conversation (`/compact`, or on its own near the end of the window).
+	 * Later events with the same `id` patch the first: an absent field keeps its value. `preTokens`
+	 * and `postTokens` are the context before and after as the agent counts it (Claude's `postTokens`
+	 * is the kept summary alone, without the system prompt and tools). `summary` replaces the kept
+	 * text, `summaryDelta` appends to it.
+	 */
+	/**
+	 * The conversation went to an agent session that had not seen it (a model or provider switch, a
+	 * fork, a restarted session), sized to the receiving model's window. `reused`: a session the chat
+	 * was on before resumed, and only the turns it missed went to it.
+	 */
+	| { type: 'context.handoff'; reason: HandoffReason; fromLabel?: string; toLabel: string; tokens: number; budget: number; reused: boolean; turns: number; verbatimTurns: number; condensedTurns: number; omittedTurns: number; toolCalls: number; files: number; text: string }
+	/** The provider runs a different model than the one requested (Cursor's silent fallback). */
+	| { type: 'model.reported'; provider: string; model: string }
+	| { type: 'context.compaction'; id: string; status?: VoltCompactionStatus; trigger?: 'manual' | 'auto'; preTokens?: number; postTokens?: number; durationMs?: number; summary?: string; summaryDelta?: string; error?: string }
 	| { type: 'error'; message: string; retryable?: boolean }
 	/** Provider status that is not assistant prose: usage limits, retries, and other ACP notices. */
-	| { type: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string }
+	/** `resetAt`: when a usage limit resets (epoch ms), from the provider's structured rate-limit data. */
+	| { type: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; resetAt?: number }
+	/** The chat's OS sandbox stopped something the agent tried (a write outside the workspace, a host while network is off). */
+	| { type: 'sandbox.denial'; denial: ISandboxDenial }
+	/** A memory was saved, read or deleted through Volt's memory tools: the transcript shows a recall chip. */
+	| { type: 'memory'; action: 'read' | 'write' | 'delete' | 'list'; names: readonly string[]; scope?: 'user' | 'project' }
 	/** Provider stream is being retried. Live-only in spirit; persisted so the trace shows the stall. */
 	| { type: 'retry'; attempt: number; delayMs: number; message: string }
 	| { type: 'finish'; reason: 'stop' | 'tool_calls' | 'length' | 'error' | 'abort' }

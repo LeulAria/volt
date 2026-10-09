@@ -11,3 +11,4 @@ export const SHOW_PULL_REQUESTS_COMMAND_ID = 'volt.pullRequest.showList';
 export const LINK_PULL_REQUEST_COMMAND_ID = 'volt.pullRequest.link';
 export const GENERATE_COMMIT_MESSAGE_COMMAND_ID = 'volt.scm.generateCommitMessage';
 export const FIX_PR_SELECTION_COMMAND_ID = 'volt.pullRequest.fixSelection';
+export const SIGN_IN_HOST_COMMAND_ID = 'volt.pullRequest.signInHost';

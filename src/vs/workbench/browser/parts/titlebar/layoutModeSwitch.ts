@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import './media/layoutModeSwitch.css';
+import { mainWindow } from '../../../../base/browser/window.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
@@ -19,7 +19,7 @@ import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/
 import { IsAuxiliaryWindowContext } from '../../../common/contextkeys.js';
 import { IViewDescriptorService, ViewContainerLocation } from '../../../common/views.js';
 import { IPaneCompositePartService } from '../../../services/panecomposite/browser/panecomposite.js';
-import { IWorkbenchLayoutService, Parts, Position } from '../../../services/layout/browser/layoutService.js';
+import { IWorkbenchLayoutService, Parts, Position, isMultiWindowPart } from '../../../services/layout/browser/layoutService.js';
 import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { AGENT_SIDE_PANEL_ID, stampLayoutModeChrome } from './agentLayoutChrome.js';
 import { LAYOUT_MODE_CONTEXT_KEY } from './layoutKeybindingMode.js';
@@ -133,7 +133,8 @@ export async function setLayoutMode(
 }
 
 function hidePartIfNeeded(layoutService: IWorkbenchLayoutService, part: Parts, hidden: boolean): boolean {
-	if (layoutService.isVisible(part) === !hidden) {
+	const visible = isMultiWindowPart(part) ? layoutService.isVisible(part, mainWindow) : layoutService.isVisible(part);
+	if (visible === !hidden) {
 		return false;
 	}
 	layoutService.setPartHidden(hidden, part);

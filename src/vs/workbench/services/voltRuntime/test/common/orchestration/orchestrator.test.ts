@@ -7,9 +7,9 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import { DEFAULT_ORCH_LIMITS, emptyOrchState } from '../../../common/orchestration/orchestrator.js';
 import { extractRoot, isRootLive, mergeRoot, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
-import { harnessTaskId, scheduleOrch } from '../../../common/orchestration/orchestratorDecider.js';
+import { harnessTaskId, RESTART_RESUME_TEXT, scheduleOrch } from '../../../common/orchestration/orchestratorDecider.js';
 import { applyOrchEvents } from '../../../common/orchestration/orchestratorProjector.js';
-import { dockModel, formatElapsed, lineage, threadStatus } from '../../../common/orchestration/orchestratorViews.js';
+import { agentRow, dockModel, formatElapsed, lineage, threadStatus } from '../../../common/orchestration/orchestratorViews.js';
 import { OrchSim, prompt } from './orchestratorSim.js';
 
 suite('Volt orchestrator: turns and queue', () => {
@@ -135,6 +135,24 @@ suite('Volt orchestrator: turns and queue', () => {
 
 		const again = sim.run({ type: 'thread.notify', threadId: 'a', turnId: 'pr-2', prompt: prompt('A review came in') });
 		assert.strictEqual(again.outcome, 'duplicate', 'a retried wake-up is not sent twice');
+	});
+
+	test('an interrupting notification (another agent\'s restart) stops the running turn and goes first', () => {
+		const sim = new OrchSim();
+		sim.submit('a', 'one');
+		sim.start('a');
+		const later = sim.submit('a', 'queued by the user');
+		const wake = sim.run({ type: 'thread.notify', threadId: 'a', turnId: 'm-1', prompt: prompt('Stop and do this instead'), interrupt: true });
+		assert.strictEqual(wake.outcome, 'queued');
+		assert.strictEqual(sim.state.threads.a.active?.phase, 'cancelling');
+		assert.deepStrictEqual(sim.state.threads.a.queue.map(item => item.id), ['m-1', later.turnId], 'it goes ahead of what was queued');
+		sim.settle('a', 'cancelled');
+		assert.strictEqual(sim.state.threads.a.active?.id, 'm-1');
+		assert.strictEqual(sim.state.threads.a.active?.kind, 'notification');
+		assert.strictEqual(sim.state.threads.a.wakeups, 1, 'it counts toward the wake-up limit like any agent message');
+
+		const idle = new OrchSim();
+		assert.strictEqual(idle.run({ type: 'thread.notify', threadId: 'b', turnId: 'm-2', prompt: prompt('hi'), interrupt: true }).outcome, 'started', 'an idle chat just starts it');
 	});
 
 	test('notifications wait for a paused or blocked chat, and stop after too many wake-ups in a row', () => {
@@ -496,6 +514,99 @@ suite('Volt orchestrator: recovery and persistence', () => {
 
 		sim.run({ type: 'queue.resume', threadId: 'parent' });
 		assert.strictEqual(sim.state.threads.parent.active?.kind, 'notification', 'resuming delivers the interrupted report first');
+	});
+
+	test('with subagents resuming, a delegated task that was running continues on its own and its report wakes the parent', () => {
+		const sim = new OrchSim();
+		sim.submit('parent', 'go');
+		sim.start('parent');
+		const task = sim.spawn('parent', 'long job').taskId!;
+		const child = sim.childOf(task);
+		const brief = sim.state.threads[child].active!.id;
+		sim.start(child);
+		sim.complete('parent', 'done', 'Started a subagent; its report will come back.');
+		sim.run({ type: 'input.opened', threadId: child, inputId: 'q1', kind: 'question' });
+		assert.strictEqual(sim.state.tasks[task].state, 'waiting');
+
+		const mark = sim.effects.length;
+		sim.run({ type: 'recover', resume: 'subagents' });
+		const started = sim.effectsOf('startTurn', mark);
+		assert.deepStrictEqual(started.map(effect => [effect.threadId, effect.turn.id, effect.turn.kind]), [[child, `${brief}~r1`, 'resume']]);
+		assert.strictEqual(started[0].turn.prompt.text, RESTART_RESUME_TEXT);
+		assert.strictEqual(sim.state.tasks[task].state, 'running', 'the question died with the agent; the task runs again');
+		assert.strictEqual(sim.state.tasks[task].restarts, 1);
+		assert.strictEqual(sim.state.threads[child].last?.outcome, 'interrupted');
+		assert.strictEqual(sim.state.threads.parent.pause, undefined, 'the idle parent keeps waiting for the report');
+
+		sim.complete(child, 'done', 'Finished after the restart.');
+		assert.strictEqual(sim.state.tasks[task].state, 'completed');
+		assert.strictEqual(sim.state.threads.parent.active?.kind, 'notification');
+		assert.ok(sim.state.threads.parent.active?.prompt.text.includes('Finished after the restart.'));
+	});
+
+	test('a turn cut off before it reached the agent is sent again as it was, and a crash loop stops after two restarts', () => {
+		const sim = new OrchSim();
+		sim.submit('parent', 'go');
+		sim.start('parent');
+		const task = sim.spawn('parent', 'job').taskId!;
+		const child = sim.childOf(task);
+		sim.complete('parent');
+		const brief = sim.state.threads[child].active!;
+		assert.strictEqual(brief.phase, 'dispatching');
+
+		sim.run({ type: 'recover', resume: 'subagents' });
+		const again = sim.state.threads[child].active!;
+		assert.strictEqual(again.kind, 'brief', 'the brief never reached the agent: it goes again');
+		assert.strictEqual(again.prompt.text, brief.prompt.text);
+
+		sim.start(child);
+		sim.run({ type: 'recover', resume: 'subagents' });
+		assert.strictEqual(sim.state.threads[child].active?.kind, 'resume');
+		sim.start(child);
+		sim.run({ type: 'recover', resume: 'subagents' });
+		assert.strictEqual(sim.state.threads[child].active, undefined, 'a third restart in a row waits for the user');
+		assert.strictEqual(sim.state.tasks[task].state, 'interrupted');
+		assert.strictEqual(sim.state.tasks[task].delivery, 'pending');
+	});
+
+	test('resume all continues interrupted chats and keeps their queues moving; off continues nothing', () => {
+		const sim = new OrchSim();
+		const first = sim.submit('a', 'one').turnId;
+		sim.start('a');
+		const second = sim.submit('a', 'two').turnId;
+		sim.run({ type: 'recover', resume: 'all' });
+		assert.strictEqual(sim.state.threads.a.active?.id, `${first}~r1`);
+		assert.strictEqual(sim.state.threads.a.pause, undefined);
+		sim.complete('a');
+		assert.strictEqual(sim.state.threads.a.active?.id, second, 'the queue goes on after the continued turn');
+
+		sim.start('a');
+		sim.run({ type: 'recover', resume: 'off' });
+		assert.strictEqual(sim.state.threads.a.active, undefined);
+		assert.strictEqual(sim.state.threads.a.pause, 'interrupted');
+	});
+
+	test('a review round is a new task that follows the previous one; an unknown or foreign round is refused', () => {
+		const sim = new OrchSim();
+		sim.submit('parent', 'go');
+		sim.start('parent');
+		const first = sim.spawn('parent', 'review the auth change', { role: 'review' }).taskId!;
+		sim.complete(sim.childOf(first), 'done', '2 issues: missing null check, no test');
+		const second = sim.spawn('parent', 'review again: both fixed', { role: 'review', previousTaskId: first });
+		assert.strictEqual(second.rejected, undefined);
+		const round = sim.state.tasks[second.taskId!];
+		assert.strictEqual(round.previousTaskId, first);
+		assert.strictEqual(round.iteration, 2);
+		assert.notStrictEqual(round.childId, sim.state.tasks[first].childId, 'a new round runs in a fresh chat');
+		assert.deepStrictEqual([agentRow(round).iteration, agentRow(round).role], [2, 'review'], 'its row reads "Review round 2"');
+		assert.strictEqual(agentRow(sim.state.tasks[first]).iteration, undefined);
+		const third = sim.spawn('parent', 'and again', { previousTaskId: second.taskId! });
+		assert.strictEqual(sim.state.tasks[third.taskId!].iteration, 3);
+
+		assert.match(sim.spawn('parent', 'x', { previousTaskId: 't-nope' }).rejected ?? '', /No task t-nope/);
+		sim.submit('other', 'go');
+		sim.start('other');
+		assert.match(sim.spawn('other', 'x', { previousTaskId: first }).rejected ?? '', /No task/);
 	});
 
 	test('the event log replays to the same state', () => {

@@ -6,6 +6,9 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import {
+	parseFilePatch,
+	parseGitStatusV2,
+	parseNumstat,
 	classifyGhError,
 	ghErrorText,
 	latestChecks,
@@ -205,5 +208,59 @@ suite('Volt pull requests: parsing', () => {
 		assert.strictEqual(voltPrErrorCode(overIpc), 'stale');
 		assert.strictEqual(voltPrErrorMessage(overIpc), 'Someone pushed since you looked.');
 		assert.strictEqual(voltPrErrorCode(new Error('[stale] plain')), undefined, 'only Volt pull request errors carry a code');
+	});
+
+	test('git status v2: branch, upstream, ahead/behind and every kind of change', () => {
+		const out = [
+			'# branch.oid 0123',
+			'# branch.head feature/word count',
+			'# branch.upstream origin/feature/word count',
+			'# branch.ab +2 -1',
+			'1 .M N... 100644 100644 100644 aaa bbb server/index.js',
+			'1 A. N... 000000 100644 100644 000 ccc docs/new file.md',
+			'1 .D N... 100644 000000 000000 ddd 000 old.txt',
+			'2 R. N... 100644 100644 100644 eee eee R100 lib/renamed.js',
+			'lib/original.js',
+			'u UU N... 100644 100644 100644 100644 f g h conflict.js',
+			'? untracked file.ts',
+			'',
+		].join('\0');
+		const parsed = parseGitStatusV2(out);
+		assert.strictEqual(parsed.head, undefined, 'the oid "0123" is too short to be one');
+		assert.strictEqual(parseGitStatusV2('# branch.oid 0123456789abcdef0123456789abcdef01234567\0').head, '0123456789abcdef0123456789abcdef01234567');
+		assert.strictEqual(parseGitStatusV2('# branch.oid (initial)\0').head, undefined);
+		assert.strictEqual(parsed.branch, 'feature/word count');
+		assert.strictEqual(parsed.upstream, 'origin/feature/word count');
+		assert.strictEqual(parsed.ahead, 2);
+		assert.strictEqual(parsed.behind, 1);
+		assert.deepStrictEqual(parsed.files.map(file => [file.status, file.path, file.previousPath]), [
+			['modified', 'server/index.js', undefined],
+			['added', 'docs/new file.md', undefined],
+			['deleted', 'old.txt', undefined],
+			['renamed', 'lib/renamed.js', 'lib/original.js'],
+			['conflicted', 'conflict.js', undefined],
+			['untracked', 'untracked file.ts', undefined],
+		]);
+		assert.strictEqual(parseGitStatusV2('# branch.head (detached)\0').branch, undefined);
+	});
+
+	test('numstat -z: counts by path, renames by their new path, binaries as zero', () => {
+		const stats = parseNumstat(['3\t1\tserver/index.js', '-\t-\tlogo.png', '2\t0\t', 'old.js', 'new.js', ''].join('\0'));
+		assert.deepStrictEqual(stats.get('server/index.js'), { additions: 3, deletions: 1 });
+		assert.deepStrictEqual(stats.get('logo.png'), { additions: 0, deletions: 0 });
+		assert.deepStrictEqual(stats.get('new.js'), { additions: 2, deletions: 0 });
+		assert.strictEqual(stats.has('old.js'), false);
+	});
+
+	test('REST file entries keep their patch and map removed to deleted', () => {
+		const file = parseFilePatch({ filename: 'a.js', previous_filename: 'b.js', status: 'renamed', additions: 1, deletions: 2, patch: '@@ -1 +1 @@\n-a\n+b' });
+		assert.deepStrictEqual(file, { path: 'a.js', previousPath: 'b.js', change: 'renamed', additions: 1, deletions: 2, patch: '@@ -1 +1 @@\n-a\n+b' });
+		const binary = parseFilePatch({ filename: 'logo.png', status: 'removed', additions: 0, deletions: 0 });
+		assert.strictEqual(binary.change, 'deleted');
+		assert.strictEqual(binary.patch, undefined);
+		// The new side's blob, for reading the whole file; a removed file has none.
+		const sha = '1b330d0236e0720f7a558f1e12f1944c446c2a1c';
+		assert.strictEqual(parseFilePatch({ filename: 'a.js', status: 'modified', sha }).blob, sha);
+		assert.strictEqual(parseFilePatch({ filename: 'a.js', status: 'removed', sha }).blob, undefined);
 	});
 });

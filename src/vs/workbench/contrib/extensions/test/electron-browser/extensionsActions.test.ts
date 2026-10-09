@@ -111,7 +111,7 @@ function setupTest(disposables: Pick<DisposableStore, 'add'>) {
 			local.publisherId = metadata.publisherId!;
 			return local;
 		},
-		async canInstall() { return true; },
+		async canInstall(): Promise<true> { return true; },
 		async getTargetPlatform() { return getTargetPlatform(platform, arch); },
 	});
 

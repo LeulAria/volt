@@ -1,0 +1,38 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * volt.chat.width: the transcript and composer columns are drawn at 728px (agentEditor.css,
+ * agentSubagents.css, agentEdits.css). A custom width swaps that cap for --volt-chat-max-width,
+ * set on the workbench root by agentChatWidth.ts. Chats hosted in another chat's tools keep their
+ * compact chrome; the new-chat landing composer and a zoomed composer keep their own widths.
+ */
+.monaco-workbench.volt-chat-width-custom .volt-agent-editor:not(.browser-hosted) :is(
+	.volt-agent-empty,
+	.volt-agent-turn:not(.user),
+	.volt-agent-turn.user .volt-agent-user-row,
+	.volt-agent-turn.user.editing .volt-agent-edit-slot,
+	.volt-agent-worked,
+	.volt-agent-composer-chips,
+	.volt-agent-composer-stack,
+	.volt-agent-suggest,
+	.volt-agent-composer-status,
+	.volt-agent-clone-banner,
+	.volt-agent-subagent-of,
+	.volt-agent-handoff,
+	.volt-agent-subagent-bar,
+	.volt-agent-pending-card
+) {
+	max-width: var(--volt-chat-max-width, 728px);
+}
+
+.monaco-workbench.volt-chat-width-custom .volt-agent-editor.has-turns:not(.browser-hosted):not(.zoomed) .volt-agent-input-box:not(.editing) {
+	max-width: var(--volt-chat-max-width, 728px);
+}
+
+/* The tasks card sits 4px inside the composer on each side. */
+.monaco-workbench.volt-chat-width-custom .volt-agent-editor:not(.browser-hosted) .volt-agent-tasks-card {
+	max-width: calc(var(--volt-chat-max-width, 728px) - 8px);
+}

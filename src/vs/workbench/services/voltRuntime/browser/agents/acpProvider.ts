@@ -15,20 +15,24 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { IAccessDecision, IAccessGate, IAccessRequest, ICompiledPolicy } from '../../common/access/accessTypes.js';
 import { IProviderAccessBridge } from '../../common/access/providerAccessBridge.js';
 import { classifyRisk } from '../../common/access/riskClassifier.js';
+import { compactionEventsFromAcpUpdate } from '../../common/acpCompaction.js';
 import { IAcpNotice, noticesFromAcpPayload, noticesFromAcpUpdate } from '../../common/acpNotices.js';
 import { acpModeForVoltMode, collectAcpToolDiffs, collectAcpToolInput, collectAcpToolLocations, IAcpSessionMode } from '../../common/acpToolInput.js';
 import { IVoltEvent } from '../../common/events.js';
 import { parseTokenUsage } from '../../common/tokenUsage.js';
 import { VoltMode } from '../../common/modes.js';
 import { IProviderProfile } from '../../common/profiles.js';
-import { IAgentMessage, IAgentProvider, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo } from '../../common/providers.js';
+import { IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo } from '../../common/providers.js';
 import { DEFAULT_ACP_CAPABILITIES } from '../../common/capabilities.js';
-import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltSandboxEvent, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { codexSandboxValue, IVoltSandboxRequest, loopbackPort, sandboxLaunchKey, sandboxStrategy, SandboxStrategy } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
 import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer } from '../../common/hostTools.js';
 import { AgentQuestionDraft, cursorAskQuestionResult, elicitationResult, elicitationToQuestions, IAgentQuestionResponse, parseQuestionDraft } from '../../common/questions.js';
 import { mapAcpToolKind } from '../../common/harness/workLog.js';
 import { ACP_IDLE_TIMINGS, ACP_STALL_NOTICE_TITLE, declaredToolWaitMs, IdleWatchdog, IIdleStageInfo, IIdleWatchdogTimings, IWatchdogClock, realWatchdogClock } from '../../common/harness/acpStall.js';
 import { ACP_RUN_BUDGET, IRunSupervisorOptions, RunSupervisor, SupervisorDirective } from '../../common/harness/supervisor.js';
+import { acpResourceBlock, AcpResourcePromptBlock } from '../../common/fileAttachments.js';
 import { isCursorPlanWall, isCursorPlanWallPrefix, isCursorTransientError, nextCursorFallback, normalizeCursorModelId } from '../../common/harness/cursorQuota.js';
 import { accessBridgeFor } from './bridges/accessBridges.js';
 import { AcpJsonRpcClient, AcpRequestAbandonedError, IAcpIncomingRequest } from './acpJsonRpc.js';
@@ -39,6 +43,9 @@ import { resolveAntigravityCliModelLabel } from '../../common/models/antigravity
 import { IModelOptionDescriptor, MODEL_OPTION_REASONING, unionDescriptors } from '../../common/models/modelOptions.js';
 import { advertisedModelVariant, applyContextWindowSuffix, applyOptionsToParameterizedId, configUpdatesForOptions, descriptorsFromAcpModel, flattenChoices, formatAgentModelLabel, IAcpAvailableModel, IAcpConfigOption, IAcpModelMeta, isModelConfigOption, metadataForAcpModel, parseParameterizedModelId } from './acpModels.js';
 
+/** `initialize`'s `agentCapabilities.mcpCapabilities`: the MCP transports the agent can connect to. */
+type IAcpMcpCapabilities = { http?: boolean; sse?: boolean };
+
 interface IAcpSession {
 	handle: IAgentSessionHandle;
 	client: AcpJsonRpcClient;
@@ -48,6 +55,7 @@ interface IAcpSession {
 	/** The read-only mode switched on for a Plan or Ask turn; undefined while the access policy decides. */
 	voltModeId?: string;
 	policy?: ICompiledPolicy;
+	sandbox?: IAgentSandboxStart;
 	voltSessionId?: string;
 	runId?: string;
 	mode?: VoltMode;
@@ -56,6 +64,8 @@ interface IAcpSession {
 	currentModeId?: string;
 	/** The agent accepts `image` prompt blocks (`promptCapabilities.image`). */
 	promptImages?: boolean;
+	/** The agent takes `resource` prompt blocks with the file's text (`promptCapabilities.embeddedContext`). */
+	promptEmbedded?: boolean;
 	/** Slash commands from the agent's last `available_commands_update`, without the slash. */
 	commands?: ReadonlySet<string>;
 	/**
@@ -67,8 +77,12 @@ interface IAcpSession {
 	settling?: Promise<void>;
 	/** Pool key of the setup this session was started with (spares are matched on it). */
 	setupKey?: string;
+	/** The host MCP servers `session/new` connected (JSON), and what they were derived from. */
+	hostMcp?: { readonly sessionId?: string; readonly capabilities?: IAcpMcpCapabilities; readonly servers: string };
 	/** The agent takes `_session/steering`: a message goes into the running turn without stopping it (Claude, Codex). */
 	steering?: boolean;
+	/** The agent takes `session/resume` (`sessionCapabilities.resume`): the conversation can continue in another folder. */
+	resumable?: boolean;
 	/** The harness's own subagents of this session, by child session id (native) or Task call id (Cursor). */
 	children?: Map<string, IAcpChild>;
 	/** Tool calls that only control a native subagent (Claude's Agent call): their updates are not tool rows. */
@@ -103,7 +117,7 @@ export interface IAcpSupervisionOptions {
 
 type TurnFollowUp = { readonly reason: 'stall' | 'steer'; readonly prompt: IAcpPromptBlock[] };
 
-type IAcpPromptBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string };
+type IAcpPromptBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string } | AcpResourcePromptBlock;
 
 /** One `send()`: the event queue the generator drains plus the state supervision needs. */
 class AcpPromptTurn {
@@ -192,13 +206,16 @@ const ACP_CLIENT_CAPABILITIES = {
 	terminal: false,
 	// Form elicitations are how Claude's AskUserQuestion (and Codex's request-user-input) reach the question tray.
 	elicitation: { form: {} },
+	// Compaction as its own entity (`compaction_update`): Claude and Codex then report when it starts and ends,
+	// the summary they kept and the tokens before and after, instead of a generic "Compact conversation" tool call.
+	session: { compaction: {} },
 	_meta: {
 		parameterizedModelPicker: true,
 		jetbrains: {
 			air: {
 				version: 1,
 				// Native subagent sessions: Claude and Codex announce each subagent, stream its own
-				// updates under its session id, and report how it ended (.aInsp/research/cursor-subagents-protocol.md §2.4).
+				// updates under its session id, and report how it ended (.aInsp/research/cursor-subagents-protocol.md section 2.4).
 				capabilities: ['sessionFailure', 'nativeSubagentSessions'],
 			},
 		},
@@ -278,6 +295,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		private readonly hostTools?: IVoltHostToolService,
 	) {
 		this.bridge = accessBridgeFor(id);
+		this.stdio.onSandboxEvent?.(event => this.onSandboxEvent(event));
 	}
 
 	setAccessGate(gate: IAccessGate): void {
@@ -321,8 +339,9 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		const sessionId = live.handle.providerSessionId ?? live.handle.id;
 		const config = this.bridge.translate(policy, { configOptions: live.configOptions, modes: live.modes });
+		const strategy = this.sandboxStrategyOf(live);
 		for (const update of config.configOptions ?? []) {
-			await this.setConfigOption(live, sessionId, update.id, update.value);
+			await this.setConfigOption(live, sessionId, update.id, codexSandboxValue(update.id, update.value, strategy));
 		}
 		if (config.sessionModeId) {
 			await this.setMode(live, sessionId, config.sessionModeId);
@@ -431,6 +450,35 @@ export class AcpAgentProvider implements IAgentProvider {
 	}
 
 	/**
+	 * Moves a session to another folder without losing what the agent knows: a new process in
+	 * `req.cwd` resumes the conversation (`session/resume`, which Claude's and Codex's adapters
+	 * advertise as `sessionCapabilities.resume`; both find their transcript by session id, not by
+	 * folder). `session/load` is not used: it replays the whole history as updates. The old process
+	 * goes only once the new one has the session.
+	 */
+	async resumeIn(session: IAgentSessionHandle, req: IAgentStartRequest): Promise<IAgentSessionHandle | undefined> {
+		const old = this.sessions.get(session.id);
+		if (!old || old.turn || !old.resumable || old.client.isDead) {
+			return undefined;
+		}
+		let live: IAcpSession;
+		try {
+			live = await this.createSession(req, old.handle.providerSessionId ?? old.handle.id);
+		} catch (err) {
+			this.logService.info(`[ACP] ${this.id} could not resume ${session.id} in ${req.cwd}: ${err instanceof Error ? err.message : String(err)}`);
+			return undefined;
+		}
+		// The ids may match: drop the old entry before the new one takes the key.
+		if (this.sessions.get(session.id) === old) {
+			this.sessions.delete(session.id);
+		}
+		this.sessions.set(live.handle.id, live);
+		live.commands = old.commands;
+		void this.stopSession(old);
+		return live.handle;
+	}
+
+	/**
 	 * Starts a session for `req` ahead of time (spawn, `initialize`, `session/new`, model and
 	 * options) and parks it. The next {@link start} with the same setup adopts it instantly instead
 	 * of paying the cold start (about 5 s for cursor-agent's `session/new` alone). One spare per
@@ -524,13 +572,17 @@ export class AcpAgentProvider implements IAgentProvider {
 			req.modelId ?? '',
 			Object.entries(req.options ?? {}).sort(([x], [y]) => x.localeCompare(y)),
 			this.hostTools?.getMcpServers(req.sessionId) ?? [],
+			sandboxLaunchKey(req.sandbox?.settings),
 		]);
 	}
 
-	private async createSession(req: IAgentStartRequest): Promise<IAcpSession> {
+	/** Spawns the agent and opens a session; with `resume`, continues that session (in `req.cwd`) instead of a new one. */
+	private async createSession(req: IAgentStartRequest, resume?: string): Promise<IAcpSession> {
 		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
 		const cwd = req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
-		const processId = await this.stdio.spawn({ command, args, cwd });
+		const env = cliAgentDefinition(this.id)?.acpEnv;
+		const sandbox = this.sandboxRequest(req);
+		const processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}) });
 		const client = new AcpJsonRpcClient(this.stdio, processId);
 		this.bindClientRequests(client);
 		client.whenDead(() => {
@@ -546,22 +598,32 @@ export class AcpAgentProvider implements IAgentProvider {
 		let initialized: {
 			agentCapabilities?: {
 				session?: { _meta?: unknown; modes?: { availableModes?: { id: string; name?: string }[] } };
-				mcpCapabilities?: { http?: boolean; sse?: boolean };
-				promptCapabilities?: { image?: boolean };
+				sessionCapabilities?: { resume?: unknown };
+				mcpCapabilities?: IAcpMcpCapabilities;
+				promptCapabilities?: { image?: boolean; embeddedContext?: boolean };
 			};
 			configOptions?: IAcpConfigOption[];
 		};
 		let created: ISessionNewResponse;
+		let hostMcp: IAcpSession['hostMcp'];
 		try {
 			initialized = await client.request('initialize', {
 				protocolVersion: 1,
 				clientCapabilities: ACP_CLIENT_CAPABILITIES,
 				clientInfo: { name: 'volt', title: 'Volt', version: '0.1.0' },
 			}, ACP_INITIALIZE_TIMEOUT_MS);
-			created = await client.request<ISessionNewResponse>('session/new', {
-				cwd: cwd ?? '',
-				mcpServers: acceptedMcpServers(this.hostTools?.getMcpServers(req.sessionId) ?? [], initialized.agentCapabilities?.mcpCapabilities),
-			}, ACP_SESSION_NEW_TIMEOUT_MS);
+			const capabilities = initialized.agentCapabilities?.mcpCapabilities;
+			const mcpServers = this.hostMcpServers(req.sessionId, capabilities);
+			hostMcp = { sessionId: req.sessionId, capabilities, servers: JSON.stringify(mcpServers) };
+			if (resume) {
+				if (!initialized.agentCapabilities?.sessionCapabilities?.resume) {
+					throw new Error('the agent cannot resume sessions');
+				}
+				const resumed = await client.request<Partial<ISessionNewResponse>>('session/resume', { sessionId: resume, cwd: cwd ?? '', mcpServers }, ACP_SESSION_NEW_TIMEOUT_MS);
+				created = { ...resumed, sessionId: resumed?.sessionId ?? resume };
+			} else {
+				created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers }, ACP_SESSION_NEW_TIMEOUT_MS);
+			}
 		} catch (err) {
 			client.dispose();
 			void this.stdio.kill(processId);
@@ -580,8 +642,12 @@ export class AcpAgentProvider implements IAgentProvider {
 			modes: created.modes?.availableModes ?? initialized.agentCapabilities?.session?.modes?.availableModes,
 			currentModeId: created.modes?.currentModeId,
 			promptImages: initialized.agentCapabilities?.promptCapabilities?.image === true,
+			promptEmbedded: initialized.agentCapabilities?.promptCapabilities?.embeddedContext === true,
 			setupKey: this.setupKey(req),
+			sandbox: req.sandbox,
+			hostMcp,
 			steering: (initialized as { _meta?: { steering?: { supported?: unknown } } })._meta?.steering?.supported === true,
+			resumable: !!initialized.agentCapabilities?.sessionCapabilities?.resume,
 		};
 		// One listener for the life of the session; it routes to whichever turn is current.
 		client.handleNotifications(note => {
@@ -601,9 +667,63 @@ export class AcpAgentProvider implements IAgentProvider {
 		return live;
 	}
 
+	/**
+	 * A session whose host MCP servers are no longer the current ones (it started before the
+	 * window's server was up, or the server restarted on another port) cannot reach Volt's tools,
+	 * render_chart included. It counts as dead, so the next turn starts a new one with the recap.
+	 */
 	isLive(session: IAgentSessionHandle): boolean {
 		const live = this.sessions.get(session.id);
-		return !!live && !live.client.isDead;
+		return !!live && !live.client.isDead
+			&& (!live.hostMcp || JSON.stringify(this.hostMcpServers(live.hostMcp.sessionId, live.hostMcp.capabilities)) === live.hostMcp.servers);
+	}
+
+	private hostMcpServers(sessionId: string | undefined, capabilities: IAcpMcpCapabilities | undefined): IVoltMcpServer[] {
+		return acceptedMcpServers(this.hostTools?.getMcpServers(sessionId) ?? [], capabilities);
+	}
+
+	/** The OS wrapper for this agent process; undefined when the chat is unconfined or the agent sandboxes itself. */
+	private sandboxRequest(req: IAgentStartRequest): IVoltSandboxRequest | undefined {
+		const sandbox = req.sandbox;
+		const settings = sandbox?.settings;
+		if (!sandbox || !settings || settings.level === 'off' || sandboxStrategy(this.id, settings.level, this.sandboxPlatform()) !== 'wrap') {
+			return undefined;
+		}
+		return {
+			level: settings.level,
+			network: settings.network,
+			providerId: this.id,
+			workspaceRoots: sandbox.workspaceRoots,
+			...(settings.extraWritableRoots?.length ? { extraWritableRoots: settings.extraWritableRoots } : {}),
+			...(settings.allowedDomains?.length ? { allowedDomains: settings.allowedDomains } : {}),
+			loopbackPorts: (this.hostTools?.getMcpServers(req.sessionId) ?? []).map(server => loopbackPort(server.url)).filter((port): port is number => port !== undefined),
+		};
+	}
+
+	private sandboxStrategyOf(session: IAcpSession): SandboxStrategy {
+		const settings = session.sandbox?.settings;
+		return settings ? sandboxStrategy(this.id, settings.level, this.sandboxPlatform()) : 'none';
+	}
+
+	private sandboxPlatform(): string {
+		return isWindows ? 'win32' : isMacintosh ? 'darwin' : 'linux';
+	}
+
+	private async sandboxBlocks(session: IAcpSession, path: string, access: 'read' | 'write'): Promise<boolean> {
+		return this.stdio.sandboxAllows !== undefined && !await this.stdio.sandboxAllows(session.processId, path, access);
+	}
+
+	private onSandboxEvent(event: IVoltSandboxEvent): void {
+		const session = [...this.sessions.values()].find(candidate => candidate.processId === event.id);
+		const turn = session?.turn && !session.turn.ended ? session.turn : undefined;
+		if (!session || !turn) {
+			return;
+		}
+		if (event.denial) {
+			this.pushActivity(session, turn, { type: 'sandbox.denial', denial: event.denial });
+		} else if (event.warning) {
+			this.pushActivity(session, turn, { type: 'notice', severity: 'warning', title: 'Sandbox', description: event.warning });
+		}
 	}
 
 	private async launchFor(profile: IProviderProfile, args: string[]): Promise<{ command: string; args: string[] }> {
@@ -991,6 +1111,16 @@ export class AcpAgentProvider implements IAgentProvider {
 			case 'reasoning.delta':
 				turn.watchdog.modelOutput();
 				break;
+			case 'context.compaction':
+				// Summarizing a long chat is quiet for a minute or more: it waits like a running tool.
+				if (event.status === 'running') {
+					turn.watchdog.toolStarted(`compaction:${event.id}`);
+				} else if (event.status) {
+					turn.watchdog.toolEnded(`compaction:${event.id}`);
+				} else {
+					turn.watchdog.activity();
+				}
+				break;
 			default:
 				turn.watchdog.activity();
 		}
@@ -1010,6 +1140,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			severity: notice.severity,
 			title,
 			...(notice.description ? { description: notice.description } : {}),
+			...(notice.resetAt !== undefined ? { resetAt: notice.resetAt } : {}),
 		});
 	}
 
@@ -1126,6 +1257,7 @@ export class AcpAgentProvider implements IAgentProvider {
 						turn.assistant = '';
 						turn.usedTools = false;
 						await this.setConfigOption(live, sessionId, modelConfigId, fallback);
+						turn.push({ type: 'model.reported', provider: this.id, model: fallback });
 						turn.push({
 							type: 'retry',
 							attempt: tried.length,
@@ -1162,6 +1294,7 @@ export class AcpAgentProvider implements IAgentProvider {
 					turn.assistant = '';
 					turn.usedTools = false;
 					await this.setConfigOption(live, sessionId, modelConfigId, fallback);
+					turn.push({ type: 'model.reported', provider: this.id, model: fallback });
 					turn.push({
 						type: 'retry',
 						attempt: tried.length,
@@ -1259,6 +1392,12 @@ export class AcpAgentProvider implements IAgentProvider {
 				blocks.push({ type: 'image', mimeType: image.mediaType, data: image.data });
 			}
 		}
+		for (const resource of msg.resources ?? []) {
+			blocks.push(acpResourceBlock(resource, !!live.promptEmbedded));
+		}
+		if (msg.resources?.length) {
+			this.logService.info(`[ACP] ${this.id} prompt resources: ${blocks.filter(block => block.type === 'resource' || block.type === 'resource_link').map(block => block.type).join(', ')}`);
+		}
 		return blocks;
 	}
 
@@ -1347,6 +1486,10 @@ export class AcpAgentProvider implements IAgentProvider {
 		const body = params as { update?: Record<string, unknown>; sessionUpdate?: string };
 		const update = (body.update ?? body) as Record<string, unknown>;
 		const kind = String(update.sessionUpdate ?? update.type ?? '');
+		const compaction = compactionEventsFromAcpUpdate(update);
+		if (compaction) {
+			return compaction;
+		}
 		const events: IVoltEvent[] = [];
 		if (kind === 'agent_message_chunk' || kind === 'agent_message') {
 			const text = this.contentText(update.content);
@@ -1448,6 +1591,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				severity: notice.severity,
 				title: notice.title,
 				...(notice.description ? { description: notice.description } : {}),
+				...(notice.resetAt !== undefined ? { resetAt: notice.resetAt } : {}),
 			});
 		}
 		return events;
@@ -1525,6 +1669,14 @@ export class AcpAgentProvider implements IAgentProvider {
 			]);
 			if (!allowed) {
 				await client.respondError(req.id, 'Blocked by Volt access policy');
+				return;
+			}
+			const access = write ? 'write' : 'read';
+			if (live && await this.sandboxBlocks(live, uri.fsPath, access)) {
+				if (turn) {
+					this.pushActivity(live, turn, { type: 'sandbox.denial', denial: { kind: access, target: uri.fsPath, source: 'volt' } });
+				}
+				await client.respondError(req.id, `Blocked by Volt sandbox: ${uri.fsPath}`);
 				return;
 			}
 			if (!write) {
@@ -1717,7 +1869,7 @@ export function planFromCursorTodos(params: unknown): Extract<IVoltEvent, { type
  * Volt's host MCP server is HTTP. Agents declare HTTP support in `mcpCapabilities.http`; one that
  * does not would reject the whole `session/new` over a transport it cannot speak.
  */
-export function acceptedMcpServers(servers: readonly IVoltMcpServer[], capabilities: { http?: boolean; sse?: boolean } | undefined): IVoltMcpServer[] {
+export function acceptedMcpServers(servers: readonly IVoltMcpServer[], capabilities: IAcpMcpCapabilities | undefined): IVoltMcpServer[] {
 	return servers.filter(server => server.type !== 'http' || capabilities?.http === true);
 }
 

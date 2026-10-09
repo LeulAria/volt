@@ -48,6 +48,7 @@ import { IStorageService } from '../../../../../platform/storage/common/storage.
 import '../chrome/agentViewSidebars.js';
 import '../chrome/agentTitlebarHeader.js';
 import '../chrome/agentNav.contribution.js';
+import './agentChatNavigation.contribution.js';
 import '../workspace/agentTerminalCwd.js';
 import '../workspace/agentIdeWorkspace.js';
 import '../workspace/agentTerminalScope.js';
@@ -57,6 +58,7 @@ import '../review/agentChangesActions.js';
 import { AgentTurnsViewContribution } from '../review/agentTurnsView.js';
 import '../review/agentEditsEditor.js';
 import '../preview/browserAutomation.js';
+import './agentSessionCommands.js';
 import { AgentBaselineContentProvider } from '../review/agentEditsService.js';
 import { AgentEditor } from './agentEditor.js';
 import { AgentChangesMultiDiffSourceResolver, AgentSnapshotContentProvider, parseAgentChangesSourceUri } from '../review/agentSessionChangesService.js';
@@ -93,7 +95,7 @@ import {
 } from './agentEditorInput.js';
 import { CONTEXT_AGENT_FIND_INPUT_FOCUSED, CONTEXT_AGENT_FIND_WIDGET_VISIBLE, CONTEXT_IN_AGENT_INPUT } from './agentFindWidget.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
-import { openAgentPanel, startAgentChat } from '../workspace/agentPanels.js';
+import { startAgentChat } from '../workspace/agentPanels.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
@@ -106,6 +108,9 @@ import {
 	INLINE_COMMENT_UNDO_COMMAND_ID,
 } from '../review/inlineCommentActions.js';
 import { InlineCommentController } from '../review/inlineCommentController.js';
+import '../../common/agentWorkflowSettings.js';
+import '../schedules/agentSchedules.contribution.js';
+import './agentWorkflowCommands.js';
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'volt.agent',
@@ -579,7 +584,7 @@ const hasEditorSelection = ContextKeyExpr.and(
 	EditorContextKeys.hasNonEmptySelection,
 	ActiveEditorContext.notEqualsTo(AGENT_EDITOR_ID),
 	CONTEXT_IN_AGENT_INPUT.negate(),
-);
+) ?? ContextKeyExpr.false();
 
 /**
  * The editor a selection command acts on. Embedded editors (the diffs in Review / Last Agent Turn)

@@ -119,13 +119,23 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 			'Run one task on a Volt subagent: a separate chat, on any model from list_models, that starts with only your brief (it does not see this conversation). Use it to work in parallel (several independent tasks at once), to get a second opinion from a different model (review, research), or to give a self-contained piece of work to a model better suited to it.',
 			'Write the brief like a hand-off to a capable colleague who knows nothing: the goal, the relevant files and facts you already found, constraints, and what the report should contain. Do not delegate work that depends on finishing something else first, and do not delegate trivial lookups you can do faster yourself.',
 			'Returns a task_id at once (wait=false, the default). Several tasks run in parallel. When a task finishes its report is delivered to this chat as a new message, so after starting tasks you may end your turn instead of polling; call wait_tasks only when you need the results before you can continue in this turn. task_status reads progress.',
+			'Review rounds: for each new round of a review (or any work you send back after changes), call delegate_task again with previous_task_id set to the last round and a fresh client_request_id (keep that id when you retry the same round). Do not use message_task for a new round: a fresh subagent reviews the current code without the previous reviewer\'s assumptions. Tasks and their reports survive a Volt restart.',
 		].join(' '),
 		inputSchema: {
 			type: 'object',
 			properties: {
 				task: { type: 'string', description: 'The complete brief for the subagent.' },
+				previous_task_id: {
+					type: 'string',
+					description: 'Start the next round of earlier work as a new task: the task_id of the previous round (e.g. a second review after you fixed what the first review found). Volt gives the new subagent that round\'s brief and report; your `task` should add what changed since, your responses to its findings, and the objections still open.',
+				},
 				title: { type: 'string', description: 'A short title shown in Volt (3-6 words).' },
 				model: MODEL_ARG,
+				models: {
+					type: 'array',
+					items: { type: 'string' },
+					description: 'Run the same brief on 2-4 models at once, one task each (independent reviews, competing designs, a second opinion from another vendor). Each report comes back on its own. Use instead of `model`.',
+				},
 				role: {
 					type: 'string',
 					enum: AGENT_TASK_ROLES,
@@ -227,6 +237,8 @@ export interface ITaskBriefContext {
 	readonly depth: number;
 	readonly isolation: AgentTaskIsolation;
 	readonly worktreeBranch?: string;
+	/** The round this task follows (`previous_task_id`): its brief and report go along. */
+	readonly previous?: { readonly id: string; readonly iteration: number; readonly brief: string; readonly result?: string; readonly state: OrchTaskState };
 }
 
 /**
@@ -244,6 +256,11 @@ export function buildTaskPrompt(brief: string, context: ITaskBriefContext): stri
 	}
 	if (context.depth >= MAX_TASK_DEPTH) {
 		lines.push('[Volt subagent] Do the work yourself: do not delegate it further.');
+	}
+	if (context.previous) {
+		const previous = context.previous;
+		lines.push(`[Volt subagent] This is round ${previous.iteration + 1} of this work. Round ${previous.iteration} (task ${previous.id}) had the brief and report below; the code may have changed since. Check whether each earlier finding still applies instead of repeating it, and say which are resolved.`);
+		lines.push('', `<previous_round task_id="${previous.id}" status="${previous.state}">`, '<brief>', previous.brief.trim(), '</brief>', '<report>', previous.result?.trim() ? clip(previous.result, TASK_RESULT_CHARS) : '(no report)', '</report>', '</previous_round>');
 	}
 	lines.push('', '<task>', brief.trim(), '</task>');
 	return lines.join('\n');
@@ -297,8 +314,14 @@ export function describeTask(task: IOrchTask, now: number, options: { readonly i
 	if (task.role !== 'general') {
 		lines.push(`role: ${task.role}`);
 	}
+	if (task.iteration && task.iteration > 1) {
+		lines.push(`iteration: ${task.iteration}${task.previousTaskId ? ` (follows ${task.previousTaskId})` : ''}`);
+	}
 	if (task.rounds > 1) {
 		lines.push(`round: ${task.rounds}`);
+	}
+	if (task.restarts) {
+		lines.push(`continued after ${task.restarts === 1 ? 'a Volt restart' : `${task.restarts} Volt restarts`}`);
 	}
 	if (task.waitingOn) {
 		lines.push(`waiting for: the user (${task.waitingOn === 'approval' ? 'an approval' : 'an answer to a question'}) in the subagent's chat`);

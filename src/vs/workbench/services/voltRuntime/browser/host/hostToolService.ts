@@ -13,8 +13,9 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
-import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
 import { browserBlockedMessage, IVoltBrowserAccessService } from '../../common/browserAccess.js';
+import { PROPOSE_PLAN_TOOL_NAME } from '../../common/plans.js';
 import { VoltMode } from '../../common/modes.js';
 import '../browserAccessService.js';
 import { AgentQuestionDraft, parseQuestionDraft, questionResponseText } from '../../common/questions.js';
@@ -82,7 +83,9 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		});
 	}
 
-	async invokeTool(name: string, input?: unknown, call?: IVoltHostToolCall): Promise<IVoltHostToolResult> {
+	async invokeTool(requested: string, input?: unknown, call?: IVoltHostToolCall): Promise<IVoltHostToolResult> {
+		// An agent may still use a tool's earlier name (render_html); it runs, and is recorded, as the current one.
+		const name = canonicalHostToolName(requested);
 		const args = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
 		const result = await this.run(name, args, call).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) }));
 		if (call?.sessionId && call.source !== 'native') {
@@ -101,6 +104,10 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		}
 		if (name === ASK_QUESTION_TOOL_NAME) {
 			return this.askQuestions(args, call);
+		}
+		if (name === PROPOSE_PLAN_TOOL_NAME) {
+			// The editor draws the plan as a card with Approve, Revise and Edit; the agent waits for the user.
+			return { text: 'The plan is shown to the user for approval. Stop here: do not implement it until the user approves it. If they ask for changes, call propose_plan again with the revised plan.' };
 		}
 		if (name === AWAIT_ANSWERS_TOOL_NAME) {
 			const requestId = typeof args.request_id === 'string' ? args.request_id : '';

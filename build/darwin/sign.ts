@@ -83,6 +83,13 @@ async function main(buildDir?: string): Promise<void> {
 		]);
 		await spawn('plutil', [
 			'-replace',
+			'NSSpeechRecognitionUsageDescription',
+			'-string',
+			'Volt turns your dictation into text for the agent composer.',
+			`${infoPlistPath}`
+		]);
+		await spawn('plutil', [
+			'-replace',
 			'NSCameraUsageDescription',
 			'-string',
 			'An application in Visual Studio Code wants to use the Camera.',

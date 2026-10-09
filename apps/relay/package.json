@@ -1,0 +1,20 @@
+{
+	"name": "volt-relay",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Self-hosted relay for Volt: webhooks held while Volt is offline, cloud tasks on remote runners, machines with host load.",
+	"type": "module",
+	"license": "MIT",
+	"bin": {
+		"volt-relay": "./bin/volt-relay.mjs",
+		"volt-runner": "./bin/volt-runner.mjs"
+	},
+	"engines": {
+		"node": ">=20"
+	},
+	"scripts": {
+		"start": "node bin/volt-relay.mjs serve",
+		"runner": "node bin/volt-runner.mjs",
+		"test": "node --test test/*.test.mjs"
+	}
+}

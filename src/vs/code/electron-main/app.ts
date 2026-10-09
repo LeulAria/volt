@@ -125,20 +125,36 @@ import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../platform/voltS
 import { createVoltStdioChannel, VoltStdioMainService } from '../../platform/voltStdio/electron-main/voltStdioMainService.js';
 import { IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../platform/voltHostMcp/common/voltHostMcp.js';
 import { VoltHostMcpMainService } from '../../platform/voltHostMcp/electron-main/voltHostMcpMainService.js';
+import { IVoltExternalMcpService, VOLT_EXTERNAL_MCP_CHANNEL_NAME } from '../../platform/voltExternalMcp/common/voltExternalMcp.js';
+import { VoltExternalMcpMainService } from '../../platform/voltExternalMcp/electron-main/voltExternalMcpMainService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../platform/voltGit/common/voltGit.js';
 import { VoltGitMainService } from '../../platform/voltGit/electron-main/voltGitMainService.js';
 import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestMainService } from '../../platform/voltPullRequests/electron-main/voltPullRequestMainService.js';
+import { IVoltRelayService, VOLT_RELAY_CHANNEL_NAME } from '../../platform/voltRelay/common/voltRelay.js';
+import { VoltRelayMainService } from '../../platform/voltRelay/electron-main/voltRelayMainService.js';
 import { IVoltUsageService, VOLT_USAGE_CHANNEL_NAME } from '../../platform/voltUsage/common/voltUsage.js';
+import { IVoltVisualPreviewService, VOLT_VISUAL_PREVIEW_CHANNEL_NAME } from '../../platform/voltVisualPreview/common/voltVisualPreview.js';
+import { VoltVisualPreviewMainService } from '../../platform/voltVisualPreview/electron-main/voltVisualPreviewMainService.js';
 import { VoltUsageMainService } from '../../platform/voltUsage/electron-main/voltUsageMainService.js';
 import { IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME } from '../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME } from '../../platform/voltBrowser/common/voltBrowser.js';
 import { VoltBrowserMainService } from '../../platform/voltBrowser/electron-main/voltBrowserMainService.js';
+import { IVoltBadgeService, VOLT_BADGE_CHANNEL_NAME } from '../../platform/voltBadge/common/voltBadge.js';
+import { VoltBadgeMainService } from '../../platform/voltBadge/electron-main/voltBadgeMainService.js';
+import { IVoltDiagnosticsService } from '../../platform/voltDiagnostics/common/voltDiagnostics.js';
+import { registerVoltDiagnosticsMain, VoltDiagnosticsMainService } from '../../platform/voltDiagnostics/electron-main/voltDiagnosticsMainService.js';
+import { IVoltStorageService, VOLT_STORAGE_CHANNEL_NAME } from '../../platform/voltStorage/common/voltStorage.js';
+import { VoltStorageMainService } from '../../platform/voltStorage/electron-main/voltStorageMainService.js';
+import { IVoltEditorImportService, VOLT_EDITOR_IMPORT_CHANNEL_NAME } from '../../platform/voltEditorImport/common/voltEditorImport.js';
+import { VoltEditorImportService } from '../../platform/voltEditorImport/node/voltEditorImportService.js';
 import { IVoltDevicesService, VOLT_DEVICES_CHANNEL_NAME } from '../../platform/voltDevices/common/voltDevices.js';
 import { VoltDevicesMainService } from '../../platform/voltDevices/electron-main/voltDevicesMainService.js';
 import { IVoltCaptureService, VOLT_CAPTURE_CHANNEL_NAME } from '../../platform/voltCapture/common/voltCapture.js';
 import { VoltCaptureMainService } from '../../platform/voltCapture/electron-main/voltCaptureMainService.js';
+import { IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME } from '../../platform/voltSpeech/common/voltSpeech.js';
+import { VoltSpeechMainService } from '../../platform/voltSpeech/electron-main/voltSpeechMainService.js';
 import ErrorTelemetry from '../../platform/telemetry/electron-main/errorTelemetry.js';
 
 /**
@@ -1064,12 +1080,17 @@ export class CodeApplication extends Disposable {
 		// Volt host MCP (questions and in-app browser tools for launched agents)
 		services.set(IVoltHostMcpService, new SyncDescriptor(VoltHostMcpMainService, undefined, false /* proxied to other processes */));
 
+		// Volt orchestrator as an OAuth MCP server for outside agents
+		services.set(IVoltExternalMcpService, new SyncDescriptor(VoltExternalMcpMainService, undefined, false /* proxied to other processes */));
+
 		// Volt agent change capture
 		services.set(IVoltGitService, new SyncDescriptor(VoltGitMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltPullRequestService, new SyncDescriptor(VoltPullRequestMainService, undefined, false /* proxied to other processes */));
 
 		// Volt usage and limits
 		services.set(IVoltUsageService, new SyncDescriptor(VoltUsageMainService, undefined, true));
+		services.set(IVoltRelayService, new SyncDescriptor(VoltRelayMainService, undefined, true));
+		services.set(IVoltVisualPreviewService, new SyncDescriptor(VoltVisualPreviewMainService, undefined, true));
 
 		// Volt in-app folder picker
 		services.set(IVoltFsBrowseService, new SyncDescriptor(VoltFsBrowseService, undefined, false /* proxied to other processes */));
@@ -1078,6 +1099,17 @@ export class CodeApplication extends Disposable {
 		services.set(IVoltBrowserService, new SyncDescriptor(VoltBrowserMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltDevicesService, new SyncDescriptor(VoltDevicesMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltCaptureService, new SyncDescriptor(VoltCaptureMainService, undefined, false /* proxied to other processes */));
+		services.set(IVoltSpeechService, new SyncDescriptor(VoltSpeechMainService, undefined, false /* proxied to other processes */));
+
+		// Volt app badge (chats that finished in the background)
+		services.set(IVoltBadgeService, new SyncDescriptor(VoltBadgeMainService, undefined, false /* proxied to other processes */));
+
+		// Volt diagnostics (tracing export, stall log, heap snapshots)
+		services.set(IVoltDiagnosticsService, new SyncDescriptor(VoltDiagnosticsMainService, undefined, false /* proxied to other processes */));
+
+		// Volt storage cleanup and first-run import
+		services.set(IVoltStorageService, new SyncDescriptor(VoltStorageMainService, undefined, true));
+		services.set(IVoltEditorImportService, new SyncDescriptor(VoltEditorImportService, undefined, true));
 
 		// Webview Manager
 		services.set(IWebviewManagerService, new SyncDescriptor(WebviewMainService));
@@ -1177,6 +1209,9 @@ export class CodeApplication extends Disposable {
 
 		const disposables = this._register(new DisposableStore());
 
+		// Volt diagnostics: times every main IPC channel registered below (stall attribution, git spans)
+		disposables.add(registerVoltDiagnosticsMain(accessor, mainProcessElectronServer));
+
 		const launchChannel = ProxyChannel.fromService(accessor.get(ILaunchMainService), disposables, { disableMarshalling: true });
 		this.mainProcessNodeIpcServer.registerChannel('launch', launchChannel);
 
@@ -1242,6 +1277,8 @@ export class CodeApplication extends Disposable {
 		// Volt host MCP
 		const voltHostMcpChannel = ProxyChannel.fromService(accessor.get(IVoltHostMcpService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_HOST_MCP_CHANNEL_NAME, voltHostMcpChannel);
+		const voltExternalMcpChannel = ProxyChannel.fromService(accessor.get(IVoltExternalMcpService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_EXTERNAL_MCP_CHANNEL_NAME, voltExternalMcpChannel);
 
 		// Volt agent change capture
 		const voltGitChannel = ProxyChannel.fromService(accessor.get(IVoltGitService), disposables);
@@ -1252,6 +1289,10 @@ export class CodeApplication extends Disposable {
 		// Volt usage and limits
 		const voltUsageChannel = ProxyChannel.fromService(accessor.get(IVoltUsageService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_USAGE_CHANNEL_NAME, voltUsageChannel);
+		const voltRelayChannel = ProxyChannel.fromService(accessor.get(IVoltRelayService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_RELAY_CHANNEL_NAME, voltRelayChannel);
+		const voltVisualPreviewChannel = ProxyChannel.fromService(accessor.get(IVoltVisualPreviewService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_VISUAL_PREVIEW_CHANNEL_NAME, voltVisualPreviewChannel);
 
 		// Volt in-app folder picker
 		const voltFsBrowseChannel = ProxyChannel.fromService(accessor.get(IVoltFsBrowseService), disposables);
@@ -1262,6 +1303,14 @@ export class CodeApplication extends Disposable {
 		mainProcessElectronServer.registerChannel(VOLT_BROWSER_CHANNEL_NAME, voltBrowserChannel);
 		mainProcessElectronServer.registerChannel(VOLT_DEVICES_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltDevicesService), disposables));
 		mainProcessElectronServer.registerChannel(VOLT_CAPTURE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltCaptureService), disposables));
+		mainProcessElectronServer.registerChannel(VOLT_SPEECH_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltSpeechService), disposables));
+
+		// Volt app badge
+		mainProcessElectronServer.registerChannel(VOLT_BADGE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltBadgeService), disposables));
+
+		// Volt storage cleanup and first-run import
+		mainProcessElectronServer.registerChannel(VOLT_STORAGE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltStorageService), disposables));
+		mainProcessElectronServer.registerChannel(VOLT_EDITOR_IMPORT_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltEditorImportService), disposables));
 
 		// Workspaces
 		const workspacesChannel = ProxyChannel.fromService(accessor.get(IWorkspacesService), disposables);

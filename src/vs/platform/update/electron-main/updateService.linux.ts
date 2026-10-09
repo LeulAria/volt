@@ -10,8 +10,9 @@ import { ILifecycleMainService } from '../../lifecycle/electron-main/lifecycleMa
 import { ILogService } from '../../log/common/log.js';
 import { INativeHostMainService } from '../../native/electron-main/nativeHostMainService.js';
 import { IProductService } from '../../product/common/productService.js';
-import { asJson, IRequestService } from '../../request/common/request.js';
-import { AvailableForDownload, IUpdate, State, UpdateType } from '../common/update.js';
+import { IRequestService } from '../../request/common/request.js';
+import { AvailableForDownload, State, UpdateType } from '../common/update.js';
+import { IVoltUpdate, voltLinuxPlatform } from '../common/voltUpdateFeed.js';
 import { AbstractUpdateService, createUpdateURL } from './abstractUpdateService.js';
 
 export class LinuxUpdateService extends AbstractUpdateService {
@@ -29,7 +30,7 @@ export class LinuxUpdateService extends AbstractUpdateService {
 	}
 
 	protected buildUpdateFeedUrl(quality: string): string {
-		return createUpdateURL(`linux-${process.arch}`, quality, this.productService);
+		return createUpdateURL(this.productService.voltRelease ? voltLinuxPlatform(process.arch) : `linux-${process.arch}`, quality, this.productService);
 	}
 
 	protected doCheckForUpdates(explicit: boolean): void {
@@ -41,7 +42,7 @@ export class LinuxUpdateService extends AbstractUpdateService {
 		this.setState(State.CheckingForUpdates(explicit));
 
 		this.requestService.request({ url }, CancellationToken.None)
-			.then<IUpdate | null>(asJson)
+			.then(context => this.parseUpdateResponse(context))
 			.then(update => {
 				if (!update || !update.url || !update.version || !update.productVersion) {
 					this.setState(State.Idle(UpdateType.Archive));
@@ -60,7 +61,10 @@ export class LinuxUpdateService extends AbstractUpdateService {
 	protected override async doDownloadUpdate(state: AvailableForDownload): Promise<void> {
 		// Use the download URL if available as we don't currently detect the package type that was
 		// installed and the website download page is more useful than the tarball generally.
-		if (this.productService.downloadUrl && this.productService.downloadUrl.length > 0) {
+		// Another Volt channel is its own app: open its download (the page, preselected).
+		if ((state.update as IVoltUpdate).voltChannel && state.update.url) {
+			this.nativeHostMainService.openExternal(undefined, state.update.url);
+		} else if (this.productService.downloadUrl && this.productService.downloadUrl.length > 0) {
 			this.nativeHostMainService.openExternal(undefined, this.productService.downloadUrl);
 		} else if (state.update.url) {
 			this.nativeHostMainService.openExternal(undefined, state.update.url);

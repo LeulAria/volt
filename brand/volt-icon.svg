@@ -2,16 +2,16 @@
 <defs>
   <!-- body: electric blue (release) or deep space (beta), darkening toward the foot -->
   <linearGradient id="bodyFill" x1="0.3" y1="0" x2="0.7" y2="1">
-    <stop offset="0" stop-color="#3A9BF2"/>
-    <stop offset="0.45" stop-color="#1B58D4"/>
-    <stop offset="0.75" stop-color="#0F37A3"/>
-    <stop offset="1" stop-color="#061653"/>
+    <stop offset="0" stop-color="#62B8FF"/>
+    <stop offset="0.45" stop-color="#3A7EEC"/>
+    <stop offset="0.75" stop-color="#2A5ED0"/>
+    <stop offset="1" stop-color="#17409C"/>
   </linearGradient>
   <!-- the gravity well: shade deepening toward the bolt's core -->
   <radialGradient id="glow" cx="0.5" cy="0.5" r="0.42">
-    <stop offset="0" stop-color="#030B30" stop-opacity="0.75"/>
-    <stop offset="0.55" stop-color="#040F3D" stop-opacity="0.28"/>
-    <stop offset="1" stop-color="#040F3D" stop-opacity="0"/>
+    <stop offset="0" stop-color="#0C2C7A" stop-opacity="0.45"/>
+    <stop offset="0.55" stop-color="#123A8E" stop-opacity="0.28"/>
+    <stop offset="1" stop-color="#123A8E" stop-opacity="0"/>
   </radialGradient>
   <!-- blueprint grid, pulled into the bolt's gravity well -->
   <linearGradient id="gridFade" x1="0" y1="0" x2="0" y2="1">
@@ -28,7 +28,7 @@
   </linearGradient>
   <linearGradient id="rimShade" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0.55" stop-color="#0A2A8A" stop-opacity="0"/>
-    <stop offset="1" stop-color="#061A5E" stop-opacity="0.6"/>
+    <stop offset="1" stop-color="#123C8E" stop-opacity="0.6"/>
   </linearGradient>
   <!-- the bolt: white porcelain, cooling slightly toward its foot -->
   <linearGradient id="glyphFill" x1="0.35" y1="0" x2="0.65" y2="1">
@@ -37,19 +37,19 @@
     <stop offset="1" stop-color="#D9E6FA"/>
   </linearGradient>
   <filter id="iconShadow" x="-20%" y="-20%" width="140%" height="140%">
-    <feGaussianBlur in="SourceAlpha" stdDeviation="14"/><feOffset dy="12"/>
-    <feComponentTransfer><feFuncA type="linear" slope="0.32"/></feComponentTransfer>
+    <feGaussianBlur in="SourceAlpha" stdDeviation="8"/><feOffset dy="5"/>
+    <feComponentTransfer><feFuncA type="linear" slope="0.16"/></feComponentTransfer>
     <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
   </filter>
   <!-- bolt lifts off the body: a wide soft shadow plus a tight contact shadow -->
   <filter id="glyphShadow" x="-30%" y="-30%" width="160%" height="160%">
     <feGaussianBlur in="SourceAlpha" stdDeviation="14" result="b1"/>
-    <feOffset in="b1" dy="10" result="o1"/>
-    <feFlood flood-color="#04154F" flood-opacity="0.24"/>
+    <feOffset in="b1" dy="6" result="o1"/>
+    <feFlood flood-color="#04154F" flood-opacity="0.12"/>
     <feComposite in2="o1" operator="in" result="s1"/>
     <feGaussianBlur in="SourceAlpha" stdDeviation="5" result="b2"/>
     <feOffset in="b2" dy="3" result="o2"/>
-    <feFlood flood-color="#04154F" flood-opacity="0.18"/>
+    <feFlood flood-color="#04154F" flood-opacity="0.09"/>
     <feComposite in2="o2" operator="in" result="s2"/>
     <feMerge><feMergeNode in="s1"/><feMergeNode in="s2"/></feMerge>
   </filter>

@@ -17,6 +17,11 @@
 	width: 340px;
 }
 
+/* On This Mac is mostly a search field and short rows, so it sits a bit narrower. */
+.volt-agent-home-workspace-flyout.mac {
+	width: 280px;
+}
+
 .volt-agent-home-workspace-flyout.form {
 	width: 320px;
 }
@@ -184,7 +189,7 @@
 	opacity: 0.55;
 }
 
-/* Clone and New Folder forms */
+/* Clone form */
 
 .volt-agent-home-workspace-form-header {
 	display: flex;

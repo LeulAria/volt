@@ -1,15 +1,12 @@
 import { Link } from "@tanstack/react-router";
-import {
-  DownloadButtons,
-  GithubMarkIcon,
-  InstallCommand,
-  RELEASES_URL,
-  REPO_URL,
-} from "./install";
 import { useRef } from "react";
+import { LandingDownload } from "@/components/download/primaryDownload";
 import { cn } from "@/lib/cn";
 import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
+import { defaultArch } from "@/lib/releases";
+import { useDetectedPlatform, useReleases } from "@/lib/useReleases";
 import { COLUMN } from "./geometry";
+import { GithubMarkIcon, InstallCommand, REPO_URL } from "./install";
 
 /* ------------------------------------------------------------------ */
 /* Closing construction                                                */
@@ -325,15 +322,31 @@ export function ClosingCta() {
         >
           Free while in public beta. macOS, Windows, and Linux.
         </p>
-        <div
-          data-c-rest
-          className="mt-8 flex w-full max-w-[560px] flex-col items-stretch gap-3 md:flex-row md:items-center"
-        >
-          <InstallCommand className="md:flex-1" />
-          <DownloadButtons className="md:w-max" />
+        <div data-c-rest className="mt-10 w-full">
+          <ClosingDownload />
+        </div>
+        <div data-c-rest className="mt-10 w-full max-w-[420px]">
+          <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-white/35">
+            Or install from a terminal
+          </div>
+          <InstallCommand />
         </div>
       </div>
     </section>
+  );
+}
+
+/** The real download for this visitor, resolved from GitHub Releases. */
+function ClosingDownload() {
+  const state = useReleases();
+  const detected = useDetectedPlatform();
+  const os = detected?.os ?? "darwin";
+  return (
+    <LandingDownload
+      state={state}
+      os={os}
+      arch={detected?.os ? detected.arch : defaultArch(os)}
+    />
   );
 }
 
@@ -352,14 +365,9 @@ export function SiteFooter() {
           >
             Docs
           </Link>
-          <a
-            href={RELEASES_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="transition-colors hover:text-white"
-          >
-            Releases
-          </a>
+          <Link to="/download" className="transition-colors hover:text-white">
+            Download
+          </Link>
           <a href="/llms.txt" className="transition-colors hover:text-white">
             llms.txt
           </a>

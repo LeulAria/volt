@@ -60,35 +60,49 @@
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
-	padding: 52px 0 12px;
+	padding: 52px 0 0;
 	background: var(--volt-agent-sidebar-bg, color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base, #141414) 78%, #000) 55%, transparent));
 	border-right: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
 }
 
-.volt-settings-back {
+.volt-settings-footer {
+	flex: none;
 	display: flex;
 	align-items: center;
+	height: 44px;
+	padding: 0 10px 6px;
+}
+
+/* The same Back as the agent list's footer while Usage is open (agentHomePane.css). */
+.volt-settings-back {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	align-items: center;
 	gap: 8px;
-	height: 28px;
-	margin: 0 10px 8px;
-	padding: 0 8px;
+	height: 32px;
+	margin: 0;
+	padding: 0 10px;
 	border: 0;
-	border-radius: 6px;
-	background: transparent;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
 	color: inherit;
 	font: inherit;
 	font-size: 13px;
+	text-align: left;
 	cursor: pointer;
+	transition: background-color 140ms ease;
 	-webkit-app-region: no-drag;
 }
 
-.volt-settings-back:hover {
-	background: var(--volt-settings-hover);
+.volt-settings-back:hover,
+.volt-settings-back:focus-visible {
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .volt-settings-back .codicon {
-	font-size: 16px;
-	opacity: 0.9;
+	font-size: 14px;
+	opacity: 0.85;
 }
 
 .volt-settings-search {
@@ -170,6 +184,12 @@
 
 .volt-settings-toc-icon .codicon {
 	font-size: 16px;
+}
+
+.volt-settings-toc-icon .volt-settings-svg-icon {
+	display: block;
+	width: 16px;
+	height: 16px;
 }
 
 .volt-settings-toc-item:hover {
@@ -316,6 +336,41 @@
 	background: var(--volt-settings-hover);
 }
 
+/* Refresh: the Usage page's spinner (createRefreshSpinner) takes the glyph's place while a check runs.
+ * It stays mounted so its SMIL clock keeps running. */
+.volt-settings-refresh {
+	position: relative;
+}
+
+.volt-settings-refresh .codicon {
+	font-size: 15px;
+}
+
+.volt-settings-refresh .volt-usage-spinner {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 15px;
+	height: 15px;
+	opacity: 0;
+	pointer-events: none;
+	transform: translate(-50%, -50%);
+	color: var(--vscode-foreground);
+}
+
+.volt-settings-refresh.spinning {
+	opacity: 1;
+	cursor: default;
+}
+
+.volt-settings-refresh.spinning .codicon {
+	visibility: hidden;
+}
+
+.volt-settings-refresh.spinning .volt-usage-spinner {
+	opacity: 1;
+}
+
 .volt-settings-section-label {
 	padding: 22px 0 6px;
 	font-size: 13px;
@@ -344,6 +399,7 @@
 	overflow: hidden;
 }
 
+.volt-settings-group + .volt-settings-group,
 .volt-settings-group + .volt-settings-list,
 .volt-settings-form + .volt-settings-list,
 .volt-settings-list + .volt-settings-form,
@@ -409,6 +465,25 @@
 	width: 220px;
 }
 
+.volt-settings-update-status {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.volt-settings-update-status:empty {
+	display: none;
+}
+
+.volt-settings-row-control.volt-settings-update-control {
+	max-width: 420px;
+}
+
+.volt-settings-update-control .monaco-button {
+	white-space: nowrap;
+	width: auto;
+}
+
 .volt-settings-input.wide {
 	width: 280px;
 }
@@ -430,6 +505,22 @@
 .volt-settings-control .monaco-select-box {
 	min-height: 28px;
 	border-radius: 7px;
+}
+
+/* Dropdowns: an outline, not a filled box, like the rest of the page. */
+.volt-settings .monaco-select-box {
+	height: 28px;
+	padding: 0 26px 0 10px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent) !important;
+	border-radius: 7px;
+	background-color: transparent !important;
+	color: var(--vscode-foreground) !important;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-settings .monaco-select-box:hover {
+	background-color: var(--volt-settings-hover) !important;
 }
 
 /* The composer's model button, reused for model choices (text generation). */
@@ -523,7 +614,7 @@
 }
 
 .volt-settings-toggle.on {
-	background: var(--vscode-button-background, #22c55e);
+	background: oklch(0.638 0.129 153.739);
 }
 
 .volt-settings-toggle::after {
@@ -534,7 +625,8 @@
 	width: 16px;
 	height: 16px;
 	border-radius: 50%;
-	background: var(--vscode-button-foreground, #fff);
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 	transition: left 0.12s ease;
 }
 
@@ -601,6 +693,9 @@
 
 .volt-settings-stepper-unit {
 	flex: 0 0 auto;
+	/* Same width for px and %, so the steppers line up in one column. */
+	min-width: 16px;
+	text-align: left;
 	margin-left: 2px;
 	opacity: 0.5;
 	font-size: 12px;
@@ -778,7 +873,656 @@
 	background: color-mix(in srgb, #ef4444 14%, transparent);
 }
 
+/* Nav groups */
+
+.volt-settings-toc-gap {
+	height: 14px;
+}
+
+/* Segmented control (appearance mode, default access) */
+
+.volt-settings-segmented {
+	--volt-segment-pill: color-mix(in srgb, var(--vscode-foreground) 24%, var(--volt-agent-window-bg-base, var(--vscode-editor-background, #1e1e1e)));
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	height: 28px;
+	padding: 2px;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	-webkit-app-region: no-drag;
+}
+
+/* Dark themes: a recessed track, so the raised pill reads at a glance. */
+.monaco-workbench.vs-dark .volt-settings-segmented,
+.monaco-workbench.hc-black .volt-settings-segmented {
+	background: rgba(0, 0, 0, 0.24);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+/* Light themes: a white pill on a grey track, like an AppKit segmented control. */
+.monaco-workbench.vs .volt-settings-segmented,
+.monaco-workbench.hc-light .volt-settings-segmented {
+	--volt-segment-pill: #fff;
+}
+
+.volt-settings-segment {
+	height: 24px;
+	padding: 0 12px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+	font: inherit;
+	font-size: 12px;
+	line-height: 24px;
+	white-space: nowrap;
+	cursor: pointer;
+	transition: background-color 120ms ease, color 120ms ease;
+}
+
+.volt-settings-segment:hover:not(.active) {
+	color: color-mix(in srgb, var(--vscode-foreground) 88%, transparent);
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.volt-settings-segment.active {
+	color: var(--vscode-foreground);
+	background: var(--volt-segment-pill);
+	box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--vscode-foreground) 12%, transparent), 0 1px 2px rgba(0, 0, 0, 0.18);
+	cursor: default;
+}
+
+.volt-settings-segment.danger.active {
+	color: #d97706;
+}
+
+.monaco-workbench.vs-dark .volt-settings-segment.danger.active,
+.monaco-workbench.hc-black .volt-settings-segment.danger.active {
+	color: #f5a524;
+}
+
+/* Clicks leave no ring on the page's own buttons; the keyboard still gets one. Prefixed to outrank
+ * the workbench's `button:focus` ring (style.css), which also forces opacity: 1. */
+.monaco-workbench .volt-settings button:focus:not(:focus-visible) {
+	outline: none;
+}
+
+.volt-settings-segment:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-settings-row-control.wide {
+	max-width: none;
+}
+
+/* Links and add buttons */
+
+.volt-settings-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 26px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-textLink-foreground);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-settings-link:hover {
+	background: var(--volt-settings-hover);
+}
+
+.volt-settings-link.danger {
+	color: var(--vscode-errorForeground, #f87171);
+}
+
+.volt-settings-link .codicon {
+	font-size: 14px;
+}
+
+.volt-settings-add {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	margin-top: 8px;
+	padding: 10px 14px;
+	border: 1px dashed var(--volt-settings-border);
+	border-radius: var(--volt-settings-radius);
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 13px;
+	opacity: 0.7;
+	cursor: pointer;
+}
+
+.volt-settings-add:hover {
+	opacity: 1;
+	background: var(--volt-settings-hover);
+}
+
+.volt-settings-form + .volt-settings-add,
+.volt-settings-list + .volt-settings-form,
+.volt-settings-empty + .volt-settings-form {
+	margin-top: 8px;
+}
+
+.volt-settings-form-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	column-gap: 12px;
+}
+
+/* Theme gallery */
+
+.volt-settings-theme-group-title {
+	margin: 4px 0 8px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-theme-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+	gap: 12px;
+	margin-bottom: 18px;
+}
+
+.volt-settings-theme {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-settings-theme-preview {
+	position: relative;
+	display: flex;
+	height: 84px;
+	border-radius: 10px;
+	overflow: hidden;
+	box-shadow: 0 0 0 1px var(--volt-settings-border);
+	transition: box-shadow 0.12s ease, transform 0.12s ease;
+}
+
+.volt-settings-theme:hover .volt-settings-theme-preview {
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
+}
+
+.volt-settings-theme.active .volt-settings-theme-preview {
+	box-shadow: 0 0 0 2px var(--volt-agent-window-bg-base, var(--vscode-editor-background)), 0 0 0 4px color-mix(in srgb, var(--vscode-foreground) 85%, transparent);
+}
+
+/* The card never draws the workbench focus outline (it boxed the preview and the label); the
+ * keyboard ring goes on the preview, like the selected ring. */
+.monaco-workbench .volt-settings .volt-settings-theme:focus,
+.monaco-workbench .volt-settings .volt-settings-theme:focus-visible {
+	outline: none;
+}
+
+.volt-settings-theme:focus-visible .volt-settings-theme-preview {
+	box-shadow: 0 0 0 2px var(--volt-agent-window-bg-base, var(--vscode-editor-background)), 0 0 0 4px var(--vscode-focusBorder, #3b82f6);
+}
+
+.volt-settings-theme.active:focus-visible .volt-settings-theme-preview {
+	box-shadow: 0 0 0 2px var(--volt-agent-window-bg-base, var(--vscode-editor-background)), 0 0 0 4px color-mix(in srgb, var(--vscode-foreground) 85%, transparent), 0 0 0 6px var(--vscode-focusBorder, #3b82f6);
+}
+
+.volt-settings-theme-preview .side {
+	flex: 0 0 26%;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 10px 7px;
+}
+
+.volt-settings-theme-preview .side span {
+	height: 4px;
+	border-radius: 2px;
+	opacity: 0.55;
+}
+
+.volt-settings-theme-preview .side span:nth-child(2) {
+	width: 70%;
+}
+
+.volt-settings-theme-preview .code {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+	padding: 12px 10px;
+}
+
+.volt-settings-theme-preview .line {
+	display: flex;
+	gap: 4px;
+}
+
+.volt-settings-theme-preview .line span {
+	height: 4px;
+	border-radius: 2px;
+}
+
+.volt-settings-theme-preview .accent {
+	position: absolute;
+	right: 8px;
+	bottom: 8px;
+	width: 28px;
+	height: 10px;
+	border-radius: 4px;
+}
+
+.volt-settings-theme-label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 0 2px;
+	font-size: 12px;
+}
+
+.volt-settings-theme-label .name {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	opacity: 0.85;
+}
+
+.volt-settings-theme.active .volt-settings-theme-label .name {
+	opacity: 1;
+}
+
+.volt-settings-theme-label .check {
+	display: inline-flex;
+}
+
+.volt-settings-theme-label .check .codicon {
+	font-size: 14px;
+}
+
+.volt-settings-theme-label .tag {
+	flex: none;
+	font-size: 10px;
+	padding: 2px 6px;
+	border-radius: 999px;
+	background: var(--volt-settings-hover);
+	opacity: 0.8;
+}
+
+.volt-settings-theme-gallery > .volt-settings-link {
+	margin: 2px 0 0;
+}
+
+/* Providers */
+
+.volt-settings-stats {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 10px;
+	margin-bottom: 4px;
+}
+
+.volt-settings-stat {
+	padding: 12px 14px;
+	border-radius: var(--volt-settings-radius);
+	background: var(--volt-settings-surface);
+	border: 1px solid var(--volt-settings-border);
+}
+
+.volt-settings-stat .value {
+	font-size: 18px;
+	font-variant-numeric: tabular-nums;
+	line-height: 1.2;
+}
+
+.volt-settings-stat .label {
+	margin-top: 2px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-stat.good .value {
+	color: #4ade80;
+}
+
+.volt-settings-stat.warn .value {
+	color: #f59e0b;
+}
+
+.volt-settings-providers .volt-settings-provider-row {
+	cursor: pointer;
+	gap: 12px;
+	min-height: 60px;
+}
+
+.volt-settings-providers .volt-settings-provider-row:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+}
+
+.volt-settings-providers .volt-settings-provider-icon {
+	width: 32px;
+	height: 32px;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	margin-top: 0;
+}
+
+.volt-settings-provider.not-installed .volt-settings-provider-icon,
+.volt-settings-provider.not-installed .name {
+	opacity: 0.6;
+}
+
+.volt-settings-providers .volt-settings-provider-row .detail {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 3px;
+	min-width: 0;
+}
+
+.volt-settings-providers .detail-text {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-settings-providers .volt-settings-dot {
+	margin-top: 0;
+	width: 6px;
+	height: 6px;
+}
+
+.volt-settings-dot.off {
+	background: color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
+}
+
+.volt-settings-providers .volt-settings-chevron .codicon {
+	transition: transform 0.15s ease;
+}
+
+.volt-settings-provider.expanded .volt-settings-chevron .codicon {
+	transform: rotate(90deg);
+}
+
+.volt-settings-provider-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 0 auto;
+}
+
+.volt-settings-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 12px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 13%, transparent);
+	border-radius: 7px;
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 1;
+	white-space: nowrap;
+	cursor: pointer;
+	transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.volt-settings-action:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+}
+
+/* Primary: solid foreground on the window color (white on dark, near-black on light). The theme's
+ * button.background (a pale blue in Volt Dark) read as washed out next to the page. */
+.volt-settings-action.primary {
+	border-color: transparent;
+	background: var(--vscode-foreground);
+	color: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
+}
+
+.volt-settings-action.primary:hover {
+	border-color: transparent;
+	background: color-mix(in srgb, var(--vscode-foreground) 84%, var(--volt-agent-window-bg-base, var(--vscode-editor-background)));
+}
+
+/* Icon-only (open docs, get a key): a square ghost button, as tall as its neighbours. */
+.volt-settings-action.icon-only {
+	width: 28px;
+	padding: 0;
+	border-color: transparent;
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+}
+
+.volt-settings-action.icon-only:hover {
+	color: var(--vscode-foreground);
+	background: var(--volt-settings-hover);
+}
+
+.volt-settings .volt-settings-action > .codicon {
+	font-size: 14px;
+	line-height: 14px;
+	/* The workbench tints bare codicons with icon.foreground; on a solid button that is invisible. */
+	color: inherit;
+}
+
+.volt-settings-action:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-settings-spinner {
+	display: inline-flex;
+	opacity: 0.7;
+}
+
+.volt-settings-provider-failure {
+	margin: 0 16px 12px 60px;
+	padding: 10px 12px;
+	border-radius: 8px;
+	background: color-mix(in srgb, #ef4444 10%, transparent);
+	font-size: 12px;
+}
+
+.volt-settings-provider-failure pre {
+	margin: 6px 0 0;
+	max-height: 140px;
+	overflow: auto;
+	white-space: pre-wrap;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11px;
+	opacity: 0.8;
+}
+
+.volt-settings-provider-key {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 16px 12px 60px;
+}
+
+.volt-settings-input.grow {
+	flex: 1;
+	width: auto;
+}
+
+.volt-settings-providers .volt-settings-provider-body {
+	padding: 4px 16px 16px 60px;
+}
+
+.volt-settings-facts {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+	gap: 10px 16px;
+	margin-bottom: 8px;
+}
+
+.volt-settings-facts .fact {
+	min-width: 0;
+}
+
+.volt-settings-facts .label {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-facts .value {
+	display: block;
+	margin-top: 2px;
+	font-size: 12px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-settings-facts code.value {
+	font-family: var(--monaco-monospace-font);
+	font-size: 11px;
+}
+
+.volt-settings-provider-links {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px;
+	margin: 0 0 8px -8px;
+}
+
+.volt-settings-provider-links:empty {
+	display: none;
+}
+
+.volt-settings-models-head {
+	padding: 10px 0 6px;
+	border-top: 1px solid var(--volt-settings-border);
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-models-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 6px;
+}
+
+.volt-settings-input.filter {
+	width: 220px;
+}
+
+.volt-settings-models-toolbar .count {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-models-toolbar .volt-settings-link {
+	margin-left: auto;
+}
+
+.volt-settings-models {
+	margin: 0 -8px;
+}
+
+.volt-settings-models-group {
+	padding: 10px 8px 4px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-models-none {
+	padding: 10px 8px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-model-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 30px;
+	padding: 0 8px;
+	border-radius: 6px;
+}
+
+.volt-settings-model-row[hidden],
+.volt-settings-models-group[hidden],
+.volt-settings-models-none[hidden] {
+	display: none;
+}
+
+.volt-settings-model-row:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.volt-settings-model-row.off .name,
+.volt-settings-model-row.off .traits {
+	opacity: 0.5;
+}
+
+.volt-settings-model-row .name {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	font-size: 12.5px;
+}
+
+.volt-settings-model-row .label {
+	flex: none;
+}
+
+.volt-settings-model-row .qualifier {
+	flex: none;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-model-row .slug {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11px;
+	color: color-mix(in srgb, var(--vscode-descriptionForeground) 75%, transparent);
+}
+
+.volt-settings-model-row .traits {
+	flex: none;
+	max-width: 50%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11.5px;
+	color: var(--vscode-descriptionForeground);
+}
+
 @media (max-width: 820px) {
+	.volt-settings-stats,
+	.volt-settings-form-grid {
+		grid-template-columns: 1fr;
+	}
+
 	.volt-settings-sidebar {
 		flex-basis: 200px;
 		width: 200px;

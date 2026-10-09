@@ -87,7 +87,7 @@ function buildWin32Setup(arch, target) {
 			NameShort: product.nameShort,
 			DirName: product.win32DirName,
 			Version: pkg.version,
-			RawVersion: pkg.version.replace(/-\w+$/, ''),
+			RawVersion: pkg.version.replace(/-.*$/, ''),
 			NameVersion: product.win32NameVersion + (target === 'user' ? ' (User)' : ''),
 			ExeBasename: product.nameShort,
 			RegValueName: product.win32RegValueName,
@@ -111,7 +111,7 @@ function buildWin32Setup(arch, target) {
 			Quality: quality
 		};
 
-		if (quality !== 'exploration') {
+		if (quality !== 'exploration' && product.win32ContextMenu) {
 			definitions['AppxPackage'] = `${quality === 'stable' ? 'code' : 'code_insider'}_${arch}.appx`;
 			definitions['AppxPackageDll'] = `${quality === 'stable' ? 'code' : 'code_insider'}_explorer_command_${arch}.dll`;
 			definitions['AppxPackageName'] = `${product.win32AppUserModelId}`;

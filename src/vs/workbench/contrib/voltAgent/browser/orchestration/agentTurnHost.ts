@@ -9,8 +9,10 @@ import { URI } from '../../../../../base/common/uri.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
+import { localize } from '../../../../../nls.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { resolveRunModelRef } from '../../../../services/voltRuntime/common/models/modelAccess.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchStartTurnRequest } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import '../../../../services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
@@ -18,35 +20,48 @@ import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/ru
 import { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { AgentRunOn, AgentWorktreeTarget } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
-import { imageAttachmentsFromMentions } from '../composer/agentMentions.js';
+import { imageAttachmentsFromMentions, resourceAttachmentsFromMentions } from '../composer/agentMentions.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
+import { IVoltResourceAttachment, MAX_EMBEDDED_RESOURCE_CHARS } from '../../../../services/voltRuntime/common/fileAttachments.js';
 import type { IAgentPromptDisplay, IAgentUserMessage } from '../editor/agentEditor.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
+import { takeTurnDisplay } from './agentTurnDisplays.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
+import { scheduledRunOf } from '../schedules/agentScheduleCommands.js';
+import { takePageContext } from '../visuals/agentVisualBridge.js';
 
 const CHECKPOINT_BEGIN_TURN_COMMAND = 'voltAgent.checkpoint.beginTurn';
 
-/**
- * The composer's live display (mentions with image bytes) for prompts it just submitted, by turn
- * id. The orchestrator stores a frozen copy; a turn started right away uses this one and skips
- * reading attachments back from disk.
- */
-const liveDisplays = new Map<string, IAgentPromptDisplay>();
-
-export function stashTurnDisplay(turnId: string, display: IAgentPromptDisplay | undefined): void {
-	if (display) {
-		liveDisplays.set(turnId, display);
-		if (liveDisplays.size > 64) {
-			liveDisplays.delete(liveDisplays.keys().next().value!);
-		}
-	}
-}
+export { stashTurnDisplay } from './agentTurnDisplays.js';
 
 /** Send options only the chat UI sets, carried by an orchestrator prompt as `host`. */
 export interface IAgentPromptHostOptions {
 	readonly runOn?: AgentRunOn;
 	readonly worktreeTarget?: AgentWorktreeTarget;
+}
+
+/**
+ * A prompt another chat's agent sent (thread_send), started (thread_launch) or forked into
+ * (thread_fork), or a fork's changes merged back into it (thread_merge_back), carried as `host`: the
+ * transcript shows it as that chat's message, not the user's.
+ */
+export interface IAgentThreadSourceHost {
+	readonly fromThread: {
+		readonly id: string;
+		readonly title: string;
+		readonly kind: 'message' | 'launch' | 'fork' | 'merge';
+		/** An agent outside Volt (OAuth MCP): `title` is its name and `id` is no chat. */
+		readonly external?: boolean;
+	};
+}
+
+export function threadSourceOf(host: unknown): IAgentThreadSourceHost['fromThread'] | undefined {
+	const from = (host as Partial<IAgentThreadSourceHost> | undefined)?.fromThread;
+	return from && typeof from.id === 'string' && typeof from.title === 'string'
+		? { id: from.id, title: from.title, kind: from.kind === 'launch' || from.kind === 'fork' || from.kind === 'merge' ? from.kind : 'message', ...(from.external === true ? { external: true } : {}) }
+		: undefined;
 }
 
 /** The composer's mode labels; the runtime's modes are their lower-case forms. */
@@ -75,6 +90,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentWorkspaceService private readonly workspace: IAgentWorkspaceService,
 		@ILogService private readonly logService: ILogService,
+		@IFileService private readonly fileService: IFileService,
 	) {
 		super();
 		this.codec = new AgentHistoryCodec(history);
@@ -96,18 +112,24 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		if (!request.isCurrent()) {
 			return undefined;
 		}
-		const display = liveDisplays.get(turn.id) ?? await this.thawDisplay(turn.prompt.display);
-		liveDisplays.delete(turn.id);
+		const display = takeTurnDisplay(turn.id) ?? await this.thawDisplay(turn.prompt.display);
 		const mode = modeLabel(turn.prompt.mode ?? input.chosenMode ?? input.restoredMode);
-		const origin: IAgentUserMessage['origin'] = turn.kind === 'notification' ? 'notification' : turn.kind === 'brief' ? 'brief' : undefined;
+		// A turn Volt continued after a restart reads as a system row, like a subagent report.
+		const restarted = turn.kind === 'resume' && (turn.prompt.display as { notification?: unknown } | undefined)?.notification === true;
+		// Another chat's agent wrote it: a message bubble marked with that chat, not a system row.
+		const fromThread = threadSourceOf(turn.prompt.host);
+		const origin: IAgentUserMessage['origin'] = fromThread ? undefined : turn.kind === 'notification' || restarted ? 'notification' : turn.kind === 'brief' ? 'brief' : undefined;
 		const controller = input.controller;
 		// The first turn after the chat changed models carries the handoff: the divider, and the brief the
 		// previous model wrote for this one (the runtime recaps the conversation itself).
 		const latest = thread.handoffs.at(-1);
 		const handoff = latest && !input.messages.some(message => message.kind === 'user' && message.handoff?.at === latest.at) ? latest : undefined;
-		const text = handoff?.brief
+		const base = handoff?.brief
 			? `[Volt] ${handoff.fromLabel ?? 'The previous model'} handed this conversation to you. Its brief:\n<handoff_brief>\n${handoff.brief}\n</handoff_brief>\n\n${turn.prompt.text}`
 			: turn.prompt.text;
+		// What the user set in the chat's interactive pages since the agent last read it.
+		const pageState = takePageContext(threadId);
+		const text = pageState ? `${base}\n\n${pageState}` : base;
 		controller.beginTurn({
 			turnId: turn.id,
 			text,
@@ -116,6 +138,8 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			...(origin ? { origin } : {}),
 			...(turn.taskIds ? { taskIds: turn.taskIds } : {}),
 			...(handoff ? { handoff: { ...(handoff.fromLabel ? { fromLabel: handoff.fromLabel } : {}), toLabel: handoff.toLabel, at: handoff.at, by: handoff.by, ...(handoff.reason ? { reason: handoff.reason } : {}) } } : {}),
+			...(scheduledRunOf(turn.prompt.host) ? { scheduled: { ...scheduledRunOf(turn.prompt.host)! } } : {}),
+			...(fromThread ? { fromThread } : {}),
 		});
 		if (turn.kind === 'brief' && thread.title) {
 			// A subagent's chat is named after its task, not after the framing its model reads.
@@ -126,10 +150,28 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			controller.endUnstartedTurn(turn.id, undefined);
 			return undefined;
 		}
-		// An explicit model for prompts the user wrote; the chat's model for everything Volt sends.
-		const ref = turn.prompt.modelRef ?? (turn.kind === 'prompt' && !handoff ? undefined : thread.modelRef);
+		// What the user typed runs on the composer's model (Auto: the runtime's). Everything Volt starts on
+		// its own (schedules, reviews, fixes, notifications, handoffs) names a model, else the chat's, else
+		// the last one the user picked; it never falls back to the catalog's first entry.
+		const typed = turn.kind === 'prompt' && !handoff && !fromThread && !scheduledRunOf(turn.prompt.host);
+		const ref = typed
+			? turn.prompt.modelRef
+			: resolveRunModelRef({ explicit: turn.prompt.modelRef, chat: thread.modelRef, lastUsed: this.runtime.getActiveCatalogRef() }, this.runtime.listCatalog());
+		if (!typed && !ref) {
+			controller.endUnstartedTurn(turn.id, localize('agentTurnHost.noModel', "No model is set for this run. Pick a model for the chat, then send again."));
+			return undefined;
+		}
+		if (typed && ref) {
+			// The model the user sent on is the one the next new chat starts on.
+			void this.runtime.setActiveCatalogRef(ref);
+		}
 		const host = (turn.prompt.host ?? {}) as IAgentPromptHostOptions;
 		const images = imageAttachmentsFromMentions(display?.mentions);
+		const resources = await this.resourcesFor(display);
+		if (!request.isCurrent()) {
+			controller.endUnstartedTurn(turn.id, undefined);
+			return undefined;
+		}
 		const send: IVoltSendRequest = {
 			text,
 			mode: normalizeVoltMode(mode),
@@ -138,6 +180,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			...(host.runOn ? { runOn: host.runOn } : {}),
 			...(host.worktreeTarget ? { worktreeTarget: host.worktreeTarget } : {}),
 			...(images.length ? { images } : {}),
+			...(resources.length ? { resources } : {}),
 		};
 		try {
 			const runId = await this.runtime.send(threadId, send);
@@ -147,6 +190,21 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			controller.endUnstartedTurn(turn.id, err instanceof Error ? err.message : String(err));
 			throw err;
 		}
+	}
+
+	/** Attached files as resources; a folded paste carries its text (read from its saved copy). */
+	private async resourcesFor(display: IAgentPromptDisplay | undefined): Promise<IVoltResourceAttachment[]> {
+		return Promise.all(resourceAttachmentsFromMentions(display?.mentions).map(async ({ pasted, ...resource }) => {
+			if (!pasted || (resource.size ?? 0) > MAX_EMBEDDED_RESOURCE_CHARS * 3) {
+				return resource;
+			}
+			try {
+				const text = (await this.fileService.readFile(URI.parse(resource.uri))).value.toString();
+				return { ...resource, text };
+			} catch {
+				return resource;
+			}
+		}));
 	}
 
 	/** The model a chat last ran on, for its sidebar row: written to its history when it changes. */

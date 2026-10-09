@@ -218,7 +218,16 @@ import './contrib/voltSettings/browser/voltSettings.contribution.js';
 // New Agent editor
 import './contrib/voltAgent/browser/editor/agentEditor.contribution.js';
 import './contrib/voltAgent/browser/history/agentHistory.contribution.js';
+import './contrib/voltAgent/browser/home/agentThreadLifecycle.contribution.js';
 import './contrib/voltProjects/browser/voltProjects.contribution.js';
+// Volt agent sidebar rail, compact list, project icons, chat width, chat notifications
+import './contrib/voltAgent/browser/sidebar/agentSidebar.contribution.js';
+
+// Volt first-run setup, project settings, storage cleanup
+import './contrib/voltSetup/browser/voltSetup.contribution.js';
+
+// Volt themes (picker, import from VS Code / Cursor, contrast)
+import './contrib/voltThemes/browser/voltThemes.contribution.js';
 
 // Volt Prediction (Tab / NES / cross-file edits)
 import './contrib/voltPrediction/browser/voltPrediction.contribution.js';

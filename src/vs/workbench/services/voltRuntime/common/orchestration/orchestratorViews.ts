@@ -19,8 +19,10 @@ import { IOrchQueueItem, IOrchState, IOrchTask, IOrchThread, nextQueued, OrchPau
  * - `queued`: idle for a moment with prompts about to be sent.
  * - `paused`: prompts or subagent reports wait for the user (after an error or a restart).
  * - `blocked`: the chat cannot run yet (its project is cloning, its worktree is being made).
+ * - `moving`: its files are moving to another checkout; the queue waits.
+ * - `limited`: parked at a provider usage limit until the reset (see limitRecovery.ts).
  */
-export type OrchThreadStatusKind = 'idle' | 'starting' | 'working' | 'stopping' | 'needsInput' | 'delegating' | 'queued' | 'paused' | 'blocked' | 'failed' | 'interrupted';
+export type OrchThreadStatusKind = 'idle' | 'starting' | 'working' | 'stopping' | 'needsInput' | 'delegating' | 'queued' | 'paused' | 'blocked' | 'moving' | 'limited' | 'failed' | 'interrupted';
 
 export interface IOrchThreadStatus {
 	readonly kind: OrchThreadStatusKind;
@@ -55,8 +57,14 @@ export function threadStatus(state: IOrchState, threadId: string): IOrchThreadSt
 					: 'working';
 		return { ...base, kind, busy: true };
 	}
+	if (thread.moving) {
+		return { ...base, kind: 'moving', busy: true };
+	}
 	if (thread.blocked) {
 		return { ...base, kind: 'blocked', busy: queued > 0 };
+	}
+	if (thread.limit) {
+		return { ...base, kind: 'limited', busy: false };
 	}
 	if (thread.pause === 'interrupted' && (queued || undelivered || thread.last?.outcome === 'interrupted')) {
 		return { ...base, kind: 'interrupted', busy: false };
@@ -118,6 +126,9 @@ export interface IOrchAgentRow {
 	readonly openable: boolean;
 	/** Started by the Multitask composer (the user), not by an agent. */
 	readonly multitask: boolean;
+	/** A later round of earlier work (a second review): 2, 3, ... */
+	readonly iteration?: number;
+	readonly role?: IOrchTask['role'];
 }
 
 export function agentRow(task: IOrchTask): IOrchAgentRow {
@@ -141,6 +152,8 @@ export function agentRow(task: IOrchTask): IOrchAgentRow {
 		cancellable: task.source === 'volt' && isLiveTaskState(task.state),
 		openable: !!task.childId,
 		multitask: task.origin === 'user',
+		...(task.iteration && task.iteration > 1 ? { iteration: task.iteration } : {}),
+		...(task.role !== 'general' ? { role: task.role } : {}),
 	};
 }
 

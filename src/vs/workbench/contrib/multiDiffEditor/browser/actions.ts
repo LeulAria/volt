@@ -38,22 +38,27 @@ export class GoToFileAction extends Action2 {
 	async run(accessor: ServicesAccessor, ...args: any[]): Promise<void> {
 		const uri = args[0] as URI;
 		const editorService = accessor.get(IEditorService);
-		const activeEditorPane = editorService.activeEditorPane;
+		// Volt: the diff the click came from (its label passes it), else the active one, else any
+		// visible diff showing `uri`. The file opens in that diff's group, so a diff in an agent's
+		// tools opens the file as a tab beside it instead of in whichever group was active.
+		const panes: unknown[] = [args[1], editorService.activeEditorPane, ...editorService.visibleEditorPanes];
+		const diffPane = panes.find((pane, i): pane is MultiDiffEditor => pane instanceof MultiDiffEditor
+			&& (i < 2 || (URI.isUri(uri) && !!pane.findDocumentDiffItem(uri))));
 		let selections: Selection[] | undefined = undefined;
-		if (!(activeEditorPane instanceof MultiDiffEditor)) {
+		if (!diffPane) {
 			if (URI.isUri(uri)) {
 				await editorService.openEditor({ resource: uri, options: { pinned: true } });
 			}
 			return;
 		}
 
-		const editor = activeEditorPane.tryGetCodeEditor(uri);
+		const editor = diffPane.tryGetCodeEditor(uri);
 		if (editor) {
 			selections = editor.editor.getSelections() ?? undefined;
 		}
 
 		let targetUri = uri;
-		const item = activeEditorPane.findDocumentDiffItem(uri);
+		const item = diffPane.findDocumentDiffItem(uri);
 		if (item && item.goToFileUri) {
 			targetUri = item.goToFileUri;
 		}
@@ -62,10 +67,11 @@ export class GoToFileAction extends Action2 {
 			label: item?.goToFileEditorTitle,
 			resource: targetUri,
 			options: {
+				pinned: true,
 				selection: selections?.[0],
 				selectionRevealType: TextEditorSelectionRevealType.CenterIfOutsideViewport,
 			} satisfies ITextEditorOptions,
-		});
+		}, diffPane.group);
 	}
 }
 

@@ -12,6 +12,14 @@ export const AGENT_SIDEBAR_MIN_WIDTH = 180;
 /** Fired on the workbench root when a chat's tools open or close, so the layout can re-weigh the list. */
 export const AGENT_TOOLS_VISIBILITY_EVENT = 'volt-agent-tools-visibility';
 
+/** The agent list folded to an icon rail (new chat, search, projects, settings) instead of the full list. */
+export const AGENT_SIDEBAR_RAIL_KEY = 'volt.agent.sidebar.rail';
+/** Set on the workbench root while the rail is on; the list column then has the rail's fixed width. */
+export const AGENT_SIDEBAR_RAIL_CLASS = 'volt-agent-sidebar-rail-mode';
+export const AGENT_SIDEBAR_RAIL_WIDTH = 52;
+/** Fired on the workbench root when the rail turns on or off, so the layout can size the column again. */
+export const AGENT_SIDEBAR_RAIL_EVENT = 'volt-agent-sidebar-rail';
+
 /** Room the chat needs beside the list, and with the tools open beside it too. */
 export const AGENT_DRAWER_CHAT_MIN_WIDTH = 480;
 export const AGENT_DRAWER_CHAT_AND_TOOLS_MIN_WIDTH = 880;
@@ -22,8 +30,10 @@ export type LayoutMode = 'agent' | 'ide';
  * The agent list floats over the chat as a drawer when the window cannot fit it beside the
  * chat (and the tools, when open). With room it stays a column on the left.
  */
-export function agentNeedsSidebarDrawer(containerWidth: number, listWidth: number, toolsOpen: boolean): boolean {
-	const needed = toolsOpen ? AGENT_DRAWER_CHAT_AND_TOOLS_MIN_WIDTH : AGENT_DRAWER_CHAT_MIN_WIDTH;
+export function agentNeedsSidebarDrawer(containerWidth: number, listWidth: number, toolsOpen: boolean, edgeWidth = 0): boolean {
+	// The right-edge sidebar (Files, Source Control, Pull Requests) takes its own column on top
+	// of the chat and tools, so the list folds away earlier while it is open.
+	const needed = (toolsOpen ? AGENT_DRAWER_CHAT_AND_TOOLS_MIN_WIDTH : AGENT_DRAWER_CHAT_MIN_WIDTH) + edgeWidth;
 	return containerWidth > 0 && containerWidth - listWidth < needed;
 }
 

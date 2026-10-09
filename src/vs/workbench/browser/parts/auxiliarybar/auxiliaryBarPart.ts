@@ -35,6 +35,7 @@ import { getContextMenuActions } from '../../../../platform/actions/browser/menu
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { applyAgentStatusbarShift, resetAgentStatusbarShift } from '../titlebar/agentLayoutChrome.js';
 import { agentPrimarySidebarToggleInTitlebar, createPrimarySidebarToggleIcon } from '../titlebar/sidebarToggleIcon.js';
+import { AGENT_SIDEBAR_RAIL_CLASS, AGENT_SIDEBAR_RAIL_WIDTH } from '../titlebar/layoutModeStartup.js';
 
 interface IAuxiliaryBarPartConfiguration {
 	position: ActivityBarPosition;
@@ -61,13 +62,24 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 		return this.layoutService.mainContainer.classList.contains('volt-layout-agent');
 	}
 
+	/** The agent list folded to its icon rail: one fixed width, no sash. */
+	private get isAgentRail(): boolean {
+		return this.isAgentLayout && this.layoutService.mainContainer.classList.contains(AGENT_SIDEBAR_RAIL_CLASS);
+	}
+
 	override get minimumWidth(): number {
+		if (this.isAgentRail) {
+			return AGENT_SIDEBAR_RAIL_WIDTH;
+		}
 		return this.isAgentLayout ? AuxiliaryBarPart.AGENT_MIN_WIDTH : 360;
 	}
 
 	override get maximumWidth(): number {
 		if (!this.isAgentLayout) {
 			return Number.POSITIVE_INFINITY;
+		}
+		if (this.isAgentRail) {
+			return AGENT_SIDEBAR_RAIL_WIDTH;
 		}
 		const width = this.layoutService.mainContainerDimension?.width ?? 0;
 		return Math.max(AuxiliaryBarPart.AGENT_MIN_WIDTH, Math.floor(width * AuxiliaryBarPart.AGENT_MAX_RATIO));
@@ -80,6 +92,9 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 	}
 
 	get preferredWidth(): number | undefined {
+		if (this.isAgentRail) {
+			return AGENT_SIDEBAR_RAIL_WIDTH;
+		}
 		if (this.isAgentLayout) {
 			return AuxiliaryBarPart.AGENT_DEFAULT_WIDTH;
 		}

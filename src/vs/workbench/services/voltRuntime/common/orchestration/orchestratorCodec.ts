@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { isLiveTaskState } from './agentTasks.js';
-import { IOrchConflict, IOrchEventEnvelope, IOrchQueueItem, IOrchState, IOrchTask, IOrchThread, IOrchTurn, ORCHESTRATOR_STATE_VERSION } from './orchestrator.js';
+import { IOrchConflict, IOrchEventEnvelope, IOrchLimitPark, IOrchMove, IOrchMoveResult, IOrchQueueItem, IOrchState, IOrchTask, IOrchThread, IOrchTurn, ORCHESTRATOR_STATE_VERSION } from './orchestrator.js';
 
 /**
  * Orchestration is persisted per root chat: the chat, its subagents' chats and their tasks in one
@@ -58,7 +58,7 @@ export function extractRoot(state: IOrchState, rootId: string, events: readonly 
 /** The root has something a restart must reconcile or the user must see. */
 export function isRootLive(state: IOrchState, rootId: string): boolean {
 	for (const thread of Object.values(state.threads)) {
-		if (thread.rootId === rootId && (thread.active || thread.queue.length || thread.pause || thread.inputs.length || thread.pendingHandoff)) {
+		if (thread.rootId === rootId && (thread.active || thread.queue.length || thread.pause || thread.inputs.length || thread.pendingHandoff || thread.limit || thread.pendingMove || thread.moving)) {
 			return true;
 		}
 	}
@@ -181,7 +181,7 @@ function parsePromptLike(value: unknown): IOrchTurn['prompt'] | undefined {
 
 const TURN_KINDS = new Set(['prompt', 'notification', 'brief', 'followup', 'resume', 'external']);
 const TURN_PHASES = new Set(['dispatching', 'running', 'cancelling']);
-const PAUSES = new Set(['failed', 'stopped', 'interrupted', 'wakeups']);
+const PAUSES = new Set(['failed', 'stopped', 'interrupted', 'wakeups', 'limit']);
 const OUTCOMES = new Set(['done', 'failed', 'cancelled', 'interrupted']);
 const TASK_STATES = new Set(['queued', 'running', 'waiting', 'completed', 'failed', 'cancelled', 'interrupted']);
 const DELIVERIES = new Set(['pending', 'delivered', 'acknowledged', 'none']);
@@ -203,6 +203,53 @@ function parseTurn(value: unknown): IOrchTurn | undefined {
 		...(Array.isArray(turn.taskIds) ? { taskIds: turn.taskIds.filter((id): id is string => typeof id === 'string') } : {}),
 		...(turn.interrupting === true ? { interrupting: true } : {}),
 		...(turn.steerable === true ? { steerable: true } : {}),
+		...(num(turn.limitProbe) !== undefined ? { limitProbe: turn.limitProbe as number } : {}),
+		...(typeof turn.limitAuto === 'boolean' ? { limitAuto: turn.limitAuto } : {}),
+	};
+}
+
+function parseLimit(value: unknown): IOrchLimitPark | undefined {
+	const limit = value as Record<string, unknown> | undefined;
+	if (!limit || typeof limit.turnId !== 'string' || num(limit.at) === undefined) {
+		return undefined;
+	}
+	return {
+		turnId: limit.turnId,
+		at: limit.at as number,
+		...(num(limit.resetAt) !== undefined ? { resetAt: limit.resetAt as number } : {}),
+		...(str(limit.message) ? { message: limit.message as string } : {}),
+		probes: num(limit.probes) ?? 0,
+		...(typeof limit.auto === 'boolean' ? { auto: limit.auto } : {}),
+		...(num(limit.notBefore) !== undefined ? { notBefore: limit.notBefore as number } : {}),
+		...(str(limit.mode) ? { mode: limit.mode as string } : {}),
+	};
+}
+
+function parseMove(value: unknown): IOrchMove | undefined {
+	const move = value as Record<string, unknown> | undefined;
+	if (!move || typeof move.id !== 'string' || typeof move.label !== 'string' || num(move.at) === undefined) {
+		return undefined;
+	}
+	return { id: move.id, target: move.target, label: move.label, by: move.by === 'agent' ? 'agent' : 'user', at: move.at as number };
+}
+
+function parseMoveResult(value: unknown): IOrchMoveResult | undefined {
+	const result = value as Record<string, unknown> | undefined;
+	if (!result || typeof result.id !== 'string' || typeof result.label !== 'string' || num(result.at) === undefined || typeof result.ok !== 'boolean') {
+		return undefined;
+	}
+	return {
+		id: result.id,
+		at: result.at as number,
+		ok: result.ok,
+		label: result.label,
+		...(str(result.error) ? { error: result.error as string } : {}),
+		...(str(result.path) ? { path: result.path as string } : {}),
+		...(str(result.branch) ? { branch: result.branch as string } : {}),
+		...(str(result.fromPath) ? { fromPath: result.fromPath as string } : {}),
+		...(str(result.fromBranch) ? { fromBranch: result.fromBranch as string } : {}),
+		...(num(result.files) !== undefined ? { files: result.files as number } : {}),
+		...(result.by === 'agent' || result.by === 'user' ? { by: result.by } : {}),
 	};
 }
 
@@ -256,7 +303,15 @@ function parseThread(value: unknown): IOrchThread | undefined {
 		...(num(thread.wakeups) ? { wakeups: thread.wakeups as number } : {}),
 		...(thread.pendingHandoff && typeof (thread.pendingHandoff as { to?: unknown }).to === 'string' ? { pendingHandoff: thread.pendingHandoff as IOrchThread['pendingHandoff'] } : {}),
 		handoffs: Array.isArray(thread.handoffs) ? thread.handoffs.filter(item => !!item && typeof (item as { to?: unknown }).to === 'string' && typeof (item as { at?: unknown }).at === 'number') as IOrchThread['handoffs'] : [],
+		...optional('limit', parseLimit(thread.limit)),
+		...optional('pendingMove', parseMove(thread.pendingMove)),
+		...optional('moving', parseMove(thread.moving)),
+		...optional('lastMove', parseMoveResult(thread.lastMove)),
 	};
+}
+
+function optional<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
+	return (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
 }
 
 function parseTask(value: unknown): IOrchTask | undefined {
@@ -299,5 +354,8 @@ function parseTask(value: unknown): IOrchTask | undefined {
 		rounds: num(task.rounds) ?? 1,
 		...(str(task.worktreePath) ? { worktreePath: task.worktreePath as string } : {}),
 		...(str(task.worktreeBranch) ? { worktreeBranch: task.worktreeBranch as string } : {}),
+		...(str(task.previousTaskId) ? { previousTaskId: task.previousTaskId as string } : {}),
+		...(num(task.iteration) !== undefined ? { iteration: task.iteration as number } : {}),
+		...(num(task.restarts) ? { restarts: task.restarts as number } : {}),
 	};
 }

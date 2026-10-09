@@ -101,6 +101,7 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 						h('div.status.deleted@status', ['R']),
 						h('div.title.original.show-file-icons@secondaryPath', [] as any),
 					]),
+					h('div.volt-header-extras@extras'),
 					h('div.actions@actions'),
 				]),
 			]),
@@ -231,6 +232,7 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 				this.editor.setDiffModel(null, tx);
 				this._dataStore.clear();
 			});
+			this._elements.extras.replaceChildren();
 			return;
 		}
 
@@ -289,6 +291,12 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 				this.setData(undefined);
 			}
 		});
+
+		// Volt: the host's part of the header, redrawn with each file this template shows.
+		this._elements.extras.replaceChildren();
+		if (value.renderHeaderExtras) {
+			this._dataStore.add(value.renderHeaderExtras(this._elements.extras));
+		}
 
 		if (data.viewModel.documentDiffItem.contextKeys) {
 			for (const [key, value] of Object.entries(data.viewModel.documentDiffItem.contextKeys)) {

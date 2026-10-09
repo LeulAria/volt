@@ -80,7 +80,8 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 			});
 		case 'turn.dispatched':
 			return updateThread(state, event.threadId, thread => {
-				const { pause: _pause, wakeups: _wakeups, ...rest } = thread;
+				// Any turn that goes out ends a usage-limit park: the chat is working again.
+				const { pause: _pause, wakeups: _wakeups, limit: _limit, ...rest } = thread;
 				const automatic = event.turn.kind === 'notification';
 				const wakeups = automatic ? (thread.wakeups ?? 0) + 1 : event.turn.kind === 'external' ? thread.wakeups : 0;
 				return { ...rest, active: event.turn, turns: thread.turns + 1, ...(wakeups ? { wakeups } : {}) };
@@ -128,6 +129,8 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 				const { result: _result, error: _error, endedAt: _endedAt, waitingOn: _waitingOn, startedAt: _startedAt, ...rest } = task;
 				return { ...rest, state: 'queued', rounds: task.rounds + 1, delivery: 'none' };
 			});
+		case 'task.restarted':
+			return updateTask(state, event.taskId, task => ({ ...task, restarts: (task.restarts ?? 0) + 1 }));
 		case 'task.updated':
 			return updateTask(state, event.taskId, task => ({
 				...task,
@@ -193,6 +196,41 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 						? { ...item, prompt: { ...item.prompt, modelRef: event.handoff.to } }
 						: item),
 				};
+			});
+		case 'limit.parked':
+			return updateThread(state, event.threadId, thread => ({ ...thread, limit: event.limit }));
+		case 'limit.configured':
+			return updateThread(state, event.threadId, thread => {
+				if (!thread.limit) {
+					return thread;
+				}
+				const { auto: _auto, notBefore: _notBefore, ...rest } = thread.limit;
+				return { ...thread, limit: event.auto === undefined ? rest : { ...rest, auto: event.auto } };
+			});
+		case 'limit.deferred':
+			return updateThread(state, event.threadId, thread => thread.limit ? { ...thread, limit: { ...thread.limit, notBefore: event.notBefore } } : thread);
+		case 'move.requested':
+			return updateThread(state, event.threadId, thread => ({ ...thread, pendingMove: event.move }));
+		case 'move.dropped':
+			return updateThread(state, event.threadId, thread => {
+				if (thread.pendingMove?.id !== event.moveId) {
+					return thread;
+				}
+				const { pendingMove: _pending, ...rest } = thread;
+				return rest;
+			});
+		case 'move.started':
+			return updateThread(state, event.threadId, thread => {
+				const { pendingMove: _pending, ...rest } = thread;
+				return { ...rest, moving: event.move };
+			});
+		case 'move.finished':
+			return updateThread(state, event.threadId, thread => {
+				if (thread.moving?.id !== event.result.id) {
+					return thread;
+				}
+				const { moving: _moving, ...rest } = thread;
+				return { ...rest, lastMove: event.result };
 			});
 		case 'conflict.detected': {
 			const list = state.conflicts[event.rootId] ?? [];

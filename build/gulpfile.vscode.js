@@ -249,7 +249,8 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 		let version = packageJson.version;
 		const quality = product.quality;
 
-		if (quality && quality !== 'stable') {
+		// Volt release builds already carry a prerelease tag (0.0.1-beta.1, 0.0.1-nightly.<stamp>).
+		if (quality && quality !== 'stable' && !version.includes('-')) {
 			version += '-' + quality;
 		}
 
@@ -270,7 +271,8 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 
 		let productJsonContents;
 		const productJsonStream = gulp.src(['product.json'], { base: '.' })
-			.pipe(json({ commit, date: readISODate('out-build'), checksums, version }))
+			// `version` stays the VS Code engine version (extension compatibility); `voltVersion` is Volt's release.
+			.pipe(json({ commit, date: readISODate('out-build'), checksums, version: product.vscodeVersion || version, voltVersion: version }))
 			.pipe(es.through(function (file) {
 				productJsonContents = file.contents.toString();
 				this.emit('data', file);
@@ -404,7 +406,8 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 			result = es.merge(result, gulp.src('.build/policies/win32/**', { base: '.build/policies/win32' })
 				.pipe(rename(f => f.dirname = `policies/${f.dirname}`)));
 
-			if (quality === 'stable' || quality === 'insider') {
+			// The Windows 11 context menu appx needs Microsoft's signed explorer-command DLLs.
+			if ((quality === 'stable' || quality === 'insider') && product.win32ContextMenu) {
 				result = es.merge(result, gulp.src('.build/win32/appx/**', { base: '.build/win32' }));
 				const rawVersion = version.replace(/-\w+$/, '').split('.');
 				const appxVersion = `${rawVersion[0]}.0.${rawVersion[1]}.${rawVersion[2]}`;

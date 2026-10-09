@@ -9,28 +9,36 @@ import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IVoltEventEnvelope } from '../../common/events.js';
 import { IAgentWorktreeService } from '../../common/git/agentWorktree.js';
+import { IWorkspaceMoveSpec, workspaceTargetLabel } from '../../common/git/workspaceMove.js';
+import { IAgentWorktreeSetupService } from '../../common/git/worktreeSetupPlan.js';
 import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
 import { normalizeVoltMode } from '../../common/modes.js';
 import { AGENT_TASK_TOOLS, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome } from '../../common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchMove, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_RESUME_AFTER_RESTART_SETTING, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
+import { ILimitSignal, LIMIT_AUTO_RESUME_SETTING, limitAutoResumes, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
 import { extractRoot, IOrchIndex, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { harnessTaskId, IOrchStep, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
 import { IVoltSessionContextService } from '../../common/sessionContext.js';
 import { OrchestratorStore } from './orchestratorStore.js';
 
+/** Models one delegate_task call may run the same brief on. */
+const MAX_FAN_OUT = 4;
 /** A cancelled run that does not report its end within this long is settled by Volt. */
 const CANCEL_SETTLE_MS = 15_000;
 /** A Volt chat id for a subagent's chat; the agent editor reads session ids from this shape. */
 const CHILD_ID_PREFIX = 'agent-';
+/** setTimeout's ceiling is about 24.8 days; the limit timer re-arms at least daily. */
+const LIMIT_TIMER_MAX_MS = 86_400_000;
 
 export class AgentOrchestratorService extends Disposable implements IAgentOrchestratorService {
 
@@ -53,6 +61,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private readonly cancelWatch = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly lastError = new Map<string, string>();
 	private readonly worktreesInFlight = new Set<string>();
+	/** Runs a provider's usage limit stopped, with what it said. */
+	private readonly limitedRuns = new Map<string, ILimitSignal>();
+	private limitTimer: ReturnType<typeof setTimeout> | undefined;
+	private limitTimerAt: number | undefined;
+	private mover: IOrchWorkspaceMover | undefined;
+	private readonly waitingForMover: Extract<OrchEffect, { kind: 'moveWorkspace' }>[] = [];
+	private readonly movesInFlight = new Set<string>();
 	/** `delegate_task` calls seen in a chat's stream, oldest first, waiting for the MCP call that matches. */
 	private readonly delegateCalls = new Map<string, string[]>();
 	/** Harness Task calls that launched asynchronously: their "completed" was the launch, not the end. */
@@ -65,6 +80,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	readonly onDidChange: Event<IOrchChange> = this._onDidChange.event;
 	private readonly _onDidChangeTasks = this._register(new Emitter<readonly string[]>());
 	readonly onDidChangeTasks: Event<readonly string[]> = this._onDidChangeTasks.event;
+	private readonly _onDidStop = this._register(new Emitter<string>());
+	readonly onDidStop: Event<string> = this._onDidStop.event;
 
 	constructor(
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
@@ -75,6 +92,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IAgentWorktreeSetupService private readonly worktreeSetup: IAgentWorktreeSetupService,
 	) {
 		super();
 		this.store = new OrchestratorStore(joinPath(environmentService.userRoamingDataHome, 'voltOrchestrator'), fileService, logService);
@@ -89,6 +108,17 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 			for (const timer of this.cancelWatch.values()) {
 				clearTimeout(timer);
+			}
+			if (this.limitTimer !== undefined) {
+				clearTimeout(this.limitTimer);
+			}
+		}));
+		// Parked chats wake at their reset: the timer follows the state.
+		this._register(this.onDidChange(() => this.scheduleLimitTick()));
+		this._register(configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(LIMIT_AUTO_RESUME_SETTING)) {
+				this.scheduleLimitTick();
+				this._onDidChange.fire({ threads: Object.values(this.state.threads).filter(thread => thread.limit).map(thread => thread.id), tasks: [] });
 			}
 		}));
 		void this.restore();
@@ -131,22 +161,103 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return outcome ? { outcome } : { outcome: 'rejected', ...(step.decision.rejected ? { reason: step.decision.rejected } : {}) };
 	}
 
-	async notify(threadId: string, prompt: IOrchPrompt, turnId: string): Promise<IOrchSubmitResult> {
+	async move(threadId: string, spec: IWorkspaceMoveSpec, options: { readonly by: 'user' | 'agent'; readonly stop?: boolean }): Promise<IOrchSubmitResult> {
+		await this.ensureThreadLoaded(threadId);
+		const move: IOrchMove = { id: generateUuid(), target: spec, label: workspaceTargetLabel(spec.target), by: options.by, at: Date.now() };
+		const step = this.apply({ type: 'thread.move', threadId, move, ...(options.stop ? { stop: true } : {}) });
+		const outcome = step.decision.outcome;
+		return outcome ? { outcome } : { outcome: 'rejected', ...(step.decision.rejected ? { reason: step.decision.rejected } : {}) };
+	}
+
+	async resumeLimit(threadId: string): Promise<IOrchSubmitResult> {
+		await this.ensureThreadLoaded(threadId);
+		const step = this.apply({ type: 'limit.resume', threadId });
+		const outcome = step.decision.outcome;
+		return outcome ? { outcome } : { outcome: 'rejected', ...(step.decision.rejected ? { reason: step.decision.rejected } : {}) };
+	}
+
+	async configureLimit(threadId: string, auto: boolean | undefined): Promise<void> {
+		this.apply({ type: 'limit.configure', threadId, auto });
+	}
+
+	async notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean }): Promise<IOrchSubmitResult> {
 		await this.ensureThreadLoaded(threadId);
 		this.describeThread(threadId, undefined);
 		// The turn id doubles as the command id, so a retried wake-up is acknowledged, not sent twice.
-		const step = this.apply({ type: 'thread.notify', threadId, turnId, prompt }, `notify:${turnId}`);
+		const step = this.apply({ type: 'thread.notify', threadId, turnId, prompt, ...(options?.interrupt ? { interrupt: true } : {}) }, `notify:${turnId}`);
 		const outcome = step.decision.outcome;
 		return outcome ? { outcome } : { outcome: 'rejected', ...(step.decision.rejected ? { reason: step.decision.rejected } : {}) };
 	}
 
 	async cancel(threadId: string, options?: { readonly cascade?: 'turn' | 'all' }): Promise<void> {
 		this.apply({ type: 'turn.cancel', threadId, ...(options?.cascade ? { cascade: options.cascade } : {}) });
+		this._onDidStop.fire(threadId);
 	}
 
 	isTurnCurrent(threadId: string, turnId: string): boolean {
 		const active = this.state.threads[threadId]?.active;
 		return active?.id === turnId && active.phase !== 'cancelling';
+	}
+
+	setWorkspaceMover(mover: IOrchWorkspaceMover): IDisposable {
+		this.mover = mover;
+		for (const effect of this.waitingForMover.splice(0)) {
+			void this.moveWorkspace(effect);
+		}
+		return toDisposable(() => {
+			if (this.mover === mover) {
+				this.mover = undefined;
+			}
+		});
+	}
+
+	autoResumeDefault(): boolean {
+		return this.configurationService.getValue<boolean>(LIMIT_AUTO_RESUME_SETTING) !== false;
+	}
+
+	/**
+	 * Arms one timer for the earliest parked chat that resumes on its own. When it fires, the
+	 * decider resumes what is due (and staggers the rest), and the next change re-arms it.
+	 */
+	private scheduleLimitTick(): void {
+		const auto = this.autoResumeDefault();
+		let next = Number.POSITIVE_INFINITY;
+		for (const thread of Object.values(this.state.threads)) {
+			if (thread.limit && !thread.active && limitAutoResumes(thread.limit, auto)) {
+				next = Math.min(next, limitDueAt(thread.limit));
+			}
+		}
+		if (!Number.isFinite(next)) {
+			this.clearLimitTimer();
+			return;
+		}
+		if (this.limitTimer !== undefined && this.limitTimerAt === next) {
+			return;
+		}
+		this.clearLimitTimer();
+		const delay = Math.min(Math.max(next - Date.now(), 0), LIMIT_TIMER_MAX_MS);
+		this.limitTimerAt = next;
+		this.limitTimer = setTimeout(() => {
+			this.limitTimer = undefined;
+			this.limitTimerAt = undefined;
+			const step = this.apply({ type: 'limit.tick', autoResume: this.autoResumeDefault() });
+			const resumed = step.envelopes.filter(envelope => envelope.event.type === 'turn.dispatched').map(envelope => (envelope.event as Extract<OrchEvent, { type: 'turn.dispatched' }>).threadId);
+			if (resumed.length) {
+				this.logService.info(`[volt orchestrator] usage limit reset: resuming ${resumed.join(', ')}`);
+			}
+			// Nothing changed (not due yet after a clamp): look again.
+			if (!step.envelopes.length) {
+				this.scheduleLimitTick();
+			}
+		}, delay);
+	}
+
+	private clearLimitTimer(): void {
+		if (this.limitTimer !== undefined) {
+			clearTimeout(this.limitTimer);
+			this.limitTimer = undefined;
+			this.limitTimerAt = undefined;
+		}
 	}
 
 	setTurnHost(host: IOrchTurnHost): IDisposable {
@@ -327,9 +438,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				}
 			}
 			this.state = { ...state, seq: Math.max(state.seq, index.seq) };
-			const step = this.apply({ type: 'recover' }, `recover:${generateUuid()}`);
+			const step = this.apply({ type: 'recover', resume: this.restartResume() }, `recover:${generateUuid()}`);
 			if (step.envelopes.length) {
-				this.logService.info(`[volt orchestrator] recovered ${index.live.length} live chat tree(s); ${step.envelopes.length} change(s) after the restart`);
+				const continued = step.envelopes.filter(envelope => envelope.event.type === 'turn.dispatched').length;
+				this.logService.info(`[volt orchestrator] recovered ${index.live.length} live chat tree(s); ${step.envelopes.length} change(s) after the restart, ${continued} turn(s) continued`);
 			}
 			if (this.state.threads && Object.keys(this.state.threads).length) {
 				this._onDidChange.fire({ threads: Object.keys(this.state.threads), tasks: Object.keys(this.state.tasks) });
@@ -339,6 +451,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		} finally {
 			this.ready.complete();
 		}
+	}
+
+	private restartResume(): OrchRestartResume {
+		const value = this.configurationService.getValue<string>(ORCH_RESUME_AFTER_RESTART_SETTING);
+		return value === 'off' || value === 'all' ? value : 'subagents';
 	}
 
 	async ensureThreadLoaded(threadId: string): Promise<void> {
@@ -397,6 +514,33 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			case 'tasksChanged':
 				this._onDidChangeTasks.fire(effect.taskIds);
 				return;
+			case 'moveWorkspace':
+				void this.moveWorkspace(effect);
+				return;
+		}
+	}
+
+	/** Runs the mover for a started move and reports how it went; a missing mover waits for one. */
+	private async moveWorkspace(effect: Extract<OrchEffect, { kind: 'moveWorkspace' }>): Promise<void> {
+		const { threadId, move } = effect;
+		const thread = this.state.threads[threadId];
+		if (thread?.moving?.id !== move.id || this.movesInFlight.has(move.id)) {
+			return;
+		}
+		const mover = this.mover;
+		if (!mover) {
+			this.waitingForMover.push(effect);
+			return;
+		}
+		this.movesInFlight.add(move.id);
+		try {
+			const result = await mover.move({ threadId, move, thread });
+			this.apply({ type: 'move.finished', threadId, result: { ...result, id: move.id, at: Date.now(), label: result.label ?? move.label, by: move.by } });
+		} catch (err) {
+			this.logService.warn('[volt orchestrator] moving the chat failed', err);
+			this.apply({ type: 'move.finished', threadId, result: { id: move.id, at: Date.now(), ok: false, label: move.label, by: move.by, error: err instanceof Error ? err.message : String(err) } });
+		} finally {
+			this.movesInFlight.delete(move.id);
 		}
 	}
 
@@ -504,6 +648,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			const created = await this.worktrees.create(root.fsPath);
 			this.runtime.rememberWorktree(task.childId, created.path, created.branch);
 			this.history.open(task.childId).setMeta({ worktreePath: created.path, worktreeBranch: created.branch });
+			// The subagent's chat stays blocked until its worktree is set up (the card shows each step).
+			await this.worktreeSetup.run(task.childId, {
+				repoRoot: root.fsPath,
+				worktreePath: created.path,
+				branch: created.branch,
+				isCancelled: () => isTerminalTaskState(this.state.tasks[taskId]?.state ?? 'cancelled'),
+			});
 			this.apply({ type: 'task.worktree', taskId, path: created.path, branch: created.branch });
 		} catch (err) {
 			this.apply({ type: 'task.error', taskId, error: `Could not create its worktree: ${err instanceof Error ? err.message : String(err)}` });
@@ -530,16 +681,49 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				this.apply({ type: 'run.started', threadId, runId: envelope.runId, ...(turnId ? { turnId } : {}), steerable: this.runtime.canSteer(threadId) });
 				return;
 			}
-			case 'error':
+			case 'error': {
 				this.lastError.set(envelope.runId, event.message);
+				const limit = limitFromError(event.message, Date.now());
+				if (limit) {
+					this.limitedRuns.set(envelope.runId, mergeLimitSignals(this.limitedRuns.get(envelope.runId), limit));
+				}
 				return;
+			}
+			case 'notice': {
+				const limit = limitFromNotice(event, Date.now());
+				if (limit) {
+					this.limitedRuns.set(envelope.runId, mergeLimitSignals(this.limitedRuns.get(envelope.runId), limit));
+				}
+				return;
+			}
 			case 'run.end': {
-				const outcome: OrchOutcome = event.reason === 'done' ? 'done' : event.reason === 'abort' ? 'cancelled' : 'failed';
+				let outcome: OrchOutcome = event.reason === 'done' ? 'done' : event.reason === 'abort' ? 'cancelled' : 'failed';
 				const error = this.lastError.get(envelope.runId);
 				this.lastError.delete(envelope.runId);
-				const reply = outcome === 'done' ? this.lastReply(threadId) : undefined;
+				let reply = outcome === 'done' ? this.lastReply(threadId) : undefined;
+				// Some CLIs end the turn normally with the limit sentence as the whole reply.
+				let limit = this.limitedRuns.get(envelope.runId);
+				this.limitedRuns.delete(envelope.runId);
+				const replyLimit = outcome === 'done' ? limitFromReply(reply, Date.now()) : undefined;
+				if (replyLimit) {
+					limit = mergeLimitSignals(limit, replyLimit);
+				}
+				if (limit && outcome !== 'cancelled') {
+					// Stopped by the provider's usage limit: the chat parks until the reset.
+					outcome = 'failed';
+					reply = undefined;
+				}
 				this.clearCancelWatch(threadId);
-				this.apply({ type: 'run.settled', threadId, runId: envelope.runId, outcome, ...(error && outcome === 'failed' ? { error } : {}), ...(reply !== undefined ? { reply } : {}) });
+				const message = limit && outcome === 'failed' ? limit.message : error;
+				this.apply({
+					type: 'run.settled',
+					threadId,
+					runId: envelope.runId,
+					outcome,
+					...(message && outcome === 'failed' ? { error: message } : {}),
+					...(reply !== undefined ? { reply } : {}),
+					...(limit && outcome === 'failed' ? { limit } : {}),
+				});
 				return;
 			}
 			case 'question.ask':
@@ -742,22 +926,34 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return { ref: match.ref, label: match.label };
 	}
 
-	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken): Promise<IVoltHostToolResult> {
+	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken, binding?: { readonly toolCallId: string | undefined }): Promise<IVoltHostToolResult> {
 		const brief = typeof args.task === 'string' ? args.task.trim() : '';
 		if (!brief) {
 			return { error: 'delegate_task needs a `task`: the complete brief for the subagent.' };
 		}
+		const fanOut = Array.isArray(args.models) ? [...new Set(args.models.filter((name): name is string => typeof name === 'string' && !!name.trim()).map(name => name.trim()))] : [];
+		if (fanOut.length > 1 && !binding) {
+			return this.delegateToModels(parentId, args, fanOut, token);
+		}
 		const parent = this.state.threads[parentId];
-		const model = this.resolveModel(args.model) ?? (parent?.modelRef ? { ref: parent.modelRef, label: parent.modelLabel ?? parent.modelRef } : undefined);
-		const role = normalizeTaskRole(args.role);
+		const previousId = typeof args.previous_task_id === 'string' && args.previous_task_id.trim() ? args.previous_task_id.trim() : undefined;
+		const previous = previousId ? this.state.tasks[previousId] : undefined;
+		if (previousId && (!previous || previous.rootId !== parent?.rootId)) {
+			return { error: `No task ${previousId} in this chat to continue from. Call task_status to list this chat's tasks.` };
+		}
+		// A new round keeps the previous round's reviewer and role unless the agent picks others.
+		const model = this.resolveModel(args.model)
+			?? (previous?.modelRef ? { ref: previous.modelRef, label: previous.modelLabel ?? previous.modelRef } : undefined)
+			?? (parent?.modelRef ? { ref: parent.modelRef, label: parent.modelLabel ?? parent.modelRef } : undefined);
+		const role = typeof args.role === 'string' || !previous ? normalizeTaskRole(args.role) : previous.role;
 		const isolation = args.isolation === 'worktree' ? 'worktree' : 'shared';
 		const parentMode = parent?.active?.prompt.mode ? normalizeVoltMode(parent.active.prompt.mode) : 'agent';
 		// A child never gets more than its parent: a read-only chat delegates read-only work.
 		const mode = parentMode === 'ask' || parentMode === 'plan' ? 'ask' : modeForTaskRole(role, undefined);
-		const title = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 80) : titleFromBrief(brief);
+		const title = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 80) : previous?.title ?? titleFromBrief(brief);
 		const taskId = newTaskId(id => !!this.state.tasks[id]);
 		const depth = (parent?.depth ?? 0) + 1;
-		const toolCallId = this.delegateCalls.get(parentId)?.shift();
+		const toolCallId = binding ? binding.toolCallId : this.delegateCalls.get(parentId)?.shift();
 		const step = this.apply({
 			type: 'task.spawn',
 			spawn: {
@@ -774,8 +970,15 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				...(typeof args.client_request_id === 'string' && args.client_request_id.trim() ? { clientRequestId: args.client_request_id.trim() } : {}),
 				...(toolCallId ? { toolCallId } : {}),
 				...(Array.isArray(args.scope) ? { scope: args.scope.filter((path): path is string => typeof path === 'string') } : {}),
+				...(previous ? { previousTaskId: previous.id } : {}),
 				childPrompt: {
-					text: buildTaskPrompt(brief, { parentTitle: parent?.title, role, depth, isolation }),
+					text: buildTaskPrompt(brief, {
+						parentTitle: parent?.title,
+						role,
+						depth,
+						isolation,
+						...(previous ? { previous: { id: previous.id, iteration: previous.iteration ?? 1, brief: previous.brief, result: previous.result, state: previous.state } } : {}),
+					}),
 					display: { text: brief, brief: true },
 					mode,
 					...(model ? { modelRef: model.ref } : {}),
@@ -800,6 +1003,55 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			lines.push('Its report is delivered to this chat as a new message when it finishes; you may end your turn. Call wait_tasks only if you need the result before you can continue.');
 		}
 		return { text: lines.join('\n') };
+	}
+
+	/**
+	 * One brief, several models: a task each (independent reviews, competing designs). The parent's
+	 * delegate_task row belongs to the first; every report comes back like any task's.
+	 */
+	private async delegateToModels(parentId: string, args: Record<string, unknown>, names: readonly string[], token: CancellationToken): Promise<IVoltHostToolResult> {
+		if (names.length > MAX_FAN_OUT) {
+			return { error: `delegate_task runs one brief on at most ${MAX_FAN_OUT} models at once.` };
+		}
+		// Resolve every model first: an unknown one starts nothing.
+		const models = names.map(name => this.resolveModel(name)!);
+		const toolCallId = this.delegateCalls.get(parentId)?.shift();
+		const key = typeof args.client_request_id === 'string' && args.client_request_id.trim() ? args.client_request_id.trim() : undefined;
+		const baseTitle = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 60) : titleFromBrief(String(args.task));
+		const ids: string[] = [];
+		const lines: string[] = [];
+		for (const [index, model] of models.entries()) {
+			const result = await this.delegate(parentId, {
+				...args,
+				models: undefined,
+				model: model.ref,
+				wait: false,
+				title: `${baseTitle} · ${model.label}`,
+				...(key ? { client_request_id: `${key}:${model.ref}` } : {}),
+			}, token, { toolCallId: index === 0 ? toolCallId : undefined });
+			const id = /\b(t-[0-9a-f]{6})\b/.exec(result.text ?? '')?.[1];
+			if (id) {
+				ids.push(id);
+			}
+			lines.push(`${model.label}: ${result.error ?? result.text?.split('\n')[0] ?? ''}`);
+		}
+		if (args.wait === true && ids.length) {
+			await this.waitFor(ids, false, TASK_WAIT_MS, token);
+		}
+		const now = Date.now();
+		const tasks = ids.map(id => this.state.tasks[id]).filter((task): task is IOrchTask => !!task);
+		const finished = tasks.filter(task => isTerminalTaskState(task.state));
+		if (finished.length) {
+			this.apply({ type: 'task.ack', taskIds: finished.map(task => task.id) });
+		}
+		return {
+			text: [
+				`Started the same brief on ${ids.length} models:`,
+				...lines,
+				...tasks.map(task => describeTask(task, now, { includeResult: isTerminalTaskState(task.state) })),
+				finished.length === tasks.length ? '' : 'Their reports are delivered to this chat as they finish; you may end your turn. wait_tasks returns them sooner if you need them now.',
+			].filter(Boolean).join('\n'),
+		};
 	}
 
 	private visibleTasks(threadId: string): IOrchTask[] {
@@ -942,6 +1194,7 @@ function touched(event: OrchEvent): { threadIds: string[]; taskIds: string[] } {
 		case 'task.waiting':
 		case 'task.settled':
 		case 'task.resumed':
+		case 'task.restarted':
 			return { threadIds: [], taskIds: [event.taskId] };
 		case 'task.delivery':
 		case 'task.pruned':

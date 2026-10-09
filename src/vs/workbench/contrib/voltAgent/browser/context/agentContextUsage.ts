@@ -86,6 +86,12 @@ export interface IContextUsageMessage {
 	readonly segments?: AgentSegment[];
 	readonly tokensUsed?: number;
 	readonly tokensWindow?: number;
+	/** `tokensUsed` is the kept summary alone (Claude, right after compacting); the system prompt and tools come on top. */
+	readonly usageExcludesPrompt?: boolean;
+	/** The chat's first prompt-side occupancy (system prompt, tools, first message), on its first reply. */
+	readonly tokensBase?: number;
+	/** Tool output the transcript does not keep (file reads): the model read it, so it sits in the context. */
+	readonly toolOutputChars?: number;
 	readonly tokensIn?: number;
 	readonly tokensOut?: number;
 	readonly tokensCache?: number;
@@ -165,7 +171,12 @@ export function estimateTokensFromText(text: string): number {
 }
 
 export function estimateMessageTokens(message: IContextUsageMessage): number {
-	return estimateTokensFromText(messageOccupancyText(message));
+	return estimateTokensFromText(messageOccupancyText(message)) + toolOutputTokens(message.toolOutputChars);
+}
+
+/** Tool output is counted at the same four characters per token as the rest of the transcript. */
+export function toolOutputTokens(chars: number | undefined): number {
+	return chars && chars > 0 ? Math.ceil(chars / 4) : 0;
 }
 
 export function agentMessagePlainText(message: IContextUsageMessage): string {
@@ -217,12 +228,12 @@ export function formatContextPercent(percent: number): string {
 	return `${Math.round(percent)}%`;
 }
 
-/** "28% Full" — the muted line under the popover title. */
+/** "28% Full", the muted line under the popover title. */
 export function formatContextFullLabel(percent: number): string {
 	return `${formatContextPercent(percent)} Full`;
 }
 
-/** "~71.6K / 256K Tokens" — the right side of that same line. */
+/** "~71.6K / 256K Tokens", the right side of that same line. */
 export function formatContextWindowLabel(used: number, limit: number): string {
 	return `~${formatContextTokens(used)} / ${formatContextTokens(limit)} Tokens`;
 }
@@ -316,10 +327,13 @@ export function occupancyFromUsage(message: Pick<IContextUsageMessage, 'tokensUs
 		: (reportedUsed && reportedUsed > 0 ? reportedUsed : undefined);
 	if (preferred !== undefined) {
 		// `used` sometimes drops cache (input+output only) or drops the completion
-		// (Anthropic reports used as input + cache). The turn total is the occupancy.
-		const inputSide = input + cache;
-		const missingOutput = output > 0 && preferred <= inputSide;
-		if (turn > preferred && (cache > preferred || missingOutput)) {
+		// (Anthropic reports used as input + cache). The turn total is the occupancy then.
+		// Only when `used` matches one of those sums: Claude's end-of-turn totals add up the
+		// cache reads of every model call in the turn (117K read for a 27K context), which
+		// would fill the meter with tokens that were never in the window at once.
+		const dropsCache = cache > 0 && nearlyEqual(preferred, input + output);
+		const dropsOutput = output > 0 && nearlyEqual(preferred, input + cache);
+		if (turn > preferred && (dropsCache || dropsOutput)) {
 			return turn;
 		}
 		return preferred;
@@ -327,9 +341,33 @@ export function occupancyFromUsage(message: Pick<IContextUsageMessage, 'tokensUs
 	return turn > 0 ? turn : undefined;
 }
 
+/** Within a rounding difference: providers count the same prompt a few tokens apart. */
+function nearlyEqual(a: number, b: number): boolean {
+	return Math.abs(a - b) <= Math.max(64, b * 0.01);
+}
+
+/**
+ * What sits in front of the conversation (system prompt, tool definitions): the chat's first
+ * prompt-side figure less its first message, else the local estimate from rules, skills and tools.
+ */
+export function promptBaseTokens(messages: readonly IContextUsageMessage[], estimate: number): number {
+	const index = messages.findIndex(message => message.kind === 'agent');
+	const base = index >= 0 ? messages[index].tokensBase : undefined;
+	if (!base) {
+		return estimate;
+	}
+	const prompt = messages.slice(0, index).reduce((sum, message) => sum + estimateMessageTokens(message), 0);
+	return Math.max(0, base - prompt);
+}
+
 export function buildContextUsageSnapshot(input: IContextUsageInput): IContextUsageSnapshot {
 	const last = lastUsageMessage(input.messages);
-	const reportedUsed = occupancyFromUsage(last, input.reportedUsed);
+	const measured = occupancyFromUsage(last, input.reportedUsed);
+	// Right after compacting Claude counts only the kept summary; the system prompt and tools still come first.
+	const promptBase = last?.usageExcludesPrompt && measured !== undefined
+		? promptBaseTokens(input.messages, overheadSum(input.overhead ?? defaultOverhead(input.nativeAgent)))
+		: 0;
+	const reportedUsed = measured !== undefined ? measured + promptBase : undefined;
 	const reportedLimit = last?.tokensWindow ?? input.reportedLimit;
 	const limit = reportedLimit && reportedLimit > 0 ? reportedLimit : Math.max(1, input.modelWindow);
 	const draft = estimateTokensFromText(input.draft);
@@ -370,7 +408,7 @@ export function buildContextUsageSnapshot(input: IContextUsageInput): IContextUs
 		const tail = unreportedTailTokens(input.messages);
 		const settledConversation = Math.max(0, conversation - Math.min(tail, conversation));
 		used = reportedUsed + draft + tail;
-		estimated = tail > 0;
+		estimated = tail > 0 || promptBase > 0;
 		const remaining = Math.max(0, reportedUsed - overheadTotal);
 		const conversationLabel = localize('voltAgent.contextConversation', "Conversation");
 		if (settledConversation > remaining) {

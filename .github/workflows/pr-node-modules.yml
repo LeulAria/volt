@@ -10,6 +10,7 @@ permissions: {}
 jobs:
   compile:
     name: Compile
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     runs-on: [ self-hosted, 1ES.Pool=1es-vscode-oss-ubuntu-22.04-x64 ]
     steps:
       - name: Checkout microsoft/vscode
@@ -86,6 +87,7 @@ jobs:
 
   linux:
     name: Linux
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     runs-on: [ self-hosted, 1ES.Pool=1es-vscode-oss-ubuntu-22.04-x64 ]
     env:
       NPM_ARCH: x64
@@ -158,6 +160,7 @@ jobs:
 
   macOS:
     name: macOS
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     runs-on: macos-14-xlarge
     env:
       NPM_ARCH: arm64
@@ -219,6 +222,7 @@ jobs:
 
   windows:
     name: Windows
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     runs-on: [ self-hosted, 1ES.Pool=1es-vscode-oss-windows-2022-x64 ]
     env:
       NPM_ARCH: x64

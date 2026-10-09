@@ -30,6 +30,7 @@ import { Promises } from '../../../../base/common/async.js';
 import { IUserDataSyncWorkbenchService } from '../../../services/userDataSync/common/userDataSync.js';
 import { Event } from '../../../../base/common/event.js';
 import { toAction } from '../../../../base/common/actions.js';
+import { IVoltUpdate, VoltReleaseChannel, voltReleaseTag } from '../../../../platform/update/common/voltUpdateFeed.js';
 
 export const CONTEXT_UPDATE_STATE = new RawContextKey<string>('updateState', StateType.Uninitialized);
 export const MAJOR_MINOR_UPDATE_AVAILABLE = new RawContextKey<boolean>('majorMinorUpdateAvailable', false);
@@ -95,6 +96,14 @@ function isMajorMinorUpdate(before: IVersion, after: IVersion): boolean {
 	return before.major < after.major || before.minor < after.minor;
 }
 
+function voltChannelName(channel: VoltReleaseChannel): string {
+	switch (channel) {
+		case 'beta': return nls.localize('voltBeta', "Volt Beta");
+		case 'nightly': return nls.localize('voltNightly', "Volt Nightly");
+		default: return nls.localize('voltStable', "Volt");
+	}
+}
+
 export class ProductContribution implements IWorkbenchContribution {
 
 	private static readonly KEY = 'releaseNotes/lastVersion';
@@ -128,6 +137,11 @@ export class ProductContribution implements IWorkbenchContribution {
 				return;
 			}
 
+			if (productService.voltRelease) {
+				this.showVoltReleaseNotes(storageService, instantiationService, notificationService, environmentService, openerService, configurationService, productService);
+				return;
+			}
+
 			const lastVersion = parseVersion(storageService.get(ProductContribution.KEY, StorageScope.APPLICATION, ''));
 			const currentVersion = parseVersion(productService.version);
 			const shouldShowReleaseNotes = configurationService.getValue<boolean>('update.showReleaseNotes');
@@ -154,6 +168,32 @@ export class ProductContribution implements IWorkbenchContribution {
 
 			storageService.store(ProductContribution.KEY, productService.version, StorageScope.APPLICATION, StorageTarget.MACHINE);
 		});
+	}
+
+	/** Volt versions move in patch steps (and nightly stamps), so any change shows the notes. */
+	private showVoltReleaseNotes(storageService: IStorageService, instantiationService: IInstantiationService, notificationService: INotificationService, environmentService: IBrowserWorkbenchEnvironmentService, openerService: IOpenerService, configurationService: IConfigurationService, productService: IProductService): void {
+		const key = 'releaseNotes/lastVoltVersion';
+		const lastVersion = storageService.get(key, StorageScope.APPLICATION, '');
+		const currentVersion = productService.voltVersion ?? productService.version;
+		storageService.store(key, currentVersion, StorageScope.APPLICATION, StorageTarget.MACHINE);
+
+		if (!lastVersion || lastVersion === currentVersion || environmentService.skipReleaseNotes || !configurationService.getValue<boolean>('update.showReleaseNotes')) {
+			return;
+		}
+
+		const releaseUrl = `https://github.com/${productService.voltRelease!.repository}/releases/tag/${voltReleaseTag(currentVersion)}`;
+		showReleaseNotesInEditor(instantiationService, currentVersion, false)
+			.then(undefined, () => {
+				notificationService.prompt(
+					severity.Info,
+					nls.localize('voltUpdated', "{0} was updated to {1}.", productService.nameLong, currentVersion),
+					[{
+						label: nls.localize('releaseNotes', "Release Notes"),
+						run: () => openerService.open(URI.parse(releaseUrl))
+					}],
+					{ priority: NotificationPriority.OPTIONAL }
+				);
+			});
 	}
 }
 
@@ -306,9 +346,16 @@ export class UpdateContribution extends Disposable implements IWorkbenchContribu
 			return;
 		}
 
+		const voltChannel = (update as IVoltUpdate).voltChannel;
+		const message = !this.productService.voltRelease
+			? nls.localize('thereIsUpdateAvailable', "There is an available update.")
+			: voltChannel
+				? nls.localize('voltOtherChannelAvailable', "{0} {1} is available. It installs next to {2} and keeps its own settings.", voltChannelName(voltChannel), productVersion, this.productService.nameLong)
+				: nls.localize('voltUpdateAvailable', "{0} {1} is available.", this.productService.nameLong, productVersion);
+
 		this.notificationService.prompt(
 			severity.Info,
-			nls.localize('thereIsUpdateAvailable', "There is an available update."),
+			message,
 			[{
 				label: nls.localize('download update', "Download Update"),
 				run: () => this.updateService.downloadUpdate()
@@ -369,7 +416,7 @@ export class UpdateContribution extends Disposable implements IWorkbenchContribu
 		}
 
 		const actions = [{
-			label: nls.localize('updateNow', "Update Now"),
+			label: this.productService.voltRelease ? nls.localize('restartToUpdateAction', "Restart to Update") : nls.localize('updateNow', "Update Now"),
 			run: () => this.updateService.quitAndInstall()
 		}, {
 			label: nls.localize('later', "Later"),
@@ -389,7 +436,9 @@ export class UpdateContribution extends Disposable implements IWorkbenchContribu
 		// windows user fast updates and mac
 		this.notificationService.prompt(
 			severity.Info,
-			nls.localize('updateAvailableAfterRestart', "Restart {0} to apply the latest update.", this.productService.nameLong),
+			this.productService.voltRelease && productVersion
+				? nls.localize('voltUpdateReady', "{0} {1} is ready. Restart to update.", this.productService.nameLong, productVersion)
+				: nls.localize('updateAvailableAfterRestart', "Restart {0} to apply the latest update.", this.productService.nameLong),
 			actions,
 			{
 				sticky: true,
@@ -399,6 +448,11 @@ export class UpdateContribution extends Disposable implements IWorkbenchContribu
 	}
 
 	private shouldShowNotification(): boolean {
+		// Volt tells people about an update as soon as it is found.
+		if (this.productService.voltRelease) {
+			return true;
+		}
+
 		const currentVersion = this.productService.commit;
 		const currentMillis = new Date().getTime();
 		const lastKnownVersion = this.storageService.get('update/lastKnownVersion', StorageScope.APPLICATION);

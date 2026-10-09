@@ -11,10 +11,16 @@ import { IEnvironmentMainService } from '../../environment/electron-main/environ
 import { ILifecycleMainService, LifecycleMainPhase } from '../../lifecycle/electron-main/lifecycleMainService.js';
 import { ILogService } from '../../log/common/log.js';
 import { IProductService } from '../../product/common/productService.js';
-import { IRequestService } from '../../request/common/request.js';
-import { AvailableForDownload, DisablementReason, IUpdateService, State, StateType, UpdateType } from '../common/update.js';
+import { IRequestContext } from '../../../base/parts/request/common/request.js';
+import { asJson, IRequestService } from '../../request/common/request.js';
+import { AvailableForDownload, DisablementReason, IUpdate, IUpdateService, State, StateType, UpdateType } from '../common/update.js';
+import { decideVoltUpdate, IVoltUpdate, resolveVoltReleaseChannel, VOLT_RELEASE_CHANNEL_SETTING, VoltReleaseChannel, voltFeedUrl } from '../common/voltUpdateFeed.js';
 
 export function createUpdateURL(platform: string, quality: string, productService: IProductService): string {
+	if (productService.voltRelease) {
+		// Static feed; `quality` is the release channel to follow.
+		return voltFeedUrl(productService.updateUrl || productService.voltRelease.feedUrl, quality as VoltReleaseChannel, platform);
+	}
 	return `${productService.updateUrl}/api/update/${platform}/${quality}/${productService.commit}`;
 }
 
@@ -29,6 +35,9 @@ export abstract class AbstractUpdateService implements IUpdateService {
 	declare readonly _serviceBrand: undefined;
 
 	protected url: string | undefined;
+
+	/** Volt: the release channel the feed URL points at. */
+	protected channel: VoltReleaseChannel | undefined;
 
 	private _state: State = State.Uninitialized;
 
@@ -55,6 +64,34 @@ export abstract class AbstractUpdateService implements IUpdateService {
 	) {
 		lifecycleMainService.when(LifecycleMainPhase.AfterWindowOpen)
 			.finally(() => this.initialize());
+
+		configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(VOLT_RELEASE_CHANNEL_SETTING)) {
+				this.onDidChangeReleaseChannel();
+			}
+		});
+	}
+
+	/** Volt: follow a newly picked release channel right away. */
+	private onDidChangeReleaseChannel(): void {
+		if (!this.productService.voltRelease || !this.url) {
+			return;
+		}
+		const channel = this.getProductQuality(this.configurationService.getValue<string>('update.mode'));
+		if (!channel || channel === this.channel) {
+			return;
+		}
+		const url = this.buildUpdateFeedUrl(channel);
+		if (!url) {
+			return;
+		}
+		this.logService.info(`update#releaseChannel - following ${channel}`);
+		this.channel = channel as VoltReleaseChannel;
+		this.url = url;
+		if (this.state.type === StateType.AvailableForDownload) {
+			this.setState(State.Idle(this.getUpdateType()));
+		}
+		this.checkForUpdates(false);
 	}
 
 	/**
@@ -89,6 +126,7 @@ export abstract class AbstractUpdateService implements IUpdateService {
 			return;
 		}
 
+		this.channel = this.productService.voltRelease ? quality as VoltReleaseChannel : undefined;
 		this.url = this.buildUpdateFeedUrl(quality);
 		if (!this.url) {
 			this.setState(State.Disabled(DisablementReason.InvalidConfiguration));
@@ -122,7 +160,37 @@ export abstract class AbstractUpdateService implements IUpdateService {
 	}
 
 	private getProductQuality(updateMode: string): string | undefined {
-		return updateMode === 'none' ? undefined : this.productService.quality;
+		if (updateMode === 'none') {
+			return undefined;
+		}
+		if (this.productService.voltRelease) {
+			return resolveVoltReleaseChannel(this.configurationService.getValue(VOLT_RELEASE_CHANNEL_SETTING), this.productService.quality);
+		}
+		return this.productService.quality;
+	}
+
+	/**
+	 * Turns an update feed response into an update, or null when there is none.
+	 * VS Code's server answers 204 or an IUpdate; Volt's static feed always answers with the
+	 * channel's latest build, which is compared with this one here.
+	 */
+	protected async parseUpdateResponse(context: IRequestContext): Promise<IUpdate | null> {
+		if (!this.productService.voltRelease || !this.channel) {
+			return asJson<IUpdate>(context);
+		}
+		if (context.res.statusCode === 404) {
+			return null; // nothing published for this platform yet
+		}
+		const entry = await asJson<unknown>(context);
+		return this.decideVoltUpdate(entry) ?? null;
+	}
+
+	protected decideVoltUpdate(entry: unknown): IVoltUpdate | undefined {
+		return this.channel && decideVoltUpdate(entry, {
+			commit: this.productService.commit,
+			date: this.productService.date,
+			quality: this.productService.quality
+		}, this.channel, this.productService.voltRelease?.downloadPage);
 	}
 
 	private scheduleCheckForUpdates(delay = 60 * 60 * 1000): Promise<void> {
@@ -207,6 +275,9 @@ export abstract class AbstractUpdateService implements IUpdateService {
 
 		try {
 			const context = await this.requestService.request({ url: this.url }, CancellationToken.None);
+			if (this.productService.voltRelease) {
+				return !(await this.parseUpdateResponse(context));
+			}
 			// The update server replies with 204 (No Content) when no
 			// update is available - that's all we want to know.
 			return context.res.statusCode === 204;

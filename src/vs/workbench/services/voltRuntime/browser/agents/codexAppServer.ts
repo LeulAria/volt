@@ -64,7 +64,7 @@ async function loadCodexModels(stdio: IVoltStdioService, preferredCommand?: stri
 	const cacheRaw = await readHomeFile(stdio, '.codex/models_cache.json');
 	const context = codexContextIndex(parseJson(cacheRaw));
 	const live = await queryAppServer(stdio, preferredCommand);
-	if (live.length) {
+	if (live?.length) {
 		return parseCodexModels(live, context);
 	}
 	return parseCodexModels(parseJson(cacheRaw));

@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { toErrorMessage } from '../../../../../base/common/errorMessage.js';
 import { hash } from '../../../../../base/common/hash.js';
 import { untildify } from '../../../../../base/common/labels.js';
@@ -31,16 +32,16 @@ import { IVoltProjectsService } from '../../../voltProjects/common/projects.js';
 import { IVoltFolderPickerService } from '../../../voltProjects/browser/folderPickerService.js';
 import { IProjectCloneService } from '../../../voltProjects/browser/projectCloneService.js';
 import { AddProjectDialog } from '../../../voltProjects/browser/ui/addProjectView.js';
-import { agentHomeWorkspaceEntries, cloneFolderName, freeFolderName, IAgentHomeWorkspaceEntry } from './agentHomeWorkspace.js';
+import { agentHomeWorkspaceEntries, cloneFolderName, commitFailureSummary, freeFolderName, gitErrorSummary, IAgentHomeWorkspaceEntry, namedProjectReadme, projectFolderSlug } from './agentHomeWorkspace.js';
 import { IAgentHomeWorkspaceMenuHost, showAgentHomeWorkspaceMenu } from './agentHomeWorkspaceMenu.js';
 
-/** Parent folder for clones, New Folder and Start from scratch, once the user picks one. */
+/** Parent folder for clones and Start from scratch, once the user picks one. */
 const LOCATION_STORAGE_KEY = 'volt.agent.home.projectsLocation';
 export const INIT_TIMEOUT_MS = 30_000;
 /** Folder name for Start from scratch; a number follows when it is taken. */
 const SCRATCH_FOLDER_NAME = 'new-project';
 
-/** What the Open Workspace menu does: open, clone and create local folders, then show them as projects. */
+/** What the Open Workspace menu does: open and clone local folders, then show them as projects. */
 export class AgentHomeWorkspaceActions {
 
 	/** Where one folder goes instead of its latest chat, e.g. into the new chat whose picker opened the menu. */
@@ -81,7 +82,7 @@ export class AgentHomeWorkspaceActions {
 			browse: () => this.browse(),
 			browseGitHub: () => this.instantiationService.createInstance(AddProjectDialog).show('github'),
 			startFromScratch: () => this.startFromScratch(),
-			createFolder: name => this.createFolder(name),
+			createProject: name => this.createProject(name),
 			clone: url => this.clone(url),
 			reportError: message => this.notificationService.error(message),
 		};
@@ -196,17 +197,53 @@ export class AgentHomeWorkspaceActions {
 		}
 	}
 
-	private async createFolder(name: string): Promise<string | undefined> {
-		const target = joinPath(this.locationUri(), name);
+	/**
+	 * A project from just a name: `<location>/<slug>` (`-2`, `-3`, ... when taken), a git
+	 * repository with a README and a first commit, open in a new chat. Only the commit may fail
+	 * softly (no git identity, a signing prompt): the project stays and the reason is shown.
+	 */
+	private async createProject(name: string): Promise<string | undefined> {
+		const label = name.trim();
+		const parent = this.locationUri();
+		let target: URI;
 		try {
-			if (await this.fileService.exists(target)) {
-				return localize('voltAgent.workspace.folderExists', "A folder named {0} is already there.", name);
-			}
+			const folder = await freeFolderName(projectFolderSlug(label), candidate => this.fileService.exists(joinPath(parent, candidate)));
+			target = joinPath(parent, folder);
 			await this.fileService.createFolder(target);
 		} catch (err) {
 			return toErrorMessage(err);
 		}
-		await this.openFolders([target]);
+		let commitError: string | undefined;
+		try {
+			const init = await this.git(target.fsPath, ['init'], INIT_TIMEOUT_MS);
+			if (init.exitCode !== 0) {
+				throw new Error(gitErrorSummary(init.stderr) || localize('voltAgent.newProject.initFailed', "git init failed."));
+			}
+			await this.fileService.writeFile(joinPath(target, 'README.md'), VSBuffer.fromString(namedProjectReadme(label)));
+			// Named and forced so a global ignore rule cannot leave the README out.
+			const add = await this.git(target.fsPath, ['add', '--force', '--', 'README.md'], INIT_TIMEOUT_MS);
+			if (add.exitCode !== 0) {
+				throw new Error(gitErrorSummary(add.stderr) || localize('voltAgent.newProject.addFailed', "git add failed."));
+			}
+			const commit = await this.git(target.fsPath, ['commit', '--message', 'Initial commit'], INIT_TIMEOUT_MS);
+			if (commit.exitCode !== 0 || commit.timedOut) {
+				commitError = commitFailureSummary(commit.stderr);
+			}
+		} catch (err) {
+			// Nothing else knows the folder yet, so a failed setup leaves nothing behind.
+			await this.fileService.del(target, { recursive: true }).catch(() => undefined);
+			return toErrorMessage(err);
+		}
+		void this.workspacesService.addRecentlyOpened([{ folderUri: target }]);
+		const project = this.sessionContext.registerProject(target, label);
+		if (this.openOne) {
+			await this.openOne(project.root);
+		} else {
+			await newAgentChat(this.sessionContext, this.agentWorkspace, this.history, this.editorGroupsService, this.instantiationService, project.root, project.displayName);
+		}
+		if (commitError) {
+			this.notificationService.warn(localize('voltAgent.newProject.noCommit', "Created {0} without a first commit: {1}", label, commitError));
+		}
 		return undefined;
 	}
 
@@ -267,7 +304,7 @@ function shellQuote(arg: string): string {
 }
 
 /**
- * The project menu (Recents, On This Mac, Start from scratch, Use Existing, New Folder) under
+ * The project menu (Recents, Start from scratch, Local folder, On This Mac, clone hosts) under
  * `anchor`, shared by the sidebar header, the new agent's project picker and Add Project.
  * Without `openOne`, a folder shows its latest chat (or a new one). A second click on the
  * same anchor closes it.

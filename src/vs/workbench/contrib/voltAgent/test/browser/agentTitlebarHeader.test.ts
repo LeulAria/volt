@@ -21,6 +21,7 @@ import {
 	primaryHeaderSidebarClosed,
 	shortTabTitle,
 } from '../../browser/chrome/agentTitlebarHeader.js';
+import { displayComputerName, toggleUsageEnvironment, usageEnvironmentTriggerLabel, usageMachineName } from '../../browser/usage/agentUsageEnvironmentMenu.js';
 
 suite('Agent primary header', () => {
 
@@ -81,6 +82,22 @@ suite('Agent primary header', () => {
 		assert.ok(labeled.length <= 37);
 		const short = formatHeaderFolderPath(`${home}/volt`, home);
 		assert.strictEqual(short, OS === OperatingSystem.Windows ? `${home}/volt` : '~/volt');
+	});
+
+	test('usage crumb names every environment, then this machine, then none', () => {
+		const all = { all: true, local: true };
+		assert.strictEqual(usageEnvironmentTriggerLabel(all, 'This Mac', 'All environments', 'No environments'), 'All environments');
+		assert.deepStrictEqual(toggleUsageEnvironment(all, 'local'), { all: false, local: false });
+		assert.deepStrictEqual(toggleUsageEnvironment(all, 'all'), { all: false, local: false });
+		const off = { all: false, local: false };
+		assert.strictEqual(usageEnvironmentTriggerLabel(off, 'This Mac', 'All environments', 'No environments'), 'No environments');
+		assert.deepStrictEqual(toggleUsageEnvironment(off, 'all'), { all: true, local: true });
+		assert.strictEqual(usageMachineName(undefined, 'This Mac'), 'This Mac');
+		assert.strictEqual(usageMachineName({ HOSTNAME: 'localhost' }, 'This Mac'), 'This Mac');
+		assert.strictEqual(usageMachineName({ HOSTNAME: 'LeulArias-MacBook-Pro.local' }, 'This Mac'), 'LeulArias MacBook Pro');
+		assert.strictEqual(usageMachineName({ COMPUTERNAME: 'Studio', HOSTNAME: 'ignored' }, 'This Mac'), 'Studio');
+		assert.strictEqual(displayComputerName('Studio'), 'Studio');
+		assert.strictEqual(displayComputerName('\u200f\u2068\u2068MacBook Pro\u2069\u2069 \u2068LeulAria\u2069\u200f'), 'LeulAria MacBook Pro');
 	});
 
 	test('folder and git hover icons use the provided strokes', () => {

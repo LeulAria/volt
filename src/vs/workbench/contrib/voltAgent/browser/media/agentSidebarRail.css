@@ -1,0 +1,203 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The agent list folded to an icon rail. The rail is a child of the list's own part, so it paints
+ * on the part's translucent sidebar fill (no layer over the window, nothing transparent stacked
+ * over a list; see the volt-transparent-window skill). Without the rail class it is not drawn.
+ */
+.volt-agent-sidebar-rail {
+	display: none;
+}
+
+.monaco-workbench.volt-layout-agent.volt-agent-sidebar-rail-mode:not(.volt-agent-drawer-mode) .part.auxiliarybar > .volt-agent-sidebar-rail {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	/* Below the window controls, level with the full list's New Chat row. */
+	padding: 40px 0 10px;
+	box-sizing: border-box;
+	gap: 2px;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+/* The project list stops above the list's footer, which stays and stacks its buttons under the rail. */
+.monaco-workbench.volt-layout-agent.volt-agent-sidebar-rail-mode:not(.volt-agent-drawer-mode) .part.auxiliarybar > .volt-agent-sidebar-rail {
+	padding-bottom: calc(var(--volt-rail-footer-height, 0px) + 6px);
+}
+
+/* The rail replaces the list and the part's own title controls; only the footer shows through. */
+.monaco-workbench.volt-layout-agent.volt-agent-sidebar-rail-mode:not(.volt-agent-drawer-mode) .part.auxiliarybar > .content,
+.monaco-workbench.volt-layout-agent.volt-agent-sidebar-rail-mode:not(.volt-agent-drawer-mode) .part.auxiliarybar > .volt-primary-sidebar-toggle,
+.monaco-workbench.volt-layout-agent.volt-agent-sidebar-rail-mode:not(.volt-agent-drawer-mode) .part.auxiliarybar > .volt-agent-nav {
+	visibility: hidden;
+}
+
+.volt-rail-group {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 2px;
+}
+
+.volt-rail-projects {
+	flex: 1 1 auto;
+	min-height: 0;
+	width: 100%;
+	padding: 2px 0;
+	overflow-y: auto;
+	overflow-x: hidden;
+	scrollbar-width: none;
+	gap: 6px;
+}
+
+.volt-rail-projects::-webkit-scrollbar {
+	display: none;
+}
+
+.volt-rail-sep {
+	flex: none;
+	width: 20px;
+	height: 1px;
+	margin: 8px 0;
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.volt-rail-button {
+	position: relative;
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 34px;
+	height: 34px;
+	padding: 0;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: inherit;
+	opacity: 0.8;
+	cursor: pointer;
+}
+
+.volt-rail-button:hover,
+.volt-rail-button:focus-visible {
+	opacity: 1;
+	background: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
+}
+
+.monaco-workbench .volt-rail-button:focus:not(:focus-visible) {
+	outline: none !important;
+}
+
+.volt-rail-button > svg,
+.volt-rail-button > .codicon {
+	width: 16px;
+	height: 16px;
+	font-size: 16px;
+}
+
+.volt-rail-project {
+	opacity: 1;
+}
+
+/* The open project: a bar on the rail's inner edge, like the list's active row. */
+.volt-rail-project.current::before {
+	content: '';
+	position: absolute;
+	left: -9px;
+	top: 9px;
+	bottom: 9px;
+	width: 3px;
+	border-radius: 0 2px 2px 0;
+	background: var(--vscode-foreground);
+	opacity: 0.7;
+}
+
+.volt-rail-project:not(.current) > .volt-project-icon {
+	opacity: 0.86;
+}
+
+.volt-rail-project:hover > .volt-project-icon {
+	opacity: 1;
+}
+
+.volt-rail-project.working > .volt-project-icon {
+	animation: volt-rail-working 1.4s ease-in-out infinite;
+}
+
+@keyframes volt-rail-working {
+	50% { opacity: 0.55; }
+}
+
+/* Unread chats: a count in the tile's top corner; waiting on you: an amber dot. */
+.volt-rail-badge {
+	position: absolute;
+	top: 1px;
+	right: 0;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.volt-rail-badge.unread {
+	min-width: 15px;
+	height: 15px;
+	padding: 0 4px;
+	border-radius: 8px;
+	background: var(--vscode-charts-blue, #3794ff);
+	color: #fff;
+	font-size: 9.5px;
+	font-weight: 700;
+	line-height: 15px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--vscode-sideBar-background, #181818) 92%, transparent);
+}
+
+.volt-rail-badge.attention {
+	top: 3px;
+	right: 2px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--vscode-editorWarning-foreground, #cca700);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--vscode-sideBar-background, #181818) 92%, transparent);
+}
+
+/* Settings, Usage, Update and Expand, one above the other, centered in the rail. */
+.monaco-workbench.volt-layout-agent.volt-agent-sidebar-rail-mode:not(.volt-agent-drawer-mode) .part.auxiliarybar .volt-agent-home-footer {
+	visibility: visible;
+	position: relative;
+	z-index: 1;
+	flex-direction: column-reverse;
+	justify-content: flex-start;
+	height: auto;
+	padding: 4px 0 10px;
+	gap: 4px;
+}
+
+.monaco-workbench.volt-layout-agent.volt-agent-sidebar-rail-mode:not(.volt-agent-drawer-mode) .part.auxiliarybar .volt-agent-home-footer > button {
+	width: 34px;
+	height: 34px;
+	border-radius: 8px;
+	margin: 0;
+}
+
+/* The full list's footer: the fold-to-rail button sits at its far end. */
+.monaco-workbench:not(.volt-agent-sidebar-rail-mode) .volt-agent-home-footer > .volt-agent-home-rail-toggle {
+	margin-left: auto;
+}
+
+.volt-agent-home-footer.usage-open > .volt-agent-home-rail-toggle {
+	display: none;
+}
+
+/* The chat's title bar starts at the rail's edge; clear the window controls that overhang it. */
+.monaco-workbench.volt-layout-agent.volt-agent-sidebar-rail-mode:not(.volt-agent-drawer-mode):not(.noauxiliarybar) .part.titlebar > .titlebar-container > .titlebar-left {
+	padding-left: 40px;
+}

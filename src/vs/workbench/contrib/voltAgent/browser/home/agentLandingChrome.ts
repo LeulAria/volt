@@ -25,11 +25,15 @@ import { IVoltStdioService } from '../../../../../platform/voltStdio/common/volt
 import { IVoltGitBranches, IVoltGitBranchRef, IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { AgentRunOn, agentRunOnStorageKey, AgentWorktreeTarget, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { CLOUD_AUTO, cloudMachineStorageKey, normalizeCloudMachine } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
+import { canTakeAgent, cpuPressure, describeMachineLoad, IRelayMachine, memoryPressure } from '../../../../services/voltRuntime/common/relay/relayMachines.js';
+import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
+import { VOLT_RELAY_CONNECT_COMMAND_ID } from '../schedules/agentWebhookRelay.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
 import { IVoltProjectsService } from '../../../voltProjects/common/projects.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { IVoltMenuItem, IVoltMenuPrompt, IVoltSubmenu, showVoltMenu } from '../ui/menu/voltMenu.js';
+import { IVoltMenuItem, IVoltMenuPrompt, IVoltMenuSection, IVoltSubmenu, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { INIT_TIMEOUT_MS, runGit, showAgentProjectMenu } from './agentHomeWorkspaceActions.js';
 import { landingWorkspaceName } from './agentLandingModel.js';
 
@@ -73,6 +77,8 @@ export class AgentLandingChrome extends Disposable {
 	private branch: { readonly name?: string; readonly detached?: string; readonly unborn?: boolean } = {};
 	private repository: ISCMRepository | undefined;
 	private runOn: AgentRunOn = 'same-branch';
+	/** Cloud location: a runner's machine id, or `auto` (the relay picks the least loaded runner). */
+	private cloudMachine = CLOUD_AUTO;
 	/** In Worktree mode: the branch the new checkout uses. None means a fresh branch from the current one. */
 	private worktreeTarget: AgentWorktreeTarget | undefined;
 	private branchRequest = 0;
@@ -98,6 +104,7 @@ export class AgentLandingChrome extends Disposable {
 		@IVoltProjectsService private readonly projects: IVoltProjectsService,
 		@IVoltGitService private readonly gitService: IVoltGitService,
 		@IVoltStdioService private readonly stdio: IVoltStdioService,
+		@IAgentCloudTasksService private readonly cloud: IAgentCloudTasksService,
 	) {
 		super();
 		this.element = $('.volt-agent-landing-chrome');
@@ -166,6 +173,11 @@ export class AgentLandingChrome extends Disposable {
 				void open();
 			}
 		}));
+	}
+
+	/** The runner a Cloud run goes to: a machine id, or `auto`. */
+	getCloudMachine(): string {
+		return this.cloudMachine;
 	}
 
 	/** The branch a new worktree should use, when Run on is Worktree and one was picked. */
@@ -544,31 +556,67 @@ export class AgentLandingChrome extends Disposable {
 
 	private renderEnvironment(): void {
 		this.runOn = normalizeAgentRunOn(this.storageService.get(agentRunOnStorageKey(this.sessionContext.activeProject?.id), StorageScope.APPLICATION));
+		this.cloudMachine = normalizeCloudMachine(this.storageService.get(cloudMachineStorageKey(this.sessionContext.activeProject?.id), StorageScope.APPLICATION));
 		const worktree = this.runOn === 'worktree';
+		const cloud = this.runOn === 'cloud';
 		const blocked = this.worktreeNeedsCommit();
-		this.envLabel.textContent = worktree ? localize('voltAgent.env.worktree', "Worktree") : THIS_MACHINE;
-		this.envIcon.replaceChildren(renderIcon(blocked ? Codicon.warning : worktree ? Codicon.repoForked : Codicon.deviceDesktop));
+		this.envLabel.textContent = worktree ? localize('voltAgent.env.worktree', "Worktree") : cloud ? localize('voltAgent.env.cloud', "Cloud") : THIS_MACHINE;
+		this.envIcon.replaceChildren(renderIcon(blocked ? Codicon.warning : worktree ? Codicon.repoForked : cloud ? Codicon.cloud : Codicon.deviceDesktop));
 		this.envButton.classList.toggle('worktree', worktree);
+		this.envButton.classList.toggle('cloud', cloud);
 		this.envButton.classList.toggle('blocked', blocked);
 		setAgentTooltip(this.envButton, blocked
 			? localize('voltAgent.worktreeNeedsCommit', "This repository has no commits yet. Make a first commit to use a worktree.")
 			: worktree
 				? localize('voltAgent.env.worktreeTooltip', "Runs in a new worktree, so your checkout is untouched")
-				: localize('voltAgent.env.localTooltip', "Runs in your checkout"));
+				: cloud
+					? localize('voltAgent.env.cloudTooltip', "Runs on a Volt Relay runner; your checkout goes along as a bundle")
+					: localize('voltAgent.env.localTooltip', "Runs in your checkout"));
 		// The branch button shows the worktree's branch only in Worktree mode.
 		this.renderBranch();
+		if (cloud && this.cloudMachine !== CLOUD_AUTO) {
+			void this.cloud.runners().then(runners => {
+				const machine = runners.find(candidate => candidate.id === this.cloudMachine);
+				this.envLabel.textContent = machine ? `${localize('voltAgent.env.cloud', "Cloud")} · ${machine.name}` : this.envLabel.textContent;
+			}, () => undefined);
+		}
 	}
 
-	/** "Run on", as in Cursor: this machine, or a new worktree. */
-	private openEnvironmentMenu(): void {
+	/** "Run on", as in Cursor: this machine, a new worktree, or a Volt Relay runner in the cloud. */
+	private async openEnvironmentMenu(): Promise<void> {
 		const repo = this.hasRepository();
 		const unborn = !!this.branch.unborn;
-		showVoltMenu<AgentRunOn>(this.contextViewService, {
+		// Runners and their load come from the relay; without a connection the Cloud section offers to connect.
+		const runners = await this.cloud.runners().catch(() => undefined);
+		const cloudItem = (machineId: string, label: string, extra: Partial<IVoltMenuItem<RunOnPick>> = {}): IVoltMenuItem<RunOnPick> => ({
+			id: `cloud:${machineId}`,
+			label,
+			checked: this.runOn === 'cloud' && this.cloudMachine === machineId,
+			disabled: !repo,
+			tooltip: !repo ? localize('voltAgent.env.cloudNeedsGit', "Needs a git repository") : undefined,
+			data: { runOn: 'cloud', machineId },
+			...extra,
+		});
+		const cloudSection: IVoltMenuSection<RunOnPick> = runners === undefined
+			? { id: 'cloud', title: localize('voltAgent.env.cloudTitle', "Cloud"), items: [{ id: 'connect', label: localize('voltAgent.env.connectRelay', "Connect to Volt Relay…"), icon: Codicon.plug, trailingIcon: Codicon.arrowRight, data: { connect: true } }] }
+			: {
+				id: 'cloud',
+				title: localize('voltAgent.env.cloudTitle', "Cloud"),
+				items: [
+					cloudItem(CLOUD_AUTO, localize('voltAgent.env.cloudAuto', "Auto (least loaded)"), {
+						icon: Codicon.sparkle,
+						detail: localize('voltAgent.env.cloudAutoDetail', "The runner with the most free capacity"),
+					}),
+					...runners.map(machine => cloudRunnerItem(machine, cloudItem)),
+				],
+				emptyMessage: localize('voltAgent.env.noRunners', "No runners yet. Start volt-runner and it shows up here."),
+			};
+		showVoltMenu<RunOnPick>(this.contextViewService, {
 			anchor: this.envButton,
 			ariaLabel: localize('voltAgent.env.runOn', "Run on"),
-			width: 220,
+			width: 260,
 			sections: [
-				{ id: 'machine', title: localize('voltAgent.env.runOn', "Run on"), items: [{ id: 'local', label: THIS_MACHINE, icon: Codicon.deviceDesktop, checked: this.runOn === 'same-branch', data: 'same-branch' }] },
+				{ id: 'machine', title: localize('voltAgent.env.runOn', "Run on"), items: [{ id: 'local', label: THIS_MACHINE, icon: Codicon.deviceDesktop, checked: this.runOn === 'same-branch', data: { runOn: 'same-branch' } }] },
 				{
 					id: 'worktree',
 					items: [{
@@ -582,18 +630,46 @@ export class AgentLandingChrome extends Disposable {
 							: unborn
 								? localize('voltAgent.env.needsCommit', "Needs a first commit")
 								: localize('voltAgent.env.worktreeDescription', "An isolated copy of the repo; review the changes to apply them"),
-						data: 'worktree',
+						data: { runOn: 'worktree' },
 					}],
 				},
+				cloudSection,
 			],
-			onPick: item => this.setRunOn(item.data),
+			onPick: item => {
+				if ('connect' in item.data) {
+					void this.commandService.executeCommand(VOLT_RELAY_CONNECT_COMMAND_ID);
+				} else {
+					this.setRunOn(item.data.runOn, item.data.machineId);
+				}
+			},
 		});
 	}
 
-	private setRunOn(runOn: AgentRunOn): void {
+	private setRunOn(runOn: AgentRunOn, machineId?: string): void {
 		this.storageService.store(agentRunOnStorageKey(this.sessionContext.activeProject?.id), runOn, StorageScope.APPLICATION, StorageTarget.USER);
+		if (machineId) {
+			this.storageService.store(cloudMachineStorageKey(this.sessionContext.activeProject?.id), machineId, StorageScope.APPLICATION, StorageTarget.USER);
+		}
 		this.renderEnvironment();
 	}
+}
+
+/** What a Run on item picks: a location, or Cloud with a runner (`auto` for the least loaded). */
+type RunOnPick = { readonly runOn: AgentRunOn; readonly machineId?: string } | { readonly connect: true };
+
+/** One runner in the Cloud section: its load bars, and why it cannot take the chat's agent when it cannot. */
+function cloudRunnerItem(machine: IRelayMachine, item: (machineId: string, label: string, extra?: Partial<IVoltMenuItem<RunOnPick>>) => IVoltMenuItem<RunOnPick>): IVoltMenuItem<RunOnPick> {
+	const eligible = machine.online && (canTakeAgent(machine, 'codex') || canTakeAgent(machine, 'claude'));
+	const reason = machine.placement?.codex?.reason ?? machine.placement?.claude?.reason;
+	return item(machine.id, machine.name, {
+		icon: Codicon.server,
+		detail: describeMachineLoad(machine),
+		load: { cpu: cpuPressure(machine.load), memory: memoryPressure(machine.load) },
+		disabled: !eligible,
+		tooltip: eligible ? undefined : !machine.online ? localize('voltAgent.env.runnerOffline', "Offline")
+			: reason ? localize('voltAgent.env.runnerReason', "The relay does not place work here: {0}", reason)
+				: localize('voltAgent.env.runnerNoAgent', "This runner has no Codex or Claude Code login"),
+	});
 }
 
 /** A branch, remote branch or tag: its name, then its latest commit's subject and age, as in VS Code. */

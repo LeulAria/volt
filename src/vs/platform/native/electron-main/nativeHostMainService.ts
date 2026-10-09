@@ -4,9 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as fs from 'fs';
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { app, BrowserWindow, clipboard, contentTracing, Display, Menu, MessageBoxOptions, MessageBoxReturnValue, OpenDevToolsOptions, OpenDialogOptions, OpenDialogReturnValue, powerMonitor, SaveDialogOptions, SaveDialogReturnValue, screen, shell, webContents } from 'electron';
-import { arch, cpus, freemem, loadavg, platform, release, totalmem, type } from 'os';
+import { arch, cpus, freemem, hostname, loadavg, platform, release, totalmem, type } from 'os';
 import { promisify } from 'util';
 import { memoize } from '../../../base/common/decorators.js';
 import { Emitter, Event } from '../../../base/common/event.js';
@@ -791,6 +791,21 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 			freemem: freemem(),
 			loadavg: loadavg()
 		};
+	}
+
+	async getComputerName(): Promise<string> {
+		if (isMacintosh) {
+			try {
+				const { stdout } = await promisify(execFile)('/usr/sbin/scutil', ['--get', 'ComputerName'], { timeout: 2000 });
+				const name = stdout.toString().trim();
+				if (name) {
+					return name;
+				}
+			} catch (error) {
+				this.logService.trace('Computer name unavailable', error);
+			}
+		}
+		return (process.env.COMPUTERNAME || hostname()).trim();
 	}
 
 	async getOSProperties(): Promise<IOSProperties> {

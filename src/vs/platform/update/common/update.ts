@@ -66,7 +66,8 @@ export type Disabled = { type: StateType.Disabled; reason: DisablementReason };
 export type Idle = { type: StateType.Idle; updateType: UpdateType; error?: string };
 export type CheckingForUpdates = { type: StateType.CheckingForUpdates; explicit: boolean };
 export type AvailableForDownload = { type: StateType.AvailableForDownload; update: IUpdate };
-export type Downloading = { type: StateType.Downloading };
+/** `update` and `progress` (0..1) are set when the updater knows them (Volt feeds, Windows downloads). */
+export type Downloading = { type: StateType.Downloading; update?: IUpdate; progress?: number };
 export type Downloaded = { type: StateType.Downloaded; update: IUpdate };
 export type Updating = { type: StateType.Updating; update: IUpdate };
 export type Ready = { type: StateType.Ready; update: IUpdate };
@@ -80,6 +81,7 @@ export const State = {
 	CheckingForUpdates: (explicit: boolean): CheckingForUpdates => ({ type: StateType.CheckingForUpdates, explicit }),
 	AvailableForDownload: (update: IUpdate): AvailableForDownload => ({ type: StateType.AvailableForDownload, update }),
 	Downloading: upcast<Downloading>({ type: StateType.Downloading }),
+	DownloadingUpdate: (update: IUpdate, progress?: number): Downloading => ({ type: StateType.Downloading, update, progress }),
 	Downloaded: (update: IUpdate): Downloaded => ({ type: StateType.Downloaded, update }),
 	Updating: (update: IUpdate): Updating => ({ type: StateType.Updating, update }),
 	Ready: (update: IUpdate): Ready => ({ type: StateType.Ready, update }),

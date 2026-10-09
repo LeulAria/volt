@@ -108,7 +108,7 @@ export class MultiDiffEditor extends AbstractEditorWithViewState<IMultiDiffEdito
 	}
 
 	protected createEditor(parent: HTMLElement): void {
-		this._uiElementFactory = this.instantiationService.createInstance(WorkbenchUIElementFactory);
+		this._uiElementFactory = this.instantiationService.createInstance(WorkbenchUIElementFactory, this);
 		this._body = DOM.append(parent, DOM.$('.multiDiffEditorBody'));
 		this._multiDiffEditorWidget = this._register(this.instantiationService.createInstance(
 			MultiDiffEditorWidget,
@@ -248,6 +248,8 @@ class WorkbenchUIElementFactory implements IWorkbenchUIElementFactory {
 	readonly diffEditorOptions = derived(this, reader => this.hostOptions.read(reader)?.read(reader));
 
 	constructor(
+		/** Volt: the editor the labels sit in, so Open File lands in its group (an agent's tools). */
+		private readonly _editor: MultiDiffEditor,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@ICommandService private readonly _commandService: ICommandService,
 	) { }
@@ -260,7 +262,7 @@ class WorkbenchUIElementFactory implements IWorkbenchUIElementFactory {
 			e.preventDefault();
 			e.stopPropagation();
 			if (currentUri) {
-				void this._commandService.executeCommand('multiDiffEditor.goToFile', currentUri);
+				void this._commandService.executeCommand('multiDiffEditor.goToFile', currentUri, this._editor);
 			}
 		});
 		return {

@@ -8,8 +8,10 @@ import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
+import { isMemoryToolName } from './memory/voltMemory.js';
 import type { VoltMode } from './modes.js';
 import type { AgentQuestionDraft, IAgentQuestionResponse } from './questions.js';
+import { PROPOSE_PLAN_TOOL_NAME } from './plans.js';
 import type { IRgbaImage } from './tools/imageAnalysis.js';
 
 export const IVoltHostToolService = createDecorator<IVoltHostToolService>('voltHostToolService');
@@ -28,16 +30,52 @@ export const AUTOMATE_BROWSER_COMMAND_ID = 'volt.browser.automate';
 export const BROWSER_PAGE_URL_COMMAND_ID = 'volt.browser.pageUrl';
 
 export const BROWSER_COMPARE_IMAGE_TOOL_NAME = 'browser_compare_image';
+
+/**
+ * Visual replies: a native chart from a JSON spec, a sandboxed HTML page, and a screenshot check of
+ * a page. The page tools carry T3 Code's names (`html_render`, `html_preview`), which agents and
+ * users already know; Volt's first names for them still work (see `LEGACY_TOOL_NAMES`).
+ */
+export const RENDER_CHART_TOOL_NAME = 'render_chart';
+export const RENDER_HTML_TOOL_NAME = 'html_render';
+export const PREVIEW_HTML_TOOL_NAME = 'html_preview';
+export const VISUAL_TOOL_NAMES = [RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, 'render_html', 'preview_html'] as const;
+
+/** Earlier names of host tools, still accepted from agents and read in stored transcripts. */
+export const LEGACY_TOOL_NAMES: Readonly<Record<string, string>> = {
+	render_html: RENDER_HTML_TOOL_NAME,
+	preview_html: PREVIEW_HTML_TOOL_NAME,
+};
+
+/** The current name of a host tool an agent may call by an earlier one. */
+export function canonicalHostToolName(name: string): string {
+	return LEGACY_TOOL_NAMES[name] ?? name;
+}
+
+/** A visual a render tool published: where its spec or page is stored, for the transcript to draw. */
+export interface IVoltVisualRef {
+	readonly kind: 'chart' | 'html';
+	/** `volt-attachment:<hash>.json` (chart spec) or `.html` (page). */
+	readonly ref: string;
+	readonly title: string;
+	/** Pages: the height the page needed at the reply column's width, so the frame opens at its size. */
+	readonly height?: number;
+	/** Pages: `[width, height]` measured at several reader widths, so a narrower chat opens at the right size too. */
+	readonly heights?: readonly (readonly [number, number])[];
+	/** Pages: the agent's cap on the frame height; taller content scrolls inside. */
+	readonly cap?: number;
+}
 export const BROWSER_NETWORK_TOOL_NAME = 'browser_network';
 export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
 
 /**
- * `core`: questions. `browser`: the in-app browser. `image`: reading image files. `pullRequests`:
- * linking and watching the chat's pull requests. `devices`: iOS simulators and Android emulators.
- * `capture`: screenshots and recordings of windows. An agent can be
+ * `core`: questions. `browser`: the in-app browser. `image`: reading image files. `threads`: other
+ * chats, their queues and checkouts (an agent as orchestrator). `pullRequests`:
+ * linking and watching the chat's pull requests. `visuals`: charts and pages shown in the reply. `devices`: iOS simulators
+ * and Android emulators. `capture`: screenshots and recordings of windows. An agent can be
  * handed a subset (`getMcpServers(sessionId, { groups })`) to keep its tool list short.
  */
-export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'pullRequests' | 'devices' | 'capture';
+export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture' | 'memory';
 
 export interface IVoltHostToolInfo {
 	readonly name: string;
@@ -56,6 +94,8 @@ export interface IVoltHostToolResult {
 	readonly text?: string;
 	readonly image?: string;
 	readonly error?: string;
+	/** Set by the render tools: the transcript draws it above the reply. */
+	readonly visual?: IVoltVisualRef;
 }
 
 export interface IVoltMcpServer {
@@ -75,6 +115,17 @@ export interface IVoltHostToolCall {
 	readonly cwd?: string;
 	/** `native`: Volt's own loop, which draws its own tool rows, so no `onDidInvokeTool` event. Default `mcp`. */
 	readonly source?: 'mcp' | 'native';
+	/** An agent outside Volt called it over the OAuth MCP server (no chat; `sessionId` is unset). */
+	readonly external?: IVoltExternalCaller;
+}
+
+/** Who an outside agent is, from the grant the user approved. */
+export interface IVoltExternalCaller {
+	readonly grantId: string;
+	readonly clientId: string;
+	/** The name it registered with (unverified), e.g. "Claude Code". */
+	readonly name: string;
+	readonly scopes: readonly string[];
 }
 
 /** What the host tools need to know about a chat they serve. */
@@ -206,6 +257,21 @@ export const VOLT_HOST_TOOLS: readonly IVoltHostToolInfo[] = [
 		group: 'core',
 		description: 'Keep waiting for the user\'s answers to an ask_question call that returned "still answering". Call it right away with the request_id it gave; do nothing else meanwhile.',
 		inputSchema: { type: 'object', properties: { request_id: { type: 'string' } }, required: ['request_id'] },
+	},
+	{
+		name: PROPOSE_PLAN_TOOL_NAME,
+		title: 'Proposed plan',
+		group: 'core',
+		description: 'Present an implementation plan for the user to approve, revise or edit in Volt. Use it in Plan mode, after you have investigated, instead of writing the plan into your reply or using a built-in plan tool. Give a short title and the plan in Markdown: the approach, the files to change, ordered steps, risks, and how to verify. Put anything only the user can decide in open_questions. Then stop and wait: do not implement the plan until the user approves it.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				title: { type: 'string', description: 'Short title, e.g. "Add dark mode toggle".' },
+				plan: { type: 'string', description: 'The plan in Markdown: approach, files to change, steps, risks, how to verify.' },
+				open_questions: { type: 'array', items: { type: 'string' }, description: 'Decisions the user must make before building.' },
+			},
+			required: ['title', 'plan'],
+		},
 	},
 	{
 		name: 'browser_navigate',
@@ -351,13 +417,16 @@ export const VOLT_HOST_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: BROWSER_SCREENSHOT_TOOL_NAME,
 		title: 'Took screenshot',
 		group: 'browser',
-		description: 'Take a screenshot of the current page (or one element) in the in-app browser to check how it looks. One image pixel is one CSS pixel up to max_side. Use browser_snapshot to find elements to act on, and browser_compare_image to check a page against a design image.',
+		description: 'Take a screenshot of the current page (or one element) in the in-app browser to check how it looks. One image pixel is one CSS pixel up to max_side. The result lists the interactive elements in the image with refs and their boxes in image pixels, so you can act on what you see by ref; a follow-up screenshot of the same page lists only the changes. Use browser_compare_image to check a page against a design image.',
 		inputSchema: {
 			type: 'object',
 			properties: {
 				ref: { ...REF, description: 'Optional element ref: capture only this element.' },
 				format: { type: 'string', enum: ['jpeg', 'png', 'webp'], description: 'Default jpeg (smallest). png for pixel-exact checks.' },
 				max_side: { type: 'number', description: 'Longest side in pixels, 256-2560. Default 1280.' },
+				ax: { type: 'string', enum: ['auto', 'full', 'off'], description: 'Element list: auto (default: full on the first capture of a page, changes after that), full, or off.' },
+				max_elements: { type: 'number', description: 'Most elements to list, 5-200. Default 60.' },
+				marks: { type: 'boolean', description: 'Draw a red outline and its ref on each listed element in the image.' },
 			},
 		},
 	},
@@ -407,7 +476,41 @@ const TOOL_PREFIX_RE = /^(?:mcp__volt__|volt[-_:]\s*|volt\.)/i;
  * (Claude), `volt: browser_click` or `volt-browser_click: browser_click` (Cursor).
  */
 /** Pull request tools (registered by the pull request service): safe, they only change Volt's own state. */
-export const PULL_REQUEST_TOOL_NAMES = ['link_pull_request', 'unlink_pull_request', 'list_thread_pull_requests', 'watch_pull_request', 'unwatch_pull_request'] as const;
+export const PULL_REQUEST_TOOL_NAMES = ['link_pull_request', 'unlink_pull_request', 'list_thread_pull_requests', 'watch_pull_request', 'unwatch_pull_request', 'stack_status', 'stack_branch', 'restack_stack'] as const;
+
+/** Scheduled task tools (registered by the schedule service): they only change Volt's own state. */
+export const SCHEDULE_TOOL_NAMES = ['schedule_task', 'list_scheduled_tasks', 'update_scheduled_task', 'delete_scheduled_task', 'run_scheduled_task_now'] as const;
+
+/**
+ * Orchestration tools (registered by the thread tool service): an agent reads, messages, forks and
+ * launches other chats, and manages their queues. They change Volt's own state; mode and caller
+ * checks live in the service.
+ */
+export const THREAD_TOOL_NAMES = [
+	'orchestrator_capabilities',
+	'thread_list',
+	'thread_search',
+	'thread_read',
+	'thread_send',
+	'thread_wait',
+	'thread_interrupt',
+	'thread_fork',
+	'thread_merge_back',
+	'thread_launch',
+	'thread_update',
+	'thread_configure',
+	'queue_list',
+	'queue_edit',
+	'queue_cancel',
+	'queue_reorder',
+	'queue_send_now',
+	'queue_resume',
+	'worktree_status',
+	'worktree_list',
+	'worktree_handoff',
+] as const;
+
+export type VoltThreadToolName = typeof THREAD_TOOL_NAMES[number];
 
 export function voltHostToolName(name?: string, title?: string): string | undefined {
 	for (const raw of [name, title]) {
@@ -418,8 +521,8 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id)) {
-				return id;
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (SCHEDULE_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id)) {
+				return canonicalHostToolName(id);
 			}
 		}
 	}

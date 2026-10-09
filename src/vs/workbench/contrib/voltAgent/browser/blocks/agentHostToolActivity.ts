@@ -3,7 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, PULL_REQUEST_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { isMemoryToolName } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
+import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, THREAD_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /** How one of Volt's own MCP tools reads in the activity trail, the way Cursor words its browser actions. */
 export interface IHostToolActivity {
@@ -77,12 +78,33 @@ export function describeHostToolActivity(name: string | undefined, title: string
 			default: return { tool, label: 'Listed pull requests' };
 		}
 	}
+	if ((THREAD_TOOL_NAMES as readonly string[]).includes(tool)) {
+		return describeThreadActivity(tool, args);
+	}
+	if (isMemoryToolName(tool)) {
+		switch (tool) {
+			case 'memory_list': return { tool, label: 'Checked memories' };
+			case 'memory_read': return { tool, label: 'Recalled memory', detail: text(args.name, 80) };
+			case 'memory_write': return { tool, label: 'Saved memory', detail: text(args.name, 80) };
+			default: return { tool, label: 'Deleted memory', detail: text(args.name, 80) };
+		}
+	}
 	const device = describeDeviceActivity(tool, args);
 	if (device) {
 		return device;
 	}
 	if (tool === IMAGE_INSPECT_TOOL_NAME) {
 		return { tool, label: 'Inspected image', detail: text(args.path, 120) };
+	}
+	// The visual itself shows above the reply; the row only records that it was made.
+	if (tool === RENDER_CHART_TOOL_NAME) {
+		return { tool, label: 'Rendered chart', detail: text(args.title, 80) };
+	}
+	if (tool === RENDER_HTML_TOOL_NAME) {
+		return { tool, label: 'Rendered page', detail: text(args.title, 80) };
+	}
+	if (tool === PREVIEW_HTML_TOOL_NAME) {
+		return { tool, label: 'Previewed page', detail: typeof args.width === 'number' ? `${args.width}px` : undefined };
 	}
 	if (!isBrowserToolName(tool)) {
 		return undefined;
@@ -133,6 +155,68 @@ export function describeHostToolActivity(name: string | undefined, title: string
 		case 'browser_screenshot':
 			return { tool, label: 'Took screenshot' };
 	}
+}
+
+/** A chat id as a short tag (`…3f9a1c`); the row's result names the chat in full. */
+function chatTag(value: unknown): string | undefined {
+	const id = typeof value === 'string' ? value.replace(/^volt:\/\/session\//i, '').trim() : '';
+	return id ? (id.length > 10 ? `…${id.slice(-6)}` : id) : undefined;
+}
+
+/** The orchestration tools: what the agent did to other chats, in the words of the sidebar. */
+function describeThreadActivity(tool: string, args: Record<string, unknown>): IHostToolActivity {
+	const chat = chatTag(args.thread_id);
+	switch (tool) {
+		case 'orchestrator_capabilities':
+			return { tool, label: 'Read orchestration options' };
+		case 'thread_list':
+			return { tool, label: 'Listed chats', detail: text(args.query, 60) ?? (Array.isArray(args.status) ? args.status.join(', ') : undefined) };
+		case 'thread_search':
+			return { tool, label: 'Searched chats', detail: text(args.query, 60) ? `"${text(args.query, 60)}"` : undefined };
+		case 'thread_read':
+			return { tool, label: chat ? 'Read chat' : 'Read this chat', detail: chat };
+		case 'thread_send':
+			return { tool, label: args.mode === 'interrupt' || args.mode === 'restart' ? 'Interrupted chat with' : args.wait === true ? 'Asked chat' : 'Messaged chat', detail: text(args.message, 80) };
+		case 'thread_wait': {
+			const count = (Array.isArray(args.thread_ids) ? args.thread_ids.length : 0) + (args.thread_id ? 1 : 0);
+			return { tool, label: count > 1 ? `Waited for ${count} chats` : 'Waited for chat', detail: count > 1 ? undefined : chatTag(args.thread_id ?? (Array.isArray(args.thread_ids) ? args.thread_ids[0] : undefined)) };
+		}
+		case 'thread_interrupt':
+			return { tool, label: 'Stopped chat', detail: text(args.reason, 60) ?? chat };
+		case 'thread_fork':
+			return { tool, label: chat ? 'Forked chat' : 'Forked this chat', detail: [text(args.title, 50), text(args.model, 40)].filter(Boolean).join(' · ') || undefined };
+		case 'thread_merge_back':
+			return { tool, label: args.apply === true ? 'Merged chat back' : 'Sent fork summary', detail: chat };
+		case 'thread_launch': {
+			const models = Array.isArray(args.models) ? args.models.length : 0;
+			return { tool, label: models > 1 ? `Launched ${models} chats` : 'Launched chat', detail: text(args.title, 60) };
+		}
+		case 'thread_update': {
+			const labels: Record<string, string> = { rename: 'Renamed chat', pin: 'Pinned chat', unpin: 'Unpinned chat', archive: 'Archived chat', unarchive: 'Unarchived chat', settle: 'Settled chat', unsettle: 'Unsettled chat', snooze: 'Snoozed chat', unsnooze: 'Woke chat', mark_unread: 'Marked chat unread', mark_read: 'Marked chat read' };
+			return { tool, label: labels[String(args.action)] ?? 'Updated chat', detail: args.action === 'rename' ? text(args.title, 60) : chat };
+		}
+		case 'thread_configure':
+			return { tool, label: 'Switched chat model', detail: text(args.model, 60) };
+		case 'queue_list':
+			return { tool, label: 'Read queue', detail: chat };
+		case 'queue_edit':
+			return { tool, label: 'Edited queued message', detail: text(args.text, 60) };
+		case 'queue_cancel':
+			return { tool, label: args.all === true ? 'Cleared queue' : 'Removed queued message', detail: chat };
+		case 'queue_reorder':
+			return { tool, label: 'Reordered queue', detail: chat };
+		case 'queue_send_now':
+			return { tool, label: 'Sent queued message now', detail: chat };
+		case 'queue_resume':
+			return { tool, label: 'Resumed queue', detail: chat };
+		case 'worktree_status':
+			return { tool, label: 'Read checkout', detail: chat };
+		case 'worktree_list':
+			return { tool, label: 'Listed worktrees' };
+		case 'worktree_handoff':
+			return { tool, label: 'Moved chat', detail: chat };
+	}
+	return { tool, label: tool };
 }
 
 /** Simulator, emulator and window capture tools. */

@@ -22,6 +22,7 @@ import {
 	findPullRequestUrls,
 	groupAndRank,
 	IAgentPrLink,
+	isReadyToMerge,
 	isTrunkBranch,
 	matchesPrQuery,
 	newLink,
@@ -36,6 +37,7 @@ import {
 	sanitizeCommitSubject,
 	sessionPrFilterTag,
 	shouldSettleForPullRequests,
+	showsPullRequests,
 	startWatch,
 	watchSummary,
 } from '../../common/agentPullRequests.js';
@@ -104,6 +106,14 @@ const check = (name: string, state: IVoltPrCheck['state'], required?: boolean): 
 suite('Volt agent pull requests', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('pull request features need an origin remote; unknown and other remotes get none', () => {
+		assert.strictEqual(showsPullRequests(['origin']), true);
+		assert.strictEqual(showsPullRequests(['upstream', 'origin']), true);
+		assert.strictEqual(showsPullRequests(['upstream']), false);
+		assert.strictEqual(showsPullRequests([]), false);
+		assert.strictEqual(showsPullRequests(undefined), false);
+	});
 
 	test('links: add once, a dismissed branch link is not re-added by discovery but is by the user', () => {
 		let links: readonly IAgentPrLink[] = [];
@@ -309,6 +319,7 @@ suite('Volt agent pull requests', () => {
 		assert.ok(!shouldSettleForPullRequests([merged], { ...chat, pinned: true }));
 		assert.ok(!shouldSettleForPullRequests([merged], { ...chat, busy: true }));
 		assert.ok(!shouldSettleForPullRequests([merged], { ...chat, settled: true }));
+		assert.ok(!shouldSettleForPullRequests([merged], { ...chat, autoSettle: false }), 'Auto-settle turned off for the chat');
 		assert.ok(!shouldSettleForPullRequests([{ ...merged, settleHandled: true }], chat), 'moving it back sticks');
 		assert.ok(!shouldSettleForPullRequests([merged], chat, false), 'merges can be told not to settle');
 		assert.ok(shouldSettleForPullRequests([link(3, 'closed', {}, { closedAt: 900 })], chat, false), 'a close always settles');
@@ -365,6 +376,22 @@ suite('Volt agent pull requests', () => {
 		assert.strictEqual(blockedReason(ready), 'Ready to merge');
 		assert.strictEqual(blockedReason(merged), 'Merged');
 		assert.strictEqual(blockedReason(pr(12, { reviewDecision: 'reviewRequired' })), 'Awaiting review');
+	});
+
+	test('ready to merge: open, mergeable, a clean merge box, and no failing, running or rejecting gate', () => {
+		const noChecks = { state: 'none', total: 0, passed: 0, failed: 0, pending: 0, skipped: 0, failing: [] } as const;
+		assert.strictEqual(isReadyToMerge(pr(1)), true);
+		assert.strictEqual(isReadyToMerge(pr(1, { checks: noChecks })), true);
+		assert.strictEqual(isReadyToMerge(pr(1, { mergeState: 'hasHooks' })), true);
+		assert.strictEqual(isReadyToMerge(pr(1, { state: 'draft' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { state: 'merged' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { mergeable: 'conflicting', mergeState: 'dirty' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { mergeable: 'unknown', mergeState: 'unknown' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { mergeState: 'blocked' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { mergeState: 'behind' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { reviewDecision: 'changesRequested' })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { checks: { state: 'pending', total: 1, passed: 0, failed: 0, pending: 1, skipped: 0, failing: [] } })), false);
+		assert.strictEqual(isReadyToMerge(pr(1, { checks: { state: 'failure', total: 1, passed: 0, failed: 1, pending: 0, skipped: 0, failing: ['ci'] } })), false);
 	});
 
 	test('merge: the method follows the last pick, then the default, then what the repository allows; the main button follows the state', () => {

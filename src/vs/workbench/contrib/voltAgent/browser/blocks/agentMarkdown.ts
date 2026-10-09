@@ -12,11 +12,13 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import type * as marked from '../../../../../base/common/marked/marked.js';
 import { MarkedKatexSupport } from '../../../markdown/browser/markedKatexSupport.js';
 import { ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
-import { IMermaidOptions, preloadMermaid, renderMermaidDiagram } from './agentMermaid.js';
+import { replaceEmojiWithIcons } from './agentEmojiIcons.js';
+import { IMermaidOptions, isMermaidXyChart, preloadMermaid, renderMermaidDiagram, xychartToChartSpec } from './agentMermaid.js';
+import { IVisualHostContext, mountChart, renderVisualSkeleton } from '../visuals/agentVisuals.js';
 
 /**
  * Markdown the way Cursor's transcript draws it: KaTeX math, highlighted code cards,
- * Mermaid diagrams for ```mermaid fences, round task markers, and link favicons.
+ * Mermaid diagrams for ```mermaid fences, round task markers, link favicons, and emoji as line icons.
  */
 
 let mathLoad: Promise<unknown> | undefined;
@@ -33,6 +35,69 @@ export function isMarkdownMathLoaded(win: CodeWindow): boolean {
 
 export interface IAgentMarkdownOptions extends ICodeCardOptions {
 	readonly onExpandDiagram?: IMermaidOptions['onExpand'];
+	/** Draws ```volt-chart fences as native charts. */
+	readonly visualHost?: IVisualHostContext;
+}
+
+const CHART_FENCES = new Set(['volt-chart', 'voltchart', 'chart-json', 'volt-charts']);
+
+/** A ```volt-chart fence once its JSON is complete; undefined while it streams or when it is not a chart. */
+function parseChartFence(value: string): unknown {
+	const trimmed = value.trim();
+	if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+		return undefined;
+	}
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * What a fence draws as a native chart: a ```volt-chart JSON spec, or a mermaid `xychart-beta`
+ * (a data chart written as a diagram) converted to one. `pending` while a chart fence is still
+ * streaming in (draw a skeleton), undefined for anything that is not a chart.
+ */
+export function fenceChartSpec(language: string | undefined, value: string, streaming = false): { readonly spec: unknown; readonly key: string } | 'pending' | undefined {
+	const lang = (language ?? '').trim().toLowerCase();
+	if (CHART_FENCES.has(lang)) {
+		const spec = parseChartFence(value);
+		return spec !== undefined ? { spec, key: fenceKey(value) } : (streaming || !value.trim() ? 'pending' : undefined);
+	}
+	if (lang === 'mermaid' && isMermaidXyChart(value)) {
+		const spec = xychartToChartSpec(value);
+		// Keyed by the spec, so later lines that change nothing (blank, a comment) keep the live chart.
+		return spec ? { spec, key: fenceKey(JSON.stringify(spec)) } : (streaming ? 'pending' : undefined);
+	}
+	return undefined;
+}
+
+/** Draws a chart fence (see `fenceChartSpec`) into `host`; false when the fence is not a chart. */
+export function renderFenceChart(host: HTMLElement, language: string | undefined, value: string, visualHost: IVisualHostContext | undefined, streaming = false): boolean {
+	if (!visualHost) {
+		return false;
+	}
+	const chart = fenceChartSpec(language, value, streaming);
+	if (!chart) {
+		return false;
+	}
+	host.classList.add('volt-md-chart-host');
+	if (chart === 'pending') {
+		renderVisualSkeleton(host, 'chart');
+	} else {
+		mountChart(host, chart.key, chart.spec, visualHost);
+	}
+	return true;
+}
+
+/** Same text, same key: a fence redrawn on every streamed frame keeps one live chart. */
+function fenceKey(value: string): string {
+	let hash = 0;
+	for (let index = 0; index < value.length; index++) {
+		hash = (hash * 31 + value.charCodeAt(index)) | 0;
+	}
+	return `fence:${value.length}:${hash}`;
 }
 
 /** Render options for MarkdownRenderer.render: math, sanitizer for KaTeX output, and Cursor code cards. */
@@ -48,7 +113,10 @@ export function agentMarkdownRenderOptions(win: CodeWindow, options: IAgentMarkd
 		}) : undefined,
 		codeBlockRendererSync: (languageId, value) => {
 			const host = $('div.volt-md-code-host');
-			if ((languageId ?? '').toLowerCase() === 'mermaid') {
+			const language = (languageId ?? '').toLowerCase();
+			if (renderFenceChart(host, language, value, options.visualHost)) {
+				// A native chart (```volt-chart, or a mermaid xychart).
+			} else if (language === 'mermaid') {
 				renderMermaidDiagram(host, value, { ...options, onExpand: options.onExpandDiagram });
 			} else {
 				renderCodeCard(host, languageId, value, options);
@@ -58,10 +126,59 @@ export function agentMarkdownRenderOptions(win: CodeWindow, options: IAgentMarkd
 	};
 }
 
-/** Post-render touches that marked cannot express: task markers and link favicons. */
+/** Post-render touches that marked cannot express: task markers, link favicons, emoji icons and footnote links. */
 export function decorateAgentMarkdown(root: HTMLElement, store: DisposableStore): void {
 	decorateTaskLists(root);
+	replaceEmojiWithIcons(root);
 	decorateLinkFavicons(root, store);
+	linkFootnotes(root, store);
+}
+
+/** How far a footnote jump looks: the whole reply, since a reply renders as several markdown blocks. */
+function footnoteScope(from: Element): Element {
+	return from.closest('.volt-agent-thread-body') ?? from.closest('.volt-agent-markdown') ?? from.ownerDocument.body;
+}
+
+/** The note a superscript ref points at, or the first ref of a note (its back arrow). */
+export function footnoteTarget(from: HTMLElement): HTMLElement | undefined {
+	const scope = footnoteScope(from);
+	if (from.matches('sup.volt-md-footnote-ref')) {
+		const n = from.textContent?.trim();
+		return Array.from(scope.querySelectorAll<HTMLElement>('ol.volt-md-footnotes')).find(note => (note.getAttribute('start') ?? '1') === n)?.querySelector('li') ?? undefined;
+	}
+	const n = from.closest('ol.volt-md-footnotes')?.getAttribute('start') ?? '1';
+	return Array.from(scope.querySelectorAll<HTMLElement>('sup.volt-md-footnote-ref')).find(ref => ref.textContent?.trim() === n);
+}
+
+const FOOTNOTE_FLASH_MS = 1600;
+
+/** Refs jump to their note and the note's back arrow returns, both briefly tinted on arrival. */
+function linkFootnotes(root: HTMLElement, store: DisposableStore): void {
+	const jump = (from: HTMLElement) => {
+		const target = footnoteTarget(from);
+		if (!target) {
+			return;
+		}
+		target.scrollIntoView({ block: 'center', inline: 'nearest' });
+		target.classList.add('volt-md-footnote-flash');
+		const win = target.ownerDocument.defaultView;
+		win?.setTimeout(() => target.classList.remove('volt-md-footnote-flash'), FOOTNOTE_FLASH_MS);
+	};
+	for (const link of root.querySelectorAll<HTMLElement>('sup.volt-md-footnote-ref, .volt-md-footnote-back')) {
+		link.setAttribute('role', 'link');
+		link.tabIndex = 0;
+		store.add(addDisposableListener(link, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			jump(link);
+		}));
+		store.add(addDisposableListener(link, 'keydown', e => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				jump(link);
+			}
+		}));
+	}
 }
 
 /** GFM task items render a disabled checkbox; Cursor draws a round check / empty circle instead. */

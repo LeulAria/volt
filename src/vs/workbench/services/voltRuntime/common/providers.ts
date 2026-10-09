@@ -3,12 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import type { ICompiledPolicy } from './access/accessTypes.js';
 import { IProviderCapabilities } from './capabilities.js';
 import { IVoltEvent } from './events.js';
 import { IModelOptionDescriptor, IVoltModelOptions } from './models/modelOptions.js';
 import { VoltMode } from './modes.js';
+import type { IVoltResourceAttachment } from './fileAttachments.js';
 import { IProviderProfile } from './profiles.js';
 import type { IToolSchema } from './tools/tool.js';
 
@@ -112,6 +114,15 @@ export interface IAgentStartRequest {
 	/** Model the user picked from this agent's catalog, when it exposes one. */
 	modelId?: string;
 	options?: IVoltModelOptions;
+	/** The chat's OS sandbox. Absent or `off`: the agent runs unconfined. */
+	sandbox?: IAgentSandboxStart;
+}
+
+/** What an agent provider needs to start its process in the OS sandbox. */
+export interface IAgentSandboxStart {
+	readonly settings: IVoltSandboxSettings;
+	/** The chat's checkout (and the main repository's `.git` for a linked worktree). */
+	readonly workspaceRoots: readonly string[];
 }
 
 export interface IAgentSessionHandle {
@@ -130,6 +141,8 @@ export interface IAgentMessage {
 	lead?: string;
 	/** Images the user attached to this turn. */
 	images?: readonly IModelImage[];
+	/** Files the user attached to this turn (see `acpResourceBlock`). */
+	resources?: readonly IVoltResourceAttachment[];
 }
 
 export interface IAgentProvider {
@@ -142,6 +155,13 @@ export interface IAgentProvider {
 	 */
 	listModels?(profile: IProviderProfile): Promise<IModelInfo[]>;
 	start(req: IAgentStartRequest): Promise<IAgentSessionHandle>;
+	/**
+	 * The same agent conversation, continued in another folder (`req.cwd`): the chat moved to
+	 * another checkout, and an agent's working directory is fixed per session. A new agent process
+	 * resumes the session there (ACP `session/resume`) and `session` is let go. Undefined when the
+	 * agent cannot resume; the caller then starts a fresh session briefed with a recap.
+	 */
+	resumeIn?(session: IAgentSessionHandle, req: IAgentStartRequest): Promise<IAgentSessionHandle | undefined>;
 	/** False when the CLI process has already exited and the next send must start a new session. */
 	isLive?(session: IAgentSessionHandle): boolean;
 	send(session: IAgentSessionHandle, msg: IAgentMessage, profile: IProviderProfile, token: CancellationToken): AsyncIterable<IVoltEvent>;

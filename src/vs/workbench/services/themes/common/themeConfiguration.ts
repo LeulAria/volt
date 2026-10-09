@@ -286,7 +286,9 @@ export class ThemeConfiguration {
 	}
 
 	public get colorTheme(): string {
-		return this.configurationService.getValue<string>(this.getColorThemeSettingId());
+		const id = this.configurationService.getValue<string>(this.getColorThemeSettingId());
+		// The built-in themes were called "Cursor Dark", "Cursor Light", ...; saved settings keep working.
+		return typeof id === 'string' && id.startsWith('Cursor ') ? `Volt ${id.slice('Cursor '.length)}` : id;
 	}
 
 	public get fileIconTheme(): string | null {

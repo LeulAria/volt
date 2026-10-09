@@ -21,6 +21,7 @@ import {
 	isManagedWorktree,
 	normalizeAgentRunOn,
 	removeAgentWorktree,
+	runOnForPrompt,
 } from '../../../common/git/agentWorktree.js';
 
 const REPO = '/repo';
@@ -31,10 +32,11 @@ suite('Agent worktrees', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('run target defaults to the same branch and only offers that or a new worktree', () => {
-		assert.deepStrictEqual([...AGENT_RUN_ON_OPTIONS], ['same-branch', 'worktree']);
+	test('run target defaults to the same branch and offers that, a new worktree, or the cloud', () => {
+		assert.deepStrictEqual([...AGENT_RUN_ON_OPTIONS], ['same-branch', 'worktree', 'cloud']);
 		assert.strictEqual(normalizeAgentRunOn(undefined), 'same-branch');
-		assert.strictEqual(normalizeAgentRunOn('cloud'), 'same-branch');
+		assert.strictEqual(normalizeAgentRunOn('cloud'), 'cloud');
+		assert.strictEqual(normalizeAgentRunOn('nowhere'), 'same-branch');
 		assert.strictEqual(normalizeAgentRunOn('worktree'), 'worktree');
 		assert.strictEqual(agentRunOnStorageKey('project-1'), 'volt.agent.runOn.project-1');
 		assert.strictEqual(agentRunOnStorageKey(undefined), 'volt.agent.runOn.default');
@@ -380,3 +382,23 @@ function ok(stdout: string): IGitRunResult {
 function fail(stderr: string): IGitRunResult {
 	return { exitCode: 1, stdout: '', stderr };
 }
+
+suite('Agent run location per prompt', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('a new chat starts where the project location says', () => {
+		assert.strictEqual(runOnForPrompt('cloud', false), 'cloud');
+		assert.strictEqual(runOnForPrompt('worktree', false), 'worktree');
+		assert.strictEqual(runOnForPrompt('same-branch', false), 'same-branch');
+	});
+
+	test('a follow-up in a chat with turns never goes to the cloud', () => {
+		assert.strictEqual(runOnForPrompt('cloud', true), 'same-branch');
+	});
+
+	test('a follow-up keeps a local location as it is', () => {
+		assert.strictEqual(runOnForPrompt('worktree', true), 'worktree');
+		assert.strictEqual(runOnForPrompt('same-branch', true), 'same-branch');
+	});
+});

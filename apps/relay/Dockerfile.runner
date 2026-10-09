@@ -1,0 +1,20 @@
+# Volt runner: git + the agent CLIs. Credentials are the operator's (env vars or mounted files);
+# they never pass through the relay.
+FROM node:22-bookworm-slim
+ARG AGENTS="claude codex"
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates procps && rm -rf /var/lib/apt/lists/*
+RUN for agent in $AGENTS; do \
+		case "$agent" in \
+			claude) npm install -g @anthropic-ai/claude-code ;; \
+			codex) npm install -g @openai/codex ;; \
+		esac; \
+	done && npm cache clean --force
+WORKDIR /app
+COPY package.json ./
+COPY bin ./bin
+COPY src ./src
+RUN ln -s /app/bin/volt-runner.mjs /usr/local/bin/volt-runner && chmod +x bin/*.mjs
+# Agents refuse to skip permissions as root; run as the image's unprivileged user.
+USER node
+ENV VOLT_RUNNER_DATA=/home/node/.volt-runner
+CMD ["node", "/app/bin/volt-runner.mjs"]

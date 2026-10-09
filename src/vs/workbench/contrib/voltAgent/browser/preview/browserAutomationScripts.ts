@@ -66,12 +66,14 @@ if (!S.net) {
  * An accessibility snapshot in the YAML shape Cursor shows (role, name, ref, states, children).
  * Wrappers without a role are flattened; hidden nodes and empty text are dropped.
  */
-export function snapshotScript(options: { selector?: string; interactive?: boolean } = {}): string {
+export function snapshotScript(options: { selector?: string; interactive?: boolean; items?: boolean } = {}): string {
 	return `(() => {
 ${RUNTIME}
 const MAX_NODES = 600;
 const SELECTOR = ${JSON.stringify(options.selector ?? null)};
 const ONLY_INTERACTIVE = ${options.interactive === true};
+const WITH_ITEMS = ${options.items === true};
+const items = [];
 let count = 0;
 const INTERACTIVE = new Set(['button', 'link', 'textbox', 'searchbox', 'checkbox', 'radio', 'switch', 'combobox', 'listbox', 'option', 'slider', 'spinbutton', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'treeitem']);
 const LANDMARK = new Set(['heading', 'img', 'navigation', 'main', 'banner', 'contentinfo', 'form', 'dialog', 'alertdialog', 'alert', 'status', 'list', 'listitem', 'table', 'row', 'cell', 'columnheader', 'rowheader', 'region', 'group', 'radiogroup', 'tablist', 'tabpanel', 'menu', 'menubar', 'toolbar', 'grid', 'gridcell', 'article', 'complementary', 'progressbar', 'meter', 'separator']);
@@ -198,6 +200,10 @@ const walk = (el, out) => {
 		count++;
 		const states = statesOf(el, role);
 		if (states.length) { node.states = states; }
+		if (INTERACTIVE.has(role)) {
+			const r = el.getBoundingClientRect();
+			node.box = [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)];
+		}
 		if (role === 'heading') { node.level = Number(el.getAttribute('aria-level')) || Number(tag.slice(1)) || undefined; }
 		if (role === 'textbox' || role === 'searchbox' || role === 'spinbutton' || role === 'slider' || role === 'combobox') {
 			const value = el.isContentEditable ? el.innerText : el.value;
@@ -205,6 +211,7 @@ const walk = (el, out) => {
 			if (tag === 'select' && el.selectedOptions && el.selectedOptions.length) { node.value = clean([...el.selectedOptions].map(o => o.label).join(', ')); }
 		}
 		if (role === 'link' && el.getAttribute('href')) { node.url = el.getAttribute('href').slice(0, 200); }
+		if (WITH_ITEMS && INTERACTIVE.has(role)) { items.push({ ref: node.ref, role, name: node.name, box: node.box, states: node.states, value: node.value }); }
 		out.push(node);
 	}
 	const target = node ? node.children : out;
@@ -237,6 +244,7 @@ const emit = (node, depth) => {
 	if (node.name) { lines.push(pad + '  name: ' + q(node.name)); }
 	if (node.ref) { lines.push(pad + '  ref: ' + node.ref); }
 	if (node.level) { lines.push(pad + '  level: ' + node.level); }
+	if (node.box) { lines.push(pad + '  box: [' + node.box.join(', ') + ']'); }
 	if (node.value !== undefined) { lines.push(pad + '  value: ' + q(node.value)); }
 	if (node.url) { lines.push(pad + '  url: ' + q(node.url)); }
 	if (node.states) { lines.push(pad + '  states: [' + node.states.join(', ') + ']'); }
@@ -252,6 +260,7 @@ return {
 	url: location.href,
 	title: document.title,
 	yaml: lines.join('\\n'),
+	items: WITH_ITEMS ? items : undefined,
 	viewport: { width: innerWidth, height: innerHeight, scrollY: Math.round(doc.scrollTop), scrollHeight: doc.scrollHeight, scrollWidth: doc.scrollWidth },
 };
 })()`;

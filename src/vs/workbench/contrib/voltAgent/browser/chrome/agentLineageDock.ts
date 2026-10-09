@@ -314,6 +314,7 @@ function statusState(kind: OrchThreadStatusKind): ISubagentView['state'] {
 		case 'stopping':
 		case 'delegating':
 		case 'queued':
+		case 'moving':
 			return 'running';
 		case 'needsInput':
 			return 'waiting';
@@ -322,6 +323,7 @@ function statusState(kind: OrchThreadStatusKind): ISubagentView['state'] {
 		case 'interrupted':
 		case 'paused':
 		case 'blocked':
+		case 'limited':
 			return 'interrupted';
 		case 'idle':
 			return 'completed';
@@ -340,6 +342,8 @@ function statusLabel(kind: OrchThreadStatusKind): string {
 		case 'interrupted': return localize('voltAgent.status.interrupted', "Interrupted");
 		case 'paused': return localize('voltAgent.status.paused', "Paused");
 		case 'blocked': return localize('voltAgent.status.blocked', "Waiting to start");
+		case 'moving': return localize('voltAgent.status.moving', "Moving");
+		case 'limited': return localize('voltAgent.status.limited', "Usage limit");
 		case 'idle': return localize('voltAgent.status.idle', "Done");
 	}
 }

@@ -12,6 +12,7 @@ import {
 	AgentSessionStatus,
 	IAgentAssistantEntry,
 	IAgentHistoryIndex,
+	IAgentForkOrigin,
 	IAgentSessionHeader,
 	IAgentSessionMeta,
 	IAgentSessionSearchOptions,
@@ -141,6 +142,7 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 	let model: string | undefined;
 	let worktreePath: string | undefined;
 	let worktreeBranch: string | undefined;
+	let forkOf: IAgentForkOrigin | undefined;
 	for (const entry of entries) {
 		switch (entry.type) {
 			case 'user': {
@@ -179,11 +181,16 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 				if (entry.model !== undefined) {
 					model = entry.model;
 				}
-				if (entry.worktreePath) {
+				// An empty path is a move back to the project's own checkout: it clears the binding.
+				if (entry.worktreePath !== undefined) {
 					worktreePath = entry.worktreePath;
+					worktreeBranch = entry.worktreePath ? worktreeBranch : '';
 				}
 				if (entry.worktreeBranch) {
 					worktreeBranch = entry.worktreeBranch;
+				}
+				if (entry.forkOf) {
+					forkOf = entry.forkOf;
 				}
 				break;
 		}
@@ -195,13 +202,13 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 			folded.push({ id, user: turn.user, assistant: turn.assistant });
 		}
 	}
-	return { header, turns: folded, title, ...(agentTitle ? { agentTitle } : {}), mode, model, worktreePath, worktreeBranch };
+	return { header, turns: folded, title, ...(agentTitle ? { agentTitle } : {}), mode, model, worktreePath, worktreeBranch, ...(forkOf ? { forkOf } : {}) };
 }
 
 /** Records needed to reproduce a transcript without superseded entries. */
 export function compactRecords(transcript: IAgentSessionTranscript): AgentHistoryRecord[] {
 	const records: AgentHistoryRecord[] = [transcript.header];
-	if (transcript.title !== undefined || transcript.agentTitle || transcript.mode !== undefined || transcript.model !== undefined || transcript.worktreePath || transcript.worktreeBranch) {
+	if (transcript.title !== undefined || transcript.agentTitle || transcript.mode !== undefined || transcript.model !== undefined || transcript.worktreePath !== undefined || transcript.worktreeBranch || transcript.forkOf) {
 		records.push({
 			type: 'meta',
 			at: transcript.header.createdAt,
@@ -209,8 +216,9 @@ export function compactRecords(transcript: IAgentSessionTranscript): AgentHistor
 			...(transcript.agentTitle ? { agentTitle: transcript.agentTitle } : {}),
 			mode: transcript.mode,
 			model: transcript.model,
-			...(transcript.worktreePath ? { worktreePath: transcript.worktreePath } : {}),
+			...(transcript.worktreePath !== undefined ? { worktreePath: transcript.worktreePath } : {}),
 			...(transcript.worktreeBranch ? { worktreeBranch: transcript.worktreeBranch } : {}),
+			...(transcript.forkOf ? { forkOf: transcript.forkOf } : {}),
 		});
 	}
 	for (const turn of transcript.turns) {
@@ -310,20 +318,39 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 		pinned: previous?.pinned,
 		archived: previous?.archived,
 		settled: previous?.settled,
+		autoSettle: previous?.autoSettle,
+		unsettledAt: previous?.unsettledAt,
 		snoozed: previous?.snoozed,
 		snoozedUntil: previous?.snoozedUntil,
 		wokeAt: previous?.wokeAt,
 		lastPromptAt: last?.user.at,
+		lastUserPromptAt: lastUserPromptAt(transcript),
 		hasDraft: previous?.hasDraft,
 		unread: previous?.unread,
 		attention: previous?.attention,
 		mode: transcript.mode ?? previous?.mode,
 		model: transcript.model ?? previous?.model,
-		worktreePath: transcript.worktreePath ?? previous?.worktreePath,
-		worktreeBranch: transcript.worktreeBranch ?? previous?.worktreeBranch,
+		// '' in the log: the chat moved back to the project's checkout.
+		worktreePath: transcript.worktreePath !== undefined ? transcript.worktreePath || undefined : previous?.worktreePath,
+		worktreeBranch: transcript.worktreePath === '' ? undefined : transcript.worktreeBranch || previous?.worktreeBranch,
+		forkOf: transcript.forkOf ?? previous?.forkOf,
 		parentId: transcript.header.parentId ?? previous?.parentId,
 		subagent: transcript.header.subagent || previous?.subagent || undefined,
 	};
+}
+
+/**
+ * The latest prompt the user wrote. The editor marks the turns Volt starts itself (a subagent
+ * report, a delegated brief, pull request news) with an `origin` in the stored message.
+ */
+function lastUserPromptAt(transcript: IAgentSessionTranscript): number | undefined {
+	for (let i = transcript.turns.length - 1; i >= 0; i--) {
+		const message = transcript.turns[i].user.message;
+		if (!message || typeof message !== 'object' || (message as { origin?: unknown }).origin === undefined) {
+			return transcript.turns[i].user.at;
+		}
+	}
+	return undefined;
 }
 
 /**

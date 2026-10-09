@@ -102,7 +102,7 @@ export async function main(argv: string[]): Promise<any> {
 
 	// Version Info
 	else if (args.version) {
-		console.log(buildVersionMessage(product.version, product.commit));
+		console.log(buildVersionMessage(product.voltVersion ?? product.version, product.commit));
 	}
 
 	// Shell integration

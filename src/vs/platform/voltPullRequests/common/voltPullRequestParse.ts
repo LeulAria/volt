@@ -8,7 +8,9 @@ import {
 	IVoltPrChecksSummary,
 	IVoltPrComment,
 	IVoltPrCommit,
+	IVoltGitStatusFile,
 	IVoltPrFile,
+	IVoltPrFilePatch,
 	IVoltPrLabel,
 	IVoltPrRepoRef,
 	IVoltPrReview,
@@ -17,6 +19,7 @@ import {
 	IVoltPrUser,
 	IVoltPullRequest,
 	IVoltPullRequestDetail,
+	VoltGitFileStatus,
 	VoltPrCheckState,
 	VoltPrChecksState,
 	VoltPrErrorCode,
@@ -29,6 +32,7 @@ import {
 	VoltPrState,
 	VoltPrViewedState,
 } from './voltPullRequests.js';
+import { hostName, hostProductLabel, parseChangeRequestUrl, providerForKnownHost } from './voltPrHosts.js';
 
 //#region Remotes
 
@@ -44,7 +48,7 @@ export interface IParsedRemote {
  * (`dev.azure.com/org/project/_git/repo`, `org@vs-ssh.visualstudio.com:v3/org/project/repo`).
  * `githubHosts` are hosts with a GitHub CLI login, so Enterprise servers count as GitHub.
  */
-export function parseRemoteUrl(url: string, githubHosts: ReadonlySet<string> = new Set()): IParsedRemote | undefined {
+export function parseRemoteUrl(url: string, githubHosts: ReadonlySet<string> = new Set(), knownHosts?: ReadonlyMap<string, VoltPrProvider>): IParsedRemote | undefined {
 	const raw = url.trim();
 	if (!raw) {
 		return undefined;
@@ -65,19 +69,24 @@ export function parseRemoteUrl(url: string, githubHosts: ReadonlySet<string> = n
 		if (!/^(https?|ssh|git|git\+ssh):$/.test(parsed.protocol)) {
 			return undefined;
 		}
-		host = parsed.hostname;
+		// The web port is part of the host (a server on :3000); an SSH port is not where the API is.
+		host = /^https?:$/.test(parsed.protocol) ? parsed.host : parsed.hostname;
 		path = decodeURIComponent(parsed.pathname);
 	}
 	host = host.toLowerCase();
 	const parts = path.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').split('/').filter(Boolean);
-	if (host === 'dev.azure.com' || host.endsWith('.dev.azure.com') || host.endsWith('.visualstudio.com')) {
-		// https: org/project/_git/repo; ssh: v3/org/project/repo
-		const git = parts.indexOf('_git');
-		if (git >= 1 && parts[git + 1]) {
-			return { host: 'dev.azure.com', owner: parts.slice(0, git).join('/'), name: parts[git + 1], provider: 'azure' };
-		}
+	const bare = hostName(host);
+	if (bare === 'dev.azure.com' || bare.endsWith('.dev.azure.com') || bare.endsWith('.visualstudio.com')) {
+		// https: org/project/_git/repo (org.visualstudio.com/[DefaultCollection/]project/_git/repo); ssh: v3/org/project/repo
 		if (parts[0] === 'v3' && parts.length >= 4) {
 			return { host: 'dev.azure.com', owner: `${parts[1]}/${parts[2]}`, name: parts[3], provider: 'azure' };
+		}
+		const git = parts.indexOf('_git');
+		if (git >= 1 && parts[git + 1]) {
+			const before = parts.slice(0, git).filter(part => part.toLowerCase() !== 'defaultcollection');
+			const org = bare.endsWith('.visualstudio.com') && !bare.startsWith('vs-ssh.') ? bare.slice(0, -'.visualstudio.com'.length) : undefined;
+			const owner = (org ? [org, ...before] : before).slice(0, 2).join('/');
+			return owner.includes('/') ? { host: 'dev.azure.com', owner, name: parts[git + 1], provider: 'azure' } : undefined;
 		}
 		return undefined;
 	}
@@ -87,27 +96,15 @@ export function parseRemoteUrl(url: string, githubHosts: ReadonlySet<string> = n
 	// GitLab groups nest; everything before the last segment is the namespace.
 	const name = parts[parts.length - 1];
 	const owner = parts.slice(0, -1).join('/');
-	return { host, owner, name, provider: providerForHost(host, githubHosts) };
+	return { host, owner, name, provider: knownHosts?.get(host) ?? providerForHost(host, githubHosts) };
 }
 
 export function providerForHost(host: string, githubHosts: ReadonlySet<string> = new Set()): VoltPrProvider {
 	const h = host.toLowerCase();
-	if (h === 'github.com' || h === 'ssh.github.com' || h.endsWith('.ghe.com') || githubHosts.has(h)) {
+	if (githubHosts.has(h)) {
 		return 'github';
 	}
-	if (h === 'gitlab.com' || h.startsWith('gitlab.')) {
-		return 'gitlab';
-	}
-	if (h === 'bitbucket.org' || h.startsWith('bitbucket.')) {
-		return 'bitbucket';
-	}
-	if (h === 'codeberg.org' || h === 'gitea.com' || h.startsWith('gitea.') || h.startsWith('forgejo.')) {
-		return 'gitea';
-	}
-	if (h === 'dev.azure.com' || h.endsWith('.dev.azure.com') || h.endsWith('.visualstudio.com')) {
-		return 'azure';
-	}
-	return 'unknown';
+	return providerForKnownHost(h);
 }
 
 /** `ssh.github.com` is GitHub's SSH-over-443 alias; the API lives on github.com. */
@@ -116,40 +113,17 @@ export function apiHost(host: string): string {
 }
 
 export function providerLabel(provider: VoltPrProvider): string {
-	switch (provider) {
-		case 'github': return 'GitHub';
-		case 'gitlab': return 'GitLab';
-		case 'bitbucket': return 'Bitbucket';
-		case 'gitea': return 'Gitea / Forgejo';
-		case 'azure': return 'Azure DevOps';
-		case 'unknown': return 'this host';
-	}
+	return hostProductLabel(provider);
 }
 
 export function prKey(repo: IVoltPrRepoRef, number: number): string {
 	return `${repo.host}/${repo.owner}/${repo.name}#${number}`.toLowerCase();
 }
 
-/** `https://github.com/o/n/pull/12` (and Enterprise hosts) → repo and number. */
+/** A pull request (merge request) URL on any host Volt knows (see {@link parseChangeRequestUrl}) → repo and number. */
 export function parsePullRequestUrl(url: string): { repo: IVoltPrRepoRef; number: number } | undefined {
-	let parsed: URL;
-	try {
-		parsed = new URL(url.trim());
-	} catch {
-		return undefined;
-	}
-	if (!/^https?:$/.test(parsed.protocol)) {
-		return undefined;
-	}
-	const match = /^\/([^/]+)\/([^/]+)\/pulls?\/(\d+)(?:\/.*)?$/.exec(parsed.pathname);
-	if (!match) {
-		return undefined;
-	}
-	const number = Number(match[3]);
-	if (!Number.isSafeInteger(number) || number <= 0) {
-		return undefined;
-	}
-	return { repo: { host: parsed.hostname.toLowerCase(), owner: match[1], name: match[2].replace(/\.git$/i, '') }, number };
+	const parsed = parseChangeRequestUrl(url);
+	return parsed ? { repo: parsed.repo, number: parsed.number } : undefined;
 }
 
 //#endregion
@@ -587,6 +561,122 @@ export function parsePullRequestDetail(raw: Json, repoRaw: Json, repo: IVoltPrRe
 /** A GraphQL string literal. */
 export function gqlString(value: string): string {
 	return JSON.stringify(value);
+}
+
+//#endregion
+
+//#region Local git
+
+/** A REST file entry (`pulls/N/files`, `commits/SHA`) with its patch. */
+export function parseFilePatch(raw: Json): IVoltPrFilePatch {
+	const previousPath = raw?.previous_filename;
+	return {
+		path: str(raw?.filename),
+		...(typeof previousPath === 'string' && previousPath && previousPath !== raw?.filename ? { previousPath } : {}),
+		change: parseRestFileChange(raw?.status),
+		additions: num(raw?.additions),
+		deletions: num(raw?.deletions),
+		...(typeof raw?.patch === 'string' && raw.patch ? { patch: raw.patch } : {}),
+		...(raw?.status !== 'removed' && typeof raw?.sha === 'string' && /^[0-9a-f]{40,64}$/.test(raw.sha) ? { blob: raw.sha } : {}),
+	};
+}
+
+export function parseRestFileChange(value: unknown): VoltPrFileChange {
+	switch (value) {
+		case 'added': return 'added';
+		case 'removed': return 'deleted';
+		case 'renamed': return 'renamed';
+		case 'copied': return 'copied';
+		case 'modified': return 'modified';
+		default: return 'changed';
+	}
+}
+
+export interface IParsedGitStatus {
+	readonly branch?: string;
+	readonly head?: string;
+	readonly upstream?: string;
+	readonly ahead: number;
+	readonly behind: number;
+	readonly files: IVoltGitStatusFile[];
+}
+
+/** `git status --porcelain=v2 --branch -z`: branch, upstream, ahead/behind and the changed files (no line counts). */
+export function parseGitStatusV2(text: string): IParsedGitStatus {
+	const entries = text.split('\0');
+	let branch: string | undefined;
+	let head: string | undefined;
+	let upstream: string | undefined;
+	let ahead = 0;
+	let behind = 0;
+	const files: IVoltGitStatusFile[] = [];
+	for (let i = 0; i < entries.length; i++) {
+		const entry = entries[i];
+		if (!entry) {
+			continue;
+		}
+		if (entry.startsWith('# branch.oid ')) {
+			const oid = entry.slice('# branch.oid '.length);
+			head = /^[0-9a-f]{7,64}$/.test(oid) ? oid : undefined;
+		} else if (entry.startsWith('# branch.head ')) {
+			const head = entry.slice('# branch.head '.length);
+			branch = head === '(detached)' ? undefined : head;
+		} else if (entry.startsWith('# branch.upstream ')) {
+			upstream = entry.slice('# branch.upstream '.length);
+		} else if (entry.startsWith('# branch.ab ')) {
+			const match = /^\+(\d+) -(\d+)$/.exec(entry.slice('# branch.ab '.length));
+			if (match) {
+				ahead = Number(match[1]);
+				behind = Number(match[2]);
+			}
+		} else if (entry.startsWith('1 ')) {
+			// 1 XY sub mH mI mW hH hI path
+			const parts = entry.split(' ');
+			files.push({ path: parts.slice(8).join(' '), status: statusFromXY(parts[1]), additions: 0, deletions: 0 });
+		} else if (entry.startsWith('2 ')) {
+			// 2 XY sub mH mI mW hH hI Xscore path, then the original path as the next entry
+			const parts = entry.split(' ');
+			const previousPath = entries[++i];
+			files.push({ path: parts.slice(9).join(' '), ...(previousPath ? { previousPath } : {}), status: 'renamed', additions: 0, deletions: 0 });
+		} else if (entry.startsWith('u ')) {
+			const parts = entry.split(' ');
+			files.push({ path: parts.slice(10).join(' '), status: 'conflicted', additions: 0, deletions: 0 });
+		} else if (entry.startsWith('? ')) {
+			files.push({ path: entry.slice(2), status: 'untracked', additions: 0, deletions: 0 });
+		}
+	}
+	return { ...(branch ? { branch } : {}), ...(head ? { head } : {}), ...(upstream ? { upstream } : {}), ahead, behind, files };
+}
+
+function statusFromXY(xy: string): VoltGitFileStatus {
+	if (xy.includes('D')) {
+		return 'deleted';
+	}
+	if (xy.includes('A')) {
+		return 'added';
+	}
+	return 'modified';
+}
+
+/** `git diff --numstat -z`: added and deleted lines by path (binary files count 0). */
+export function parseNumstat(text: string): Map<string, { additions: number; deletions: number }> {
+	const stats = new Map<string, { additions: number; deletions: number }>();
+	const entries = text.split('\0');
+	for (let i = 0; i < entries.length; i++) {
+		const entry = entries[i];
+		const match = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(entry);
+		if (!match) {
+			continue;
+		}
+		let path = match[3];
+		if (!path) {
+			// A rename: the old and new paths follow as their own entries.
+			i++;
+			path = entries[++i] ?? '';
+		}
+		stats.set(path, { additions: match[1] === '-' ? 0 : Number(match[1]), deletions: match[2] === '-' ? 0 : Number(match[2]) });
+	}
+	return stats;
 }
 
 //#endregion

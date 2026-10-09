@@ -23,12 +23,15 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { URI } from '../../../../base/common/uri.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+import { AgentUpdateButtonContribution } from '../../voltAgent/browser/update/agentUpdateButton.js';
 
 const workbench = Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench);
 
 workbench.registerWorkbenchContribution(ProductContribution, LifecyclePhase.Restored);
 workbench.registerWorkbenchContribution(UpdateContribution, LifecyclePhase.Restored);
 workbench.registerWorkbenchContribution(SwitchProductQualityContribution, LifecyclePhase.Restored);
+// Volt: the update button and popover in the agent sidebar footer.
+workbench.registerWorkbenchContribution(AgentUpdateButtonContribution, LifecyclePhase.Restored);
 
 // Release notes
 

@@ -61,6 +61,8 @@ export class FreshTextTracker {
 	}
 }
 
+const TABLE_PARTS = new Set(['TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'COLGROUP']);
+
 function commonPrefixLength(a: string, b: string): number {
 	const max = Math.min(a.length, b.length);
 	let i = 0;
@@ -78,7 +80,8 @@ function wrapFreshText(roots: readonly HTMLElement[], chunks: readonly IChunk[],
 		for (let node = walker.nextNode(); node; node = walker.nextNode()) {
 			const length = node.nodeValue?.length ?? 0;
 			// Chips (inline code, file paths), links, quotes and math render as they are; only prose fades in.
-			if (!node.parentElement?.closest(FRESH_TEXT_SKIP)) {
+			// The line breaks between table parts stay bare: a span in a row becomes an extra cell.
+			if (!node.parentElement?.closest(FRESH_TEXT_SKIP) && !TABLE_PARTS.has(node.parentElement?.tagName ?? '')) {
 				nodes.push({ node: node as Text, start: offset });
 			}
 			offset += length;

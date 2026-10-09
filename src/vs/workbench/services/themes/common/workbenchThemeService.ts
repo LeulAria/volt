@@ -39,9 +39,9 @@ export enum ThemeSettings {
 }
 
 export enum ThemeSettingDefaults {
-	COLOR_THEME_DARK = 'Cursor Dark',
-	COLOR_THEME_LIGHT = 'Cursor Light',
-	COLOR_THEME_HC_DARK = 'Cursor Dark High Contrast',
+	COLOR_THEME_DARK = 'Volt Dark',
+	COLOR_THEME_LIGHT = 'Volt Light',
+	COLOR_THEME_HC_DARK = 'Volt Dark High Contrast',
 	COLOR_THEME_HC_LIGHT = 'Default High Contrast Light',
 
 	COLOR_THEME_DARK_OLD = 'Default Dark+',

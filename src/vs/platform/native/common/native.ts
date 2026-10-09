@@ -169,6 +169,8 @@ export interface ICommonNativeHostService {
 	isRunningUnderARM64Translation(): Promise<boolean>;
 
 	getOSProperties(): Promise<IOSProperties>;
+	/** The computer's display name, e.g. "LeulAria MacBook Pro". May include bidi marks from macOS. */
+	getComputerName(): Promise<string>;
 	getOSStatistics(): Promise<IOSStatistics>;
 	getOSVirtualMachineHint(): Promise<number>;
 

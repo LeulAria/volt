@@ -321,7 +321,7 @@ export class NotificationsCenter extends Themable implements INotificationsCente
 	override updateStyles(): void {
 		if (this.notificationsCenterContainer && this.notificationsCenterHeader) {
 			const widgetShadowColor = this.getColor(widgetShadow);
-			this.notificationsCenterContainer.style.boxShadow = widgetShadowColor ? `0 0 8px 2px ${widgetShadowColor}` : '';
+			this.notificationsCenterContainer.style.boxShadow = widgetShadowColor ? `0 8px 24px -4px ${widgetShadowColor}, 0 2px 6px -2px ${widgetShadowColor}` : '';
 
 			const borderColor = this.getColor(NOTIFICATIONS_CENTER_BORDER);
 			this.notificationsCenterContainer.style.border = borderColor ? `1px solid ${borderColor}` : '';

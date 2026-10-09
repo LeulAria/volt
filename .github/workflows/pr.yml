@@ -18,6 +18,7 @@ env:
 jobs:
   compile:
     name: Compile & Hygiene
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     runs-on: [ self-hosted, 1ES.Pool=1es-vscode-oss-ubuntu-22.04-x64 ]
     steps:
       - name: Checkout microsoft/vscode

@@ -7,8 +7,10 @@ import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import type { IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { VoltAccessMode } from './access/accessModes.js';
 import { AccessDecisionScope, IAccessRequest, IExecutionReceipt, IPermissionRule, PermissionEffect } from './access/accessTypes.js';
+import type { IHandoffActivity } from './contextHandoff.js';
 import { IVoltEventEnvelope } from './events.js';
 import { VoltMode } from './modes.js';
 import { IVoltModelOptions } from './models/modelOptions.js';
@@ -33,6 +35,8 @@ export interface IVoltTaskModels {
 	tab?: string;
 	/** Model for chat titles and other generated text. Falls back to the chat's own model. */
 	title?: string;
+	/** Model for commit messages and pull request titles and descriptions. Falls back to the text generation model. */
+	git?: string;
 }
 
 /** An MCP server from the project or user config, and how its connection is doing. */
@@ -44,6 +48,23 @@ export interface IVoltMcpServerStatus {
 	readonly state: 'idle' | 'connecting' | 'ready' | 'error';
 }
 
+/** A message of a chat's model transcript as history restores it. */
+export interface IVoltSeedMessage {
+	readonly role: 'user' | 'assistant';
+	readonly content: string;
+	readonly model?: string;
+	readonly activity?: IHandoffActivity;
+	readonly compacted?: boolean;
+}
+
+export interface IVoltCompactionPlan {
+	readonly kind: 'native' | 'handoff';
+	/** `handoff`: estimated tokens the conversation compacts to. */
+	readonly tokens?: number;
+	/** The model the chat compacts for. */
+	readonly label?: string;
+}
+
 export interface IAgentRuntimeService extends IVoltModelAccess {
 	readonly _serviceBrand: undefined;
 	readonly onDidChangeCatalog: Event<void>;
@@ -52,17 +73,42 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	readonly onDidChangeAccess: Event<void>;
 
 	getOrCreateSession(key: string): IVoltSession;
-	/** Restore a session's model transcript from durable history when it has none yet. */
-	seedSession(key: string, messages: readonly { role: 'user' | 'assistant'; content: string }[]): void;
+	/**
+	 * Restore a session's model transcript from durable history when it has none yet. `forkedFrom`
+	 * marks a fork, so its first agent is briefed as one.
+	 */
+	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: { readonly forkedFrom?: string }): void;
+	/**
+	 * How `/compact` would run in this chat on `providerRef` now: the agent's own (`native`: Claude
+	 * Code's `/compact`, Codex's, or Volt's summarizer for native models), or Volt's handoff summary
+	 * and a fresh session (`handoff`, with its estimated size). Undefined when there is nothing to compact.
+	 */
+	compactionPlan(sessionId: string, providerRef: string | undefined): IVoltCompactionPlan | undefined;
 	/**
 	 * The user rewrote history: keep only the first `userTurns` user messages (and the replies
 	 * between them). Model-side transcripts are cut to match, so the old turns are forgotten.
 	 */
 	truncateSession(sessionId: string, userTurns: number): void;
+	/**
+	 * Stops the chat's agent so its next prompt starts a fresh one, which reads skills, plugins,
+	 * MCP servers and rules again and gets the conversation as a recap. Also drops what a fresh
+	 * agent would otherwise reuse (parked spares, cached skills, failed MCP servers).
+	 * False, with nothing changed, while a run is active, unless `cancel` stops that run first.
+	 */
+	restartAgent(sessionId: string, options?: { readonly cancel?: boolean }): Promise<boolean>;
 	/** Starts the selected ACP agent ahead of the first message. No-op for native models. */
 	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void;
 	/** Restore the checkout a chat already created, so a reload does not fall through to the open folder. */
 	rememberWorktree(sessionId: string, path: string | undefined, branch: string | undefined): void;
+	/**
+	 * The chat moved to another checkout (`path` undefined: the project's own). Its next turn runs
+	 * there: an ACP agent resumes its session in the new folder when it can, else a fresh one is
+	 * briefed with the conversation. `note` opens that turn for the model; `announce` is the
+	 * transcript notice it starts with. Refused while a turn runs.
+	 */
+	relocate(sessionId: string, path: string | undefined, branch: string | undefined, note: { readonly model: string; readonly announce: string }): boolean;
+	/** The checkout a chat works in now: its worktree, else the project folder. */
+	workingFolder(sessionId: string): string | undefined;
 	send(sessionId: string, request: IVoltSendRequest): Promise<string>;
 	/** A run that takes messages between steps is live in this chat (native loop, or an ACP agent with steering). */
 	canSteer(sessionId: string): boolean;
@@ -116,6 +162,11 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 
 	getAccessMode(): VoltAccessMode;
 	setAccessMode(mode: VoltAccessMode): Promise<void>;
+	/** The chat's OS sandbox, or the default for chats that never set one. */
+	getSandboxSettings(sessionId: string): IVoltSandboxSettings;
+	setSandboxSettings(sessionId: string, settings: IVoltSandboxSettings): Promise<void>;
+	getDefaultSandboxSettings(): IVoltSandboxSettings;
+	setDefaultSandboxSettings(settings: IVoltSandboxSettings): Promise<void>;
 	respondToAccessRequest(requestId: string, effect: Extract<PermissionEffect, 'allow' | 'deny'>, scope?: AccessDecisionScope, pattern?: string): void;
 	/** Questions an agent is waiting on in this chat, oldest first. */
 	getPendingQuestions(sessionId: string): readonly IAgentQuestionRequest[];
@@ -142,7 +193,7 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	/**
 	 * One small tool-less call for generated text (commit messages, pull request descriptions):
 	 * the text generation model when one is set in Settings, else the chat's model, else the first
-	 * enabled one. Undefined when no model answered.
+	 * enabled one. The `git` slot tries the git text model first. Undefined when no model answered.
 	 */
-	generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number }): Promise<string | undefined>;
+	generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number; readonly slot?: 'title' | 'git' }): Promise<string | undefined>;
 }

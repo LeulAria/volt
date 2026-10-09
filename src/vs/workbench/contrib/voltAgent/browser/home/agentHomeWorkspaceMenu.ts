@@ -15,7 +15,7 @@ import { isEqual } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { createHomeBitbucketIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeGitLabIcon, createHomeLaptopIcon, createHomeOpenWorkspaceIcon } from './agentHomeIcons.js';
+import { createHomeBitbucketIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeGitLabIcon, createHomeLaptopIcon } from './agentHomeIcons.js';
 import {
 	AGENT_CLONE_PROVIDERS,
 	AGENT_HOME_RECENT_LIMIT,
@@ -24,7 +24,7 @@ import {
 	cloneProviderPlaceholder,
 	filterAgentHomeWorkspaceEntries,
 	IAgentHomeWorkspaceEntry,
-	newFolderNameProblem,
+	newProjectNameProblem,
 	resolveCloneUrl,
 } from './agentHomeWorkspace.js';
 
@@ -33,7 +33,7 @@ export interface IAgentHomeWorkspaceMenuHost {
 	readonly entries: readonly IAgentHomeWorkspaceEntry[];
 	/** The project the menu was opened from; its rows get a check. */
 	readonly current?: URI;
-	/** Where new, cloned and scratch folders are made, as a path label. */
+	/** Where cloned and scratch folders are made, as a path label. */
 	location(): string;
 	/** Asks for another location and keeps it for next time. */
 	changeLocation(): Promise<void>;
@@ -44,20 +44,20 @@ export interface IAgentHomeWorkspaceMenuHost {
 	/** The Add Project dialog on its GitHub tab: your repositories, searchable. */
 	browseGitHub(): Promise<void>;
 	startFromScratch(): Promise<void>;
-	/** Resolves with a message when the folder could not be made. */
-	createFolder(name: string): Promise<string | undefined>;
+	/** A repository from just a name, open in a new chat. Resolves with a message when it could not be made. */
+	createProject(name: string): Promise<string | undefined>;
 	/** Resolves with a message when the clone failed. */
 	clone(url: string): Promise<string | undefined>;
 	/** A failure that lands after the menu closed. */
 	reportError(message: string): void;
 }
 
-type FlyoutKind = 'mac' | 'existing' | 'clone' | 'newFolder';
+type FlyoutKind = 'mac' | 'clone' | 'newProject';
 
 /**
- * Open Workspace popover on the sidebar's project header: Recents, On This
- * Mac (search, pick one or several), Start from scratch, Use Existing (open a
- * folder or clone from a host), New Folder. Same panel look as the filter menu.
+ * Open Workspace popover on the sidebar's project header: Recents, then under
+ * Repos — Start from scratch, Local folder, On This Mac (search, pick one or
+ * several), and the clone hosts inline. Same panel look as the filter menu.
  */
 export function showAgentHomeWorkspaceMenu(
 	contextViewService: IContextViewService,
@@ -99,7 +99,10 @@ interface IRowOptions {
 	readonly description?: string;
 	/** Present on multi-select rows: whether the box is ticked. */
 	readonly checked?: boolean;
+	/** Hover submenu. Draws a chevron and opens on hover or Right. */
 	readonly submenu?: FlyoutKind;
+	/** Row the open flyout lines up with. Defaults to `submenu`. */
+	readonly flyout?: string;
 	/** The project the menu was opened from: a trailing check. */
 	readonly current?: boolean;
 	readonly onClick?: () => void;
@@ -117,12 +120,14 @@ class AgentHomeWorkspaceMenu extends Disposable {
 
 	private query = '';
 	private flyoutKind: FlyoutKind | undefined;
+	/** `mac`, or `clone:<provider>` for the host whose form is open. */
+	private flyoutKey: string | undefined;
 	private macQuery = '';
 	private multiple = false;
 	private readonly selected = new Map<string, IAgentHomeWorkspaceEntry>();
 	private cloneProvider: AgentCloneProvider = 'github';
 	private cloneUrl = '';
-	private folderName = '';
+	private projectName = '';
 	private busy = false;
 	private error: string | undefined;
 
@@ -205,31 +210,50 @@ class AgentHomeWorkspaceMenu extends Disposable {
 
 		this.heading(this.body, localize('voltAgent.workspace.repos', "Repos"));
 		this.row(this.body, store, {
-			label: localize('voltAgent.workspace.onThisMac', "On This Mac"),
-			icon: createHomeLaptopIcon(),
-			submenu: 'mac',
-			onHover: () => this.openFlyout('mac'),
-		});
-		this.row(this.body, store, {
 			label: localize('voltAgent.workspace.fromScratch', "Start from scratch"),
 			icon: Codicon.add,
 			onClick: () => this.run(() => this.host.startFromScratch()),
 			onHover: closeHover,
 		});
-		this.separator(this.body);
 		this.row(this.body, store, {
-			label: localize('voltAgent.workspace.useExisting', "Use Existing..."),
-			icon: Codicon.folderOpened,
-			submenu: 'existing',
-			onHover: () => this.openFlyout('existing'),
-		});
-		this.row(this.body, store, {
-			label: localize('voltAgent.workspace.newFolder', "New Folder"),
-			icon: createHomeOpenWorkspaceIcon(),
-			submenu: 'newFolder',
-			onClick: () => this.openFlyout('newFolder', true),
+			label: localize('voltAgent.workspace.newProject', "New Project..."),
+			icon: Codicon.repo,
+			flyout: 'newProject',
+			onClick: () => this.openFlyout('newProject', true),
 			onHover: closeHover,
 		});
+		this.row(this.body, store, {
+			label: localize('voltAgent.workspace.localFolder', "Local folder"),
+			icon: Codicon.folderOpened,
+			onClick: () => this.run(() => this.host.browse()),
+			onHover: closeHover,
+		});
+		this.row(this.body, store, {
+			label: localize('voltAgent.workspace.onThisMac', "On This Mac"),
+			icon: createHomeLaptopIcon(),
+			submenu: 'mac',
+			onHover: () => this.openFlyout('mac'),
+		});
+		this.separator(this.body);
+		this.heading(this.body, localize('voltAgent.workspace.cloneFrom', "Clone Repository"));
+		this.row(this.body, store, {
+			label: localize('voltAgent.workspace.browseGitHub', "Your GitHub repositories..."),
+			icon: Codicon.github,
+			onClick: () => this.run(() => this.host.browseGitHub()),
+			onHover: closeHover,
+		});
+		for (const provider of AGENT_CLONE_PROVIDERS) {
+			this.row(this.body, store, {
+				label: cloneProviderLabel(provider),
+				icon: providerIcon(provider),
+				flyout: cloneFlyoutKey(provider),
+				onClick: () => {
+					this.cloneProvider = provider;
+					this.openFlyout('clone', true);
+				},
+				onHover: closeHover,
+			});
+		}
 		this.syncExpanded();
 	}
 
@@ -246,18 +270,20 @@ class AgentHomeWorkspaceMenu extends Disposable {
 			return;
 		}
 		if (!kind) {
-			if (this.flyoutKind === 'mac' || this.flyoutKind === 'existing') {
+			if (this.flyoutKind === 'mac') {
 				this.hideFlyout();
 			}
 			return;
 		}
-		if (this.flyoutKind === kind && !this.flyout.classList.contains('hidden')) {
+		const key = kind === 'clone' ? cloneFlyoutKey(this.cloneProvider) : kind;
+		if (this.flyoutKey === key && !this.flyout.classList.contains('hidden')) {
 			if (focus) {
 				this.focusFlyout();
 			}
 			return;
 		}
 		this.flyoutKind = kind;
+		this.flyoutKey = key;
 		this.error = undefined;
 		this.paintFlyout();
 		if (focus) {
@@ -267,9 +293,11 @@ class AgentHomeWorkspaceMenu extends Disposable {
 
 	private hideFlyout(): void {
 		this.flyoutKind = undefined;
+		this.flyoutKey = undefined;
 		this.flyoutStore.clear();
 		clearNode(this.flyout);
 		this.flyout.classList.add('hidden');
+		this.flyout.classList.remove('mac');
 		this.syncExpanded();
 	}
 
@@ -282,19 +310,17 @@ class AgentHomeWorkspaceMenu extends Disposable {
 		this.flyoutStore.clear();
 		clearNode(this.flyout);
 		this.flyout.classList.remove('hidden');
-		this.flyout.classList.toggle('form', kind === 'clone' || kind === 'newFolder');
+		this.flyout.classList.toggle('mac', kind === 'mac');
+		this.flyout.classList.toggle('form', kind === 'clone' || kind === 'newProject');
 		switch (kind) {
 			case 'mac':
 				this.paintMac();
 				break;
-			case 'existing':
-				this.paintExisting();
-				break;
 			case 'clone':
 				this.paintClone();
 				break;
-			case 'newFolder':
-				this.paintNewFolder();
+			case 'newProject':
+				this.paintNewProject();
 				break;
 			default: {
 				const unexpected: never = kind;
@@ -389,7 +415,7 @@ class AgentHomeWorkspaceMenu extends Disposable {
 			if (!matches.length) {
 				this.note(list, this.macQuery.trim()
 					? localize('voltAgent.workspace.noMatches', "No folders match")
-					: localize('voltAgent.workspace.noFolders', "No folders yet. Open one below."));
+					: localize('voltAgent.workspace.noFolders', "No folders yet."));
 			}
 			for (const entry of matches) {
 				const key = entry.uri.toString();
@@ -424,42 +450,6 @@ class AgentHomeWorkspaceMenu extends Disposable {
 		}));
 		paintSelected();
 		paintList();
-
-		this.separator(this.flyout);
-		this.row(this.flyout, store, {
-			label: localize('voltAgent.workspace.openFolder', "Open Folder"),
-			icon: Codicon.folderOpened,
-			onClick: () => {
-				this.run(() => this.host.browse());
-			},
-		});
-	}
-
-	/** Use Existing: a folder already on disk, or a clone from a Git host. */
-	private paintExisting(): void {
-		const store = this.flyoutStore;
-		this.row(this.flyout, store, {
-			label: localize('voltAgent.workspace.openFolderEllipsis', "Open Folder..."),
-			icon: Codicon.folderOpened,
-			onClick: () => this.run(() => this.host.browse()),
-		});
-		this.separator(this.flyout);
-		this.heading(this.flyout, localize('voltAgent.workspace.cloneFrom', "Clone Repository"));
-		this.row(this.flyout, store, {
-			label: localize('voltAgent.workspace.browseGitHub', "Your GitHub repositories..."),
-			icon: Codicon.github,
-			onClick: () => this.run(() => this.host.browseGitHub()),
-		});
-		for (const provider of AGENT_CLONE_PROVIDERS) {
-			this.row(this.flyout, store, {
-				label: cloneProviderLabel(provider),
-				icon: providerIcon(provider),
-				onClick: () => {
-					this.cloneProvider = provider;
-					this.openFlyout('clone', true);
-				},
-			});
-		}
 	}
 
 	/** Paste a repository URL (or owner/repo on a host) and clone it into the location. */
@@ -474,7 +464,9 @@ class AgentHomeWorkspaceMenu extends Disposable {
 		store.add(addDisposableListener(back, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
-			this.openFlyout('existing', true);
+			const provider = this.cloneProvider;
+			this.hideFlyout();
+			this.menu.querySelector<HTMLElement>(`[data-flyout="${cloneFlyoutKey(provider)}"]`)?.focus();
 		}));
 		const title = append(header, $('span.title'));
 		const icon = providerIcon(this.cloneProvider);
@@ -526,26 +518,27 @@ class AgentHomeWorkspaceMenu extends Disposable {
 		await this.whileBusy(() => this.host.clone(url));
 	}
 
-	/** New Folder: a name, created inside the location. */
-	private paintNewFolder(): void {
+	/** New Project: a name; the project becomes a repository with a README and a first commit. */
+	private paintNewProject(): void {
 		const store = this.flyoutStore;
-		this.heading(this.flyout, localize('voltAgent.workspace.newFolder', "New Folder"));
+		this.heading(this.flyout, localize('voltAgent.workspace.newProjectHeading', "New Project"));
 		const form = append(this.flyout, $('.volt-agent-home-workspace-form'));
-		const name = this.input(form, localize('voltAgent.workspace.folderName', "Folder name"));
+		const name = this.input(form, localize('voltAgent.workspace.projectName', "Project name"));
 		name.classList.add('field');
-		name.value = this.folderName;
+		name.value = this.projectName;
 		name.disabled = this.busy;
-		name.setAttribute('aria-label', localize('voltAgent.workspace.folderName', "Folder name"));
 		this.location(form, store, localize('voltAgent.workspace.createIn', "Create in"));
 		const message = append(form, $('.volt-agent-home-workspace-error'));
 		message.textContent = this.error ?? '';
-		const submit = this.submit(form, store, localize('voltAgent.workspace.create', "Create"), () => void this.submitNewFolder());
+		const submit = this.submit(form, store, this.busy
+			? localize('voltAgent.workspace.creating', "Creating...")
+			: localize('voltAgent.workspace.create', "Create"), () => void this.submitNewProject());
 		const sync = () => {
 			submit.disabled = this.busy || !name.value.trim();
 		};
 		sync();
 		store.add(addDisposableListener(name, 'input', () => {
-			this.folderName = name.value;
+			this.projectName = name.value;
 			this.error = undefined;
 			message.textContent = '';
 			sync();
@@ -553,24 +546,25 @@ class AgentHomeWorkspaceMenu extends Disposable {
 		store.add(addDisposableListener(name, 'keydown', e => {
 			if (e.key === 'Enter') {
 				e.preventDefault();
-				void this.submitNewFolder();
+				void this.submitNewProject();
 			}
 		}));
+		submit.classList.toggle('busy', this.busy);
 	}
 
-	private async submitNewFolder(): Promise<void> {
+	private async submitNewProject(): Promise<void> {
 		if (this.busy) {
 			return;
 		}
-		const problem = newFolderNameProblem(this.folderName);
+		const problem = newProjectNameProblem(this.projectName);
 		if (problem) {
 			this.error = problem;
 			this.paintFlyout();
 			this.focusFlyout();
 			return;
 		}
-		const name = this.folderName.trim();
-		await this.whileBusy(() => this.host.createFolder(name));
+		const name = this.projectName.trim();
+		await this.whileBusy(() => this.host.createProject(name));
 	}
 
 	/** Runs a form action with its inputs locked. Closes on success, shows the message on failure. */
@@ -622,9 +616,8 @@ class AgentHomeWorkspaceMenu extends Disposable {
 	}
 
 	private syncExpanded(): void {
-		const owner = this.flyoutKind === 'clone' ? 'existing' : this.flyoutKind;
 		for (const row of this.menu.querySelectorAll<HTMLElement>('[data-flyout]')) {
-			const open = row.dataset.flyout === owner;
+			const open = !!this.flyoutKey && row.dataset.flyout === this.flyoutKey;
 			row.classList.toggle('expanded', open);
 			row.setAttribute('aria-expanded', String(open));
 		}
@@ -635,8 +628,7 @@ class AgentHomeWorkspaceMenu extends Disposable {
 		if (this.flyout.classList.contains('hidden')) {
 			return;
 		}
-		const owner = this.flyoutKind === 'clone' ? 'existing' : this.flyoutKind;
-		const row = owner ? this.menu.querySelector<HTMLElement>(`[data-flyout="${owner}"]`) : null;
+		const row = this.flyoutKey ? this.menu.querySelector<HTMLElement>(`[data-flyout="${this.flyoutKey}"]`) : null;
 		const win = getWindow(this.container);
 		const box = this.container.getBoundingClientRect();
 		const width = this.flyout.offsetWidth;
@@ -683,8 +675,12 @@ class AgentHomeWorkspaceMenu extends Disposable {
 	private row(parent: HTMLElement, store: DisposableStore, options: IRowOptions): HTMLButtonElement {
 		const row = append(parent, $('button.volt-agent-home-filter-row.volt-agent-home-workspace-row')) as HTMLButtonElement;
 		row.type = 'button';
+		const flyout = options.flyout ?? options.submenu;
+		if (flyout) {
+			row.dataset.flyout = flyout;
+		}
 		if (options.submenu) {
-			row.dataset.flyout = options.submenu;
+			row.dataset.submenu = options.submenu;
 			row.setAttribute('aria-haspopup', 'true');
 		}
 		if (options.checked !== undefined) {
@@ -710,7 +706,7 @@ class AgentHomeWorkspaceMenu extends Disposable {
 			row.setAttribute('aria-current', 'true');
 			trailing.appendChild(renderIcon(Codicon.check));
 		}
-		if (options.submenu && options.submenu !== 'newFolder') {
+		if (options.submenu) {
 			trailing.appendChild(renderIcon(Codicon.chevronRight));
 		}
 		if (options.onHover) {
@@ -789,7 +785,7 @@ class AgentHomeWorkspaceMenu extends Disposable {
 				return;
 			}
 			case 'ArrowRight': {
-				const kind = target.dataset.flyout as FlyoutKind | undefined;
+				const kind = target.dataset.submenu as FlyoutKind | undefined;
 				if (!isInput && kind) {
 					e.preventDefault();
 					this.openFlyout(kind, true);
@@ -799,8 +795,9 @@ class AgentHomeWorkspaceMenu extends Disposable {
 			case 'ArrowLeft': {
 				if (inFlyout && !isInput) {
 					e.preventDefault();
-					const owner = this.flyoutKind === 'clone' ? 'existing' : this.flyoutKind;
-					this.menu.querySelector<HTMLElement>(`[data-flyout="${owner}"]`)?.focus();
+					if (this.flyoutKey) {
+						this.menu.querySelector<HTMLElement>(`[data-flyout="${this.flyoutKey}"]`)?.focus();
+					}
 				}
 				return;
 			}
@@ -808,6 +805,10 @@ class AgentHomeWorkspaceMenu extends Disposable {
 	}
 
 	//#endregion
+}
+
+function cloneFlyoutKey(provider: AgentCloneProvider): string {
+	return `clone:${provider}`;
 }
 
 function providerIcon(provider: AgentCloneProvider): ThemeIcon | HTMLElement {

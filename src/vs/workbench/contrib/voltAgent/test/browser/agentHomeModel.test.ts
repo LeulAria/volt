@@ -13,6 +13,8 @@ import {
 	AGENT_HOME_GROUP_LIMIT,
 	AGENT_HOME_WEEK_LIMIT,
 	agentHomeAddStart,
+	agentHomeLiveWork,
+	AgentHomeWorkState,
 	agentPanelTabsMode,
 	buildAgentHomeTree,
 	compactSessionAge,
@@ -29,11 +31,16 @@ import {
 	sessionMetaParts,
 	sessionShowsStatusBadge,
 	sessionStatusBadge,
+	sessionInWorkingShelf,
 	sessionsWithOpenDrafts,
+	sessionWorkState,
+	sortWorkingSessions,
 	uniqueHomeFolders,
 	unsentDraftForFolder,
 } from '../../browser/home/agentHomeModel.js';
 import { IAgentRepoInfo } from '../../browser/home/agentRepoInfo.js';
+import { IOrchState, IOrchTask, IOrchThread } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { AGENT_SCRATCH_WORKSPACE_ID } from '../../browser/home/agentHomeWorkspace.js';
 
 function session(id: string, extra: Partial<IAgentSessionMeta> = {}): IAgentSessionMeta {
 	return {
@@ -164,6 +171,18 @@ suite('Agent home list model', () => {
 		const workspaces = section(tree);
 		assert.ok(workspaces.element.type === 'section' && workspaces.element.key === 'workspaces' && workspaces.element.filter);
 		assert.deepStrictEqual(projectLabels(workspaces), ['volt']);
+	});
+
+	test('chats without a project share one No Project group, not a group per scratch folder', () => {
+		const tree = buildAgentHomeTree([folder('/tmp/volt', { current: true })], [
+			session('repo', { workspaceFolder: '/tmp/volt' }),
+			session('a', { workspaceId: AGENT_SCRATCH_WORKSPACE_ID, workspaceLabel: 'No Project', workspaceFolder: '/h/.volt/scratch/2026-10-06-a-11111111', updatedAt: 5 }),
+			session('b', { workspaceId: AGENT_SCRATCH_WORKSPACE_ID, workspaceLabel: 'No Project', workspaceFolder: '/h/.volt/scratch/2026-10-06-b-22222222', updatedAt: 6 }),
+		], view());
+		assert.deepStrictEqual(projectLabels(section(tree)).sort(), ['No Project', 'volt']);
+		const scratch = section(tree).children?.find(child => child.element.type === 'folder' && child.element.project.label === 'No Project');
+		assert.deepStrictEqual(sessionIds(scratch), ['b', 'a']);
+		assert.ok(scratch?.element.type === 'folder' && !scratch.element.project.folder, 'the group has no folder to start a chat in');
 	});
 
 	test('nests agent tabs under their project, newest first', () => {
@@ -499,14 +518,16 @@ suite('Agent home list model', () => {
 		assert.strictEqual(sessionMetaParts(chat, context, view({ show: ['machine'] }), 1_000_000).length, 1);
 	});
 
-	test('status badge: input, working time, woke, done, draft, limited, failed; none when stopped or idle; only for inbox tabs', () => {
+	test('status badge: input, working time, woke, done, draft, limit reached, failed, stopped; none when idle; only for inbox tabs', () => {
 		const now = 10 * 60_000;
 		assert.deepStrictEqual(sessionStatusBadge(session('w', { status: 'running', lastPromptAt: now - 2 * 60_000 }), now), { kind: 'working', label: 'Working 2m' });
 		assert.deepStrictEqual(sessionStatusBadge(session('d', { status: 'done' }), now), { kind: 'done', label: 'Done' });
 		assert.deepStrictEqual(sessionStatusBadge(session('n', { status: 'idle', turnCount: 0 }), now), { kind: 'draft', label: 'Draft' });
 		assert.strictEqual(sessionStatusBadge(session('i', { status: 'idle', turnCount: 2 }), now), undefined);
-		assert.strictEqual(sessionStatusBadge(session('c', { status: 'cancelled' }), now), undefined);
-		assert.deepStrictEqual(sessionStatusBadge(session('l', { status: 'error', summary: 'Usage limit reached · resets 3:20 AM' }), now), { kind: 'limited', label: 'Limited' });
+		assert.deepStrictEqual(sessionStatusBadge(session('c', { status: 'cancelled' }), now), { kind: 'stopped', label: 'Stopped' });
+		assert.deepStrictEqual(sessionStatusBadge(session('l', { status: 'error', summary: 'Usage limit reached · resets 3:20 AM' }), now), { kind: 'limited', label: 'Limit reached' });
+		assert.deepStrictEqual(sessionStatusBadge(session('h', { status: 'done', summary: 'You\u2019ve hit your limit · resets 5pm (Asia/Dubai)' }), now), { kind: 'limited', label: 'Limit reached' });
+		assert.deepStrictEqual(sessionStatusBadge(session('r', { status: 'done', summary: 'Added a retry when the API rate limit is hit' }), now), { kind: 'done', label: 'Done' });
 		assert.deepStrictEqual(sessionStatusBadge(session('f', { status: 'error', summary: 'Connection reset' }), now), { kind: 'failed', label: 'Failed' });
 		assert.deepStrictEqual(sessionStatusBadge(session('a', { status: 'running', attention: 'approval' }), now), { kind: 'input', label: 'Input' });
 		assert.deepStrictEqual(sessionStatusBadge(session('q', { status: 'running', attention: 'question' }), now), { kind: 'input', label: 'Input' });
@@ -519,6 +540,101 @@ suite('Agent home list model', () => {
 		assert.ok(!sessionShowsStatusBadge(session('x'), view({ show: ['updated'] })));
 		assert.ok(!sessionShowsStatusBadge(session('x', { settled: true }), view()));
 		assert.ok(!sessionShowsStatusBadge(session('x', { snoozed: true }), view()));
+	});
+
+	test('working state: a running turn or subagents at work, never a chat that needs the user', () => {
+		assert.strictEqual(sessionWorkState(session('r', { status: 'running' })), 'working');
+		assert.strictEqual(sessionWorkState(session('a', { status: 'running', attention: 'approval' })), undefined);
+		assert.strictEqual(sessionWorkState(session('q', { status: 'done', attention: 'question' }), 'delegating'), undefined);
+		assert.strictEqual(sessionWorkState(session('d', { status: 'done' })), undefined);
+		assert.strictEqual(sessionWorkState(session('d', { status: 'done', unread: true }), 'delegating'), 'delegating', 'a reply that only says it delegated keeps the chat waiting');
+		assert.strictEqual(sessionWorkState(session('e', { status: 'error' }), 'delegating'), undefined, 'a failure needs the user');
+		assert.strictEqual(sessionWorkState(session('i', { status: 'interrupted' })), undefined);
+		assert.strictEqual(sessionWorkState(session('s', { status: 'done' }), 'working'), 'working', 'a turn starting before history records it');
+		assert.ok(!sessionInWorkingShelf(session('p', { status: 'running', pinned: true })), 'pinned chats stay pinned');
+		assert.ok(!sessionInWorkingShelf(session('z', { status: 'running', settled: true })));
+		assert.ok(sessionInWorkingShelf(session('w', { status: 'running' })));
+	});
+
+	test('live work from the orchestrator: active turns, and idle parents of running Volt subagents', () => {
+		const thread = (id: string, extra: Partial<IOrchThread> = {}): IOrchThread => ({ id, rootId: id, depth: 0, createdAt: 0, queue: [], inputs: [], turns: 1, handoffs: [], ...extra });
+		const task = (id: string, parentId: string, state: IOrchTask['state'], source: IOrchTask['source'] = 'volt'): IOrchTask => ({ id, source, parentId, rootId: parentId, title: id, role: 'general', origin: 'agent', brief: '', isolation: 'shared', depth: 1, createdAt: 0, state, steps: 0, files: [], delivery: 'none', rounds: 0 });
+		const turn = { id: 't', kind: 'prompt' as const, prompt: { text: 'x' }, at: 0, phase: 'running' as const };
+		const state: Pick<IOrchState, 'threads' | 'tasks'> = {
+			threads: {
+				running: thread('running', { active: turn }),
+				asking: thread('asking', { active: turn, inputs: [{ id: 'i', kind: 'approval', at: 0 }] }),
+				parent: thread('parent'),
+				blocked: thread('blocked'),
+				finished: thread('finished'),
+				harness: thread('harness'),
+			},
+			tasks: {
+				a: task('a', 'parent', 'running'),
+				b: task('b', 'parent', 'completed'),
+				c: task('c', 'blocked', 'running'),
+				d: task('d', 'blocked', 'waiting'),
+				e: task('e', 'finished', 'completed'),
+				f: task('f', 'harness', 'running', 'harness'),
+			},
+		};
+		assert.deepStrictEqual([...agentHomeLiveWork(state)].sort(), [['parent', 'delegating'], ['running', 'working']]);
+	});
+
+	test('working shelf: busy chats fold into a collapsed Working group, last sent first, in every grouping', () => {
+		const folders = [folder('/tmp/volt', { current: true })];
+		const live = new Map<string, AgentHomeWorkState>([['waiting', 'delegating']]);
+		const sessions = [
+			session('done', { workspaceFolder: '/tmp/volt', status: 'done', updatedAt: 50 }),
+			session('older', { workspaceFolder: '/tmp/volt', status: 'running', lastPromptAt: 10, updatedAt: 60 }),
+			session('newer', { workspaceFolder: '/tmp/volt', status: 'running', lastPromptAt: 30, updatedAt: 40 }),
+			session('waiting', { workspaceFolder: '/tmp/volt', status: 'done', lastPromptAt: 20, unread: true }),
+			session('ask', { workspaceFolder: '/tmp/volt', status: 'running', attention: 'question' }),
+			session('pin', { workspaceFolder: '/tmp/volt', status: 'running', pinned: true }),
+		];
+		const options = { workingShelf: true, live };
+
+		const projects = buildAgentHomeTree(folders, sessions, view(), options);
+		assert.deepStrictEqual(sessionIds(section(projects).children?.[0]), ['done', 'ask']);
+		const group = projects.find(node => node.element.type === 'group');
+		assert.ok(group?.element.type === 'group' && group.element.id === 'working' && group.element.count === 3);
+		assert.strictEqual(group.collapsed, true);
+		assert.deepStrictEqual(sessionIds(group), ['newer', 'waiting', 'older']);
+		assert.ok(allSessionIds(projects).includes('pin'));
+
+		const updated = buildAgentHomeTree(folders, sessions, view({ grouping: 'updated' }), { ...options, now: 100 });
+		assert.deepStrictEqual(updated.flatMap(node => node.element.type === 'group' ? [node.element.id] : []), ['working']);
+
+		// Status grouping keeps its headers: Working moves below Done, folded, with its count.
+		const status = buildAgentHomeTree(folders, [...sessions, session('parked', { status: 'done', settled: true })], view({ grouping: 'status' }), options);
+		assert.deepStrictEqual(headers(status), ['pinned', 'needsAttention', 'done', 'working', 'settled']);
+		const working = status.find(node => node.element.type === 'bucket' && node.element.id === 'working')!;
+		assert.ok(working.element.type === 'bucket' && working.element.count === 3 && working.collapsed);
+
+		// Off: the old layout, busy chats in their project and an expanded Working status header.
+		assert.ok(!buildAgentHomeTree(folders, sessions, view(), { live }).some(node => node.element.type === 'group'));
+		assert.deepStrictEqual(headers(buildAgentHomeTree(folders, sessions, view({ grouping: 'status' }), { live })), ['pinned', 'needsAttention', 'working', 'done']);
+	});
+
+	test('working shelf: an all-busy flat list keeps its filter header without the empty note', () => {
+		const tree = buildAgentHomeTree([], [session('r', { status: 'running' })], view({ grouping: 'updated' }), { workingShelf: true });
+		assert.deepStrictEqual(tree.map(node => node.element.type), ['section', 'group']);
+		assert.deepStrictEqual(tree[0].children, []);
+	});
+
+	test('the Working shelf orders by the user\'s own prompts, not Volt\'s wake-ups', () => {
+		const ids = sortWorkingSessions([
+			session('a', { createdAt: 1, lastPromptAt: 90, lastUserPromptAt: 10 }),
+			session('b', { createdAt: 1, lastPromptAt: 20 }),
+			session('c', { createdAt: 30 }),
+		]).map(s => s.id);
+		assert.deepStrictEqual(ids, ['c', 'b', 'a']);
+	});
+
+	test('status badge says Waiting while subagents run, and Working while a turn starts', () => {
+		assert.deepStrictEqual(sessionStatusBadge(session('d', { status: 'done', unread: true }), 0, 'delegating'), { kind: 'working', label: 'Waiting' });
+		assert.deepStrictEqual(sessionStatusBadge(session('s', { status: 'done' }), 0, 'working'), { kind: 'working', label: 'Working' });
+		assert.strictEqual(sessionStatusBadge(session('e', { status: 'error', summary: 'boom' }), 0, 'delegating')?.kind, 'failed');
 	});
 
 	test('a snoozed tab counts down to its return', () => {

@@ -12,7 +12,7 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { NotificationsList } from './notificationsList.js';
 import { Event, Emitter } from '../../../../base/common/event.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
-import { NOTIFICATIONS_TOAST_BORDER, NOTIFICATIONS_BACKGROUND } from '../../../common/theme.js';
+import { NOTIFICATIONS_TOAST_BORDER } from '../../../common/theme.js';
 import { IThemeService, Themable } from '../../../../platform/theme/common/themeService.js';
 import { widgetShadow } from '../../../../platform/theme/common/colorRegistry.js';
 import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
@@ -486,11 +486,11 @@ export class NotificationsToasts extends Themable implements INotificationsToast
 
 	override updateStyles(): void {
 		this.mapNotificationToToast.forEach(({ toast }) => {
-			const backgroundColor = this.getColor(NOTIFICATIONS_BACKGROUND);
-			toast.style.background = backgroundColor ? backgroundColor : '';
+			// Volt: the see-through background comes from notificationsToasts.css
+			// (--vscode-notifications-background at 80%), so it is not set inline here.
 
 			const widgetShadowColor = this.getColor(widgetShadow);
-			toast.style.boxShadow = widgetShadowColor ? `0 0 8px 2px ${widgetShadowColor}` : '';
+			toast.style.boxShadow = widgetShadowColor ? `0 8px 24px -4px ${widgetShadowColor}, 0 2px 6px -2px ${widgetShadowColor}` : '';
 
 			const borderColor = this.getColor(NOTIFICATIONS_TOAST_BORDER);
 			toast.style.border = borderColor ? `1px solid ${borderColor}` : '';

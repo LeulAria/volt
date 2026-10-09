@@ -45,7 +45,7 @@ import { IBannerService } from '../services/banner/browser/bannerService.js';
 import { IPaneCompositePartService } from '../services/panecomposite/browser/panecomposite.js';
 import { AuxiliaryBarPart } from './parts/auxiliarybar/auxiliaryBarPart.js';
 import { stampLayoutModeChrome } from './parts/titlebar/agentLayoutChrome.js';
-import { AGENT_LEFT_SIDEBAR_HIDDEN_KEY, AGENT_TOOLS_VISIBILITY_EVENT, agentNeedsSidebarDrawer, agentStartupSidebarWidth, LAYOUT_MODE_STORAGE_KEY, readStoredLayoutModeValue } from './parts/titlebar/layoutModeStartup.js';
+import { AGENT_LEFT_SIDEBAR_HIDDEN_KEY, AGENT_SIDEBAR_RAIL_CLASS, AGENT_SIDEBAR_RAIL_EVENT, AGENT_SIDEBAR_RAIL_KEY, AGENT_SIDEBAR_RAIL_WIDTH, AGENT_TOOLS_VISIBILITY_EVENT, agentNeedsSidebarDrawer, agentStartupSidebarWidth, LAYOUT_MODE_STORAGE_KEY, readStoredLayoutModeValue } from './parts/titlebar/layoutModeStartup.js';
 import { ITelemetryService } from '../../platform/telemetry/common/telemetry.js';
 import { IAuxiliaryWindowService } from '../services/auxiliaryWindow/browser/auxiliaryWindowService.js';
 import { CodeWindow, mainWindow } from '../../base/browser/window.js';
@@ -350,6 +350,18 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			if (this.initialized && this.updateAgentDrawerMode()) {
 				this.layout();
 			}
+		}));
+		// The rail turned on or off: its class already changed the column's limits; size it to `detail.width`.
+		this._register(addDisposableListener(this.mainContainer, AGENT_SIDEBAR_RAIL_EVENT, e => {
+			if (!this.initialized) {
+				return;
+			}
+			this.updateAgentDrawerMode();
+			const width = (e as CustomEvent<{ readonly width?: number } | undefined>).detail?.width;
+			if (!this.agentDrawerMode && typeof width === 'number' && this.isVisible(Parts.AUXILIARYBAR_PART)) {
+				this.workbenchGrid.resizeView(this.auxiliaryBarPartView, { width, height: this.workbenchGrid.getViewSize(this.auxiliaryBarPartView).height });
+			}
+			this.layout();
 		}));
 
 
@@ -791,6 +803,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		const mode = readStoredLayoutModeValue(stored, location !== 'left');
 		if (mode === 'ide') {
 			this.stateModel.setRuntimeValue(LayoutStateKeys.SIDEBAR_POSITON, Position.LEFT);
+			this.mainContainer.classList.remove(AGENT_SIDEBAR_RAIL_CLASS);
 			stampLayoutModeChrome(this.mainContainer, false, 0);
 			return;
 		}
@@ -807,7 +820,10 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 
 		const hideLeftSidebar = this.storageService.getBoolean(AGENT_LEFT_SIDEBAR_HIDDEN_KEY, StorageScope.PROFILE, false);
 		const windowWidth = this._mainContainerDimension?.width ?? 0;
-		const openWidth = agentStartupSidebarWidth(
+		// The rail has one width; the list's own width stays saved for when it opens again.
+		const rail = this.storageService.getBoolean(AGENT_SIDEBAR_RAIL_KEY, StorageScope.PROFILE, false);
+		this.mainContainer.classList.toggle(AGENT_SIDEBAR_RAIL_CLASS, rail);
+		const openWidth = rail ? AGENT_SIDEBAR_RAIL_WIDTH : agentStartupSidebarWidth(
 			this.stateModel.getInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE),
 			false,
 			{
@@ -2367,7 +2383,13 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		const root = this.mainContainer;
 		const agent = root.classList.contains('volt-layout-agent');
 		const toolsOpen = !!root.querySelector(':scope > .volt-agent-tools-area:not(.hidden):not(.floating)');
-		const drawer = agent && agentNeedsSidebarDrawer(this._mainContainerDimension.width, AuxiliaryBarPart.AGENT_DEFAULT_WIDTH, toolsOpen);
+		// The right-edge sidebar (Files / Source Control / Pull Requests) inside the tools area
+		// takes a column of its own; count it so the list folds away when it opens in a tight window.
+		const edge = toolsOpen ? root.querySelector<HTMLElement>(':scope > .volt-agent-tools-area:not(.hidden):not(.floating) .volt-agent-files-sidebar:not(.hidden)') : null;
+		const edgeWidth = edge ? (edge.offsetWidth || 300) : 0;
+		// The rail is narrow enough to stay a column in any window.
+		const rail = root.classList.contains(AGENT_SIDEBAR_RAIL_CLASS);
+		const drawer = agent && !rail && agentNeedsSidebarDrawer(this._mainContainerDimension.width, AuxiliaryBarPart.AGENT_DEFAULT_WIDTH, toolsOpen, edgeWidth);
 		if (drawer === this.agentDrawerMode) {
 			return false;
 		}

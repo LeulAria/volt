@@ -9,6 +9,10 @@ import { INativeHostService } from '../../../../platform/native/common/native.js
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { getLayoutMode, onDidChangeLayoutMode } from '../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IWorkbenchLayoutService } from '../../../services/layout/browser/layoutService.js';
+// Desktop-only: the app icon badge for chats that finished in the background.
+import './voltBadge.contribution.js';
+// Desktop-only Volt diagnostics (tracing, stall log, heap snapshots).
+import '../../voltDiagnostics/electron-browser/voltDiagnostics.contribution.js';
 
 class VoltAgentWindowChromeContribution extends Disposable implements IWorkbenchContribution {
 

@@ -1,0 +1,34 @@
+name: Volt Beta
+
+on:
+  push:
+    tags:
+      - 'v*-beta*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, e.g. 0.0.1-beta.2 (empty = <package.json>-beta.<run number>)'
+        default: ''
+      platforms:
+        description: 'Targets (comma-separated) or "all"'
+        default: all
+      publish:
+        description: Publish the release and update the feed
+        type: boolean
+        default: true
+
+concurrency:
+  group: volt-release-beta-${{ github.ref }}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/volt-build.yml
+    secrets: inherit
+    with:
+      channel: beta
+      version: ${{ inputs.version || '' }}
+      platforms: ${{ inputs.platforms || 'all' }}
+      publish: ${{ github.event_name == 'push' || inputs.publish }}

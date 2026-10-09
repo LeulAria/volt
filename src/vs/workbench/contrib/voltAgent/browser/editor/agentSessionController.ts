@@ -5,18 +5,21 @@
 
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { alwaysAllowPattern } from '../../../../services/voltRuntime/common/access/wildcard.js';
 import { mergeToolInput } from '../../../../services/voltRuntime/common/acpToolInput.js';
 import { IVoltEvent, IVoltEventEnvelope, IVoltToolDiff } from '../../../../services/voltRuntime/common/events.js';
+import type { IVoltVisualRef } from '../../../../services/voltRuntime/common/hostTools.js';
 import { runStatusLine } from '../../../../services/voltRuntime/common/harness/workLog.js';
 import { AgentSessionAttention, AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { appendProviderNotice, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IFileChangeBlock, IPlanBlock, isExploreTool, isFileChangeTool, isPlanTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments } from '../blocks/agentBlocks.js';
+import { appendProviderNotice, appendSandboxDenial, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isPlanTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments, isHiddenExploreToolBlock } from '../blocks/agentBlocks.js';
 import { sameHostToolArgs } from '../blocks/agentHostToolActivity.js';
-import { classifySupervisionNotice } from '../chrome/agentTimeline.js';
+import { classifySupervisionNotice, stampTodoSteps } from '../chrome/agentTimeline.js';
 import { agentMessagePlainText } from '../context/agentContextUsage.js';
 import { extractToolImage } from '../preview/browserSnapshot.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
@@ -52,6 +55,8 @@ export interface IAgentTurnSpec {
 	readonly origin?: IAgentUserMessage['origin'];
 	readonly taskIds?: readonly string[];
 	readonly handoff?: IAgentUserMessage['handoff'];
+	readonly scheduled?: IAgentUserMessage['scheduled'];
+	readonly fromThread?: IAgentUserMessage['fromThread'];
 }
 
 export interface IAgentSessionChange {
@@ -81,12 +86,59 @@ export function hasPendingApproval(message: IAgentAssistantMessage): boolean {
 		segment.kind === 'block' && segment.block.type === 'approval' && !segment.block.blocked && !segment.block.decision && segment.block.status === 'streaming');
 }
 
+function applyCompactionUpdate(compaction: IAgentCompaction, event: Extract<IVoltEvent, { type: 'context.compaction' }>): void {
+	if (event.status) {
+		compaction.status = event.status;
+	}
+	if (event.trigger) {
+		compaction.trigger = event.trigger;
+	}
+	if (event.preTokens !== undefined) {
+		compaction.preTokens = event.preTokens;
+	}
+	if (event.postTokens !== undefined) {
+		compaction.postTokens = event.postTokens;
+	}
+	if (event.durationMs !== undefined) {
+		compaction.durationMs = event.durationMs;
+	}
+	if (event.summary !== undefined) {
+		compaction.summary = event.summary || undefined;
+	}
+	if (event.summaryDelta) {
+		compaction.summary = (compaction.summary ?? '') + event.summaryDelta;
+	}
+	if (event.error) {
+		compaction.error = event.error;
+	}
+}
+
+/**
+ * When a turn ends, a compaction it left running ends the way the turn did. A `/compact` turn the
+ * agent never reported a compaction for, and that answered in words instead, loses its placeholder.
+ */
+function settleCompactions(reply: IAgentAssistantMessage, outcome: IAgentCompaction['status']): void {
+	const answered = reply.segments.some(segment => segment.kind === 'text' && segment.text.trim());
+	for (let i = reply.segments.length - 1; i >= 0; i--) {
+		const segment = reply.segments[i];
+		if (segment.kind !== 'compaction' || segment.compaction.status !== 'running') {
+			continue;
+		}
+		if (segment.compaction.provisional && outcome === 'completed' && answered) {
+			reply.segments.splice(i, 1);
+			continue;
+		}
+		segment.compaction.status = outcome;
+		delete segment.compaction.provisional;
+	}
+}
+
 export function hasVisibleReply(message: IAgentAssistantMessage): boolean {
 	if ((message.text ?? '').trim()) {
 		return true;
 	}
 	return (message.segments ?? []).some(segment =>
-		(segment.kind === 'text' && segment.text.trim()) || (segment.kind === 'notice' && segment.title.trim()));
+		(segment.kind === 'text' && segment.text.trim()) || (segment.kind === 'notice' && segment.title.trim()) || segment.kind === 'compaction');
 }
 
 /**
@@ -123,6 +175,11 @@ export class AgentSessionController extends Disposable {
 	private lastTextId: string | undefined;
 	/** The run reported real context occupancy (`used`); its end-of-turn totals are not occupancy. */
 	private runReportedUsed = false;
+	/**
+	 * The kept-summary size of the run's last compaction. Claude reports exactly that as `used` right
+	 * after compacting, without the system prompt and tools that still come first.
+	 */
+	private compactedTo: number | undefined;
 
 	constructor(
 		private host: IAgentSessionHost,
@@ -131,6 +188,7 @@ export class AgentSessionController extends Disposable {
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
 		@IAgentWorkspaceService private readonly agentWorkspace: IAgentWorkspaceService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IFileService private readonly fileService: IFileService,
 	) {
 		super();
 		this._register(runtime.onEvent(host.sessionId, envelope => this.apply(envelope)));
@@ -189,6 +247,8 @@ export class AgentSessionController extends Disposable {
 			...(spec.origin ? { origin: spec.origin } : {}),
 			...(spec.taskIds?.length ? { taskIds: [...spec.taskIds] } : {}),
 			...(spec.handoff ? { handoff: spec.handoff } : {}),
+			...(spec.scheduled ? { scheduled: spec.scheduled } : {}),
+			...(spec.fromThread ? { fromThread: spec.fromThread } : {}),
 		};
 		const reply: IAgentAssistantMessage = {
 			kind: 'agent',
@@ -205,6 +265,13 @@ export class AgentSessionController extends Disposable {
 				items: [],
 			},
 		};
+		if (isCompactCommand(spec.text) && reply.activity) {
+			// "Compacting context" from the first frame: the agent reports its compaction only once the
+			// prompt reaches it, and the checkpoint before a turn can take a couple of seconds.
+			reply.segments.push({ kind: 'compaction', compaction: { id: `pending-${spec.turnId}`, status: 'running', trigger: 'manual', startedAt: Date.now(), provisional: true } });
+			reply.activity.status = localize('voltAgent.compaction.running', "Compacting context");
+			reply.activity.statusPinned = true;
+		}
 		this.host.messages.push(user, reply);
 		// The prompt is durable before the model is asked.
 		this.host.recordUser?.(user);
@@ -303,6 +370,24 @@ export class AgentSessionController extends Disposable {
 		}
 	}
 
+	/**
+	 * A chart or page from render_chart / render_html: a block in the reply (the transcript lifts it
+	 * above the final text). The call's row keeps only the title, since the stored copy is the visual.
+	 */
+	private attachVisual(last: IAgentAssistantMessage, visual: IVoltVisualRef, tool: string): void {
+		const id = `visual-${visual.ref.replace(/[^a-z0-9]/gi, '').slice(-24)}`;
+		if (last.segments.some(segment => segment.kind === 'block' && segment.block.id === id)) {
+			return;
+		}
+		last.segments.push({ kind: 'block', block: { id, type: 'visual', status: 'complete', kind: visual.kind, title: visual.title, ref: visual.ref, ...(visual.height ? { height: visual.height } : {}), ...(visual.heights?.length ? { heights: visual.heights } : {}), ...(visual.cap ? { cap: visual.cap } : {}) } });
+		for (const segment of last.segments) {
+			if (segment.kind === 'activity' && segment.item.browserTool === tool && segment.item.input && segment.item.input.length > 2000) {
+				segment.item.input = JSON.stringify({ title: visual.title });
+				segment.item.hostArgs = { title: visual.title };
+			}
+		}
+	}
+
 	/** Opens in the session that produced it, so a background run never takes over the visible chat. */
 	private openPreview(url: string): void {
 		const clean = sanitizeBrowserUrl(url) ?? extractLocalPreviewUrl(url) ?? extractHttpUrl(url) ?? url;
@@ -337,6 +422,16 @@ export class AgentSessionController extends Disposable {
 			this.host.contextUsed = measured;
 			if (last) {
 				last.tokensUsed = measured;
+				// The context meter adds the system prompt and tools back onto Claude's post-compaction figure.
+				if (reported && this.compactedTo !== undefined && event.used === this.compactedTo) {
+					last.usageExcludesPrompt = true;
+				} else if (last.usageExcludesPrompt) {
+					last.usageExcludesPrompt = undefined;
+				}
+				// The chat's first prompt-side figure: system prompt, tools and the first message, the floor every later turn sits on.
+				if (reported && last.tokensBase === undefined && this.host.messages.find(message => message.kind === 'agent') === last) {
+					last.tokensBase = event.used;
+				}
 			}
 		}
 		if (event.size !== undefined && Number.isFinite(event.size) && event.size > 0) {
@@ -357,6 +452,40 @@ export class AgentSessionController extends Disposable {
 		if (event.cache !== undefined && Number.isFinite(event.cache) && event.cache >= 0) {
 			last.tokensCache = event.cache;
 		}
+	}
+
+	/**
+	 * A compaction the agent reported: one row per id, patched as its updates arrive. A `/compact`
+	 * turn's provisional row becomes the agent's first one.
+	 */
+	private applyCompaction(last: IAgentAssistantMessage, activity: IAgentActivity, event: Extract<IVoltEvent, { type: 'context.compaction' }>): void {
+		const rows = last.segments.flatMap(segment => segment.kind === 'compaction' ? [segment.compaction] : []);
+		let compaction = rows.find(row => row.id === event.id);
+		if (!compaction) {
+			compaction = rows.find(row => row.provisional && row.status === 'running');
+			if (compaction) {
+				compaction.id = event.id;
+				delete compaction.provisional;
+			} else {
+				compaction = { id: event.id, status: 'running', startedAt: Date.now() };
+				last.segments.push({ kind: 'compaction', compaction });
+			}
+			// The agent may not say how big the context was: the meter's last reading is.
+			compaction.preTokens ??= this.host.contextUsed;
+		}
+		applyCompactionUpdate(compaction, event);
+		if (compaction.status === 'running') {
+			activity.status = compaction.trigger === 'auto'
+				? localize('voltAgent.compaction.autoRunning', "Auto-compacting context")
+				: localize('voltAgent.compaction.running', "Compacting context");
+			activity.statusPinned = true;
+			return;
+		}
+		if (compaction.status === 'completed' && compaction.postTokens !== undefined) {
+			this.compactedTo = compaction.postTokens;
+		}
+		activity.statusPinned = false;
+		activity.status = localize('voltAgent.thinking', "Thinking");
 	}
 
 	/** DeepSeek `presentCall`. Card wins over the tool-name heuristics used for ACP. */
@@ -525,6 +654,7 @@ export class AgentSessionController extends Disposable {
 				this.runningCalls.clear();
 				this.lastTextId = undefined;
 				this.runReportedUsed = false;
+				this.compactedTo = undefined;
 				last.runId = envelope.runId;
 				last.outcome = undefined;
 				last.failure = undefined;
@@ -666,7 +796,7 @@ export class AgentSessionController extends Disposable {
 					const parsedPlan = parsePlanToolInput(event.input);
 					last.segments.push({
 						kind: 'block',
-						block: createPlanBlock({ id, callId: event.callId, input: event.input, name: parsedPlan.name, markdown: parsedPlan.plan ?? '' }),
+						block: createPlanBlock({ id, callId: event.callId, input: event.input, name: parsedPlan.name, markdown: parsedPlan.plan ?? '', openQuestions: parsedPlan.openQuestions }),
 					});
 					activity.status = localize('voltAgent.planning', "Planning");
 				} else if (isFileChangeTool(event.name, event.title, kind)) {
@@ -745,11 +875,13 @@ export class AgentSessionController extends Disposable {
 						const parsedPlan = parsePlanToolInput(block.input);
 						block.name = parsedPlan.name ?? block.name;
 						block.markdown = parsedPlan.plan ?? block.markdown;
+						block.openQuestions = parsedPlan.openQuestions ?? block.openQuestions;
 					}
 					const item = this.findActivityByCallId(last, event.callId);
 					if (item) {
 						const input = mergeToolInput(item.input, event.delta);
 						applyExploreInputToActivity(item, item.toolName ?? item.label, item.toolTitle, input);
+						this.promoteToPlanCard(last, event.callId, item.toolName ?? '', item.toolTitle, input);
 					}
 				}
 				break;
@@ -763,6 +895,7 @@ export class AgentSessionController extends Disposable {
 				if (item && event.title && event.title !== item.toolTitle) {
 					item.toolTitle = event.title;
 					applyExploreInputToActivity(item, item.toolName ?? item.label, event.title, item.input);
+					this.promoteToPlanCard(last, event.callId, item.toolName ?? '', event.title, item.input);
 				}
 				break;
 			}
@@ -772,6 +905,15 @@ export class AgentSessionController extends Disposable {
 				const image = extractToolImage(event.result);
 				if (image) {
 					this.attachSnapshotImage(last, event.callId, image);
+				}
+				// Read and plan output is not kept in the transcript text, but the model read it: the context meter estimates it.
+				const keptInText = block?.type === 'terminal' || (block?.type === 'tool' && !isHiddenExploreToolBlock(block));
+				const outputChars = (event.output || output).length;
+				if (!keptInText && outputChars > 0) {
+					last.toolOutputChars = (last.toolOutputChars ?? 0) + outputChars;
+				} else if (!keptInText) {
+					// Cursor and Grok end a read without its content: the file on disk is what the model received.
+					this.countReadFile(last, event.callId);
 				}
 				if (block?.type === 'terminal') {
 					block.output = unwrapOutputFence(event.output || output);
@@ -802,16 +944,21 @@ export class AgentSessionController extends Disposable {
 						item.view = event.view;
 					}
 				}
+				const done = this.findActivityByCallId(last, event.callId);
+				if (done) {
+					this.promoteToPlanCard(last, event.callId, done.toolName ?? '', event.title ?? done.toolTitle, done.input);
+				}
 				this.settleCall(activity, event.callId);
 				break;
 			}
 			case 'plan': {
-				const previous = last.steps;
+				// A turn's first update continues the chat's list: Claude's task tools and Cursor's to-dos outlive a turn.
+				const previous = last.steps.length ? last.steps : this.host.messages.findLast((message): message is IAgentAssistantMessage => message !== last && message.kind === 'agent' && message.steps.length > 0)?.steps ?? [];
 				last.title = localize('voltAgent.planTitle', "Plan");
-				last.steps = event.entries.map(entry => ({
+				last.steps = stampTodoSteps(previous, event.entries.map(entry => ({
 					label: entry.content,
 					state: entry.status === 'completed' ? 'done' : entry.status === 'in_progress' ? 'current' : 'pending',
-				}));
+				})), Date.now());
 				// Cursor writes to-do changes into the timeline: "Added 4 to-dos", "Completed 2 of 6 Fix the bug".
 				const todo = describeTodoUpdate(previous, last.steps);
 				if (todo) {
@@ -870,7 +1017,11 @@ export class AgentSessionController extends Disposable {
 							status: 'complete',
 							requestId: event.requestId,
 							outcome: event.outcome,
-							items: event.answers.map(item => ({ question: item.question, answer: item.answer })),
+							items: event.answers.map(item => ({
+								question: item.question,
+								answer: item.answer,
+								...(item.attachments?.length ? { attachments: item.attachments.map(file => ({ name: file.name, kind: file.kind, size: file.size, path: file.path })) } : {}),
+							})),
 							...(event.note ? { note: event.note } : {}),
 						},
 					});
@@ -882,6 +1033,9 @@ export class AgentSessionController extends Disposable {
 			}
 			case 'host.tool':
 				this.attachHostToolResult(last, event);
+				if (event.visual) {
+					this.attachVisual(last, event.visual, event.name);
+				}
 				break;
 			case 'access.resolved': {
 				for (const segment of last.segments) {
@@ -969,8 +1123,28 @@ export class AgentSessionController extends Disposable {
 				}
 				break;
 			}
+			case 'model.reported':
+				this.applyReportedModel(last, event);
+				break;
+			case 'context.compaction':
+				this.applyCompaction(last, activity, event);
+				break;
+			case 'context.handoff': {
+				// Kept on the prompt the handoff went out with: its divider shows what was sent.
+				const index = this.host.messages.lastIndexOf(last);
+				const user = this.host.messages[index - 1];
+				if (user?.kind === 'user' && user.id === last.id) {
+					const { type: _type, ...info } = event;
+					user.contextHandoff = info;
+					this.host.recordUser?.(user);
+				}
+				break;
+			}
 			case 'notice':
 				this.showProviderNotice(last, activity, event.severity, event.title, event.description);
+				break;
+			case 'sandbox.denial':
+				appendSandboxDenial(last.segments, event.denial);
 				break;
 			case 'retry':
 				this.showProviderNotice(last, activity, 'warning', event.message);
@@ -989,6 +1163,7 @@ export class AgentSessionController extends Disposable {
 				last.endedAt = Date.now();
 				last.startedAt ??= last.endedAt;
 				last.durationMs = Math.max(0, last.endedAt - last.startedAt);
+				settleCompactions(last, last.cancelled ? 'cancelled' : event.reason === 'fail' ? 'failed' : 'completed');
 				if (!last.cancelled && event.reason !== 'fail' && !hasVisibleReply(last)) {
 					const empty = localize('voltAgent.emptyReply', "Stopped before a reply.");
 					last.text = empty;
@@ -1044,6 +1219,7 @@ export class AgentSessionController extends Disposable {
 			const parsedPlan = parsePlanToolInput(raw);
 			block.name = parsedPlan.name ?? block.name;
 			block.markdown = parsedPlan.plan ?? block.markdown;
+			block.openQuestions = parsedPlan.openQuestions ?? block.openQuestions;
 		} else if (block?.type === 'file') {
 			block.input = raw;
 			const parsedAt = this.rawParsedAt.get(callId) ?? 0;
@@ -1085,6 +1261,47 @@ export class AgentSessionController extends Disposable {
 		}, delay);
 	}
 
+	/**
+	 * The divider names the model the provider reports running, not the one requested: Cursor can fall back
+	 * to Composer 2.5 after a plan wall, and the handoff said Claude Haiku.
+	 */
+	private applyReportedModel(last: IAgentAssistantMessage, event: Extract<IVoltEvent, { type: 'model.reported' }>): void {
+		const index = this.host.messages.lastIndexOf(last);
+		const user = this.host.messages[index - 1];
+		if (user?.kind !== 'user' || user.id !== last.id) {
+			return;
+		}
+		const item = this.runtime.listCatalog().find(entry => entry.kind === 'model' && entry.providerId === event.provider && (entry.id === event.model || entry.id.replace(/\[.*\]$/, '') === event.model));
+		const label = item?.label ?? event.model;
+		let changed = false;
+		if (user.contextHandoff && user.contextHandoff.toLabel !== label) {
+			user.contextHandoff = { ...user.contextHandoff, toLabel: label };
+			changed = true;
+		}
+		if (user.handoff && user.handoff.toLabel !== label) {
+			user.handoff = { ...user.handoff, toLabel: label };
+			changed = true;
+		}
+		if (changed) {
+			this.host.recordUser?.(user);
+		}
+	}
+
+	/** Sizes a finished read from disk into the reply's unkept tool output (the whole file: the runtime sends no range). */
+	private countReadFile(message: IAgentAssistantMessage, callId: string): void {
+		const item = this.findActivityByCallId(message, callId);
+		const path = item?.kind === 'read' ? item.path ?? item.files?.[0] : undefined;
+		if (!path) {
+			return;
+		}
+		this.fileService.stat(URI.file(path)).then(stat => {
+			if (stat.isFile && stat.size > 0) {
+				message.toolOutputChars = (message.toolOutputChars ?? 0) + stat.size;
+				this.fire({ kind: 'usage' });
+			}
+		}, () => { /* Not a local file: the estimate stays without it. */ });
+	}
+
 	private findActivityByCallId(message: IAgentAssistantMessage, callId: string): IAgentActivityItem | undefined {
 		for (const segment of message.segments) {
 			if (segment.kind === 'activity' && segment.item.callId === callId) {
@@ -1094,9 +1311,32 @@ export class AgentSessionController extends Disposable {
 		return message.activity?.items.find(item => item.callId === callId);
 	}
 
+	/**
+	 * Cursor starts an MCP call as a generic row and names it only later, so a plan tool may first show
+	 * as an activity row. Once its name or arguments say it is a plan, the row becomes the plan card.
+	 */
+	private promoteToPlanCard(last: IAgentAssistantMessage, callId: string, name: string, title: string | undefined, input: string | undefined): void {
+		if (!isPlanTool(name, title, input) || findBlockByCallId(last.segments, callId)) {
+			return;
+		}
+		const index = last.segments.findIndex(segment => segment.kind === 'activity' && segment.item.callId === callId);
+		if (index === -1) {
+			return;
+		}
+		const id = `tool-${callId}`;
+		const parsed = parsePlanToolInput(input);
+		last.segments[index] = { kind: 'block', block: createPlanBlock({ id, callId, input, name: parsed.name, markdown: parsed.plan ?? '', openQuestions: parsed.openQuestions }) };
+		last.blockState[id] = last.blockState[id] ?? { expanded: false };
+		const items = last.activity?.items;
+		const at = items?.findIndex(item => item.callId === callId) ?? -1;
+		if (items && at !== -1) {
+			items.splice(at, 1);
+		}
+	}
+
 	private planFromInput(id: string, callId: string, input: string | undefined): IPlanBlock {
 		const parsed = parsePlanToolInput(input);
-		return createPlanBlock({ id, callId, input, name: parsed.name, markdown: parsed.plan ?? '' });
+		return createPlanBlock({ id, callId, input, name: parsed.name, markdown: parsed.plan ?? '', openQuestions: parsed.openQuestions });
 	}
 
 	private createFileChangeFromTool(id: string, callId: string, name: string, title: string | undefined, input?: string): IFileChangeBlock {

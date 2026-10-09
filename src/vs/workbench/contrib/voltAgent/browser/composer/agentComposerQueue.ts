@@ -12,6 +12,8 @@ import { localize } from '../../../../../nls.js';
 import { ITerminalService } from '../../../terminal/browser/terminal.js';
 import { AgentTooltip, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { groupSummary, isLiveSubagentState, ISubagentView, renderCursorCardRow, tickSubagentClocks } from '../chrome/agentSubagents.js';
+import { ITasksCard } from '../chrome/agentTimeline.js';
+import { AgentTasksCard } from './agentTasksCard.js';
 
 export interface IQueuedPrompt {
 	id: string;
@@ -109,6 +111,8 @@ export class AgentComposerQueue extends Disposable {
 	readonly element: HTMLElement;
 
 	private readonly queueEl: HTMLElement;
+	/** The agent's to-dos, last in the stack so it tucks under the input box. */
+	private readonly tasksCard: AgentTasksCard;
 	private readonly listeners = this._register(new DisposableStore());
 	private readonly dragListeners = this._register(new DisposableStore());
 	private items: IQueuedPrompt[] = [];
@@ -133,6 +137,8 @@ export class AgentComposerQueue extends Disposable {
 		super();
 		this.element = $('.volt-agent-composer-stack');
 		this.queueEl = append(this.element, $('.volt-agent-queue-card.hidden'));
+		this.tasksCard = this._register(new AgentTasksCard(() => this.syncStackClass()));
+		append(this.element, this.tasksCard.element);
 		this._register(this.terminalService.onDidChangeInstances(() => this.render()));
 		this._register(this.terminalService.onAnyInstancePrimaryStatusChange(() => this.render()));
 	}
@@ -152,6 +158,11 @@ export class AgentComposerQueue extends Disposable {
 		}
 		this.state = state;
 		this.render();
+	}
+
+	/** The latest to-do list, or undefined to hide the Tasks card. */
+	setTasks(card: ITasksCard | undefined): void {
+		this.tasksCard.set(card);
 	}
 
 	setQueue(items: readonly IQueuedPrompt[]): void {
@@ -210,7 +221,7 @@ export class AgentComposerQueue extends Disposable {
 		const count = this.items.length;
 		const agents = this.shownAgents().length || (this.agentsInDock ? this.agents.conflicts.length : 0);
 		this.queueEl.classList.toggle('hidden', count === 0 && agents === 0);
-		this.element.classList.toggle('has-stack', count > 0 || agents > 0);
+		this.syncStackClass();
 		this.queueEl.classList.toggle('paused', false);
 		this.queueEl.classList.toggle('editing', false);
 		if (agents) {
@@ -220,6 +231,12 @@ export class AgentComposerQueue extends Disposable {
 			this.renderQueue(append(this.queueEl, $('.volt-agent-work-section.queue')));
 		}
 		this.renderTerminals();
+	}
+
+	private syncStackClass(): void {
+		const cards = this.items.length > 0 || this.shownAgents().length > 0 || (this.agentsInDock && this.agents.conflicts.length > 0);
+		this.element.classList.toggle('has-stack', cards || this.tasksCard.visible);
+		this.element.classList.toggle('has-tasks', this.tasksCard.visible);
 	}
 
 	/** With the dock open, finished agents sit under its "Previous agents": the card keeps the working ones. */

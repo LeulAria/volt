@@ -25,6 +25,8 @@ import {
 	createAgentWorktree,
 	ensureAgentWorktree,
 	removeAgentWorktree,
+	serializeForRepo,
+	WorktreeRemoval,
 } from '../../common/git/agentWorktree.js';
 
 const GIT_TIMEOUT_MS = 180_000;
@@ -120,6 +122,22 @@ export class AgentWorktreeService implements IAgentWorktreeService {
 		}
 	}
 
+	async remove(repoRoot: string, path: string, branch: string, options: { readonly deleteBranch: boolean; readonly force: boolean; readonly ownsBranch?: boolean }): Promise<WorktreeRemoval> {
+		return removeAgentWorktree({
+			run: (cwd, args) => this.git(cwd, args),
+			files: this.files(),
+			repoRoot,
+			worktreesRoot: this.worktreesRoot(),
+			path,
+			branch,
+			...options,
+		});
+	}
+
+	serialize<T>(repoRoot: string, work: () => Promise<T>): Promise<T> {
+		return serializeForRepo((cwd, args) => this.git(cwd, args), repoRoot, work);
+	}
+
 	private worktreesRoot(): string {
 		if (!this.rootPath) {
 			const home = this.pathService.userHome({ preferLocal: true });
@@ -144,7 +162,7 @@ export class AgentWorktreeService implements IAgentWorktreeService {
 		};
 	}
 
-	private async git(cwd: string, args: readonly string[]): Promise<IGitRunResult> {
+	async git(cwd: string, args: readonly string[]): Promise<IGitRunResult> {
 		try {
 			const result = await this.stdio.exec({
 				id: `git-${generateUuid().slice(0, 8)}`,

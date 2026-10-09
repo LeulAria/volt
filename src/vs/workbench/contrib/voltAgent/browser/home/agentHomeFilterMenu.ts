@@ -28,10 +28,14 @@ import {
 	isStatusFilterActive,
 } from './agentHomeFilter.js';
 import { createHomeEnvironmentIcon, createHomeFolderIcon, createHomeStatusIcon } from './agentHomeIcons.js';
+import { agentHomeDensityHost } from './agentHomeDensity.js';
 
 export interface IAgentHomeFilterMenuHost {
 	readonly view: IAgentHomeViewState;
 	setView(next: IAgentHomeViewState): void;
+	/** Busy chats fold into a Working shelf (a setting, not part of the view state). */
+	readonly workingSection: boolean;
+	setWorkingSection(on: boolean): void;
 	collapseAll(): void;
 	markAllAsRead(): void;
 }
@@ -91,7 +95,10 @@ export function showAgentHomeFilterMenu(
 			const paintMain = () => {
 				mainStore.clear();
 				clearNode(menu);
-				buildMainMenu(menu, host, mainStore, open, next => {
+				buildMainMenu(menu, host, mainStore, open, () => {
+					host.setWorkingSection(!host.workingSection);
+					paintMain();
+				}, next => {
 					host.setView(next);
 					paintMain();
 					if (openFlyout) {
@@ -138,6 +145,7 @@ function buildMainMenu(
 	host: IAgentHomeFilterMenuHost,
 	store: DisposableStore,
 	openFlyout: (kind: FlyoutKind | undefined) => void,
+	onToggleWorking: () => void,
 	setView: (next: IAgentHomeViewState) => void,
 	onReset: () => void,
 	onCollapse: () => void,
@@ -164,6 +172,27 @@ function buildMainMenu(
 		submenu: true,
 		flyout: 'show',
 		onHover: () => openFlyout('show'),
+		store,
+	});
+	const density = agentHomeDensityHost();
+	if (density) {
+		appendToggleRow(menu, {
+			label: localize('voltAgent.home.filter.compact', "Compact List"),
+			checked: density.compact,
+			// The same view again repaints the menu with the new check.
+			onClick: () => {
+				density.setCompact(!density.compact);
+				setView(view);
+			},
+			onHover: () => openFlyout(undefined),
+			store,
+		});
+	}
+	appendToggleRow(menu, {
+		label: localize('voltAgent.home.filter.workingSection', "Working Section"),
+		checked: host.workingSection,
+		onClick: onToggleWorking,
+		onHover: () => openFlyout(undefined),
 		store,
 	});
 	append(menu, $('.volt-agent-home-filter-sep'));

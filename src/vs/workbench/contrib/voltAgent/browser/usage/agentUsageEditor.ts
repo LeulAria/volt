@@ -35,6 +35,8 @@ import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createAgentScrollable } from '../editor/agentScrollable.js';
 import { createVoltSegmented, IVoltSegmented } from '../ui/segmented/voltSegmented.js';
 import { IUsageChartSeriesStyle, UsageChart } from './agentUsageChart.js';
+import { usageInsights } from './agentUsageInsights.js';
+import { voltCharts, voltChartStrings } from '../visuals/agentVisuals.js';
 import { DotMatrixMeter } from './agentUsageDots.js';
 import { showUsageModelDialog } from './agentUsageModelDialog.js';
 import { copyUsagePage } from './agentUsagePageMirror.js';
@@ -242,6 +244,11 @@ export class AgentUsageEditor extends EditorPane {
 		this.scroll = this._register(createAgentScrollable(body));
 		this.container.insertBefore(this.scroll.getDomNode(), header).classList.add('volt-usage-scroll');
 		this._register(this.scroll.onScroll(() => this.syncHeaderBackdrop()));
+		// The insights charts draw a frame or more after render() rescans, so the page keeps growing past
+		// the height the scrollbar measured. Rescan whenever the content's size changes.
+		const sizeObserver = new (getWindow(this.container).ResizeObserver)(() => this.scroll.scanDomNode());
+		sizeObserver.observe(this.content);
+		this._register(toDisposable(() => sizeObserver.disconnect()));
 		const observer = new MutationObserver(() => {
 			this.headerMirror = undefined;
 			this.pendingBackdrop.value = scheduleAtNextAnimationFrame(getWindow(this.container), () => this.syncHeaderBackdrop());
@@ -546,7 +553,7 @@ export class AgentUsageEditor extends EditorPane {
 			append(item, $('span')).textContent = note.message;
 		}
 
-		const chartSection = append(overview, $('.volt-usage-chart-column'));
+		const chartSection = append(overview, $('.volt-usage-chart-column.engine'));
 		chartSection.setAttribute('aria-label', summary.hourly
 			? metric === 'cost' ? localize('voltUsage.hourlyCost', "Cost per hour") : localize('voltUsage.hourlyTokens', "Tokens per hour")
 			: metric === 'cost' ? localize('voltUsage.dailyCost', "Cost per day") : localize('voltUsage.dailyTokens', "Tokens per day"));
@@ -563,6 +570,9 @@ export class AgentUsageEditor extends EditorPane {
 		this.renderShares(summary, metric);
 		this.renderTotals(summary);
 		this.renderBreakdown(summary, metric);
+		if (!placeholder) {
+			this.renderInsights(snapshot, summary, metric, animate);
+		}
 		this.renderFootnote();
 		if (placeholder) {
 			this.fadePlaceholder();
@@ -590,6 +600,24 @@ export class AgentUsageEditor extends EditorPane {
 		detail.textContent = `${sessionsText} \u00b7 ${metric === 'cost'
 			? localize('voltUsage.tokensSuffix', "{0} tokens", formatTokens(totals.tokens))
 			: formatCost(totals.cost)}`;
+	}
+
+	/** What the range says, each chart titled with its finding: token mix, cache hits, models over time, when you work. */
+	private renderInsights(snapshot: IVoltUsageSnapshot, summary: IUsageSummary, metric: UsageMetric, animate: boolean): void {
+		const insights = usageInsights(snapshot, summary, metric);
+		if (!insights.length) {
+			return;
+		}
+		const section = append(this.content, $('.volt-usage-section.volt-usage-insights'));
+		sectionHead(section, localize('voltUsage.insights', "Insights"));
+		const grid = append(section, $('.volt-usage-insights-grid'));
+		const charts = voltCharts(getWindow(grid));
+		for (const insight of insights) {
+			const card = append(grid, $('.volt-usage-insight'));
+			card.classList.toggle('wide', insight.wide);
+			const handle = charts.render(card, insight.spec, { strings: voltChartStrings(), animate });
+			this.renderStore.add(toDisposable(() => handle.dispose()));
+		}
 	}
 
 	private renderTotals(summary: IUsageSummary): void {

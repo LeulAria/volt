@@ -30,6 +30,8 @@ export interface ICliAgentDefinition {
 	readonly acpArgs: readonly string[];
 	readonly earlyAccess?: boolean;
 	readonly acpAdapter?: IAcpAdapter;
+	/** Extra environment for the ACP process. */
+	readonly acpEnv?: Readonly<Record<string, string>>;
 	/** Reads the CLI's own config to work out who is signed in. */
 	readonly probeAuth?: (stdio: IVoltStdioService) => Promise<{ account?: string; plan?: string } | undefined>;
 }
@@ -240,6 +242,9 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 		// Claude Code has no `acp` subcommand; the official adapter speaks ACP for it.
 		acpArgs: [],
 		acpAdapter: { command: 'claude-agent-acp', package: '@agentclientprotocol/claude-agent-acp@0.81.2' },
+		// Claude Code turns its to-do tools (TodoWrite / TaskCreate) on only for older models, so Opus 5.5
+		// and newer had no list to show in the Tasks card. This switch turns them on for every model.
+		acpEnv: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' },
 		probeAuth: probeClaudeAuth,
 	},
 	{

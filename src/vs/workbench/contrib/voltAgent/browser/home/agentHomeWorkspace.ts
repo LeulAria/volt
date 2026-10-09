@@ -155,3 +155,79 @@ export function gitErrorSummary(stderr: string): string | undefined {
 	const fatal = lines.find(line => /^(fatal|error):/i.test(line));
 	return (fatal ?? lines.at(-1))?.replace(/^(fatal|error):\s*/i, '');
 }
+
+/**
+ * Workspace id every chat started without a project is saved with. The sidebar lists those
+ * chats under one "No Project" group instead of a group per scratch folder.
+ */
+export const AGENT_SCRATCH_WORKSPACE_ID = 'volt-scratch';
+
+/** Whether a saved chat was started without a project (see {@link AGENT_SCRATCH_WORKSPACE_ID}). */
+export function isScratchSession(session: { readonly workspaceId: string } | undefined): boolean {
+	return session?.workspaceId === AGENT_SCRATCH_WORKSPACE_ID;
+}
+
+/** What a chat without a project shows where others show their project. */
+export function scratchProjectLabel(): string {
+	return localize('voltAgent.scratch.label', "No Project");
+}
+
+/** Names Windows will not take as a folder, whatever the extension. */
+const RESERVED_FOLDER_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
+
+/**
+ * Folder name for a project started from just a name: lowercase letters and digits, words
+ * joined by `-`, accents dropped, at most 64 characters. Nothing usable gives `project`.
+ */
+export function projectFolderSlug(name: string): string {
+	const slug = name
+		.normalize('NFKD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+/, '')
+		.slice(0, 64)
+		.replace(/-+$/, '');
+	if (!slug) {
+		return 'project';
+	}
+	return RESERVED_FOLDER_NAME.test(slug) ? `${slug}-project` : slug;
+}
+
+/**
+ * Folder for a chat started without a project: `<YYYY-MM-DD>-<first words>-<id>`, e.g.
+ * `2026-09-25-convert-these-pngs-to-webp-a1b2c3d4`. The date is the local day the chat
+ * started; at most five words of the first message, only `[a-z0-9]`, so a pasted blob cannot
+ * outgrow a file name. A message with no such words leaves the date and the id.
+ */
+export function scratchFolderName(date: Date, firstMessage: string, id: string): string {
+	const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+	const words = firstMessage
+		.toLowerCase()
+		.split(/[^a-z0-9]+/)
+		.filter(Boolean)
+		.slice(0, 5)
+		.join('-')
+		.slice(0, 48)
+		.replace(/-+$/, '');
+	const suffix = id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
+	return [day, words, suffix].filter(Boolean).join('-');
+}
+
+/** README of a project started from just a name. */
+export function namedProjectReadme(name: string): string {
+	return `# ${name.trim()}\n`;
+}
+
+/** Why the first commit of a new project failed, in a line the user can act on. */
+export function commitFailureSummary(stderr: string): string {
+	if (/identity unknown|tell me who you are|no (name|email) was given/i.test(stderr)) {
+		return localize('voltAgent.newProject.noIdentity', "Git has no name or email on this machine. Set user.name and user.email, then commit.");
+	}
+	return gitErrorSummary(stderr) ?? localize('voltAgent.newProject.commitFailed', "Git could not make the first commit.");
+}
+
+/** Why a new project cannot have this name, or undefined when it can. */
+export function newProjectNameProblem(name: string): string | undefined {
+	return name.trim() ? undefined : localize('voltAgent.newProject.empty', "Enter a project name.");
+}

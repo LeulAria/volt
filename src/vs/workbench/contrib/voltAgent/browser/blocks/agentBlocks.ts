@@ -5,14 +5,17 @@
 
 import { isSubagentToolName } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
 import { sameProviderNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
+import { voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { planProposalFromArgs, PROPOSE_PLAN_TOOL_NAME } from '../../../../services/voltRuntime/common/plans.js';
 import type { IVoltToolView } from '../../../../services/voltRuntime/common/events.js';
+import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
 import { presentOutput, type OutputView } from '../../../../services/voltRuntime/common/harness/adaptiveOutput.js';
 import { describeHostToolActivity, hostToolCall } from './agentHostToolActivity.js';
 import type { IWorkCounts, ToolKind } from '../../../../services/voltRuntime/common/harness/workLog.js';
 
 export type AgentBlockStatus = 'streaming' | 'complete' | 'error';
 
-export type AgentBlockType = 'markdown' | 'code' | 'terminal' | 'table' | 'list' | 'cards' | 'chart' | 'mermaid' | 'tool' | 'file' | 'error' | 'approval' | 'answers' | 'plan';
+export type AgentBlockType = 'markdown' | 'code' | 'terminal' | 'table' | 'list' | 'cards' | 'chart' | 'mermaid' | 'tool' | 'file' | 'error' | 'approval' | 'answers' | 'plan' | 'visual';
 
 export interface IAgentBaseBlock {
 	readonly id: string;
@@ -68,6 +71,24 @@ export interface IChartBlock extends IAgentBaseBlock {
 	values: number[];
 	unit?: string;
 	title?: string;
+}
+
+/**
+ * A chart or page an agent showed with render_chart / render_html. The transcript draws it above
+ * the reply: a native chart from the stored spec, or the page in a sandboxed frame.
+ */
+export interface IVisualBlock extends IAgentBaseBlock {
+	readonly type: 'visual';
+	kind: 'chart' | 'html';
+	title: string;
+	/** The stored spec (`volt-attachment:<hash>.json`) or page (`.html`). */
+	ref: string;
+	/** Pages: height at the reply column's width, so the frame opens at its size. */
+	height?: number;
+	/** Pages: `[width, height]` at several reader widths (see `IVoltVisualRef.heights`). */
+	heights?: readonly (readonly [number, number])[];
+	/** Pages: the agent's cap on the frame height. */
+	cap?: number;
 }
 
 export interface IMermaidBlock extends IAgentBaseBlock {
@@ -128,16 +149,18 @@ export interface IAnswersBlock extends IAgentBaseBlock {
 	readonly type: 'answers';
 	requestId: string;
 	outcome: 'answered' | 'skipped' | 'cancelled';
-	items: { question: string; answer: string }[];
+	/** `attachments`: files sent with the answer, shown as chips under it. */
+	items: { question: string; answer: string; attachments?: readonly { name: string; kind: 'image' | 'file'; size: number; path?: string }[] }[];
 	note?: string;
 }
 
-/** A plan an agent wrote for approval (cursor-agent's createPlan): the plan itself, then Build. */
+/** A plan an agent wrote for approval (cursor-agent's createPlan, Volt's propose_plan): the plan itself, then Build. */
 export interface IPlanBlock extends IAgentBaseBlock {
 	readonly type: 'plan';
 	callId?: string;
 	name?: string;
 	markdown: string;
+	openQuestions?: readonly string[];
 	input?: string;
 }
 
@@ -145,20 +168,24 @@ export function createPlanBlock(partial: Omit<IPlanBlock, 'type' | 'status'> & {
 	return { type: 'plan', status: 'streaming', ...partial };
 }
 
-/** cursor-agent's plan tool: `Create Plan` with `{ name, plan, todos }` input. */
+/** The plan tools: cursor-agent's `Create Plan` ({ name, plan, todos }), the native create_plan, and Volt's propose_plan. */
 export function isPlanTool(name: string, title?: string, input?: string): boolean {
-	return /^create[ _-]?plan$/i.test(name.trim()) || /^create[ _-]?plan$/i.test((title ?? '').trim()) || /"_toolName"\s*:\s*"createPlan"/.test(input ?? '');
+	return /^create[ _-]?plan$/i.test(name.trim()) || /^create[ _-]?plan$/i.test((title ?? '').trim()) || /^exit[ _-]?plan[ _-]?mode$/i.test(name.trim()) || /^exit[ _-]?plan[ _-]?mode$/i.test((title ?? '').trim()) || /"_toolName"\s*:\s*"createPlan"/.test(input ?? '') || voltHostToolName(name, title) === PROPOSE_PLAN_TOOL_NAME || /"toolName"\s*:\s*"propose_plan"/.test(input ?? '');
 }
 
-export function parsePlanToolInput(input: string | undefined): { name?: string; plan?: string } {
+/** A plan tool's input. Cursor wraps MCP calls as `{ toolName, args }`, so the arguments are unwrapped first. */
+export function parsePlanToolInput(input: string | undefined): { name?: string; plan?: string; openQuestions?: readonly string[] } {
 	if (!input) {
 		return {};
 	}
 	try {
-		const parsed = JSON.parse(input) as { name?: unknown; plan?: unknown };
+		const parsed = JSON.parse(input) as Record<string, unknown>;
+		const args = parsed.args && typeof parsed.args === 'object' ? parsed.args as Record<string, unknown> : parsed;
+		const plan = planProposalFromArgs(args);
 		return {
-			...(typeof parsed.name === 'string' ? { name: parsed.name } : {}),
-			...(typeof parsed.plan === 'string' ? { plan: parsed.plan } : {}),
+			...(plan.title ? { name: plan.title } : {}),
+			...(plan.markdown ? { plan: plan.markdown } : {}),
+			...(plan.openQuestions.length ? { openQuestions: plan.openQuestions } : {}),
 		};
 	} catch {
 		return {};
@@ -179,7 +206,8 @@ export type AgentBlock =
 	| IToolBlock
 	| IFileChangeBlock
 	| IErrorBlock
-	| IApprovalBlock;
+	| IApprovalBlock
+	| IVisualBlock;
 
 export function createApprovalBlock(partial: Omit<IApprovalBlock, 'type' | 'status'> & { status?: AgentBlockStatus }): IApprovalBlock {
 	return {
@@ -238,7 +266,32 @@ export type AgentSegment =
 	 * Provider or harness status. `supervision` marks a run supervisor's finding (a loop, a stall,
 	 * a budget stop): the transcript draws it as a tray with actions instead of a plain line.
 	 */
-	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind };
+	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind; sandbox?: ISandboxDenial }
+	/** The agent compacted the conversation here: a divider while it summarizes, then what it kept. */
+	| { kind: 'compaction'; compaction: IAgentCompaction };
+
+/** A context compaction in a reply (`/compact`, or the agent's own when the window filled up). */
+export interface IAgentCompaction {
+	id: string;
+	status: 'running' | 'completed' | 'failed' | 'cancelled';
+	trigger?: 'manual' | 'auto';
+	/** The context before, as the agent counted it. */
+	preTokens?: number;
+	/** The context after, as the agent counted it (Claude: the kept summary alone). */
+	postTokens?: number;
+	durationMs?: number;
+	/** The summary the conversation continues from, when the agent shares it. */
+	summary?: string;
+	error?: string;
+	startedAt?: number;
+	/** Drawn when a `/compact` turn started, before the agent reported its own compaction. */
+	provisional?: boolean;
+}
+
+/** `/compact`, alone or with instructions for the summary. */
+export function isCompactCommand(text: string | undefined): boolean {
+	return /^\/compact(?:\s|$)/.test(text?.trim() ?? '');
+}
 
 /** What a run supervisor reported: the agent repeats itself, went quiet, or hit a step/time/token budget. */
 export type SupervisionKind = 'loop' | 'stall' | 'budget';
@@ -270,6 +323,11 @@ export function appendProviderNotice(segments: AgentSegment[], notice: { severit
 		return;
 	}
 	segments.push({ kind: 'notice', severity: notice.severity, title, ...(description ? { description } : {}), ...(notice.supervision ? { supervision: notice.supervision } : {}) });
+}
+
+/** Each refusal keeps its own row: it names a different path or host, so it is never merged. */
+export function appendSandboxDenial(segments: AgentSegment[], denial: ISandboxDenial): void {
+	segments.push({ kind: 'notice', severity: 'warning', title: 'Blocked by the sandbox', description: denial.target, sandbox: denial });
 }
 
 /**
@@ -1057,9 +1115,11 @@ export function blocksPlainText(blocks: AgentBlock[]): string {
 			case 'approval':
 				return [block.action, block.resource, block.reason].filter(Boolean).join('\n');
 			case 'answers':
-				return block.items.map(item => `${item.question}\n${item.answer}`).concat(block.note ? [block.note] : []).join('\n');
+				return block.items.map(item => [item.question, item.answer, ...(item.attachments ?? []).map(file => file.name)].filter(Boolean).join('\n')).concat(block.note ? [block.note] : []).join('\n');
 			case 'plan':
 				return [block.name, block.markdown].filter(Boolean).join('\n\n');
+			case 'visual':
+				return block.title;
 		}
 	}).filter(Boolean).join('\n\n');
 }
@@ -1239,7 +1299,7 @@ export function isFileChangeTool(name: string, title?: string, kind?: ToolKind):
 	return MUTATING_TOOL_RE.test(s);
 }
 
-function isHiddenExploreToolBlock(block: AgentBlock): boolean {
+export function isHiddenExploreToolBlock(block: AgentBlock): boolean {
 	return block.type === 'tool' && isExploreTool(block.name, block.title);
 }
 

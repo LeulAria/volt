@@ -12,7 +12,7 @@ import { IListAccessibilityProvider } from '../../../../../base/browser/ui/list/
 import { RenderIndentGuides } from '../../../../../base/browser/ui/tree/abstractTree.js';
 import { IObjectTreeElement, ITreeNode, ITreeRenderer, ObjectTreeElementCollapseState } from '../../../../../base/browser/ui/tree/tree.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
-import { Action, IAction, Separator } from '../../../../../base/common/actions.js';
+import { Action, IAction, Separator, SubmenuAction, toAction } from '../../../../../base/common/actions.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename } from '../../../../../base/common/resources.js';
@@ -20,8 +20,10 @@ import { URI } from '../../../../../base/common/uri.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { showAgentProjectMenu } from './agentHomeWorkspaceActions.js';
+import { isScratchSession, scratchProjectLabel } from './agentHomeWorkspace.js';
 import { IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IContextMenuService, IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -35,10 +37,17 @@ import { EditorsOrder } from '../../../../common/editor.js';
 import { GroupsOrder, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
+import { cloudTaskStatusText, cloudTaskTone, ICloudTask } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
+import { AgentCloudTaskMenu } from '../cloud/agentCloudTaskMenu.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { limitBadgeLabel, limitParkedClock } from '../../../../services/voltRuntime/common/orchestration/limitRecovery.js';
+import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IRecentFolder, IRecentWorkspace, IWorkspacesService, isRecentFolder, isRecentWorkspace } from '../../../../../platform/workspaces/common/workspaces.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { OPEN_AGENT_SCHEDULES_COMMAND_ID } from '../schedules/agentScheduleCommands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { AgentUsageEditorInput, OPEN_AGENT_USAGE_COMMAND_ID } from '../usage/agentUsageEditor.js';
 import { createUsageIcon } from '../usage/agentUsageIcons.js';
@@ -65,15 +74,20 @@ import { showAgentHomeNewChatMenu } from './agentHomeNewChatMenu.js';
 import {
 	AGENT_HOME_GROUP_EXPAND_ALL,
 	AgentHomeActionId,
+	agentHomeLiveWork,
+	AgentHomeWorkState,
 	AgentHomeElement,
 	AgentHomeStatusBadgeKind,
 	agentHomeAddStart,
 	agentHomeGroupLabel,
 	agentHomeSectionLabel,
 	buildAgentHomeTree,
+	buildCloudHomeNodes,
 	folderPath,
 	IAgentHomeFolder,
 	IAgentHomeNode,
+	IAgentHomeRunGroup,
+	IAgentHomeRunMember,
 	IAgentHomeProject,
 	IAgentHomeSessionContext,
 	IAgentHomeStatusBadge,
@@ -91,6 +105,12 @@ import { agentSessionHoverRows, agentSessionStatusNote } from './agentSessionHov
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { IAgentPrBadge, prBadge, sessionPrFilterTag, visibleLinks } from '../../common/agentPullRequests.js';
+import { IAgentRunGroupService } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
+import { runBadgeKind, runGroupBadge, runGroupSummary, runStatusLabel } from '../runGroups/agentRunGroupLabels.js';
+import { ARCHIVE_RUN_GROUP_COMMAND_ID, OPEN_RUN_GROUP_COMMAND_ID } from '../runGroups/agentRunGroupCommands.js';
+import { AGENT_HOME_WORKING_SECTION_SETTING } from '../../common/agentHomeSettings.js';
+import { lifecycleUndoLabel } from '../../common/agentLifecycleUndo.js';
+import { AGENT_LIFECYCLE_UNDO_COMMAND_ID, IAgentThreadLifecycleService } from './agentThreadLifecycle.js';
 
 const ROW_HEIGHT = 28;
 /** An agent tab with a second line (branch, pull request, model). */
@@ -110,8 +130,11 @@ const identityProvider: IIdentityProvider<AgentHomeElement> = {
 			case 'bucket': return `bucket:${element.id}`;
 			case 'group': return `group:${element.id}`;
 			case 'session': return `session:${element.folderKey}:${element.session.id}`;
+			case 'runGroup': return `runGroup:${element.folderKey}:${element.group.id}`;
 			case 'more': return `more:${element.groupKey}`;
 			case 'empty': return `empty:${element.key}`;
+			case 'cloudHeader': return 'cloudHeader';
+			case 'cloud': return `cloud:${element.task.id}`;
 			default: {
 				const unexpected: never = element;
 				return unexpected;
@@ -150,14 +173,15 @@ const ROW_STATE_CLASSES = [
 	'is-new', 'is-action', 'is-section', 'is-folder', 'is-bucket', 'is-group', 'is-session', 'is-more', 'is-empty',
 	'is-nested', 'is-flat', 'is-collapsible', 'current', 'unread', 'archived', 'pinned',
 	'status-needsAttention', 'status-working', 'status-draft', 'status-done',
-	'actions-cover-name', 'active-chat', 'shelf-active', 'shelf-settled', 'shelf-snooze', 'group-settled', 'group-snooze', 'two-line',
+	'actions-cover-name', 'active-chat', 'shelf-active', 'shelf-settled', 'shelf-snooze', 'group-working', 'group-settled', 'group-snooze', 'two-line',
+	'is-run-group', 'is-run-member', 'run-winner', 'run-discarded',
 ];
 
 class AgentHomeDelegate implements IListVirtualDelegate<AgentHomeElement> {
 	constructor(private readonly host: { readonly twoLine: boolean }) { }
 
 	getHeight(element: AgentHomeElement): number {
-		return element.type === 'session' && this.host.twoLine ? TWO_LINE_ROW_HEIGHT : ROW_HEIGHT;
+		return (element.type === 'session' || element.type === 'runGroup') && this.host.twoLine ? TWO_LINE_ROW_HEIGHT : ROW_HEIGHT;
 	}
 
 	getTemplateId(): string {
@@ -237,9 +261,10 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 
 		const element = node.element;
 		// Group headers: collapsed left / expanded down. Folder rows keep collapsed right.
-		// Settled / Snoozed put a trailing chevron after their rule: down to open, up to fold.
+		// Working puts a trailing chevron after its rule: down to open, up to fold. Settled / Snoozed
+		// lead with a pane-header chevron like the other group headers: right when folded, down when open.
 		const collapsedChevron = element.type === 'bucket' ? Codicon.chevronLeft : Codicon.chevronRight;
-		const chevron = element.type === 'group'
+		const chevron = element.type === 'group' && element.id === 'working'
 			? (node.collapsed ? Codicon.chevronDown : Codicon.chevronUp)
 			: (node.collapsed ? collapsedChevron : Codicon.chevronDown);
 		template.twist.replaceChildren(renderIcon(chevron));
@@ -266,12 +291,25 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 				this.renderGroup(element, template);
 				break;
 			case 'session':
-				this.renderSession(element, template);
+				if (element.runMember) {
+					this.renderRunMember(element, element.runMember, template);
+				} else {
+					this.renderSession(element, template);
+				}
+				break;
+			case 'runGroup':
+				this.renderRunGroup(element, template);
 				break;
 			case 'more':
 				template.container.classList.add('is-more');
 				template.container.classList.toggle('is-nested', element.nested);
 				template.name.textContent = localize('voltAgent.home.showMore', "Show more");
+				break;
+			case 'cloudHeader':
+				this.renderCloudHeader(element.count, template);
+				break;
+			case 'cloud':
+				this.renderCloudRow(element.task, template);
 				break;
 			case 'empty':
 				template.container.classList.add('is-empty');
@@ -323,6 +361,21 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		}));
 	}
 
+	private renderCloudHeader(count: number, template: IHomeTemplate): void {
+		template.container.classList.add('is-section');
+		template.name.textContent = `${localize('voltAgent.home.cloud', "Cloud")} · ${count}`;
+	}
+
+	private renderCloudRow(task: ICloudTask, template: IHomeTemplate): void {
+		const tone = cloudTaskTone(task);
+		// Rows are reused: the tone from an earlier render goes before the current one is set.
+		template.container.classList.remove('cloud-active', 'cloud-succeeded', 'cloud-failed', 'cloud-muted');
+		template.container.classList.add('is-cloud', `cloud-${tone}`);
+		template.name.textContent = task.title;
+		template.meta.textContent = cloudTaskStatusText(task);
+		setAgentTooltip(template.container, `${task.title}\n${cloudTaskStatusText(task)}`);
+	}
+
 	private renderSection(element: Extract<AgentHomeElement, { type: 'section' }>, template: IHomeTemplate): void {
 		template.container.classList.add('is-section');
 		template.name.textContent = agentHomeSectionLabel(element.key);
@@ -354,6 +407,9 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 	private renderBucket(element: Extract<AgentHomeElement, { type: 'bucket' }>, template: IHomeTemplate): void {
 		template.container.classList.add('is-group', 'is-collapsible');
 		template.name.textContent = element.label;
+		if (element.count !== undefined) {
+			template.meta.textContent = String(element.count);
+		}
 		if (element.filter) {
 			this.renderFilter(template);
 		}
@@ -382,10 +438,13 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		}));
 	}
 
-	/** Settled / Snoozed: the label, a rule across the row, and the fold chevron at the end. */
+	/** Working: the label, its folded-chat count, a rule and a trailing chevron. Settled / Snoozed: a pane section header (leading chevron, uppercase label). */
 	private renderGroup(element: Extract<AgentHomeElement, { type: 'group' }>, template: IHomeTemplate): void {
 		template.container.classList.add('is-group', 'is-collapsible', `group-${element.id}`);
 		template.name.textContent = agentHomeGroupLabel(element.id);
+		if (element.count !== undefined) {
+			template.meta.textContent = String(element.count);
+		}
 	}
 
 	private renderSession(element: Extract<AgentHomeElement, { type: 'session' }>, template: IHomeTemplate): void {
@@ -400,10 +459,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.container.classList.toggle('pinned', !!session.pinned);
 		template.container.classList.toggle('active-chat', this.host.isActiveChat(session.id));
 
-		// Under a project a dot is enough; in a flat list the project's initials say where the tab lives.
-		if (element.nested || !context.initials) {
-			append(template.glyph, $('span.volt-agent-home-dot'));
-		} else {
+		// In a flat list the project's initials say where the tab lives; under a project the title stands alone.
+		if (!element.nested && context.initials) {
 			append(template.glyph, $('span.volt-agent-home-initials')).textContent = context.initials;
 		}
 		template.name.textContent = session.title || localize('voltAgent.home.untitled', "New Agent");
@@ -415,7 +472,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			this.renderSecondLine(template, session, context);
 		}
 
-		const badge = sessionShowsStatusBadge(session, this.host.view) ? sessionStatusBadge(session, now) : undefined;
+		const badge = sessionShowsStatusBadge(session, this.host.view) ? this.host.limitBadge(session.id) ?? sessionStatusBadge(session, now, this.host.liveWork(session.id)) : undefined;
 		if (badge) {
 			this.renderStatusBadge(template.badge, badge);
 		}
@@ -437,12 +494,80 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			this.renderRowAction(template, template.wake, localize('voltAgent.home.unsnoozeThread', "Unsnooze"),
 				() => this.host.wake(session), renderIcon(Codicon.bellSlash));
 		}
+		// Run rows hide these; a recycled template must show them again.
+		template.pin.classList.remove('hidden');
+		template.archive.classList.remove('hidden');
 		this.renderRowAction(template, template.pin, session.pinned ? localize('voltAgent.home.unpin', "Unpin") : localize('voltAgent.home.pin', "Pin"),
 			() => this.host.togglePin(session), renderIcon(session.pinned ? Codicon.pinned : Codicon.pin));
 		this.renderRowAction(template, template.archive, session.archived ? localize('voltAgent.home.unarchive', "Unarchive") : localize('voltAgent.home.archive', "Archive"),
 			() => this.host.toggleArchive(session), renderIcon(Codicon.archive));
 		template.elementDisposables.add(this.host.bindSessionHover(template.container, session));
 		template.elementDisposables.add(addDisposableListener(template.container, 'mouseenter', () => this.fadeNameUnderActions(template)));
+	}
+
+	/** One prompt, several models: their icons stacked, the prompt, and how far the runs are. */
+	private renderRunGroup(element: Extract<AgentHomeElement, { type: 'runGroup' }>, template: IHomeTemplate): void {
+		const group = element.group;
+		const status = sessionPrimaryStatus(group.session);
+		template.container.classList.add('is-session', 'is-run-group', 'is-collapsible', `status-${status}`, element.nested ? 'is-nested' : 'is-flat', 'shelf-active');
+		template.container.classList.toggle('archived', !!group.session.archived);
+		template.container.classList.toggle('active-chat', this.host.isActiveRunGroup(group.id));
+		template.glyph.appendChild(renderIcon(Codicon.layers));
+		template.name.textContent = group.session.title;
+		// The models, as overlapping brand icons where other rows show their age.
+		const stack = append(template.meta, $('span.volt-run-group-stack'));
+		for (const family of group.families.slice(0, 4)) {
+			stack.appendChild(createBrandIcon(family, 12));
+		}
+		const twoLine = this.host.twoLine;
+		template.container.classList.toggle('two-line', twoLine);
+		if (twoLine) {
+			append(template.subBranch, $('span.sub-text')).textContent = group.summary;
+		}
+		if (group.badge) {
+			this.renderStatusBadge(template.badge, group.badge);
+		}
+		// The chevron folds the runs out; the rest of the row opens the compare view.
+		template.elementDisposables.add(addDisposableListener(template.twist, 'mousedown', e => e.stopPropagation()));
+		template.elementDisposables.add(addDisposableListener(template.twist, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.host.toggleRunGroup(element);
+		}));
+		// Rows are recycled: a session row may have left its snooze, settle and pin buttons showing.
+		for (const button of [template.snooze, template.settle, template.wake, template.pin]) {
+			button.classList.add('hidden');
+		}
+		template.archive.classList.remove('hidden');
+		this.renderRowAction(template, template.archive, localize('voltAgent.home.archiveRunGroup', "Archive"),
+			() => this.host.archiveRunGroup(group.id), renderIcon(Codicon.archive));
+		setAgentTooltip(template.container, `${group.session.title}\n${group.summary}`);
+	}
+
+	/** A run in a group: its model, live status, and what it changed so far. */
+	private renderRunMember(element: Extract<AgentHomeElement, { type: 'session' }>, member: IAgentHomeRunMember, template: IHomeTemplate): void {
+		const live = this.host.runMemberView(member);
+		template.container.classList.add('is-session', 'is-run-member', element.nested ? 'is-nested' : 'is-flat', 'shelf-active');
+		template.container.classList.toggle('run-winner', !!member.winner);
+		template.container.classList.toggle('run-discarded', !!member.discarded);
+		template.container.classList.toggle('active-chat', this.host.isActiveChat(member.sessionId));
+		template.glyph.appendChild(createBrandIcon(member.family, 13));
+		template.name.textContent = member.winner ? localize('voltAgent.home.runWinner', "{0} · Winner", member.label) : member.label;
+		const twoLine = this.host.twoLine;
+		template.container.classList.toggle('two-line', twoLine);
+		if (twoLine) {
+			template.subBranch.appendChild(renderIcon(Codicon.gitBranch));
+			append(template.subBranch, $('span.sub-text')).textContent = member.branch;
+		}
+		template.meta.textContent = live.stat ?? '';
+		const badge = live.badge ?? member.badge;
+		if (badge) {
+			this.renderStatusBadge(template.badge, badge);
+		}
+		for (const button of [template.snooze, template.settle, template.wake, template.pin, template.archive]) {
+			button.classList.add('hidden');
+		}
+		setAgentTooltip(template.container, `${member.label} · ${member.branch}\n${live.label}`);
 	}
 
 	/** Branch (or project), the pull request badge, and the model, under the title. */
@@ -458,7 +583,16 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		if (badge) {
 			this.renderPrBadge(template, session, badge);
 		}
-		template.subModel.textContent = line.model ?? '';
+		// The model's brand icon, its name on hover; the name itself when the provider is unknown.
+		const model = line.model;
+		const provider = model ? this.host.modelProvider(session, model) : undefined;
+		if (model && provider) {
+			template.subModel.appendChild(createBrandIcon(provider, 12));
+			template.subModel.title = model;
+		} else {
+			template.subModel.textContent = line.model ?? '';
+			template.subModel.removeAttribute('title');
+		}
 	}
 
 	private renderPrBadge(template: IHomeTemplate, session: IAgentSessionMeta, badge: IAgentPrBadge): void {
@@ -473,7 +607,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		}
 		const snapshot = badge.link.snapshot;
 		setAgentTooltip(pill, snapshot
-			? `#${snapshot.number} ${snapshot.title}\n${snapshot.headRefName} → ${snapshot.baseRefName}${badge.link.watch ? `\n${localize('voltAgent.home.prWatched', "Watched: the agent wakes on checks, reviews and conflicts")}` : ''}`
+			? `#${snapshot.number} ${snapshot.title}\n${snapshot.baseRefName} ← ${snapshot.headRefName}${badge.link.watch ? `\n${localize('voltAgent.home.prWatched', "Watched: the agent wakes on checks, reviews and conflicts")}` : ''}`
 			: localize('voltAgent.home.prLinked', "Pull request #{0}", badge.number));
 		template.elementDisposables.add(addDisposableListener(pill, 'mousedown', e => e.stopPropagation()));
 		template.elementDisposables.add(addDisposableListener(pill, 'click', e => {
@@ -526,7 +660,7 @@ function prBadgeIcon(state: IAgentPrBadge['state']): ThemeIcon {
 	}
 }
 
-/** The glyph in a status badge: drawn rings for most states, a codicon for Interrupted. */
+/** The glyph in a status badge: drawn rings for most states, codicons for Interrupted and Stopped. */
 function statusBadgeIcon(kind: AgentHomeStatusBadgeKind): HTMLElement {
 	switch (kind) {
 		case 'input':
@@ -538,6 +672,8 @@ function statusBadgeIcon(kind: AgentHomeStatusBadgeKind): HTMLElement {
 		case 'failed':
 			return createHomeStatusBadgeIcon(kind);
 		case 'interrupted': return renderIcon(Codicon.debugPause);
+		// The same square as the transcript's "Stopped" marker.
+		case 'stopped': return renderIcon(Codicon.debugStop);
 		default: {
 			const unexpected: never = kind;
 			return unexpected;
@@ -548,6 +684,8 @@ function statusBadgeIcon(kind: AgentHomeStatusBadgeKind): HTMLElement {
 /** Headers sit flush; agent tabs under a project or time/status group step in once (~6px). */
 function rowLevel(element: AgentHomeElement): number {
 	switch (element.type) {
+		case 'runGroup':
+			return 1;
 		case 'session':
 			// A side chat steps in past its chat's dot, so it reads as part of that chat.
 			return 1 + 3 * (element.sideDepth ?? 0);
@@ -560,6 +698,8 @@ function rowLevel(element: AgentHomeElement): number {
 		case 'bucket':
 		case 'group':
 		case 'empty':
+		case 'cloudHeader':
+		case 'cloud':
 			return 0;
 		default: {
 			const unexpected: never = element;
@@ -576,13 +716,19 @@ function elementLabel(element: AgentHomeElement): string {
 		case 'folder': return element.project.label;
 		case 'bucket': return element.label;
 		case 'group': return agentHomeGroupLabel(element.id);
+		case 'runGroup': return localize('voltAgent.home.runGroupRow', "{0}, {1}", element.group.session.title, element.group.summary);
 		case 'session': {
+			if (element.runMember) {
+				return localize('voltAgent.home.runMemberRow', "{0}, {1}", element.runMember.label, element.runMember.statusLabel);
+			}
 			const title = element.session.title || localize('voltAgent.home.untitled', "New Agent");
 			return element.session.turnCount === 0
 				? localize('voltAgent.home.draftRow', "{0}, Draft", title)
 				: title;
 		}
 		case 'more': return localize('voltAgent.home.showMore', "Show more");
+		case 'cloudHeader': return localize('voltAgent.home.cloud', "Cloud");
+		case 'cloud': return element.task.title;
 		case 'empty': return element.filtered
 			? localize('voltAgent.home.noMatches', "No agents match these filters")
 			: localize('voltAgent.home.noAgents', "No agents yet");
@@ -608,7 +754,7 @@ function actionSpec(id: AgentHomeActionId): { readonly label: string; readonly i
 		case 'search':
 			return { label: localize('voltAgent.home.search', "Search"), icon: Codicon.search };
 		case 'automations':
-			return { label: localize('voltAgent.home.automations', "Automations"), icon: Codicon.settingsGear };
+			return { label: localize('voltAgent.home.automations', "Automations"), icon: Codicon.history };
 		case 'customize':
 			return { label: localize('voltAgent.home.customize', "Customize"), icon: Codicon.extensions };
 		default: {
@@ -616,6 +762,10 @@ function actionSpec(id: AgentHomeActionId): { readonly label: string; readonly i
 			return unexpected;
 		}
 	}
+}
+
+function sameLiveWork(a: ReadonlyMap<string, AgentHomeWorkState>, b: ReadonlyMap<string, AgentHomeWorkState>): boolean {
+	return a.size === b.size && [...a].every(([id, state]) => b.get(id) === state);
 }
 
 function sameRepo(a: IAgentRepoInfo | undefined, b: IAgentRepoInfo | undefined): boolean {
@@ -640,13 +790,20 @@ export class AgentHomePane extends Disposable {
 	/** Recently opened folders, read once and again only when that list changes. */
 	private recents: Promise<readonly (IRecentFolder | IRecentWorkspace)[]> | undefined;
 	private refreshSeq = 0;
+	/** The Cloud rows' menu opens beside the list. */
+	private readonly cloudMenu: AgentCloudTaskMenu;
+	private readonly cloudAnchor: HTMLElement;
 	private viewState: IAgentHomeViewState;
 	/** Chats with a parent whose orchestration was asked for, to learn if they are subagents. */
 	private readonly checkedSubagents = new Set<string>();
 	/** Desktop only: pull requests linked to chats. */
 	private readonly pullRequests: IAgentPullRequestService | undefined;
+	/** Desktop only: prompts sent to several models at once. */
+	private readonly runGroups: IAgentRunGroupService | undefined;
 	/** Whether the tree was last built with two-line agent tabs; their height changes with it. */
 	private builtTwoLine: boolean | undefined;
+	/** Chats the orchestrator sees busy: a turn starting or running, or subagents still at work. */
+	private live = new Map<string, AgentHomeWorkState>();
 
 	constructor(
 		parent: HTMLElement,
@@ -660,6 +817,7 @@ export class AgentHomePane extends Disposable {
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
 		@IWorkspacesService private readonly workspacesService: IWorkspacesService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IAgentCloudTasksService private readonly cloud: IAgentCloudTasksService,
 		@IVoltSessionContextService private readonly voltSessionContext: IVoltSessionContextService,
 		@IAgentWorkspaceService private readonly agentWorkspace: IAgentWorkspaceService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
@@ -668,9 +826,18 @@ export class AgentHomePane extends Disposable {
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 		@ILayoutService private readonly layoutService: ILayoutService,
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
+		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IAgentThreadLifecycleService private readonly lifecycle: IAgentThreadLifecycleService,
 	) {
 		super();
 		this._register(this.voltProjects.onDidChange(() => this.scheduleRefresh()));
+		this._register(this.runtime.onDidChangeCatalog(() => this.scheduleRefresh()));
+		this._register(this.configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(AGENT_HOME_WORKING_SECTION_SETTING)) {
+				this.scheduleRefresh();
+			}
+		}));
 		// Subagent chats are reached from their parent, not listed. Chats from before the history kept
 		// that flag learn it once their orchestration is loaded; the history change refreshes the list.
 		this._register(this.orchestrator.onDidChange(change => {
@@ -680,10 +847,18 @@ export class AgentHomePane extends Disposable {
 					this.history.pinSessionParent(id, thread.parentId, { subagent: true });
 				}
 			}
+			// A turn starting or subagents finishing moves a chat in or out of Working before history says so.
+			if (!sameLiveWork(this.live, agentHomeLiveWork(this.orchestrator.getState()))) {
+				this.scheduleRefresh();
+			}
 		}));
 		this.pullRequests = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
 		if (this.pullRequests) {
 			this._register(this.pullRequests.onDidChange(() => this.scheduleRefresh()));
+		}
+		this.runGroups = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentRunGroupService));
+		if (this.runGroups) {
+			this._register(this.runGroups.onDidChange(() => this.scheduleRefresh()));
 		}
 		this.repoResolver = new AgentRepoResolver(fileService);
 		this.viewState = this.readViewState();
@@ -693,7 +868,7 @@ export class AgentHomePane extends Disposable {
 		this.nav = append(this.element, $('.volt-agent-home-nav'));
 		this.installNav(keybindingService);
 		this.treeContainer = append(this.element, $('.volt-agent-home-tree'));
-		this.installSettingsButton();
+		this.installSettingsButton(keybindingService);
 
 		this.tree = this._register(this.instantiationService.createInstance(
 			WorkbenchObjectTree<AgentHomeElement>,
@@ -710,7 +885,8 @@ export class AgentHomePane extends Disposable {
 				multipleSelectionSupport: false,
 				hideTwistiesOfChildlessElements: false,
 				renderIndentGuides: RenderIndentGuides.None,
-				expandOnlyOnTwistieClick: false,
+				// A run group's row opens its compare view; its chevron folds the runs out.
+				expandOnlyOnTwistieClick: (element: AgentHomeElement) => element.type === 'runGroup',
 				// Every node carries its own default collapse state; see toTreeElement.
 				paddingBottom: ROW_HEIGHT,
 				setRowLineHeight: false,
@@ -720,6 +896,11 @@ export class AgentHomePane extends Disposable {
 				stickyScrollBackdrop: true,
 			}
 		));
+
+		// Rows still below the fold dissolve into the footer; the fade lifts at the end of the list.
+		this._register(this.tree.onDidScroll(e => {
+			this.treeContainer.classList.toggle('more-below', e.scrollTop + e.height < e.scrollHeight - ROW_HEIGHT);
+		}));
 
 		this._register(this.tree.onDidOpen(e => {
 			const element = e.element;
@@ -735,6 +916,14 @@ export class AgentHomePane extends Disposable {
 					this.tree.setFocus([]);
 				}
 			});
+		}));
+
+		// Header chevrons and the row's `collapsed` class are drawn in renderElement; a fold alone does not re-render the row.
+		this._register(this.tree.onDidChangeCollapseState(e => {
+			const element = e.node.element;
+			if (element && this.tree.hasElement(element)) {
+				this.tree.rerender(element);
+			}
 		}));
 
 		this._register(this.tree.onContextMenu(e => {
@@ -753,6 +942,9 @@ export class AgentHomePane extends Disposable {
 		this._register(this.workspaceService.onDidChangeWorkspaceFolders(() => this.scheduleRefresh()));
 		this._register(this.workspaceService.onDidChangeWorkbenchState(() => this.scheduleRefresh()));
 		this._register(this.history.onDidChange(() => this.scheduleRefresh()));
+		this._register(this.cloud.onDidChange(() => this.scheduleRefresh()));
+		this.cloudAnchor = parent;
+		this.cloudMenu = instantiationService.createInstance(AgentCloudTaskMenu);
 		this._register(this.editorService.onDidEditorsChange(() => this.scheduleRefresh()));
 		this._register(this.editorService.onDidActiveEditorChange(() => this.scheduleRefresh()));
 		this._register(onDidChangeAgentToolEditors(() => this.scheduleRefresh()));
@@ -773,7 +965,7 @@ export class AgentHomePane extends Disposable {
 	 * Footer of the agent list: Settings and Usage. While Usage is the active page the row
 	 * turns into a Back button that closes it and returns to the chat underneath.
 	 */
-	private installSettingsButton(): void {
+	private installSettingsButton(keybindingService: IKeybindingService): void {
 		const footer = append(this.element, $('.volt-agent-home-footer'));
 
 		const back = append(footer, $('button.volt-agent-home-back')) as HTMLButtonElement;
@@ -827,6 +1019,38 @@ export class AgentHomePane extends Disposable {
 		};
 		this._register(this.editorService.onDidActiveEditorChange(sync));
 		sync();
+		this.installUndoNotice(footer, keybindingService);
+	}
+
+	/**
+	 * "Settled 'Fix login'  Undo Cmd+Z" in the footer for a few seconds after a settle, snooze,
+	 * archive or pin. It sits in the footer's free space, so the list above never moves.
+	 */
+	private installUndoNotice(footer: HTMLElement, keybindingService: IKeybindingService): void {
+		const notice = append(footer, $('.volt-agent-home-undo.hidden'));
+		notice.setAttribute('role', 'status');
+		notice.setAttribute('aria-live', 'polite');
+		const label = append(notice, $('span.label'));
+		const undo = append(notice, $('button.undo')) as HTMLButtonElement;
+		undo.type = 'button';
+		append(undo, $('span')).textContent = localize('voltAgent.home.undo', "Undo");
+		const key = append(undo, $('span.keybinding'));
+		this._register(addDisposableListener(undo, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.lifecycle.undo();
+		}));
+		const render = () => {
+			const entry = this.lifecycle.notice;
+			notice.classList.toggle('hidden', !entry);
+			if (entry) {
+				label.textContent = lifecycleUndoLabel(entry);
+				setAgentTooltip(label, label.textContent);
+				key.textContent = keybindingService.lookupKeybinding(AGENT_LIFECYCLE_UNDO_COMMAND_ID)?.getLabel() ?? '';
+			}
+		};
+		this._register(this.lifecycle.onDidChangeNotice(render));
+		render();
 	}
 
 	/** Closes every Usage tab; the group falls back to the chat that was open before it. */
@@ -898,9 +1122,36 @@ export class AgentHomePane extends Disposable {
 		return isTwoLineView(this.viewState);
 	}
 
+	/** The provider behind a chat's model: its orchestration's model ref, else the catalog entry with that label. */
+	modelProvider(session: IAgentSessionMeta, label: string): string | undefined {
+		const catalog = this.runtime.listCatalog();
+		const ref = this.orchestrator.getThread(session.id)?.modelRef;
+		return (ref ? catalog.find(item => item.ref === ref) : undefined)?.providerId
+			?? catalog.find(item => item.label === label)?.providerId;
+	}
+
 	/** The model a chat last ran on: its history, else its loaded orchestration. */
 	modelLabel(session: IAgentSessionMeta): string | undefined {
 		return session.model || this.orchestrator.getThread(session.id)?.modelLabel;
+	}
+
+	liveWork(sessionId: string): AgentHomeWorkState | undefined {
+		return this.live.get(sessionId);
+	}
+
+	/** A chat parked at a usage limit says when it resumes, and the countdown moves with the clock tick. */
+	limitBadge(sessionId: string): IAgentHomeStatusBadge | undefined {
+		const thread = this.orchestrator.getThread(sessionId);
+		if (!thread?.limit || thread.active) {
+			return undefined;
+		}
+		const now = Date.now();
+		const clock = limitParkedClock(thread.limit, this.orchestrator.autoResumeDefault(), now);
+		return { kind: 'limited', label: limitBadgeLabel(thread.limit, now, clock.auto) };
+	}
+
+	get workingSection(): boolean {
+		return this.configurationService.getValue<boolean>(AGENT_HOME_WORKING_SECTION_SETTING) !== false;
 	}
 
 	prBadge(sessionId: string): IAgentPrBadge | undefined {
@@ -967,29 +1218,29 @@ export class AgentHomePane extends Disposable {
 	}
 
 	togglePin(session: IAgentSessionMeta): void {
-		void this.history.setPinned(session.id, !session.pinned);
+		void this.lifecycle.setPinned(session.id, !session.pinned);
 	}
 
 	toggleArchive(session: IAgentSessionMeta): void {
 		this.hover.hide();
-		void this.history.setArchived(session.id, !session.archived);
+		void this.lifecycle.setArchived(session.id, !session.archived);
 	}
 
 	settle(session: IAgentSessionMeta): void {
 		this.hover.hide();
-		void this.history.setSettled(session.id, true);
+		void this.lifecycle.setSettled(session.id, true);
 	}
 
 	/** The clock on an agent tab: quick picks, or Custom… for a date or a duration. */
 	openSnoozeMenu(anchor: HTMLElement, session: IAgentSessionMeta): void {
 		this.hover.hide();
-		showAgentSnoozeMenu(this.contextViewService, anchor, this.layoutService.activeContainer, until => void this.history.setSnoozed(session.id, true, until));
+		showAgentSnoozeMenu(this.contextViewService, anchor, this.layoutService.activeContainer, until => void this.lifecycle.setSnoozed(session.id, true, until));
 	}
 
 	/** The bell on a snoozed tab: back to the list now. */
 	wake(session: IAgentSessionMeta): void {
 		this.hover.hide();
-		void this.history.setSnoozed(session.id, false);
+		void this.lifecycle.setSnoozed(session.id, false);
 	}
 
 	openFilterMenu(anchor: HTMLElement): void {
@@ -999,6 +1250,10 @@ export class AgentHomePane extends Disposable {
 				return pane.view;
 			},
 			setView: next => pane.setView(next),
+			get workingSection() {
+				return pane.workingSection;
+			},
+			setWorkingSection: on => void pane.configurationService.updateValue(AGENT_HOME_WORKING_SECTION_SETTING, on),
 			collapseAll: () => pane.collapseAll(),
 			markAllAsRead: () => pane.markAllAsRead(),
 		});
@@ -1023,23 +1278,28 @@ export class AgentHomePane extends Disposable {
 		showAgentHomeNewChatMenu(this.contextViewService, anchor, projects, choice => void this.startChat(choice));
 	}
 
-	/** Right-click on an agent tab: pin, settle, snooze, archive. */
+	/** Right-click on an agent tab: pin, settle, snooze, Auto-settle, archive. */
 	showSessionMenu(session: IAgentSessionMeta, anchor: HTMLElement | { x: number; y: number }): void {
 		this.hover.hide();
 		const actions: IAction[] = [
-			new Action('volt.home.pin', session.pinned ? localize('voltAgent.home.unpin', "Unpin") : localize('voltAgent.home.pin', "Pin"), undefined, !session.archived, () => this.history.setPinned(session.id, !session.pinned)),
+			new Action('volt.home.pin', session.pinned ? localize('voltAgent.home.unpin', "Unpin") : localize('voltAgent.home.pin', "Pin"), undefined, !session.archived, () => this.lifecycle.setPinned(session.id, !session.pinned)),
 			new Separator(),
-			new Action('volt.home.settle', session.settled ? localize('voltAgent.home.unsettle', "Move Out of Settled") : localize('voltAgent.home.settle', "Move to Settled"), undefined, true, () => this.history.setSettled(session.id, !session.settled)),
+			new Action('volt.home.settle', session.settled ? localize('voltAgent.home.unsettle', "Move Out of Settled") : localize('voltAgent.home.settle', "Move to Settled"), undefined, true, () => this.lifecycle.setSettled(session.id, !session.settled)),
 			new Action('volt.home.snooze', session.snoozed ? localize('voltAgent.home.unsnooze', "Unsnooze") : localize('voltAgent.home.snoozeAction', "Snooze…"), undefined, true, async () => {
 				if (session.snoozed) {
-					await this.history.setSnoozed(session.id, false);
+					await this.lifecycle.setSnoozed(session.id, false);
 				} else {
 					// The picker hangs from an element; a right-click at a point falls back to the list.
 					this.openSnoozeMenu(isHTMLElement(anchor) ? anchor : this.treeContainer, session);
 				}
 			}),
+			// Off keeps the chat out of Settled however long it sits idle; settling by hand still works.
+			new SubmenuAction('volt.home.autoSettle', localize('voltAgent.home.autoSettle', "Auto-settle"), [
+				toAction({ id: 'volt.home.autoSettle.on', label: localize('voltAgent.home.autoSettleOn', "Enabled"), checked: session.autoSettle !== false, run: () => this.history.setAutoSettle(session.id, true) }),
+				toAction({ id: 'volt.home.autoSettle.off', label: localize('voltAgent.home.autoSettleOff', "Disabled"), checked: session.autoSettle === false, run: () => this.history.setAutoSettle(session.id, false) }),
+			]),
 			new Separator(),
-			new Action('volt.home.archive', session.archived ? localize('voltAgent.home.unarchive', "Unarchive") : localize('voltAgent.home.archive', "Archive"), undefined, true, () => this.history.setArchived(session.id, !session.archived)),
+			new Action('volt.home.archive', session.archived ? localize('voltAgent.home.unarchive', "Unarchive") : localize('voltAgent.home.archive', "Archive"), undefined, true, () => this.lifecycle.setArchived(session.id, !session.archived)),
 		];
 		this.contextMenuService.showContextMenu({
 			getAnchor: () => anchor,
@@ -1060,6 +1320,10 @@ export class AgentHomePane extends Disposable {
 
 	/** Where a session lives, as far as the row can tell: repository or folder name, branch, initials. */
 	sessionContext(session: IAgentSessionMeta): IAgentHomeSessionContext & { readonly initials: string } {
+		if (isScratchSession(session)) {
+			const label = scratchProjectLabel();
+			return { workspace: label, initials: repoInitials(label) };
+		}
 		const primary = sessionFolders(session)[0];
 		const repo = primary ? this.repos.get(primary) : undefined;
 		const folderName = primary ? basename(uriFromStoredRoot(primary)) : undefined;
@@ -1118,12 +1382,15 @@ export class AgentHomePane extends Disposable {
 			case 'bucket':
 			case 'group':
 			case 'section':
+			case 'cloudHeader':
 				return this.tree.getNode(element).collapsible;
 			case 'newChat':
 			case 'action':
 			case 'session':
+			case 'runGroup':
 			case 'more':
 			case 'empty':
+			case 'cloud':
 				return false;
 			default: {
 				const unexpected: never = element;
@@ -1144,12 +1411,19 @@ export class AgentHomePane extends Disposable {
 			case 'bucket':
 			case 'group':
 			case 'empty':
+			case 'cloudHeader':
+				return;
+			case 'cloud':
+				this.cloudMenu.show(element.task, this.cloudAnchor);
 				return;
 			case 'folder':
 				await this.openProject(element);
 				return;
 			case 'session':
 				await this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, element.session.id);
+				return;
+			case 'runGroup':
+				await this.commandService.executeCommand(OPEN_RUN_GROUP_COMMAND_ID, element.group.id);
 				return;
 			case 'more':
 				this.showMore(element.groupKey);
@@ -1180,6 +1454,8 @@ export class AgentHomePane extends Disposable {
 				await this.commandService.executeCommand('workbench.action.showCommands');
 				return;
 			case 'automations':
+				await this.commandService.executeCommand(OPEN_AGENT_SCHEDULES_COMMAND_ID);
+				return;
 			case 'customize':
 				await this.commandService.executeCommand(OPEN_AGENT_CUSTOMIZE_COMMAND_ID);
 				return;
@@ -1346,7 +1622,9 @@ export class AgentHomePane extends Disposable {
 				}
 			}
 		}
-		const tree = buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags });
+		const runGroups = this.homeRunGroups(sessions);
+		this.live = agentHomeLiveWork(this.orchestrator.getState());
+		const tree = [...buildCloudHomeNodes(this.cloud.tasks), ...buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags, runGroups, workingShelf: this.workingSection, live: this.live })];
 		// Row heights are measured when rows are inserted: switching one and two lines inserts them again.
 		if (this.builtTwoLine !== undefined && this.builtTwoLine !== this.twoLine) {
 			this.tree.setChildren(null, []);
@@ -1364,6 +1642,105 @@ export class AgentHomePane extends Disposable {
 	 * Reads git facts for every folder the list can show. The resolver caches
 	 * them, so a refresh only follows when a repository or branch changed.
 	 */
+	/** Each run group as one row: it stands in for its runs wherever the list sorts or groups chats. */
+	private homeRunGroups(sessions: readonly IAgentSessionMeta[]): IAgentHomeRunGroup[] {
+		const service = this.runGroups;
+		if (!service) {
+			return [];
+		}
+		const byId = new Map(sessions.map(session => [session.id, session]));
+		const now = Date.now();
+		const showArchived = this.viewState.archived === 'show';
+		return service.list().filter(group => showArchived || !group.archived).map(group => {
+			const rollup = service.rollup(group.id);
+			const summary = runGroupSummary(group, rollup);
+			const metas = new Map<string, IAgentSessionMeta>();
+			for (const run of group.runs) {
+				const meta = byId.get(run.id);
+				if (meta) {
+					metas.set(run.id, meta);
+				}
+			}
+			const first = metas.values().next().value as IAgentSessionMeta | undefined;
+			const updatedAt = Math.max(group.createdAt, ...[...metas.values()].map(meta => meta.updatedAt));
+			const badge = runGroupBadge(rollup);
+			const session: IAgentSessionMeta = {
+				id: group.id,
+				title: group.title,
+				createdAt: group.createdAt,
+				updatedAt,
+				workspaceId: first?.workspaceId ?? group.repoRoot,
+				workspaceLabel: first?.workspaceLabel ?? basename(URI.file(group.repoRoot)),
+				workspaceFolder: first?.workspaceFolder ?? group.repoRoot,
+				turnCount: 1,
+				preview: group.prompt.text.slice(0, 200),
+				summary,
+				status: rollup.live ? 'running' : rollup.status === 'failed' ? 'error' : 'done',
+				lastPromptAt: group.createdAt,
+				...(rollup.status === 'needsInput' ? { attention: 'question' as const } : {}),
+				...(group.archived ? { archived: true } : {}),
+			};
+			return {
+				id: group.id,
+				session,
+				families: group.runs.map(run => run.model.family),
+				summary,
+				...(badge ? { badge } : {}),
+				metas,
+				members: group.runs.map(run => {
+					const status = service.runStatus(group.id, run.id);
+					const kind = runBadgeKind(status);
+					const statusLabel = runStatusLabel(status, run, now);
+					return {
+						sessionId: run.id,
+						label: run.model.label,
+						family: run.model.family,
+						branch: run.branch,
+						statusLabel,
+						...(kind ? { badge: { kind, label: statusLabel } } : {}),
+						...(group.winner?.runId === run.id ? { winner: true } : {}),
+						...(run.discarded ? { discarded: true } : {}),
+					};
+				}),
+			};
+		});
+	}
+
+	/** A run row's live status (its clock moves between refreshes) and its diff stat. */
+	runMemberView(member: IAgentHomeRunMember): { readonly label: string; readonly badge?: IAgentHomeStatusBadge; readonly stat?: string } {
+		const group = this.runGroups?.groupOf(member.sessionId);
+		const run = group?.runs.find(candidate => candidate.id === member.sessionId);
+		if (!group || !run || !this.runGroups) {
+			return { label: member.statusLabel };
+		}
+		const status = this.runGroups.runStatus(group.id, run.id);
+		const label = runStatusLabel(status, run, Date.now());
+		const kind = runBadgeKind(status);
+		// allow-any-unicode-next-line
+		const stat = run.stats && (run.stats.additions || run.stats.deletions) ? `+${run.stats.additions} −${run.stats.deletions}` : undefined;
+		return { label, ...(kind ? { badge: { kind, label } } : {}), ...(stat ? { stat } : {}) };
+	}
+
+	isActiveRunGroup(groupId: string): boolean {
+		const active = this.editorService.activeEditor as { readonly runGroupId?: string } | undefined;
+		return active?.runGroupId === groupId;
+	}
+
+	toggleRunGroup(element: AgentHomeElement): void {
+		if (!this.tree.hasElement(element)) {
+			return;
+		}
+		if (this.tree.isCollapsed(element)) {
+			this.tree.expand(element);
+		} else {
+			this.tree.collapse(element);
+		}
+	}
+
+	archiveRunGroup(groupId: string): void {
+		void this.commandService.executeCommand(ARCHIVE_RUN_GROUP_COMMAND_ID, groupId);
+	}
+
 	private isSubagentSession(session: IAgentSessionMeta): boolean {
 		if (session.subagent || this.orchestrator.getThread(session.id)?.taskId) {
 			return true;
@@ -1537,6 +1914,8 @@ function toTreeElement(node: IAgentHomeNode): IObjectTreeElement<AgentHomeElemen
 		case 'bucket':
 		case 'group':
 		case 'section':
+		case 'runGroup':
+		case 'cloudHeader':
 			collapsible = hasChildren;
 			break;
 		case 'newChat':
@@ -1544,6 +1923,7 @@ function toTreeElement(node: IAgentHomeNode): IObjectTreeElement<AgentHomeElemen
 		case 'session':
 		case 'more':
 		case 'empty':
+		case 'cloud':
 			collapsible = false;
 			break;
 		default: {

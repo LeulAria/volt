@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { inlineResourceContext } from '../common/fileAttachments.js';
 import { DeferredPromise, IntervalTimer, RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
@@ -33,20 +34,29 @@ import { DEFAULT_MODEL_CAPABILITIES } from '../common/capabilities.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../common/events.js';
 import { IVoltModelOptions, MODEL_OPTION_REASONING, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
 import { modePolicy, VoltMode } from '../common/modes.js';
-import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
-import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
+import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
+import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
+import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { resolveTabModel } from '../common/models/modelAccess.js';
-import { IAgentRuntimeService, IVoltMcpServerStatus, IVoltTaskModels } from '../common/runtime.js';
-import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
+import { IAgentRuntimeService, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltTaskModels } from '../common/runtime.js';
+import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
-import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService } from '../common/hostTools.js';
+import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
+import { agentCompactionPrompt, compactedHistory, compactInstructions, isCompactCommand } from '../common/compaction.js';
+import { buildContextHandoff, compactionBudget, handoffBudget, HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_MAX_TOKENS_SETTING, handoffPath, handoffToolCall, HandoffReason, IContextHandoff, IHandoffActivity, IHandoffFile, IHandoffToolCall } from '../common/contextHandoff.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import './git/agentWorktreeSetupService.js';
+import { withPlanModeInstruction } from '../common/plans.js';
+import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService, VISUAL_TOOL_NAMES } from '../common/hostTools.js';
+import { IVoltMemoryService } from '../common/memory/voltMemory.js';
 import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQuestionResponse } from '../common/questions.js';
 import { AcpAgentProvider, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
 import { AcpLoopDetector } from '../common/harness/acpLoopDetector.js';
 import { LOOP_NOTICE_TITLE } from '../common/harness/supervisor.js';
-import { DeepseekDirective, IDeepseekStep } from '../common/deepseek/loop.js';
+import { DeepseekDirective, IDeepseekStep, runDeepseekLoop } from '../common/deepseek/loop.js';
 import { EditBaselineTracker } from './editBaselines.js';
 import './host/hostToolService.js';
+import './memory/voltMemoryService.js';
 import { clearClaudeModelCache } from './agents/claudeCatalog.js';
 import { CLI_AGENT_DEFINITIONS, cliAgentDefinition, detectCliAgent } from './agents/cliAgents.js';
 import { NullVoltStdioService } from './host/nullStdioService.js';
@@ -90,7 +100,6 @@ import { isAcpTurnRestartable } from '../common/harness/sessionRetry.js';
 import { TaskLifecycle } from '../common/harness/lifecycle.js';
 import { IToolCall, IToolContext, IVoltTool, toolSchemas } from '../common/tools/tool.js';
 import { deepseekKnobs, resolveApproval } from '../common/deepseek/approval.js';
-import { runDeepseekLoop } from '../common/deepseek/loop.js';
 import { VoltLlmAdapter } from './deepseek/voltLlmAdapter.js';
 import { buildSubagentPrompt, nativeModelTurn } from '../common/deepseek/prompt.js';
 import { ApprovalOutcome } from '../common/deepseek/protocol.js';
@@ -182,6 +191,19 @@ interface IRunState {
 	/** Reasons this run was already sent back for (each at most once). */
 	readonly continued: { regression: boolean; todos: boolean };
 	regressed?: boolean;
+	/** What the run did besides talking, kept with its reply for handoffs to other sessions. */
+	activity?: { readonly tools: IHandoffToolCall[]; readonly files: IHandoffFile[]; readonly calls: Map<string, { kind?: string; name: string; title?: string; input: string; paths: string[] }> };
+}
+
+/** An agent session the chat moved away from (another model or provider), kept warm to switch back to. */
+interface IParkedAgent {
+	readonly handle: IAgentSessionHandle;
+	readonly providerId: string;
+	readonly ref: string;
+	readonly cwd: string | undefined;
+	/** How many of the chat's `messages` it has seen. */
+	readonly synced: number;
+	readonly parkedAt: number;
 }
 
 type AgentTurnResult =
@@ -221,16 +243,26 @@ interface ISessionState extends IVoltSession {
 	 * conversation as a recap, so the title it names would come from the recap, not the chat.
 	 */
 	agentJoinedLate?: IAgentSessionHandle;
+	/** The user restarted the agent while a turn held it: the next prompt starts a fresh one. */
+	restartPending?: boolean;
 	/** Catalog ref the live agent session was started for. */
 	agentRef?: string;
 	/** Folder the live agent session was started in. A chat moved to another project needs a new one. */
 	agentCwd?: string;
+	/** Sandbox the live agent process was started under (see sandboxLaunchKey). */
+	agentSandboxKey?: string;
 	/** Last time the live agent started or finished a run; idle agents are let go oldest first. */
 	agentUsedAt?: number;
 	/** One notice after a checkout is created or restored. */
 	announceWorktree?: boolean;
+	/** The chat moved to another checkout: the next turn opens with this note and notice. */
+	moved?: { readonly model: string; readonly announce: string; readonly announced?: boolean };
 	/** A title was requested from the first message; set once it landed, so the agent's own titles stop replacing it. */
 	titleState?: 'pending' | 'done';
+	/** Agent sessions of models the chat moved away from; switching back resumes one with only the turns it missed. */
+	parkedAgents?: IParkedAgent[];
+	/** The chat was forked from another: its first agent is briefed as a fork. */
+	forkedFrom?: string;
 }
 
 /** Native-model conversation state that outlives a single run. */
@@ -257,8 +289,8 @@ const DIAGNOSED_EXTENSIONS = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|cs|c|cc|cpp
 const SUBAGENT_TOOLS = ['read_file', 'list_dir', 'grep', 'glob', 'diagnostics', 'code_nav', 'git_status', 'git_diff', 'git_log', 'git_show', 'skill'];
 const INSTRUCTIONS_TTL_MS = 5_000;
 /** Recap of turns an agent has not seen, in estimated tokens (a few thousand, not a second prompt). */
-const RECAP_TOKENS = 4_000;
-const RECAP_MESSAGE_CHARS = 3_000;
+/** Sessions a chat keeps warm for switching back (per chat); idle ones go after IDLE_AGENT_TTL_MS. */
+const MAX_PARKED_PER_CHAT = 2;
 
 export class AgentRuntimeService extends Disposable implements IAgentRuntimeService {
 
@@ -284,6 +316,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private providerRefresh: Promise<void> | undefined;
 	private providerRefreshAgain = false;
 	private accessMode: VoltAccessMode = DEFAULT_ACCESS_MODE;
+	private sandboxDefaults: IVoltSandboxSettings = DEFAULT_SANDBOX_SETTINGS;
+	private sandboxChats: Record<string, IVoltSandboxSettings> = {};
 	private projectRules: IPermissionRule[] = [];
 	private savedRules: IPermissionRule[] = [];
 	private compiledPolicy: ICompiledPolicy = compilePolicy({});
@@ -345,16 +379,19 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@ILogService private readonly logService: ILogService,
 		@IVoltStdioService private readonly stdio: IVoltStdioService,
 		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
+		@IVoltMemoryService private readonly memory: IVoltMemoryService,
 		@ISearchService private readonly searchService: ISearchService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
+		@IAgentWorktreeSetupService private readonly worktreeSetup: IAgentWorktreeSetupService,
 		@ITextFileService private readonly textFileService: ITextFileService,
 		@IPathService private readonly pathService: IPathService,
 		@IMarkerService markerService: IMarkerService,
 		@ITextModelService textModelService: ITextModelService,
 		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
 		@IEnvironmentService environmentService: IEnvironmentService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 	) {
 		super();
 		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeaturesService, fileService));
@@ -394,6 +431,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 
 	private releaseIdleAgents(): void {
 		const now = Date.now();
+		// Sessions parked by a model switch: kept while fresh, at most MAX_IDLE_AGENTS over all chats.
+		const parked = [...this.sessions.values()].flatMap(session => (session.parkedAgents ?? []).map(agent => ({ session, agent })))
+			.sort((a, b) => b.agent.parkedAt - a.agent.parkedAt);
+		parked.forEach(({ session, agent }, index) => {
+			if (index >= MAX_IDLE_AGENTS || now - agent.parkedAt >= IDLE_AGENT_TTL_MS) {
+				this.releaseParked(session, candidate => candidate === agent);
+			}
+		});
 		const idle = [...this.sessions.values()]
 			.filter(session => session.agentHandle && !isRunActive(session))
 			.sort((a, b) => (b.agentUsedAt ?? 0) - (a.agentUsedAt ?? 0));
@@ -410,6 +455,57 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 	}
 
+	/** Disposes the chat's parked agent sessions (all, or those `which` picks). */
+	private releaseParked(session: ISessionState, which?: (agent: IParkedAgent) => boolean): void {
+		const parked = session.parkedAgents;
+		if (!parked?.length) {
+			return;
+		}
+		const released = which ? parked.filter(which) : parked.slice();
+		session.parkedAgents = parked.filter(agent => !released.includes(agent));
+		for (const agent of released) {
+			void this.agentProviders.get(agent.providerId)?.dispose(agent.handle).catch(err => this.logService.trace('[volt] releasing a parked agent failed', err));
+		}
+	}
+
+	/**
+	 * The chat moves to another model: its live agent session stays warm instead of being stopped,
+	 * so switching back resumes it with only the turns it missed.
+	 */
+	private parkSessionAgent(session: ISessionState): void {
+		const handle = session.agentHandle;
+		const providerId = session.agentProviderId;
+		const provider = providerId ? this.agentProviders.get(providerId) : undefined;
+		if (!handle || !providerId || !provider || !session.agentRef || !(provider.isLive?.(handle) ?? true)) {
+			return;
+		}
+		session.agentHandle = undefined;
+		session.agentProviderId = undefined;
+		const parked: IParkedAgent = { handle, providerId, ref: session.agentRef, cwd: session.agentCwd, synced: session.agentSynced ?? 0, parkedAt: Date.now() };
+		session.agentRef = undefined;
+		session.agentCwd = undefined;
+		session.agentSynced = 0;
+		// One per model: a newer session of the same model replaces the older one.
+		this.releaseParked(session, agent => agent.ref === parked.ref && agent.cwd === parked.cwd);
+		session.parkedAgents = [parked, ...session.parkedAgents ?? []];
+		this.releaseParked(session, agent => session.parkedAgents!.indexOf(agent) >= MAX_PARKED_PER_CHAT);
+		this.agentReaper.schedule();
+	}
+
+	/** A parked session of exactly this model and folder that is still alive, taken out of the parking. */
+	private takeParkedAgent(session: ISessionState, provider: IAgentProvider, item: IVoltCatalogItem, cwd: string | undefined): IParkedAgent | undefined {
+		const parked = session.parkedAgents?.find(agent => agent.providerId === provider.id && agent.ref === item.ref && agent.cwd === cwd);
+		if (!parked) {
+			return undefined;
+		}
+		session.parkedAgents = session.parkedAgents!.filter(agent => agent !== parked);
+		if (!(provider.isLive?.(parked.handle) ?? true) || parked.synced > session.messages.length) {
+			void provider.dispose(parked.handle).catch(() => undefined);
+			return undefined;
+		}
+		return parked;
+	}
+
 	/** Stops a chat's idle agent. Its next prompt starts a new one and recaps the conversation. */
 	private releaseAgent(session: ISessionState): void {
 		const handle = session.agentHandle;
@@ -418,6 +514,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.agentProviderId = undefined;
 		session.agentRef = undefined;
 		session.agentCwd = undefined;
+		session.agentSandboxKey = undefined;
 		session.agentSynced = 0;
 		this.forgetAliases(session.sessionId);
 		if (handle) {
@@ -440,12 +537,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return session;
 	}
 
-	seedSession(key: string, messages: readonly { role: 'user' | 'assistant'; content: string }[]): void {
+	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: { readonly forkedFrom?: string }): void {
 		const session = this.getOrCreateSession(key) as ISessionState;
+		if (options?.forkedFrom) {
+			session.forkedFrom = options.forkedFrom;
+		}
 		if (session.messages.length || session.activeRun) {
 			return;
 		}
-		session.messages = messages.filter(message => message.content.trim()).map(message => ({ role: message.role, content: message.content }));
+		session.messages = messages.filter(message => message.content.trim() || message.activity?.tools.length || message.activity?.files.length).map(message => ({
+			role: message.role,
+			content: message.content,
+			...(message.model ? { model: message.model } : {}),
+			...(message.activity ? { activity: message.activity } : {}),
+			...(message.compacted ? { compacted: true } : {}),
+		}));
 		// The saved native transcript carries tool calls and results the text history does not.
 		const seeded = session.messages.length;
 		this.nativeRestores.set(key, this.journal.load(key).then(entry => {
@@ -469,8 +575,32 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.worktreeBranch = branch;
 	}
 
+	relocate(sessionId: string, path: string | undefined, branch: string | undefined, note: { readonly model: string; readonly announce: string }): boolean {
+		const session = this.getOrCreateSession(sessionId) as ISessionState;
+		if (session.run && !session.run.ended) {
+			return false;
+		}
+		session.worktreePath = path || undefined;
+		session.worktreeBranch = path ? branch : undefined;
+		session.announceWorktree = false;
+		session.moved = note;
+		this.history.open(sessionId).setMeta({ worktreePath: path ?? '', ...(path && branch ? { worktreeBranch: branch } : {}) });
+		// The live agent keeps its folder until the next turn, which resumes it in the new one (see executeAgent).
+		this.logService.info(`[volt] ${sessionId} now works in ${path ?? 'the project checkout'}`);
+		return true;
+	}
+
+	workingFolder(sessionId: string): string | undefined {
+		const session = this.getOrCreateSession(sessionId) as ISessionState;
+		return this.executionRoot(session)?.fsPath;
+	}
+
 	supportsCommand(sessionId: string, name: string): boolean {
 		const session = this.sessions.get(sessionId);
+		if (name === 'compact') {
+			// Every chat can compact: the agent's own /compact, Volt's summarizer, or a hand-off summary.
+			return !!session?.messages.some(message => message.role === 'assistant');
+		}
 		if (!session?.agentHandle || !session.agentProviderId) {
 			return false;
 		}
@@ -549,7 +679,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const engine = catalogItem?.kind === 'agent' ? 'agent' : 'native';
 		const run = this.beginRun(session, request.mode, engine, sendAt);
 		try {
-			await this.prepareWorktree(session, request);
+			await this.prepareWorktree(session, request, () => !this.isCurrent(session, run));
 		} catch (err) {
 			this.emit(session, run.runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
 			this.finish(session, run, 'fail');
@@ -638,8 +768,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return result.exitCode === 0 ? result.stdout : undefined;
 	}
 
-	async generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number }): Promise<string | undefined> {
-		const pinned = this.taskModels.title ? this.catalog.find(item => item.ref === this.taskModels.title && item.enabled) : undefined;
+	async generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number; readonly slot?: 'title' | 'git' }): Promise<string | undefined> {
+		const git = options?.slot === 'git' && this.taskModels.git ? this.catalog.find(item => item.ref === this.taskModels.git && item.enabled) : undefined;
+		const pinned = git ?? (this.taskModels.title ? this.catalog.find(item => item.ref === this.taskModels.title && item.enabled) : undefined);
 		const chatRef = options?.sessionId ? this.sessions.get(options.sessionId)?.providerRef : undefined;
 		const item = pinned
 			?? (chatRef ? this.catalog.find(candidate => candidate.ref === chatRef && candidate.enabled) : undefined)
@@ -699,10 +830,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		const cwd = this.executionRoot(session)?.fsPath;
-		if (session.agentHandle && session.agentRef === item.ref && session.agentCwd === cwd && (provider.isLive?.(session.agentHandle) ?? true)) {
+		if (session.agentHandle && session.agentRef === item.ref && session.agentCwd === cwd && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true)) {
 			return;
 		}
-		const spare = this.spareRequest(provider, profile, item, cwd, undefined);
+		const sandbox = this.sandboxStart(session.sessionId, cwd);
+		const spare = this.spareRequest(provider, profile, item, cwd, undefined, sandbox);
 		if (this.agentPool.has(spare.key)) {
 			return;
 		}
@@ -711,7 +843,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// the provider (its host MCP URL names the chat), which `start` adopts.
 		const perChat = provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'prewarmSpare' | 'hasSpare'>>;
 		if (!this.aliasHost() && perChat.prewarmSpare && perChat.hasSpare) {
-			const request = this.agentStartRequest(session.sessionId, profile, item, cwd, undefined, mode);
+			const request = this.agentStartRequest(session.sessionId, profile, item, cwd, undefined, mode, sandbox);
 			if (!perChat.hasSpare(request)) {
 				void perChat.prewarmSpare(request);
 			}
@@ -720,7 +852,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.agentPool.ensure(spare);
 	}
 
-	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode): IAgentStartRequest {
+	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode, sandbox?: IAgentSandboxStart): IAgentStartRequest {
 		return {
 			sessionId,
 			mode,
@@ -728,22 +860,38 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			cwd,
 			modelId: item.id === profile.providerId ? undefined : item.id,
 			options: this.resolvedOptions(item, options),
+			...(sandbox ? { sandbox } : {}),
 		};
 	}
 
-	/** Pool key: an agent can serve a chat when all of these match. */
-	private poolKey(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined): string {
-		const resolved = this.resolvedOptions(item, options);
-		const sorted = Object.keys(resolved).sort().map(key => [key, resolved[key]]);
-		return JSON.stringify([provider.id, profile.id, item.ref, cwd ?? '', sorted]);
+	private sandboxKey(sessionId: string): string {
+		return sandboxLaunchKey(this.getSandboxSettings(sessionId));
 	}
 
-	private spareRequest(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined): ISpareRequest {
+	/** The chat's sandbox as an agent start asks for it; undefined when the chat runs unconfined. */
+	private sandboxStart(sessionId: string, cwd: string | undefined): IAgentSandboxStart | undefined {
+		const settings = this.getSandboxSettings(sessionId);
+		if (settings.level === 'off') {
+			return undefined;
+		}
+		const session = this.sessions.get(sessionId) as ISessionState | undefined;
+		const project = session ? this.projectRoot(session)?.fsPath : undefined;
+		return { settings, workspaceRoots: sandboxWorkspaceRoots(cwd, project, !!session?.worktreePath) };
+	}
+
+	/** Pool key: an agent can serve a chat when all of these match. */
+	private poolKey(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined): string {
+		const resolved = this.resolvedOptions(item, options);
+		const sorted = Object.keys(resolved).sort().map(key => [key, resolved[key]]);
+		return JSON.stringify([provider.id, profile.id, item.ref, cwd ?? '', sorted, sandboxLaunchKey(sandbox?.settings)]);
+	}
+
+	private spareRequest(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined): ISpareRequest {
 		return {
-			key: this.poolKey(provider, profile, item, cwd, options),
+			key: this.poolKey(provider, profile, item, cwd, options, sandbox),
 			providerId: provider.id,
 			start: async alias => {
-				const handle = await provider.start(this.agentStartRequest(alias, profile, item, cwd, options, 'agent'));
+				const handle = await provider.start(this.agentStartRequest(alias, profile, item, cwd, options, 'agent', sandbox));
 				try {
 					await provider.applyAccessPolicy?.(handle, this.compiledPolicy);
 				} catch (err) {
@@ -760,7 +908,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private async startAgentSession(session: ISessionState, run: IRunState, provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, mode: VoltMode, options: IVoltModelOptions | undefined): Promise<void> {
 		const cwd = this.executionRoot(session)?.fsPath;
 		// The provider adopts a spare it parked for this chat (see prewarmAgent), else starts cold.
-		const handle = await provider.start(this.agentStartRequest(session.sessionId, profile, item, cwd, options, mode));
+		const handle = await provider.start(this.agentStartRequest(session.sessionId, profile, item, cwd, options, mode, this.sandboxStart(session.sessionId, cwd)));
 		if (!this.isCurrent(session, run) && session.agentHandle) {
 			// A newer run already has an agent; this cancelled run's start is not needed.
 			void provider.dispose(handle).catch(() => undefined);
@@ -776,6 +924,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.agentProviderId = provider.id;
 		session.agentRef = item.ref;
 		session.agentCwd = cwd;
+		session.agentSandboxKey = this.sandboxKey(session.sessionId);
 		session.agentUsedAt = Date.now();
 		// A fresh agent process has seen nothing of this conversation yet.
 		session.agentSynced = 0;
@@ -824,6 +973,50 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session.agentHandle && (session.agentSynced ?? 0) > session.messages.length) {
 			this.disposeSessionAgent(session);
 			session.agentSynced = 0;
+		}
+		this.releaseParked(session, agent => agent.synced > session.messages.length);
+	}
+
+	async restartAgent(sessionId: string, options?: { readonly cancel?: boolean }): Promise<boolean> {
+		const session = this.sessions.get(sessionId);
+		const run = session?.run;
+		if (run && !run.ended && !options?.cancel) {
+			this.logService.info(`[volt] not restarting the agent of ${sessionId}: a turn is running`);
+			return false;
+		}
+		this.forgetAgentSetup();
+		if (!session) {
+			// Nothing started yet: the chat's first agent reads the new setup anyway.
+			return true;
+		}
+		// Set before the cancel: a queued prompt that starts while this turn unwinds starts fresh too.
+		session.restartPending = true;
+		if (run && !run.ended) {
+			await this.cancel(sessionId);
+		}
+		// A cancelled turn holds its agent until it unwinds; disposing it under the turn would race it.
+		await this.waitSettled(run, SETTLE_WAIT_AGENT_MS);
+		if (session.restartPending && !(session.run && !session.run.ended)) {
+			session.restartPending = false;
+			this.releaseAgent(session);
+		}
+		// Parked sessions started with the old setup too.
+		this.releaseParked(session);
+		return true;
+	}
+
+	/**
+	 * Drops what a fresh agent would reuse instead of reading again: spares started with the old
+	 * setup, skills and rules read a moment ago, and MCP servers that failed to start.
+	 */
+	private forgetAgentSetup(): void {
+		this.instructionsByRoot.clear();
+		this.mcpHost.forgetFailed();
+		this.agentPool.clear();
+		for (const provider of this.agentProviders.values()) {
+			if (provider instanceof AcpAgentProvider) {
+				void provider.disposeSpares().catch(() => undefined);
+			}
 		}
 	}
 
@@ -1354,6 +1547,28 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		await this.pushPolicyToAgents();
 	}
 
+	getSandboxSettings(sessionId: string): IVoltSandboxSettings {
+		return this.sandboxChats[sessionId] ?? this.sandboxDefaults;
+	}
+
+	async setSandboxSettings(sessionId: string, settings: IVoltSandboxSettings): Promise<void> {
+		this.sandboxChats = { ...this.sandboxChats, [sessionId]: normalizeSandboxSettings(settings) };
+		this.storeSandbox();
+	}
+
+	getDefaultSandboxSettings(): IVoltSandboxSettings {
+		return this.sandboxDefaults;
+	}
+
+	async setDefaultSandboxSettings(settings: IVoltSandboxSettings): Promise<void> {
+		this.sandboxDefaults = normalizeSandboxSettings(settings);
+		this.storeSandbox();
+	}
+
+	private storeSandbox(): void {
+		this.storageService.store(VOLT_SANDBOX_STORAGE_KEY, JSON.stringify({ defaults: this.sandboxDefaults, chats: this.sandboxChats }), StorageScope.APPLICATION, StorageTarget.USER);
+	}
+
 	respondToAccessRequest(requestId: string, effect: Extract<PermissionEffect, 'allow' | 'deny'>, scope: AccessDecisionScope = 'once', pattern?: string): void {
 		const pending = this.pendingApprovals.get(requestId);
 		if (!pending) {
@@ -1554,13 +1769,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!session || call.name === ASK_QUESTION_TOOL_NAME || call.name === AWAIT_ANSWERS_TOOL_NAME) {
 			return;
 		}
+		// A page or chart spec can be hundreds of KB; the visual's stored copy is what the transcript keeps.
+		const visualTool = (VISUAL_TOOL_NAMES as readonly string[]).includes(call.name);
 		this.emit(session, session.activeRun?.runId || session.sessionId, {
 			type: 'host.tool',
 			name: call.name,
-			args: call.args,
+			args: visualTool ? { ...(typeof call.args.title === 'string' ? { title: call.args.title } : {}) } : call.args,
 			...(call.result.text ? { text: call.result.text } : {}),
 			...(call.result.image ? { image: call.result.image } : {}),
 			...(call.result.error ? { error: call.result.error } : {}),
+			...(call.result.visual ? { visual: call.result.visual } : {}),
 		});
 	}
 
@@ -1808,7 +2026,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** First send in New Worktree mode creates the checkout. Later sends stay there, recreating it if archive pruned the files. */
-	private async prepareWorktree(session: ISessionState, request: IVoltSendRequest): Promise<void> {
+	private async prepareWorktree(session: ISessionState, request: IVoltSendRequest, isCancelled: () => boolean): Promise<void> {
 		const project = this.projectRoot(session);
 		if (session.worktreePath && session.worktreeBranch) {
 			if (!project) {
@@ -1817,6 +2035,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			const recreated = await this.worktrees.ensure(project.fsPath, session.worktreePath, session.worktreeBranch);
 			if (recreated) {
 				session.announceWorktree = true;
+				// A checkout recreated from its branch has none of what setup installed.
+				await this.worktreeSetup.run(session.sessionId, { repoRoot: project.fsPath, worktreePath: session.worktreePath, branch: session.worktreeBranch, isCancelled });
+			} else if (this.worktreeSetup.needsRetry(session.sessionId)) {
+				// The last setup failed or was cancelled: finish it before the agent works there.
+				await this.worktreeSetup.retry(session.sessionId, { isCancelled });
 			}
 			return;
 		}
@@ -1832,9 +2055,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.worktreeBranch = created.branch;
 		session.announceWorktree = true;
 		this.history.open(session.sessionId).setMeta({ worktreePath: created.path, worktreeBranch: created.branch });
+		await this.worktreeSetup.run(session.sessionId, { repoRoot: project.fsPath, worktreePath: created.path, branch: created.branch, isCancelled });
 	}
 
 	private noteWorktree(session: ISessionState, runId: string): void {
+		if (session.moved && !session.moved.announced) {
+			session.moved = { ...session.moved, announced: true };
+			this.emit(session, runId, { type: 'notice', severity: 'info', title: session.moved.announce, ...(session.worktreePath ? { description: session.worktreePath } : {}) });
+			return;
+		}
 		if (!session.announceWorktree || !session.worktreeBranch || !session.worktreePath) {
 			return;
 		}
@@ -1919,6 +2148,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		const state = this.nativeState(session);
+		if (isCompactCommand(request.text)) {
+			await this.compactNativeNow(session, run, state, provider, profile, apiKey, item);
+			return;
+		}
 		// This run appends to its own copy; cancelling detaches it, so a loop that is still unwinding
 		// cannot push tool results after the next run's user message.
 		const transcript = state.messages.slice();
@@ -1929,15 +2162,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		state.changed.clear();
 		state.ledger.resumeReferences();
 		const images = this.modelImages(request.images);
-		this.syncNativeTranscript(session, state, request.text, images);
+		// A model Volt runs itself reads a folded paste inline, as ACP agents with embedded context do.
+		const pasted = inlineResourceContext(request.resources);
+		this.syncNativeTranscript(session, state, pasted ? `${request.text}\n\n${pasted}` : request.text, images);
 
-		const [projectInstructions, instructions, mcpTools] = await Promise.all([
+		const [projectInstructions, instructions, mcpTools, memoryContext] = await Promise.all([
 			this.workspaceProjectInstructions(root),
 			this.workspaceInstructions(root),
 			// MCP servers get a short, bounded wait: a slow server joins the next run instead of stalling this one.
 			modePolicy(request.mode).allowMcp
 				? this.pathService.userHome().catch(() => undefined).then(home => this.mcpHost.tools(root, home, transcript.length > 1 ? 1_500 : 4_000)).catch(() => [])
 				: Promise.resolve([]),
+			this.memory.context().catch(() => undefined),
 		]);
 		if (!this.isCurrent(session, run)) {
 			return;
@@ -1945,8 +2181,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		state.instructions = instructions;
 		const facts = this.environmentFacts(root);
 		const tools = [...this.workspaceTools(session, state), ...mcpTools];
+		// After a move the model reads where it works now before the prompt.
+		const moved = session.moved?.model;
+		session.moved = undefined;
 		const turn = nativeModelTurn({
-			text: request.text,
+			text: moved ? `${moved}\n\n${request.text}` : request.text,
 			mode: request.mode,
 			cwd,
 			platform: facts.platform,
@@ -1955,6 +2194,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			projectInstructions,
 			rules: alwaysRules(instructions.rules),
 			skills: instructionsIndex(instructions.skills, instructions.rules),
+			memory: memoryContext,
 			tools,
 		});
 		const selected = tools.filter(tool => turn.toolNames.includes(tool.name));
@@ -2026,8 +2266,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			if (!this.isCurrent(session, run)) {
 				return;
 			}
-			if (result.assistant) {
-				session.messages.push({ role: 'assistant', content: result.assistant, model: item.label });
+			const nativeActivity = this.runActivity(run);
+			if (result.assistant || nativeActivity) {
+				session.messages.push({ role: 'assistant', content: result.assistant ?? '', model: item.label, ...(nativeActivity ? { activity: nativeActivity } : {}) });
 			}
 			state.synced = session.messages.length;
 			if (result.stopped?.by === 'loop') {
@@ -2175,6 +2416,35 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * Summarizes older turns into one handoff message and keeps the recent tail verbatim. Done in
 	 * place on the loop's own array, at one boundary, so the prompt cache restarts only once.
 	 */
+	/**
+	 * `/compact` in a native chat: Volt's summarizer folds everything but the latest exchange into a
+	 * summary, as it does on its own near the context limit, and nothing is sent to the model.
+	 */
+	private async compactNativeNow(session: ISessionState, run: IRunState, state: INativeState, provider: IModelProvider, profile: IProviderProfile, apiKey: string | undefined, item: IVoltCatalogItem): Promise<void> {
+		// The /compact message is a command, not part of the conversation.
+		if (session.messages.at(-1)?.role === 'user' && isCompactCommand(session.messages.at(-1)!.content)) {
+			session.messages.pop();
+		}
+		const messages = state.messages.slice();
+		const compacted = await this.compactNative(session, run, state, messages, {
+			provider, profile, apiKey, item, system: '', contextWindow: item.capabilities.contextWindow || DEFAULT_MODEL_CAPABILITIES.contextWindow, aggressive: true, token: run.cancel.token, keepTokens: 0,
+		});
+		if (!this.isCurrent(session, run)) {
+			return;
+		}
+		if (compacted) {
+			state.messages = messages;
+			state.synced = session.messages.length;
+			this.journal.schedule(session.sessionId, () => ({ version: 1 as const, messages: state.messages, synced: state.synced, effort: state.effort, todo: state.todo, savedAt: Date.now() }));
+		}
+		const id = generateUuid();
+		const text = compacted ? 'Compacted the conversation: earlier turns are now a summary the model continues from.' : 'Nothing to compact yet: the conversation is already short.';
+		this.emit(session, run.runId, { type: 'text.start', id });
+		this.emit(session, run.runId, { type: 'text.delta', id, delta: text });
+		this.emit(session, run.runId, { type: 'text.end', id });
+		this.finish(session, run, 'done');
+	}
+
 	private async compactNative(session: ISessionState, run: IRunState, state: INativeState, messages: INativeLoopMessage[], input: {
 		readonly provider: IModelProvider;
 		readonly profile: IProviderProfile;
@@ -2184,15 +2454,20 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		readonly contextWindow: number;
 		readonly aggressive: boolean;
 		readonly token: CancellationToken;
+		/** Tokens of recent turns to keep verbatim; `/compact` keeps only the latest exchange. */
+		readonly keepTokens?: number;
 	}): Promise<boolean> {
 		const window = effectiveWindow({ window: input.contextWindow, ...DEFAULT_COMPACTION });
-		const boundary = compactionBoundary(messages, Math.floor(window * (input.aggressive ? 0.1 : 0.25)));
+		const boundary = compactionBoundary(messages, input.keepTokens ?? Math.floor(window * (input.aggressive ? 0.1 : 0.25)));
 		if (boundary <= 0) {
 			return false;
 		}
 		const older = messages.slice(0, boundary);
 		const carry = { files: state.ledger.summary(), todo: state.todo };
-		this.emitEngine(session, run, { type: 'notice', severity: 'info', title: 'Compacting the conversation to keep it within the model\'s context.' });
+		const compactionId = generateUuid();
+		const startedAt = Date.now();
+		const preTokens = estimateTokens(input.system) + totalTokens(messages);
+		this.emitEngine(session, run, { type: 'context.compaction', id: compactionId, status: 'running', trigger: 'auto', preTokens });
 		let summary: string | undefined;
 		try {
 			let text = '';
@@ -2219,7 +2494,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		messages.splice(0, messages.length, ...next);
 		state.ledger.invalidateReferences();
 		state.promptTokens = estimateTokens(input.system) + totalTokens(messages);
-		this.emitEngine(session, run, { type: 'compaction', stages: [summary ? 'summarize' : 'mechanical'], dropped: boundary });
+		this.emitEngine(session, run, {
+			type: 'context.compaction',
+			id: compactionId,
+			status: 'completed',
+			postTokens: state.promptTokens,
+			durationMs: Date.now() - startedAt,
+			...(summary ? { summary } : {}),
+		});
 		return true;
 	}
 
@@ -2454,15 +2736,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** What `buildAcpLead` reads, and nothing else: the lead is built on every turn's critical path. */
-	private async contextPackInput(session: ISessionState, mode: VoltMode, intent: IIntent): Promise<IContextPackInput> {
+	private async contextPackInput(session: ISessionState, mode: VoltMode, intent: IIntent, withMemory: boolean): Promise<IContextPackInput> {
 		const root = this.executionRoot(session);
 		return {
+			...(withMemory ? { memory: await this.memory.context() } : {}),
 			mode,
 			intent: { ...intent, groups: this.effectiveGroups(session, intent) },
 			runPlan: intent.wantsPreview ? await this.workspaceRunPlan(root) : undefined,
 			environment: this.environmentFacts(root),
 			...(intent.shape ? { shape: intent.shape } : {}),
 			...(mode === 'multitask' ? { taskModels: [...new Set(this.listCatalog().filter(item => item.enabled).map(item => item.label))] } : {}),
+			visuals: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
 		};
 	}
 
@@ -2476,7 +2760,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const token = run.cancel.token;
 		// Another model from the same CLI is another agent session: restart it; the recap carries the thread over.
 		const hasLiveAgent = () => !!session.agentHandle && session.agentProviderId === provider.id && session.agentRef === item.ref
-			&& session.agentCwd === this.executionRoot(session)?.fsPath && (provider.isLive?.(session.agentHandle) ?? true);
+			&& session.agentCwd === this.executionRoot(session)?.fsPath && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true);
 		// One prompt at a time per agent session: a cancelled turn lets go of the agent before the
 		// next prompt is written, or the agent is replaced.
 		if (previous?.engine === 'agent' && !await this.waitSettled(previous, SETTLE_WAIT_AGENT_MS) && this.isCurrent(session, run) && session.agentHandle) {
@@ -2484,17 +2768,47 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.disposeSessionAgent(session);
 			session.agentSynced = 0;
 		}
+		if (session.restartPending && this.isCurrent(session, run)) {
+			// Restarted while the previous turn held the agent (see restartAgent).
+			session.restartPending = false;
+			this.releaseAgent(session);
+		}
 		const turns: string[] = [];
+		let voltCompaction = false;
+		// A bare `/compact` with no live session that compacts itself: Volt's handoff summary, no model call.
+		if (isCompactCommand(request.text) && !compactInstructions(request.text) && !(hasLiveAgent() && (provider.supportsCommand?.(session.agentHandle!, 'compact') ?? false))) {
+			this.compactWithHandoff(session, run, item);
+			return;
+		}
 		try {
 			for (let attempt = 0; attempt < 2; attempt++) {
 				if (!this.isCurrent(session, run)) {
 					return;
 				}
 				try {
-					if (hasLiveAgent()) {
+					let reused = false;
+					const reusedAgent = hasLiveAgent();
+					if (reusedAgent) {
+						run.metrics.setAgentSource('live');
+					} else if (attempt === 0 && await this.resumeAgentElsewhere(session, run, provider, profile, item, request)) {
 						run.metrics.setAgentSource('live');
 					} else {
-						await this.acquireAgent(session, run, provider, profile, item, request, intent, attempt > 0);
+						const cwd = this.executionRoot(session)?.fsPath;
+						// Back on a model the chat was on before: its session is still warm, and only the turns it missed go to it.
+						const parked = attempt === 0 ? this.takeParkedAgent(session, provider, item, cwd) : undefined;
+						if (attempt === 0) {
+							// The session being left stays warm for switching back.
+							this.parkSessionAgent(session);
+						}
+						if (parked) {
+							this.disposeSessionAgent(session);
+							this.bindAgent(session, provider, item, cwd, parked.handle);
+							session.agentSynced = parked.synced;
+							reused = true;
+							run.metrics.setAgentSource('live');
+						} else {
+							await this.acquireAgent(session, run, provider, profile, item, request, intent, attempt > 0);
+						}
 					}
 					const handle = session.agentHandle;
 					if (!this.isCurrent(session, run) || !handle) {
@@ -2502,16 +2816,42 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					}
 					run.metrics.mark('agentReady');
 					provider.setRunContext?.(handle, { sessionId: session.sessionId, runId: run.runId, mode: request.mode });
-					const recap = conversationRecap(session.messages.slice(session.agentSynced ?? 0, -1));
-					if (recap) {
+					const handoff = this.contextHandoff(session, item, reused);
+					if (handoff && !reused) {
 						session.agentJoinedLate = handle;
 					}
-					const lead = [recap, buildAcpLead(await this.contextPackInput(session, request.mode, intent))].filter(Boolean).join('\n\n') || undefined;
+					// After a move: the conversation so far happened in the old folder.
+					const moved = session.moved?.model;
+					const lead = [handoff?.text, moved, buildAcpLead(await this.contextPackInput(session, request.mode, intent, !reusedAgent && !reused))].filter(Boolean).join('\n\n') || undefined;
+					if (moved && session.moved?.model === moved) {
+						session.moved = undefined;
+					}
 					if (!this.isCurrent(session, run)) {
 						return;
 					}
+					if (handoff) {
+						this.emit(session, run.runId, {
+							type: 'context.handoff',
+							reason: handoff.reason,
+							...(handoff.fromLabel ? { fromLabel: handoff.fromLabel } : {}),
+							toLabel: item.label,
+							tokens: handoff.tokens,
+							budget: handoff.budget,
+							reused,
+							turns: handoff.turns,
+							verbatimTurns: handoff.verbatimTurns,
+							condensedTurns: handoff.condensedTurns,
+							omittedTurns: handoff.omittedTurns,
+							toolCalls: handoff.toolCalls,
+							files: handoff.files.length,
+							text: handoff.text,
+						});
+					}
 					const images = this.modelImages(request.images);
-					const first = await this.agentTurn(session, run, provider, handle, profile, { text: request.text, mode: request.mode, lead, ...(images ? { images } : {}) }, attempt === 0);
+					// An agent with no /compact of its own writes a hand-off summary that replaces the history.
+					voltCompaction = isCompactCommand(request.text) && !(provider.supportsCommand?.(handle, 'compact') ?? false);
+					const text = voltCompaction ? agentCompactionPrompt(compactInstructions(request.text)) : request.text;
+					const first = await this.agentTurn(session, run, provider, handle, profile, { text: request.mode === 'plan' ? withPlanModeInstruction(text) : text, mode: request.mode, lead, ...(images ? { images } : {}), ...(request.resources?.length ? { resources: request.resources } : {}) }, attempt === 0);
 					if (first.kind === 'stale') {
 						return;
 					}
@@ -2523,7 +2863,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					turns.push(first.assistant);
 					let reason = first.reason;
 					// The agent wants to stop. Volt's checks may send it back once per reason.
-					while (reason === 'done') {
+					while (reason === 'done' && !voltCompaction) {
 						const message = await this.qualityContinuation(session, run);
 						if (!message || !this.isCurrent(session, run)) {
 							break;
@@ -2543,10 +2883,20 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						return;
 					}
 					const assistant = turns.filter(text => text.trim()).join('\n\n');
-					if (assistant) {
-						session.messages.push({ role: 'assistant', content: assistant, model: item.label });
+					const agentActivity = this.runActivity(run);
+					if (assistant || agentActivity) {
+						session.messages.push({ role: 'assistant', content: assistant, model: item.label, ...(agentActivity ? { activity: agentActivity } : {}) });
 					}
 					session.agentSynced = session.messages.length;
+					if (voltCompaction && reason === 'done' && assistant.trim()) {
+						// The summary is the whole context now; the next prompt starts a fresh agent briefed with it.
+						const dropped = session.messages.length;
+						session.messages = compactedHistory(assistant);
+						this.releaseAgent(session);
+						this.releaseParked(session);
+						this.emit(session, run.runId, { type: 'compaction', stages: ['handoff'], dropped });
+						this.emit(session, run.runId, { type: 'notice', severity: 'info', title: 'Conversation compacted', description: 'The next message starts a fresh agent session that sees only this summary.' });
+					}
 					this.finish(session, run, reason);
 					return;
 				} catch (err) {
@@ -2622,9 +2972,128 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** A warm spare when one fits (or is about to), otherwise a cold start bound to this chat. */
+	/** After a move the same agent conversation continues in the new folder; the agent keeps what it has seen. */
+	private async resumeAgentElsewhere(session: ISessionState, run: IRunState, provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, request: IVoltSendRequest): Promise<boolean> {
+		const handle = session.agentHandle;
+		const cwd = this.executionRoot(session)?.fsPath;
+		if (!handle || !provider.resumeIn || session.agentProviderId !== provider.id || session.agentRef !== item.ref || session.agentCwd === cwd) {
+			return false;
+		}
+		const resumed = await provider.resumeIn(handle, this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode));
+		if (!resumed || !this.isCurrent(session, run)) {
+			if (resumed) {
+				void provider.dispose(resumed).catch(() => undefined);
+			}
+			return false;
+		}
+		session.agentHandle = resumed;
+		session.agentCwd = cwd;
+		session.agentUsedAt = Date.now();
+		await provider.applyAccessPolicy?.(resumed, this.compiledPolicy);
+		return true;
+	}
+
+	/**
+	 * The conversation the session about to answer has not seen, sized to the receiving model's
+	 * window: everything before this prompt for a new session, only the missed turns for one the
+	 * chat comes back to.
+	 */
+	private contextHandoff(session: ISessionState, item: IVoltCatalogItem, reused: boolean): (IContextHandoff & { readonly fromLabel?: string }) | undefined {
+		const synced = Math.min(session.agentSynced ?? 0, Math.max(0, session.messages.length - 1));
+		const unseen = session.messages.slice(synced, -1);
+		if (!unseen.length) {
+			return undefined;
+		}
+		const earlier = session.messages.slice(0, -1);
+		const fromLabel = (reused ? unseen : earlier).findLast(message => message.role === 'assistant' && message.model && message.model !== item.label)?.model;
+		const forked = !!session.forkedFrom;
+		session.forkedFrom = undefined;
+		const reason: HandoffReason = reused ? 'return' : forked ? 'fork' : fromLabel ? 'switch' : 'resume';
+		const handoff = buildContextHandoff({
+			messages: unseen,
+			budget: this.handoffBudgetFor(item),
+			reason,
+			firstTurn: countUserTurns(session.messages.slice(0, synced)) + 1,
+			...(fromLabel ? { fromLabel } : {}),
+			toLabel: item.label,
+			threadId: session.sessionId,
+		});
+		return handoff && { ...handoff, ...(fromLabel ? { fromLabel } : {}) };
+	}
+
+	private handoffBudgetFor(item: IVoltCatalogItem): number {
+		const setting = (key: string) => {
+			const value = this.configurationService.getValue<unknown>(key);
+			return typeof value === 'number' ? value : undefined;
+		};
+		return handoffBudget({ contextWindow: item.capabilities.contextWindow, percent: setting(HANDOFF_BUDGET_PERCENT_SETTING), maxTokens: setting(HANDOFF_MAX_TOKENS_SETTING) });
+	}
+
+	/**
+	 * `/compact` for an agent that has none of its own (or no live session to run it in): the
+	 * conversation becomes Volt's handoff summary (recent turns verbatim, older ones condensed),
+	 * and the next prompt starts a fresh session briefed with it. Nothing is sent to a model.
+	 */
+	private compactWithHandoff(session: ISessionState, run: IRunState, item: IVoltCatalogItem): void {
+		if (session.messages.at(-1)?.role === 'user' && isCompactCommand(session.messages.at(-1)!.content)) {
+			// The /compact message is a command, not part of the conversation.
+			session.messages.pop();
+		}
+		const id = generateUuid();
+		const startedAt = Date.now();
+		this.emit(session, run.runId, { type: 'context.compaction', id, status: 'running', trigger: 'manual' });
+		const handoff = buildContextHandoff({ messages: session.messages, budget: compactionBudget(item.capabilities.contextWindow), reason: 'compact', threadId: session.sessionId });
+		if (!handoff) {
+			this.emit(session, run.runId, { type: 'context.compaction', id, status: 'failed', error: 'Nothing to compact yet.' });
+			this.finish(session, run, 'done');
+			return;
+		}
+		session.messages = [{ role: 'assistant', content: handoff.text, model: item.label, compacted: true }];
+		// Sessions that hold the long history would bring it back.
+		this.releaseAgent(session);
+		this.releaseParked(session);
+		this.compactionPlans.delete(session.sessionId);
+		this.emit(session, run.runId, { type: 'context.compaction', id, status: 'completed', trigger: 'manual', postTokens: handoff.tokens, durationMs: Date.now() - startedAt, summary: handoff.text });
+		// The meter's reading until the next session reports its own: the summary (the meter adds the prompt base).
+		this.emit(session, run.runId, { type: 'usage', input: 0, output: 0, used: handoff.tokens });
+		this.finish(session, run, 'done');
+	}
+
+	private readonly compactionPlans = new Map<string, { readonly key: string; readonly plan: IVoltCompactionPlan | undefined }>();
+
+	compactionPlan(sessionId: string, providerRef: string | undefined): IVoltCompactionPlan | undefined {
+		const session = this.sessions.get(sessionId);
+		if (!session || !session.messages.some(message => message.role === 'assistant')) {
+			return undefined;
+		}
+		const ref = providerRef ?? session.providerRef;
+		const item = this.catalog.find(candidate => candidate.ref === ref && candidate.enabled);
+		if (!item) {
+			return undefined;
+		}
+		if (item.kind !== 'agent') {
+			return { kind: 'native', label: item.label };
+		}
+		const provider = session.agentProviderId ? this.agentProviders.get(session.agentProviderId) : undefined;
+		if (session.agentHandle && session.agentRef === item.ref && provider && (provider.isLive?.(session.agentHandle) ?? true) && (provider.supportsCommand?.(session.agentHandle, 'compact') ?? false)) {
+			return { kind: 'native', label: item.label };
+		}
+		// Built once per transcript length: the chip asks on every meter refresh.
+		const key = `${item.ref}\0${session.messages.length}\0${session.messages.at(-1)?.content.length ?? 0}`;
+		const cached = this.compactionPlans.get(sessionId);
+		if (cached?.key === key) {
+			return cached.plan;
+		}
+		const handoff = buildContextHandoff({ messages: session.messages, budget: compactionBudget(item.capabilities.contextWindow), reason: 'compact' });
+		const plan: IVoltCompactionPlan | undefined = handoff ? { kind: 'handoff', tokens: handoff.tokens, label: item.label } : undefined;
+		this.compactionPlans.set(sessionId, { key, plan });
+		return plan;
+	}
+
 	private async acquireAgent(session: ISessionState, run: IRunState, provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, request: IVoltSendRequest, intent: IIntent, restart: boolean): Promise<void> {
 		const cwd = this.executionRoot(session)?.fsPath;
-		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options);
+		const sandbox = this.sandboxStart(session.sessionId, cwd);
+		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options, sandbox);
 		run.spare = spareRequest;
 		// A spare's browser tools reach this chat only when the host tool service maps its alias.
 		if (this.aliasHost() || !(intent.wantsPreview || intent.matchesDesign)) {
@@ -2642,7 +3111,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			}
 		}
 		// The provider may hold a spare it parked for this chat (prewarmAgent without alias support).
-		const parked = (provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'hasSpare'>>).hasSpare?.(this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode));
+		const parked = (provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'hasSpare'>>).hasSpare?.(this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode, sandbox));
 		await this.startAgentSession(session, run, provider, profile, item, request.mode, request.options);
 		run.metrics.setAgentSource(restart ? 'restart' : parked ? 'pool' : 'cold');
 	}
@@ -2755,7 +3224,57 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		run.events++;
 		run.metrics.observe(event);
 		this.observeForGate(session, run, event);
+		this.observeForHandoff(session, run, event);
 		this.emit(session, run.runId, event);
+	}
+
+	/** Keeps what the run did (tool calls by what they touched, files it changed) for handoffs to other sessions. */
+	private observeForHandoff(session: ISessionState, run: IRunState, event: IVoltEvent): void {
+		const activity: NonNullable<IRunState['activity']> = run.activity ??= { tools: [], files: [], calls: new Map() };
+		const cwd = run.engine === 'agent' ? session.agentCwd ?? this.executionRoot(session)?.fsPath : this.executionRoot(session)?.fsPath;
+		switch (event.type) {
+			case 'tool.start':
+				activity.calls.set(event.callId, { kind: event.kind, name: event.name, title: event.title, input: event.input ?? '', paths: [...event.locations?.map(location => location.path) ?? [], ...event.diffs?.map(diff => diff.path) ?? []] });
+				return;
+			case 'tool.input.delta': {
+				const call = activity.calls.get(event.callId);
+				if (call) {
+					call.input = event.append ? call.input + event.delta : event.delta;
+				}
+				return;
+			}
+			case 'tool.update': {
+				const call = activity.calls.get(event.callId);
+				if (call) {
+					call.kind = event.kind ?? call.kind;
+					call.title = event.title ?? call.title;
+					call.paths.push(...event.locations?.map(location => location.path) ?? [], ...event.diffs?.map(diff => diff.path) ?? []);
+				}
+				return;
+			}
+			case 'tool.end': {
+				const call = activity.calls.get(event.callId);
+				activity.calls.delete(event.callId);
+				if (!call) {
+					return;
+				}
+				const failed = !!event.error || (event.exitCode !== undefined && event.exitCode !== 0);
+				activity.tools.push(handoffToolCall({ ...call, title: event.title ?? call.title, paths: [...call.paths, ...event.diffs?.map(diff => diff.path) ?? []], failed }, cwd));
+				for (const diff of event.diffs ?? []) {
+					activity.files.push({ path: handoffPath(diff.path, cwd), kind: diff.oldText === null ? 'create' : 'edit' });
+				}
+				return;
+			}
+			case 'file.change':
+				activity.files.push({ path: handoffPath(event.uri.fsPath, cwd), kind: event.kind });
+				return;
+		}
+	}
+
+	/** The run's activity as a reply carries it, or undefined when it only talked. */
+	private runActivity(run: IRunState): IHandoffActivity | undefined {
+		const activity = run.activity;
+		return activity && (activity.tools.length || activity.files.length) ? { tools: activity.tools.slice(), files: activity.files.slice() } : undefined;
 	}
 
 	// --- quality gate --------------------------------------------------------------------------
@@ -3120,6 +3639,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.modeProfiles = this.readJson(VOLT_MODE_PROFILES_STORAGE_KEY, {});
 		this.modelOptions = this.readJson(VOLT_MODEL_OPTIONS_STORAGE_KEY, {});
 		this.accessMode = normalizeVoltAccessMode(this.storageService.get(VOLT_ACCESS_MODE_STORAGE_KEY, StorageScope.APPLICATION));
+		const storedSandbox = this.readJson<{ defaults?: unknown; chats?: Record<string, unknown> }>(VOLT_SANDBOX_STORAGE_KEY, {});
+		this.sandboxDefaults = normalizeSandboxSettings(storedSandbox.defaults);
+		this.sandboxChats = Object.fromEntries(Object.entries(storedSandbox.chats ?? {}).map(([id, value]) => [id, normalizeSandboxSettings(value)]));
 		this.projectRules = this.readWorkspaceJson(VOLT_ACCESS_PROJECT_RULES_STORAGE_KEY, []);
 		this.savedRules = this.readWorkspaceJson(VOLT_ACCESS_SAVED_RULES_STORAGE_KEY, []);
 		this.recompilePolicy();
@@ -3441,33 +3963,6 @@ function abortSignalFrom(token: CancellationToken): AbortSignal {
 	}
 	token.onCancellationRequested(() => controller.abort());
 	return controller.signal;
-}
-
-/**
- * Turns an ACP agent has not seen (the user was on another model, or its process was replaced),
- * newest kept within a token budget, so switching models keeps the thread instead of starting
- * over, without sending a second prompt's worth of history.
- */
-function conversationRecap(messages: readonly { role: string; content: string; model?: string }[]): string | undefined {
-	const turns = messages.filter(message => message.content.trim() && message.role !== 'system');
-	if (!turns.length) {
-		return undefined;
-	}
-	const lines: string[] = [];
-	let used = 0;
-	for (let i = turns.length - 1; i >= 0 && used < RECAP_TOKENS; i--) {
-		const text = turns[i].content.trim();
-		const clipped = text.length > RECAP_MESSAGE_CHARS ? `${text.slice(0, RECAP_MESSAGE_CHARS)} [...]` : text;
-		const speaker = turns[i].role === 'assistant' ? (turns[i].model ? `Assistant (${turns[i].model})` : 'Assistant') : 'User';
-		lines.unshift(`${speaker}: ${clipped}`);
-		used += estimateTokens(clipped);
-	}
-	return [
-		'<conversation_so_far>',
-		'This conversation started with another model. Here is what was said before this message; continue from it.',
-		...lines,
-		'</conversation_so_far>',
-	].join('\n');
 }
 
 const TITLE_TIMEOUT_MS = 30_000;

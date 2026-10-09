@@ -16,6 +16,8 @@ export interface IVoltHostMcpToolInfo {
 	readonly inputSchema: object;
 	/** Lets a URL ask for a subset: `/mcp/<sessionId>?groups=core,image`. */
 	readonly group?: string;
+	/** Earlier names still accepted in `tools/call` (never listed). */
+	readonly aliases?: readonly string[];
 }
 
 /** Where agents reach a window's server, and the bearer token every request must carry. */

@@ -33,10 +33,14 @@ export interface IVoltMenuItem<T> {
 	readonly subtitle?: string;
 	/** Line counts after the label, green and red as in a diff. Zero counts are left out. */
 	readonly stats?: { readonly additions: number; readonly deletions: number };
-	readonly icon?: ThemeIcon | (() => HTMLElement);
+	/** Two small bars after the label: CPU and memory, each 0..1 (a machine's load). */
+	readonly load?: { readonly cpu: number; readonly memory: number };
+	readonly icon?: ThemeIcon | (() => HTMLElement | SVGElement);
 	/** Spins the icon (clone in progress). */
 	readonly busy?: boolean;
 	readonly checked?: boolean;
+	/** Picking it leaves the menu open, so a checkbox can toggle and refresh. */
+	readonly keepOpen?: boolean;
 	readonly disabled?: boolean;
 	/** Right-aligned hint such as "⌘⌥A". */
 	readonly keybinding?: string;
@@ -109,6 +113,8 @@ export interface IVoltMenuOptions<T> extends IVoltSubmenu<T> {
 	readonly align?: 'left' | 'right';
 	/** Space between the menu and the anchor, on whichever side the menu lands. */
 	readonly gap?: number;
+	/** Something stacked on top of the anchor that the menu should not cover (the composer's chips). */
+	readonly above?: () => HTMLElement | undefined;
 	readonly className?: string;
 	readonly ariaLabel: string;
 	readonly onPick: (item: IVoltMenuItem<T>) => void | Promise<void>;
@@ -158,12 +164,16 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 	};
 	contextViewService.showContextView({
 		getAnchor: () => {
-			if (options.gap === undefined) {
+			const covered = options.above?.();
+			if (options.gap === undefined && !covered) {
 				return options.anchor;
 			}
-			// Grow the anchor by the gap so the menu keeps its distance whichever side it lands on.
+			// Grow the anchor by the gap so the menu keeps its distance whichever side it lands on,
+			// and up over whatever sits on top of it so the menu opens above that too.
+			const gap = options.gap ?? 0;
 			const page = getDomNodePagePosition(options.anchor);
-			return { x: page.left, y: page.top - options.gap, width: page.width, height: page.height + options.gap * 2 };
+			const top = covered ? Math.min(page.top, getDomNodePagePosition(covered).top) : page.top;
+			return { x: page.left, y: top - gap, width: page.width, height: page.top + page.height - top + gap * 2 };
 		},
 		anchorAlignment: options.align === 'right' ? AnchorAlignment.RIGHT : AnchorAlignment.LEFT,
 		anchorPosition: options.position === 'above' ? AnchorPosition.ABOVE : AnchorPosition.BELOW,
@@ -719,7 +729,9 @@ class VoltMenuWidget<T> extends Disposable {
 			}
 			return;
 		}
-		this.context.hide();
+		if (!item.keepOpen) {
+			this.context.hide();
+		}
 		await this.context.pick(item);
 	}
 
@@ -957,6 +969,14 @@ function renderItem<T>(host: HTMLElement, item: IVoltMenuItem<T>, matches: IMatc
 		}
 		if (item.stats.deletions > 0) {
 			append(stats, $('span.del')).textContent = `-${item.stats.deletions}`;
+		}
+	}
+	if (item.load) {
+		const load = append(line, $('span.volt-menu-load'));
+		load.title = localize('voltMenu.load', "CPU {0}%, memory {1}%", Math.round(item.load.cpu * 100), Math.round(item.load.memory * 100));
+		for (const [name, level] of [['cpu', item.load.cpu], ['memory', item.load.memory]] as const) {
+			const bar = append(load, $(`span.volt-menu-load-bar.${name}`));
+			append(bar, $('span.volt-menu-load-fill')).style.width = `${Math.round(Math.min(1, Math.max(0, level)) * 100)}%`;
 		}
 	}
 	if (item.detail) {

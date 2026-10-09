@@ -1,0 +1,764 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Setup wizard, Project Settings and the storage list. They live in the opaque .volt-modal panel (or the settings page), so nothing here is see-through; no backdrop-filter anywhere. */
+
+.volt-modal.volt-setup {
+	/* Opaque: the panel holds scrolling lists over the see-through agent window (see the transparent-window rules). A hairline top highlight gives it depth instead of a blur. */
+	background: var(--vscode-quickInput-background, var(--vscode-editorWidget-background));
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, var(--vscode-foreground) 7%, transparent),
+		0 16px 48px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+}
+
+/* While an install or sign-in runs in the terminal the wizard waits as a card in the corner. */
+.volt-modal.volt-setup.collapsed {
+	top: auto;
+	left: auto;
+	right: 16px;
+	bottom: 16px;
+	transform: none;
+	max-height: none;
+}
+
+.volt-setup-header {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 16px 12px 12px 20px;
+	flex-shrink: 0;
+}
+
+.volt-setup-titles {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-setup-steps {
+	display: flex;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.volt-setup-step button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 24px;
+	padding: 0 10px 0 4px;
+	border: 0;
+	border-radius: 12px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-setup-step button:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.volt-setup-step .index {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	font-size: 11px;
+}
+
+.volt-setup-step .index .codicon {
+	font-size: 12px;
+}
+
+.volt-setup-step.active button {
+	color: var(--vscode-foreground);
+}
+
+.volt-setup-step.active .index {
+	background: var(--vscode-foreground);
+	border-color: var(--vscode-foreground);
+	color: var(--vscode-editor-background);
+}
+
+.volt-setup-step.past .index {
+	border-color: transparent;
+	color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+
+.volt-setup-content {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	flex: 1;
+	min-height: 0;
+	padding: 4px 20px 16px;
+	overflow-y: auto;
+}
+
+/* The list fades out at the bottom edge above the footer. A mask, never backdrop-filter. */
+.volt-modal.volt-setup .volt-setup-content {
+	mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), rgba(0, 0, 0, 0.35));
+	-webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), rgba(0, 0, 0, 0.35));
+}
+
+
+.volt-setup-lead {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	color: var(--vscode-descriptionForeground);
+	line-height: 1.45;
+}
+
+.volt-setup-lead > span {
+	flex: 1;
+}
+
+.volt-setup-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 6px;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-textLink-foreground);
+	font: inherit;
+	font-size: 12px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-setup-link:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.volt-setup-link:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.volt-setup-link .codicon {
+	font-size: 13px;
+}
+
+.volt-setup-link .codicon-loading,
+.volt-setup-spinner .codicon-loading {
+	animation: codicon-spin 1.25s steps(30) infinite;
+}
+
+.volt-setup-list {
+	display: flex;
+	flex-direction: column;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	border-radius: 10px;
+	overflow: hidden;
+	flex-shrink: 0;
+}
+
+.volt-setup-empty {
+	padding: 14px 16px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* ---- Agents ---------------------------------------------------------------------------- */
+
+.volt-setup-agent {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 52px;
+	padding: 8px 12px 8px 14px;
+}
+
+.volt-setup-agent + .volt-setup-agent {
+	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-setup-agent-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	flex-shrink: 0;
+}
+
+.volt-setup-agent-text {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-setup-agent-name {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.volt-setup-version,
+.volt-setup-badge,
+.volt-setup-tag {
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
+
+.volt-setup-badge,
+.volt-setup-tag {
+	padding: 0 6px;
+	border-radius: 8px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	line-height: 16px;
+}
+
+.volt-setup-agent-status {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.volt-setup-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	flex-shrink: 0;
+	background: var(--vscode-descriptionForeground);
+	opacity: 0.6;
+}
+
+.volt-setup-dot.ready {
+	background: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+	opacity: 1;
+}
+
+.volt-setup-dot.warn {
+	background: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow));
+	opacity: 1;
+}
+
+.volt-setup-dot.missing {
+	background: transparent;
+	border: 1px solid var(--vscode-descriptionForeground);
+	box-sizing: border-box;
+}
+
+.volt-setup-dot.checking {
+	animation: volt-setup-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes volt-setup-pulse {
+	from { opacity: 0.2; }
+	to { opacity: 0.8; }
+}
+
+.volt-setup-agent-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.volt-setup-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 4px;
+	height: 26px;
+	padding: 0 12px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-setup-action:hover:not(:disabled) {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-setup-action.primary {
+	border-color: transparent;
+	background: var(--vscode-foreground);
+	color: var(--vscode-editor-background);
+}
+
+.volt-setup-action.primary:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--vscode-foreground) 84%, var(--vscode-editor-background));
+}
+
+.volt-setup-action.icon-only {
+	width: 26px;
+	padding: 0;
+}
+
+.volt-setup-action:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.volt-setup-action.hidden {
+	visibility: hidden;
+}
+
+/* ---- Running card ---------------------------------------------------------------------- */
+
+.volt-setup-running {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 14px 16px;
+}
+
+.volt-setup-running-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-weight: 500;
+}
+
+.volt-setup-command {
+	padding: 6px 8px;
+	border-radius: 6px;
+	background: var(--vscode-textCodeBlock-background, color-mix(in srgb, var(--vscode-foreground) 6%, transparent));
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
+.volt-setup-running-hint {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.volt-setup-running-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+.volt-setup-running-actions .monaco-button,
+.volt-setup-footer .monaco-button,
+.volt-setup-settings-button .monaco-button {
+	width: auto;
+	min-width: 72px;
+	padding: 4px 14px;
+	border-radius: 6px;
+	white-space: nowrap;
+}
+
+/* ---- Projects -------------------------------------------------------------------------- */
+
+.volt-setup-sources {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 8px;
+	flex-shrink: 0;
+}
+
+.volt-setup-source {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 12px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	border-radius: 10px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-setup-source:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.volt-setup-source .icon .codicon {
+	font-size: 18px;
+}
+
+.volt-setup-source .text {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.volt-setup-source .detail {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-setup-added {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-setup-added .codicon {
+	color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+
+.volt-setup-section {
+	margin-top: 4px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	font-weight: 500;
+	flex-shrink: 0;
+}
+
+.volt-setup-group + .volt-setup-group {
+	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-setup-group-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 10px 4px 14px;
+}
+
+.volt-setup-group-head .name {
+	font-weight: 500;
+}
+
+.volt-setup-group-head .count {
+	flex: 1;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-setup-folder {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	height: 30px;
+	padding: 0 14px;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-setup-folder:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.volt-setup-folder:disabled {
+	cursor: default;
+}
+
+.volt-setup-folder:disabled .name,
+.volt-setup-folder:disabled .volt-setup-folder-icon {
+	opacity: 0.6;
+}
+
+.volt-setup-check {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	border: 1px solid var(--vscode-checkbox-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+	border-radius: 4px;
+	background: var(--vscode-checkbox-background, transparent);
+	flex-shrink: 0;
+}
+
+.volt-setup-folder.checked .volt-setup-check {
+	border-color: var(--vscode-foreground);
+	background: var(--vscode-foreground);
+	color: var(--vscode-editor-background);
+}
+
+.volt-setup-check .codicon {
+	font-size: 12px;
+}
+
+.volt-setup-folder-icon {
+	display: inline-flex;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-setup-folder .name {
+	flex-shrink: 0;
+	max-width: 40%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-setup-folder .path {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+/* ---- Done ------------------------------------------------------------------------------ */
+
+.volt-setup-done {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 12px;
+	margin: auto 0;
+	padding: 16px 0;
+	text-align: center;
+}
+
+.volt-setup-done-icon .codicon {
+	font-size: 36px;
+	color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+
+.volt-setup-done-title {
+	font-size: 17px;
+	font-weight: 500;
+}
+
+.volt-setup-summary {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 4px 0 0;
+	padding: 0;
+	list-style: none;
+	text-align: left;
+}
+
+.volt-setup-summary li {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.volt-setup-summary .codicon {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-setup-done-hint {
+	max-width: 440px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+/* ---- Project Settings ------------------------------------------------------------------ */
+
+.volt-project-settings-group {
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	border-radius: 10px;
+	flex-shrink: 0;
+}
+
+.volt-project-settings-row {
+	display: flex;
+	align-items: center;
+	gap: 20px;
+	padding: 12px 14px;
+}
+
+.volt-project-settings-row + .volt-project-settings-row {
+	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-project-settings-row .copy {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-project-settings-row .desc,
+.volt-project-settings-hint,
+.volt-project-settings-source {
+	margin-top: 3px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.volt-project-settings-source:empty {
+	display: none;
+}
+
+.volt-project-settings-source.warn {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-project-settings-row .control {
+	display: flex;
+	justify-content: flex-end;
+	flex-shrink: 0;
+	max-width: 300px;
+}
+
+.volt-setup-segmented {
+	display: inline-flex;
+	padding: 2px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	border-radius: 7px;
+}
+
+.volt-setup-segmented button {
+	height: 24px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-setup-segmented button.active {
+	background: var(--vscode-toolbar-activeBackground, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+	color: var(--vscode-foreground);
+}
+
+.volt-project-settings-text {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 72px;
+	padding: 8px 10px;
+	border: 1px solid var(--vscode-input-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+	border-radius: 6px;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 1.5;
+	resize: vertical;
+	flex-shrink: 0;
+	outline: none;
+}
+
+.volt-project-settings-text:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+/* ---- Storage --------------------------------------------------------------------------- */
+
+.volt-storage {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	flex-shrink: 0;
+}
+
+.volt-storage-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.volt-storage-total {
+	font-weight: 500;
+}
+
+.volt-storage-when {
+	flex: 1;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-storage-list {
+	display: flex;
+	flex-direction: column;
+	background: var(--volt-settings-surface, transparent);
+	border: 1px solid var(--volt-settings-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+	border-radius: var(--volt-settings-radius, 10px);
+	overflow: hidden;
+}
+
+.volt-storage-row {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	min-height: 56px;
+	padding: 10px 14px 10px 16px;
+}
+
+.volt-storage-row + .volt-storage-row {
+	border-top: 1px solid var(--volt-settings-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+.volt-storage-text {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-storage-detail {
+	margin-top: 3px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.volt-storage-note {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-top: 4px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-storage-note.warn .codicon {
+	color: var(--vscode-editorWarning-foreground);
+	font-size: 13px;
+}
+
+.volt-storage-size {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 2px;
+	min-width: 84px;
+	flex-shrink: 0;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-storage-size .freeable {
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
+
+.volt-setup-settings-button {
+	display: flex;
+	margin: 0 0 16px;
+}
+
+.volt-setup-projects-section .volt-setup-settings-button {
+	margin: 16px 0 0;
+}

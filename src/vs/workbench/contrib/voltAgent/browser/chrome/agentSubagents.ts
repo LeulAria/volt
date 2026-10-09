@@ -52,13 +52,24 @@ export function subagentKindLabel(kind: string | undefined): string | undefined 
 	return known[kind] ?? kind.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+/** "Review round 2": a task delegated again after changes, in the place of the harness kind. */
+export function subagentRoundLabel(row: Pick<IOrchAgentRow, 'iteration' | 'role'>): string | undefined {
+	if (!row.iteration || row.iteration < 2) {
+		return undefined;
+	}
+	return row.role === 'review'
+		? localize('voltAgent.subagent.reviewRound', "Review round {0}", row.iteration)
+		: localize('voltAgent.subagent.round', "Round {0}", row.iteration);
+}
+
 export function subagentView(row: IOrchAgentRow, providerFor: (modelRef: string | undefined) => string | undefined): ISubagentView {
+	const kindLabel = subagentRoundLabel(row) ?? subagentKindLabel(row.kind);
 	return {
 		key: row.taskId,
 		title: row.title,
 		...(row.modelLabel ? { modelLabel: row.modelLabel } : {}),
 		...(providerFor(row.modelRef) ? { providerId: providerFor(row.modelRef) } : {}),
-		...(subagentKindLabel(row.kind) ? { kindLabel: subagentKindLabel(row.kind) } : {}),
+		...(kindLabel ? { kindLabel } : {}),
 		state: row.state,
 		stateLabel: row.stateLabel,
 		...(row.detail ? { detail: row.detail } : {}),

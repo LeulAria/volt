@@ -75,6 +75,8 @@ export function pickerListHeight(count: number): number {
 export interface IModelPickerListHost {
 	selectedRef: string;
 	modelAuto: boolean;
+	/** Multi mode: the picked models; rows show a checkbox instead of the selected check. */
+	multi?: ReadonlySet<string>;
 	/** Overrides the Auto row's copy, for pickers where Auto means "no pinned model". */
 	auto?: { readonly label: string; readonly description: string };
 	favorites: ReadonlySet<string>;
@@ -148,6 +150,7 @@ export class ModelPickerListRenderer implements IListRenderer<IModelPickerRow, I
 		template.container.classList.toggle('message', row.kind === 'message' || row.kind === 'settings');
 		template.container.classList.toggle('skeleton', row.kind === 'skeleton');
 		template.container.classList.toggle('model', row.kind === 'model');
+		template.container.classList.remove('multi', 'picked');
 
 		if (row.kind === 'skeleton') {
 			return;
@@ -195,7 +198,17 @@ export class ModelPickerListRenderer implements IListRenderer<IModelPickerRow, I
 		template.disposables.add(addDisposableListener(template.container, 'mouseleave', () => {
 			this.host.onPreviewEnd();
 		}));
-		const isSelected = !this.host.modelAuto && row.model.ref === this.host.selectedRef;
+		const multi = this.host.multi;
+		if (multi) {
+			const picked = multi.has(row.model.ref);
+			template.container.classList.add('multi');
+			template.container.classList.toggle('picked', picked);
+			template.check.appendChild(renderIcon(picked ? Codicon.passFilled : Codicon.circleLargeOutline));
+			template.container.setAttribute('aria-checked', String(picked));
+		} else {
+			template.container.removeAttribute('aria-checked');
+		}
+		const isSelected = !multi && !this.host.modelAuto && row.model.ref === this.host.selectedRef;
 		template.selected.classList.toggle('hidden', !isSelected);
 		template.star.classList.remove('hidden');
 		const favorited = this.host.favorites.has(row.model.ref);

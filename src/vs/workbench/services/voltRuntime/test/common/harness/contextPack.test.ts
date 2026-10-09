@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, DESIGN_LOOP, TEST_INTEGRITY, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
+import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, DESIGN_LOOP, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
 import { classifyIntent } from '../../../common/harness/intent.js';
 
 suite('Volt context pack', () => {
@@ -99,6 +99,17 @@ suite('Volt context pack', () => {
 		assert.ok(buildAcpLead({ mode: 'agent', intent: classifyIntent('Make the todos API production ready.', 'agent') })?.includes(CALLER_VISIBLE_CHANGES));
 		assert.ok(!buildAcpLead({ mode: 'agent', intent: classifyIntent('add a GET /health route to src/server.js', 'agent') })?.includes(CALLER_VISIBLE_CHANGES));
 		assert.ok(!buildAcpLead({ mode: 'plan', intent: classifyIntent('Make the todos API production ready.', 'plan') })?.includes(CALLER_VISIBLE_CHANGES));
+	});
+
+	test('agents that can reach the volt MCP server are told when to chart, except for small edits', () => {
+		const question = classifyIntent('how has my token usage changed by model over the last 30 days?', 'ask');
+		assert.ok(buildAcpLead({ mode: 'ask', intent: question, visuals: true })?.includes(`[Volt] ${VISUAL_REPLIES}`));
+		assert.ok(buildAcpLead({ mode: 'agent', intent: classifyIntent('analyse the commit history of this repo by author', 'agent'), visuals: true })?.includes(VISUAL_REPLIES));
+		assert.ok(!buildAcpLead({ mode: 'ask', intent: question })?.includes(VISUAL_REPLIES), 'not without the visual tools');
+		assert.ok(!buildAcpLead({ mode: 'agent', intent: classifyIntent('fix the typo in README.md', 'agent'), visuals: true })?.includes(VISUAL_REPLIES), 'not in the fast lane');
+		assert.ok(buildSystemPrompt({ mode: 'ask', intent: question, visuals: true }).includes(VISUAL_REPLIES), 'native prompts receive the same guidance');
+		assert.ok(!buildSystemPrompt({ mode: 'ask', intent: question }).includes(VISUAL_REPLIES));
+		assert.ok(!buildSystemPrompt({ mode: 'agent', intent: classifyIntent('fix the typo in README.md', 'agent'), visuals: true }).includes(VISUAL_REPLIES));
 	});
 
 	test('test-related work forbids gaming the suite; other work and read-only modes do not carry the line', () => {
