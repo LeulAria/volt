@@ -758,6 +758,14 @@ code.volt-md-code.volt-md-diff {
 	padding: 8px 0;
 }
 
+/* While its fence streams, a diagram is one fixed-size card (MermaidDiagramView); partial drawings changed shape every frame. */
+.volt-md-code-block.mermaid.volt-md-mermaid-pending {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 140px;
+}
+
 /* Wide diagrams shrink to the column down to 55% (text stays readable), then scroll sideways. */
 .volt-md-mermaid-content > .volt-md-mermaid-svg {
 	display: block;

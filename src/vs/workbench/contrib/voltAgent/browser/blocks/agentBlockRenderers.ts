@@ -33,6 +33,7 @@ import {
 	IFileChangeBlock,
 	IListBlock,
 	IMarkdownBlock,
+	IMermaidBlock,
 	ITableBlock,
 	ITerminalBlock,
 	IToolBlock,
@@ -43,7 +44,7 @@ import {
 	stripCellMarkup,
 	terminalCommandLabels,
 } from './agentBlocks.js';
-import { renderMermaidDiagram } from './agentMermaid.js';
+import { IMermaidOptions, isMermaidXyChart, renderMermaidDiagram } from './agentMermaid.js';
 import { mountChart, renderVisualBlock } from '../visuals/agentVisuals.js';
 import { highlight, ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
 import { agentMarkdownRenderOptions, decorateAgentMarkdown, fenceChartSpec, normalizeMathDelimiters, renderFenceChart } from './agentMarkdown.js';
@@ -128,7 +129,7 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 				renderFenceChart(append(parent, $('.volt-agent-block.volt-agent-fence-chart')), 'mermaid', block.source, ctx, block.status === 'streaming');
 				return;
 			}
-			renderMermaidDiagram(parent, block.source, { ...codeCardOptions(ctx), onExpand: ctx.onExpandDiagram });
+			renderMermaidDiagram(parent, block.source, mermaidOptions(ctx));
 			return;
 		case 'tool':
 			renderToolBlock(parent, block, ctx);
@@ -392,6 +393,15 @@ export class StreamingMarkdownView implements IDisposable {
 		}
 		this.chunks = [];
 	}
+}
+
+/** A ```mermaid block drawn as a diagram (an xychart draws as a Volt chart instead). */
+export function isDiagramBlock(block: AgentBlock): block is IMermaidBlock {
+	return block.type === 'mermaid' && !isMermaidXyChart(block.source);
+}
+
+export function mermaidOptions(ctx: IBlockRenderContext): IMermaidOptions {
+	return { ...codeCardOptions(ctx), onExpand: ctx.onExpandDiagram };
 }
 
 function renderMarkdownBlock(parent: HTMLElement, block: IMarkdownBlock, ctx: IBlockRenderContext): void {

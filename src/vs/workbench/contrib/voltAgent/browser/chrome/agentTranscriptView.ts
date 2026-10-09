@@ -13,7 +13,8 @@ import { localize } from '../../../../../nls.js';
 import { AgentBlock, IAgentActivityItem, IToolBlock } from '../blocks/agentBlocks.js';
 import { formatContextTokens } from '../context/agentContextUsage.js';
 import { createCompactIcon } from '../context/agentContextUsageView.js';
-import { appendHighlightedShell, IBlockRenderContext, renderMarkdownInto, StreamingMarkdownView } from '../blocks/agentBlockRenderers.js';
+import { appendHighlightedShell, IBlockRenderContext, isDiagramBlock, mermaidOptions, renderMarkdownInto, StreamingMarkdownView } from '../blocks/agentBlockRenderers.js';
+import { MermaidDiagramView } from '../blocks/agentMermaid.js';
 import { highlightCodeLines, runnableShellCommand } from '../blocks/agentCodeBlock.js';
 import { computeFileChangePreview, IFileChangePreviewLine } from '../review/fileChangePreviewModel.js';
 import { fileChangeSource, formatElapsed, ITodoChecklist } from './agentTimeline.js';
@@ -311,7 +312,7 @@ function rowSignature(row: TranscriptRow, host: ITranscriptHost, options: ITrans
 			return hashString(JSON.stringify(row));
 		case 'block': {
 			const block = row.block;
-			if (block.type === 'visual') {
+			if (block.type === 'visual' || isDiagramBlock(block)) {
 				return undefined;
 			}
 			// Shell code gets its Run button and terminals drop their shimmer once the reply is done.
@@ -400,6 +401,13 @@ function renderRow(parent: HTMLElement, row: TranscriptRow, host: ITranscriptHos
 			renderCompactionRow(parent, row, host);
 			return;
 		case 'block':
+			if (options.reuse && isDiagramBlock(row.block)) {
+				// A diagram: one view per block that eases between drawings while its fence streams.
+				const view = options.reuse.view(`mermaid:${row.block.id}`, () => new MermaidDiagramView());
+				keep(parent, [view.element], pass);
+				view.update(row.block.source, row.block.status === 'streaming', mermaidOptions(host.ctx));
+				return;
+			}
 			host.renderBlock(parent, row.block);
 			return;
 	}

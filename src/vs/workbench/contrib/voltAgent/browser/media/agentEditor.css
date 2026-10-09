@@ -1349,7 +1349,8 @@ pre.volt-agent-searchable {
 
 .volt-agent-activity-progress.shimmer,
 .volt-agent-activity-label.shimmer,
-.volt-agent-term-headline.shimmer {
+.volt-agent-term-headline.shimmer,
+.volt-md-mermaid-pending-label.shimmer {
 	display: block;
 	width: fit-content;
 	max-width: 100%;
@@ -1393,7 +1394,8 @@ pre.volt-agent-searchable {
 @media (prefers-reduced-motion: reduce) {
 	.volt-agent-activity-progress.shimmer,
 	.volt-agent-activity-label.shimmer,
-	.volt-agent-term-headline.shimmer {
+	.volt-agent-term-headline.shimmer,
+	.volt-md-mermaid-pending-label.shimmer {
 		background-image: none;
 		-webkit-text-fill-color: unset;
 		color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
