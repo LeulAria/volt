@@ -147,6 +147,8 @@ interface IHomeTemplate {
 	readonly container: HTMLElement;
 	readonly icon: HTMLElement;
 	readonly twist: HTMLElement;
+	/** The pull request at the end of a one-line row. */
+	readonly linePr: HTMLElement;
 	readonly glyph: HTMLElement;
 	readonly name: HTMLElement;
 	readonly actions: HTMLElement;
@@ -177,11 +179,18 @@ const ROW_STATE_CLASSES = [
 	'is-run-group', 'is-run-member', 'run-winner', 'run-discarded',
 ];
 
+/** Settled chats are done with: one line each, their pull request at its end. */
+function isOneLineSession(session: IAgentSessionMeta): boolean {
+	return sessionHomeShelf(session) === 'settled';
+}
+
 class AgentHomeDelegate implements IListVirtualDelegate<AgentHomeElement> {
 	constructor(private readonly host: { readonly twoLine: boolean }) { }
 
 	getHeight(element: AgentHomeElement): number {
-		return (element.type === 'session' || element.type === 'runGroup') && this.host.twoLine ? TWO_LINE_ROW_HEIGHT : ROW_HEIGHT;
+		return (element.type === 'session' && !isOneLineSession(element.session)) || element.type === 'runGroup'
+			? (this.host.twoLine ? TWO_LINE_ROW_HEIGHT : ROW_HEIGHT)
+			: ROW_HEIGHT;
 	}
 
 	getTemplateId(): string {
@@ -205,6 +214,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		twist.appendChild(renderIcon(Codicon.chevronDown));
 		const glyph = append(icon, $('span.glyph'));
 		const name = append(container, $('span.name'));
+		const linePr = append(container, $('span.line-pr'));
 		const meta = append(container, $('span.meta'));
 		const badge = append(container, $('span.status-badge'));
 		const sub = append(container, $('span.sub'));
@@ -237,7 +247,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		const add = append(container, $('button.add')) as HTMLButtonElement;
 		add.appendChild(renderIcon(Codicon.add));
 		add.tabIndex = -1;
-		return { container, icon, twist, glyph, name, actions, snooze, settle, wake, pin, archive, badge, meta, sub, subBranch, subPr, subModel, keybinding, filter, openWorkspace, add, elementDisposables: new DisposableStore() };
+		return { container, icon, twist, glyph, name, linePr, actions, snooze, settle, wake, pin, archive, badge, meta, sub, subBranch, subPr, subModel, keybinding, filter, openWorkspace, add, elementDisposables: new DisposableStore() };
 	}
 
 	renderElement(node: ITreeNode<AgentHomeElement, void>, _index: number, template: IHomeTemplate): void {
@@ -249,6 +259,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.badge.className = 'status-badge';
 		template.subBranch.replaceChildren();
 		template.subPr.replaceChildren();
+		template.linePr.replaceChildren();
 		template.subModel.textContent = '';
 		template.keybinding.textContent = '';
 		template.filter.classList.add('hidden');
@@ -260,14 +271,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.container.classList.toggle('collapsed', !!node.collapsed);
 
 		const element = node.element;
-		// Group headers: collapsed left / expanded down. Folder rows keep collapsed right.
-		// Working puts a trailing chevron after its rule: down to open, up to fold. Settled / Snoozed
-		// lead with a pane-header chevron like the other group headers: right when folded, down when open.
-		const collapsedChevron = element.type === 'bucket' ? Codicon.chevronLeft : Codicon.chevronRight;
-		const chevron = element.type === 'group' && element.id === 'working'
-			? (node.collapsed ? Codicon.chevronDown : Codicon.chevronUp)
-			: (node.collapsed ? collapsedChevron : Codicon.chevronDown);
-		template.twist.replaceChildren(renderIcon(chevron));
+		// Every header, folder and group alike: right when folded, down when open.
+		template.twist.replaceChildren(renderIcon(node.collapsed ? Codicon.chevronRight : Codicon.chevronDown));
 		switch (element.type) {
 			case 'newChat':
 				template.container.classList.add('is-new');
@@ -464,12 +469,18 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			append(template.glyph, $('span.volt-agent-home-initials')).textContent = context.initials;
 		}
 		template.name.textContent = session.title || localize('voltAgent.home.untitled', "New Agent");
-		const twoLine = this.host.twoLine;
+		const oneLine = isOneLineSession(session);
+		const twoLine = this.host.twoLine && !oneLine;
 		template.container.classList.toggle('two-line', twoLine);
 		// On two lines the branch moves to the second line, beside the pull request and the model.
-		template.meta.textContent = sessionMetaParts(session, twoLine ? { workspace: context.workspace } : context, this.host.view, now).join(' · ');
+		template.meta.textContent = sessionMetaParts(session, twoLine || oneLine ? { workspace: context.workspace } : context, this.host.view, now).join(' · ');
 		if (twoLine) {
 			this.renderSecondLine(template, session, context);
+		} else if (oneLine) {
+			const pr = this.host.view.show.has('pr') ? this.host.prBadge(session.id) : undefined;
+			if (pr) {
+				this.renderPrBadge(template, session, pr, template.linePr);
+			}
 		}
 
 		const badge = sessionShowsStatusBadge(session, this.host.view) ? this.host.limitBadge(session.id) ?? sessionStatusBadge(session, now, this.host.liveWork(session.id)) : undefined;
@@ -581,7 +592,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		}
 		const badge = this.host.view.show.has('pr') ? this.host.prBadge(session.id) : undefined;
 		if (badge) {
-			this.renderPrBadge(template, session, badge);
+			this.renderPrBadge(template, session, badge, template.subPr);
 		}
 		// The model's brand icon, its name on hover; the name itself when the provider is unknown.
 		const model = line.model;
@@ -595,8 +606,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		}
 	}
 
-	private renderPrBadge(template: IHomeTemplate, session: IAgentSessionMeta, badge: IAgentPrBadge): void {
-		const pill = append(template.subPr, $(`span.volt-agent-home-pr.state-${badge.state}`));
+	private renderPrBadge(template: IHomeTemplate, session: IAgentSessionMeta, badge: IAgentPrBadge, parent: HTMLElement): void {
+		const pill = append(parent, $(`span.volt-agent-home-pr.state-${badge.state}`));
 		pill.appendChild(renderIcon(badge.kind === 'stack' ? Codicon.layers : prBadgeIcon(badge.state)));
 		append(pill, $('span')).textContent = badge.kind === 'multi' ? `#${badge.number} +${badge.count - 1}` : badge.kind === 'stack' ? `${badge.count}` : `#${badge.number}`;
 		if (badge.checks) {
