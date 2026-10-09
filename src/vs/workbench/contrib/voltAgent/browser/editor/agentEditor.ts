@@ -261,6 +261,7 @@ interface IStashedThread {
 	readonly settled: DisposableStore;
 	readonly tail: DisposableStore;
 	readonly tailExchange: HTMLElement | undefined;
+	readonly tailTurns: Map<IAgentAssistantMessage, HTMLElement>;
 	readonly tailFrom: number;
 	readonly renderedCount: number;
 	readonly settledMessages: readonly IAgentMessage[];
@@ -768,8 +769,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 	/** Rows of the live exchange kept between streaming redraws (see agentTranscriptReuse.ts). */
 	private reuse = new TranscriptReuse();
-	/** Each drawn reply's turn element, so a streaming redraw can update it in place. */
-	private readonly agentTurnElements = new WeakMap<IAgentAssistantMessage, HTMLElement>();
+	/**
+	 * The live exchange's reply turns, so a streaming redraw updates them in place. Only the live
+	 * exchange: a map over every drawn turn kept dropped threads' DOM alive through their messages.
+	 */
+	private tailTurns = new Map<IAgentAssistantMessage, HTMLElement>();
 	/** Nodes a tail redraw replaced; removed once live pages have been moved out of them. */
 	private tailStale: Node[] | undefined;
 	private tailExchange: HTMLElement | undefined;
@@ -2528,6 +2532,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.tailFrom = -1;
 		this.renderedCount = this.messages.length;
 		this.settledMessages = [];
+		this.tailTurns = new Map();
 		parkVisualFrames(this.threadInner, this.visualParking);
 		this.threadInner.replaceChildren();
 		if (!this.messages.length) {
@@ -2623,7 +2628,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.renderUserTurn(turn, message, index);
 			}
 		} else {
-			this.agentTurnElements.set(message, turn);
+			if (this.renderingTail) {
+				this.tailTurns.set(message, turn);
+			}
 			this.renderAgentTurn(turn, message);
 		}
 	}
@@ -2890,6 +2897,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.settledListeners.add(this.reuse);
 			this.tailListeners = new DisposableStore();
 			this.reuse = new TranscriptReuse();
+			this.tailTurns = new Map();
 			for (let k = 1; k < starts.length; k++) {
 				const last = k === starts.length - 1;
 				const element = append(this.threadInner, $('.volt-agent-exchange'));
@@ -2929,7 +2937,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		try {
 			for (let index = from; index < to; index++) {
 				const message = this.messages[index];
-				const turn = message.kind === 'agent' ? this.agentTurnElements.get(message) : undefined;
+				const turn = message.kind === 'agent' ? this.tailTurns.get(message) : undefined;
 				if (message.kind === 'agent' && turn?.parentNode === exchange) {
 					this.renderAgentTurn(turn, message);
 					desired.push(turn);
@@ -2942,6 +2950,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		} finally {
 			this.renderingTail = false;
 			this.tailStale = undefined;
+		}
+		const drawn = new Set(this.messages.slice(from, to));
+		for (const message of this.tailTurns.keys()) {
+			if (!drawn.has(message)) {
+				this.tailTurns.delete(message);
+			}
 		}
 		stale.push(...reconcileChildren(exchange, desired));
 		// Live pages move out of the rows they were in before those rows go.
@@ -2973,6 +2987,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			settled: this.settledListeners,
 			tail: this.tailListeners,
 			tailExchange: this.tailExchange,
+			tailTurns: this.tailTurns,
 			tailFrom: this.tailFrom,
 			renderedCount: this.renderedCount,
 			settledMessages: this.settledMessages,
@@ -2991,6 +3006,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.tailFrom = -1;
 		this.renderedCount = 0;
 		this.settledMessages = [];
+		this.tailTurns = new Map();
 		for (const sessionId of this.stashedThreads.keys()) {
 			if (this.stashedThreads.size <= MAX_STASHED_THREADS) {
 				break;
@@ -3022,6 +3038,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.threadInner.replaceChildren(entry.nodes);
 		adoptVisualFrames(this.threadInner);
 		this.tailExchange = entry.tailExchange;
+		this.tailTurns = entry.tailTurns;
 		this.tailFrom = entry.tailFrom;
 		this.renderedCount = entry.renderedCount;
 		this.settledMessages = entry.settledMessages;
