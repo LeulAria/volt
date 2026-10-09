@@ -27,6 +27,8 @@ import { IAgentDevicesService, IDeviceShot, IDeviceTarget } from './agentDevices
 
 /** The preview refreshes this often while on screen (plus right after every action). */
 const POLL_MS = 350;
+/** The most a half-open device's right half leans back in 3D, in degrees. */
+const MAX_LEAN = 65;
 const PREVIEW_MAX_SIDE = 1400;
 /** A press that moves less than this is a tap; more is a swipe. */
 const TAP_SLOP = 6;
@@ -89,6 +91,9 @@ export class DevicePreview extends Disposable {
 	private readonly posture = this._register(new MutableDisposable<DisposableStore>());
 	private postureControl: IVoltSegmented<VoltDevicePosture> | undefined;
 	private postures: IVoltDevicePostures = { supported: [] };
+	/** The device `postures` were read for, so a list refresh does not read them again. */
+	private posturesKey: string | undefined;
+	private posturesTimer: number | undefined;
 
 	private target: IDeviceTarget | undefined;
 	private shot: IDeviceShot | undefined;
@@ -178,6 +183,7 @@ export class DevicePreview extends Disposable {
 			dispose: () => {
 				const win = getWindow(this.element);
 				win.clearTimeout(this.pollTimer);
+				win.clearTimeout(this.posturesTimer);
 				win.clearTimeout(this.typeTimer);
 				win.clearTimeout(this.agentTimer);
 			}
@@ -213,10 +219,11 @@ export class DevicePreview extends Disposable {
 		const found = key ? this.devices.find(key) : undefined;
 		const fallback = !found && !this.target ? this.firstBooted() : undefined;
 		const next = found ?? fallback ?? this.target;
-		const wasBooted = this.target?.device.state === 'booted';
 		this.target = next;
-		if (next && next.device.state === 'booted' && !wasBooted) {
+		if (next && next.device.state === 'booted' && this.posturesKey !== this.devices.keyOf(next)) {
 			void this.loadPostures();
+		} else if (next && next.device.state !== 'booted') {
+			this.posturesKey = undefined;
 		}
 		this.renderToolbar();
 		this.refreshSoon(0);
@@ -238,6 +245,7 @@ export class DevicePreview extends Disposable {
 		this.shot = undefined;
 		this.frameKey = '';
 		this.postures = { supported: [] };
+		this.posturesKey = undefined;
 		clearNode(this.rig);
 		this.screens = [];
 		this.renderToolbar();
@@ -342,12 +350,24 @@ export class DevicePreview extends Disposable {
 		if (!target || target.device.platform !== 'android') {
 			return;
 		}
-		const postures = await this.devices.postures(target).catch(() => ({ supported: [] }));
-		if (this.target === target) {
-			this.postures = postures;
-			this.renderPosture();
-			this.layout();
+		const key = this.devices.keyOf(target);
+		this.posturesKey = key;
+		const postures = await this.devices.postures(target).catch(() => undefined);
+		// A list refresh swaps in a new object for the same device: compare by key.
+		if (!this.target || this.devices.keyOf(this.target) !== key) {
+			return;
 		}
+		if (!postures) {
+			// adb was not ready yet (the device just booted, or Volt just started): ask again shortly.
+			this.posturesKey = undefined;
+			const win = getWindow(this.element);
+			win.clearTimeout(this.posturesTimer);
+			this.posturesTimer = win.setTimeout(() => this.syncTarget(), 3000);
+			return;
+		}
+		this.postures = postures;
+		this.renderPosture();
+		this.layout();
 	}
 
 	private showMoreMenu(): void {
@@ -535,6 +555,7 @@ export class DevicePreview extends Disposable {
 	private applyShot(shot: IDeviceShot): void {
 		this.shot = shot;
 		this.message.classList.add('hidden');
+		this.rig.classList.remove('hidden');
 		this.ensureFrame(shot);
 		for (const screen of this.screens) {
 			if (screen.src !== shot.dataUrl) {
@@ -623,8 +644,9 @@ export class DevicePreview extends Disposable {
 		this.scene.classList.toggle('three-d', this.threeD);
 		const hinge = hingeAngle(this.postures.current);
 		for (const half of this.rig.querySelectorAll<HTMLElement>('.volt-device-half.right')) {
-			// Half open: the right half turns up at the hinge (the middle), like a book standing open.
-			half.style.transform = `rotateY(${-hinge}deg)`;
+			// Half open: the right half swings back at the hinge (the middle), like a book standing open.
+			// Turning it all the way to 90 degrees would show it edge-on, so it leans back at most 65.
+			half.style.transform = `rotateY(${Math.min(hinge, MAX_LEAN)}deg)`;
 		}
 	}
 
