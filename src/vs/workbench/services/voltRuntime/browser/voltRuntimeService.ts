@@ -423,8 +423,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this._register(this.hostTools.onDidInvokeTool(call => this.onHostToolResult(call)));
 		this.loadState();
 		this.watchSharedModelChoice();
-		void this.refreshCatalog();
-		void this.refreshProviders();
+		// One detection pass at startup feeds the catalog too (refreshing both separately probed
+		// every CLI twice), and the model lists hydrated from storage are kept so a restart does
+		// not respawn each CLI to list models again; the periodic health check refreshes them.
+		this.providerRefresh = this.executeProviderRefresh(true).finally(() => {
+			this.providerRefresh = undefined;
+		});
 		this.scheduleHealthChecks();
 		this._register(toDisposable(() => void this.disposeTabAgent()));
 	}
@@ -846,6 +850,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// the provider (its host MCP URL names the chat), which `start` adopts.
 		const perChat = provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'prewarmSpare' | 'hasSpare'>>;
 		if (!this.aliasHost() && perChat.prewarmSpare && perChat.hasSpare) {
+			// One chat in view at a time: stop spares other providers parked for chats left behind.
+			for (const other of this.agentProviders.values()) {
+				if (other !== provider) {
+					(other as Partial<Pick<AcpAgentProvider, 'releaseSpares'>>).releaseSpares?.(session.sessionId);
+				}
+			}
 			const request = this.agentStartRequest(session.sessionId, profile, item, cwd, undefined, mode, sandbox);
 			if (!perChat.hasSpare(request)) {
 				void perChat.prewarmSpare(request);
@@ -1506,9 +1516,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return this.providerRefresh;
 	}
 
-	private async executeProviderRefresh(): Promise<void> {
-		clearClaudeModelCache();
-		this.agentModels.clear();
+	private async executeProviderRefresh(keepModelCache = false): Promise<void> {
+		if (!keepModelCache) {
+			clearClaudeModelCache();
+			this.agentModels.clear();
+		}
 		const results = await Promise.all(this.profiles.map(async profile => {
 			const detect = profile.enabled
 				? await this.detectProfile(profile).catch(() => ({ available: false, detail: 'Health check failed.' }) satisfies IDetectResult)

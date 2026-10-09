@@ -101,6 +101,8 @@ interface IAcpChild {
 /** A session started ahead of time that no chat owns yet. */
 interface IAcpSpare {
 	readonly key: string;
+	/** The chat the spare was started for (its host MCP URL names it). */
+	readonly sessionId: string;
 	readonly startedAt: number;
 	readonly session: Promise<IAcpSession>;
 	expiry?: ReturnType<typeof setTimeout>;
@@ -489,7 +491,10 @@ export class AcpAgentProvider implements IAgentProvider {
 	 * setup; an unadopted spare is stopped after {@link SPARE_TTL_MS}.
 	 *
 	 * The setup includes the host MCP servers, whose URL names the chat. A spare made for chat A is
-	 * not handed to chat B, so pass the `sessionId` the spare is meant for.
+	 * not handed to chat B, so pass the `sessionId` the spare is meant for. Spares parked for other
+	 * chats are stopped first: prewarming follows the chat in view, and an agent process (with its
+	 * adapter and MCP servers) costs several hundred MB, so clicking through old chats must not
+	 * leave one running per chat visited.
 	 */
 	prewarmSpare(req: IAgentStartRequest): Promise<void> {
 		const key = this.setupKey(req);
@@ -500,11 +505,12 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (existing) {
 			this.dropSpare(key, existing);
 		}
+		this.releaseSpares(req.sessionId);
 		while (this.spares.size >= MAX_SPARES) {
 			const [oldestKey, oldest] = [...this.spares.entries()].sort((x, y) => x[1].startedAt - y[1].startedAt)[0];
 			this.dropSpare(oldestKey, oldest);
 		}
-		const spare: IAcpSpare = { key, startedAt: Date.now(), session: this.createSession(req) };
+		const spare: IAcpSpare = { key, sessionId: req.sessionId, startedAt: Date.now(), session: this.createSession(req) };
 		this.spares.set(key, spare);
 		spare.expiry = setTimeout(() => {
 			if (this.spares.get(key) === spare) {
@@ -522,6 +528,15 @@ export class AcpAgentProvider implements IAgentProvider {
 	/** True when a spare for this setup is parked or starting. */
 	hasSpare(req: IAgentStartRequest): boolean {
 		return this.spares.has(this.setupKey(req));
+	}
+
+	/** Stops the spares parked for chats other than `keepSessionId`. */
+	releaseSpares(keepSessionId: string | undefined): void {
+		for (const [key, spare] of [...this.spares.entries()]) {
+			if (spare.sessionId !== keepSessionId) {
+				this.dropSpare(key, spare);
+			}
+		}
 	}
 
 	/** Stops every parked spare. */
