@@ -230,13 +230,17 @@ function fastProductCompile(src: string, out: string, options: { ignoreTypeError
 			.pipe(sourcemaps.write('.', { addComment: false, includeContent: true, sourceRoot: util.toFileUri(srcRoot) }));
 		const resources = gulp.src([`${src}/**`, `!${src}/**/*.ts`], { base: src, nodir: true })
 			.pipe(generator.stream);
-		await new Promise<void>((resolve, reject) => {
-			es.merge(emitted, resources)
-				.pipe(util.$if(isUtf8Test, bom()))
-				.pipe(gulp.dest(out))
-				.on('error', reject)
-				.on('finish', () => resolve());
-		});
+		try {
+			await new Promise<void>((resolve, reject) => {
+				es.merge(emitted, resources)
+					.pipe(util.$if(isUtf8Test, bom()))
+					.pipe(gulp.dest(out))
+					.on('error', reject)
+					.on('finish', () => resolve());
+			});
+		} finally {
+			await fs.promises.rm(emitDir, { recursive: true, force: true });
+		}
 
 		const errors = [...typeErrors, ...cycles.errors()];
 		for (const error of errors) {

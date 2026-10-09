@@ -236,13 +236,18 @@ function fastProductCompile(src, out, options) {
             .pipe(sourcemaps.write('.', { addComment: false, includeContent: true, sourceRoot: util.toFileUri(srcRoot) }));
         const resources = gulp_1.default.src([`${src}/**`, `!${src}/**/*.ts`], { base: src, nodir: true })
             .pipe(generator.stream);
-        await new Promise((resolve, reject) => {
-            event_stream_1.default.merge(emitted, resources)
-                .pipe(util.$if(isUtf8Test, bom()))
-                .pipe(gulp_1.default.dest(out))
-                .on('error', reject)
-                .on('finish', () => resolve());
-        });
+        try {
+            await new Promise((resolve, reject) => {
+                event_stream_1.default.merge(emitted, resources)
+                    .pipe(util.$if(isUtf8Test, bom()))
+                    .pipe(gulp_1.default.dest(out))
+                    .on('error', reject)
+                    .on('finish', () => resolve());
+            });
+        }
+        finally {
+            await fs_1.default.promises.rm(emitDir, { recursive: true, force: true });
+        }
         const errors = [...typeErrors, ...cycles.errors()];
         for (const error of errors) {
             (0, fancy_log_1.default)(ansi_colors_1.default.red('Error'), error);
