@@ -119,7 +119,9 @@ const vscodeResources = [
 const bootstrapEntryPoints = [
 	'out-build/main.js',
 	'out-build/cli.js',
-	'out-build/bootstrap-fork.js'
+	'out-build/bootstrap-fork.js',
+	// Volt's agent server: inlines vs/server/node/voltAgent like server-main inlines server.main.
+	'out-build/volt-agent-server-main.js'
 ];
 
 const bundleVSCodeTask = task.define('bundle-vscode', task.series(
