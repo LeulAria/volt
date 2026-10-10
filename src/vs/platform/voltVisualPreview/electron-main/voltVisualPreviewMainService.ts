@@ -9,7 +9,9 @@ import { tmpdir } from 'os';
 import { join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
-import { IVoltVisualConsoleMessage, IVoltVisualPreview, IVoltVisualPreviewRequest, IVoltVisualPreviewService, VOLT_VISUAL_MAX_CAPTURE, VOLT_VISUAL_MAX_WIDTH, VOLT_VISUAL_MIN_WIDTH } from '../common/voltVisualPreview.js';
+import { IVoltPageCapture, IVoltPageCaptureRequest, IVoltPageEvaluation, IVoltPageOpened, IVoltPageOpenRequest, IVoltPageState, IVoltVisualConsoleMessage, IVoltVisualPreview, IVoltVisualPreviewRequest, IVoltVisualPreviewService, VOLT_VISUAL_MAX_CAPTURE, VOLT_VISUAL_MAX_WIDTH, VOLT_VISUAL_MIN_WIDTH, VoltPageInput, VoltPageScheme } from '../common/voltVisualPreview.js';
+import { consoleMessageOf } from './cdpConsole.js';
+import { VoltHeadlessPages } from './voltHeadlessPages.js';
 
 const LOAD_TIMEOUT_MS = 15_000;
 /** A page that never settles (an endless loop, a hung script) fails the call instead of holding the agent. */
@@ -19,46 +21,8 @@ const STEP_TIMEOUT_MS = 3_000;
 const SETTLE_MS = 350;
 const MAX_MESSAGES = 60;
 
-interface IRemoteObject {
-	readonly type?: string;
-	readonly value?: unknown;
-	readonly description?: string;
-	readonly unserializableValue?: string;
-}
-
-interface IStackFrame {
-	readonly functionName?: string;
-	readonly url?: string;
-	readonly lineNumber?: number;
-	readonly columnNumber?: number;
-}
-
 function clampWidth(width: number): number {
 	return Math.round(Math.min(VOLT_VISUAL_MAX_WIDTH, Math.max(VOLT_VISUAL_MIN_WIDTH, Number.isFinite(width) ? width : 728)));
-}
-
-function describeArg(arg: IRemoteObject): string {
-	if (arg.type === 'string' && typeof arg.value === 'string') {
-		return arg.value;
-	}
-	if (arg.unserializableValue) {
-		return arg.unserializableValue;
-	}
-	if (arg.value !== undefined) {
-		try {
-			return JSON.stringify(arg.value);
-		} catch {
-			// fall through to the description
-		}
-	}
-	return arg.description ?? String(arg.type ?? '');
-}
-
-function describeStack(frames: readonly IStackFrame[] | undefined): string {
-	return (frames ?? []).slice(0, 4).map(frame => {
-		const file = frame.url ? frame.url.replace(/^.*\//, '') : 'page.html';
-		return `\n    at ${frame.functionName || '<anonymous>'} (${file}:${(frame.lineNumber ?? 0) + 1}:${(frame.columnNumber ?? 0) + 1})`;
-	}).join('');
 }
 
 /**
@@ -70,8 +34,11 @@ export class VoltVisualPreviewMainService implements IVoltVisualPreviewService {
 	declare readonly _serviceBrand: undefined;
 
 	private queue: Promise<unknown> = Promise.resolve();
+	private readonly pages: VoltHeadlessPages;
 
-	constructor(@ILogService private readonly logService: ILogService) { }
+	constructor(@ILogService private readonly logService: ILogService) {
+		this.pages = new VoltHeadlessPages(logService);
+	}
 
 	capture(request: IVoltVisualPreviewRequest): Promise<IVoltVisualPreview> {
 		const once = () => this.run(request);
@@ -79,6 +46,50 @@ export class VoltVisualPreviewMainService implements IVoltVisualPreviewService {
 		this.queue = run.catch(() => undefined);
 		return run;
 	}
+
+	//#region Headless pages (see VoltHeadlessPages)
+
+	openPage(request: IVoltPageOpenRequest): Promise<IVoltPageOpened> {
+		return this.pages.open(request);
+	}
+
+	evaluatePage<T>(id: string, expression: string, timeoutMs?: number): Promise<IVoltPageEvaluation<T>> {
+		return this.pages.evaluate<T>(id, expression, timeoutMs);
+	}
+
+	inputPage(id: string, input: readonly VoltPageInput[]): Promise<void> {
+		return this.pages.input(id, input);
+	}
+
+	insertPageText(id: string, text: string): Promise<boolean> {
+		return this.pages.insertText(id, text);
+	}
+
+	navigatePage(id: string, target: string, timeoutMs?: number): Promise<IVoltPageState> {
+		return this.pages.navigate(id, target, timeoutMs);
+	}
+
+	waitForPage(id: string, timeoutMs: number): Promise<IVoltPageState> {
+		return this.pages.waitFor(id, timeoutMs);
+	}
+
+	setPageScheme(id: string, scheme: VoltPageScheme | undefined): Promise<void> {
+		return this.pages.setScheme(id, scheme);
+	}
+
+	capturePage(id: string, request?: IVoltPageCaptureRequest): Promise<IVoltPageCapture> {
+		return this.pages.capture(id, request);
+	}
+
+	takePageConsole(id: string): Promise<IVoltVisualConsoleMessage[]> {
+		return this.pages.takeConsole(id);
+	}
+
+	async closePage(id: string): Promise<void> {
+		this.pages.close(id);
+	}
+
+	//#endregion
 
 	private async run(request: IVoltVisualPreviewRequest): Promise<IVoltVisualPreview> {
 		const width = clampWidth(request.width);
@@ -117,17 +128,9 @@ export class VoltVisualPreviewMainService implements IVoltVisualPreviewService {
 			const cdp = contents.debugger;
 			cdp.attach('1.3');
 			cdp.on('message', (_event, method, params) => {
-				if (method === 'Runtime.consoleAPICalled') {
-					const level = params.type === 'error' || params.type === 'assert' ? 'error' : params.type === 'warning' ? 'warning' : params.type === 'info' ? 'info' : 'log';
-					push(level, (params.args as IRemoteObject[] ?? []).map(describeArg).join(' '));
-				} else if (method === 'Runtime.exceptionThrown') {
-					const details = params.exceptionDetails ?? {};
-					push('error', `Uncaught ${details.exception?.description ?? details.text ?? 'error'}${details.exception?.description ? '' : describeStack(details.stackTrace?.callFrames)}`);
-				} else if (method === 'Log.entryAdded') {
-					const entry = params.entry ?? {};
-					if (entry.level === 'error' || entry.level === 'warning') {
-						push(entry.level, `${entry.text ?? ''}${entry.url ? ` (${entry.url})` : ''}`);
-					}
+				const message = consoleMessageOf(method, params);
+				if (message) {
+					push(message.level, message.text);
 				}
 			});
 			const timeout = new Promise<never>((_, reject) => {

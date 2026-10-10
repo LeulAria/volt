@@ -41,6 +41,13 @@ if [ -n "${MACOS_CERTIFICATE:-}" ]; then
 	AGENT_TEMPDIRECTORY="$TMP" CODESIGN_IDENTITY="$IDENTITY" VSCODE_ARCH="$ARCH" node "$ROOT/build/darwin/sign.js" "$BUILD_DIR"
 else
 	echo "::warning::MACOS_CERTIFICATE is not set: ad-hoc signing $NAME (Gatekeeper will ask users to confirm the first launch)."
+	# build/darwin/sign.js adds these usage descriptions when it signs, and it does not run here.
+	# Without NSSpeechRecognitionUsageDescription macOS kills the speech helper on the first dictation.
+	INFO_PLIST="$APP/Contents/Info.plist"
+	plutil -replace NSAppleEventsUsageDescription -string "An application in $NAME wants to use AppleScript." "$INFO_PLIST"
+	plutil -replace NSMicrophoneUsageDescription -string "An application in $NAME wants to use the Microphone." "$INFO_PLIST"
+	plutil -replace NSSpeechRecognitionUsageDescription -string "Volt turns your dictation into text for the agent composer." "$INFO_PLIST"
+	plutil -replace NSCameraUsageDescription -string "An application in $NAME wants to use the Camera." "$INFO_PLIST"
 	codesign --force --deep --sign - "$APP"
 fi
 codesign --verify --deep --strict --verbose=2 "$APP" || echo "::warning::codesign --verify reported problems"
@@ -65,7 +72,24 @@ STAGE="$TMP/dmg-$ARCH"
 rm -rf "$STAGE" && mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/$APP_NAME"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "$NAME" -srcfolder "$STAGE" -ov -format UDZO "$OUT/$BASE.dmg"
+# Build a read-write image, then compress it to ULMO (LZMA): ~40% smaller than UDZO for this app
+# (177MB -> 105MB for darwin-arm64) and readable on macOS 10.15+ (Electron needs 11+).
+# `hdiutil create -srcfolder` fails with "Resource busy" now and then, so it gets a few tries.
+RW_DMG="$TMP/$BASE-rw.dmg"
+for ATTEMPT in 1 2 3 4 5; do
+	rm -f "$RW_DMG"
+	if hdiutil create -volname "$NAME" -srcfolder "$STAGE" -ov -format UDRW "$RW_DMG"; then
+		break
+	fi
+	if [ "$ATTEMPT" -eq 5 ]; then
+		echo "hdiutil create failed $ATTEMPT times" >&2
+		exit 1
+	fi
+	echo "hdiutil create failed (attempt $ATTEMPT), retrying"
+	sleep $((ATTEMPT * 5))
+done
+hdiutil convert "$RW_DMG" -format ULMO -ov -o "$OUT/$BASE.dmg"
+rm -f "$RW_DMG"
 rm -rf "$STAGE"
 if [ -n "$IDENTITY" ]; then
 	codesign --force --sign "$IDENTITY" --timestamp "$OUT/$BASE.dmg"

@@ -23,7 +23,9 @@ import { parsePullRequestUrl, prKey } from '../../../../../platform/voltPullRequ
 import { buildRestackConflictPrompt } from '../../../../../platform/voltPullRequests/common/voltPrStacks.js';
 import {
 	IVoltPrAccount,
+	IVoltPrBranchRef,
 	IVoltPrCreateRequest,
+	IVoltPrFingerprint,
 	IVoltPrHostCredential,
 	IVoltPrRepo,
 	IVoltPrRepoRef,
@@ -38,6 +40,7 @@ import {
 	VoltPrMergeMethod,
 	voltPrErrorCode,
 	voltPrErrorMessage,
+	voltPrErrorRetryAt,
 } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
@@ -162,6 +165,16 @@ const REPO_TTL_MS = 30_000;
 const ORIGIN_TTL_MS = 60_000;
 const DETAIL_TTL_MS = 8_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
+/**
+ * A watched pull request whose fingerprint has not moved is still read in full this often: edits
+ * inside review threads leave no trace in it.
+ */
+const WATCH_DETAIL_BACKSTOP_MS = 30 * 60_000;
+/**
+ * A branch without an open pull request is asked about again this often in the background sweep.
+ * One opened from a chat is found right after its turn; one opened elsewhere shows up within this.
+ */
+const BRANCH_MISS_MS = 10 * 60_000;
 const MERGE_METHOD_KEY = 'volt.pullRequests.mergeMethods';
 /** Tokens the user gave Volt for code hosts other than GitHub (secret storage, JSON). */
 const HOST_TOKENS_KEY = 'volt.pullRequests.hostTokens';
@@ -212,6 +225,10 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	private hostTokens: IVoltPrHostCredential[] = [];
 	/** When each pull request was last read in a watch pass. */
 	private readonly watchedAt = new Map<string, number>();
+	/** The fingerprint each watched pull request had when its detail was last read, and when. */
+	private readonly watchPrints = new Map<string, { readonly status: string; readonly remarks: string; readonly at: number }>();
+	/** Branches (`repo\0branch`) the last lookup found no open pull request for, and when. */
+	private readonly branchMisses = new Map<string, number>();
 	private readonly linkLocks = new SequencerByKey<string>();
 	private syncing: Promise<void> | undefined;
 	private historyReady = false;
@@ -746,17 +763,31 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 
 	private markHostOk(host: string): void {
 		const key = host.toLowerCase();
-		if (this.hosts.has(key)) {
-			this.hosts.delete(key);
+		const state = this.hosts.get(key);
+		if (!state) {
+			return;
 		}
+		// The user's reads may spend the quota's reserve: one that worked clears the problem, but
+		// background reads still wait for the rate limit to reset.
+		if (state.problem?.code === 'rateLimited' && state.until > Date.now()) {
+			this.hosts.set(key, { failures: 0, until: state.until });
+			return;
+		}
+		this.hosts.delete(key);
 	}
 
 	private markHostFailed(host: string, err: unknown): void {
 		const key = host.toLowerCase();
 		const state = this.hosts.get(key) ?? { failures: 0, until: 0 };
-		state.failures++;
 		const code = voltPrErrorCode(err) ?? 'failed';
-		state.until = Date.now() + Math.min(MAX_BACKOFF_MS, OPEN_SYNC_MS * 2 ** Math.min(state.failures - 1, 4));
+		if (code === 'rateLimited') {
+			// GitHub said when its quota frees up: wait exactly that long. The wait sends nothing (the
+			// service refuses without a request), so it is no failure to back off from further.
+			state.until = Math.max(state.until, voltPrErrorRetryAt(err) ?? Date.now() + OPEN_SYNC_MS);
+		} else {
+			state.failures++;
+			state.until = Date.now() + Math.min(MAX_BACKOFF_MS, OPEN_SYNC_MS * 2 ** Math.min(state.failures - 1, 4));
+		}
 		state.problem = { code, message: voltPrErrorMessage(err) };
 		this.hosts.set(key, state);
 		this.logService.trace('[volt-pr] read failed', host, code, voltPrErrorMessage(err));
@@ -774,7 +805,8 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		}
 		await Promise.all([...byHost].map(async ([host, list]) => {
 			try {
-				const read = await this.api.getMany(list.map(link => ({ repo: link.repo, number: link.number, ...(link.account ? { account: link.account } : {}) })));
+				// The sweep's reads are background: they leave the quota's last tenth to the user.
+				const read = await this.api.getMany(list.map(link => prRequest(link, !force)));
 				this.markHostOk(host);
 				this.applySnapshots(read);
 			} catch (err) {
@@ -837,24 +869,103 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 
 	//#region Watch passes
 
+	/**
+	 * Watch passes ask first, in one batched read per host, whether anything changed (about a point
+	 * for 25 pull requests on GitHub), and read the detail of only the pull requests that moved,
+	 * that still run checks, or whose last full read is old. (T3 Code, pingdotgg/t3code#16270.)
+	 */
 	private async runWatches(watched: Map<string, { sessionId: string; link: IAgentPrLink }[]>, now: number, force: boolean): Promise<void> {
-		const due = [...watched].filter(([key]) => force || now - (this.watchedAt.get(key) ?? 0) >= WATCH_SYNC_MS);
-		// A few at a time: each pass is one detail read.
-		for (let i = 0; i < due.length; i += 4) {
-			await Promise.all(due.slice(i, i + 4).map(([key, owners]) => this.watchPass(key, owners)));
+		for (const key of [...this.watchPrints.keys()]) {
+			if (!watched.has(key)) {
+				this.watchPrints.delete(key);
+			}
+		}
+		const due = [...watched].filter(([key, owners]) => this.hostReady(owners[0].link.repo.host, false) && (force || now - (this.watchedAt.get(key) ?? 0) >= WATCH_SYNC_MS));
+		if (!due.length) {
+			return;
+		}
+		const { prints, skipped } = await this.watchFingerprints(due);
+		const reads: [string, { sessionId: string; link: IAgentPrLink }[]][] = [];
+		for (const [key, owners] of due) {
+			if (skipped.has(key)) {
+				continue;
+			}
+			if (this.needsDetail(key, owners, prints.get(key), now)) {
+				reads.push([key, owners]);
+			} else {
+				this.watchedAt.set(key, now);
+			}
+		}
+		// A few at a time: each is one detail read.
+		for (let i = 0; i < reads.length; i += 4) {
+			await Promise.all(reads.slice(i, i + 4).map(([key, owners]) => this.watchPass(key, owners, prints.get(key))));
 		}
 	}
 
-	private async watchPass(key: string, owners: { sessionId: string; link: IAgentPrLink }[]): Promise<void> {
+	/**
+	 * One fingerprint read per host for the due watches. A rate-limited host skips the pass; a host
+	 * without fingerprints, or a read that failed otherwise, leaves its watches reading the detail.
+	 */
+	private async watchFingerprints(due: readonly [string, { sessionId: string; link: IAgentPrLink }[]][]): Promise<{ prints: Map<string, IVoltPrFingerprint>; skipped: Set<string> }> {
+		const byHost = new Map<string, IVoltPrRequest[]>();
+		for (const [, owners] of due) {
+			const link = owners[0].link;
+			const list = byHost.get(link.repo.host) ?? [];
+			list.push(prRequest(link, true));
+			byHost.set(link.repo.host, list);
+		}
+		const prints = new Map<string, IVoltPrFingerprint>();
+		const skipped = new Set<string>();
+		await Promise.all([...byHost].map(async ([host, requests]) => {
+			try {
+				for (const print of await this.api.fingerprints(requests)) {
+					prints.set(print.key, print);
+				}
+			} catch (err) {
+				if (voltPrErrorCode(err) === 'rateLimited') {
+					this.markHostFailed(host, err);
+					for (const request of requests) {
+						skipped.add(prKey(request.repo, request.number));
+					}
+				} else {
+					this.logService.trace('[volt-pr] could not read fingerprints; reading watched pull requests in full', host, voltPrErrorMessage(err));
+				}
+			}
+		}));
+		return { prints, skipped };
+	}
+
+	/** Whether a watched pull request's detail is worth reading this pass, going by its fingerprint. */
+	private needsDetail(key: string, owners: readonly { link: IAgentPrLink }[], print: IVoltPrFingerprint | undefined, now: number): boolean {
+		const seen = this.watchPrints.get(key);
+		if (!print || !seen || print.unsettled) {
+			// No fingerprint (another host, a failed read), none to compare with, or checks still
+			// running: counts by state cannot tell which check finished.
+			return true;
+		}
+		if (owners.some(({ link }) => link.watch?.headSha === null)) {
+			// A watch's first pass takes its baseline from the detail.
+			return true;
+		}
+		return print.status !== seen.status || print.remarks !== seen.remarks || now - seen.at >= WATCH_DETAIL_BACKSTOP_MS;
+	}
+
+	private async watchPass(key: string, owners: { sessionId: string; link: IAgentPrLink }[], print?: IVoltPrFingerprint): Promise<void> {
 		const first = owners[0].link;
 		if (!this.hostReady(first.repo.host, false)) {
 			return;
 		}
-		this.watchedAt.set(key, Date.now());
+		const readAt = Date.now();
+		this.watchedAt.set(key, readAt);
 		let detail: IVoltPullRequestDetail;
 		try {
-			detail = await this.detail({ repo: first.repo, number: first.number, ...(first.account ? { account: first.account } : {}) }, true);
+			detail = await this.detail(prRequest(first, true), true);
 		} catch (err) {
+			if (voltPrErrorCode(err) === 'rateLimited') {
+				// Not the watch's failure: the host waits out the limit without a request, and the
+				// watch carries on after it (T3 Code, pingdotgg/t3code#16208).
+				return;
+			}
 			for (const { sessionId } of owners) {
 				const link = this.links(sessionId).find(candidate => candidate.key === key);
 				if (!link?.watch) {
@@ -870,6 +981,13 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 				}
 			}
 			return;
+		}
+		if (print) {
+			// The fingerprint was read before the detail: anything that moved in between makes the
+			// next one differ, and the detail is read again.
+			this.watchPrints.set(key, { status: print.status, remarks: print.remarks, at: readAt });
+		} else {
+			this.watchPrints.delete(key);
 		}
 		const remarks = collectRemarks(detail);
 		for (const { sessionId } of owners) {
@@ -970,7 +1088,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			this.logService.trace('[volt-pr] could not read the finished turn', err);
 		}
 		this.repos.delete(this.folderFor(sessionId) ?? '');
-		await this.discoverFor([sessionId]);
+		await this.discoverFor([sessionId], true);
 	}
 
 	private async discover(): Promise<void> {
@@ -981,9 +1099,20 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		await this.discoverFor(recent);
 	}
 
-	/** Links the open pull request of each chat's branch, by the rules in {@link discoveredPrBelongs}. */
-	private async discoverFor(sessionIds: readonly string[]): Promise<void> {
-		const byBranch = new Map<string, { repo: IVoltPrRepo; chats: IAgentSessionMeta[] }>();
+	/**
+	 * Links the open pull request of each chat's branch, by the rules in {@link discoveredPrBelongs}.
+	 * Every branch of a repository goes in one lookup that asks only which pull requests they have
+	 * (about a point for 50 branches); summaries are read only for pull requests about to be linked.
+	 * `force` (after a turn) also asks about branches that had no open pull request a moment ago.
+	 */
+	private async discoverFor(sessionIds: readonly string[], force = false): Promise<void> {
+		const now = Date.now();
+		for (const [key, at] of [...this.branchMisses]) {
+			if (now - at >= BRANCH_MISS_MS) {
+				this.branchMisses.delete(key);
+			}
+		}
+		const byRepo = new Map<string, { repo: IVoltPrRepo; branches: Map<string, IAgentSessionMeta[]> }>();
 		for (const sessionId of sessionIds) {
 			const meta = this.history.get(sessionId);
 			const folder = this.folderFor(sessionId);
@@ -994,38 +1123,67 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			if (!repo || repo.provider !== 'github' || !repo.branch || isTrunkBranch(repo.branch) || !this.hostReady(repo.host, false)) {
 				continue;
 			}
-			const key = `${repoId(repo)}\u0000${repo.branch}`;
-			const entry = byBranch.get(key) ?? { repo, chats: [] };
-			entry.chats.push(meta);
-			byBranch.set(key, entry);
+			if (!force && this.branchMisses.has(`${repoId(repo)}\u0000${repo.branch}`)) {
+				continue;
+			}
+			const entry = byRepo.get(repoId(repo)) ?? { repo, branches: new Map<string, IAgentSessionMeta[]>() };
+			const chats = entry.branches.get(repo.branch) ?? [];
+			chats.push(meta);
+			entry.branches.set(repo.branch, chats);
+			byRepo.set(repoId(repo), entry);
 		}
-		for (const { repo, chats } of byBranch.values()) {
-			let found: IVoltPullRequest[];
+		const toLink: { meta: IAgentSessionMeta; ref: IVoltPrBranchRef }[] = [];
+		for (const { repo, branches } of byRepo.values()) {
+			let refs: IVoltPrBranchRef[];
 			try {
-				found = await this.api.forBranch({ repo, branch: repo.branch! });
+				refs = await this.api.branchPullRequests({ repo: { host: repo.host, owner: repo.owner, name: repo.name }, branches: [...branches.keys()], ...(force ? {} : { background: true }) });
 				this.markHostOk(repo.host);
 			} catch (err) {
 				this.markHostFailed(repo.host, err);
 				continue;
 			}
-			const pr = found[0];
-			if (!pr) {
-				continue;
-			}
-			for (const meta of chats) {
-				const ownBranch = !!meta.worktreePath && meta.worktreeBranch === repo.branch;
-				if (this.links(meta.id).some(link => link.key === pr.key)) {
+			for (const [branch, chats] of branches) {
+				// The open one first, then the most recent.
+				const pr = refs.filter(ref => ref.branch === branch).sort((a, b) => Number(isOpenState(b.state)) - Number(isOpenState(a.state)) || b.createdAt - a.createdAt)[0];
+				const missKey = `${repoId(repo)}\u0000${branch}`;
+				if (pr && isOpenState(pr.state)) {
+					this.branchMisses.delete(missKey);
+				} else {
+					this.branchMisses.set(missKey, now);
+				}
+				if (!pr) {
 					continue;
 				}
-				if (!discoveredPrBelongs(pr, { ownBranch, createdAt: meta.createdAt, lastPromptAt: meta.lastPromptAt, updatedAt: meta.updatedAt })) {
-					continue;
+				const key = prKey(pr.repo, pr.number);
+				for (const meta of chats) {
+					const ownBranch = !!meta.worktreePath && meta.worktreeBranch === branch;
+					if (this.links(meta.id).some(link => link.key === key)) {
+						continue;
+					}
+					if (discoveredPrBelongs(pr, { ownBranch, createdAt: meta.createdAt, lastPromptAt: meta.lastPromptAt, updatedAt: meta.updatedAt })) {
+						toLink.push({ meta, ref: pr });
+					}
 				}
-				await this.linkLocks.queue(meta.id, async () => {
-					this.setLinks(meta.id, addLink(this.links(meta.id), newLink(pr.repo, pr.number, pr.url, 'branch', Date.now(), pr)));
-				});
 			}
-			this.applySnapshots([pr]);
 		}
+		if (!toLink.length) {
+			return;
+		}
+		// One batched read for every pull request about to be linked; linked without a snapshot if it
+		// fails (the next sweep reads those first).
+		const unique = new Map(toLink.map(({ ref }) => [prKey(ref.repo, ref.number), ref]));
+		const summaries = await this.api.getMany([...unique.values()].map(ref => ({ repo: ref.repo, number: ref.number, ...(force ? {} : { background: true }) }))).catch(err => {
+			this.logService.trace('[volt-pr] could not read discovered pull requests', voltPrErrorMessage(err));
+			return [] as IVoltPullRequest[];
+		});
+		const byKey = new Map(summaries.map(pr => [pr.key, pr]));
+		for (const { meta, ref } of toLink) {
+			const pr = byKey.get(prKey(ref.repo, ref.number));
+			await this.linkLocks.queue(meta.id, async () => {
+				this.setLinks(meta.id, addLink(this.links(meta.id), newLink(ref.repo, ref.number, pr?.url ?? '', 'branch', Date.now(), pr)));
+			});
+		}
+		this.applySnapshots(summaries);
 	}
 
 	//#endregion
@@ -1322,6 +1480,11 @@ function describeLink(link: IAgentPrLink): Record<string, unknown> {
 function repoFromArg(value: string, host: string): IVoltPrRepoRef {
 	const [owner, name] = value.split('/');
 	return { host: host.toLowerCase(), owner, name: name.replace(/\.git$/, '') };
+}
+
+/** The request that reads a link's pull request as its account; `background` for sweeps nobody waits on. */
+function prRequest(link: IAgentPrLink, background: boolean): IVoltPrRequest {
+	return { repo: link.repo, number: link.number, ...(link.account ? { account: link.account } : {}), ...(background ? { background: true } : {}) };
 }
 
 function repoId(repo: IVoltPrRepoRef): string {

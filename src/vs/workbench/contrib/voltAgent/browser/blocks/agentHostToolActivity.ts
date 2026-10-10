@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { isMemoryToolName } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
-import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, THREAD_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, MOCKUPS_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME, THREAD_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /** How one of Volt's own MCP tools reads in the activity trail, the way Cursor words its browser actions. */
 export interface IHostToolActivity {
@@ -106,6 +106,17 @@ export function describeHostToolActivity(name: string | undefined, title: string
 	if (tool === PREVIEW_HTML_TOOL_NAME) {
 		return { tool, label: 'Previewed page', detail: typeof args.width === 'number' ? `${args.width}px` : undefined };
 	}
+	if (tool === MOCKUPS_TOOL_NAME) {
+		const count = Array.isArray(args.options) ? args.options.length : 0;
+		return { tool, label: count ? `Showed ${count} mockup${count === 1 ? '' : 's'}` : 'Showed mockups', detail: text(args.title, 80) };
+	}
+	if (tool === SCREENS_TOOL_NAME) {
+		if (typeof args.job === 'string' && !args.title) {
+			return { tool, label: 'Capturing screens' };
+		}
+		const count = Array.isArray(args.screens) ? args.screens.length : 0;
+		return { tool, label: count > 1 ? `Captured ${count} screens` : 'Captured screens', detail: text(args.title, 80) ?? text(args.url, 80) ?? text(args.device, 60) };
+	}
 	if (!isBrowserToolName(tool)) {
 		return undefined;
 	}
@@ -115,6 +126,10 @@ export function describeHostToolActivity(name: string | undefined, title: string
 			return { tool, label: 'Navigated to', detail: text(args.url, 120) };
 		case 'browser_snapshot':
 			return { tool, label: 'Read page' };
+		case 'browser_act': {
+			const steps = stepCount(args);
+			return { tool, label: args.run ? 'Ran saved flows' : 'Acted on page', detail: args.run ? [args.run].flat().join(', ') : steps ? `${steps} step${steps === 1 ? '' : 's'}` : undefined };
+		}
 		case 'browser_click':
 			return { tool, label: args.doubleClick === true ? 'Double-clicked' : 'Clicked', detail: element ?? text(args.ref) };
 		case 'browser_type': {
@@ -219,6 +234,14 @@ function describeThreadActivity(tool: string, args: Record<string, unknown>): IH
 	return { tool, label: tool };
 }
 
+/** Steps in an act call: script lines (not comments) or JSON steps. */
+function stepCount(args: Record<string, unknown>): number {
+	if (typeof args.script === 'string') {
+		return args.script.split('\n').filter(line => line.trim() && !/^\s*(#|\/\/)/.test(line)).length;
+	}
+	return Array.isArray(args.steps) ? args.steps.length : 0;
+}
+
 /** Simulator, emulator and window capture tools. */
 function describeDeviceActivity(tool: string, args: Record<string, unknown>): IHostToolActivity | undefined {
 	const device = text(args.device);
@@ -228,6 +251,11 @@ function describeDeviceActivity(tool: string, args: Record<string, unknown>): IH
 		case 'device_boot': return { tool, label: 'Booted', detail: device };
 		case 'device_shutdown': return { tool, label: 'Shut down', detail: device };
 		case 'device_screenshot': return { tool, label: 'Took device screenshot', detail: device };
+		case 'device_snapshot': return { tool, label: 'Read device screen', detail: device };
+		case 'device_act': {
+			const steps = stepCount(args);
+			return { tool, label: 'Acted on device', detail: [steps ? `${steps} step${steps === 1 ? '' : 's'}` : undefined, device ? `on ${device}` : undefined].filter(Boolean).join(' ') || undefined };
+		}
 		case 'device_tap': return { tool, label: 'Tapped', detail: [at, device ? `on ${device}` : undefined].filter(Boolean).join(' ') || undefined };
 		case 'device_swipe': return { tool, label: 'Swiped', detail: device };
 		case 'device_type': {
@@ -238,6 +266,12 @@ function describeDeviceActivity(tool: string, args: Record<string, unknown>): IH
 		case 'device_install_app': return { tool, label: 'Installed', detail: text(args.path, 120) };
 		case 'device_launch_app': return { tool, label: 'Launched', detail: text(args.app, 120) };
 		case 'device_set_posture': return { tool, label: 'Changed posture to', detail: args.posture === 'halfOpen' ? 'half open' : text(args.posture) };
+		case 'desktop_apps': return { tool, label: 'Listed desktop apps' };
+		case 'desktop_snapshot': return { tool, label: 'Read desktop app', detail: text(args.app) };
+		case 'desktop_act': {
+			const lines = stepCount(args);
+			return { tool, label: 'Acted on desktop app', detail: [text(args.app), lines ? `${lines} step${lines === 1 ? '' : 's'}` : undefined].filter(Boolean).join(' · ') || undefined };
+		}
 		case 'window_list': return { tool, label: 'Listed windows' };
 		case 'window_capture': return { tool, label: 'Captured window', detail: text(args.window) };
 		case 'window_record_start': return { tool, label: 'Started recording', detail: text(args.window) };

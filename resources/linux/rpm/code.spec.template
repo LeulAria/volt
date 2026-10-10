@@ -24,6 +24,9 @@ Visual Studio Code is a new choice of tool that combines the simplicity of a cod
 %define _build_id_links none
 %define __strip @@STRIP@@
 
+# xz payload, like the deb (dpkg-deb -Zxz): rpmbuild's gzip default left the rpm ~45MB larger.
+%define _binary_payload w6.xzdio
+
 %install
 # Destination directories
 mkdir -p %{buildroot}%{_bindir}

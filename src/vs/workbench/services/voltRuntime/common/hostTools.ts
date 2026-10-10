@@ -8,10 +8,12 @@ import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
+import { DESKTOP_TOOL_NAMES } from './desktopTools.js';
 import { isMemoryToolName } from './memory/voltMemory.js';
 import type { VoltMode } from './modes.js';
 import type { AgentQuestionDraft, IAgentQuestionResponse } from './questions.js';
 import { PROPOSE_PLAN_TOOL_NAME } from './plans.js';
+import { parseActSteps } from './tools/pageModel.js';
 import type { IRgbaImage } from './tools/imageAnalysis.js';
 
 export const IVoltHostToolService = createDecorator<IVoltHostToolService>('voltHostToolService');
@@ -19,6 +21,8 @@ export const IVoltHostToolService = createDecorator<IVoltHostToolService>('voltH
 export const ASK_QUESTION_TOOL_NAME = 'ask_question';
 export const BROWSER_SCREENSHOT_TOOL_NAME = 'browser_screenshot';
 export const BROWSER_SNAPSHOT_TOOL_NAME = 'browser_snapshot';
+/** Several browser steps in one call, targeted by meaning, each verified (see `pageModel.ts`). */
+export const BROWSER_ACT_TOOL_NAME = 'browser_act';
 export const CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID = 'volt.browser.captureSnapshot';
 /**
  * Runs one `browser_*` tool against a chat's own browser tab:
@@ -39,7 +43,13 @@ export const BROWSER_COMPARE_IMAGE_TOOL_NAME = 'browser_compare_image';
 export const RENDER_CHART_TOOL_NAME = 'render_chart';
 export const RENDER_HTML_TOOL_NAME = 'html_render';
 export const PREVIEW_HTML_TOOL_NAME = 'html_preview';
-export const VISUAL_TOOL_NAMES = [RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, 'render_html', 'preview_html'] as const;
+/**
+ * Galleries in the reply, drawn as pages: design alternatives the user compares and picks from,
+ * and the user's own app screens (web, simulator, emulator, desktop) captured in light and dark.
+ */
+export const MOCKUPS_TOOL_NAME = 'mockups_render';
+export const SCREENS_TOOL_NAME = 'screens_capture';
+export const VISUAL_TOOL_NAMES = [RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, MOCKUPS_TOOL_NAME, SCREENS_TOOL_NAME, 'render_html', 'preview_html'] as const;
 
 /** Earlier names of host tools, still accepted from agents and read in stored transcripts. */
 export const LEGACY_TOOL_NAMES: Readonly<Record<string, string>> = {
@@ -75,7 +85,7 @@ export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
  * and Android emulators. `capture`: screenshots and recordings of windows. An agent can be
  * handed a subset (`getMcpServers(sessionId, { groups })`) to keep its tool list short.
  */
-export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture' | 'memory';
+export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture' | 'memory' | 'desktop';
 
 export interface IVoltHostToolInfo {
 	readonly name: string;
@@ -157,6 +167,8 @@ export interface IVoltBrowserAutomationOptions {
 	/** `browser_compare_image`: the decoded reference image and how to name it in the result. */
 	readonly reference?: IRgbaImage;
 	readonly referenceLabel?: string;
+	/** The chat's project folder (its worktree): `browser_act` keeps saved flows under `.volt/flows` there. */
+	readonly cwd?: string;
 }
 
 /** A host tool ran for a chat; the transcript attaches the result to the agent's matching tool row. */
@@ -178,7 +190,7 @@ export const AWAIT_ANSWERS_TOOL_NAME = 'await_answers';
 
 const REF = { type: 'string', description: 'Exact target element reference from the latest page snapshot (e.g. "e12").' };
 const ELEMENT = { type: 'string', description: 'Human-readable element description used to obtain permission to interact with the element, shown to the user (e.g. "Top-left cell").' };
-const PAGE_STATE_NOTE = 'Returns the page URL, title and an accessibility snapshot with element refs.';
+const PAGE_STATE_NOTE = 'Returns what the action did (DOM changes, requests, navigation) and the page: in full the first time you see a document, then only what changed since your last view.';
 const SCREENSHOT_AFTER = { type: 'boolean', description: 'Also return a screenshot after the action (saves a browser_screenshot call).' };
 const RECT = {
 	type: 'object',
@@ -189,6 +201,7 @@ const RECT = {
 export const BROWSER_TOOL_NAMES = [
 	'browser_navigate',
 	'browser_snapshot',
+	BROWSER_ACT_TOOL_NAME,
 	'browser_click',
 	'browser_type',
 	'browser_press_key',
@@ -284,12 +297,51 @@ export const VOLT_HOST_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: 'browser_snapshot',
 		title: 'Read page',
 		group: 'browser',
-		description: `Capture an accessibility snapshot of the current page in the in-app browser. Better than a screenshot for deciding what to click. ${PAGE_STATE_NOTE}`,
+		description: 'Read the whole current page in the in-app browser as an accessibility tree (roles, names, states, values, refs). Better than a screenshot for deciding what to click. Long runs of similar rows or items are folded to the first and last few. If you already know the labels (you wrote the page), skip it and target elements by role/name/label/text in browser_act.',
 		inputSchema: {
 			type: 'object',
 			properties: {
 				selector: { type: 'string', description: 'Optional CSS selector: snapshot only this subtree.' },
 				interactive: { type: 'boolean', description: 'Only list interactive elements (buttons, links, inputs). Much shorter.' },
+				unfold: { type: 'boolean', description: 'Show long runs of rows/items in full (they are folded to the first and last few by default).' },
+			},
+		},
+	},
+	{
+		name: BROWSER_ACT_TOOL_NAME,
+		title: 'Acted on page',
+		group: 'browser',
+		description: `Run a whole browser flow in ONE call instead of one call per click: fill forms, click through pages, check results. Write it as a script, one short step per line:
+goto http://localhost:3000/login
+type "Email" ada@example.com
+type "Password" \${password}
+check "Remember me"
+click button "Sign in" => "Welcome back" and url /dashboard
+click button "Delete" in "Project A"
+submit "Search" lamp        (type, then Enter)
+select "Country" Germany
+scroll down until "Load more"
+wait gone "Loading"
+expect count listitem in "Todos" 2
+? click "Accept cookies"    (optional step)
+Targets: "text" (for type/select/check: the field's label), role "name" (button, link, textbox, checkbox, radio, switch, combobox, tab, menuitem, option, listitem, row, heading, dialog...), a ref like e12, label/placeholder/css "...", then "in <target>" for a row, card or dialog, "#2" for the 2nd match, "exact". "=> condition" verifies a step: "text", gone "text", url /path, title "x", <target> checked|unchecked|visible|hidden|enabled|disabled|focused, <target> = "value", count <target> N (join with "and").
+Each step waits for its target (3s), acts with real input, waits for the page to settle, and reports what it did (DOM changes, requests, navigation, or that nothing reacted). The run stops at the first failure with a code (NOT_FOUND, AMBIGUOUS with candidate refs, DISABLED, STALE_REF, VERIFY_FAILED) and never retries a click. It ends with only what changed on the page since you last saw it.
+If you know the page (you wrote it), skip browser_snapshot. Pass observe: "on_failure" when the "=>" checks are your report. Pass save: "name" to keep a passing flow in .volt/flows/name.flow, and later re-run flows with run: "name" or run: ["sign-in", "checkout"] (one line per flow) after each edit; \${name} placeholders take vars, and passwords must come from vars.`,
+		inputSchema: {
+			type: 'object',
+			properties: {
+				script: { type: 'string', description: 'The steps, one per line (see above). Preferred over steps.' },
+				run: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }], description: 'Saved flow(s) to run instead of a script.' },
+				vars: { type: 'object', description: 'Values for ${name} placeholders in the script or flows.' },
+				save: { type: 'string', description: 'Save this script as a flow when every step passes.' },
+				steps: {
+					type: 'array',
+					maxItems: 30,
+					description: 'The same steps as JSON objects, if you prefer: {"action": "click", "target": {"role": "button", "name": "Save"}, "expect": {"text": "Saved"}}.',
+					items: { type: 'object' },
+				},
+				observe: { type: 'string', enum: ['auto', 'on_failure', 'full', 'none'], description: 'Page state at the end: auto (default: changes since your last view, or the full page on a new document), on_failure (only if a step failed), full, or none.' },
+				screenshot: SCREENSHOT_AFTER,
 			},
 		},
 	},
@@ -521,7 +573,7 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (SCHEDULE_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id)) {
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (SCHEDULE_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id)) {
 				return canonicalHostToolName(id);
 			}
 		}
@@ -606,19 +658,41 @@ export function browserToolVerdict(name: string, args: Record<string, unknown>, 
 		case 'browser_press_key':
 		case 'browser_select_option':
 			return !pageUrl || isLocalBrowserUrl(pageUrl) ? ALLOW : { kind: 'ask', reason: `acts on ${hostOf(pageUrl)}, which is not a local page` };
+		case BROWSER_ACT_TOOL_NAME: {
+			// Judged like the single-step tools it bundles: the sites it opens, and the page it acts on.
+			const parsed = parseActSteps(args.steps);
+			const steps = 'steps' in parsed ? parsed.steps : [];
+			const away = steps.find(step => step.action === 'navigate' && !isLocalBrowserUrl(step.url));
+			if (away) {
+				return { kind: 'ask', reason: `opens ${hostOf(away.url) || 'a site'}, which is not a local page` };
+			}
+			const acts = steps.some(step => step.action === 'click' || step.action === 'type' || step.action === 'press' || step.action === 'select' || step.action === 'check' || step.action === 'uncheck');
+			const opensLocal = steps.findIndex(step => step.action === 'navigate');
+			const actsFirst = steps.findIndex(step => step.action !== 'navigate' && step.action !== 'wait' && step.action !== 'expect' && step.action !== 'hover' && step.action !== 'scroll');
+			// Acting after the steps opened a local page is acting on that page.
+			const onCurrentPage = acts && (opensLocal < 0 || actsFirst < opensLocal);
+			return !onCurrentPage || !pageUrl || isLocalBrowserUrl(pageUrl) ? ALLOW : { kind: 'ask', reason: `acts on ${hostOf(pageUrl)}, which is not a local page` };
+		}
 	}
 	return ALLOW;
 }
 
 /** Tools whose verdict depends on the page the browser shows. */
 export function browserVerdictNeedsPage(name: string): boolean {
-	return name === 'browser_click' || name === 'browser_type' || name === 'browser_press_key' || name === 'browser_select_option';
+	return name === 'browser_click' || name === 'browser_type' || name === 'browser_press_key' || name === 'browser_select_option' || name === BROWSER_ACT_TOOL_NAME;
 }
 
 /** Another part of Volt that serves tools on the host MCP server (the orchestrator's task tools). */
 export interface IVoltHostToolProvider {
 	readonly tools: readonly IVoltHostToolInfo[];
 	invoke(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult>;
+	/**
+	 * Why this call needs the user's approval in every mode (e.g. "controls Notes on your desktop"),
+	 * or undefined when it does not. Asked before `invoke`; refused without a chat to ask in.
+	 */
+	needsApproval?(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<string | undefined>;
+	/** The user allowed a call `needsApproval` asked about. */
+	approved?(name: string, args: Record<string, unknown>, call: IVoltHostToolCall): void;
 }
 
 export interface IVoltHostToolService {

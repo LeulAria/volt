@@ -15,6 +15,8 @@ export type VoltDeviceKind = 'simulator' | 'emulator' | 'physical';
 export type VoltDeviceState = 'booted' | 'booting' | 'shutdown' | 'offline' | 'unauthorized' | 'unknown';
 /** A foldable's hinge: closed on its cover screen, half open like a laptop, or flat open. */
 export type VoltDevicePosture = 'folded' | 'halfOpen' | 'open';
+/** The system's light or dark mode, which apps that follow it draw in. */
+export type VoltDeviceAppearance = 'light' | 'dark';
 export type VoltDeviceButton = 'home' | 'back' | 'appSwitch' | 'lock' | 'volumeUp' | 'volumeDown' | 'siri' | 'enter' | 'delete';
 
 /** How to reach another machine's simulators: `ssh [-p port] [-i identity] [user@]host`. Keys only; never a password. */
@@ -62,6 +64,8 @@ export interface IVoltDeviceList {
 
 export type VoltDeviceInput =
 	| { readonly kind: 'tap'; readonly x: number; readonly y: number }
+	/** Deletes `count` characters before the end of the focused field. */
+	| { readonly kind: 'clear'; readonly count: number }
 	| { readonly kind: 'swipe'; readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number; readonly durationMs?: number }
 	| { readonly kind: 'type'; readonly text: string }
 	| { readonly kind: 'button'; readonly button: VoltDeviceButton };
@@ -81,6 +85,13 @@ export interface IVoltDeviceScreen {
 	 * pixels (1).
 	 */
 	readonly scale: number;
+}
+
+/** The screen's accessibility tree as the platform tool printed it (parsed in `deviceUi.ts`). */
+export interface IVoltDeviceUi {
+	/** `uiautomator`: Android's XML dump. `axe` / `idb`: the iOS simulator's JSON element tree. */
+	readonly format: 'uiautomator' | 'axe' | 'idb';
+	readonly data: string;
 }
 
 export interface IVoltDevicePostures {
@@ -103,10 +114,16 @@ export interface IVoltDevicesService {
 	screenshot(host: IVoltDeviceHost, device: IVoltDeviceRef, maxSide?: number): Promise<IVoltDeviceScreen>;
 	/** Coordinates are in input units (see `IVoltDeviceScreen.scale`). */
 	input(host: IVoltDeviceHost, device: IVoltDeviceRef, input: VoltDeviceInput): Promise<void>;
+	/** The accessibility tree of what is on screen (Android: uiautomator; iOS: AXe or idb). Frames are in input units. */
+	describeUi(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<IVoltDeviceUi>;
 	/** A `.app` (iOS simulator) or `.apk` (Android) on this machine; copied over first for a remote host. */
 	installApp(host: IVoltDeviceHost, device: IVoltDeviceRef, path: string): Promise<void>;
 	/** A bundle id / package name (optionally `package/.Activity`), or a URL to open. */
 	launchApp(host: IVoltDeviceHost, device: IVoltDeviceRef, target: string): Promise<void>;
 	getPostures(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<IVoltDevicePostures>;
 	setPosture(host: IVoltDeviceHost, device: IVoltDeviceRef, posture: VoltDevicePosture): Promise<void>;
+	/** Light or dark mode now; undefined when the device cannot say (Android's automatic night mode). */
+	getAppearance(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<VoltDeviceAppearance | undefined>;
+	/** Switches the system to light or dark mode (simctl ui appearance, cmd uimode night); apps that follow it redraw. */
+	setAppearance(host: IVoltDeviceHost, device: IVoltDeviceRef, appearance: VoltDeviceAppearance): Promise<void>;
 }

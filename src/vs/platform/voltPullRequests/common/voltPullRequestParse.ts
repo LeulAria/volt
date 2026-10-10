@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
+	IVoltPrBranchRef,
 	IVoltPrCheck,
 	IVoltPrChecksSummary,
 	IVoltPrComment,
@@ -11,6 +12,7 @@ import {
 	IVoltGitStatusFile,
 	IVoltPrFile,
 	IVoltPrFilePatch,
+	IVoltPrFingerprint,
 	IVoltPrLabel,
 	IVoltPrRepoRef,
 	IVoltPrReview,
@@ -155,6 +157,30 @@ export function classifyGhError(stderr: string, exitCode: number | null, spawnEr
 		return 'network';
 	}
 	return 'failed';
+}
+
+/**
+ * `gh api --include` prints the status line, the headers and a blank line before the body (also
+ * for error answers). Output without a status line (gh never reached the host) is all body.
+ */
+export function splitGhInclude(stdout: string): { status?: number; headers?: Map<string, string>; body: string } {
+	const statusLine = /^HTTP\/[\d.]+\s+(\d{3})\b[^\n]*\n/.exec(stdout);
+	if (!statusLine) {
+		return { body: stdout };
+	}
+	const rest = stdout.slice(statusLine[0].length);
+	const blank = /^\r?\n/.exec(rest) ?? /\r?\n\r?\n/.exec(rest);
+	const head = blank ? rest.slice(0, blank.index) : rest;
+	const headers = new Map<string, string>();
+	for (const line of head.split(/\r?\n/)) {
+		const colon = line.indexOf(':');
+		if (colon > 0) {
+			const name = line.slice(0, colon).trim().toLowerCase();
+			const value = line.slice(colon + 1).trim();
+			headers.set(name, headers.has(name) ? `${headers.get(name)}, ${value}` : value);
+		}
+	}
+	return { status: Number(statusLine[1]), headers, body: blank ? rest.slice(blank.index + blank[0].length) : '' };
 }
 
 /** The useful part of `gh`'s stderr: no usage text, at most a few lines. */
@@ -427,6 +453,113 @@ export function parsePullRequest(raw: Json, repo: IVoltPrRepoRef, viewer: string
 		comments: num(raw.comments?.totalCount) + reviewComments,
 		autoMerge: !!raw.autoMergeRequest,
 		viewer,
+	};
+}
+
+/**
+ * A pull request from GitHub's REST API, for when GraphQL's quota is used up (the two are counted
+ * apart). Lists leave out sizes, mergeability and comment counts, and REST has no check rollup,
+ * review decision or threads: those read as unknown or none until the next GraphQL read.
+ */
+export function parseRestPullRequest(raw: Json, repo: IVoltPrRepoRef, viewer: string): IVoltPullRequest {
+	const number = num(raw.number);
+	const mergedAt = time(raw.merged_at);
+	const closedAt = time(raw.closed_at);
+	const headOwner = raw.head?.repo?.owner?.login ?? raw.head?.user?.login;
+	const baseRepo = raw.base?.repo?.full_name;
+	const headRepo = raw.head?.repo?.full_name;
+	const state = mergedAt !== undefined || raw.merged === true ? 'MERGED' : raw.state === 'closed' ? 'CLOSED' : 'OPEN';
+	const mergeable = raw.mergeable === true ? 'MERGEABLE' : raw.mergeable === false ? 'CONFLICTING' : undefined;
+	const users = (list: unknown): Json[] => Array.isArray(list) ? list.filter(Boolean) : [];
+	return {
+		key: prKey(repo, number),
+		repo: { host: repo.host, owner: repo.owner, name: repo.name },
+		number,
+		id: str(raw.node_id),
+		title: str(raw.title),
+		url: str(raw.html_url),
+		state: parsePrState(state, raw.draft),
+		author: parseUser({ login: raw.user?.login, avatarUrl: raw.user?.avatar_url, __typename: raw.user?.type === 'Bot' ? 'Bot' : 'User' }),
+		headRefName: str(raw.head?.ref),
+		headRefOid: str(raw.head?.sha),
+		baseRefName: str(raw.base?.ref),
+		...(typeof headOwner === 'string' ? { headOwner } : {}),
+		crossRepository: typeof baseRepo === 'string' && typeof headRepo === 'string' ? baseRepo.toLowerCase() !== headRepo.toLowerCase() : false,
+		createdAt: time(raw.created_at) ?? 0,
+		updatedAt: time(raw.updated_at) ?? 0,
+		...(mergedAt !== undefined ? { mergedAt } : {}),
+		...(closedAt !== undefined ? { closedAt } : {}),
+		additions: num(raw.additions),
+		deletions: num(raw.deletions),
+		changedFiles: num(raw.changed_files),
+		mergeable: parseMergeable(mergeable),
+		mergeState: parseMergeState(typeof raw.mergeable_state === 'string' ? raw.mergeable_state.toUpperCase() : undefined),
+		checks: summarizeChecks([]),
+		labels: users(raw.labels).map(label => ({ name: str(label.name), color: str(label.color, '888888') })).filter(label => label.name),
+		assignees: users(raw.assignees).map(user => str(user.login)).filter(Boolean),
+		reviewRequests: [
+			...users(raw.requested_reviewers).map(user => str(user.login)),
+			...users(raw.requested_teams).map(team => team.slug ? `${repo.owner}/${team.slug}` : ''),
+		].filter(Boolean),
+		reviews: [],
+		unresolvedThreads: 0,
+		comments: num(raw.comments) + num(raw.review_comments),
+		autoMerge: !!raw.auto_merge,
+		viewer,
+	};
+}
+
+/** What a branch lookup asks for about each pull request: enough to tell which one it is. */
+export const PR_BRANCH_REF_FIELDS = 'number state isDraft createdAt headRepositoryOwner { login }';
+
+export function parseBranchRef(raw: Json, repo: IVoltPrRepoRef, branch: string): IVoltPrBranchRef {
+	const headOwner = raw.headRepositoryOwner?.login ?? raw.head?.repo?.owner?.login ?? raw.head?.user?.login;
+	const merged = raw.state === 'MERGED' || typeof raw.merged_at === 'string';
+	const state = merged ? 'MERGED' : raw.state === 'CLOSED' || raw.state === 'closed' ? 'CLOSED' : 'OPEN';
+	return {
+		branch,
+		repo: { host: repo.host, owner: repo.owner, name: repo.name },
+		number: num(raw.number),
+		state: parsePrState(state, raw.isDraft ?? raw.draft),
+		createdAt: time(raw.createdAt ?? raw.created_at) ?? 0,
+		...(typeof headOwner === 'string' ? { headOwner } : {}),
+	};
+}
+
+/**
+ * The "did anything change?" read: one connection per part and no nodes past the newest few, so
+ * 25 pull requests cost about a point. Comment and review edits show in `updatedAt`; a reply in a
+ * review thread is a new review, so it moves the review count.
+ */
+export const PR_FINGERPRINT_FRAGMENT = `
+fragment VoltPrFingerprint on PullRequest {
+	number state isDraft headRefOid mergeable reviewDecision
+	commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 1) {
+		checkRunCountsByState { state count }
+		statusContextCountsByState { state count }
+	} } } } }
+	comments(last: 10) { totalCount nodes { updatedAt } }
+	reviews(last: 10) { totalCount nodes { updatedAt } }
+	reviewThreads { totalCount }
+}`;
+
+const RUNNING_CHECK_STATES = new Set(['QUEUED', 'IN_PROGRESS', 'WAITING', 'PENDING', 'REQUESTED', 'EXPECTED']);
+
+export function parseFingerprint(raw: Json, repo: IVoltPrRepoRef): IVoltPrFingerprint {
+	const rollup = nodes(raw.commits)[0]?.commit?.statusCheckRollup;
+	const counts = (list: unknown): string[] => (Array.isArray(list) ? list : [])
+		.filter(entry => num(entry?.count) > 0)
+		.map(entry => `${str(entry.state)}:${num(entry.count)}`)
+		.sort();
+	const runs = counts(rollup?.contexts?.checkRunCountsByState);
+	const statuses = counts(rollup?.contexts?.statusContextCountsByState);
+	const running = [...runs, ...statuses].some(entry => RUNNING_CHECK_STATES.has(entry.slice(0, entry.indexOf(':'))));
+	const edited = [...nodes(raw.comments), ...nodes(raw.reviews)].reduce((latest, node) => Math.max(latest, time(node.updatedAt) ?? 0), 0);
+	return {
+		key: prKey(repo, num(raw.number)),
+		status: JSON.stringify([raw.state, !!raw.isDraft, raw.headRefOid, raw.mergeable, raw.reviewDecision ?? null, rollup?.state ?? null, runs, statuses]),
+		remarks: JSON.stringify([num(raw.comments?.totalCount), num(raw.reviews?.totalCount), num(raw.reviewThreads?.totalCount), edited]),
+		unsettled: raw.mergeable === 'UNKNOWN' || rollup?.state === 'PENDING' || rollup?.state === 'EXPECTED' || running,
 	};
 }
 

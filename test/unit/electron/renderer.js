@@ -215,6 +215,11 @@ async function loadTests(opts) {
 		'throw ListenerLeakError'
 	]);
 
+	/** Tests whose output is their result (benchmark tables): printed, and not an error. */
+	const _testsThatReport = new Set([
+		'benchmark: browser_act against the single-step tools',
+	]);
+
 	const _allowedSuitesWithOutput = new Set([
 		'InlineChatController'
 	]);
@@ -223,7 +228,7 @@ async function loadTests(opts) {
 
 	for (const consoleFn of [console.log, console.error, console.info, console.warn, console.trace, console.debug]) {
 		console[consoleFn.name] = function (msg) {
-			if (!currentTest) {
+			if (!currentTest || _testsThatReport.has(currentTest.title)) {
 				consoleFn.apply(console, arguments);
 			} else if (!_allowedTestOutput.some(a => a.test(msg)) && !_allowedTestsWithOutput.has(currentTest.title) && !_allowedSuitesWithOutput.has(currentTest.parent?.title ?? '')) {
 				_testsWithUnexpectedOutput = true;

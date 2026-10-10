@@ -1,0 +1,281 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The composer's `/` menu (agentSlashMenu.ts), its side card, the hover card of `/skill` tokens,
+ * and the tokens themselves. Metrics follow Cursor's: 29px rows inset 6px from the border, 13px
+ * text, match highlights in link blue, cards 278px (side) and 300px (hover) wide.
+ */
+
+.volt-agent-slash-host {
+	--volt-slash-bg: var(--vscode-editorWidget-background, #222222);
+	--volt-slash-border: var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	--volt-slash-row-hover: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.07)));
+	--volt-slash-match: color-mix(in srgb, var(--vscode-textLink-foreground, #4daafc) 70%, var(--vscode-foreground, #cccccc));
+	position: relative;
+	box-sizing: border-box;
+	max-width: calc(100vw - 16px);
+	font-size: 13px;
+	line-height: 18px;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-slash-menu {
+	box-sizing: border-box;
+	border: 1px solid var(--volt-slash-border);
+	border-radius: 10px;
+	background: var(--volt-slash-bg);
+	box-shadow: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	overflow: hidden;
+}
+
+.monaco-workbench.vs .volt-agent-slash-host,
+.monaco-workbench.hc-light .volt-agent-slash-host {
+	--volt-slash-border: var(--vscode-widget-border, rgba(0, 0, 0, 0.12));
+	--volt-slash-row-hover: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(0, 0, 0, 0.06)));
+}
+
+.volt-agent-slash-list {
+	box-sizing: border-box;
+	padding: 3px 6px;
+	overflow-x: hidden;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: thin;
+	scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4)) transparent;
+}
+
+.volt-agent-slash-list::-webkit-scrollbar {
+	width: 10px;
+}
+
+.volt-agent-slash-list::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.volt-agent-slash-list::-webkit-scrollbar-thumb {
+	border: 3px solid transparent;
+	border-radius: 5px;
+	background-clip: padding-box;
+	background-color: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4));
+}
+
+.volt-agent-slash-list::-webkit-scrollbar-thumb:hover {
+	background-color: var(--vscode-scrollbarSlider-hoverBackground, rgba(100, 100, 100, 0.7));
+}
+
+.volt-slash-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 29px;
+	padding: 0 8px 0 7px;
+	box-sizing: border-box;
+	border-radius: 6px;
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.volt-slash-row.focused {
+	background: var(--volt-slash-row-hover);
+}
+
+.volt-slash-icon {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	color: var(--vscode-foreground);
+}
+
+.volt-slash-icon .volt-slash-glyph,
+.volt-skill-card-source .volt-slash-glyph {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+}
+
+.volt-slash-glyph svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
+/* Built-ins are solid and bright; the user's own glyphs are drawn lighter. */
+.volt-slash-glyph.volt {
+	color: var(--vscode-foreground, #e4e4e4);
+}
+
+.volt-slash-glyph:not(.volt) {
+	color: var(--vscode-icon-foreground, #c5c5c5);
+	opacity: 0.85;
+}
+
+.volt-slash-glyph .codicon {
+	font-size: 15px;
+}
+
+.volt-slash-glyph.subagent .volt-agent-svg-icon,
+.volt-slash-glyph.subagent svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
+.volt-slash-logo {
+	display: block;
+	width: 16px;
+	height: 16px;
+	border-radius: 4px;
+	object-fit: cover;
+}
+
+.volt-slash-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 62%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--vscode-foreground);
+}
+
+.volt-slash-summary {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-slash-row .highlight {
+	color: var(--volt-slash-match);
+}
+
+/* Only the focused row says how to keep it on. */
+.volt-slash-hint {
+	display: none;
+	flex: none;
+	margin-left: auto;
+	padding-left: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-slash-row.focused .volt-slash-hint {
+	display: inline;
+}
+
+/* The card beside the menu and the one beside a token. */
+.volt-skill-card {
+	box-sizing: border-box;
+	padding: 9px 11px 10px;
+	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	border-radius: 10px;
+	background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background, #1e1e1e));
+	box-shadow: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	color: var(--vscode-foreground);
+	font-size: 13px;
+	line-height: 18px;
+	white-space: normal;
+	overflow-wrap: anywhere;
+	pointer-events: none;
+}
+
+.monaco-workbench.vs .volt-skill-card,
+.monaco-workbench.hc-light .volt-skill-card {
+	border-color: var(--vscode-widget-border, rgba(0, 0, 0, 0.12));
+}
+
+.volt-skill-card[hidden] {
+	display: none !important;
+}
+
+.volt-skill-card.side {
+	position: absolute;
+	z-index: 1;
+	width: 278px;
+}
+
+.volt-skill-card.hover {
+	position: fixed;
+	z-index: 2600;
+	max-width: 300px;
+	pointer-events: auto;
+}
+
+.volt-skill-card-title {
+	color: var(--vscode-foreground);
+}
+
+.volt-skill-card-source {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 4px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-skill-card-source .volt-slash-icon,
+.volt-skill-card-source .volt-slash-glyph.volt {
+	flex: none;
+}
+
+.volt-skill-card-description {
+	margin-top: 4px;
+	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+	display: -webkit-box;
+	-webkit-line-clamp: 14;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+/*
+ * A `/skill` token: orange text, no chip and no icon. Hover underlines it (the card opens beside it).
+ * Same rules in the composer (Monaco decoration) and in a sent message.
+ */
+:is(.volt-agent-monaco, .volt-agent-inline-mention) {
+	--volt-skill-token-fg: #e5b567;
+}
+
+.monaco-workbench.vs :is(.volt-agent-monaco, .volt-agent-inline-mention),
+.monaco-workbench.hc-light :is(.volt-agent-monaco, .volt-agent-inline-mention) {
+	--volt-skill-token-fg: #b8741a;
+}
+
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-pill.skill {
+	color: var(--volt-skill-token-fg) !important;
+}
+
+.volt-agent-monaco .volt-agent-mention-pill.skill:not(.hovered) {
+	text-decoration: none;
+}
+
+/* Built-in skills have no file to open: the token reads as text. */
+.volt-agent-monaco .volt-agent-mention-pill.skill.builtin {
+	cursor: text;
+}
+
+.volt-agent-monaco .volt-agent-mention-pill.skill.hovered,
+.volt-agent-inline-mention.skill:hover .volt-agent-mention-pill.skill {
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+/* A sent message draws no icon slot for a token. */
+.volt-agent-inline-mention.skill > .volt-agent-mention-icon {
+	display: none !important;
+}
+
+.volt-agent-inline-mention.skill {
+	cursor: default;
+}
+
+.volt-agent-inline-mention.skill[data-open] {
+	cursor: pointer;
+}

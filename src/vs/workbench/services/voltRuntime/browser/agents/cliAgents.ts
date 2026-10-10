@@ -128,7 +128,9 @@ export function acpLaunchFor(def: ICliAgentDefinition | undefined, command: stri
 	if (adapterOnPath) {
 		return { command: adapter.command, args: [] };
 	}
-	return { command: isWindows ? 'npx.cmd' : 'npx', args: ['-y', adapter.package] };
+	// The adapter version is pinned, so a cached copy is the right one: --prefer-offline skips the
+	// registry round trip npx makes on every spawn (a cold start of seconds, a failure offline).
+	return { command: isWindows ? 'npx.cmd' : 'npx', args: ['-y', '--prefer-offline', adapter.package] };
 }
 
 /** Reads a file below the user's home directory through the shell, since the renderer has no home path. */

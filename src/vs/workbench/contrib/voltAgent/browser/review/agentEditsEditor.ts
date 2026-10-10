@@ -49,6 +49,8 @@ export const KEEP_HUNK_ID = 'voltAgent.edits.keepHunk';
 export const UNDO_HUNK_ID = 'voltAgent.edits.undoHunk';
 export const KEEP_FILE_ID = 'voltAgent.edits.keepFile';
 export const UNDO_FILE_ID = 'voltAgent.edits.undoFile';
+export const KEEP_ALL_ID = 'voltAgent.edits.keepAll';
+export const UNDO_ALL_ID = 'voltAgent.edits.undoAll';
 export const NEXT_HUNK_ID = 'voltAgent.edits.nextHunk';
 export const PREVIOUS_HUNK_ID = 'voltAgent.edits.previousHunk';
 
@@ -188,6 +190,20 @@ export class AgentEditsEditorController extends Disposable implements IEditorCon
 		}
 	}
 
+	/** Keeps every pending change of the chat that changed this file, in all its files. */
+	async keepAll(): Promise<void> {
+		if (this.file) {
+			await this.edits.keepAll(this.file.sessionId);
+		}
+	}
+
+	/** Undoes every pending change of the chat that changed this file, in all its files. */
+	async undoAll(): Promise<void> {
+		if (this.file) {
+			await this.edits.undoAll(this.file.sessionId);
+		}
+	}
+
 	revealHunk(delta: 1 | -1): void {
 		const ranges = this.sortedRanges();
 		if (!ranges.length) {
@@ -294,7 +310,10 @@ export class AgentEditsEditorController extends Disposable implements IEditorCon
 			return;
 		}
 		const inside = this.indexAt(position);
-		const next = inside >= 0 ? inside : Math.max(0, this.sortedRanges().findIndex(range => range.startLineNumber > position.lineNumber));
+		const ranges = this.sortedRanges();
+		const below = ranges.findIndex(range => range.startLineNumber > position.lineNumber);
+		// Past the last hunk, the nearest one is the last, not the first at the top of the file.
+		const next = inside >= 0 ? inside : below >= 0 ? below : ranges.length - 1;
 		if (next !== this.activeIndex) {
 			this.activeIndex = next;
 			this.layoutHunkWidget();
@@ -440,9 +459,13 @@ export class AgentEditsEditorController extends Disposable implements IEditorCon
 			return;
 		}
 		const lineHeight = this.editor.getOption(EditorOption.lineHeight);
-		// Sit on the first line of the hunk, above the removed lines when there are any.
-		const top = this.editor.getTopForLineNumber(range.startLineNumber) - this.editor.getScrollTop() - (this.zoneHeights[index] ?? 0) * lineHeight;
-		widget.show(index, this.hunkCount(), top);
+		const lineCount = this.editor.getModel()?.getLineCount() ?? 0;
+		// Sit on the first line of the hunk, above the removed lines when there are any. Lines removed
+		// at the end of the file have no line below them: their zone starts under the last line.
+		const top = (this.changeAt(index)?.modified.startLineNumber ?? 0) > lineCount
+			? this.editor.getBottomForLineNumber(lineCount)
+			: this.editor.getTopForLineNumber(range.startLineNumber) - (this.zoneHeights[index] ?? 0) * lineHeight;
+		widget.show(index, this.hunkCount(), top - this.editor.getScrollTop());
 	}
 }
 
@@ -692,6 +715,34 @@ registerAction2(class extends Action2 {
 	}
 	override run(accessor: ServicesAccessor): Promise<void> | void {
 		return controllerFor(accessor)?.undoFile();
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: KEEP_ALL_ID,
+			title: localize2('voltAgent.edits.keepAllTitle', "Keep All Agent Changes"),
+			f1: true,
+			precondition: CTX_AGENT_EDITS_PENDING,
+		});
+	}
+	override run(accessor: ServicesAccessor): Promise<void> | void {
+		return controllerFor(accessor)?.keepAll();
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: UNDO_ALL_ID,
+			title: localize2('voltAgent.edits.undoAllTitle', "Undo All Agent Changes"),
+			f1: true,
+			precondition: CTX_AGENT_EDITS_PENDING,
+		});
+	}
+	override run(accessor: ServicesAccessor): Promise<void> | void {
+		return controllerFor(accessor)?.undoAll();
 	}
 });
 

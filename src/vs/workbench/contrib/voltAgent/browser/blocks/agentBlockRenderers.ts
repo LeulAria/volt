@@ -127,7 +127,7 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 				renderFenceChart(append(parent, $('.volt-agent-block.volt-agent-fence-chart')), 'mermaid', block.source, ctx, block.status === 'streaming');
 				return;
 			}
-			renderMermaidDiagram(parent, block.source, { ...codeCardOptions(ctx), onExpand: ctx.onExpandDiagram });
+			renderMermaidDiagram(parent, block.source, { ...codeCardOptions(ctx), onExpand: ctx.onExpandDiagram, streaming: block.status === 'streaming' && ctx.streaming !== false });
 			return;
 		case 'tool':
 			renderToolBlock(parent, block, ctx);

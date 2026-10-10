@@ -150,9 +150,22 @@ interface IToolsPart {
 /** Every live host, so the tools + action and a side chat can find the one they belong to. */
 const hosts = new Set<AgentSurfaceHost>();
 
+/**
+ * A tools area that belongs to a page instead of a chat (Customize keeps its right panel under
+ * `volt-customize`). Chat session ids are UUIDs, so the prefix cannot collide with one.
+ */
+export function isPseudoToolsSession(sessionId: string | undefined): boolean {
+	return !!sessionId && sessionId.startsWith('volt-');
+}
+
+/** A host showing a chat's tools, not a page's. Code looking for "the chat on screen" only considers these. */
+function isChatToolsHost(host: AgentSurfaceHost): boolean {
+	return !isPseudoToolsSession(host.currentSessionId);
+}
+
 export function openAgentToolsPanel(): void {
 	for (const host of hosts) {
-		if (host.openToolsPanel()) {
+		if (isChatToolsHost(host) && host.openToolsPanel()) {
 			return;
 		}
 	}
@@ -287,13 +300,13 @@ export function isAgentChangesShown(sessionId: string): boolean {
  */
 export function openInAgentTools(input: EditorInput, sessionId?: string, options?: IEditorOptions): Promise<IEditorPane | undefined> | undefined {
 	const candidates = [...hosts].filter(host => host.canOpenTools());
-	const host = (sessionId ? candidates.find(candidate => candidate.showsSession(sessionId)) : undefined) ?? candidates[0];
+	const host = (sessionId ? candidates.find(candidate => candidate.showsSession(sessionId)) : undefined) ?? candidates.find(isChatToolsHost);
 	return host?.openEditorInTools(input, options);
 }
 
 /** The chat whose tools are on screen, if any. */
 export function agentToolsSessionOnScreen(): string | undefined {
-	return [...hosts].find(host => host.canOpenTools())?.currentSessionId;
+	return [...hosts].find(host => host.canOpenTools() && isChatToolsHost(host))?.currentSessionId;
 }
 
 function toolGroupFor(editor: EditorInput): { entry: IToolsPart; group: IEditorGroup } | undefined {
@@ -312,7 +325,7 @@ function toolGroupFor(editor: EditorInput): { entry: IToolsPart; group: IEditorG
 export function revealAgentToolEditor(editor: EditorInput): boolean {
 	const located = toolGroupFor(editor);
 	const host = (located && [...hosts].find(candidate => candidate.showsSession(located.entry.sessionId)))
-		?? [...hosts].find(candidate => candidate.canOpenTools());
+		?? [...hosts].find(candidate => candidate.canOpenTools() && isChatToolsHost(candidate));
 	const opened = host?.openToolsPanel() ?? false;
 	if (!opened) {
 		openAgentToolsPanel();
@@ -599,7 +612,7 @@ export class AgentSurfaceHost extends Disposable {
 		}
 		if (sessionId) {
 			const saved = toolParts.get(sessionId)
-				?? (hasSavedAgentTools(this.storageService, sessionId) || this.pendingSurfaces(sessionId).length || AgentFilesSidebar.isOpen(this.storageService) ? this.createPart(sessionId) : undefined);
+				?? (hasSavedAgentTools(this.storageService, sessionId) || this.pendingSurfaces(sessionId).length || this.filesSidebarOpen() ? this.createPart(sessionId) : undefined);
 			// A view off screen does not take the area from the view showing it.
 			if (saved && (!saved.holder || saved.holder === this || !saved.holder.isOnScreen() || this.isOnScreen())) {
 				this.showPart(saved);
@@ -726,7 +739,7 @@ export class AgentSurfaceHost extends Disposable {
 
 	/** Opening the sidebar opens the tools beside the chat on screen, even with no tab in them. */
 	private onDidChangeFilesSidebar(): void {
-		if (AgentFilesSidebar.isOpen(this.storageService) && this.canOpenTools() && (!this.open || this.toolsHidden)) {
+		if (this.filesSidebarOpen() && this.canOpenTools() && (!this.open || this.toolsHidden)) {
 			this.toolsGroup();
 			return;
 		}
@@ -1044,6 +1057,11 @@ export class AgentSurfaceHost extends Disposable {
 		}
 	}
 
+	/** The Explorer/Source Control sidebar is a chat's; a page's tools area (Customize) leaves it out. */
+	private filesSidebarOpen(): boolean {
+		return !isPseudoToolsSession(this.sessionId) && AgentFilesSidebar.isOpen(this.storageService);
+	}
+
 	private isOnScreen(): boolean {
 		const box = this.container.getBoundingClientRect();
 		return box.width > 0 && box.height > 0;
@@ -1054,7 +1072,7 @@ export class AgentSurfaceHost extends Disposable {
 		const entry = this.shown;
 		// In the IDE layout a chat's tools are tabs in the middle (see agentIdeWorkspace), not a split beside it.
 		return !this.toolsHidden && !this.nested() && !!entry && entry.sessionId === this.sessionId
-			&& (entry.part.groups.some(group => group.count > 0) || AgentFilesSidebar.isOpen(this.storageService))
+			&& (entry.part.groups.some(group => group.count > 0) || this.filesSidebarOpen())
 			&& getLayoutMode(this.layoutService) === 'agent';
 	}
 
@@ -1105,7 +1123,7 @@ export class AgentSurfaceHost extends Disposable {
 
 	private filesSidebarSplit(): IFilesSidebarSplit {
 		const entry = this.shown;
-		if (!this.open || this.presentation !== 'split' || !entry || !AgentFilesSidebar.isOpen(this.storageService)) {
+		if (!this.open || this.presentation !== 'split' || !entry || !this.filesSidebarOpen()) {
 			return { mode: 'none', width: 0 };
 		}
 		const fills = !entry.part.groups.some(group => group.count > 0);
@@ -1261,7 +1279,7 @@ export class AgentSurfaceHost extends Disposable {
 	 * beside it. Its icon row lines up with the tabs' first row. Returns the width it takes.
 	 */
 	private layoutFilesSidebar(entry: IToolsPart, available: number, height: number): number {
-		const open = this.presentation !== 'floating' && AgentFilesSidebar.isOpen(this.storageService);
+		const open = this.presentation !== 'floating' && this.filesSidebarOpen();
 		// No tab beside it: the sidebar is the whole tools area, without an empty editor group next to it.
 		const fills = open && !entry.part.groups.some(group => group.count > 0);
 		const width = fills ? available : open ? this.filesSidebar.widthFor(available) : 0;
@@ -1299,6 +1317,7 @@ export class AgentSurfaceHost extends Disposable {
 			return;
 		}
 		const toggle = this.filesSidebar.toggleButton;
+		toggle.style.display = isPseudoToolsSession(this.sessionId) ? 'none' : '';
 		if (toggle.parentElement !== actions || this.fullscreenButton.parentElement !== actions || this.closePanelButton.parentElement !== actions
 			|| toggle.nextSibling !== this.fullscreenButton || this.fullscreenButton.nextSibling !== this.closePanelButton) {
 			actions.append(toggle, this.fullscreenButton, this.closePanelButton);
@@ -2109,7 +2128,8 @@ export class AgentSurfaceHost extends Disposable {
 				return;
 			}
 			const sessionId = this.sessionId;
-			if (sessionId) {
+			// A page's tools area keeps its split for the session only; the workspace records are per chat.
+			if (sessionId && !isPseudoToolsSession(sessionId)) {
 				this.workspace.setSplitRatio(sessionId, this.ratio);
 			}
 		};
@@ -2352,6 +2372,7 @@ function strokeIcon(doc: Document, paths: readonly string[], rects: readonly { x
 	return svg;
 }
 
+// allow-any-unicode-next-line
 /** Cursor's ↗↙ (enter full screen) and ↙↗ inward (exit). */
 function createExpandIcon(doc: Document, exit: boolean): SVGSVGElement {
 	return exit

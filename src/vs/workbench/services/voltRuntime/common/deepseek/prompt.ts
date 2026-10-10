@@ -199,6 +199,27 @@ export function buildSubagentPrompt(input: { readonly kind: 'explore' | 'researc
 	].filter(Boolean).join('\n\n');
 }
 
+/** System prompt of a subagent defined in a file: its own instructions, framed for a delegated task. */
+export function customSubagentPrompt(definition: { readonly name: string; readonly description: string; readonly body: string }, input: { readonly cwd?: string; readonly platform?: string; readonly date?: string; readonly writes: boolean; readonly tools: readonly string[] }): string {
+	return [
+		[
+			`You are the "${definition.name}" subagent. Volt's main agent started you for one task and sees only your final message.`,
+			input.writes ? 'You may change files and run commands within the task you were given.' : 'You are read-only: do not try to edit files or run commands.',
+		].join(' '),
+		definition.body.trim(),
+		[
+			'- Work fast: make independent searches and reads in the same turn so they run in parallel.',
+			'- Your final message is the only thing the main agent sees. Make it a complete, self-contained report: what you found or did, with `path:line` references where they matter.',
+			input.tools.length ? `- Your tools: ${input.tools.join(', ')}.` : '',
+		].filter(Boolean).join('\n'),
+		[
+			input.cwd ? `Workspace: ${input.cwd}` : '',
+			input.platform ? `Platform: ${input.platform}` : '',
+			input.date ? `Date: ${input.date}` : '',
+		].filter(Boolean).join('\n'),
+	].filter(Boolean).join('\n\n');
+}
+
 export interface INativeModelTurn {
 	/** Always empty. The native path does not prefetch. */
 	readonly prefetch: readonly string[];

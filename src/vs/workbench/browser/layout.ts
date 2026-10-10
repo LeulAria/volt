@@ -831,7 +831,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			false,
 			{
 				min: AuxiliaryBarPart.AGENT_MIN_WIDTH,
-				max: windowWidth > 0 ? Math.max(AuxiliaryBarPart.AGENT_MIN_WIDTH, Math.floor(windowWidth * AuxiliaryBarPart.AGENT_MAX_RATIO)) : undefined,
+				max: windowWidth > 0 ? AuxiliaryBarPart.agentMaxWidth(windowWidth) : undefined,
 				fallback: AuxiliaryBarPart.AGENT_DEFAULT_WIDTH,
 			},
 		);

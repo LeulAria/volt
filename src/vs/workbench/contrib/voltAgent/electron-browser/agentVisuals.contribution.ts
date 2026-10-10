@@ -4,18 +4,24 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { joinPath } from '../../../../base/common/resources.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerMainProcessRemoteService } from '../../../../platform/ipc/electron-browser/services.js';
 import { IVoltVisualPreviewService, VOLT_VISUAL_PREVIEW_CHANNEL_NAME } from '../../../../platform/voltVisualPreview/common/voltVisualPreview.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
+import { INativeWorkbenchEnvironmentService } from '../../../services/environment/electron-browser/environmentService.js';
 import { IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
+import { AgentGalleryToolProvider } from '../browser/visuals/agentGalleryTools.js';
 import { disposeLiveVisuals } from '../browser/visuals/agentVisuals.js';
 import { AgentVisualToolProvider } from '../browser/visuals/agentVisualTools.js';
 
 // Pages are measured and screenshotted offscreen in the main process.
 registerMainProcessRemoteService(IVoltVisualPreviewService, VOLT_VISUAL_PREVIEW_CHANNEL_NAME);
 
-/** Puts render_chart, render_html and preview_html on Volt's MCP server, before any agent connects. */
+/**
+ * Puts render_chart, html_render and html_preview, and the galleries (mockups_render,
+ * screens_capture), on Volt's MCP server before any agent connects.
+ */
 class AgentVisualsContribution extends Disposable implements IWorkbenchContribution {
 
 	static readonly ID = 'workbench.contrib.voltAgentVisuals';
@@ -23,10 +29,13 @@ class AgentVisualsContribution extends Disposable implements IWorkbenchContribut
 	constructor(
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 		@IInstantiationService instantiationService: IInstantiationService,
+		@INativeWorkbenchEnvironmentService environmentService: INativeWorkbenchEnvironmentService,
 	) {
 		super();
 		const provider = this._register(instantiationService.createInstance(AgentVisualToolProvider));
 		this._register(hostTools.registerToolProvider(provider));
+		const galleries = this._register(instantiationService.createInstance(AgentGalleryToolProvider, joinPath(environmentService.tmpDir, 'volt-screens')));
+		this._register(hostTools.registerToolProvider(galleries));
 		this._register(disposeLiveVisuals());
 	}
 }

@@ -14,19 +14,26 @@ import {
 	apiHost,
 	classifyGhError,
 	ghErrorText,
-	gqlString,
+	parseBranchRef,
 	parseCheckRun,
 	parseFile,
 	parseFilePatch,
+	parseFingerprint,
 	parseGitStatusV2,
 	parseNumstat,
 	parsePullRequest,
 	parsePullRequestDetail,
 	parseRemoteUrl,
+	parseRestPullRequest,
+	PR_BRANCH_REF_FIELDS,
+	PR_FINGERPRINT_FRAGMENT,
 	PR_SUMMARY_FRAGMENT,
+	prKey,
 	providerForHost,
 	providerLabel,
+	splitGhInclude,
 } from '../common/voltPullRequestParse.js';
+import { describeGithubRefusal, IVoltGithubRefusal, readGithubRateLimit, isGithubRateLimitAnswer, VoltGithubHeaders, VoltGithubPriority, VoltGithubQuota, VoltGithubQuotaResource } from '../common/voltGithubQuota.js';
 import { splitUnifiedDiff } from '../common/hosts/hostParse.js';
 import { pullRequestHeadRef, repositoryWebUrl } from '../common/voltPrHosts.js';
 import { isStackTrunk, IVoltRestackResult, stackBranchName } from '../common/voltPrStacks.js';
@@ -36,6 +43,10 @@ import { VoltPrFetch } from './hosts/voltPrHttp.js';
 import { VoltPrHostRegistry } from './hosts/voltPrHostRegistry.js';
 import {
 	IVoltBranchSummary,
+	IVoltPrBranchesRequest,
+	IVoltPrBranchPullRequests,
+	IVoltPrBranchRef,
+	IVoltPrFingerprint,
 	IVoltChangesSummary,
 	IVoltGitCommitRequest,
 	IVoltGitCommitResult,
@@ -74,6 +85,14 @@ const GH_TIMEOUT_MS = 45_000;
 const GIT_TIMEOUT_MS = 120_000;
 /** Pull requests per batched GraphQL read; GitHub's node limit leaves room for 100 checks each. */
 const BATCH_SIZE = 20;
+/** Branches per lookup document: each alias is one connection without nested ones, so 50 cost about a point. */
+const BRANCH_BATCH_SIZE = 50;
+/** Pull requests per fingerprint document: about a point for 25. */
+const FINGERPRINT_BATCH_SIZE = 25;
+/** REST reads at a time when GraphQL's quota is out: GitHub's secondary limits punish bursts. */
+const REST_CONCURRENCY = 5;
+/** Node ids kept for mutations (they never change); the oldest go first past this. */
+const MAX_NODE_IDS = 2000;
 /** Accounts and tokens stay cached this long; `refreshAccounts` drops them early. */
 const ACCOUNT_TTL_MS = 5 * 60_000;
 const MAX_FILES = 3000;
@@ -93,6 +112,20 @@ interface IRunResult {
 
 /** A command that had nothing to say (skipped on a repository without commits). */
 const EMPTY_RUN: IRunResult = { code: 0, stdout: '', stderr: '', timedOut: false };
+
+/** One `gh api` answer, its status and headers split off when gh printed them. */
+interface IGhApiAnswer {
+	readonly result: IRunResult;
+	/** Undefined when gh printed no headers (paginated reads) or never reached GitHub. */
+	readonly status?: number;
+	readonly headers?: VoltGithubHeaders;
+	/** stdout without the status line and headers. */
+	readonly body: string;
+	readonly host: string;
+	readonly login: string;
+	/** The quota's key: host and account. */
+	readonly account: string;
+}
 
 interface IRunOptions {
 	readonly cwd?: string;
@@ -124,6 +157,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	private readonly viewers = new Map<string, { at: number; login: Promise<string> }>();
 	/** Git writes into one clone run one at a time (fetch into hidden refs, push). */
 	private readonly gitQueue = new SequencerByKey<string>();
+	/** GitHub's rate limits per account, REST and GraphQL apart, as its answers report them. */
+	private readonly quota = new VoltGithubQuota();
+	/** GraphQL node ids by pull request key: every mutation needs one, and they never change. */
+	private readonly nodeIds = new Map<string, string>();
 
 	/** GitLab, Bitbucket, Gitea / Forgejo and Azure DevOps. */
 	private readonly hosts: VoltPrHostRegistry;
@@ -418,8 +455,12 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		if (other) {
 			return tagProvider(await other.list(request.repo, request.state, Math.max(1, Math.min(100, request.limit ?? 50))), other.provider);
 		}
-		const states = request.state === 'open' ? '[OPEN]' : request.state === 'closed' ? '[CLOSED, MERGED]' : '[OPEN, CLOSED, MERGED]';
 		const limit = Math.max(1, Math.min(100, request.limit ?? 50));
+		return this.graphqlOrRest(() => this.listGraphql(request, limit), () => this.listRest(request, limit));
+	}
+
+	private async listGraphql(request: IVoltPrListRequest, limit: number): Promise<IVoltPullRequest[]> {
+		const states = request.state === 'open' ? '[OPEN]' : request.state === 'closed' ? '[CLOSED, MERGED]' : '[OPEN, CLOSED, MERGED]';
 		const { data, login } = await this.graphqlAs(request.repo.host, request, `query($owner: String!, $name: String!) {
 			viewer { login }
 			repository(owner: $owner, name: $name) {
@@ -428,39 +469,154 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		}
 		${PR_SUMMARY_FRAGMENT}`, { owner: request.repo.owner, name: request.repo.name });
 		const viewer = data.viewer?.login ?? login;
-		return (data.repository?.pullRequests?.nodes ?? []).filter(Boolean).map((node: Json) => parsePullRequest(node, request.repo, viewer));
+		return this.rememberNodeIds((data.repository?.pullRequests?.nodes ?? []).filter(Boolean).map((node: Json) => parsePullRequest(node, request.repo, viewer)));
+	}
+
+	/** The list over REST: no checks, reviews or threads, but the pull requests are there. */
+	private async listRest(request: IVoltPrListRequest, limit: number): Promise<IVoltPullRequest[]> {
+		const state = request.state === 'open' ? 'open' : request.state === 'closed' ? 'closed' : 'all';
+		const { data, login } = await this.restAs(request.repo.host, request, 'GET', `repos/${request.repo.owner}/${request.repo.name}/pulls?state=${state}&sort=updated&direction=desc&per_page=${limit}`);
+		return (Array.isArray(data) ? data : []).filter(Boolean).map((raw: Json) => parseRestPullRequest(raw, request.repo, login));
 	}
 
 	async forBranch(request: IVoltPrBranchRequest): Promise<IVoltPullRequest[]> {
+		const { branch, ...rest } = request;
+		const [found] = await this.forBranches({ ...rest, branches: [branch] });
+		return [...found?.pullRequests ?? []];
+	}
+
+	async forBranches(request: IVoltPrBranchesRequest): Promise<IVoltPrBranchPullRequests[]> {
+		const branches = [...new Set(request.branches.filter(Boolean))];
 		const other = await this.other(request.repo.host);
 		if (other) {
-			return tagProvider(await other.forBranch(request.repo, request.branch, request.headOwner), other.provider);
+			return Promise.all(branches.map(async branch => ({ branch, pullRequests: tagProvider(await other.forBranch(request.repo, branch, request.headOwner), other.provider) })));
 		}
-		const { data, login } = await this.graphqlAs(request.repo.host, request, `query($owner: String!, $name: String!, $branch: String!) {
-			viewer { login }
-			repository(owner: $owner, name: $name) {
-				pullRequests(first: 10, headRefName: $branch, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { ...VoltPr } }
-			}
+		// Which pull requests first (about a point for 50 branches), then the summaries of just those:
+		// a summary per pull request found costs far less than ten summaries per branch asked about.
+		const refs = await this.branchPullRequests({ ...request, branches });
+		const auth = authOf(request);
+		const summaries = refs.length ? await this.graphqlOrRest(
+			() => this.getMany(refs.map(ref => ({ repo: ref.repo, number: ref.number, ...auth }))),
+			() => this.restPullRequests(refs, auth),
+		) : [];
+		const byNumber = new Map(summaries.map(pr => [pr.number, pr]));
+		return branches.map(branch => ({
+			branch,
+			// The open one first, then the most recent.
+			pullRequests: refs.filter(ref => ref.branch === branch)
+				.map(ref => byNumber.get(ref.number))
+				.filter((pr): pr is IVoltPullRequest => !!pr)
+				.sort((a, b) => Number(isOpen(b)) - Number(isOpen(a)) || b.createdAt - a.createdAt),
+		}));
+	}
+
+	async branchPullRequests(request: IVoltPrBranchesRequest): Promise<IVoltPrBranchRef[]> {
+		const branches = [...new Set(request.branches.filter(Boolean))];
+		if (!branches.length) {
+			return [];
 		}
-		${PR_SUMMARY_FRAGMENT}`, { owner: request.repo.owner, name: request.repo.name, branch: request.branch });
-		const viewer = data.viewer?.login ?? login;
-		const found = (data.repository?.pullRequests?.nodes ?? []).filter(Boolean).map((node: Json) => parsePullRequest(node, request.repo, viewer)) as IVoltPullRequest[];
+		const other = await this.other(request.repo.host);
+		if (other) {
+			const found = await Promise.all(branches.map(async branch => (await other.forBranch(request.repo, branch, request.headOwner)).map((pr): IVoltPrBranchRef => ({
+				branch,
+				repo: pr.repo,
+				number: pr.number,
+				state: pr.state,
+				createdAt: pr.createdAt,
+				...(pr.headOwner ? { headOwner: pr.headOwner } : {}),
+			}))));
+			return found.flat();
+		}
+		const refs: IVoltPrBranchRef[] = [];
+		for (let start = 0; start < branches.length; start += BRANCH_BATCH_SIZE) {
+			const chunk = branches.slice(start, start + BRANCH_BATCH_SIZE);
+			refs.push(...await this.graphqlOrRest(() => this.branchRefsGraphql(request, chunk), () => this.branchRefsRest(request, chunk)));
+		}
 		const owner = request.headOwner?.toLowerCase();
-		const mine = owner ? found.filter(pr => (pr.headOwner ?? request.repo.owner).toLowerCase() === owner) : found;
-		// The open one first, then the most recent.
-		return mine.sort((a, b) => Number(isOpen(b)) - Number(isOpen(a)) || b.createdAt - a.createdAt);
+		return owner ? refs.filter(ref => (ref.headOwner ?? request.repo.owner).toLowerCase() === owner) : refs;
+	}
+
+	/** One document for many branches: an alias per branch, every name a variable. */
+	private async branchRefsGraphql(request: IVoltPrBranchesRequest, branches: readonly string[]): Promise<IVoltPrBranchRef[]> {
+		const variables: Record<string, unknown> = { owner: request.repo.owner, name: request.repo.name };
+		const params: string[] = [];
+		const fields = branches.map((branch, i) => {
+			variables[`b${i}`] = branch;
+			params.push(`$b${i}: String!`);
+			return `b${i}: pullRequests(first: 10, headRefName: $b${i}, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { ${PR_BRANCH_REF_FIELDS} } }`;
+		});
+		const data = await this.graphql(request.repo.host, request, `query($owner: String!, $name: String!, ${params.join(', ')}) {
+			repository(owner: $owner, name: $name) {
+				${fields.join('\n')}
+			}
+		}`, variables);
+		return branches.flatMap((branch, i) => ((data.repository?.[`b${i}`]?.nodes ?? []) as Json[]).filter(Boolean).map(raw => parseBranchRef(raw, request.repo, branch)));
+	}
+
+	/** The lookup over REST, a branch a call: only branches in the repository itself (or in `headOwner`'s fork). */
+	private async branchRefsRest(request: IVoltPrBranchesRequest, branches: readonly string[]): Promise<IVoltPrBranchRef[]> {
+		const owner = request.headOwner ?? request.repo.owner;
+		const found = await mapLimited(branches, REST_CONCURRENCY, async branch => {
+			const data = await this.rest(request.repo.host, request, 'GET', `repos/${request.repo.owner}/${request.repo.name}/pulls?state=all&sort=created&direction=desc&per_page=10&head=${encodeURIComponent(`${owner}:${branch}`)}`);
+			return (Array.isArray(data) ? data : []).filter(Boolean).map((raw: Json) => parseBranchRef(raw, request.repo, branch));
+		});
+		return found.flat();
+	}
+
+	/** Pull request summaries over REST, one call each, for when GraphQL's quota is out. */
+	private async restPullRequests(refs: readonly { readonly repo: IVoltPrRepoRef; readonly number: number }[], auth: IVoltPrAuth): Promise<IVoltPullRequest[]> {
+		return mapLimited(refs, REST_CONCURRENCY, async ref => {
+			const { data, login } = await this.restAs(ref.repo.host, auth, 'GET', `repos/${ref.repo.owner}/${ref.repo.name}/pulls/${ref.number}`);
+			return parseRestPullRequest(data, ref.repo, login);
+		});
+	}
+
+	async fingerprints(requests: readonly IVoltPrRequest[]): Promise<IVoltPrFingerprint[]> {
+		const groups = groupRequests(requests);
+		const results: IVoltPrFingerprint[] = [];
+		const errors: unknown[] = [];
+		await Promise.all([...groups.values()].map(async group => {
+			try {
+				if (await this.other(group[0].repo.host)) {
+					// Other hosts have no cheap read: their callers read the detail as before.
+					return;
+				}
+				const auth = authOf(group[0], group.every(request => request.background));
+				for (let start = 0; start < group.length; start += FINGERPRINT_BATCH_SIZE) {
+					results.push(...await this.readFingerprints(group.slice(start, start + FINGERPRINT_BATCH_SIZE), auth));
+				}
+			} catch (err) {
+				errors.push(err);
+			}
+		}));
+		if (!results.length && errors.length) {
+			throw errors[0];
+		}
+		return results;
+	}
+
+	private async readFingerprints(batch: readonly IVoltPrRequest[], auth: IVoltPrAuth): Promise<IVoltPrFingerprint[]> {
+		const variables: Record<string, unknown> = {};
+		const params: string[] = [];
+		const fields = batch.map((request, i) => {
+			variables[`o${i}`] = request.repo.owner;
+			variables[`n${i}`] = request.repo.name;
+			variables[`p${i}`] = request.number;
+			params.push(`$o${i}: String!, $n${i}: String!, $p${i}: Int!`);
+			return `f${i}: repository(owner: $o${i}, name: $n${i}) { pullRequest(number: $p${i}) { ...VoltPrFingerprint } }`;
+		});
+		const { data } = await this.graphqlAs(batch[0].repo.host, auth, `query(${params.join(', ')}) {
+			${fields.join('\n')}
+		}
+		${PR_FINGERPRINT_FRAGMENT}`, variables, true);
+		return batch.flatMap((request, i) => {
+			const raw = data[`f${i}`]?.pullRequest;
+			return raw ? [parseFingerprint(raw, request.repo)] : [];
+		});
 	}
 
 	async getMany(requests: readonly IVoltPrRequest[]): Promise<IVoltPullRequest[]> {
-		const groups = new Map<string, IVoltPrRequest[]>();
-		for (const request of requests) {
-			const key = `${apiHost(request.repo.host)}\u0000${request.account ?? ''}`;
-			const group = groups.get(key) ?? [];
-			if (!group.some(other => sameRepo(other.repo, request.repo) && other.number === request.number)) {
-				group.push(request);
-			}
-			groups.set(key, group);
-		}
+		const groups = groupRequests(requests);
 		const results: IVoltPullRequest[] = [];
 		const errors: unknown[] = [];
 		await Promise.all([...groups.values()].map(async group => {
@@ -480,10 +636,12 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 				results.push(...tagProvider(read.filter((pr): pr is IVoltPullRequest => !!pr), client.provider));
 				return;
 			}
+			// A batch nobody waits on stays background only when every request in it is.
+			const auth = authOf(group[0], group.every(request => request.background));
 			for (let start = 0; start < group.length; start += BATCH_SIZE) {
 				const batch = group.slice(start, start + BATCH_SIZE);
 				try {
-					results.push(...await this.readBatch(batch));
+					results.push(...await this.readBatch(batch, auth));
 				} catch (err) {
 					errors.push(err);
 				}
@@ -496,7 +654,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		return results;
 	}
 
-	private async readBatch(batch: readonly IVoltPrRequest[]): Promise<IVoltPullRequest[]> {
+	private async readBatch(batch: readonly IVoltPrRequest[], auth: IVoltPrAuth): Promise<IVoltPullRequest[]> {
 		const repos: { repo: IVoltPrRepoRef; numbers: number[] }[] = [];
 		for (const request of batch) {
 			let entry = repos.find(candidate => sameRepo(candidate.repo, request.repo));
@@ -506,11 +664,24 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			}
 			entry.numbers.push(request.number);
 		}
-		const fields = repos.map((entry, r) => `r${r}: repository(owner: ${gqlString(entry.repo.owner)}, name: ${gqlString(entry.repo.name)}) {
-			${entry.numbers.map(number => `p${number}: pullRequest(number: ${number}) { ...VoltPr }`).join('\n')}
-		}`).join('\n');
-		const { data, login } = await this.graphqlAs(batch[0].repo.host, batch[0], `query { viewer { login } ${fields} }
-		${PR_SUMMARY_FRAGMENT}`, {}, true);
+		// Every owner, name and number travels as a variable: nothing a caller supplies is written into the document.
+		const variables: Record<string, unknown> = {};
+		const params: string[] = [];
+		const fields = repos.map((entry, r) => {
+			variables[`r${r}o`] = entry.repo.owner;
+			variables[`r${r}n`] = entry.repo.name;
+			params.push(`$r${r}o: String!`, `$r${r}n: String!`);
+			const prs = entry.numbers.map(number => {
+				variables[`r${r}p${number}`] = number;
+				params.push(`$r${r}p${number}: Int!`);
+				return `p${number}: pullRequest(number: $r${r}p${number}) { ...VoltPr }`;
+			});
+			return `r${r}: repository(owner: $r${r}o, name: $r${r}n) {
+			${prs.join('\n')}
+		}`;
+		}).join('\n');
+		const { data, login } = await this.graphqlAs(batch[0].repo.host, auth, `query(${params.join(', ')}) { viewer { login } ${fields} }
+		${PR_SUMMARY_FRAGMENT}`, variables, true);
 		const viewer = data.viewer?.login ?? login;
 		const out: IVoltPullRequest[] = [];
 		repos.forEach((entry, r) => {
@@ -521,7 +692,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 				}
 			}
 		});
-		return out;
+		return this.rememberNodeIds(out);
 	}
 
 	async detail(request: IVoltPrRequest): Promise<IVoltPullRequestDetail> {
@@ -559,6 +730,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			throw new VoltPrError('notFound', `Pull request #${request.number} was not found in ${request.repo.owner}/${request.repo.name}.`);
 		}
 		const viewer = data.viewer?.login ?? login;
+		this.rememberNodeIds([{ key: prKey(request.repo, request.number), id: raw.id }]);
 		const checks = (raw.headChecks?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [])
 			.map(parseCheckRun).filter((check: IVoltPrCheck | undefined): check is IVoltPrCheck => !!check);
 		const files = await this.files(request, raw.id);
@@ -596,7 +768,8 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			return;
 		}
 		try {
-			const out = await this.rest(request.repo.host, request, 'GET', `repos/${request.repo.owner}/${request.repo.name}/pulls/${request.number}/files?per_page=100`, undefined, ['--paginate', '--slurp']);
+			// Nice to have: it leaves the REST reserve alone, and the files show without their old names.
+			const out = await this.rest(request.repo.host, { ...request, background: true }, 'GET', `repos/${request.repo.owner}/${request.repo.name}/pulls/${request.number}/files?per_page=100`, undefined, ['--paginate', '--slurp']);
 			const pages = Array.isArray(out) ? out.flat() : [];
 			const previous = new Map<string, string>();
 			for (const entry of pages) {
@@ -825,11 +998,13 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		if (other) {
 			return other.rerunFailedChecks(request.repo, request.number);
 		}
-		const [pr] = await this.getMany([request]);
-		if (!pr) {
+		// The head commit over REST: everything this does is REST, so it spends no GraphQL points.
+		const pr = await this.rest(request.repo.host, request, 'GET', `repos/${request.repo.owner}/${request.repo.name}/pulls/${request.number}`);
+		const headSha = typeof pr?.head?.sha === 'string' ? pr.head.sha : undefined;
+		if (!headSha) {
 			throw new VoltPrError('notFound', `Pull request #${request.number} was not found.`);
 		}
-		const runs = await this.rest(request.repo.host, request, 'GET', `repos/${request.repo.owner}/${request.repo.name}/actions/runs?head_sha=${pr.headRefOid}&per_page=100`);
+		const runs = await this.rest(request.repo.host, request, 'GET', `repos/${request.repo.owner}/${request.repo.name}/actions/runs?head_sha=${headSha}&per_page=100`);
 		const failed = (runs?.workflow_runs ?? []).filter((run: Json) => run?.status === 'completed' && ['failure', 'timed_out', 'cancelled', 'startup_failure'].includes(run?.conclusion));
 		let started = 0;
 		for (const run of failed) {
@@ -1102,12 +1277,15 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			throw new VoltPrError('failed', `Not a blob id: ${request.sha}`);
 		}
 		// Raw, not through rest(): the text must not be trimmed or read as JSON.
-		const { env } = await this.authEnv(request.repo.host, request);
-		const result = await this.run(this.ghCommand, ['api', '--hostname', apiHost(request.repo.host), '-H', 'Accept: application/vnd.github.raw+json', `repos/${request.repo.owner}/${request.repo.name}/git/blobs/${request.sha}`], { env, timeoutMs: GH_TIMEOUT_MS });
-		if (result.code !== 0) {
-			throw this.failure(result, []);
+		const answer = await this.ghApi(request.repo.host, request, 'core', ['-H', 'Accept: application/vnd.github.raw+json', `repos/${request.repo.owner}/${request.repo.name}/git/blobs/${request.sha}`]);
+		const limited = this.rateLimited(answer, 'core', []);
+		if (limited) {
+			throw limited;
 		}
-		return result.stdout;
+		if (answer.result.code !== 0) {
+			throw this.failure(answer.result, []);
+		}
+		return answer.body;
 	}
 
 	/** Whether the repository around `folder` has it in HEAD or anything under it in the index. */
@@ -1308,11 +1486,12 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		const context = this.stackContext(status.root, status.defaultBranch, status.remote);
 		const stack = await readStack(context, request.branch ?? status.branch);
 		const repo = await this.resolveRepo(request.folder);
-		const layers: IVoltPrStackLayerView[] = [];
-		for (const layer of stack.layers) {
-			const prs = repo ? await this.forBranchOrNone(repo, layer.branch) : [];
-			layers.push({ layer, pullRequest: prs.find(isOpen) ?? prs[0] });
-		}
+		// Every layer in one lookup, not a read per layer.
+		const byBranch = repo ? await this.forBranchesOrNone(repo, stack.layers.map(layer => layer.branch)) : new Map<string, readonly IVoltPullRequest[]>();
+		const layers: IVoltPrStackLayerView[] = stack.layers.map(layer => {
+			const prs = byBranch.get(layer.branch) ?? [];
+			return { layer, pullRequest: prs.find(isOpen) ?? prs[0] };
+		});
 		return { stack, layers, checkedOut: status.branch };
 	}
 
@@ -1382,6 +1561,18 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		return { git, root, trunk: trunk ?? 'main', remote };
 	}
 
+	/** {@link forBranchOrNone} for several branches in one lookup. */
+	private async forBranchesOrNone(repo: IVoltPrRepo, branches: readonly string[]): Promise<Map<string, readonly IVoltPullRequest[]>> {
+		try {
+			return new Map((await this.forBranches({ repo, branches })).map(found => [found.branch, found.pullRequests]));
+		} catch (err) {
+			if (voltPrErrorCode(err) === 'failed') {
+				throw err;
+			}
+			return new Map();
+		}
+	}
+
 	/** Pull requests for a branch; none when the host can't answer (no sign-in yet), since a stack view still works without them. */
 	private async forBranchOrNone(repo: IVoltPrRepo, branch: string): Promise<IVoltPullRequest[]> {
 		try {
@@ -1399,6 +1590,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	//#region Plumbing
 
 	private async nodeId(request: IVoltPrRequest): Promise<string> {
+		const known = this.nodeIds.get(prKey(request.repo, request.number));
+		if (known) {
+			return known;
+		}
 		const data = await this.graphql(request.repo.host, request, `query($owner: String!, $name: String!, $number: Int!) {
 			repository(owner: $owner, name: $name) { pullRequest(number: $number) { id } }
 		}`, { owner: request.repo.owner, name: request.repo.name, number: request.number });
@@ -1406,7 +1601,22 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		if (typeof id !== 'string') {
 			throw new VoltPrError('notFound', `Pull request #${request.number} was not found in ${request.repo.owner}/${request.repo.name}.`);
 		}
+		this.rememberNodeIds([{ key: prKey(request.repo, request.number), id }]);
 		return id;
+	}
+
+	/** Keeps the node ids of pull requests just read, so writes to them skip the lookup. */
+	private rememberNodeIds<T extends { readonly key: string; readonly id: unknown }>(prs: T[]): T[] {
+		for (const pr of prs) {
+			if (typeof pr.id === 'string' && pr.id) {
+				this.nodeIds.delete(pr.key);
+				this.nodeIds.set(pr.key, pr.id);
+			}
+		}
+		while (this.nodeIds.size > MAX_NODE_IDS) {
+			this.nodeIds.delete(this.nodeIds.keys().next().value!);
+		}
+		return prs;
 	}
 
 	private async mutate(request: IVoltPrRequest, query: string, variables: Record<string, unknown>): Promise<Json> {
@@ -1422,19 +1632,19 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	 * name pull requests that are gone; those come back null and the rest are kept.
 	 */
 	private async graphqlAs(host: string, auth: IVoltPrAuth, query: string, variables: Record<string, unknown>, partial = false): Promise<{ data: Json; login: string }> {
-		const { env, login } = await this.authEnv(host, auth);
-		const result = await this.run(this.ghCommand, ['api', 'graphql', '--hostname', apiHost(host), '--input', '-'], {
-			env,
-			input: JSON.stringify({ query, variables }),
-			timeoutMs: GH_TIMEOUT_MS,
-		});
+		const answer = await this.ghApi(host, auth, 'graphql', ['graphql', '--input', '-'], { input: JSON.stringify({ query, variables }) });
 		let body: Json;
 		try {
-			body = result.stdout.trim() ? JSON.parse(result.stdout) : undefined;
+			body = answer.body.trim() ? JSON.parse(answer.body) : undefined;
 		} catch {
 			body = undefined;
 		}
 		const errors: Json[] = Array.isArray(body?.errors) ? body.errors : [];
+		const limited = this.rateLimited(answer, 'graphql', errors);
+		if (limited) {
+			throw limited;
+		}
+		const { result, login } = answer;
 		if (result.code === 0 && !errors.length && body?.data) {
 			return { data: body.data, login };
 		}
@@ -1450,34 +1660,125 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	private async rest(host: string, auth: IVoltPrAuth, method: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT', path: string, body?: unknown, extra: readonly string[] = []): Promise<Json> {
-		const { env } = await this.authEnv(host, auth);
-		const args = ['api', '--hostname', apiHost(host), '--method', method, ...extra, path];
+		return (await this.restAs(host, auth, method, path, body, extra)).data;
+	}
+
+	private async restAs(host: string, auth: IVoltPrAuth, method: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT', path: string, body?: unknown, extra: readonly string[] = []): Promise<{ data: Json; login: string }> {
+		const args = ['--method', method, ...extra, path];
 		if (body !== undefined) {
 			args.push('--input', '-');
 		}
-		const result = await this.run(this.ghCommand, args, {
-			env,
+		const answer = await this.ghApi(host, auth, 'core', args, {
 			...(body !== undefined ? { input: JSON.stringify(body) } : {}),
-			timeoutMs: GH_TIMEOUT_MS,
+			paginate: extra.includes('--paginate'),
 		});
+		let parsed: Json;
+		try {
+			parsed = JSON.parse(answer.body);
+		} catch {
+			parsed = undefined;
+		}
+		const limited = this.rateLimited(answer, 'core', typeof parsed?.message === 'string' ? [{ message: parsed.message }] : []);
+		if (limited) {
+			throw limited;
+		}
+		const { result, login } = answer;
 		if (result.code !== 0) {
-			let parsed: Json;
-			try {
-				parsed = JSON.parse(result.stdout);
-			} catch {
-				parsed = undefined;
-			}
 			const detail = [parsed?.message, ...(Array.isArray(parsed?.errors) ? parsed.errors.map((error: Json) => error?.message ?? error?.code) : [])].filter(Boolean).join(': ');
 			throw this.failure(result, detail ? [{ message: detail }] : []);
 		}
-		const text = result.stdout.trim();
+		const text = answer.body.trim();
 		if (!text) {
-			return undefined;
+			return { data: undefined, login };
 		}
 		try {
-			return JSON.parse(text);
+			return { data: JSON.parse(text), login };
 		} catch {
-			return text;
+			return { data: text, login };
+		}
+	}
+
+	/**
+	 * One `gh api` call as the chosen account, under GitHub's rate limits: refused without a request
+	 * when the quota says so (background reads leave the last tenth alone), and GitHub's own count
+	 * read back from the answer's headers. Paginated reads print headers for every page, so they go
+	 * without; the next single answer brings the count up to date.
+	 */
+	private async ghApi(host: string, auth: IVoltPrAuth, resource: VoltGithubQuotaResource, args: readonly string[], options: { readonly input?: string; readonly paginate?: boolean } = {}): Promise<IGhApiAnswer> {
+		const api = apiHost(host);
+		const { env, login } = await this.authEnv(api, auth);
+		const account = quotaAccount(api, login);
+		const priority: VoltGithubPriority = auth.background ? 'background' : 'interactive';
+		const refusal = this.quota.admit(account, resource, priority);
+		if (refusal) {
+			throw refusalError(refusal, api);
+		}
+		const include = !options.paginate;
+		const result = await this.run(this.ghCommand, ['api', '--hostname', api, ...(include ? ['--include'] : []), ...args], {
+			env,
+			...(options.input !== undefined ? { input: options.input } : {}),
+			timeoutMs: GH_TIMEOUT_MS,
+		});
+		const split = include ? splitGhInclude(result.stdout) : { body: result.stdout };
+		if (split.headers) {
+			this.quota.observe(account, readGithubRateLimit(split.headers));
+		}
+		return { result, ...(split.status !== undefined ? { status: split.status } : {}), ...(split.headers ? { headers: split.headers } : {}), body: split.body, host: api, login, account };
+	}
+
+	/**
+	 * GitHub refused for a rate limit: hold that quota until its reset (or the whole account until
+	 * `retry-after`, for a secondary limit), so later calls wait without a request, and say when.
+	 */
+	private rateLimited(answer: IGhApiAnswer, resource: VoltGithubQuotaResource, errors: readonly Json[]): VoltPrError | undefined {
+		const { result, status, headers } = answer;
+		const messages = errors.map(error => typeof error?.message === 'string' ? error.message : '').filter(Boolean);
+		const graphqlLimited = errors.some(error => error?.type === 'RATE_LIMITED');
+		const httpLimited = status !== undefined
+			? isGithubRateLimitAnswer(status, headers ?? new Map(), [result.stderr, ...messages].join('\n'))
+			: result.code !== 0 && classifyGhError(result.stderr, result.code, result.spawnError) === 'rateLimited';
+		if (!graphqlLimited && !httpLimited) {
+			return undefined;
+		}
+		const now = Date.now();
+		const reading = (headers && readGithubRateLimit(headers)) ?? this.quota.reading(answer.account, resource, now);
+		const exhausted = !headers?.has('retry-after') && (graphqlLimited || (!!reading && reading.remaining <= 0));
+		let refusal: IVoltGithubRefusal;
+		if (exhausted) {
+			// A primary limit: this quota is empty until its reset; the other one still works.
+			const quotaResource = reading?.resource ?? resource;
+			const retryAt = reading && reading.resetAt > now ? reading.resetAt : this.quota.pauseEnd(undefined, now);
+			this.quota.pause(answer.account, retryAt, quotaResource);
+			refusal = { resource: quotaResource, retryAt, reason: 'exhausted' };
+		} else {
+			// A secondary limit holds every quota of the account.
+			const retryAt = this.quota.pauseEnd(headers, now);
+			this.quota.pause(answer.account, retryAt);
+			refusal = { resource, retryAt, reason: 'paused' };
+		}
+		this.logService?.warn(`[volt-pr] ${describeGithubRefusal(refusal, answer.host, now)}`);
+		return refusalError(refusal, answer.host, now);
+	}
+
+	/**
+	 * GraphQL first, REST when GraphQL's quota refuses. GitHub counts the two apart, so a read that
+	 * has both forms keeps working while one is used up. When REST refuses too (a secondary limit
+	 * holds the whole account), the GraphQL refusal is what the caller hears.
+	 */
+	private async graphqlOrRest<T>(graphql: () => Promise<T>, rest: () => Promise<T>): Promise<T> {
+		try {
+			return await graphql();
+		} catch (err) {
+			if (voltPrErrorCode(err) !== 'rateLimited') {
+				throw err;
+			}
+			try {
+				const read = await rest();
+				this.logService?.trace('[volt-pr] GraphQL rate limit reached; read over REST instead');
+				return read;
+			} catch (restErr) {
+				throw voltPrErrorCode(restErr) === 'rateLimited' ? err : restErr;
+			}
 		}
 	}
 
@@ -1567,6 +1868,48 @@ function validateBranchName(name: string): void {
 	if (!name || name.startsWith('-') || /[\s~^:?*\[\\]|\.\.|@\{|\.lock$|\/$|^\//.test(name)) {
 		throw new VoltPrError('failed', `Not a valid branch name: ${name}`);
 	}
+}
+
+/** The quota's key: GitHub counts per account, and each host is its own GitHub. */
+function quotaAccount(host: string, login: string): string {
+	return `${host}\u0000${login.toLowerCase()}`;
+}
+
+function refusalError(refusal: IVoltGithubRefusal, host: string, now = Date.now()): VoltPrError {
+	return new VoltPrError('rateLimited', describeGithubRefusal(refusal, host, now), refusal.retryAt);
+}
+
+/** Who a call runs as, and whether anyone waits on it. */
+function authOf(auth: IVoltPrAuth, background = auth.background): IVoltPrAuth {
+	return { ...(auth.account ? { account: auth.account } : {}), ...(background ? { background: true } : {}) };
+}
+
+/** Requests by host and account (one GraphQL document can only run as one), each pull request once. */
+function groupRequests(requests: readonly IVoltPrRequest[]): Map<string, IVoltPrRequest[]> {
+	const groups = new Map<string, IVoltPrRequest[]>();
+	for (const request of requests) {
+		const key = `${apiHost(request.repo.host)}\u0000${request.account ?? ''}`;
+		const group = groups.get(key) ?? [];
+		if (!group.some(other => sameRepo(other.repo, request.repo) && other.number === request.number)) {
+			group.push(request);
+		}
+		groups.set(key, group);
+	}
+	return groups;
+}
+
+/** `map` with at most `limit` calls in flight, results in order. */
+async function mapLimited<T, R>(items: readonly T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
+	const out: R[] = new Array(items.length);
+	let next = 0;
+	const worker = async () => {
+		while (next < items.length) {
+			const index = next++;
+			out[index] = await map(items[index]);
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+	return out;
 }
 
 function sameRepo(a: IVoltPrRepoRef, b: IVoltPrRepoRef): boolean {

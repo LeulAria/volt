@@ -52,8 +52,13 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 	static readonly viewContainersWorkspaceStateKey = 'workbench.auxiliarybar.viewContainersWorkspaceState';
 
 	static readonly AGENT_MIN_WIDTH = 180;
-	static readonly AGENT_DEFAULT_WIDTH = 260;
+	static readonly AGENT_DEFAULT_WIDTH = 230;
 	static readonly AGENT_MAX_RATIO = 0.35;
+
+	/** Widest the agent list may be dragged in a window this wide: 35% of it. */
+	static agentMaxWidth(containerWidth: number): number {
+		return Math.max(AuxiliaryBarPart.AGENT_MIN_WIDTH, Math.floor(containerWidth * AuxiliaryBarPart.AGENT_MAX_RATIO));
+	}
 
 	override readonly minimumHeight: number = 0;
 	override readonly maximumHeight: number = Number.POSITIVE_INFINITY;
@@ -81,8 +86,7 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 		if (this.isAgentRail) {
 			return AGENT_SIDEBAR_RAIL_WIDTH;
 		}
-		const width = this.layoutService.mainContainerDimension?.width ?? 0;
-		return Math.max(AuxiliaryBarPart.AGENT_MIN_WIDTH, Math.floor(width * AuxiliaryBarPart.AGENT_MAX_RATIO));
+		return AuxiliaryBarPart.agentMaxWidth(this.layoutService.mainContainerDimension?.width ?? 0);
 	}
 
 	get preferredHeight(): number | undefined {

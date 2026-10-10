@@ -388,12 +388,13 @@ export class HistoryService extends Disposable implements IHistoryService {
 		handleEditorNavigationScopeChange();
 	}
 
-	private getStack(group = this.editorGroupService.activeGroup, editor = group.activeEditor): IEditorNavigationStacks {
+	// `activeGroup` is undefined while a restored editor window has focus but no grid yet.
+	private getStack(group: IEditorGroup | undefined = this.editorGroupService.activeGroup, editor = group?.activeEditor): IEditorNavigationStacks {
 		switch (this.editorNavigationScope) {
 
 			// Per Editor
 			case GoScope.EDITOR: {
-				if (!editor) {
+				if (!group || !editor) {
 					return new NoOpEditorNavigationStacks();
 				}
 
@@ -418,6 +419,10 @@ export class HistoryService extends Disposable implements IHistoryService {
 
 			// Per Editor Group
 			case GoScope.EDITOR_GROUP: {
+				if (!group) {
+					return new NoOpEditorNavigationStacks();
+				}
+
 				let stack = this.editorGroupScopedNavigationStacks.get(group.id)?.stack;
 				if (!stack) {
 					const disposable = new DisposableStore();

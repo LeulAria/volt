@@ -24,6 +24,19 @@ export const AGENT_VOICE_ENDPOINT_SETTING = 'volt.agent.composer.voice.transcrip
 
 export const AGENT_VOICE_MODEL_SETTING = 'volt.agent.composer.voice.transcriptionModel';
 
+/** Where dictation goes: `auto`, `openai` (realtime), `system` (the Mac's recognizer) or `endpoint`. */
+export const AGENT_VOICE_ENGINE_SETTING = 'volt.agent.composer.voice.engine';
+
+/** The OpenAI realtime transcription model dictation uses. */
+export const AGENT_VOICE_REALTIME_MODEL_SETTING = 'volt.agent.composer.voice.realtimeModel';
+
+export type AgentVoiceEngine = 'auto' | 'openai' | 'system' | 'endpoint';
+
+/** OpenAI's realtime transcription models, fastest first. */
+export const AGENT_VOICE_REALTIME_MODELS: readonly string[] = ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'];
+
+export const AGENT_VOICE_DEFAULT_REALTIME_MODEL = 'gpt-4o-transcribe';
+
 Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfiguration({
 	id: 'volt.agent.composer',
 	title: localize('voltAgent.composerConfigTitle', "Agent Composer"),
@@ -54,6 +67,23 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			type: 'string',
 			default: 'whisper-1',
 			description: localize('voltAgent.voiceModel', "The transcription model sent to the speech-to-text endpoint."),
+		},
+		[AGENT_VOICE_ENGINE_SETTING]: {
+			type: 'string',
+			enum: ['auto', 'openai', 'system', 'endpoint'],
+			enumDescriptions: [
+				localize('voltAgent.voiceEngine.auto', "OpenAI realtime transcription when an OpenAI key is set, otherwise the Mac's speech recognizer, otherwise the transcription endpoint."),
+				localize('voltAgent.voiceEngine.openai', "OpenAI realtime transcription, with the model below."),
+				localize('voltAgent.voiceEngine.system', "The Mac's speech recognizer: on device when its model is installed, otherwise Apple's service."),
+				localize('voltAgent.voiceEngine.endpoint', "The OpenAI-compatible transcription endpoint above, such as a local Whisper server."),
+			],
+			default: 'auto',
+			description: localize('voltAgent.voiceEngine', "Where dictation in the agent composer is transcribed."),
+		},
+		[AGENT_VOICE_REALTIME_MODEL_SETTING]: {
+			type: 'string',
+			default: AGENT_VOICE_DEFAULT_REALTIME_MODEL,
+			description: localize('voltAgent.voiceRealtimeModel', "The OpenAI realtime transcription model dictation uses, such as gpt-4o-transcribe or gpt-4o-mini-transcribe."),
 		},
 		[AGENT_DEFAULT_MODEL_SETTING]: {
 			type: 'string',

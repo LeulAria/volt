@@ -8,6 +8,7 @@ import { IRequestService } from '../../../../../platform/request/common/request.
 import { DEFAULT_MODEL_CAPABILITIES } from '../../common/capabilities.js';
 import { IVoltEvent } from '../../common/events.js';
 import { contextLabelFromTokens, pickNumber, pickText } from '../../common/models/modelMeta.js';
+import { generationParams } from '../../common/models/modelOptions.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
 import { GeminiToolAssembler, IGeminiPart } from '../../common/harness/geminiToolStream.js';
@@ -120,6 +121,14 @@ export class GeminiProvider implements IModelProvider {
 		const assembler = new GeminiToolAssembler(req.modelId);
 		// Gemini takes thoughts back only as signatures on calls (see GeminiToolAssembler).
 		const reasoning = new ProviderReasoning(`${textId}-think`, this.id, req.modelId, 'none');
+		const params = generationParams(req.options);
+		const generationConfig = {
+			// Thought summaries stream only when asked for; they become the Thought row.
+			...(this.thinks(req.modelId) ? { thinkingConfig: { includeThoughts: true } } : {}),
+			...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
+			...(params.topP !== undefined ? { topP: params.topP } : {}),
+			...(params.maxOutputTokens !== undefined ? { maxOutputTokens: params.maxOutputTokens } : {}),
+		};
 		let started = false;
 		for await (const line of requestSseStream(this.requestService, url, {
 			type: 'POST',
@@ -128,8 +137,7 @@ export class GeminiProvider implements IModelProvider {
 				contents: toGeminiContents(req.messages, { model: req.modelId }),
 				systemInstruction: system ? { parts: [{ text: system }] } : undefined,
 				...(tools ? { tools } : {}),
-				// Thought summaries stream only when asked for; they become the Thought row.
-				...(this.thinks(req.modelId) ? { generationConfig: { thinkingConfig: { includeThoughts: true } } } : {}),
+				...(Object.keys(generationConfig).length ? { generationConfig } : {}),
 			}),
 		}, token)) {
 			if (typeof line !== 'string') {

@@ -153,6 +153,8 @@ import { IVoltEditorImportService, VOLT_EDITOR_IMPORT_CHANNEL_NAME } from '../..
 import { VoltEditorImportService } from '../../platform/voltEditorImport/node/voltEditorImportService.js';
 import { IVoltDevicesService, VOLT_DEVICES_CHANNEL_NAME } from '../../platform/voltDevices/common/voltDevices.js';
 import { VoltDevicesMainService } from '../../platform/voltDevices/electron-main/voltDevicesMainService.js';
+import { IVoltDesktopService, VOLT_DESKTOP_CHANNEL_NAME } from '../../platform/voltDesktop/common/voltDesktop.js';
+import { VoltDesktopMainService } from '../../platform/voltDesktop/electron-main/voltDesktopMainService.js';
 import { IVoltCaptureService, VOLT_CAPTURE_CHANNEL_NAME } from '../../platform/voltCapture/common/voltCapture.js';
 import { VoltCaptureMainService } from '../../platform/voltCapture/electron-main/voltCaptureMainService.js';
 import { IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME } from '../../platform/voltSpeech/common/voltSpeech.js';
@@ -1100,6 +1102,7 @@ export class CodeApplication extends Disposable {
 		// Volt in-app browser (session data, color scheme emulation)
 		services.set(IVoltBrowserService, new SyncDescriptor(VoltBrowserMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltDevicesService, new SyncDescriptor(VoltDevicesMainService, undefined, false /* proxied to other processes */));
+		services.set(IVoltDesktopService, new SyncDescriptor(VoltDesktopMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltCaptureService, new SyncDescriptor(VoltCaptureMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltSpeechService, new SyncDescriptor(VoltSpeechMainService, undefined, false /* proxied to other processes */));
 
@@ -1307,6 +1310,7 @@ export class CodeApplication extends Disposable {
 		const voltBrowserChannel = ProxyChannel.fromService(accessor.get(IVoltBrowserService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_BROWSER_CHANNEL_NAME, voltBrowserChannel);
 		mainProcessElectronServer.registerChannel(VOLT_DEVICES_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltDevicesService), disposables));
+		mainProcessElectronServer.registerChannel(VOLT_DESKTOP_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltDesktopService), disposables));
 		mainProcessElectronServer.registerChannel(VOLT_CAPTURE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltCaptureService), disposables));
 		mainProcessElectronServer.registerChannel(VOLT_SPEECH_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltSpeechService), disposables));
 

@@ -108,6 +108,33 @@ suite('Volt host tool service', () => {
 		assert.ok((await service.invokeTool('browser_evaluate', { expression: '1' }, { sessionId: 's1', mode: 'plan' })).error);
 	});
 
+	test('a provider can require approval in every mode, and is told when it was given', async () => {
+		const { service, modes } = setup();
+		modes.set('s1', 'agent');
+		const invoked: string[] = [];
+		const approved: string[] = [];
+		store.add(service.registerToolProvider({
+			tools: [{ name: 'desktop_act', title: 'Acted', description: '', inputSchema: {} }],
+			invoke: async name => { invoked.push(name); return { text: 'done' }; },
+			needsApproval: async () => approved.length ? undefined : 'controls apps on your Mac',
+			approved: (_name, _args, call) => { approved.push(call.sessionId!); },
+		}));
+		assert.match((await service.invokeTool('desktop_act', {}, { sessionId: 's1' })).error ?? '', /needs the user's approval/);
+		assert.match((await service.invokeTool('desktop_act', {}, undefined)).error ?? '', /needs the user's approval/);
+		let allow = false;
+		const asked: IVoltHostToolApproval[] = [];
+		service.setApprover({ approve: async request => { asked.push(request); return allow; } });
+		assert.match((await service.invokeTool('desktop_act', {}, { sessionId: 's1' })).error ?? '', /did not allow desktop_act/);
+		allow = true;
+		assert.strictEqual((await service.invokeTool('desktop_act', {}, { sessionId: 's1' })).text, 'done');
+		assert.strictEqual((await service.invokeTool('desktop_act', {}, { sessionId: 's1' })).text, 'done');
+		assert.strictEqual(asked.length, 2, 'once approved, the provider stops asking');
+		assert.strictEqual(asked[0].mode, 'agent');
+		assert.deepStrictEqual(approved, ['s1']);
+		assert.deepStrictEqual(invoked, ['desktop_act', 'desktop_act']);
+		service.setApprover(undefined);
+	});
+
 	test('Plan mode judges clicks by the page the chat shows', async () => {
 		const remote = setup({ pageUrl: 'https://mail.example.com/inbox' });
 		remote.modes.set('s1', 'plan');

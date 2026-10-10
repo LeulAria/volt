@@ -8,6 +8,7 @@ import { IRequestService } from '../../../../../platform/request/common/request.
 import { DEFAULT_MODEL_CAPABILITIES } from '../../common/capabilities.js';
 import { IVoltEvent } from '../../common/events.js';
 import { pickText } from '../../common/models/modelMeta.js';
+import { generationParams } from '../../common/models/modelOptions.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
 import { OpenAiToolAssembler } from '../../common/harness/openaiToolStream.js';
@@ -108,6 +109,12 @@ export class OllamaProvider implements IModelProvider {
 		const reasoning = new ProviderReasoning(`${textId}-think`, this.id, req.modelId, 'none');
 		const think = await this.thinks(baseURL, req.modelId, token);
 		const callPrefix = `ollama_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+		const params = generationParams(req.options);
+		const options = {
+			...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
+			...(params.topP !== undefined ? { top_p: params.topP } : {}),
+			...(params.maxOutputTokens !== undefined ? { num_predict: params.maxOutputTokens } : {}),
+		};
 		let started = false;
 		for await (const line of requestSseStream(this.requestService, url, {
 			type: 'POST',
@@ -119,6 +126,7 @@ export class OllamaProvider implements IModelProvider {
 				...(tools ? { tools } : {}),
 				// Thinking in its own field, not inline <think> tags in the reply.
 				...(think ? { think: true } : {}),
+				...(Object.keys(options).length ? { options } : {}),
 			}),
 		}, token)) {
 			if (typeof line !== 'string') {

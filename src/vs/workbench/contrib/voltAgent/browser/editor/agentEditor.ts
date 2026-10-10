@@ -92,6 +92,8 @@ import { createBrandIcon, providerFamilyLabel } from '../../../../services/voltR
 import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
 import { CLOUD_AUTO, cloudAgentForFamily, cloudMachineStorageKey, normalizeCloudMachine } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
 import { splitModelDisplayName } from '../../../../services/voltRuntime/common/models/modelOptions.js';
+import { IAgentCustomizeService, IAgentSlashItem } from '../customize/agentCustomizeService.js';
+import { AgentSkillHoverCard } from '../composer/agentSkillHoverCard.js';
 import { IAgentRunGroupService, IRunGroupModel, validateRunSelection } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
@@ -773,6 +775,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly exploreHitsTooltip = this._register(new AgentTooltip());
 	private readonly markdownRenderer: MarkdownRenderer;
 	private mentionPreview: MentionCodePreview | undefined;
+	/** The card beside a `/skill` token in a sent message; made on first hover. */
+	private skillHoverCard: AgentSkillHoverCard | undefined;
 	private clockTimer: IDisposable | undefined;
 	private statusRotateTimer: IDisposable | undefined;
 	private readonly statusMotion = new Map<string, { text: string; from?: string; started?: number }>();
@@ -1905,7 +1909,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const draft = this.inputModel?.getValue() ?? '';
 		input.draft = draft;
 		input.draftMentions = this.mentionController?.displayMentions() ?? [];
-		input.setHasUnsavedContent(!!draft.trim());
+		// The mode token alone (Alt+Enter) is not something the user wrote.
+		input.setHasUnsavedContent(!!draft.trim() && !this.mentionController?.isModeOnlyDraft());
 		input.scheduleDraftSave();
 	}
 
@@ -2269,6 +2274,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 						this.openCitation(citation, chip);
 					}));
 				}
+			} else if (mention.kind === 'skill') {
+				this.bindSkillChip(chip, mention);
 			} else if (mention.resource && (mention.kind === 'file' || mention.kind === 'image')) {
 				const resource = URI.revive(mention.resource);
 				// An attached PDF or archive opens in its own app; text and project files beside the chat.
@@ -2290,6 +2297,34 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.setSearchableText(parent, text.slice(cursor));
 		} else if (cursor === 0) {
 			this.setSearchableText(parent, text);
+		}
+	}
+
+	/** A `/skill` token in a sent message: its card on hover, its file on click. */
+	private bindSkillChip(chip: HTMLElement, mention: IAgentDisplayMention): void {
+		const name = mention.value ?? mention.label.replace(/^\//, '');
+		const resource = mention.resource ? URI.revive(mention.resource) : undefined;
+		if (resource) {
+			chip.setAttribute('data-open', 'true');
+		}
+		let lookup: Promise<IAgentSlashItem | undefined> | undefined;
+		this.threadListeners.add(addDisposableListener(chip, 'mouseenter', () => {
+			lookup ??= this.instantiationService.invokeFunction(accessor => accessor.get(IAgentCustomizeService)).findSlashItem(name);
+			void lookup.then(item => {
+				if (item && chip.isConnected && chip.matches(':hover')) {
+					this.skillHoverCard ??= this._register(this.instantiationService.createInstance(AgentSkillHoverCard));
+					this.skillHoverCard.scheduleShow(item, () => chip.isConnected ? chip.getBoundingClientRect() : undefined, `chip:${name}`);
+				}
+			});
+		}));
+		this.threadListeners.add(addDisposableListener(chip, 'mouseleave', () => this.skillHoverCard?.scheduleHide()));
+		if (resource) {
+			this.threadListeners.add(addDisposableListener(chip, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.skillHoverCard?.hide();
+				this.surfaceHost.openFile(resource);
+			}));
 		}
 	}
 
@@ -4531,6 +4566,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			openResource: (resource, range) => this.surfaceHost.openFile(resource, range ? { startLine: range.startLineNumber, endLine: range.endLineNumber } : undefined),
 			sessionId: () => this.sessionKey,
 			openCitation: (citation, chip) => this.openCitation(citation, chip ?? anchor),
+			openModelPicker: () => this.showModelDropdown(),
+			currentModelLabel: () => {
+				const selected = this.modelPicker.selectedModel();
+				return selected ? splitModelDisplayName(selected.name).name : undefined;
+			},
 		};
 	}
 
@@ -6336,6 +6376,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.updateInputPlaceholder();
 		this.updateComposerEditorOptions();
 		this.layoutInputEditor();
+		// A skill kept on with Alt+Enter goes back into the emptied composer.
+		this.mentionController?.reseedMode();
 	}
 
 	/** A turn is live: its reply streams, or the orchestrator is starting one for this chat. */

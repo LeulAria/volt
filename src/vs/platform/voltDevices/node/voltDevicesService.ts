@@ -10,9 +10,11 @@ import { homedir, tmpdir } from 'os';
 import { basename, delimiter, join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
-import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidShell, androidTextChunks, avdLabel, fitWithin, gzipFrom, ICommand, IAdbDevice, IRawFrame, iosInputCommand, IosInputTool, isAlreadyBooted, isAlreadyShutdown, isXcodeLicenseError, jpegSize, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseRawFrame, parseSimctlDevices, parseSimctlScreen, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, SYSTEM_SIMCTL, sshCommand, stateForPosture } from '../common/deviceCommands.js';
+import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidShell, androidTextChunks, avdLabel, fitWithin, gzipFrom, ICommand, IAdbDevice, IRawFrame, iosInputCommand, IosInputTool, isAlreadyBooted, isAlreadyShutdown, isXcodeLicenseError, jpegSize, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseNightMode, parseRawFrame, parseSimctlAppearance, parseSimctlDevices, parseSimctlScreen, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, SYSTEM_SIMCTL, sshCommand, stateForPosture } from '../common/deviceCommands.js';
+import { FileAccess } from '../../../base/common/network.js';
+import { ANDROID_KEY_NUMBERS, ANDROID_UI_SERVER_COMMAND, ANDROID_UI_SERVER_JAR, AndroidUiServer } from './androidUiServer.js';
 import { downscale, encodePng } from './frameEncoding.js';
-import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDeviceRef, IVoltDeviceScreen, IVoltDevicesService, VoltDeviceInput, VoltDevicePosture, VoltDeviceState } from '../common/voltDevices.js';
+import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDeviceRef, IVoltDeviceScreen, IVoltDevicesService, IVoltDeviceUi, VoltDeviceAppearance, VoltDeviceInput, VoltDevicePosture, VoltDeviceState } from '../common/voltDevices.js';
 
 interface IRunResult {
 	readonly stdout: Buffer;
@@ -75,6 +77,9 @@ export class VoltDevicesService implements IVoltDevicesService {
 	private readonly serials = new Map<string, string>();
 	/** Hosts whose devices cannot gzip a capture on the device; they make PNGs there instead. */
 	private readonly noRawCapture = new Set<string>();
+	/** The UI reader running on each local Android device (by serial), and how often each one failed. */
+	private readonly uiServers = new Map<string, AndroidUiServer>();
+	private readonly uiServerFailures = new Map<string, number>();
 
 	/**
 	 * `encodeJpeg` turns RGBA pixels into a JPEG of the given size (the main process has a native
@@ -610,7 +615,14 @@ export class VoltDevicesService implements IVoltDevicesService {
 	//#region Input
 
 	async input(host: IVoltDeviceHost, device: IVoltDeviceRef, input: VoltDeviceInput): Promise<void> {
-		if (device.platform === 'ios') {
+		if (device.platform === 'ios' && input.kind === 'clear') {
+			// No select-all on the simulator's keyboard: backspace from the end, one key at a time.
+			for (let i = 0; i < Math.min(80, input.count); i++) {
+				await this.input(host, device, { kind: 'button', button: 'delete' });
+			}
+			return;
+		}
+		if (device.platform === 'ios' && input.kind !== 'clear') {
 			// Buttons the simulator does not have fail before the tool check.
 			iosInputCommand('axe', device.id, input);
 			const tool = await this.iosInputTool(host);
@@ -624,7 +636,54 @@ export class VoltDevicesService implements IVoltDevicesService {
 		await this.withSerial(host, device, serial => this.androidInput(host, serial, input));
 	}
 
+	/**
+	 * The UI reader on a local Android device (see `UiServer.java`): one connection kept open, so a
+	 * screen read takes milliseconds instead of `uiautomator dump`'s seconds. Undefined over SSH and
+	 * after it failed twice on this device; callers then use adb's own tools.
+	 */
+	private async uiServer(host: IVoltDeviceHost, serial: string): Promise<AndroidUiServer | undefined> {
+		if (host.ssh || (this.uiServerFailures.get(serial) ?? 0) >= 2) {
+			return undefined;
+		}
+		let server = this.uiServers.get(serial);
+		if (!server) {
+			const adb = await this.androidTool(host, 'adb');
+			const jar = FileAccess.asFileUri('vs/platform/voltDevices/node/android/volt-ui.jar').fsPath;
+			server = new AndroidUiServer(async () => {
+				await this.exec({ file: adb, args: ['-s', serial, 'push', jar, ANDROID_UI_SERVER_JAR] }, { timeout: 20_000 });
+				return spawn(adb, ['-s', serial, 'shell', ANDROID_UI_SERVER_COMMAND], { env: await this.env() });
+			});
+			this.uiServers.set(serial, server);
+		}
+		return server;
+	}
+
+	/** Asks the device's UI reader; undefined (after noting the failure) when it cannot answer. */
+	private async askUiServer(host: IVoltDeviceHost, serial: string, command: string, timeoutMs = 8000): Promise<string | undefined> {
+		const server = await this.uiServer(host, serial).catch(() => undefined);
+		if (!server) {
+			return undefined;
+		}
+		try {
+			const reply = await server.request(command, timeoutMs);
+			if (reply.startsWith('ERR ')) {
+				this.logService.trace('[volt-devices] UI reader:', reply);
+				return undefined;
+			}
+			return reply;
+		} catch (err) {
+			this.logService.warn('[volt-devices] the UI reader failed; using adb tools', err instanceof Error ? err.message : String(err));
+			server.dispose();
+			this.uiServers.delete(serial);
+			this.uiServerFailures.set(serial, (this.uiServerFailures.get(serial) ?? 0) + 1);
+			return undefined;
+		}
+	}
+
 	private async androidInput(host: IVoltDeviceHost, serial: string, input: VoltDeviceInput): Promise<void> {
+		if (await this.androidInputFast(host, serial, input)) {
+			return;
+		}
 		const shell = (argv: readonly string[]) => this.run(host, ['adb', '-s', serial, 'shell', androidShell(argv)]);
 		const r = (value: number) => String(Math.round(value));
 		switch (input.kind) {
@@ -642,7 +701,55 @@ export class VoltDevicesService implements IVoltDevicesService {
 			case 'button':
 				await shell(['input', 'keyevent', androidKeycode(input.button)]);
 				return;
+			case 'clear':
+				// One command: jump to the end, then that many backspaces.
+				await shell(['input', 'keyevent', 'KEYCODE_MOVE_END', ...Array.from({ length: Math.min(200, Math.max(0, input.count)) }, () => 'KEYCODE_DEL')]);
+				return;
 		}
+	}
+
+	/** Input through the UI reader (tens of ms instead of `input`'s start-up); false when it cannot. */
+	private async androidInputFast(host: IVoltDeviceHost, serial: string, input: VoltDeviceInput): Promise<boolean> {
+		const r = (value: number) => String(Math.round(value));
+		switch (input.kind) {
+			case 'tap':
+				return !!await this.askUiServer(host, serial, `tap ${r(input.x)} ${r(input.y)}`);
+			case 'swipe':
+				return !!await this.askUiServer(host, serial, `swipe ${r(input.x1)} ${r(input.y1)} ${r(input.x2)} ${r(input.y2)} ${r(input.durationMs ?? 300)}`, 10_000);
+			case 'type':
+				// Newlines are Enter; text the keyboard map cannot type goes through `input text`.
+				return !!await this.askUiServer(host, serial, `text ${Buffer.from(input.text, 'utf8').toString('base64')}`, 15_000);
+			case 'button': {
+				const code = ANDROID_KEY_NUMBERS[androidKeycode(input.button)];
+				return code !== undefined && !!await this.askUiServer(host, serial, `key ${code}`);
+			}
+			case 'clear':
+				return !!await this.askUiServer(host, serial, `keys ${[ANDROID_KEY_NUMBERS.KEYCODE_MOVE_END, ...Array.from({ length: Math.min(200, Math.max(0, input.count)) }, () => ANDROID_KEY_NUMBERS.KEYCODE_DEL)].join(' ')}`, 15_000);
+		}
+	}
+
+	async describeUi(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<IVoltDeviceUi> {
+		if (device.platform === 'ios') {
+			const tool = await this.iosInputTool(host);
+			const argv = tool === 'axe' ? ['axe', 'describe-ui', '--udid', device.id] : ['idb', 'ui', 'describe-all', '--udid', device.id, '--json'];
+			return { format: tool, data: text(await this.run(host, argv, { timeout: ACTION_TIMEOUT })) };
+		}
+		return this.withSerial(host, device, async serial => {
+			const fast = await this.askUiServer(host, serial, 'dump');
+			if (fast?.includes('<hierarchy')) {
+				return { format: 'uiautomator', data: fast };
+			}
+			let data = text(await this.run(host, ['adb', '-s', serial, 'exec-out', 'uiautomator', 'dump', '/dev/tty'], { timeout: ACTION_TIMEOUT, allowFail: true }));
+			if (!data.includes('<hierarchy')) {
+				// Some system images cannot write the dump to the terminal: write a file and read it back.
+				await this.run(host, ['adb', '-s', serial, 'shell', 'uiautomator', 'dump', '/sdcard/volt-ui.xml'], { timeout: ACTION_TIMEOUT });
+				data = text(await this.run(host, ['adb', '-s', serial, 'exec-out', 'cat', '/sdcard/volt-ui.xml'], { timeout: ACTION_TIMEOUT }));
+			}
+			if (!data.includes('<hierarchy')) {
+				throw new Error(firstLine(data) || 'uiautomator returned no screen (the device may be locked or animating)');
+			}
+			return { format: 'uiautomator', data: data.slice(data.indexOf('<?xml') >= 0 ? data.indexOf('<?xml') : data.indexOf('<hierarchy'), data.lastIndexOf('</hierarchy>') + '</hierarchy>'.length) };
+		});
 	}
 
 	private async iosInputTool(host: IVoltDeviceHost): Promise<IosInputTool> {
@@ -757,6 +864,34 @@ export class VoltDevicesService implements IVoltDevicesService {
 			return;
 		}
 		throw new Error(`${avdLabel(device.id)} has no ${posture === 'halfOpen' ? 'half-open' : posture} posture.`);
+	}
+
+	//#endregion
+
+	//#region Appearance
+
+	async getAppearance(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<VoltDeviceAppearance | undefined> {
+		if (device.platform === 'ios') {
+			const result = await this.simctlRun(host, ['ui', device.id, 'appearance'], { allowFail: true, timeout: 10_000 });
+			return parseSimctlAppearance(text(result));
+		}
+		return this.withSerial(host, device, async serial => parseNightMode(text(await this.run(host, ['adb', '-s', serial, 'shell', 'cmd uimode night'], { allowFail: true, timeout: 8000 }))));
+	}
+
+	async setAppearance(host: IVoltDeviceHost, device: IVoltDeviceRef, appearance: VoltDeviceAppearance): Promise<void> {
+		if (device.platform === 'ios') {
+			const result = await this.simctlRun(host, ['ui', device.id, 'appearance', appearance], { allowFail: true, timeout: 10_000 });
+			if (result.code !== 0) {
+				throw new Error(firstLine(result.stderr) || `Could not switch ${device.id} to ${appearance} mode. Is it booted?`);
+			}
+			return;
+		}
+		await this.withSerial(host, device, async serial => {
+			const out = text(await this.run(host, ['adb', '-s', serial, 'shell', `cmd uimode night ${appearance === 'dark' ? 'yes' : 'no'}`], { timeout: 8000 }));
+			if (/Error|Unknown command/i.test(out)) {
+				throw new Error(`${serial} cannot switch dark mode from adb (${firstLine(out)}); Android 10 or later can.`);
+			}
+		});
 	}
 
 	//#endregion

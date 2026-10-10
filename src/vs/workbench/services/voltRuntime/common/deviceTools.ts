@@ -9,6 +9,8 @@ export const DEVICE_TOOL_NAMES = [
 	'device_list',
 	'device_boot',
 	'device_shutdown',
+	'device_snapshot',
+	'device_act',
 	'device_screenshot',
 	'device_tap',
 	'device_swipe',
@@ -52,6 +54,43 @@ export const DEVICE_TOOLS: readonly IVoltHostToolInfo[] = [
 		approvalInReadOnlyModes: 'shuts down a simulator',
 		description: 'Shut down a simulator or emulator.',
 		inputSchema: { type: 'object', properties: { device: DEVICE, host: HOST }, required: ['device'] },
+	},
+	{
+		name: 'device_snapshot',
+		title: 'Read device screen',
+		group: 'devices',
+		description: 'Read what is on a booted simulator or emulator screen as an accessibility tree: buttons, rows, text fields, switches with their text, states and refs ("d12"). Much cheaper than a screenshot and exact: use it to decide what to tap, then device_act. Long lists are folded. iOS needs AXe or idb.',
+		inputSchema: { type: 'object', properties: { device: DEVICE, host: HOST, unfold: { type: 'boolean', description: 'Show long lists in full.' } } },
+	},
+	{
+		name: 'device_act',
+		title: 'Acted on device',
+		group: 'devices',
+		approvalInReadOnlyModes: 'taps and types on the device',
+		description: `Run several steps on a simulator or emulator in ONE call, targeting what the screen says instead of pixels. Script, one step per line:
+open com.example.app        (or a deep link)
+tap "Sign in"
+type "Email" ada@example.com
+submit "Password" \${password}
+check "Remember me"
+scroll down until "Display"
+press back                   (back, home, enter, delete, appSwitch, lock)
+tap switch "Wi-Fi" => switch "Wi-Fi" checked
+expect "Welcome" and gone "Loading"
+Targets: "text" (for type/check: the field's label), role "name" (button, textbox, checkbox, switch, radio, listitem, tab...), a ref like d12 from device_snapshot, id "resource-id", then "in <target>", "#2", "exact". "=> condition" verifies a step. Each step waits for its target (5s), taps its center, re-reads the screen and reports what changed; the run stops at the first failure (NOT_FOUND, AMBIGUOUS with candidates, DISABLED, VERIFY_FAILED) and ends with the screen changes since your last read. Use it instead of device_screenshot + device_tap. save / run / vars work like browser_act's saved flows.`,
+		inputSchema: {
+			type: 'object',
+			properties: {
+				device: DEVICE,
+				host: HOST,
+				script: { type: 'string', description: 'The steps, one per line (see above).' },
+				run: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }], description: 'Saved flow(s) to run instead of a script.' },
+				vars: { type: 'object', description: 'Values for ${name} placeholders.' },
+				save: { type: 'string', description: 'Save this script as a flow when every step passes.' },
+				steps: { type: 'array', maxItems: 30, items: { type: 'object' }, description: 'The same steps as JSON objects, if you prefer.' },
+				observe: { type: 'string', enum: ['auto', 'on_failure', 'full', 'none'], description: 'Screen state at the end: auto (changes since your last read), on_failure, full, or none.' },
+			},
+		},
 	},
 	{
 		name: 'device_screenshot',

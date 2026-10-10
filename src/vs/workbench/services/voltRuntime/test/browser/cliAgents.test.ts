@@ -65,7 +65,7 @@ suite('runCli', () => {
 		assert.deepStrictEqual(acpLaunchFor(claude, 'claude', ['acp'], true), { command: 'claude-agent-acp', args: [] });
 		const viaNpx = acpLaunchFor(claude, 'claude', [], false);
 		assert.ok(/^npx(\.cmd)?$/.test(viaNpx.command));
-		assert.deepStrictEqual(viaNpx.args, ['-y', '@agentclientprotocol/claude-agent-acp@0.81.2']);
+		assert.deepStrictEqual(viaNpx.args, ['-y', '--prefer-offline', '@agentclientprotocol/claude-agent-acp@0.81.2']);
 	});
 
 	test('Codex launches the ACP adapter, never `codex acp`', () => {
@@ -73,7 +73,7 @@ suite('runCli', () => {
 		assert.deepStrictEqual(acpLaunchFor(codex, 'codex', ['acp'], true), { command: 'codex-acp', args: [] });
 		const viaNpx = acpLaunchFor(codex, 'codex', ['acp'], false);
 		assert.ok(/^npx(\.cmd)?$/.test(viaNpx.command));
-		assert.deepStrictEqual(viaNpx.args, ['-y', '@agentclientprotocol/codex-acp@1.13.1']);
+		assert.deepStrictEqual(viaNpx.args, ['-y', '--prefer-offline', '@agentclientprotocol/codex-acp@1.13.1']);
 	});
 
 	test('Grok launches `agent stdio`, never the old `grok acp` profile args', () => {

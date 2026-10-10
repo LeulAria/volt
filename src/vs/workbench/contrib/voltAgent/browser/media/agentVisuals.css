@@ -204,91 +204,16 @@
 }
 
 /*
- * Skeleton while a visual is on its way (tool call streaming, stored spec loading, page loading):
- * a title line and a plot of faint bars, with one soft sweep. Plain gradients on small boxes only:
- * no blur, no backdrop-filter, no :has().
+ * Placeholder while a visual is on its way (tool call streaming, stored spec loading, page
+ * loading): the dot loader (agentDotLoader.css) at the visual's height. Over a page's frame it
+ * covers the frame until the page has laid out.
  */
-.volt-agent-visual-skeleton {
-	--volt-skel-base: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
-	--volt-skel-hi: color-mix(in srgb, var(--vscode-foreground) 13%, transparent);
-	display: flex;
-	flex-direction: column;
-	gap: 8px;
-	height: 240px;
-	box-sizing: border-box;
-	padding: 2px 0 8px;
-	pointer-events: none;
-}
-
-.volt-agent-visual-skeleton.page {
-	padding: 4px 0 12px;
-}
-
 .volt-agent-visual-frame > .volt-agent-visual-skeleton {
 	position: absolute;
 	inset: 0;
 	z-index: 1;
 	height: auto;
 	background: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
-}
-
-.volt-agent-visual-skeleton-title,
-.volt-agent-visual-skeleton-subtitle,
-.volt-agent-visual-skeleton-bar {
-	background: linear-gradient(90deg, var(--volt-skel-base) 0%, var(--volt-skel-hi) 40%, var(--volt-skel-base) 80%);
-	background-size: 200% 100%;
-	animation: volt-visual-skeleton-sweep 1.6s ease-in-out infinite;
-}
-
-.volt-agent-visual-skeleton-title {
-	flex: none;
-	width: 38%;
-	height: 12px;
-	border-radius: 6px;
-}
-
-.volt-agent-visual-skeleton-subtitle {
-	flex: none;
-	width: 24%;
-	height: 9px;
-	border-radius: 5px;
-	opacity: 0.7;
-}
-
-.volt-agent-visual-skeleton-plot {
-	flex: 1;
-	min-height: 0;
-	margin-top: 8px;
-	display: flex;
-	align-items: flex-end;
-	gap: 6%;
-	padding: 0 2% 0 0;
-	border-bottom: 1px solid var(--volt-skel-base);
-}
-
-.volt-agent-visual-skeleton-bar {
-	flex: 1;
-	border-radius: 4px 4px 0 0;
-}
-
-/* A page skeleton reads as blocks of content rather than a chart. */
-.volt-agent-visual-skeleton.page .volt-agent-visual-skeleton-plot {
-	border-bottom: 0;
-	gap: 3%;
-	opacity: 0.6;
-}
-
-@keyframes volt-visual-skeleton-sweep {
-	0% { background-position: 200% center; }
-	100% { background-position: -200% center; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.volt-agent-visual-skeleton-title,
-	.volt-agent-visual-skeleton-subtitle,
-	.volt-agent-visual-skeleton-bar {
-		animation: none;
-	}
 }
 
 /* Expanded: the same visual, larger, in the preview dialog. */

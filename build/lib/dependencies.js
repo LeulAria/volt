@@ -35,6 +35,11 @@ function getNpmProductionDependencies(folder) {
             }
         }
         raw = err.stdout;
+        // npm 10+ prints `npm error` rather than `npm ERR!`, so a crash (npm 11's "reading 'ruleset'")
+        // slips past the checks above. With nothing listed the build would ship without node_modules.
+        if (!raw?.trim()) {
+            throw err;
+        }
     }
     return raw.split(/\r?\n/).filter(line => {
         return !!line.trim() && path_1.default.relative(root, line) !== path_1.default.relative(root, folder);

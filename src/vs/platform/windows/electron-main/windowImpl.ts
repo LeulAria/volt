@@ -699,6 +699,9 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 	private readonly jsCallStackCollector: Delayer<void>;
 	private readonly jsCallStackCollectorStopScheduler: RunOnceScheduler;
 
+	/** When the development build last reloaded this window for a gone renderer. */
+	private devReloadTimes: number[] = [];
+
 	constructor(
 		config: IWindowCreationOptions,
 		@ILogService logService: ILogService,
@@ -1131,7 +1134,12 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 				// Process gone
 				else if (type === WindowError.PROCESS_GONE) {
-					if (!this.environmentMainService.isBuilt) {
+					// Not when the app is going down (a killed renderer, a quit), and at most 3 reloads a
+					// minute, so a renderer that dies while starting gets the dialog instead of a reload loop.
+					const now = Date.now();
+					this.devReloadTimes = this.devReloadTimes.filter(time => now - time < 60_000);
+					if (!this.environmentMainService.isBuilt && details?.reason !== 'killed' && !this.lifecycleMainService.quitRequested && this.devReloadTimes.length < 3) {
+						this.devReloadTimes.push(now);
 						this.logService.error('[volt] renderer gone in development, reloading the window instead of quitting');
 						try {
 							this.webContents.reloadIgnoringCache();

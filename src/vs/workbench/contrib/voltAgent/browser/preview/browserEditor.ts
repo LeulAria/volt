@@ -2279,6 +2279,15 @@ export class VoltBrowserView extends Disposable {
 		return true;
 	}
 
+	/** A navigation or load is in flight: scripts run now may land in the document that is going away. */
+	isLoadingForAgent(): boolean {
+		try {
+			return !!this.webview?.isLoading?.() || !this.guestIdle;
+		} catch {
+			return !this.guestIdle;
+		}
+	}
+
 	/** After an input: give the page a beat to react, and if that started a navigation, wait it out. */
 	async settle(timeoutMs = 10000, token: CancellationToken = CancellationToken.None): Promise<void> {
 		await timeout(60);

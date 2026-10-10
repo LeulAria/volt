@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { androidKeycode, androidLaunchArgv, fitWithin, gzipFrom, jpegSize, parseRawFrame, emulatorFailure, androidSdkCandidates, androidTextChunks, avdLabel, imagePointToInput, iosButtonName, iosInputCommand, isAlreadyBooted, isXcodeLicenseError, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, parseSshTarget, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simRuntimeLabel, sshCommand, stateForPosture } from '../../common/deviceCommands.js';
+import { androidKeycode, androidLaunchArgv, fitWithin, gzipFrom, jpegSize, parseRawFrame, emulatorFailure, androidSdkCandidates, androidTextChunks, avdLabel, imagePointToInput, iosButtonName, iosInputCommand, isAlreadyBooted, isXcodeLicenseError, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseNightMode, parseSimctlAppearance, parseSimctlDevices, parseSimctlScreen, parseSshTarget, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simRuntimeLabel, sshCommand, stateForPosture } from '../../common/deviceCommands.js';
 
 const SIMCTL_JSON = JSON.stringify({
 	devices: {
@@ -260,5 +260,15 @@ suite('Volt devices: commands and parsers', () => {
 		const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0, 0, 0xff, 0xc0, 0x00, 0x11, 8, 0x01, 0xe0, 0x02, 0x80, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
 		assert.deepStrictEqual(jpegSize(jpeg), { width: 640, height: 480 });
 		assert.strictEqual(jpegSize(Buffer.from('not a jpeg')), undefined);
+	});
+
+	test('light and dark mode are read from simctl and cmd uimode', () => {
+		assert.strictEqual(parseSimctlAppearance('dark\n'), 'dark');
+		assert.strictEqual(parseSimctlAppearance('light'), 'light');
+		assert.strictEqual(parseSimctlAppearance('unsupported'), undefined);
+		assert.strictEqual(parseNightMode('Night mode: yes'), 'dark');
+		assert.strictEqual(parseNightMode('Night mode: no\n'), 'light');
+		assert.strictEqual(parseNightMode('Night mode: auto'), undefined, 'automatic follows the clock');
+		assert.strictEqual(parseNightMode(''), undefined);
 	});
 });

@@ -22,6 +22,7 @@ import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
@@ -44,7 +45,7 @@ import { VOLT_MODES, VoltMode, modePolicy } from '../../../services/voltRuntime/
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
 import { IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
 import { IWorkbenchThemeService, ThemeSettings } from '../../../services/themes/common/workbenchThemeService.js';
-import { AGENT_DEFAULT_MODEL_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_PROMPT_HISTORY_SETTING } from '../../voltAgent/common/agentComposerSettings.js';
+import { AGENT_DEFAULT_MODEL_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_PROMPT_HISTORY_SETTING, AGENT_VOICE_DEFAULT_REALTIME_MODEL, AGENT_VOICE_ENDPOINT_SETTING, AGENT_VOICE_ENGINE_SETTING, AGENT_VOICE_MODEL_SETTING, AGENT_VOICE_REALTIME_MODEL_SETTING, AGENT_VOICE_REALTIME_MODELS, AgentVoiceEngine } from '../../voltAgent/common/agentComposerSettings.js';
 import { AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING } from '../../voltAgent/common/agentWorkflowSettings.js';
 import { AGENT_HOME_AUTO_SETTLE_DAYS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING } from '../../voltAgent/common/agentHomeSettings.js';
 import '../../voltAgent/common/agentAwakeSettings.js';
@@ -257,6 +258,16 @@ export class VoltSettingsEditor extends EditorPane {
 			}
 			this._register(addDisposableListener(item, 'click', () => this.setSection(section.id)));
 		}
+		// Skills, subagents, rules, MCP servers and plugins are managed on the agent's Customize page.
+		append(this.toc, $('.volt-settings-toc-gap'));
+		const customize = append(this.toc, $('button.volt-settings-toc-item')) as HTMLButtonElement;
+		customize.type = 'button';
+		append(customize, $('span.volt-settings-toc-icon')).appendChild(renderIcon(Codicon.zap));
+		append(customize, $('span.volt-settings-toc-text')).textContent = localize('voltSettings.skillsPlugins', "Skills & Plugins");
+		this._register(addDisposableListener(customize, 'click', () => {
+			this.close();
+			void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand('workbench.action.voltAgent.customize'));
+		}));
 
 		// Back sits at the foot of the nav, where the agent list puts it while Usage is open.
 		const footer = append(sidebar, $('.volt-settings-footer'));
@@ -287,7 +298,6 @@ export class VoltSettingsEditor extends EditorPane {
 		this._register(toDisposable(() => resize.disconnect()));
 		this.providers = new ProvidersPage(this.instantiationService, {
 			target: () => this.target,
-			sectionLabel: label => this.sectionLabel(label),
 			store: this.renderStore,
 			search: () => this.search,
 			rerender: () => this.renderContent(),
@@ -427,6 +437,8 @@ export class VoltSettingsEditor extends EditorPane {
 		this.renderedSection = this.section;
 		this.renderStore.clear();
 		this.content.replaceChildren();
+		// Providers & Models is two panes side by side; it takes the room the other pages leave.
+		this.content.classList.toggle('volt-settings-content-wide', this.section === 'providers');
 		this.block = undefined;
 		this.renderGeneration++;
 		const generation = this.renderGeneration;
@@ -625,6 +637,11 @@ export class VoltSettingsEditor extends EditorPane {
 			host => this.textGenerationPicker(host, 'git', localize('voltSettings.gitTextModel', "Git text model"), localize('voltSettings.gitTextDefault', "Default"), localize('voltSettings.gitTextDefaultDesc', "Use the text generation model")),
 		);
 		this.renderPower();
+
+		this.sectionLabel(localize('voltSettings.predictionAndVoice', "Prediction and voice"));
+		const assist = this.settingsGroup();
+		this.predictionModelRow(assist);
+		this.voiceModelRow(assist);
 		this.renderUpdates();
 	}
 
@@ -821,8 +838,49 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 	}
 
+	/** Ghost text's model, chosen like the text generation model. Auto takes the composer's fastest. */
+	private predictionModelRow(group: HTMLElement): void {
+		this.settingRow(
+			group,
+			localize('voltSettings.predictionModel', "Prediction model"),
+			localize('voltSettings.predictionModelDesc', "Writes the ghost text in editors and in the agent composer. Auto uses the fastest model of the composer's provider (Opus -> Haiku on the same Claude login). API and local models (Ollama) answer far faster than agent CLIs."),
+			host => this.textGenerationPicker(host, 'tab', localize('voltSettings.predictionModel', "Prediction model"), localize('voltSettings.predictionAuto', "Auto"), localize('voltSettings.predictionAutoDesc', "The fastest model of the composer's provider")),
+		);
+	}
+
+	/** Where dictation is transcribed, and with which model. */
+	private voiceModelRow(group: HTMLElement): void {
+		const engine = (this.configurationService.getValue<string>(AGENT_VOICE_ENGINE_SETTING) || 'auto') as AgentVoiceEngine;
+		const realtime = this.configurationService.getValue<string>(AGENT_VOICE_REALTIME_MODEL_SETTING) || AGENT_VOICE_DEFAULT_REALTIME_MODEL;
+		const endpointModel = this.configurationService.getValue<string>(AGENT_VOICE_MODEL_SETTING) || 'whisper-1';
+		const realtimeModels = AGENT_VOICE_REALTIME_MODELS.includes(realtime) ? AGENT_VOICE_REALTIME_MODELS : [...AGENT_VOICE_REALTIME_MODELS, realtime];
+		const options: (ISelectOptionItem & { readonly engine: AgentVoiceEngine; readonly model?: string })[] = [
+			{ text: localize('voltSettings.voiceAuto', "Auto"), detail: 'auto', engine: 'auto' },
+			...realtimeModels.map(model => ({ text: localize('voltSettings.voiceOpenAi', "OpenAI realtime - {0}", model), detail: `openai:${model}`, engine: 'openai' as const, model })),
+			{ text: localize('voltSettings.voiceSystem', "Mac speech recognizer"), detail: 'system', engine: 'system' },
+			{ text: localize('voltSettings.voiceEndpointOption', "Custom endpoint - {0}", endpointModel), detail: 'endpoint', engine: 'endpoint' },
+		];
+		const current = engine === 'openai' ? `openai:${realtime}` : engine;
+		const selected = Math.max(0, options.findIndex(option => option.detail === current));
+		this.settingRow(
+			group,
+			localize('voltSettings.voiceModel', "Voice model"),
+			localize('voltSettings.voiceModelDesc', "Transcribes dictation in the agent composer. Auto streams to OpenAI when an OpenAI key is set, otherwise uses the Mac's recognizer. A custom endpoint is any OpenAI-compatible speech-to-text server, such as a local Whisper."),
+			host => {
+				const box = this.selectBox(append(host, $('.volt-settings-select')), options, selected, localize('voltSettings.voiceModel', "Voice model"));
+				this.renderStore.add(box.onDidSelect(e => {
+					const option = options[e.index];
+					void this.configurationService.updateValue(AGENT_VOICE_ENGINE_SETTING, option.engine);
+					if (option.model) {
+						void this.configurationService.updateValue(AGENT_VOICE_REALTIME_MODEL_SETTING, option.model);
+					}
+				}));
+			},
+		);
+	}
+
 	/** The composer's model picker, bound to a generated-text slot instead of the composer's model. */
-	private textGenerationPicker(host: HTMLElement, slot: 'title' | 'git', ariaLabel: string, autoLabel: string, autoDescription: string): void {
+	private textGenerationPicker(host: HTMLElement, slot: 'title' | 'git' | 'tab', ariaLabel: string, autoLabel: string, autoDescription: string): void {
 		this.modelPicker(host, {
 			get: () => this.runtime.getTaskModels()[slot],
 			set: ref => void this.runtime.setTaskModel(slot, ref),
@@ -975,7 +1033,7 @@ export class VoltSettingsEditor extends EditorPane {
 	private renderTab(): void {
 		this.pageHead(
 			localize('voltSettings.tab', "Tab & Prediction"),
-			localize('voltSettings.tabLead', "Ghost text as you type, from the composer model or one you pin."),
+			localize('voltSettings.tabLead2', "Ghost text wherever you type: code in any editor, the next words in the agent composer. Tab accepts."),
 		);
 		const settings = this.prediction.getSettings();
 		const group = this.settingsGroup();
@@ -989,32 +1047,38 @@ export class VoltSettingsEditor extends EditorPane {
 				this.renderContent();
 			}),
 		);
+		this.predictionModelRow(group);
 
-		const models = this.runtime.listCatalog().filter(item => item.enabled);
-		const taskModels = this.runtime.getTaskModels();
-		const options: ISelectOptionItem[] = [
-			{ text: localize('voltSettings.tabFollow', "Follow composer (Cursor, Claude, ...)"), detail: '' },
-			...models.map(model => ({ text: model.qualifier ? `${model.label} - ${model.qualifier}` : model.label, detail: model.ref })),
-		];
-		const selected = Math.max(0, options.findIndex(option => option.detail === (taskModels.tab ?? '')));
+		this.sectionLabel(localize('voltSettings.composerPrediction', "Agent composer"));
+		const composer = this.settingsGroup();
 		this.settingRow(
-			group,
-			localize('voltSettings.tabModel', "Tab model"),
-			localize('voltSettings.tabModelDesc', "Follow the composer selection, or pin a specific model or agent just for predictions."),
-			host => {
-				const box = this.selectBox(append(host, $('.volt-settings-select')), options, selected, localize('voltSettings.tabModel', "Tab model"));
-				this.renderStore.add(box.onDidSelect(e => {
-					void this.runtime.setTaskModel('tab', options[e.index].detail || undefined);
-				}));
-			},
+			composer,
+			localize('voltSettings.composerGhost', "Predict the message"),
+			localize('voltSettings.composerGhostDesc', "While you type to the agent: the rest of the word and the next words from your own prompts at once, then the rest of the sentence from the prediction model, which reads the chat and the clipboard."),
+			host => this.switch(host, settings.composer, localize('voltSettings.composerGhost', "Predict the message"), () => {
+				this.prediction.updateSettings({ composer: !settings.composer });
+				this.renderContent();
+			}),
+		);
+		this.settingRow(
+			composer,
+			localize('voltSettings.composerPause', "Pause before the model"),
+			localize('voltSettings.composerPauseDesc', "How long the typing stops before the prediction model is asked to finish the sentence. Suggestions from your prompts never wait."),
+			host => this.stepper(host, String(settings.composerDelayMs), localize('voltSettings.ms', "ms"), ms => {
+				const clamped = Math.max(0, Math.min(5000, Math.round(ms)));
+				this.prediction.updateSettings({ composerDelayMs: clamped });
+				return clamped;
+			}, 100),
 		);
 
+		this.sectionLabel(localize('voltSettings.editorPrediction', "Editors"));
+		const editors = this.settingsGroup();
 		const modeOptions: ISelectOptionItem[] = [
 			{ text: localize('voltSettings.tabEager', "Eager"), detail: 'eager' },
 			{ text: localize('voltSettings.tabSubtle', "Subtle"), detail: 'subtle' },
 		];
 		this.settingRow(
-			group,
+			editors,
 			localize('voltSettings.tabMode', "Prediction mode"),
 			localize('voltSettings.tabModeDesc', "Eager predicts while you type. Subtle only predicts on the explicit trigger (Alt+\\)."),
 			host => {
@@ -1026,7 +1090,7 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 
 		this.settingRow(
-			group,
+			editors,
 			localize('voltSettings.tabDebounce', "Debounce"),
 			localize('voltSettings.tabDebounceDesc', "Extra wait before a model request is sent. Lower is snappier; higher saves tokens while typing fast."),
 			host => this.stepper(host, String(settings.debounceMs), localize('voltSettings.ms', "ms"), ms => {
@@ -1037,7 +1101,7 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 
 		this.settingRow(
-			group,
+			editors,
 			localize('voltSettings.tabGlobs', "Disabled files"),
 			localize('voltSettings.tabGlobsDesc', "Glob patterns that never receive predictions (comma separated). Secrets and lockfiles are excluded by default."),
 			host => {
@@ -1051,6 +1115,26 @@ export class VoltSettingsEditor extends EditorPane {
 				}));
 			},
 		);
+
+		this.sectionLabel(localize('voltSettings.voice', "Voice"));
+		const voice = this.settingsGroup();
+		this.voiceModelRow(voice);
+		this.textSettingRow(voice, AGENT_VOICE_ENDPOINT_SETTING, localize('voltSettings.voiceEndpoint', "Transcription endpoint"), localize('voltSettings.voiceEndpointDesc', "Base URL of an OpenAI-compatible speech-to-text server for the custom endpoint, such as http://localhost:8000/v1."));
+		this.textSettingRow(voice, AGENT_VOICE_MODEL_SETTING, localize('voltSettings.voiceEndpointModel', "Endpoint model"), localize('voltSettings.voiceEndpointModelDesc', "The model name the custom endpoint takes, such as whisper-1."));
+	}
+
+	/** A text input bound to a string setting, saved when it changes. */
+	private textSettingRow(group: HTMLElement, key: string, title: string, desc: string): void {
+		this.settingRow(group, title, desc, host => {
+			const input = this.renderStore.add(new InputBox(append(host, $('.volt-settings-input.wide')), this.contextViewService, {
+				ariaLabel: title,
+				inputBoxStyles: this.inputBoxStyles(),
+			}));
+			input.value = this.configurationService.getValue<string>(key) ?? '';
+			this.renderStore.add(addDisposableListener(input.inputElement, 'change', () => {
+				void this.configurationService.updateValue(key, input.value.trim());
+			}));
+		});
 	}
 
 	private renderSecurity(): void {

@@ -179,6 +179,8 @@ suite('Agent runtime orchestration', () => {
 			stub({}),
 			stub({ userRoamingDataHome: URI.file('/user') }),
 			stub({ getValue: () => undefined }),
+			// No hooks: every tool runs as it is.
+			stub({ run: async () => ({ context: [] }), wrapTool: (tool: unknown) => tool, definitions: async () => [] }),
 		));
 		await service.refreshProviders();
 		const internals = service as unknown as IRuntimeInternals;
