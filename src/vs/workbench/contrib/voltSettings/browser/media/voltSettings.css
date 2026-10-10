@@ -410,8 +410,7 @@
 
 .volt-settings-row,
 .volt-settings-card,
-.volt-settings-mode,
-.volt-settings-provider-row {
+.volt-settings-mode {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -422,8 +421,7 @@
 
 .volt-settings-row + .volt-settings-row,
 .volt-settings-card + .volt-settings-card,
-.volt-settings-mode + .volt-settings-mode,
-.volt-settings-provider + .volt-settings-provider {
+.volt-settings-mode + .volt-settings-mode {
 	border-top: 1px solid var(--volt-settings-border);
 }
 
@@ -434,8 +432,7 @@
 }
 
 .volt-settings-row label,
-.volt-settings-card-copy .title,
-.volt-settings-provider-row .name {
+.volt-settings-card-copy .title {
 	display: block;
 	font-size: 13px;
 	font-weight: 400;
@@ -443,8 +440,7 @@
 }
 
 .volt-settings-row .desc,
-.volt-settings-card-copy .meta,
-.volt-settings-provider-row .detail {
+.volt-settings-card-copy .meta {
 	margin-top: 4px;
 	font-size: 12px;
 	line-height: 1.45;
@@ -701,19 +697,13 @@
 	font-size: 12px;
 }
 
-/* Providers */
-
-.volt-settings-provider-row {
-	align-items: center;
-	padding: 13px 16px;
-}
+/* Status dots (providers) */
 
 .volt-settings-dot {
 	flex: 0 0 auto;
-	width: 7px;
-	height: 7px;
+	width: 6px;
+	height: 6px;
 	border-radius: 50%;
-	margin-top: 6px;
 	background: var(--vscode-descriptionForeground);
 }
 
@@ -734,92 +724,8 @@
 	background: #6b7280;
 }
 
-.volt-settings-provider-icon {
-	flex: 0 0 auto;
-	width: 18px;
-	height: 18px;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	margin-top: 1px;
-}
-
-.volt-settings-provider-icon .volt-brand-icon svg {
-	display: block;
-	overflow: visible;
-}
-
-.volt-settings-provider-row .text {
-	flex: 1;
-	min-width: 0;
-}
-
-.volt-settings-provider-row .title {
-	display: flex;
-	align-items: baseline;
-	gap: 8px;
-	flex-wrap: wrap;
-}
-
-.volt-settings-provider-row .version {
-	font-size: 12px;
-	opacity: 0.45;
-}
-
-.volt-settings-provider-row .badge {
-	font-size: 10px;
-	line-height: 1;
-	padding: 3px 6px;
-	border-radius: 999px;
-	color: #eab308;
-	background: color-mix(in srgb, #eab308 16%, transparent);
-}
-
-.volt-settings-chevron {
-	flex: 0 0 auto;
-	width: 24px;
-	height: 24px;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	border: none;
-	background: transparent;
-	color: var(--vscode-foreground);
-	opacity: 0.4;
-	cursor: pointer;
-	border-radius: 6px;
-	margin-top: 0;
-}
-
-.volt-settings-chevron:hover {
-	opacity: 1;
-	background: var(--volt-settings-hover);
-}
-
-.volt-settings-provider-body {
-	padding: 0 16px 14px 48px;
-}
-
-.volt-settings-provider-connection {
-	font-family: var(--monaco-monospace-font);
-	font-size: 11px;
-	opacity: 0.5;
-	margin-bottom: 10px;
-}
-
-.volt-settings-provider-empty {
-	font-size: 12px;
-	opacity: 0.55;
-	padding-bottom: 4px;
-}
-
-.volt-settings-provider-model {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 16px;
-	padding: 7px 0;
-	font-size: 12px;
+.volt-settings-dot.off {
+	background: color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
 }
 
 /* Modes + status */
@@ -1168,13 +1074,506 @@
 	margin: 2px 0 0;
 }
 
-/* Providers */
+/* Providers & Models: providers and their models in a list on the left, the selection on the right
+ * (providersPage.ts). Both panes scroll on their own inside a box that fills the window. */
+
+.volt-settings-content-inner.volt-settings-content-wide {
+	width: min(1180px, 100%);
+	padding-bottom: 24px;
+}
+
+.volt-pm {
+	display: grid;
+	grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+	gap: 14px;
+	/* The page title, its lead and the bottom padding take the rest of the window. */
+	height: max(460px, calc(100vh - 172px));
+}
+
+.volt-pm-list,
+.volt-pm-detail {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	background: var(--volt-settings-surface);
+	border: 1px solid var(--volt-settings-border);
+	border-radius: var(--volt-settings-radius);
+	overflow: hidden;
+}
+
+.volt-pm-scroll,
+.volt-pm-detail-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	scrollbar-width: thin;
+	scrollbar-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent) transparent;
+}
+
+/* List */
+
+.volt-pm-filter {
+	flex: none;
+	padding: 10px 10px 4px;
+}
+
+.volt-pm-filter .monaco-inputbox {
+	height: 28px;
+	border-radius: 7px;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent) !important;
+	border-color: transparent !important;
+}
+
+.volt-pm-filter .monaco-inputbox input {
+	background: transparent !important;
+}
+
+.volt-pm-scroll {
+	padding: 4px 6px 10px;
+}
+
+.volt-pm-group {
+	padding: 14px 8px 4px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pm-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 30px;
+	padding: 0 8px 0 4px;
+	border-radius: 6px;
+	color: var(--vscode-foreground);
+	font-size: 13px;
+	cursor: pointer;
+	user-select: none;
+	outline: none;
+}
+
+.volt-pm-item:hover {
+	background: var(--volt-settings-hover);
+}
+
+.volt-pm-item.selected {
+	background: var(--volt-settings-selected);
+}
+
+.volt-pm-item:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-pm-item.overview {
+	padding-left: 8px;
+}
+
+.volt-pm-glyph {
+	display: inline-flex;
+	width: 16px;
+	justify-content: center;
+	opacity: 0.8;
+}
+
+.volt-pm-glyph .codicon {
+	font-size: 14px;
+}
+
+.volt-pm-twistie {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	border-radius: 4px;
+	opacity: 0.55;
+}
+
+.volt-pm-twistie:hover {
+	opacity: 1;
+	background: var(--volt-settings-hover);
+}
+
+.volt-pm-twistie .codicon {
+	font-size: 12px;
+	transition: transform 120ms ease;
+}
+
+.volt-pm-block.expanded .volt-pm-twistie .codicon {
+	transform: rotate(90deg);
+}
+
+.volt-pm-twistie.empty {
+	visibility: hidden;
+}
+
+.volt-pm-icon {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+}
+
+.volt-pm-icon .volt-brand-icon svg,
+.volt-pm-head-icon .volt-brand-icon svg {
+	display: block;
+	overflow: visible;
+}
+
+.volt-pm-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-pm-count {
+	flex: none;
+	min-width: 18px;
+	padding: 0 5px;
+	border-radius: 999px;
+	font-size: 10.5px;
+	line-height: 16px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+	color: var(--vscode-descriptionForeground);
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.volt-pm-count.warn {
+	color: #f59e0b;
+	background: color-mix(in srgb, #f59e0b 14%, transparent);
+}
+
+.volt-pm-block.not-installed .volt-pm-name,
+.volt-pm-block.not-installed .volt-pm-icon,
+.volt-pm-block.off > .provider .volt-pm-name {
+	opacity: 0.6;
+}
+
+.volt-pm-item.model {
+	height: 26px;
+	padding-left: 54px;
+	font-size: 12.5px;
+	color: color-mix(in srgb, var(--vscode-foreground) 88%, transparent);
+}
+
+.volt-pm-item.model.off .volt-pm-name {
+	opacity: 0.5;
+}
+
+.volt-pm-hidden {
+	display: inline-flex;
+	opacity: 0.45;
+}
+
+.volt-pm-hidden .codicon {
+	font-size: 12px;
+}
+
+.volt-pm-add {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	height: 28px;
+	margin-top: 2px;
+	padding: 0 8px 0 7px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	font-size: 12.5px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-pm-add:hover,
+.volt-pm-add.selected {
+	color: var(--vscode-foreground);
+	background: var(--volt-settings-hover);
+}
+
+.volt-pm-add.selected {
+	background: var(--volt-settings-selected);
+}
+
+.volt-pm-add .codicon {
+	width: 22px;
+	font-size: 13px;
+	text-align: center;
+}
+
+.volt-pm-block[hidden],
+.volt-pm-models[hidden],
+.volt-pm-item[hidden],
+.volt-pm-group[hidden],
+.volt-pm-add[hidden],
+.volt-pm-none[hidden] {
+	display: none;
+}
+
+.volt-pm-none {
+	padding: 16px 10px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* Detail */
+
+.volt-pm-detail-inner {
+	padding: 20px 22px 28px;
+}
+
+.volt-pm-head {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	padding-bottom: 18px;
+	border-bottom: 1px solid var(--volt-settings-border);
+}
+
+.volt-pm-head-icon {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 44px;
+	height: 44px;
+	border-radius: 11px;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+}
+
+.volt-pm-head-icon > .codicon {
+	font-size: 20px;
+	opacity: 0.85;
+}
+
+.volt-pm-head-copy {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-pm-head-title {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: 4px 8px;
+	font-size: 16px;
+	line-height: 1.25;
+	letter-spacing: -0.01em;
+}
+
+.volt-pm-head-title .version {
+	font-size: 12px;
+	letter-spacing: normal;
+	opacity: 0.45;
+}
+
+.volt-pm-head-title .badge {
+	align-self: center;
+	font-size: 10px;
+	line-height: 1;
+	letter-spacing: normal;
+	padding: 3px 6px;
+	border-radius: 999px;
+	color: #eab308;
+	background: color-mix(in srgb, #eab308 16%, transparent);
+}
+
+.volt-pm-head-status {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	margin-top: 5px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pm-head-status .text {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-pm-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: none;
+}
+
+.volt-pm-section-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 26px;
+	margin: 22px 0 8px;
+	font-size: 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
+}
+
+.volt-pm-section-title > .volt-settings-link {
+	margin: 0 -8px 0 auto;
+}
+
+.volt-pm-section-hint {
+	margin: -4px 0 10px;
+	font-size: 12px;
+	line-height: 1.45;
+	opacity: 0.55;
+}
+
+.volt-pm-detail .volt-settings-row {
+	gap: 20px;
+	min-height: 48px;
+	padding: 10px 14px;
+}
+
+.volt-pm-detail .volt-settings-row-control {
+	max-width: 60%;
+	min-width: 0;
+}
+
+.volt-pm-detail .volt-settings-group + .volt-settings-group {
+	margin-top: 10px;
+}
+
+.volt-pm-value {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 12px;
+	text-align: right;
+}
+
+code.volt-pm-value {
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+}
+
+.volt-pm-copy {
+	flex: none;
+	width: 24px;
+	height: 24px;
+}
+
+.volt-pm-copy .codicon {
+	font-size: 13px;
+}
+
+.volt-pm-form-actions {
+	justify-content: flex-end;
+	padding: 10px 14px;
+	border-top: 1px solid var(--volt-settings-border);
+}
+
+.volt-pm-desc {
+	margin: 16px 0 0;
+	font-size: 12.5px;
+	line-height: 1.5;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-input.param {
+	width: 120px;
+}
+
+.volt-pm-caps {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 12px 14px;
+	border-top: 1px solid var(--volt-settings-border);
+}
+
+.volt-pm-caps:first-child {
+	border-top: 0;
+}
+
+.volt-pm-cap {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 24px;
+	padding: 0 9px 0 7px;
+	border-radius: 999px;
+	font-size: 11.5px;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.volt-pm-cap .codicon {
+	font-size: 12px;
+}
+
+.volt-pm-cap.on .codicon {
+	color: #4ade80;
+}
+
+.volt-pm-cap:not(.on) {
+	opacity: 0.45;
+}
+
+/* Overview: the providers that need a step, each with that step. */
+
+.volt-pm-setup-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 54px;
+	padding: 10px 14px;
+	cursor: pointer;
+}
+
+.volt-pm-setup-row + .volt-pm-setup-row {
+	border-top: 1px solid var(--volt-settings-border);
+}
+
+.volt-pm-setup-row:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+}
+
+.volt-pm-setup-row .volt-pm-icon {
+	width: 28px;
+	height: 28px;
+	border-radius: 7px;
+}
+
+.volt-pm-setup-row .copy {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-pm-setup-row .name {
+	font-size: 13px;
+}
+
+.volt-pm-setup-row .detail {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 3px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
 
 .volt-settings-stats {
 	display: grid;
 	grid-template-columns: repeat(3, 1fr);
 	gap: 10px;
-	margin-bottom: 4px;
+	margin-top: 18px;
 }
 
 .volt-settings-stat {
@@ -1204,109 +1603,72 @@
 	color: #f59e0b;
 }
 
-.volt-settings-providers .volt-settings-provider-row {
-	cursor: pointer;
-	gap: 12px;
-	min-height: 60px;
-}
-
-.volt-settings-providers .volt-settings-provider-row:hover {
-	background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
-}
-
-.volt-settings-providers .volt-settings-provider-icon {
-	width: 32px;
-	height: 32px;
-	border-radius: 8px;
-	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
-	margin-top: 0;
-}
-
-.volt-settings-provider.not-installed .volt-settings-provider-icon,
-.volt-settings-provider.not-installed .name {
-	opacity: 0.6;
-}
-
-.volt-settings-providers .volt-settings-provider-row .detail {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	margin-top: 3px;
-	min-width: 0;
-}
-
-.volt-settings-providers .detail-text {
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-}
-
-.volt-settings-providers .volt-settings-dot {
-	margin-top: 0;
-	width: 6px;
-	height: 6px;
-}
-
-.volt-settings-dot.off {
-	background: color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
-}
-
-.volt-settings-providers .volt-settings-chevron .codicon {
-	transition: transform 0.15s ease;
-}
-
-.volt-settings-provider.expanded .volt-settings-chevron .codicon {
-	transform: rotate(90deg);
-}
-
-.volt-settings-provider-actions {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	flex: 0 0 auto;
-}
-
+/* Action buttons (Install, Sign In, Download, Add Key, Save): small, a grey wash rather than a
+ * solid fill, and one width per row so a column of them lines up whatever each one says. */
 .volt-settings-action {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	gap: 6px;
-	height: 28px;
-	padding: 0 12px;
-	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 13%, transparent);
+	gap: 5px;
+	height: 26px;
+	padding: 0 10px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 	border-radius: 7px;
-	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
-	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 88%, transparent);
 	font: inherit;
 	font-size: 12px;
 	font-weight: 500;
 	line-height: 1;
 	white-space: nowrap;
 	cursor: pointer;
-	transition: background-color 120ms ease, border-color 120ms ease;
+	transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 .volt-settings-action:hover {
-	background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
-	border-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 13%, transparent);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 }
 
-/* Primary: solid foreground on the window color (white on dark, near-black on light). The theme's
- * button.background (a pale blue in Volt Dark) read as washed out next to the page. */
+/* Primary: the same wash, a step stronger. */
 .volt-settings-action.primary {
-	border-color: transparent;
-	background: var(--vscode-foreground);
-	color: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .volt-settings-action.primary:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+.volt-pm-actions > .volt-settings-action:not(.icon-only):not(.ghost) {
+	width: 96px;
+	padding: 0 8px;
+}
+
+.volt-settings-action > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Ghost (back to the provider): text and icon only until hovered. */
+.volt-settings-action.ghost {
 	border-color: transparent;
-	background: color-mix(in srgb, var(--vscode-foreground) 84%, var(--volt-agent-window-bg-base, var(--vscode-editor-background)));
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+}
+
+.volt-settings-action.ghost:hover {
+	color: var(--vscode-foreground);
+	background: var(--volt-settings-hover);
 }
 
 /* Icon-only (open docs, get a key): a square ghost button, as tall as its neighbours. */
 .volt-settings-action.icon-only {
-	width: 28px;
+	width: 26px;
 	padding: 0;
 	border-color: transparent;
 	background: transparent;
@@ -1319,9 +1681,9 @@
 }
 
 .volt-settings .volt-settings-action > .codicon {
-	font-size: 14px;
-	line-height: 14px;
-	/* The workbench tints bare codicons with icon.foreground; on a solid button that is invisible. */
+	font-size: 13px;
+	line-height: 13px;
+	/* The workbench tints bare codicons with icon.foreground. */
 	color: inherit;
 }
 
@@ -1332,11 +1694,13 @@
 
 .volt-settings-spinner {
 	display: inline-flex;
+	justify-content: center;
+	width: 96px;
 	opacity: 0.7;
 }
 
 .volt-settings-provider-failure {
-	margin: 0 16px 12px 60px;
+	margin-top: 14px;
 	padding: 10px 12px;
 	border-radius: 8px;
 	background: color-mix(in srgb, #ef4444 10%, transparent);
@@ -1356,8 +1720,12 @@
 .volt-settings-provider-key {
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	padding: 0 16px 12px 60px;
+	gap: 8px;
+	margin-top: 14px;
+	padding: 10px 12px;
+	border: 1px solid var(--volt-settings-border);
+	border-radius: var(--volt-settings-radius);
+	background: var(--volt-settings-surface);
 }
 
 .volt-settings-input.grow {
@@ -1365,63 +1733,28 @@
 	width: auto;
 }
 
-.volt-settings-providers .volt-settings-provider-body {
-	padding: 4px 16px 16px 60px;
-}
-
-.volt-settings-facts {
-	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-	gap: 10px 16px;
-	margin-bottom: 8px;
-}
-
-.volt-settings-facts .fact {
-	min-width: 0;
-}
-
-.volt-settings-facts .label {
-	font-size: 11px;
-	color: var(--vscode-descriptionForeground);
-}
-
-.volt-settings-facts .value {
-	display: block;
-	margin-top: 2px;
-	font-size: 12px;
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-}
-
-.volt-settings-facts code.value {
-	font-family: var(--monaco-monospace-font);
-	font-size: 11px;
-}
-
 .volt-settings-provider-links {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 2px;
-	margin: 0 0 8px -8px;
+	margin: 18px 0 0 -8px;
 }
 
 .volt-settings-provider-links:empty {
 	display: none;
 }
 
-.volt-settings-models-head {
-	padding: 10px 0 6px;
-	border-top: 1px solid var(--volt-settings-border);
-	font-size: 12px;
-	color: var(--vscode-descriptionForeground);
+/* A provider's models: a filter, then one dense row per model. */
+
+.volt-pm-models-group {
+	padding-bottom: 6px;
 }
 
 .volt-settings-models-toolbar {
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	margin-bottom: 6px;
+	padding: 10px 14px 6px;
 }
 
 .volt-settings-input.filter {
@@ -1433,12 +1766,8 @@
 	color: var(--vscode-descriptionForeground);
 }
 
-.volt-settings-models-toolbar .volt-settings-link {
-	margin-left: auto;
-}
-
 .volt-settings-models {
-	margin: 0 -8px;
+	padding: 0 6px;
 }
 
 .volt-settings-models-group {
@@ -1457,9 +1786,16 @@
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	height: 30px;
-	padding: 0 8px;
+	height: 32px;
+	padding: 0 4px 0 8px;
 	border-radius: 6px;
+	cursor: pointer;
+	outline: none;
+}
+
+.volt-settings-model-row:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
 }
 
 .volt-settings-model-row[hidden],
@@ -1509,12 +1845,49 @@
 
 .volt-settings-model-row .traits {
 	flex: none;
-	max-width: 50%;
+	max-width: 45%;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font-size: 11.5px;
 	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pm-row-chevron {
+	display: inline-flex;
+	opacity: 0.35;
+}
+
+.volt-pm-row-chevron .codicon {
+	font-size: 12px;
+}
+
+.volt-settings-model-row:hover .volt-pm-row-chevron {
+	opacity: 0.8;
+}
+
+.volt-pm-detail .volt-settings-empty {
+	margin-top: 0;
+}
+
+.volt-pm-detail .volt-settings-form {
+	margin-top: 18px;
+}
+
+@media (max-width: 1080px) {
+	.volt-pm-detail .volt-settings-model-row .traits {
+		display: none;
+	}
+}
+
+@media (max-width: 820px) {
+	.volt-pm {
+		grid-template-columns: 200px minmax(0, 1fr);
+	}
+
+	.volt-pm-detail .volt-settings-row-control {
+		max-width: none;
+	}
 }
 
 @media (max-width: 820px) {

@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { compactEffortLabel, fillDescriptors, splitModelDisplayName, traitDescriptors, unionDescriptors } from '../../common/models/modelOptions.js';
+import { compactEffortLabel, fillDescriptors, generationParams, parseModelParam, pickGenerationParams, splitModelDisplayName, traitDescriptors, unionDescriptors } from '../../common/models/modelOptions.js';
 
 suite('compactEffortLabel', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
@@ -75,5 +75,37 @@ suite('descriptor merge', () => {
 			{ id: 'reasoning', label: 'Reasoning', type: 'select', options: [{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }] },
 		]);
 		assert.deepStrictEqual(traits.map(trait => trait.id), ['reasoning', 'contextWindow', 'fastMode']);
+	});
+});
+
+suite('model generation params', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('reads pins in range and drops the rest', () => {
+		assert.strictEqual(parseModelParam('temperature', '0.7'), 0.7);
+		assert.strictEqual(parseModelParam('temperature', ' 0 '), 0);
+		assert.strictEqual(parseModelParam('temperature', '2.5'), undefined);
+		assert.strictEqual(parseModelParam('temperature', '-1'), undefined);
+		assert.strictEqual(parseModelParam('temperature', 'warm'), undefined);
+		assert.strictEqual(parseModelParam('temperature', ''), undefined);
+		assert.strictEqual(parseModelParam('temperature', true), undefined);
+		assert.strictEqual(parseModelParam('topP', '1'), 1);
+		assert.strictEqual(parseModelParam('topP', '1.1'), undefined);
+		assert.strictEqual(parseModelParam('maxOutputTokens', '4096'), 4096);
+		assert.strictEqual(parseModelParam('maxOutputTokens', '40.5'), undefined);
+		assert.strictEqual(parseModelParam('maxOutputTokens', '0'), undefined);
+		assert.strictEqual(parseModelParam('reasoning', 'high'), undefined);
+	});
+
+	test('a request carries only the valid pins', () => {
+		assert.deepStrictEqual(generationParams({ temperature: '0.2', topP: 'x', maxOutputTokens: '8000', reasoning: 'high' }), {
+			temperature: 0.2,
+			maxOutputTokens: 8000,
+		});
+		assert.deepStrictEqual(generationParams(undefined), {});
+	});
+
+	test('picking pins keeps them as strings and leaves option selections behind', () => {
+		assert.deepStrictEqual(pickGenerationParams({ temperature: '0.50', reasoning: 'high', fastMode: true, maxOutputTokens: '9e9' }), { temperature: '0.5' });
 	});
 });

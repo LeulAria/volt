@@ -14,8 +14,11 @@ export const IVoltPredictionService = createDecorator<IVoltPredictionService>('v
 /** One concrete text replacement the model predicted. */
 export interface IPredictedEdit {
 	uri: URI;
+	/** Where the edit goes. Recomputed from `find` against the live text when that is set. */
 	range: IRange;
 	replacement: string;
+	/** Text the edit replaces, as the model copied it. Gone from the file means the edit is stale. */
+	find?: string;
 	/** Model-supplied rationale, surfaced in hovers/receipts. Never invented by Volt. */
 	reason?: string;
 }
@@ -83,6 +86,13 @@ export interface IPredictionSettings {
 	mode: 'eager' | 'subtle';
 	/** Glob patterns that never receive predictions (secrets, lockfiles). */
 	disabledGlobs: string[];
+	/** Ghost text in the agent composer: the rest of the word, the next words, the rest of the sentence. */
+	composer: boolean;
+	/**
+	 * Pause in typing before the composer asks the model to continue the sentence. Suggestions from
+	 * the user's own prompts show at once, without waiting.
+	 */
+	composerDelayMs: number;
 }
 
 export const DEFAULT_PREDICTION_SETTINGS: IPredictionSettings = {
@@ -90,7 +100,24 @@ export const DEFAULT_PREDICTION_SETTINGS: IPredictionSettings = {
 	debounceMs: 0,
 	mode: 'eager',
 	disabledGlobs: ['**/.env*', '**/*.lock', '**/package-lock.json', '**/secrets*'],
+	composer: true,
+	composerDelayMs: 1000,
 };
+
+/** What the composer's model continuation is built from. */
+export interface IComposerPredictionInput {
+	/** The composer's text model; caches are kept per composer. */
+	readonly uri: URI;
+	/** Everything typed before the cursor. */
+	readonly draft: string;
+	/** Text after the cursor (usually empty: the composer predicts at the end). */
+	readonly after: string;
+	/** Recent messages of the chat, oldest first, each already shortened. */
+	readonly transcript: readonly string[];
+	/** Files and other names the chat is about. */
+	readonly vocabulary: readonly string[];
+	readonly clipboard?: string;
+}
 
 export const VOLT_PREDICTION_SETTINGS_STORAGE_KEY = 'volt.prediction.settings';
 
@@ -113,6 +140,18 @@ export interface IVoltPredictionService {
 
 	/** Ghost text at the cursor. Multiline capable. */
 	predictInline(ctx: IPredictionContext, token: CancellationToken): Promise<IEditPrediction | undefined>;
+
+	/**
+	 * Ghost text already known for `ctx` without a model call: the rest of a suggestion the user is
+	 * typing through, or an answer for this exact spot. Undefined otherwise.
+	 */
+	peekInline(ctx: IPredictionContext): IEditPrediction | undefined;
+
+	/** The model's continuation of a composer message (a few words), or undefined. */
+	predictComposer(input: IComposerPredictionInput, token: CancellationToken): Promise<string | undefined>;
+
+	/** A composer continuation already known for `input`, without a model call. */
+	peekComposer(input: IComposerPredictionInput): string | undefined;
 
 	/** Next-edit prediction: a structured edit near (or after) the cursor, plus follow-ups. */
 	predictNextEdit(ctx: IPredictionContext, token: CancellationToken): Promise<IEditPrediction | undefined>;

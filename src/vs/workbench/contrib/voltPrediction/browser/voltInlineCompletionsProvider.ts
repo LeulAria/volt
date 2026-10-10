@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { raceCancellation, raceTimeout } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { match as matchGlob } from '../../../../base/common/glob.js';
@@ -11,7 +12,7 @@ import { Schemas } from '../../../../base/common/network.js';
 import { basename } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { Position } from '../../../../editor/common/core/position.js';
-import { IRange, Range } from '../../../../editor/common/core/range.js';
+import { Range } from '../../../../editor/common/core/range.js';
 import {
 	InlineCompletion,
 	InlineCompletionContext,
@@ -29,9 +30,14 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { IMarkerService } from '../../../../platform/markers/common/markers.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { localize } from '../../../../nls.js';
-import { IEditPrediction, IPredictedEdit, IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
+import { IEditPrediction, IPredictedEdit, IPredictionContext, IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
+import { AGENT_COMPOSER_SCHEME } from '../../../services/voltRuntime/common/prediction/composerContext.js';
+import { INLINE_EXCERPT_BUDGET } from '../../../services/voltRuntime/common/prediction/contextWindow.js';
 import { shiftRangeAfterAccept } from '../../../services/voltRuntime/common/prediction/editGraph.js';
+import { fromClipboard } from '../../../services/voltRuntime/common/prediction/localPredictor.js';
+import { inlineEditForLine, postProcessInline } from '../../../services/voltRuntime/common/prediction/postProcess.js';
 import { buildPredictionContext } from '../../../services/voltRuntime/browser/prediction/predictionContextBuilder.js';
+import { resolveEditInModel, sortByPosition } from '../../../services/voltRuntime/browser/prediction/predictedEditResolver.js';
 import { RecentEditsTracker } from '../../../services/voltRuntime/browser/prediction/recentEditsTracker.js';
 
 type VoltItemKind = 'inline' | 'queued' | 'jump';
@@ -47,6 +53,18 @@ interface IVoltCompletionList extends InlineCompletions<IVoltInlineItem> {
 }
 
 /**
+ * Editors that get no code ghost text: the agent composers have their own natural-language
+ * provider, and output or debug views are not typed into.
+ */
+const NO_CODE_PREDICTION_SCHEMES = new Set<string>([AGENT_COMPOSER_SCHEME, Schemas.inMemory, 'output', 'debug']);
+
+/**
+ * How long a request waits for a fast model before showing what is known locally. An agent CLI
+ * takes seconds: its answer appears on its own when it lands, so it is not waited for at all.
+ */
+const MODEL_WAIT_MS = 900;
+
+/**
  * VOLT's single inline-completion provider (D23). Serves three item shapes through the
  * stock editor UI:
  *  - ghost text at the cursor (`kind: inline`),
@@ -57,8 +75,11 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 
 	readonly groupId = 'volt';
 	readonly displayName = 'Volt';
-	/** Wait for typing to settle so we do not cancel the LLM on every key. */
-	readonly debounceDelayMs = 160;
+	/**
+	 * Short: typing into a suggestion is answered from the service's typed-through cache, and a
+	 * request still running for an earlier keystroke is reused rather than cancelled.
+	 */
+	readonly debounceDelayMs = 75;
 
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	readonly onDidChangeInlineCompletions: Event<void> = this._onDidChange.event;
@@ -69,6 +90,8 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 	private clipboardCache = '';
 	private clipboardReadAt = 0;
 	private warned = false;
+	/** Where ghost text was last asked for, so an answer that lands later is shown only if it still applies. */
+	private latest: { readonly model: ITextModel; readonly ctx: IPredictionContext } | undefined;
 
 	constructor(
 		private readonly recentEdits: RecentEditsTracker,
@@ -88,7 +111,8 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 		if (!settings.enabled) {
 			return undefined;
 		}
-		if (model.uri.scheme !== Schemas.file && model.uri.scheme !== Schemas.untitled) {
+		// Any editor that is typed into: files, untitled, notebooks, settings, remote files.
+		if (NO_CODE_PREDICTION_SCHEMES.has(model.uri.scheme)) {
 			return undefined;
 		}
 		if (settings.disabledGlobs.some(pattern => matchGlob(pattern, model.uri.path))) {
@@ -106,12 +130,13 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 		}
 
 		void this.refreshClipboard();
-		const ctx = buildPredictionContext(model, position, this.markerService, this.modelService, this.recentEdits.list(), this.clipboardCache);
+		const inlineOnly = context.includeInlineCompletions || !context.includeInlineEdits;
+		const ctx = buildPredictionContext(model, position, this.markerService, this.modelService, this.recentEdits.list(), this.clipboardCache, inlineOnly ? INLINE_EXCERPT_BUDGET : undefined);
 
 		if (!this.predictionService.resolveTabModelRef()) {
 			this.warnOnce(localize(
 				'voltPrediction.noModel',
-				"Volt Tab follows the agent composer. Pick Cursor (or any agent/model) there."
+				"Volt Tab has no model. Choose a prediction model in Volt Settings > Tab & Prediction, or a model in the composer."
 			));
 			return undefined;
 		}
@@ -122,25 +147,67 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 			if (!prediction || token.isCancellationRequested) {
 				return undefined;
 			}
-			this.queue = prediction.next.slice();
-			return this.list(model, position, [this.editItem(prediction.primary)]);
+			this.queue = [prediction.primary, ...prediction.next];
+			const served = this.serveQueue(model, position);
+			return served ? this.list(model, position, served) : undefined;
 		}
 
-		// 3. Ghost text from the selected chat model - not nearby-line echo, not LSP.
-		const prediction = await this.predictionService.predictInline(ctx, token);
+		// 3. Ghost text. Instant when already known: typed through, or this spot answered before.
+		const known = this.predictionService.peekInline(ctx);
+		if (known) {
+			return this.inlineList(model, position, known.primary.replacement);
+		}
+		// Otherwise the model, waited for briefly. A slower answer shows on its own when it lands;
+		// until then, what the line starts of the clipboard.
+		this.latest = { model, ctx };
+		const answer = this.predictionService.predictInline(ctx, CancellationToken.None);
+		const agentLane = this.predictionService.resolveTabModelRef()?.startsWith('agent:');
+		const prediction = agentLane ? undefined : await raceCancellation(raceTimeout(answer, MODEL_WAIT_MS), token);
 		const failure = this.predictionService.consumeLastFailure();
 		if (failure) {
 			this.warnOnce(localize('voltPrediction.failed', "Volt Tab: {0}", failure));
 		}
-		if (!prediction || token.isCancellationRequested || model.getVersionId() !== ctx.modelVersionId) {
+		if (token.isCancellationRequested || model.getVersionId() !== ctx.modelVersionId) {
+			this.showWhenAnswered(answer);
 			return undefined;
 		}
+		if (prediction) {
+			return this.inlineList(model, position, prediction.primary.replacement);
+		}
+		this.showWhenAnswered(answer);
+		const local = clipboardSuggestion(ctx);
+		return local ? this.inlineList(model, position, local) : undefined;
+	}
+
+	/** Builds the ghost-text item for `completion` at `position`, fitted to the rest of the line. */
+	private inlineList(model: ITextModel, position: Position, completion: string): IVoltCompletionList {
+		// Re-read the line: the cursor's line may have changed while the model was answering.
+		const lineContent = model.getLineContent(position.lineNumber);
+		const edit = inlineEditForLine(completion, lineContent.slice(0, position.column - 1), lineContent.slice(position.column - 1));
 		const item: IVoltInlineItem = {
 			voltKind: 'inline',
-			insertText: prediction.primary.replacement,
-			range: new Range(position.lineNumber, position.column, position.lineNumber, position.column),
+			insertText: edit.insertText,
+			range: edit.replacesLineSuffix
+				? new Range(position.lineNumber, position.column, position.lineNumber, model.getLineMaxColumn(position.lineNumber))
+				: new Range(position.lineNumber, position.column, position.lineNumber, position.column),
 		};
 		return this.list(model, position, [item]);
+	}
+
+	/**
+	 * When `answer` lands and fits where the user is now (nothing typed since the last request, or
+	 * typed into it), asks the editor to fetch again: the service then answers from its cache.
+	 */
+	private showWhenAnswered(answer: Promise<IEditPrediction | undefined>): void {
+		void answer.then(result => {
+			const latest = this.latest;
+			if (!result || !latest || latest.model.isDisposed() || latest.model.getVersionId() !== latest.ctx.modelVersionId) {
+				return;
+			}
+			if (this.predictionService.peekInline(latest.ctx)) {
+				this._onDidChange.fire();
+			}
+		}, () => undefined);
 	}
 
 	handleEndOfLifetime(completions: IVoltCompletionList, item: IVoltInlineItem, reason: InlineCompletionEndOfLifeReason<IVoltInlineItem>): void {
@@ -149,7 +216,7 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 				this.dropAccepted(item.voltEdit);
 				// Retrigger so the next edit in the chain shows immediately.
 				this._onDidChange.fire();
-			} else if (item.voltKind === 'inline') {
+			} else if (item.voltKind === 'inline' && this.canChain()) {
 				this.chainNextEdit(completions.sourceModel, completions.sourcePosition);
 			}
 			// 'jump': core ran vscode.open; the queue is served when NES retriggers there.
@@ -190,41 +257,50 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 
 	// --- queue -----------------------------------------------------------------------------
 
+	/**
+	 * The next queued edit for this file, placed in the file as it is now (text-anchored edits
+	 * are found again; an edit whose text is gone is dropped as stale), else a jump to the next
+	 * file that has one.
+	 */
 	private serveQueue(model: ITextModel, position: Position): IVoltInlineItem[] | undefined {
 		if (!this.queue.length) {
 			return undefined;
 		}
 		const uri = model.uri.toString();
-		while (this.queue.length) {
-			const local = this.queue.find(edit => edit.uri.toString() === uri);
-			if (local) {
-				if (!this.rangeIsValid(model, local.range)) {
-					this.queue = this.queue.filter(edit => edit !== local);
-					continue;
-				}
-				return [this.editItem(local)];
+		const local: IPredictedEdit[] = [];
+		const remote: IPredictedEdit[] = [];
+		for (const edit of this.queue) {
+			if (edit.uri.toString() !== uri) {
+				remote.push(edit);
+				continue;
 			}
-			// All remaining edits live in other files -> offer the jump.
-			return [this.jumpItem(this.queue[0].uri, position)];
+			const placed = resolveEditInModel(edit, model, position);
+			if (placed) {
+				local.push(placed);
+			}
 		}
-		return undefined;
+		this.queue = [...sortByPosition(local), ...remote];
+		if (local.length) {
+			return [this.editItem(this.queue[0])];
+		}
+		// All remaining edits live in other files -> offer the jump.
+		return remote.length ? [this.jumpItem(remote[0].uri, position)] : undefined;
+	}
+
+	/** Chained next-edit requests cost a full structured round trip: fast HTTP models only. */
+	private canChain(): boolean {
+		const ref = this.predictionService.resolveTabModelRef();
+		return !!ref && !ref.startsWith('agent:');
 	}
 
 	private dropAccepted(accepted: IPredictedEdit): void {
 		const uri = accepted.uri.toString();
 		this.queue = this.queue
 			.filter(edit => edit !== accepted)
-			.map(edit => edit.uri.toString() === uri
+			// Text-anchored edits are found again when served; positional ones shift.
+			.map(edit => edit.uri.toString() === uri && edit.find === undefined
 				? { ...edit, range: shiftRangeAfterAccept(edit.range, accepted) }
 				: edit);
-	}
-
-	private rangeIsValid(model: ITextModel, range: IRange): boolean {
-		if (range.endLineNumber > model.getLineCount()) {
-			return false;
-		}
-		return range.startColumn <= model.getLineMaxColumn(range.startLineNumber)
-			&& range.endColumn <= model.getLineMaxColumn(range.endLineNumber);
 	}
 
 	// --- chaining --------------------------------------------------------------------------
@@ -239,6 +315,7 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 				if (model.isDisposed()) {
 					return;
 				}
+				// The cursor ends up after the accepted text; `near` is where the completion started.
 				const position = model.validatePosition(near);
 				const ctx = buildPredictionContext(model, position, this.markerService, this.modelService, this.recentEdits.list(), this.clipboardCache);
 				const prediction = await this.predictionService.predictNextEdit(ctx, cts.token);
@@ -301,4 +378,16 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 			sourcePosition: position,
 		};
 	}
+}
+
+/**
+ * Instant ghost text with no model call: the rest of the clipboard when the line is being typed
+ * as its start (or a keyword before it), the "I just copied this" case.
+ */
+function clipboardSuggestion(ctx: IPredictionContext): string | undefined {
+	if (ctx.linePrefix.trim().length < 2) {
+		return undefined;
+	}
+	const raw = fromClipboard(ctx.linePrefix, ctx.clipboard);
+	return raw ? postProcessInline({ raw, linePrefix: ctx.linePrefix, lineSuffix: ctx.lineSuffix, prefix: ctx.prefix, suffix: ctx.suffix }) : undefined;
 }

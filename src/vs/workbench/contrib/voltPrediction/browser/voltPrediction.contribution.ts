@@ -11,12 +11,15 @@ import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/
 import { RecentEditsTracker } from '../../../services/voltRuntime/browser/prediction/recentEditsTracker.js';
 // Ensure the prediction service singleton is registered before anything asks for it.
 import '../../../services/voltRuntime/browser/prediction/voltPredictionService.js';
+import { AGENT_COMPOSER_SCHEME } from '../../../services/voltRuntime/common/prediction/composerContext.js';
 import { VoltAiEditAction } from './oneShotEdit.js';
+import { VoltComposerCompletionsProvider } from './voltComposerCompletionsProvider.js';
 import { VoltInlineCompletionsProvider } from './voltInlineCompletionsProvider.js';
 
 /**
  * Wires the Prediction Runtime into the editor: one InlineCompletionsProvider on every
- * language (D23) plus the recent-edits tracker feeding its context.
+ * language (D23) plus the recent-edits tracker feeding its context, and a natural-language
+ * provider for the agent composers.
  */
 class VoltPredictionContribution extends Disposable {
 
@@ -32,6 +35,8 @@ class VoltPredictionContribution extends Disposable {
 		this.recentEdits = this._register(instantiationService.createInstance(RecentEditsTracker));
 		const provider = this._register(instantiationService.createInstance(VoltInlineCompletionsProvider, this.recentEdits));
 		this._register(languageFeaturesService.inlineCompletionsProvider.register('*', provider));
+		const composer = this._register(instantiationService.createInstance(VoltComposerCompletionsProvider));
+		this._register(languageFeaturesService.inlineCompletionsProvider.register({ scheme: AGENT_COMPOSER_SCHEME }, composer));
 		recentEditsForActions = this.recentEdits;
 	}
 }

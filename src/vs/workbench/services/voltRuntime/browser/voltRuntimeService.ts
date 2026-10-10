@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { inlineResourceContext } from '../common/fileAttachments.js';
+import { getActiveDocument } from '../../../../base/browser/dom.js';
 import { DeferredPromise, IntervalTimer, RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
@@ -20,6 +21,7 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { IAgentWorktreeService } from '../common/git/agentWorktree.js';
 import { IAgentHistoryService } from '../common/history/agentHistory.js';
 import { buildTitlePrompt, sanitizeTitle, titleCommandFor } from '../common/history/titleGeneration.js';
+import { predictionCommandFor } from '../common/prediction/printCommand.js';
 import { normalizeCursorModelId } from '../common/harness/cursorQuota.js';
 import { IVoltSessionContextService } from '../common/sessionContext.js';
 import './sessionContextService.js';
@@ -32,7 +34,7 @@ import { compilePolicy } from '../common/access/policyCompiler.js';
 import { accessBridgeFor } from './agents/bridges/accessBridges.js';
 import { DEFAULT_MODEL_CAPABILITIES } from '../common/capabilities.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../common/events.js';
-import { IVoltModelOptions, MODEL_OPTION_REASONING, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
+import { IVoltModelOptions, MODEL_OPTION_REASONING, pickGenerationParams, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
 import { modePolicy, VoltMode } from '../common/modes.js';
 import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/modelVisibility.js';
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
@@ -118,6 +120,26 @@ import { createCompatProvider, createLMStudioProvider, createOpenAIProvider, cre
 const RECEIPT_LIMIT = 500;
 /** Access-broker session id for Tab completions that ride an ACP agent. */
 const TAB_PREDICTION_SESSION_ID = 'volt-tab-prediction';
+/**
+ * Prompts one Tab agent session answers before a fresh one takes over. An agent keeps every prompt
+ * in its conversation and re-reads it all on the next turn, so without a cap each ghost-text
+ * request would cost more tokens and time than the last.
+ */
+const TAB_AGENT_MAX_PROMPTS = 6;
+/** One print-mode prediction; the prediction service cancels sooner when the answer is no longer wanted. */
+const TAB_PRINT_TIMEOUT_MS = 30_000;
+
+/** The agent session that answers Tab predictions. */
+interface ITabAgentSession {
+	readonly ref: string;
+	readonly handle: IAgentSessionHandle;
+	readonly provider: IAgentProvider;
+	/** How it was started, so a spare with the same setup can be parked before it retires. */
+	readonly request: IAgentStartRequest;
+	prompts: number;
+	inflight: number;
+	retired: boolean;
+}
 
 /** Bumped whenever the built-in profile list changes so existing installs pick it up. */
 const CLI_SEED_VERSION = 4;
@@ -334,6 +356,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private catalogRefresh: Promise<void> | undefined;
 	private modelOptions: Record<string, IVoltModelOptions> = {};
 	private detections = new Map<string, IDetectResult>();
+	private readonly detectionsInFlight = new Map<string, Promise<IDetectResult>>();
 	private readonly agentModels = new Map<string, IModelInfo[]>();
 	private lastProviderCheck: number | undefined;
 	private readonly healthTimer = this._register(new IntervalTimer());
@@ -345,7 +368,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private projectRules: IPermissionRule[] = [];
 	private savedRules: IPermissionRule[] = [];
 	private compiledPolicy: ICompiledPolicy = compilePolicy({});
-	private tabAgent: { ref: string; handle: IAgentSessionHandle; provider: IAgentProvider } | undefined;
+	private tabAgent: ITabAgentSession | undefined;
 	private readonly policyMemo = new Map<string, IAccessDecision>();
 	private readonly pendingApprovals = new Map<string, { resolve: (decision: IAccessDecision) => void; request: IAccessRequest }>();
 	private readonly pendingQuestions = new Map<string, { request: IAgentQuestionRequest; waiters: Set<(response: IAgentQuestionResponse) => void> }>();
@@ -1316,35 +1339,118 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		options: IVoltModelOptions | undefined,
 		token: CancellationToken,
 	): AsyncIterable<IVoltEvent> {
+		// Like chat titles: one print-mode call with nothing carried over, when the CLI has one.
+		const definition = cliAgentDefinition(profile.providerId);
+		const command = profile.command && definition?.commands.includes(profile.command) ? profile.command : undefined;
+		// An agent that lists no models has the provider's id as its own: then the CLI picks its cheapest.
+		const argv = predictionCommandFor(profile.providerId, command, messages, item.id === profile.providerId ? undefined : titleAgentModel(item));
+		if (argv) {
+			yield* this.streamPrintCommand(argv, token);
+			return;
+		}
 		const provider = this.agentProviders.get(profile.providerId);
 		if (!provider) {
 			throw new Error(`Unknown agent provider ${profile.providerId}`);
 		}
-		if (!this.tabAgent || this.tabAgent.ref !== item.ref) {
-			await this.disposeTabAgent();
-			const handle = await provider.start({
+		let live = this.tabAgent;
+		if (live && (live.ref !== item.ref || live.prompts >= TAB_AGENT_MAX_PROMPTS)) {
+			this.retireTabAgent(live);
+			live = undefined;
+		}
+		if (!live) {
+			const request: IAgentStartRequest = {
 				mode: 'ask',
 				profile,
 				cwd: this.workspace.getWorkspace().folders[0]?.uri.fsPath,
 				modelId: item.id === profile.providerId ? undefined : item.id,
 				options: this.resolvedOptions(item, options),
-			});
+			};
+			// Adopts the spare parked below when there is one, so a rotation costs no cold start.
+			const handle = await provider.start(request);
 			provider.setRunContext?.(handle, { sessionId: TAB_PREDICTION_SESSION_ID, runId: 'tab', mode: 'ask' });
 			await provider.applyAccessPolicy?.(handle, compilePolicy({ overlay: modeOverlay('ask') }));
-			this.tabAgent = { ref: item.ref, handle, provider };
+			const started = this.tabAgent;
+			if (started && started.ref === item.ref && started.prompts < TAB_AGENT_MAX_PROMPTS) {
+				// Another request started the same session while this one was starting: keep that one.
+				void provider.dispose(handle).catch(() => undefined);
+				live = started;
+			} else {
+				if (started) {
+					this.retireTabAgent(started);
+				}
+				live = { ref: item.ref, handle, provider, request, prompts: 0, inflight: 0, retired: false };
+				this.tabAgent = live;
+			}
+		}
+		live.prompts++;
+		if (live.prompts === TAB_AGENT_MAX_PROMPTS) {
+			const spares = live.provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'prewarmSpare' | 'hasSpare'>>;
+			if (spares.prewarmSpare && spares.hasSpare && !spares.hasSpare(live.request)) {
+				void spares.prewarmSpare(live.request);
+			}
 		}
 		const text = [
 			'Fill-in-the-middle. Reply with SOURCE CODE only - the exact characters to insert at the cursor.',
 			'No English. No markdown. No explanation. Empty reply if you cannot complete.',
 			...messages.map(message => message.content).filter(Boolean),
 		].join('\n\n');
-		yield* provider.send(this.tabAgent.handle, { text, mode: 'ask' }, profile, token);
+		live.inflight++;
+		try {
+			yield* provider.send(live.handle, { text, mode: 'ask' }, profile, token);
+		} finally {
+			live.inflight--;
+			if (live.retired && !live.inflight) {
+				void live.provider.dispose(live.handle).catch(() => undefined);
+			}
+		}
+	}
+
+	/** Runs a one-shot CLI command and reports its output as one text reply. Cancelling kills it. */
+	private async *streamPrintCommand(argv: readonly string[], token: CancellationToken): AsyncIterable<IVoltEvent> {
+		const id = `tab-${generateUuid().slice(0, 8)}`;
+		const cancel = token.onCancellationRequested(() => void this.stdio.cancelExec(id).catch(() => undefined));
+		try {
+			const result = await this.stdio.exec({
+				id,
+				command: argv.map(quoteShellArg).join(' '),
+				// Away from the project, like titles: the CLI loads no project instructions for a few words.
+				cwd: isWindows ? undefined : '/tmp',
+				timeoutMs: TAB_PRINT_TIMEOUT_MS,
+				inlineChars: 8_000,
+			});
+			if (token.isCancellationRequested || result.cancelled) {
+				return;
+			}
+			if (result.exitCode !== 0) {
+				const detail = result.timedOut ? 'The agent took too long to answer.' : (result.stderr || result.stdout).trim().split('\n').pop() || `The agent exited with ${result.exitCode}.`;
+				yield { type: 'error', message: detail.slice(0, 300) };
+				return;
+			}
+			const textId = `${id}-text`;
+			yield { type: 'text.start', id: textId };
+			yield { type: 'text.delta', id: textId, delta: result.stdout };
+			yield { type: 'text.end', id: textId };
+		} finally {
+			cancel.dispose();
+		}
+	}
+
+	/** Takes a Tab session out of use; it goes once its last prompt has answered. */
+	private retireTabAgent(live: ITabAgentSession): void {
+		live.retired = true;
+		if (this.tabAgent === live) {
+			this.tabAgent = undefined;
+		}
+		if (!live.inflight) {
+			void live.provider.dispose(live.handle).catch(() => undefined);
+		}
 	}
 
 	private async disposeTabAgent(): Promise<void> {
 		const live = this.tabAgent;
 		this.tabAgent = undefined;
 		if (live) {
+			live.retired = true;
 			await live.provider.dispose(live.handle).catch(() => undefined);
 		}
 	}
@@ -1917,9 +2023,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			}));
 	}
 
-	/** Merges the caller's selections over the stored ones and fills in provider defaults. */
+	/**
+	 * Merges the caller's selections over the stored ones and fills in provider defaults. API models
+	 * also carry the sampling pins from Settings; agent CLIs choose their own and never get them.
+	 */
 	private resolvedOptions(item: IVoltCatalogItem, requested: IVoltModelOptions | undefined): IVoltModelOptions {
-		return resolveModelOptions(item.optionDescriptors, { ...this.getModelOptions(item.ref), ...requested });
+		const merged = { ...this.getModelOptions(item.ref), ...requested };
+		const resolved = resolveModelOptions(item.optionDescriptors, merged);
+		return item.kind === 'model' ? { ...resolved, ...pickGenerationParams(merged) } : resolved;
 	}
 
 	private providerState(profile: IProviderProfile, detect: IDetectResult | undefined): VoltProviderState {
@@ -1935,7 +2046,27 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return detect.authenticated ? 'authenticated' : 'available';
 	}
 
-	private async detectProfile(profile: IProviderProfile): Promise<IDetectResult> {
+	/**
+	 * Overlapping probes of one profile share a detection. The constructor starts the catalog and the
+	 * provider refresh together, and each detected every profile: twice the `which`, `--version` and
+	 * auth spawns at startup. Keyed by the whole profile, so an edited profile is probed afresh.
+	 */
+	private detectProfile(profile: IProviderProfile): Promise<IDetectResult> {
+		const key = JSON.stringify(profile);
+		let detection = this.detectionsInFlight.get(key);
+		if (!detection) {
+			const started = this.probeProfile(profile).finally(() => {
+				if (this.detectionsInFlight.get(key) === started) {
+					this.detectionsInFlight.delete(key);
+				}
+			});
+			this.detectionsInFlight.set(key, started);
+			detection = started;
+		}
+		return detection;
+	}
+
+	private async probeProfile(profile: IProviderProfile): Promise<IDetectResult> {
 		if (profile.kind === 'agent') {
 			const definition = cliAgentDefinition(profile.providerId);
 			if (definition) {
@@ -1973,6 +2104,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			// Probes spawn throwaway agents (initialize, session/new, model lists); never during a run.
 			if (this.anyRunLive()) {
 				this.healthDeferred = true;
+				return;
+			}
+			// Nor while no Volt window has focus: a night in the background was hundreds of spawns and
+			// failed localhost probes. The first tick after the user is back runs as usual.
+			if (!getActiveDocument().hasFocus()) {
 				return;
 			}
 			void this.refreshProviders();

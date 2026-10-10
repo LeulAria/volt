@@ -7,11 +7,12 @@ import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IPredictionContext } from '../../common/prediction.js';
-import { extractExcerpt, extractImports, truncateSnippet } from '../../common/prediction/contextWindow.js';
+import { locateAnchor } from '../../common/prediction/anchorEdits.js';
+import { cursorIdentifiers, extractExcerpt, extractImports, relevantSnippet, truncateSnippet } from '../../common/prediction/contextWindow.js';
 import { lineDelta, meetsConfidence, orderEdits, samePath, shiftRangeAfterAccept } from '../../common/prediction/editGraph.js';
 import { IParsedEdit, parseMultiEdit } from '../../common/prediction/multiEditParser.js';
-import { dedupePrefixOverlap, fitToLineSuffix, isProseCompletion, postProcessInline, stripFences } from '../../common/prediction/postProcess.js';
-import { PredictionCache, predictionCacheKey } from '../../common/prediction/predictionCache.js';
+import { dedupeLineEcho, dedupePrefixOverlap, fitToLineSuffix, inlineEditForLine, isProseCompletion, postProcessInline, stripFences, stripSpecialTokens, trimSuffixOverlap, trimToBlock } from '../../common/prediction/postProcess.js';
+import { PredictionCache, predictionCacheKey, TypedThroughCache } from '../../common/prediction/predictionCache.js';
 import { fromClipboard, fromHarvestedPattern, fromNearbyLine, predictLocal } from '../../common/prediction/localPredictor.js';
 import { buildInlinePrompt, buildNextEditPrompt, CURSOR_MARKER } from '../../common/prediction/predictionPrompt.js';
 
@@ -43,6 +44,14 @@ suite('Volt prediction: context window', () => {
 		assert.strictEqual(extractImports(py).split('\n').length, 2);
 	});
 
+	test('related files contribute only the lines that mention names near the cursor', () => {
+		const text = 'a\nb\nfunction getUser() {}\nc\nd\ne\nf\nconst z = getUser();\ng';
+		assert.strictEqual(relevantSnippet(text, ['getUser']), 'b\nfunction getUser() {}\nc\n...\nf\nconst z = getUser();\ng');
+		assert.strictEqual(relevantSnippet(text, ['missing']), '');
+		assert.strictEqual(relevantSnippet(text, []), '');
+		assert.deepStrictEqual(cursorIdentifiers('import x\nconst user = load();\n', 'return user.na'), ['user', 'load']);
+	});
+
 	test('snippet truncation marks the cut', () => {
 		assert.strictEqual(truncateSnippet('abc', 10), 'abc');
 		assert.ok(truncateSnippet('a'.repeat(500), 10).endsWith('...'));
@@ -63,9 +72,50 @@ suite('Volt prediction: post-process', () => {
 		assert.strictEqual(dedupePrefixOverlap('getUser(id);', 'const user = '), 'getUser(id);');
 	});
 
-	test('multiline completion collapses to one line when text follows the cursor', () => {
-		assert.strictEqual(fitToLineSuffix('id);\nmore()', ');'), 'id');
+	test('multiline completion collapses to one line when code follows the cursor', () => {
+		assert.strictEqual(fitToLineSuffix('id) + 1;\nmore()', ') + 1;'), 'id');
 		assert.strictEqual(fitToLineSuffix('id);\nmore()', ''), 'id);\nmore()');
+		assert.strictEqual(fitToLineSuffix('a)', ') * 2'), 'a', 'a closer the suffix already has');
+		// Only closers after the cursor: the body is kept, the echoed closers go.
+		assert.strictEqual(fitToLineSuffix('\n  doIt();\n})', '})'), '\n  doIt();\n');
+	});
+
+	test('strips FIM and end-of-text tokens', () => {
+		assert.strictEqual(stripSpecialTokens('foo()<|endoftext|>bar'), 'foo()');
+		assert.strictEqual(stripSpecialTokens('<|fim_middle|>x + 1'), 'x + 1');
+	});
+
+	test('drops an echo of the lines above the cursor', () => {
+		assert.strictEqual(dedupeLineEcho('function f() {\n  return 42;', 'function f() {\n  return ', '  return '), '42;');
+	});
+
+	test('stops at the end of the block', () => {
+		assert.strictEqual(trimToBlock('\n    return x * 2\n\ndef g():\n    pass', 'def f(x):'), '\n    return x * 2\n', 'the next Python def');
+		assert.strictEqual(trimToBlock('doA();\n  }\n\nfunction next() {}', '    '), 'doA();\n  }', 'keeps the closing brace');
+	});
+
+	test('drops a closing brace the document already has, but not a balanced block\'s own', () => {
+		assert.strictEqual(trimSuffixOverlap('return 1;\n}', '\n}\n', ''), 'return 1;');
+		assert.strictEqual(trimSuffixOverlap('if (x) {\n    y();\n  }', '\n}\n', ''), 'if (x) {\n    y();\n  }');
+	});
+
+	test('full pipeline on a fenced block body', () => {
+		assert.strictEqual(postProcessInline({
+			raw: '```ts\n  return a + b;\n}\n```',
+			linePrefix: '  ',
+			lineSuffix: '',
+			prefix: 'function add(a, b) {\n  ',
+			suffix: '\n}\n',
+		}), 'return a + b;');
+	});
+
+	test('fits completions around the closers after the cursor', () => {
+		assert.deepStrictEqual(inlineEditForLine('a, b', 'foo(', ')'), { insertText: 'a, b', replacesLineSuffix: false });
+		assert.deepStrictEqual(inlineEditForLine('a, b);', 'foo(', ')'), { insertText: 'a, b);', replacesLineSuffix: true }, 'closes the call itself');
+		assert.deepStrictEqual(inlineEditForLine('x > 0) {\n  y();\n}', 'if (', ')'), { insertText: 'x > 0) {\n  y();\n}', replacesLineSuffix: true });
+		assert.deepStrictEqual(inlineEditForLine('\n  return 1;', 'function f() {', '}'), { insertText: '\n  return 1;\n}', replacesLineSuffix: true }, 'a body inside the braces');
+		assert.deepStrictEqual(inlineEditForLine('hello', 'print("', '")'), { insertText: 'hello', replacesLineSuffix: false }, 'inside a string');
+		assert.deepStrictEqual(inlineEditForLine('x', 'a = ', ''), { insertText: 'x', replacesLineSuffix: false });
 	});
 
 	test('full pipeline returns undefined for empty results', () => {
@@ -119,6 +169,29 @@ suite('Volt prediction: multi-edit parser', () => {
 	test('extracts JSON wrapped in prose or fences', () => {
 		const parsed = parseMultiEdit('Here you go:\n```json\n{"confidence":0.6,"edits":[]}\n```\nDone!');
 		assert.strictEqual(parsed?.confidence, 0.6);
+	});
+
+	test('text-anchored edits: the same anchor once, and never a no-op', () => {
+		const parsed = parseMultiEdit(JSON.stringify({
+			confidence: 0.9,
+			edits: [
+				{ path: 'a.ts', find: 'x', replace: 'y' },
+				{ path: 'a.ts', find: 'x', replace: 'z' },
+				{ path: 'a.ts', find: 'same', replace: 'same' },
+			],
+		}));
+		assert.strictEqual(parsed?.edits.length, 1);
+		assert.strictEqual(parsed?.edits[0].find, 'x');
+		assert.strictEqual(parsed?.edits[0].replacement, 'y');
+	});
+
+	test('anchors resolve nearest the cursor, and despite different indentation', () => {
+		const text = 'a\nfoo(1)\nb\nfoo(1)\nc\nd\n';
+		assert.deepStrictEqual(locateAnchor(text, 'foo(1)', 'foo(2)', text.indexOf('b')), { start: 2, end: 8, replacement: 'foo(2)' }, 'one character away beats two');
+		assert.deepStrictEqual(locateAnchor(text, 'foo(1)', 'foo(2)', text.indexOf('d')), { start: 11, end: 17, replacement: 'foo(2)' });
+		const block = 'if (x) {\n    call();\n}';
+		assert.deepStrictEqual(locateAnchor(block, '      call();', '      call(1);', 0), { start: 9, end: 20, replacement: '    call(1);' });
+		assert.strictEqual(locateAnchor(block, 'missing();', 'x', 0), undefined);
 	});
 
 	test('rejects garbage entirely', () => {
@@ -201,6 +274,16 @@ suite('Volt prediction: cache', () => {
 		assert.strictEqual(cache.get('a'), '1');
 		assert.strictEqual(cache.get('b'), undefined);
 		assert.strictEqual(cache.get('c'), '3');
+	});
+
+	test('typing into a suggestion is answered from the cache', () => {
+		const cache = new TypedThroughCache();
+		cache.remember('u', 'const x = ', '\n', 'foo(bar);');
+		assert.strictEqual(cache.lookup('u', 'const x = fo', '\n'), 'o(bar);');
+		assert.strictEqual(cache.lookup('u', 'const x = zz', '\n'), undefined, 'typed something else');
+		assert.strictEqual(cache.lookup('u', 'const x = foo(bar);', '\n'), undefined, 'nothing left');
+		assert.strictEqual(cache.lookup('u', 'const x = fo', ';\n'), undefined, 'the text after the cursor changed');
+		assert.strictEqual(cache.lookup('other', 'const x = fo', '\n'), undefined);
 	});
 
 	test('key changes with cursor-local text only', () => {

@@ -34,6 +34,8 @@ import { fallbackSubagentView, ITranscriptHost, renderTranscript, tickElapsed } 
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { DropIntoEditorController } from '../../../../../editor/contrib/dropOrPasteInto/browser/dropIntoEditorController.js';
+import { InlineCompletionsController } from '../../../../../editor/contrib/inlineCompletions/browser/controller/inlineCompletionsController.js';
+import { IComposerPredictionContext, registerComposerContext } from '../../../../services/voltRuntime/common/prediction/composerContext.js';
 import { EDITOR_FONT_DEFAULTS, IEditorOptions as ICodeEditorOptions } from '../../../../../editor/common/config/editorOptions.js';
 import { ITextModel } from '../../../../../editor/common/model.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
@@ -583,6 +585,24 @@ interface IModeOption {
 /** Least time between two streaming redraws of the live exchange. */
 const STREAM_FRAME_MS = 50;
 
+/** How long the composer's ghost text reuses the prompts it read; a send refreshes them at once. */
+const PREDICTION_PROMPTS_TTL_MS = 10_000;
+
+function clipForPrediction(text: string, max: number): string {
+	const flat = text.replace(/\s+/g, ' ').trim();
+	return flat.length <= max ? flat : `${flat.slice(0, max)}...`;
+}
+
+/** Accepts the predicted continuation showing in `editor`; false when none shows. */
+function acceptGhostText(editor: ICodeEditor): boolean {
+	const model = InlineCompletionsController.get(editor)?.model.get();
+	if (!model?.inlineCompletionState.get()) {
+		return false;
+	}
+	void model.accept(editor);
+	return true;
+}
+
 /** Model silence (no tool running) after which the live line says the turn is taking longer than expected, as Cursor does. */
 const SLOW_TURN_MS = 90_000;
 
@@ -722,6 +742,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly editorDisposables = this._register(new DisposableStore());
 
 	private messages: IAgentMessage[] = [];
+	/** Prompts the composer's ghost text learns from, read from storage at most every few seconds. */
+	private predictionPrompts: { readonly at: number; readonly prompts: string[] } | undefined;
 	private currentMode = MODE_OPTIONS[0].id;
 	private readonly modelPicker: AgentModelPicker;
 	private get currentModel(): string { return this.modelPicker.currentModel; }
@@ -1740,6 +1762,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			acceptSuggestionOnEnter: 'off',
 			quickSuggestions: { other: 'off', comments: 'off', strings: 'off' },
 			suggestOnTriggerCharacters: false,
+			// Predictions of the message being typed; whether they run is the Tab & Prediction setting.
+			inlineSuggest: { ...editorConfiguration.inlineSuggest, enabled: true, showToolbar: 'never' },
 			ariaLabel: forEdit
 				? localize('voltAgent.editAria', "Edit message")
 				: localize('voltAgent.inputAria', "Agent input"),
@@ -3578,7 +3602,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		widgetOptions.contextKeyValues = { [CONTEXT_IN_AGENT_INPUT.key]: true };
 		widgetOptions.contributions = [
 			...(widgetOptions.contributions ?? []),
-			...EditorExtensionsRegistry.getSomeEditorContributions([DropIntoEditorController.ID]),
+			// Ghost text: Volt predicts the rest of the message as it is typed.
+			...EditorExtensionsRegistry.getSomeEditorContributions([DropIntoEditorController.ID, InlineCompletionsController.ID]),
 		];
 		this.editEditor = this.editEditorDisposables.add(this.instantiationService.createInstance(
 			CodeEditorWidget,
@@ -3591,6 +3616,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.editModel = this.modelService.createModel('', null, modelUri, true);
 		this.editEditorDisposables.add(toDisposable(() => this.editModel?.dispose()));
 		this.editEditor.setModel(this.editModel);
+		this.editEditorDisposables.add(registerComposerContext(modelUri, () => this.composerPredictionContext()));
 		this.editMentionController = this.editEditorDisposables.add(this.instantiationService.createInstance(AgentMentionController, this.editEditor));
 		this.editMentionController.setHost(this.mentionHost(this.editInputBox));
 		this.editLists = this.editEditorDisposables.add(new AgentComposerLists(this.editEditor));
@@ -3632,6 +3658,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				e.preventDefault();
 				e.stopPropagation();
 				this.cancelUserEdit();
+				return;
+			}
+			if (e.keyCode === KeyCode.Tab && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && this.editEditor && acceptGhostText(this.editEditor)) {
+				e.preventDefault();
+				e.stopPropagation();
 				return;
 			}
 			if (e.keyCode === KeyCode.Enter && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
@@ -4858,7 +4889,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		widgetOptions.contextKeyValues = { [CONTEXT_IN_AGENT_INPUT.key]: true };
 		widgetOptions.contributions = [
 			...(widgetOptions.contributions ?? []),
-			...EditorExtensionsRegistry.getSomeEditorContributions([DropIntoEditorController.ID]),
+			// Ghost text: Volt predicts the rest of the message as it is typed.
+			...EditorExtensionsRegistry.getSomeEditorContributions([DropIntoEditorController.ID, InlineCompletionsController.ID]),
 		];
 		this.inputEditor = this.editorDisposables.add(this.instantiationService.createInstance(
 			CodeEditorWidget,
@@ -4870,6 +4902,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const modelUri = URI.from({ scheme: 'volt-agent-input', path: `input-${this.sessionKey}-${Date.now()}` });
 		this.inputModel = this.modelService.createModel('', null, modelUri, true);
 		this.inputEditor.setModel(this.inputModel);
+		this.editorDisposables.add(registerComposerContext(modelUri, () => this.composerPredictionContext()));
 		this.mentionController = this.editorDisposables.add(this.instantiationService.createInstance(AgentMentionController, this.inputEditor));
 		this.mentionController.setHost(this.mentionHost(this.inputBox));
 		this.composerLists = this.editorDisposables.add(new AgentComposerLists(this.inputEditor));
@@ -4949,6 +4982,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				}
 				e.preventDefault();
 				e.stopPropagation();
+				// Tab takes a predicted continuation when one shows; otherwise it switches to Plan.
+				if (!e.shiftKey && this.inputEditor && acceptGhostText(this.inputEditor)) {
+					return;
+				}
 				this.togglePlan();
 				return;
 			}
@@ -5046,6 +5083,40 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		);
 	}
 
+	/**
+	 * What the composer's ghost text knows about this chat: its last messages, the prompts sent
+	 * before, and the names in play. Read on each keystroke, so the stored prompts are cached.
+	 */
+	private composerPredictionContext(): IComposerPredictionContext {
+		const transcript: string[] = [];
+		const names = new Set<string>();
+		for (const message of this.messages.slice(-8)) {
+			if (message.kind === 'user') {
+				transcript.push(`User: ${clipForPrediction(message.text, 400)}`);
+				for (const mention of message.mentions ?? []) {
+					names.add(mention.label);
+				}
+				continue;
+			}
+			const text = message.text || message.segments.map(segment => segment.kind === 'text' ? segment.text : '').join('');
+			if (text.trim()) {
+				transcript.push(`Agent: ${clipForPrediction(text, 600)}`);
+			}
+			for (const path of message.changes ?? []) {
+				names.add(basename(path));
+			}
+		}
+		const folder = this.workspaceContextService.getWorkspace().folders[0];
+		if (folder) {
+			names.add(folder.name);
+		}
+		const now = Date.now();
+		if (!this.predictionPrompts || now - this.predictionPrompts.at > PREDICTION_PROMPTS_TTL_MS) {
+			this.predictionPrompts = { at: now, prompts: this.promptHistoryEntries().map(entry => entry.text) };
+		}
+		return { transcript, prompts: this.predictionPrompts.prompts, vocabulary: [...names] };
+	}
+
 	/** This chat's prompts, newest first, then prompts sent from other chats. */
 	private promptHistoryEntries(): IAgentPromptHistoryEntry[] {
 		const own: IAgentPromptHistoryEntry[] = [];
@@ -5064,6 +5135,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private rememberSentPrompt(agentText: string, display: IAgentPromptDisplay | undefined): void {
 		this.promptHistory.reset();
+		this.predictionPrompts = undefined;
 		if (this.promptHistoryEnabled()) {
 			rememberPrompt(this.storageService, { text: display?.text.trim() || agentText, mentions: display?.mentions });
 		}

@@ -17,6 +17,9 @@ export interface IExcerptBudget {
 
 export const DEFAULT_EXCERPT_BUDGET: IExcerptBudget = { before: 3000, after: 1500 };
 
+/** Ghost text needs the code around the cursor, not the whole function: about 900 tokens. */
+export const INLINE_EXCERPT_BUDGET: IExcerptBudget = { before: 2400, after: 1000 };
+
 export interface IExcerpt {
 	prefix: string;
 	suffix: string;
@@ -61,6 +64,69 @@ export function extractImports(text: string, maxLines = 60): string {
 		if (IMPORT_LINE.test(line)) {
 			out.push(line.trimEnd());
 		}
+	}
+	return out.join('\n');
+}
+
+const KEYWORDS = new Set([
+	'abstract', 'async', 'await', 'boolean', 'break', 'case', 'catch', 'class', 'const', 'continue', 'default', 'def', 'delete', 'elif',
+	'else', 'enum', 'export', 'extends', 'false', 'final', 'finally', 'float', 'for', 'from', 'func', 'function', 'import', 'impl', 'interface',
+	'lambda', 'let', 'match', 'none', 'null', 'number', 'package', 'private', 'protected', 'public', 'return', 'self', 'static',
+	'string', 'struct', 'super', 'switch', 'this', 'throw', 'true', 'type', 'typeof', 'undefined', 'unsafe', 'void', 'while', 'with',
+	'yield', 'var', 'int', 'bool', 'new', 'try', 'not', 'and', 'pass', 'use', 'mut', 'pub', 'then', 'end',
+]);
+
+/**
+ * Identifiers near the cursor (the current line first, then the lines just above), the names a
+ * related file is useful for. Keywords and short names are left out.
+ */
+export function cursorIdentifiers(prefix: string, linePrefix: string, max = 12): string[] {
+	const recent = prefix.split('\n').slice(-6, -1).reverse();
+	const seen = new Set<string>();
+	for (const line of [linePrefix, ...recent]) {
+		for (const match of line.matchAll(/[A-Za-z_$][\w$]{2,}/g)) {
+			const word = match[0];
+			if (!KEYWORDS.has(word.toLowerCase()) && !seen.has(word)) {
+				seen.add(word);
+				if (seen.size >= max) {
+					return [...seen];
+				}
+			}
+		}
+	}
+	return [...seen];
+}
+
+/**
+ * The lines of a related file that mention `identifiers`, with a line of context either side,
+ * capped at `maxChars`. Empty when nothing matches, so an unrelated file costs no tokens.
+ */
+export function relevantSnippet(text: string, identifiers: readonly string[], maxChars = 600): string {
+	if (!identifiers.length) {
+		return '';
+	}
+	const pattern = new RegExp(`\\b(?:${identifiers.map(id => id.replace(/[$]/g, '\\$')).join('|')})\\b`);
+	const lines = text.split('\n');
+	const keep = new Set<number>();
+	for (let i = 0; i < lines.length && keep.size < 60; i++) {
+		if (pattern.test(lines[i])) {
+			keep.add(i - 1).add(i).add(i + 1);
+		}
+	}
+	const out: string[] = [];
+	let used = 0;
+	let last = -2;
+	for (const i of [...keep].filter(i => i >= 0 && i < lines.length).sort((a, b) => a - b)) {
+		const line = lines[i].trimEnd();
+		if (used + line.length + 1 > maxChars) {
+			break;
+		}
+		if (last >= 0 && i > last + 1) {
+			out.push('...');
+		}
+		out.push(line);
+		used += line.length + 1;
+		last = i;
 	}
 	return out.join('\n');
 }

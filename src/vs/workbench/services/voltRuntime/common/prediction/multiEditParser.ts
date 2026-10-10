@@ -10,10 +10,16 @@
  */
 
 import { stripFences } from './postProcess.js';
+import { CURSOR_MARKER } from './predictionPrompt.js';
 
 export interface IParsedEdit {
 	/** Path exactly as the model returned it; the browser layer resolves it to a URI. */
 	path: string;
+	/**
+	 * Text the edit replaces, copied from the file. When present it decides where the edit goes
+	 * and the positions below are 0 until the edit is located in the file.
+	 */
+	find?: string;
 	startLineNumber: number;
 	startColumn: number;
 	endLineNumber: number;
@@ -37,6 +43,22 @@ function parseEdit(raw: unknown): IParsedEdit | undefined {
 	}
 	const o = raw as Record<string, unknown>;
 	const path = typeof o.path === 'string' ? o.path.trim() : '';
+	if (typeof o.find === 'string') {
+		const replacement = typeof o.replace === 'string' ? o.replace : o.replacement;
+		if (!path || path.includes('..') || !o.find.trim() || typeof replacement !== 'string' || replacement === o.find) {
+			return undefined;
+		}
+		return {
+			path,
+			find: stripMarker(o.find),
+			startLineNumber: 0,
+			startColumn: 0,
+			endLineNumber: 0,
+			endColumn: 0,
+			replacement: stripMarker(replacement),
+			reason: typeof o.reason === 'string' ? o.reason : undefined,
+		};
+	}
 	const startLineNumber = asPositiveInt(o.startLine);
 	const startColumn = asPositiveInt(o.startColumn);
 	const endLineNumber = asPositiveInt(o.endLine);
@@ -61,9 +83,18 @@ function parseEdit(raw: unknown): IParsedEdit | undefined {
 	};
 }
 
+/** Models copy the cursor marker out of the excerpt into anchors now and then. */
+function stripMarker(text: string): string {
+	return text.split(CURSOR_MARKER).join('');
+}
+
 function overlapsSameFile(a: IParsedEdit, b: IParsedEdit): boolean {
 	if (a.path !== b.path) {
 		return false;
+	}
+	if (a.find !== undefined || b.find !== undefined) {
+		// Located later; two edits of the same text are one edit.
+		return a.find === b.find;
 	}
 	const aEndsBeforeB = a.endLineNumber < b.startLineNumber || (a.endLineNumber === b.startLineNumber && a.endColumn <= b.startColumn);
 	const bEndsBeforeA = b.endLineNumber < a.startLineNumber || (b.endLineNumber === a.startLineNumber && b.endColumn <= a.startColumn);

@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { DEFAULT_MODEL_CAPABILITIES } from '../../common/capabilities.js';
-import { formatPredictionError, resolveRunModelRef, resolveTabModel } from '../../common/models/modelAccess.js';
+import { fastModelRank, fastTabSibling, formatPredictionError, resolveRunModelRef, resolveTabModel } from '../../common/models/modelAccess.js';
 import { IVoltCatalogItem } from '../../common/providers.js';
 
 function model(ref: string, enabled = true): IVoltCatalogItem {
@@ -35,13 +35,38 @@ suite('Volt tab model resolution', () => {
 	const haiku = model('model:p1:haiku');
 	const claudeCode = agent('agent:p2:claude');
 
-	test('composer selection wins over the Tab override', () => {
+	function inProfile(item: IVoltCatalogItem, profileId: string): IVoltCatalogItem {
+		return { ...item, profileId };
+	}
+
+	test('a pinned Tab model wins over the composer selection', () => {
 		const ref = resolveTabModel('agent:p2:claude', { tab: 'model:p1:haiku', ask: 'model:p1:gpt-5' }, [claudeCode, gpt, haiku]);
-		assert.strictEqual(ref, 'agent:p2:claude');
+		assert.strictEqual(ref, 'model:p1:haiku');
+		// Pinned exactly as chosen, even a slow model.
+		assert.strictEqual(resolveTabModel('model:p1:haiku', { tab: 'model:p1:gpt-5' }, [gpt, haiku]), 'model:p1:gpt-5');
 	});
 
-	test('falls back to the active composer model', () => {
-		assert.strictEqual(resolveTabModel('model:p1:gpt-5', {}, [gpt, haiku]), 'model:p1:gpt-5');
+	test('following the composer steps down to the fastest model of the same provider', () => {
+		const opus = inProfile(agent('agent:cc:claude-opus-5-5'), 'cc');
+		const sonnet = inProfile(agent('agent:cc:claude-sonnet-5-5'), 'cc');
+		const ccHaiku = inProfile(agent('agent:cc:claude-haiku-4-5-20251001'), 'cc');
+		const otherHaiku = inProfile(model('model:api:claude-haiku-4-5'), 'api');
+		assert.strictEqual(resolveTabModel(opus.ref, {}, [opus, sonnet, ccHaiku, otherHaiku]), ccHaiku.ref, 'same CLI login, never another provider');
+		assert.strictEqual(resolveTabModel(opus.ref, {}, [opus, sonnet]), opus.ref, 'nothing faster: the selection itself');
+		assert.strictEqual(resolveTabModel('model:p1:gpt-5', {}, [gpt, haiku]), 'model:p1:haiku');
+	});
+
+	test('an already fast selection is kept', () => {
+		const mini = model('model:p1:gpt-5-mini');
+		assert.strictEqual(resolveTabModel(mini.ref, {}, [gpt, haiku, mini]), mini.ref);
+	});
+
+	test('fast model ranking', () => {
+		assert.strictEqual(fastTabSibling(gpt, [gpt, model('model:p1:gpt-5-mini'), model('model:p1:gpt-5-nano')]).id, 'gpt-5-nano');
+		assert.strictEqual(fastModelRank('gemini-2.5-flash-lite')! < fastModelRank('gemini-2.5-flash')!, true);
+		assert.strictEqual(fastModelRank('claude-opus-5-5'), undefined);
+		assert.strictEqual(fastModelRank('gemini-2.5-pro'), undefined);
+		assert.strictEqual(fastModelRank('administrator'), undefined, 'mini only as a word');
 	});
 
 	test('Tab override is used when the composer has no selection', () => {
@@ -49,8 +74,9 @@ suite('Volt tab model resolution', () => {
 		assert.strictEqual(ref, 'model:p1:haiku');
 	});
 
-	test('falls back to the first enabled agent before a chat model', () => {
-		assert.strictEqual(resolveTabModel(undefined, {}, [gpt, claudeCode]), 'agent:p2:claude');
+	test('with nothing selected, an HTTP chat model beats an agent turn', () => {
+		assert.strictEqual(resolveTabModel(undefined, {}, [gpt, claudeCode]), 'model:p1:gpt-5');
+		assert.strictEqual(resolveTabModel(undefined, {}, [claudeCode]), 'agent:p2:claude');
 	});
 
 	test('disabled models are never picked', () => {
