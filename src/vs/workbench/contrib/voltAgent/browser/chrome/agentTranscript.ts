@@ -13,7 +13,8 @@ import { AgentBlock, AgentSegment, createPlanBlock, IAgentActivityItem, IAgentCo
 import { computeChangeStats } from '../review/fileChangePreviewModel.js';
 import { isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
-import { PREVIEW_HTML_TOOL_NAME, RENDER_HTML_TOOL_NAME, VISUAL_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
+import { PREVIEW_HTML_TOOL_NAME, RENDER_CHART_TOOL_NAME, VISUAL_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
+import { chartLoaderShape } from '../visuals/agentDotLoader.js';
 
 /**
  * Cursor's transcript model. Between two pieces of assistant text, every tool call and
@@ -359,14 +360,17 @@ function pendingVisualBlock(item: IAgentActivityItem, source: readonly AgentSegm
 	}
 	const title = typeof item.hostArgs?.title === 'string' ? item.hostArgs.title : (/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(item.input ?? '')?.[1] ?? '');
 	const height = typeof item.hostArgs?.height === 'number' ? item.hostArgs.height : undefined;
+	const kind = tool === RENDER_CHART_TOOL_NAME ? 'chart' : 'html';
+	const round = kind === 'chart' && chartLoaderShape(item.input ?? (item.hostArgs ? JSON.stringify(item.hostArgs) : '')) === 'circle';
 	return {
 		id: `visual-pending-${item.callId ?? index}`,
 		type: 'visual',
 		status: 'streaming',
-		kind: tool === RENDER_HTML_TOOL_NAME ? 'html' : 'chart',
+		kind,
 		title,
 		ref: '',
 		...(height ? { height } : {}),
+		...(round ? { shape: 'circle' as const } : {}),
 	};
 }
 

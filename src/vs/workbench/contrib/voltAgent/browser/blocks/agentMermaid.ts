@@ -8,6 +8,7 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { localize } from '../../../../../nls.js';
 import { createCodeCardShell, ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
 import { markupToFragment } from './agentMarkupDom.js';
+import { mermaidLoaderShape, renderDotLoader } from '../visuals/agentDotLoader.js';
 import type * as BeautifulMermaid from './vendor/beautifulMermaid.js';
 
 interface MermaidNode {
@@ -27,6 +28,8 @@ const NODE_ID = /[A-Za-z][\w-]*/;
 export interface IMermaidOptions extends ICodeCardOptions {
 	/** Opens the diagram larger (Cursor's "Expand diagram"). */
 	readonly onExpand?: (svg: SVGSVGElement, source: string) => void;
+	/** The fence is still streaming in: hold the diagram's place with the dot loader until it closes. */
+	readonly streaming?: boolean;
 }
 
 /**
@@ -190,8 +193,15 @@ function mermaidMarkup(source: string): string | null | undefined {
 
 export function renderMermaidDiagram(parent: HTMLElement, source: string, options: IMermaidOptions): void {
 	const host = append(parent, $('.volt-agent-block.mermaid'));
-	draw(host, source, options);
+	if (options.streaming) {
+		// A half-written diagram either fails to parse or reshuffles with every line: show it once whole.
+		renderDiagramLoader(host, source);
+		void preloadMermaid();
+		return;
+	}
 	if (mermaidMarkup(source) === undefined) {
+		// The renderer is still loading: dots in the diagram's likely shape, then the diagram.
+		renderDiagramLoader(host, source);
 		preloadMermaid().then(() => {
 			if (host.isConnected) {
 				host.replaceChildren();
@@ -199,10 +209,23 @@ export function renderMermaidDiagram(parent: HTMLElement, source: string, option
 				options.onDidChangeSize?.();
 			}
 		});
+		return;
 	}
+	draw(host, source, options);
+}
+
+function renderDiagramLoader(host: HTMLElement, source: string): void {
+	host.classList.add('loading');
+	const { shape, height } = mermaidLoaderShape(source);
+	renderDotLoader(host, {
+		shape,
+		height,
+		caption: localize('voltAgent.mermaid.drawing', "Drawing diagram"),
+	});
 }
 
 function draw(host: HTMLElement, source: string, options: IMermaidOptions): void {
+	host.classList.remove('loading');
 	const markup = mermaidMarkup(source);
 	const doc = host.ownerDocument;
 	let svg: SVGSVGElement | undefined;

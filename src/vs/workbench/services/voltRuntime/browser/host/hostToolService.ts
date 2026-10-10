@@ -98,6 +98,15 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		for (const provider of this.providers) {
 			const tool = provider.tools.find(candidate => candidate.name === name);
 			if (tool) {
+				const always = await provider.needsApproval?.(name, args, call);
+				if (always) {
+					const refusal = await this.checkAlways(name, args, call, always);
+					if (refusal) {
+						return refusal;
+					}
+					provider.approved?.(name, args, call!);
+					return provider.invoke(name, args, call);
+				}
 				const refusal = tool.approvalInReadOnlyModes && call?.sessionId ? await this.checkReadOnly(call.sessionId, name, args, call, tool.approvalInReadOnlyModes) : undefined;
 				return refusal ?? provider.invoke(name, args, call);
 			}
@@ -130,9 +139,10 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 			if (refusal) {
 				return refusal;
 			}
+			const cwd = call.cwd ?? this.sessions?.cwd(call.sessionId) ?? this.workspace.getWorkspace().folders[0]?.uri.fsPath;
 			const options: IVoltBrowserAutomationOptions = name === BROWSER_COMPARE_IMAGE_TOOL_NAME
-				? { token, ...await this.loadReference(args, call) }
-				: { token };
+				? { token, cwd, ...await this.loadReference(args, call) }
+				: { token, cwd };
 			if (token.isCancellationRequested) {
 				return { error: 'Cancelled.' };
 			}
@@ -164,6 +174,16 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		}
 		const allowed = await this.approver.approve({ sessionId, name, args, mode, reason: verdict.reason }, call.token ?? CancellationToken.None).catch(() => false);
 		return allowed ? undefined : { error: `The user did not allow ${name} in ${label} mode (it ${verdict.reason}). Continue without it.` };
+	}
+
+	/** A provider tool that needs the user's approval in every mode (desktop control). */
+	private async checkAlways(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined, reason: string): Promise<IVoltHostToolResult | undefined> {
+		if (!call?.sessionId || !this.approver) {
+			return { error: `${name} was not run: it ${reason}, which needs the user's approval in a Volt chat.` };
+		}
+		const mode = call.mode ?? this.sessions?.mode(call.sessionId) ?? 'agent';
+		const allowed = await this.approver.approve({ sessionId: call.sessionId, name, args, mode, reason }, call.token ?? CancellationToken.None).catch(() => false);
+		return allowed ? undefined : { error: `The user did not allow ${name} (it ${reason}). Continue without it, or ask them.` };
 	}
 
 	/** A provider tool that acts (taps, installs, records) needs the user's approval in Ask and Plan. */

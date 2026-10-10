@@ -28,6 +28,7 @@ import { WebviewThemeDataProvider } from '../../../webview/browser/themeing.js';
 import { IWebviewElement, IWebviewService, WebviewContentPurpose } from '../../../webview/browser/webview.js';
 import type { IVisualBlock } from '../blocks/agentBlocks.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { DotLoaderShape, renderDotLoader } from './agentDotLoader.js';
 import { pageHeightFor, PAGE_SEND_INTERVAL_MS, PageRequest, parsePageRequest, setPageContext } from './agentVisualBridge.js';
 import { buildVisualPage, VISUAL_COLUMN_WIDTH, VISUAL_MAX_HEIGHT, VISUAL_MIN_HEIGHT } from './agentVisualPage.js';
 import { IVoltChartsHandle, IVoltChartsRuntime, IVoltChartsStrings, voltChartsRuntime } from './voltChartsRuntime.js';
@@ -616,23 +617,19 @@ async function savePage(ctx: IVisualHostContext, title: string, html: string): P
 //#region The transcript block
 
 /**
- * A chart-shaped placeholder (title line, plot with faint bars) for a visual that is on its way:
- * the tool call still streaming in, its stored spec being read, or the page loading.
+ * The placeholder for a visual on its way (the tool call still streaming in, its stored spec being
+ * read, or the page loading): the dot loader, in the shape and height of what is coming. Only one
+ * the agent is still making says so ("Creating chart"); a stored one loading is just the dots.
  */
-export function renderVisualSkeleton(parent: HTMLElement, kind: 'chart' | 'html' | 'page', height?: number): HTMLElement {
-	const skeleton = append(parent, $('.volt-agent-visual-skeleton'));
-	skeleton.classList.add(kind === 'chart' ? 'chart' : 'page');
-	skeleton.setAttribute('role', 'status');
-	skeleton.setAttribute('aria-label', kind === 'chart' ? localize('voltVisual.loadingChart', "Loading chart") : localize('voltVisual.loadingPage', "Loading page"));
-	if (height) {
-		skeleton.style.height = `${height}px`;
-	}
-	append(skeleton, $('.volt-agent-visual-skeleton-title'));
-	append(skeleton, $('.volt-agent-visual-skeleton-subtitle'));
-	const plot = append(skeleton, $('.volt-agent-visual-skeleton-plot'));
-	for (const level of [46, 72, 58, 88, 64, 80, 40, 68]) {
-		append(plot, $('.volt-agent-visual-skeleton-bar')).style.height = `${level}%`;
-	}
+export function renderVisualSkeleton(parent: HTMLElement, kind: 'chart' | 'html' | 'page', height?: number, hint?: { readonly shape?: DotLoaderShape; readonly creating?: boolean }): HTMLElement {
+	const chart = kind === 'chart';
+	const skeleton = renderDotLoader(parent, {
+		shape: hint?.shape ?? 'wide',
+		height,
+		caption: hint?.creating ? (chart ? localize('voltVisual.creatingChart', "Creating chart") : localize('voltVisual.creatingPage', "Building page")) : undefined,
+		ariaLabel: chart ? localize('voltVisual.loadingChart', "Loading chart") : localize('voltVisual.loadingPage', "Loading page"),
+	});
+	skeleton.classList.add('volt-agent-visual-skeleton', chart ? 'chart' : 'page');
 	return skeleton;
 }
 
@@ -685,7 +682,7 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 	if (!block.ref) {
 		// The render_chart / render_html call is still streaming in: hold its place.
 		wrap.classList.add('pending');
-		renderVisualSkeleton(body, block.kind, block.kind === 'html' ? frameHeight(block.height) : undefined);
+		renderVisualSkeleton(body, block.kind, block.kind === 'html' ? frameHeight(block.height) : undefined, { shape: block.shape, creating: true });
 		return;
 	}
 	if (block.kind === 'chart') {

@@ -122,6 +122,12 @@
 	mask-image: linear-gradient(to top, rgb(0 0 0 / 0.1) 0px, rgb(0 0 0 / 0.1) 12px, rgb(0 0 0 / 0.415) 35px, #000 64px);
 }
 
+/* A Context or Session Usage card is its own surface: no fade band around it on the transcript. */
+.volt-agent-editor.has-turns:has(.volt-agent-composer > .volt-agent-context-panel) .volt-agent-thread > .monaco-scrollable-element {
+	-webkit-mask-image: none;
+	mask-image: none;
+}
+
 .volt-agent-thread-fade.bottom {
 	display: none;
 }

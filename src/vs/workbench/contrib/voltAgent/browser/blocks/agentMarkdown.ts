@@ -3,18 +3,19 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, runWhenWindowIdle } from '../../../../../base/browser/dom.js';
 import { allowedMarkdownHtmlAttributes, allowedMarkdownHtmlTags, MarkdownRenderOptions } from '../../../../../base/browser/markdownRenderer.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { CodeWindow } from '../../../../../base/browser/window.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable } from '../../../../../base/common/lifecycle.js';
 import type * as marked from '../../../../../base/common/marked/marked.js';
 import { MarkedKatexSupport } from '../../../markdown/browser/markedKatexSupport.js';
 import { ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
 import { replaceEmojiWithIcons } from './agentEmojiIcons.js';
 import { IMermaidOptions, isMermaidXyChart, preloadMermaid, renderMermaidDiagram, xychartToChartSpec } from './agentMermaid.js';
 import { IVisualHostContext, mountChart, renderVisualSkeleton } from '../visuals/agentVisuals.js';
+import { chartLoaderShape } from '../visuals/agentDotLoader.js';
 
 /**
  * Markdown the way Cursor's transcript draws it: KaTeX math, highlighted code cards,
@@ -22,11 +23,17 @@ import { IVisualHostContext, mountChart, renderVisualSkeleton } from '../visuals
  */
 
 let mathLoad: Promise<unknown> | undefined;
+let diagramPreload: IDisposable | undefined;
 
-/** Loads KaTeX (and the diagram renderer) ahead of the first reply that needs them. */
+/**
+ * Loads KaTeX ahead of the first reply that needs it; the promise settles once math is ready. The
+ * diagram renderer (1.5 MB of mermaid and elkjs) waits for an idle moment so a chat restored at
+ * startup does not evaluate it mid-restore; a diagram drawn before then loads it on its own.
+ */
 export function preloadMarkdownExtras(win: CodeWindow): Promise<unknown> {
 	mathLoad ??= MarkedKatexSupport.loadExtension(win, { throwOnError: false }).catch(() => undefined);
-	return Promise.all([mathLoad, preloadMermaid()]);
+	diagramPreload ??= runWhenWindowIdle(win, () => void preloadMermaid(), 10_000);
+	return mathLoad;
 }
 
 export function isMarkdownMathLoaded(win: CodeWindow): boolean {
@@ -84,7 +91,7 @@ export function renderFenceChart(host: HTMLElement, language: string | undefined
 	}
 	host.classList.add('volt-md-chart-host');
 	if (chart === 'pending') {
-		renderVisualSkeleton(host, 'chart');
+		renderVisualSkeleton(host, 'chart', undefined, { shape: isMermaidXyChart(value) ? 'wide' : chartLoaderShape(value), creating: true });
 	} else {
 		mountChart(host, chart.key, chart.spec, visualHost);
 	}

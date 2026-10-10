@@ -89,6 +89,8 @@ export interface IVisualBlock extends IAgentBaseBlock {
 	heights?: readonly (readonly [number, number])[];
 	/** Pages: the agent's cap on the frame height. */
 	cap?: number;
+	/** Still streaming in: a single round chart (pie, donut, gauge) holds a round placeholder. */
+	shape?: 'circle';
 }
 
 export interface IMermaidBlock extends IAgentBaseBlock {

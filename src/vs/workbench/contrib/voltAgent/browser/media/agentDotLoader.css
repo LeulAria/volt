@@ -1,0 +1,118 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The dot loader (agentDotLoader.ts): a halftone field of shivering dots in the shape of the
+ * picture on its way. The box holds that picture's height, so nothing below jumps when it lands.
+ * The dots are drawn on one canvas; the colors below are read from it, so keep them plain colors
+ * (hex or rgb), not color-mix().
+ */
+.volt-dot-loader {
+	--volt-dot-loader-height: 240px;
+	--volt-dot-loader-color: #4d7dff;
+	--volt-dot-loader-highlight: #b4c8ff;
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	height: var(--volt-dot-loader-height);
+	min-width: 0;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.monaco-workbench.vs .volt-dot-loader,
+.monaco-workbench.hc-light .volt-dot-loader {
+	--volt-dot-loader-color: #2f62ea;
+	--volt-dot-loader-highlight: #6f95ff;
+}
+
+.monaco-workbench.hc-black .volt-dot-loader {
+	--volt-dot-loader-color: #6fc3df;
+	--volt-dot-loader-highlight: #ffffff;
+}
+
+.volt-dot-loader-field {
+	position: relative;
+	flex: none;
+	width: 100%;
+	height: 100%;
+	max-width: 100%;
+	overflow: hidden;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--volt-dot-loader-color) 5%, transparent);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.volt-dot-loader.square .volt-dot-loader-field,
+.volt-dot-loader.circle .volt-dot-loader-field {
+	width: auto;
+	aspect-ratio: 1;
+}
+
+.volt-dot-loader.tall .volt-dot-loader-field {
+	width: auto;
+	aspect-ratio: 9 / 16;
+}
+
+.volt-dot-loader.circle .volt-dot-loader-field {
+	border-radius: 50%;
+}
+
+.volt-dot-loader-canvas {
+	position: absolute;
+	inset: 0;
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+/* "Creating chart": in the field's top corner (not above it, so the height stays the picture's). */
+.volt-dot-loader-caption {
+	--volt-dot-caption-base: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+	--volt-dot-caption-hi: var(--vscode-foreground);
+	position: absolute;
+	top: 10px;
+	left: 12px;
+	max-width: calc(100% - 24px);
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 18px;
+	color: var(--volt-dot-caption-base);
+	background-image: linear-gradient(90deg, var(--volt-dot-caption-base) 0%, var(--volt-dot-caption-base) 35%, var(--volt-dot-caption-hi) 50%, var(--volt-dot-caption-base) 65%, var(--volt-dot-caption-base) 100%);
+	background-size: 300% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
+	animation: volt-dot-caption-sweep 2.2s linear infinite;
+}
+
+/* A round field has no corner to sit in: the caption goes beside it. */
+.volt-dot-loader.circle .volt-dot-loader-caption {
+	position: static;
+	flex: 1;
+	min-width: 0;
+	max-width: none;
+}
+
+@keyframes volt-dot-caption-sweep {
+	from { background-position: 100% 0; }
+	to { background-position: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-dot-loader-caption {
+		animation: none;
+		-webkit-text-fill-color: currentColor;
+	}
+}
+
+.monaco-workbench.reduce-motion .volt-dot-loader-caption {
+	animation: none;
+	-webkit-text-fill-color: currentColor;
+}
