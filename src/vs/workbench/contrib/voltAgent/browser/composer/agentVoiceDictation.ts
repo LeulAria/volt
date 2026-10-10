@@ -10,8 +10,11 @@ import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
-import { IVoltSpeechEndpoint, IVoltSpeechService, pcm16Bytes, rmsLevel, VOLT_SPEECH_SAMPLE_RATE } from '../../../../../platform/voltSpeech/common/voltSpeech.js';
-import { AGENT_VOICE_ENDPOINT_SETTING, AGENT_VOICE_MODEL_SETTING } from '../../common/agentComposerSettings.js';
+import { ISecretStorageService } from '../../../../../platform/secrets/common/secrets.js';
+import { IVoltSpeechEndpoint, IVoltSpeechService, IVoltSpeechStartOptions, pcm16Bytes, rmsLevel, VOLT_SPEECH_SAMPLE_RATE } from '../../../../../platform/voltSpeech/common/voltSpeech.js';
+import { secretKeyForProfile } from '../../../../services/voltRuntime/common/profiles.js';
+import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { AGENT_VOICE_DEFAULT_REALTIME_MODEL, AGENT_VOICE_ENDPOINT_SETTING, AGENT_VOICE_ENGINE_SETTING, AGENT_VOICE_MODEL_SETTING, AGENT_VOICE_REALTIME_MODEL_SETTING, AgentVoiceEngine } from '../../common/agentComposerSettings.js';
 
 export type AgentDictationState = 'idle' | 'starting' | 'listening' | 'transcribing';
 
@@ -60,6 +63,8 @@ export class AgentVoiceDictation extends Disposable {
 		@IVoltSpeechService private readonly speech: IVoltSpeechService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ILogService private readonly logService: ILogService,
+		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@ISecretStorageService private readonly secretStorage: ISecretStorageService,
 	) {
 		super();
 		this._register(this.speech.onDidEvent(event => {
@@ -151,7 +156,7 @@ export class AgentVoiceDictation extends Disposable {
 		this._level = 0;
 		this.setState('starting');
 		try {
-			await this.speech.start({ sessionId: session.id, locale: navigator.language || 'en-US', endpoint: this.endpoint() });
+			await this.speech.start(await this.startOptions(session.id));
 			if (generation !== this.generation) {
 				return;
 			}
@@ -266,6 +271,26 @@ export class AgentVoiceDictation extends Disposable {
 			clearTimeout(this.transcribeTimer);
 			this.transcribeTimer = undefined;
 		}
+	}
+
+	/** The engine and model chosen in Settings > Voice model, with the user's OpenAI key for realtime. */
+	private async startOptions(sessionId: string): Promise<IVoltSpeechStartOptions> {
+		const engine = (this.configurationService.getValue<string>(AGENT_VOICE_ENGINE_SETTING) || 'auto') as AgentVoiceEngine;
+		const options: IVoltSpeechStartOptions = { sessionId, locale: navigator.language || 'en-US', engine, endpoint: this.endpoint() };
+		if (engine !== 'auto' && engine !== 'openai') {
+			return options;
+		}
+		const openai = this.runtime.listProfiles().find(profile => profile.providerId === 'openai' && profile.enabled && profile.hasSecret);
+		// An empty key lets the main process use its own OPENAI_API_KEY.
+		const apiKey = openai ? await this.secretStorage.get(secretKeyForProfile(openai.id)) ?? '' : '';
+		return {
+			...options,
+			realtime: {
+				baseUrl: openai?.endpoint?.baseURL || 'https://api.openai.com/v1',
+				apiKey,
+				model: this.configurationService.getValue<string>(AGENT_VOICE_REALTIME_MODEL_SETTING) || AGENT_VOICE_DEFAULT_REALTIME_MODEL,
+			},
+		};
 	}
 
 	private endpoint(): IVoltSpeechEndpoint | undefined {
