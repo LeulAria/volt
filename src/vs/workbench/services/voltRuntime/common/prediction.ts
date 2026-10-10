@@ -101,7 +101,7 @@ export const DEFAULT_PREDICTION_SETTINGS: IPredictionSettings = {
 	mode: 'eager',
 	disabledGlobs: ['**/.env*', '**/*.lock', '**/package-lock.json', '**/secrets*'],
 	composer: true,
-	composerDelayMs: 1000,
+	composerDelayMs: 500,
 };
 
 /** What the composer's model continuation is built from. */
@@ -146,6 +146,13 @@ export interface IVoltPredictionService {
 	 * typing through, or an answer for this exact spot. Undefined otherwise.
 	 */
 	peekInline(ctx: IPredictionContext): IEditPrediction | undefined;
+
+	/**
+	 * Starts the ghost-text request for `ctx` without waiting for it (the text after a suggestion
+	 * is accepted), unless it is known or another request is running. A later {@link predictInline}
+	 * for the same spot gets its answer.
+	 */
+	prefetchInline(ctx: IPredictionContext): void;
 
 	/** The model's continuation of a composer message (a few words), or undefined. */
 	predictComposer(input: IComposerPredictionInput, token: CancellationToken): Promise<string | undefined>;

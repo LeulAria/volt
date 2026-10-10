@@ -36,7 +36,8 @@ class VoltPredictionContribution extends Disposable {
 		const provider = this._register(instantiationService.createInstance(VoltInlineCompletionsProvider, this.recentEdits));
 		this._register(languageFeaturesService.inlineCompletionsProvider.register('*', provider));
 		const composer = this._register(instantiationService.createInstance(VoltComposerCompletionsProvider));
-		this._register(languageFeaturesService.inlineCompletionsProvider.register({ scheme: AGENT_COMPOSER_SCHEME }, composer));
+		// The composers' models are simple-widget models: a provider only sees them with hasAccessToAllModels.
+		this._register(languageFeaturesService.inlineCompletionsProvider.register({ scheme: AGENT_COMPOSER_SCHEME, hasAccessToAllModels: true }, composer));
 		recentEditsForActions = this.recentEdits;
 	}
 }

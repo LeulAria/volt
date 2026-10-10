@@ -10,7 +10,7 @@
  * cap length. Empty result means "show nothing".
  */
 
-import { CURSOR_MARKER } from './predictionPrompt.js';
+import { CURSOR_MARKER, InlineWriting } from './predictionPrompt.js';
 
 const MAX_COMPLETION_LINES = 16;
 
@@ -40,6 +40,8 @@ export function stripFences(text: string): string {
 
 /** Removes the cursor marker and FIM / end-of-text control tokens; output stops at an end token. */
 export function stripSpecialTokens(text: string): string {
+	// Agent CLIs (`claude -p`) leak their own reminders into the reply, and models copy the tag.
+	text = text.replace(/<system-reminder>[\s\S]*?(?:<\/system-reminder>|$)/g, '');
 	const end = /<\|(?:endoftext|end_of_text|file_separator|im_end|eot_id|end)\|>|<EOT>|<\/s>/.exec(text);
 	if (end) {
 		text = text.slice(0, end.index);
@@ -51,12 +53,32 @@ export function stripSpecialTokens(text: string): string {
  * Ghost text must be code. Agents often answer in English ("There is no meaningful value...").
  * Those must never be inserted into the buffer.
  */
+const ANSWER_NOTE = /^[([]\s*(nothing to |no (completion|insertion|code|change|continuation)s?\b|empty (reply|completion|insertion)\b)/i;
+
+/** A reply about the task, not the text to insert. Prose is fine where the user writes prose; this never is. */
+const META_REPLY = /^(sure[,!.]|okay[,!.]|here('s| is| are) (the|your|a)\b|as an ai\b|i (can't|cannot|can not) (help|complete|continue)\b|nothing to (insert|complete|add|continue)\b|no (completion|insertion|continuation) (is )?(needed|required|possible)\b|the (cursor|completion|insertion) (is|would|should)\b)/i;
+
+/**
+ * "(Nothing to insert: ...)", "[No completion]", "Sure, here is...": a note about the answer, not
+ * the answer. Also after a line of real text: "Three\n(Nothing to insert: ...)".
+ */
+export function isAnswerNote(text: string): boolean {
+	const t = text.trim();
+	return META_REPLY.test(t) || TASK_TALK.test(t) || t.split('\n').some(line => ANSWER_NOTE.test(line.trim()));
+}
+
+/** A refusal or an aside about the autocomplete itself ("I'm not going to continue that text, since..."). */
+const TASK_TALK = /\b(cursor marker|system (prompt|setup|reminder)|happy to help|as an (ai|assistant|autocomplete)|act as an? (autocomplete|assistant))\b|\bcontinu(e|es|ing) the (line|text|sentence|document|draft|paragraph|writing)\b|<\|cursor\|>|^i('m| am) (not going to|unable to|not able to)\b|\bi (can't|cannot|won't|will not) (continue|complete) (this|that|the)\b/i;
+
 export function isProseCompletion(text: string): boolean {
 	const t = text.trim();
 	if (!t) {
 		return false;
 	}
-	if (/^(there is|there are|there'?s|i |i'm|i cannot|i can't|sorry|unfortunately|no meaningful|cannot |can't |the code|this (is|would|does|doesn't)|as an ai|here is|here's|sure[,.!]|based on|it (looks|seems)|you (can|should)|to complete|the (completion|cursor|insertion))/i.test(t)) {
+	if (isAnswerNote(t)) {
+		return true;
+	}
+	if (/^(nothing to (insert|complete|add)|no (completion|insertion) (is )?(needed|required|possible)|there is|there are|there'?s|i |i'm|i cannot|i can't|sorry|unfortunately|no meaningful|cannot |can't |the code|this (is|would|does|doesn't)|as an ai|here is|here's|sure[,.!]|based on|it (looks|seems)|you (can|should)|to complete|the (completion|cursor|insertion))/i.test(t)) {
 		return true;
 	}
 	const codeChars = (t.match(/[{}();=<>[\].]/g) ?? []).length;
@@ -282,10 +304,16 @@ export interface IInlinePostProcessInput {
 	prefix?: string;
 	/** Text after the cursor (the excerpt). Enables removal of lines the document already has. */
 	suffix?: string;
+	/** Code (default), or writing: a Markdown or text document, or a comment in code. */
+	writing?: InlineWriting;
 }
 
 /** Full inline pipeline. Returns undefined when nothing worth showing survives. */
-export function postProcessInline({ raw, linePrefix, lineSuffix, prefix, suffix }: IInlinePostProcessInput): string | undefined {
+export function postProcessInline({ raw, linePrefix, lineSuffix, prefix, suffix, writing = 'code' }: IInlinePostProcessInput): string | undefined {
+	if (writing !== 'code') {
+		// Markdown has fences of its own: they stay.
+		return postProcessWriting(stripSpecialTokens(raw.replace(/\r\n/g, '\n')), linePrefix, lineSuffix, prefix, suffix, writing);
+	}
 	let text = stripSpecialTokens(stripFences(raw.replace(/\r\n/g, '\n')));
 	// Models occasionally prefix with a stray newline when the cursor is mid-line.
 	if (linePrefix.trim().length > 0) {
@@ -305,6 +333,107 @@ export function postProcessInline({ raw, linePrefix, lineSuffix, prefix, suffix 
 		return undefined;
 	}
 	return text;
+}
+
+/**
+ * Writing (Markdown, plain text, a comment): English is the point here, so only notes about the
+ * answer are refused. No indentation-based block rules; the reply is one line and one sentence.
+ */
+function postProcessWriting(text: string, linePrefix: string, lineSuffix: string, prefix: string | undefined, suffix: string | undefined, writing: 'prose' | 'comment'): string | undefined {
+	// The prompt asks for <insert>...</insert>: whatever the model says around it is not text.
+	const tagged = /<insert>([\s\S]*?)(?:<\/insert>|$)/.exec(text);
+	if (tagged) {
+		// A `<br>` on a line of its own is an HTML line break, not text.
+		text = tagged[1].replace(/^[ \t]*<br\s*\/?>[ \t]*$/gim, '');
+	} else {
+		// Untagged: a fence around the whole reply is wrapping, not text.
+		text = /^\s*```[^\n]*\n([\s\S]*?)\n?```\s*$/.exec(text)?.[1] ?? text;
+	}
+	// A line break first is a stray mid-sentence or on an empty line; after a finished line
+	// (`Three|` -> `\nFour`) it starts the next one.
+	if (writing === 'comment' || !linePrefix.trim() || /\s$/.test(linePrefix)) {
+		text = text.replace(/^\n+/, '');
+	}
+	text = dedupeLineEcho(text, prefix ?? linePrefix, linePrefix);
+	text = dedupePrefixOverlap(text, linePrefix);
+	if (/\S\s$/.test(linePrefix)) {
+		text = text.replace(/^[ \t]+/, '');
+	}
+	text = dropRestartedSentence(text, linePrefix);
+	// The line's last words said again (`Three` -> ` Three`).
+	const said = linePrefix.trim().toLowerCase();
+	const reply = text.trim().toLowerCase();
+	const at = said.length - reply.length;
+	if (reply && said.endsWith(reply) && (at === 0 || !/[\p{L}\p{N}_]/u.test(said[at - 1]))) {
+		return undefined;
+	}
+	text = trimSuffixOverlap(text, suffix ?? '', lineSuffix);
+	text = fitToLineSuffix(text, lineSuffix);
+	const line = oneLine(text, prefix ?? linePrefix, writing);
+	if (line === undefined) {
+		return undefined;
+	}
+	text = line;
+	// One sentence at a time, like the composer: a second one is a guess on a guess.
+	const sentence = /^[^\n]*?\S[.!?]["')\]]?(?=[ \t]+\S)/.exec(text);
+	if (sentence) {
+		text = sentence[0];
+	}
+	text = text.replace(/\s+$/, m => (m.includes('\n') ? '' : m));
+	if (!text.trim() || isAnswerNote(text) || text.trim() === lineSuffix.trim()) {
+		return undefined;
+	}
+	// Code symbols after a line of plain words (`that` -> ` ' ' + 'the' ...`) are a confused reply.
+	if (writing === 'prose' && !/[{};=+<>`|\\]/.test(linePrefix) && (text.match(/[{};=+<>|\\]|' '|" "/g) ?? []).length >= 2) {
+		return undefined;
+	}
+	return text;
+}
+
+/**
+ * The writing reply is a line break and nothing else: the model says the line is finished but
+ * not what comes next.
+ */
+export function repliedLineBreakOnly(raw: string): boolean {
+	const text = stripSpecialTokens(raw.replace(/\r\n/g, '\n'));
+	const inner = /<insert>([\s\S]*?)(?:<\/insert>|$)/.exec(text)?.[1] ?? text;
+	return inner.includes('\n') && !inner.replace(/<br\s*\/?>/gi, '').trim();
+}
+
+/**
+ * One line: the rest of this one, or (after a finished line) the next one. In lines written one
+ * under another, the next line follows directly, without the blank line a model may put first. A
+ * code fence is all or nothing.
+ */
+function oneLine(text: string, prefix: string, writing: 'prose' | 'comment'): string | undefined {
+	const lines = text.split('\n');
+	if (writing === 'comment') {
+		return lines[0];
+	}
+	const breaks = lines.findIndex(line => line.trim());
+	if (breaks < 0) {
+		return '';
+	}
+	const lead = breaks > 1 && !/\n[ \t]*\n/.test(prefix.slice(-300)) ? '\n' : '\n'.repeat(breaks);
+	if (/^\s*```/.test(lines[breaks])) {
+		const close = lines.findIndex((line, i) => i > breaks && /^\s*```\s*$/.test(line));
+		return close > 0 && close - breaks <= 8 ? lead + lines.slice(breaks, close + 1).join('\n') : undefined;
+	}
+	return lead + lines[breaks];
+}
+
+/**
+ * The reply starts the sentence over and catches up with the line (`...editor that` ->
+ * ` AI-powered code editor that helps you`): only what comes after the line's last three words.
+ */
+function dropRestartedSentence(text: string, linePrefix: string): string {
+	const words = linePrefix.trim().split(/\s+/);
+	if (words.length < 3) {
+		return text;
+	}
+	const tail = words.slice(-3).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+	const match = new RegExp(`${tail}(?![\\p{L}\\p{N}])`, 'iu').exec(text);
+	return match && match.index <= 60 ? text.slice(match.index + match[0].length) : text;
 }
 
 /** How the editor applies a cleaned completion on the cursor's line. */

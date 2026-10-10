@@ -13,15 +13,13 @@ import { IModelMessage } from '../providers.js';
  * the caller then uses an agent session instead. `model` undefined: the CLI's cheapest default.
  */
 export function predictionCommandFor(providerId: string, command: string | undefined, messages: readonly IModelMessage[], model?: string): readonly string[] | undefined {
-	const system = messages.filter(message => message.role === 'system').map(message => message.content).filter(Boolean).join('\n\n');
-	const user = messages.filter(message => message.role !== 'system').map(message => message.content).filter(Boolean).join('\n\n');
+	const { system, user } = splitPrompt(messages);
 	const combined = system ? `${system}\n\n${user}` : user;
 	switch (providerId) {
 		case 'claude-code':
 			return [
 				command || 'claude', '-p', '--model', model || 'haiku', '--output-format', 'text',
-				...(system ? ['--system-prompt', system] : []),
-				'--tools', '', '--disable-slash-commands', '--strict-mcp-config', '--no-session-persistence', '--settings', '{"disableAllHooks":true}',
+				...claudeQuietFlags(system),
 				user,
 			];
 		case 'codex':
@@ -31,4 +29,43 @@ export function predictionCommandFor(providerId: string, command: string | undef
 		default:
 			return undefined;
 	}
+}
+
+/**
+ * The same Claude call with the prompt read from stdin as one stream-json message, so the process
+ * can be started before the request and its start-up (about two seconds) is off the critical path.
+ * Undefined for agents without that mode.
+ */
+export function warmPredictionCommandFor(providerId: string, command: string | undefined, messages: readonly IModelMessage[], model?: string): { readonly argv: readonly string[]; readonly input: string } | undefined {
+	if (providerId !== 'claude-code') {
+		return undefined;
+	}
+	const { system, user } = splitPrompt(messages);
+	return {
+		argv: [
+			command || 'claude', '-p', '--model', model || 'haiku',
+			'--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+			...claudeQuietFlags(system),
+		],
+		input: `${JSON.stringify({ type: 'user', message: { role: 'user', content: user } })}\n`,
+	};
+}
+
+function splitPrompt(messages: readonly IModelMessage[]): { system: string; user: string } {
+	return {
+		system: messages.filter(message => message.role === 'system').map(message => message.content).filter(Boolean).join('\n\n'),
+		user: messages.filter(message => message.role !== 'system').map(message => message.content).filter(Boolean).join('\n\n'),
+	};
+}
+
+/**
+ * No tools, hooks, MCP servers or saved session, and the prediction's own system prompt. Low
+ * effort: otherwise Haiku thinks for up to a second and a half before writing a few characters.
+ */
+function claudeQuietFlags(system: string): string[] {
+	return [
+		'--effort', 'low',
+		...(system ? ['--system-prompt', system] : []),
+		'--tools', '', '--disable-slash-commands', '--strict-mcp-config', '--no-session-persistence', '--settings', '{"disableAllHooks":true}',
+	];
 }

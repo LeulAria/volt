@@ -20,8 +20,8 @@ import { DEFAULT_PREDICTION_SETTINGS, IComposerPredictionInput, IEditPrediction,
 import { buildComposerPrompt, cleanComposerCompletion } from '../../common/prediction/composerPredictor.js';
 import { meetsConfidence, orderEdits, samePath } from '../../common/prediction/editGraph.js';
 import { IParsedEdit, parseMultiEdit } from '../../common/prediction/multiEditParser.js';
-import { capLines, dedupeLineEcho, dedupePrefixOverlap, postProcessInline, stripFences, stripSpecialTokens, trimToBlock } from '../../common/prediction/postProcess.js';
-import { buildInlinePrompt, buildNextEditPrompt } from '../../common/prediction/predictionPrompt.js';
+import { capLines, dedupeLineEcho, dedupePrefixOverlap, postProcessInline, repliedLineBreakOnly, stripFences, stripSpecialTokens, trimToBlock } from '../../common/prediction/postProcess.js';
+import { buildInlinePrompt, buildNextEditPrompt, InlineWriting, inlineWritingKind } from '../../common/prediction/predictionPrompt.js';
 import { PredictionCache, predictionCacheKey, typedSince, TypedThroughCache } from '../../common/prediction/predictionCache.js';
 import { IModelMessage } from '../../common/providers.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
@@ -31,8 +31,8 @@ const INLINE_TIMEOUT_MS = 10_000;
 const NES_TIMEOUT_MS = 15_000;
 const AGENT_TAB_TIMEOUT_MS = 30_000;
 const ONESHOT_TIMEOUT_MS = 60_000;
-/** An agent turn costs seconds and a whole agent prompt: wait for the typing to really pause. */
-const AGENT_EXTRA_DEBOUNCE_MS = 250;
+/** An agent call costs a whole prompt: wait for the typing to pause, but not long (Claude answers in under a second). */
+const AGENT_EXTRA_DEBOUNCE_MS = 100;
 
 /** Ghost text is a statement or a short block; anything longer was going to be cut anyway. */
 const INLINE_MAX_OUTPUT_TOKENS = 256;
@@ -186,23 +186,43 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 		return cached ? this.inlineResult(ctx, cached) : undefined;
 	}
 
+	prefetchInline(ctx: IPredictionContext): void {
+		const modelRef = this.modelAccess.resolveTabModelRef();
+		if (!modelRef || this.inlineFlight || this.peekInline(ctx)) {
+			return;
+		}
+		const cacheKey = predictionCacheKey(modelRef, ctx.uri.toString(), ctx.prefix, ctx.suffix);
+		if (this.inlineCache.get(cacheKey) === undefined) {
+			this.startInlineFlight(modelRef, ctx, cacheKey);
+		}
+	}
+
 	private startInlineFlight(modelRef: string, ctx: IPredictionContext, cacheKey: string): IInlineFlight {
 		this.inlineFlight?.cts.dispose(true);
 		const cts = new CancellationTokenSource();
 		const uri = ctx.uri.toString();
 		const agent = modelRef.startsWith('agent:');
+		const writing = inlineWritingKind(ctx.languageId, ctx.linePrefix);
+		const ask = (at: IPredictionContext, extraDebounceMs: number) => this.request(modelRef, buildInlinePrompt(at, writing), {
+			timeoutMs: agent ? AGENT_TAB_TIMEOUT_MS : INLINE_TIMEOUT_MS,
+			extraDebounceMs,
+			options: this.tabOptions(modelRef, INLINE_MAX_OUTPUT_TOKENS),
+			// Stop reading once the reply has run past the block (or sentence) it completes.
+			enough: text => inlineReplyIsComplete(text, at.prefix, at.linePrefix, writing),
+		}, cts.token);
 		const result = (async () => {
-			const raw = await this.request(modelRef, buildInlinePrompt(ctx), {
-				timeoutMs: agent ? AGENT_TAB_TIMEOUT_MS : INLINE_TIMEOUT_MS,
-				extraDebounceMs: agent ? AGENT_EXTRA_DEBOUNCE_MS : 0,
-				options: this.tabOptions(modelRef, INLINE_MAX_OUTPUT_TOKENS),
-				// Stop reading once the reply has run past the block it completes.
-				enough: text => inlineReplyIsComplete(text, ctx.prefix, ctx.linePrefix),
-			}, cts.token);
+			const raw = await ask(ctx, agent ? AGENT_EXTRA_DEBOUNCE_MS : 0);
 			if (raw === undefined) {
 				return undefined;
 			}
-			const completion = postProcessInline({ raw, linePrefix: ctx.linePrefix, lineSuffix: ctx.lineSuffix, prefix: ctx.prefix, suffix: ctx.suffix }) ?? '';
+			let completion = postProcessInline({ raw, linePrefix: ctx.linePrefix, lineSuffix: ctx.lineSuffix, prefix: ctx.prefix, suffix: ctx.suffix, writing }) ?? '';
+			if (!completion && writing === 'prose' && ctx.linePrefix.trim() && !ctx.lineSuffix.trim() && repliedLineBreakOnly(raw)) {
+				// "This line is finished" and nothing more: ask for the next line itself (Tab, Tab, Tab down a list).
+				const next: IPredictionContext = { ...ctx, prefix: `${ctx.prefix}\n`, linePrefix: '' };
+				const nextRaw = await ask(next, 0);
+				const line = nextRaw === undefined ? undefined : postProcessInline({ raw: nextRaw, linePrefix: '', lineSuffix: ctx.lineSuffix, prefix: next.prefix, suffix: ctx.suffix, writing });
+				completion = line && !line.startsWith('\n') ? `\n${line}` : '';
+			}
 			// Cache negatives too - retrying the same position would give the same nothing.
 			this.inlineCache.set(cacheKey, completion);
 			if (completion) {
@@ -299,7 +319,7 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 			if (raw === undefined) {
 				return undefined;
 			}
-			const completion = cleanComposerCompletion(raw, input.draft) ?? '';
+			const completion = cleanComposerCompletion(raw, input.draft, input.vocabulary) ?? '';
 			this.composerCache.set(cacheKey, completion);
 			if (completion) {
 				this.composerTyped.remember(uri, input.draft, input.after, completion);
@@ -495,9 +515,10 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 
 /**
  * True once a streamed ghost-text reply has gone past the block the cursor is in, or past the
- * line cap: what is left would be cut by post-processing anyway.
+ * line cap: what is left would be cut by post-processing anyway. Writing and comments end with
+ * their line.
  */
-export function inlineReplyIsComplete(raw: string, prefix: string, linePrefix: string): boolean {
+export function inlineReplyIsComplete(raw: string, prefix: string, linePrefix: string, writing: InlineWriting = 'code'): boolean {
 	if (/<\|(?:endoftext|end_of_text|file_separator|im_end|eot_id|end)\|>|<EOT>|<\/s>/.test(raw)) {
 		return true;
 	}
@@ -507,6 +528,11 @@ export function inlineReplyIsComplete(raw: string, prefix: string, linePrefix: s
 		return false;
 	}
 	const whole = raw.slice(0, newline);
+	if (writing !== 'code') {
+		// Writing is one line: done once a line with text has ended, or the insert is closed.
+		const text = stripSpecialTokens(whole).replace(/^\s*<insert>/, '').replace(/^\n+/, '');
+		return whole.includes('</insert>') || /\S/.test(text.split('\n')[0]);
+	}
 	if (/^\s*```[^\n]*\n[\s\S]*\n```\s*$/.test(whole)) {
 		// A closed fence: the code inside is the whole answer.
 		return true;

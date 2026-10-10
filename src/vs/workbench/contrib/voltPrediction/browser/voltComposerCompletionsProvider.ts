@@ -19,13 +19,14 @@ import { ComposerLanguageModel } from '../../../services/voltRuntime/common/pred
 /** A composer longer than this is a pasted log or file, not a sentence being typed. */
 const MAX_DRAFT_CHARS = 20_000;
 /** Until the settings say otherwise: the pause before the model is asked. */
-const DEFAULT_DELAY_MS = 1000;
+const DEFAULT_DELAY_MS = 500;
 
 /**
  * Ghost text in the agent composers (the prompt box, editing a sent message): the rest of the
  * word, the next words, the rest of the sentence. Guesses from the user's own prompts show on
  * every keystroke; once the typing pauses, the prediction model continues the sentence with the
- * chat in view, and its answer replaces the guess. Tab accepts.
+ * chat in view, and its answer replaces the guess (the change event makes the editor ask again,
+ * and the answer is then known). Tab accepts.
  */
 export class VoltComposerCompletionsProvider extends Disposable implements InlineCompletionsProvider<InlineCompletions> {
 
@@ -83,12 +84,13 @@ export class VoltComposerCompletionsProvider extends Disposable implements Inlin
 		const known = this.predictionService.peekComposer(input);
 		if (known) {
 			this.pause.cancel();
-			return this.list(position, known);
+			return this.list(position, known, true);
 		}
 		// Each keystroke restarts the pause; the model is asked once the typing stops.
 		this.pause.schedule(Math.max(0, settings.composerDelayMs));
 		const guess = this.languageModel(chat).predict(draft);
-		return guess ? this.list(position, guess) : undefined;
+		// Not forward-stable: the editor would keep showing it over the model's answer.
+		return guess ? this.list(position, guess, false) : undefined;
 	}
 
 	disposeInlineCompletions(): void {
@@ -124,12 +126,12 @@ export class VoltComposerCompletionsProvider extends Disposable implements Inlin
 		return this.local.model;
 	}
 
-	private list(position: Position, text: string): InlineCompletions {
+	private list(position: Position, text: string, stable: boolean): InlineCompletions {
 		const item: InlineCompletion = {
 			insertText: text,
 			range: new Range(position.lineNumber, position.column, position.lineNumber, position.column),
 		};
-		return { items: [item], enableForwardStability: true };
+		return { items: [item], enableForwardStability: stable };
 	}
 
 	private async refreshClipboard(): Promise<void> {

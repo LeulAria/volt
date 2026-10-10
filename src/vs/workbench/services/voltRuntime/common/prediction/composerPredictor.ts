@@ -122,8 +122,10 @@ export class ComposerLanguageModel {
 			return undefined;
 		}
 		const spelled = this.spellings.get(best.word) ?? best.word;
-		// Keep what the user typed; take the rest from the remembered spelling.
-		const rest = spelled.slice(partial.length);
+		// Keep what the user typed; take the rest from the remembered spelling, unless that was
+		// shouted (`TEST WINDOW`) and the user types in lowercase.
+		const shouted = spelled.length > 1 && spelled === spelled.toUpperCase() && partial === partial.toLowerCase();
+		const rest = (shouted ? spelled.toLowerCase() : spelled).slice(partial.length);
 		const following = this.chain([previous, best.word].filter((word): word is string => !!word), MAX_NEXT_WORDS - 1);
 		return following.length ? `${rest} ${following.join(' ')}` : rest;
 	}
@@ -229,9 +231,10 @@ export const COMPOSER_SYSTEM_PROMPT = [
 	'You autocomplete the message a developer is typing to an AI coding agent, like a phone keyboard that knows the conversation.',
 	`Continue the text exactly where ${COMPOSER_CURSOR} is: the next few words, at most to the end of the sentence.`,
 	'Write as the developer, in their language, tone and casing. Use names from the chat (files, functions, errors) when they fit.',
-	`Begin the reply with the last word before ${COMPOSER_CURSOR}, completed if it is cut off, then continue.`,
-	'Reply with that word and the continuation only: no quotes, no preamble, no answer to the message.',
+	'When the text stops inside a word, start with the rest of that word; after a finished word, start with a space.',
+	'Reply with the continuation only: no quotes, no preamble, never an answer to the message.',
 	'If no continuation is likely, reply with nothing.',
+	`Examples: \`rename the var${COMPOSER_CURSOR}\` -> \`iable to userCount\`; \`now run the ${COMPOSER_CURSOR}\` -> \`tests again\`.`,
 ].join(' ');
 
 export interface IComposerPromptInput {
@@ -266,12 +269,15 @@ export function buildComposerPrompt(input: IComposerPromptInput): IModelMessage[
 		blocks.push(`## Clipboard\n${clipboard}`);
 	}
 	blocks.push(`## The message being typed\n${input.draft}${COMPOSER_CURSOR}${input.after}`);
-	blocks.push(`Continue at ${COMPOSER_CURSOR}. Reply with the last word and the continuation only.`);
+	blocks.push(`Continue at ${COMPOSER_CURSOR}. Reply with the continuation only.`);
 	return [
 		{ role: 'system', content: COMPOSER_SYSTEM_PROMPT },
 		{ role: 'user', content: blocks.join('\n\n') },
 	];
 }
+
+/** Words that are rarely the end of a longer one: after a whole word, a reply starting with one starts a new word. */
+const STANDALONE_WORD = /^(the|a|an|and|or|but|to|in|on|at|of|for|with|from|by|it|its|this|that|these|those|is|are|was|be|so|if|then|than|when|all|my|your|our|their|them|me|us|you|we|they|not|no|now|also|too|again|please|instead|before|after|into)\b/i;
 
 /** A reply about the task rather than the continuation (`Sure, ...`, `Here is ...`). Words like "make sure" stay valid. */
 const META_REPLY = /^((sure|okay|ok)[,!.]|here('s| is| are)\b|(continuation|completion)\s*:|i (can|will|would|cannot|can't) (help|continue|complete)\b|as an ai\b|based on (the|your) (message|conversation|context)\b)/i;
@@ -280,9 +286,10 @@ const META_REPLY = /^((sure|okay|ok)[,!.]|here('s| is| are)\b|(continuation|comp
  * A model reply turned into ghost text for `draft`: one line, without an echo of what was typed,
  * cut after the sentence it finishes. Undefined when nothing usable is left.
  */
-export function cleanComposerCompletion(raw: string, draft: string): string | undefined {
+export function cleanComposerCompletion(raw: string, draft: string, vocabulary: readonly string[] = []): string | undefined {
 	let text = stripSpecialTokens(stripFences(raw.replace(/\r\n/g, '\n')));
-	text = text.split(COMPOSER_CURSOR).join('');
+	// An HTML line break (`st<br>`) is a line break.
+	text = text.split(COMPOSER_CURSOR).join('').replace(/<br\s*\/?>/gi, '\n');
 	// The first line only: the composer predicts the sentence being typed, not the next paragraph.
 	text = text.replace(/^\n+/, '');
 	const newline = text.indexOf('\n');
@@ -299,13 +306,22 @@ export function cleanComposerCompletion(raw: string, draft: string): string | un
 		text = restated;
 	} else {
 		text = dedupeEcho(text, draft);
-		// Chat replies rarely keep a leading space: after a whole word, the continuation is a new one.
-		if (/[\p{L}\p{N}_]$/u.test(draft) && /^[\p{L}\p{N}_(\[{"'`]/u.test(text)) {
+		// No space first is the rest of the unfinished word (`bu` + `g in ...`), unless a whole word
+		// was typed and the reply starts a common word of its own (`commit` + `the changes`).
+		const partial = /[\p{L}\p{N}_]+$/u.exec(draft)?.[0];
+		if (partial && partial.length >= 3 && STANDALONE_WORD.test(text)) {
 			text = ` ${text}`;
 		}
 	}
+	if (contradictsName(draft, text, vocabulary)) {
+		return undefined;
+	}
 	if (/\s$/.test(draft)) {
-		text = text.replace(/^\s+/, '');
+		text = dropRestatedLastWord(text.replace(/^\s+/, ''), draft);
+	}
+	// A quote the draft never opened (`fix the bu` -> `bug" in ...`).
+	if (countOf(text, '"') % 2 === 1 && countOf(draft, '"') % 2 === 0) {
+		text = text.replace(/"/g, '');
 	}
 	const sentence = /^(.*?[.!?])(\s|$)/.exec(text);
 	if (sentence && sentence[1].trim().length >= 2) {
@@ -327,6 +343,33 @@ function stripRestatedWord(text: string, draft: string): string | undefined {
 		return undefined;
 	}
 	return lead.slice(partial.length);
+}
+
+/**
+ * The word being typed starts a name from the chat (`agentCompo` -> `agentComposerChips.ts`) but
+ * the reply finishes it as another word (`agentComponent`): the local completion is right.
+ */
+function contradictsName(draft: string, text: string, vocabulary: readonly string[]): boolean {
+	const partial = /[\p{L}\p{N}_]+$/u.exec(draft)?.[0];
+	if (!partial || partial.length < 3) {
+		return false;
+	}
+	const word = partial + (/^[\p{L}\p{N}_]*/u.exec(text)?.[0] ?? '');
+	const names = vocabulary.flatMap(entry => entry.match(NAME) ?? []).map(name => /^[\p{L}\p{N}_$]*/u.exec(name)![0]).filter(name => name.length > partial.length && name.startsWith(partial));
+	return names.length > 0 && !names.some(name => name === word || name.startsWith(word) && word.length > partial.length);
+}
+
+/** After a space, a reply that starts with the draft's last word again (`test for ` + `for clamp`) loses it. */
+function dropRestatedLastWord(text: string, draft: string): string {
+	const last = /([\p{L}\p{N}_'-]+)[^\S\n]+$/u.exec(draft)?.[1];
+	if (!last || !text.toLowerCase().startsWith(last.toLowerCase()) || /[\p{L}\p{N}_]/u.test(text[last.length] ?? '')) {
+		return text;
+	}
+	return text.slice(last.length).replace(/^\s+/, '');
+}
+
+function countOf(text: string, ch: string): number {
+	return text.split(ch).length - 1;
 }
 
 /** Drops the start of `text` that repeats the end of `draft` (models restate the last words). */

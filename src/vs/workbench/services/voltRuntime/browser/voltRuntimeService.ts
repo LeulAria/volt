@@ -21,7 +21,8 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { IAgentWorktreeService } from '../common/git/agentWorktree.js';
 import { IAgentHistoryService } from '../common/history/agentHistory.js';
 import { buildTitlePrompt, sanitizeTitle, titleCommandFor } from '../common/history/titleGeneration.js';
-import { predictionCommandFor } from '../common/prediction/printCommand.js';
+import { predictionCommandFor, warmPredictionCommandFor } from '../common/prediction/printCommand.js';
+import { WarmPrintAgents } from './prediction/warmPrintAgent.js';
 import { normalizeCursorModelId } from '../common/harness/cursorQuota.js';
 import { IVoltSessionContextService } from '../common/sessionContext.js';
 import './sessionContextService.js';
@@ -369,6 +370,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private savedRules: IPermissionRule[] = [];
 	private compiledPolicy: ICompiledPolicy = compilePolicy({});
 	private tabAgent: ITabAgentSession | undefined;
+	private warmTabAgents: WarmPrintAgents | undefined;
 	private readonly policyMemo = new Map<string, IAccessDecision>();
 	private readonly pendingApprovals = new Map<string, { resolve: (decision: IAccessDecision) => void; request: IAccessRequest }>();
 	private readonly pendingQuestions = new Map<string, { request: IAgentQuestionRequest; waiters: Set<(response: IAgentQuestionResponse) => void> }>();
@@ -1343,7 +1345,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const definition = cliAgentDefinition(profile.providerId);
 		const command = profile.command && definition?.commands.includes(profile.command) ? profile.command : undefined;
 		// An agent that lists no models has the provider's id as its own: then the CLI picks its cheapest.
-		const argv = predictionCommandFor(profile.providerId, command, messages, item.id === profile.providerId ? undefined : titleAgentModel(item));
+		const model = item.id === profile.providerId ? undefined : titleAgentModel(item);
+		// Away from the project, like titles: the CLI loads no project instructions for a few words.
+		const printCwd = isWindows ? undefined : '/tmp';
+		const warm = warmPredictionCommandFor(profile.providerId, command, messages, model);
+		this.warmTabAgents ??= this._register(new WarmPrintAgents(this.stdio));
+		if (warm && (yield* this.warmTabAgents.ask(warm.argv, printCwd, warm.input, token))) {
+			return;
+		}
+		const argv = predictionCommandFor(profile.providerId, command, messages, model);
 		if (argv) {
 			yield* this.streamPrintCommand(argv, token);
 			return;

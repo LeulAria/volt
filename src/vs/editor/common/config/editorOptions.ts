@@ -4445,7 +4445,8 @@ class InlineEditorSuggest extends BaseEditorOption<EditorOption.inlineSuggest, I
 				renderSideBySide: 'auto',
 				allowCodeShifting: 'always',
 			},
-			triggerCommandOnProviderChange: true,
+			// Volt: a provider's change event refetches that provider (ghost text that lands after a pause).
+			triggerCommandOnProviderChange: false,
 			experimental: {
 				suppressInlineSuggestions: '',
 				showOnSuggestConflict: 'never',
