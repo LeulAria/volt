@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import cp from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import vfs from 'vinyl-fs';
@@ -233,6 +234,28 @@ async function main(arch: string = process.arch): Promise<void> {
 	if (!isUpToDate) {
 		await util.rimraf(electronPath)();
 		await util.streamToPromise(getElectron(arch)());
+	}
+	addDarwinUsageDescriptions(electronPath);
+}
+
+/**
+ * Release builds add these when they sign; the dev bundle needs them too. Without
+ * NSSpeechRecognitionUsageDescription macOS kills the dictation helper when it asks for access.
+ */
+function addDarwinUsageDescriptions(electronPath: string): void {
+	if (process.platform !== 'darwin') {
+		return;
+	}
+	const infoPlist = path.join(electronPath, `${product.nameLong}.app`, 'Contents', 'Info.plist');
+	if (!fs.existsSync(infoPlist)) {
+		return;
+	}
+	const descriptions: Record<string, string> = {
+		NSMicrophoneUsageDescription: `An application in ${product.nameLong} wants to use the Microphone.`,
+		NSSpeechRecognitionUsageDescription: 'Volt turns your dictation into text for the agent composer.',
+	};
+	for (const [key, value] of Object.entries(descriptions)) {
+		cp.execFileSync('plutil', ['-replace', key, '-string', value, infoPlist]);
 	}
 }
 

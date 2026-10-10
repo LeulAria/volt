@@ -17,6 +17,8 @@ export type AgentDictationState = 'idle' | 'starting' | 'listening' | 'transcrib
 
 const AUDIO_BLOCK_FRAMES = 2048;
 const TRANSCRIBE_TIMEOUT_MS = 60_000;
+/** 32 ms at 16 kHz: four waveform bars per audio block. */
+const LEVEL_SLICE_FRAMES = 512;
 
 interface IDictationAudio {
 	readonly stream: MediaStream;
@@ -45,6 +47,14 @@ export class AgentVoiceDictation extends Disposable {
 
 	private readonly _onDidCommit = this._register(new Emitter<string>());
 	readonly onDidCommit = this._onDidCommit.event;
+
+	private readonly _onDidFail = this._register(new Emitter<string>());
+	/** Dictation stopped on a problem: the microphone, speech access, or a transcript that never came. */
+	readonly onDidFail = this._onDidFail.event;
+
+	private readonly _onDidHear = this._register(new Emitter<readonly number[]>());
+	/** The microphone's loudness (RMS) in {@link LEVEL_SLICE_FRAMES} slices while listening, for the waveform. */
+	readonly onDidHear = this._onDidHear.event;
 
 	private _state: AgentDictationState = 'idle';
 	private _partial = '';
@@ -193,6 +203,11 @@ export class AgentVoiceDictation extends Disposable {
 		}
 		this._level = rmsLevel(samples);
 		this._onDidChange.fire();
+		const slices: number[] = [];
+		for (let start = 0; start < samples.length; start += LEVEL_SLICE_FRAMES) {
+			slices.push(rmsLevel(samples.subarray(start, start + LEVEL_SLICE_FRAMES)));
+		}
+		this._onDidHear.fire(slices);
 		const pcm = encodeBase64(VSBuffer.wrap(pcm16Bytes(samples)));
 		this.speech.pushAudio(sessionId, pcm).catch(err => this.logService.warn('[voice] audio was not delivered', err));
 	}
@@ -225,10 +240,11 @@ export class AgentVoiceDictation extends Disposable {
 		this.session = undefined;
 		this._partial = '';
 		this._level = 0;
-		this.setState('idle', text ? undefined : localize('voltAgent.dictation.nothingHeard', "No speech was heard."));
+		// Before the state change, so the composer settles the live transcript instead of removing it.
 		if (text) {
 			this._onDidCommit.fire(text);
 		}
+		this.setState('idle', text ? undefined : localize('voltAgent.dictation.nothingHeard', "No speech was heard."));
 	}
 
 	private fail(sessionId: string, message: string): void {
@@ -244,6 +260,7 @@ export class AgentVoiceDictation extends Disposable {
 		this._partial = '';
 		this._level = 0;
 		this.setState('idle', message);
+		this._onDidFail.fire(message);
 		void this.speech.cancel(sessionId).catch(err => this.logService.trace('[voice] cancel failed', err));
 	}
 

@@ -647,6 +647,8 @@
 .volt-agent-input-box.editing .volt-agent-zoom-btn,
 .volt-agent-input-box.editing .volt-agent-context-btn,
 .volt-agent-input-box.editing .volt-agent-attach-btn,
+.volt-agent-edit-slot .volt-agent-mic-btn,
+.volt-agent-input-box.editing .volt-agent-mic-btn,
 .volt-agent-input-box.editing .volt-agent-queue-bar {
 	display: none !important;
 }
@@ -4575,6 +4577,22 @@ pre.volt-agent-searchable {
 .volt-agent-context-btn svg .fill {
 	color: currentColor;
 	transition: color 160ms ease;
+}
+
+.volt-agent-mic-btn[hidden] {
+	display: none;
+}
+
+.volt-agent-mic-btn {
+	width: 18px;
+	height: 26px;
+}
+
+.volt-agent-mic-btn .volt-agent-svg-icon.mic,
+.volt-agent-mic-btn .volt-agent-svg-icon.mic svg {
+	width: 17px;
+	height: 17px;
+	display: block;
 }
 
 .volt-agent-toolbar-end .volt-agent-send {

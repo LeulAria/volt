@@ -35,7 +35,9 @@ import { mainWindow } from '../../../../../base/browser/window.js';
 import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { DropIntoEditorController } from '../../../../../editor/contrib/dropOrPasteInto/browser/dropIntoEditorController.js';
 import { EDITOR_FONT_DEFAULTS, IEditorOptions as ICodeEditorOptions } from '../../../../../editor/common/config/editorOptions.js';
-import { ITextModel } from '../../../../../editor/common/model.js';
+import { IRange } from '../../../../../editor/common/core/range.js';
+import { IEditorDecorationsCollection } from '../../../../../editor/common/editorCommon.js';
+import { ITextModel, TrackedRangeStickiness } from '../../../../../editor/common/model.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { ITextResourceConfigurationService } from '../../../../../editor/common/services/textResourceConfiguration.js';
@@ -124,7 +126,7 @@ import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { AgentLimitBanner } from '../composer/agentLimitBanner.js';
 import { AgentVoiceDictation } from '../composer/agentVoiceDictation.js';
 import { PLANS_FOLDER, planDocument, planFileName } from '../../../../services/voltRuntime/common/plans.js';
-import { AgentVoiceStrip } from '../composer/agentVoiceStrip.js';
+import { AgentVoiceVisuals } from '../composer/agentVoiceVisuals.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING, shouldCompactBeforeSend, shouldOfferCompactChip } from '../../../../services/voltRuntime/common/compaction.js';
 import type { IVoltEvent } from '../../../../services/voltRuntime/common/events.js';
@@ -282,25 +284,14 @@ function createOpenNewAgentIcon(): HTMLElement {
 function createMicIcon(): HTMLElement {
 	const el = $('span.volt-agent-svg-icon.mic');
 	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('viewBox', '0 0 72 72');
 	svg.setAttribute('width', '24');
 	svg.setAttribute('height', '24');
-	svg.setAttribute('fill', 'none');
 	svg.setAttribute('aria-hidden', 'true');
-	const mic = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'rect');
-	mic.setAttribute('x', '9');
-	mic.setAttribute('y', '3');
-	mic.setAttribute('width', '6');
-	mic.setAttribute('height', '11');
-	mic.setAttribute('rx', '3');
+	const mic = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+	mic.setAttribute('d', 'M52.251 34.646 57.501 34.727C57.339 45.515 49.239 54.134 38.625 55.352V65.354H33.375V55.331C22.128 53.927 14.499 43.826 14.499 34.688H19.749C19.749 42.05 26.439 50.252 36.045 50.252 45 50.252 52.119 43.397 52.251 34.646ZM35.999 6.646C41.699 6.646 46.337 11.284 46.337 16.981L46.307 34.654C46.307 40.351 41.684 44.989 35.999 44.989 30.302 44.989 25.664 40.351 25.664 34.654V16.981C25.664 11.284 30.302 6.646 35.999 6.646Z');
 	mic.setAttribute('fill', 'currentColor');
-	const stem = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
-	stem.setAttribute('d', 'M7 11a5 5 0 0 0 10 0M12 16v3M9 19h6');
-	stem.setAttribute('stroke', 'currentColor');
-	stem.setAttribute('stroke-width', '1.8');
-	stem.setAttribute('stroke-linecap', 'round');
 	svg.appendChild(mic);
-	svg.appendChild(stem);
 	el.appendChild(svg);
 	return el;
 }
@@ -652,11 +643,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private zoomButton!: HTMLButtonElement;
 	private contextUsageView!: AgentContextUsageView;
 	private attachButton!: HTMLButtonElement;
+	/** Voice when the send button is not the mic: in follow-ups and while a draft is typed. */
+	private micButton!: HTMLButtonElement;
 	private sendButton!: HTMLButtonElement;
 
 	private voiceDictation!: AgentVoiceDictation;
 
-	private voiceStrip!: AgentVoiceStrip;
+	/** The live transcript in the composer while dictating: each partial replaces it, the final text settles it. */
+	private dictatedText: IEditorDecorationsCollection | undefined;
+	private dictatedShown = '';
+	private dictatedSeparator = '';
 	private suggestEl!: HTMLElement;
 	private composerQueue!: AgentComposerQueue;
 	/** The agent's to-dos, above the chips like the Context Usage card. */
@@ -1102,10 +1098,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		// Subagents and queued prompts sit right on top of the text area, under the chips (Cursor).
 		append(this.composerEl, this.composerQueue.element);
 		this.voiceDictation = this._register(this.instantiationService.createInstance(AgentVoiceDictation));
-		this.voiceStrip = this._register(this.instantiationService.createInstance(AgentVoiceStrip, this.voiceDictation));
-		append(this.composerEl, this.voiceStrip.element);
-		this._register(this.voiceDictation.onDidChange(() => this.sendButton.classList.toggle('recording', this.voiceDictation.active)));
-		this._register(this.voiceDictation.onDidCommit(text => this.insertDictatedText(text)));
+		this._register(this.voiceDictation.onDidChange(() => this.syncDictation()));
+		this._register(this.voiceDictation.onDidCommit(text => this.endDictatedText(text)));
+		this._register(this.voiceDictation.onDidFail(message => this.notificationService.warn(message)));
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
 		this.monacoHost = append(this.inputBox, $('.volt-agent-monaco.show-file-icons'));
 		this.placeholderEl = append(this.monacoHost, $('.volt-agent-placeholder'));
@@ -1168,9 +1163,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		setAgentTooltip(this.attachButton, localize('voltAgent.attach', "Add context"));
 		this.attachButton.appendChild(renderIcon(Codicon.attach));
 
+		this.micButton = append(this.toolbarEndEl, $('button.volt-agent-icon-btn.volt-agent-mic-btn')) as HTMLButtonElement;
+		this.micButton.type = 'button';
+		setAgentTooltip(this.micButton, localize('voltAgent.voice', "Voice"));
+		this.micButton.appendChild(createMicIcon());
+
 		this.sendButton = append(this.toolbarEndEl, $('button.volt-agent-send')) as HTMLButtonElement;
 		this.sendButton.type = 'button';
 		this.updateSendButton();
+		this._register(new AgentVoiceVisuals(this.inputBox, this.micButton, this.voiceDictation));
 
 		this.contextUsageView = this._register(this.instantiationService.createInstance(AgentContextUsageView, {
 			getUsageInput: () => this.contextUsageInput(),
@@ -1263,6 +1264,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			e.preventDefault();
 			e.stopPropagation();
 			void this.openEditInNewAgent();
+		}));
+		this._register(addDisposableListener(this.micButton, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.voiceDictation.toggle();
 		}));
 		this._register(addDisposableListener(this.sendButton, 'click', () => {
 			if (this.sendKind === 'mic') {
@@ -6028,27 +6034,74 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		return !!(this.inputModel?.getValue().trim());
 	}
 
-	private insertDictatedText(text: string): void {
+	private syncDictation(): void {
+		const active = this.voiceDictation.active;
+		if (active) {
+			this.writeDictatedText(this.voiceDictation.partial);
+		} else if (this.dictatedText) {
+			// Cancelled or failed: take the partial transcript back out.
+			this.endDictatedText('');
+		}
+		if (this.micButton.classList.contains('recording') !== active) {
+			this.micButton.classList.toggle('recording', active);
+			setAgentTooltip(this.micButton, active ? localize('voltAgent.voiceStop', "Stop dictation") : localize('voltAgent.voice', "Voice"));
+			this.updateSendButton();
+		}
+	}
+
+	/** Writes `text` where dictation started, over what the last partial wrote. Empty removes it. */
+	private writeDictatedText(text: string): void {
+		if (text === this.dictatedShown) {
+			return;
+		}
 		this.ensureInputEditor();
 		const editor = this.inputEditor;
 		const model = this.inputModel;
 		if (!editor || !model || model.isDisposed()) {
 			return;
 		}
-		const pos = editor.getPosition() ?? model.getFullModelRange().getEndPosition();
-		const range = { startLineNumber: pos.lineNumber, startColumn: pos.column, endLineNumber: pos.lineNumber, endColumn: pos.column };
-		const before = model.getValueInRange({ ...range, startColumn: Math.max(1, pos.column - 1) });
-		const separator = before && !/\s/.test(before) ? ' ' : '';
-		editor.executeEdits('volt-dictation', [{ range, text: separator + text }]);
-		editor.focus();
+		let range: IRange | undefined = this.dictatedText?.getRange(0) ?? undefined;
+		if (!range) {
+			const pos = editor.getPosition() ?? model.getFullModelRange().getEndPosition();
+			range = { startLineNumber: pos.lineNumber, startColumn: pos.column, endLineNumber: pos.lineNumber, endColumn: pos.column };
+			const before = model.getValueInRange({ ...range, startColumn: Math.max(1, pos.column - 1) });
+			this.dictatedSeparator = before && !/\s/.test(before) ? ' ' : '';
+			// One undo step for the whole dictation.
+			editor.pushUndoStop();
+			this.dictatedText = editor.createDecorationsCollection();
+		}
+		const insert = text ? this.dictatedSeparator + text : '';
+		editor.executeEdits('volt-dictation', [{ range, text: insert }]);
+		const start = { lineNumber: range.startLineNumber, column: range.startColumn };
+		const end = model.getPositionAt(model.getOffsetAt(start) + insert.length);
+		this.dictatedText!.set([{
+			range: { startLineNumber: start.lineNumber, startColumn: start.column, endLineNumber: end.lineNumber, endColumn: end.column },
+			options: { description: 'volt-dictation', stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
+		}]);
+		editor.setPosition(end);
+		this.dictatedShown = text;
+	}
+
+	/** Settles dictation with its final text, or removes the partial when `text` is empty. */
+	private endDictatedText(text: string): void {
+		this.writeDictatedText(text);
+		this.dictatedText?.clear();
+		this.dictatedText = undefined;
+		this.dictatedShown = '';
+		this.inputEditor?.pushUndoStop();
+		if (text) {
+			this.inputEditor?.focus();
+		}
 	}
 
 	private updateSendButton(): void {
 		this.composerQueue?.setState(this.queueState());
 		const canSend = this.composerCanSend();
-		const kind: 'mic' | 'send' = this.isFollowUpComposer() || this.hasDraft() ? 'send' : 'mic';
+		// While dictating, the mic button shows the waveform and the send button stays send.
+		const kind: 'mic' | 'send' = this.isFollowUpComposer() || this.hasDraft() || this.voiceDictation?.active ? 'send' : 'mic';
 		this.sendButton.disabled = !canSend;
 		this.sendButton.classList.toggle('disabled', !canSend);
+		this.micButton.hidden = kind === 'mic';
 		if (this.sendKind === kind && this.sendButton.childElementCount) {
 			this.sendButton.classList.remove('stop');
 			return;

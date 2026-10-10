@@ -41,6 +41,7 @@ exports.config = void 0;
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
+const child_process_1 = __importDefault(require("child_process"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const vinyl_fs_1 = __importDefault(require("vinyl-fs"));
@@ -247,6 +248,27 @@ async function main(arch = process.arch) {
     if (!isUpToDate) {
         await util.rimraf(electronPath)();
         await util.streamToPromise(getElectron(arch)());
+    }
+    addDarwinUsageDescriptions(electronPath);
+}
+/**
+ * Release builds add these when they sign; the dev bundle needs them too. Without
+ * NSSpeechRecognitionUsageDescription macOS kills the dictation helper when it asks for access.
+ */
+function addDarwinUsageDescriptions(electronPath) {
+    if (process.platform !== 'darwin') {
+        return;
+    }
+    const infoPlist = path_1.default.join(electronPath, `${product.nameLong}.app`, 'Contents', 'Info.plist');
+    if (!fs_1.default.existsSync(infoPlist)) {
+        return;
+    }
+    const descriptions = {
+        NSMicrophoneUsageDescription: `An application in ${product.nameLong} wants to use the Microphone.`,
+        NSSpeechRecognitionUsageDescription: 'Volt turns your dictation into text for the agent composer.',
+    };
+    for (const [key, value] of Object.entries(descriptions)) {
+        child_process_1.default.execFileSync('plutil', ['-replace', key, '-string', value, infoPlist]);
     }
 }
 if (require.main === module) {
