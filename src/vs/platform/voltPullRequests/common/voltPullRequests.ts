@@ -298,6 +298,11 @@ export interface IVoltPrHostInfo {
 /** Which account reads a repository: the host's active one unless the user picked another. */
 export interface IVoltPrAuth {
 	readonly account?: string;
+	/**
+	 * A read nobody is waiting on (sync, watch and discovery passes). GitHub refuses it without a
+	 * request while the quota is down to the last tenth, which is kept for what the user asks for.
+	 */
+	readonly background?: boolean;
 }
 
 export interface IVoltPrRequest extends IVoltPrAuth {
@@ -338,6 +343,43 @@ export interface IVoltPrBranchRequest extends IVoltPrAuth {
 	readonly repo: IVoltPrRepoRef;
 	readonly branch: string;
 	readonly headOwner?: string;
+}
+
+/** Several branches of one repository at once (see {@link IVoltPrBranchRequest}). */
+export interface IVoltPrBranchesRequest extends IVoltPrAuth {
+	readonly repo: IVoltPrRepoRef;
+	readonly branches: readonly string[];
+	readonly headOwner?: string;
+}
+
+/** A pull request a branch is the head of, with only what tells which one it is. */
+export interface IVoltPrBranchRef {
+	readonly branch: string;
+	readonly repo: IVoltPrRepoRef;
+	readonly number: number;
+	readonly state: VoltPrState;
+	readonly createdAt: number;
+	readonly headOwner?: string;
+}
+
+export interface IVoltPrBranchPullRequests {
+	readonly branch: string;
+	/** Newest first, the open one before the rest. */
+	readonly pullRequests: readonly IVoltPullRequest[];
+}
+
+/**
+ * A pull request's "did anything change?" answer, cheap enough to ask for many at once. Compare
+ * the parts with an earlier answer; equal parts mean nothing a reader would see moved.
+ */
+export interface IVoltPrFingerprint {
+	readonly key: string;
+	/** State, draft, head commit, mergeability, review decision and the head's checks counted by state. */
+	readonly status: string;
+	/** Comment, review and thread counts, and the newest edit of a comment or review. */
+	readonly remarks: string;
+	/** A check still runs, or mergeability is being worked out: counts alone cannot say what moved. */
+	readonly unsettled: boolean;
 }
 
 export interface IVoltPrFetchResult {
@@ -477,8 +519,9 @@ export type VoltPrErrorCode =
  * start of the message (`[noAuth] ...`); {@link voltPrErrorCode} reads it back.
  */
 export class VoltPrError extends Error {
-	constructor(readonly code: VoltPrErrorCode, message: string) {
-		super(`[${code}] ${message}`);
+	/** `retryAt` (epoch ms): when asking again can work (a rate limit's reset); it rides in the prefix as `[rateLimited@ms]`. */
+	constructor(readonly code: VoltPrErrorCode, message: string, readonly retryAt?: number) {
+		super(`[${code}${retryAt !== undefined ? `@${Math.round(retryAt)}` : ''}] ${message}`);
 		this.name = VOLT_PR_ERROR;
 	}
 }
@@ -493,14 +536,23 @@ export function voltPrErrorCode(err: unknown): VoltPrErrorCode | undefined {
 	if (!isVoltPrError(err)) {
 		return undefined;
 	}
-	const match = /^\[(\w+)\]/.exec(err.message);
+	const match = /^\[(\w+)(?:@\d+)?\]/.exec(err.message);
 	return match ? match[1] as VoltPrErrorCode : 'failed';
+}
+
+/** When a failed call can be tried again (a rate limit's reset); undefined when the error does not say. */
+export function voltPrErrorRetryAt(err: unknown): number | undefined {
+	if (!isVoltPrError(err)) {
+		return undefined;
+	}
+	const match = /^\[\w+@(\d+)\]/.exec(err.message);
+	return match ? Number(match[1]) : undefined;
 }
 
 /** The message without its `[code]` prefix, for people. */
 export function voltPrErrorMessage(err: unknown): string {
 	const message = err instanceof Error ? err.message : String(err);
-	return message.replace(/^\[\w+\]\s*/, '');
+	return message.replace(/^\[\w+(?:@\d+)?\]\s*/, '');
 }
 
 /** One layer of a stack and the pull request its branch has, if any. */
@@ -535,6 +587,18 @@ export interface IVoltPullRequestService {
 	list(request: IVoltPrListRequest): Promise<IVoltPullRequest[]>;
 	/** Pull requests whose head is the branch, newest first. */
 	forBranch(request: IVoltPrBranchRequest): Promise<IVoltPullRequest[]>;
+	/** {@link forBranch} for several branches of one repository in a couple of round trips. */
+	forBranches(request: IVoltPrBranchesRequest): Promise<IVoltPrBranchPullRequests[]>;
+	/**
+	 * Which pull requests the branches are the heads of: number, state and age only, so asking
+	 * about many branches costs about what asking about one does. Branches with none are left out.
+	 */
+	branchPullRequests(request: IVoltPrBranchesRequest): Promise<IVoltPrBranchRef[]>;
+	/**
+	 * A cheap "did anything change?" read for many pull requests at once (on GitHub about a point
+	 * for 25). Hosts without one answer an empty list; missing pull requests are left out.
+	 */
+	fingerprints(requests: readonly IVoltPrRequest[]): Promise<IVoltPrFingerprint[]>;
 	/** Several pull requests in one round trip per host and account; missing ones are left out. */
 	getMany(requests: readonly IVoltPrRequest[]): Promise<IVoltPullRequest[]>;
 	detail(request: IVoltPrRequest): Promise<IVoltPullRequestDetail>;

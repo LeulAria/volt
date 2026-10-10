@@ -16,6 +16,7 @@ import {
 	IVoltPullRequestDetail,
 	VoltPrError,
 	voltPrErrorCode,
+	voltPrErrorMessage,
 } from '../../common/voltPullRequests.js';
 import { commitPathRef, IVoltPrHostClient, openFirst, parseCommitPathRef, VoltPrRestClient } from './voltPrHostClient.js';
 
@@ -127,7 +128,7 @@ export class GiteaClient extends VoltPrRestClient implements IVoltPrHostClient {
 		} catch (err) {
 			// 409: the head moved since `head_commit_id`; 405: not mergeable (conflicts, checks, approvals).
 			if (voltPrErrorCode(err) === 'conflict' && /head|sha|out of date|modified/i.test((err as Error).message)) {
-				throw new VoltPrError('stale', (err as Error).message.replace(/^\[\w+\]\s*/, ''));
+				throw new VoltPrError('stale', voltPrErrorMessage(err));
 			}
 			throw err;
 		}

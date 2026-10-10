@@ -9,7 +9,8 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
-import { asJson, IRequestService } from '../../../../platform/request/common/request.js';
+import { asJson, asText, IRequestService } from '../../../../platform/request/common/request.js';
+import { describeGithubRefusal, githubHeaders, isGithubRateLimitAnswer, readGithubRateLimit, VoltGithubQuota } from '../../../../platform/voltPullRequests/common/voltGithubQuota.js';
 import { AuthenticationSession, IAuthenticationService } from '../../../services/authentication/common/authentication.js';
 
 export interface IGitHubRepo {
@@ -50,6 +51,7 @@ export interface IGitHubReposService {
 const PROVIDER = 'github';
 const SCOPES = ['repo'];
 const API = 'https://api.github.com';
+const HOST = 'github.com';
 const PER_PAGE = 100;
 
 interface IApiRepo {
@@ -75,6 +77,11 @@ export class GitHubReposService extends Disposable implements IGitHubReposServic
 
 	private accountCache: Promise<IGitHubAccount | undefined> | undefined;
 	private readonly pages = new Map<number, { readonly repos: readonly IGitHubRepo[]; readonly hasMore: boolean }>();
+	/**
+	 * GitHub's rate limits as its answers report them. Search has its own small quota (30 a minute
+	 * signed in, 10 without): once it is used up, searches wait for its reset without a request.
+	 */
+	private readonly quota = new VoltGithubQuota();
 
 	constructor(
 		@IAuthenticationService private readonly authenticationService: IAuthenticationService,
@@ -161,22 +168,43 @@ export class GitHubReposService extends Disposable implements IGitHubReposServic
 	}
 
 	private get<T>(session: AuthenticationSession, path: string, token: CancellationToken): Promise<T> {
-		return this.fetch<T>(path, token, { Authorization: `token ${session.accessToken}` });
+		return this.fetch<T>(path, token, { Authorization: `token ${session.accessToken}` }, `session:${session.account.id}`);
 	}
 
 	private getPublic<T>(path: string, token: CancellationToken): Promise<T> {
-		return this.fetch<T>(path, token, {});
+		return this.fetch<T>(path, token, {}, 'anonymous');
 	}
 
-	private async fetch<T>(path: string, token: CancellationToken, headers: Record<string, string>): Promise<T> {
+	private async fetch<T>(path: string, token: CancellationToken, headers: Record<string, string>, account: string): Promise<T> {
+		const resource = path.startsWith('/search/') ? 'search' : 'core';
+		const refusal = this.quota.admit(account, resource, 'interactive');
+		if (refusal) {
+			throw new Error(describeGithubRefusal(refusal, HOST));
+		}
 		const context = await this.requestService.request({
 			type: 'GET',
 			url: `${API}${path}`,
 			headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Volt', ...headers },
 		}, token);
 		const status = context.res.statusCode ?? 0;
+		const responseHeaders = githubHeaders(context.res.headers);
+		const reading = readGithubRateLimit(responseHeaders);
+		this.quota.observe(account, reading);
 		if (status < 200 || status >= 300) {
-			throw new Error(status === 403 ? 'GitHub rate limit reached. Try again in a minute.' : `GitHub request failed (${status}).`);
+			let message = '';
+			try {
+				message = String(JSON.parse(await asText(context) ?? '')?.message ?? '');
+			} catch {
+				// Not JSON: the status says enough.
+			}
+			if (isGithubRateLimitAnswer(status, responseHeaders, message)) {
+				// Wait for GitHub's reset (or its `retry-after`) without asking again; not every 403 is this.
+				const exhausted = !responseHeaders.has('retry-after') && reading !== undefined && reading.remaining <= 0;
+				const retryAt = exhausted && reading ? reading.resetAt : this.quota.pauseEnd(responseHeaders);
+				this.quota.pause(account, retryAt, exhausted && reading ? reading.resource : undefined);
+				throw new Error(describeGithubRefusal({ resource: reading?.resource ?? resource, retryAt, reason: exhausted ? 'exhausted' : 'paused' }, HOST));
+			}
+			throw new Error(message ? `GitHub request failed (${status}): ${message}` : `GitHub request failed (${status}).`);
 		}
 		const json = await asJson<T>(context);
 		if (!json) {
