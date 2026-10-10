@@ -66,6 +66,10 @@ const vscodeResourceIncludes = [
 	// Node Scripts
 	'out-build/vs/base/node/{terminateProcess.sh,cpuUsage.sh,ps.sh}',
 
+	// Volt: the desktop helper's source (compiled on first use) and the Android UI reader
+	'out-build/vs/platform/voltDesktop/node/helper/VoltDesktop.swift',
+	'out-build/vs/platform/voltDevices/node/android/volt-ui.jar',
+
 	// Touchbar
 	'out-build/vs/workbench/browser/parts/editor/media/*.png',
 	'out-build/vs/workbench/contrib/debug/browser/media/*.png',
@@ -244,7 +248,7 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 		const extensions = gulp.src(['.build/extensions/**', ...platformSpecificBuiltInExtensionsExclusions], { base: '.build', dot: true });
 
 		const sources = es.merge(src, extensions)
-			.pipe(filter(['**', '!**/*.{js,css}.map'], { dot: true }));
+			.pipe(filter(['**', '!**/*.{js,mjs,cjs,css}.map'], { dot: true }));
 
 		let version = packageJson.version;
 		const quality = product.quality;
@@ -291,7 +295,8 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 		const dependenciesSrc = productionDependencies.map(d => path.relative(root, d)).map(d => [`${d}/**`, `!${d}/**/{test,tests}/**`]).flat().concat('!**/*.mk');
 
 		const deps = gulp.src(dependenciesSrc, { base: '.', dot: true })
-			.pipe(filter(['**', `!**/${config.version}/**`, '!**/bin/darwin-arm64-87/**', '!**/package-lock.json', '!**/yarn.lock', '!**/*.{js,css}.map']))
+			// Source maps (xterm's .mjs.map alone is ~4.7MB) are never read at runtime.
+			.pipe(filter(['**', `!**/${config.version}/**`, '!**/bin/darwin-arm64-87/**', '!**/package-lock.json', '!**/yarn.lock', '!**/*.map']))
 			.pipe(util.cleanNodeModules(path.join(__dirname, '.moduleignore')))
 			.pipe(util.cleanNodeModules(path.join(__dirname, `.moduleignore.${process.platform}`)))
 			.pipe(jsFilter)

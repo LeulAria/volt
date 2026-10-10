@@ -186,3 +186,31 @@ zone.js/dist/**
 @xterm/xterm-addon-*/fixtures/**
 @xterm/xterm-addon-*/out/**
 @xterm/xterm-addon-*/out-test/**
+
+# Volt: files no desktop build loads. Exclude rules only: a `!` rule here re-adds files through a
+# second stream, so it must only ever match files an earlier rule excluded.
+
+# The workbench loads dist/katex.min.js and dist/katex.min.css; Chromium takes the first source in
+# each @font-face, the woff2, so the woff and ttf copies are never read. dist/katex.js stays as `main`.
+katex/src/**
+katex/contrib/**
+katex/node_modules/**
+katex/cli.js
+katex/katex.js
+katex/dist/contrib/**
+katex/dist/katex.mjs
+katex/dist/katex.css
+katex/dist/fonts/*.woff
+katex/dist/fonts/*.ttf
+
+# v8-inspect-profiler requires lib/ through `main`; the browser bundle and the CLI are unused.
+chrome-remote-interface/chrome-remote-interface.js
+chrome-remote-interface/webpack.config.js
+chrome-remote-interface/bin/**
+chrome-remote-interface/node_modules/commander/**
+
+# 1DS bundles are only imported on the web (`isWeb`), which packages its own node_modules.
+@microsoft/1ds-core-js/bundle/**
+@microsoft/1ds-post-js/bundle/**
+@microsoft/applicationinsights-core-js/browser/**
+@microsoft/applicationinsights-core-js/dist/*.api.json
