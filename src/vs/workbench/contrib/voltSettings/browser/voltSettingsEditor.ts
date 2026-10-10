@@ -49,7 +49,7 @@ import { AGENT_HOME_AUTO_SETTLE_DAYS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING
 /** Settings on the Appearance page whose controls redraw when they change. */
 const APPEARANCE_PAGE_SETTINGS = [ThemeSettings.DETECT_COLOR_SCHEME, ThemeSettings.PREFERRED_DARK_THEME, ThemeSettings.PREFERRED_LIGHT_THEME, ThemeSettings.FILE_ICON_THEME, 'editor.fontSize', 'window.zoomLevel'];
 const COMPOSER_PAGE_SETTINGS = [AGENT_PROMPT_HISTORY_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING, AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING, AGENT_HOME_AUTO_SETTLE_DAYS_SETTING];
-import { AgentModelPicker } from '../../voltAgent/browser/picker/agentModelPicker.js';
+import { AgentModelPicker, type IModelOption, type IProviderGroup } from '../../voltAgent/browser/picker/agentModelPicker.js';
 import { appendSettingsBlock, SettingsStickyHeads } from './settingsStickyHeads.js';
 import { VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
 import { renderProjectsSection, renderStorageSection } from '../../voltSetup/browser/settingsSections.js';
@@ -708,35 +708,57 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 	}
 
-	/** Where dictation is transcribed, and with which model. */
+	/** Where dictation is transcribed, and with which model. Picked like the prediction model. */
 	private voiceModelRow(group: HTMLElement): void {
-		const engine = (this.configurationService.getValue<string>(AGENT_VOICE_ENGINE_SETTING) || 'auto') as AgentVoiceEngine;
+		const label = localize('voltSettings.voiceModel', "Voice model");
+		this.settingRow(
+			group,
+			label,
+			localize('voltSettings.voiceModelDesc', "Transcribes dictation in the agent composer. Auto streams to OpenAI when an OpenAI key is set, otherwise uses the Mac's recognizer. A custom endpoint is any OpenAI-compatible speech-to-text server, such as a local Whisper."),
+			host => this.modelPicker(host, {
+				get: () => {
+					const engine = (this.configurationService.getValue<string>(AGENT_VOICE_ENGINE_SETTING) || 'auto') as AgentVoiceEngine;
+					if (engine === 'auto') {
+						return undefined;
+					}
+					return engine === 'openai' ? `openai:${this.configurationService.getValue<string>(AGENT_VOICE_REALTIME_MODEL_SETTING) || AGENT_VOICE_DEFAULT_REALTIME_MODEL}` : engine;
+				},
+				set: ref => {
+					if (ref?.startsWith('openai:')) {
+						void this.configurationService.updateValue(AGENT_VOICE_REALTIME_MODEL_SETTING, ref.slice('openai:'.length));
+					}
+					const engine: AgentVoiceEngine = !ref ? 'auto' : ref.startsWith('openai:') ? 'openai' : ref as AgentVoiceEngine;
+					void this.configurationService.updateValue(AGENT_VOICE_ENGINE_SETTING, engine);
+				},
+			}, label, localize('voltSettings.voiceAuto', "Auto"), localize('voltSettings.voiceAutoDesc', "OpenAI when an OpenAI key is set, otherwise the Mac's recognizer"), () => this.voiceModelGroups()),
+		);
+	}
+
+	/** The voice picker's tabs: OpenAI realtime models, the Mac's recognizer, a custom endpoint. */
+	private voiceModelGroups(): IProviderGroup[] {
 		const realtime = this.configurationService.getValue<string>(AGENT_VOICE_REALTIME_MODEL_SETTING) || AGENT_VOICE_DEFAULT_REALTIME_MODEL;
 		const endpointModel = this.configurationService.getValue<string>(AGENT_VOICE_MODEL_SETTING) || 'whisper-1';
 		const realtimeModels = AGENT_VOICE_REALTIME_MODELS.includes(realtime) ? AGENT_VOICE_REALTIME_MODELS : [...AGENT_VOICE_REALTIME_MODELS, realtime];
-		const options: (ISelectOptionItem & { readonly engine: AgentVoiceEngine; readonly model?: string })[] = [
-			{ text: localize('voltSettings.voiceAuto', "Auto"), detail: 'auto', engine: 'auto' },
-			...realtimeModels.map(model => ({ text: localize('voltSettings.voiceOpenAi', "OpenAI realtime - {0}", model), detail: `openai:${model}`, engine: 'openai' as const, model })),
-			{ text: localize('voltSettings.voiceSystem', "Mac speech recognizer"), detail: 'system', engine: 'system' },
-			{ text: localize('voltSettings.voiceEndpointOption', "Custom endpoint - {0}", endpointModel), detail: 'endpoint', engine: 'endpoint' },
-		];
-		const current = engine === 'openai' ? `openai:${realtime}` : engine;
-		const selected = Math.max(0, options.findIndex(option => option.detail === current));
-		this.settingRow(
-			group,
-			localize('voltSettings.voiceModel', "Voice model"),
-			localize('voltSettings.voiceModelDesc', "Transcribes dictation in the agent composer. Auto streams to OpenAI when an OpenAI key is set, otherwise uses the Mac's recognizer. A custom endpoint is any OpenAI-compatible speech-to-text server, such as a local Whisper."),
-			host => {
-				const box = this.selectBox(append(host, $('.volt-settings-select')), options, selected, localize('voltSettings.voiceModel', "Voice model"));
-				this.renderStore.add(box.onDidSelect(e => {
-					const option = options[e.index];
-					void this.configurationService.updateValue(AGENT_VOICE_ENGINE_SETTING, option.engine);
-					if (option.model) {
-						void this.configurationService.updateValue(AGENT_VOICE_REALTIME_MODEL_SETTING, option.model);
-					}
-				}));
+		const option = (ref: string, name: string, family: string, qualifier: string, description: string): IModelOption => ({
+			ref, name, qualifier, providerId: family, family, description, optionDescriptors: [], contextWindow: 0,
+		});
+		const openAi = localize('voltSettings.voiceOpenAiGroup', "OpenAI");
+		const mac = localize('voltSettings.voiceMacGroup', "Mac");
+		const endpoint = localize('voltSettings.voiceEndpointGroup', "Custom endpoint");
+		return [
+			{
+				family: 'codex', label: openAi, models: realtimeModels.map(model => option(`openai:${model}`, model, 'codex', openAi,
+					localize('voltSettings.voiceOpenAiDesc', "Streams to OpenAI's realtime transcription. Needs an OpenAI key."))),
 			},
-		);
+			{
+				family: 'local', label: mac, models: [option('system', localize('voltSettings.voiceSystem', "Mac speech recognizer"), 'local', mac,
+					localize('voltSettings.voiceSystemDesc', "Apple's on-device speech recognition. No key needed."))],
+			},
+			{
+				family: 'generic', label: endpoint, models: [option('endpoint', endpointModel, 'generic', endpoint,
+					localize('voltSettings.voiceEndpointOptionDesc', "The OpenAI-compatible speech-to-text server set below."))],
+			},
+		];
 	}
 
 	/** The composer's model picker, bound to a generated-text slot instead of the composer's model. */
@@ -748,7 +770,7 @@ export class VoltSettingsEditor extends EditorPane {
 	}
 
 	/** The composer's model picker, bound to a setting instead of the composer's model. */
-	private modelPicker(host: HTMLElement, binding: { get(): string | undefined; set(ref: string | undefined): void }, ariaLabel: string, autoLabel: string, autoDescription: string): void {
+	private modelPicker(host: HTMLElement, binding: { get(): string | undefined; set(ref: string | undefined): void }, ariaLabel: string, autoLabel: string, autoDescription: string, models?: () => IProviderGroup[]): void {
 		const button = append(host, $('button.volt-agent-model.volt-settings-model')) as HTMLButtonElement;
 		button.type = 'button';
 		button.setAttribute('aria-haspopup', 'dialog');
@@ -760,6 +782,7 @@ export class VoltSettingsEditor extends EditorPane {
 				autoLabel,
 				autoDescription,
 			},
+			models,
 			position: AnchorPosition.BELOW,
 			alignment: AnchorAlignment.RIGHT,
 			onDidChange: () => render(),

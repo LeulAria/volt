@@ -112,108 +112,142 @@
 	font-size: 13px;
 }
 
-.volt-agent-send.recording {
-	background: var(--vscode-errorForeground);
-	color: var(--vscode-editor-background);
+/*
+ * Dictation. A colored glow rises from the bottom of the input box and swells with the voice, and
+ * the mic button turns into a scrolling waveform. The glow is its own blurred layer (filter, never
+ * backdrop-filter: the window is transparent) clipped by the input box.
+ */
+.volt-agent-input-box {
+	position: relative;
+	isolation: isolate;
 }
 
-.volt-agent-voice-strip {
-	display: flex;
+.volt-agent-voice-glow {
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	pointer-events: none;
+	opacity: 0;
+	transform: scaleY(calc(0.75 + var(--volt-voice-level, 0) * 0.45));
+	transform-origin: 50% 100%;
+	transition: opacity 360ms ease, transform 180ms ease-out;
+	-webkit-mask-image: radial-gradient(70% 140% at 50% 100%, #000 15%, transparent 72%);
+	mask-image: radial-gradient(70% 140% at 50% 100%, #000 15%, transparent 72%);
+}
+
+.volt-agent-input-box.voice-active .volt-agent-voice-glow {
+	opacity: calc(0.6 + var(--volt-voice-level, 0) * 0.4);
+}
+
+.volt-agent-input-box.voice-transcribing .volt-agent-voice-glow {
+	opacity: 0.5;
+}
+
+.monaco-workbench.vs .volt-agent-input-box.voice-active .volt-agent-voice-glow,
+.monaco-workbench.hc-light .volt-agent-input-box.voice-active .volt-agent-voice-glow {
+	opacity: calc(0.4 + var(--volt-voice-level, 0) * 0.3);
+}
+
+/* Twice as wide with the colors repeated, so sliding it by half loops without a seam. */
+.volt-agent-voice-aurora {
+	position: absolute;
+	left: 0;
+	bottom: -40%;
+	width: 200%;
+	height: 100%;
+	background: linear-gradient(90deg,
+		#2dd4bf 0%, #6366f1 7%, #ec4899 14%, #f97316 21%, #facc15 28%, #a855f7 36%, #22d3ee 43%, #2dd4bf 50%,
+		#6366f1 57%, #ec4899 64%, #f97316 71%, #facc15 78%, #a855f7 86%, #22d3ee 93%, #2dd4bf 100%);
+	filter: blur(16px);
+	animation: volt-agent-voice-aurora 9s linear infinite;
+	animation-play-state: paused;
+}
+
+.volt-agent-input-box.voice-active .volt-agent-voice-aurora {
+	will-change: transform;
+	animation-play-state: running;
+}
+
+@keyframes volt-agent-voice-aurora {
+	from { transform: translateX(0); }
+	to { transform: translateX(-50%); }
+}
+
+.volt-agent-voice-wave {
+	display: none;
 	align-items: center;
-	gap: 8px;
-	margin: 0 0 6px;
-	padding: 6px 6px 6px 10px;
-	border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border));
-	border-radius: 8px;
-	background: var(--vscode-editorWidget-background);
-	color: var(--vscode-foreground);
-	font-size: 12px;
+	gap: 2px;
+	height: 16px;
 }
 
-.volt-agent-voice-strip.hidden {
+/* Stop square at the end of the pill, after the waveform. */
+.volt-agent-voice-stop {
+	display: none;
+	width: 8px;
+	height: 8px;
+	border-radius: 2px;
+	background: currentColor;
+	flex-shrink: 0;
+}
+
+.volt-agent-mic-btn.recording {
+	width: auto;
+	gap: 7px;
+	padding: 0 9px;
+	border-radius: 13px;
+	background: rgba(255, 255, 255, 0.08);
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-mic-btn.recording:hover {
+	background: rgba(255, 255, 255, 0.14);
+	color: var(--vscode-foreground);
+}
+
+.monaco-workbench.vs .volt-agent-mic-btn.recording,
+.monaco-workbench.hc-light .volt-agent-mic-btn.recording {
+	background: rgba(0, 0, 0, 0.06);
+}
+
+.volt-agent-mic-btn.recording .volt-agent-svg-icon {
 	display: none;
 }
 
-.volt-agent-voice-strip.error .volt-agent-voice-label {
-	color: var(--vscode-errorForeground);
+.volt-agent-mic-btn.recording .volt-agent-voice-stop {
+	display: block;
 }
 
-.volt-agent-voice-meter {
+.volt-agent-mic-btn.recording .volt-agent-voice-wave {
 	display: flex;
-	align-items: center;
-	gap: 2px;
-	height: 14px;
-	flex: none;
 }
 
-.volt-agent-voice-bar {
-	width: 3px;
+/* Height and brightness come from the voice (set per bar in TS). */
+.volt-agent-voice-wave-bar {
+	width: 1.5px;
 	height: 100%;
-	border-radius: 2px;
-	background: var(--vscode-foreground);
-	opacity: 0.7;
-	transform: scaleY(0.2);
-	transition: transform 60ms linear;
+	border-radius: 1px;
+	background: currentColor;
+	transform: scaleY(0.3);
+	opacity: 0.35;
+	transition: transform 90ms linear, opacity 90ms linear;
 }
 
-.volt-agent-voice-bar:nth-child(1),
-.volt-agent-voice-bar:nth-child(5) {
-	transform: scaleY(calc(0.2 + var(--volt-voice-level, 0) * 0.5));
+.volt-agent-input-box.voice-transcribing .volt-agent-voice-wave-bar {
+	animation: volt-agent-voice-pulse 1.2s ease-in-out infinite;
 }
 
-.volt-agent-voice-bar:nth-child(2),
-.volt-agent-voice-bar:nth-child(4) {
-	transform: scaleY(calc(0.2 + var(--volt-voice-level, 0) * 0.8));
-}
-
-.volt-agent-voice-bar:nth-child(3) {
-	transform: scaleY(calc(0.2 + var(--volt-voice-level, 0)));
-}
-
-.volt-agent-voice-strip.transcribing .volt-agent-voice-bar {
-	animation: volt-agent-voice-pulse 1s ease-in-out infinite;
-}
-
-.volt-agent-voice-strip.transcribing .volt-agent-voice-bar:nth-child(2) {
-	animation-delay: 0.15s;
-}
-
-.volt-agent-voice-strip.transcribing .volt-agent-voice-bar:nth-child(3) {
+.volt-agent-input-box.voice-transcribing .volt-agent-voice-wave-bar:nth-child(even) {
 	animation-delay: 0.3s;
 }
 
 @keyframes volt-agent-voice-pulse {
-	0%, 100% { opacity: 0.3; }
-	50% { opacity: 0.9; }
+	0%, 100% { transform: scaleY(0.3); opacity: 0.3; }
+	50% { transform: scaleY(0.55); opacity: 0.8; }
 }
 
-.volt-agent-voice-label {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.volt-agent-voice-btn {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	flex: none;
-	width: 22px;
-	height: 22px;
-	padding: 0;
-	border: 0;
-	border-radius: 4px;
-	background: transparent;
-	color: inherit;
-	cursor: pointer;
-}
-
-.volt-agent-voice-btn:hover {
-	background: var(--vscode-toolbar-hoverBackground);
-}
-
-.volt-agent-voice-btn .codicon {
-	font-size: 14px;
+@media (prefers-reduced-motion: reduce) {
+	.volt-agent-voice-aurora,
+	.volt-agent-input-box.voice-transcribing .volt-agent-voice-wave-bar {
+		animation: none;
+	}
 }

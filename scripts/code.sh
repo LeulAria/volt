@@ -47,6 +47,17 @@ function code() {
 		DISABLE_TEST_EXTENSION=""
 	fi
 
+	# macOS: run as its own app so the mic and speech permissions are Volt's, not the terminal's
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		DISCLAIM=".build/volt-disclaim"
+		if [[ ! -x "$DISCLAIM" || "build/volt/disclaim.c" -nt "$DISCLAIM" ]]; then
+			cc -O2 -o "$DISCLAIM" build/volt/disclaim.c 2>/dev/null || rm -f "$DISCLAIM"
+		fi
+		if [[ -x "$DISCLAIM" ]]; then
+			exec "$DISCLAIM" "$CODE" . $DISABLE_TEST_EXTENSION "$@"
+		fi
+	fi
+
 	# Launch Code
 	exec "$CODE" . $DISABLE_TEST_EXTENSION "$@"
 }
