@@ -142,12 +142,64 @@
 	display: none;
 }
 
+/* Customize's trail: once a marketplace page is open, Customize dims like the project and
+ * Marketplace links back to the listing. */
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-title.has-crumbs > .volt-agent-primary-header-label {
+	flex-shrink: 0;
+	opacity: 0.6;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-crumbs {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-crumb {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	font-weight: 400;
+	line-height: 18px;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-crumb.link {
+	flex-shrink: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font-family: inherit;
+	opacity: 0.6;
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-crumb.link:hover {
+	opacity: 1;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-crumb.link:focus {
+	outline: none;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-crumb.link:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
 .monaco-workbench.volt-layout-agent .volt-agent-primary-header-laptop {
 	display: inline-flex;
 	flex-shrink: 0;
 	opacity: 0.72;
 }
 
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-crumbs[hidden],
 .monaco-workbench.volt-layout-agent .volt-agent-primary-header-laptop[hidden],
 .monaco-workbench.volt-layout-agent .volt-agent-primary-header-label[hidden],
 .monaco-workbench.volt-layout-agent .volt-agent-primary-header-env[hidden] {
