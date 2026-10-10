@@ -15,14 +15,26 @@ export interface ISubagentRequest {
 	readonly description: string;
 	readonly prompt: string;
 	readonly kind: SubagentKind;
+	/** A subagent defined in a file (`.volt/agents/<name>.md`, ...), by name. */
+	readonly agent?: string;
+}
+
+/** A subagent defined in a file, as the task tool offers it. */
+export interface ISubagentDefinitionInfo {
+	readonly name: string;
+	readonly description: string;
+	readonly readonly: boolean;
+	readonly background: boolean;
 }
 
 export interface IMetaToolHost {
 	grantGroups(groups: readonly CapabilityGroup[], reason: string): readonly CapabilityGroup[];
 	/** The skill or agent-requested rule body, or `undefined` when no such name exists. */
 	loadSkill?(name: string): Promise<string | undefined>;
-	/** Runs a read-only sub-agent and returns its final report. */
+	/** Runs a sub-agent and returns its final report. */
 	runSubagent?(request: ISubagentRequest, ctx: IToolContext): Promise<{ readonly text: string; readonly isError?: boolean }>;
+	/** Subagents defined in files that the task tool can start by name. */
+	subagents?(): readonly ISubagentDefinitionInfo[];
 	/** Shows the questions in the chat's question tray and resolves with the user's answers. */
 	askQuestion?(draft: AgentQuestionDraft, ctx: IToolContext): Promise<IAgentQuestionResponse>;
 }
@@ -175,32 +187,48 @@ export function createMetaTools(host: IMetaToolHost): IVoltTool[] {
 	}
 	if (host.runSubagent) {
 		const run = host.runSubagent.bind(host);
+		// Read once per run: the tool list is part of the cached prompt prefix.
+		const custom = (host.subagents?.() ?? []).filter(agent => agent.name !== 'explore' && agent.name !== 'research').slice(0, 40);
+		const customNames = new Map(custom.map(agent => [agent.name.toLowerCase(), agent.name]));
+		const describe = (agent: ISubagentDefinitionInfo) => {
+			const traits = [agent.readonly ? 'read-only' : 'can edit and run commands', ...(agent.background ? ['runs in the background'] : [])].join(', ');
+			return `- ${agent.name} (${traits}): ${agent.description.replace(/\s+/g, ' ').slice(0, 240)}`;
+		};
 		tools.push({
 			name: 'task',
 			group: 'meta',
 			kind: 'think',
 			parallelSafe: true,
-			snippet: 'task - delegate a read-only investigation to a sub-agent',
+			snippet: custom.length ? 'task - delegate work to a sub-agent (built-in or one of the project\'s subagents)' : 'task - delegate a read-only investigation to a sub-agent',
 			description: [
-				'Start a sub-agent with its own context to investigate and report back. It can read, search, and navigate code',
-				'(agent "explore") and also search and fetch the web (agent "research"); it cannot edit or run commands.',
-				'Use for broad searches ("where and how is X handled across the codebase"), comparing approaches, or researching docs,',
-				'especially several independent questions at once: call task several times in one turn and they run in parallel.',
-				'Give a complete, self-contained prompt and say exactly what to return. Only its final report comes back.',
-				'Do not use for a single known file or a one-off grep; do those directly.',
-			].join(' '),
+				[
+					'Start a sub-agent with its own context to investigate and report back. It can read, search, and navigate code',
+					'(agent "explore") and also search and fetch the web (agent "research"); it cannot edit or run commands.',
+					'Use for broad searches ("where and how is X handled across the codebase"), comparing approaches, or researching docs,',
+					'especially several independent questions at once: call task several times in one turn and they run in parallel.',
+					'Give a complete, self-contained prompt and say exactly what to return. Only its final report comes back.',
+					'Do not use for a single known file or a one-off grep; do those directly.',
+				].join(' '),
+				...(custom.length ? [
+					'The user defined these subagents; pass the name as agent when the task matches the description, and they follow their own instructions:',
+					custom.map(describe).join('\n'),
+					'A background subagent returns at once; its report arrives as a later message.',
+				] : []),
+			].join('\n\n'),
 			schema: objectSchema({
 				description: { type: 'string', description: 'Three-to-six word label shown to the user' },
 				prompt: { type: 'string', description: 'Everything the sub-agent needs to know, and what to report' },
-				agent: { type: 'string', enum: ['explore', 'research'], description: 'Default explore' },
+				agent: { type: 'string', enum: ['explore', 'research', ...custom.map(agent => agent.name)], description: 'Default explore' },
 			}, ['description', 'prompt']),
 			timeoutMs: 15 * 60_000,
 			execute: async (args, ctx) => {
 				const prompt = pickString(args, 'prompt') ?? '';
 				const description = pickString(args, 'description') ?? 'Sub-agent task';
-				const kind: SubagentKind = pickString(args, 'agent') === 'research' ? 'research' : 'explore';
+				const requested = pickString(args, 'agent')?.trim() ?? '';
+				const agent = customNames.get(requested.toLowerCase());
+				const kind: SubagentKind = requested === 'research' ? 'research' : 'explore';
 				try {
-					const report = await run({ description, prompt, kind }, ctx);
+					const report = await run({ description, prompt, kind, ...(agent ? { agent } : {}) }, ctx);
 					return { callId: '', name: 'task', kind: 'think', text: report.text, ...(report.isError ? { isError: true } : {}) };
 				} catch (err) {
 					return { callId: '', name: 'task', kind: 'think', text: err instanceof Error ? err.message : String(err), isError: true };

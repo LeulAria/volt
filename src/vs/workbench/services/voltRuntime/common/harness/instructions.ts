@@ -29,12 +29,24 @@ export interface IRuleDoc extends IInstructionDoc {
 	readonly globs: readonly string[];
 }
 
+/** A subagent defined in a file (`.volt/agents/<name>.md`, `.claude/agents`, `.cursor/agents`, plugins). */
+export interface ISubagentDoc extends IInstructionDoc {
+	/** `inherit`, a model id, or an alias such as `sonnet` or `fast`. */
+	readonly model: string;
+	/** It may only read and search: no edits, no shell. */
+	readonly readonly: boolean;
+	/** It runs while the main agent carries on; its report arrives later. */
+	readonly background: boolean;
+	/** Claude Code's `tools:` allow-list, in Claude's tool names. */
+	readonly tools?: readonly string[];
+}
+
 export interface IFrontmatter {
 	readonly fields: Record<string, string | string[] | boolean>;
 	readonly body: string;
 }
 
-/** Enough YAML for skill and rule headers: scalars, booleans, inline and dash lists. */
+/** Enough YAML for skill and rule headers: scalars, booleans, inline and dash lists, folded (`>`) and literal (`|`) blocks. */
 export function parseFrontmatter(text: string): IFrontmatter {
 	const normalized = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
 	const head = /^---\n([\s\S]*?)\n---\n?/.exec(normalized);
@@ -43,7 +55,24 @@ export function parseFrontmatter(text: string): IFrontmatter {
 	}
 	const fields: Record<string, string | string[] | boolean> = {};
 	let listKey: string | undefined;
+	let block: { key: string; folded: boolean; lines: string[] } | undefined;
+	const closeBlock = () => {
+		if (block) {
+			const lines = block.lines;
+			const indent = Math.min(...lines.filter(line => line.trim()).map(line => /^\s*/.exec(line)![0].length), Number.MAX_SAFE_INTEGER);
+			const stripped = lines.map(line => line.slice(Number.isFinite(indent) ? indent : 0));
+			fields[block.key] = (block.folded ? stripped.map(line => line.trim()).join(' ').replace(/\s{2,}/g, ' ') : stripped.join('\n')).trim();
+			block = undefined;
+		}
+	};
 	for (const line of head[1].split('\n')) {
+		if (block) {
+			if (!line.trim() || /^\s+/.test(line)) {
+				block.lines.push(line);
+				continue;
+			}
+			closeBlock();
+		}
 		const item = /^\s+-\s*(.*)$/.exec(line);
 		if (item && listKey) {
 			const list = Array.isArray(fields[listKey]) ? fields[listKey] as string[] : [];
@@ -61,7 +90,10 @@ export function parseFrontmatter(text: string): IFrontmatter {
 		if (!value) {
 			continue;
 		}
-		if (value === 'true' || value === 'false') {
+		if (/^[>|][+-]?\d*$/.test(value)) {
+			block = { key, folded: value.startsWith('>'), lines: [] };
+			listKey = undefined;
+		} else if (value === 'true' || value === 'false') {
 			fields[key] = value === 'true';
 		} else if (value.startsWith('[') && value.endsWith(']')) {
 			fields[key] = value.slice(1, -1).split(',').map(part => unquote(part.trim())).filter(Boolean);
@@ -69,6 +101,7 @@ export function parseFrontmatter(text: string): IFrontmatter {
 			fields[key] = unquote(value);
 		}
 	}
+	closeBlock();
 	return { fields, body: normalized.slice(head[0].length).trim() };
 }
 
@@ -81,6 +114,29 @@ export function skillFromFile(text: string, folderName: string, source: string, 
 	const name = typeof fields.name === 'string' && fields.name.trim() ? fields.name.trim() : folderName;
 	const description = typeof fields.description === 'string' ? fields.description.trim() : firstSentence(body);
 	return body ? { name, description, body, source, folder } : undefined;
+}
+
+export function subagentFromFile(text: string, fileName: string, source: string): ISubagentDoc | undefined {
+	const { fields, body } = parseFrontmatter(text);
+	if (!body) {
+		return undefined;
+	}
+	const textOf = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : undefined;
+	const flag = (...keys: string[]) => keys.some(key => fields[key] === true || (typeof fields[key] === 'string' && /^(true|yes|on)$/i.test(fields[key] as string)));
+	const toolsField = fields.tools;
+	const tools = (Array.isArray(toolsField) ? toolsField : typeof toolsField === 'string' ? toolsField.split(',') : [])
+		.map(tool => tool.trim())
+		.filter(Boolean);
+	return {
+		name: textOf(fields.name) ?? fileName.replace(/\.md$/i, ''),
+		description: textOf(fields.description) ?? firstSentence(body),
+		body,
+		source,
+		model: textOf(fields.model) ?? 'inherit',
+		readonly: flag('readonly', 'readOnly', 'read-only', 'read_only'),
+		background: flag('is_background', 'isBackground', 'background'),
+		...(tools.length ? { tools } : {}),
+	};
 }
 
 export function ruleFromFile(text: string, fileName: string, source: string): IRuleDoc | undefined {

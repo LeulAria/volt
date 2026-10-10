@@ -69,11 +69,13 @@ import { nativeToModelMessages } from '../common/harness/providerMessages.js';
 import { runToolBatch } from '../common/harness/toolRuntime.js';
 import { estimateTokens, totalTokens } from '../common/harness/contextEngine.js';
 import { FileLedger } from '../common/harness/fileLedger.js';
-import { alwaysRules, findInstruction, instructionsIndex, rulesForPath } from '../common/harness/instructions.js';
+import { alwaysRules, findInstruction, instructionsIndex, ISubagentDoc, rulesForPath } from '../common/harness/instructions.js';
+import { IVoltHookRunContext, IVoltHooksService } from '../common/hooks/voltHooks.js';
+import './hooks/voltHooksService.js';
 import { applyCompaction, COMPACTION_SYSTEM, compactionBoundary, compactionRequest, DEFAULT_COMPACTION, effectiveWindow, mechanicalSummary, pruneImages, serializeForSummary, shouldCompact } from '../common/harness/nativeCompaction.js';
 import { chooseEffort, EffortLevel } from '../common/deepseek/effort.js';
 import { IToolDocuments } from './tools/fileTools.js';
-import { ISubagentRequest } from './tools/metaTools.js';
+import { ISubagentRequest, NATIVE_ASK_QUESTION_TOOL_NAME } from './tools/metaTools.js';
 import { CodeIntelHost } from './host/codeIntelHost.js';
 import { McpHost } from './host/mcpHost.js';
 import { NativeJournal } from './history/nativeJournal.js';
@@ -102,7 +104,7 @@ import { TaskLifecycle } from '../common/harness/lifecycle.js';
 import { IToolCall, IToolContext, IVoltTool, toolSchemas } from '../common/tools/tool.js';
 import { deepseekKnobs, resolveApproval } from '../common/deepseek/approval.js';
 import { VoltLlmAdapter } from './deepseek/voltLlmAdapter.js';
-import { buildSubagentPrompt, nativeModelTurn } from '../common/deepseek/prompt.js';
+import { buildSubagentPrompt, customSubagentPrompt, nativeModelTurn } from '../common/deepseek/prompt.js';
 import { ApprovalOutcome } from '../common/deepseek/protocol.js';
 import { createBuiltinTools } from './tools/registry.js';
 import { loadProjectInstructions } from './prompt/projectInstructions.js';
@@ -288,6 +290,25 @@ interface INativeState {
 /** Languages whose editor services report diagnostics worth waiting for. */
 const DIAGNOSED_EXTENSIONS = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|cs|c|cc|cpp|h|hpp|php|rb|swift|dart|vue|svelte|css|scss|less|json)$/i;
 const SUBAGENT_TOOLS = ['read_file', 'list_dir', 'grep', 'glob', 'diagnostics', 'code_nav', 'git_status', 'git_diff', 'git_log', 'git_show', 'skill'];
+/** Claude Code tool names in a subagent's `tools:` list, as Volt's tools. */
+const SUBAGENT_TOOL_ALIASES: Record<string, readonly string[]> = {
+	read: ['read_file'],
+	ls: ['list_dir'],
+	grep: ['grep'],
+	glob: ['glob'],
+	bash: ['shell', 'job_output', 'job_wait', 'job_stop'],
+	shell: ['shell', 'job_output', 'job_wait', 'job_stop'],
+	edit: ['edit_file'],
+	multiedit: ['edit_file'],
+	write: ['write_file'],
+	delete: ['delete_file'],
+	webfetch: ['web_fetch'],
+	websearch: ['web_search'],
+	todowrite: ['todo'],
+	skill: ['skill'],
+};
+/** Times stop hooks may send the agent back to work in one run. */
+const MAX_HOOK_FOLLOWUPS = 5;
 const INSTRUCTIONS_TTL_MS = 5_000;
 /** Recap of turns an agent has not seen, in estimated tokens (a few thousand, not a second prompt). */
 /** Sessions a chat keeps warm for switching back (per chat); idle ones go after IDLE_AGENT_TTL_MS. */
@@ -337,6 +358,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly runPlans = new Map<string, Promise<IRunPlan>>();
 	private readonly projectInstructionsByRoot = new Map<string, Promise<string | undefined>>();
 	private readonly instructionsByRoot = new Map<string, { readonly at: number; readonly value: Promise<IInstructionsSnapshot> }>();
+	/** Chats whose `sessionStart` hooks ran. */
+	private readonly hookStartedSessions = new Set<string>();
+	/** Times a `stop` hook sent the agent back to work in the current run, per chat. */
+	private readonly hookFollowups = new Map<string, number>();
 	private readonly codeIntel: CodeIntelHost;
 	private readonly mcpHost: McpHost;
 	private readonly journal: NativeJournal;
@@ -395,6 +420,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
 		@IEnvironmentService environmentService: IEnvironmentService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IVoltHooksService private readonly hooks: IVoltHooksService,
 	) {
 		super();
 		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeaturesService, fileService));
@@ -2118,6 +2144,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				...(state ? {
 					loadSkill: name => this.loadSkill(session, name),
 					runSubagent: (request, ctx) => this.runSubagent(session, state, request, ctx),
+					subagents: () => (state.instructions?.subagents ?? []).map(agent => ({ name: agent.name, description: agent.description, readonly: agent.readonly, background: agent.background })),
 					askQuestion: (draft, ctx) => this.askQuestionsUntil(session.sessionId, session.run?.runId, draft, ctx.signal),
 				} : {}),
 			},
@@ -2198,7 +2225,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const images = this.modelImages(request.images);
 		// A model Volt runs itself reads a folded paste inline, as ACP agents with embedded context do.
 		const pasted = inlineResourceContext(request.resources);
-		this.syncNativeTranscript(session, state, pasted ? `${request.text}\n\n${pasted}` : request.text, images);
+		const hookContext = (): IVoltHookRunContext => ({
+			sessionId: session.sessionId,
+			runId: run.runId,
+			root: this.executionRoot(session)?.fsPath,
+			cwd,
+			model: item.id,
+			mode: request.mode,
+			stop: reason => this.stopRunForHook(session, run, reason),
+		});
+		const hookNotes = await this.promptHooks(session, run, request, hookContext());
+		if (hookNotes === undefined || !this.isCurrent(session, run)) {
+			return;
+		}
+		const promptText = [request.text, pasted, hookNotes.length ? `<hook_context>\n${hookNotes.join('\n\n')}\n</hook_context>` : undefined].filter(Boolean).join('\n\n');
+		this.syncNativeTranscript(session, state, promptText, images);
 
 		const [projectInstructions, instructions, mcpTools, memoryContext] = await Promise.all([
 			this.workspaceProjectInstructions(root),
@@ -2232,7 +2273,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			tools,
 		});
 		const selected = tools.filter(tool => turn.toolNames.includes(tool.name));
-		const registry = new Map(selected.map(tool => [tool.name, tool]));
+		// Hooks run around every call; the schemas sent to the model are the tools' own.
+		const registry = new Map(selected.map(tool => [tool.name, this.hooks.wrapTool(tool, hookContext)]));
 		const cancel = run.cancel.token;
 		const options = this.runOptions(item, request, state);
 		const schemas = toolSchemas(selected);
@@ -2295,10 +2337,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				token: cancel,
 				isPaused: () => !!session.paused,
 				claimInbox: () => this.isCurrent(session, run) ? state.inbox.splice(0, state.inbox.length) : [],
-				controller: { afterStep: step => this.afterNativeStep(session, run, state, step) },
+				controller: {
+					afterStep: async step => {
+						const directive = await this.afterNativeStep(session, run, state, step);
+						if (directive.kind !== 'continue' || !step.wantsToFinish || cancel.isCancellationRequested) {
+							return directive;
+						}
+						return (await this.stopHooks(session, step.assistant, hookContext())) ?? directive;
+					},
+				},
 			});
 			if (!this.isCurrent(session, run)) {
 				return;
+			}
+			if (result.assistant) {
+				void this.hooks.run('afterAgentResponse', hookContext(), { text: result.assistant });
 			}
 			const nativeActivity = this.runActivity(run);
 			if (result.assistant || nativeActivity) {
@@ -2313,6 +2366,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				this.emit(session, run.runId, { type: 'notice', severity: 'warning', title: 'Paused at the step limit for one run.', description: 'Send "continue" to keep going from here.' });
 			}
 			const aborted = result.outcome === 'abort' || cancel.isCancellationRequested;
+			if (aborted || result.outcome !== 'done') {
+				// Completed runs already went through the stop hooks before the loop let them end.
+				void this.hooks.run('stop', hookContext(), protocol => protocol === 'claude' ? { stop_hook_active: false } : { status: aborted ? 'aborted' : 'error', loop_count: this.hookFollowups.get(session.sessionId) ?? 0 });
+			}
 			this.finish(session, run, aborted ? 'abort' : result.outcome === 'fail' ? 'fail' : 'done');
 		} catch (err) {
 			if (this.isCurrent(session, run)) {
@@ -2502,6 +2559,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const startedAt = Date.now();
 		const preTokens = estimateTokens(input.system) + totalTokens(messages);
 		this.emitEngine(session, run, { type: 'context.compaction', id: compactionId, status: 'running', trigger: 'auto', preTokens });
+		void this.hooks.run('preCompact', { sessionId: session.sessionId, runId: run.runId, root: this.executionRoot(session)?.fsPath, cwd: state.cwd, model: input.item.id, mode: session.mode }, protocol => protocol === 'claude'
+			? { trigger: input.keepTokens !== undefined ? 'manual' : 'auto', custom_instructions: '' }
+			: { trigger: input.keepTokens !== undefined ? 'manual' : 'auto', context_tokens: preTokens });
 		let summary: string | undefined;
 		try {
 			let text = '';
@@ -2540,11 +2600,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/**
-	 * A read-only sub-agent: its own context, the read/search/web tools, the same model at a lower
-	 * effort. The parent sees one progress line per step and gets back only the final report.
+	 * A sub-agent: its own context and transcript, the parent's model at a lower effort, and only its
+	 * final report comes back. The built-in ones (explore, research) are read-only. A subagent
+	 * defined in a file (`.volt/agents/<name>.md`, `.claude/agents`, `.cursor/agents`, plugins)
+	 * follows its own instructions with its own model, may edit when it is not `readonly`, keeps to
+	 * its `tools:` list, and with `is_background` reports back later while the parent carries on.
 	 */
 	private async runSubagent(session: ISessionState, parent: INativeState, request: ISubagentRequest, ctx: IToolContext): Promise<{ text: string; isError?: boolean }> {
-		const item = this.catalog.find(c => c.ref === session.providerRef && c.enabled) ?? this.catalog.find(c => c.enabled);
+		const definition = request.agent ? parent.instructions?.subagents?.find(agent => agent.name.toLowerCase() === request.agent!.toLowerCase()) : undefined;
+		const parentItem = this.catalog.find(c => c.ref === session.providerRef && c.enabled) ?? this.catalog.find(c => c.enabled);
+		const item = definition ? this.subagentModel(definition.model, parentItem) : parentItem;
 		const profile = item ? this.profiles.find(p => p.id === item.profileId) : undefined;
 		const provider = profile ? this.modelProviders.get(profile.providerId) : undefined;
 		const run = session.run && !session.run.ended ? session.run : undefined;
@@ -2552,63 +2617,224 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!item || !profile || !provider || item.kind !== 'model' || !run || !runId) {
 			return { text: 'Sub-agents need a native model to be selected.', isError: true };
 		}
-		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
-		const allowed = new Set([...SUBAGENT_TOOLS, ...(request.kind === 'research' ? ['web_search', 'web_fetch'] : [])]);
-		const tools = this.workspaceTools(session, { ...parent, ledger: new FileLedger() }).filter(tool => allowed.has(tool.name));
-		const registry = new Map(tools.map(tool => [tool.name, tool]));
+		const label = definition?.name ?? request.kind;
 		const root = this.executionRoot(session);
-		const facts = this.environmentFacts(root);
-		const system: INativeLoopMessage = { role: 'system', content: buildSubagentPrompt({ kind: request.kind, cwd: root?.fsPath, platform: facts.platform, date: facts.date }) };
-		const options = { ...this.resolvedOptions(item, undefined) };
-		if (item.optionDescriptors?.some(option => option.id === MODEL_OPTION_REASONING)) {
-			const values = item.optionDescriptors.find(option => option.id === MODEL_OPTION_REASONING)?.options?.map(option => option.value) ?? [];
-			options[MODEL_OPTION_REASONING] = closestLevel(request.kind === 'research' ? 'medium' : 'low', values.filter(value => value !== 'auto' && value !== 'off')) ?? 'low';
+		const hookContext = (): IVoltHookRunContext => ({
+			sessionId: session.sessionId,
+			runId,
+			root: root?.fsPath,
+			cwd: root?.fsPath,
+			model: item.id,
+			mode: session.mode,
+			stop: reason => this.stopRunForHook(session, run, reason),
+		});
+		const started = await this.hooks.run('subagentStart', hookContext(), { subagent_type: label, description: request.description, prompt: request.prompt });
+		if (started.blocked !== undefined || started.stopRun) {
+			return { text: `A hook did not let the ${label} subagent start: ${started.blocked ?? started.stopRun}`, isError: true };
 		}
+		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
+		const background = !!definition?.background;
+		const allowed = this.subagentToolNames(request, definition, background);
+		const writes = !!definition && !definition.readonly;
+		const tools = this.workspaceTools(session, { ...parent, ledger: new FileLedger() })
+			.filter(tool => allowed.has(tool.name))
+			.map(tool => this.hooks.wrapTool(tool, hookContext));
+		const registry = new Map(tools.map(tool => [tool.name, tool]));
+		const facts = this.environmentFacts(root);
+		const system: INativeLoopMessage = {
+			role: 'system',
+			content: definition
+				? customSubagentPrompt(definition, { cwd: root?.fsPath, platform: facts.platform, date: facts.date, writes, tools: [...registry.keys()] })
+				: buildSubagentPrompt({ kind: request.kind, cwd: root?.fsPath, platform: facts.platform, date: facts.date }),
+		};
+		const options = { ...this.resolvedOptions(item, undefined) };
+		if (item.optionDescriptors?.some(option => option.id === MODEL_OPTION_REASONING) && (!definition || definition.model === 'inherit' || definition.model === 'fast')) {
+			const values = item.optionDescriptors.find(option => option.id === MODEL_OPTION_REASONING)?.options?.map(option => option.value) ?? [];
+			options[MODEL_OPTION_REASONING] = closestLevel(request.kind === 'research' || (definition && definition.model !== 'fast') ? 'medium' : 'low', values.filter(value => value !== 'auto' && value !== 'off')) ?? 'low';
+		}
+		// A background subagent outlives the call that started it, but not the chat's run being stopped.
 		const source = new CancellationTokenSource(run.cancel.token);
 		const onAbort = () => source.cancel();
-		ctx.signal.addEventListener('abort', onAbort);
+		if (!background) {
+			ctx.signal.addEventListener('abort', onAbort);
+		}
 		const progress = (status: string) => {
-			if (ctx.callId && !run.ended) {
+			if (!background && ctx.callId && !run.ended) {
 				this.emit(session, runId, { type: 'tool.progress', callId: ctx.callId, status: `${request.description}: ${status}` });
 			}
 		};
-		try {
-			const result = await runDeepseekLoop({
-				stream: messages => new VoltLlmAdapter(provider).stream({
-					modelId: item.id,
-					messages: nativeToModelMessages([system, ...messages]),
-					profile,
-					apiKey,
-					options,
-					tools: toolSchemas(tools),
-				}, source.token),
-				execute: (calls, onResult) => runToolBatch(registry, calls, { cwd: root?.fsPath, signal: abortSignalFrom(source.token), sessionId: session.sessionId, mode: 'ask' }, { authorize: async () => ({ allow: true }), onResult }),
-				authorize: async call => this.preauthorizeDeepseek(session, runId, profile, call, registry.get(call.name)) ?? 'rejected',
-				preauthorize: call => this.preauthorizeDeepseek(session, runId, profile, call, registry.get(call.name)) ?? 'rejected',
-				emit: event => {
-					if (event.type === 'tool.start' && event.title) {
-						progress(event.title);
-					}
-				},
-				tool: name => registry.get(name),
-				cwd: root?.fsPath,
-			}, {
-				messages: [{ role: 'user', content: request.prompt }],
-				token: source.token,
-				budget: { maxToolCalls: 80, maxModelCalls: 30 },
-			});
-			const text = result.assistant.trim();
-			if (result.outcome === 'abort') {
-				return { text: 'The sub-agent was cancelled.', isError: true };
+		const work = async (): Promise<{ text: string; isError?: boolean }> => {
+			try {
+				const result = await runDeepseekLoop({
+					stream: messages => new VoltLlmAdapter(provider).stream({
+						modelId: item.id,
+						messages: nativeToModelMessages([system, ...messages]),
+						profile,
+						apiKey,
+						options,
+						tools: toolSchemas(tools),
+					}, source.token),
+					execute: (calls, onResult) => runToolBatch(registry, calls, {
+						cwd: root?.fsPath,
+						signal: abortSignalFrom(source.token),
+						sessionId: session.sessionId,
+						mode: writes ? session.mode : 'ask',
+						// Its edits count as the chat's changes (review, diagnostics), without drawing its tool cards.
+						...(writes ? { emit: (event: { type: string;[key: string]: unknown }) => { if (event.type === 'file.change') { this.onToolEvent(session, run, parent, event); } } } : {}),
+					}, { authorize: async () => ({ allow: true }), onResult }),
+					// A subagent that edits asks for approval like the main agent; a read-only one never needs to.
+					authorize: async call => writes
+						? this.authorizeDeepseek(session, runId, profile, call, registry.get(call.name))
+						: this.preauthorizeDeepseek(session, runId, profile, call, registry.get(call.name)) ?? 'rejected',
+					preauthorize: call => this.preauthorizeDeepseek(session, runId, profile, call, registry.get(call.name)) ?? (writes ? undefined : 'rejected'),
+					emit: event => {
+						if (event.type === 'tool.start' && event.title) {
+							progress(event.title);
+						}
+					},
+					tool: name => registry.get(name),
+					cwd: root?.fsPath,
+				}, {
+					messages: [{ role: 'user', content: request.prompt }],
+					token: source.token,
+					budget: writes ? { maxToolCalls: 200, maxModelCalls: 60 } : { maxToolCalls: 80, maxModelCalls: 30 },
+				});
+				const text = result.assistant.trim();
+				let report: { text: string; isError?: boolean };
+				if (result.outcome === 'abort') {
+					report = { text: `The ${label} subagent was cancelled.`, isError: true };
+				} else if (!text) {
+					report = { text: `The ${label} subagent finished without a report.`, isError: true };
+				} else {
+					report = { text: result.outcome === 'budget' ? `${text}\n\n(The sub-agent reached its step limit; this report may be partial.)` : text, ...(result.outcome === 'fail' ? { isError: true } : {}) };
+				}
+				void this.hooks.run('subagentStop', hookContext(), { subagent_type: label, status: report.isError ? 'error' : 'completed', result: report.text.slice(0, 8_000) });
+				return report;
+			} finally {
+				ctx.signal.removeEventListener('abort', onAbort);
+				source.dispose();
 			}
-			if (!text) {
-				return { text: 'The sub-agent finished without a report.', isError: true };
-			}
-			return { text: result.outcome === 'budget' ? `${text}\n\n(The sub-agent reached its step limit; this report may be partial.)` : text, ...(result.outcome === 'fail' ? { isError: true } : {}) };
-		} finally {
-			ctx.signal.removeEventListener('abort', onAbort);
-			source.dispose();
+		};
+		if (!background) {
+			return work();
 		}
+		void work().then(report => this.deliverBackgroundReport(session, run, parent, label, report), err => this.deliverBackgroundReport(session, run, parent, label, { text: err instanceof Error ? err.message : String(err), isError: true }));
+		return { text: `Started the ${label} subagent in the background. Its report will arrive as a message when it finishes; carry on with other work meanwhile.` };
+	}
+
+	/** The tools a subagent gets: built-ins read only; a defined one by its `tools:` list or its read/write setting. */
+	private subagentToolNames(request: ISubagentRequest, definition: ISubagentDoc | undefined, background: boolean): Set<string> {
+		const readOnly = new Set([...SUBAGENT_TOOLS, 'web_search', 'web_fetch']);
+		if (!definition) {
+			return new Set([...SUBAGENT_TOOLS, ...(request.kind === 'research' ? ['web_search', 'web_fetch'] : [])]);
+		}
+		let names: Set<string>;
+		if (definition.tools?.length) {
+			names = new Set(['skill']);
+			for (const tool of definition.tools) {
+				const key = tool.trim().replace(/\(.*\)$/, '').toLowerCase();
+				for (const mapped of SUBAGENT_TOOL_ALIASES[key] ?? [tool.trim()]) {
+					names.add(mapped);
+				}
+			}
+		} else if (definition.readonly) {
+			names = readOnly;
+		} else {
+			// Everything the main agent has, except starting more subagents and asking the user mid-way in the background.
+			names = new Set(['read_file', 'list_dir', 'edit_file', 'write_file', 'delete_file', 'grep', 'glob', 'diagnostics', 'code_nav', 'shell', 'job_output', 'job_wait', 'job_stop', 'git_status', 'git_diff', 'git_log', 'git_show', 'web_search', 'web_fetch', 'skill', 'todo', ...(background ? [] : [NATIVE_ASK_QUESTION_TOOL_NAME])]);
+		}
+		if (definition.readonly) {
+			names = new Set([...names].filter(name => readOnly.has(name)));
+		}
+		names.delete('task');
+		return names;
+	}
+
+	/** `inherit` (or nothing usable) keeps the chat's model; a model id, a label, or an alias such as `sonnet` picks an enabled native model. */
+	private subagentModel(model: string, fallback: IVoltCatalogItem | undefined): IVoltCatalogItem | undefined {
+		const wanted = model.trim().toLowerCase();
+		if (!wanted || wanted === 'inherit' || wanted === 'fast' || wanted === 'default') {
+			return fallback;
+		}
+		const models = this.catalog.filter(candidate => candidate.enabled && candidate.kind === 'model');
+		return models.find(candidate => candidate.ref.toLowerCase() === wanted || candidate.id.toLowerCase() === wanted)
+			?? models.find(candidate => candidate.label.toLowerCase() === wanted)
+			?? (fallback && fallback.kind === 'model' && fallback.id.toLowerCase().includes(wanted) ? fallback : undefined)
+			?? models.find(candidate => candidate.id.toLowerCase().includes(wanted) || candidate.label.toLowerCase().includes(wanted))
+			?? fallback;
+	}
+
+	/** A background subagent's report goes to the chat's agent while it runs, else onto the chat as a notice. */
+	private deliverBackgroundReport(session: ISessionState, run: IRunState, parent: INativeState, label: string, report: { text: string; isError?: boolean }): void {
+		const message = `<subagent_report name="${label}"${report.isError ? ' status="error"' : ''}>\n${report.text}\n</subagent_report>`;
+		if (this.isCurrent(session, run) && !run.ended) {
+			parent.inbox.push(message);
+			this.emit(session, run.runId, { type: 'inbox', claimed: 0 });
+			return;
+		}
+		// The run already ended: the next prompt carries the report, and the user sees it now.
+		parent.inbox.push(message);
+		this.emit(session, run.runId, { type: 'notice', severity: report.isError ? 'warning' : 'info', title: `The ${label} subagent finished.`, description: report.text.slice(0, 600) });
+	}
+
+	/**
+	 * `sessionStart` (once per chat) and `beforeSubmitPrompt` hooks. Undefined when a hook refused
+	 * the prompt (the run is ended); otherwise the context the hooks asked to add to it.
+	 */
+	private async promptHooks(session: ISessionState, run: IRunState, request: IVoltSendRequest, context: IVoltHookRunContext): Promise<string[] | undefined> {
+		this.hookFollowups.delete(session.sessionId);
+		const notes: string[] = [];
+		const refuse = (title: string, reason: string, userMessage?: string) => {
+			this.emit(session, run.runId, { type: 'notice', severity: 'warning', title, description: [reason, userMessage && userMessage !== reason ? userMessage : undefined].filter(Boolean).join('\n') });
+			this.finish(session, run, 'abort');
+			return undefined;
+		};
+		if (!this.hookStartedSessions.has(session.sessionId)) {
+			this.hookStartedSessions.add(session.sessionId);
+			const resumed = session.messages.filter(message => message.role === 'user').length > 1;
+			const started = await this.hooks.run('sessionStart', context, protocol => protocol === 'claude'
+				? { source: resumed ? 'resume' : 'startup' }
+				: { session_id: session.sessionId, is_background_agent: false, composer_mode: request.mode });
+			if (started.blocked !== undefined || started.stopRun) {
+				return refuse('A session hook stopped this chat.', started.blocked ?? started.stopRun ?? '', started.userMessage);
+			}
+			notes.push(...started.context);
+		}
+		const submitted = await this.hooks.run('beforeSubmitPrompt', context, protocol => protocol === 'claude' ? { prompt: request.text } : { prompt: request.text, attachments: [] });
+		if (submitted.blocked !== undefined || submitted.stopRun) {
+			return refuse('A hook blocked this prompt.', submitted.blocked ?? submitted.stopRun ?? '', submitted.userMessage);
+		}
+		if (submitted.userMessage) {
+			this.emit(session, run.runId, { type: 'notice', severity: 'info', title: submitted.userMessage });
+		}
+		notes.push(...submitted.context);
+		return notes;
+	}
+
+	/** `stop` hooks when the agent wants to finish: a follow-up sends it back to work, a few times per run at most. */
+	private async stopHooks(session: ISessionState, assistant: string, context: IVoltHookRunContext): Promise<{ readonly kind: 'inject'; readonly message: string } | undefined> {
+		const loops = this.hookFollowups.get(session.sessionId) ?? 0;
+		const result = await this.hooks.run('stop', context, protocol => protocol === 'claude'
+			? { stop_hook_active: loops > 0, last_assistant_message: assistant.slice(-4_000) }
+			: { status: 'completed', loop_count: loops });
+		const followup = result.followup?.trim();
+		if (result.stopRun || !followup || loops >= MAX_HOOK_FOLLOWUPS) {
+			return undefined;
+		}
+		this.hookFollowups.set(session.sessionId, loops + 1);
+		if (context.runId) {
+			this.emit(session, context.runId, { type: 'notice', severity: 'info', title: 'A stop hook sent the agent back to work.', description: followup.slice(0, 300) });
+		}
+		return { kind: 'inject', message: followup };
+	}
+
+	/** A hook answered "stop": end the run the way Stop does, and say why. */
+	private stopRunForHook(session: ISessionState, run: IRunState, reason: string): void {
+		if (!this.isCurrent(session, run) || run.ended) {
+			return;
+		}
+		this.emit(session, run.runId, { type: 'notice', severity: 'warning', title: 'A hook stopped the run.', description: reason });
+		this.cancelRun(session, run);
 	}
 
 	private async loadSkill(session: ISessionState, name: string): Promise<string | undefined> {
