@@ -66,8 +66,11 @@ import { citationLabel, IAgentCitation, serializeChatSelection, withCitationComm
 import { showCitationCommentEditor } from './agentCitationComment.js';
 import { formatDuration, IAgentVideoFrame, ITimeRange, mapRangesToSource, MAX_VIDEO_BYTES, normalizeVideoMime, probeVideo, rangesDuration, videoExtensionForMime, videoMimeForExtension } from './agentVideoAttachments.js';
 import { AgentVideoViewer, IAgentVideoClip, showAgentVideoViewer } from './agentVideoViewer.js';
+import { IAgentCustomizeService, IAgentSlashItem } from '../customize/agentCustomizeService.js';
+import { AgentSlashMenu, rankSlashItems } from './agentSlashMenu.js';
+import { AgentSkillHoverCard } from './agentSkillHoverCard.js';
 
-export type AgentMentionKind = 'file' | 'folder' | 'terminal' | 'chat' | 'branch' | 'browser' | 'image' | 'video' | 'mcp' | 'selection';
+export type AgentMentionKind = 'file' | 'folder' | 'terminal' | 'chat' | 'branch' | 'browser' | 'image' | 'video' | 'mcp' | 'selection' | 'skill';
 
 export interface IAgentImagePayload {
 	id: string;
@@ -117,6 +120,10 @@ export interface IAgentMention {
 	file?: IAgentFilePayload;
 	/** `selection` only: where the quote came from and the user's comment on it. */
 	citation?: IAgentCitation;
+	/** `skill` only: the `/` entry the token stands for (`value` holds its name). */
+	slash?: IAgentSlashItem;
+	/** `skill` only: kept on for every message (picked with Alt+Enter). */
+	mode?: boolean;
 }
 
 export const BROWSER_MENTION_COLORS = ['#89b4fa', '#a6e3a1', '#94e2d5', '#fab387', '#74c7ec', '#cba6f7', '#f9e2af', '#f5c2e7'] as const;
@@ -284,6 +291,10 @@ export interface IAgentMentionHost {
 	sessionId?(): string | undefined;
 	/** Shows a cited quote in its reply. False when the reply or the words are gone. */
 	openCitation?(citation: IAgentCitation, chip: HTMLElement | undefined): void;
+	/** `/model`: opens the chat's model picker. */
+	openModelPicker?(): void;
+	/** The chat's model as the `/model` row shows it ("Grok 4.7"). */
+	currentModelLabel?(): string | undefined;
 }
 
 type MentionMenuView = 'root' | 'files' | 'terminals' | 'chats';
@@ -301,6 +312,24 @@ const MENU_SEARCH_DEBOUNCE_MS = 80;
 const MAX_CHAT_CONTEXT_CHARS = 24_000;
 /** A referenced terminal sends its last lines. */
 const MAX_TERMINAL_LINES = 80;
+/**
+ * Commands the `/` menu runs. The ids live in agentEditorInput.ts and agentUsageEditor.ts, which
+ * are not imported here: they pull in the whole editor.
+ */
+const CUSTOMIZE_COMMAND_ID = 'workbench.action.voltAgent.customize';
+const USAGE_COMMAND_ID = 'workbench.action.voltAgent.usage';
+const NEW_AGENT_COMMAND_ID = 'workbench.action.newAgent';
+/** Stands in for the rest of the message in a command's text until the prompt is sent. */
+const SLASH_ARGS_MARK = '\u0000ARGS\u0000';
+
+/**
+ * How a `/` token reads in the text the agent gets. Never a bare leading `/name`: CLI agents (Claude
+ * Code, Codex) take that for one of their own commands. The instructions follow the prompt.
+ */
+function slashTagFor(item: Pick<IAgentSlashItem, 'name' | 'type'>): string {
+	const word = item.type === 'builtin-command' ? 'command' : item.type;
+	return `[/${item.name} ${word}]`;
+}
 
 /** Keeps the rows whose label contains the query, with the match highlighted. */
 function filterRows(rows: readonly AgentMentionRow[], query: string): AgentMentionRow[] {
@@ -333,8 +362,8 @@ export function mentionIconClasses(
 	if (mention.kind === 'file' || (mention.kind === 'image' && mention.resource)) {
 		return getIconClasses(modelService, languageService, mention.resource, FileKind.FILE);
 	}
-	if (mention.kind === 'selection') {
-		// Drawn by CSS (a chat bubble).
+	if (mention.kind === 'selection' || mention.kind === 'skill') {
+		// A quote is drawn by CSS (a chat bubble); a `/skill` token has no icon.
 		return [];
 	}
 	const icon = mention.kind === 'image' ? Codicon.fileMedia
@@ -418,6 +447,23 @@ export class AgentMentionController extends Disposable {
 	onDidRemoveMention: ((mention: IAgentMention) => void) | undefined;
 	private readonly codePreview: MentionCodePreview;
 	private readonly pastePreview: PastedTextPreview;
+	private readonly slashMenu: AgentSlashMenu;
+	private readonly skillHover: AgentSkillHoverCard;
+	/** The `/` entries: loaded on first use, dropped when skills change on disk. */
+	private slashItems: readonly IAgentSlashItem[] | undefined;
+	private slashItemsLoading: Promise<readonly IAgentSlashItem[]> | undefined;
+	/** `line:column` of the `/` the menu is for. */
+	private slashToken: string | undefined;
+	/** Escape closed the menu for this `/`; typing more will not reopen it. */
+	private slashDismissedToken: string | undefined;
+	private slashRange: IRange | undefined;
+	private slashQuery = '';
+	private slashGeneration = 0;
+	/** What a used entry sends with the prompt, by entry id: alone, and with the rest of the message. */
+	private readonly slashPrompts = new Map<string, { readonly plain?: string; readonly withArgs?: string }>();
+	private readonly slashPreparations = new Map<string, Promise<void>>();
+	/** The entry kept on for every message (picked with Alt+Enter); put back into the composer after each send. */
+	private modeItem: IAgentSlashItem | undefined;
 
 	constructor(
 		private readonly editor: ICodeEditor,
@@ -439,6 +485,7 @@ export class AgentMentionController extends Disposable {
 		@IClipboardService private readonly clipboardService: IClipboardService,
 		@IOpenerService private readonly openerService: IOpenerService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
+		@IAgentCustomizeService private readonly customize: IAgentCustomizeService,
 	) {
 		super();
 		this.attachmentStore = instantiationService.createInstance(AgentAttachmentStore);
@@ -449,6 +496,23 @@ export class AgentMentionController extends Disposable {
 			cursor: () => this.getCursorAnchor(),
 			open: resource => this.openBeside(resource),
 			onDidHide: () => this.closeMentionMenu(),
+		}));
+		this.slashMenu = this._register(instantiationService.createInstance(AgentSlashMenu, {
+			anchor: () => this.host.anchor,
+			cursor: () => this.getCursorAnchor(),
+			pick: (item: IAgentSlashItem, asMode: boolean) => this.pickSlash(item, asMode),
+			onDidHide: () => { this.slashGeneration++; },
+		}));
+		this.skillHover = this._register(instantiationService.createInstance(AgentSkillHoverCard));
+		this._register(this.customize.onDidChange(() => {
+			// A skill was added, edited or removed: list and resolve again from disk.
+			this.slashItems = undefined;
+			this.slashItemsLoading = undefined;
+			this.slashPrompts.clear();
+			if (this.slashMenu.isVisible) {
+				this.paintSlashMenu();
+			}
+			this.refreshSlashMentions();
 		}));
 		this._register(toDisposable(() => {
 			clearTimeout(this.menuSearchTimer);
@@ -548,7 +612,7 @@ export class AgentMentionController extends Disposable {
 
 	/** Resolves once every attached video has its stills and every attached file is saved; undefined when none is pending. */
 	whenMediaReady(): Promise<void> | undefined {
-		const pending = [...this.videoPreparations.values(), ...this.filePreparations.values()];
+		const pending = [...this.videoPreparations.values(), ...this.filePreparations.values(), ...this.slashPreparations.values()];
 		return pending.length ? Promise.all(pending).then(() => undefined) : undefined;
 	}
 
@@ -829,6 +893,9 @@ export class AgentMentionController extends Disposable {
 			if (mention.kind === 'chat' && mention.value) {
 				void this.loadChatContext(mention.value);
 			}
+			if (mention.kind === 'skill') {
+				this.attachSlashItem(mention);
+			}
 			if (mention.image && !mention.image.path) {
 				this.persistImage(mention.image);
 			}
@@ -853,12 +920,22 @@ export class AgentMentionController extends Disposable {
 			})
 			.filter((item): item is { mention: IAgentMention; range: Range } => !!item)
 			.sort((a, b) => model.getOffsetAt(b.range.getStartPosition()) - model.getOffsetAt(a.range.getStartPosition()));
+		// The rest of the message, without its `/` tokens: what a command's `$ARGUMENTS` stands for.
+		let args = text;
 		for (const { mention, range } of replacements) {
 			const start = model.getOffsetAt(range.getStartPosition());
 			const end = model.getOffsetAt(range.getEndPosition());
 			text = `${text.slice(0, start)}${this.tagValueFor(mention)}${text.slice(end)}`;
+			if (mention.kind === 'skill') {
+				args = `${args.slice(0, start)}${args.slice(end)}`;
+			}
 		}
-		const blocks = this.contextBlocks(replacements.map(item => item.mention).reverse());
+		const typed = this.typedSlash(text, replacements.some(item => item.mention.kind === 'skill' && model.getOffsetAt(item.range.getStartPosition()) === 0));
+		if (typed) {
+			text = `${slashTagFor(typed.item)}${text.slice(typed.length)}`;
+			args = args.slice(typed.length);
+		}
+		const blocks = this.contextBlocks(replacements.map(item => item.mention).reverse(), args.trim(), typed?.item);
 		const mediaLines = attachmentPathLines(this.displayMentions()).join('\n');
 		return [text.trim(), ...blocks, mediaLines].filter(Boolean).join('\n\n');
 	}
@@ -1043,9 +1120,9 @@ export class AgentMentionController extends Disposable {
 		};
 	}
 
-	/** True while the panel shows, and for the rest of a keystroke it consumed (Enter that picked a row closes it). */
+	/** True while the @ or / menu shows, and for the rest of a keystroke it consumed (Enter that picked a row closes it). */
 	get isMenuOpen(): boolean {
-		return this.mentionMenu.isVisible || this.menuKeyConsumed;
+		return this.mentionMenu.isVisible || this.slashMenu.isVisible || this.menuKeyConsumed;
 	}
 
 	/** Types an @ at the cursor and opens the panel on Files & Folders. */
@@ -1091,10 +1168,16 @@ export class AgentMentionController extends Disposable {
 			} else {
 				this.codePreview.scheduleHide();
 			}
+			if (mention?.kind === 'skill' && mention.slash) {
+				this.skillHover.scheduleShow(mention.slash, () => this.tokenRect(mention), mention.id);
+			} else {
+				this.skillHover.scheduleHide();
+			}
 		}));
 		this._register(this.editor.onMouseLeave(() => {
 			this.setHoveredMention(undefined);
 			this.codePreview.scheduleHide();
+			this.skillHover.scheduleHide();
 		}));
 
 		this._register(this.editor.onMouseDown(e => {
@@ -1139,6 +1222,10 @@ export class AgentMentionController extends Disposable {
 				void this.openMention(mention);
 			} else if (mention.citation) {
 				this.host.openCitation?.(mention.citation, e.target.element ?? undefined);
+			} else if (mention.kind === 'skill' && mention.resource) {
+				// A skill, command, subagent or rule file opens in its editor; built-ins have no file.
+				this.skillHover.hide();
+				this.openBeside(mention.resource);
 			}
 		}));
 
@@ -1147,7 +1234,7 @@ export class AgentMentionController extends Disposable {
 			this.scheduleMenuRefresh(true);
 		}));
 		this._register(this.editor.onDidChangeCursorPosition(() => {
-			if (this.mentionMenu.isVisible) {
+			if (this.mentionMenu.isVisible || this.slashMenu.isVisible) {
 				this.scheduleMenuRefresh(false);
 			}
 		}));
@@ -1158,23 +1245,29 @@ export class AgentMentionController extends Disposable {
 				if (this.disposed) {
 					return;
 				}
-				if (this.mentionMenu.containsFocus) {
+				if (this.mentionMenu.containsFocus || this.slashMenu.containsFocus) {
 					this.editor.focus();
 				} else if (!this.editor.hasTextFocus()) {
 					this.closeMentionMenu();
+					this.closeSlashMenu();
+					this.skillHover.hide();
 				}
 			}, 0);
 		}));
 
 		this._register(this.editor.onKeyDown(e => {
-			if (this.mentionMenu.isVisible && this.handleMenuKey(e, () => {
+			const consume = () => {
 				// Before the action runs: its edit flushes the editor's queued events, which delivers
 				// this same keystroke to the composer's own handlers (Enter would send).
 				e.preventDefault();
 				e.stopPropagation();
 				this.menuKeyConsumed = true;
 				setTimeout(() => this.menuKeyConsumed = false, 0);
-			})) {
+			};
+			if (this.slashMenu.isVisible && this.handleSlashKey(e, consume)) {
+				return;
+			}
+			if (this.mentionMenu.isVisible && this.handleMenuKey(e, consume)) {
 				return;
 			}
 			if (e.keyCode === KeyCode.Backspace || e.keyCode === KeyCode.Delete) {
@@ -1284,6 +1377,10 @@ export class AgentMentionController extends Disposable {
 			this.menuTyped = false;
 			if (!this.disposed) {
 				this.refreshMentionMenu(allowOpen);
+				if (allowOpen) {
+					this.tokenizeTypedSlash();
+				}
+				this.refreshSlashMenu(allowOpen);
 			}
 		});
 	}
@@ -1428,6 +1525,345 @@ export class AgentMentionController extends Disposable {
 		}
 		return false;
 	}
+
+	//#region Slash menu
+
+	/** The `/query` token before the cursor, at the start of a line or after a space; not inside a token. */
+	private getSlashQuery(): { query: string; range: IRange } | undefined {
+		const model = this.editor.getModel();
+		const pos = this.editor.getPosition();
+		const selection = this.editor.getSelection();
+		if (!model || !pos || (selection && !selection.isEmpty())) {
+			return undefined;
+		}
+		const before = model.getLineContent(pos.lineNumber).slice(0, pos.column - 1);
+		const match = /(^|\s)(\/[^\s/]*)$/.exec(before);
+		if (!match) {
+			return undefined;
+		}
+		const token = match[2];
+		const startColumn = pos.column - token.length;
+		if (this.findMentionAt({ lineNumber: pos.lineNumber, column: startColumn + 1 })) {
+			return undefined;
+		}
+		return {
+			query: token.slice(1),
+			range: { startLineNumber: pos.lineNumber, startColumn, endLineNumber: pos.lineNumber, endColumn: pos.column },
+		};
+	}
+
+	/** Opens, updates, or closes the `/` menu from the token before the cursor. Only typing opens it. */
+	private refreshSlashMenu(allowOpen: boolean): void {
+		const slash = this.insertingMention || this.mentionMenu.isVisible ? undefined : this.getSlashQuery();
+		if (!slash) {
+			this.slashToken = undefined;
+			this.slashDismissedToken = undefined;
+			this.closeSlashMenu();
+			return;
+		}
+		if (!this.editor.hasTextFocus()) {
+			this.closeSlashMenu();
+			return;
+		}
+		const token = `${slash.range.startLineNumber}:${slash.range.startColumn}`;
+		if (token !== this.slashToken) {
+			if (!allowOpen) {
+				this.closeSlashMenu();
+				return;
+			}
+			this.slashToken = token;
+		}
+		if (this.slashDismissedToken === token || (!this.slashMenu.isVisible && !allowOpen)) {
+			this.closeSlashMenu();
+			return;
+		}
+		this.slashRange = slash.range;
+		this.slashQuery = slash.query;
+		this.paintSlashMenu();
+	}
+
+	private closeSlashMenu(): void {
+		this.slashGeneration++;
+		this.slashMenu.hide();
+	}
+
+	private paintSlashMenu(): void {
+		const generation = ++this.slashGeneration;
+		const items = this.slashItems;
+		if (!items) {
+			void this.ensureSlashItems().then(() => {
+				if (generation === this.slashGeneration && this.slashToken && !this.disposed) {
+					this.paintSlashMenu();
+				}
+			});
+			return;
+		}
+		const rows = rankSlashItems(items, this.slashQuery, item => item.command === 'model' ? this.host.currentModelLabel?.() || item.summary : item.summary);
+		if (!rows.length) {
+			// Nothing matches: the menu gets out of the way until the query matches again.
+			this.slashMenu.hide();
+			return;
+		}
+		this.slashMenu.show(rows);
+	}
+
+	private ensureSlashItems(): Promise<readonly IAgentSlashItem[]> {
+		if (this.slashItems) {
+			return Promise.resolve(this.slashItems);
+		}
+		if (!this.slashItemsLoading) {
+			const loading: Promise<readonly IAgentSlashItem[]> = this.customize.getSlashItems().then(items => {
+				if (this.slashItemsLoading === loading) {
+					this.slashItems = items;
+				}
+				return items;
+			}, () => {
+				if (this.slashItemsLoading === loading) {
+					this.slashItemsLoading = undefined;
+				}
+				return [];
+			});
+			this.slashItemsLoading = loading;
+		}
+		return this.slashItemsLoading;
+	}
+
+	/** Up / Down / Enter / Tab / Escape drive the menu; Alt+Enter picks the entry as a mode. */
+	private handleSlashKey(e: IKeyboardEvent, consume: () => void): boolean {
+		if (e.metaKey || e.ctrlKey) {
+			return false;
+		}
+		if (e.altKey) {
+			if (e.keyCode === KeyCode.Enter && !e.shiftKey && this.slashMenu.hasSelection) {
+				consume();
+				this.slashMenu.accept(true);
+				return true;
+			}
+			return false;
+		}
+		switch (e.keyCode) {
+			case KeyCode.DownArrow:
+				consume();
+				this.slashMenu.move(1);
+				return true;
+			case KeyCode.UpArrow:
+				consume();
+				this.slashMenu.move(-1);
+				return true;
+			case KeyCode.Enter:
+			case KeyCode.Tab:
+				if (e.shiftKey) {
+					return false;
+				}
+				if (!this.slashMenu.hasSelection) {
+					this.slashDismissedToken = this.slashToken;
+					this.closeSlashMenu();
+					return false;
+				}
+				consume();
+				this.slashMenu.accept(false);
+				return true;
+			case KeyCode.Escape:
+				consume();
+				this.slashDismissedToken = this.slashToken;
+				this.closeSlashMenu();
+				return true;
+		}
+		return false;
+	}
+
+	private pickSlash(item: IAgentSlashItem, asMode: boolean): void {
+		const range = this.slashRange;
+		this.slashToken = undefined;
+		this.closeSlashMenu();
+		if (!range) {
+			return;
+		}
+		if (item.type === 'builtin-command') {
+			// A command acts at once; the typed `/query` goes away.
+			this.editor.executeEdits('volt-agent-slash', [{ range: Range.lift(range), text: '' }]);
+			this.editor.focus();
+			// After this keystroke: the picker or page it opens must not receive it.
+			setTimeout(() => this.runSlashCommand(item), 0);
+			return;
+		}
+		const mention = this.slashMention(item, asMode);
+		if (asMode) {
+			// One mode at a time: an older mode token stays as a one-off use.
+			for (const other of this.mentions) {
+				other.mode = undefined;
+			}
+			this.modeItem = item;
+		}
+		this.insertMention(mention, range);
+		this.prepareSlashPrompt(item);
+	}
+
+	private runSlashCommand(item: IAgentSlashItem): void {
+		if (this.disposed) {
+			return;
+		}
+		switch (item.command) {
+			case 'model':
+				this.host.openModelPicker?.();
+				return;
+			case 'customize':
+				void this.commandService.executeCommand(CUSTOMIZE_COMMAND_ID);
+				return;
+			case 'new-chat':
+				void this.commandService.executeCommand(NEW_AGENT_COMMAND_ID);
+				return;
+			case 'usage':
+				void this.commandService.executeCommand(USAGE_COMMAND_ID);
+				return;
+		}
+	}
+
+	private slashMention(item: IAgentSlashItem, mode: boolean): IAgentMention {
+		return {
+			id: `skill:${generateUuid()}`,
+			kind: 'skill',
+			label: `/${item.name}`,
+			value: item.name,
+			resource: item.resource,
+			slash: item,
+			mode: mode || undefined,
+		};
+	}
+
+	/** Reads what the entry sends ahead of time: serialize() runs synchronously at send. */
+	private prepareSlashPrompt(item: IAgentSlashItem): void {
+		if (item.type === 'builtin-command' || this.slashPrompts.has(item.id) || this.slashPreparations.has(item.id)) {
+			return;
+		}
+		const pending = Promise.all([
+			this.customize.resolveSlashPrompt(item),
+			this.customize.resolveSlashPrompt(item, SLASH_ARGS_MARK),
+		]).then(([plain, withArgs]) => {
+			this.slashPrompts.set(item.id, { plain, withArgs });
+		}, () => undefined).finally(() => this.slashPreparations.delete(item.id));
+		this.slashPreparations.set(item.id, pending);
+	}
+
+	/** A restored token finds its entry again by name, then reads what it sends. */
+	private attachSlashItem(mention: IAgentMention): void {
+		const name = (mention.value ?? mention.label.replace(/^\//, '')).toLowerCase();
+		const key = `attach:${mention.id}`;
+		const pending = this.ensureSlashItems().then(items => {
+			const item = items.find(candidate => candidate.name.toLowerCase() === name);
+			if (item && !this.disposed) {
+				mention.slash = item;
+				mention.resource = item.resource;
+				this.prepareSlashPrompt(item);
+			}
+		}).finally(() => this.slashPreparations.delete(key));
+		this.slashPreparations.set(key, pending);
+	}
+
+	/** Skills changed on disk: the tokens in the composer pick up the new definitions. */
+	private refreshSlashMentions(): void {
+		for (const mention of this.mentions) {
+			if (mention.kind === 'skill') {
+				this.attachSlashItem(mention);
+			}
+		}
+	}
+
+	/**
+	 * A known `/name` typed out in full and followed by a space becomes a token, as if picked from the
+	 * menu. A plain `/name` at the start of the message has its instructions read in advance too.
+	 */
+	private tokenizeTypedSlash(): void {
+		const model = this.editor.getModel();
+		const pos = this.editor.getPosition();
+		const items = this.slashItems;
+		if (this.insertingMention || !model || !pos || !items) {
+			return;
+		}
+		const find = (name: string) => items.find(candidate => candidate.type !== 'builtin-command' && candidate.name.toLowerCase() === name.toLowerCase());
+		const leading = /^\s*\/([\w.:-]+)(?=\s|$)/.exec(model.getLineContent(1));
+		const leadingItem = leading ? find(leading[1]) : undefined;
+		if (leadingItem) {
+			this.prepareSlashPrompt(leadingItem);
+		}
+		const before = model.getLineContent(pos.lineNumber).slice(0, pos.column - 1);
+		const match = /(^|\s)\/([\w.:-]+) $/.exec(before);
+		const item = match ? find(match[2]) : undefined;
+		if (!match || !item) {
+			return;
+		}
+		const startColumn = pos.column - match[2].length - 2;
+		if (this.findMentionAt({ lineNumber: pos.lineNumber, column: startColumn + 1 })) {
+			return;
+		}
+		this.insertMention(this.slashMention(item, false), { startLineNumber: pos.lineNumber, startColumn, endLineNumber: pos.lineNumber, endColumn: pos.column });
+		this.prepareSlashPrompt(item);
+	}
+
+	/** A plain-text `/name` at the start of the message that names a known entry whose instructions are ready. */
+	private typedSlash(text: string, coveredByToken: boolean): { item: IAgentSlashItem; length: number } | undefined {
+		if (coveredByToken || !this.slashItems) {
+			return undefined;
+		}
+		const match = /^\s*\/([\w.:-]+)(?=\s|$)/.exec(text);
+		if (!match) {
+			return undefined;
+		}
+		const name = match[1].toLowerCase();
+		const item = this.slashItems.find(candidate => candidate.type !== 'builtin-command' && candidate.name.toLowerCase() === name);
+		return item && this.slashPrompts.has(item.id) ? { item, length: match[0].length } : undefined;
+	}
+
+	/** The token's box on screen, for the hover card. */
+	private tokenRect(mention: IAgentMention): DOMRect | undefined {
+		const model = this.editor.getModel();
+		const node = this.editor.getDomNode();
+		const range = mention.decorationId && model ? model.getDecorationRange(mention.decorationId) : undefined;
+		if (!range || !node) {
+			return undefined;
+		}
+		const start = this.editor.getScrolledVisiblePosition(range.getStartPosition());
+		const end = this.editor.getScrolledVisiblePosition(range.getEndPosition());
+		if (!start || !end) {
+			return undefined;
+		}
+		const box = node.getBoundingClientRect();
+		return new DOMRect(box.left + start.left, box.top + start.top, Math.max(1, end.left - start.left), start.height);
+	}
+
+	/** Deleting the mode token turns the mode off. */
+	private endModeIf(mention: IAgentMention): void {
+		if (mention.kind === 'skill' && mention.mode) {
+			this.modeItem = undefined;
+		}
+		if (mention.kind === 'skill') {
+			this.skillHover.hide();
+		}
+	}
+
+	/** The entry kept on for every message (Alt+Enter), if any. */
+	get modeSkill(): IAgentSlashItem | undefined {
+		return this.modeItem;
+	}
+
+	/** The composer holds only the mode token: nothing the user wrote. */
+	isModeOnlyDraft(): boolean {
+		const value = this.editor.getModel()?.getValue().trim();
+		return !!this.modeItem && value === `/${this.modeItem.name}`;
+	}
+
+	/** After a send emptied the composer: puts the mode token back at the start. */
+	reseedMode(): void {
+		const item = this.modeItem;
+		const model = this.editor.getModel();
+		if (!item || !model || model.getValueLength() > 0) {
+			return;
+		}
+		this.insertMention(this.slashMention(item, true), { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 });
+		this.prepareSlashPrompt(item);
+	}
+
+	//#endregion
 
 	private setMenuView(view: MentionMenuView): void {
 		this.menuView = view;
@@ -1754,11 +2190,31 @@ export class AgentMentionController extends Disposable {
 		}
 	}
 
-	/** What a chat or terminal mention stands for, appended after the prompt. */
-	private contextBlocks(mentions: readonly IAgentMention[]): string[] {
+	/**
+	 * What a chat, terminal or `/` mention stands for, appended after the prompt. `args` is the rest
+	 * of the message (a command's `$ARGUMENTS`); `typed` is an entry named by plain text at the start.
+	 */
+	private contextBlocks(mentions: readonly IAgentMention[], args = '', typed?: IAgentSlashItem): string[] {
 		const blocks: string[] = [];
 		const seen = new Set<string>();
+		const slashBlock = (item: IAgentSlashItem) => {
+			const prompt = this.slashPrompts.get(item.id);
+			const block = args ? prompt?.withArgs?.split(SLASH_ARGS_MARK).join(args) : prompt?.plain;
+			if (block && !seen.has(`slash:${item.id}`)) {
+				seen.add(`slash:${item.id}`);
+				blocks.push(block);
+			}
+		};
+		if (typed) {
+			slashBlock(typed);
+		}
 		for (const mention of mentions) {
+			if (mention.kind === 'skill') {
+				if (mention.slash) {
+					slashBlock(mention.slash);
+				}
+				continue;
+			}
 			const key = `${mention.kind}:${mention.value ?? mention.resource?.toString() ?? mention.label}`;
 			if (seen.has(key)) {
 				continue;
@@ -2225,6 +2681,18 @@ export class AgentMentionController extends Disposable {
 		const hoverClass = hovered ? ' hovered' : '';
 		const accentClass = mention.kind === 'browser' ? ` c${mention.accent ?? 0}` : '';
 		const detail = this.mediaDetail(mention);
+		if (mention.kind === 'skill') {
+			// Orange text, no icon; the card beside it is drawn by AgentSkillHoverCard.
+			return [{
+				range,
+				options: {
+					description: 'volt-agent-mention',
+					inlineClassName: `volt-agent-mention-pill skill${mention.resource ? '' : ' builtin'}${hoverClass}`,
+					inlineClassNameAffectsLetterSpacing: true,
+					stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+				}
+			}];
+		}
 		return [
 			{
 				range,
@@ -2378,6 +2846,7 @@ export class AgentMentionController extends Disposable {
 			this.hoveredMentionId = undefined;
 			this.onDidHoverMention?.(undefined);
 		}
+		this.endModeIf(mention);
 		this.onDidRemoveMention?.(mention);
 		if (mention.kind === 'image' || mention.kind === 'video') {
 			this.notifyImages();
@@ -2398,6 +2867,9 @@ export class AgentMentionController extends Disposable {
 		if (mention.kind === 'video' && mention.video) {
 			const number = this.videoMentions().indexOf(mention) + 1;
 			return number > 0 ? `[Video #${number}: ${mention.label}]` : `[Video: ${mention.label}]`;
+		}
+		if (mention.kind === 'skill') {
+			return slashTagFor(mention.slash ?? { name: mention.label.replace(/^\//, ''), type: 'skill' });
 		}
 		// Named references; a chat's or terminal's content follows the prompt (see contextBlocks).
 		if (mention.kind === 'chat' || mention.kind === 'terminal' || mention.kind === 'mcp') {
@@ -2505,6 +2977,7 @@ export class AgentMentionController extends Disposable {
 		this.reattachMentions();
 		for (const mention of dropped) {
 			if (!this.mentions.includes(mention)) {
+				this.endModeIf(mention);
 				this.onDidRemoveMention?.(mention);
 			}
 		}
