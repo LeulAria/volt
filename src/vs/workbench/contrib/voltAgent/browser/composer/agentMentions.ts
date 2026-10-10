@@ -13,7 +13,6 @@ import { compareItemsByFuzzyScore, FuzzyScorerCache, IItemAccessor, prepareQuery
 import { IExpression, match as glob } from '../../../../../base/common/glob.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
 import { basename } from '../../../../../base/common/path.js';
 import { dirname, isEqualOrParent, relativePath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -48,7 +47,7 @@ import { IHistoryService } from '../../../../services/history/common/history.js'
 import { ISearchService } from '../../../../services/search/common/search.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService, IVoltMcpServerStatus } from '../../../../services/voltRuntime/common/runtime.js';
-import { attachmentSavedLine, IVoltResourceAttachment, fileTypeLabel, formatAttachmentSize, MAX_FILE_ATTACHMENT_BYTES } from '../../../../services/voltRuntime/common/fileAttachments.js';
+import { attachmentSavedLine, fileTypeLabel, formatAttachmentSize, MAX_FILE_ATTACHMENT_BYTES } from '../../../../services/voltRuntime/common/fileAttachments.js';
 import { extensionForMime } from '../../../../services/voltRuntime/common/history/agentHistoryLog.js';
 import { searchFilesAndFolders } from '../../../search/browser/searchChatContext.js';
 import { ITerminalService } from '../../../terminal/browser/terminal.js';
@@ -56,7 +55,7 @@ import { compactSessionAge } from '../home/agentHomeModel.js';
 import { AgentMentionMenu, AgentMentionMenuContent, AgentMentionRow, IAgentMentionFileRow, IAgentMentionTreeEntry } from './agentMentionMenu.js';
 import { MentionCodePreview } from './mentionCodePreview.js';
 import { AgentAttachmentStore } from './agentAttachmentStore.js';
-import { attachmentRoute, countLines, fileChipDetail, heicJpegName, IAgentFilePayload, isSendableImageMime, isTextAttachment, largePasteBytes, PASTED_TEXT_NAME, shouldFoldPaste, storageMime } from './agentFileAttachments.js';
+import { attachmentRoute, countLines, fileChipDetail, heicJpegName, IAgentFilePayload, isTextAttachment, largePasteBytes, PASTED_TEXT_NAME, shouldFoldPaste, storageMime } from './agentFileAttachments.js';
 import { formatLineCount, guessPastedLanguage, pastedFileName } from '../../common/agentPastedText.js';
 import { AGENT_LARGE_PASTE_SETTING } from '../../common/agentComposerSettings.js';
 import { PastedTextPreview } from './agentPastedTextPreview.js';
@@ -146,65 +145,8 @@ export interface IAgentDisplayMention {
 	citation?: IAgentCitation;
 }
 
-/** An image the model receives with the prompt: the runtime's `IVoltImageAttachment` shape. */
-export interface IAgentImageAttachment {
-	readonly mediaType: string;
-	/** Base64 without a `data:` prefix. */
-	readonly data: string;
-	/** The name the prompt text refers to ("Image1" for `@Image1`, the file name for a dropped file). */
-	readonly name?: string;
-}
-
-/**
- * The pasted and dropped images among a prompt's mentions, and the stills of its videos, ready for
- * `IVoltSendRequest.images`. The text mention stays in the prompt; the name ties the two together.
- */
-export function imageAttachmentsFromMentions(mentions: readonly IAgentDisplayMention[] | undefined): IAgentImageAttachment[] {
-	const attachments: IAgentImageAttachment[] = [];
-	const seen = new Set<Uint8Array>();
-	for (const mention of mentions ?? []) {
-		if (mention.kind === 'video') {
-			for (const frame of mention.video?.frames ?? []) {
-				attachments.push({ mediaType: frame.mime, data: encodeBase64(VSBuffer.wrap(frame.bytes)), name: videoFrameName(mention.label, frame.time) });
-			}
-			continue;
-		}
-		const image = mention.image;
-		if (mention.kind !== 'image' || !image?.bytes.byteLength || seen.has(image.bytes)) {
-			continue;
-		}
-		const mediaType = image.mime.toLowerCase() === 'image/jpg' ? 'image/jpeg' : image.mime.toLowerCase();
-		if (!isSendableImageMime(mediaType)) {
-			continue;
-		}
-		seen.add(image.bytes);
-		attachments.push({ mediaType, data: encodeBase64(VSBuffer.wrap(image.bytes)), name: mention.label });
-	}
-	return attachments;
-}
-
-/**
- * The prompt's attached files as ACP resources (saved copies only). A folded paste is marked
- * `pasted`: the turn host reads its text so agents that take embedded context get it inline.
- */
-export function resourceAttachmentsFromMentions(mentions: readonly IAgentDisplayMention[] | undefined): (IVoltResourceAttachment & { readonly pasted?: boolean })[] {
-	const resources: (IVoltResourceAttachment & { readonly pasted?: boolean })[] = [];
-	for (const mention of mentions ?? []) {
-		const file = mention.file;
-		if (!file?.path) {
-			continue;
-		}
-		const mime = file.mime.toLowerCase();
-		const mimeType = file.pasted && !(mime.startsWith('text/') || mime === 'application/json') ? 'text/plain' : file.mime;
-		resources.push({ uri: URI.file(file.path).toString(), name: mention.label, mimeType, size: file.size, ...(file.pasted ? { pasted: true } : {}) });
-	}
-	return resources;
-}
-
-/** `screen.mov @ 0:03.5`: the name a video still is sent under. */
-export function videoFrameName(label: string, time: number): string {
-	return `${label} @ ${formatDuration(time, true)}`;
-}
+export { imageAttachmentsFromMentions, resourceAttachmentsFromMentions, videoFrameName } from './agentMentionImages.js';
+export type { IAgentImageAttachment } from './agentMentionImages.js';
 
 /**
  * `[Image #1 "image.png" is saved at: /path]` for each image in a prompt, a line per video

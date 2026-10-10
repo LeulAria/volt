@@ -7,7 +7,7 @@ import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { hashAsync } from '../../../../../base/common/hash.js';
 import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { basename, joinPath } from '../../../../../base/common/resources.js';
+import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { FileOperationError, FileOperationResult, IFileService } from '../../../../../platform/files/common/files.js';
@@ -43,6 +43,9 @@ import {
 	createEmptyIndex,
 	decodeLog,
 	deriveMeta,
+	describeWorkspace,
+	IAgentHistoryExport,
+	matchesHistoryListOptions,
 	derivePreview,
 	deriveTitle,
 	encodeRecord,
@@ -642,20 +645,25 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 	}
 
 	private matches(meta: IAgentSessionMeta, options?: IAgentHistoryListOptions): boolean {
-		if (meta.turnCount === 0 && !meta.hasDraft) {
-			return false;
-		}
-		if (!options?.includeArchived && meta.archived) {
-			return false;
-		}
-		if (options?.workspaceId && meta.workspaceId !== options.workspaceId) {
-			return false;
-		}
-		return true;
+		return matchesHistoryListOptions(meta, options);
 	}
 
 	get(id: string): IAgentSessionMeta | undefined {
 		return this.sessions.get(id);
+	}
+
+	/**
+	 * Everything the index knows, for the agent server to mirror to its clients: every chat's
+	 * entry (including empty and archived ones), which chats have logs on disk, and the pins.
+	 */
+	exportState(): IAgentHistoryExport {
+		return {
+			sessions: [...this.sessions.values()],
+			onDisk: [...this.onDisk],
+			pinnedWorkspaces: Object.fromEntries(this.pinnedWorkspaces),
+			pinnedParents: Object.fromEntries(this.pinnedParents),
+			pinnedSubagents: [...this.pinnedSubagents],
+		};
 	}
 
 	has(id: string): boolean {
@@ -1008,15 +1016,6 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 	}
 
 	//#endregion
-}
-
-function describeWorkspace(workspaceContextService: IWorkspaceContextService): IAgentSessionWorkspace {
-	const workspace = workspaceContextService.getWorkspace();
-	const folders = workspace.folders.map(folder => folder.uri.fsPath);
-	const label = workspace.folders[0]?.name
-		|| (workspace.configuration ? basename(workspace.configuration).replace(/\.code-workspace$/, '') : '')
-		|| 'Untitled';
-	return { id: workspace.id, label, folders };
 }
 
 function shallowEqualMeta(a: IAgentSessionMeta, b: IAgentSessionMeta): boolean {

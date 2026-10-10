@@ -768,6 +768,16 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 			this.syncSessionView();
 
 			this._id = this.webContents.id;
+
+			// A view's web contents outlive the browser window that held it: without this, a closed
+			// window leaves its renderer running, hidden, until Volt quits. Registered before the
+			// window's own 'closed' handler, which disposes this window.
+			const view = this.view;
+			this._register(Event.fromNodeEventEmitter(this._win, 'closed')(() => {
+				if (!view.webContents.isDestroyed()) {
+					view.webContents.close();
+				}
+			}));
 			this.setWin(this._win, options);
 
 			// Apply some state after window creation

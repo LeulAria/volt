@@ -10,7 +10,7 @@ import { antigravityModelsToInfo, parseAntigravityModelLines } from '../../commo
 import { grokModelsToInfo, IGrokCachedModel, parseGrokModelLines } from '../../common/models/grokModels.js';
 import { parseOpenCodeModelLines } from '../../common/models/harnessCatalog.js';
 import { isSignInNotice } from '../../common/acpNotices.js';
-import { providerFamily } from '../providers/providerBrands.js';
+import { providerFamily } from '../providers/providerFamily.js';
 import { IDetectResult, IModelInfo } from '../../common/providers.js';
 
 /** A separate ACP server for a CLI that has no ACP mode of its own. It drives the CLI with the same login. */

@@ -71,6 +71,7 @@ import {
 	VoltBrowserEditorInputSerializer,
 } from '../preview/browserEditorInput.js';
 import { CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID } from '../../../../services/voltRuntime/common/hostTools.js';
+import { AGENT_SIDE_PANEL_ID } from '../../../../browser/parts/titlebar/agentLayoutChrome.js';
 import {
 	AGENT_EDITOR_ID,
 	AGENT_EDITOR_LINE_NUMBERS_SETTING,
@@ -81,7 +82,6 @@ import {
 	AGENT_FIND_TOGGLE_CASE_COMMAND_ID,
 	AGENT_FIND_TOGGLE_REGEX_COMMAND_ID,
 	AGENT_FIND_TOGGLE_WHOLE_WORD_COMMAND_ID,
-	AGENT_SIDE_PANEL_ID,
 	AGENT_SIDE_PANEL_VIEW_ID,
 	AGENT_SUBMIT_COMMAND_ID,
 	AgentEditorInput,

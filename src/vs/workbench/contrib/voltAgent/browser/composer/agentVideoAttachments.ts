@@ -3,7 +3,6 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { getWindow } from '../../../../../base/browser/dom.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { localize } from '../../../../../nls.js';
 
@@ -344,7 +343,7 @@ export async function recordVideoSegments(
 /** Resolves when playback reaches `end`, stops, or is cancelled. */
 function playUntil(video: HTMLVideoElement, end: number, onTime: (time: number) => void, token: CancellationToken): Promise<void> {
 	return new Promise<void>(resolve => {
-		const win = getWindow(video);
+		const win = windowOf(video);
 		let frame = 0;
 		const check = () => {
 			if (token.isCancellationRequested || video.ended || video.paused || video.currentTime >= end) {
@@ -367,7 +366,7 @@ function playUntil(video: HTMLVideoElement, end: number, onTime: (time: number) 
 
 function waitFor(video: HTMLVideoElement, event: 'loadeddata' | 'seeked' | 'durationchange', timeoutMs: number): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const win = getWindow(video);
+		const win = windowOf(video);
 		const done = (error?: Error) => {
 			video.removeEventListener(event, onEvent);
 			video.removeEventListener('error', onError);
@@ -384,4 +383,9 @@ function waitFor(video: HTMLVideoElement, event: 'loadeddata' | 'seeked' | 'dura
 		video.addEventListener(event, onEvent);
 		video.addEventListener('error', onError);
 	});
+}
+
+/** The window an element lives in (no DOM helper import: the agent server loads this module for its pure helpers). */
+function windowOf(element: HTMLElement): Window & typeof globalThis {
+	return (element.ownerDocument.defaultView ?? globalThis) as Window & typeof globalThis;
 }
