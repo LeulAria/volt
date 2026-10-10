@@ -14,6 +14,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { asJson, asText, IRequestService } from '../../../../../platform/request/common/request.js';
+import { IVoltSkillsDirectoryService } from '../../../../../platform/voltMarketplace/common/voltMarketplace.js';
 import { IAuthenticationService } from '../../../../services/authentication/common/authentication.js';
 import { readJsonFile, safeItemName } from './agentCustomize.js';
 import { IAgentCustomizeService } from './agentCustomizeService.js';
@@ -200,6 +201,7 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 
 	constructor(
 		@IRequestService private readonly requestService: IRequestService,
+		@IVoltSkillsDirectoryService private readonly skillsDirectory: IVoltSkillsDirectoryService,
 		@IFileService private readonly fileService: IFileService,
 		@IAuthenticationService private readonly authenticationService: IAuthenticationService,
 		@IAgentCustomizeService private readonly customize: IAgentCustomizeService,
@@ -218,8 +220,9 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		const key = `${q.toLowerCase()}|${limit}`;
 		let pending = this.searches.get(key);
 		if (!pending) {
-			pending = this.fetchJson<{ skills?: unknown[] }>(`${SKILLS_SH}/api/search?q=${encodeURIComponent(q)}&limit=${limit}`, {}, token)
-				.then(result => (result?.skills ?? []).map(toSkill).filter((skill): skill is ISkillsShSkill => !!skill));
+			// skills.sh has no CORS headers: the main process asks it.
+			pending = this.skillsDirectory.search(q, limit)
+				.then(skills => skills.map(toSkill).filter((skill): skill is ISkillsShSkill => !!skill));
 			pending.catch(() => this.searches.delete(key));
 			this.searches.set(key, pending);
 		}
