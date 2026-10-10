@@ -313,7 +313,8 @@ export class AgentContextUsageView extends Disposable {
 		} catch {
 			home = undefined;
 		}
-		const items = await this.scanner.scan(folders, home);
+		// Of what plugins ship, only their skills reach the agent's context.
+		const items = (await this.scanner.scan(folders, home)).filter(item => !item.plugin || item.kind === 'skill');
 		if (gen !== this.overheadGen) {
 			return;
 		}
