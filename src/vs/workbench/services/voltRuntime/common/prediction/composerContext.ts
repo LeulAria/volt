@@ -17,6 +17,8 @@ export interface IComposerPredictionContext {
 	readonly prompts: readonly string[];
 	/** Names the chat is about: files mentioned or changed, the project. */
 	readonly vocabulary: readonly string[];
+	/** What the agent is doing or just did: tools running, commands with exit codes, errors, files changed. */
+	readonly activity?: readonly string[];
 }
 
 const contexts = new Map<string, () => IComposerPredictionContext>();

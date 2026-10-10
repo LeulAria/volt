@@ -68,10 +68,70 @@ export class ComposerLanguageModel {
 
 	/** The best instant continuation of `draft` (all the text before the cursor), or undefined. */
 	predict(draft: string): string | undefined {
+		return this.predictScored(draft)?.text;
+	}
+
+	/**
+	 * The best instant continuation with how sure of it the model is, 0..1. A prompt sent before
+	 * that the draft is typing out again is near-certain once a few words are typed; a phrase from
+	 * the middle of one is likely; a finished word or the usual next words are a fair guess that the
+	 * prediction model may still improve on.
+	 */
+	predictScored(draft: string): { readonly text: string; readonly confidence: number } | undefined {
 		if (draft.trim().length < MIN_PARTIAL_WORD) {
 			return undefined;
 		}
-		return this.fromHistory(draft) ?? this.completeWord(draft) ?? this.nextWords(draft);
+		const history = this.fromHistory(draft);
+		if (history) {
+			// Three words of an old prompt typed again pick it out; `fix the ` could start anything.
+			const sure = draft.trim().length >= 12 && tokens(draft).length >= 3;
+			return { text: history, confidence: sure ? 0.9 : 0.6 };
+		}
+		const phrase = this.fromPhrase(draft);
+		if (phrase) {
+			return phrase;
+		}
+		const word = this.completeWord(draft) ?? this.nextWords(draft);
+		return word ? { text: word, confidence: 0.5 } : undefined;
+	}
+
+	/**
+	 * The draft's last words appear in a prompt sent before (anywhere in it; a draft that is the
+	 * start of one is {@link fromHistory}): what followed them there, to the end of that clause.
+	 * The last word may be half typed. Longer matches first, then newer prompts.
+	 */
+	fromPhrase(draft: string): { readonly text: string; readonly confidence: number } | undefined {
+		const tail = draft.slice(-160);
+		if (/\n\s*$/.test(tail)) {
+			return undefined;
+		}
+		const words = tokens(tail);
+		const partial = /[\p{L}\p{N}_'-]$/u.test(tail);
+		for (let n = Math.min(6, words.length); n >= 3; n--) {
+			const phrase = words.slice(-n);
+			const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])${phrase.map(escapeRegExp).join('[^\\p{L}\\p{N}_]+')}${partial ? '' : '(?![\\p{L}\\p{N}_])'}`, 'iu');
+			for (const prompt of this.prompts) {
+				const match = pattern.exec(prompt);
+				if (!match) {
+					continue;
+				}
+				let rest = prompt.slice(match.index + match[0].length);
+				const stop = rest.search(/[.!?\n]/);
+				if (stop >= 0) {
+					rest = rest.slice(0, stop + (rest[stop] === '\n' ? 0 : 1));
+				}
+				if (!partial) {
+					// The draft already ends with its own punctuation and space (`fix the bug, `).
+					rest = rest.replace(/^[^\p{L}\p{N}_]+/u, '');
+					rest = /\s$/.test(tail) ? rest : ` ${rest}`;
+				}
+				rest = clipAtWord(rest.trimEnd(), MAX_HISTORY_CHARS);
+				if (rest.trim().length >= 2) {
+					return { text: rest, confidence: n >= 4 ? 0.8 : 0.6 };
+				}
+			}
+		}
+		return undefined;
 	}
 
 	/** The draft starts a prompt sent before: the rest of it, up to its first line break. */
@@ -179,6 +239,10 @@ export class ComposerLanguageModel {
 	}
 }
 
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function tokens(text: string): string[] {
 	return [...text.matchAll(WORD)].map(match => match[0]);
 }
@@ -243,6 +307,7 @@ export interface IComposerPromptInput {
 	readonly transcript: readonly string[];
 	readonly vocabulary: readonly string[];
 	readonly clipboard?: string;
+	readonly activity?: readonly string[];
 }
 
 export function buildComposerPrompt(input: IComposerPromptInput): IModelMessage[] {
@@ -264,6 +329,9 @@ export function buildComposerPrompt(input: IComposerPromptInput): IModelMessage[
 	if (input.vocabulary.length) {
 		blocks.push(`## Names in this chat\n${input.vocabulary.slice(0, 40).join(', ')}`);
 	}
+	if (input.activity?.length) {
+		blocks.push(`## What the agent and the terminals are doing\n${input.activity.slice(-8).join('\n')}`);
+	}
 	const clipboard = input.clipboard?.trim();
 	if (clipboard && clipboard.length <= 600) {
 		blocks.push(`## Clipboard\n${clipboard}`);
@@ -271,8 +339,8 @@ export function buildComposerPrompt(input: IComposerPromptInput): IModelMessage[
 	blocks.push(`## The message being typed\n${input.draft}${COMPOSER_CURSOR}${input.after}`);
 	blocks.push(`Continue at ${COMPOSER_CURSOR}. Reply with <insert>the continuation</insert> only.`);
 	return [
-		{ role: 'system', content: COMPOSER_SYSTEM_PROMPT },
-		{ role: 'user', content: blocks.join('\n\n') },
+		{ role: 'system', content: COMPOSER_SYSTEM_PROMPT, ephemeral: true },
+		{ role: 'user', content: blocks.join('\n\n'), ephemeral: true },
 	];
 }
 

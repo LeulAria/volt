@@ -10,7 +10,7 @@
  * cap length. Empty result means "show nothing".
  */
 
-import { CURSOR_MARKER, InlineWriting } from './predictionPrompt.js';
+import { CURSOR_MARKER, hasCodeAfter, InlineWriting, OPENS_BLOCK } from './predictionPrompt.js';
 
 const MAX_COMPLETION_LINES = 16;
 
@@ -166,7 +166,7 @@ export function trimToBlock(completion: string, linePrefix: string): string {
 	}
 	const base = indentWidth(/^[ \t]*/.exec(linePrefix)![0]);
 	const lines = completion.split('\n');
-	const opensBlock = /([:{([]|=>|\b(?:do|then))\s*$/.test(linePrefix + lines[0]);
+	const opensBlock = OPENS_BLOCK.test(linePrefix + lines[0]);
 	for (let i = 1; i < lines.length; i++) {
 		const line = lines[i];
 		if (!line.trim()) {
@@ -310,6 +310,73 @@ export function fitToLineSuffix(completion: string, lineSuffix: string): string 
 	return completion;
 }
 
+/** A model stuck in a loop writes the same line again and again: one copy of the run stays. */
+export function cutRepetition(text: string): string {
+	const lines = text.split('\n');
+	for (let i = 2; i < lines.length; i++) {
+		if (lines[i].trim() && lines[i] === lines[i - 1] && lines[i] === lines[i - 2]) {
+			return lines.slice(0, i - 1).join('\n');
+		}
+	}
+	return text;
+}
+
+/**
+ * A streamed code reply cut after its first line, when that line is all that can be used: code
+ * follows the cursor, or the line ends a statement that opens no block. Undefined while the first
+ * line is still coming, when more lines are wanted, or while the reply may still be repeating the
+ * lines above the cursor (the echo is dropped later, and the real text comes after it).
+ */
+export function firstLineOnly(raw: string, prefix: string, linePrefix: string, lineSuffix: string): string | undefined {
+	if (!linePrefix.trim()) {
+		return undefined;
+	}
+	const text = stripSpecialTokens(raw.replace(/\r\n/g, '\n'));
+	// Tagged replies only: before the tag (a preamble, a fence) nothing tells where the code starts.
+	let start = /^\s*<insert>/.exec(text)?.[0].length;
+	if (start === undefined) {
+		return undefined;
+	}
+	while (text[start] === '\n') {
+		start++;
+	}
+	const end = text.indexOf('\n', start);
+	if (end < 0) {
+		return undefined;
+	}
+	const line = text.slice(start, end);
+	if (!line.trim() || line.includes('</insert>') || /^\s*```/.test(line)) {
+		return undefined;
+	}
+	const echo = line.trim();
+	if (echo.length >= 3 && prefix.split('\n').slice(-7, -1).some(above => above.trim() === echo)) {
+		return undefined;
+	}
+	if (!hasCodeAfter(lineSuffix) && OPENS_BLOCK.test(linePrefix + line)) {
+		return undefined;
+	}
+	return text.slice(0, end);
+}
+
+/**
+ * The text a reply has inserted so far, cleaned the way the finished reply will be, for checking
+ * the typing against it while it streams. Undefined while it may still be an echo of the code
+ * above the cursor (nothing can be judged yet).
+ */
+export function partialInsertText(raw: string, prefix: string, linePrefix: string): string | undefined {
+	const reply = stripSpecialTokens(raw.replace(/\r\n/g, '\n'));
+	let text = taggedInsert(reply) ?? reply.replace(/^\s*```[^\n]*\n/, '');
+	if (linePrefix.trim()) {
+		text = text.replace(/^\n+/, '');
+	}
+	// A reply that so far is the start of a line above (or of the cursor's own line) may be an echo.
+	const lead = text.trimStart();
+	if (!lead || prefix.split('\n').slice(-6).some(line => line.trimStart().startsWith(lead))) {
+		return undefined;
+	}
+	return dedupePrefixOverlap(dedupeLineEcho(text, prefix, linePrefix), linePrefix);
+}
+
 export function capLines(text: string, maxLines = MAX_COMPLETION_LINES): string {
 	const lines = text.split('\n');
 	return lines.length <= maxLines ? text : lines.slice(0, maxLines).join('\n');
@@ -345,6 +412,7 @@ export function postProcessInline({ raw, linePrefix, lineSuffix, prefix, suffix,
 	text = dedupeLineEcho(text, prefix ?? linePrefix, linePrefix);
 	text = dedupePrefixOverlap(text, linePrefix);
 	text = trimToBlock(text, linePrefix);
+	text = cutRepetition(text);
 	text = trimSuffixOverlap(text, suffix ?? '', lineSuffix);
 	text = fitToLineSuffix(text, lineSuffix);
 	text = capLines(text.replace(/\s+$/, m => (m.includes('\n') ? '' : m)));

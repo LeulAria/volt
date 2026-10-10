@@ -570,6 +570,39 @@ function clipForPrediction(text: string, max: number): string {
 	return flat.length <= max ? flat : `${flat.slice(0, max)}...`;
 }
 
+/**
+ * What a reply's run did, for the composer's ghost text: commands with their exit codes (and the
+ * last lines of a failure), tools still running, errors, files changed. The next message is
+ * usually about these ("the tests still fail in ...").
+ */
+function predictionActivity(segments: readonly AgentSegment[]): string[] {
+	const out: string[] = [];
+	for (const segment of segments) {
+		if (segment.kind === 'notice') {
+			if (segment.severity === 'error') {
+				out.push(`Error: ${clipForPrediction(segment.title, 160)}`);
+			}
+			continue;
+		}
+		if (segment.kind !== 'block') {
+			continue;
+		}
+		const block = segment.block;
+		if (block.type === 'terminal') {
+			const status = block.exitCode === undefined ? (block.status === 'streaming' ? ' (running)' : '') : ` (exit ${block.exitCode})`;
+			const tail = block.exitCode ? `: ${clipForPrediction(block.output.trimEnd().split('\n').slice(-2).join(' '), 160)}` : '';
+			out.push(`$ ${clipForPrediction(block.command, 100)}${status}${tail}`);
+		} else if (block.type === 'tool' && block.status === 'streaming') {
+			out.push(`Running ${clipForPrediction(block.title || block.name, 80)}`);
+		} else if (block.type === 'error') {
+			out.push(`Error: ${clipForPrediction(block.message, 160)}`);
+		} else if (block.type === 'file') {
+			out.push(`${block.verb} ${block.path}`);
+		}
+	}
+	return out;
+}
+
 /** Accepts the predicted continuation showing in `editor`; false when none shows. */
 function acceptGhostText(editor: ICodeEditor): boolean {
 	const model = InlineCompletionsController.get(editor)?.model.get();
@@ -5082,6 +5115,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private composerPredictionContext(): IComposerPredictionContext {
 		const transcript: string[] = [];
 		const names = new Set<string>();
+		const activity: string[] = [];
 		for (const message of this.messages.slice(-8)) {
 			if (message.kind === 'user') {
 				transcript.push(`User: ${clipForPrediction(message.text, 400)}`);
@@ -5097,6 +5131,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			for (const path of message.changes ?? []) {
 				names.add(basename(path));
 			}
+			activity.push(...predictionActivity(message.segments));
 		}
 		const folder = this.workspaceContextService.getWorkspace().folders[0];
 		if (folder) {
@@ -5106,7 +5141,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!this.predictionPrompts || now - this.predictionPrompts.at > PREDICTION_PROMPTS_TTL_MS) {
 			this.predictionPrompts = { at: now, prompts: this.promptHistoryEntries().map(entry => entry.text) };
 		}
-		return { transcript, prompts: this.predictionPrompts.prompts, vocabulary: [...names] };
+		// The last reply's activity matters most; older lines only while there is room.
+		return { transcript, prompts: this.predictionPrompts.prompts, vocabulary: [...names], activity: activity.slice(-8) };
 	}
 
 	/** This chat's prompts, newest first, then prompts sent from other chats. */

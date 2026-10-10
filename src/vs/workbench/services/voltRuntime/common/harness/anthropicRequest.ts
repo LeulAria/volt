@@ -41,13 +41,16 @@ export interface IAnthropicRequest {
 const EPHEMERAL = { type: 'ephemeral' } as const;
 
 export function buildAnthropicRequest(input: IAnthropicRequestInput): IAnthropicRequest {
+	// A one-off prompt (Tab): a cache write costs a quarter more than a read and is never hit.
+	const oneOff = input.messages.length > 0 && input.messages.every(message => message.ephemeral);
 	const systemText = input.messages.filter(message => message.role === 'system').map(message => message.content).filter(Boolean);
 	const system = systemText.map((text, index) => ({
 		type: 'text',
 		text,
-		...(index === systemText.length - 1 ? { cache_control: EPHEMERAL } : {}),
+		...(!oneOff && index === systemText.length - 1 ? { cache_control: EPHEMERAL } : {}),
 	}));
-	const messages = markCacheBreakpoints(toAnthropicMessages(input.messages, { model: input.modelId }));
+	const converted = toAnthropicMessages(input.messages, { model: input.modelId });
+	const messages = oneOff ? converted : markCacheBreakpoints(converted);
 	const betas: string[] = [];
 	const thinking = claudeThinkingParams(input.meta, input.effort, input.maxTokens);
 	const body: Record<string, unknown> = {

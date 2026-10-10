@@ -84,6 +84,12 @@ export interface IModelMessage {
 	isError?: boolean;
 	/** Pixels: a tool result's (browser snapshot) or, on a user message, what the user attached. */
 	images?: IModelImage[];
+	/**
+	 * Asked once and never again (a Tab prediction changes with every keystroke): providers with
+	 * explicit prompt caching leave a prompt made only of these out of the cache, since a cache
+	 * write costs more than a plain read and would never be hit.
+	 */
+	ephemeral?: boolean;
 }
 
 export interface IModelRequest {
