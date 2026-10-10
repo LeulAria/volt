@@ -32,8 +32,8 @@ const ACTIVE_MS = 5000;
 const MAX_IN_FLIGHT = 3;
 /** Captures slower than this run one at a time: an overloaded emulator must not get more work. */
 const SLOW_CAPTURE_MS = 1000;
-/** The most a half-open device's right half leans back in 3D, in degrees. */
-const MAX_LEAN = 65;
+/** The most each half of a half-open device leans toward you in 3D, in degrees. */
+const MAX_LEAN = 40;
 const PREVIEW_MAX_SIDE = 1400;
 /** A press that moves less than this is a tap; more is a swipe. */
 const TAP_SLOP = 6;
@@ -344,14 +344,15 @@ export class DevicePreview extends Disposable {
 		}
 		if (this.postureControl && this.postureControl.element.childElementCount - 1 === supported.length) {
 			if (this.postures.current && this.postureControl.value !== this.postures.current) {
-				this.postureControl.set(this.postures.current);
+				// The agent folded it, or the device did: slide the thumb there too.
+				this.postureControl.set(this.postures.current, true);
 			}
 			return;
 		}
 		clearNode(this.postureSlot);
 		const store = new DisposableStore();
 		this.posture.value = store;
-		this.postureControl = createVoltSegmented(this.postureSlot, supported.map(id => ({ id, label: postureLabel(id) })), this.postures.current ?? supported[supported.length - 1], posture => void this.setPosture(posture), store, 'small');
+		this.postureControl = createVoltSegmented(this.postureSlot, supported.map(id => ({ id, label: postureLabel(id) })), this.postures.current ?? supported[supported.length - 1], posture => void this.setPosture(posture), store, 'small outlined');
 		getWindow(this.element).requestAnimationFrame(() => this.postureControl?.sync());
 	}
 
@@ -624,13 +625,22 @@ export class DevicePreview extends Disposable {
 			return;
 		}
 		const units = this.screenUnits(shot);
-		const hinged = this.threeD && this.postures.current === 'halfOpen';
+		// A foldable in 3D is always built from two halves, so folding and unfolding animates at the hinge.
+		const hinged = this.threeD && device.foldable && this.postures.supported.length > 1;
 		const key = `${device.id}:${units.width}x${units.height}:${hinged}`;
 		if (key === this.frameKey) {
 			return;
 		}
+		// The same device with another screen size: it folded or unfolded in 2D.
+		const settle = !!this.frameKey && this.frameKey.split(':')[0] === device.id && !hinged;
 		this.frameKey = key;
 		clearNode(this.rig);
+		if (settle) {
+			this.rig.classList.remove('settle');
+			void this.rig.offsetWidth;
+			this.rig.classList.add('settle');
+			getWindow(this.rig).setTimeout(() => this.rig.classList.remove('settle'), 400);
+		}
 		this.screens = [];
 		const landscape = units.width > units.height && !device.foldable;
 		const halves = hinged ? ['left', 'right'] : ['whole'];
@@ -674,11 +684,15 @@ export class DevicePreview extends Disposable {
 		const turn = this.threeD ? ` rotateX(${this.orbit.pitch}deg) rotateY(${this.orbit.yaw}deg)` : '';
 		this.rig.style.transform = `translate(-50%, -50%) scale(${scale.toFixed(4)})${turn}`;
 		this.scene.classList.toggle('three-d', this.threeD);
-		const hinge = hingeAngle(this.postures.current);
-		for (const half of this.rig.querySelectorAll<HTMLElement>('.volt-device-half.right')) {
-			// Half open: the right half swings back at the hinge (the middle), like a book standing open.
-			// Turning it all the way to 90 degrees would show it edge-on, so it leans back at most 65.
-			half.style.transform = `rotateY(${Math.min(hinge, MAX_LEAN)}deg)`;
+		// Half open: both halves lean toward you from the hinge (the middle), like a book held open with
+		// its pages facing you: the fold goes inward, and the device stays centered. Side by side they
+		// would be edge-on at 90 degrees, so each leans at most `MAX_LEAN`.
+		const lean = Math.min(hingeAngle(this.postures.current) / 2, MAX_LEAN);
+		for (const half of this.rig.querySelectorAll<HTMLElement>('.volt-device-half')) {
+			if (half.classList.contains('whole')) {
+				continue;
+			}
+			half.style.transform = `rotateY(${half.classList.contains('left') ? lean : -lean}deg)`;
 		}
 	}
 

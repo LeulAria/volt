@@ -85,6 +85,17 @@
 	font-size: 12px;
 }
 
+/* Outlined: hairline track and thumb on a transparent background (the device preview's posture switch). */
+.volt-segmented.outlined {
+	background: transparent;
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+}
+
+.volt-segmented.outlined .volt-segmented-thumb {
+	background: transparent;
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
 /* Equal pills across the whole row. */
 .volt-segmented.fill {
 	display: flex;

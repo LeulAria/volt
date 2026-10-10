@@ -102,17 +102,19 @@
 .volt-device-power {
 	height: 24px;
 	padding: 0 10px;
-	border: 1px solid var(--vscode-button-border, var(--vscode-widget-border, transparent));
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
 	border-radius: 6px;
-	background: var(--vscode-button-secondaryBackground);
-	color: var(--vscode-button-secondaryForeground);
+	background: transparent;
+	color: var(--vscode-foreground);
 	font: inherit;
 	cursor: pointer;
 	white-space: nowrap;
+	transition: background-color 120ms ease, border-color 120ms ease;
 }
 
 .volt-device-power:hover:not(:disabled) {
-	background: var(--vscode-button-secondaryHoverBackground);
+	background: var(--vscode-toolbar-hoverBackground);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 38%, transparent);
 }
 
 .volt-device-power:disabled {
@@ -180,10 +182,6 @@
 	user-select: none;
 }
 
-.volt-device-stage:focus-visible {
-	box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
-}
-
 .volt-device-scene {
 	position: absolute;
 	inset: 0;
@@ -212,6 +210,16 @@
 	transition: none;
 }
 
+/* The screen changes size when the device folds or unfolds in 2D: it settles in instead of jumping. */
+.volt-device-rig.settle {
+	animation: volt-device-settle 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes volt-device-settle {
+	from { opacity: 0.3; }
+	to { opacity: 1; }
+}
+
 .volt-device-rig.hidden {
 	display: none;
 }
@@ -222,7 +230,7 @@
 	top: 0;
 	transform-origin: 50% 50%;
 	transform-style: preserve-3d;
-	transition: transform 200ms ease-out;
+	transition: transform 420ms cubic-bezier(0.32, 1.25, 0.5, 1);
 }
 
 /* Half open in 3D: two copies of the device, each showing one side of the hinge. */
@@ -327,6 +335,10 @@
 
 @media (prefers-reduced-motion: reduce) {
 	.volt-device-rig,
+	.volt-device-rig.settle {
+		animation: none;
+	}
+
 	.volt-device-half {
 		transition: none;
 	}
