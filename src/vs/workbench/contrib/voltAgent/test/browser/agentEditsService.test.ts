@@ -12,6 +12,8 @@ import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IDocumentDiff, IDocumentDiffProviderOptions } from '../../../../../editor/common/diff/documentDiffProvider.js';
 import { linesDiffComputers } from '../../../../../editor/common/diff/linesDiffComputers.js';
+import { Range } from '../../../../../editor/common/core/range.js';
+import { DetailedLineRangeMapping } from '../../../../../editor/common/diff/rangeMapping.js';
 import { IEditorWorkerService } from '../../../../../editor/common/services/editorWorker.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { TestEditorWorkerService } from '../../../../../editor/test/common/services/testEditorWorkerService.js';
@@ -29,7 +31,7 @@ import { TestDialogService } from '../../../../../platform/dialogs/test/common/t
 import { workbenchInstantiationService } from '../../../../test/browser/workbenchTestServices.js';
 import { AgentEditsService, IAgentEditsService, mergeText3, sessionFromBaseline } from '../../browser/review/agentEditsService.js';
 import { IAgentCheckpointService, refSegment } from '../../browser/review/agentCheckpointService.js';
-import { IAgentSessionFileChange, mergeSnapshotChanges } from '../../browser/review/agentSessionChanges.js';
+import { agentTurnScope, IAgentSessionFileChange, mergeSnapshotChanges } from '../../browser/review/agentSessionChanges.js';
 import { AgentSessionChangesService } from '../../browser/review/agentSessionChangesService.js';
 import { createFileChangeBlock, FileChangeVerb } from '../../browser/blocks/agentBlocks.js';
 import { ISCMService } from '../../../scm/common/scm.js';
@@ -105,6 +107,9 @@ suite('Snapshot change helpers', () => {
 
 /** Computes real line diffs from the models, like the editor worker. */
 class DiffingWorkerService extends TestEditorWorkerService {
+	/** Report hunks without character-level detail, as a diff that timed out does. */
+	dropInnerChanges = false;
+
 	constructor(private readonly models: () => IModelService) {
 		super();
 	}
@@ -115,7 +120,8 @@ class DiffingWorkerService extends TestEditorWorkerService {
 			return null;
 		}
 		const result = linesDiffComputers.getDefault().computeDiff(a.getLinesContent(), b.getLinesContent(), { ignoreTrimWhitespace: false, maxComputationTimeMs: 0, computeMoves: false });
-		return { identical: !result.changes.length, quitEarly: result.hitTimeout, changes: result.changes, moves: result.moves };
+		const changes = this.dropInnerChanges ? result.changes.map(change => new DetailedLineRangeMapping(change.original, change.modified, undefined)) : result.changes;
+		return { identical: !changes.length, quitEarly: result.hitTimeout, changes, moves: result.moves };
 	}
 }
 
@@ -152,10 +158,13 @@ suite('AgentEditsService', () => {
 		events = store.add(new Emitter<IVoltEventEnvelope>());
 		instantiation.stub(IAgentRuntimeService, { onDidEmit: events.event } as Partial<IAgentRuntimeService>);
 		instantiation.stub(IVoltGitService, { readBlob: async () => VSBuffer.fromString('') } as Partial<IVoltGitService>);
-		instantiation.stub(IEditorWorkerService, new DiffingWorkerService(() => instantiation.get(IModelService)));
+		worker = new DiffingWorkerService(() => instantiation.get(IModelService));
+		instantiation.stub(IEditorWorkerService, worker);
 		dialogs = new TestDialogService();
 		instantiation.stub(IDialogService, dialogs);
 	});
+
+	let worker: DiffingWorkerService;
 
 	async function create(): Promise<AgentEditsService> {
 		service = store.add(instantiation.createInstance(AgentEditsService));
@@ -320,6 +329,256 @@ suite('AgentEditsService', () => {
 		service = reloaded;
 		await settle();
 		assert.deepStrictEqual(reloaded.getPendingFiles().map(f => [f.sessionId, f.additions, !!f.modifiedUri]), [['A', 1, true], ['B', 1, false]]);
+	});
+
+	/** Shared text, or one hunk as `[before, after]`. Hunks are kept apart by unchanged lines. */
+	type HunkPart = string | readonly [before: string, after: string];
+
+	const singleHunkCases: { readonly name: string; readonly parts: readonly HunkPart[] }[] = [
+		{ name: 'insert at start', parts: [['', 'X\n'], 'a\nb\nc\n'] },
+		{ name: 'insert in the middle', parts: ['a\n', ['', 'X\nY\n'], 'b\nc\n'] },
+		{ name: 'insert at end', parts: ['a\nb\n', ['', 'X\n']] },
+		{ name: 'delete at start', parts: [['a\n', ''], 'b\nc\n'] },
+		{ name: 'delete in the middle', parts: ['a\n', ['b\nc\n', ''], 'd\n'] },
+		{ name: 'delete at end', parts: ['a\nb\n', ['c\n', '']] },
+		{ name: 'modify at start', parts: [['a\n', 'A\n'], 'b\nc\n'] },
+		{ name: 'modify in the middle', parts: ['a\n', ['b\n', 'B1\nB2\n'], 'c\n'] },
+		{ name: 'modify at end', parts: ['a\nb\n', ['c\n', 'C\n']] },
+		{ name: 'no final newline: append a line', parts: ['a\nb', ['', '\nc']] },
+		{ name: 'no final newline: delete the last line', parts: ['a\nb', ['\nc', '']] },
+		{ name: 'no final newline: modify the last line', parts: ['a\nb\n', ['c', 'C']] },
+		{ name: 'final newline added', parts: ['a\nb', ['', '\n']] },
+		{ name: 'final newline removed', parts: ['a\nb', ['\n', '']] },
+		{ name: 'empty file filled', parts: [['', 'a\nb\n']] },
+		{ name: 'file emptied', parts: [['a\nb\n', '']] },
+		{ name: 'CRLF insert', parts: ['a\r\n', ['', 'X\r\n'], 'b\r\n'] },
+		{ name: 'CRLF delete at end', parts: ['a\r\nb\r\n', ['c\r\n', '']] },
+		{ name: 'CRLF modify', parts: ['a\r\n', ['b\r\n', 'B\r\n'], 'c\r\n'] },
+	];
+
+	const multiHunkCases: { readonly name: string; readonly parts: readonly HunkPart[] }[] = [
+		{ name: 'three hunks', parts: [['a\n', 'A\n'], 'b\nc\nd\n', ['', 'X\nY\n'], 'e\nf\ng\n', ['h\n', '']] },
+		{ name: 'three hunks, CRLF, no final newline', parts: ['a\r\n', ['b\r\n', ''], 'c\r\nd\r\ne\r\n', ['f\r\n', 'F\r\nG\r\n'], 'h\r\ni\r\nj', ['', '\r\nk']] },
+	];
+
+	function compose(parts: readonly HunkPart[], side: (hunk: number) => 0 | 1): string {
+		let hunk = 0;
+		return parts.map(part => typeof part === 'string' ? part : part[side(hunk++)]).join('');
+	}
+
+	async function waitFor(condition: () => boolean, what: string): Promise<void> {
+		for (let i = 0; i < 200 && !condition(); i++) {
+			await new Promise(resolve => setTimeout(resolve, 10));
+			await service.whenSettled();
+		}
+		assert.ok(condition(), `timed out waiting for ${what}`);
+	}
+
+	let hunkFile = 0;
+
+	/**
+	 * Keeps or undoes each hunk of `parts` in file order, checking the file on disk and the
+	 * baseline after every step. Returns the failure instead of throwing, so one run reports
+	 * every broken case.
+	 */
+	async function reviewHunks(name: string, parts: readonly HunkPart[], choices: readonly ('keep' | 'undo')[]): Promise<string | undefined> {
+		const uri = URI.file(`/project/hunks-${hunkFile++}.txt`);
+		const label = `${name} [${choices.join(', ')}]${worker.dropInnerChanges ? ' without inner changes' : ''}`;
+		try {
+			await fileService.writeFile(uri, VSBuffer.fromString(compose(parts, () => 1)));
+			service.recordBaseline('A', uri, compose(parts, () => 0));
+			await waitFor(() => service.getPendingFile(uri, 'A')?.changes.length === choices.length, `${choices.length} hunks`);
+			for (let step = 0; step < choices.length; step++) {
+				const pending = service.getPendingFile(uri, 'A')!;
+				const change = pending.changes[0];
+				const done = choices[step] === 'keep' ? await service.keepHunk(uri, change, 'A') : await service.undoHunk(uri, change, 'A');
+				assert.strictEqual(done, true, `step ${step} applied`);
+				if (step === choices.length - 1) {
+					await waitFor(() => !service.getPendingFile(uri, 'A'), 'the entry to resolve');
+				} else {
+					await waitFor(() => service.getPendingFile(uri, 'A')?.changes.length === choices.length - step - 1, `hunks left after step ${step}`);
+					const baseline = compose(parts, hunk => hunk <= step && choices[hunk] === 'keep' ? 1 : 0);
+					assert.strictEqual(JSON.stringify(service.getBaselineModel(pending.baselineUri)?.getValue()), JSON.stringify(baseline), `baseline after step ${step}`);
+				}
+				const expected = compose(parts, hunk => hunk <= step && choices[hunk] === 'undo' ? 0 : 1);
+				assert.strictEqual(JSON.stringify((await fileService.readFile(uri)).value.toString()), JSON.stringify(expected), `file after step ${step}`);
+			}
+			return undefined;
+		} catch (err) {
+			return `${label}: ${err instanceof Error ? err.message : String(err)}`;
+		}
+	}
+
+	test('keep or undo a single hunk anywhere in the file', async function () {
+		this.timeout(120_000);
+		await create();
+		const failures: string[] = [];
+		for (const dropInner of [false, true]) {
+			worker.dropInnerChanges = dropInner;
+			for (const { name, parts } of singleHunkCases) {
+				for (const choice of ['keep', 'undo'] as const) {
+					const failure = await reviewHunks(name, parts, [choice]);
+					if (failure) {
+						failures.push(failure);
+					}
+				}
+			}
+		}
+		assert.deepStrictEqual(failures, []);
+	});
+
+	test('keep some hunks and undo others, in every combination', async function () {
+		this.timeout(120_000);
+		await create();
+		const failures: string[] = [];
+		for (const dropInner of [false, true]) {
+			worker.dropInnerChanges = dropInner;
+			for (const { name, parts } of multiHunkCases) {
+				const count = parts.filter(part => typeof part !== 'string').length;
+				for (let mask = 0; mask < 1 << count; mask++) {
+					const failure = await reviewHunks(name, parts, Array.from({ length: count }, (_, i) => mask & (1 << i) ? 'undo' : 'keep'));
+					if (failure) {
+						failures.push(failure);
+					}
+				}
+			}
+		}
+		assert.deepStrictEqual(failures, []);
+	});
+
+	test('undoing a hunk keeps what the user typed elsewhere in the file', async () => {
+		await create();
+		await write('a\nb\nc\nd\ne\n');
+		await write('a\nB\nc\nd\ne\n');
+		service.recordBaseline('A', file, 'a\nb\nc\nd\ne\n');
+		await waitFor(() => service.getPendingFile(file, 'A')?.changes.length === 1, 'the agent hunk');
+		const model = instantiation.get(IModelService).getModel(file)!;
+		model.pushEditOperations(null, [{ range: new Range(5, 1, 5, 2), text: 'E (mine)' }], () => null);
+		await waitFor(() => service.getPendingFile(file, 'A')?.changes.length === 2, 'the typed line to show');
+		const agentHunk = service.getPendingFile(file, 'A')!.changes.find(change => change.modified.startLineNumber === 2)!;
+		assert.strictEqual(await service.undoHunk(file, agentHunk, 'A'), true);
+		assert.strictEqual(model.getValue(), 'a\nb\nc\nd\nE (mine)\n');
+		assert.strictEqual(await read(), 'a\nb\nc\nd\nE (mine)\n');
+	});
+
+	test('undoing the only hunk of a file the agent created deletes the file', async () => {
+		await create();
+		await write('created\nby agent\n');
+		service.recordBaseline('A', file, undefined);
+		await waitFor(() => service.getPendingFile(file, 'A')?.changes.length === 1, 'the created file');
+		const resolved: string[] = [];
+		store.add(service.onDidResolve(e => resolved.push(`${e.sessionId}:${e.outcome}`)));
+		assert.strictEqual(await service.undoHunk(file, service.getPendingFile(file, 'A')!.changes[0], 'A'), true);
+		await waitFor(() => !service.getPendingFile(file, 'A'), 'the entry to resolve');
+		assert.strictEqual(await fileService.exists(file), false);
+		assert.deepStrictEqual(resolved, ['A:undone']);
+	});
+
+	test('settling the last hunk resolves the file like Keep File / Undo File', async () => {
+		await create();
+		const resolved: string[] = [];
+		store.add(service.onDidResolve(e => resolved.push(`${e.outcome}`)));
+		await write('x\ny\nz\n');
+		await write('X\ny\nz\n');
+		service.recordBaseline('A', file, 'x\ny\nz\n');
+		await waitFor(() => service.getPendingFile(file, 'A')?.changes.length === 1, 'one hunk');
+		await service.keepHunk(file, service.getPendingFile(file, 'A')!.changes[0], 'A');
+		await waitFor(() => !service.getPendingFile(file, 'A'), 'kept');
+		await write('X\ny\nZ\n');
+		service.recordBaseline('A', file, 'X\ny\nz\n');
+		await waitFor(() => service.getPendingFile(file, 'A')?.changes.length === 1, 'one hunk');
+		await service.undoHunk(file, service.getPendingFile(file, 'A')!.changes[0], 'A');
+		await waitFor(() => !service.getPendingFile(file, 'A'), 'undone');
+		assert.deepStrictEqual(resolved, ['kept', 'undone']);
+	});
+
+	test('Undo File after keeping one hunk keeps that hunk, also after a reload', async () => {
+		await create();
+		await write('a\nb\nc\nd\ne\n');
+		await write('A\nb\nc\nd\nE\n');
+		service.recordBaseline('A', file, 'a\nb\nc\nd\ne\n');
+		emitRunEnd('A');
+		await waitFor(() => service.getPendingFile(file, 'A')?.changes.length === 2, 'two hunks');
+		await service.keepHunk(file, service.getPendingFile(file, 'A')!.changes[0], 'A');
+		await waitFor(() => service.getPendingFile(file, 'A')?.changes.length === 1, 'one hunk left');
+		await new Promise(resolve => setTimeout(resolve, 600));
+		service.dispose();
+		store.delete(service);
+		service = store.add(instantiation.createInstance(AgentEditsService));
+		await waitFor(() => service.getPendingFile(file, 'A')?.changes.length === 1, 'the kept hunk is still kept after a reload');
+		assert.strictEqual(await service.undoFile(file, 'A'), true);
+		assert.strictEqual(await read(), 'A\nb\nc\nd\ne\n');
+	});
+
+	async function setUpThreeFiles(): Promise<{ modified: URI; created: URI; deleted: URI }> {
+		const modified = URI.file('/project/m.ts');
+		const created = URI.file('/project/n.ts');
+		const deleted = URI.file('/project/d.ts');
+		await fileService.writeFile(modified, VSBuffer.fromString('m2\n'));
+		await fileService.writeFile(created, VSBuffer.fromString('new\n'));
+		service.recordBaseline('A', modified, 'm1\n');
+		service.recordBaseline('A', created, undefined);
+		service.recordBaseline('A', deleted, 'gone\n');
+		service.recordBaseline('B', file, 'other chat\n');
+		await fileService.writeFile(file, VSBuffer.fromString('other chat, edited\n'));
+		await waitFor(() => service.getPendingFiles('A').length === 3 && service.getPendingFile(deleted, 'A')?.kind === 'deleted', 'three pending files');
+		return { modified, created, deleted };
+	}
+
+	test('Undo All puts back every file of the chat, and only that chat', async () => {
+		await create();
+		const { modified, created, deleted } = await setUpThreeFiles();
+		const resolved: string[] = [];
+		store.add(service.onDidResolve(e => resolved.push(`${e.sessionId}:${e.outcome}`)));
+		await service.undoAll('A');
+		await waitFor(() => service.getPendingFiles('A').length === 0, 'no pending files');
+		assert.strictEqual((await fileService.readFile(modified)).value.toString(), 'm1\n');
+		assert.strictEqual(await fileService.exists(created), false);
+		assert.strictEqual((await fileService.readFile(deleted)).value.toString(), 'gone\n');
+		assert.deepStrictEqual(resolved, ['A:undone', 'A:undone', 'A:undone']);
+		assert.strictEqual(service.getPendingFiles('B').length, 1, 'the other chat is untouched');
+		assert.strictEqual(await read(), 'other chat, edited\n');
+	});
+
+	test('Keep All leaves every file as the agent left it', async () => {
+		await create();
+		const { modified, created, deleted } = await setUpThreeFiles();
+		await service.keepAll('A');
+		await waitFor(() => service.getPendingFiles('A').length === 0, 'no pending files');
+		assert.strictEqual((await fileService.readFile(modified)).value.toString(), 'm2\n');
+		assert.strictEqual((await fileService.readFile(created)).value.toString(), 'new\n');
+		assert.strictEqual(await fileService.exists(deleted), false);
+		assert.strictEqual(service.getPendingFiles('B').length, 1);
+	});
+
+	test('Undo All keeps the round in the chat\'s history', async () => {
+		await create();
+		instantiation.stub(IAgentEditsService, service);
+		instantiation.stub(ISCMService, { repositories: [], onDidAddRepository: Event.None, onDidRemoveRepository: Event.None } as Partial<ISCMService>);
+		instantiation.stub(IVoltSessionContextService, { rootFor: () => URI.file('/project') } as Partial<IVoltSessionContextService>);
+		const turnChange = { uri: file, path: 'app.ts', kind: 'modified' as const, binary: false, additions: 1, deletions: 1, repoRoot: '/project', oldBlob: 'o', newBlob: 'n', turnId: 't1' };
+		instantiation.stub(IAgentCheckpointService, {
+			onDidChange: Event.None,
+			getChanges: async (_sessionId: string, scope: unknown) => typeof scope === 'object' ? [turnChange] : [],
+		} as Partial<IAgentCheckpointService>);
+		const changes = store.add(instantiation.createInstance(AgentSessionChangesService));
+		await write('before\n');
+		await write('after\n');
+		service.recordBaseline('S', file, 'before\n');
+		changes.setSessionTranscript('S', [
+			{ kind: 'user', id: 't1', text: 'change it' },
+			{ kind: 'agent', id: 'a1', segments: [{ kind: 'block', block: createFileChangeBlock({ id: 'f', path: '/project/app.ts', verb: 'Edited', original: 'before', modified: 'after', additions: 1, deletions: 1 }) }] },
+		]);
+		await waitFor(() => changes.getStats('S', 'pending').files === 1, 'pending');
+		changes.getStats('S', agentTurnScope('t1'));
+		await changes.loadTurn('S', 't1');
+
+		await service.undoAll('S');
+		await waitFor(() => changes.getStats('S', 'pending').files === 0, 'undone');
+		assert.strictEqual(await read(), 'before\n');
+		assert.deepStrictEqual(changes.getFiles('S', 'lastTurn').map(f => f.path), ['project/app.ts'], 'the round still lists the file');
+		assert.deepStrictEqual(changes.getFiles('S', 'uncommitted').map(f => f.path), ['project/app.ts']);
+		assert.deepStrictEqual(changes.getStats('S', agentTurnScope('t1')), { files: 1, additions: 1, deletions: 1 }, 'the turn keeps its diff');
 	});
 
 });

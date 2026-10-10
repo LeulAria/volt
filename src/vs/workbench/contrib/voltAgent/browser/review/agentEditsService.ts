@@ -186,6 +186,8 @@ class PendingEntry extends Disposable implements IEntry {
 	/** What the agent left in the file at the end of its turn; null when it deleted the file. */
 	agentText: string | null | undefined;
 	busy = false;
+	/** How the user settled hunks so far: once any hunk is kept, the file counts as kept when the last one goes. */
+	settledHunks: 'kept' | 'undone' | undefined;
 
 	constructor(
 		readonly sessionId: string,
@@ -369,12 +371,18 @@ class PendingEntry extends Disposable implements IEntry {
 		return this.computing;
 	}
 
-	whenSettled(): Promise<void> {
-		if (this.scheduler.isScheduled()) {
-			this.scheduler.cancel();
-			return this.refresh();
+	/** Resolves once the diff reflects the text as it is now, including a re-run that typing during the last one asked for. */
+	async whenSettled(): Promise<void> {
+		for (let round = 0; round < 5; round++) {
+			if (this.scheduler.isScheduled()) {
+				this.scheduler.cancel();
+				await this.refresh();
+			} else if (this.computing) {
+				await this.computing;
+			} else {
+				return;
+			}
 		}
-		return this.computing ?? Promise.resolve();
 	}
 
 	private async computeDiff(): Promise<void> {
@@ -563,25 +571,53 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 
 	async keepHunk(uri: URI, change: DetailedLineRangeMapping, sessionId?: string): Promise<boolean> {
 		const entry = this.find(uri, sessionId);
-		const modified = entry instanceof PendingEntry ? entry.modified : undefined;
-		if (!(entry instanceof PendingEntry) || !modified || !hasChange(entry.changes, change)) {
+		if (!(entry instanceof PendingEntry)) {
 			return false;
 		}
-		entry.baseline.pushEditOperations(null, hunkEdits(change, modified, entry.baseline, 'keep'), () => null);
+		const current = await currentHunk(entry, change);
+		const modified = entry.modified;
+		if (!current || !modified || !this.isListed(entry)) {
+			return false;
+		}
+		entry.settledHunks = 'kept';
+		entry.baseline.pushEditOperations(null, hunkEdits(current, modified, entry.baseline, 'keep'), () => null);
 		await entry.refresh();
 		return true;
 	}
 
 	async undoHunk(uri: URI, change: DetailedLineRangeMapping, sessionId?: string): Promise<boolean> {
 		const entry = this.find(uri, sessionId);
-		// Only the entry that follows the live file can write a hunk back into it.
-		const modified = entry instanceof PendingEntry ? entry.live : undefined;
-		if (!(entry instanceof PendingEntry) || !modified || !hasChange(entry.changes, change)) {
+		if (!(entry instanceof PendingEntry) || entry.busy) {
 			return false;
 		}
-		modified.pushEditOperations(null, hunkEdits(change, entry.baseline, modified, 'undo'), () => null);
-		await entry.refresh();
+		const current = await currentHunk(entry, change);
+		// Only the entry that follows the live file can write a hunk back into it.
+		const modified = entry.live;
+		if (!current || !modified || !this.isListed(entry)) {
+			return false;
+		}
+		entry.settledHunks ??= 'undone';
+		entry.busy = true;
+		try {
+			// Its own undo stop: Cmd+Z in the editor brings back exactly this hunk.
+			modified.pushStackElement();
+			modified.pushEditOperations(null, hunkEdits(current, entry.baseline, modified, 'undo'), () => null);
+			modified.pushStackElement();
+			if (!entry.existed && !entry.baseline.getValueLength() && !modified.getValueLength()) {
+				// Nothing is left of a file the agent created: it goes, as Undo File does.
+				if (await this.writeText(uri, undefined, undefined)) {
+					this.resolve(entry, 'undone');
+					await this.thawBelow(uri);
+				}
+				return true;
+			}
+		} finally {
+			entry.busy = false;
+		}
+		// Save before the diff settles: when this was the last hunk, the entry only goes once the
+		// file on disk is back to the baseline (see removeIfReverted).
 		await this.save(uri);
+		await entry.refresh();
 		return true;
 	}
 
@@ -590,8 +626,7 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 		if (!entry) {
 			return;
 		}
-		this.remove(entry);
-		this._onDidResolve.fire({ sessionId: entry.sessionId, uri, outcome: 'kept' });
+		this.resolve(entry, 'kept');
 	}
 
 	async undoFile(uri: URI, sessionId?: string): Promise<boolean> {
@@ -620,8 +655,7 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 			}
 			return false;
 		}
-		this.remove(entry);
-		this._onDidResolve.fire({ sessionId: entry.sessionId, uri, outcome: 'undone' });
+		this.resolve(entry, 'undone');
 		await this.thawBelow(uri);
 		return true;
 	}
@@ -871,8 +905,18 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 			this._onDidChange.fire(entry.uri);
 			return;
 		}
-		this.remove(entry);
+		if (entry.settledHunks) {
+			// The user settled the last hunk: the file is reviewed, as if kept or undone whole.
+			this.resolve(entry, entry.settledHunks);
+		} else {
+			this.remove(entry);
+		}
 		void this.thawBelow(entry.uri);
+	}
+
+	private resolve(entry: IEntry, outcome: IAgentEditResolution['outcome']): void {
+		this.remove(entry);
+		this._onDidResolve.fire({ sessionId: entry.sessionId, uri: entry.uri, outcome });
 	}
 
 	private remove(entry: IEntry): void {
@@ -1046,9 +1090,15 @@ function lineDiff(original: string[], modified: string[]): { originalStart: numb
 	return new LcsDiff({ getElements: () => original }, { getElements: () => modified }).ComputeDiff(false).changes;
 }
 
-function hasChange(changes: readonly DetailedLineRangeMapping[], change: DetailedLineRangeMapping): boolean {
-	return changes.some(candidate => candidate === change
-		|| (candidate.original.equals(change.original) && candidate.modified.equals(change.modified)));
+/**
+ * `change` as the file is now. The diff is brought up to date first: a hunk taken from a diff that
+ * predates the last keystroke would put its text on the wrong lines. Typing moves a hunk in the
+ * file, never in the baseline, so its baseline lines find it again.
+ */
+async function currentHunk(entry: PendingEntry, change: DetailedLineRangeMapping): Promise<DetailedLineRangeMapping | undefined> {
+	await entry.whenSettled();
+	return entry.changes.find(candidate => candidate === change)
+		?? entry.changes.find(candidate => candidate.original.equals(change.original));
 }
 
 /**
