@@ -91,6 +91,11 @@ interface IAcpSession {
 	subagentCalls?: Set<string>;
 	/** Background work the agent started (Claude's `run_in_background` Bash), by task id. Outlives turns. */
 	backgroundTasks?: Map<string, IAcpBackgroundTask>;
+	/**
+	 * A text-only session (`IAgentStartRequest.textOnly`). `ownPrompt`: it runs on Volt's system prompt
+	 * with no tools, so Volt's modes and access policy have nothing to switch.
+	 */
+	textOnly?: { readonly ownPrompt: boolean };
 }
 
 /** States of an AIR async task; the last three are final. */
@@ -258,6 +263,11 @@ const TRANSPORT_RESUME_DELAY_MS = 1500;
 
 /** Cursor waits 6 s for a soft-cancelled stream to end before cutting it (`softCancelLingerMs`). */
 const PROMPT_CANCEL_LINGER_MS = 6_000;
+/**
+ * A text-only session's next request waits on its cancelled one: a prediction nobody wants any more
+ * is cut loose after this long, so the next keystroke's request goes out.
+ */
+const TEXT_ONLY_CANCEL_LINGER_MS = 750;
 /** A spare session nobody adopted is stopped after this long; its process holds a model connection. */
 const SPARE_TTL_MS = 10 * 60_000;
 const MAX_SPARES = 2;
@@ -647,9 +657,41 @@ export class AcpAgentProvider implements IAgentProvider {
 			cwd,
 			req.modelId ?? '',
 			Object.entries(req.options ?? {}).sort(([x], [y]) => x.localeCompare(y)),
-			this.hostTools?.getMcpServers(req.sessionId) ?? [],
+			req.textOnly ? req.textOnly.systemPrompt : this.hostTools?.getMcpServers(req.sessionId) ?? [],
 			sandboxLaunchKey(req.sandbox?.settings),
 		]);
+	}
+
+	/** Claude's adapter takes a whole system prompt and the SDK's options on `session/new` (`_meta`). */
+	takesSystemPrompt(): boolean {
+		return this.id === 'claude-code';
+	}
+
+	/**
+	 * `session/new`'s `_meta` for a text-only session: the request's system prompt in place of
+	 * Claude Code's, no built-in tools, user MCP servers, hooks, project settings or saved
+	 * transcript, and no extended thinking. Undefined for agents that take none of it.
+	 */
+	private textOnlyMeta(req: IAgentStartRequest): Record<string, unknown> | undefined {
+		if (!req.textOnly || !this.takesSystemPrompt()) {
+			return undefined;
+		}
+		return {
+			systemPrompt: req.textOnly.systemPrompt,
+			claudeCode: {
+				options: {
+					tools: [],
+					settingSources: ['user'],
+					settings: { disableAllHooks: true },
+					strictMcpConfig: true,
+					persistSession: false,
+					thinking: { type: 'disabled' },
+					effort: 'low',
+					// An agent entry without a model list would run the account's default (often Opus).
+					...(req.modelId ? {} : { model: 'haiku' }),
+				},
+			},
+		};
 	}
 
 	/** Spawns the agent and opens a session; with `resume`, continues that session (in `req.cwd`) instead of a new one. */
@@ -689,8 +731,9 @@ export class AcpAgentProvider implements IAgentProvider {
 				clientInfo: { name: 'volt', title: 'Volt', version: '0.1.0' },
 			}, ACP_INITIALIZE_TIMEOUT_MS);
 			const capabilities = initialized.agentCapabilities?.mcpCapabilities;
-			const mcpServers = this.hostMcpServers(req.sessionId, capabilities);
-			hostMcp = { sessionId: req.sessionId, capabilities, servers: JSON.stringify(mcpServers) };
+			// A text-only session never calls Volt's tools: no server, and nothing to go stale.
+			const mcpServers = req.textOnly ? [] : this.hostMcpServers(req.sessionId, capabilities);
+			hostMcp = req.textOnly ? undefined : { sessionId: req.sessionId, capabilities, servers: JSON.stringify(mcpServers) };
 			if (resume) {
 				if (!initialized.agentCapabilities?.sessionCapabilities?.resume) {
 					throw new Error('the agent cannot resume sessions');
@@ -698,7 +741,8 @@ export class AcpAgentProvider implements IAgentProvider {
 				const resumed = await client.request<Partial<ISessionNewResponse>>('session/resume', { sessionId: resume, cwd: cwd ?? '', mcpServers }, ACP_SESSION_NEW_TIMEOUT_MS);
 				created = { ...resumed, sessionId: resumed?.sessionId ?? resume };
 			} else {
-				created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers }, ACP_SESSION_NEW_TIMEOUT_MS);
+				const meta = this.textOnlyMeta(req);
+				created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 			}
 		} catch (err) {
 			client.dispose();
@@ -724,6 +768,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			hostMcp,
 			steering: (initialized as { _meta?: { steering?: { supported?: unknown } } })._meta?.steering?.supported === true,
 			resumable: !!initialized.agentCapabilities?.sessionCapabilities?.resume,
+			...(req.textOnly ? { textOnly: { ownPrompt: this.takesSystemPrompt() } } : {}),
 		};
 		// One listener for the life of the session; it routes to whichever turn is current.
 		client.handleNotifications(note => {
@@ -1318,7 +1363,8 @@ export class AcpAgentProvider implements IAgentProvider {
 	}
 
 	private onIdle(live: IAcpSession, turn: AcpPromptTurn, info: IIdleStageInfo): void {
-		if (turn.ended) {
+		// A text-only request has its caller's own deadline; asking a prediction to "continue" helps nobody.
+		if (turn.ended || live.textOnly) {
 			return;
 		}
 		const quiet = formatQuiet(info.quietMs);
@@ -1360,7 +1406,9 @@ export class AcpAgentProvider implements IAgentProvider {
 		const modelConfigId = live.configOptions?.find(isModelConfigOption)?.id ?? 'model';
 		const holdPlanWall = this.id === 'cursor-acp';
 		const tried: string[] = live.currentModel ? [live.currentModel] : [];
-		await this.applyVoltMode(live, sessionId, msg.mode);
+		if (!live.textOnly?.ownPrompt) {
+			await this.applyVoltMode(live, sessionId, msg.mode);
+		}
 		let body = this.promptBlocks(live, msg);
 		let resumes = 0;
 
@@ -1499,7 +1547,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		turn.cancelSentFor = cts;
 		void live.client.notify('session/cancel', { sessionId: live.handle.providerSessionId ?? live.handle.id }).catch(() => undefined);
 		const clock = this.supervision.clock ?? realWatchdogClock;
-		clock.setTimeout(() => cts.cancel(), this.supervision.cancelLingerMs ?? PROMPT_CANCEL_LINGER_MS);
+		clock.setTimeout(() => cts.cancel(), this.supervision.cancelLingerMs ?? (live.textOnly ? TEXT_ONLY_CANCEL_LINGER_MS : PROMPT_CANCEL_LINGER_MS));
 	}
 
 	/** Queues the turn's last events. A prompt still in flight is cancelled; the next turn waits for it to settle. */

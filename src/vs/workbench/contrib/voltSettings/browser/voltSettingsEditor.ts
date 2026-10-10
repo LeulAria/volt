@@ -843,7 +843,7 @@ export class VoltSettingsEditor extends EditorPane {
 		this.settingRow(
 			group,
 			localize('voltSettings.predictionModel', "Prediction model"),
-			localize('voltSettings.predictionModelDesc', "Writes the ghost text in editors and in the agent composer. Auto uses the fastest model of the composer's provider (Opus -> Haiku on the same Claude login). API and local models (Ollama) answer far faster than agent CLIs."),
+			localize('voltSettings.predictionModelDesc2', "Writes the ghost text in editors and in the agent composer, and cleans up dictation. Auto uses the fastest model of the composer's provider (Opus -> Haiku on the same Claude login). An agent answers through one session that starts with Volt; API and local models (Ollama) answer faster still."),
 			host => this.textGenerationPicker(host, 'tab', localize('voltSettings.predictionModel', "Prediction model"), localize('voltSettings.predictionAuto', "Auto"), localize('voltSettings.predictionAutoDesc', "The fastest model of the composer's provider")),
 		);
 	}
@@ -1119,6 +1119,15 @@ export class VoltSettingsEditor extends EditorPane {
 		this.sectionLabel(localize('voltSettings.voice', "Voice"));
 		const voice = this.settingsGroup();
 		this.voiceModelRow(voice);
+		this.settingRow(
+			voice,
+			localize('voltSettings.voiceCleanup', "Clean up dictation"),
+			localize('voltSettings.voiceCleanupDesc', "The prediction model fixes punctuation, misheard names and spoken code ('agent editor dot ts' -> agentEditor.ts) and drops filler words before the text goes in. When it takes more than a few seconds, the text goes in as heard."),
+			host => this.switch(host, settings.voice, localize('voltSettings.voiceCleanup', "Clean up dictation"), () => {
+				this.prediction.updateSettings({ voice: !settings.voice });
+				this.renderContent();
+			}),
+		);
 		this.textSettingRow(voice, AGENT_VOICE_ENDPOINT_SETTING, localize('voltSettings.voiceEndpoint', "Transcription endpoint"), localize('voltSettings.voiceEndpointDesc', "Base URL of an OpenAI-compatible speech-to-text server for the custom endpoint, such as http://localhost:8000/v1."));
 		this.textSettingRow(voice, AGENT_VOICE_MODEL_SETTING, localize('voltSettings.voiceEndpointModel', "Endpoint model"), localize('voltSettings.voiceEndpointModelDesc', "The model name the custom endpoint takes, such as whisper-1."));
 	}

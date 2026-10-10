@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { raceCancellation, timeout } from '../../../../../base/common/async.js';
+import { raceCancellation, RunOnceScheduler, timeout } from '../../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { CancellationError } from '../../../../../base/common/errors.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
@@ -14,16 +14,18 @@ import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { URI } from '../../../../../base/common/uri.js';
-import { formatPredictionError, IVoltModelAccess } from '../../common/models/modelAccess.js';
+import { cheapestReasoningLevel, formatPredictionError, IVoltModelAccess } from '../../common/models/modelAccess.js';
 import { IVoltModelOptions, MODEL_OPTION_REASONING, MODEL_PARAM_MAX_OUTPUT } from '../../common/models/modelOptions.js';
-import { DEFAULT_PREDICTION_SETTINGS, IComposerPredictionInput, IEditPrediction, IPredictedEdit, IPredictionContext, IPredictionSettings, IVoltPredictionService, VOLT_PREDICTION_SETTINGS_STORAGE_KEY } from '../../common/prediction.js';
+import { DEFAULT_PREDICTION_SETTINGS, IComposerPredictionInput, IDictationInput, IEditPrediction, IPredictedEdit, IPredictionContext, IPredictionSettings, IVoltPredictionService, VOLT_PREDICTION_SETTINGS_STORAGE_KEY } from '../../common/prediction.js';
 import { buildComposerPrompt, cleanComposerCompletion } from '../../common/prediction/composerPredictor.js';
+import { buildDictationPrompt, cleanDictationReply, dictationReplyIsComplete } from '../../common/prediction/dictationCleanup.js';
 import { meetsConfidence, orderEdits, samePath } from '../../common/prediction/editGraph.js';
 import { IParsedEdit, parseMultiEdit } from '../../common/prediction/multiEditParser.js';
 import { capLines, dedupeLineEcho, dedupePrefixOverlap, firstLineOnly, partialInsertText, postProcessInline, repliedLineBreakOnly, stripFences, stripSpecialTokens, trimToBlock } from '../../common/prediction/postProcess.js';
 import { buildInlinePrompt, buildNextEditPrompt, InlineWriting, inlineWritingKind } from '../../common/prediction/predictionPrompt.js';
 import { PredictionCache, predictionCacheKey, typedSince, TypedThroughCache } from '../../common/prediction/predictionCache.js';
 import { PredictionStats } from '../../common/prediction/predictionStats.js';
+import { PredictorTask } from '../../common/prediction/predictorSkill.js';
 import { IModelMessage } from '../../common/providers.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
 
@@ -32,7 +34,7 @@ const INLINE_TIMEOUT_MS = 10_000;
 const NES_TIMEOUT_MS = 15_000;
 const AGENT_TAB_TIMEOUT_MS = 30_000;
 const ONESHOT_TIMEOUT_MS = 60_000;
-/** An agent call costs a whole prompt: wait for the typing to pause, but not long (Claude answers in under a second). */
+/** An agent call costs a whole prompt: wait for the typing to pause, but not long (a warm agent answers in under a second). */
 const AGENT_EXTRA_DEBOUNCE_MS = 100;
 
 /** Ghost text is a statement or a short block; anything longer was going to be cut anyway. */
@@ -41,9 +43,11 @@ const NES_MAX_OUTPUT_TOKENS = 2_048;
 /** The composer predicts the rest of a sentence: a handful of words. */
 const COMPOSER_MAX_OUTPUT_TOKENS = 48;
 const COMPOSER_TIMEOUT_MS = 8_000;
-
-/** Reasoning levels from cheapest; a Tab request takes the first one the model offers. */
-const CHEAPEST_REASONING = ['off', 'none', 'minimal', 'low'];
+/** Dictation waits on its cleanup: past this, the transcript goes in as it was heard. */
+const DICTATION_TIMEOUT_MS = 4_000;
+const DICTATION_MAX_OUTPUT_TOKENS = 1_024;
+/** The Tab model can change several times in a row while the catalog loads; the predictor starts once it settles. */
+const WARM_DELAY_MS = 500;
 
 /** A failing provider is asked again after 1s, 2s, 4s ... up to this. */
 const MAX_BACKOFF_MS = 60_000;
@@ -106,6 +110,8 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 	private readonly _onDidExtendInline = this._register(new Emitter<URI>());
 	readonly onDidExtendInline: Event<URI> = this._onDidExtendInline.event;
 
+	private readonly warmScheduler = this._register(new RunOnceScheduler(() => this.warmUp(), WARM_DELAY_MS));
+
 	constructor(
 		@IAgentRuntimeService private readonly modelAccess: IVoltModelAccess & IAgentRuntimeService,
 		@IStorageService private readonly storageService: IStorageService,
@@ -114,6 +120,15 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 	) {
 		super();
 		this.settings = this.loadSettings();
+		this._register(this.modelAccess.onDidChangeActiveCatalog(() => this.warmScheduler.schedule()));
+		this._register(this.modelAccess.onDidChangeCatalog(() => this.warmScheduler.schedule()));
+		this._register(this.onDidChangeSettings(() => this.warmScheduler.schedule()));
+	}
+
+	warmUp(): void {
+		this.warmScheduler.cancel();
+		const wanted = this.settings.enabled || this.settings.voice;
+		this.modelAccess.warmPredictor(wanted ? this.modelAccess.resolveTabModelRef() : undefined);
 	}
 
 	getSettings(): IPredictionSettings {
@@ -271,9 +286,9 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 		let showFirst: (text: string | undefined) => void = () => { };
 		const first = new Promise<string | undefined>(resolve => showFirst = resolve);
 		const progress: IFlightProgress = { sent: false, partial: '' };
-		const ask = (at: IPredictionContext, extraDebounceMs: number) => this.request(modelRef, buildInlinePrompt(at, writing), {
+		const ask = (at: IPredictionContext, extraDebounceMs: number) => this.request(modelRef, writing === 'code' ? 'code' : 'writing', buildInlinePrompt(at, writing), {
 			timeoutMs: agent ? AGENT_TAB_TIMEOUT_MS : INLINE_TIMEOUT_MS,
-			extraDebounceMs,
+			pauseMs: this.settings.debounceMs + extraDebounceMs,
 			options: this.tabOptions(modelRef, INLINE_MAX_OUTPUT_TOKENS),
 			// Stop reading once the reply has run past the block (or sentence, or line) it completes.
 			enough: text => inlineReplyIsComplete(text, at.prefix, at.linePrefix, writing, at.lineSuffix),
@@ -402,9 +417,9 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 		const agent = modelRef.startsWith('agent:');
 		const progress: IFlightProgress = { sent: false, partial: '' };
 		const result = (async () => {
-			const raw = await this.request(modelRef, buildComposerPrompt(input), {
+			const raw = await this.request(modelRef, 'composer', buildComposerPrompt(input), {
 				timeoutMs: agent ? AGENT_TAB_TIMEOUT_MS : COMPOSER_TIMEOUT_MS,
-				extraDebounceMs: 0,
+				pauseMs: this.settings.debounceMs,
 				options: this.tabOptions(modelRef, COMPOSER_MAX_OUTPUT_TOKENS),
 				// One sentence or one line is the whole answer.
 				enough: text => text.includes('</insert>') || (/\S/.test(text) && (/\S[^\S\n]*\n/.test(text) || /[.!?]\s/.test(text))),
@@ -452,9 +467,9 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 		this.structuredInFlight = cts;
 		let raw: string | undefined;
 		try {
-			raw = await this.request(modelRef, buildNextEditPrompt(ctx, intent), {
+			raw = await this.request(modelRef, 'next-edit', buildNextEditPrompt(ctx, intent), {
 				timeoutMs: modelRef.startsWith('agent:') ? Math.max(timeoutMs, AGENT_TAB_TIMEOUT_MS) : timeoutMs,
-				extraDebounceMs: 0,
+				pauseMs: this.settings.debounceMs,
 				options: this.tabOptions(modelRef, NES_MAX_OUTPUT_TOKENS),
 			}, cts.token);
 		} finally {
@@ -514,6 +529,24 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 		return URI.joinPath(folder.uri, relative);
 	}
 
+	// --- dictation ---------------------------------------------------------------------------------
+
+	async polishDictation(input: IDictationInput, token: CancellationToken): Promise<string | undefined> {
+		const modelRef = this.modelAccess.resolveTabModelRef();
+		const transcript = input.transcript.trim();
+		if (!modelRef || !this.settings.voice || !transcript || this.backingOff()) {
+			return undefined;
+		}
+		const raw = await this.request(modelRef, 'voice', buildDictationPrompt(input), {
+			timeoutMs: DICTATION_TIMEOUT_MS,
+			// Nobody is typing: the request goes out at once.
+			pauseMs: 0,
+			options: this.tabOptions(modelRef, Math.min(DICTATION_MAX_OUTPUT_TOKENS, 48 + Math.ceil(transcript.length / 3))),
+			enough: dictationReplyIsComplete,
+		}, token);
+		return raw === undefined ? undefined : cleanDictationReply(raw, transcript);
+	}
+
 	// --- model round-trip ----------------------------------------------------------------------
 
 	/**
@@ -526,8 +559,7 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 			return undefined;
 		}
 		const options: IVoltModelOptions = { [MODEL_PARAM_MAX_OUTPUT]: String(maxOutputTokens) };
-		const levels = item.optionDescriptors?.find(descriptor => descriptor.id === MODEL_OPTION_REASONING)?.options?.map(option => option.value) ?? [];
-		const cheapest = CHEAPEST_REASONING.find(level => levels.includes(level));
+		const cheapest = cheapestReasoningLevel(item);
 		if (cheapest) {
 			options[MODEL_OPTION_REASONING] = cheapest;
 		}
@@ -550,16 +582,16 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 	}
 
 	/**
-	 * One stateless call: race a timeout, collect text deltas, stop early once `enough` says so.
-	 * Returns undefined on cancellation (the caller shows nothing). `onSent` runs once the pause is
-	 * over and the request leaves; `onText` with the reply so far, on each delta.
+	 * One stateless call: wait out `pauseMs`, race a timeout, collect text deltas, stop early once
+	 * `enough` says so. Returns undefined on cancellation (the caller shows nothing). `onSent` runs
+	 * once the pause is over and the request leaves; `onText` with the reply so far, on each delta.
+	 * `task` tells the predictor agent which of its skills to use; chat models read `messages`.
 	 */
-	private async request(modelRef: string, messages: IModelMessage[], opts: { timeoutMs: number; extraDebounceMs: number; options: IVoltModelOptions | undefined; enough?: (text: string) => boolean; onSent?: () => void; onText?: (text: string) => void }, token: CancellationToken): Promise<string | undefined> {
+	private async request(modelRef: string, task: PredictorTask, messages: IModelMessage[], opts: { timeoutMs: number; pauseMs: number; options: IVoltModelOptions | undefined; enough?: (text: string) => boolean; onSent?: () => void; onText?: (text: string) => void }, token: CancellationToken): Promise<string | undefined> {
 		const cts = new CancellationTokenSource(token);
-		const debounce = this.settings.debounceMs + opts.extraDebounceMs;
-		if (debounce > 0) {
+		if (opts.pauseMs > 0) {
 			try {
-				await timeout(debounce, cts.token);
+				await timeout(opts.pauseMs, cts.token);
 			} catch {
 				cts.dispose();
 				return undefined; // cancelled while debouncing
@@ -579,7 +611,7 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 		let text = '';
 		let stoppedEarly = false;
 		try {
-			for await (const event of this.modelAccess.streamModel(modelRef, messages, opts.options, cts.token)) {
+			for await (const event of this.modelAccess.streamModel(modelRef, messages, opts.options, cts.token, task)) {
 				if (cts.token.isCancellationRequested) {
 					return undefined;
 				}

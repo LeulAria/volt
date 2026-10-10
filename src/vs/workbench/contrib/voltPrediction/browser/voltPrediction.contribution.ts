@@ -38,8 +38,11 @@ class VoltPredictionContribution extends Disposable {
 	constructor(
 		@IInstantiationService instantiationService: IInstantiationService,
 		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
+		@IVoltPredictionService predictionService: IVoltPredictionService,
 	) {
 		super();
+		// The predictor agent starts with Volt, so the first keystroke and the first dictation find it ready.
+		predictionService.warmUp();
 		this.recentEdits = this._register(instantiationService.createInstance(RecentEditsTracker));
 		const index = this._register(instantiationService.createInstance(WorkspaceContextIndex));
 		const terminals = this._register(instantiationService.createInstance(TerminalCommandTracker));

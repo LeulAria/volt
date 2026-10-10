@@ -1199,6 +1199,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		// Subagents and queued prompts sit right on top of the text area, under the chips (Cursor).
 		append(this.composerEl, this.composerQueue.element);
 		this.voiceDictation = this._register(this.instantiationService.createInstance(AgentVoiceDictation));
+		this.voiceDictation.textBefore = () => this.textBeforeDictation();
 		this._register(this.voiceDictation.onDidChange(() => this.syncDictation()));
 		this._register(this.voiceDictation.onDidCommit(text => this.endDictatedText(text)));
 		this._register(this.voiceDictation.onDidFail(message => this.notificationService.warn(message)));
@@ -6358,6 +6359,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}]);
 		editor.setPosition(end);
 		this.dictatedShown = text;
+	}
+
+	/** The draft before where dictation writes: the sentence it continues and the names around it. */
+	private textBeforeDictation(): string {
+		const model = this.inputModel;
+		const start = this.dictatedText?.getRange(0)?.getStartPosition() ?? this.inputEditor?.getPosition();
+		return model && !model.isDisposed() && start ? model.getValueInRange({ startLineNumber: 1, startColumn: 1, endLineNumber: start.lineNumber, endColumn: start.column }) : '';
 	}
 
 	/** Settles dictation with its final text, or removes the partial when `text` is empty. */

@@ -22,8 +22,8 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { IAgentWorktreeService } from '../common/git/agentWorktree.js';
 import { IAgentHistoryService } from '../common/history/agentHistory.js';
 import { buildTitlePrompt, sanitizeTitle, titleCommandFor } from '../common/history/titleGeneration.js';
-import { predictionCommandFor, warmPredictionCommandFor } from '../common/prediction/printCommand.js';
-import { WarmPrintAgents } from './prediction/warmPrintAgent.js';
+import { PREDICTOR_SKILL, predictorRequest, PredictorTask } from '../common/prediction/predictorSkill.js';
+import { IPredictorLaunch, PredictorAgent } from './prediction/predictorAgent.js';
 import { normalizeCursorModelId } from '../common/harness/cursorQuota.js';
 import { IVoltSessionContextService } from '../common/sessionContext.js';
 import './sessionContextService.js';
@@ -42,7 +42,7 @@ import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
-import { resolveTabModel } from '../common/models/modelAccess.js';
+import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelAccess.js';
 import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltTaskModels } from '../common/runtime.js';
 import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
@@ -122,28 +122,8 @@ import { createCompatProvider, createLMStudioProvider, createOpenAIProvider, cre
 const RECEIPT_LIMIT = 500;
 /** Per-chat access picks kept; the oldest fall back to the default. */
 const ACCESS_CHATS_LIMIT = 500;
-/** Access-broker session id for Tab completions that ride an ACP agent. */
+/** Access-broker session id for the predictor agent (Tab, composer ghost text, dictation). */
 const TAB_PREDICTION_SESSION_ID = 'volt-tab-prediction';
-/**
- * Prompts one Tab agent session answers before a fresh one takes over. An agent keeps every prompt
- * in its conversation and re-reads it all on the next turn, so without a cap each ghost-text
- * request would cost more tokens and time than the last.
- */
-const TAB_AGENT_MAX_PROMPTS = 6;
-/** One print-mode prediction; the prediction service cancels sooner when the answer is no longer wanted. */
-const TAB_PRINT_TIMEOUT_MS = 30_000;
-
-/** The agent session that answers Tab predictions. */
-interface ITabAgentSession {
-	readonly ref: string;
-	readonly handle: IAgentSessionHandle;
-	readonly provider: IAgentProvider;
-	/** How it was started, so a spare with the same setup can be parked before it retires. */
-	readonly request: IAgentStartRequest;
-	prompts: number;
-	inflight: number;
-	retired: boolean;
-}
 
 /** Bumped whenever the built-in profile list changes so existing installs pick it up. */
 const CLI_SEED_VERSION = 4;
@@ -390,8 +370,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private savedRules: IPermissionRule[] = [];
 	/** One compiled policy per access mode in use; rebuilt when rules change. */
 	private readonly policyByMode = new Map<VoltAccessMode, ICompiledPolicy>();
-	private tabAgent: ITabAgentSession | undefined;
-	private warmTabAgents: WarmPrintAgents | undefined;
+	/** The agent session behind every prediction when an agent serves Tab (see warmPredictor). */
+	private readonly predictor: PredictorAgent;
 	private readonly policyMemo = new Map<string, IAccessDecision>();
 	private readonly pendingApprovals = new Map<string, { resolve: (decision: IAccessDecision) => void; request: IAccessRequest }>();
 	private readonly pendingQuestions = new Map<string, { request: IAgentQuestionRequest; waiters: Set<(response: IAgentQuestionResponse) => void> }>();
@@ -520,7 +500,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		void this.refreshCatalog();
 		void this.refreshProviders();
 		this.scheduleHealthChecks();
-		this._register(toDisposable(() => void this.disposeTabAgent()));
+		this.predictor = this._register(new PredictorAgent(ref => this.launchPredictor(ref), this.logService));
 	}
 
 	/** Each chat keeps its agent process warm for follow-ups; this keeps that from growing without bound. */
@@ -1366,10 +1346,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/**
-	 * One stateless completion. Chat models go through HTTP. Agent refs reuse a dedicated
-	 * ask-mode ACP session so the composer selection can power Tab.
+	 * One stateless completion. Chat models go through HTTP with `messages` as they are. Agent refs
+	 * go to the predictor's warm ACP session, which knows `task` from its skill.
 	 */
-	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken): AsyncIterable<IVoltEvent> {
+	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken, task: PredictorTask): AsyncIterable<IVoltEvent> {
 		const item = this.catalog.find(c => c.ref === ref);
 		if (!item) {
 			throw new Error(`Unknown catalog ref ${ref}`);
@@ -1379,7 +1359,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			throw new Error(`Missing profile for catalog ref ${ref}`);
 		}
 		if (item.kind === 'agent') {
-			yield* this.streamTabAgent(item, profile, messages, options, token);
+			yield* this.predictor.ask(item.ref, task, predictorRequest(task, messages), token);
 			return;
 		}
 		const provider = this.modelProviders.get(profile.providerId);
@@ -1401,135 +1381,41 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}, token);
 	}
 
-	private async *streamTabAgent(
-		item: IVoltCatalogItem,
-		profile: IProviderProfile,
-		messages: IModelMessage[],
-		options: IVoltModelOptions | undefined,
-		token: CancellationToken,
-	): AsyncIterable<IVoltEvent> {
-		// Like chat titles: one print-mode call with nothing carried over, when the CLI has one.
-		const definition = cliAgentDefinition(profile.providerId);
-		const command = profile.command && definition?.commands.includes(profile.command) ? profile.command : undefined;
-		// An agent that lists no models has the provider's id as its own: then the CLI picks its cheapest.
-		const model = item.id === profile.providerId ? undefined : titleAgentModel(item);
-		// Away from the project, like titles: the CLI loads no project instructions for a few words.
-		const printCwd = isWindows ? undefined : '/tmp';
-		const warm = warmPredictionCommandFor(profile.providerId, command, messages, model);
-		this.warmTabAgents ??= this._register(new WarmPrintAgents(this.stdio));
-		if (warm && (yield* this.warmTabAgents.ask(warm.argv, printCwd, warm.input, token))) {
-			return;
+	warmPredictor(ref: string | undefined): void {
+		const item = ref ? this.catalog.find(candidate => candidate.ref === ref) : undefined;
+		this.predictor.warm(item?.kind === 'agent' ? item.ref : undefined);
+	}
+
+	/**
+	 * Starts the predictor's session on `ref`'s agent: text-only, read-only, on the cheapest reasoning
+	 * level, with the predictor skill as its system prompt where the agent takes one.
+	 */
+	private async launchPredictor(ref: string): Promise<IPredictorLaunch> {
+		const item = this.catalog.find(candidate => candidate.ref === ref && candidate.kind === 'agent');
+		const profile = item && this.profiles.find(candidate => candidate.id === item.profileId);
+		const provider = profile && this.agentProviders.get(profile.providerId);
+		if (!item || !profile || !provider) {
+			throw new Error(`No agent serves ${ref}`);
 		}
-		const argv = predictionCommandFor(profile.providerId, command, messages, model);
-		if (argv) {
-			yield* this.streamPrintCommand(argv, token);
-			return;
-		}
-		const provider = this.agentProviders.get(profile.providerId);
-		if (!provider) {
-			throw new Error(`Unknown agent provider ${profile.providerId}`);
-		}
-		let live = this.tabAgent;
-		if (live && (live.ref !== item.ref || live.prompts >= TAB_AGENT_MAX_PROMPTS)) {
-			this.retireTabAgent(live);
-			live = undefined;
-		}
-		if (!live) {
-			const request: IAgentStartRequest = {
-				mode: 'ask',
-				profile,
-				cwd: this.workspace.getWorkspace().folders[0]?.uri.fsPath,
-				modelId: item.id === profile.providerId ? undefined : item.id,
-				options: this.resolvedOptions(item, options),
-			};
-			// Adopts the spare parked below when there is one, so a rotation costs no cold start.
-			const handle = await provider.start(request);
-			provider.setRunContext?.(handle, { sessionId: TAB_PREDICTION_SESSION_ID, runId: 'tab', mode: 'ask' });
+		const ownPrompt = provider.takesSystemPrompt?.() === true;
+		const reasoning = cheapestReasoningLevel(item);
+		const request: IAgentStartRequest = {
+			mode: 'ask',
+			profile,
+			// An agent on Volt's own prompt runs away from the project: it loads no project instructions or
+			// settings, and every request brings its own context. Others keep the folder (Codex wants a repository).
+			cwd: ownPrompt && !isWindows ? '/tmp' : this.workspace.getWorkspace().folders[0]?.uri.fsPath,
+			modelId: item.id === profile.providerId ? undefined : item.id,
+			options: reasoning ? { [MODEL_OPTION_REASONING]: reasoning } : {},
+			textOnly: { systemPrompt: PREDICTOR_SKILL },
+		};
+		const handle = await provider.start(request);
+		provider.setRunContext?.(handle, { sessionId: TAB_PREDICTION_SESSION_ID, runId: 'tab', mode: 'ask' });
+		if (!ownPrompt) {
+			// It keeps its tools, so it runs read-only.
 			await provider.applyAccessPolicy?.(handle, compilePolicy({ overlay: modeOverlay('ask') }));
-			const started = this.tabAgent;
-			if (started && started.ref === item.ref && started.prompts < TAB_AGENT_MAX_PROMPTS) {
-				// Another request started the same session while this one was starting: keep that one.
-				void provider.dispose(handle).catch(() => undefined);
-				live = started;
-			} else {
-				if (started) {
-					this.retireTabAgent(started);
-				}
-				live = { ref: item.ref, handle, provider, request, prompts: 0, inflight: 0, retired: false };
-				this.tabAgent = live;
-			}
 		}
-		live.prompts++;
-		if (live.prompts === TAB_AGENT_MAX_PROMPTS) {
-			const spares = live.provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'prewarmSpare' | 'hasSpare'>>;
-			if (spares.prewarmSpare && spares.hasSpare && !spares.hasSpare(live.request)) {
-				void spares.prewarmSpare(live.request);
-			}
-		}
-		const text = [
-			'Fill-in-the-middle. Reply with SOURCE CODE only - the exact characters to insert at the cursor.',
-			'No English. No markdown. No explanation. Empty reply if you cannot complete.',
-			...messages.map(message => message.content).filter(Boolean),
-		].join('\n\n');
-		live.inflight++;
-		try {
-			yield* provider.send(live.handle, { text, mode: 'ask' }, profile, token);
-		} finally {
-			live.inflight--;
-			if (live.retired && !live.inflight) {
-				void live.provider.dispose(live.handle).catch(() => undefined);
-			}
-		}
-	}
-
-	/** Runs a one-shot CLI command and reports its output as one text reply. Cancelling kills it. */
-	private async *streamPrintCommand(argv: readonly string[], token: CancellationToken): AsyncIterable<IVoltEvent> {
-		const id = `tab-${generateUuid().slice(0, 8)}`;
-		const cancel = token.onCancellationRequested(() => void this.stdio.cancelExec(id).catch(() => undefined));
-		try {
-			const result = await this.stdio.exec({
-				id,
-				command: argv.map(quoteShellArg).join(' '),
-				// Away from the project, like titles: the CLI loads no project instructions for a few words.
-				cwd: isWindows ? undefined : '/tmp',
-				timeoutMs: TAB_PRINT_TIMEOUT_MS,
-				inlineChars: 8_000,
-			});
-			if (token.isCancellationRequested || result.cancelled) {
-				return;
-			}
-			if (result.exitCode !== 0) {
-				const detail = result.timedOut ? 'The agent took too long to answer.' : (result.stderr || result.stdout).trim().split('\n').pop() || `The agent exited with ${result.exitCode}.`;
-				yield { type: 'error', message: detail.slice(0, 300) };
-				return;
-			}
-			const textId = `${id}-text`;
-			yield { type: 'text.start', id: textId };
-			yield { type: 'text.delta', id: textId, delta: result.stdout };
-			yield { type: 'text.end', id: textId };
-		} finally {
-			cancel.dispose();
-		}
-	}
-
-	/** Takes a Tab session out of use; it goes once its last prompt has answered. */
-	private retireTabAgent(live: ITabAgentSession): void {
-		live.retired = true;
-		if (this.tabAgent === live) {
-			this.tabAgent = undefined;
-		}
-		if (!live.inflight) {
-			void live.provider.dispose(live.handle).catch(() => undefined);
-		}
-	}
-
-	private async disposeTabAgent(): Promise<void> {
-		const live = this.tabAgent;
-		this.tabAgent = undefined;
-		if (live) {
-			live.retired = true;
-			await live.provider.dispose(live.handle).catch(() => undefined);
-		}
+		return { provider, handle, profile, ownPrompt };
 	}
 
 	async setTaskModel(slot: keyof IVoltTaskModels, ref: string | undefined): Promise<void> {

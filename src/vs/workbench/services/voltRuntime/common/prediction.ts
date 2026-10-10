@@ -102,6 +102,8 @@ export interface IPredictionSettings {
 	 * the user's own prompts show at once, without waiting.
 	 */
 	composerDelayMs: number;
+	/** Dictated text is cleaned up by the prediction model (punctuation, misheard names, spoken code, fillers). */
+	voice: boolean;
 }
 
 export const DEFAULT_PREDICTION_SETTINGS: IPredictionSettings = {
@@ -111,6 +113,7 @@ export const DEFAULT_PREDICTION_SETTINGS: IPredictionSettings = {
 	disabledGlobs: ['**/.env*', '**/*.lock', '**/package-lock.json', '**/secrets*'],
 	composer: true,
 	composerDelayMs: 300,
+	voice: true,
 };
 
 /** What the composer's model continuation is built from. */
@@ -130,11 +133,20 @@ export interface IComposerPredictionInput {
 	readonly activity?: readonly string[];
 }
 
+/** What a dictation cleanup is built from. */
+export interface IDictationInput {
+	/** What speech recognition heard. */
+	readonly transcript: string;
+	/** The text before where the dictation goes (the composer's draft so far), if any. */
+	readonly before?: string;
+}
+
 export const VOLT_PREDICTION_SETTINGS_STORAGE_KEY = 'volt.prediction.settings';
 
 /**
- * The Prediction Runtime (D20): ephemeral, cancellable, no Session/Run, never ACP.
- * Each call is one stateless model round-trip through `IVoltModelAccess.streamModel()`.
+ * The Prediction Runtime (D20): ephemeral, cancellable, no Session/Run. Each call is one stateless
+ * round trip through `IVoltModelAccess.streamModel()`: HTTP for a chat model, or a prompt to the
+ * predictor agent's warm ACP session when an agent serves Tab.
  */
 export interface IVoltPredictionService {
 	readonly _serviceBrand: undefined;
@@ -180,4 +192,16 @@ export interface IVoltPredictionService {
 
 	/** One-shot multi-location edit for an explicit user intent (Volt: AI Edit). */
 	predictMultiEdit(ctx: IPredictionContext, intent: string, token: CancellationToken): Promise<IEditPrediction | undefined>;
+
+	/**
+	 * Dictated text cleaned up: punctuation, misheard names, spoken code, no fillers. Empty when it
+	 * was only fillers; undefined when cleanup is off, fails or is too slow (keep the transcript).
+	 */
+	polishDictation(input: IDictationInput, token: CancellationToken): Promise<string | undefined>;
+
+	/**
+	 * Gets the model behind predictions ready before the first keystroke: for an agent, starts its
+	 * predictor session. Called when Volt starts; the service repeats it when the Tab model changes.
+	 */
+	warmUp(): void;
 }

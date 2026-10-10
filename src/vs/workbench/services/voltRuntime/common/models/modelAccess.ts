@@ -6,7 +6,8 @@
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Event } from '../../../../../base/common/event.js';
 import { IVoltEvent } from '../events.js';
-import { IVoltModelOptions } from './modelOptions.js';
+import { PredictorTask } from '../prediction/predictorSkill.js';
+import { IVoltModelOptions, MODEL_OPTION_REASONING } from './modelOptions.js';
 import { IModelMessage, IVoltCatalogItem } from '../providers.js';
 
 /**
@@ -17,11 +18,17 @@ import { IModelMessage, IVoltCatalogItem } from '../providers.js';
  */
 export interface IVoltModelAccess {
 	/**
-	 * Streams one stateless completion for a catalog ref. Chat-model refs go through the
-	 * HTTP provider. Agent refs use a dedicated ask-mode ACP session so the composer
-	 * selection (e.g. Cursor Grok) can power Tab.
+	 * Streams one stateless completion for a catalog ref. Chat-model refs go through the HTTP
+	 * provider with `messages` as they are. Agent refs go to the predictor: one text-only ACP
+	 * session that knows every `task` from its skill, so it gets only the task and its context.
 	 */
-	streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken): AsyncIterable<IVoltEvent>;
+	streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken, task?: PredictorTask): AsyncIterable<IVoltEvent>;
+
+	/**
+	 * Starts the predictor agent for `ref` ahead of the first request (Volt starting, the Tab model
+	 * changing), so no keystroke waits for an agent to boot. A chat-model ref or undefined stops it.
+	 */
+	warmPredictor(ref: string | undefined): void;
 
 	resolveCatalogItem(ref: string): IVoltCatalogItem | undefined;
 
@@ -63,6 +70,15 @@ const FAST_TAB_MODELS: readonly RegExp[] = [
 	/(^|[-_ ./])(fast|turbo|instant|lite|small)([-_ .]|$)/i,
 	/coder/i,
 ];
+
+/** Reasoning levels from cheapest; a prediction takes the first one the model offers. */
+const CHEAPEST_REASONING = ['off', 'none', 'minimal', 'low'];
+
+/** The cheapest reasoning level `item` offers, or undefined when it has no reasoning option. */
+export function cheapestReasoningLevel(item: IVoltCatalogItem): string | undefined {
+	const levels = item.optionDescriptors?.find(descriptor => descriptor.id === MODEL_OPTION_REASONING)?.options?.map(option => option.value) ?? [];
+	return CHEAPEST_REASONING.find(level => levels.includes(level));
+}
 
 /** Rank of `id` in {@link FAST_TAB_MODELS}, or undefined when it is not a fast model. */
 export function fastModelRank(id: string): number | undefined {

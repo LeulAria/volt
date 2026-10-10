@@ -122,6 +122,13 @@ export interface IAgentStartRequest {
 	options?: IVoltModelOptions;
 	/** The chat's OS sandbox. Absent or `off`: the agent runs unconfined. */
 	sandbox?: IAgentSandboxStart;
+	/**
+	 * A session that only writes text for Volt (the predictor behind Tab, the composer's ghost text
+	 * and dictation): no Volt MCP servers, no stall recovery, a short cancel, and where the agent
+	 * allows it (see {@link IAgentProvider.takesSystemPrompt}) `systemPrompt` in place of its own,
+	 * no tools, hooks or saved transcript, and the least thinking.
+	 */
+	textOnly?: { readonly systemPrompt: string };
 }
 
 /** What an agent provider needs to start its process in the OS sandbox. */
@@ -181,6 +188,11 @@ export interface IAgentProvider {
 	canSteer?(session: IAgentSessionHandle): boolean;
 	/** Puts a message into the running turn; false when the agent refused it. */
 	steer?(session: IAgentSessionHandle, text: string): Promise<boolean>;
+	/**
+	 * A `textOnly` session of this agent runs on the request's system prompt instead of the agent's
+	 * own, with no tools. Otherwise the caller teaches the session with a first prompt.
+	 */
+	takesSystemPrompt?(): boolean;
 }
 
 export interface IVoltCatalogItem {
