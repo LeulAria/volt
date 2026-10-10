@@ -21,6 +21,7 @@ import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
@@ -233,6 +234,16 @@ export class VoltSettingsEditor extends EditorPane {
 			}
 			this._register(addDisposableListener(item, 'click', () => this.setSection(section.id)));
 		}
+		// Skills, subagents, rules, MCP servers and plugins are managed on the agent's Customize page.
+		append(this.toc, $('.volt-settings-toc-gap'));
+		const customize = append(this.toc, $('button.volt-settings-toc-item')) as HTMLButtonElement;
+		customize.type = 'button';
+		append(customize, $('span.volt-settings-toc-icon')).appendChild(renderIcon(Codicon.zap));
+		append(customize, $('span.volt-settings-toc-text')).textContent = localize('voltSettings.skillsPlugins', "Skills & Plugins");
+		this._register(addDisposableListener(customize, 'click', () => {
+			this.close();
+			void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand('workbench.action.voltAgent.customize'));
+		}));
 
 		// Back sits at the foot of the nav, where the agent list puts it while Usage is open.
 		const footer = append(sidebar, $('.volt-settings-footer'));

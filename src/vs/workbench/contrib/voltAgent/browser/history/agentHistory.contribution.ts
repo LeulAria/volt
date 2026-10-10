@@ -14,6 +14,7 @@ import { Action2, MenuId, MenuRegistry, registerAction2 } from '../../../../../p
 import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
@@ -302,6 +303,23 @@ registerAction2(class OpenAgentCustomizeAction extends Action2 {
 		}
 		const input = accessor.get(IInstantiationService).createInstance(AgentCustomizeEditorInput);
 		await accessor.get(IEditorService).openEditor(input, { pinned: true });
+	}
+});
+
+registerAction2(class OpenAgentMarketplaceAction extends Action2 {
+	constructor() {
+		super({
+			id: 'workbench.action.voltAgent.customize.marketplace',
+			title: localize2('voltAgent.marketplace', "Browse Skills and Plugins Marketplace"),
+			category: Categories.View,
+			icon: Codicon.extensions,
+			f1: true,
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		AgentCustomizeEditor.requestView('marketplace');
+		await accessor.get(ICommandService).executeCommand(OPEN_AGENT_CUSTOMIZE_COMMAND_ID);
 	}
 });
 

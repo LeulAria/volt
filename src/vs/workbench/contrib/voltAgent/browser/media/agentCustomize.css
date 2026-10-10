@@ -3,22 +3,79 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+/* Customize: a centered column of pills and rounded cards, after Cursor's Customize page. The
+ * right panel (agentSurfaceHost.ts) lays itself over the page's right share when a file opens. */
+
+.volt-customize-root {
+	--volt-customize-fg: var(--vscode-foreground, #e6e6e6);
+	--volt-customize-muted: var(--vscode-descriptionForeground, #8b8b8b);
+	--volt-customize-line: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 9%, transparent);
+	--volt-customize-line-strong: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 14%, transparent);
+	--volt-customize-card: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 3.5%, transparent);
+	--volt-customize-hover: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 5.5%, transparent);
+	--volt-customize-tile: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 6.5%, transparent);
+	--volt-customize-pill: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 8%, transparent);
+	--volt-customize-column: 780px;
+	--volt-customize-gutter: 32px;
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	background: var(--vscode-editor-background);
+	color: var(--volt-customize-fg);
+}
+
+.volt-customize-root.has-surfaces {
+	flex-direction: row;
+	align-items: stretch;
+}
+
+.volt-customize-main {
+	position: relative;
+	container-type: inline-size;
+	container-name: volt-customize;
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.volt-customize-root.has-surfaces > .volt-customize-main {
+	width: auto;
+}
+
 .volt-customize {
 	display: flex;
 	flex-direction: column;
-	height: 100%;
+	flex: 1;
 	min-height: 0;
-	box-sizing: border-box;
-	padding: 20px 28px 0;
-	color: var(--vscode-foreground);
 	font-size: 13px;
-	background: var(--vscode-editor-background);
+	line-height: 1.4;
+}
+
+.volt-customize .hidden {
+	display: none !important;
+}
+
+/* Header: search and the filters stay put while the list scrolls under them. */
+.volt-customize-header-area {
+	flex: none;
+	width: 100%;
+	max-width: calc(var(--volt-customize-column) + var(--volt-customize-gutter) * 2);
+	margin: 0 auto;
+	padding: 48px var(--volt-customize-gutter) 6px;
+	box-sizing: border-box;
 }
 
 .volt-customize-top {
 	display: flex;
 	align-items: center;
-	gap: 10px;
+	gap: 9px;
 }
 
 .volt-customize-search {
@@ -28,36 +85,40 @@
 	align-items: center;
 	gap: 8px;
 	height: 34px;
-	padding: 0 12px;
+	padding: 0 14px;
 	box-sizing: border-box;
-	border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
-	border-radius: 17px;
-	background: var(--vscode-input-background);
-	color: var(--vscode-descriptionForeground);
+	border: 1px solid var(--volt-customize-line-strong);
+	border-radius: 999px;
+	background: var(--volt-customize-card);
+	color: var(--volt-customize-muted);
+	transition: border-color 120ms ease;
 }
 
 .volt-customize-search:focus-within {
-	border-color: var(--vscode-focusBorder);
+	border-color: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 26%, transparent);
 }
 
 .volt-customize-search .codicon {
+	flex: none;
 	font-size: 15px;
 }
 
 .volt-customize-search-input {
 	flex: 1;
 	min-width: 0;
+	height: 100%;
 	border: 0 !important;
 	outline: none !important;
 	box-shadow: none !important;
 	background: transparent;
-	color: var(--vscode-input-foreground, var(--vscode-foreground));
+	color: var(--volt-customize-fg);
 	font: inherit;
+	font-size: 13px;
 	padding: 0;
 }
 
 .volt-customize-search-input::placeholder {
-	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+	color: var(--volt-customize-muted);
 }
 
 .volt-customize-primary {
@@ -65,16 +126,33 @@
 	height: 34px;
 	padding: 0 16px;
 	border: 0;
-	border-radius: 17px;
-	background: var(--vscode-button-background);
-	color: var(--vscode-button-foreground);
+	border-radius: 999px;
+	background: #f2f2f2;
+	color: #1a1a1a;
 	font: inherit;
-	cursor: pointer;
+	font-size: 13px;
+	font-weight: 500;
 	white-space: nowrap;
+	cursor: pointer;
 }
 
 .volt-customize-primary:hover {
-	background: var(--vscode-button-hoverBackground);
+	background: #ffffff;
+}
+
+.volt-customize-primary:focus-visible {
+	outline: 2px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.volt-customize-primary .short {
+	display: none;
+}
+
+.monaco-workbench.vs .volt-customize-primary,
+.monaco-workbench.hc-light .volt-customize-primary {
+	background: #1f1f1f;
+	color: #f5f5f5;
 }
 
 .volt-customize-filters {
@@ -89,17 +167,19 @@
 	flex: none;
 	width: 1px;
 	height: 18px;
-	background: var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+	background: var(--volt-customize-line-strong);
 }
 
 .volt-customize-chips {
 	flex: 1;
 	min-width: 0;
 	display: flex;
+	align-items: center;
 	gap: 8px;
 	overflow-x: auto;
 	scrollbar-width: none;
-	padding-bottom: 2px;
+	/* The last chip fades out instead of being cut where the row ends. */
+	mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
 }
 
 .volt-customize-chips::-webkit-scrollbar {
@@ -112,241 +192,928 @@
 	align-items: center;
 	gap: 6px;
 	height: 30px;
-	padding: 0 14px;
-	border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
-	border-radius: 15px;
+	padding: 0 12px;
+	box-sizing: border-box;
+	border: 1px solid var(--volt-customize-line-strong);
+	border-radius: 999px;
 	background: transparent;
-	color: var(--vscode-foreground);
+	color: var(--volt-customize-fg);
 	font: inherit;
-	cursor: pointer;
+	font-size: 13px;
 	white-space: nowrap;
+	cursor: pointer;
 }
 
 .volt-customize-chip:hover {
-	background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
+	background: var(--volt-customize-hover);
+}
+
+.volt-customize-chip:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
 }
 
 .volt-customize-chip.active {
-	background: var(--vscode-badge-background, rgba(255, 255, 255, 0.12));
-	color: var(--vscode-badge-foreground, var(--vscode-foreground));
-	border-color: transparent;
+	background: var(--volt-customize-pill);
+	border-color: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 22%, transparent);
 }
 
-.volt-customize-chip .chip-count {
-	font-size: 11px;
-	color: var(--vscode-descriptionForeground);
+.volt-customize-chip .codicon {
+	font-size: 14px;
+	color: var(--volt-customize-muted);
 }
 
-.volt-customize-chip.active .chip-count {
+.volt-customize-chip.scope .codicon-chevron-down {
+	font-size: 12px;
+}
+
+.volt-customize-chip.add .codicon {
 	color: inherit;
-	opacity: 0.8;
 }
 
-.volt-customize-chip.scope .codicon {
-	font-size: 14px;
-}
-
-.volt-customize-header {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	margin-top: 26px;
-	padding: 0 4px 10px;
-}
-
-.volt-customize-heading {
-	display: inline-flex;
-	align-items: baseline;
-	gap: 6px;
-	font-size: 15px;
-	font-weight: 600;
-}
-
-.volt-customize-heading .count {
-	font-weight: 400;
-	color: var(--vscode-descriptionForeground);
-}
-
-.volt-customize-header-actions {
-	display: inline-flex;
-	align-items: center;
-	gap: 10px;
-}
-
-.volt-customize-text-button,
-.volt-customize-outline-button {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	height: 28px;
-	padding: 0 10px;
-	border: 0;
-	border-radius: 6px;
-	background: transparent;
-	color: var(--vscode-foreground);
-	font: inherit;
-	cursor: pointer;
-}
-
-.volt-customize-text-button:hover {
-	background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
-}
-
-.volt-customize-outline-button {
-	border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
-}
-
-.volt-customize-outline-button:hover {
-	background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
-}
-
-.volt-customize-scroll {
-	flex: 1;
-	min-height: 0;
-	display: flex;
-	flex-direction: column;
-}
-
-.volt-customize-scroll > .volt-customize-list {
-	flex: 1;
-	min-height: 0;
-	overflow: hidden;
-	padding-bottom: 24px;
-}
-
-.volt-customize-empty {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 6px;
-	padding: 48px 16px;
-	color: var(--vscode-descriptionForeground);
-	text-align: center;
-}
-
-.volt-customize-empty .hint {
-	font-size: 12px;
-	opacity: 0.8;
-}
-
-.volt-customize-item {
-	position: relative;
-	display: flex;
-	align-items: center;
-	gap: 14px;
-	padding: 12px 14px;
-	margin-bottom: 8px;
-	border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25)));
-	border-radius: 10px;
-	background: var(--vscode-editorWidget-background, rgba(255, 255, 255, 0.03));
-	cursor: pointer;
-	outline: none;
-}
-
-.volt-customize-item:hover,
-.volt-customize-item:focus-visible {
-	background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
-	border-color: var(--vscode-focusBorder, rgba(128, 128, 128, 0.5));
-}
-
-.volt-customize-item .icon {
-	flex: none;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 40px;
-	height: 40px;
-	border-radius: 8px;
-	background: var(--vscode-badge-background, rgba(255, 255, 255, 0.08));
-	color: var(--vscode-foreground);
-}
-
-.volt-customize-item .icon .codicon {
-	font-size: 20px;
-}
-
-.volt-customize-item .copy {
-	flex: 1;
-	min-width: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 3px;
-}
-
-.volt-customize-item .name,
-.volt-customize-item .meta {
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.volt-customize-item .name {
-	font-size: 14px;
-}
-
-.volt-customize-item .meta {
-	font-size: 12px;
-	color: var(--vscode-descriptionForeground);
-}
-
-.volt-customize-item .tags {
+.volt-customize-icon-button {
 	flex: none;
 	display: inline-flex;
-	gap: 6px;
-}
-
-.volt-customize-item .tag {
-	padding: 2px 8px;
-	border-radius: 10px;
-	background: var(--vscode-badge-background, rgba(255, 255, 255, 0.08));
-	color: var(--vscode-badge-foreground, var(--vscode-descriptionForeground));
-	font-size: 11px;
-	white-space: nowrap;
-	max-width: 160px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.volt-customize-item .tag.source {
-	background: transparent;
-	border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
-}
-
-.volt-customize-remove {
-	display: none;
 	align-items: center;
 	justify-content: center;
 	width: 28px;
 	height: 28px;
+	padding: 0;
 	border: 0;
 	border-radius: 6px;
 	background: transparent;
-	color: var(--vscode-errorForeground, #f14c4c);
+	color: var(--volt-customize-muted);
 	cursor: pointer;
-	padding: 0;
 }
 
-.volt-customize.editing .volt-customize-remove {
-	display: inline-flex;
+.volt-customize-icon-button:hover,
+.volt-customize-icon-button.open {
+	background: var(--volt-customize-hover);
+	color: var(--volt-customize-fg);
 }
 
-.volt-customize-remove:hover {
-	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+.volt-customize-icon-button.filter {
+	margin-left: 8px;
 }
 
-/* Side-panel width: stack the search row and drop the extra tags. */
-.volt-agent-side-host .volt-customize {
-	padding: 16px 16px 0;
-}
-
-.volt-agent-side-host .volt-customize-top {
-	flex-wrap: wrap;
-}
-
-.volt-agent-side-host .volt-customize-primary {
+/* Body */
+.volt-customize-scroll {
 	flex: 1;
+	min-height: 0;
 }
 
-.volt-agent-side-host .volt-customize-item .tags {
+.volt-customize-body {
+	box-sizing: border-box;
+	width: 100%;
+	padding: 0 var(--volt-customize-gutter) 64px;
+}
+
+.volt-customize-list,
+.volt-marketplace {
+	max-width: var(--volt-customize-column);
+	margin: 0 auto;
+}
+
+.volt-customize-section {
+	margin-top: 30px;
+}
+
+.volt-customize-section-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	min-height: 28px;
+	padding: 0 8px 0 8px;
+	margin-bottom: 10px;
+}
+
+.volt-customize-section-title {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 6px;
+	min-width: 0;
+	margin: 0;
+	font-size: 14px;
+	font-weight: 500;
+	color: var(--volt-customize-fg);
+}
+
+.volt-customize-section-title > span:first-child {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-customize-section-title .count {
+	font-weight: 400;
+	color: var(--volt-customize-muted);
+}
+
+.volt-customize-section-actions {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-customize-outline-button,
+.volt-customize-text-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 26px;
+	padding: 0 9px;
+	box-sizing: border-box;
+	border: 1px solid var(--volt-customize-line-strong);
+	border-radius: 7px;
+	background: transparent;
+	color: var(--volt-customize-fg);
+	font: inherit;
+	font-size: 13px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-customize-text-button {
+	border-color: transparent;
+	color: var(--volt-customize-muted);
+}
+
+.volt-customize-outline-button .codicon,
+.volt-customize-text-button .codicon {
+	font-size: 14px;
+}
+
+.volt-customize-outline-button:hover:not(:disabled),
+.volt-customize-text-button:hover:not(:disabled) {
+	background: var(--volt-customize-hover);
+	color: var(--volt-customize-fg);
+}
+
+.volt-customize-outline-button.subtle {
+	border-color: var(--volt-customize-line);
+	color: var(--volt-customize-muted);
+}
+
+.volt-customize-outline-button:disabled,
+.volt-customize-text-button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+/* A group of rows in one rounded card, split by hairlines. */
+.volt-customize-card {
+	border-radius: 12px;
+	background: var(--volt-customize-card);
+	overflow: hidden;
+}
+
+.volt-customize-card.empty {
+	padding: 14px 16px;
+}
+
+.volt-customize-card-empty {
+	color: var(--volt-customize-muted);
+	font-size: 13px;
+}
+
+.volt-customize-row {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 50px;
+	padding: 6px 12px;
+	box-sizing: border-box;
+	outline: none;
+}
+
+.volt-customize-row.single {
+	min-height: 44px;
+}
+
+.volt-customize-row + .volt-customize-row {
+	border-top: 1px solid var(--volt-customize-line);
+}
+
+.volt-customize-row.clickable {
+	cursor: pointer;
+}
+
+.volt-customize-row.clickable:hover,
+.volt-customize-row:focus-visible {
+	background: var(--volt-customize-hover);
+}
+
+.volt-customize-row:focus-visible {
+	box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
+}
+
+.volt-customize-tile {
+	position: relative;
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 7px;
+	background: var(--volt-customize-tile);
+	color: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 78%, transparent);
+}
+
+.volt-customize-tile .codicon {
+	font-size: 15px;
+}
+
+.volt-customize-tile .volt-agent-svg-icon,
+.volt-customize-tile .volt-agent-svg-icon svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
+.volt-customize-tile.logo {
+	background: transparent;
+}
+
+.volt-customize-tile.logo img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	border-radius: 7px;
+	object-fit: cover;
+}
+
+.volt-customize-status {
+	position: absolute;
+	right: -2px;
+	bottom: -2px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	box-shadow: 0 0 0 2px var(--vscode-editor-background);
+	background: var(--volt-customize-muted);
+}
+
+.volt-customize-status.ready {
+	background: #4bb46c;
+}
+
+.volt-customize-status.connecting {
+	background: #d6a73a;
+}
+
+.volt-customize-status.error {
+	background: var(--vscode-errorForeground, #f14c4c);
+}
+
+.volt-customize-row-copy {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 1px;
+}
+
+.volt-customize-row-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-customize-row-copy .name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13.5px;
+	color: var(--volt-customize-fg);
+}
+
+.volt-customize-row-copy .description {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12.5px;
+	color: var(--volt-customize-muted);
+}
+
+.volt-customize-badge {
+	flex: none;
+	padding: 1px 8px;
+	border-radius: 7px;
+	background: var(--volt-customize-pill);
+	color: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 72%, transparent);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.volt-customize-row-more {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--volt-customize-muted);
+	cursor: pointer;
+}
+
+.volt-customize-row-more:hover,
+.volt-customize-row-more.open {
+	background: var(--volt-customize-pill);
+	color: var(--volt-customize-fg);
+}
+
+.volt-customize-row-more .codicon {
+	font-size: 14px;
+}
+
+.volt-customize-link-button {
+	flex: none;
+	padding: 2px 4px;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-textLink-foreground, #7aa2e3);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.volt-customize-link-button:hover {
+	text-decoration: underline;
+}
+
+.volt-customize-add-button {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 24px;
+	padding: 0 12px;
+	border: 0;
+	border-radius: 999px;
+	background: var(--volt-customize-pill);
+	color: var(--volt-customize-fg);
+	font: inherit;
+	font-size: 13px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-customize-add-button:hover:not(:disabled):not(.added) {
+	background: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 14%, transparent);
+}
+
+.volt-customize-add-button.added {
+	background: var(--volt-customize-card);
+	color: var(--volt-customize-muted);
+	cursor: default;
+}
+
+.volt-customize-add-button.remove {
+	color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.volt-customize-add-button:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+
+.volt-customize-add-button .codicon {
+	font-size: 13px;
+}
+
+.volt-customize-show-more {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin: 12px 0 0 8px;
+	padding: 2px 0;
+	border: 0;
+	background: transparent;
+	color: var(--volt-customize-muted);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.volt-customize-show-more:hover {
+	color: var(--volt-customize-fg);
+}
+
+.volt-customize-show-more .codicon {
+	font-size: 13px;
+}
+
+.volt-customize-new-row {
+	margin-top: 30px;
+}
+
+.volt-customize-message {
+	padding: 10px 8px;
+	color: var(--volt-customize-muted);
+	font-size: 13px;
+}
+
+.volt-customize-message.error {
+	color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.volt-customize-empty-box {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+	margin-top: 30px;
+	padding: 48px 16px;
+	text-align: center;
+	color: var(--volt-customize-muted);
+}
+
+.volt-customize-empty-box.bordered {
+	margin-top: 0;
+	padding: 40px 16px;
+	border: 1px solid var(--volt-customize-line-strong);
+	border-radius: 12px;
+}
+
+.volt-customize-empty-box .title {
+	color: var(--volt-customize-fg);
+	font-size: 14px;
+	font-weight: 500;
+}
+
+.volt-customize-empty-box .hint {
+	font-size: 13px;
+}
+
+/* Marketplace */
+.volt-marketplace-carousel {
+	position: relative;
+}
+
+.volt-marketplace-carousel-track {
+	display: flex;
+	gap: 12px;
+	overflow-x: auto;
+	scroll-snap-type: x mandatory;
+	scrollbar-width: none;
+	padding: 1px;
+}
+
+.volt-marketplace-carousel-track::-webkit-scrollbar {
 	display: none;
+}
+
+.volt-marketplace-card {
+	flex: 0 0 calc((100% - 24px) / 3);
+	min-width: 200px;
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 12px;
+	box-sizing: border-box;
+	border: 1px solid var(--volt-customize-line-strong);
+	border-radius: 10px;
+	scroll-snap-align: start;
+	cursor: pointer;
+	outline: none;
+}
+
+.volt-marketplace-card:hover,
+.volt-marketplace-card:focus-visible {
+	background: var(--volt-customize-hover);
+}
+
+.volt-marketplace-card:focus-visible {
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-marketplace-card .volt-marketplace-icon {
+	width: 32px;
+	height: 32px;
+	border-radius: 8px;
+}
+
+.volt-marketplace-card-copy {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.volt-marketplace-card-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13.5px;
+}
+
+.volt-marketplace-card-description {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12.5px;
+	color: var(--volt-customize-muted);
+}
+
+.volt-marketplace-card-publisher {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-top: 4px;
+	min-width: 0;
+	font-size: 12px;
+	color: var(--volt-customize-muted);
+}
+
+.volt-marketplace-card-publisher span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-marketplace-card-publisher .codicon {
+	font-size: 12px;
+}
+
+.volt-marketplace-carousel-next,
+.volt-marketplace-carousel-prev {
+	position: absolute;
+	top: 50%;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	transform: translateY(-50%);
+	border: 1px solid var(--volt-customize-line-strong);
+	border-radius: 50%;
+	background: var(--vscode-editor-background);
+	color: var(--volt-customize-fg);
+	cursor: pointer;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.volt-marketplace-carousel-next {
+	right: 6px;
+}
+
+.volt-marketplace-carousel-prev {
+	left: 6px;
+}
+
+.volt-marketplace-carousel-next.hidden,
+.volt-marketplace-carousel-prev.hidden {
+	display: none;
+}
+
+.volt-marketplace-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	column-gap: 28px;
+	row-gap: 2px;
+}
+
+.volt-marketplace-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 52px;
+	padding: 6px 0;
+	box-sizing: border-box;
+	min-width: 0;
+}
+
+.volt-marketplace-row-copy {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	cursor: pointer;
+}
+
+.volt-marketplace-row-copy .name,
+.volt-marketplace-row-copy .description {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-marketplace-row-copy .name {
+	font-size: 13.5px;
+}
+
+.volt-marketplace-row-copy .description {
+	font-size: 12.5px;
+	color: var(--volt-customize-muted);
+}
+
+.volt-marketplace-row-copy:hover .name {
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+.volt-marketplace-icon {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	height: 30px;
+	border-radius: 8px;
+	overflow: hidden;
+	background: var(--volt-customize-tile);
+	color: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 78%, transparent);
+}
+
+.volt-marketplace-icon.box {
+	background: transparent;
+	border: 1px solid var(--volt-customize-line-strong);
+	box-sizing: border-box;
+}
+
+.volt-marketplace-icon img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.volt-marketplace-icon .codicon {
+	font-size: 16px;
+}
+
+.volt-marketplace .volt-customize-section-title {
+	font-size: 15px;
+}
+
+/* Menus opened from the page */
+.volt-customize-menu .volt-menu-row {
+	font-size: 13px;
+}
+
+.volt-customize-scope-menu .volt-menu-trailing {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	box-sizing: border-box;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 30%, transparent);
+	border-radius: 4px;
+	opacity: 1;
+}
+
+.volt-customize-scope-menu .volt-menu-row.checked .volt-menu-trailing {
+	border-color: transparent;
+	background: var(--vscode-button-background, #4c8dde);
+	color: var(--vscode-button-foreground, #ffffff);
+}
+
+.volt-customize-scope-menu .volt-menu-trailing .codicon {
+	font-size: 12px;
+}
+
+/* Dialogs: a small card over the dimmed window. */
+.volt-customize-dialog-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 2540;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgba(0, 0, 0, 0.45);
+	animation: volt-customize-fade 120ms ease-out;
+}
+
+@keyframes volt-customize-fade {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+.volt-customize-dialog {
+	width: min(368px, calc(100vw - 32px));
+	box-sizing: border-box;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 12%, transparent);
+	border-radius: 10px;
+	background: var(--vscode-editorWidget-background, #1c1c1c);
+	color: var(--vscode-foreground, #e6e6e6);
+	box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+	font-size: 13px;
+	overflow: hidden;
+}
+
+.volt-customize-dialog-body {
+	padding: 16px 13px 14px;
+}
+
+.volt-customize-dialog-title {
+	font-size: 14px;
+	font-weight: 500;
+}
+
+.volt-customize-dialog-subtitle {
+	margin-top: 8px;
+	color: var(--vscode-descriptionForeground, #8b8b8b);
+	font-size: 13px;
+	line-height: 1.45;
+}
+
+.volt-customize-dialog-input {
+	display: block;
+	width: 100%;
+	height: 26px;
+	margin-top: 18px;
+	padding: 0 7px;
+	box-sizing: border-box;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 14%, transparent);
+	border-radius: 5px;
+	background: var(--vscode-input-background, rgba(255, 255, 255, 0.04));
+	color: var(--vscode-input-foreground, var(--vscode-foreground));
+	font: inherit;
+	font-size: 13px;
+	outline: none;
+}
+
+.volt-customize-dialog-input:focus {
+	border-color: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 30%, transparent);
+}
+
+.volt-customize-dialog-input::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
+.volt-customize-dialog.invalid .volt-customize-dialog-input {
+	border-color: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 60%, transparent);
+}
+
+.volt-customize-dialog-error {
+	margin-top: 8px;
+	color: var(--vscode-errorForeground, #f48771);
+	font-size: 12.5px;
+	line-height: 1.45;
+}
+
+.volt-customize-dialog-error:empty {
+	display: none;
+}
+
+.volt-customize-dialog-footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 8px 8px 8px 12px;
+	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 9%, transparent);
+}
+
+.volt-customize-dialog-cancel {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 5px;
+	padding: 2px 0;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-foreground, #e6e6e6);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.volt-customize-dialog-cancel .key {
+	color: var(--vscode-descriptionForeground, #8b8b8b);
+	font-size: 12px;
+}
+
+.volt-customize-dialog-confirm {
+	height: 22px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 5px;
+	background: var(--vscode-button-background, #4c8dde);
+	color: var(--vscode-button-foreground, #ffffff);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.volt-customize-dialog-confirm:hover:not(:disabled) {
+	background: var(--vscode-button-hoverBackground, #5b98e4);
+}
+
+.volt-customize-dialog-confirm:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+
+.volt-customize-dialog-confirm.destructive {
+	background: var(--vscode-errorForeground, #d14242);
+	color: #ffffff;
+}
+
+.volt-customize-dialog.busy .volt-customize-dialog-confirm {
+	cursor: progress;
+}
+
+/* Narrow: the page beside an open right panel, or in the side panel. */
+@container volt-customize (max-width: 620px) {
+	.volt-customize {
+		--volt-customize-gutter: 18px;
+	}
+
+	.volt-customize-header-area {
+		padding-top: 28px;
+	}
+
+	.volt-customize-primary {
+		padding: 0 14px;
+	}
+
+	.volt-customize-primary .long {
+		display: none;
+	}
+
+	.volt-customize-primary .short {
+		display: inline;
+	}
+
+	.volt-marketplace-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.volt-marketplace-card {
+		flex-basis: calc((100% - 12px) / 1.4);
+	}
+
+	.volt-customize-badge {
+		display: none;
+	}
+}
+
+@container volt-customize (max-width: 380px) {
+	.volt-customize-header-area {
+		padding-top: 16px;
+	}
+
+	.volt-customize-row-more {
+		display: none;
+	}
+}
+
+/* Hooks: the settings line above the groups and the outcome badges of the execution log. */
+.volt-customize-hooks-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-top: 24px;
+	padding: 0 0 0 8px;
+}
+
+.volt-customize-hooks-bar .hint {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-customize-muted);
+	font-size: 12.5px;
+}
+
+.volt-customize-outcome {
+	flex: none;
+	padding: 1px 8px;
+	border-radius: 7px;
+	background: var(--volt-customize-pill);
+	color: var(--volt-customize-muted);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.volt-customize-outcome.blocked {
+	background: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 16%, transparent);
+	color: var(--vscode-errorForeground, #f48771);
+}
+
+.volt-customize-outcome.rewrote,
+.volt-customize-outcome.followup {
+	background: color-mix(in srgb, var(--vscode-textLink-foreground, #4daafc) 16%, transparent);
+	color: var(--vscode-textLink-foreground, #7aa2e3);
+}
+
+.volt-customize-outcome.error {
+	background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #d6a73a) 16%, transparent);
+	color: var(--vscode-editorWarning-foreground, #d6a73a);
 }
