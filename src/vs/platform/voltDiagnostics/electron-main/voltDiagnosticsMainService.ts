@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { powerMonitor } from 'electron';
 import { promises as fs } from 'fs';
 import * as os from 'os';
 import { generateUuid } from '../../../base/common/uuid.js';
@@ -110,6 +111,17 @@ export class VoltDiagnosticsMainService extends Disposable implements IVoltDiagn
 		});
 		this.applyTracingConfig();
 		this.applyStallThreshold();
+
+		// Sleep is not a stall. The monitor's clock already pauses with the machine on macOS and Linux;
+		// stopping it across suspend covers Windows, where that clock can keep running.
+		const onSuspend = () => this.stallMonitor.clear();
+		const onResume = () => this.applyStallThreshold();
+		powerMonitor.on('suspend', onSuspend);
+		powerMonitor.on('resume', onResume);
+		this._register(toDisposable(() => {
+			powerMonitor.off('suspend', onSuspend);
+			powerMonitor.off('resume', onResume);
+		}));
 
 		this._register(configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(VOLT_TRACING_ENABLED_SETTING) || e.affectsConfiguration(VOLT_TRACING_ENDPOINT_SETTING)

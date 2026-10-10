@@ -137,7 +137,8 @@ class VoltDevReloadContribution extends Disposable implements IWorkbenchContribu
 
 		const imported = await import(/* webpackIgnore: true */ `${stableUrl}?hot=${Date.now()}`) as Record<string, unknown>;
 		if (apply) {
-			return apply(imported);
+			// The patcher writes the old classes back into what it is given; a module namespace is read-only.
+			return apply({ ...imported });
 		}
 		return Object.keys(oldExports).length > 0;
 	}

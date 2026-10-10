@@ -45,18 +45,22 @@ export class DriftStallDetector {
 	}
 }
 
-/** Runs a {@link DriftStallDetector} on a real timer. */
+/**
+ * Runs a {@link DriftStallDetector} on a real timer. The lag is measured on `monotonic`:
+ * `performance.now()` stops while the machine sleeps (macOS, Linux), so a closed lid is not a
+ * stall the way it is on `Date.now()`. `wall` dates the stall for the log and spans.
+ */
 export class DriftStallMonitor implements IDisposable {
 
 	private readonly handle: ReturnType<typeof setInterval>;
 
-	constructor(thresholdMs: number, onStall: (stall: IDriftStall) => void, now: () => number = Date.now) {
+	constructor(thresholdMs: number, onStall: (stall: IDriftStall) => void, monotonic: () => number = () => performance.now(), wall: () => number = Date.now) {
 		const interval = stallTickInterval(thresholdMs);
-		const detector = new DriftStallDetector(thresholdMs, interval, now());
+		const detector = new DriftStallDetector(thresholdMs, interval, monotonic());
 		this.handle = setInterval(() => {
-			const stall = detector.tick(now());
+			const stall = detector.tick(monotonic());
 			if (stall) {
-				onStall(stall);
+				onStall({ startTime: wall() - stall.durationMs, durationMs: stall.durationMs });
 			}
 		}, interval);
 		(this.handle as { unref?: () => void }).unref?.();

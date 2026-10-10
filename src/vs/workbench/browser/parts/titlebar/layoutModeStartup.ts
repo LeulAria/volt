@@ -6,7 +6,7 @@
 export const LAYOUT_MODE_STORAGE_KEY = 'volt.layoutMode';
 export const AGENT_LEFT_SIDEBAR_HIDDEN_KEY = 'volt.agent.leftSidebar.hidden';
 export const SIDEBAR_LOCATION_KEY = 'workbench.sideBar.location';
-export const AGENT_LIST_WIDTH = 260;
+export const AGENT_LIST_WIDTH = 230;
 export const AGENT_SIDEBAR_MIN_WIDTH = 180;
 
 /** Fired on the workbench root when a chat's tools open or close, so the layout can re-weigh the list. */
