@@ -179,40 +179,6 @@ function buildWritingPrompt(ctx: IPredictionContext, writing: 'prose' | 'comment
 	];
 }
 
-export const WRITING_SYSTEM_PROMPT = [
-	'You are the autocomplete of a text editor. Continue the text exactly at ' + CURSOR_MARKER + ', as its writer would.',
-	'If the text stops inside a word, finish the word and go on; after a space, write the next words; on an empty line, write the next line the way the lines above go (the next list item, the text under a heading, the next sentence).',
-	'Stop at the end of the sentence, or at the end of the line in a list or a heading.',
-	'Match the language, tone, casing, punctuation and formatting of the document, and stay on its subject.',
-	'Put the inserted text between <insert> and </insert>, exactly as it goes into the document: no quotes, no fences. Never repeat the text before the cursor.',
-	'Nothing outside the tags is used. If nothing fits, reply <insert></insert>.',
-	'Examples: `red\ngreen\n' + CURSOR_MARKER + '` -> <insert>blue</insert>. `We ship on Fri' + CURSOR_MARKER + '` -> <insert>day, after the review.</insert> `Monday\nTuesday' + CURSOR_MARKER + '` -> <insert>\nWednesday</insert>',
-].join(' ');
-
-/** Small models misjudge where in a word the cursor is: say it. */
-function cursorSituation(linePrefix: string): string {
-	if (!linePrefix.trim()) {
-		return 'The cursor is at the start of a line.';
-	}
-	const word = /[\p{L}\p{N}_'-]+$/u.exec(linePrefix)?.[0];
-	return word
-		? `The cursor is at the end of the word \`${word}\`. If it is cut off, finish it. If the line is complete (a list item, a heading, a finished sentence), reply with a line break and then the whole next line; otherwise go on with a space and the next word.`
-		: 'The cursor is after a space or punctuation: start the next word.';
-}
-
-/** Markdown, plain text and code comments: the writing around the cursor, continued as writing. */
-function buildWritingPrompt(ctx: IPredictionContext, writing: 'prose' | 'comment'): IModelMessage[] {
-	const what = writing === 'comment'
-		? `## Comment being written in ${ctx.uri.path} (${ctx.languageId}). Continue the comment only, on its line, never code.`
-		: `## Document: ${ctx.uri.path} (${ctx.languageId})`;
-	const excerpt = `${what}\n${ctx.prefix}${CURSOR_MARKER}${ctx.suffix}`;
-	const blocks = contextBlocks({ ...ctx, diagnostics: [], imports: writing === 'comment' ? ctx.imports : '' }, INLINE_LIMITS);
-	return [
-		{ role: 'system', content: WRITING_SYSTEM_PROMPT },
-		{ role: 'user', content: assemble(excerpt, blocks, `Continue at ${CURSOR_MARKER}. ${cursorSituation(ctx.linePrefix)} Reply with <insert>the inserted text</insert> only.`, INLINE_PROMPT_CHAR_BUDGET) },
-	];
-}
-
 /**
  * Edits are anchored on text, not positions: chat models cannot count lines or columns in an
  * excerpt reliably, but they copy a line exactly. Volt finds `find` in the file itself.

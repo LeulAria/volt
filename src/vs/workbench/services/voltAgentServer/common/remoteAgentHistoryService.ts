@@ -9,7 +9,7 @@ import { joinPath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { AgentSessionAttention, IAgentForkOrigin, IAgentHistoryListOptions, IAgentHistoryService, IAgentSessionAppendAssistant, IAgentSessionDraft, IAgentSessionHandle, IAgentSessionLifecycle, IAgentSessionMeta, IAgentSessionTranscript, IAgentSessionWorkspace } from '../../voltRuntime/common/history/agentHistory.js';
+import { AgentSessionAttention, IAgentForkOrigin, IAgentHistoryListOptions, IAgentHistoryService, IAgentSessionAppendAssistant, IAgentSessionDraft, IAgentSessionHandle, IAgentSessionLifecycle, IAgentSessionMeta, IAgentSessionTranscript, IAgentSessionTruncation, IAgentSessionWorkspace } from '../../voltRuntime/common/history/agentHistory.js';
 import { describeWorkspace, matchesHistoryListOptions, parseAttachmentRef, searchSessions, sortSessions } from '../../voltRuntime/common/history/agentHistoryLog.js';
 import { IAgentServerClientService } from './agentServerClient.js';
 
@@ -31,6 +31,8 @@ export class RemoteAgentHistoryService extends Disposable implements IAgentHisto
 
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	readonly onDidChange = this._onDidChange.event;
+	private readonly _onDidTruncate = this._register(new Emitter<IAgentSessionTruncation>());
+	readonly onDidTruncate = this._onDidTruncate.event;
 	readonly whenReady: Promise<void>;
 	readonly currentWorkspace: IAgentSessionWorkspace;
 
@@ -85,10 +87,14 @@ export class RemoteAgentHistoryService extends Disposable implements IAgentHisto
 	open(id: string): IAgentSessionHandle {
 		let handle = this.handles.get(id);
 		if (!handle) {
-			handle = new RemoteSessionHandle(id, this.client, () => this.get(id));
+			handle = new RemoteSessionHandle(id, this.client, () => this.get(id), truncation => this._onDidTruncate.fire(truncation));
 			this.handles.set(id, handle);
 		}
 		return handle;
+	}
+
+	readTranscript(id: string): Promise<IAgentSessionTranscript | undefined> {
+		return this.client.call('history.readTranscript', id);
 	}
 
 	pinSessionWorkspace(id: string, workspace: IAgentSessionWorkspace): void {
@@ -154,6 +160,7 @@ class RemoteSessionHandle implements IAgentSessionHandle {
 		readonly id: string,
 		private readonly client: IAgentServerClientService,
 		private readonly readMeta: () => IAgentSessionMeta | undefined,
+		private readonly didTruncate: (truncation: IAgentSessionTruncation) => void,
 	) { }
 
 	get meta(): IAgentSessionMeta | undefined {
@@ -177,7 +184,16 @@ class RemoteSessionHandle implements IAgentSessionHandle {
 	}
 
 	truncate(fromTurn: string): void {
-		this.write('truncate', fromTurn);
+		// The turns it drops, read before the write lands, for listeners such as the usage ledger.
+		const next = this.chain.then(async () => {
+			const turns = (await this.load().catch(() => undefined))?.turns ?? [];
+			await this.client.call('history.handle.truncate', this.id, fromTurn);
+			const index = turns.findIndex(turn => turn.id === fromTurn);
+			if (index >= 0) {
+				this.didTruncate({ sessionId: this.id, index, turns: turns.slice(index) });
+			}
+		});
+		this.chain = next.catch(() => undefined);
 	}
 
 	setMeta(meta: { title?: string; agentTitle?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string; forkOf?: IAgentForkOrigin }): void {

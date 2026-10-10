@@ -71,7 +71,7 @@ const ORCHESTRATOR_METHODS = ['submit', 'move', 'resumeLimit', 'configureLimit',
 const HISTORY_METHODS = [
 	'search', 'rename', 'setAgentTitle', 'delete', 'setPinned', 'setArchived', 'setSettled', 'setAutoSettle', 'setSnoozed', 'restoreLifecycle',
 	'setUnread', 'clearWoke', 'markAllRead', 'setAttention', 'pinSessionWorkspace', 'pinSessionParent', 'putAttachment', 'getAttachment',
-	'attachmentResource', 'flushAll',
+	'attachmentResource', 'flushAll', 'readTranscript',
 ] as const;
 const HANDLE_METHODS = ['load', 'loadDraft', 'saveDraft', 'setMeta', 'appendUser', 'appendAssistant', 'truncate', 'flush'] as const;
 const PROJECT_METHODS = ['registerProject', 'registerScratchProject', 'unregisterProject', 'bindSession', 'rebindUnstartedSession'] as const;
