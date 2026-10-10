@@ -7,27 +7,27 @@ import { getActiveDocument } from '../../../../../base/browser/dom.js';
 import { raceCancellation, raceTimeout, SequencerByKey, timeout } from '../../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Disposable, DisposableMap, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { decodeDataUrl, encodeImage, ImageFormat, scaleScreenshot } from '../../../../services/voltRuntime/browser/host/imageCodec.js';
-import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostToolResult, IVoltHostToolService, VoltBrowserAutomationToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_ACT_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostToolResult, IVoltHostToolService, VoltBrowserAutomationToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 import { VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { diffAx, formatAxLine, IAxItem, placeOnImage, readingOrder, strokeBoxes } from '../../../../services/voltRuntime/common/tools/axAnnotations.js';
 import { clampRect, compareImages, compareLayout, cropImage, describeComparison, describeLayout, diffHeatmap, parseRect, sideBySide } from '../../../../services/voltRuntime/common/tools/imageAnalysis.js';
+import { actionEffect, describeEffect, IActionEffect, IPageView } from '../../../../services/voltRuntime/common/tools/pageModel.js';
 import { agentSessionBrowser } from '../workspace/agentSurfaceHost.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { keepUserFocus } from './agentFocusGuard.js';
+import { formatActRun, formatFlowRuns, IActDriver, IFlowRun, IPageSnapshotBase, pageStateLines, probe, runActSteps, settle, unsafeToSave } from './browserAct.js';
+import { fileFlowStore, resolveActInput } from '../actFlows.js';
 import { IVoltBrowserViews, IVoltConsoleMessage, normalizeBrowserUrl, VoltBrowserView } from './browserEditor.js';
-import { clickFallbackScript, evaluateScript, focusScript, INetworkEntry, NETWORK_SCRIPT, rectScript, scrollScript, selectOptionScript, setValueScript, SNAPSHOT_SCRIPT, snapshotScript, targetScript, textPresentScript } from './browserAutomationScripts.js';
+import { clickFallbackScript, evaluateScript, focusScript, INetworkEntry, NETWORK_SCRIPT, readStateScript, rectScript, scrollScript, selectOptionScript, setValueScript, SNAPSHOT_SCRIPT, snapshotScript, targetScript, textPresentScript } from './browserAutomationScripts.js';
 
-interface IPageSnapshot {
-	url: string;
-	title: string;
-	yaml: string;
-	error?: string;
-	viewport?: { width: number; height: number; scrollY: number; scrollHeight: number; scrollWidth: number };
+interface IPageSnapshot extends IPageSnapshotBase {
 	items?: IAxItem[];
 }
 
@@ -42,11 +42,13 @@ interface ITarget {
 interface IAutomationServices {
 	readonly workspace: IAgentWorkspaceService;
 	readonly views: IVoltBrowserViews;
+	readonly files: IFileService;
 }
 
 interface ICallContext {
 	readonly token: CancellationToken;
 	readonly options: IVoltBrowserAutomationOptions;
+	readonly files: IFileService;
 }
 
 class AutomationError extends Error { }
@@ -152,6 +154,8 @@ async function click(view: VoltBrowserView, ref: string, options: { double?: boo
 		notes.push('Note: the element is disabled, so the click may have done nothing.');
 	}
 	const button = options.button ?? 'left';
+	const driver = driverFor(view);
+	const before = await probe(driver);
 	if (hit.covered || !view.canSendInput()) {
 		// Something sits on top of the element's center (a toast, an overlay): click the element itself.
 		await run(view, clickFallbackScript(ref), token);
@@ -161,8 +165,36 @@ async function click(view: VoltBrowserView, ref: string, options: { double?: boo
 	} else {
 		mouseClick(view, hit.x, hit.y, button, !!options.double);
 	}
-	await view.settle(10000, token);
+	notes.unshift(effectLine(actionEffect(before, await settle(driver, token))));
 	return notes;
+}
+
+/** The chat's browser tab as the page `browser_act` steps run in. */
+function driverFor(view: VoltBrowserView): IActDriver {
+	return {
+		run: <T>(code: string, ms: number) => raceTimeout(view.runScript<T>(code), ms).catch(() => undefined),
+		canSendInput: () => view.canSendInput(),
+		click: (x, y, button, double) => mouseClick(view, x, y, button, double),
+		move: (x, y) => view.sendInput({ type: 'mouseMove', x, y }),
+		press: combo => pressKey(view, combo),
+		insertText: text => view.insertText(text),
+		isLoading: () => view.isLoadingForAgent(),
+		waitForLoad: (ms, token) => view.automationReady(ms, token),
+		navigate: (url, token) => view.navigateForAgent(normalizeBrowserUrl(url), 20000, token),
+		history: (action, token) => view.historyForAgent(action, token),
+	};
+}
+
+function effectLine(effect: IActionEffect | undefined): string {
+	return `- Effect: ${describeEffect(effect)}`;
+}
+
+/** Runs one input and reports what it did once the page has gone quiet. */
+async function withEffect(view: VoltBrowserView, token: CancellationToken, input: () => void | Promise<void>): Promise<string> {
+	const driver = driverFor(view);
+	const before = await probe(driver);
+	await input();
+	return effectLine(actionEffect(before, await settle(driver, token)));
 }
 
 function formatConsole(messages: readonly IVoltConsoleMessage[], limit = 40): string[] {
@@ -172,26 +204,34 @@ function formatConsole(messages: readonly IVoltConsoleMessage[], limit = 40): st
 	});
 }
 
-async function pageState(view: VoltBrowserView, withSnapshot = true, script = SNAPSHOT_SCRIPT): Promise<string[]> {
+/** The page as the agent last read it, per view: the next result reports only what changed since. */
+const seen = new WeakMap<VoltBrowserView, IPageView>();
+
+/**
+ * `auto`: the whole page the first time the agent sees a document, only the changes after that.
+ * `full`: the whole page. `none`: URL, title and errors only. A partial `script` (selector or
+ * interactive only) is shown whole and leaves what the agent knows of the page as it was.
+ */
+async function pageState(view: VoltBrowserView, observe: 'auto' | 'full' | 'none' = 'auto', script = SNAPSHOT_SCRIPT, unfold?: boolean): Promise<string[]> {
 	const lines = ['### Page state'];
 	const snap = await raceTimeout(view.runScript<IPageSnapshot>(script), SCRIPT_TIMEOUT_MS).catch(() => undefined);
 	if (!snap) {
 		lines.push('- The page did not answer (still loading or busy).');
 		return lines;
 	}
-	lines.push(`- Page URL: ${snap.url}`, `- Page Title: ${snap.title || '(untitled)'}`);
-	const viewport = view.getViewport();
-	if (snap.viewport) {
-		const overflow = snap.viewport.scrollWidth > snap.viewport.width + 1 ? ` (content is ${snap.viewport.scrollWidth}px wide: horizontal overflow)` : '';
-		lines.push(`- Viewport: ${snap.viewport.width}×${snap.viewport.height}${viewport ? ' (fixed)' : ''}, scrolled ${snap.viewport.scrollY}/${Math.max(0, snap.viewport.scrollHeight - snap.viewport.height)}${overflow}`);
-	}
 	const errors = view.takeConsole(true).filter(msg => msg.level === 'error' || msg.level === 'warning');
-	if (errors.length) {
-		lines.push('- New console errors/warnings:', ...formatConsole(errors, 10).map(line => `  ${line}`));
+	const state = pageStateLines(snap, {
+		previous: seen.get(view),
+		observe,
+		partial: script !== SNAPSHOT_SCRIPT,
+		fixedViewport: !!view.getViewport(),
+		console: errors.length ? formatConsole(errors, 10) : undefined,
+		unfold,
+	});
+	if (state.page) {
+		seen.set(view, state.page);
 	}
-	if (withSnapshot) {
-		lines.push('- Page Snapshot:', '```yaml', snap.yaml, '```');
-	}
+	lines.push(...state.lines);
 	return lines;
 }
 
@@ -526,7 +566,41 @@ async function act(view: VoltBrowserView, tool: VoltBrowserAutomationToolName, a
 			const selector = str(args.selector);
 			const interactive = args.interactive === true;
 			const script = selector || interactive ? snapshotScript({ selector, interactive }) : SNAPSHOT_SCRIPT;
-			return { text: (await pageState(view, true, script)).join('\n') };
+			return { text: (await pageState(view, 'full', script, args.unfold === true)).join('\n') };
+		}
+		case BROWSER_ACT_TOOL_NAME: {
+			const store = ctx.options.cwd ? fileFlowStore(ctx.files, URI.file(ctx.options.cwd)) : undefined;
+			const input = await resolveActInput(args, store, BROWSER_ACT_TOOL_NAME);
+			if ('error' in input) {
+				return { error: input.error };
+			}
+			const driver = driverFor(view);
+			const [first] = input.plans;
+			if (input.plans.length === 1 && !first.label) {
+				const run = await runActSteps(driver, first.steps, token);
+				cancelled(token);
+				// on_failure: the steps' own expectations are the report; the page only matters when one failed.
+				const brief = args.observe === 'on_failure' && run.ok;
+				const lines = formatActRun(run, BROWSER_ACT_TOOL_NAME, { brief });
+				if (input.save && store) {
+					const refused = run.ok ? unsafeToSave(run, args.vars as Record<string, string> | undefined) : 'the run did not pass';
+					lines.push(refused ? `- Not saved as flow ${input.save.name}: ${refused}.` : `- Saved as flow ${input.save.name} (${(await store.write(input.save.name, input.save.script)).fsPath}): re-run it with {"run": "${input.save.name}"}.`);
+				}
+				const observe = args.observe === 'full' || args.observe === 'none' ? args.observe : brief ? 'none' : 'auto';
+				return { text: [...lines, '', ...await pageState(view, observe)].join('\n') };
+			}
+			// Several saved flows: each runs on its own; the page is shown after the first one that fails.
+			const runs: IFlowRun[] = [];
+			let failure: string[] | undefined;
+			for (const plan of input.plans) {
+				const run = await runActSteps(driver, plan.steps, token);
+				cancelled(token);
+				runs.push({ label: plan.label ?? 'flow', run });
+				if (!run.ok && !failure) {
+					failure = await pageState(view, 'auto');
+				}
+			}
+			return { text: [...formatFlowRuns(runs, BROWSER_ACT_TOOL_NAME), ...(failure ? ['', ...failure] : [])].join('\n') };
 		}
 		case 'browser_click': {
 			const double = args.doubleClick === true;
@@ -540,9 +614,8 @@ async function act(view: VoltBrowserView, tool: VoltBrowserAutomationToolName, a
 				if (!view.canSendInput()) {
 					return { error: 'Coordinate clicks are not available in this browser; use a ref.' };
 				}
-				mouseClick(view, Math.round(x), Math.round(y), button, double);
-				await view.settle(10000, token);
-				return { text: [...action('click', { 'Element': element, 'At': `${Math.round(x)}, ${Math.round(y)}`, 'Click type': double ? 'double-click' : 'single-click', 'Button': button }), '', ...await pageState(view)].join('\n') };
+				const effect = await withEffect(view, token, () => mouseClick(view, Math.round(x), Math.round(y), button, double));
+				return { text: [...action('click', { 'Element': element, 'At': `${Math.round(x)}, ${Math.round(y)}`, 'Click type': double ? 'double-click' : 'single-click', 'Button': button }), effect, '', ...await pageState(view)].join('\n') };
 			}
 			const notes = await click(view, ref, { double, button }, token);
 			return { text: [...action('click', { 'Element': element, 'Ref': ref, 'Click type': double ? 'double-click' : 'single-click', 'Button': button }), ...notes, '', ...await pageState(view)].join('\n') };
@@ -557,47 +630,51 @@ async function act(view: VoltBrowserView, tool: VoltBrowserAutomationToolName, a
 			if (focus.error) {
 				throw staleRef(ref);
 			}
-			if (!await view.insertText(text).catch(() => false)) {
-				await run(view, setValueScript(ref, text, clear), token);
-			}
-			if (args.submit === true) {
-				pressKey(view, 'Enter');
-			}
-			await view.settle(10000, token);
-			return { text: [...action('type', { 'Element': element, 'Ref': ref, 'Text': JSON.stringify(text), 'Submitted': args.submit === true ? 'yes' : undefined }), '', ...await pageState(view)].join('\n') };
+			let secret = false;
+			const effect = await withEffect(view, token, async () => {
+				if (!await view.insertText(text).catch(() => false)) {
+					await run(view, setValueScript(ref, text, clear), token);
+				}
+				secret = !!(await raceTimeout(view.runScript<{ secret?: boolean }>(readStateScript(ref)), 2000).catch(() => undefined))?.secret;
+				if (args.submit === true) {
+					pressKey(view, 'Enter');
+				}
+			});
+			const typed = secret ? `${'•'.repeat(Math.min(8, Math.max(1, text.length)))} (hidden)` : JSON.stringify(text);
+			return { text: [...action('type', { 'Element': element, 'Ref': ref, 'Text': typed, 'Submitted': args.submit === true ? 'yes' : undefined }), effect, '', ...await pageState(view)].join('\n') };
 		}
 		case 'browser_press_key': {
 			const key = str(args.key);
 			if (!key) {
 				return { error: 'browser_press_key needs a `key`.' };
 			}
-			pressKey(view, key);
-			await view.settle(10000, token);
-			return { text: [...action('press key', { Key: key }), '', ...await pageState(view)].join('\n') };
+			const effect = await withEffect(view, token, () => pressKey(view, key));
+			return { text: [...action('press key', { Key: key }), effect, '', ...await pageState(view)].join('\n') };
 		}
 		case 'browser_hover': {
 			if (!ref) {
 				return { error: 'browser_hover needs a `ref`.' };
 			}
 			const hit = await target(view, ref, token);
-			view.sendInput({ type: 'mouseMove', x: hit.x, y: hit.y });
-			await view.settle(10000, token);
-			return { text: [...action('hover', { Element: element, Ref: ref }), '', ...await pageState(view)].join('\n') };
+			const effect = await withEffect(view, token, () => view.sendInput({ type: 'mouseMove', x: hit.x, y: hit.y }));
+			return { text: [...action('hover', { Element: element, Ref: ref }), effect, '', ...await pageState(view)].join('\n') };
 		}
 		case 'browser_select_option': {
 			const values = Array.isArray(args.values) ? args.values.map(value => String(value)) : [];
 			if (!ref || !values.length) {
 				return { error: 'browser_select_option needs `ref` and `values`.' };
 			}
-			const picked = await run<{ error?: string; picked?: string[] }>(view, selectOptionScript(ref, values), token);
+			let picked: { error?: string; picked?: string[] } = {};
+			const effect = await withEffect(view, token, async () => {
+				picked = await run<{ error?: string; picked?: string[] }>(view, selectOptionScript(ref, values), token);
+			});
 			if (picked.error === 'stale') {
 				throw staleRef(ref);
 			}
 			if (picked.error) {
-				return { error: `${element ?? ref} is not a <select>. Click it and choose the option instead.` };
+				return { error: `${element ?? ref} is not a <select>. Use browser_act with {"action":"select"}, which also opens custom dropdowns and clicks the option.` };
 			}
-			await view.settle(10000, token);
-			return { text: [...action('select option', { Element: element, Ref: ref, Selected: picked.picked?.join(', ') || '(no matching option)' }), '', ...await pageState(view)].join('\n') };
+			return { text: [...action('select option', { Element: element, Ref: ref, Selected: picked.picked?.join(', ') || '(no matching option)' }), effect, '', ...await pageState(view)].join('\n') };
 		}
 		case 'browser_scroll': {
 			const dy = num(args.deltaY) ?? (ref ? 0 : 600);
@@ -606,7 +683,7 @@ async function act(view: VoltBrowserView, tool: VoltBrowserAutomationToolName, a
 			if (scrolled.error && ref) {
 				throw staleRef(ref);
 			}
-			await view.settle(10000, token);
+			await settle(driverFor(view), token, 1000);
 			return { text: [...action('scroll', { Element: element, 'Delta Y': String(dy), 'Delta X': dx ? String(dx) : undefined }), '', ...await pageState(view)].join('\n') };
 		}
 		case 'browser_resize': {
@@ -615,7 +692,7 @@ async function act(view: VoltBrowserView, tool: VoltBrowserAutomationToolName, a
 			const reset = args.reset === true || width === undefined || height === undefined;
 			view.setViewport(reset ? undefined : { width: width!, height: height! });
 			await timeout(180);
-			await view.settle(10000, token);
+			await settle(driverFor(view), token, 1500);
 			return { text: [...action('resize', reset ? { Viewport: 'fills the pane' } : { Viewport: `${Math.round(width!)}×${Math.round(height!)}` }), '', ...await pageState(view)].join('\n') };
 		}
 		case 'browser_wait_for': {
@@ -682,7 +759,7 @@ async function act(view: VoltBrowserView, tool: VoltBrowserAutomationToolName, a
 			const listing = elementListing(view, shot, args);
 			const format: ImageFormat = args.format === 'png' || args.format === 'webp' ? args.format : 'jpeg';
 			const image = args.marks === true && listing.listed.length ? await markedImage(shot, listing.listed, format) : shot.image;
-			return { text: [...action('screenshot', details), '', ...await pageState(view, false), '', ...listing.lines].join('\n'), image };
+			return { text: [...action('screenshot', details), '', ...await pageState(view, 'none'), '', ...listing.lines].join('\n'), image };
 		}
 		case BROWSER_COMPARE_IMAGE_TOOL_NAME:
 			return compare(view, args, ctx);
@@ -712,7 +789,7 @@ export function cancelAgentBrowserCalls(sessionId: string): void {
 
 CommandsRegistry.registerCommand(AUTOMATE_BROWSER_COMMAND_ID, (accessor: ServicesAccessor, callerId: string, tool: VoltBrowserAutomationToolName, args?: Record<string, unknown>, options?: IVoltBrowserAutomationOptions) => {
 	// The accessor is only valid now, not once the call's turn in the queue comes.
-	const services: IAutomationServices = { workspace: accessor.get(IAgentWorkspaceService), views: accessor.get(IVoltBrowserViews) };
+	const services: IAutomationServices = { workspace: accessor.get(IAgentWorkspaceService), views: accessor.get(IVoltBrowserViews), files: accessor.get(IFileService) };
 	// A warm-pool agent calls with its pool id; its browser tab lives under the chat it was given.
 	const sessionId = accessor.get(IAgentRuntimeService).chatFor(callerId);
 	const source = new CancellationTokenSource(options?.token);
@@ -722,7 +799,7 @@ CommandsRegistry.registerCommand(AUTOMATE_BROWSER_COMMAND_ID, (accessor: Service
 		inflight.set(sessionId, calls);
 	}
 	calls.add(source);
-	const ctx: ICallContext = { token: source.token, options: options ?? {} };
+	const ctx: ICallContext = { token: source.token, options: options ?? {}, files: services.files };
 	return queue.queue(sessionId, () => source.token.isCancellationRequested
 		? Promise.resolve<IVoltHostToolResult>({ error: 'Cancelled.' })
 		: automate(services, sessionId, tool, args ?? {}, ctx)
