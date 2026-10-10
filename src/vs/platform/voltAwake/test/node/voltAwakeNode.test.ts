@@ -223,60 +223,60 @@ suite('Volt awake macOS backend', () => {
 
 // sh, ps and the fake sudo need a POSIX system.
 if (process.platform !== 'win32') {
-suite('Volt awake recovery script', () => {
+	suite('Volt awake recovery script', () => {
 
-	let home: string;
-	let bin: string;
-	setup(async () => {
-		home = await tempDir();
-		bin = join(home, 'bin');
-		await fs.mkdir(join(home, '.volt', 'awake', 'holders'), { recursive: true });
-		await fs.mkdir(bin);
-		// A fake sudo that records its arguments instead of running pmset.
-		await fs.writeFile(join(bin, 'sudo'), `#!/bin/sh\necho "$@" >> "${join(home, 'sudo.log')}"\nexit 0\n`, { mode: 0o755 });
-		await fs.writeFile(join(home, '.volt', 'awake', 'recovery.sh'), RECOVERY_SCRIPT, { mode: 0o700 });
-		await fs.writeFile(join(home, '.volt', 'awake', 'changes'), 'darwinSleepDisabled=1\nwin32Lid=x,1,1\n');
+		let home: string;
+		let bin: string;
+		setup(async () => {
+			home = await tempDir();
+			bin = join(home, 'bin');
+			await fs.mkdir(join(home, '.volt', 'awake', 'holders'), { recursive: true });
+			await fs.mkdir(bin);
+			// A fake sudo that records its arguments instead of running pmset.
+			await fs.writeFile(join(bin, 'sudo'), `#!/bin/sh\necho "$@" >> "${join(home, 'sudo.log')}"\nexit 0\n`, { mode: 0o755 });
+			await fs.writeFile(join(home, '.volt', 'awake', 'recovery.sh'), RECOVERY_SCRIPT, { mode: 0o700 });
+			await fs.writeFile(join(home, '.volt', 'awake', 'changes'), 'darwinSleepDisabled=1\nwin32Lid=x,1,1\n');
+		});
+		teardown(() => fs.rm(home, { recursive: true, force: true }));
+
+		const run = () => new Promise<void>((resolve, reject) => execFile('/bin/sh', [join(home, '.volt', 'awake', 'recovery.sh')], { env: { HOME: home, VOLT_AWAKE_TEST_PATH: bin } }, err => err ? reject(err) : resolve()));
+		const sudoLog = () => fs.readFile(join(home, 'sudo.log'), 'utf8').catch(() => '');
+		const lstart = (pid: number) => new Promise<string>(resolve => execFile('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], { env: { LC_ALL: 'C' } }, (_err, stdout) => resolve(stdout.trim().replace(/\s+/g, ' '))));
+		const writeHolder = (pid: number, started: string, deadline = Math.floor(Date.now() / 1000) + 600) =>
+			fs.writeFile(join(home, '.volt', 'awake', 'holders', String(pid)), `pid=${pid}\nstarted=${started}\nboot=\ndeadline=${deadline}\nlid=1\nowner=volt\n`);
+
+		test('a live holder keeps sleep off; once it is gone, sleep goes back on and the journal is cleared', async () => {
+			await writeHolder(process.pid, await lstart(process.pid));
+			await run();
+			assert.strictEqual(await sudoLog(), '', 'the live holder (this test process) keeps it');
+
+			const exited = spawn('/bin/sh', ['-c', 'exit 0']);
+			await new Promise(resolve => exited.on('exit', resolve));
+			await fs.rm(join(home, '.volt', 'awake', 'holders', String(process.pid)));
+			await writeHolder(exited.pid!, 'Thu Jan 1 00:00:00 1970');
+			await run();
+			assert.strictEqual((await sudoLog()).trim(), '-n /usr/bin/pmset -a disablesleep 0');
+			assert.deepStrictEqual(parseKeyValues(await fs.readFile(join(home, '.volt', 'awake', 'changes'), 'utf8')), new Map([['win32Lid', 'x,1,1']]), 'only its own line goes');
+			assert.deepStrictEqual(await fs.readdir(join(home, '.volt', 'awake', 'holders')), [], 'the dead holder is removed');
+		});
+
+		test('a holder whose pid now belongs to another process, or whose deadline passed, does not count', async () => {
+			await writeHolder(process.pid, 'Thu Jan 1 00:00:00 1970');
+			await run();
+			assert.strictEqual((await sudoLog()).trim(), '-n /usr/bin/pmset -a disablesleep 0');
+
+			await fs.writeFile(join(home, '.volt', 'awake', 'changes'), 'darwinSleepDisabled=1\n');
+			await fs.rm(join(home, 'sudo.log'));
+			await writeHolder(process.pid, await lstart(process.pid), Math.floor(Date.now() / 1000) - 5);
+			await run();
+			assert.strictEqual((await sudoLog()).trim(), '-n /usr/bin/pmset -a disablesleep 0');
+			await assert.rejects(fs.stat(join(home, '.volt', 'awake', 'changes')), 'the last line takes the file with it');
+		});
+
+		test('nothing journaled: nothing to do', async () => {
+			await fs.rm(join(home, '.volt', 'awake', 'changes'));
+			await run();
+			assert.strictEqual(await sudoLog(), '');
+		});
 	});
-	teardown(() => fs.rm(home, { recursive: true, force: true }));
-
-	const run = () => new Promise<void>((resolve, reject) => execFile('/bin/sh', [join(home, '.volt', 'awake', 'recovery.sh')], { env: { HOME: home, VOLT_AWAKE_TEST_PATH: bin } }, err => err ? reject(err) : resolve()));
-	const sudoLog = () => fs.readFile(join(home, 'sudo.log'), 'utf8').catch(() => '');
-	const lstart = (pid: number) => new Promise<string>(resolve => execFile('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], { env: { LC_ALL: 'C' } }, (_err, stdout) => resolve(stdout.trim().replace(/\s+/g, ' '))));
-	const writeHolder = (pid: number, started: string, deadline = Math.floor(Date.now() / 1000) + 600) =>
-		fs.writeFile(join(home, '.volt', 'awake', 'holders', String(pid)), `pid=${pid}\nstarted=${started}\nboot=\ndeadline=${deadline}\nlid=1\nowner=volt\n`);
-
-	test('a live holder keeps sleep off; once it is gone, sleep goes back on and the journal is cleared', async () => {
-		await writeHolder(process.pid, await lstart(process.pid));
-		await run();
-		assert.strictEqual(await sudoLog(), '', 'the live holder (this test process) keeps it');
-
-		const exited = spawn('/bin/sh', ['-c', 'exit 0']);
-		await new Promise(resolve => exited.on('exit', resolve));
-		await fs.rm(join(home, '.volt', 'awake', 'holders', String(process.pid)));
-		await writeHolder(exited.pid!, 'Thu Jan 1 00:00:00 1970');
-		await run();
-		assert.strictEqual((await sudoLog()).trim(), '-n /usr/bin/pmset -a disablesleep 0');
-		assert.deepStrictEqual(parseKeyValues(await fs.readFile(join(home, '.volt', 'awake', 'changes'), 'utf8')), new Map([['win32Lid', 'x,1,1']]), 'only its own line goes');
-		assert.deepStrictEqual(await fs.readdir(join(home, '.volt', 'awake', 'holders')), [], 'the dead holder is removed');
-	});
-
-	test('a holder whose pid now belongs to another process, or whose deadline passed, does not count', async () => {
-		await writeHolder(process.pid, 'Thu Jan 1 00:00:00 1970');
-		await run();
-		assert.strictEqual((await sudoLog()).trim(), '-n /usr/bin/pmset -a disablesleep 0');
-
-		await fs.writeFile(join(home, '.volt', 'awake', 'changes'), 'darwinSleepDisabled=1\n');
-		await fs.rm(join(home, 'sudo.log'));
-		await writeHolder(process.pid, await lstart(process.pid), Math.floor(Date.now() / 1000) - 5);
-		await run();
-		assert.strictEqual((await sudoLog()).trim(), '-n /usr/bin/pmset -a disablesleep 0');
-		await assert.rejects(fs.stat(join(home, '.volt', 'awake', 'changes')), 'the last line takes the file with it');
-	});
-
-	test('nothing journaled: nothing to do', async () => {
-		await fs.rm(join(home, '.volt', 'awake', 'changes'));
-		await run();
-		assert.strictEqual(await sudoLog(), '');
-	});
-});
 }

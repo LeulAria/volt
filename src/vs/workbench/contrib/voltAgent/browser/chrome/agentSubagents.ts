@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentSubagents.css';
-import { $, addDisposableListener, append, getWindow } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow, isHTMLButtonElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
@@ -118,7 +118,7 @@ export interface ISubagentRowOptions {
 /** One subagent row: avatar · title + state · model, the step under it, the clock and an open chevron. */
 export function renderSubagentRow(parent: HTMLElement, view: ISubagentView, options: ISubagentRowOptions): HTMLElement {
 	const row = append(parent, $(view.openable ? 'button.volt-subagent-row' : 'div.volt-subagent-row')) as HTMLElement;
-	if (row instanceof HTMLButtonElement) {
+	if (isHTMLButtonElement(row)) {
 		row.type = 'button';
 	}
 	row.dataset.subagent = view.key;
@@ -405,7 +405,7 @@ export function subagentStateMark(owner: HTMLElement, view: Pick<ISubagentView, 
 export function renderCursorSubagentRow(parent: HTMLElement, view: ISubagentView, options: ISubagentRowOptions): HTMLElement {
 	const live = isLiveSubagentState(view.state);
 	const row = append(parent, $(view.openable ? 'button.volt-tr-subagent.volt-subagent-cursor' : 'div.volt-tr-subagent.volt-subagent-cursor')) as HTMLElement;
-	if (row instanceof HTMLButtonElement) {
+	if (isHTMLButtonElement(row)) {
 		row.type = 'button';
 	}
 	row.dataset.subagent = view.key;
@@ -463,7 +463,7 @@ export function renderCursorSubagentRow(parent: HTMLElement, view: ISubagentView
 /** A subagent in the card above the composer (Cursor): the plane, its title, and a word when it needs you or failed. */
 export function renderCursorCardRow(parent: HTMLElement, view: ISubagentView, options: ISubagentRowOptions): HTMLElement {
 	const row = append(parent, $(view.openable ? 'button.volt-agent-work-agent' : 'div.volt-agent-work-agent')) as HTMLElement;
-	if (row instanceof HTMLButtonElement) {
+	if (isHTMLButtonElement(row)) {
 		row.type = 'button';
 	}
 	row.dataset.subagent = view.key;

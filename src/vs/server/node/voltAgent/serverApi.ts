@@ -66,6 +66,7 @@ const RUNTIME_METHODS = [
 	'setTaskModel', 'setModeProfile', 'refreshCatalog', 'detectAgents', 'refreshProviders', 'setProfileEnabled', 'setHealthCheckInterval',
 	'setModelOptions', 'setAccessMode', 'setSandboxSettings', 'setDefaultSandboxSettings', 'respondToAccessRequest', 'respondToQuestions',
 	'setProjectRules', 'revokeSavedApproval', 'listMcpServers', 'generateText', 'getRunMetrics', 'listReceipts', 'setActiveCatalogRef',
+	'stopAgentBackgroundTask', 'warmPredictor',
 ] as const;
 const ORCHESTRATOR_METHODS = ['submit', 'move', 'resumeLimit', 'configureLimit', 'notify', 'cancel', 'dispatch', 'ensureThreadLoaded'] as const;
 const HISTORY_METHODS = [
@@ -128,13 +129,15 @@ export class AgentServerApi extends Disposable {
 
 	private registerMethods(): void {
 		this._register(this.expose('runtime', this.runtime, RUNTIME_METHODS, (method, params) => {
-			const sessionId = typeof params[0] === 'string' ? params[0] : undefined;
-			if (method === 'setDefaultSandboxSettings') {
-				// Chats that never chose their own sandbox follow the default.
+			// setAccessMode(mode, sessionId?) names its chat second; warmPredictor(ref) names none.
+			const sessionArg = method === 'setAccessMode' ? params[1] : params[0];
+			const sessionId = typeof sessionArg === 'string' ? sessionArg : undefined;
+			if (method === 'setDefaultSandboxSettings' || (method === 'setAccessMode' && !sessionId)) {
+				// Chats that never chose their own sandbox or access mode follow the default.
 				for (const key of this.col('sessions').keys()) {
 					this.scheduleSession(key);
 				}
-			} else if (sessionId && method !== 'generateText') {
+			} else if (sessionId && method !== 'generateText' && method !== 'warmPredictor') {
 				this.scheduleSession(sessionId);
 			}
 			this.runtimeRefresh.schedule();
@@ -252,6 +255,7 @@ export class AgentServerApi extends Disposable {
 		this._register(this.sessionContext.onDidChangeProjects(() => this.publishProjects()));
 		this._register(this.checkpoints.onDidChange(sessionId => this.publishCheckpoints(sessionId)));
 		this._register(this.orchestrator.onDidStop(threadId => this.protocol.publish('server', { kind: 'orch.stop', threadId })));
+		this._register(this.runtime.onDidChangeAgentBackgroundTask(task => this.protocol.publish('server', toWire({ kind: 'runtime.backgroundTask', task }))));
 		this._register(this.hostTools.onDidInvokeTool(e => this.protocol.publish('hostTools', toWire({ kind: 'invoked', ...e }))));
 		this._register(this.hostTools.onDidChangeMcp(() => this.protocol.publish('hostTools', { kind: 'mcp' })));
 		this._register(this.hostTools.onDidChangeTools(() => this.runtimeRefresh.schedule()));
@@ -318,6 +322,7 @@ export class AgentServerApi extends Disposable {
 				...(session.worktreeBranch ? { worktreeBranch: session.worktreeBranch } : {}),
 				...(this.runtime.workingFolder(sessionId) ? { workingFolder: this.runtime.workingFolder(sessionId) } : {}),
 				sandbox: this.runtime.getSandboxSettings(sessionId),
+				accessMode: this.runtime.getAccessMode(sessionId),
 				...(compaction ? { compaction } : {}),
 				userTurns: session.messages.filter(message => message.role === 'user' && !(message as { steer?: boolean }).steer).length,
 				canSteer: this.runtime.canSteer(sessionId),

@@ -25,6 +25,14 @@ interface IRoute {
 	readonly body: string;
 }
 
+/** The request body fields these tests read. */
+interface ISentBody {
+	readonly reasoning?: unknown;
+	readonly reasoning_effort?: unknown;
+	readonly think?: unknown;
+	readonly generationConfig?: unknown;
+}
+
 /** Answers each request from the first matching route and keeps what was sent. */
 function fakeRequests(routes: readonly IRoute[]): { service: IRequestService; sent: IRequestOptions[] } {
 	const sent: IRequestOptions[] = [];
@@ -138,7 +146,7 @@ suite('Volt provider reasoning', () => {
 			reasoning_details: [{ type: 'reasoning.text', index: 0, text: 'Plan it.', signature: 'sig' }],
 		});
 		// No effort picked: nothing asks for reasoning, so optional-thinking models are not switched on.
-		const body = JSON.parse(String(sent[0].data));
+		const body = JSON.parse(String(sent[0].data)) as ISentBody;
 		assert.strictEqual(body.reasoning, undefined);
 		assert.strictEqual(body.reasoning_effort, undefined);
 	});
@@ -154,7 +162,7 @@ suite('Volt provider reasoning', () => {
 		assert.strictEqual(models.find(model => model.id === 'x/plain')?.capabilities.reasoning, false);
 		await collect(provider, { modelId: 'x/thinker', options: { reasoning: 'high' } });
 		await collect(provider, { modelId: 'x/plain', options: { reasoning: 'high' } });
-		const bodies = sent.filter(options => options.url?.endsWith('/chat/completions')).map(options => JSON.parse(String(options.data)));
+		const bodies = sent.filter(options => options.url?.endsWith('/chat/completions')).map(options => JSON.parse(String(options.data)) as ISentBody);
 		assert.deepStrictEqual(bodies[0].reasoning, { effort: 'high' });
 		assert.strictEqual(bodies[0].reasoning_effort, undefined);
 		assert.strictEqual(bodies[1].reasoning, undefined);
@@ -179,7 +187,7 @@ suite('Volt provider reasoning', () => {
 		assert.strictEqual(thought(events), 'Hmm, two.');
 		assert.deepStrictEqual(types(events), ['reasoning.start', 'reasoning.delta', 'reasoning.delta', 'reasoning.end', 'text.start', 'text.delta', 'text.end', 'finish']);
 		const chat = sent.find(options => options.url?.endsWith('/api/chat'));
-		assert.strictEqual(JSON.parse(String(chat?.data)).think, true);
+		assert.strictEqual((JSON.parse(String(chat?.data)) as ISentBody).think, true);
 		// The capability is asked once per model.
 		await collect(provider, { modelId: 'qwen3' });
 		assert.strictEqual(sent.filter(options => options.url?.endsWith('/api/show')).length, 1);
@@ -208,7 +216,7 @@ suite('Volt provider reasoning', () => {
 		assert.strictEqual(thought(events), 'Weighing options.');
 		assert.deepStrictEqual(types(events), ['reasoning.start', 'reasoning.delta', 'reasoning.end', 'text.start', 'text.delta', 'text.end', 'finish']);
 		await collect(provider, { modelId: 'gemini-2.0-flash' });
-		const bodies = sent.map(options => JSON.parse(String(options.data)));
+		const bodies = sent.map(options => JSON.parse(String(options.data)) as ISentBody);
 		assert.deepStrictEqual(bodies[0].generationConfig, { thinkingConfig: { includeThoughts: true } });
 		assert.strictEqual(bodies[1].generationConfig, undefined);
 	});

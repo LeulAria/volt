@@ -8,7 +8,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/
 import {
 	describeWebhookDelivery, evaluateWebhookFilters, formatWebhookFilter, IAgentWebhookDelivery, isHandledDelivery, mergeWebhookDeliveries, parseWebhookDelivery, parseWebhookFilter,
 	newWebhookTrigger, parseWebhookTrigger, planWebhookDelivery, recordWebhookDelivery, renderWebhookTemplate, resolveWebhookPath, splitWebhookPath, WEBHOOK_DELIVERIES_KEPT, webhookContext, webhookRunPrompt, truncateLines,
-} from '../../../common/schedules/agentWebhooks.js';
+} from '../../../common/automations/automationWebhooks.js';
 
 const PR = {
 	action: 'opened',

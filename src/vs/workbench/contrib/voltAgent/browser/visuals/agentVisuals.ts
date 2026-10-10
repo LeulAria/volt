@@ -272,7 +272,7 @@ function loadAttachment(ctx: IVisualHostContext, ref: string): Promise<Uint8Arra
 function loadSpec(ctx: IVisualHostContext, ref: string): Promise<unknown> {
 	let pending = specs.get(ref);
 	if (!pending) {
-		pending = loadAttachment(ctx, ref).then(bytes => bytes ? JSON.parse(new TextDecoder().decode(bytes)) : undefined).catch(() => undefined);
+		pending = loadAttachment(ctx, ref).then(bytes => bytes ? JSON.parse(new TextDecoder().decode(bytes)) as unknown : undefined).catch(() => undefined);
 		specs.set(ref, pending);
 		if (specs.size > 64) {
 			specs.delete(specs.keys().next().value!);

@@ -99,8 +99,8 @@ export namespace Schemas {
 	/** Scheme used for the agent Usage (cost, tokens, limits) editor tab. */
 	export const voltUsage = 'volt-usage';
 
-	/** Scheme used for the agent Scheduled Tasks (Automations) editor tab. */
-	export const voltSchedules = 'volt-schedules';
+	/** Scheme used for the agent Automations editor tab. */
+	export const voltAutomations = 'volt-automations';
 
 	/** Scheme used for a multi-model run group's compare editor tab. */
 	export const voltRunGroup = 'volt-run-group';

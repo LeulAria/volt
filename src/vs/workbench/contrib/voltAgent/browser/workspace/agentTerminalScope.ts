@@ -117,7 +117,7 @@ class AgentTerminalScopeContribution extends Disposable {
 
 	private readStoredOwners(): Map<number, string> {
 		try {
-			const raw = JSON.parse(this.storageService.get(OWNERS_KEY, StorageScope.WORKSPACE, '{}'));
+			const raw = JSON.parse(this.storageService.get(OWNERS_KEY, StorageScope.WORKSPACE, '{}')) as Record<string, unknown> | null;
 			return new Map(Object.entries(raw ?? {})
 				.filter((entry): entry is [string, string] => typeof entry[1] === 'string')
 				.map(([pid, owner]) => [Number(pid), owner]));

@@ -3,8 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { azureBranch, parseAzureChanges, parseAzureChecks, parseAzureDetail, parseAzurePull } from '../../common/hosts/azureParse.js';
-import { Json } from '../../common/hosts/hostParse.js';
+import { azureBranch, IAzureChangeEntryJson, IAzureCommitJson, IAzurePullRequestJson, IAzureStatusJson, IAzureThreadJson, parseAzureChanges, parseAzureChecks, parseAzureDetail, parseAzurePull } from '../../common/hosts/azureParse.js';
+import { num } from '../../common/hosts/hostParse.js';
 import {
 	IVoltPrCheck,
 	IVoltPrCreateRequest,
@@ -21,6 +21,19 @@ import { IVoltPrHostClient, openFirst, parseCommitPathRef, VoltPrRestClient } fr
 import { VoltPrHttp } from './voltPrHttp.js';
 
 const API_VERSION = '7.1';
+
+/** Azure's list responses: `{ count, value: [...] }`. */
+interface IAzureListJson<T> {
+	readonly value?: T[];
+}
+
+interface IAzureConnectionDataJson {
+	readonly authenticatedUser?: {
+		readonly id?: unknown;
+		readonly providerDisplayName?: unknown;
+		readonly customDisplayName?: unknown;
+	};
+}
 
 /**
  * Azure DevOps Repos. A repository is `org/project` + name; the API sits under the organization on
@@ -57,7 +70,7 @@ export class AzureClient extends VoltPrRestClient implements IVoltPrHostClient {
 		const org = owner?.split('/')[0] ?? '';
 		let cached = this.identities.get(org);
 		if (!cached) {
-			cached = this.http.get<Json>(org ? `/${encodeURIComponent(org)}/_apis/connectionData` : '/_apis/connectionData').then(data => {
+			cached = this.http.get<IAzureConnectionDataJson | undefined>(org ? `/${encodeURIComponent(org)}/_apis/connectionData` : '/_apis/connectionData').then(data => {
 				const user = data?.authenticatedUser;
 				const name = user?.providerDisplayName ?? user?.customDisplayName;
 				if (typeof user?.id !== 'string' || typeof name !== 'string' || /^anonymous$/i.test(name)) {
@@ -76,16 +89,16 @@ export class AzureClient extends VoltPrRestClient implements IVoltPrHostClient {
 	}
 
 	private async checks(repo: IVoltPrRepoRef, number: number): Promise<IVoltPrCheck[]> {
-		const statuses = await this.http.get<Json>(`${this.pr(repo, number)}/statuses`, this.q());
+		const statuses = await this.http.get<IAzureListJson<IAzureStatusJson> | undefined>(`${this.pr(repo, number)}/statuses`, this.q());
 		return parseAzureChecks(Array.isArray(statuses?.value) ? statuses.value : []);
 	}
 
-	private async rows(repo: IVoltPrRepoRef, raws: readonly Json[], viewer: string): Promise<IVoltPullRequest[]> {
-		return this.eachSettled(raws, async raw => parseAzurePull(raw, repo, viewer, { webUrl: this.webUrl, checks: raw.status === 'active' ? await this.checks(repo, raw.pullRequestId) : [] }), raw => parseAzurePull(raw, repo, viewer, { webUrl: this.webUrl }));
+	private async rows(repo: IVoltPrRepoRef, raws: readonly IAzurePullRequestJson[], viewer: string): Promise<IVoltPullRequest[]> {
+		return this.eachSettled(raws, async raw => parseAzurePull(raw, repo, viewer, { webUrl: this.webUrl, checks: raw.status === 'active' ? await this.checks(repo, num(raw.pullRequestId)) : [] }), raw => parseAzurePull(raw, repo, viewer, { webUrl: this.webUrl }));
 	}
 
-	private async search(repo: IVoltPrRepoRef, criteria: Record<string, string>, limit: number): Promise<Json[]> {
-		const out = await this.http.get<Json>(`${this.repoPath(repo)}/pullrequests`, this.q({ ...Object.fromEntries(Object.entries(criteria).map(([key, value]) => [`searchCriteria.${key}`, value])), '$top': Math.min(100, limit) }));
+	private async search(repo: IVoltPrRepoRef, criteria: Record<string, string>, limit: number): Promise<IAzurePullRequestJson[]> {
+		const out = await this.http.get<IAzureListJson<IAzurePullRequestJson> | undefined>(`${this.repoPath(repo)}/pullrequests`, this.q({ ...Object.fromEntries(Object.entries(criteria).map(([key, value]) => [`searchCriteria.${key}`, value])), '$top': Math.min(100, limit) }));
 		return Array.isArray(out?.value) ? out.value : [];
 	}
 
@@ -103,7 +116,7 @@ export class AzureClient extends VoltPrRestClient implements IVoltPrHostClient {
 	}
 
 	async get(repo: IVoltPrRepoRef, number: number): Promise<IVoltPullRequest | undefined> {
-		const response = await this.http.request<Json>('GET', this.pr(repo, number), { query: this.q(), allow: [404] });
+		const response = await this.http.request<IAzurePullRequestJson | undefined>('GET', this.pr(repo, number), { query: this.q(), allow: [404] });
 		if (response.status === 404 || !response.body) {
 			return undefined;
 		}
@@ -111,7 +124,7 @@ export class AzureClient extends VoltPrRestClient implements IVoltPrHostClient {
 	}
 
 	async detail(repo: IVoltPrRepoRef, number: number): Promise<IVoltPullRequestDetail> {
-		const response = await this.http.request<Json>('GET', this.pr(repo, number), { query: this.q(), allow: [404] });
+		const response = await this.http.request<IAzurePullRequestJson>('GET', this.pr(repo, number), { query: this.q(), allow: [404] });
 		if (response.status === 404) {
 			throw new VoltPrError('notFound', `Pull request ${number} was not found in ${repo.owner}/${repo.name}.`);
 		}
@@ -120,25 +133,25 @@ export class AzureClient extends VoltPrRestClient implements IVoltPrHostClient {
 			this.viewer(repo.owner),
 			this.checks(repo, number).catch(() => []),
 			this.changes(repo, number).catch(() => []),
-			this.http.get<Json>(`${this.pr(repo, number)}/threads`, this.q()).then(out => Array.isArray(out?.value) ? out.value : []).catch(() => []),
-			this.http.get<Json>(`${this.pr(repo, number)}/commits`, this.q({ '$top': 100 })).then(out => Array.isArray(out?.value) ? out.value : []).catch(() => []),
+			this.http.get<IAzureListJson<IAzureThreadJson> | undefined>(`${this.pr(repo, number)}/threads`, this.q()).then(out => Array.isArray(out?.value) ? out.value : []).catch(() => []),
+			this.http.get<IAzureListJson<IAzureCommitJson> | undefined>(`${this.pr(repo, number)}/commits`, this.q({ '$top': 100 })).then(out => Array.isArray(out?.value) ? out.value : []).catch(() => []),
 		]);
 		return parseAzureDetail({ pull, checks, changes, threads, commits, webUrl: this.webUrl }, repo, viewer);
 	}
 
 	/** The last iteration's changes against the target. */
-	private async changes(repo: IVoltPrRepoRef, number: number): Promise<Json[]> {
-		const iterations = await this.http.get<Json>(`${this.pr(repo, number)}/iterations`, this.q());
-		const last = Array.isArray(iterations?.value) ? iterations.value.reduce((max: number, iteration: Json) => Math.max(max, Number(iteration?.id) || 0), 0) : 0;
+	private async changes(repo: IVoltPrRepoRef, number: number): Promise<IAzureChangeEntryJson[]> {
+		const iterations = await this.http.get<IAzureListJson<{ readonly id?: unknown } | undefined> | undefined>(`${this.pr(repo, number)}/iterations`, this.q());
+		const last = Array.isArray(iterations?.value) ? iterations.value.reduce((max, iteration) => Math.max(max, Number(iteration?.id) || 0), 0) : 0;
 		if (!last) {
 			return [];
 		}
-		const changes = await this.http.get<Json>(`${this.pr(repo, number)}/iterations/${last}/changes`, this.q({ '$top': 2000, '$compareTo': 0 }));
+		const changes = await this.http.get<{ readonly changeEntries?: IAzureChangeEntryJson[] } | undefined>(`${this.pr(repo, number)}/iterations/${last}/changes`, this.q({ '$top': 2000, '$compareTo': 0 }));
 		return Array.isArray(changes?.changeEntries) ? changes.changeEntries : [];
 	}
 
 	async create(request: IVoltPrCreateRequest): Promise<IVoltPullRequest> {
-		const created = await this.http.json<Json>('POST', `${this.repoPath(request.repo)}/pullrequests`, {
+		const created = await this.http.json<IAzurePullRequestJson | undefined>('POST', `${this.repoPath(request.repo)}/pullrequests`, {
 			query: this.q(),
 			body: { sourceRefName: `refs/heads/${request.head}`, targetRefName: `refs/heads/${request.base}`, title: request.title, description: request.body, isDraft: request.draft },
 		});
@@ -149,7 +162,7 @@ export class AzureClient extends VoltPrRestClient implements IVoltPrHostClient {
 	}
 
 	async merge(request: IVoltPrMergeRequest): Promise<void> {
-		const pull = await this.http.get<Json>(this.pr(request.repo, request.number), this.q());
+		const pull = await this.http.get<IAzurePullRequestJson | undefined>(this.pr(request.repo, request.number), this.q());
 		const head = String(pull?.lastMergeSourceCommit?.commitId ?? '');
 		if (request.headOid && head && head !== request.headOid) {
 			throw new VoltPrError('stale', 'Someone pushed to the branch since you looked.');
@@ -254,10 +267,10 @@ export class AzureClient extends VoltPrRestClient implements IVoltPrHostClient {
 
 	async remoteBranches(repo: IVoltPrRepoRef): Promise<string[]> {
 		const [repoRaw, refs] = await Promise.all([
-			this.http.get<Json>(this.repoPath(repo), this.q()),
-			this.http.get<Json>(`${this.repoPath(repo)}/refs`, this.q({ filter: 'heads/', '$top': 300 })),
+			this.http.get<{ readonly defaultBranch?: unknown } | undefined>(this.repoPath(repo), this.q()),
+			this.http.get<IAzureListJson<{ readonly name?: unknown } | undefined> | undefined>(`${this.repoPath(repo)}/refs`, this.q({ filter: 'heads/', '$top': 300 })),
 		]);
-		const names = (Array.isArray(refs?.value) ? refs.value : []).map((ref: Json) => azureBranch(ref?.name)).filter(Boolean) as string[];
+		const names = (Array.isArray(refs?.value) ? refs.value : []).map(ref => azureBranch(ref?.name)).filter(Boolean);
 		const main = azureBranch(repoRaw?.defaultBranch);
 		return main ? [main, ...names.filter(name => name !== main)] : names;
 	}

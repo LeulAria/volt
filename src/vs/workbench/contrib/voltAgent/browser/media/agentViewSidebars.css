@@ -489,7 +489,7 @@
 	height: 14px;
 }
 
-/* "+12 −3" at the end of the Changes row. */
+/* "+12 -3" at the end of the Changes row. */
 .volt-agent-dock-row > .volt-agent-dock-row-label {
 	flex: 1;
 }

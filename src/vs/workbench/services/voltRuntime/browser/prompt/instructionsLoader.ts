@@ -24,24 +24,43 @@ const RULE_DIRS = ['.cursor/rules', '.volt/rules'];
 const SUBAGENT_DIRS = ['.volt/agents', '.agents/agents', '.claude/agents', '.cursor/agents', '.codex/agents'];
 const MAX_DOC_CHARS = 60_000;
 
+/** Skill, rule, subagent and plugin folders of any layout above, and the files that enable plugins. */
+const INSTRUCTION_PATH = /\/\.(?:volt|agents|claude|cursor|codex)(?:\/(?:skills|rules|agents|plugins)(?:\/|$)|$)|\/\.claude\/settings\.json$/i;
+
+/** Whether a change to this file or folder can change what {@link loadInstructions} returns. */
+export function affectsInstructions(resource: URI): boolean {
+	return INSTRUCTION_PATH.test(resource.path);
+}
+
 /** Workspace skills win over personal ones with the same name. */
 export async function loadInstructions(fileService: IFileService, root: URI | undefined, home: URI | undefined): Promise<IInstructionsSnapshot> {
-	const plugins = home ? await pluginRoots(fileService, home) : [];
-	const skillDirs = [
+	const ownSkillDirs = [
 		...(root ? WORKSPACE_SKILL_DIRS.map(dir => joinPath(root, dir)) : []),
 		...(home ? HOME_SKILL_DIRS.map(dir => joinPath(home, dir)) : []),
-		...plugins.map(plugin => joinPath(plugin, 'skills')),
 	];
-	const agentDirs = [
+	const ownAgentDirs = [
 		...(root ? SUBAGENT_DIRS.map(dir => joinPath(root, dir)) : []),
 		...(home ? SUBAGENT_DIRS.map(dir => joinPath(home, dir)) : []),
-		...plugins.map(plugin => joinPath(plugin, 'agents')),
 	];
-	const [skillLists, ruleLists, agentLists] = await Promise.all([
-		Promise.all(skillDirs.map(dir => loadSkills(fileService, dir))),
+	// The workspace's and the user's folders do not wait for the plugin scan; plugins still come last.
+	const fromPlugins = (home ? pluginRoots(fileService, home) : Promise.resolve([])).then(async plugins => {
+		const skillDirs = plugins.map(plugin => joinPath(plugin, 'skills'));
+		const agentDirs = plugins.map(plugin => joinPath(plugin, 'agents'));
+		const [skills, agents] = await Promise.all([
+			Promise.all(skillDirs.map(dir => loadSkills(fileService, dir))),
+			Promise.all(agentDirs.map(dir => loadSubagents(fileService, dir))),
+		]);
+		return { skillDirs, skills, agents };
+	});
+	const [ownSkills, ruleLists, ownAgents, plugin] = await Promise.all([
+		Promise.all(ownSkillDirs.map(dir => loadSkills(fileService, dir))),
 		Promise.all(root ? RULE_DIRS.map(dir => loadRules(fileService, joinPath(root, dir), 0)) : []),
-		Promise.all(agentDirs.map(dir => loadSubagents(fileService, dir))),
+		Promise.all(ownAgentDirs.map(dir => loadSubagents(fileService, dir))),
+		fromPlugins,
 	]);
+	const skillDirs = [...ownSkillDirs, ...plugin.skillDirs];
+	const skillLists = [...ownSkills, ...plugin.skills];
+	const agentLists = [...ownAgents, ...plugin.agents];
 	const skills: IInstructionDoc[] = [];
 	const names = new Set<string>();
 	for (const skill of skillLists.flat()) {
@@ -104,11 +123,14 @@ async function loadSubagents(fileService: IFileService, dir: URI): Promise<ISuba
  * (`~/.volt/plugins/<name>`), and Cursor's newest finished download of each plugin.
  */
 async function pluginRoots(fileService: IFileService, home: URI): Promise<URI[]> {
-	const dirs: URI[] = [];
-	const [installed, settings] = await Promise.all([
+	// Every source is read at once; the order of the result stays Claude's, Volt's, Cursor's.
+	const [installed, settings, volt, cursor] = await Promise.all([
 		readJson(fileService, joinPath(home, '.claude', 'plugins', 'installed_plugins.json')),
 		readJson(fileService, joinPath(home, '.claude', 'settings.json')),
+		resolve(fileService, joinPath(home, '.volt', 'plugins')),
+		cursorPluginRoots(fileService, home),
 	]);
+	const dirs: URI[] = [];
 	const enabled = ((settings as { enabledPlugins?: Record<string, unknown> } | undefined)?.enabledPlugins ?? {}) as Record<string, unknown>;
 	const plugins = (installed as { plugins?: Record<string, unknown> } | undefined)?.plugins ?? {};
 	for (const [key, entries] of Object.entries(plugins)) {
@@ -120,27 +142,26 @@ async function pluginRoots(fileService: IFileService, home: URI): Promise<URI[]>
 			dirs.push(URI.file(entry.installPath));
 		}
 	}
-	const volt = await resolve(fileService, joinPath(home, '.volt', 'plugins'));
 	for (const plugin of volt?.children ?? []) {
 		if (plugin.isDirectory) {
 			dirs.push(plugin.resource);
 		}
 	}
-	const cursorCache = await resolve(fileService, joinPath(home, '.cursor', 'plugins', 'cache'));
-	for (const marketplace of cursorCache?.children ?? []) {
-		const named = marketplace.isDirectory ? await resolve(fileService, marketplace.resource) : undefined;
-		for (const plugin of named?.children ?? []) {
-			if (!plugin.isDirectory) {
-				continue;
-			}
-			const versions = await resolve(fileService, plugin.resource, true);
-			const newest = (versions?.children ?? []).filter(child => child.isDirectory).sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0))[0];
-			if (newest) {
-				dirs.push(newest.resource);
-			}
-		}
-	}
+	dirs.push(...cursor);
 	return dirs;
+}
+
+/** The newest finished download of each Cursor plugin, every marketplace and plugin read in parallel. */
+async function cursorPluginRoots(fileService: IFileService, home: URI): Promise<URI[]> {
+	const cache = await resolve(fileService, joinPath(home, '.cursor', 'plugins', 'cache'));
+	const marketplaces = await Promise.all((cache?.children ?? []).filter(child => child.isDirectory).map(async marketplace => {
+		const named = await resolve(fileService, marketplace.resource);
+		return Promise.all((named?.children ?? []).filter(plugin => plugin.isDirectory).map(async plugin => {
+			const versions = await resolve(fileService, plugin.resource, true);
+			return (versions?.children ?? []).filter(child => child.isDirectory).sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0))[0]?.resource;
+		}));
+	}));
+	return marketplaces.flat().filter((dir): dir is URI => !!dir);
 }
 
 async function readJson(fileService: IFileService, uri: URI): Promise<unknown> {
@@ -160,24 +181,19 @@ async function loadRules(fileService: IFileService, dir: URI, depth: number): Pr
 	if (!stat?.children) {
 		return [];
 	}
-	const rules: IRuleDoc[] = [];
-	for (const child of [...stat.children].sort((a, b) => a.name.localeCompare(b.name))) {
+	// Read in parallel; the result keeps the sorted order.
+	const loaded = await Promise.all([...stat.children].sort((a, b) => a.name.localeCompare(b.name)).map(async (child): Promise<IRuleDoc[]> => {
 		if (child.isDirectory) {
-			if (depth < 2) {
-				rules.push(...await loadRules(fileService, child.resource, depth + 1));
-			}
-			continue;
+			return depth < 2 ? loadRules(fileService, child.resource, depth + 1) : [];
 		}
 		if (!/\.(mdc|md|txt)$/i.test(child.name)) {
-			continue;
+			return [];
 		}
 		const text = await readText(fileService, child.resource);
 		const rule = text ? ruleFromFile(text, child.name, child.resource.toString()) : undefined;
-		if (rule) {
-			rules.push(rule);
-		}
-	}
-	return rules;
+		return rule ? [rule] : [];
+	}));
+	return loaded.flat();
 }
 
 async function resolve(fileService: IFileService, uri: URI, metadata = false): Promise<IFileStat | undefined> {

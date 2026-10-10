@@ -41,13 +41,16 @@ export interface IAnthropicRequest {
 const EPHEMERAL = { type: 'ephemeral' } as const;
 
 export function buildAnthropicRequest(input: IAnthropicRequestInput): IAnthropicRequest {
+	// A one-off prompt (Tab): a cache write costs a quarter more than a read and is never hit.
+	const oneOff = input.messages.length > 0 && input.messages.every(message => message.ephemeral);
 	const systemText = input.messages.filter(message => message.role === 'system').map(message => message.content).filter(Boolean);
 	const system = systemText.map((text, index) => ({
 		type: 'text',
 		text,
-		...(index === systemText.length - 1 ? { cache_control: EPHEMERAL } : {}),
+		...(!oneOff && index === systemText.length - 1 ? { cache_control: EPHEMERAL } : {}),
 	}));
-	const messages = markCacheBreakpoints(toAnthropicMessages(input.messages, { model: input.modelId }));
+	const converted = toAnthropicMessages(input.messages, { model: input.modelId });
+	const messages = oneOff ? converted : markCacheBreakpoints(converted);
 	const betas: string[] = [];
 	const thinking = claudeThinkingParams(input.meta, input.effort, input.maxTokens);
 	const body: Record<string, unknown> = {
@@ -61,12 +64,34 @@ export function buildAnthropicRequest(input: IAnthropicRequestInput): IAnthropic
 		...samplingParams(input, thinking),
 	};
 	if (input.firstParty && input.tools?.length) {
-		// Old tool results are cleared server-side once the prompt grows. That is not a history
-		// edit, so cached prefixes and replayed thinking stay valid.
-		body.context_management = { edits: [{ type: 'clear_tool_uses_20250919' }] };
+		// Old tool results are cleared server-side once the prompt grows. Server-side clearing is not
+		// a history edit (replayed thinking stays valid), but every clearing pass rewrites the prompt
+		// from the first cleared result on, so the cached prefix past that point is lost. With the
+		// defaults (trigger 100K, keep 3) that happened on nearly every step of a long run; here it
+		// starts late and must free a large batch at once, so it happens rarely.
+		body.context_management = {
+			edits: [{
+				type: 'clear_tool_uses_20250919',
+				trigger: { type: 'input_tokens', value: toolClearTrigger(input.meta.contextWindow) },
+				keep: { type: 'tool_uses', value: 3 },
+				clear_at_least: { type: 'input_tokens', value: TOOL_CLEAR_AT_LEAST },
+			}],
+		};
 		betas.push('context-management-2025-06-27');
 	}
 	return { body, betas };
+}
+
+/** A clearing pass is skipped unless it frees at least this much, so the cache write pays for itself. */
+const TOOL_CLEAR_AT_LEAST = 40_000;
+
+/**
+ * Prompt size at which old tool results start to be cleared: 70% of the window Volt actually uses
+ * (capped like client-side compaction, which starts at 80%), so clearing comes before compaction.
+ */
+function toolClearTrigger(contextWindow: number): number {
+	const window = Math.min(contextWindow > 0 ? contextWindow : 200_000, 400_000);
+	return Math.max(100_000, Math.round(window * 0.7));
 }
 
 /**

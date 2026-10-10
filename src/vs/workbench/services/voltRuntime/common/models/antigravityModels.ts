@@ -65,8 +65,8 @@ export function parseAntigravityCliModelLabel(value: string): IAntigravityCliMod
 	const tabIndex = stripped.indexOf('\t');
 	const labelColumn = tabIndex >= 0
 		? stripped.slice(tabIndex + 1).trim()
-		: stripped.replace(/^(?:[*•-]\s+)+/u, '');
-	const trimmed = labelColumn.replace(/^(?:[*•-]\s+)+/u, '').trim();
+		: stripped.replace(/^(?:[*\u2022-]\s+)+/u, '');
+	const trimmed = labelColumn.replace(/^(?:[*\u2022-]\s+)+/u, '').trim();
 	if (!trimmed) {
 		return undefined;
 	}

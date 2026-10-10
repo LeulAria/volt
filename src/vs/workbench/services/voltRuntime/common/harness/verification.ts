@@ -393,9 +393,10 @@ const TAIL_LINES = 40;
 type LineRule = readonly [RegExp, 'pass' | 'fail', number];
 
 const NAME_RULES: readonly LineRule[] = [
+	// allow-any-unicode-next-line
 	// node:test spec reporter and Mocha (`✔ name (1ms)` / `✖ name`), Jest/Vitest (`✓` / `✕` / `×`).
-	[/^\s*[✔✓√]\s+(.+)$/, 'pass', 1],
-	[/^\s*[✖✕×✗]\s+(.+)$/, 'fail', 1],
+	[/^\s*[\u2714\u2713\u221a]\s+(.+)$/, 'pass', 1],
+	[/^\s*[\u2716\u2715\u00d7\u2717]\s+(.+)$/, 'fail', 1],
 	// TAP (node --test in a pipe on older Node, tap, ava --tap).
 	[/^\s*ok \d+ - (.+?)(?:\s+#\s*(?:SKIP|TODO).*)?$/, 'pass', 1],
 	[/^\s*not ok \d+ - (.+?)(?:\s+#\s*(?:SKIP|TODO).*)?$/, 'fail', 1],
@@ -415,7 +416,7 @@ const NAME_RULES: readonly LineRule[] = [
 
 /** Summary lines: the counts are only used when names are missing on one side. */
 const COUNT_RULES: readonly ((text: string) => { pass: number; fail: number } | undefined)[] = [
-	text => matchCounts(text, /^[ℹ#] pass (\d+)$/m, /^[ℹ#] fail (\d+)$/m),
+	text => matchCounts(text, /^[\u2139#] pass (\d+)$/m, /^[\u2139#] fail (\d+)$/m),
 	text => matchCounts(text, /^Tests:.*?(\d+) passed/m, /^Tests:.*?(\d+) failed/m, true),
 	text => matchCounts(text, /^\s*Tests\s+.*?(\d+) passed/m, /^\s*Tests\s+.*?(\d+) failed/m, true),
 	text => matchCounts(text, /^\s*(\d+) passing\b/m, /^\s*(\d+) failing\b/m, true),
@@ -442,7 +443,7 @@ export function parseCheckOutput(command: string, output: string, exitCode: numb
 	const passed = new Set<string>();
 	for (const raw of text.split('\n')) {
 		const line = raw.trimEnd();
-		if (!line || /^\s*[✖✕×✗]\s+failing tests:?$/i.test(line)) {
+		if (!line || /^\s*[\u2716\u2715\u00d7\u2717]\s+failing tests:?$/i.test(line)) {
 			continue;
 		}
 		for (const [pattern, verdict, group] of NAME_RULES) {

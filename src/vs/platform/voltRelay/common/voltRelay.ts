@@ -39,7 +39,7 @@ export interface IVoltRelayEvent {
 	readonly data?: unknown;
 }
 
-export type VoltRelaySignatureKind = 'none' | 'github' | 'generic';
+export type VoltRelaySignatureKind = 'none' | 'github' | 'slack' | 'sentry' | 'linear' | 'pagerduty' | 'teams' | 'generic';
 
 /** HMAC settings of a hook; same shape the relay stores. */
 export interface IVoltRelaySignature {

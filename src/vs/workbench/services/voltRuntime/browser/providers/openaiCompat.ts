@@ -122,7 +122,7 @@ export class OpenAICompatProvider implements IModelProvider {
 				usage?: { prompt_tokens?: number; completion_tokens?: number; input_tokens?: number; output_tokens?: number; prompt_tokens_details?: { cached_tokens?: number }; prompt_cache_hit_tokens?: number };
 			};
 			try {
-				json = JSON.parse(data);
+				json = JSON.parse(data) as typeof json;
 			} catch {
 				continue;
 			}

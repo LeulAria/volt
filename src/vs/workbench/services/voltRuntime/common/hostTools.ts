@@ -14,6 +14,7 @@ import type { VoltMode } from './modes.js';
 import type { AgentQuestionDraft, IAgentQuestionResponse } from './questions.js';
 import { PROPOSE_PLAN_TOOL_NAME } from './plans.js';
 import { parseActSteps } from './tools/pageModel.js';
+import { TERMINAL_READ_TOOL_NAMES } from './terminalTools.js';
 import type { IRgbaImage } from './tools/imageAnalysis.js';
 
 export const IVoltHostToolService = createDecorator<IVoltHostToolService>('voltHostToolService');
@@ -85,7 +86,7 @@ export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
  * and Android emulators. `capture`: screenshots and recordings of windows. An agent can be
  * handed a subset (`getMcpServers(sessionId, { groups })`) to keep its tool list short.
  */
-export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture' | 'memory' | 'desktop';
+export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture' | 'memory' | 'desktop' | 'terminal';
 
 export interface IVoltHostToolInfo {
 	readonly name: string;
@@ -530,8 +531,12 @@ const TOOL_PREFIX_RE = /^(?:mcp__volt__|volt[-_:]\s*|volt\.)/i;
 /** Pull request tools (registered by the pull request service): safe, they only change Volt's own state. */
 export const PULL_REQUEST_TOOL_NAMES = ['link_pull_request', 'unlink_pull_request', 'list_thread_pull_requests', 'watch_pull_request', 'unwatch_pull_request', 'stack_status', 'stack_branch', 'restack_stack'] as const;
 
-/** Scheduled task tools (registered by the schedule service): they only change Volt's own state. */
-export const SCHEDULE_TOOL_NAMES = ['schedule_task', 'list_scheduled_tasks', 'update_scheduled_task', 'delete_scheduled_task', 'run_scheduled_task_now'] as const;
+/**
+ * Automation tools (registered by the automation service): `manage_automations` creates, lists,
+ * changes and runs automations; `automation` is what a run uses (memory, Slack, Teams, pull
+ * requests). Two tools with an action each, so every chat's tool list stays short.
+ */
+export const AUTOMATION_TOOL_NAMES = ['manage_automations', 'automation'] as const;
 
 /**
  * Orchestration tools (registered by the thread tool service): an agent reads, messages, forks and
@@ -573,7 +578,7 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (SCHEDULE_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id)) {
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (AUTOMATION_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id) || TERMINAL_READ_TOOL_NAMES.has(id)) {
 				return canonicalHostToolName(id);
 			}
 		}

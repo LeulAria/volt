@@ -11,22 +11,29 @@ import { Position } from '../../../../editor/common/core/position.js';
 import { Range } from '../../../../editor/common/core/range.js';
 import { InlineCompletion, InlineCompletionContext, InlineCompletions, InlineCompletionsProvider } from '../../../../editor/common/languages.js';
 import { ITextModel } from '../../../../editor/common/model.js';
-import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 import { IComposerPredictionInput, IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
 import { composerContextFor, IComposerPredictionContext } from '../../../services/voltRuntime/common/prediction/composerContext.js';
 import { ComposerLanguageModel } from '../../../services/voltRuntime/common/prediction/composerPredictor.js';
+import { LOCAL_SURE } from '../../../services/voltRuntime/common/prediction/localPredictor.js';
+import { ClipboardWatch } from './clipboardWatch.js';
+import { TerminalCommandTracker } from './terminalCommandTracker.js';
 
 /** A composer longer than this is a pasted log or file, not a sentence being typed. */
 const MAX_DRAFT_CHARS = 20_000;
 /** Until the settings say otherwise: the pause before the model is asked. */
 const DEFAULT_DELAY_MS = 300;
+/** A clipboard copied this recently rides along; an older one only when the draft names something in it. */
+const CLIPBOARD_FRESH_MS = 5 * 60_000;
+/** Terminal commands this recent are part of what the message may be about. */
+const TERMINAL_RECENT_MS = 15 * 60_000;
 
 /**
  * Ghost text in the agent composers (the prompt box, editing a sent message): the rest of the
  * word, the next words, the rest of the sentence. Guesses from the user's own prompts show on
- * every keystroke; once the typing pauses, the prediction model continues the sentence with the
- * chat in view, and its answer replaces the guess (the change event makes the editor ask again,
- * and the answer is then known). Tab accepts.
+ * every keystroke; a sure one (a prompt sent before being typed again) is the answer, with no
+ * model call. Otherwise, once the typing pauses, the prediction model continues the sentence with
+ * the chat, the agent's activity and the terminals in view, and its answer replaces the guess
+ * (the change event makes the editor ask again, and the answer is then known). Tab accepts.
  */
 export class VoltComposerCompletionsProvider extends Disposable implements InlineCompletionsProvider<InlineCompletions> {
 
@@ -42,12 +49,11 @@ export class VoltComposerCompletionsProvider extends Disposable implements Inlin
 	/** The last text ghost text was asked for, for the model call when the typing pauses. */
 	private latest: { readonly model: ITextModel; readonly input: IComposerPredictionInput; readonly versionId: number } | undefined;
 	private local: { readonly key: string; readonly model: ComposerLanguageModel } | undefined;
-	private clipboard = '';
-	private clipboardReadAt = 0;
 
 	constructor(
+		private readonly terminals: TerminalCommandTracker,
+		private readonly clipboard: ClipboardWatch,
 		@IVoltPredictionService private readonly predictionService: IVoltPredictionService,
-		@IClipboardService private readonly clipboardService: IClipboardService,
 	) {
 		super();
 		this.pause = this._register(new RunOnceScheduler(() => this.askModel(), DEFAULT_DELAY_MS));
@@ -68,15 +74,17 @@ export class VoltComposerCompletionsProvider extends Disposable implements Inlin
 			this.pause.cancel();
 			return undefined;
 		}
-		void this.refreshClipboard();
+		this.clipboard.refresh();
 		const chat = composerContextFor(model.uri);
+		const terminals = this.terminals.recent(TERMINAL_RECENT_MS);
 		const input: IComposerPredictionInput = {
 			uri: model.uri,
 			draft,
 			after,
 			transcript: chat?.transcript ?? [],
 			vocabulary: chat?.vocabulary ?? [],
-			clipboard: this.clipboard,
+			clipboard: this.clipboard.recent(CLIPBOARD_FRESH_MS, text => draftNamesClipboard(draft, text)),
+			activity: [...(chat?.activity ?? []), ...terminals],
 		};
 		this.latest = { model, input, versionId: model.getVersionId() };
 
@@ -84,13 +92,20 @@ export class VoltComposerCompletionsProvider extends Disposable implements Inlin
 		const known = this.predictionService.peekComposer(input);
 		if (known) {
 			this.pause.cancel();
+			this.predictionService.stats.bump('instant');
 			return this.list(position, known, true);
+		}
+		const guess = this.languageModel(chat).predictScored(draft);
+		if (guess && guess.confidence >= LOCAL_SURE) {
+			// A prompt sent before, typed out again: nothing for the model to add.
+			this.pause.cancel();
+			this.predictionService.stats.bump('local');
+			return this.list(position, guess.text, true);
 		}
 		// Each keystroke restarts the pause; the model is asked once the typing stops.
 		this.pause.schedule(Math.max(0, settings.composerDelayMs));
-		const guess = this.languageModel(chat).predict(draft);
 		// Not forward-stable: the editor would keep showing it over the model's answer.
-		return guess ? this.list(position, guess, false) : undefined;
+		return guess ? this.list(position, guess.text, false) : undefined;
 	}
 
 	disposeInlineCompletions(): void {
@@ -134,20 +149,21 @@ export class VoltComposerCompletionsProvider extends Disposable implements Inlin
 		return { items: [item], enableForwardStability: stable };
 	}
 
-	private async refreshClipboard(): Promise<void> {
-		if (Date.now() - this.clipboardReadAt < 1000) {
-			return;
-		}
-		this.clipboardReadAt = Date.now();
-		try {
-			this.clipboard = (await this.clipboardService.readText()).slice(0, 2_000);
-		} catch {
-			// No clipboard access: the prompt goes without it.
-		}
-	}
 }
 
 /** A slash command or an @ mention being typed: their own menus complete those. */
 function typingCommandOrMention(draft: string): boolean {
 	return /^\s*\/\S*$/.test(draft) || /(^|\s)@[^\s]*$/.test(draft);
+}
+
+/** The draft names something from an older clipboard: an identifier, a path, a long word. */
+function draftNamesClipboard(draft: string, clipboard: string): boolean {
+	const words = new Set(draft.slice(-400).match(/[\p{L}\p{N}_$.\/-]{4,}/gu) ?? []);
+	for (const word of words) {
+		const name = word.length >= 8 || /[A-Z_.\/$\d-]/.test(word.slice(1));
+		if (name && clipboard.includes(word)) {
+			return true;
+		}
+	}
+	return false;
 }

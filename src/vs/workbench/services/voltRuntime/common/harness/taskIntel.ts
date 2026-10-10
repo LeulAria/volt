@@ -403,7 +403,7 @@ function defaultCriterionText(evidence: EvidenceKind): string {
 function scoreComplexity(body: string, intent: IIntent, deliverables: readonly string[], constraints: readonly ITaskConstraint[], shape: IRequestShape): number {
 	const words = body.split(/\s+/).filter(Boolean).length;
 	const paths = (body.match(/[\w./-]+\.[a-z]{1,5}\b/gi) ?? []).length;
-	const bullets = (body.match(/^\s*(?:[-*•]|\d+[.)])\s+/gm) ?? []).length;
+	const bullets = (body.match(/^\s*(?:[-*\u2022]|\d+[.)])\s+/gm) ?? []).length;
 
 	let score = 0;
 	score += laneWeight(intent.lane);

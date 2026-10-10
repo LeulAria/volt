@@ -55,6 +55,8 @@ export interface IVoltMenuItem<T> {
 	readonly prompt?: IVoltMenuPrompt;
 	/** Stays listed while searching, whatever the query. */
 	readonly alwaysShow?: boolean;
+	/** Extra classes on the row, for a menu's own styling (a right-aligned link row). */
+	readonly className?: string;
 	readonly data: T;
 }
 
@@ -541,6 +543,9 @@ class VoltMenuWidget<T> extends Disposable {
 			element.setAttribute('role', 'button');
 			renderItem(element, item, undefined);
 			element.classList.toggle('disabled', !!item.disabled);
+			if (item.className) {
+				element.classList.add(...item.className.split(' '));
+			}
 			this._register(addDisposableListener(element, 'mouseenter', () => {
 				this.setActive(this.rows.length + this.footerRows.findIndex(row => row.element === element), false);
 				this.hoverFlyout();
@@ -935,6 +940,15 @@ class ItemRenderer<T> implements IListRenderer<Row<T>, HTMLElement> {
 		clearNode(element);
 		element.classList.toggle('disabled', !!row.item.disabled);
 		element.classList.toggle('checked', !!row.item.checked);
+		// Rows are reused: drop the classes the previous item added.
+		if (element.dataset.itemClass) {
+			element.classList.remove(...element.dataset.itemClass.split(' '));
+			delete element.dataset.itemClass;
+		}
+		if (row.item.className) {
+			element.classList.add(...row.item.className.split(' '));
+			element.dataset.itemClass = row.item.className;
+		}
 		renderItem(element, row.item, row.matches);
 	}
 

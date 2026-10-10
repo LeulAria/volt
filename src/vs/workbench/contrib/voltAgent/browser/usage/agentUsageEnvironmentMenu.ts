@@ -6,7 +6,7 @@
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { localize } from '../../../../../nls.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { IVoltMenuHandle, IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
+import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 
 /** Which environments the Usage header is showing. One machine today, so both flags move together. */
 export interface IUsageEnvironmentSelection {
@@ -29,7 +29,7 @@ const SLIDER_LINES: readonly (readonly [string, string, string, string])[] = [
 
 /**
  * macOS sometimes stores the computer name with bidi marks, so the logical order is the reverse
- * of what the menu should show (“MacBook Pro” then “LeulAria” reads as “LeulAria MacBook Pro”).
+ * of what the menu should show ("MacBook Pro" then "LeulAria" reads as "LeulAria MacBook Pro").
  */
 export function displayComputerName(raw: string): string {
 	const trimmed = raw.trim();
@@ -47,7 +47,7 @@ export function displayComputerName(raw: string): string {
 	return (rtl ? chunks.reverse() : chunks).join(' ');
 }
 
-/** Friendly machine name from the process environment, or the caller’s fallback (“This Mac”). */
+/** Friendly machine name from the process environment, or the caller's fallback ("This Mac"). */
 export function usageMachineName(env: { readonly COMPUTERNAME?: string; readonly HOSTNAME?: string } | undefined, fallback: string): string {
 	const computer = env?.COMPUTERNAME?.trim();
 	if (computer) {
@@ -60,7 +60,7 @@ export function usageMachineName(env: { readonly COMPUTERNAME?: string; readonly
 	return host.includes(' ') ? host : host.replace(/-/g, ' ');
 }
 
-/** Trigger text: “All environments” while every environment is on, otherwise the one that is. */
+/** Trigger text: "All environments" while every environment is on, otherwise the one that is. */
 export function usageEnvironmentTriggerLabel(state: IUsageEnvironmentSelection, machine: string, allLabel: string, noneLabel: string): string {
 	if (state.all && state.local) {
 		return allLabel;
@@ -71,7 +71,7 @@ export function usageEnvironmentTriggerLabel(state: IUsageEnvironmentSelection, 
 	return noneLabel;
 }
 
-/** “All environments” selects every row. The local row is the only environment, so it tracks that. */
+/** "All environments" selects every row. The local row is the only environment, so it tracks that. */
 export function toggleUsageEnvironment(state: IUsageEnvironmentSelection, id: 'all' | 'local'): IUsageEnvironmentSelection {
 	if (id === 'all') {
 		const on = !(state.all && state.local);
@@ -113,13 +113,12 @@ export interface IUsageEnvironmentMenuOptions {
 }
 
 /**
- * The Usage header’s environment menu: checked environments, then Model prices.
+ * The Usage header's environment menu: checked environments, then Model prices.
  * Checking a row leaves the menu open. Model prices closes it.
  * Rows are the shared list menu, flush to the border.
  */
 export function showUsageEnvironmentMenu(contextViewService: IContextViewService, options: IUsageEnvironmentMenuOptions): void {
 	let state = options.state;
-	let menu: IVoltMenuHandle | undefined;
 	const allLabel = localize('voltUsage.allEnvironments', "All environments");
 	const pricesLabel = localize('voltUsage.modelPrices', "Model prices");
 	const doc = options.anchor.ownerDocument;
@@ -132,7 +131,7 @@ export function showUsageEnvironmentMenu(contextViewService: IContextViewService
 		data: id,
 	});
 	const width = Math.min(340, Math.max(228, Math.ceil(options.machineLabel.length * 7.6 + 64)));
-	menu = showVoltMenu(contextViewService, {
+	const menu = showVoltMenu(contextViewService, {
 		anchor: options.anchor,
 		position: 'below',
 		align: 'left',
@@ -156,7 +155,7 @@ export function showUsageEnvironmentMenu(contextViewService: IContextViewService
 			}
 			state = toggleUsageEnvironment(state, picked.data);
 			options.onToggle(state);
-			menu?.refresh();
+			menu.refresh();
 		},
 	});
 }

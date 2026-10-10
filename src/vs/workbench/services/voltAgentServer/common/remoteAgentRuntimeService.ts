@@ -17,7 +17,7 @@ import { VoltMode } from '../../voltRuntime/common/modes.js';
 import { IProviderProfile, IProviderProfileDraft } from '../../voltRuntime/common/profiles.js';
 import { IAgentDetectResult, IModelMessage, IVoltCatalogItem, IVoltProviderStatus } from '../../voltRuntime/common/providers.js';
 import type { IAgentQuestionRequest, IAgentQuestionResponse } from '../../voltRuntime/common/questions.js';
-import { IAgentRuntimeService, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IVoltSendRequest, IVoltSession } from '../../voltRuntime/common/session.js';
 import { IAgentServerClientService } from './agentServerClient.js';
@@ -32,6 +32,8 @@ export interface IRemoteSessionSummary extends Omit<IVoltSession, 'messages'> {
 	/** The checkout the chat works in now (its worktree, else the project folder). */
 	readonly workingFolder?: string;
 	readonly sandbox?: IVoltSandboxSettings;
+	/** The chat's access mode (its own, or the default). */
+	readonly accessMode?: VoltAccessMode;
 	/** How `/compact` would run on the chat's own model now. */
 	readonly compaction?: IVoltCompactionPlan;
 }
@@ -67,6 +69,8 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 	readonly onDidChangeActiveCatalog = this._onDidChangeActiveCatalog.event;
 	private readonly _onDidEmit = this._register(new Emitter<IVoltEventEnvelope>());
 	readonly onDidEmit: Event<IVoltEventEnvelope> = this._onDidEmit.event;
+	private readonly _onDidChangeAgentBackgroundTask = this._register(new Emitter<IVoltAgentBackgroundTask>());
+	readonly onDidChangeAgentBackgroundTask: Event<IVoltAgentBackgroundTask> = this._onDidChangeAgentBackgroundTask.event;
 
 	private readonly listeners = new Map<string, Set<(e: IVoltEventEnvelope) => void>>();
 	/** Session objects handed out, updated in place as the server's summaries change. */
@@ -82,6 +86,12 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 			this._onDidEmit.fire(envelope);
 			for (const listener of [...this.listeners.get(envelope.sessionId) ?? []]) {
 				listener(envelope);
+			}
+		}));
+		this._register(client.onServerEvent(event => {
+			const data = event as { kind?: string; task?: unknown };
+			if (data.kind === 'runtime.backgroundTask' && data.task) {
+				this._onDidChangeAgentBackgroundTask.fire(data.task as IVoltAgentBackgroundTask);
 			}
 		}));
 	}
@@ -381,6 +391,11 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 		return this.value<string>('tabModelRef');
 	}
 
+	/** The predictor agent runs on the server, beside the models it serves. */
+	warmPredictor(ref: string | undefined): void {
+		this.client.send('runtime.warmPredictor', ref);
+	}
+
 	/** One completion, run by the server; its events are replayed here once it finishes. */
 	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken): AsyncIterable<IVoltEvent> {
 		const events = await this.client.call<IVoltEvent[]>('runtime.streamModel', ref, messages, options);
@@ -396,12 +411,17 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 
 	//#region Access and questions
 
-	getAccessMode(): VoltAccessMode {
-		return this.value<VoltAccessMode>('accessMode') ?? DEFAULT_ACCESS_MODE;
+	getAccessMode(sessionId?: string): VoltAccessMode {
+		const own = sessionId ? this.summary(sessionId)?.accessMode : undefined;
+		return own ?? this.value<VoltAccessMode>('accessMode') ?? DEFAULT_ACCESS_MODE;
 	}
 
-	setAccessMode(mode: VoltAccessMode): Promise<void> {
-		return this.client.call('runtime.setAccessMode', mode);
+	setAccessMode(mode: VoltAccessMode, sessionId?: string): Promise<void> {
+		return sessionId ? this.client.call('runtime.setAccessMode', mode, sessionId) : this.client.call('runtime.setAccessMode', mode);
+	}
+
+	stopAgentBackgroundTask(chatId: string, taskId: string): Promise<void> {
+		return this.client.call('runtime.stopAgentBackgroundTask', chatId, taskId);
 	}
 
 	getSandboxSettings(sessionId: string): IVoltSandboxSettings {

@@ -185,7 +185,7 @@ export class AgentVideoViewer extends Disposable {
 				'M8.6 7.6L20 17M8.6 16.4L20 7',
 			]));
 			append(this.deleteButton, $('span')).textContent = localize('voltAgent.videoDelete', "Delete");
-			setAgentTooltip(this.deleteButton, localize('voltAgent.videoDeleteHint', "Cut the selected part out of the video"), '⌫');
+			setAgentTooltip(this.deleteButton, localize('voltAgent.videoDeleteHint', "Cut the selected part out of the video"), '\u232b');
 			this._register(addDisposableListener(this.deleteButton, EventType.CLICK, () => this.deleteSelection()));
 			this.resetButton = append(row, $('button.volt-agent-image-cropbar-btn.volt-agent-video-reset')) as HTMLButtonElement;
 			this.resetButton.type = 'button';
@@ -356,8 +356,8 @@ export class AgentVideoViewer extends Disposable {
 		if (this.editable) {
 			this.rangeLabel.textContent = !this.loaded ? ''
 				: this.removed.length
-					? localize('voltAgent.videoKeeps', "Selected {0} – {1} · keeps {2}s", formatDuration(this.start, true), formatDuration(this.end, true), keptSeconds.toFixed(1))
-					: localize('voltAgent.videoRange', "{0} – {1} · {2}s", formatDuration(this.start, true), formatDuration(this.end, true), (this.end - this.start).toFixed(1));
+					? localize('voltAgent.videoKeeps', "Selected {0} \u2013 {1} · keeps {2}s", formatDuration(this.start, true), formatDuration(this.end, true), keptSeconds.toFixed(1))
+					: localize('voltAgent.videoRange', "{0} \u2013 {1} · {2}s", formatDuration(this.start, true), formatDuration(this.end, true), (this.end - this.start).toFixed(1));
 		}
 		if (this.deleteButton) {
 			this.deleteButton.disabled = !this.canDelete;
@@ -390,7 +390,7 @@ export class AgentVideoViewer extends Disposable {
 			block.dataset.index = String(index);
 			block.style.left = pct(range.start);
 			block.style.width = pct(range.end - range.start);
-			setAgentTooltip(block, localize('voltAgent.videoRemoved', "Deleted {0} – {1}. Click to bring it back", formatDuration(range.start, true), formatDuration(range.end, true)));
+			setAgentTooltip(block, localize('voltAgent.videoRemoved', "Deleted {0} \u2013 {1}. Click to bring it back", formatDuration(range.start, true), formatDuration(range.end, true)));
 		});
 	}
 

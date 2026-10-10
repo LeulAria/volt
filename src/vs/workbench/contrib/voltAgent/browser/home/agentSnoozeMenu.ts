@@ -145,7 +145,7 @@ export function showCustomSnoozeDialog(host: HTMLElement, snooze: (until: number
 		ariaLabel: localize('voltAgent.snooze.time', "Time"),
 	}));
 
-	// Duration: 2 Hours, with − and + around the amount.
+	// Duration: 2 Hours, with - and + around the amount.
 	const forPane = append(body, $('.volt-agent-snooze-fields'));
 	const stepper = append(field(forPane, localize('voltAgent.snooze.for', "Snooze for")), $('.volt-agent-snooze-stepper'));
 	const minus = append(stepper, $('button.volt-agent-snooze-step')) as HTMLButtonElement;

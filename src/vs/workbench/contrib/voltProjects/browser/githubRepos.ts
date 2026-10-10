@@ -193,7 +193,7 @@ export class GitHubReposService extends Disposable implements IGitHubReposServic
 		if (status < 200 || status >= 300) {
 			let message = '';
 			try {
-				message = String(JSON.parse(await asText(context) ?? '')?.message ?? '');
+				message = String((JSON.parse(await asText(context) ?? '') as { message?: unknown } | null)?.message ?? '');
 			} catch {
 				// Not JSON: the status says enough.
 			}

@@ -4,7 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { VSBuffer } from '../../../../../base/common/buffer.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { runWhenGlobalIdle } from '../../../../../base/common/async.js';
+import { Disposable, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -13,8 +14,10 @@ import { INativeLoopMessage } from '../../common/harness/nativeLoop.js';
 
 /**
  * The native model transcript on disk: every tool call and result, not just the visible text.
- * Saved at step boundaries, so after a reload (or a crash mid-run) the next message continues
- * with everything the model had seen, and an interrupted tool batch is repaired on replay.
+ * Saved at the end of a run, and during one at most every {@link SAVE_DELAY_MS} (at a step
+ * boundary, once the window is idle): a save serializes the whole transcript, up to megabytes.
+ * After a reload (or a crash mid-run) the next message continues with everything the model had
+ * seen as of the last save, and an interrupted tool batch is repaired on replay.
  */
 
 export interface INativeJournalEntry {
@@ -27,13 +30,17 @@ export interface INativeJournalEntry {
 	readonly savedAt: number;
 }
 
-const SAVE_DELAY_MS = 1_000;
+/** Longest a running turn's transcript waits to be saved; steps in between only update what will be written. */
+const SAVE_DELAY_MS = 8_000;
+/** How long a save may wait for the window to go idle. */
+const SAVE_IDLE_TIMEOUT_MS = 3_000;
 const MAX_BYTES = 8 * 1024 * 1024;
 const KEEP_FULL_TAIL = 40;
 
 export class NativeJournal extends Disposable {
 
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly idle = new Map<string, IDisposable>();
 	private readonly latest = new Map<string, () => INativeJournalEntry>();
 
 	constructor(
@@ -55,24 +62,40 @@ export class NativeJournal extends Disposable {
 		}
 	}
 
-	/** Debounced save; `now` writes immediately (end of a run). */
+	/**
+	 * Throttled save: the first step after a save starts the wait, later ones only replace the
+	 * snapshot it will write (the latest). `now` writes immediately (end of a run).
+	 */
 	schedule(sessionId: string, snapshot: () => INativeJournalEntry, now = false): Promise<void> | void {
 		this.latest.set(sessionId, snapshot);
+		if (now) {
+			this.cancel(sessionId);
+			return this.write(sessionId);
+		}
+		if (this.timers.has(sessionId) || this.idle.has(sessionId)) {
+			return;
+		}
+		this.timers.set(sessionId, setTimeout(() => {
+			this.timers.delete(sessionId);
+			this.idle.set(sessionId, runWhenGlobalIdle(() => {
+				this.idle.delete(sessionId);
+				void this.write(sessionId);
+			}, SAVE_IDLE_TIMEOUT_MS));
+		}, SAVE_DELAY_MS));
+	}
+
+	private cancel(sessionId: string): void {
 		const pending = this.timers.get(sessionId);
 		if (pending) {
 			clearTimeout(pending);
 			this.timers.delete(sessionId);
 		}
-		if (now) {
-			return this.write(sessionId);
-		}
-		this.timers.set(sessionId, setTimeout(() => {
-			this.timers.delete(sessionId);
-			void this.write(sessionId);
-		}, SAVE_DELAY_MS));
+		this.idle.get(sessionId)?.dispose();
+		this.idle.delete(sessionId);
 	}
 
 	async delete(sessionId: string): Promise<void> {
+		this.cancel(sessionId);
 		this.latest.delete(sessionId);
 		await this.fileService.del(this.file(sessionId)).catch(() => undefined);
 	}
@@ -95,11 +118,11 @@ export class NativeJournal extends Disposable {
 	}
 
 	private flushAll(): void {
-		for (const [sessionId, timer] of this.timers) {
-			clearTimeout(timer);
+		const pending = new Set([...this.timers.keys(), ...this.idle.keys()]);
+		for (const sessionId of pending) {
+			this.cancel(sessionId);
 			void this.write(sessionId);
 		}
-		this.timers.clear();
 	}
 
 	private file(sessionId: string): URI {

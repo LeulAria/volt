@@ -82,6 +82,8 @@ export class AgentContextUsageView extends Disposable {
 
 	readonly element: HTMLElement;
 
+	/** The left group (branch, environment); the editor adds the access picker here. */
+	readonly startElement: HTMLElement;
 	private readonly branchButton: HTMLButtonElement;
 	private readonly branchIcon: HTMLElement;
 	private readonly branchChevron: HTMLElement;
@@ -129,7 +131,7 @@ export class AgentContextUsageView extends Disposable {
 		this.scanner = new AgentCustomizationScanner(fileService);
 		this.element = $('.volt-agent-composer-status');
 
-		const start = append(this.element, $('.volt-agent-status-start'));
+		const start = this.startElement = append(this.element, $('.volt-agent-status-start'));
 		this.branchButton = append(start, $('button.volt-agent-status-branch')) as HTMLButtonElement;
 		this.branchButton.type = 'button';
 		this.branchIcon = this.branchButton.appendChild(renderIcon(Codicon.gitBranch));

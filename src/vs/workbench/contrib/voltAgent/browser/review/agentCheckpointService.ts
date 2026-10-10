@@ -8,8 +8,9 @@ import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableMap } from '../../../../../base/common/lifecycle.js';
 import { ResourceMap } from '../../../../../base/common/map.js';
 import { Schemas } from '../../../../../base/common/network.js';
-import { joinPath, relativePath } from '../../../../../base/common/resources.js';
+import { isEqualOrParent, joinPath, relativePath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
+import { FileChangesEvent, IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
@@ -19,7 +20,8 @@ import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase 
 import { IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { ITextFileService } from '../../../../services/textfile/common/textfiles.js';
+import { setTurnWriteGate } from '../../../../services/voltRuntime/common/turnWriteGate.js';
+import { ITextFileService, TextFileEditorModelState } from '../../../../services/textfile/common/textfiles.js';
 import { IAgentEditsService } from './agentEditsService.js';
 
 export const IAgentCheckpointService = createDecorator<IAgentCheckpointService>('voltAgentCheckpoints');
@@ -91,16 +93,26 @@ export interface IAgentSnapshotChange {
 	readonly turnId: string;
 }
 
+export interface IAgentBeginTurnOptions {
+	/**
+	 * Every change the turn makes to the files waits on the chat's turn write gate (Volt's own loop;
+	 * an ACP agent that asks before it edits or runs commands). The snapshot then becomes that gate
+	 * and {@link IAgentCheckpointService.beginTurn} resolves at once: the prompt goes out without waiting.
+	 */
+	readonly writesGated?: boolean;
+}
+
 export interface IAgentCheckpointService {
 	readonly _serviceBrand: undefined;
 	/** Fires with the session id when its checkpoints or redo state change. */
 	readonly onDidChange: Event<string>;
 	/**
 	 * Call right before sending a prompt: snapshots the project under `turnId` so the checkpoint
-	 * predates anything the agent does. Resolves when the snapshot is taken (at most ~2 s).
-	 * Without it the snapshot is taken at the run's start and keyed by the run id.
+	 * predates anything the agent does. Resolves when the snapshot is taken (at most ~2 s), or at
+	 * once when nothing changed since the last turn's after-snapshot (which is then reused) or when
+	 * `options.writesGated`. Without it the snapshot is taken at the run's start and keyed by the run id.
 	 */
-	beginTurn(sessionId: string, turnId: string): Promise<void>;
+	beginTurn(sessionId: string, turnId: string, options?: IAgentBeginTurnOptions): Promise<void>;
 	/** Loaded checkpoints, oldest first (empty until {@link loadCheckpoints} or the first run). */
 	getCheckpoints(sessionId: string): readonly IAgentCheckpoint[];
 	loadCheckpoints(sessionId: string): Promise<readonly IAgentCheckpoint[]>;
@@ -162,12 +174,22 @@ interface ISession {
 	redo: IVoltGitRestoreStep | undefined;
 	/** Snapshots and restores of one chat run one after another. */
 	chain: Promise<unknown>;
-	pendingBegin: { readonly turnId: string; readonly at: number; readonly root: string | undefined; readonly snapshot: Promise<IVoltGitSnapshot | undefined> } | undefined;
+	/** Offering snapshot changes for review, in order but off {@link chain}: the next checkpoint never waits on it. */
+	captures: Promise<void>;
+	/** `reused`: the last turn's after-snapshot, taken over with no git work (nothing to publish or clean up). */
+	pendingBegin: { readonly turnId: string; readonly at: number; readonly root: string | undefined; readonly snapshot: Promise<IVoltGitSnapshot | undefined>; readonly reused?: boolean } | undefined;
+	/**
+	 * The project as the chat's last finished turn left it: its final snapshot, the folder it is of,
+	 * and the change generation of the work tree when that snapshot started reading it.
+	 */
+	settled: { readonly snapshot: IVoltGitSnapshot; readonly folder: string; readonly generation: number } | undefined;
+	/** Runs of this chat between `run.start` and `run.end`. */
+	readonly activeRuns: Set<string>;
 	/** Mutating tool calls still running in the current turn. */
 	readonly inFlight: Set<string>;
 	readonly batch: RunOnceScheduler;
-	/** Files the user kept or undid during the current turn: not re-offered from snapshots. */
-	readonly resolved: ResourceMap<true>;
+	/** Files the user kept or undid during the current turn: not re-offered from snapshots. Replaced, not cleared, per turn. */
+	resolved: ResourceMap<true>;
 }
 
 export class AgentCheckpointService extends Disposable implements IAgentCheckpointService {
@@ -183,6 +205,12 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 	/** When the user last saved each file from an editor. */
 	private readonly userSaves = new ResourceMap<number>();
 	private readonly diffCache = new Map<string, Promise<IVoltGitDiffEntry[]>>();
+	/**
+	 * Per snapshot work tree (fs path): bumped on anything that may have changed a file in it (a file
+	 * event, a save, an agent's tool or file change in any chat, a restore). An after-snapshot is
+	 * only reused as the next checkpoint while its generation is still current.
+	 */
+	private readonly generations = new Map<string, number>();
 
 	constructor(
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
@@ -190,36 +218,141 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		@IAgentEditsService private readonly edits: IAgentEditsService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IWorkspaceContextService private readonly workspace: IWorkspaceContextService,
-		@ITextFileService textFileService: ITextFileService,
+		@ITextFileService private readonly textFileService: ITextFileService,
 		@ILogService private readonly logService: ILogService,
+		@IFileService fileService: IFileService,
 	) {
 		super();
 		this._register(runtime.onDidEmit(envelope => this.onEvent(envelope)));
-		this._register(textFileService.files.onDidSave(e => this.userSaves.set(e.model.resource, Date.now())));
+		this._register(textFileService.files.onDidSave(e => {
+			this.userSaves.set(e.model.resource, Date.now());
+			this.bumpGenerations(workTree => isEqualOrParent(e.model.resource, URI.file(workTree)));
+		}));
+		this._register(fileService.onDidFilesChange(e => this.onFilesChange(e)));
 		this._register(edits.onDidResolve(e => this.sessions.get(e.sessionId)?.resolved.set(e.uri, true)));
 	}
 
 	// --- turn tracking
 
-	beginTurn(sessionId: string, turnId: string): Promise<void> {
+	beginTurn(sessionId: string, turnId: string, options?: IAgentBeginTurnOptions): Promise<void> {
 		const session = this.session(sessionId);
+		const root = this.rootFor(sessionId)?.toString();
+		// A run of this chat still winding down may change files yet: no after-snapshot stands for the project.
+		const mayReuse = !session.activeRuns.size;
+		const reused = mayReuse ? this.reusableSnapshot(session, root) : undefined;
+		if (reused) {
+			// Nothing changed since the last turn's after-snapshot: it is this turn's checkpoint, at no cost.
+			session.pendingBegin = { turnId, at: Date.now(), root, snapshot: Promise.resolve(reused), reused: true };
+			return Promise.resolve();
+		}
 		const snapshot = this.enqueue(session, async () => {
 			const repo = await this.ensureRepo(session);
-			return repo ? this.snapshot(repo, `${this.prefix(sessionId)}pending/pre`, `volt: before turn ${turnId}`) : undefined;
+			if (!repo) {
+				return undefined;
+			}
+			// The last turn's after-snapshot may have landed while this waited behind it.
+			return (mayReuse ? this.reusableSnapshot(session, root) : undefined)
+				?? this.snapshot(repo, `${this.prefix(sessionId)}pending/pre`, `volt: before turn ${turnId}`, this.settledSnapshot(session));
 		});
-		session.pendingBegin = { turnId, at: Date.now(), root: this.rootFor(sessionId)?.toString(), snapshot };
+		session.pendingBegin = { turnId, at: Date.now(), root, snapshot };
+		if (options?.writesGated) {
+			// The prompt goes out now; the agent's first write waits for the snapshot instead.
+			setTurnWriteGate(sessionId, snapshot);
+			return Promise.resolve();
+		}
 		return raceTimeout(snapshot.then(() => undefined), BEGIN_TURN_WAIT_MS).then(() => undefined);
+	}
+
+	/**
+	 * The last turn's after-snapshot, when it still is the project: taken in this folder, no file
+	 * event, save, agent change or restore since it began reading the tree, the folder is one the
+	 * workbench watches (else changes go unseen), no other chat's agent is running in it and no
+	 * editor is mid-save. Any doubt means a fresh snapshot.
+	 */
+	private reusableSnapshot(session: ISession, root: string | undefined): IVoltGitSnapshot | undefined {
+		const settled = session.settled;
+		const repo = session.repo;
+		if (!settled || !repo || !root || settled.folder !== root || session.folder?.toString() !== root) {
+			return undefined;
+		}
+		if (this.generation(repo.workTree) !== settled.generation || !this.isWatched(repo.workTree)) {
+			return undefined;
+		}
+		for (const other of this.sessions.values()) {
+			if (other !== session && other.repo?.workTree === repo.workTree && other.activeRuns.size) {
+				return undefined;
+			}
+		}
+		const workTree = URI.file(repo.workTree);
+		if (this.textFileService.files.models.some(model => model.hasState(TextFileEditorModelState.PENDING_SAVE) && isEqualOrParent(model.resource, workTree))) {
+			return undefined;
+		}
+		return settled.snapshot;
+	}
+
+	/** The last after-snapshot of this folder, for a snapshot to return as is when the tree is unchanged. */
+	private settledSnapshot(session: ISession): IVoltGitSnapshot | undefined {
+		const settled = session.settled;
+		return settled && settled.folder === session.folder?.toString() ? settled.snapshot : undefined;
+	}
+
+	/** Whether the workbench's file watcher covers `workTree` (a workspace folder is it, or holds it). */
+	private isWatched(workTree: string): boolean {
+		const resource = URI.file(workTree);
+		return this.workspace.getWorkspace().folders.some(folder => folder.uri.scheme === Schemas.file && isEqualOrParent(resource, folder.uri));
+	}
+
+	private generation(workTree: string): number {
+		let generation = this.generations.get(workTree);
+		if (generation === undefined) {
+			// Tracked from now on: later changes in this tree bump it.
+			generation = 0;
+			this.generations.set(workTree, generation);
+		}
+		return generation;
+	}
+
+	private bumpGenerations(affects: (workTree: string) => boolean = () => true): void {
+		for (const [workTree, generation] of this.generations) {
+			if (affects(workTree)) {
+				this.generations.set(workTree, generation + 1);
+			}
+		}
+	}
+
+	/** A file event in a tracked work tree, outside its git folders (snapshots write there themselves), changes its generation. */
+	private onFilesChange(e: FileChangesEvent): void {
+		for (const [workTree, generation] of this.generations) {
+			const root = URI.file(workTree);
+			if (!e.affects(root)) {
+				continue;
+			}
+			const inTree = (resource: URI) => {
+				const path = isEqualOrParent(resource, root) ? relativePath(root, resource) : undefined;
+				return path !== undefined && !path.split('/').includes('.git');
+			};
+			if (e.rawAdded.some(inTree) || e.rawUpdated.some(inTree) || e.rawDeleted.some(inTree)) {
+				this.generations.set(workTree, generation + 1);
+			}
+		}
 	}
 
 	private onEvent(envelope: IVoltEventEnvelope): void {
 		const event = envelope.event;
 		switch (event.type) {
-			case 'run.start':
+			case 'run.start': {
+				// One run per chat: a new one supersedes any that never reported its end.
+				const runs = this.session(envelope.sessionId).activeRuns;
+				runs.clear();
+				runs.add(event.runId);
 				this.startTurn(envelope.sessionId, event.runId);
 				break;
+			}
 			case 'tool.start':
 				if (!event.kind || !READ_ONLY_KINDS.has(event.kind)) {
 					this.sessions.get(envelope.sessionId)?.inFlight.add(event.callId);
+					// Any chat's agent may be about to change files in a tree another chat would reuse a snapshot of.
+					this.bumpGenerations();
 				}
 				break;
 			case 'tool.end': {
@@ -227,12 +360,15 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 				if (session && (session.inFlight.delete(event.callId) || event.diffs?.length || event.card === 'terminal' || event.card === 'diff') && !session.inFlight.size) {
 					session.batch.schedule();
 				}
+				this.bumpGenerations();
 				break;
 			}
 			case 'file.change':
 				this.sessions.get(envelope.sessionId)?.batch.schedule();
+				this.bumpGenerations();
 				break;
 			case 'run.end':
+				this.sessions.get(envelope.sessionId)?.activeRuns.delete(event.runId);
 				this.endTurn(envelope.sessionId, event.runId);
 				break;
 		}
@@ -247,7 +383,8 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		const turnId = begin?.turnId ?? runId;
 		const turn: ITurn = { turnId, userTurn, runId, key: turnKey(userTurn, turnId), before: undefined, after: undefined, running: true, startedAt: Date.now(), handled: new Set() };
 		session.inFlight.clear();
-		session.resolved.clear();
+		// A new map: the last turn's review offers, which may still be queued, keep reading its own.
+		session.resolved = new ResourceMap();
 		void this.enqueue(session, async () => {
 			await this.load(session);
 			const repo = await this.ensureRepo(session);
@@ -263,10 +400,17 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 			const early = begin && begin.root === session.folder?.toString() ? await begin.snapshot : undefined;
 			if (early) {
 				await this.git.updateRef({ repoRoot: repo.repoRoot, ref: pre, commit: early.commit });
-				await this.git.updateRef({ repoRoot: repo.repoRoot, ref: `${this.prefix(sessionId)}pending/pre` });
+				if (!begin?.reused) {
+					await this.git.updateRef({ repoRoot: repo.repoRoot, ref: `${this.prefix(sessionId)}pending/pre` });
+				}
 				turn.before = early;
 			} else {
-				turn.before = await this.snapshot(repo, pre, `volt: before turn ${turnId}`);
+				const settled = this.settledSnapshot(session);
+				turn.before = await this.snapshot(repo, pre, `volt: before turn ${turnId}`, settled);
+				if (settled && turn.before.commit === settled.commit) {
+					// An unchanged tree comes back as the earlier snapshot without its ref written.
+					await this.git.updateRef({ repoRoot: repo.repoRoot, ref: pre, commit: settled.commit });
+				}
 			}
 			await this.dropTurns(session, repo, [...abandoned, ...session.turns.slice(0, Math.max(0, session.turns.length - MAX_TURNS))]);
 			this._onDidChange.fire(sessionId);
@@ -280,6 +424,8 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		}
 		session.batch.cancel();
 		session.inFlight.clear();
+		// The final snapshot below stands for the project again once it lands.
+		session.settled = undefined;
 		// Looked up after the queued work: the turn is recorded once its first snapshot lands.
 		void this.snapshotAfter(session, true).finally(() => {
 			const turn = session.turns.find(candidate => candidate.runId === runId);
@@ -292,12 +438,16 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 
 	/** After a batch of mutating tools (or at the end of the turn): snapshot, then offer new changes for review. */
 	private snapshotAfter(session: ISession, final: boolean): Promise<void> {
+		// This turn's decisions, even if the review offers run after the next turn started.
+		const resolved = session.resolved;
 		return this.enqueue(session, async () => {
 			const turn = session.turns.at(-1);
 			const repo = session.repo;
 			if (!turn?.running || !turn.before || !repo) {
 				return;
 			}
+			// Read before the scan: a change the scan may have missed bumps it past this.
+			const generation = this.generation(repo.workTree);
 			const previous = turn.after ?? turn.before;
 			const after = await this.git.snapshot({
 				repoRoot: repo.repoRoot,
@@ -311,20 +461,30 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 				this.logService.warn('[volt] checkpoint snapshot failed', err);
 				return undefined;
 			});
+			if (after && final && session.repo === repo && session.folder) {
+				// What the turn left: the next turn's checkpoint, for as long as nothing changes.
+				session.settled = { snapshot: after, folder: session.folder.toString(), generation };
+			}
 			if (!after || after.commit === turn.before.commit) {
 				return;
 			}
 			turn.after = after;
-			await this.capture(session, repo, turn, final).catch(err => this.logService.warn('[volt] capturing snapshot changes failed', err));
+			// Off the snapshot queue: reading the changed files can take a while, and the next turn's
+			// checkpoint must not wait for it. Offers still run in order, each for its own snapshot.
+			const before = turn.before;
+			session.captures = session.captures
+				.then(() => this.capture(session, repo, turn, before, after, final, resolved))
+				.catch(err => this.logService.warn('[volt] capturing snapshot changes failed', err));
 		});
 	}
 
 	/**
-	 * Offers what the turn changed that no edit tool reported (shell commands, agents writing
-	 * files themselves, renames, binaries) for Keep/Undo, with the pre-turn text as the baseline.
+	 * Offers what the turn changed between two of its snapshots that no edit tool reported (shell
+	 * commands, agents writing files themselves, renames, binaries) for Keep/Undo, with the
+	 * pre-turn text as the baseline. `resolved` holds the files the user settled during the turn.
 	 */
-	private async capture(session: ISession, repo: IVoltGitSnapshotRepo, turn: ITurn, final: boolean): Promise<void> {
-		const entries = await this.git.diffSummary({ repoRoot: repo.repoRoot, from: turn.before!.commit, to: turn.after!.commit });
+	private async capture(session: ISession, repo: IVoltGitSnapshotRepo, turn: ITurn, before: IVoltGitSnapshot, after: IVoltGitSnapshot, final: boolean, resolved: ResourceMap<true>): Promise<void> {
+		const entries = await this.git.diffSummary({ repoRoot: repo.repoRoot, from: before.commit, to: after.commit });
 		const sessionId = session.sessionId;
 		const offer = (path: string): URI | undefined => {
 			const uri = this.toUri(session, path);
@@ -334,7 +494,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 			turn.handled.add(path);
 			const saved = this.userSaves.get(uri);
 			// Already in review (any chat), settled by the user this turn, or the user's own save.
-			if (this.edits.getPendingFile(uri) || session.resolved.has(uri) || (saved !== undefined && saved >= turn.startedAt)) {
+			if (this.edits.getPendingFile(uri) || resolved.has(uri) || (saved !== undefined && saved >= turn.startedAt)) {
 				return undefined;
 			}
 			return uri;
@@ -367,13 +527,15 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		}
 	}
 
-	/** Resolves once the chat's queued snapshot and restore work is done. */
+	/** Resolves once the chat's queued snapshot, restore and review-offer work is done. */
 	async whenIdle(sessionId: string): Promise<void> {
 		const session = this.sessions.get(sessionId);
 		while (session) {
 			const chain = session.chain;
+			const captures = session.captures;
 			await chain;
-			if (chain === session.chain) {
+			await captures;
+			if (chain === session.chain && captures === session.captures) {
 				return;
 			}
 		}
@@ -409,6 +571,8 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 
 	async restoreCheckpoint(sessionId: string, turn: AgentTurnRef, options?: { readonly overwrite?: boolean }): Promise<IAgentRestoreResult | undefined> {
 		this.assertIdle(sessionId);
+		// Files are about to change: a turn sent meanwhile must not reuse the last after-snapshot.
+		this.bumpGenerations();
 		const plan = await this.plan(sessionId, turn);
 		if (!plan) {
 			return undefined;
@@ -418,6 +582,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 
 	async redo(sessionId: string, options?: { readonly overwrite?: boolean }): Promise<IAgentRestoreResult | undefined> {
 		this.assertIdle(sessionId);
+		this.bumpGenerations();
 		const session = this.session(sessionId);
 		await this.load(session);
 		const repo = await this.ensureRepo(session);
@@ -437,6 +602,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 	}
 
 	async restoreFile(sessionId: string, uri: URI, options?: { readonly overwrite?: boolean }): Promise<VoltGitRestoreOutcome | 'unavailable'> {
+		this.bumpGenerations();
 		const session = this.session(sessionId);
 		await this.load(session);
 		const repo = await this.ensureRepo(session);
@@ -448,7 +614,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		if (!steps.length) {
 			return 'unavailable';
 		}
-		const result = await this.enqueue(session, () => this.git.restore!({ repoRoot: repo.repoRoot, workTree: repo.workTree, steps, paths: [path], overwrite: options?.overwrite }));
+		const result = await this.enqueue(session, () => this.git.restore!({ repoRoot: repo.repoRoot, workTree: repo.workTree, steps, paths: [path], overwrite: options?.overwrite }).finally(() => this.bumpGenerations()));
 		return result.entries[0]?.outcome ?? 'unavailable';
 	}
 
@@ -500,6 +666,8 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		const repo = await this.ensureRepo(session);
 		session.turns = [];
 		session.redo = undefined;
+		// Its commit loses every ref below.
+		session.settled = undefined;
 		if (repo) {
 			await this.git.deleteRefs({ repoRoot: repo.repoRoot, prefix: this.prefix(sessionId) });
 		}
@@ -539,7 +707,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		return this.enqueue(session, async () => {
 			const prefix = `${this.prefix(session.sessionId)}redo/`;
 			const before = remember ? await this.snapshot(repo, `${prefix}before`, 'volt: before restore') : undefined;
-			const result = await this.git.restore!({ repoRoot: repo.repoRoot, workTree: repo.workTree, steps, overwrite });
+			const result = await this.git.restore!({ repoRoot: repo.repoRoot, workTree: repo.workTree, steps, overwrite }).finally(() => this.bumpGenerations());
 			if (before && result.entries.some(entry => entry.action !== 'none')) {
 				const after = await this.git.snapshot({ repoRoot: repo.repoRoot, workTree: repo.workTree, indexFile: repo.indexFile, parent: before.commit, ref: `${prefix}after`, message: 'volt: after restore' });
 				session.redo = { before: before.commit, after: after.commit };
@@ -568,7 +736,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		if (!session) {
 			const batch = new RunOnceScheduler(() => void this.snapshotAfter(session!, false), BATCH_DELAY_MS);
 			this.schedulers.set(sessionId, batch);
-			session = { sessionId, repo: undefined, folder: undefined, turns: [], loaded: undefined, redo: undefined, chain: Promise.resolve(), pendingBegin: undefined, inFlight: new Set(), batch, resolved: new ResourceMap() };
+			session = { sessionId, repo: undefined, folder: undefined, turns: [], loaded: undefined, redo: undefined, chain: Promise.resolve(), captures: Promise.resolve(), pendingBegin: undefined, settled: undefined, activeRuns: new Set(), inFlight: new Set(), batch, resolved: new ResourceMap() };
 			this.sessions.set(sessionId, session);
 		}
 		return session;
@@ -640,6 +808,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 			session.turns = [];
 			session.redo = undefined;
 			session.loaded = undefined;
+			session.settled = undefined;
 		}
 		if (!root || root.scheme !== Schemas.file || !this.git.resolveSnapshotRepo) {
 			return undefined;
@@ -680,8 +849,9 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		return inRepo && !inRepo.startsWith('..') ? inRepo : undefined;
 	}
 
-	private snapshot(repo: IVoltGitSnapshotRepo, ref: string, message: string): Promise<IVoltGitSnapshot> {
-		return this.git.snapshot({ repoRoot: repo.repoRoot, workTree: repo.workTree, indexFile: repo.indexFile, ref, message });
+	/** With `reuse`, an unchanged tree returns that snapshot as is: no commit, and `ref` is left alone. */
+	private snapshot(repo: IVoltGitSnapshotRepo, ref: string, message: string, reuse?: IVoltGitSnapshot): Promise<IVoltGitSnapshot> {
+		return this.git.snapshot({ repoRoot: repo.repoRoot, workTree: repo.workTree, indexFile: repo.indexFile, ref, message, ...(reuse ? { reuse } : {}) });
 	}
 
 	private diff(repo: IVoltGitSnapshotRepo, from: string, to: string): Promise<IVoltGitDiffEntry[]> {

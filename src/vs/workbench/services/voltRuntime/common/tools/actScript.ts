@@ -50,7 +50,7 @@ class Cursor {
 	peek(): string {
 		this.ws();
 		// allow-any-unicode-next-line
-		const m = /^[^\s"'“”‘’]+/.exec(this.text.slice(this.at));
+		const m = /^[^\s"'\u201c\u201d\u2018\u2019]+/.exec(this.text.slice(this.at));
 		return m ? m[0] : '';
 	}
 
@@ -63,7 +63,7 @@ class Cursor {
 	isQuote(): boolean {
 		this.ws();
 		// allow-any-unicode-next-line
-		return /^["'“‘]/.test(this.text.slice(this.at));
+		return /^["'\u201c\u2018]/.test(this.text.slice(this.at));
 	}
 
 	quoted(): string | undefined {
@@ -95,7 +95,7 @@ class Cursor {
 		const rest = this.text.slice(this.at).trim();
 		this.at = this.text.length;
 		// allow-any-unicode-next-line
-		const m = /^(["'“‘])(.*)(["'”’])$/s.exec(rest);
+		const m = /^(["'\u201c\u2018])(.*)(["'\u201d\u2019])$/s.exec(rest);
 		return m && !m[2].includes(m[1]) ? m[2] : rest;
 	}
 
@@ -392,7 +392,7 @@ function parseLine(line: string): IActStep {
 		case 'menu': {
 			// menu File > Export > "PDF…"
 			// allow-any-unicode-next-line
-			const path = c.rest().split('>').map(part => part.trim().replace(/^(["'“‘])(.*)(["'”’])$/s, '$2')).filter(Boolean);
+			const path = c.rest().split('>').map(part => part.trim().replace(/^(["'\u201c\u2018])(.*)(["'\u201d\u2019])$/s, '$2')).filter(Boolean);
 			if (!path.length) {
 				throw new ScriptError('menu needs a path, e.g. menu File > Save As…');
 			}

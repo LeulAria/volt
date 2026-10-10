@@ -22,16 +22,119 @@ import {
 	VoltPrMergeState,
 	VoltPrState,
 } from '../voltPullRequests.js';
-import { ALL_MERGE_OPTIONS, Json, latestByName, list, num, str, time, user } from './hostParse.js';
+import { ALL_MERGE_OPTIONS, latestByName, list, num, str, time, user } from './hostParse.js';
 
 /** Azure DevOps Repos (`{org}/{project}/_apis/git`): pull requests, statuses and threads in Volt's shapes. */
+
+/** An identity (`createdBy`, a reviewer, a comment's author). */
+export interface IAzureIdentityJson {
+	readonly id?: unknown;
+	readonly displayName?: unknown;
+	readonly uniqueName?: unknown;
+	readonly imageUrl?: unknown;
+}
+
+interface IAzureReviewerJson extends IAzureIdentityJson {
+	readonly vote?: unknown;
+	readonly isRequired?: unknown;
+}
+
+interface IAzureCommitRefJson {
+	readonly commitId?: unknown;
+}
+
+interface IAzureLabelJson {
+	readonly name?: unknown;
+	readonly active?: unknown;
+}
+
+export interface IAzurePullRequestJson {
+	readonly pullRequestId?: unknown;
+	readonly status?: unknown;
+	readonly isDraft?: unknown;
+	readonly title?: unknown;
+	readonly description?: unknown;
+	readonly createdBy?: IAzureIdentityJson;
+	readonly reviewers?: unknown;
+	readonly labels?: unknown;
+	readonly creationDate?: unknown;
+	readonly closedDate?: unknown;
+	readonly mergeStatus?: unknown;
+	readonly sourceRefName?: unknown;
+	readonly targetRefName?: unknown;
+	readonly lastMergeSourceCommit?: IAzureCommitRefJson;
+	readonly lastMergeTargetCommit?: IAzureCommitRefJson;
+	readonly forkSource?: unknown;
+	readonly autoCompleteSetBy?: unknown;
+	readonly completionOptions?: { readonly deleteSourceBranch?: unknown };
+	readonly repository?: { readonly webUrl?: unknown };
+}
+
+interface IAzureStatusContextJson {
+	readonly genre?: unknown;
+	readonly name?: unknown;
+}
+
+export interface IAzureStatusJson {
+	readonly context?: IAzureStatusContextJson;
+	readonly state?: unknown;
+	readonly targetUrl?: unknown;
+	readonly description?: unknown;
+	readonly creationDate?: unknown;
+	readonly updatedDate?: unknown;
+}
+
+export interface IAzureChangeEntryJson {
+	readonly changeType?: unknown;
+	readonly originalPath?: unknown;
+	readonly sourceServerItem?: unknown;
+	readonly item?: {
+		readonly path?: unknown;
+		readonly objectId?: unknown;
+		readonly isFolder?: unknown;
+		readonly gitObjectType?: unknown;
+	};
+}
+
+interface IAzureCommentJson {
+	readonly id?: unknown;
+	readonly author?: IAzureIdentityJson;
+	readonly content?: unknown;
+	readonly commentType?: unknown;
+	readonly isDeleted?: unknown;
+	readonly publishedDate?: unknown;
+	readonly lastUpdatedDate?: unknown;
+}
+
+interface IAzureFilePositionJson {
+	readonly line?: unknown;
+}
+
+export interface IAzureThreadJson {
+	readonly id?: unknown;
+	readonly status?: unknown;
+	readonly isDeleted?: unknown;
+	readonly comments?: unknown;
+	readonly threadContext?: {
+		readonly filePath?: unknown;
+		readonly rightFileStart?: IAzureFilePositionJson;
+		readonly leftFileStart?: IAzureFilePositionJson;
+	};
+}
+
+export interface IAzureCommitJson {
+	readonly commitId?: unknown;
+	readonly comment?: unknown;
+	readonly author?: { readonly name?: unknown; readonly date?: unknown };
+	readonly committer?: { readonly date?: unknown };
+}
 
 /** `refs/heads/feature/x` → `feature/x`. */
 export function azureBranch(ref: unknown): string {
 	return str(ref).replace(/^refs\/heads\//, '');
 }
 
-export function azureState(raw: Json): VoltPrState {
+export function azureState(raw: IAzurePullRequestJson | undefined): VoltPrState {
 	switch (raw?.status) {
 		case 'completed': return 'merged';
 		case 'abandoned': return 'closed';
@@ -50,9 +153,9 @@ export function azureCheckState(value: unknown): VoltPrCheckState {
 }
 
 /** `GET .../pullrequests/{id}/statuses` (`value`): newest per context. */
-export function parseAzureChecks(statuses: readonly Json[]): IVoltPrCheck[] {
+export function parseAzureChecks(statuses: readonly IAzureStatusJson[]): IVoltPrCheck[] {
 	return latestByName(statuses.map(status => {
-		const context = status.context ?? {};
+		const context: IAzureStatusContextJson = status.context ?? {};
 		const name = [context.genre, context.name].filter((part: unknown) => typeof part === 'string' && part).join('/') || 'status';
 		return {
 			name,
@@ -77,7 +180,7 @@ function voteState(vote: number): IVoltPrReviewSummary['state'] | undefined {
 	return undefined;
 }
 
-export function azureLogin(raw: Json): string {
+export function azureLogin(raw: IAzureIdentityJson | undefined): string {
 	return str(raw?.displayName || raw?.uniqueName, 'ghost');
 }
 
@@ -86,11 +189,11 @@ export interface IAzureExtras {
 	readonly webUrl?: string;
 }
 
-export function parseAzurePull(raw: Json, repo: IVoltPrRepoRef, viewer: string, extras: IAzureExtras = {}): IVoltPullRequest {
+export function parseAzurePull(raw: IAzurePullRequestJson, repo: IVoltPrRepoRef, viewer: string, extras: IAzureExtras = {}): IVoltPullRequest {
 	const number = num(raw.pullRequestId);
 	const state = azureState(raw);
 	const open = state === 'open' || state === 'draft';
-	const reviewers = list(raw.reviewers);
+	const reviewers = list<IAzureReviewerJson>(raw.reviewers);
 	const reviews: IVoltPrReviewSummary[] = [];
 	for (const reviewer of reviewers) {
 		const verdict = voteState(num(reviewer.vote) || (typeof reviewer.vote === 'number' ? reviewer.vote : 0));
@@ -104,7 +207,8 @@ export function parseAzurePull(raw: Json, repo: IVoltPrRepoRef, viewer: string, 
 	const mergeStatus = str(raw.mergeStatus);
 	const mergeable: VoltPrMergeable = !open ? 'unknown' : mergeStatus === 'conflicts' ? 'conflicting' : mergeStatus === 'succeeded' ? 'mergeable' : 'unknown';
 	const mergeState: VoltPrMergeState = !open ? 'unknown' : state === 'draft' ? 'draft' : mergeable === 'conflicting' ? 'dirty' : mergeStatus === 'rejectedByPolicy' ? 'blocked' : mergeable === 'mergeable' ? 'clean' : 'unknown';
-	const url = extras.webUrl ? pullRequestWebUrl('azure', extras.webUrl, repo, number) : str(raw.repository?.webUrl) ? `${raw.repository.webUrl}/pullrequest/${number}` : '';
+	const repoUrl = str(raw.repository?.webUrl);
+	const url = extras.webUrl ? pullRequestWebUrl('azure', extras.webUrl, repo, number) : repoUrl ? `${repoUrl}/pullrequest/${number}` : '';
 	return {
 		key: prKey(repo, number),
 		repo: { host: repo.host, owner: repo.owner, name: repo.name },
@@ -129,7 +233,7 @@ export function parseAzurePull(raw: Json, repo: IVoltPrRepoRef, viewer: string, 
 		mergeState,
 		...(reviewDecision ? { reviewDecision } : {}),
 		checks: summarizeChecks(extras.checks ?? []),
-		labels: list(raw.labels).filter(label => label.active !== false).map(label => ({ name: str(label.name), color: '888888' })).filter(label => label.name),
+		labels: list<IAzureLabelJson>(raw.labels).filter(label => label.active !== false).map(label => ({ name: str(label.name), color: '888888' })).filter(label => label.name),
 		assignees: [],
 		reviewRequests: reviewers.filter(reviewer => !voteState(typeof reviewer.vote === 'number' ? reviewer.vote : 0)).map(azureLogin),
 		reviews,
@@ -155,7 +259,7 @@ export function azureFileChange(value: unknown): VoltPrFileChange {
 }
 
 /** `GET .../iterations/{n}/changes` (`changeEntries`): files only, no line counts (Azure has none). */
-export function parseAzureChanges(entries: readonly Json[]): IVoltPrFile[] {
+export function parseAzureChanges(entries: readonly IAzureChangeEntryJson[]): IVoltPrFile[] {
 	return entries
 		.filter(entry => !entry.item?.isFolder && entry.item?.gitObjectType !== 'tree')
 		.map(entry => {
@@ -174,7 +278,7 @@ export function parseAzureChanges(entries: readonly Json[]): IVoltPrFile[] {
 		.filter(file => file.path);
 }
 
-function parseAzureComment(raw: Json, url: string): IVoltPrComment {
+function parseAzureComment(raw: IAzureCommentJson, url: string): IVoltPrComment {
 	return {
 		id: String(raw.id ?? ''),
 		...(typeof raw.id === 'number' ? { databaseId: raw.id } : {}),
@@ -186,14 +290,14 @@ function parseAzureComment(raw: Json, url: string): IVoltPrComment {
 }
 
 /** Threads with a file context are review threads; others are conversation. System threads (votes, pushes) are left out. */
-export function parseAzureThreads(threads: readonly Json[], prUrl: string): { threads: IVoltPrReviewThread[]; conversation: IVoltPrComment[] } {
+export function parseAzureThreads(threads: readonly IAzureThreadJson[], prUrl: string): { threads: IVoltPrReviewThread[]; conversation: IVoltPrComment[] } {
 	const out: IVoltPrReviewThread[] = [];
 	const conversation: IVoltPrComment[] = [];
 	for (const thread of threads) {
 		if (thread.isDeleted) {
 			continue;
 		}
-		const comments = list(thread.comments).filter(comment => comment.commentType !== 'system' && !comment.isDeleted).map(comment => parseAzureComment(comment, `${prUrl}?discussionId=${thread.id}`));
+		const comments = list<IAzureCommentJson>(thread.comments).filter(comment => comment.commentType !== 'system' && !comment.isDeleted).map(comment => parseAzureComment(comment, `${prUrl}?discussionId=${thread.id}`));
 		if (!comments.length) {
 			continue;
 		}
@@ -218,7 +322,7 @@ export function parseAzureThreads(threads: readonly Json[], prUrl: string): { th
 	return { threads: out, conversation: conversation.sort((a, b) => a.createdAt - b.createdAt) };
 }
 
-export function parseAzureCommit(raw: Json): IVoltPrCommit {
+export function parseAzureCommit(raw: IAzureCommitJson): IVoltPrCommit {
 	return {
 		oid: str(raw.commitId),
 		headline: str(raw.comment).split('\n')[0],
@@ -229,11 +333,11 @@ export function parseAzureCommit(raw: Json): IVoltPrCommit {
 }
 
 export interface IAzureDetailParts {
-	readonly pull: Json;
+	readonly pull: IAzurePullRequestJson;
 	readonly checks: readonly IVoltPrCheck[];
-	readonly changes: readonly Json[];
-	readonly threads: readonly Json[];
-	readonly commits: readonly Json[];
+	readonly changes: readonly IAzureChangeEntryJson[];
+	readonly threads: readonly IAzureThreadJson[];
+	readonly commits: readonly IAzureCommitJson[];
 	readonly webUrl?: string;
 }
 

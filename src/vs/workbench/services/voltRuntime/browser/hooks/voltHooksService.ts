@@ -47,7 +47,11 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 	},
 });
 
-const CACHE_TTL_MS = 10_000;
+/**
+ * Hook definitions are kept until a hook file or plugin folder changes (file events, or a write
+ * through the editor). The age limit only catches edits outside Volt to folders nothing watches.
+ */
+const CACHE_TTL_MS = 120_000;
 const MAX_EXECUTIONS = 200;
 const OUTPUT_CHARS = 20_000;
 
@@ -98,6 +102,12 @@ export class VoltHooksService extends Disposable implements IVoltHooksService {
 				this.cache.clear();
 			}
 		}));
+		// Saves and deletes through Volt itself, also in folders the file watcher does not cover (home).
+		this._register(this.fileService.onDidRunOperation(e => {
+			if (this.cache.size && (isHookFile(e.resource) || (e.target && isHookFile(e.target.resource)))) {
+				this.cache.clear();
+			}
+		}));
 	}
 
 	get executions(): readonly IVoltHookExecution[] {
@@ -142,20 +152,26 @@ export class VoltHooksService extends Disposable implements IVoltHooksService {
 		const rootUri = root ? URI.file(root) : undefined;
 		const rootName = rootUri ? rootUri.path.split('/').filter(Boolean).pop() ?? root! : '';
 
+		// The plugin scan and the trust check do not depend on each other.
+		const [plugins, trusted] = await Promise.all([
+			home ? this.pluginRoots(home, thirdParty) : Promise.resolve([]),
+			rootUri ? this.isTrusted(rootUri) : Promise.resolve(false),
+		]);
+
 		if (home) {
 			add(joinPath(home, '.volt', 'hooks.json'), { scope: 'user', origin: 'volt', cwd: joinPath(home, '.volt').fsPath, label: 'Volt User' });
 			if (thirdParty) {
 				add(joinPath(home, '.cursor', 'hooks.json'), { scope: 'user', origin: 'cursor', cwd: joinPath(home, '.cursor').fsPath, label: 'Cursor User' });
 				add(joinPath(home, '.claude', 'settings.json'), { scope: 'user', origin: 'claude', cwd: root, label: 'Claude User' });
 			}
-			for (const plugin of await this.pluginRoots(home, thirdParty)) {
+			for (const plugin of plugins) {
 				for (const file of [joinPath(plugin.root, 'hooks', 'hooks.json'), joinPath(plugin.root, 'hooks.json')]) {
 					add(file, { scope: 'plugin', origin: plugin.origin, cwd: root, pluginRoot: plugin.root.fsPath, label: rootName ? `${rootName} / ${plugin.name}` : plugin.name });
 				}
 			}
 		}
 		// A project's own hooks are code from the repository: only a trusted folder runs them.
-		if (rootUri && (await this.isTrusted(rootUri))) {
+		if (rootUri && trusted) {
 			add(joinPath(rootUri, '.volt', 'hooks.json'), { scope: 'workspace', origin: 'volt', cwd: root, label: rootName });
 			if (thirdParty) {
 				add(joinPath(rootUri, '.cursor', 'hooks.json'), { scope: 'workspace', origin: 'cursor', cwd: root, label: `${rootName} / Cursor` });
@@ -177,17 +193,25 @@ export class VoltHooksService extends Disposable implements IVoltHooksService {
 
 	/** Installed plugins that may ship hooks: Volt's own always; Claude Code's and Cursor's with third-party hooks on. */
 	private async pluginRoots(home: URI, thirdParty: boolean): Promise<{ root: URI; name: string; origin: IVoltHookDefinition['origin'] }[]> {
-		const roots: { root: URI; name: string; origin: IVoltHookDefinition['origin'] }[] = [];
-		for (const plugin of (await this.children(joinPath(home, '.volt', 'plugins'))).filter(child => child.isDirectory)) {
-			roots.push({ root: plugin.resource, name: plugin.name, origin: 'volt' });
-		}
-		if (!thirdParty) {
-			return roots;
-		}
+		// Every source is scanned at once; the order stays Volt's, Claude Code's, Cursor's.
+		const [volt, claude, cursor] = await Promise.all([
+			this.children(joinPath(home, '.volt', 'plugins')),
+			thirdParty ? this.claudePluginRoots(home) : Promise.resolve([]),
+			thirdParty ? this.cursorPluginRoots(home) : Promise.resolve([]),
+		]);
+		return [
+			...volt.filter(child => child.isDirectory).map(plugin => ({ root: plugin.resource, name: plugin.name, origin: 'volt' as const })),
+			...claude,
+			...cursor,
+		];
+	}
+
+	private async claudePluginRoots(home: URI): Promise<{ root: URI; name: string; origin: IVoltHookDefinition['origin'] }[]> {
 		const [installed, settings] = await Promise.all([
 			this.readJson(joinPath(home, '.claude', 'plugins', 'installed_plugins.json')),
 			this.readJson(joinPath(home, '.claude', 'settings.json')),
 		]);
+		const roots: { root: URI; name: string; origin: IVoltHookDefinition['origin'] }[] = [];
 		const enabled = ((settings as { enabledPlugins?: Record<string, unknown> } | undefined)?.enabledPlugins ?? {}) as Record<string, unknown>;
 		for (const [key, entries] of Object.entries((installed as { plugins?: Record<string, unknown> } | undefined)?.plugins ?? {})) {
 			if (enabled[key] === false || !Array.isArray(entries)) {
@@ -198,15 +222,20 @@ export class VoltHooksService extends Disposable implements IVoltHooksService {
 				roots.push({ root: URI.file(entry.installPath), name: key.split('@')[0], origin: 'claude' });
 			}
 		}
-		for (const marketplace of (await this.children(joinPath(home, '.cursor', 'plugins', 'cache'))).filter(child => child.isDirectory)) {
-			for (const plugin of (await this.children(marketplace.resource)).filter(child => child.isDirectory)) {
-				const versions = (await this.children(plugin.resource, true)).filter(child => child.isDirectory).sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
-				if (versions[0]) {
-					roots.push({ root: versions[0].resource, name: plugin.name, origin: 'cursor' });
-				}
-			}
-		}
 		return roots;
+	}
+
+	/** The newest download of each Cursor plugin; marketplaces and plugins are read in parallel. */
+	private async cursorPluginRoots(home: URI): Promise<{ root: URI; name: string; origin: IVoltHookDefinition['origin'] }[]> {
+		const marketplaces = (await this.children(joinPath(home, '.cursor', 'plugins', 'cache'))).filter(child => child.isDirectory);
+		const found = await Promise.all(marketplaces.map(async marketplace => {
+			const plugins = (await this.children(marketplace.resource)).filter(child => child.isDirectory);
+			return Promise.all(plugins.map(async plugin => {
+				const versions = (await this.children(plugin.resource, true)).filter(child => child.isDirectory).sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
+				return versions[0] ? [{ root: versions[0].resource, name: plugin.name, origin: 'cursor' as const }] : [];
+			}));
+		}));
+		return found.flat(2);
 	}
 
 	private async children(dir: URI, metadata = false): Promise<IFileStat[]> {
@@ -432,7 +461,9 @@ export class VoltHooksService extends Disposable implements IVoltHooksService {
 }
 
 function isHookFile(uri: URI): boolean {
-	return /[\\/](hooks\.json|settings(\.local)?\.json|installed_plugins\.json)$/.test(uri.path);
+	return /[\\/](hooks\.json|settings(\.local)?\.json|installed_plugins\.json)$/.test(uri.path)
+		// A plugin installed, updated or removed.
+		|| /[\\/]\.(?:volt|cursor|claude)[\\/]plugins(?:[\\/][^\\/]+){0,3}$/.test(uri.path);
 }
 
 function beforeEventsFor(name: string): VoltHookEvent[] {

@@ -94,7 +94,9 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		return result;
 	}
 
-	private async run(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
+	private async run(name: string, args: Record<string, unknown>, requested: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
+		// Calls over MCP carry no folder: a chat's tools work in its worktree or project.
+		const call = requested?.sessionId && !requested.cwd ? { ...requested, cwd: this.sessions?.cwd(requested.sessionId) } : requested;
 		for (const provider of this.providers) {
 			const tool = provider.tools.find(candidate => candidate.name === name);
 			if (tool) {

@@ -998,7 +998,7 @@ export class AgentGalleryToolProvider extends Disposable implements IVoltHostToo
 				screen.errors.push(result.error ?? 'the window could not be captured');
 				continue;
 			}
-			const size = /(\d+)×(\d+)/.exec(result.text ?? '');
+			const size = /(\d+)\u00d7(\d+)/.exec(result.text ?? '');
 			this.push(job, index, job.variants[0], { dataUrl: result.image, width: size ? Number(size[1]) : 1280, height: size ? Number(size[2]) : 800 });
 		}
 	}

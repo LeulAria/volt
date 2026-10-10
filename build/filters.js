@@ -83,7 +83,7 @@ module.exports.indentationFilter = [
 	'!src/vs/base/browser/dompurify/*',
 	'!src/vs/base/common/marked/marked.js',
 	'!src/vs/base/common/semver/semver.js',
-	'!src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.js',
+	'!src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.{js,license.txt}',
 	'!src/vs/workbench/contrib/voltAgent/browser/ui/vendor/dayjs.js',
 	'!src/vs/base/node/terminateProcess.sh',
 	'!src/vs/base/node/cpuUsage.sh',

@@ -72,7 +72,7 @@ suite('Anthropic record/replay through the native loop', () => {
 					effort: 'medium',
 					firstParty: true,
 				});
-				bodies.push(JSON.parse(JSON.stringify(request.body)));
+				bodies.push(JSON.parse(JSON.stringify(request.body)) as Record<string, unknown>);
 				const parser = new AnthropicStreamParser(MODEL, 'r');
 				const recorded = turns[bodies.length - 1] ?? [];
 				return adaptModelStream((async function* () {

@@ -15,11 +15,17 @@ export const VOLT_ACCESS_MODES: readonly VoltAccessMode[] = [
 export const DEFAULT_ACCESS_MODE: VoltAccessMode = 'supervised';
 
 export const VOLT_ACCESS_MODE_STORAGE_KEY = 'volt.runtime.accessMode';
+/** Per-chat overrides of the default access mode, keyed by session id. */
+export const VOLT_ACCESS_CHATS_STORAGE_KEY = 'volt.runtime.accessChats';
 export const VOLT_ACCESS_PROJECT_RULES_STORAGE_KEY = 'volt.runtime.accessProjectRules';
 export const VOLT_ACCESS_SAVED_RULES_STORAGE_KEY = 'volt.runtime.accessSavedRules';
 
+export function isVoltAccessMode(value: unknown): value is VoltAccessMode {
+	return typeof value === 'string' && (VOLT_ACCESS_MODES as readonly string[]).includes(value);
+}
+
 export function normalizeVoltAccessMode(value: string | undefined): VoltAccessMode {
-	return (VOLT_ACCESS_MODES as readonly string[]).includes(value ?? '') ? value as VoltAccessMode : DEFAULT_ACCESS_MODE;
+	return isVoltAccessMode(value) ? value : DEFAULT_ACCESS_MODE;
 }
 
 export interface IAccessModeOption {
@@ -30,9 +36,14 @@ export interface IAccessModeOption {
 
 export const ACCESS_MODE_OPTIONS: readonly IAccessModeOption[] = [
 	{
-		id: 'supervised',
-		label: 'Supervised',
-		description: 'Ask before risky commands and file changes.',
+		id: 'full-access',
+		label: 'Full access',
+		description: 'Allows commands and edits without prompts.',
+	},
+	{
+		id: 'auto',
+		label: 'Auto',
+		description: 'Supported providers approve routine actions; others still ask.',
 	},
 	{
 		id: 'auto-accept-edits',
@@ -40,17 +51,12 @@ export const ACCESS_MODE_OPTIONS: readonly IAccessModeOption[] = [
 		description: 'Auto-approve edits, ask before other actions.',
 	},
 	{
-		id: 'auto',
-		label: 'Auto',
-		description: 'An AI reviewer approves routine actions; risky ones still ask.',
-	},
-	{
-		id: 'full-access',
-		label: 'Full access',
-		description: 'Allow commands and edits without prompts.',
+		id: 'supervised',
+		label: 'Supervised',
+		description: 'Ask before commands and file changes.',
 	},
 ];
 
 export function accessModeOption(mode: VoltAccessMode): IAccessModeOption {
-	return ACCESS_MODE_OPTIONS.find(option => option.id === mode) ?? ACCESS_MODE_OPTIONS[0];
+	return ACCESS_MODE_OPTIONS.find(option => option.id === mode) ?? ACCESS_MODE_OPTIONS[ACCESS_MODE_OPTIONS.length - 1];
 }

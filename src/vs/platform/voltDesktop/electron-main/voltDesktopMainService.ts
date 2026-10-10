@@ -127,7 +127,7 @@ export class VoltDesktopMainService extends Disposable implements IVoltDesktopSe
 					this.buffer = this.buffer.slice(at + 1);
 					let reply: { id?: number; ok?: boolean; result?: unknown; error?: string };
 					try {
-						reply = JSON.parse(line);
+						reply = JSON.parse(line) as typeof reply;
 					} catch {
 						continue;
 					}

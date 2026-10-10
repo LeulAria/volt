@@ -313,7 +313,7 @@ export class VoltGitService extends Disposable implements IVoltGitService {
 				// Starting from the user's index reuses its stat cache, so only changed files are hashed.
 				await mkdir(dirname(indexFile), { recursive: true });
 				const real = await this.gitPath(workTree, 'index');
-				await copyFile(real, indexFile).catch(err => {
+				await copyFile(real, indexFile).catch((err: NodeJS.ErrnoException) => {
 					if (err?.code !== 'ENOENT') {
 						throw err;
 					}
@@ -325,18 +325,28 @@ export class VoltGitService extends Disposable implements IVoltGitService {
 				// Files the private index already has: modifications and deletions.
 				const hinted = warm && !!request.paths?.length;
 				let scope = hinted ? request.paths : undefined;
-				const updated = await this.run({ cwd: workTree, args: [...config, 'add', '-u', '--', ...(scope ?? [])], env, timeoutMs: remaining(), okCodes: hinted ? [0, 128] : [0] });
+				// HEAD only matters for a new commit; asked alongside the scan instead of after it.
+				const head = request.parent === undefined ? this.head(workTree).catch(() => undefined) : undefined;
+				// Listing untracked files only reads the index, and `add -u` drops or rewrites no path of
+				// it that is still on disk: the list is the same either way, so the two run side by side.
+				let [updated, listed] = await Promise.all([
+					this.run({ cwd: workTree, args: [...config, 'add', '-u', '--', ...(scope ?? [])], env, timeoutMs: remaining(), okCodes: hinted ? [0, 128] : [0] }),
+					this.listUntracked(workTree, scope, env, remaining),
+				]);
 				if (updated.exitCode !== 0) {
 					// A hinted path the index does not know (new, or gone everywhere); scan everything instead.
 					scope = undefined;
-					await this.run({ cwd: workTree, args: [...config, 'add', '-u'], env, timeoutMs: remaining() });
+					[updated, listed] = await Promise.all([
+						this.run({ cwd: workTree, args: [...config, 'add', '-u'], env, timeoutMs: remaining() }),
+						this.listUntracked(workTree, undefined, env, remaining),
+					]);
 				}
-				const skipped = await this.addUntracked(workTree, indexFile, scope, request, env, remaining);
+				const skipped = await this.addUntracked(workTree, indexFile, listed, request, env, remaining);
 				const tree = (await this.run({ cwd: workTree, args: ['write-tree'], env, timeoutMs: remaining() })).stdout.toString('utf8').trim();
 				if (request.reuse && request.reuse.tree === tree) {
 					return { commit: request.reuse.commit, tree, ...(skipped ? { skipped } : {}) };
 				}
-				const parent = request.parent ?? await this.head(workTree);
+				const parent = request.parent ?? await head;
 				const commitArgs = ['commit-tree', '--no-gpg-sign', tree, ...(parent ? ['-p', parent] : []), '-m', request.message];
 				const commit = (await this.run({ cwd: request.repoRoot, args: commitArgs, env: SNAPSHOT_IDENTITY, timeoutMs: remaining() })).stdout.toString('utf8').trim();
 				// Published last, so a ref never names a commit whose objects are missing.
@@ -351,19 +361,28 @@ export class VoltGitService extends Disposable implements IVoltGitService {
 		});
 	}
 
+	/** The untracked, not ignored files (`ls-files -o`) the private index does not have, within `scope`. */
+	private listUntracked(workTree: string, scope: readonly string[] | undefined, env: Record<string, string>, remaining: () => number): Promise<IGitOutput> {
+		return this.run({ cwd: workTree, args: ['-c', 'core.untrackedCache=true', 'ls-files', '-o', '--exclude-standard', '-z', '--', ...(scope ?? [])], env, timeoutMs: remaining() });
+	}
+
 	/**
-	 * Adds the untracked, not ignored files the private index does not have yet, minus dependency
-	 * folders and anything over the size and count limits. Left-out paths are remembered next to
-	 * the index so they stay out for good. Returns how many were left out this time.
+	 * Adds the `listed` untracked files (see {@link listUntracked}), minus dependency folders and
+	 * anything over the size and count limits. Left-out paths are remembered next to the index so
+	 * they stay out for good. Returns how many were left out this time.
 	 */
-	private async addUntracked(workTree: string, indexFile: string, scope: readonly string[] | undefined, limits: IVoltGitSnapshotRequest, env: Record<string, string>, remaining: () => number): Promise<number> {
-		const listed = await this.run({ cwd: workTree, args: ['-c', 'core.untrackedCache=true', 'ls-files', '-o', '--exclude-standard', '-z', '--', ...(scope ?? [])], env, timeoutMs: remaining() });
-		const skipFile = `${indexFile}.skip`;
-		const sticky = new Set((await readFile(skipFile, 'utf8').catch(() => '')).split('\0').filter(Boolean));
+	private async addUntracked(workTree: string, indexFile: string, listed: IGitOutput, limits: IVoltGitSnapshotRequest, env: Record<string, string>, remaining: () => number): Promise<number> {
 		const heavy = new Set(VOLT_SNAPSHOT_LIMITS.heavyFolders);
 		// Nested repositories come back as `dir/`; adding them would record a gitlink no restore can rebuild.
-		const candidates = listed.stdout.toString('utf8').split('\0')
-			.filter(path => path && !path.endsWith('/') && !sticky.has(path) && !path.split('/').slice(0, -1).some(segment => heavy.has(segment)));
+		const listedPaths = listed.stdout.toString('utf8').split('\0')
+			.filter(path => path && !path.endsWith('/') && !path.split('/').slice(0, -1).some(segment => heavy.has(segment)));
+		if (!listedPaths.length) {
+			// Nothing new: the usual case once the index is warm, with no file to read or stat.
+			return 0;
+		}
+		const skipFile = `${indexFile}.skip`;
+		const sticky = new Set((await readFile(skipFile, 'utf8').catch(() => '')).split('\0').filter(Boolean));
+		const candidates = sticky.size ? listedPaths.filter(path => !sticky.has(path)) : listedPaths;
 		const maxFileBytes = limits.maxFileBytes ?? VOLT_SNAPSHOT_LIMITS.maxFileBytes;
 		const maxNewFiles = limits.maxNewFiles ?? VOLT_SNAPSHOT_LIMITS.maxNewFiles;
 		const maxNewBytes = limits.maxNewBytes ?? VOLT_SNAPSHOT_LIMITS.maxNewBytes;
@@ -790,7 +809,7 @@ async function pruneEmptyParents(workTree: string, path: string): Promise<void> 
 }
 
 async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-	const out: R[] = new Array(items.length);
+	const out: R[] = new Array<R>(items.length);
 	let next = 0;
 	const worker = async () => {
 		while (next < items.length) {

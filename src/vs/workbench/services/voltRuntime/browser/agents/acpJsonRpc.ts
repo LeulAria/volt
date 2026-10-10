@@ -43,7 +43,8 @@ export interface IAcpIncomingRequest {
 export class AcpJsonRpcClient extends Disposable {
 
 	private nextId = 1;
-	private buffer = '';
+	/** Chunks of the line still being received, joined once its newline arrives. */
+	private readonly partial: string[] = [];
 	private dead = false;
 	private readonly pending = new Map<string | number, IPending>();
 	private readonly _onNotification = this._register(new Emitter<IAcpNotification>());
@@ -168,23 +169,36 @@ export class AcpJsonRpcClient extends Disposable {
 		}
 	}
 
+	/**
+	 * Frames newline-delimited messages. Each chunk is scanned only for its own newlines; a line
+	 * split over many chunks (a large tool output) is joined once, so framing stays linear.
+	 */
 	private push(chunk: string): void {
-		this.buffer += chunk;
-		const lines = this.buffer.split(/\r?\n/);
-		this.buffer = lines.pop() ?? '';
-		for (const line of lines) {
-			const trimmed = line.trim();
-			if (!trimmed) {
-				continue;
+		let start = 0;
+		for (let newline = chunk.indexOf('\n'); newline !== -1; newline = chunk.indexOf('\n', start)) {
+			const tail = chunk.slice(start, newline);
+			let line = tail;
+			if (this.partial.length) {
+				this.partial.push(tail);
+				line = this.partial.join('');
+				this.partial.length = 0;
 			}
-			this.dispatch(trimmed);
+			start = newline + 1;
+			// trim() also drops the `\r` of a CRLF line ending.
+			const trimmed = line.trim();
+			if (trimmed) {
+				this.dispatch(trimmed);
+			}
+		}
+		if (start < chunk.length) {
+			this.partial.push(start ? chunk.slice(start) : chunk);
 		}
 	}
 
 	private dispatch(line: string): void {
 		let msg: { jsonrpc?: string; id?: string | number; method?: string; params?: unknown; result?: unknown; error?: { message?: string; data?: unknown } };
 		try {
-			msg = JSON.parse(line);
+			msg = JSON.parse(line) as typeof msg;
 		} catch {
 			return;
 		}

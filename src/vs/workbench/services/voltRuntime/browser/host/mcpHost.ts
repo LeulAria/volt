@@ -54,13 +54,29 @@ export class McpHost extends Disposable {
 		this._register({ dispose: () => this.closeAll() });
 	}
 
+	/**
+	 * Starts connecting every configured server without waiting for any, so a send finds them up.
+	 * Cheap to call often (composer focus): connections are shared and started once.
+	 */
+	async prewarm(root: URI | undefined, home: URI | undefined): Promise<void> {
+		for (const config of await this.configs(root, home)) {
+			void this.connection(config, root);
+		}
+	}
+
+	/**
+	 * Tools of the servers that are up within `waitMs`. Servers still starting keep connecting in
+	 * the background and are in the list of a later call.
+	 */
 	async tools(root: URI | undefined, home: URI | undefined, waitMs: number): Promise<IVoltTool[]> {
 		const configs = await this.configs(root, home);
 		if (!configs.length) {
 			return [];
 		}
-		const deadline = new Promise<undefined>(resolve => setTimeout(() => resolve(undefined), waitMs));
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const deadline = new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), waitMs); });
 		const connected = await Promise.all(configs.map(async config => ({ config, connection: await Promise.race([this.connection(config, root), deadline]) })));
+		clearTimeout(timer);
 		const tools: IVoltTool[] = [];
 		for (const { config, connection } of connected) {
 			if (!connection?.alive) {
@@ -205,10 +221,11 @@ export class McpHost extends Disposable {
 			if (notify) {
 				return undefined;
 			}
-			const messages = /^\s*[{[]/.test(body)
-				? [JSON.parse(body)].flat()
-				: body.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => JSON.parse(line.slice(5).trim()));
-			const reply = messages.find(message => message && message.id === id) as { result?: unknown; error?: { message?: string } } | undefined;
+			type RpcReply = { id?: unknown; result?: unknown; error?: { message?: string } } | null;
+			const messages: RpcReply[] = /^\s*[{[]/.test(body)
+				? [JSON.parse(body) as RpcReply | RpcReply[]].flat()
+				: body.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => JSON.parse(line.slice(5).trim()) as RpcReply);
+			const reply = messages.find(message => message && message.id === id);
 			if (!reply) {
 				throw new Error(`No response to ${method}.`);
 			}

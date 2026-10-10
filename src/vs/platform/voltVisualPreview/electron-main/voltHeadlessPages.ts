@@ -154,7 +154,7 @@ export class VoltHeadlessPages {
 			// The protocol only answers once the window has a renderer: start one on a blank page first.
 			await win.loadURL('about:blank');
 			page.cdp.attach('1.3');
-			page.cdp.on('message', (_event, method, params) => this.onProtocolEvent(page, method, params));
+			page.cdp.on('message', (_event, method: string, params: ICdpConsoleParams & { readonly [key: string]: unknown }) => this.onProtocolEvent(page, method, params));
 			await Promise.all([
 				page.cdp.sendCommand('Runtime.enable'),
 				page.cdp.sendCommand('Log.enable'),

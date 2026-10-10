@@ -385,7 +385,7 @@ export class AgentPullRequestsViewPane extends ViewPane {
 		append(line1, $('.volt-pr-spacer'));
 		const size = append(line1, $('span.volt-pr-stats'));
 		append(size, $('span.add')).textContent = `+${pr.additions}`;
-		append(size, $('span.del')).textContent = `−${pr.deletions}`;
+		append(size, $('span.del')).textContent = `\u2212${pr.deletions}`;
 
 		const line2 = append(lines, $('.volt-pr-list-line.sub'));
 		avatar(line2, pr.author.login, pr.author.avatarUrl, 14);
@@ -422,7 +422,7 @@ export class AgentPullRequestsViewPane extends ViewPane {
 				open();
 			}
 		}));
-		setAgentTooltip(row, `#${pr.number} ${pr.title}\n${pr.baseRefName} ← ${pr.headRefName} · ${pr.author.login}\n+${pr.additions} −${pr.deletions} · ${pr.changedFiles} files`);
+		setAgentTooltip(row, `#${pr.number} ${pr.title}\n${pr.baseRefName} ← ${pr.headRefName} · ${pr.author.login}\n+${pr.additions} \u2212${pr.deletions} · ${pr.changedFiles} files`);
 	}
 
 	/** Shown while Shift is held: one click acts, no confirmation (the Shift is the confirmation). */

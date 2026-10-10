@@ -12,7 +12,7 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const BLOCKED_TAGS = new Set(['script', 'foreignobject', 'iframe', 'object', 'embed']);
 const VOID_TAGS = new Set(['br', 'hr', 'img', 'input', 'meta', 'link']);
-const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: '\'', nbsp: ' ' };
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: '\'', nbsp: '\u00a0' };
 
 export function decodeEntities(text: string): string {
 	return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, name: string) => {

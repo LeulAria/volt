@@ -10,6 +10,10 @@ import crypto from 'node:crypto';
  * Volt's own copy for its direct local URL (`platform/voltRelay/node/relaySignature.ts`).
  *
  * - `github`: `X-Hub-Signature-256: sha256=<hex>`.
+ * - `slack`: `X-Slack-Signature: v0=<hex>` over `v0:<timestamp>:<body>` (5 minute window).
+ * - `sentry`: `Sentry-Hook-Signature: <hex>`. `linear`: `Linear-Signature: <hex>`.
+ * - `pagerduty`: `X-PagerDuty-Signature: v1=<hex>[,v1=<hex>]` (several during key rotation).
+ * - `teams`: outgoing webhooks, `Authorization: HMAC <base64>` keyed by the base64-decoded token.
  * - `generic`: any header, hex or base64, optional prefix. With `timestampHeader`, the signed
  *   text is `<timestamp>.<body>` and requests older than `toleranceSec` are refused (replay guard,
  *   as Stripe and Slack do).
@@ -17,8 +21,15 @@ import crypto from 'node:crypto';
  */
 export const SIGNATURE_PRESETS = {
 	github: { header: 'x-hub-signature-256', prefix: 'sha256=', encoding: 'hex' },
+	slack: { header: 'x-slack-signature', prefix: 'v0=', encoding: 'hex', timestampHeader: 'x-slack-request-timestamp', format: 'slack' },
+	sentry: { header: 'sentry-hook-signature', prefix: '', encoding: 'hex' },
+	linear: { header: 'linear-signature', prefix: '', encoding: 'hex' },
+	pagerduty: { header: 'x-pagerduty-signature', prefix: 'v1=', encoding: 'hex' },
+	teams: { header: 'authorization', prefix: 'HMAC ', encoding: 'base64', keyBase64: true },
 	generic: { header: 'x-volt-signature', prefix: 'sha256=', encoding: 'hex' },
 };
+
+export const SIGNATURE_KINDS = ['none', ...Object.keys(SIGNATURE_PRESETS)];
 
 /** The effective settings for a stored signature config. */
 export function signatureSettings(config) {
@@ -26,13 +37,16 @@ export function signatureSettings(config) {
 		return undefined;
 	}
 	const preset = SIGNATURE_PRESETS[config.kind] ?? SIGNATURE_PRESETS.generic;
+	const custom = config.kind === 'generic';
 	return {
 		secret: String(config.secret ?? ''),
-		header: String(config.header || preset.header).toLowerCase(),
-		prefix: config.prefix ?? preset.prefix,
-		encoding: config.encoding === 'base64' ? 'base64' : preset.encoding,
-		timestampHeader: config.timestampHeader ? String(config.timestampHeader).toLowerCase() : undefined,
+		header: String((custom && config.header) || preset.header).toLowerCase(),
+		prefix: custom && config.prefix !== undefined && config.prefix !== null ? config.prefix : preset.prefix,
+		encoding: custom && config.encoding === 'base64' ? 'base64' : preset.encoding,
+		timestampHeader: custom ? (config.timestampHeader ? String(config.timestampHeader).toLowerCase() : undefined) : preset.timestampHeader,
 		toleranceSec: Number.isFinite(config.toleranceSec) && config.toleranceSec > 0 ? config.toleranceSec : 300,
+		format: preset.format,
+		keyBase64: !!preset.keyBase64,
 	};
 }
 
@@ -42,8 +56,10 @@ export function signBody(config, body, timestamp) {
 	if (!settings) {
 		return undefined;
 	}
-	const text = settings.timestampHeader ? Buffer.concat([Buffer.from(`${timestamp}.`), Buffer.from(body)]) : Buffer.from(body);
-	return settings.prefix + crypto.createHmac('sha256', settings.secret).update(text).digest(settings.encoding);
+	const head = settings.format === 'slack' ? `v0:${timestamp}:` : settings.timestampHeader ? `${timestamp}.` : '';
+	const text = Buffer.concat([Buffer.from(head), Buffer.from(body)]);
+	const key = settings.keyBase64 ? Buffer.from(settings.secret, 'base64') : settings.secret;
+	return settings.prefix + crypto.createHmac('sha256', key).update(text).digest(settings.encoding);
 }
 
 /**
@@ -78,7 +94,8 @@ export function verifySignature(config, headers, body, now = Date.now()) {
 	const expected = signBody(config, body, timestamp);
 	const given = String(value).trim();
 	// Accept the digest with or without the prefix, so `sha256=` vs bare hex is not a footgun.
-	const candidates = settings.prefix && !given.startsWith(settings.prefix) ? [settings.prefix + given] : [given];
+	const candidates = (settings.prefix === 'v1=' ? given.split(',') : [given]).map(value => value.trim()).filter(Boolean)
+		.map(value => settings.prefix && !value.startsWith(settings.prefix) ? settings.prefix + value : value);
 	const ok = candidates.some(candidate => {
 		const left = Buffer.from(candidate);
 		const right = Buffer.from(expected);

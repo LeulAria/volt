@@ -335,7 +335,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			'- Talk to a chat that already exists: thread_send (wait=true returns its reply); thread_read to read it; thread_wait to wait for several.',
 			'- Steer what a chat does next: queue_list / queue_edit / queue_reorder / queue_cancel / queue_send_now; thread_interrupt to stop it; thread_configure to move it to another model.',
 			'- Pull requests: link_pull_request / watch_pull_request take thread_id to act for a chat you launched; a watch wakes that chat when checks fail or pass, a review comes in, or the branch conflicts.',
-			'- Recurring work: schedule_task. Visual answers: render_chart (data) and html_render (pages).',
+			'- Recurring or event-driven work: manage_automations. Visual answers: render_chart (data) and html_render (pages).',
 			'Mention chats as their markdown link so the user can open them.',
 		];
 		return { text: lines.join('\n') };

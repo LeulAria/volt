@@ -547,6 +547,11 @@ button.volt-tr-header:hover .volt-tr-chevron,
 	animation: volt-approval-in 0.16s cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
+/* Drawn again after it first faded in (agentBlockRenderers.ts): no second fade. */
+.volt-agent-block.approval:not(.question).shown {
+	animation: none;
+}
+
 /* Blocked or denied: tint the single border instead of the inset ring. */
 .volt-agent-block.approval:not(.question).blocked,
 .volt-agent-block.approval:not(.question).deny {

@@ -370,7 +370,7 @@ function parseJson(text: string): Record<string, unknown> | undefined {
 		return undefined;
 	}
 	try {
-		const value = JSON.parse(trimmed);
+		const value: unknown = JSON.parse(trimmed);
 		return value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
 	} catch {
 		return undefined;

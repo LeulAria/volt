@@ -8,6 +8,7 @@ import { Event } from '../../../../base/common/event.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IRange } from '../../../../editor/common/core/range.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import { PredictionStats } from './prediction/predictionStats.js';
 
 export const IVoltPredictionService = createDecorator<IVoltPredictionService>('voltPredictionService');
 
@@ -76,6 +77,14 @@ export interface IPredictionContext {
 	clipboard?: string;
 	/** Text-model version the context was built from; stale contexts are discarded. */
 	modelVersionId: number;
+	/** Signatures of the names used near the cursor, from the workspace index (`api.ts:12 function f(a)`). */
+	definitions?: string[];
+	/** Terminal commands that just failed and name code near the cursor: `$ npm test (exit 1): ...`. */
+	running?: string[];
+	/** Lines (1-based, inclusive) the excerpt shows; recent edits inside them are visible already. */
+	excerptLines?: { readonly start: number; readonly end: number };
+	/** Extra pause before the request is sent; a keystroke meanwhile replaces it at no cost. */
+	delayMs?: number;
 }
 
 export interface IPredictionSettings {
@@ -93,6 +102,8 @@ export interface IPredictionSettings {
 	 * the user's own prompts show at once, without waiting.
 	 */
 	composerDelayMs: number;
+	/** Dictated text is cleaned up by the prediction model (punctuation, misheard names, spoken code, fillers). */
+	voice: boolean;
 }
 
 export const DEFAULT_PREDICTION_SETTINGS: IPredictionSettings = {
@@ -102,6 +113,7 @@ export const DEFAULT_PREDICTION_SETTINGS: IPredictionSettings = {
 	disabledGlobs: ['**/.env*', '**/*.lock', '**/package-lock.json', '**/secrets*'],
 	composer: true,
 	composerDelayMs: 300,
+	voice: true,
 };
 
 /** What the composer's model continuation is built from. */
@@ -117,18 +129,33 @@ export interface IComposerPredictionInput {
 	/** Files and other names the chat is about. */
 	readonly vocabulary: readonly string[];
 	readonly clipboard?: string;
+	/** What the agent and the terminals are doing or just did: tools running, commands and their exit codes, errors. */
+	readonly activity?: readonly string[];
+}
+
+/** What a dictation cleanup is built from. */
+export interface IDictationInput {
+	/** What speech recognition heard. */
+	readonly transcript: string;
+	/** The text before where the dictation goes (the composer's draft so far), if any. */
+	readonly before?: string;
 }
 
 export const VOLT_PREDICTION_SETTINGS_STORAGE_KEY = 'volt.prediction.settings';
 
 /**
- * The Prediction Runtime (D20): ephemeral, cancellable, no Session/Run, never ACP.
- * Each call is one stateless model round-trip through `IVoltModelAccess.streamModel()`.
+ * The Prediction Runtime (D20): ephemeral, cancellable, no Session/Run. Each call is one stateless
+ * round trip through `IVoltModelAccess.streamModel()`: HTTP for a chat model, or a prompt to the
+ * predictor agent's warm ACP session when an agent serves Tab.
  */
 export interface IVoltPredictionService {
 	readonly _serviceBrand: undefined;
 
 	readonly onDidChangeSettings: Event<void>;
+	/** A ghost text grew after it was first shown: the rest of a streamed answer arrived for this file. */
+	readonly onDidExtendInline: Event<URI>;
+	/** Requests, prompt size, answers without a model, skips: since the window opened. */
+	readonly stats: PredictionStats;
 	getSettings(): IPredictionSettings;
 	updateSettings(update: Partial<IPredictionSettings>): void;
 
@@ -165,4 +192,16 @@ export interface IVoltPredictionService {
 
 	/** One-shot multi-location edit for an explicit user intent (Volt: AI Edit). */
 	predictMultiEdit(ctx: IPredictionContext, intent: string, token: CancellationToken): Promise<IEditPrediction | undefined>;
+
+	/**
+	 * Dictated text cleaned up: punctuation, misheard names, spoken code, no fillers. Empty when it
+	 * was only fillers; undefined when cleanup is off, fails or is too slow (keep the transcript).
+	 */
+	polishDictation(input: IDictationInput, token: CancellationToken): Promise<string | undefined>;
+
+	/**
+	 * Gets the model behind predictions ready before the first keystroke: for an agent, starts its
+	 * predictor session. Called when Volt starts; the service repeats it when the Tab model changes.
+	 */
+	warmUp(): void;
 }

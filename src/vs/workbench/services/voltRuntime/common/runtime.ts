@@ -67,12 +67,29 @@ export interface IVoltCompactionPlan {
 	readonly label?: string;
 }
 
+/** A command a CLI agent runs in the background by itself (Claude's `run_in_background` Bash). */
+export interface IVoltAgentBackgroundTask {
+	/** The chat it belongs to (a subagent's task belongs to its parent chat). */
+	readonly chatId: string;
+	readonly taskId: string;
+	readonly label: string;
+	readonly state: 'running' | 'completed' | 'failed' | 'stopped';
+	/** How it ended, once it did. */
+	readonly summary?: string;
+	/** Where the agent writes its output, for reading and tailing. */
+	readonly outputFilePath?: string;
+}
+
 export interface IAgentRuntimeService extends IVoltModelAccess {
 	readonly _serviceBrand: undefined;
 	readonly onDidChangeCatalog: Event<void>;
 	readonly onDidChangeProfiles: Event<void>;
 	readonly onDidChangeProviderStatus: Event<void>;
 	readonly onDidChangeAccess: Event<void>;
+	/** A CLI agent started, updated or ended a command it runs in the background on its own. */
+	readonly onDidChangeAgentBackgroundTask: Event<IVoltAgentBackgroundTask>;
+	/** Stops a CLI agent's background command without cancelling its turn. */
+	stopAgentBackgroundTask(chatId: string, taskId: string): Promise<void>;
 
 	getOrCreateSession(key: string): IVoltSession;
 	/**
@@ -98,7 +115,10 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	 * False, with nothing changed, while a run is active, unless `cancel` stops that run first.
 	 */
 	restartAgent(sessionId: string, options?: { readonly cancel?: boolean }): Promise<boolean>;
-	/** Starts the selected ACP agent ahead of the first message. No-op for native models. */
+	/**
+	 * Starts the selected ACP agent ahead of the first message. For a native model, fills what a
+	 * send reads before its request (skills, rules, memory, hooks, the API key) and starts MCP servers.
+	 */
 	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void;
 	/** Restore the checkout a chat already created, so a reload does not fall through to the open folder. */
 	rememberWorktree(sessionId: string, path: string | undefined, branch: string | undefined): void;
@@ -162,8 +182,10 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	getModelOptions(ref: string): IVoltModelOptions;
 	setModelOptions(ref: string, options: IVoltModelOptions): Promise<void>;
 
-	getAccessMode(): VoltAccessMode;
-	setAccessMode(mode: VoltAccessMode): Promise<void>;
+	/** The chat's access mode, or the default (Settings) without a chat or when it never picked one. */
+	getAccessMode(sessionId?: string): VoltAccessMode;
+	/** With a chat, sets that chat's mode only; without one, sets the default for every other chat. */
+	setAccessMode(mode: VoltAccessMode, sessionId?: string): Promise<void>;
 	/** The chat's OS sandbox, or the default for chats that never set one. */
 	getSandboxSettings(sessionId: string): IVoltSandboxSettings;
 	setSandboxSettings(sessionId: string, settings: IVoltSandboxSettings): Promise<void>;

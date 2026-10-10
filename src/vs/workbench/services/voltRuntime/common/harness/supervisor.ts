@@ -282,7 +282,7 @@ function parseInput(input: string): Record<string, unknown> | undefined {
 		return undefined;
 	}
 	try {
-		const parsed = JSON.parse(input);
+		const parsed: unknown = JSON.parse(input);
 		return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
 	} catch {
 		return undefined;

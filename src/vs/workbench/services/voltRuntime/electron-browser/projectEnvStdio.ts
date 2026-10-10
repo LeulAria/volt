@@ -9,7 +9,7 @@ import { projectRunEnv } from '../common/projectRunEnv.js';
 
 /**
  * The main-process stdio service, with each project's environment added to the agent processes
- * spawned in it (Project Settings > Environment). Everything else passes straight through.
+ * and commands run in it (Project Settings > Environment). Everything else passes straight through.
  */
 export class ProjectEnvVoltStdioService implements IVoltStdioService {
 
@@ -33,7 +33,11 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	write(id: string, data: string): Promise<void> { return this.inner.write(id, data); }
 	kill(id: string): Promise<void> { return this.inner.kill(id); }
 	which(command: string): Promise<string | undefined> { return this.inner.which(command); }
-	exec(request: IVoltExecRequest): Promise<IVoltExecResult> { return this.inner.exec(request); }
+	/** Commands get the project's environment too (a project's DOCKER_HOST or PATH additions). */
+	exec(request: IVoltExecRequest): Promise<IVoltExecResult> {
+		const env = projectRunEnv(request.cwd);
+		return this.inner.exec(env ? { ...request, env: { ...env, ...request.env } } : request);
+	}
 	cancelExec(id: string): Promise<void> { return this.inner.cancelExec(id); }
 	jobOutput(id: string, since?: number): Promise<IVoltJobOutput | undefined> { return this.inner.jobOutput(id, since); }
 	jobWait(id: string, timeoutMs: number, until?: string, since?: number): Promise<IVoltJobOutput | undefined> { return this.inner.jobWait(id, timeoutMs, until, since); }

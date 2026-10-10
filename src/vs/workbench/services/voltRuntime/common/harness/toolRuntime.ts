@@ -56,7 +56,7 @@ export async function runToolBatch(
 		const tool = tools.get(call.name);
 		return tool ? { ...call, args: normalizeArgs(tool.schema, call.args) } : call;
 	});
-	const results: IToolResult[] = new Array(calls.length);
+	const results: IToolResult[] = new Array<IToolResult>(calls.length);
 	const deliver = (index: number, result: IToolResult) => {
 		results[index] = result;
 		options.onResult?.(result);

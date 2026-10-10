@@ -145,8 +145,8 @@ export class VoltProjectsService extends Disposable implements IVoltProjectsServ
 
 	private readMeta(): Record<string, IProjectMeta> {
 		try {
-			const raw = JSON.parse(this.storageService.get(META_KEY, StorageScope.APPLICATION, '{}'));
-			return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+			const raw: unknown = JSON.parse(this.storageService.get(META_KEY, StorageScope.APPLICATION, '{}'));
+			return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, IProjectMeta> : {};
 		} catch {
 			return {};
 		}

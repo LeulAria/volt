@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { bufferToStream, VSBuffer } from '../../../common/buffer.js';
+import { bufferToStream, newWriteableBufferStream, VSBuffer, VSBufferWriteableStream } from '../../../common/buffer.js';
 import { CancellationToken } from '../../../common/cancellation.js';
 import { canceled } from '../../../common/errors.js';
 import { IHeaders, IRequestContext, IRequestOptions, OfflineError } from './request.js';
@@ -20,6 +20,8 @@ export async function request(options: IRequestOptions, token: CancellationToken
 		AbortSignal.timeout(options.timeout),
 	]) : cancellation.signal;
 
+	// Once the body streams, the pump owns the cancellation listener so a cancel still aborts mid-body.
+	let streaming = false;
 	try {
 		const fetchInit: RequestInit = {
 			method: options.type || 'GET',
@@ -31,27 +33,60 @@ export async function request(options: IRequestOptions, token: CancellationToken
 			fetchInit.cache = 'no-store';
 		}
 		const res = await fetch(options.url || '', fetchInit);
-		return {
-			res: {
-				statusCode: res.status,
-				headers: getResponseHeaders(res),
-			},
-			stream: bufferToStream(VSBuffer.wrap(new Uint8Array(await res.arrayBuffer()))),
+		const head = {
+			statusCode: res.status,
+			headers: getResponseHeaders(res),
 		};
+		if (!res.body) {
+			return { res: head, stream: bufferToStream(VSBuffer.wrap(new Uint8Array(await res.arrayBuffer()))) };
+		}
+		// Hand each chunk on as it arrives: a streamed (SSE) answer must not wait for the whole body.
+		const stream = newWriteableBufferStream();
+		streaming = true;
+		void pumpBody(res.body, stream, options, isOnline).finally(() => disposable.dispose());
+		return { res: head, stream };
 	} catch (err) {
-		if (isOnline && !isOnline()) {
-			throw new OfflineError();
-		}
-		if (err?.name === 'AbortError') {
-			throw canceled();
-		}
-		if (err?.name === 'TimeoutError') {
-			throw new Error(`Fetch timeout: ${options.timeout}ms`);
-		}
-		throw err;
+		throw requestError(err, options, isOnline);
 	} finally {
-		disposable.dispose();
+		if (!streaming) {
+			disposable.dispose();
+		}
 	}
+}
+
+async function pumpBody(body: NonNullable<Response['body']>, stream: VSBufferWriteableStream, options: IRequestOptions, isOnline?: () => boolean): Promise<void> {
+	const reader = body.getReader();
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) {
+				break;
+			}
+			if (value?.byteLength) {
+				await stream.write(VSBuffer.wrap(value));
+			}
+		}
+	} catch (err) {
+		const error = requestError(err, options, isOnline);
+		stream.error(error instanceof Error ? error : new Error(String(error)));
+	} finally {
+		reader.releaseLock();
+		stream.end();
+	}
+}
+
+function requestError(err: unknown, options: IRequestOptions, isOnline?: () => boolean): unknown {
+	if (isOnline && !isOnline()) {
+		return new OfflineError();
+	}
+	const name = (err as { readonly name?: unknown } | null | undefined)?.name;
+	if (name === 'AbortError') {
+		return canceled();
+	}
+	if (name === 'TimeoutError') {
+		return new Error(`Fetch timeout: ${options.timeout}ms`);
+	}
+	return err;
 }
 
 function getRequestHeaders(options: IRequestOptions) {

@@ -114,7 +114,7 @@ export function matchesRequestedForm(text: string, form: OutputForm): boolean {
 		return rows.length >= 3;
 	}
 	if (form === 'list') {
-		const items = text.split('\n').filter(line => /^\s*(?:[-*•]|\d+[.)])\s+\S/.test(line));
+		const items = text.split('\n').filter(line => /^\s*(?:[-*\u2022]|\d+[.)])\s+\S/.test(line));
 		return items.length >= 3;
 	}
 	return true;

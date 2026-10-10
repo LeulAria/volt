@@ -98,7 +98,8 @@ export class ServerSessionHost extends Disposable {
 	}
 
 	private onChange(sessionId: string, change: IAgentSessionChange): void {
-		if (change.kind === 'render') {
+		// 'activity' changed the messages without changing what is drawn (more reasoning): a patch carries it too.
+		if (change.kind === 'render' || change.kind === 'activity') {
 			this.schedule(sessionId);
 			return;
 		}
@@ -138,6 +139,8 @@ export class ServerSessionHost extends Disposable {
 			return;
 		}
 		const input = tracked.input;
+		// Tool arguments streamed since the last patch are parsed once, here (the window does it per frame).
+		input.controller.flushStreamedInput?.();
 		const patcher = this.patcherFor(sessionId, input.messages);
 		const patch = patcher.diff(this.wireMessages(input.messages), { contextUsed: input.contextUsed, contextWindow: input.contextWindow });
 		if (patch) {

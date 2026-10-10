@@ -114,7 +114,10 @@ export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 		tools.push('- edit_file for existing files: old_string must match exactly; several changes to one file go in one call via edits. write_file only for new files or full rewrites.');
 	}
 	if (policy.allowTerminal && has('shell')) {
-		tools.push('- shell runs non-interactive commands with no stdin. Run servers and watchers with background: true, then job_wait for readiness. Never start an interactive program or editor.');
+		tools.push('- shell runs non-interactive commands with no stdin. A command still running after 25s returns its output so far and keeps going as a job (job_wait / job_output / job_stop); keep working meanwhile. Never start an interactive program or editor.');
+		if (has('terminal_start')) {
+			tools.push('- Servers, watchers, `docker compose up` and anything else that keeps running go in terminal_start: it returns once the process is up, the user sees it as a chip, and you keep working. Read it with terminal_output / terminal_wait, stop it with terminal_stop. Never wait for such a process to exit. For Docker, call docker_ensure once instead of opening Docker and polling.');
+		}
 	}
 	tools.push('- Prefer the dedicated tools over shell for reading, searching, and editing files.');
 	if (has('code_nav')) {

@@ -10,7 +10,7 @@ import { join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
 import { IVoltPageCapture, IVoltPageCaptureRequest, IVoltPageEvaluation, IVoltPageOpened, IVoltPageOpenRequest, IVoltPageState, IVoltVisualConsoleMessage, IVoltVisualPreview, IVoltVisualPreviewRequest, IVoltVisualPreviewService, VOLT_VISUAL_MAX_CAPTURE, VOLT_VISUAL_MAX_WIDTH, VOLT_VISUAL_MIN_WIDTH, VoltPageInput, VoltPageScheme } from '../common/voltVisualPreview.js';
-import { consoleMessageOf } from './cdpConsole.js';
+import { consoleMessageOf, ICdpConsoleParams } from './cdpConsole.js';
 import { VoltHeadlessPages } from './voltHeadlessPages.js';
 
 const LOAD_TIMEOUT_MS = 15_000;
@@ -127,7 +127,7 @@ export class VoltVisualPreviewMainService implements IVoltVisualPreviewService {
 			contents.on('will-navigate', event => event.preventDefault());
 			const cdp = contents.debugger;
 			cdp.attach('1.3');
-			cdp.on('message', (_event, method, params) => {
+			cdp.on('message', (_event, method: string, params: ICdpConsoleParams) => {
 				const message = consoleMessageOf(method, params);
 				if (message) {
 					push(message.level, message.text);

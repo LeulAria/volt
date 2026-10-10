@@ -126,7 +126,7 @@ export function showAgentGitCommitDialog(accessor: ServicesAccessor, options: IA
 			const deletions = selected.reduce((sum, file) => sum + file.deletions, 0);
 			totals.replaceChildren();
 			append(totals, $('span.add')).textContent = `+${additions}`;
-			append(totals, $('span.del')).textContent = `−${deletions}`;
+			append(totals, $('span.del')).textContent = `\u2212${deletions}`;
 			edit.textContent = editing ? localize('voltGit.dialog.done', "Done") : localize('voltGit.dialog.edit', "Edit");
 			for (const file of status.files) {
 				const isExcluded = excluded.has(file.path);
@@ -159,7 +159,7 @@ export function showAgentGitCommitDialog(accessor: ServicesAccessor, options: IA
 				} else if (file.additions || file.deletions) {
 					const stats = append(row, $('span.stats'));
 					append(stats, $('span.add')).textContent = `+${file.additions}`;
-					append(stats, $('span.del')).textContent = `−${file.deletions}`;
+					append(stats, $('span.del')).textContent = `\u2212${file.deletions}`;
 				}
 			}
 			const none = selected.length === 0;

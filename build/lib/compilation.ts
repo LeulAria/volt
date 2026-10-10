@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import cp from 'child_process';
 import es from 'event-stream';
 import fs from 'fs';
 import gulp from 'gulp';
@@ -123,18 +124,49 @@ export function transpileTask(src: string, out: string, esbuild?: boolean): task
 
 export function compileTask(src: string, out: string, build: boolean, options: { disableMangle?: boolean; preserveEnglish?: boolean } = {}): task.StreamTask | task.PromiseTask {
 
-	// VOLT_BUILD_IGNORE_TYPE_ERRORS=1: report type errors but still package. Mangling needs a clean type check, so it is off too.
+	// VOLT_BUILD_IGNORE_TYPE_ERRORS=1: report type errors but still package. Mangling needs a clean type check, so then it runs only when tsgo finds no errors.
 	const ignoreTypeErrors = !!process.env.VOLT_BUILD_IGNORE_TYPE_ERRORS;
-	const mangle = build && !options.disableMangle && !ignoreTypeErrors;
+	const wantsMangle = build && !options.disableMangle;
 	// Without mangling, product builds type-check and emit with tsgo (the native TypeScript
 	// compiler, ~6 s for src); VOLT_BUILD_ENGINE=tsc keeps the single-threaded TypeScript
 	// emitter. Mangling rewrites TypeScript through the language service, so it stays on tsc.
-	if (build && !mangle && process.env.VOLT_BUILD_ENGINE !== 'tsc') {
+	const useTsgo = build && process.env.VOLT_BUILD_ENGINE !== 'tsc';
+	const taskName = `compile-${path.basename(src)}`;
+	if (useTsgo && !wantsMangle) {
 		const fast: task.PromiseTask = fastProductCompile(src, out, { ignoreTypeErrors, preserveEnglish: !!options.preserveEnglish });
-		fast.taskName = `compile-${path.basename(src)}`;
+		fast.taskName = taskName;
 		return fast;
 	}
+	if (wantsMangle && ignoreTypeErrors) {
+		// A lenient build mangles only when the tree type-checks; the check costs a tsgo pass, so it runs with the task.
+		const lenient: task.PromiseTask = async () => {
+			if (isTypeClean(path.join(__dirname, '../../', src, 'tsconfig.json'))) {
+				await streamDone(tscCompileTask(src, out, build, { mangle: true, ignoreTypeErrors, preserveEnglish: options.preserveEnglish })());
+			} else if (useTsgo) {
+				await fastProductCompile(src, out, { ignoreTypeErrors, preserveEnglish: !!options.preserveEnglish })();
+			} else {
+				await streamDone(tscCompileTask(src, out, build, { mangle: false, ignoreTypeErrors, preserveEnglish: options.preserveEnglish })());
+			}
+		};
+		lenient.taskName = taskName;
+		return lenient;
+	}
 
+	const tsc = tscCompileTask(src, out, build, { mangle: wantsMangle, ignoreTypeErrors, preserveEnglish: options.preserveEnglish });
+	tsc.taskName = taskName;
+	return tsc;
+}
+
+function streamDone(stream: NodeJS.ReadWriteStream): Promise<void> {
+	return new Promise((resolve, reject) => {
+		stream.on('end', () => resolve());
+		stream.on('error', reject);
+	});
+}
+
+/** Product or dev compile through the TypeScript emitter (gulp-tsb), optionally mangling first. */
+function tscCompileTask(src: string, out: string, build: boolean, options: { mangle: boolean; ignoreTypeErrors: boolean; preserveEnglish?: boolean }): task.StreamTask {
+	const { mangle, ignoreTypeErrors } = options;
 	const task = () => {
 
 		if (os.totalmem() < 4_000_000_000) {
@@ -178,7 +210,6 @@ export function compileTask(src: string, out: string, build: boolean, options: {
 			.pipe(gulp.dest(out));
 	};
 
-	task.taskName = `compile-${path.basename(src)}`;
 	return task;
 }
 
@@ -255,7 +286,6 @@ function fastProductCompile(src: string, out: string, options: { ignoreTypeError
 
 /** Runs tsgo on the project with extra arguments; resolves with one entry per diagnostic. */
 function runTsgo(projectPath: string, args: string[]): Promise<string[]> {
-	const cp = require('child_process') as typeof import('child_process');
 	const root = path.join(__dirname, '../..');
 	const tsgo = path.join(path.dirname(require.resolve('@typescript/native-preview/package.json', { paths: [root] })), 'bin', 'tsgo');
 	return new Promise(resolve => {
@@ -317,6 +347,20 @@ class ImportCycleCollector {
 		}
 		return errors;
 	}
+}
+
+/**
+ * Whether the project has no type errors, by the native compiler: seconds, where a second tsc pass takes
+ * minutes. The mangler renames by type information, so a lenient build mangles only when this holds.
+ */
+function isTypeClean(projectPath: string): boolean {
+	const tsgo = path.join(__dirname, '../../node_modules/.bin', process.platform === 'win32' ? 'tsgo.cmd' : 'tsgo');
+	const result = cp.spawnSync(tsgo, ['--project', projectPath, '--noEmit', '--skipLibCheck'], { encoding: 'utf8', shell: process.platform === 'win32', maxBuffer: 64 * 1024 * 1024 });
+	if (result.status !== 0) {
+		const errors = result.error ? result.error.message : `${(result.stdout ?? '').match(/error TS\d+/g)?.length ?? 0} type errors`;
+		fancyLog(ansiColors.yellow('[mangler]'), `skipped, ${path.relative(process.cwd(), projectPath)} does not type-check: ${errors}`);
+	}
+	return result.status === 0;
 }
 
 export function watchTask(out: string, build: boolean, srcPath: string = 'src'): task.StreamTask {

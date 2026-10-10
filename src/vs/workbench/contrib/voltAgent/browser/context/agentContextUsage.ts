@@ -171,7 +171,35 @@ export function estimateTokensFromText(text: string): number {
 }
 
 export function estimateMessageTokens(message: IContextUsageMessage): number {
-	return estimateTokensFromText(messageOccupancyText(message)) + toolOutputTokens(message.toolOutputChars);
+	// A settled message is counted once: the meter reads every message each time it redraws, and
+	// counting means re-parsing the reply's markdown. Only the reply still streaming is recounted.
+	const key = settledTokenKey(message);
+	if (key !== undefined) {
+		const cached = settledTokens.get(message);
+		if (cached?.key === key) {
+			return cached.tokens;
+		}
+	}
+	const tokens = estimateTokensFromText(messageOccupancyText(message)) + toolOutputTokens(message.toolOutputChars);
+	if (key !== undefined) {
+		settledTokens.set(message, { key, tokens });
+	}
+	return tokens;
+}
+
+const settledTokens = new WeakMap<IContextUsageMessage, { readonly key: string; readonly tokens: number }>();
+
+/**
+ * What a settled message's count depends on, cheaply: its shape and text sizes. Undefined for a
+ * reply still streaming, which changes every frame and is always counted afresh.
+ */
+function settledTokenKey(message: IContextUsageMessage): string | undefined {
+	if (message.activity?.streaming) {
+		return undefined;
+	}
+	const last = message.segments?.at(-1);
+	const lastSize = last?.kind === 'text' || last?.kind === 'thought' ? last.text.length : 0;
+	return `${message.text?.length ?? 0}:${message.agentText?.length ?? 0}:${message.segments?.length ?? 0}:${lastSize}:${message.steps?.length ?? 0}:${message.changes?.length ?? 0}:${message.toolOutputChars ?? 0}:${message.activity?.thinkingText?.length ?? 0}`;
 }
 
 /** Tool output is counted at the same four characters per token as the rest of the transcript. */

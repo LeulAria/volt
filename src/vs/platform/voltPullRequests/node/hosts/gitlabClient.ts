@@ -3,8 +3,24 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Json, stripDraftTitle } from '../../common/hosts/hostParse.js';
-import { gitlabProjectId, parseGitlabChecks, parseGitlabDetail, parseGitlabDiff, parseGitlabMergeRequest } from '../../common/hosts/gitlabParse.js';
+import { num, str, stripDraftTitle } from '../../common/hosts/hostParse.js';
+import {
+	gitlabProjectId,
+	IGitlabApprovalsJson,
+	IGitlabCommitJson,
+	IGitlabCommitStatusJson,
+	IGitlabDiffJson,
+	IGitlabDiscussionJson,
+	IGitlabJobJson,
+	IGitlabLabelJson,
+	IGitlabMergeRequestJson,
+	IGitlabProjectJson,
+	IGitlabUserJson,
+	parseGitlabChecks,
+	parseGitlabDetail,
+	parseGitlabDiff,
+	parseGitlabMergeRequest,
+} from '../../common/hosts/gitlabParse.js';
 import {
 	IVoltPrCheck,
 	IVoltPrCreateRequest,
@@ -23,6 +39,11 @@ import { IVoltPrHttpResponse } from './voltPrHttp.js';
 
 const PER_PAGE = 100;
 
+/** `GET .../changes`: GitLab before 15.7 has no `/diffs`. */
+interface IGitlabChangesJson {
+	readonly changes?: readonly IGitlabDiffJson[];
+}
+
 /** GitLab.com and self-managed GitLab, `/api/v4`. Merge requests are numbered by `iid`. */
 export class GitlabClient extends VoltPrRestClient implements IVoltPrHostClient {
 
@@ -37,7 +58,7 @@ export class GitlabClient extends VoltPrRestClient implements IVoltPrHostClient 
 	}
 
 	protected async readViewer(): Promise<string> {
-		const me = await this.http.get<Json>('/user');
+		const me = await this.http.get<IGitlabUserJson | undefined>('/user');
 		if (typeof me?.username !== 'string') {
 			throw new VoltPrError('noAuth', `${this.label} did not say who the token belongs to.`);
 		}
@@ -52,32 +73,32 @@ export class GitlabClient extends VoltPrRestClient implements IVoltPrHostClient 
 		return got >= PER_PAGE ? page + 1 : undefined;
 	}
 
-	private all(path: string, query: Record<string, string | number> = {}, limit = Infinity): Promise<Json[]> {
-		return this.http.pages<Json>(path, { per_page: PER_PAGE, ...query }, body => Array.isArray(body) ? body : [], (response, page, got) => this.nextPage(response, page, got), limit);
+	private all<T>(path: string, query: Record<string, string | number> = {}, limit = Infinity): Promise<T[]> {
+		return this.http.pages<T>(path, { per_page: PER_PAGE, ...query }, body => Array.isArray(body) ? body as T[] : [], (response, page, got) => this.nextPage(response, page, got), limit);
 	}
 
 	/** List rows carry no pipeline: open ones are read one by one for it (the single read has `head_pipeline`). */
-	private async rows(repo: IVoltPrRepoRef, raws: readonly Json[], viewer: string): Promise<IVoltPullRequest[]> {
+	private async rows(repo: IVoltPrRepoRef, raws: readonly IGitlabMergeRequestJson[], viewer: string): Promise<IVoltPullRequest[]> {
 		return this.eachSettled(raws, async raw => {
-			const full = raw.state === 'opened' && raw.head_pipeline === undefined ? await this.http.get<Json>(this.mr(repo, raw.iid)) : raw;
+			const full = raw.state === 'opened' && raw.head_pipeline === undefined ? await this.http.get<IGitlabMergeRequestJson>(this.mr(repo, num(raw.iid))) : raw;
 			return parseGitlabMergeRequest(full, repo, viewer);
 		}, raw => parseGitlabMergeRequest(raw, repo, viewer));
 	}
 
 	async list(repo: IVoltPrRepoRef, state: 'open' | 'closed' | 'all', limit: number): Promise<IVoltPullRequest[]> {
 		const states = state === 'open' ? ['opened'] : state === 'closed' ? ['closed', 'merged'] : ['all'];
-		const [viewer, ...lists] = await Promise.all([this.viewer(), ...states.map(value => this.all(`${this.project(repo)}/merge_requests`, { state: value, order_by: 'updated_at', sort: 'desc' }, limit))]);
-		const raws = (lists as Json[][]).flat().sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, limit);
-		return this.rows(repo, raws, viewer as string);
+		const [viewer, lists] = await Promise.all([this.viewer(), Promise.all(states.map(value => this.all<IGitlabMergeRequestJson>(`${this.project(repo)}/merge_requests`, { state: value, order_by: 'updated_at', sort: 'desc' }, limit)))]);
+		const raws = lists.flat().sort((a, b) => Date.parse(str(b.updated_at)) - Date.parse(str(a.updated_at))).slice(0, limit);
+		return this.rows(repo, raws, viewer);
 	}
 
 	async forBranch(repo: IVoltPrRepoRef, branch: string): Promise<IVoltPullRequest[]> {
-		const [viewer, raws] = await Promise.all([this.viewer(), this.all(`${this.project(repo)}/merge_requests`, { state: 'all', source_branch: branch, order_by: 'created_at', sort: 'desc' }, 20)]);
+		const [viewer, raws] = await Promise.all([this.viewer(), this.all<IGitlabMergeRequestJson>(`${this.project(repo)}/merge_requests`, { state: 'all', source_branch: branch, order_by: 'created_at', sort: 'desc' }, 20)]);
 		return openFirst(await this.rows(repo, raws, viewer));
 	}
 
 	async get(repo: IVoltPrRepoRef, number: number): Promise<IVoltPullRequest | undefined> {
-		const response = await this.http.request<Json>('GET', this.mr(repo, number), { allow: [404] });
+		const response = await this.http.request<IGitlabMergeRequestJson | undefined>('GET', this.mr(repo, number), { allow: [404] });
 		if (response.status === 404 || !response.body) {
 			return undefined;
 		}
@@ -85,11 +106,11 @@ export class GitlabClient extends VoltPrRestClient implements IVoltPrHostClient 
 	}
 
 	/** The head pipeline's jobs (in the project that ran it: a fork's for its merge requests) and external statuses. */
-	private async checks(repo: IVoltPrRepoRef, mr: Json): Promise<IVoltPrCheck[]> {
+	private async checks(repo: IVoltPrRepoRef, mr: IGitlabMergeRequestJson): Promise<IVoltPrCheck[]> {
 		const pipeline = mr.head_pipeline ?? mr.pipeline;
 		const [jobs, statuses] = await Promise.all([
-			pipeline?.id ? this.all(`/projects/${pipeline.project_id ?? gitlabProjectId(repo)}/pipelines/${pipeline.id}/jobs`, { include_retried: 'false' }).catch(() => []) : Promise.resolve([]),
-			mr.sha ? this.all(`${this.project(repo)}/repository/commits/${mr.sha}/statuses`).catch(() => []) : Promise.resolve([]),
+			pipeline?.id ? this.all<IGitlabJobJson>(`/projects/${pipeline.project_id ?? gitlabProjectId(repo)}/pipelines/${pipeline.id}/jobs`, { include_retried: 'false' }).catch(() => []) : Promise.resolve([]),
+			mr.sha ? this.all<IGitlabCommitStatusJson>(`${this.project(repo)}/repository/commits/${mr.sha}/statuses`).catch(() => []) : Promise.resolve([]),
 		]);
 		if (!jobs.length && !statuses.length && pipeline?.status) {
 			// Jobs can be out of reach (a fork's pipeline): the pipeline itself still says where it stands.
@@ -99,33 +120,33 @@ export class GitlabClient extends VoltPrRestClient implements IVoltPrHostClient 
 	}
 
 	async detail(repo: IVoltPrRepoRef, number: number): Promise<IVoltPullRequestDetail> {
-		const response = await this.http.request<Json>('GET', this.mr(repo, number), { allow: [404] });
+		const response = await this.http.request<IGitlabMergeRequestJson>('GET', this.mr(repo, number), { allow: [404] });
 		if (response.status === 404) {
 			throw new VoltPrError('notFound', `Merge request !${number} was not found in ${repo.owner}/${repo.name}.`);
 		}
 		const mr = response.body;
 		const [viewer, project, checks, diffs, discussions, commits, approvals, labels] = await Promise.all([
 			this.viewer(),
-			this.http.get<Json>(this.project(repo)),
+			this.http.get<IGitlabProjectJson | undefined>(this.project(repo)),
 			this.checks(repo, mr),
-			this.all(`${this.mr(repo, number)}/diffs`).catch(async err => {
+			this.all<IGitlabDiffJson>(`${this.mr(repo, number)}/diffs`).catch(async err => {
 				// GitLab before 15.7 has only `/changes`.
 				if (voltPrErrorCode(err) !== 'notFound') {
 					throw err;
 				}
-				return (await this.http.get<Json>(`${this.mr(repo, number)}/changes`))?.changes ?? [];
+				return (await this.http.get<IGitlabChangesJson | undefined>(`${this.mr(repo, number)}/changes`))?.changes ?? [];
 			}),
-			this.all(`${this.mr(repo, number)}/discussions`).catch(() => []),
-			this.all(`${this.mr(repo, number)}/commits`).catch(() => []),
-			this.http.get<Json>(`${this.mr(repo, number)}/approvals`).catch(() => undefined),
-			this.all(`${this.project(repo)}/labels`).catch(() => []),
+			this.all<IGitlabDiscussionJson>(`${this.mr(repo, number)}/discussions`).catch(() => []),
+			this.all<IGitlabCommitJson>(`${this.mr(repo, number)}/commits`).catch(() => []),
+			this.http.get<IGitlabApprovalsJson>(`${this.mr(repo, number)}/approvals`).catch(() => undefined),
+			this.all<IGitlabLabelJson>(`${this.project(repo)}/labels`).catch(() => []),
 		]);
 		return parseGitlabDetail({ mr, project, checks, diffs, discussions, commits, approvals, labels }, repo, viewer);
 	}
 
 	async create(request: IVoltPrCreateRequest): Promise<IVoltPullRequest> {
 		const title = request.draft ? `Draft: ${stripDraftTitle(request.title)}` : request.title;
-		const created = await this.http.json<Json>('POST', `${this.project(request.repo)}/merge_requests`, {
+		const created = await this.http.json<IGitlabMergeRequestJson | undefined>('POST', `${this.project(request.repo)}/merge_requests`, {
 			body: { source_branch: request.head, target_branch: request.base, title, description: request.body },
 		});
 		if (typeof created?.iid !== 'number') {
@@ -179,7 +200,7 @@ export class GitlabClient extends VoltPrRestClient implements IVoltPrHostClient 
 	}
 
 	async setDraft(repo: IVoltPrRepoRef, number: number, draft: boolean): Promise<void> {
-		const mr = await this.http.get<Json>(this.mr(repo, number));
+		const mr = await this.http.get<IGitlabMergeRequestJson | undefined>(this.mr(repo, number));
 		const plain = stripDraftTitle(String(mr?.title ?? ''));
 		await this.http.json('PUT', this.mr(repo, number), { body: { title: draft ? `Draft: ${plain}` : plain } });
 	}
@@ -210,7 +231,7 @@ export class GitlabClient extends VoltPrRestClient implements IVoltPrHostClient 
 	}
 
 	async postReview(repo: IVoltPrRepoRef, number: number, body: string, comments: readonly IVoltPrLineComment[]): Promise<{ posted: number; url?: string }> {
-		const mr = await this.http.get<Json>(this.mr(repo, number));
+		const mr = await this.http.get<IGitlabMergeRequestJson | undefined>(this.mr(repo, number));
 		const refs = mr?.diff_refs;
 		let posted = 0;
 		const leftOver: IVoltPrLineComment[] = [];
@@ -237,7 +258,7 @@ export class GitlabClient extends VoltPrRestClient implements IVoltPrHostClient 
 	}
 
 	override async rerunFailedChecks(repo: IVoltPrRepoRef, number: number): Promise<number> {
-		const mr = await this.http.get<Json>(this.mr(repo, number));
+		const mr = await this.http.get<IGitlabMergeRequestJson | undefined>(this.mr(repo, number));
 		const pipeline = mr?.head_pipeline;
 		if (!pipeline?.id || pipeline.status !== 'failed') {
 			return 0;
@@ -248,19 +269,19 @@ export class GitlabClient extends VoltPrRestClient implements IVoltPrHostClient 
 
 	async filePatches(repo: IVoltPrRepoRef, number: number, commit?: string): Promise<IVoltPrFilePatch[]> {
 		if (commit) {
-			const diffs = await this.all(`${this.project(repo)}/repository/commits/${commit}/diff`);
+			const diffs = await this.all<IGitlabDiffJson>(`${this.project(repo)}/repository/commits/${commit}/diff`);
 			return diffs.map(parseGitlabDiff).map(file => file.change === 'deleted' ? file : { ...file, blob: commitPathRef(commit, file.path) });
 		}
-		const mr = await this.http.get<Json>(this.mr(repo, number));
+		const mr = await this.http.get<IGitlabMergeRequestJson | undefined>(this.mr(repo, number));
 		const head = String(mr?.sha ?? mr?.diff_refs?.head_sha ?? '');
-		let diffs: Json[];
+		let diffs: readonly IGitlabDiffJson[];
 		try {
-			diffs = await this.all(`${this.mr(repo, number)}/diffs`);
+			diffs = await this.all<IGitlabDiffJson>(`${this.mr(repo, number)}/diffs`);
 		} catch (err) {
 			if (voltPrErrorCode(err) !== 'notFound') {
 				throw err;
 			}
-			diffs = (await this.http.get<Json>(`${this.mr(repo, number)}/changes`))?.changes ?? [];
+			diffs = (await this.http.get<IGitlabChangesJson | undefined>(`${this.mr(repo, number)}/changes`))?.changes ?? [];
 		}
 		return diffs.map(parseGitlabDiff).map(file => file.change === 'deleted' || !head ? file : { ...file, blob: commitPathRef(head, file.path) });
 	}
@@ -274,7 +295,7 @@ export class GitlabClient extends VoltPrRestClient implements IVoltPrHostClient 
 	}
 
 	async remoteBranches(repo: IVoltPrRepoRef): Promise<string[]> {
-		const [project, branches] = await Promise.all([this.http.get<Json>(this.project(repo)), this.all(`${this.project(repo)}/repository/branches`, {}, 300)]);
+		const [project, branches] = await Promise.all([this.http.get<IGitlabProjectJson | undefined>(this.project(repo)), this.all<{ readonly name?: unknown }>(`${this.project(repo)}/repository/branches`, {}, 300)]);
 		const names = branches.map(branch => branch?.name).filter((name): name is string => typeof name === 'string');
 		const main = project?.default_branch;
 		return typeof main === 'string' ? [main, ...names.filter(name => name !== main)] : names;

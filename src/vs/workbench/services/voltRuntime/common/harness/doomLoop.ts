@@ -698,7 +698,7 @@ function maskVolatile(text: string): string {
 function maskPositions(text: string): string {
 	return text
 		.replace(/:\d+(?::\d+)?\b/g, ':#')
-		.replace(/\blines? \d+(?:\s*[-–,]\s*\d+)*/gi, 'line #')
+		.replace(/\blines? \d+(?:\s*[-\u2013,]\s*\d+)*/gi, 'line #')
 		.replace(/\(\d+,\s*\d+\)/g, '(#,#)');
 }
 
@@ -715,7 +715,7 @@ export function errorShape(message: string): string {
 		.slice(0, 120);
 }
 
-const ERROR_LINE = /error|fail|exception|assert|cannot|can't|not found|no such|denied|refused|invalid|unexpected|missing|✖|✗|panic|traceback/i;
+const ERROR_LINE = /error|fail|exception|assert|cannot|can't|not found|no such|denied|refused|invalid|unexpected|missing|\u2716|\u2717|panic|traceback/i;
 
 /** The line that says what went wrong: not the echoed command, not the exit status. */
 export function salientLine(text: string): string {

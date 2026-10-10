@@ -5,7 +5,7 @@
 
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
-import { basename, joinPath } from '../../../../../base/common/resources.js';
+import { basename, isEqual, isEqualOrParent, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
@@ -18,6 +18,11 @@ import { importedMemoryDraft, IVoltMemory, IVoltMemoryDraft, IVoltMemoryService,
 
 const MAX_NOTE_BYTES = 64 * 1024;
 const MAX_NOTES_PER_SCOPE = 500;
+/**
+ * Notes are read once and kept until a write or delete here, or a file change under their folder.
+ * The age limit only catches edits made outside Volt to the user folder, which nothing watches.
+ */
+const NOTES_TTL_MS = 60_000;
 
 interface INote {
 	readonly memory: IVoltMemory;
@@ -49,6 +54,8 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 	readonly onDidChange: Event<void> = this._onDidChange.event;
 
 	private readonly userDir: URI;
+	/** Notes per scope, read once per change instead of on every turn. */
+	private readonly cache = new Map<VoltMemoryScope, { readonly dir: URI; readonly at: number; readonly value: Promise<INote[]> }>();
 
 	constructor(
 		@IFileService private readonly fileService: IFileService,
@@ -63,6 +70,21 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 			tools: VOLT_MEMORY_TOOLS,
 			invoke: (name, args) => this.invokeTool(name, args),
 		}));
+		this._register(fileService.onDidFilesChange(e => {
+			for (const [scope, entry] of [...this.cache]) {
+				if (e.affects(entry.dir)) {
+					this.cache.delete(scope);
+				}
+			}
+		}));
+		this._register(fileService.onDidRunOperation(e => {
+			for (const [scope, entry] of [...this.cache]) {
+				if (isEqualOrParent(e.resource, entry.dir) || (e.target && isEqualOrParent(e.target.resource, entry.dir))) {
+					this.cache.delete(scope);
+				}
+			}
+		}));
+		this._register(workspace.onDidChangeWorkspaceFolders(() => this.cache.delete('project')));
 	}
 
 	async list(scope: VoltMemoryScope | 'all' = 'all'): Promise<readonly IVoltMemory[]> {
@@ -84,6 +106,7 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 			throw new Error('Open a folder to save project notes, or save to the user scope.');
 		}
 		await this.fileService.writeFile(joinPath(dir, memoryFileName(memory.name)), VSBuffer.fromString(serializeMemory(memory)));
+		this.cache.clear();
 		this._onDidChange.fire();
 		return memory;
 	}
@@ -107,6 +130,7 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 			return false;
 		}
 		await this.fileService.del(note.uri);
+		this.cache.clear();
 		this._onDidChange.fire();
 		return true;
 	}
@@ -134,11 +158,21 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 		return (await this.notes(scope ?? 'all')).find(note => memorySlug(note.memory.name) === key);
 	}
 
-	private async scopeNotes(scope: VoltMemoryScope): Promise<INote[]> {
+	private scopeNotes(scope: VoltMemoryScope): Promise<INote[]> {
 		const dir = this.dirFor(scope);
 		if (!dir) {
-			return [];
+			return Promise.resolve([]);
 		}
+		const cached = this.cache.get(scope);
+		if (cached && isEqual(cached.dir, dir) && Date.now() - cached.at < NOTES_TTL_MS) {
+			return cached.value;
+		}
+		const value = this.readNotes(scope, dir);
+		this.cache.set(scope, { dir, at: Date.now(), value });
+		return value;
+	}
+
+	private async readNotes(scope: VoltMemoryScope, dir: URI): Promise<INote[]> {
 		let children;
 		try {
 			children = (await this.fileService.resolve(dir)).children ?? [];

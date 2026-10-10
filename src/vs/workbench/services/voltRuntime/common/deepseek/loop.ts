@@ -13,6 +13,7 @@ import { describeArgIssues, isUnparsedArgs, normalizeArgs, validateArgs } from '
 import { ProviderError, providerRetryDelay } from '../providerError.js';
 import type { IModelAssistantPart } from '../providers.js';
 import { IToolCall, IToolResult, IVoltTool } from '../tools/tool.js';
+import { turnWriteGate } from '../turnWriteGate.js';
 import { ApprovalOutcome, StreamChunk } from './protocol.js';
 import { DEEPSEEK_BUDGET } from './prompt.js';
 import { presentCall, presentResult, toolEndFromView, toolStartFromView } from './presentation.js';
@@ -50,6 +51,8 @@ export interface IDeepseekHost {
 	emit(event: IVoltEvent): void;
 	tool(name: string): IVoltTool | undefined;
 	readonly cwd?: string;
+	/** The chat the run belongs to: writes wait for its turn gate (the checkpoint taken at send). */
+	readonly sessionId?: string;
 	/** Model window, reported with usage so the context meter is exact. */
 	readonly contextWindow?: number;
 	/** Largest output the model accepts; used after a cut-off turn. */
@@ -525,7 +528,7 @@ class EagerDispatch {
 }
 
 async function runCalls(host: IDeepseekHost, calls: readonly IToolCall[], eager: EagerDispatch): Promise<{ results: IToolResult[]; executed: number }> {
-	const slots: (IToolResult | undefined)[] = new Array(calls.length);
+	const slots: (IToolResult | undefined)[] = new Array<IToolResult | undefined>(calls.length);
 	const pending: { prepared: IPreparedCall; index: number }[] = [];
 	for (let index = 0; index < calls.length; index++) {
 		const call = calls[index];
@@ -567,9 +570,10 @@ async function runCalls(host: IDeepseekHost, calls: readonly IToolCall[], eager:
 	});
 
 	if (approved.length) {
-		// Early reads were earlier in the batch; a write after them must see them finish first.
+		// Early reads were earlier in the batch; a write after them must see them finish first. A
+		// write also waits for the turn's gate: the checkpoint taken at send may still be running.
 		if (approved.some(entry => !entry.prepared.tool.parallelSafe)) {
-			await eager.settle();
+			await Promise.all([eager.settle(), turnWriteGate(host.sessionId)]);
 		}
 		const byId = new Map(approved.map(entry => [entry.prepared.call.id, entry]));
 		const ended = new Set<string>();
@@ -643,6 +647,7 @@ async function readChunks(
 	const idleMs = host.streamTimeouts?.idleMs ?? DEEPSEEK_STREAM_TIMEOUTS.idleMs;
 	const abort = new AbortController();
 	const iterator = host.stream(messages, token, { ...options, signal: abort.signal })[Symbol.asyncIterator]();
+	const watchdog = new StreamWatchdog();
 	let completed = false;
 	let received = false;
 	let graceMs = 0;
@@ -675,7 +680,7 @@ async function readChunks(
 	try {
 		while (true) {
 			const limit = received ? idleMs : firstChunkMs;
-			const next = await nextWithin(iterator, limit > 0 ? limit + graceMs : 0);
+			const next = await watchdog.next(iterator, limit > 0 ? limit + graceMs : 0);
 			if (next === STALLED) {
 				abort.abort();
 				closeOpenCalls(host, blocks, INTERRUPTED_TOOL, eager);
@@ -770,6 +775,7 @@ async function readChunks(
 		closeOpenCalls(host, blocks, INTERRUPTED_TOOL, eager);
 		return { kind: 'error', error, visible };
 	} finally {
+		watchdog.dispose();
 		if (!completed) {
 			// Abandoned mid-stream: let the generator clean up once its pending read settles.
 			void Promise.resolve().then(() => iterator.return?.()).catch(() => undefined);
@@ -797,25 +803,84 @@ async function readChunks(
 	return { kind: 'ok', finish: calls.length ? 'tool_calls' : 'stop', assistant, calls, parts: orderedParts() };
 }
 
-/** The next chunk, or `STALLED` when none arrives within `ms` (0 waits forever). */
-function nextWithin<T>(iterator: AsyncIterator<T>, ms: number): Promise<IteratorResult<T> | typeof STALLED> {
-	const next = iterator.next();
-	if (ms <= 0) {
-		return next;
-	}
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => {
-			next.catch(() => undefined);
-			resolve(STALLED);
-		}, ms);
-		next.then(value => {
-			clearTimeout(timer);
-			resolve(value);
-		}, error => {
-			clearTimeout(timer);
-			reject(error);
+/**
+ * The stream's silence watchdog. One timer serves the whole stream instead of one per chunk: each
+ * read only moves the deadline, and the timer is re-armed when it fires before that deadline (or
+ * when a read needs an earlier one than the armed timer, e.g. the first chunk's long allowance
+ * giving way to the idle limit).
+ */
+class StreamWatchdog {
+
+	private deadline = 0;
+	private timer: ReturnType<typeof setTimeout> | undefined;
+	private armedAt = 0;
+	private stall: (() => void) | undefined;
+
+	/** The next chunk, or `STALLED` when none arrives within `ms` (0 waits forever). */
+	next<T>(iterator: AsyncIterator<T>, ms: number): Promise<IteratorResult<T> | typeof STALLED> {
+		const next = iterator.next();
+		if (ms <= 0) {
+			return next;
+		}
+		this.deadline = Date.now() + ms;
+		return new Promise((resolve, reject) => {
+			let settled = false;
+			const settle = () => {
+				settled = true;
+				this.stall = undefined;
+			};
+			this.stall = () => {
+				if (!settled) {
+					settle();
+					next.catch(() => undefined);
+					resolve(STALLED);
+				}
+			};
+			this.arm();
+			next.then(value => {
+				if (!settled) {
+					settle();
+					resolve(value);
+				}
+			}, error => {
+				if (!settled) {
+					settle();
+					reject(error);
+				}
+			});
 		});
-	});
+	}
+
+	dispose(): void {
+		if (this.timer !== undefined) {
+			clearTimeout(this.timer);
+			this.timer = undefined;
+		}
+		this.stall = undefined;
+	}
+
+	private arm(): void {
+		if (this.timer !== undefined && this.armedAt <= this.deadline) {
+			return;
+		}
+		if (this.timer !== undefined) {
+			clearTimeout(this.timer);
+		}
+		this.armedAt = this.deadline;
+		this.timer = setTimeout(() => this.fire(), Math.max(0, this.deadline - Date.now()));
+	}
+
+	private fire(): void {
+		this.timer = undefined;
+		if (!this.stall) {
+			return;
+		}
+		if (this.deadline > Date.now()) {
+			this.arm();
+			return;
+		}
+		this.stall();
+	}
 }
 
 function eventsFromChunk(chunk: StreamChunk, blocks: Map<number, IOpenBlock>): IVoltEvent[] {

@@ -581,8 +581,8 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 
 	private readMergeMethods(): Record<string, string> {
 		try {
-			const parsed = JSON.parse(this.storageService.get(MERGE_METHOD_KEY, StorageScope.PROFILE, '{}'));
-			return parsed && typeof parsed === 'object' ? parsed : {};
+			const parsed: unknown = JSON.parse(this.storageService.get(MERGE_METHOD_KEY, StorageScope.PROFILE, '{}'));
+			return parsed && typeof parsed === 'object' ? parsed as Record<string, string> : {};
 		} catch {
 			return {};
 		}

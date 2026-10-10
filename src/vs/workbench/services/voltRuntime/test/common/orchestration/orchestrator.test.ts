@@ -638,7 +638,7 @@ suite('Volt orchestrator: recovery and persistence', () => {
 		assert.deepStrictEqual(merged.threads.parent, sim.state.threads.parent);
 		assert.ok(isRootLive(merged, 'parent'));
 
-		const damaged = JSON.parse(JSON.stringify(snapshot));
+		const damaged = JSON.parse(JSON.stringify(snapshot)) as { threads: unknown[]; tasks: unknown[] };
 		damaged.threads.push({ id: 'broken' }, null, 42);
 		damaged.tasks.push({ id: 'x', state: 'exploded' });
 		const recovered = parseRootSnapshot(damaged);

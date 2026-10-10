@@ -78,21 +78,44 @@ async function openSse(requestService: IRequestService, url: string, init: IHttp
 	return ctx;
 }
 
+/**
+ * Lines of a body that arrives chunk by chunk. Only the new chunk is scanned for line breaks (the
+ * unfinished tail is carried over), and bytes are decoded in stream mode so a multi-byte character
+ * split across two chunks stays whole.
+ */
 async function* sseLines(ctx: IRequestContext, token: CancellationToken): AsyncIterable<string> {
-	let buffer = '';
+	const decoder = new TextDecoder();
+	let partial = '';
 	const queue: string[] = [];
 	let done = false;
 	let failed: Error | undefined;
 	let notify: (() => void) | undefined;
 
+	const take = (text: string) => {
+		let start = 0;
+		let newline = text.indexOf('\n');
+		while (newline !== -1) {
+			let line = partial + text.slice(start, newline);
+			partial = '';
+			if (line.endsWith('\r')) {
+				line = line.slice(0, -1);
+			}
+			queue.push(line);
+			start = newline + 1;
+			newline = text.indexOf('\n', start);
+		}
+		partial += start ? text.slice(start) : text;
+	};
+
+	// The stream stops reporting once cancelled; wake the reader so it does not wait forever.
+	const cancelled = token.onCancellationRequested(() => {
+		done = true;
+		notify?.();
+	});
+
 	listenStream(ctx.stream, {
 		onData: chunk => {
-			buffer += chunk.toString();
-			const parts = buffer.split(/\r?\n/);
-			buffer = parts.pop() ?? '';
-			for (const line of parts) {
-				queue.push(line);
-			}
+			take(decoder.decode(chunk.buffer, { stream: true }));
 			notify?.();
 		},
 		onError: err => {
@@ -101,28 +124,38 @@ async function* sseLines(ctx: IRequestContext, token: CancellationToken): AsyncI
 			notify?.();
 		},
 		onEnd: () => {
-			if (buffer) {
-				queue.push(buffer);
-				buffer = '';
+			take(decoder.decode());
+			if (partial) {
+				queue.push(partial.endsWith('\r') ? partial.slice(0, -1) : partial);
+				partial = '';
 			}
 			done = true;
 			notify?.();
 		}
 	}, token);
 
-	while (!done || queue.length) {
-		if (!queue.length) {
-			await new Promise<void>(resolve => { notify = resolve; });
-			notify = undefined;
-			if (failed && !queue.length) {
-				throw new ProviderError(failed.message);
+	try {
+		while (!done || queue.length) {
+			if (!queue.length) {
+				await new Promise<void>(resolve => { notify = resolve; });
+				notify = undefined;
+				if (failed && !queue.length) {
+					throw new ProviderError(failed.message);
+				}
+				continue;
 			}
-			continue;
+			yield queue.shift()!;
 		}
-		yield queue.shift()!;
-	}
-	if (failed) {
-		throw new ProviderError(failed.message);
+		if (token.isCancellationRequested) {
+			// A blank line (an SSE event separator) lets the provider see the cancellation and finish as aborted.
+			yield '';
+			return;
+		}
+		if (failed) {
+			throw new ProviderError(failed.message);
+		}
+	} finally {
+		cancelled.dispose();
 	}
 }
 

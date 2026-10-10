@@ -177,7 +177,7 @@ export class AgentPullRequestHoverCard extends Disposable {
 		}
 
 		const changes = append(rows, $('.volt-pr-hover-row'));
-		// The ± the side panel's Changes row uses.
+		// The +/- the side panel's Changes row uses.
 		const diff = append(changes, $('span.volt-pr-icon.muted'));
 		const glyph = diff.appendChild(createSurfaceStrokeIcon(diff.ownerDocument, CHANGES_ICON_PATH));
 		glyph.setAttribute('width', '14');
@@ -185,7 +185,7 @@ export class AgentPullRequestHoverCard extends Disposable {
 		glyph.setAttribute('stroke-width', '1.5');
 		const stats = append(changes, $('span.volt-pr-hover-label.volt-pr-hover-stats'));
 		append(stats, $('span.add')).textContent = `+${pr.additions}`;
-		append(stats, $('span.del')).textContent = `−${pr.deletions}`;
+		append(stats, $('span.del')).textContent = `\u2212${pr.deletions}`;
 		append(changes, $('span.volt-pr-hover-detail')).textContent = pr.changedFiles === 1
 			? localize('voltPr.hoverOneFile', "1 file")
 			: localize('voltPr.hoverFiles', "{0} files", pr.changedFiles);

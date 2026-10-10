@@ -130,7 +130,7 @@ export const DEFAULT_ORBIT: IOrbit = { yaw: -22, pitch: 10 };
 const MAX_YAW = 70;
 const MAX_PITCH = 45;
 
-/** Dragging by (dx, dy) CSS px from `start` turns the device; a full stage width is ~180°. */
+/** Dragging by (dx, dy) CSS px from `start` turns the device; a full stage width is ~180 degrees. */
 export function orbitAfterDrag(start: IOrbit, dx: number, dy: number, stageWidth: number): IOrbit {
 	const perPixel = 180 / Math.max(200, stageWidth);
 	const clamp = (value: number, max: number) => Math.max(-max, Math.min(max, value));

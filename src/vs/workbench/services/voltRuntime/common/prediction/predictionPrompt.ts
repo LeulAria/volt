@@ -16,6 +16,23 @@ import { IPredictionContext } from '../prediction.js';
 
 export const CURSOR_MARKER = '<|cursor|>';
 
+/** A line that ends here opens a block (or an argument list) whose body goes on the next lines. */
+export const OPENS_BLOCK = /([:{([]|=>|\b(?:do|then))\s*$/;
+
+/** Code (not only closers) follows the cursor on its line. */
+export function hasCodeAfter(lineSuffix: string): boolean {
+	return !!lineSuffix.trim() && !/^[\s)\]}>"'`;,]*$/.test(lineSuffix);
+}
+
+/**
+ * Only the rest of the cursor's line is worth predicting: code follows the cursor (a pure insert
+ * cannot span it), or a statement is being finished that opens no block. On an empty line, or at
+ * the end of `if (x) {`, the lines that follow are wanted too.
+ */
+export function singleLineScope(linePrefix: string, lineSuffix: string): boolean {
+	return !!linePrefix.trim() && (hasCodeAfter(lineSuffix) || !OPENS_BLOCK.test(linePrefix));
+}
+
 /** Total character budget for the user prompt; blocks are dropped lowest-value-first. */
 export const PROMPT_CHAR_BUDGET = 12_000;
 
@@ -26,54 +43,78 @@ interface IBlockLimits {
 	readonly clipboardChars: number;
 	readonly recentEdits: number;
 	readonly editChars: number;
+	/** Ghost text: edits the excerpt already shows are left out (the cursor's own typing, mostly). */
+	readonly inline: boolean;
 }
 
-const NES_LIMITS: IBlockLimits = { clipboardChars: 2_000, recentEdits: 8, editChars: 400 };
-const INLINE_LIMITS: IBlockLimits = { clipboardChars: 800, recentEdits: 5, editChars: 200 };
+const NES_LIMITS: IBlockLimits = { clipboardChars: 2_000, recentEdits: 8, editChars: 400, inline: false };
+const INLINE_LIMITS: IBlockLimits = { clipboardChars: 600, recentEdits: 4, editChars: 160, inline: true };
 
 function clip(text: string, max: number): string {
 	return text.length <= max ? text : `${text.slice(0, max)}...`;
 }
 
-function contextBlocks(ctx: IPredictionContext, limits: IBlockLimits = NES_LIMITS): string[] {
-	const blocks: string[] = [];
-	if (ctx.clipboard?.trim()) {
-		blocks.push(`## Clipboard\n${clip(ctx.clipboard.trim(), limits.clipboardChars)}`);
+/** A context block and how much it is worth when the budget runs short (higher stays longer). */
+interface IBlock {
+	readonly text: string;
+	readonly priority: number;
+}
+
+/**
+ * The context blocks in prompt order: what changes least first (definitions, related code,
+ * imports), what changes on every keystroke last (recent edits), so providers that cache prompt
+ * prefixes (OpenAI, DeepSeek, Gemini) reuse everything up to the first block that changed.
+ */
+function contextBlocks(ctx: IPredictionContext, limits: IBlockLimits = NES_LIMITS): IBlock[] {
+	const blocks: IBlock[] = [];
+	if (ctx.definitions?.length) {
+		blocks.push({ text: `## Definitions of names near the cursor\n${ctx.definitions.join('\n')}`, priority: 5 });
 	}
-	if (ctx.recentEdits.length) {
-		const edits = ctx.recentEdits.slice(-limits.recentEdits).map(e => {
+	ctx.siblings.slice(0, 3).forEach((sibling, i) => {
+		blocks.push({ text: `## Related open file: ${sibling.path}\n${sibling.excerpt}`, priority: 1 - i * 0.1 });
+	});
+	if (ctx.imports) {
+		blocks.push({ text: `## Imports of the current file\n${ctx.imports}`, priority: 2 });
+	}
+	if (ctx.running?.length) {
+		blocks.push({ text: `## Terminal\n${ctx.running.join('\n')}`, priority: 2.5 });
+	}
+	if (ctx.clipboard?.trim()) {
+		blocks.push({ text: `## Clipboard\n${clip(ctx.clipboard.trim(), limits.clipboardChars)}`, priority: 3 });
+	}
+	if (ctx.diagnostics.length) {
+		blocks.push({ text: `## Diagnostics near the cursor\n${ctx.diagnostics.slice(0, 6).join('\n')}`, priority: 6 });
+	}
+	const visible = limits.inline ? ctx.excerptLines : undefined;
+	const edits = visible
+		? ctx.recentEdits.filter(e => e.uri.toString() !== ctx.uri.toString() || e.startLineNumber < visible.start || e.startLineNumber > visible.end)
+		: ctx.recentEdits;
+	if (edits.length) {
+		const rendered = edits.slice(-limits.recentEdits).map(e => {
 			const removed = e.removed ? `-${clip(e.removed, limits.editChars).replace(/\n/g, '\n-')}` : '';
 			const inserted = e.inserted ? `+${clip(e.inserted, limits.editChars).replace(/\n/g, '\n+')}` : '';
 			return `${e.uri.path}:${e.startLineNumber}\n${[removed, inserted].filter(Boolean).join('\n')}`;
 		});
-		blocks.push(`## Recent edits (oldest first)\n${edits.join('\n---\n')}`);
-	}
-	if (ctx.diagnostics.length) {
-		blocks.push(`## Diagnostics near the cursor\n${ctx.diagnostics.slice(0, 6).join('\n')}`);
-	}
-	if (ctx.imports) {
-		blocks.push(`## Imports of the current file\n${ctx.imports}`);
-	}
-	for (const sibling of ctx.siblings.slice(0, 3)) {
-		blocks.push(`## Related open file: ${sibling.path}\n${sibling.excerpt}`);
+		blocks.push({ text: `## Recent edits (oldest first)\n${rendered.join('\n---\n')}`, priority: 4 });
 	}
 	return blocks;
 }
 
-/** Assembles blocks + the (mandatory) excerpt under `budget`. */
-function assemble(excerptBlock: string, blocks: string[], instruction: string, budget = PROMPT_CHAR_BUDGET): string {
-	const parts: string[] = [];
+/**
+ * Assembles blocks + the (mandatory) excerpt under `budget`. Blocks are kept by priority until the
+ * budget is spent, then written in their own order.
+ */
+function assemble(excerptBlock: string, blocks: IBlock[], instruction: string, budget = PROMPT_CHAR_BUDGET): string {
 	let used = excerptBlock.length + instruction.length;
-	for (const block of blocks) {
-		if (used + block.length > budget) {
+	const kept = new Set<IBlock>();
+	for (const block of [...blocks].sort((a, b) => b.priority - a.priority)) {
+		if (used + block.text.length + 2 > budget) {
 			continue;
 		}
-		parts.push(block);
-		used += block.length;
+		kept.add(block);
+		used += block.text.length + 2;
 	}
-	parts.push(excerptBlock);
-	parts.push(instruction);
-	return parts.join('\n\n');
+	return [...blocks.filter(block => kept.has(block)).map(block => block.text), excerptBlock, instruction].join('\n\n');
 }
 
 export const INLINE_SYSTEM_PROMPT = [
@@ -139,9 +180,13 @@ export function buildInlinePrompt(ctx: IPredictionContext, writing: InlineWritin
 		return buildWritingPrompt(ctx, writing);
 	}
 	const excerpt = `## Current file: ${ctx.uri.path} (${ctx.languageId})\n${ctx.prefix}${CURSOR_MARKER}${ctx.suffix}`;
+	// Saying how much is wanted saves the lines that would be cut anyway (and the wait for them).
+	const scope = singleLineScope(ctx.linePrefix, ctx.lineSuffix)
+		? 'Finish the current line only.'
+		: 'Write the lines that obviously come next, up to the end of the current block.';
 	return [
-		{ role: 'system', content: INLINE_SYSTEM_PROMPT },
-		{ role: 'user', content: assemble(excerpt, contextBlocks(ctx, INLINE_LIMITS), `CODE ONLY. Complete at ${CURSOR_MARKER}. Reply with <insert>the inserted code</insert> only.`, INLINE_PROMPT_CHAR_BUDGET) },
+		{ role: 'system', content: INLINE_SYSTEM_PROMPT, ephemeral: true },
+		{ role: 'user', content: assemble(excerpt, contextBlocks(ctx, INLINE_LIMITS), `CODE ONLY. Complete at ${CURSOR_MARKER}. ${scope} Reply with <insert>the inserted code</insert> only.`, INLINE_PROMPT_CHAR_BUDGET), ephemeral: true },
 	];
 }
 
@@ -172,10 +217,10 @@ function buildWritingPrompt(ctx: IPredictionContext, writing: 'prose' | 'comment
 		? `## Comment being written in ${ctx.uri.path} (${ctx.languageId}). Continue the comment only, on its line, never code.`
 		: `## Document: ${ctx.uri.path} (${ctx.languageId})`;
 	const excerpt = `${what}\n${ctx.prefix}${CURSOR_MARKER}${ctx.suffix}`;
-	const blocks = contextBlocks({ ...ctx, diagnostics: [], imports: writing === 'comment' ? ctx.imports : '' }, INLINE_LIMITS);
+	const blocks = contextBlocks({ ...ctx, diagnostics: [], imports: writing === 'comment' ? ctx.imports : '', definitions: writing === 'comment' ? ctx.definitions : undefined, running: undefined }, INLINE_LIMITS);
 	return [
-		{ role: 'system', content: WRITING_SYSTEM_PROMPT },
-		{ role: 'user', content: assemble(excerpt, blocks, `Continue at ${CURSOR_MARKER}. ${cursorSituation(ctx.linePrefix)} Reply with <insert>the inserted text</insert> only.`, INLINE_PROMPT_CHAR_BUDGET) },
+		{ role: 'system', content: WRITING_SYSTEM_PROMPT, ephemeral: true },
+		{ role: 'user', content: assemble(excerpt, blocks, `Continue at ${CURSOR_MARKER}. ${cursorSituation(ctx.linePrefix)} Reply with <insert>the inserted text</insert> only.`, INLINE_PROMPT_CHAR_BUDGET), ephemeral: true },
 	];
 }
 

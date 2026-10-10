@@ -216,7 +216,251 @@ fragment VoltPr on PullRequest {
 	} } } } } }
 }`;
 
-type Json = any;
+/**
+ * GitHub's JSON as Volt reads it. The answers are untrusted, so leaves are `unknown` and every
+ * value goes through str/num/time or a type check; nested objects may be missing or null.
+ */
+
+/** A GraphQL connection: `nodes` may hold nulls (nodes the viewer cannot see). */
+export interface IGhConnection<T> {
+	readonly nodes?: readonly (T | null)[] | null;
+	readonly totalCount?: unknown;
+}
+
+export interface IGhActorJson {
+	readonly login?: unknown;
+	readonly avatarUrl?: unknown;
+	readonly __typename?: unknown;
+}
+
+export interface IGhLabelJson {
+	readonly name?: unknown;
+	readonly color?: unknown;
+}
+
+/** A `CheckRun` or a `StatusContext` in a commit's check rollup. */
+export interface IGhCheckContextJson {
+	readonly __typename?: unknown;
+	readonly name?: unknown;
+	readonly status?: unknown;
+	readonly conclusion?: unknown;
+	readonly detailsUrl?: unknown;
+	readonly startedAt?: unknown;
+	readonly completedAt?: unknown;
+	readonly title?: unknown;
+	readonly checkSuite?: {
+		readonly workflowRun?: { readonly workflow?: { readonly name?: unknown } | null } | null;
+		readonly app?: { readonly name?: unknown } | null;
+	} | null;
+	readonly context?: unknown;
+	readonly state?: unknown;
+	readonly targetUrl?: unknown;
+	readonly description?: unknown;
+	readonly createdAt?: unknown;
+	readonly isRequired?: unknown;
+}
+
+export interface IGhStateCountJson {
+	readonly state?: unknown;
+	readonly count?: unknown;
+}
+
+export interface IGhCommitJson {
+	readonly oid?: unknown;
+	readonly messageHeadline?: unknown;
+	readonly committedDate?: unknown;
+	readonly authoredDate?: unknown;
+	readonly author?: { readonly name?: unknown; readonly user?: { readonly login?: unknown } | null } | null;
+	readonly statusCheckRollup?: {
+		readonly state?: unknown;
+		readonly contexts?: IGhConnection<IGhCheckContextJson> & {
+			readonly checkRunCountsByState?: readonly (IGhStateCountJson | null)[] | null;
+			readonly statusContextCountsByState?: readonly (IGhStateCountJson | null)[] | null;
+		} | null;
+	} | null;
+}
+
+/** A `commits` node, or the commit itself. */
+export interface IGhCommitNodeJson extends IGhCommitJson {
+	readonly commit?: IGhCommitJson | null;
+}
+
+export interface IGhCommentJson {
+	readonly id?: unknown;
+	readonly databaseId?: unknown;
+	readonly author?: IGhActorJson | null;
+	readonly body?: unknown;
+	readonly createdAt?: unknown;
+	readonly publishedAt?: unknown;
+	readonly updatedAt?: unknown;
+	readonly url?: unknown;
+	readonly outdated?: unknown;
+	readonly diffHunk?: unknown;
+}
+
+export interface IGhThreadJson {
+	readonly id?: unknown;
+	readonly path?: unknown;
+	readonly line?: unknown;
+	readonly originalLine?: unknown;
+	readonly startLine?: unknown;
+	readonly diffSide?: unknown;
+	readonly isResolved?: unknown;
+	readonly isOutdated?: unknown;
+	readonly viewerCanResolve?: unknown;
+	readonly viewerCanUnresolve?: unknown;
+	readonly comments?: IGhConnection<IGhCommentJson> | null;
+}
+
+export interface IGhReviewJson {
+	readonly id?: unknown;
+	readonly author?: IGhActorJson | null;
+	readonly state?: unknown;
+	readonly body?: unknown;
+	readonly submittedAt?: unknown;
+	readonly createdAt?: unknown;
+	readonly updatedAt?: unknown;
+	readonly url?: unknown;
+}
+
+export interface IGhReviewRequestJson {
+	readonly requestedReviewer?: {
+		readonly __typename?: unknown;
+		readonly login?: unknown;
+		readonly combinedSlug?: unknown;
+	} | null;
+}
+
+/** The `VoltPr` fragment, and what a detail ({@link parsePullRequestDetail}) or fingerprint read adds. */
+export interface IGhPullRequestJson {
+	readonly id?: unknown;
+	readonly number?: unknown;
+	readonly title?: unknown;
+	readonly url?: unknown;
+	readonly state?: unknown;
+	readonly isDraft?: unknown;
+	readonly createdAt?: unknown;
+	readonly updatedAt?: unknown;
+	readonly mergedAt?: unknown;
+	readonly closedAt?: unknown;
+	readonly author?: IGhActorJson | null;
+	readonly headRefName?: unknown;
+	readonly headRefOid?: unknown;
+	readonly baseRefName?: unknown;
+	readonly isCrossRepository?: unknown;
+	readonly headRepositoryOwner?: { readonly login?: unknown } | null;
+	readonly additions?: unknown;
+	readonly deletions?: unknown;
+	readonly changedFiles?: unknown;
+	readonly mergeable?: unknown;
+	readonly mergeStateStatus?: unknown;
+	readonly reviewDecision?: unknown;
+	readonly autoMergeRequest?: unknown;
+	readonly labels?: IGhConnection<IGhLabelJson> | null;
+	readonly assignees?: IGhConnection<IGhActorJson> | null;
+	readonly reviewRequests?: IGhConnection<IGhReviewRequestJson> | null;
+	readonly latestReviews?: IGhConnection<IGhReviewJson> | null;
+	readonly comments?: IGhConnection<IGhCommentJson> | null;
+	readonly reviews?: IGhConnection<IGhReviewJson> | null;
+	readonly reviewThreads?: IGhConnection<IGhThreadJson> | null;
+	readonly commits?: IGhConnection<IGhCommitNodeJson> | null;
+	readonly body?: unknown;
+	readonly baseRefOid?: unknown;
+	readonly viewerCanUpdate?: unknown;
+	readonly reviewThreadsFull?: IGhConnection<IGhThreadJson> | null;
+	readonly reviewList?: IGhConnection<IGhReviewJson> | null;
+	readonly conversation?: IGhConnection<IGhCommentJson> | null;
+	readonly commitList?: IGhConnection<IGhCommitNodeJson> | null;
+	readonly headChecks?: IGhConnection<IGhCommitNodeJson> | null;
+}
+
+/** The repository fields a detail read asks for. */
+export interface IGhRepositoryJson {
+	readonly viewerPermission?: unknown;
+	readonly mergeCommitAllowed?: unknown;
+	readonly squashMergeAllowed?: unknown;
+	readonly rebaseMergeAllowed?: unknown;
+	readonly deleteBranchOnMerge?: unknown;
+	readonly autoMergeAllowed?: unknown;
+	readonly labels?: IGhConnection<IGhLabelJson> | null;
+	readonly pullRequest?: IGhPullRequestJson | null;
+}
+
+export interface IGhRestUserJson {
+	readonly login?: unknown;
+	readonly avatar_url?: unknown;
+	readonly type?: unknown;
+}
+
+/** A pull request from the REST API (`pulls`, `pulls/N`). */
+export interface IGhRestPullJson {
+	readonly number?: unknown;
+	readonly node_id?: unknown;
+	readonly title?: unknown;
+	readonly html_url?: unknown;
+	readonly state?: unknown;
+	readonly draft?: unknown;
+	readonly merged?: unknown;
+	readonly merged_at?: unknown;
+	readonly closed_at?: unknown;
+	readonly created_at?: unknown;
+	readonly updated_at?: unknown;
+	readonly user?: IGhRestUserJson | null;
+	readonly head?: {
+		readonly ref?: unknown;
+		readonly sha?: unknown;
+		readonly user?: { readonly login?: unknown } | null;
+		readonly repo?: { readonly full_name?: unknown; readonly owner?: { readonly login?: unknown } | null } | null;
+	} | null;
+	readonly base?: { readonly ref?: unknown; readonly repo?: { readonly full_name?: unknown } | null } | null;
+	readonly additions?: unknown;
+	readonly deletions?: unknown;
+	readonly changed_files?: unknown;
+	readonly mergeable?: unknown;
+	readonly mergeable_state?: unknown;
+	readonly labels?: unknown;
+	readonly assignees?: unknown;
+	readonly requested_reviewers?: unknown;
+	readonly requested_teams?: unknown;
+	readonly comments?: unknown;
+	readonly review_comments?: unknown;
+	readonly auto_merge?: unknown;
+}
+
+/** A pull request from a branch lookup: {@link PR_BRANCH_REF_FIELDS} over GraphQL, or a REST list entry. */
+export interface IGhBranchRefJson {
+	readonly number?: unknown;
+	readonly state?: unknown;
+	readonly isDraft?: unknown;
+	readonly draft?: unknown;
+	readonly createdAt?: unknown;
+	readonly created_at?: unknown;
+	readonly merged_at?: unknown;
+	readonly headRepositoryOwner?: { readonly login?: unknown } | null;
+	readonly head?: IGhRestPullJson['head'];
+}
+
+/** A changed file from GraphQL's `files` connection. */
+export interface IGhFileJson {
+	readonly path?: unknown;
+	readonly previousFilename?: unknown;
+	readonly previousPath?: unknown;
+	readonly changeType?: unknown;
+	readonly additions?: unknown;
+	readonly deletions?: unknown;
+	readonly viewerViewedState?: unknown;
+}
+
+/** A REST file entry (`pulls/N/files`, `commits/SHA`). */
+export interface IGhRestFileJson {
+	readonly filename?: unknown;
+	readonly previous_filename?: unknown;
+	readonly status?: unknown;
+	readonly additions?: unknown;
+	readonly deletions?: unknown;
+	readonly patch?: unknown;
+	readonly sha?: unknown;
+}
 
 function time(value: unknown): number | undefined {
 	if (typeof value !== 'string' || !value) {
@@ -234,11 +478,16 @@ function num(value: unknown): number {
 	return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-function nodes(connection: Json): Json[] {
-	return Array.isArray(connection?.nodes) ? connection.nodes.filter((node: unknown) => !!node) : [];
+/** The truthy entries of what should be an array, read as `T`. */
+export function items<T>(value: unknown): T[] {
+	return Array.isArray(value) ? value.filter((item): item is T => !!item) : [];
 }
 
-export function parseUser(raw: Json): IVoltPrUser {
+function nodes<T>(connection: IGhConnection<T> | null | undefined): T[] {
+	return items<T>(connection?.nodes);
+}
+
+export function parseUser(raw: IGhActorJson | null | undefined): IVoltPrUser {
 	// GitHub returns no author for deleted accounts ("ghost").
 	const login = str(raw?.login, 'ghost');
 	return {
@@ -296,7 +545,7 @@ export function parseReviewState(value: unknown): VoltPrReviewState {
 	}
 }
 
-export function parseCheckRun(raw: Json): IVoltPrCheck | undefined {
+export function parseCheckRun(raw: IGhCheckContextJson | null | undefined): IVoltPrCheck | undefined {
 	if (raw?.__typename === 'CheckRun') {
 		let state: VoltPrCheckState;
 		if (raw.status !== 'COMPLETED') {
@@ -386,17 +635,17 @@ export function summarizeChecks(checks: readonly IVoltPrCheck[]): IVoltPrChecksS
 	return { state, total, passed, failed, pending, skipped, failing };
 }
 
-function headChecks(raw: Json): IVoltPrCheck[] {
+function headChecks(raw: IGhPullRequestJson): IVoltPrCheck[] {
 	const commit = nodes(raw?.commits)[0]?.commit;
 	const contexts = nodes(commit?.statusCheckRollup?.contexts);
 	return latestChecks(contexts.map(parseCheckRun).filter((check): check is IVoltPrCheck => !!check));
 }
 
-function parseLabels(raw: Json): IVoltPrLabel[] {
+function parseLabels(raw: IGhConnection<IGhLabelJson> | null | undefined): IVoltPrLabel[] {
 	return nodes(raw).map(label => ({ name: str(label.name), color: str(label.color, '888888') })).filter(label => label.name);
 }
 
-function reviewRequestName(raw: Json): string | undefined {
+function reviewRequestName(raw: IGhReviewRequestJson): string | undefined {
 	const reviewer = raw?.requestedReviewer;
 	if (!reviewer) {
 		return undefined;
@@ -407,7 +656,7 @@ function reviewRequestName(raw: Json): string | undefined {
 	return typeof reviewer.login === 'string' ? reviewer.login : undefined;
 }
 
-export function parsePullRequest(raw: Json, repo: IVoltPrRepoRef, viewer: string): IVoltPullRequest {
+export function parsePullRequest(raw: IGhPullRequestJson, repo: IVoltPrRepoRef, viewer: string): IVoltPullRequest {
 	const number = num(raw.number);
 	const threads = nodes(raw.reviewThreads);
 	const reviewComments = threads.reduce((sum, thread) => sum + num(thread?.comments?.totalCount), 0);
@@ -461,7 +710,7 @@ export function parsePullRequest(raw: Json, repo: IVoltPrRepoRef, viewer: string
  * apart). Lists leave out sizes, mergeability and comment counts, and REST has no check rollup,
  * review decision or threads: those read as unknown or none until the next GraphQL read.
  */
-export function parseRestPullRequest(raw: Json, repo: IVoltPrRepoRef, viewer: string): IVoltPullRequest {
+export function parseRestPullRequest(raw: IGhRestPullJson, repo: IVoltPrRepoRef, viewer: string): IVoltPullRequest {
 	const number = num(raw.number);
 	const mergedAt = time(raw.merged_at);
 	const closedAt = time(raw.closed_at);
@@ -470,7 +719,6 @@ export function parseRestPullRequest(raw: Json, repo: IVoltPrRepoRef, viewer: st
 	const headRepo = raw.head?.repo?.full_name;
 	const state = mergedAt !== undefined || raw.merged === true ? 'MERGED' : raw.state === 'closed' ? 'CLOSED' : 'OPEN';
 	const mergeable = raw.mergeable === true ? 'MERGEABLE' : raw.mergeable === false ? 'CONFLICTING' : undefined;
-	const users = (list: unknown): Json[] => Array.isArray(list) ? list.filter(Boolean) : [];
 	return {
 		key: prKey(repo, number),
 		repo: { host: repo.host, owner: repo.owner, name: repo.name },
@@ -495,11 +743,11 @@ export function parseRestPullRequest(raw: Json, repo: IVoltPrRepoRef, viewer: st
 		mergeable: parseMergeable(mergeable),
 		mergeState: parseMergeState(typeof raw.mergeable_state === 'string' ? raw.mergeable_state.toUpperCase() : undefined),
 		checks: summarizeChecks([]),
-		labels: users(raw.labels).map(label => ({ name: str(label.name), color: str(label.color, '888888') })).filter(label => label.name),
-		assignees: users(raw.assignees).map(user => str(user.login)).filter(Boolean),
+		labels: items<IGhLabelJson>(raw.labels).map(label => ({ name: str(label.name), color: str(label.color, '888888') })).filter(label => label.name),
+		assignees: items<IGhRestUserJson>(raw.assignees).map(user => str(user.login)).filter(Boolean),
 		reviewRequests: [
-			...users(raw.requested_reviewers).map(user => str(user.login)),
-			...users(raw.requested_teams).map(team => team.slug ? `${repo.owner}/${team.slug}` : ''),
+			...items<IGhRestUserJson>(raw.requested_reviewers).map(user => str(user.login)),
+			...items<{ readonly slug?: unknown }>(raw.requested_teams).map(team => team.slug ? `${repo.owner}/${team.slug}` : ''),
 		].filter(Boolean),
 		reviews: [],
 		unresolvedThreads: 0,
@@ -512,7 +760,7 @@ export function parseRestPullRequest(raw: Json, repo: IVoltPrRepoRef, viewer: st
 /** What a branch lookup asks for about each pull request: enough to tell which one it is. */
 export const PR_BRANCH_REF_FIELDS = 'number state isDraft createdAt headRepositoryOwner { login }';
 
-export function parseBranchRef(raw: Json, repo: IVoltPrRepoRef, branch: string): IVoltPrBranchRef {
+export function parseBranchRef(raw: IGhBranchRefJson, repo: IVoltPrRepoRef, branch: string): IVoltPrBranchRef {
 	const headOwner = raw.headRepositoryOwner?.login ?? raw.head?.repo?.owner?.login ?? raw.head?.user?.login;
 	const merged = raw.state === 'MERGED' || typeof raw.merged_at === 'string';
 	const state = merged ? 'MERGED' : raw.state === 'CLOSED' || raw.state === 'closed' ? 'CLOSED' : 'OPEN';
@@ -545,10 +793,10 @@ fragment VoltPrFingerprint on PullRequest {
 
 const RUNNING_CHECK_STATES = new Set(['QUEUED', 'IN_PROGRESS', 'WAITING', 'PENDING', 'REQUESTED', 'EXPECTED']);
 
-export function parseFingerprint(raw: Json, repo: IVoltPrRepoRef): IVoltPrFingerprint {
+export function parseFingerprint(raw: IGhPullRequestJson, repo: IVoltPrRepoRef): IVoltPrFingerprint {
 	const rollup = nodes(raw.commits)[0]?.commit?.statusCheckRollup;
-	const counts = (list: unknown): string[] => (Array.isArray(list) ? list : [])
-		.filter(entry => num(entry?.count) > 0)
+	const counts = (list: unknown): string[] => items<IGhStateCountJson>(list)
+		.filter(entry => num(entry.count) > 0)
 		.map(entry => `${str(entry.state)}:${num(entry.count)}`)
 		.sort();
 	const runs = counts(rollup?.contexts?.checkRunCountsByState);
@@ -582,7 +830,7 @@ export function parseViewed(value: unknown): VoltPrViewedState {
 	}
 }
 
-export function parseFile(raw: Json): IVoltPrFile {
+export function parseFile(raw: IGhFileJson): IVoltPrFile {
 	const previousPath = raw.previousFilename ?? raw.previousPath;
 	return {
 		path: str(raw.path),
@@ -594,7 +842,7 @@ export function parseFile(raw: Json): IVoltPrFile {
 	};
 }
 
-export function parseComment(raw: Json): IVoltPrComment {
+export function parseComment(raw: IGhCommentJson): IVoltPrComment {
 	return {
 		id: str(raw.id),
 		...(typeof raw.databaseId === 'number' ? { databaseId: raw.databaseId } : {}),
@@ -609,7 +857,7 @@ export function parseComment(raw: Json): IVoltPrComment {
 	};
 }
 
-export function parseThread(raw: Json): IVoltPrReviewThread {
+export function parseThread(raw: IGhThreadJson): IVoltPrReviewThread {
 	const line = typeof raw.line === 'number' ? raw.line : typeof raw.originalLine === 'number' ? raw.originalLine : undefined;
 	const startLine = typeof raw.startLine === 'number' ? raw.startLine : undefined;
 	return {
@@ -625,7 +873,7 @@ export function parseThread(raw: Json): IVoltPrReviewThread {
 	};
 }
 
-export function parseReview(raw: Json): IVoltPrReview {
+export function parseReview(raw: IGhReviewJson): IVoltPrReview {
 	return {
 		id: str(raw.id),
 		author: parseUser(raw.author),
@@ -636,7 +884,7 @@ export function parseReview(raw: Json): IVoltPrReview {
 	};
 }
 
-export function parseCommit(raw: Json): IVoltPrCommit {
+export function parseCommit(raw: IGhCommitNodeJson | null | undefined): IVoltPrCommit {
 	const commit = raw?.commit ?? raw;
 	const rollup = commit?.statusCheckRollup?.state;
 	let checks: VoltPrChecksState;
@@ -662,7 +910,7 @@ export interface IDetailExtras {
 	readonly checks?: readonly IVoltPrCheck[];
 }
 
-export function parsePullRequestDetail(raw: Json, repoRaw: Json, repo: IVoltPrRepoRef, viewer: string, extras: IDetailExtras): IVoltPullRequestDetail {
+export function parsePullRequestDetail(raw: IGhPullRequestJson, repoRaw: IGhRepositoryJson | null | undefined, repo: IVoltPrRepoRef, viewer: string, extras: IDetailExtras): IVoltPullRequestDetail {
 	const summary = parsePullRequest(raw, repo, viewer);
 	const checkRuns = extras.checks ? latestChecks(extras.checks) : headChecks(raw);
 	const permission = str(repoRaw?.viewerPermission);
@@ -701,7 +949,7 @@ export function gqlString(value: string): string {
 //#region Local git
 
 /** A REST file entry (`pulls/N/files`, `commits/SHA`) with its patch. */
-export function parseFilePatch(raw: Json): IVoltPrFilePatch {
+export function parseFilePatch(raw: IGhRestFileJson | null | undefined): IVoltPrFilePatch {
 	const previousPath = raw?.previous_filename;
 	return {
 		path: str(raw?.filename),

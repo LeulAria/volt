@@ -160,7 +160,7 @@ export class GeminiProvider implements IModelProvider {
 				usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number };
 			};
 			try {
-				json = JSON.parse(data);
+				json = JSON.parse(data) as typeof json;
 			} catch {
 				continue;
 			}

@@ -6,13 +6,22 @@
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IVoltExecResult, IVoltJobOutput, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltHostToolService } from '../../common/hostTools.js';
+import { isLongRunningCommand, TERMINAL_START_TOOL_NAME } from '../../common/terminalTools.js';
 import { pickBoolean, pickNumber, pickString } from '../../common/tools/args.js';
 import { IToolContext, IToolResult, IVoltTool } from '../../common/tools/tool.js';
 import { objectSchema } from './schema.js';
+import { hasManagedTerminals, runTerminalTool } from './terminalTool.js';
 import { resolveWorkspaceUri } from './workspacePath.js';
 
-const DEFAULT_TIMEOUT_MS = 120_000;
+/** A command with no timeout of its own is stopped after this; it stops blocking long before (see YIELD_AFTER_MS). */
+const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const MAX_TIMEOUT_MS = 10 * 60_000;
+/**
+ * A command still running after this hands control back to the agent with its output so far and
+ * goes on as a job, so a slow build or a server started without `background` never stalls the turn.
+ */
+const YIELD_AFTER_MS = 25_000;
 const INLINE_CHARS = 30_000;
 
 export interface IShellToolHost {
@@ -22,9 +31,19 @@ export interface IShellToolHost {
 	readonly spillDir?: () => string | undefined;
 	/** A log was written; read_file may now open it. */
 	readonly onLog?: (path: string) => void;
+	/** Managed terminals: servers and watchers run there, visible to the user, instead of as hidden jobs. */
+	readonly hostTools?: IVoltHostToolService;
 }
 
 export function createShellTools(host: IShellToolHost): IVoltTool[] {
+	/** Where each job's last read ended, so a wait looks only at what is new. */
+	const jobOffsets = new Map<string, number>();
+	const remember = (job: IVoltJobOutput | undefined): IVoltJobOutput | undefined => {
+		if (job) {
+			jobOffsets.set(job.id, job.offset);
+		}
+		return job;
+	};
 	return [
 		{
 			name: 'shell',
@@ -35,15 +54,16 @@ export function createShellTools(host: IShellToolHost): IVoltTool[] {
 			description: [
 				'Run a shell command (non-interactive, no stdin) in the workspace and get its exit code with stdout and stderr.',
 				'Use for the project\'s own tooling: tests, builds, type-checks, package scripts, git operations.',
-				'Set background: true for servers and watchers, then use job_wait / job_output / job_stop with the returned job id.',
+				`A command still running after ${YIELD_AFTER_MS / 1000}s returns its output so far and keeps running as a job: continue with job_wait / job_output / job_stop.`,
+				'Servers, watchers and other commands that never exit (or background: true) run in a terminal the user can watch; they return once ready with a terminal id for terminal_output / terminal_wait / terminal_stop.',
 				'Do not use to read, search, or edit files (read_file, grep, glob, edit_file are faster), or to open a browser.',
 			].join(' '),
 			schema: objectSchema({
 				command: { type: 'string' },
 				description: { type: 'string', description: 'Five-word label shown to the user, e.g. "Run unit tests"' },
 				cwd: { type: 'string', description: 'Working directory (default: workspace root)' },
-				timeout_ms: { type: 'integer', description: `Stop the command after this long (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS})` },
-				background: { type: 'boolean', description: 'Keep running as a job; returns after a few seconds with early output' },
+				timeout_ms: { type: 'integer', description: `Stop the command after this long (default and max ${MAX_TIMEOUT_MS})` },
+				background: { type: 'boolean', description: 'A server or watcher: run it in a managed terminal and return once it is up' },
 			}, ['command']),
 			timeoutMs: MAX_TIMEOUT_MS + 30_000,
 			execute: async (args, ctx) => runShell(host, args, ctx),
@@ -60,7 +80,10 @@ export function createShellTools(host: IShellToolHost): IVoltTool[] {
 				id: { type: 'string' },
 				offset: { type: 'integer', description: 'Offset returned by the previous read' },
 			}, ['id']),
-			execute: async args => jobResult('job_output', await host.stdio.jobOutput(pickString(args, 'id') ?? '', pickNumber(args, 'offset', 'since'))),
+			execute: async args => {
+				const id = pickString(args, 'id') ?? '';
+				return jobResult('job_output', remember(await host.stdio.jobOutput(id, pickNumber(args, 'offset', 'since') ?? jobOffsets.get(id))));
+			},
 		},
 		{
 			name: 'job_wait',
@@ -76,11 +99,16 @@ export function createShellTools(host: IShellToolHost): IVoltTool[] {
 				timeout_ms: { type: 'integer', description: 'Default 30000, max 600000' },
 			}, ['id']),
 			timeoutMs: MAX_TIMEOUT_MS + 30_000,
-			execute: async args => jobResult('job_wait', await host.stdio.jobWait(
-				pickString(args, 'id') ?? '',
-				Math.min(MAX_TIMEOUT_MS, Math.max(100, pickNumber(args, 'timeout_ms', 'timeout') ?? 30_000)),
-				pickString(args, 'until', 'pattern'),
-			)),
+			execute: async args => {
+				const id = pickString(args, 'id') ?? '';
+				// Only output after the last read counts, so a pattern that matched before cannot end the wait at once.
+				return jobResult('job_wait', remember(await host.stdio.jobWait(
+					id,
+					Math.min(MAX_TIMEOUT_MS, Math.max(100, pickNumber(args, 'timeout_ms', 'timeout') ?? 30_000)),
+					pickString(args, 'until', 'pattern'),
+					jobOffsets.get(id),
+				)));
+			},
 		},
 		{
 			name: 'job_stop',
@@ -118,7 +146,17 @@ async function runShell(host: IShellToolHost, args: unknown, ctx: IToolContext):
 	}
 	const cwd = cwdUri?.fsPath ?? ctx.cwd;
 	const background = pickBoolean(args, 'background');
-	const timeoutMs = Math.min(MAX_TIMEOUT_MS, Math.max(1_000, pickNumber(args, 'timeout_ms', 'timeout') ?? DEFAULT_TIMEOUT_MS));
+	// Servers and watchers go to a managed terminal: visible to the user, readable by the agent, never blocking.
+	if ((background || isLongRunningCommand(command)) && host.hostTools && hasManagedTerminals(host.hostTools)) {
+		const started = await runTerminalTool(host.hostTools, TERMINAL_START_TOOL_NAME, {
+			command,
+			cwd,
+			...(pickString(args, 'description') ? { title: pickString(args, 'description') } : {}),
+		}, ctx);
+		return { ...started, name: 'shell' };
+	}
+	const explicitTimeout = pickNumber(args, 'timeout_ms', 'timeout');
+	const timeoutMs = Math.min(MAX_TIMEOUT_MS, Math.max(1_000, explicitTimeout ?? DEFAULT_TIMEOUT_MS));
 	const id = `sh-${generateUuid().slice(0, 8)}`;
 	const onAbort = () => void host.stdio.cancelExec(id);
 	if (ctx.signal.aborted) {
@@ -133,6 +171,8 @@ async function runShell(host: IShellToolHost, args: unknown, ctx: IToolContext):
 			cwd,
 			timeoutMs,
 			background,
+			// A short explicit timeout is the caller's wish to wait it out; otherwise hand back control.
+			...(!background && (explicitTimeout === undefined || explicitTimeout > YIELD_AFTER_MS) ? { yieldAfterMs: YIELD_AFTER_MS } : {}),
 			inlineChars: INLINE_CHARS,
 			spillDir: host.spillDir?.(),
 		});
@@ -147,7 +187,9 @@ async function runShell(host: IShellToolHost, args: unknown, ctx: IToolContext):
 	const seconds = (result.durationMs / 1000).toFixed(1);
 	const output = result.combined.trim() || '(no output)';
 	let status: string;
-	if (result.running) {
+	if (result.running && !background) {
+		status = `[still running after ${seconds}s as job ${id}; output so far is above. Keep working, or job_wait (id, until, timeout_ms) for it; job_output reads more, job_stop stops it]`;
+	} else if (result.running) {
 		status = `[running in the background as job ${id}; use job_wait / job_output / job_stop]`;
 	} else if (result.cancelled) {
 		status = '[cancelled]';

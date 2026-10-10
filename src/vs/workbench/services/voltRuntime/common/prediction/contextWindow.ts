@@ -68,7 +68,7 @@ export function extractImports(text: string, maxLines = 60): string {
 	return out.join('\n');
 }
 
-const KEYWORDS = new Set([
+export const KEYWORDS: ReadonlySet<string> = new Set([
 	'abstract', 'async', 'await', 'boolean', 'break', 'case', 'catch', 'class', 'const', 'continue', 'default', 'def', 'delete', 'elif',
 	'else', 'enum', 'export', 'extends', 'false', 'final', 'finally', 'float', 'for', 'from', 'func', 'function', 'import', 'impl', 'interface',
 	'lambda', 'let', 'match', 'none', 'null', 'number', 'package', 'private', 'protected', 'public', 'return', 'self', 'static',

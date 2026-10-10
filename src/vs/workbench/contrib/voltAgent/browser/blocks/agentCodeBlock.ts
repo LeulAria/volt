@@ -45,6 +45,8 @@ export interface ICodeCardOptions {
 	readonly fileIconClasses?: (path: string) => readonly string[];
 	/** Runs a shell block in the chat's terminal; absent while the reply still streams. */
 	readonly onRunInTerminal?: (command: string) => void;
+	/** The fence is still streaming in: it is drawn again with more text in a moment. */
+	readonly streaming?: boolean;
 }
 
 const SHELL_LANGS = new Set(['sh', 'bash', 'zsh', 'fish', 'shell', 'console', 'powershell', 'pwsh']);
@@ -124,10 +126,14 @@ const lastHighlight = new Map<string, { code: string; lines: Node[][] }>();
 
 const DIFF_LANGS = new Set(['diff', 'patch']);
 
+/** Aliases whose streaming card has a highlight in flight: a growing fence asks again once it is done. */
+const streamingHighlights = new Set<string>();
+
 /**
  * Cursor's code card: a bordered card, no language label, and a copy button that appears on hover.
- * The body is a read-only Monaco editor so indent and colours match the workbench editor. The body
- * scrolls sideways instead of wrapping.
+ * The body is static highlighted HTML (the tokenizer's theme colours, the editor's font, size and tab
+ * width), not an editor: a card costs a few elements, lays out at once at its real width, and a
+ * streamed redraw does not build a widget. The body scrolls sideways instead of wrapping.
  */
 export function renderCodeCard(parent: HTMLElement, language: string | undefined, code: string, options: ICodeCardOptions): HTMLElement {
 	const citation = parseCodeCitation(language);
@@ -147,83 +153,63 @@ export function renderCodeCard(parent: HTMLElement, language: string | undefined
 	if (citation) {
 		renderCitationHeader(shell.card, citation, options);
 	}
-	const codeEl = renderHighlightedCode(shell.card, shell.scroll, lang, text, options);
-	if (options.instantiationService) {
-		// Indent like the editor that replaces it, so the swap does not shift the code sideways.
-		codeEl.style.tabSize = '4';
-		deferMonacoMount(shell.card, shell.scroll, codeEl, text, lang, options);
-	}
-	return shell.card;
-}
-
-/** Highlighted lines as plain DOM: the card body until (or instead of) its Monaco editor. */
-function renderHighlightedCode(card: HTMLElement, scroll: HTMLElement, lang: string, text: string, options: ICodeCardOptions): HTMLElement {
-	const codeEl = append(scroll, $('code.volt-md-code.volt-agent-searchable'));
+	const codeEl = append(shell.scroll, $('code.volt-md-code.volt-agent-searchable'));
+	applyEditorFont(codeEl, options);
 	const key = `${lang}\n${text}`;
 	const cached = highlightCache.get(key);
 	if (cached) {
 		appendLines(codeEl, cloneLines(cached));
-		return codeEl;
+		return shell.card;
 	}
+	// Lines unchanged since the last highlight keep their colours until this one lands.
 	appendLines(codeEl, provisionalLines(lang, text));
-	if (options.languageService && lang) {
+	if (options.languageService && lang && !PLAIN_ALIASES.has(lang)) {
+		// A fence still streaming re-tokenizes at most one version at a time; frames in between
+		// show the colours of the last one (provisionalLines).
+		if (options.streaming && streamingHighlights.has(lang)) {
+			return shell.card;
+		}
+		if (options.streaming) {
+			streamingHighlights.add(lang);
+		}
+		const settle = () => {
+			if (options.streaming) {
+				streamingHighlights.delete(lang);
+			}
+		};
 		highlight(options.languageService, lang, text).then(lines => {
-			if (!card.isConnected || !codeEl.isConnected) {
+			settle();
+			if (!shell.card.isConnected) {
 				return;
 			}
 			codeEl.replaceChildren();
 			appendLines(codeEl, cloneLines(lines));
 			options.onDidChangeSize?.();
-		}, () => { /* keep plain text */ });
+		}, () => {
+			settle();
+			/* keep plain text */
+		});
 	}
-	return codeEl;
+	return shell.card;
 }
 
-/** How long a card must stay near the viewport before it gets its editor; a streamed reply is redrawn every 50 ms, so its cards never do. */
-const MONACO_MOUNT_DELAY_MS = 150;
-
-/**
- * A read-only Monaco editor per code card costs a text model, tokenization, a view with its own
- * DOM, listeners and a ResizeObserver (a 60-turn chat with two blocks a turn made 120 of them: +76k
- * DOM nodes, 5 s to render). Cards start as highlighted lines and get their editor only once they
- * have been on or near screen for a moment.
- */
-function deferMonacoMount(card: HTMLElement, scroll: HTMLElement, codeEl: HTMLElement, text: string, lang: string, options: ICodeCardOptions): void {
-	const win = getWindow(card);
-	const mount = () => {
-		if (!card.isConnected || options.store.isDisposed) {
-			return;
-		}
-		if (mountMonacoCode(scroll, text, lang, options)) {
-			codeEl.remove();
-			card.classList.add('has-editor');
-			options.onDidChangeSize?.();
-		}
-	};
-	if (typeof win.IntersectionObserver !== 'function') {
-		mount();
+/** The workbench editor's font size, line height and tab width on a static card (the family comes from `--volt-code-font`). */
+function applyEditorFont(codeEl: HTMLElement, options: ICodeCardOptions): void {
+	const font = options.instantiationService?.invokeFunction(accessor => {
+		const configurationService = accessor.get(IConfigurationService);
+		const fontSize = configurationService.getValue<number>('editor.fontSize') || EDITOR_FONT_DEFAULTS.fontSize;
+		const configuredLineHeight = configurationService.getValue<number>('editor.lineHeight');
+		const lineHeight = configuredLineHeight > 0 ? configuredLineHeight : Math.round(fontSize * 1.5);
+		const tabSize = configurationService.getValue<number>('editor.tabSize') || 4;
+		return { fontSize, lineHeight, tabSize };
+	});
+	if (!font) {
 		return;
 	}
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const observer = new win.IntersectionObserver(entries => {
-		if (entries.some(entry => entry.isIntersecting)) {
-			timer ??= setTimeout(() => {
-				timer = undefined;
-				observer.disconnect();
-				mount();
-			}, MONACO_MOUNT_DELAY_MS);
-		} else if (timer !== undefined) {
-			clearTimeout(timer);
-			timer = undefined;
-		}
-	}, { rootMargin: '400px 0px' });
-	observer.observe(card);
-	options.store.add(toDisposable(() => {
-		observer.disconnect();
-		if (timer !== undefined) {
-			clearTimeout(timer);
-		}
-	}));
+	codeEl.style.fontSize = `${font.fontSize}px`;
+	codeEl.style.lineHeight = `${font.lineHeight}px`;
+	codeEl.style.tabSize = String(font.tabSize);
+	codeEl.style.setProperty('--volt-md-code-line-height', `${font.lineHeight}px`);
 }
 
 /** The header on a cited snippet: file icon, name, "Ln a-b"; clicking opens the file there. */

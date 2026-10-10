@@ -297,7 +297,7 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<string> {
 		const chunks: Buffer[] = [];
 		let size = 0;
 		let tooLarge = false;
-		req.on('data', chunk => {
+		req.on('data', (chunk: Buffer | string) => {
 			if (tooLarge) {
 				return; // drain the rest, so the client finishes writing and can read the 413
 			}

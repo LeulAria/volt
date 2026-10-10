@@ -10,7 +10,7 @@ import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
 import { OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
 
 /** Speech bubble with two text lines. */
-/** The ± stroke the agent window uses for Changes (the window's tools list, the + menu). */
+/** The +/- stroke the agent window uses for Changes (the window's tools list, the + menu). */
 export const CHANGES_ICON_PATH = 'M12 3v14m7-7H5m14 11H5';
 
 /** An icon's shapes on a 24 grid, as [tag, attributes]. */

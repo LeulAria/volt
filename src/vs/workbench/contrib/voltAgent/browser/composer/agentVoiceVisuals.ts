@@ -27,7 +27,7 @@ export class AgentVoiceVisuals extends Disposable {
 	private readonly waveElement: HTMLElement;
 	private readonly glow: HTMLElement;
 	private readonly bars: HTMLElement[] = [];
-	private readonly heights: number[] = new Array(WAVE_BARS).fill(0);
+	private readonly heights: number[] = new Array<number>(WAVE_BARS).fill(0);
 	private readonly pending: number[] = [];
 	private frame: number | undefined;
 	private lastStep = 0;

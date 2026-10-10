@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
-import { verifySignature } from './signature.mjs';
+import { SIGNATURE_KINDS, verifySignature } from './signature.mjs';
 import { Store } from './store.mjs';
 import { ineligibleReason, loadScore, pickMachine } from './placement.mjs';
 import { HttpError, newId, normalizePairingCode, pairingCode, randomToken, redactHeaders, safeEqual, sha256 } from './util.mjs';
@@ -242,6 +242,7 @@ export class Relay {
 			name: hook.name,
 			enabled: hook.enabled,
 			signature: { kind: hook.signature?.kind ?? 'none', header: hook.signature?.header, prefix: hook.signature?.prefix, encoding: hook.signature?.encoding, timestampHeader: hook.signature?.timestampHeader, hasSecret: !!hook.signature?.secret },
+			holdOffline: hook.holdOffline !== false,
 			tokenHint: hook.tokenHint,
 			createdAt: hook.createdAt,
 			held: deliveries.filter(delivery => delivery.status === 'held' || delivery.status === 'delivered').length,
@@ -279,8 +280,11 @@ export class Relay {
 		if (typeof body.enabled === 'boolean') {
 			hook.enabled = body.enabled;
 		}
+		if (typeof body.holdOffline === 'boolean') {
+			hook.holdOffline = body.holdOffline;
+		}
 		if (body.signature && typeof body.signature === 'object') {
-			const kind = ['none', 'github', 'generic'].includes(body.signature.kind) ? body.signature.kind : 'none';
+			const kind = SIGNATURE_KINDS.includes(body.signature.kind) ? body.signature.kind : 'none';
 			hook.signature = kind === 'none' ? { kind } : {
 				kind,
 				// An update without a secret keeps the stored one (the client may not hold it any more).
@@ -329,6 +333,10 @@ export class Relay {
 		if (!hook.enabled) {
 			throw new HttpError(410, 'This hook is turned off.');
 		}
+		// Microsoft Graph checks a subscription URL by echoing a token before it sends anything.
+		if (typeof request.query?.validationToken === 'string' && request.query.validationToken) {
+			return { status: 200, text: String(request.query.validationToken).slice(0, 1024) };
+		}
 		const now = Date.now();
 		const window = (this.rates.get(hook.id) ?? []).filter(at => now - at < 60_000);
 		if (window.length >= WEBHOOK_RATE_PER_MINUTE) {
@@ -338,8 +346,8 @@ export class Relay {
 		this.rates.set(hook.id, window);
 
 		const headers = request.headers;
-		const event = headerOf(headers, 'x-github-event') ?? headerOf(headers, 'x-gitlab-event') ?? headerOf(headers, 'x-event-type') ?? headerOf(headers, 'x-volt-event');
-		const externalId = headerOf(headers, 'x-github-delivery') ?? headerOf(headers, 'x-gitlab-event-uuid') ?? headerOf(headers, 'idempotency-key') ?? headerOf(headers, 'x-delivery-id') ?? headerOf(headers, 'x-request-id');
+		const event = headerOf(headers, 'x-github-event') ?? headerOf(headers, 'x-gitlab-event') ?? headerOf(headers, 'sentry-hook-resource') ?? headerOf(headers, 'linear-event') ?? headerOf(headers, 'x-event-type') ?? headerOf(headers, 'x-volt-event');
+		let externalId = headerOf(headers, 'x-github-delivery') ?? headerOf(headers, 'x-gitlab-event-uuid') ?? headerOf(headers, 'idempotency-key') ?? headerOf(headers, 'x-delivery-id') ?? headerOf(headers, 'x-request-id');
 		const check = verifySignature(hook.signature, headers, request.body, now);
 		const base = {
 			hookId: hook.id,
@@ -362,6 +370,19 @@ export class Relay {
 			this.store.emit('delivery', rejected.id, rejected);
 			throw new HttpError(401, check.reason);
 		}
+		const json = parseJsonObject(request.body);
+		// Slack checks an Events API URL with a challenge it wants back at once.
+		if (json?.type === 'url_verification' && typeof json.challenge === 'string') {
+			return { status: 200, body: { challenge: json.challenge } };
+		}
+		// Opt-out of holding (T3's queue-while-offline is opt-in; here holding is the default): refuse
+		// while the owning Volt is away, so the sender's own retries take over.
+		const owner = this.state.devices.find(device => device.id === hook.ownerId);
+		if (hook.holdOffline === false && (!owner?.lastSeenAt || now - owner.lastSeenAt > MACHINE_STALE_MS)) {
+			throw new HttpError(503, 'Volt is offline and this hook does not hold deliveries.', { 'retry-after': '60' });
+		}
+		const bodyId = typeof json?.event_id === 'string' ? json.event_id : typeof json?.event?.id === 'string' ? json.event.id : undefined;
+		externalId ??= headerOf(headers, 'linear-delivery') ?? headerOf(headers, 'request-id') ?? bodyId;
 		if (externalId) {
 			const duplicate = this.state.deliveries.find(delivery => delivery.hookId === hook.id && delivery.externalId === externalId && !delivery.redeliveryOf && delivery.status !== 'failed');
 			if (duplicate) {
@@ -379,6 +400,10 @@ export class Relay {
 		this.state.deliveries.push(delivery);
 		this.prune(hook.id);
 		await this.store.save();
+		// A Teams outgoing webhook shows the reply in the channel.
+		if (hook.signature?.kind === 'teams') {
+			return { status: 200, body: { type: 'message', text: 'Volt received it; an automation is on it.' } };
+		}
 		return { status: 202, body: { id: delivery.id, status: 'held' } };
 	}
 
@@ -945,4 +970,16 @@ function sanitizeUsage(event) {
 		...(num(event.costUsd) !== undefined ? { costUsd: event.costUsd } : {}),
 		...(num(event.turns) !== undefined ? { turns: event.turns } : {}),
 	};
+}
+
+function parseJsonObject(body) {
+	if (!body?.length || body[0] !== 0x7b) {
+		return undefined;
+	}
+	try {
+		const value = JSON.parse(body.toString('utf8'));
+		return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
+	} catch {
+		return undefined;
+	}
 }

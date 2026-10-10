@@ -35,7 +35,7 @@ class FrameDriver implements IActDriver {
 
 	async run<T>(code: string, ms: number): Promise<T | undefined> {
 		try {
-			const value = await raceTimeout(Promise.resolve(this.win.eval(code)), ms);
+			const value = await raceTimeout(Promise.resolve<unknown>(this.win.eval(code)), ms);
 			return value === undefined ? undefined : JSON.parse(JSON.stringify(value)) as T;
 		} catch {
 			return undefined;

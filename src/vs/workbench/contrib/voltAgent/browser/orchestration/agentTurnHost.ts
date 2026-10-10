@@ -6,7 +6,6 @@
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { basename } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
-import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { localize } from '../../../../../nls.js';
@@ -29,10 +28,12 @@ import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { takeTurnDisplay } from './agentTurnDisplays.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
-import { scheduledRunOf } from '../schedules/agentScheduleCommands.js';
+import { automationRunOf } from '../automations/automationCommands.js';
 import { takePageContext } from '../visuals/agentVisualBridge.js';
+import { IAgentCheckpointService } from '../review/agentCheckpointService.js';
 
-const CHECKPOINT_BEGIN_TURN_COMMAND = 'voltAgent.checkpoint.beginTurn';
+/** CLI agents whose access bridge makes them ask Volt before every edit and command under Supervised. */
+const ASKING_CLI_AGENTS = new Set(['claude-code', 'codex', 'opencode']);
 
 export { stashTurnDisplay } from './agentTurnDisplays.js';
 
@@ -85,7 +86,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		@IAgentOrchestratorService orchestrator: IAgentOrchestratorService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-		@ICommandService private readonly commandService: ICommandService,
+		@IAgentCheckpointService private readonly checkpoints: IAgentCheckpointService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentWorkspaceService private readonly workspace: IAgentWorkspaceService,
@@ -138,27 +139,27 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			...(origin ? { origin } : {}),
 			...(turn.taskIds ? { taskIds: turn.taskIds } : {}),
 			...(handoff ? { handoff: { ...(handoff.fromLabel ? { fromLabel: handoff.fromLabel } : {}), toLabel: handoff.toLabel, at: handoff.at, by: handoff.by, ...(handoff.reason ? { reason: handoff.reason } : {}) } } : {}),
-			...(scheduledRunOf(turn.prompt.host) ? { scheduled: { ...scheduledRunOf(turn.prompt.host)! } } : {}),
+			...(automationRunOf(turn.prompt.host) ? { scheduled: { ...automationRunOf(turn.prompt.host)! } } : {}),
 			...(fromThread ? { fromThread } : {}),
 		});
 		if (turn.kind === 'brief' && thread.title) {
 			// A subagent's chat is named after its task, not after the framing its model reads.
 			this.history.open(threadId).setMeta({ title: thread.title });
 		}
-		await this.beginCheckpoint(threadId, turn.id);
-		if (!request.isCurrent()) {
-			controller.endUnstartedTurn(turn.id, undefined);
-			return undefined;
-		}
 		// What the user typed runs on the composer's model (Auto: the runtime's). Everything Volt starts on
 		// its own (schedules, reviews, fixes, notifications, handoffs) names a model, else the chat's, else
 		// the last one the user picked; it never falls back to the catalog's first entry.
-		const typed = turn.kind === 'prompt' && !handoff && !fromThread && !scheduledRunOf(turn.prompt.host);
+		const typed = turn.kind === 'prompt' && !handoff && !fromThread && !automationRunOf(turn.prompt.host);
 		const ref = typed
 			? turn.prompt.modelRef
 			: resolveRunModelRef({ explicit: turn.prompt.modelRef, chat: thread.modelRef, lastUsed: this.runtime.getActiveCatalogRef() }, this.runtime.listCatalog());
 		if (!typed && !ref) {
 			controller.endUnstartedTurn(turn.id, localize('agentTurnHost.noModel', "No model is set for this run. Pick a model for the chat, then send again."));
+			return undefined;
+		}
+		await this.beginCheckpoint(threadId, turn.id, ref);
+		if (!request.isCurrent()) {
+			controller.endUnstartedTurn(turn.id, undefined);
 			return undefined;
 		}
 		if (typed && ref) {
@@ -262,17 +263,36 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		return { text: raw.text, ...(mentions?.length ? { mentions } : {}) };
 	}
 
-	/** Snapshots the files before a turn runs (bounded by the checkpoint service to about 2 s). */
-	private async beginCheckpoint(sessionId: string, turnId: string): Promise<void> {
-		if (!CommandsRegistry.getCommand(CHECKPOINT_BEGIN_TURN_COMMAND)) {
-			return;
-		}
+	/**
+	 * Snapshots the files before a turn runs. Where every change the turn makes waits on the
+	 * chat's write gate, the snapshot becomes that gate and the prompt goes out at once; otherwise
+	 * the send waits for it (bounded by the checkpoint service to about 2 s). Nothing is waited on
+	 * when the last turn's after-snapshot still matches the project.
+	 */
+	private async beginCheckpoint(sessionId: string, turnId: string, ref: string | undefined): Promise<void> {
 		try {
-			await this.commandService.executeCommand(CHECKPOINT_BEGIN_TURN_COMMAND, { sessionId, turnId });
+			await this.checkpoints.beginTurn(sessionId, turnId, { writesGated: this.writesWaitForGate(sessionId, ref) });
 		} catch (err) {
 			// A missed snapshot only disables Restore for this turn; the run goes ahead.
 			this.logService.warn('[volt orchestrator] checkpoint before turn failed', err);
 		}
+	}
+
+	/**
+	 * Whether every change this turn makes to the files waits on its write gate. Volt's own loop
+	 * gates each mutating tool, and a CLI agent that Supervised makes ask before it edits or runs a
+	 * command waits for the answer, which waits for the gate. A CLI agent allowed to act on its own
+	 * (Auto, Full access; Claude and Codex also edit in-process under Auto-accept edits), one whose
+	 * own mode decides (Cursor), or a model not known yet can change files before Volt hears of
+	 * it: its checkpoint is taken before the prompt goes out.
+	 */
+	private writesWaitForGate(sessionId: string, ref: string | undefined): boolean {
+		const effective = ref ?? this.runtime.getOrCreateSession(sessionId).providerRef;
+		const item = effective ? this.runtime.listCatalog().find(candidate => candidate.ref === effective) : undefined;
+		if (item?.kind === 'model') {
+			return true;
+		}
+		return !!item && ASKING_CLI_AGENTS.has(item.providerId) && this.runtime.getAccessMode(sessionId) === 'supervised';
 	}
 }
 
