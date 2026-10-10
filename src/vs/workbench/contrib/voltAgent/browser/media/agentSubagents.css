@@ -438,33 +438,17 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	position: relative;
 	margin-top: 4px;
 	padding: 0;
-	border: 0;
+	/* The same edge as the other Volt menus (filter, workspace, + menu). */
+	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
 	border-radius: 8px;
 	background: color-mix(in srgb, var(--vscode-foreground) 2.5%, transparent);
 	box-shadow: none;
 	overflow: hidden;
 }
 
-/*
- * Glass edge: a 1px ring brighter at the top left and bottom right, cut out of a gradient with a
- * mask. No backdrop-filter (volt-transparent-window skill). Above the rows so their hover keeps it.
- */
-.monaco-workbench.volt-layout-agent .volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body::before {
-	content: '';
-	position: absolute;
-	inset: 0;
-	z-index: 1;
-	padding: 1px;
-	border-radius: inherit;
-	background: linear-gradient(155deg,
-		color-mix(in srgb, var(--vscode-foreground) 24%, transparent) 0%,
-		color-mix(in srgb, var(--vscode-foreground) 8%, transparent) 35%,
-		color-mix(in srgb, var(--vscode-foreground) 5%, transparent) 65%,
-		color-mix(in srgb, var(--vscode-foreground) 16%, transparent) 100%);
-	-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-	-webkit-mask-composite: xor;
-	mask-composite: exclude;
-	pointer-events: none;
+.monaco-workbench.volt-layout-agent.vs .volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body,
+.monaco-workbench.volt-layout-agent.hc-light .volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body {
+	border-color: var(--vscode-widget-border, rgba(0, 0, 0, 0.1));
 }
 
 /* The agents group sits flush against the rule above it, with a little room under its last row. */

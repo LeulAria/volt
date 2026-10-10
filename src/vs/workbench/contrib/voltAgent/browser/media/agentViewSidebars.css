@@ -324,13 +324,14 @@
 	backdrop-filter: none;
 }
 
-/* A new chat: no transcript to sit beside yet, so the actions float at the chat's top right (agentQuickOpenActionsHost). */
+/* A new chat has no session yet, so there is nothing for the actions to act on: they appear beside the transcript
+ * once the first prompt is sent (agentQuickOpenActionsHost moves them there). */
 .monaco-workbench.volt-layout-agent .volt-agent-editor-main > .volt-agent-quick-open-actions {
 	position: absolute;
 	top: 8px;
 	right: 15px;
 	z-index: 6;
-	display: flex;
+	display: none;
 	flex-direction: column;
 	align-items: stretch;
 	width: 228px;

@@ -169,7 +169,7 @@ suite('Agent home list model', () => {
 		const tree = buildAgentHomeTree([folder('/tmp/app'), folder('/tmp/volt', { current: true })], [session('chat', { workspaceFolder: '/tmp/volt' })], view());
 		assert.deepStrictEqual(tree.map(node => node.element.type), ['section']);
 		const workspaces = section(tree);
-		assert.ok(workspaces.element.type === 'section' && workspaces.element.key === 'workspaces' && workspaces.element.filter);
+		assert.ok(workspaces.element.type === 'section' && workspaces.element.key === 'workspaces');
 		assert.deepStrictEqual(projectLabels(workspaces), ['volt']);
 	});
 
@@ -307,7 +307,7 @@ suite('Agent home list model', () => {
 		], view({ grouping: 'status' }));
 		assert.deepStrictEqual(headers(tree), ['pinned', 'needsAttention', 'working', 'draft', 'done']);
 		const pinned = tree.find(node => node.element.type === 'bucket' && node.element.id === 'pinned');
-		assert.ok(pinned?.element.type === 'bucket' && pinned.element.filter, 'filter sits on the first header');
+		assert.ok(pinned?.element.type === 'bucket');
 		assert.deepStrictEqual(sessionIds(pinned), ['pin']);
 		const done = tree.find(node => node.element.type === 'bucket' && node.element.id === 'done');
 		assert.deepStrictEqual(sessionIds(done), ['done'], 'pinned tabs are not repeated');
@@ -359,7 +359,7 @@ suite('Agent home list model', () => {
 	test('an empty flat grouping keeps a header for the filter', () => {
 		const tree = buildAgentHomeTree([], [session('a', { status: 'done' })], view({ grouping: 'status', status: ['working'] }));
 		const agents = section(tree);
-		assert.ok(agents.element.type === 'section' && agents.element.key === 'agents' && agents.element.filter);
+		assert.ok(agents.element.type === 'section' && agents.element.key === 'agents');
 		assert.deepStrictEqual(agents.children?.map(child => child.element.type), ['empty']);
 	});
 
@@ -616,7 +616,7 @@ suite('Agent home list model', () => {
 		assert.deepStrictEqual(headers(buildAgentHomeTree(folders, sessions, view({ grouping: 'status' }), { live })), ['pinned', 'needsAttention', 'working', 'done']);
 	});
 
-	test('working shelf: an all-busy flat list keeps its filter header without the empty note', () => {
+	test('working shelf: an all-busy flat list keeps an Agents header without the empty note', () => {
 		const tree = buildAgentHomeTree([], [session('r', { status: 'running' })], view({ grouping: 'updated' }), { workingShelf: true });
 		assert.deepStrictEqual(tree.map(node => node.element.type), ['section', 'group']);
 		assert.deepStrictEqual(tree[0].children, []);

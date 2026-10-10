@@ -41,10 +41,7 @@ import { CommandsRegistry, ICommandService } from '../../../../../platform/comma
 import { FIX_PR_SELECTION_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
-import { getLayoutMode, isAgentDrawerMode, isAgentSidebarShowing, LayoutModeContext, openAgentSidebar, revealAgentSidePanel, storeAgentLeftSidebarHidden } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
-import { IPaneCompositePartService } from '../../../../services/panecomposite/browser/panecomposite.js';
-import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
-import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { getLayoutMode, LayoutModeContext, revealAgentSidePanel } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import '../chrome/agentViewSidebars.js';
 import '../chrome/agentTitlebarHeader.js';
 import '../chrome/agentNav.contribution.js';
@@ -96,6 +93,7 @@ import {
 import { CONTEXT_AGENT_FIND_INPUT_FOCUSED, CONTEXT_AGENT_FIND_WIDGET_VISIBLE, CONTEXT_IN_AGENT_INPUT } from './agentFindWidget.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
 import { startAgentChat } from '../workspace/agentPanels.js';
+import { toggleAgentToolsPanel } from '../workspace/agentSurfaceHost.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
@@ -961,6 +959,8 @@ registerAction2(class OpenAgentSidePanelAction extends Action2 {
 			title: localize2('voltAgent.openSidePanel', "Toggle Agents Side Bar"),
 			category: Categories.View,
 			f1: true,
+			// The agent layout's Cmd+L is Toggle Right Panel; Cmd+B has the agents list there.
+			precondition: LayoutModeContext.isEqualTo('ide'),
 			icon: AgentSidePanelIcon,
 			toggled: {
 				condition: AuxiliaryBarVisibleContext,
@@ -992,22 +992,9 @@ registerAction2(class OpenAgentSidePanelAction extends Action2 {
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const layoutService = accessor.get(IWorkbenchLayoutService);
 		const viewsService = accessor.get(IViewsService);
-		const storageService = accessor.get(IStorageService);
+		// Cmd+L from the composer and the browser runs this directly, in either layout.
 		if (getLayoutMode(layoutService) === 'agent') {
-			const showing = isAgentSidebarShowing(layoutService);
-			// A drawer opens and closes for now; it leaves the saved choice for the column alone.
-			const drawer = isAgentDrawerMode(layoutService);
-			if (showing) {
-				if (!drawer) {
-					storeAgentLeftSidebarHidden(storageService, true);
-				}
-				layoutService.setPartHidden(true, Parts.AUXILIARYBAR_PART);
-				return;
-			}
-			if (!drawer) {
-				storeAgentLeftSidebarHidden(storageService, false);
-			}
-			await openAgentSidebar(accessor.get(IConfigurationService), layoutService, accessor.get(IPaneCompositePartService));
+			toggleAgentToolsPanel();
 			return;
 		}
 		if (layoutService.isAuxiliaryBarMaximized()) {

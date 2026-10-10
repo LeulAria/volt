@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
 import { autorun } from '../../../../base/common/observable.js';
 import { resolve } from '../../../../base/common/path.js';
 import { isMacintosh } from '../../../../base/common/platform.js';
@@ -17,6 +17,7 @@ import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { INativeHostService } from '../../../../platform/native/common/native.js';
+import { preventBackgroundThrottling } from '../../../../platform/native/electron-browser/voltBackgroundThrottling.js';
 import { IWorkspaceTrustRequestService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
 import { ViewContainerLocation } from '../../../common/views.js';
@@ -122,13 +123,15 @@ class ChatSuspendThrottlingHandler extends Disposable {
 	) {
 		super();
 
+		const hold = this._register(new MutableDisposable());
 		this._register(autorun(reader => {
 			const running = chatService.requestInProgressObs.read(reader);
 
 			// When a chat request is in progress, we must ensure that background
 			// throttling is not applied so that the chat session can continue
 			// even when the window is not in focus.
-			nativeHostService.setBackgroundThrottling(!running);
+			// Volt: counted with the agents' own hold, so neither turns throttling back on under the other.
+			hold.value = running ? preventBackgroundThrottling(nativeHostService) : undefined;
 		}));
 	}
 }

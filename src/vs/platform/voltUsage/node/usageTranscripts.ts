@@ -299,7 +299,9 @@ const SESSION_FIELD = /(?<!\\)"(?:sessionId|session_id)":"([^"]+)"/g;
 function readActivity(text: string, fallbackSessionId?: string): ITranscriptActivity | undefined {
 	const sessionIds = new Set<string>();
 	for (const match of text.matchAll(SESSION_FIELD)) {
-		sessionIds.add(match[1]);
+		// A regex match is a slice that keeps the whole transcript's text alive; the parsed transcripts
+		// are cached, so 2 GB of Claude transcripts ran the main process out of memory. Copy it out.
+		sessionIds.add(Buffer.from(match[1], 'utf8').toString('utf8'));
 	}
 	if (!sessionIds.size && fallbackSessionId) {
 		sessionIds.add(fallbackSessionId);

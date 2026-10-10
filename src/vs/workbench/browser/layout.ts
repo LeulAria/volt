@@ -45,7 +45,7 @@ import { IBannerService } from '../services/banner/browser/bannerService.js';
 import { IPaneCompositePartService } from '../services/panecomposite/browser/panecomposite.js';
 import { AuxiliaryBarPart } from './parts/auxiliarybar/auxiliaryBarPart.js';
 import { stampLayoutModeChrome } from './parts/titlebar/agentLayoutChrome.js';
-import { AGENT_LEFT_SIDEBAR_HIDDEN_KEY, AGENT_SIDEBAR_RAIL_CLASS, AGENT_SIDEBAR_RAIL_EVENT, AGENT_SIDEBAR_RAIL_KEY, AGENT_SIDEBAR_RAIL_WIDTH, AGENT_TOOLS_VISIBILITY_EVENT, agentNeedsSidebarDrawer, agentStartupSidebarWidth, LAYOUT_MODE_STORAGE_KEY, readStoredLayoutModeValue } from './parts/titlebar/layoutModeStartup.js';
+import { AGENT_SIDEBAR_RAIL_CLASS, AGENT_SIDEBAR_RAIL_EVENT, AGENT_SIDEBAR_RAIL_KEY, AGENT_SIDEBAR_RAIL_WIDTH, AGENT_TOOLS_VISIBILITY_EVENT, agentNeedsSidebarDrawer, agentStartupSidebarWidth, isNewEmptyWindow, LAYOUT_MODE_STORAGE_KEY, markNewEmptyWindowSidebarHidden, readAgentLeftSidebarHidden, readStoredLayoutModeValue } from './parts/titlebar/layoutModeStartup.js';
 import { ITelemetryService } from '../../platform/telemetry/common/telemetry.js';
 import { IAuxiliaryWindowService } from '../services/auxiliaryWindow/browser/auxiliaryWindowService.js';
 import { CodeWindow, mainWindow } from '../../base/browser/window.js';
@@ -818,7 +818,10 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			}
 		}
 
-		const hideLeftSidebar = this.storageService.getBoolean(AGENT_LEFT_SIDEBAR_HIDDEN_KEY, StorageScope.PROFILE, false);
+		if (isNewEmptyWindow(this.storageService, this.contextService.getWorkbenchState() === WorkbenchState.EMPTY)) {
+			markNewEmptyWindowSidebarHidden(this.storageService);
+		}
+		const hideLeftSidebar = readAgentLeftSidebarHidden(this.storageService);
 		const windowWidth = this._mainContainerDimension?.width ?? 0;
 		// The rail has one width; the list's own width stays saved for when it opens again.
 		const rail = this.storageService.getBoolean(AGENT_SIDEBAR_RAIL_KEY, StorageScope.PROFILE, false);
@@ -2384,8 +2387,9 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		const agent = root.classList.contains('volt-layout-agent');
 		const toolsOpen = !!root.querySelector(':scope > .volt-agent-tools-area:not(.hidden):not(.floating)');
 		// The right-edge sidebar (Files / Source Control / Pull Requests) inside the tools area
-		// takes a column of its own; count it so the list folds away when it opens in a tight window.
-		const edge = toolsOpen ? root.querySelector<HTMLElement>(':scope > .volt-agent-tools-area:not(.hidden):not(.floating) .volt-agent-files-sidebar:not(.hidden)') : null;
+		// takes a column of its own beside the tabs; count it so the list folds away when it opens in a
+		// tight window. With no tabs it fills the tools area and is already counted as the tools.
+		const edge = toolsOpen ? root.querySelector<HTMLElement>(':scope > .volt-agent-tools-area:not(.hidden):not(.floating) .volt-agent-files-sidebar:not(.hidden):not(.fills)') : null;
 		const edgeWidth = edge ? (edge.offsetWidth || 300) : 0;
 		// The rail is narrow enough to stay a column in any window.
 		const rail = root.classList.contains(AGENT_SIDEBAR_RAIL_CLASS);
@@ -2408,7 +2412,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		} else {
 			this.setAgentDrawerOpen(false);
 			if (agent) {
-				const hidden = this.storageService.getBoolean(AGENT_LEFT_SIDEBAR_HIDDEN_KEY, StorageScope.PROFILE, false);
+				const hidden = readAgentLeftSidebarHidden(this.storageService);
 				this.setAuxiliaryBarHidden(hidden, true);
 				// A view hidden from the start has only its minimum to come back to; the grid takes the
 				// width once it has been laid out at the new window size.

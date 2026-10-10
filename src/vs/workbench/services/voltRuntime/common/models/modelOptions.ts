@@ -37,6 +37,71 @@ export const MODEL_OPTION_SERVICE_TIER = 'serviceTier';
 export const MODEL_OPTION_FAST = 'fastMode';
 export const MODEL_OPTION_THINKING = 'thinking';
 
+/**
+ * Sampling pins for API models, set in Settings > Providers & Models. They live in the same
+ * per-model record as the option selections (as strings) but are not descriptors: no provider
+ * advertises them, and an unset pin means the provider's own default. Agent CLIs never get them.
+ */
+export const MODEL_PARAM_TEMPERATURE = 'temperature';
+export const MODEL_PARAM_TOP_P = 'topP';
+export const MODEL_PARAM_MAX_OUTPUT = 'maxOutputTokens';
+
+export interface IModelParamSpec {
+	readonly id: string;
+	readonly min: number;
+	readonly max: number;
+	readonly integer: boolean;
+}
+
+export const MODEL_GENERATION_PARAMS: readonly IModelParamSpec[] = [
+	{ id: MODEL_PARAM_TEMPERATURE, min: 0, max: 2, integer: false },
+	{ id: MODEL_PARAM_TOP_P, min: 0, max: 1, integer: false },
+	{ id: MODEL_PARAM_MAX_OUTPUT, min: 1, max: 1_000_000, integer: true },
+];
+
+export interface IModelGenerationParams {
+	readonly temperature?: number;
+	readonly topP?: number;
+	readonly maxOutputTokens?: number;
+}
+
+/** A stored pin as a number in its range, or undefined for blank, malformed or out-of-range input. */
+export function parseModelParam(id: string, value: string | boolean | undefined): number | undefined {
+	const spec = MODEL_GENERATION_PARAMS.find(candidate => candidate.id === id);
+	if (!spec || typeof value !== 'string' || !value.trim()) {
+		return undefined;
+	}
+	const parsed = Number(value.trim());
+	if (!Number.isFinite(parsed) || parsed < spec.min || parsed > spec.max || (spec.integer && !Number.isInteger(parsed))) {
+		return undefined;
+	}
+	return parsed;
+}
+
+/** The pins a request carries, read from resolved options. */
+export function generationParams(options: IVoltModelOptions | undefined): IModelGenerationParams {
+	const temperature = parseModelParam(MODEL_PARAM_TEMPERATURE, options?.[MODEL_PARAM_TEMPERATURE]);
+	const topP = parseModelParam(MODEL_PARAM_TOP_P, options?.[MODEL_PARAM_TOP_P]);
+	const maxOutputTokens = parseModelParam(MODEL_PARAM_MAX_OUTPUT, options?.[MODEL_PARAM_MAX_OUTPUT]);
+	return {
+		...(temperature !== undefined ? { temperature } : {}),
+		...(topP !== undefined ? { topP } : {}),
+		...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+	};
+}
+
+/** Only the valid pins of a stored record, for merging back after `resolveModelOptions` drops them. */
+export function pickGenerationParams(options: IVoltModelOptions | undefined): IVoltModelOptions {
+	const picked: IVoltModelOptions = {};
+	for (const spec of MODEL_GENERATION_PARAMS) {
+		const value = parseModelParam(spec.id, options?.[spec.id]);
+		if (value !== undefined) {
+			picked[spec.id] = String(value);
+		}
+	}
+	return picked;
+}
+
 /** Trait rows render in this order, then any other advertised selects. */
 export const MODEL_OPTION_TRAIT_ORDER = [
 	MODEL_OPTION_REASONING,

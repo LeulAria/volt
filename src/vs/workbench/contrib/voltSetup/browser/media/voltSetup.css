@@ -667,6 +667,71 @@
 	border-color: var(--vscode-focusBorder);
 }
 
+/* The title and the project's path sit over a rule, like the footer under the content. */
+.volt-modal.volt-project-settings .volt-modal-header {
+	border-bottom: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+.volt-modal.volt-project-settings .volt-project-settings-content {
+	padding-top: 16px;
+}
+
+.volt-project-settings-usage-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+	flex-shrink: 0;
+}
+
+.volt-project-settings-usage-head .since {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-project-settings-usage {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.volt-project-settings-usage .stat {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	padding: 12px 14px;
+}
+
+.volt-project-settings-usage .stat + .stat {
+	border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-project-settings-usage .label {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-project-settings-usage .value {
+	overflow: hidden;
+	font-size: 20px;
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+	line-height: 1.3;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Kept when empty so the four values line up. */
+.volt-project-settings-usage .note {
+	min-height: 16px;
+	overflow: hidden;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	line-height: 16px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 /* ---- Storage --------------------------------------------------------------------------- */
 
 .volt-storage {

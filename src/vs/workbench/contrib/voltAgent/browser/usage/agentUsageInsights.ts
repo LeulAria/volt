@@ -12,8 +12,6 @@ import { IUsageSummary, metricValue, UsageMetric } from './agentUsageModel.js';
  * (usage per day or hour by agent) and the Insights below it, each titled with what it found.
  */
 
-const HOUR_MS = 60 * 60 * 1000;
-
 export interface IUsageSeriesStyle {
 	readonly label: string;
 	readonly color: string;
@@ -52,17 +50,6 @@ export function usageChartSpec(summary: IUsageSummary, metric: UsageMetric, styl
 			}),
 		})),
 	};
-}
-
-const WEEKDAYS = [1, 2, 3, 4, 5, 6, 0];
-
-function weekdayName(day: number, long: boolean): string {
-	// 2023-01-01 was a Sunday.
-	return new Date(2023, 0, 1 + day).toLocaleDateString(undefined, { weekday: long ? 'long' : 'short' });
-}
-
-function hourName(hour: number): string {
-	return new Date(2023, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' }).replace(/\s/g, '').toLowerCase();
 }
 
 function percent(value: number): string {
@@ -108,6 +95,8 @@ export function usageInsights(snapshot: IVoltUsageSnapshot, summary: IUsageSumma
 		charts.push({
 			wide: false, spec: {
 				type: 'stacked-area',
+				// See-through hatching per kind rather than solid bands.
+				fill: 'pattern',
 				title: localize('voltUsage.insights.mixTitle', "{0} of tokens were cache reads", percent(sum(mix.cached) / allTokens)),
 				subtitle: summary.hourly ? localize('voltUsage.insights.mixHourly', "Tokens per hour by kind") : localize('voltUsage.insights.mixDaily', "Tokens per day by kind"),
 				unit: 'tokens',
@@ -191,39 +180,5 @@ export function usageInsights(snapshot: IVoltUsageSnapshot, summary: IUsageSumma
 		});
 	}
 
-	// When you work: the whole history, by weekday and hour in local time.
-	const grid = WEEKDAYS.map(() => Array.from({ length: 24 }, () => 0));
-	let gridTotal = 0;
-	for (const bucket of snapshot.buckets) {
-		const date = new Date(bucket.hour);
-		const value = metric === 'cost' ? bucket.costUsd : bucket.uncached + bucket.cached + bucket.cacheWrite + bucket.output;
-		grid[WEEKDAYS.indexOf(date.getDay())][date.getHours()] += value;
-		gridTotal += value;
-	}
-	if (gridTotal > 0) {
-		let peakRow = 0;
-		let peakHour = 0;
-		grid.forEach((line, r) => line.forEach((value, hour) => {
-			if (value > grid[peakRow][peakHour]) {
-				peakRow = r;
-				peakHour = hour;
-			}
-		}));
-		const weekdays = sum(grid.slice(0, 5).map(sum)) / 5;
-		const weekends = sum(grid.slice(5).map(sum)) / 2;
-		charts.push({
-			wide: true, spec: {
-				type: 'heatmap',
-				title: localize('voltUsage.insights.peakTitle', "Busiest on {0} around {1}", weekdayName(WEEKDAYS[peakRow], true), hourName(peakHour)),
-				subtitle: weekdays > 0
-					? localize('voltUsage.insights.peakSubtitle', "{0} by weekday and hour in your time zone, last {1} days. Weekends run at {2} of weekdays.", measure.charAt(0).toUpperCase() + measure.slice(1), Math.round((snapshot.generatedAt - snapshot.sinceMs) / (24 * HOUR_MS)), percent(weekends / weekdays))
-					: localize('voltUsage.insights.peakSubtitleShort', "{0} by weekday and hour in your time zone.", measure.charAt(0).toUpperCase() + measure.slice(1)),
-				unit: unitOf(metric),
-				rows: WEEKDAYS.map(day => weekdayName(day, false)),
-				columns: Array.from({ length: 24 }, (_, hour) => hourName(hour)),
-				values: grid,
-			}
-		});
-	}
 	return charts;
 }

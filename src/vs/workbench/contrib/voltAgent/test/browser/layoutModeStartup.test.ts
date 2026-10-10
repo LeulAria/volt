@@ -38,10 +38,13 @@ suite('Layout mode startup', () => {
 		assert.strictEqual(agentNeedsSidebarDrawer(1000, 290, false), false);
 		assert.strictEqual(agentNeedsSidebarDrawer(770, 290, false), false);
 		assert.strictEqual(agentNeedsSidebarDrawer(769, 290, false), true);
-		// With the tools open, chat and tools need 880 beside it.
-		assert.strictEqual(agentNeedsSidebarDrawer(1000, 290, true), true);
-		assert.strictEqual(agentNeedsSidebarDrawer(1170, 290, true), false);
-		assert.strictEqual(agentNeedsSidebarDrawer(1169, 290, true), true);
+		// With the tools open, chat and tools need 600 beside it.
+		assert.strictEqual(agentNeedsSidebarDrawer(1000, 290, true), false);
+		assert.strictEqual(agentNeedsSidebarDrawer(890, 290, true), false);
+		assert.strictEqual(agentNeedsSidebarDrawer(889, 290, true), true);
+		// The files sidebar beside the tabs adds its own width: a 1200px window still keeps the list.
+		assert.strictEqual(agentNeedsSidebarDrawer(1200, 260, true, 300), false);
+		assert.strictEqual(agentNeedsSidebarDrawer(1159, 260, true, 300), true);
 		// A window with no size yet never counts as narrow.
 		assert.strictEqual(agentNeedsSidebarDrawer(0, 290, true), false);
 	});

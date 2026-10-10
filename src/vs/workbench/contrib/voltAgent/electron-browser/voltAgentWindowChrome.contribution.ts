@@ -11,6 +11,8 @@ import { getLayoutMode, onDidChangeLayoutMode } from '../../../browser/parts/tit
 import { IWorkbenchLayoutService } from '../../../services/layout/browser/layoutService.js';
 // Desktop-only: the app icon badge for chats that finished in the background.
 import './voltBadge.contribution.js';
+// Desktop-only: Lid-Closed Mode (stay awake while agents work, also with the lid shut).
+import './voltAwake.contribution.js';
 // Desktop-only Volt diagnostics (tracing, stall log, heap snapshots).
 import '../../voltDiagnostics/electron-browser/voltDiagnostics.contribution.js';
 

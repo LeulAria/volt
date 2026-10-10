@@ -35,6 +35,17 @@ export class FakeWatchdogClock implements IWatchdogClock {
 		this.timers = this.timers.filter(timer => timer.live);
 	}
 
+	/**
+	 * The computer sleeps for `ms`: the wall clock jumps, timers do not run and stay due the same
+	 * time after waking (monotonic timer clocks stop during sleep).
+	 */
+	sleep(ms: number): void {
+		this.time += ms;
+		for (const timer of this.timers) {
+			timer.at += ms;
+		}
+	}
+
 	get pending(): number {
 		return this.timers.filter(timer => timer.live).length;
 	}

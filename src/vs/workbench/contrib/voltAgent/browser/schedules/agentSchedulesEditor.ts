@@ -10,6 +10,7 @@ import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/s
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { Schemas } from '../../../../../base/common/network.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
@@ -68,7 +69,7 @@ export class AgentSchedulesEditorInput extends EditorInput {
 	static readonly TypeID = AGENT_SCHEDULES_INPUT_ID;
 	static readonly EditorID = AGENT_SCHEDULES_EDITOR_ID;
 
-	readonly resource = URI.from({ scheme: 'volt-schedules', path: 'schedules' });
+	readonly resource = URI.from({ scheme: Schemas.voltSchedules, path: 'schedules' });
 	/** A task to scroll to and highlight once the page shows it. */
 	focusTask: string | undefined;
 

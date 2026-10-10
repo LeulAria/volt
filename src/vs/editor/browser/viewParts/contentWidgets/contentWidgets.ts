@@ -7,6 +7,7 @@ import * as dom from '../../../../base/browser/dom.js';
 import { FastDomNode, createFastDomNode } from '../../../../base/browser/fastDomNode.js';
 import { ContentWidgetPositionPreference, IContentWidget, IContentWidgetRenderedCoordinate } from '../../editorBrowser.js';
 import { PartFingerprint, PartFingerprints, ViewPart } from '../../view/viewPart.js';
+import { FixedContainingBlock } from '../../view/fixedContainingBlock.js';
 import { RenderingContext, RestrictedRenderingContext } from '../../view/renderingContext.js';
 import { ViewContext } from '../../../common/viewModel/viewContext.js';
 import * as viewEvents from '../../../common/viewEvents.js';
@@ -29,6 +30,7 @@ export class ViewContentWidgets extends ViewPart {
 
 	public domNode: FastDomNode<HTMLElement>;
 	public overflowingContentWidgetsDomNode: FastDomNode<HTMLElement>;
+	private readonly _fixedContainingBlock: FixedContainingBlock;
 
 	constructor(context: ViewContext, viewDomNode: FastDomNode<HTMLElement>) {
 		super(context);
@@ -44,10 +46,12 @@ export class ViewContentWidgets extends ViewPart {
 		this.overflowingContentWidgetsDomNode = createFastDomNode(document.createElement('div'));
 		PartFingerprints.write(this.overflowingContentWidgetsDomNode, PartFingerprint.OverflowingContentWidgets);
 		this.overflowingContentWidgetsDomNode.setClassName('overflowingContentWidgets');
+		this._fixedContainingBlock = new FixedContainingBlock(this.overflowingContentWidgetsDomNode.domNode);
 	}
 
 	public override dispose(): void {
 		super.dispose();
+		this._fixedContainingBlock.dispose();
 		this._widgets = {};
 	}
 
@@ -100,7 +104,7 @@ export class ViewContentWidgets extends ViewPart {
 	}
 
 	public addWidget(_widget: IContentWidget): void {
-		const myWidget = new Widget(this._context, this._viewDomNode, _widget);
+		const myWidget = new Widget(this._context, this._viewDomNode, _widget, this._fixedContainingBlock);
 		this._widgets[myWidget.id] = myWidget;
 
 		if (myWidget.allowEditorOverflow) {
@@ -170,6 +174,9 @@ interface IBoxLayoutResult {
 	belowTop: number;
 
 	left: number;
+
+	/** The corner that `aboveTop`, `belowTop` and `left` count from, when it is not the viewport's. */
+	origin?: Coordinate;
 }
 
 interface IOffViewportRenderData {
@@ -181,6 +188,8 @@ interface IInViewportRenderData {
 	kind: 'inViewport';
 	coordinate: Coordinate;
 	position: ContentWidgetPositionPreference;
+	/** Where `coordinate` counts from when a fixed widget is not placed from the viewport's corner (see {@link FixedContainingBlock}). */
+	origin?: Coordinate;
 }
 
 type IRenderData = IInViewportRenderData | IOffViewportRenderData;
@@ -210,7 +219,7 @@ class Widget {
 
 	private _renderData: IRenderData | null;
 
-	constructor(context: ViewContext, viewDomNode: FastDomNode<HTMLElement>, actual: IContentWidget) {
+	constructor(context: ViewContext, viewDomNode: FastDomNode<HTMLElement>, actual: IContentWidget, private readonly _fixedContainingBlock: FixedContainingBlock) {
 		this._context = context;
 		this._viewDomNode = viewDomNode;
 		this._actual = actual;
@@ -362,13 +371,19 @@ class Widget {
 		const aboveTop = anchor.top - height;
 		const belowTop = anchor.top + anchor.height;
 
-		const domNodePosition = dom.getDomNodePagePosition(this._viewDomNode.domNode);
+		const pagePosition = dom.getDomNodePagePosition(this._viewDomNode.domNode);
 		const elDocument = this._viewDomNode.domNode.ownerDocument;
 		const elWindow = elDocument.defaultView;
+
+		// A fixed widget counts from the box that holds fixed elements and is cut off by it. That is the
+		// viewport, unless an ancestor (the agent window's tools area is `contain: paint`) took it over:
+		// then the widget is laid out inside that box, in the box's own coordinates.
+		const box = this._fixedOverflowWidgets ? this._fixedContainingBlock.measure() : undefined;
+		const domNodePosition = box ? { left: pagePosition.left - box.left, top: pagePosition.top - box.top, width: pagePosition.width, height: pagePosition.height } : pagePosition;
 		const absoluteAboveTop = domNodePosition.top + aboveTop - (elWindow?.scrollY ?? 0);
 		const absoluteBelowTop = domNodePosition.top + belowTop - (elWindow?.scrollY ?? 0);
 
-		const windowSize = dom.getClientArea(elDocument.body);
+		const windowSize = box ? new dom.Dimension(box.width, box.height) : dom.getClientArea(elDocument.body);
 		const [left, absoluteAboveLeft] = this._layoutHorizontalSegmentInPage(windowSize, domNodePosition, anchor.left - ctx.scrollLeft + this._contentLeft, width);
 
 		// Leave some clearance to the top/bottom
@@ -384,7 +399,8 @@ class Widget {
 				aboveTop: Math.max(absoluteAboveTop, TOP_PADDING),
 				fitsBelow,
 				belowTop: absoluteBelowTop,
-				left: absoluteAboveLeft
+				left: absoluteAboveLeft,
+				origin: box ? new Coordinate(box.top, box.left) : undefined
 			};
 		}
 
@@ -493,7 +509,8 @@ class Widget {
 						return {
 							kind: 'inViewport',
 							coordinate: new Coordinate(placement.aboveTop, placement.left),
-							position: ContentWidgetPositionPreference.ABOVE
+							position: ContentWidgetPositionPreference.ABOVE,
+							origin: placement.origin
 						};
 					}
 				} else if (pref === ContentWidgetPositionPreference.BELOW) {
@@ -505,7 +522,8 @@ class Widget {
 						return {
 							kind: 'inViewport',
 							coordinate: new Coordinate(placement.belowTop, placement.left),
-							position: ContentWidgetPositionPreference.BELOW
+							position: ContentWidgetPositionPreference.BELOW,
+							origin: placement.origin
 						};
 					}
 				} else {
@@ -587,7 +605,10 @@ class Widget {
 		}
 
 		if (typeof this._actual.afterRender === 'function') {
-			safeInvoke(this._actual.afterRender, this._actual, this._renderData.position, this._renderData.coordinate);
+			// Widgets are told where they are in the viewport, whatever box their position counts from.
+			const origin = this._renderData.origin;
+			const coordinate = origin ? new Coordinate(this._renderData.coordinate.top + origin.top, this._renderData.coordinate.left + origin.left) : this._renderData.coordinate;
+			safeInvoke(this._actual.afterRender, this._actual, this._renderData.position, coordinate);
 		}
 	}
 }

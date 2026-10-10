@@ -6,8 +6,7 @@
 import assert from 'assert';
 import { $ } from '../../../../../base/browser/dom.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { EditorInput } from '../../../../common/editor/editorInput.js';
-import { QUICK_OPEN_NARROW_CHAT_WIDTH, QUICK_OPEN_NARROW_WINDOW_WIDTH, agentQuickOpenActionsHost, dockOpenTabs, dockTabKey, mountAgentQuickOpenActions, quickOpenCollapsedForWidth, quickOpenNarrowForSpace } from '../../browser/chrome/agentViewSidebars.js';
+import { QUICK_OPEN_NARROW_CHAT_WIDTH, QUICK_OPEN_NARROW_WINDOW_WIDTH, agentQuickOpenActionsHost, dockTabKey, mountAgentQuickOpenActions, quickOpenCollapsedForWidth, quickOpenNarrowForSpace } from '../../browser/chrome/agentViewSidebars.js';
 
 suite('Agent view sidebars', () => {
 
@@ -79,17 +78,6 @@ suite('Agent view sidebars', () => {
 
 		assert.strictEqual(dockTabKey(browser), dockTabKey({ ...browser, getName: () => 'Google Search' }));
 		assert.notStrictEqual(dockTabKey(browser), dockTabKey({ typeId: browser.typeId, resource: { toString: () => 'volt-browser://other' }, getName: () => 'Other' }));
-	});
-
-	test('open tabs include a right-side browser and skip the chat', () => {
-		const chat = { id: 'chat' } as unknown as EditorInput;
-		const browser = { id: 'browser' } as unknown as EditorInput;
-		const tabs = dockOpenTabs(
-			[{ editors: [chat] }, { editors: [browser, browser] }],
-			editor => editor === chat,
-		);
-
-		assert.deepStrictEqual(tabs, [browser]);
 	});
 
 	test('keeps Quick Open Actions an in-flow sibling of the transcript on the chat scroller', () => {

@@ -14,6 +14,7 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { fromNow } from '../../../../../base/common/date.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
 import { DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Schemas } from '../../../../../base/common/network.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
@@ -43,7 +44,6 @@ import { openRunDiff } from './agentRunGroupDiff.js';
 
 export const AGENT_RUN_GROUP_EDITOR_ID = 'workbench.editor.voltRunGroup';
 export const AGENT_RUN_GROUP_INPUT_ID = 'workbench.input.voltRunGroup';
-const RUN_GROUP_SCHEME = 'volt-run-group';
 
 const RunGroupTabIcon = registerIcon('volt-run-group-editor-label-icon', Codicon.layers, localize('voltRun.tabIcon', "Icon of a model comparison tab."));
 
@@ -59,7 +59,7 @@ export class AgentRunGroupEditorInput extends EditorInput {
 		@IAgentRunGroupService private readonly runGroups: IAgentRunGroupService,
 	) {
 		super();
-		this.resource = URI.from({ scheme: RUN_GROUP_SCHEME, path: `/${runGroupId}` });
+		this.resource = URI.from({ scheme: Schemas.voltRunGroup, path: `/${runGroupId}` });
 		this._register(runGroups.onDidChange(id => {
 			if (id === runGroupId) {
 				this._onDidChangeLabel.fire();

@@ -219,6 +219,8 @@ import './contrib/voltSettings/browser/voltSettings.contribution.js';
 import './contrib/voltAgent/browser/editor/agentEditor.contribution.js';
 import './contrib/voltAgent/browser/history/agentHistory.contribution.js';
 import './contrib/voltAgent/browser/home/agentThreadLifecycle.contribution.js';
+// Per-project tokens, cost and agent time, for Project Settings
+import './contrib/voltAgent/browser/usage/agentProjectUsage.js';
 import './contrib/voltProjects/browser/voltProjects.contribution.js';
 // Volt agent sidebar rail, compact list, project icons, chat width, chat notifications
 import './contrib/voltAgent/browser/sidebar/agentSidebar.contribution.js';

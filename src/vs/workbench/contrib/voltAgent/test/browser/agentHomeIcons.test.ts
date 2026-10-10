@@ -10,6 +10,7 @@ import {
 	AGENT_HOME_FOLDER_ICON_PATH,
 	AGENT_SESSION_HOVER_FOLDER_ICON_PATH,
 	AGENT_HOME_NEW_CHAT_ICON_PATH,
+	AGENT_HOME_OPEN_WORKSPACE_ICON_PATHS,
 	AGENT_HOME_NEW_PROJECT_ICON_PATH,
 	AGENT_HOME_SEARCH_ICON_PATH,
 	AGENT_HOME_STATUS_ICON_PATHS,
@@ -18,6 +19,7 @@ import {
 	createSessionHoverFolderIcon,
 	createHomeNewChatIcon,
 	createHomeNewProjectIcon,
+	createHomeOpenWorkspaceIcon,
 	createHomeSearchIcon,
 	createHomeStatusIcon,
 } from '../../browser/home/agentHomeIcons.js';
@@ -35,14 +37,28 @@ suite('Agent home icons', () => {
 		assert.strictEqual(path?.getAttribute('stroke-width'), '2');
 	});
 
-	test('new chat icon uses the folded-page stroke path', () => {
+	test('new chat icon is the paper plane at stroke 1', () => {
 		const icon = createHomeNewChatIcon();
 		const path = icon.querySelector('path');
 		assert.ok(icon.classList.contains('new-chat'));
 		assert.strictEqual(path?.getAttribute('d'), AGENT_HOME_NEW_CHAT_ICON_PATH);
 		assert.strictEqual(path?.getAttribute('stroke'), 'currentColor');
-		assert.strictEqual(path?.getAttribute('stroke-width'), '2');
-		assert.ok(AGENT_HOME_NEW_CHAT_ICON_PATH.includes('8.87'));
+		assert.strictEqual(path?.getAttribute('stroke-width'), '1');
+		assert.strictEqual(path?.getAttribute('stroke-linecap'), 'round');
+		assert.strictEqual(path?.getAttribute('stroke-linejoin'), 'round');
+	});
+
+	test('open workspace icon is the folder with a plus at stroke 1', () => {
+		const icon = createHomeOpenWorkspaceIcon();
+		const paths = [...icon.querySelectorAll('path')];
+		assert.ok(icon.classList.contains('open-workspace'));
+		assert.deepStrictEqual(paths.map(p => p.getAttribute('d')), [...AGENT_HOME_OPEN_WORKSPACE_ICON_PATHS]);
+		for (const path of paths) {
+			assert.strictEqual(path.getAttribute('stroke'), 'currentColor');
+			assert.strictEqual(path.getAttribute('stroke-width'), '1');
+			assert.strictEqual(path.getAttribute('stroke-linecap'), 'round');
+			assert.strictEqual(path.getAttribute('stroke-linejoin'), 'round');
+		}
 	});
 
 	test('new project icon uses the folder-plus path with square caps', () => {

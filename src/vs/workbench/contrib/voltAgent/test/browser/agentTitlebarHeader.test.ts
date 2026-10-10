@@ -41,9 +41,8 @@ suite('Agent primary header', () => {
 		assert.strictEqual(primaryHeaderSidebarClosed({ toggleInTitlebar: false, auxiliaryBarHidden: false, leftCollapsed: true }), true);
 		assert.strictEqual(primaryHeaderShowsSearch(false), false);
 		assert.strictEqual(primaryHeaderShowsSearch(true), true);
-		assert.strictEqual(primaryHeaderShowsNewAgent(true, false), true);
-		assert.strictEqual(primaryHeaderShowsNewAgent(true, true), false);
-		assert.strictEqual(primaryHeaderShowsNewAgent(false, false), false);
+		assert.strictEqual(primaryHeaderShowsNewAgent(true), true);
+		assert.strictEqual(primaryHeaderShowsNewAgent(false), false);
 		assert.strictEqual(isNewAgentWindow(true, 'New Agent', 'New Agent', 0), true);
 		assert.strictEqual(isNewAgentWindow(true, 'New Agent', 'New Agent', 2), false);
 		assert.strictEqual(isNewAgentWindow(true, 'Header drag issue', 'New Agent', 0), false);

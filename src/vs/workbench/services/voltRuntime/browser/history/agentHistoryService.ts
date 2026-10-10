@@ -33,6 +33,7 @@ import {
 	IAgentSessionLifecycle,
 	IAgentSessionMeta,
 	IAgentSessionTranscript,
+	IAgentSessionTruncation,
 	IAgentSessionWorkspace,
 } from '../../common/history/agentHistory.js';
 import {
@@ -229,7 +230,12 @@ class SessionHandle implements IAgentSessionHandle {
 	}
 
 	truncate(fromTurn: string): void {
+		const turns = this.transcript?.turns ?? [];
+		const index = turns.findIndex(turn => turn.id === fromTurn);
 		this.append({ type: 'truncate', at: Date.now(), from: fromTurn });
+		if (index >= 0 && !this.closed) {
+			this.service.didTruncate({ sessionId: this.id, index, turns: turns.slice(index) });
+		}
 	}
 
 	setMeta(meta: { title?: string; agentTitle?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string; forkOf?: IAgentForkOrigin }): void {
@@ -430,6 +436,8 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	readonly onDidChange: Event<void> = this._onDidChange.event;
+	private readonly _onDidTruncate = this._register(new Emitter<IAgentSessionTruncation>());
+	readonly onDidTruncate: Event<IAgentSessionTruncation> = this._onDidTruncate.event;
 	readonly whenReady: Promise<void>;
 	readonly currentWorkspace: IAgentSessionWorkspace;
 
@@ -596,6 +604,11 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 	}
 
 	/** @internal */
+	didTruncate(truncation: IAgentSessionTruncation): void {
+		this._onDidTruncate.fire(truncation);
+	}
+
+	/** @internal */
 	updateMeta(meta: IAgentSessionMeta): void {
 		const previous = this.sessions.get(meta.id);
 		if (previous && shallowEqualMeta(previous, meta)) {
@@ -703,6 +716,28 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 			this.handles.set(safe, handle);
 		}
 		return handle;
+	}
+
+	async readTranscript(id: string): Promise<IAgentSessionTranscript | undefined> {
+		const safe = safeSessionId(id);
+		if (!safe) {
+			return undefined;
+		}
+		const handle = this.handles.get(safe);
+		if (handle) {
+			return handle.load();
+		}
+		await this.closing.get(safe);
+		try {
+			const content = await this.fileService.readFile(this.logFileFor(safe));
+			const decoded = decodeLog(content.value.buffer);
+			return decoded.header ? foldTranscript(decoded.header, decoded.entries) : undefined;
+		} catch (err) {
+			if (!isNotFound(err)) {
+				this.logService.warn(`[agent history] failed to read ${safe}`, err);
+			}
+			return undefined;
+		}
 	}
 
 	/** @internal */

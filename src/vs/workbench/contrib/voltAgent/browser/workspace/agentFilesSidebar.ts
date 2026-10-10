@@ -10,7 +10,6 @@ import { Disposable, DisposableStore, MutableDisposable } from '../../../../../b
 import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
-import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
@@ -19,7 +18,7 @@ import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IWorkspaceContextService, WorkbenchState } from '../../../../../platform/workspace/common/workspace.js';
 import { IViewDescriptorService } from '../../../../common/views.js';
-import { getLayoutMode, isAgentLeftSidebarHidden, openAgentSidebar } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { getLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { ILentPaneCompositePart, IPaneCompositePartService } from '../../../../services/panecomposite/browser/panecomposite.js';
@@ -36,7 +35,7 @@ import { INIT_TIMEOUT_MS, runGit } from '../home/agentHomeWorkspaceActions.js';
 import { trackLentPanesCollapsed } from '../review/agentChangesEditor.js';
 import { AgentScmRepositoryFocus } from '../review/agentScmRepository.js';
 import { setAgentChangesSession } from '../review/agentTurnsView.js';
-import { FILES_ICON_SHAPES, type SvgIconShapes } from './agentSurfaceMenu.js';
+import { EXPLORER_ICON_SHAPES, type SvgIconShapes } from './agentSurfaceMenu.js';
 import { AGENT_PULL_REQUESTS_CONTAINER_ID, setPullRequestsViewSession } from '../pullRequests/agentPullRequestsViewState.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 
@@ -53,7 +52,7 @@ const MIN_TABS_WIDTH = 320;
 
 const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container: string; readonly icon: SvgIconShapes; readonly label: string }[] = [
 	{
-		id: 'explorer', container: EXPLORER_VIEWLET_ID, label: localize('voltAgent.filesSidebar.explorer', "Files"), icon: FILES_ICON_SHAPES
+		id: 'explorer', container: EXPLORER_VIEWLET_ID, label: localize('voltAgent.filesSidebar.explorer', "Explorer"), icon: EXPLORER_ICON_SHAPES
 	},
 	{
 		id: 'scm', container: SCM_VIEWLET_ID, label: localize('voltAgent.filesSidebar.scm', "Source Control"), icon: [
@@ -215,7 +214,8 @@ export class AgentFilesSidebar extends Disposable {
 
 		this.toggleButton = $('button.volt-agent-tools-files-toggle') as HTMLButtonElement;
 		this.toggleButton.type = 'button';
-		this.toggleButton.appendChild(createSidebarRightIcon(this.toggleButton.ownerDocument));
+		// The Explorer tab's folder, so it reads apart from the right-panel toggle beside it.
+		this.toggleButton.appendChild(createTabIcon(this.toggleButton.ownerDocument, EXPLORER_ICON_SHAPES));
 		this._register(addDisposableListener(this.toggleButton, 'click', () => AgentFilesSidebar.setOpen(this.storageService, !readState(this.storageService).open)));
 
 		this._register(addDisposableListener(this.sash, 'pointerdown', e => this.beginResize(e)));
@@ -307,11 +307,6 @@ export class AgentFilesSidebar extends Disposable {
 	hide(): void {
 		this.size = undefined;
 		this.setShown(false);
-	}
-
-	/** On screen beside tabs, not as the whole tools area, and not in a full-screen area. */
-	isBesideTabs(): boolean {
-		return this.shown && !this.fills && !this.element.closest('.volt-agent-tools-area.fullscreen');
 	}
 
 	/** Shows Source Control for this chat now. */
@@ -589,25 +584,16 @@ const LEFT_NARROW_MIN = 220;
  * Makes room for the files sidebar: while one is on screen the agents list on the left is a bit
  * narrower, and it gets its width back when the sidebar closes. (The chat gives up some room too:
  * see the split in agentSurfaceHost.ts.) The width to give back is stored, so it survives a restart
- * with the sidebar open.
- *
- * With tabs beside the sidebar as well, the chat would be squeezed by three columns, so the list
- * closes until they do, and then comes back. Opening it again meanwhile keeps it open.
+ * with the sidebar open. The list only closes when the window has no room for it: the layout's
+ * drawer mode decides that (agentNeedsSidebarDrawer).
  */
 class AgentFilesSidebarRoomContribution extends Disposable {
 
 	static readonly ID = 'workbench.contrib.voltAgentFilesSidebarRoom';
 
-	/** The list was closed here to make room, and opens again when the room is back. */
-	private listAutoHidden = false;
-	/** The user opened the list again while crowded; it stays until they close it. */
-	private listKept = false;
-
 	constructor(
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@IStorageService private readonly storageService: IStorageService,
-		@IConfigurationService private readonly configurationService: IConfigurationService,
-		@IPaneCompositePartService private readonly paneCompositeService: IPaneCompositePartService,
 	) {
 		super();
 		// Sidebars hide and show again while a chat switches; act on where they settle.
@@ -619,7 +605,6 @@ class AgentFilesSidebarRoomContribution extends Disposable {
 	}
 
 	private apply(): void {
-		this.applyCrowded();
 		const saved = this.storageService.getNumber(LEFT_WIDTH_KEY, StorageScope.PROFILE);
 		// A drawer floats over the window and has a fixed width; only the column is narrowed.
 		const column = this.isColumnShowing();
@@ -646,34 +631,6 @@ class AgentFilesSidebarRoomContribution extends Disposable {
 		return getLayoutMode(this.layoutService) === 'agent'
 			&& this.layoutService.isVisible(Parts.AUXILIARYBAR_PART)
 			&& !this.layoutService.mainContainer.classList.contains('volt-agent-drawer-mode');
-	}
-
-	/** Closes the list while tabs and the files sidebar both show, and opens it again after. */
-	private applyCrowded(): void {
-		if (getLayoutMode(this.layoutService) !== 'agent' || this.layoutService.mainContainer.classList.contains('volt-agent-drawer-mode')) {
-			return;
-		}
-		const visible = this.layoutService.isVisible(Parts.AUXILIARYBAR_PART);
-		const crowded = [...shownSidebars].some(sidebar => sidebar.isBesideTabs());
-		if (!visible && !this.listAutoHidden) {
-			// Closed by the user: next time it may close on its own again.
-			this.listKept = false;
-		}
-		if (crowded) {
-			if (visible && this.listAutoHidden) {
-				// Opened again while crowded: it stays.
-				this.listAutoHidden = false;
-				this.listKept = true;
-			} else if (visible && !this.listKept) {
-				this.listAutoHidden = true;
-				this.layoutService.setPartHidden(true, Parts.AUXILIARYBAR_PART);
-			}
-		} else if (this.listAutoHidden) {
-			this.listAutoHidden = false;
-			if (!visible && !isAgentLeftSidebarHidden(this.storageService)) {
-				void openAgentSidebar(this.configurationService, this.layoutService, this.paneCompositeService);
-			}
-		}
 	}
 }
 

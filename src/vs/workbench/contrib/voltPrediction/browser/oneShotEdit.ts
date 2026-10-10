@@ -7,6 +7,7 @@ import { CancellationTokenSource } from '../../../../base/common/cancellation.js
 import { isCodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { IBulkEditService, ResourceTextEdit } from '../../../../editor/browser/services/bulkEditService.js';
 import { IModelService } from '../../../../editor/common/services/model.js';
+import { ITextModelService } from '../../../../editor/common/services/resolverService.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { Action2 } from '../../../../platform/actions/common/actions.js';
@@ -22,6 +23,7 @@ import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { IEditPrediction, IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
 import { buildPredictionContext } from '../../../services/voltRuntime/browser/prediction/predictionContextBuilder.js';
+import { resolveEditInModel } from '../../../services/voltRuntime/browser/prediction/predictedEditResolver.js';
 import { RecentEditsTracker } from '../../../services/voltRuntime/browser/prediction/recentEditsTracker.js';
 
 export const VOLT_AI_EDIT_COMMAND_ID = 'volt.prediction.aiEdit';
@@ -54,6 +56,9 @@ export class VoltAiEditAction extends Action2 {
 		const bulkEditService = accessor.get(IBulkEditService);
 		const notificationService = accessor.get(INotificationService);
 		const progressService = accessor.get(IProgressService);
+		const textModelService = accessor.get(ITextModelService);
+		// The accessor is only valid until the first await; the agent handoff needs these later.
+		const handoff: IAgentHandoff = { layoutService: accessor.get(IWorkbenchLayoutService), viewsService: accessor.get(IViewsService), notificationService };
 
 		const control = editorService.activeTextEditorControl;
 		if (!isCodeEditor(control) || !control.hasModel()) {
@@ -85,12 +90,34 @@ export class VoltAiEditAction extends Action2 {
 			return;
 		}
 		if (!prediction || prediction.confidence < APPLY_CONFIDENCE_THRESHOLD) {
-			await escalateToAgent(accessor, intent, prediction, notificationService);
+			await escalateToAgent(handoff, intent, prediction);
 			return;
 		}
 
-		const edits = [prediction.primary, ...prediction.next]
-			.map(edit => new ResourceTextEdit(edit.uri, { range: edit.range, text: edit.replacement }));
+		// Text-anchored edits are placed in each file as it is now; one whose text is not there is dropped.
+		const placed: ResourceTextEdit[] = [];
+		for (const edit of [prediction.primary, ...prediction.next]) {
+			let reference;
+			try {
+				reference = await textModelService.createModelReference(edit.uri);
+			} catch {
+				continue;
+			}
+			try {
+				const target = reference.object.textEditorModel;
+				const resolved = resolveEditInModel(edit, target, target.uri.toString() === model.uri.toString() ? position : { lineNumber: 1, column: 1 });
+				if (resolved) {
+					placed.push(new ResourceTextEdit(resolved.uri, { range: resolved.range, text: resolved.replacement }));
+				}
+			} finally {
+				reference.dispose();
+			}
+		}
+		if (!placed.length) {
+			await escalateToAgent(handoff, intent, prediction);
+			return;
+		}
+		const edits = placed;
 		const result = await bulkEditService.apply(edits, {
 			showPreview: edits.length > 1,
 			label: localize('voltPrediction.editLabel', "Volt AI Edit: {0}", intent),
@@ -103,9 +130,13 @@ export class VoltAiEditAction extends Action2 {
 }
 
 /** Hands the intent to the agent thread: open side panel, prefill the composer, tell the user why. */
-async function escalateToAgent(accessor: ServicesAccessor, intent: string, prediction: IEditPrediction | undefined, notificationService: INotificationService): Promise<void> {
-	const layoutService = accessor.get(IWorkbenchLayoutService);
-	const viewsService = accessor.get(IViewsService);
+interface IAgentHandoff {
+	readonly layoutService: IWorkbenchLayoutService;
+	readonly viewsService: IViewsService;
+	readonly notificationService: INotificationService;
+}
+
+async function escalateToAgent({ layoutService, viewsService, notificationService }: IAgentHandoff, intent: string, prediction: IEditPrediction | undefined): Promise<void> {
 	layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
 	const view = await viewsService.openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, true);
 	if (!view) {

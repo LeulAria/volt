@@ -12,14 +12,14 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
 import { defaultButtonStyles } from '../../../../platform/theme/browser/defaultStyles.js';
-import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, VOLT_PROJECT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../services/voltRuntime/common/sessionContext.js';
 import { VoltProjectCommands } from '../../voltProjects/common/projects.js';
 import { IVoltProjectSettingsService } from './projectSettingsService.js';
 import { VoltStorageView } from './storageView.js';
 
 export const VOLT_SETUP_COMMAND_ID = 'volt.setup.open';
-export const VOLT_PROJECT_SETTINGS_COMMAND_ID = 'volt.projects.settings';
+export { VOLT_PROJECT_SETTINGS_COMMAND_ID };
 export const VOLT_MANAGE_STORAGE_COMMAND_ID = 'volt.storage.manage';
 
 /** Volt Settings > Agents: a way back into the first-run wizard. */

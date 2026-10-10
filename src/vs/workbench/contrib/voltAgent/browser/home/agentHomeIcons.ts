@@ -6,6 +6,7 @@
 import { $ } from '../../../../../base/browser/dom.js';
 
 export const AGENT_HOME_SEARCH_ICON_PATH = 'm21 21l-4.343-4.343m0 0A8 8 0 1 0 5.343 5.343a8 8 0 0 0 11.314 11.314';
+/** Paper plane for New Chat in the sidebar header and rail. */
 export const AGENT_HOME_NEW_CHAT_ICON_PATH = 'm8.87 6.133l5.863-1.938c3.3-1.09 4.95-1.636 5.825-.76c.875.874.33 2.524-.761 5.825l-1.937 5.862c-1.236 3.74-1.854 5.61-2.98 5.838a2 2 0 0 1-.725.013c-1.136-.19-1.842-2.037-3.253-5.732c-.27-.703-.404-1.055-.645-1.328a2 2 0 0 0-.178-.178c-.273-.241-.624-.376-1.328-.644c-3.695-1.412-5.542-2.118-5.732-3.254c-.04-.24-.035-.486.013-.724c.228-1.126 2.098-1.744 5.838-2.98m3.93 5.054l2.698-2.698';
 /** Folder-plus outline for New project; stroke follows currentColor, square caps. */
 export const AGENT_HOME_NEW_PROJECT_ICON_PATH = 'M22 11V6H11L9 3.5H2V20h11m7-5v3m0 0v3m0-3h-3m3 0h3';
@@ -65,7 +66,7 @@ export function createHomeSearchIcon(): HTMLElement {
 }
 
 export function createHomeNewChatIcon(): HTMLElement {
-	return createHomeSvgIcon('new-chat', AGENT_HOME_NEW_CHAT_ICON_PATH);
+	return createHomeSvgIcon('new-chat', AGENT_HOME_NEW_CHAT_ICON_PATH, { strokeWidth: '1' });
 }
 
 export function createHomeNewProjectIcon(): HTMLElement {
@@ -169,9 +170,25 @@ export function createHomeEnvironmentIcon(): HTMLElement {
 	return createHomeStrokeIcon('environment', [AGENT_HOME_ENVIRONMENT_ICON_PATH], '1.25', [[15, 12], [18, 12]]);
 }
 
-/** Folder-plus on the Open Workspace header control; lighter than New project. */
+/** Folder with a centered plus for the Open Workspace header control. */
+export const AGENT_HOME_OPEN_WORKSPACE_ICON_PATHS = [
+	'M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z',
+	'M12 10v6',
+	'M9 13h6',
+] as const;
+
 export function createHomeOpenWorkspaceIcon(): HTMLElement {
-	return createHomeSvgIcon('open-workspace', AGENT_HOME_NEW_PROJECT_ICON_PATH, { strokeWidth: '1.5' });
+	return createHomeStrokeIcon('open-workspace', AGENT_HOME_OPEN_WORKSPACE_ICON_PATHS, '1');
+}
+
+/** Lucide settings gear for the sidebar footer: rounded petals around a ring. */
+export const AGENT_HOME_SETTINGS_ICON_PATHS = [
+	'M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915',
+	'M15 12a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
+] as const;
+
+export function createHomeSettingsIcon(): HTMLElement {
+	return createHomeStrokeIcon('settings', AGENT_HOME_SETTINGS_ICON_PATHS, '1.5');
 }
 
 /** Laptop outline for On This Mac. */

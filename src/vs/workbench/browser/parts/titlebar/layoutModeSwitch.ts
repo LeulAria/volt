@@ -23,7 +23,7 @@ import { IWorkbenchLayoutService, Parts, Position, isMultiWindowPart } from '../
 import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { AGENT_SIDE_PANEL_ID, stampLayoutModeChrome } from './agentLayoutChrome.js';
 import { LAYOUT_MODE_CONTEXT_KEY } from './layoutKeybindingMode.js';
-import { AGENT_LIST_WIDTH, AGENT_SIDEBAR_MIN_WIDTH, AGENT_LEFT_SIDEBAR_HIDDEN_KEY, LAYOUT_MODE_STORAGE_KEY, readStoredLayoutModeValue, SIDEBAR_LOCATION_KEY, type LayoutMode } from './layoutModeStartup.js';
+import { AGENT_LIST_WIDTH, AGENT_SIDEBAR_MIN_WIDTH, LAYOUT_MODE_STORAGE_KEY, readAgentLeftSidebarHidden, readStoredLayoutModeValue, SIDEBAR_LOCATION_KEY, writeAgentLeftSidebarHidden, type LayoutMode } from './layoutModeStartup.js';
 
 export type { LayoutMode } from './layoutModeStartup.js';
 export { AGENT_LEFT_SIDEBAR_HIDDEN_KEY } from './layoutModeStartup.js';
@@ -47,11 +47,11 @@ const onWillChangeLayoutModeEmitter = new Emitter<LayoutMode>();
 export const onWillChangeLayoutMode = onWillChangeLayoutModeEmitter.event;
 
 export function isAgentLeftSidebarHidden(storageService: IStorageService): boolean {
-	return storageService.getBoolean(AGENT_LEFT_SIDEBAR_HIDDEN_KEY, StorageScope.PROFILE, false);
+	return readAgentLeftSidebarHidden(storageService);
 }
 
 export function storeAgentLeftSidebarHidden(storageService: IStorageService, hidden: boolean): void {
-	storageService.store(AGENT_LEFT_SIDEBAR_HIDDEN_KEY, hidden, StorageScope.PROFILE, StorageTarget.USER);
+	writeAgentLeftSidebarHidden(storageService, hidden);
 }
 
 export function readStoredLayoutMode(storageService: IStorageService, layoutService: IWorkbenchLayoutService): LayoutMode {

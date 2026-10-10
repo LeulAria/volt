@@ -5,8 +5,7 @@
 
 import { IDisposable } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
-import { IFileService } from '../../../../../platform/files/common/files.js';
-import { EditorResourceAccessor, isEditorInputWithOptions, isUntitledResourceEditorInput, SideBySideEditor } from '../../../../common/editor.js';
+import { EditorResourceAccessor, isEditorInputWithOptions, SideBySideEditor } from '../../../../common/editor.js';
 import { registerEditorGroupRouter } from '../../../../services/editor/common/editorGroupFinder.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { AUX_WINDOW_GROUP } from '../../../../services/editor/common/editorService.js';
@@ -18,8 +17,18 @@ export interface IAgentFileEditorHost {
 	openToolsGroup(): IEditorGroup | undefined;
 }
 
-/** Files targeting a main chat belong to that chat's tools, leaving its conversation on screen. */
-export function registerAgentFileEditorRouting(editorGroupsService: IEditorGroupsService, fileService: IFileService, host: IAgentFileEditorHost): IDisposable {
+/** The agent window's own pages: they take the main panel in place of the chat, like picking a chat does. */
+const MAIN_PANEL_SCHEMES: ReadonlySet<string> = new Set([
+	Schemas.voltAgent,
+	Schemas.voltSettings,
+	Schemas.voltCustomize,
+	Schemas.voltUsage,
+	Schemas.voltSchedules,
+	Schemas.voltRunGroup,
+]);
+
+/** Anything else opened over a main chat (files, diffs, a turn's changes, previews) is a tab in that chat's tools, leaving its conversation on screen. */
+export function registerAgentFileEditorRouting(editorGroupsService: IEditorGroupsService, host: IAgentFileEditorHost): IDisposable {
 	return registerEditorGroupRouter(editorGroupsService, (input, preferredGroup) => {
 		const sessionId = host.getSessionId();
 		if (!sessionId || preferredGroup === AUX_WINDOW_GROUP) {
@@ -35,7 +44,7 @@ export function registerAgentFileEditorRouting(editorGroupsService: IEditorGroup
 		}
 		const editor = isEditorInputWithOptions(input) ? input.editor : input;
 		const resource = EditorResourceAccessor.getCanonicalUri(editor, { supportSideBySide: SideBySideEditor.PRIMARY });
-		if (!(resource ? resource.scheme === Schemas.untitled || fileService.hasProvider(resource) : isUntitledResourceEditorInput(editor))) {
+		if (resource && MAIN_PANEL_SCHEMES.has(resource.scheme)) {
 			return undefined;
 		}
 		return host.openToolsGroup();

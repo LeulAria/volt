@@ -1687,6 +1687,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 .vc-line.vc-dashed{stroke-dasharray:3 4;stroke-width:1.5}
 .vc-line.vc-ref{stroke-dasharray:3 4;stroke-width:1.25;opacity:.75}
 .vc-band{stroke:var(--vc-bg);stroke-width:1;stroke-linejoin:round}
+.vc-band-hatched{stroke:none}
 .vc-dot{stroke:var(--vc-bg);stroke-width:1.5}
 .vc-scatter{stroke:var(--vc-bg);stroke-width:1;fill-opacity:.78;transition:opacity 160ms}
 .vc-anno line{stroke:color-mix(in srgb,var(--vc-fg) 55%,transparent);stroke-width:1;shape-rendering:crispEdges}
@@ -3166,6 +3167,8 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			this.knobs.clear();
 			const type = this.model.type;
 			const visibleCount = frame.series.filter(series => series.visible && !series.source.reference).length;
+			// Hatched stacks: each band is a see-through tint under diagonal lines, edged on top in its color.
+			const hatchedStack = this.stacked && this.model.look.fill === 'pattern';
 			frame.series.forEach((series, index) => {
 				const source = series.source;
 				const group = s('g', { class: 'vc-s' }, this.seriesLayer);
@@ -3181,9 +3184,13 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 					nodes.dots = s('g', {}, group);
 				} else {
 					if (this.stacked && !source.reference) {
-						nodes.area = s('path', { class: 'vc-band' }, group);
-						nodes.area.style.fill = source.color;
-						nodes.area.style.fillOpacity = '0.9';
+						nodes.area = s('path', { class: `vc-band${hatchedStack ? ' vc-band-hatched' : ''}` }, group);
+						if (hatchedStack) {
+							nodes.area.style.fill = pattern(this.defs, 'lines', source.color, { angle: [45, 135, 45, 135][index % 4], tint: 0.1, ink: 0.55 });
+						} else {
+							nodes.area.style.fill = source.color;
+							nodes.area.style.fillOpacity = '0.9';
+						}
 					} else if (this.areaFill(visibleCount) !== 'none' && this.areaFill(visibleCount) !== 'gradient' && !source.reference) {
 						const fill = this.areaFill(visibleCount);
 						nodes.area = s('path', { class: 'vc-area' }, group);
@@ -3204,7 +3211,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 						nodes.area = s('path', { class: 'vc-area', fill: `url(#${id})` }, group);
 						nodes.gradient = id;
 					}
-					if (!this.stacked || source.reference) {
+					if (!this.stacked || source.reference || hatchedStack) {
 						nodes.line = s('path', { class: `vc-line${source.reference && !source.overlay ? ' vc-ref' : source.dashed ? ' vc-dashed' : ''}` }, group);
 						nodes.line.style.stroke = source.color;
 						nodes.line.classList.toggle('vc-nostroke', !this.model.look.stroke && !!nodes.area);
@@ -3218,6 +3225,13 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 					this.knobs.set(source.key, knob);
 				}
 			});
+			// Hatched bands do not overlap, but their top lines do where a band is near zero (output
+			// over cache reads). Lower series draw last, so the big band keeps its own edge color.
+			if (hatchedStack) {
+				for (const group of [...this.seriesLayer.children].reverse()) {
+					this.seriesLayer.appendChild(group);
+				}
+			}
 			// The primary knob draws over the others.
 			this.cursorLayer.appendChild(this.halo);
 			this.cursorLayer.appendChild(this.knob);
@@ -7346,7 +7360,8 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 .vc-ring-progress i{display:block;height:100%;border-radius:2px}
 .vc-funnel-band{fill:color-mix(in srgb,var(--vc-fg) 4%,transparent)}
 .vc-funnel-big{fill:var(--vc-fg);font-size:15px;font-weight:650;font-variant-numeric:tabular-nums}
-.vc-tip{background:color-mix(in srgb,var(--vc-tip-bg) 88%,transparent);-webkit-backdrop-filter:blur(14px) saturate(1.4);backdrop-filter:blur(14px) saturate(1.4);border:1px solid var(--vc-tip-border);border-radius:12px;padding:9px 11px 10px;box-shadow:var(--vc-shadow),inset 0 1px 0 color-mix(in srgb,var(--vc-fg) 7%,transparent);scale:.96;transition:opacity 120ms ease,scale 240ms ${EASE_OUT}}
+/* Solid, never backdrop-filter: in the see-through agent window a blurred tip turns the sidebar black (volt-transparent-window). */
+.vc-tip{background:var(--vc-tip-bg);border:1px solid var(--vc-tip-border);border-radius:12px;padding:9px 11px 10px;box-shadow:var(--vc-shadow),inset 0 1px 0 color-mix(in srgb,var(--vc-fg) 7%,transparent);scale:.96;transition:opacity 120ms ease,scale 240ms ${EASE_OUT}}
 .vc-tip.vc-shown{scale:1}
 .vc-tip-title{font-weight:500;letter-spacing:.01em}
 .vc-tip-hero{font-size:18px;line-height:23px}

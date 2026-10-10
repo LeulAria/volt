@@ -16,11 +16,10 @@ export const CHANGES_ICON_PATH = 'M12 3v14m7-7H5m14 11H5';
 /** An icon's shapes on a 24 grid, as [tag, attributes]. */
 export type SvgIconShapes = readonly (readonly [string, Record<string, string | number>])[];
 
-/** Folder with a pin: Files in the right panel's tabs, the window's tools list and the + menu. */
-export const FILES_ICON_SHAPES: SvgIconShapes = [
-	['path', { d: 'M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z' }],
-	['circle', { cx: 12, cy: 13, r: 2 }],
-	['path', { d: 'M12 15v5' }],
+/** A closed folder: the Explorer in the right panel's sidebar, the window's tools list and the + menu. */
+export const EXPLORER_ICON_SHAPES: SvgIconShapes = [
+	['path', { d: 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z' }],
+	['path', { d: 'M2 10h20' }],
 ];
 
 export const SIDE_CHAT_ICON_PATH = 'M7 7H15M7 11H11M5 3H19C20.1046 3 21 3.89543 21 5V15C21 16.1046 20.1046 17 19 17H16L12.3536 20.6464C12.1583 20.8417 11.8417 20.8417 11.6464 20.6464L8 17H5C3.89543 17 3 16.1046 3 15V5C3 3.89543 3.89543 3 5 3Z';
@@ -51,7 +50,7 @@ export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 			id: 'file',
 			label: localize('voltAgent.surfaceMenu.file', "File"),
 			icon: Codicon.file,
-			svgPath: FILES_ICON_SHAPES,
+			svgPath: EXPLORER_ICON_SHAPES,
 		},
 		{
 			id: 'terminal',

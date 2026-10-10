@@ -1,0 +1,20 @@
+{
+	"comments": {
+		"lineComment": "%%"
+	},
+	// Mermaid's brackets are not code brackets: shapes ([label], {decision}, >flag]), ER cardinalities
+	// (||--o{) and async arrows (-)) are often unbalanced, which bracket matching would mark as errors.
+	"brackets": [],
+	"autoClosingPairs": [
+		{ "open": "{", "close": "}" },
+		{ "open": "[", "close": "]" },
+		{ "open": "(", "close": ")" },
+		{ "open": "\"", "close": "\"", "notIn": ["string"] }
+	],
+	"surroundingPairs": [
+		["{", "}"],
+		["[", "]"],
+		["(", ")"],
+		["\"", "\""]
+	]
+}

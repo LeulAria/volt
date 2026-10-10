@@ -93,6 +93,31 @@ suite('Inline Completions', () => {
 		);
 	});
 
+	test('A provider change asks that provider again at the same position', async function () {
+		// Volt: a model answer that lands after a pause is shown through the change event.
+		const provider = new MockInlineCompletionsProvider();
+		await withAsyncTestCodeEditorAndInlineCompletionsModel('',
+			{ fakeClock: true, provider },
+			async ({ editor, editorViewModel, model, context }) => {
+				provider.setReturnValue({ insertText: 'foobar', range: new Range(1, 1, 1, 4) });
+				context.keyboardType('foo');
+				model.trigger();
+				await timeout(1000);
+				assert.deepStrictEqual(provider.getAndClearCallHistory(), [
+					{ position: '(1,4)', text: 'foo', triggerKind: 0, }
+				]);
+
+				provider.setReturnValue({ insertText: 'foobaz', range: new Range(1, 1, 1, 4) });
+				provider.fireChange();
+				await timeout(1000);
+				assert.deepStrictEqual(provider.getAndClearCallHistory(), [
+					{ position: '(1,4)', text: 'foo', triggerKind: 0, }
+				]);
+				assert.deepStrictEqual(context.getAndClearViewStates(), ['', 'foo[bar]', 'foo[baz]']);
+			}
+		);
+	});
+
 	test('Unindent whitespace', async function () {
 		const provider = new MockInlineCompletionsProvider();
 		await withAsyncTestCodeEditorAndInlineCompletionsModel('',

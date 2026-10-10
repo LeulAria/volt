@@ -84,6 +84,12 @@ export const realWatchdogClock: IWatchdogClock = {
 
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
+/**
+ * A timer this late means the computer slept: timers stop while it does, the wall clock does not.
+ * Throttled hidden windows run timers up to about a minute late, so this stays above that.
+ */
+export const SLEEP_GAP_MS = 90_000;
+
 export class IdleWatchdog {
 
 	private lastActivity: number;
@@ -93,6 +99,8 @@ export class IdleWatchdog {
 	private fired = new Set<IdleStage>();
 	private everActive = false;
 	private timer: { dispose(): void } | undefined;
+	/** When the armed timer should fire, to tell a sleep from a quiet agent. */
+	private dueAt: number | undefined;
 	private disposed = false;
 
 	constructor(
@@ -233,6 +241,7 @@ export class IdleWatchdog {
 			return;
 		}
 		const delay = Math.min(MAX_TIMER_MS, Math.max(1, this.lastActivity + next.atMs - this.clock.now()));
+		this.dueAt = this.clock.now() + delay;
 		this.timer = this.clock.setTimeout(() => this.check(), delay);
 	}
 
@@ -240,6 +249,12 @@ export class IdleWatchdog {
 		this.timer = undefined;
 		if (this.disposed || this.pauses) {
 			return;
+		}
+		const late = this.dueAt === undefined ? 0 : this.clock.now() - this.dueAt;
+		if (late > SLEEP_GAP_MS) {
+			// The computer slept (lid closed, idle sleep). The agent's process was frozen too, so the
+			// time asleep is not its silence: only the quiet time while awake counts.
+			this.lastActivity += late;
 		}
 		const quietMs = this.clock.now() - this.lastActivity;
 		const limits = this.thresholds();

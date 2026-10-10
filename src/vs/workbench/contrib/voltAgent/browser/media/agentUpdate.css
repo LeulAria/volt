@@ -238,7 +238,8 @@
 }
 
 .volt-agent-update-button.idle .codicon {
-	font-size: 16px;
+	/* Matches the other sidebar footer icons. */
+	font-size: 14px;
 }
 
 /* Checking: the Usage page's spinner alone, on the refresh glyph's spot. It stays mounted so its SMIL clock keeps running. */
@@ -253,8 +254,8 @@
 }
 
 .volt-agent-update-button.idle .volt-usage-spinner {
-	width: 15px;
-	height: 15px;
+	width: 13px;
+	height: 13px;
 	color: var(--vscode-foreground);
 }
 

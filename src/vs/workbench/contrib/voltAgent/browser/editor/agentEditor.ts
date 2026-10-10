@@ -28,12 +28,16 @@ import { ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
 import { EditorExtensionsRegistry } from '../../../../../editor/browser/editorExtensions.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { preloadMarkdownExtras } from '../blocks/agentMarkdown.js';
+import { createDiagramViewer, diagramKind } from '../blocks/agentMermaid.js';
+import { createMessageCopyIcon } from '../blocks/agentCodeBlock.js';
 import { IAgentChatForkService } from '../orchestration/agentChatFork.js';
 import { buildTranscriptRows, hasSignInNotice, ITranscriptSteer, TranscriptRow, withoutFailureNotice } from '../chrome/agentTranscript.js';
 import { fallbackSubagentView, ITranscriptHost, renderTranscript, tickElapsed } from '../chrome/agentTranscriptView.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { DropIntoEditorController } from '../../../../../editor/contrib/dropOrPasteInto/browser/dropIntoEditorController.js';
+import { InlineCompletionsController } from '../../../../../editor/contrib/inlineCompletions/browser/controller/inlineCompletionsController.js';
+import { IComposerPredictionContext, registerComposerContext } from '../../../../services/voltRuntime/common/prediction/composerContext.js';
 import { EDITOR_FONT_DEFAULTS, IEditorOptions as ICodeEditorOptions } from '../../../../../editor/common/config/editorOptions.js';
 import { IRange } from '../../../../../editor/common/core/range.js';
 import { IEditorDecorationsCollection } from '../../../../../editor/common/editorCommon.js';
@@ -111,6 +115,7 @@ import { getSimpleCodeEditorWidgetOptions } from '../../../codeEditor/browser/si
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { completeStreamingBlocks } from './agentSessionController.js';
 import { AgentSurfaceHost, agentSideChatParents, revealAgentSideChat } from '../workspace/agentSurfaceHost.js';
+import { prefersReducedMotion } from './agentThreadScroll.js';
 import { openAgentPanel } from '../workspace/agentPanels.js';
 import { AgentComposerChips, shouldOfferScrollToBottom } from '../composer/agentComposerChips.js';
 import { AgentPendingChanges, MINI_FILE_DIFF_VIEWER_ENABLED } from '../composer/agentPendingChanges.js';
@@ -296,6 +301,17 @@ function createMicIcon(): HTMLElement {
 	return el;
 }
 
+/** Where the mic was drawn before the send button changed, so it can travel to where it is drawn after. */
+interface IMicMotion {
+	readonly rect: DOMRect;
+	readonly color: string;
+	/** The other toolbar buttons' left edges: they glide aside for the mic button instead of jumping. */
+	readonly siblings: ReadonlyMap<Element, number>;
+}
+
+/** The mic slides out of the send button and the buttons beside it make room together. */
+const MIC_MOTION: KeyframeAnimationOptions = { duration: 280, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' };
+
 function createChevronIcon(): HTMLElement {
 	return createSvgIcon(
 		'0 0 16 7',
@@ -314,34 +330,6 @@ function createExpandIcon(restored: boolean): HTMLElement {
 		true,
 		'2',
 	);
-}
-
-function createCopyIcon(): HTMLElement {
-	const el = $('span.volt-agent-svg-icon.copy');
-	const doc = el.ownerDocument;
-	const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', '0 0 24 24');
-	svg.setAttribute('width', '24');
-	svg.setAttribute('height', '24');
-	svg.setAttribute('fill', 'none');
-	svg.setAttribute('stroke', 'currentColor');
-	svg.setAttribute('stroke-width', '1');
-	svg.setAttribute('stroke-linecap', 'round');
-	svg.setAttribute('stroke-linejoin', 'round');
-	svg.setAttribute('aria-hidden', 'true');
-	const rect = doc.createElementNS('http://www.w3.org/2000/svg', 'rect');
-	rect.setAttribute('width', '14');
-	rect.setAttribute('height', '14');
-	rect.setAttribute('x', '8');
-	rect.setAttribute('y', '8');
-	rect.setAttribute('rx', '2');
-	rect.setAttribute('ry', '2');
-	const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
-	path.setAttribute('d', 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2');
-	svg.appendChild(rect);
-	svg.appendChild(path);
-	el.appendChild(svg);
-	return el;
 }
 
 function createForkIcon(): HTMLElement {
@@ -572,6 +560,24 @@ interface IModeOption {
 /** Least time between two streaming redraws of the live exchange. */
 const STREAM_FRAME_MS = 50;
 
+/** How long the composer's ghost text reuses the prompts it read; a send refreshes them at once. */
+const PREDICTION_PROMPTS_TTL_MS = 10_000;
+
+function clipForPrediction(text: string, max: number): string {
+	const flat = text.replace(/\s+/g, ' ').trim();
+	return flat.length <= max ? flat : `${flat.slice(0, max)}...`;
+}
+
+/** Accepts the predicted continuation showing in `editor`; false when none shows. */
+function acceptGhostText(editor: ICodeEditor): boolean {
+	const model = InlineCompletionsController.get(editor)?.model.get();
+	if (!model?.inlineCompletionState.get()) {
+		return false;
+	}
+	void model.accept(editor);
+	return true;
+}
+
 /** Model silence (no tool running) after which the live line says the turn is taking longer than expected, as Cursor does. */
 const SLOW_TURN_MS = 90_000;
 
@@ -716,6 +722,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly editorDisposables = this._register(new DisposableStore());
 
 	private messages: IAgentMessage[] = [];
+	/** Prompts the composer's ghost text learns from, read from storage at most every few seconds. */
+	private predictionPrompts: { readonly at: number; readonly prompts: string[] } | undefined;
 	private currentMode = MODE_OPTIONS[0].id;
 	private readonly modelPicker: AgentModelPicker;
 	private get currentModel(): string { return this.modelPicker.currentModel; }
@@ -1742,6 +1750,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			acceptSuggestionOnEnter: 'off',
 			quickSuggestions: { other: 'off', comments: 'off', strings: 'off' },
 			suggestOnTriggerCharacters: false,
+			// Predictions of the message being typed; whether they run is the Tab & Prediction setting.
+			inlineSuggest: { ...editorConfiguration.inlineSuggest, enabled: true, showToolbar: 'never' },
 			ariaLabel: forEdit
 				? localize('voltAgent.editAria', "Edit message")
 				: localize('voltAgent.inputAria', "Agent input"),
@@ -2342,7 +2352,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onSavePlan: plan => this.savePlanDocument(plan),
 			streaming: !!message.activity?.streaming,
 			languageService: this.languageService,
-			onExpandDiagram: svg => this.showDiagramPreview(svg),
+			onExpandDiagram: (svg, source) => this.showDiagramPreview(svg, source),
 			onWheel: event => this.threadScroll.delegateScrollFromMouseWheelEvent(event),
 			onExpandVisual: (title, content, store) => {
 				this.showPreviewOverlay(title, content, true);
@@ -3549,7 +3559,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		widgetOptions.contextKeyValues = { [CONTEXT_IN_AGENT_INPUT.key]: true };
 		widgetOptions.contributions = [
 			...(widgetOptions.contributions ?? []),
-			...EditorExtensionsRegistry.getSomeEditorContributions([DropIntoEditorController.ID]),
+			// Ghost text: Volt predicts the rest of the message as it is typed.
+			...EditorExtensionsRegistry.getSomeEditorContributions([DropIntoEditorController.ID, InlineCompletionsController.ID]),
 		];
 		this.editEditor = this.editEditorDisposables.add(this.instantiationService.createInstance(
 			CodeEditorWidget,
@@ -3562,6 +3573,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.editModel = this.modelService.createModel('', null, modelUri, true);
 		this.editEditorDisposables.add(toDisposable(() => this.editModel?.dispose()));
 		this.editEditor.setModel(this.editModel);
+		this.editEditorDisposables.add(registerComposerContext(modelUri, () => this.composerPredictionContext()));
 		this.editMentionController = this.editEditorDisposables.add(this.instantiationService.createInstance(AgentMentionController, this.editEditor));
 		this.editMentionController.setHost(this.mentionHost(this.editInputBox));
 		this.editLists = this.editEditorDisposables.add(new AgentComposerLists(this.editEditor));
@@ -3603,6 +3615,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				e.preventDefault();
 				e.stopPropagation();
 				this.cancelUserEdit();
+				return;
+			}
+			if (e.keyCode === KeyCode.Tab && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && this.editEditor && acceptGhostText(this.editEditor)) {
+				e.preventDefault();
+				e.stopPropagation();
 				return;
 			}
 			if (e.keyCode === KeyCode.Enter && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
@@ -4261,13 +4278,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.showPreviewOverlay(label, img);
 	}
 
-	/** Cursor's "Expand diagram": the same dialog as screenshots, with the diagram drawn larger. */
-	private showDiagramPreview(svg: SVGSVGElement): void {
-		const holder = $('.volt-agent-snapshot-diagram');
-		svg.removeAttribute('width');
-		svg.removeAttribute('height');
-		holder.appendChild(svg);
-		this.showPreviewOverlay(localize('voltAgent.diagram', "Diagram"), holder, true);
+	/** Cursor's "Expand diagram", on a canvas that zooms and pans; it opens fitted to the dialog. */
+	private showDiagramPreview(svg: SVGSVGElement, source: string): void {
+		const store = new DisposableStore();
+		const viewer = createDiagramViewer(svg, store);
+		this.showPreviewOverlay(diagramKind(source).label, viewer, true);
+		this.snapshotStore.add(store);
+		viewer.focus();
 	}
 
 	private showPreviewOverlay(label: string, content: HTMLElement, wide = false): void {
@@ -4408,7 +4425,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const copyButton = append(footer, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
 		copyButton.setAttribute('aria-label', copyLabel);
 		setAgentTooltip(copyButton, copyLabel);
-		copyButton.appendChild(createCopyIcon());
+		copyButton.appendChild(createMessageCopyIcon());
 		this.threadListeners.add(addDisposableListener(copyButton, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -4420,7 +4437,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					if (!copyButton.isConnected) {
 						return;
 					}
-					copyButton.replaceChildren(createCopyIcon());
+					copyButton.replaceChildren(createMessageCopyIcon());
 					setAgentTooltip(copyButton, copyLabel);
 					copyButton.classList.remove('copied');
 				}, 1500));
@@ -4824,7 +4841,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		widgetOptions.contextKeyValues = { [CONTEXT_IN_AGENT_INPUT.key]: true };
 		widgetOptions.contributions = [
 			...(widgetOptions.contributions ?? []),
-			...EditorExtensionsRegistry.getSomeEditorContributions([DropIntoEditorController.ID]),
+			// Ghost text: Volt predicts the rest of the message as it is typed.
+			...EditorExtensionsRegistry.getSomeEditorContributions([DropIntoEditorController.ID, InlineCompletionsController.ID]),
 		];
 		this.inputEditor = this.editorDisposables.add(this.instantiationService.createInstance(
 			CodeEditorWidget,
@@ -4836,6 +4854,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const modelUri = URI.from({ scheme: 'volt-agent-input', path: `input-${this.sessionKey}-${Date.now()}` });
 		this.inputModel = this.modelService.createModel('', null, modelUri, true);
 		this.inputEditor.setModel(this.inputModel);
+		this.editorDisposables.add(registerComposerContext(modelUri, () => this.composerPredictionContext()));
 		this.mentionController = this.editorDisposables.add(this.instantiationService.createInstance(AgentMentionController, this.inputEditor));
 		this.mentionController.setHost(this.mentionHost(this.inputBox));
 		this.composerLists = this.editorDisposables.add(new AgentComposerLists(this.inputEditor));
@@ -4915,6 +4934,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				}
 				e.preventDefault();
 				e.stopPropagation();
+				// Tab takes a predicted continuation when one shows; otherwise it switches to Plan.
+				if (!e.shiftKey && this.inputEditor && acceptGhostText(this.inputEditor)) {
+					return;
+				}
 				this.togglePlan();
 				return;
 			}
@@ -5012,6 +5035,40 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		);
 	}
 
+	/**
+	 * What the composer's ghost text knows about this chat: its last messages, the prompts sent
+	 * before, and the names in play. Read on each keystroke, so the stored prompts are cached.
+	 */
+	private composerPredictionContext(): IComposerPredictionContext {
+		const transcript: string[] = [];
+		const names = new Set<string>();
+		for (const message of this.messages.slice(-8)) {
+			if (message.kind === 'user') {
+				transcript.push(`User: ${clipForPrediction(message.text, 400)}`);
+				for (const mention of message.mentions ?? []) {
+					names.add(mention.label);
+				}
+				continue;
+			}
+			const text = message.text || message.segments.map(segment => segment.kind === 'text' ? segment.text : '').join('');
+			if (text.trim()) {
+				transcript.push(`Agent: ${clipForPrediction(text, 600)}`);
+			}
+			for (const path of message.changes ?? []) {
+				names.add(basename(path));
+			}
+		}
+		const folder = this.workspaceContextService.getWorkspace().folders[0];
+		if (folder) {
+			names.add(folder.name);
+		}
+		const now = Date.now();
+		if (!this.predictionPrompts || now - this.predictionPrompts.at > PREDICTION_PROMPTS_TTL_MS) {
+			this.predictionPrompts = { at: now, prompts: this.promptHistoryEntries().map(entry => entry.text) };
+		}
+		return { transcript, prompts: this.predictionPrompts.prompts, vocabulary: [...names] };
+	}
+
 	/** This chat's prompts, newest first, then prompts sent from other chats. */
 	private promptHistoryEntries(): IAgentPromptHistoryEntry[] {
 		const own: IAgentPromptHistoryEntry[] = [];
@@ -5030,6 +5087,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private rememberSentPrompt(agentText: string, display: IAgentPromptDisplay | undefined): void {
 		this.promptHistory.reset();
+		this.predictionPrompts = undefined;
 		if (this.promptHistoryEnabled()) {
 			rememberPrompt(this.storageService, { text: display?.text.trim() || agentText, mentions: display?.mentions });
 		}
@@ -6101,6 +6159,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const kind: 'mic' | 'send' = this.isFollowUpComposer() || this.hasDraft() || this.voiceDictation?.active ? 'send' : 'mic';
 		this.sendButton.disabled = !canSend;
 		this.sendButton.classList.toggle('disabled', !canSend);
+		const motion = this.sendKind !== kind && this.sendButton.childElementCount ? this.captureMicMotion() : undefined;
 		this.micButton.hidden = kind === 'mic';
 		if (this.sendKind === kind && this.sendButton.childElementCount) {
 			this.sendButton.classList.remove('stop');
@@ -6115,6 +6174,66 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				? localize('voltAgent.send', "Send")
 				: localize('voltAgent.voice', "Voice"));
 		this.sendButton.appendChild(kind === 'send' ? createSendIcon() : createMicIcon());
+		if (motion) {
+			this.playMicMotion(motion);
+		}
+	}
+
+	/** The mic on screen: the send button's while it is the mic, else the mic button's glyph (its waveform pill while recording). */
+	private shownMic(): HTMLElement | undefined {
+		if (this.sendKind === 'mic') {
+			return this.sendButton.querySelector<HTMLElement>('.volt-agent-svg-icon.mic') ?? undefined;
+		}
+		if (this.micButton.hidden) {
+			return undefined;
+		}
+		return this.micButton.classList.contains('recording') ? this.micButton : this.micButton.querySelector<HTMLElement>('.volt-agent-svg-icon.mic') ?? undefined;
+	}
+
+	private captureMicMotion(): IMicMotion | undefined {
+		const mic = this.shownMic();
+		const rect = mic?.getBoundingClientRect();
+		if (!mic || !rect?.width || prefersReducedMotion(mic)) {
+			return undefined;
+		}
+		const siblings = new Map<Element, number>();
+		for (const child of this.toolbarEndEl.children) {
+			if (child !== this.micButton && child !== this.sendButton) {
+				siblings.set(child, child.getBoundingClientRect().left);
+			}
+		}
+		return { rect, color: getWindow(mic).getComputedStyle(mic).color, siblings };
+	}
+
+	/** Moves the mic from where it was: out of the send button to the left once a draft is typed, back in when it is cleared. */
+	private playMicMotion(motion: IMicMotion): void {
+		const mic = this.shownMic();
+		const rect = mic?.getBoundingClientRect();
+		if (!mic || !rect?.width) {
+			return;
+		}
+		const dx = motion.rect.left + motion.rect.width / 2 - (rect.left + rect.width / 2);
+		const dy = motion.rect.top + motion.rect.height / 2 - (rect.top + rect.height / 2);
+		// The recording pill is another shape than the glyph it leaves from: it grows in place of scaling.
+		const pill = mic === this.micButton;
+		const color = getWindow(mic).getComputedStyle(mic).color;
+		// Its color changes off the white button: the faint toolbar gray is lost over it.
+		const leaving = this.sendKind === 'send';
+		mic.animate([
+			{ offset: 0, transform: `translate(${dx}px, ${dy}px) scale(${pill ? 0.6 : motion.rect.width / rect.width})`, color: motion.color, opacity: pill ? 0 : 1 },
+			{ offset: leaving ? 0.7 : 0.35, color: leaving ? motion.color : color },
+			{ offset: 1, transform: 'none', color, opacity: 1 },
+		], MIC_MOTION);
+		for (const [sibling, left] of motion.siblings) {
+			const shift = left - sibling.getBoundingClientRect().left;
+			if (shift) {
+				sibling.animate([{ transform: `translateX(${shift}px)` }, { transform: 'none' }], MIC_MOTION);
+			}
+		}
+		if (this.sendKind === 'send') {
+			// The arrow takes the mic's place once it has left.
+			this.sendButton.firstElementChild?.animate([{ opacity: 0, transform: 'scale(0.4)' }, { opacity: 1, transform: 'none' }], { ...MIC_MOTION, duration: 220, delay: 70, fill: 'backwards' });
+		}
 	}
 
 	removeQueuedPrompt(id: string): void {

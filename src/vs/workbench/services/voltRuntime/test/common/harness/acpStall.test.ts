@@ -126,6 +126,32 @@ suite('Volt ACP idle watchdog', () => {
 		dog.dispose();
 	});
 
+	test('time the computer spent asleep (lid closed) is not silence', () => {
+		const clock = new FakeWatchdogClock();
+		const { dog, names } = watch(clock);
+		dog.modelOutput();
+		clock.advance(1 * MINUTE);
+		clock.sleep(30 * MINUTE);
+		clock.advance(59 * SECOND);
+		assert.deepStrictEqual(names(), [], 'woke 59 s ago after 1 min of quiet: nothing due yet');
+		clock.advance(1 * SECOND);
+		assert.deepStrictEqual(names(), ['notice@120s'], 'two awake minutes, not 32');
+		dog.modelOutput();
+		clock.advance(1 * MINUTE);
+		assert.deepStrictEqual(names(), ['notice@120s']);
+		dog.dispose();
+	});
+
+	test('a timer a throttled window ran a minute late still counts the whole wait', () => {
+		const clock = new FakeWatchdogClock();
+		const { dog, names } = watch(clock);
+		clock.advance(1 * MINUTE);
+		clock.sleep(1 * MINUTE);
+		clock.advance(1 * MINUTE);
+		assert.deepStrictEqual(names(), ['notice@180s']);
+		dog.dispose();
+	});
+
 	test('dispose stops all timers', () => {
 		const clock = new FakeWatchdogClock();
 		const { dog, names } = watch(clock);

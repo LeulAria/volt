@@ -54,9 +54,10 @@
 
 /* Sidebar */
 
+/* Matches the agent window's left sidebar (syncSidebarWidth in voltSettingsEditor.ts). */
 .volt-settings-sidebar {
-	flex: 0 0 252px;
-	width: 252px;
+	flex: 0 0 var(--volt-settings-sidebar-width, 252px);
+	width: var(--volt-settings-sidebar-width, 252px);
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
@@ -186,10 +187,11 @@
 	font-size: 16px;
 }
 
+/* Hugeicons line icons (settingsIcons.ts): 1.5px strokes on a 24px grid read best a touch above 16px. */
 .volt-settings-toc-icon .volt-settings-svg-icon {
 	display: block;
-	width: 16px;
-	height: 16px;
+	width: 17px;
+	height: 17px;
 }
 
 .volt-settings-toc-item:hover {
@@ -218,10 +220,10 @@
 }
 
 .volt-settings-content-inner {
-	width: min(760px, 100%);
+	width: min(1040px, 100%);
 	margin-inline: auto;
-	/* 72px to the title text; the title's own top padding is the rest. */
-	padding: 58px 40px 80px;
+	/* 44px to the title text; the title's own top padding is the rest. */
+	padding: 30px 40px 80px;
 }
 
 /* Titles stick to the top while their block scrolls under them, over a blurred copy of the page
@@ -1524,8 +1526,8 @@
 	}
 
 	.volt-settings-sidebar {
-		flex-basis: 200px;
-		width: 200px;
+		flex-basis: var(--volt-settings-sidebar-width, 200px);
+		width: var(--volt-settings-sidebar-width, 200px);
 	}
 
 	.volt-settings-content-inner {

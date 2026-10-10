@@ -166,6 +166,11 @@
 	background: var(--vscode-button-hoverBackground, #5d7cf5);
 }
 
+/* The + follows the label's button foreground, not the workbench icon color. */
+.monaco-workbench .volt-schedules-new .codicon {
+	color: inherit;
+}
+
 .volt-schedules-list {
 	display: flex;
 	flex-direction: column;

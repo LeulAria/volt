@@ -453,7 +453,8 @@ export class AgentComposerChips extends Disposable {
 			if (gen !== this.refreshGen) {
 				return;
 			}
-			this.hasChanges = stats.files > 0 || stats.additions > 0 || stats.deletions > 0;
+			// A chip without +/- counts says nothing: files the agent touched back to how they were, or only renames.
+			this.hasChanges = stats.additions > 0 || stats.deletions > 0;
 			this.insertions = stats.additions;
 			this.deletions = stats.deletions;
 			this.runningTerminals = runningTerminals;
@@ -481,7 +482,7 @@ export class AgentComposerChips extends Disposable {
 		if (gen !== this.refreshGen) {
 			return;
 		}
-		this.hasChanges = hasChanges || insertions > 0 || deletions > 0;
+		this.hasChanges = insertions > 0 || deletions > 0;
 		this.insertions = insertions;
 		this.deletions = deletions;
 		this.runningTerminals = runningTerminals;

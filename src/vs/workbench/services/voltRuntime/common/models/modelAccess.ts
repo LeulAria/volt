@@ -50,12 +50,56 @@ function isEnabledItem(catalog: readonly IVoltCatalogItem[], ref: string | undef
 }
 
 /**
- * Resolution order - the composer picker is the source of truth:
- *   1. the active composer selection (Cursor / Claude / Codex / a chat model)
- *   2. explicit Tab override (`taskModels.tab`)
- *   3. the first enabled ACP agent
- *   4. the fast slot (`taskModels.ask`)
- *   5. the first enabled chat model
+ * Model ids that answer in a fraction of a second, best first. Ghost text is a few dozen tokens
+ * of local code: the composer's frontier model is slower and far more expensive per keystroke.
+ */
+const FAST_TAB_MODELS: readonly RegExp[] = [
+	/codestral/i,
+	/haiku/i,
+	/flash[-_ ]?lite/i,
+	/flash/i,
+	/(^|[-_ ./])(nano)([-_ .]|$)/i,
+	/(^|[-_ ./])(mini)([-_ .]|$)/i,
+	/(^|[-_ ./])(fast|turbo|instant|lite|small)([-_ .]|$)/i,
+	/coder/i,
+];
+
+/** Rank of `id` in {@link FAST_TAB_MODELS}, or undefined when it is not a fast model. */
+export function fastModelRank(id: string): number | undefined {
+	const rank = FAST_TAB_MODELS.findIndex(pattern => pattern.test(id));
+	return rank < 0 ? undefined : rank;
+}
+
+/**
+ * The fastest model offered by the same provider profile as `item` (same CLI login or API key),
+ * or `item` itself when it is already fast or the profile offers nothing faster.
+ */
+export function fastTabSibling(item: IVoltCatalogItem, catalog: readonly IVoltCatalogItem[], usable: (item: IVoltCatalogItem) => boolean = () => true): IVoltCatalogItem {
+	if (fastModelRank(item.id) !== undefined) {
+		return item;
+	}
+	let best: { item: IVoltCatalogItem; rank: number } | undefined;
+	for (const candidate of catalog) {
+		if (candidate.profileId !== item.profileId || candidate.kind !== item.kind || !candidate.enabled || !usable(candidate)) {
+			continue;
+		}
+		const rank = fastModelRank(candidate.id);
+		// Catalog order breaks ties: providers list newer models first.
+		if (rank !== undefined && (!best || rank < best.rank)) {
+			best = { item: candidate, rank };
+		}
+	}
+	return best?.item ?? item;
+}
+
+/**
+ * Resolution order:
+ *   1. explicit Tab model (`taskModels.tab`), exactly as pinned in Settings
+ *   2. the active composer selection (Cursor / Claude / Codex / a chat model), stepped down to
+ *      the fastest model of the same provider (Opus -> Haiku on the same Claude login)
+ *   3. the fast slot (`taskModels.ask`)
+ *   4. the fastest enabled chat model (an HTTP round trip beats an agent turn by seconds)
+ *   5. the first enabled ACP agent, stepped down the same way
  *   6. undefined - predictions disabled; LSP completion is unaffected
  *
  * `usable` skips chat models that cannot be called (e.g. OpenAI with no API key).
@@ -69,13 +113,17 @@ export function resolveTabModel(
 ): string | undefined {
 	const pick = (ref: string | undefined) => {
 		const item = isEnabledItem(catalog, ref);
-		return item && usable(item) ? item.ref : undefined;
+		return item && usable(item) ? item : undefined;
 	};
-	return pick(activeRef)
-		?? pick(taskModels.tab)
-		?? catalog.find(c => c.kind === 'agent' && c.enabled && usable(c))?.ref
-		?? pick(taskModels.ask)
-		?? catalog.find(c => c.kind === 'model' && c.enabled && usable(c))?.ref;
+	const active = pick(activeRef);
+	const models = catalog.filter(c => c.kind === 'model' && c.enabled && usable(c));
+	const fastestModel = models.map(item => ({ item, rank: fastModelRank(item.id) ?? FAST_TAB_MODELS.length })).sort((a, b) => a.rank - b.rank)[0]?.item;
+	const agent = catalog.find(c => c.kind === 'agent' && c.enabled && usable(c));
+	return pick(taskModels.tab)?.ref
+		?? (active && fastTabSibling(active, catalog, usable).ref)
+		?? pick(taskModels.ask)?.ref
+		?? fastestModel?.ref
+		?? (agent && fastTabSibling(agent, catalog, usable).ref);
 }
 
 /**

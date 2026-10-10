@@ -8,6 +8,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { IVoltUsageBucket, IVoltUsageSnapshot } from '../../../../../platform/voltUsage/common/voltUsage.js';
 import { usageChartSpec, usageInsights } from '../../browser/usage/agentUsageInsights.js';
 import { summarizeUsage } from '../../browser/usage/agentUsageModel.js';
+import { usageCalendar } from '../../browser/usage/agentUsageCalendar.js';
 
 function bucket(hour: number, model: string, cached: number, uncached: number, costUsd: number): IVoltUsageBucket {
 	return {
@@ -37,8 +38,29 @@ suite('Usage insights', () => {
 		const models = insights.find(insight => insight.spec.type === 'stacked-bar')!;
 		assert.strictEqual(models.spec.title, 'claude-opus-5-5 handled 75% of your spend');
 		assert.ok(models.wide);
-		const heat = insights.find(insight => insight.spec.type === 'heatmap')!;
-		assert.ok(heat.spec.title.startsWith('Busiest on Tuesday around 3'), heat.spec.title);
+	});
+
+	test('the activity calendar lays days out in Sunday-first weeks with streaks and peaks', () => {
+		const at = (day: number, hour: number) => new Date(2026, 9, day, hour).getTime();
+		const days: IVoltUsageSnapshot = {
+			...snapshot,
+			// Oct 1-3 in a row, Oct 5 the busiest, nothing on Oct 4 or today (Oct 6).
+			buckets: [bucket(at(1, 10), 'a', 10, 0, 1), bucket(at(2, 10), 'a', 10, 0, 2), bucket(at(3, 10), 'a', 10, 0, 3), bucket(at(5, 15), 'a', 10, 0, 40)],
+		};
+		const calendar = usageCalendar(days, now);
+		assert.strictEqual(calendar.activeDays, 4);
+		assert.strictEqual(calendar.longestStreak, 3);
+		// Today is empty, so the streak runs back from yesterday.
+		assert.strictEqual(calendar.currentStreak, 1);
+		assert.strictEqual(calendar.busiest?.start, new Date(2026, 9, 5).getTime());
+		assert.deepStrictEqual(calendar.peak, { weekday: 1, hour: 15 });
+		assert.ok(calendar.weeks.every(week => week.length === 7));
+		// Today (a Tuesday) is the last day; the rest of its week is outside the history.
+		const last = calendar.weeks.at(-1)!;
+		assert.strictEqual(last[2]?.start, new Date(2026, 9, 6).getTime());
+		assert.strictEqual(last[3], undefined);
+		const levels = calendar.weeks.flat().filter(day => day && day.level).map(day => day!.level);
+		assert.deepStrictEqual(levels, [1, 2, 3, 4]);
 	});
 
 	test('the main chart has one series per agent over every slot', () => {

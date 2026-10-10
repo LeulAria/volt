@@ -3,15 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-/* Usage page (Cost / Tokens / Limits). The page paints no plate of its own: it sits on the agent
- * window's translucent editor fill, which drops to 80% while Usage is open so the desktop shows
- * through like the sidebar. No backdrop-filter anywhere (see the volt-transparent-window skill). */
+/* Usage page (agentUsagePage.ts), shown in Volt Settings and in the old Usage tab. It paints no
+ * plate of its own. No backdrop-filter anywhere (see the volt-transparent-window skill). The model
+ * dialog's layer is appended to the host, outside the page, so it takes the page's variables too. */
 
-.monaco-workbench.volt-layout-agent.volt-usage-open {
-	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 80%, transparent);
-}
-
-.volt-usage {
+.volt-usage,
+.volt-usage-dialog-layer {
 	--volt-usage-claude: #e08a6a;
 	--volt-usage-codex: #d7dbe3;
 	--volt-usage-cursor: #7f9dff;
@@ -47,7 +44,9 @@
 }
 
 .vs .volt-usage,
-.hc-light .volt-usage {
+.hc-light .volt-usage,
+.vs .volt-usage-dialog-layer,
+.hc-light .volt-usage-dialog-layer {
 	--volt-usage-claude: #c8623f;
 	--volt-usage-codex: #3b3f47;
 	--volt-usage-cursor: #4f74e8;
@@ -61,187 +60,11 @@
 	--volt-usage-speed-ultrafast: #e87ba4;
 }
 
-/* Header */
+/* Refresh, at the end of the stats row */
 
-/* The controls bar floats over the top of the page and stops short of the scrollbar so the slider
- * stays visible. */
 .volt-usage {
 	position: relative;
 }
-
-.volt-usage-header {
-	position: absolute;
-	top: 0;
-	left: 0;
-	right: 12px;
-	z-index: 3;
-	height: 60px;
-	padding: 18px 48px 0 48px;
-	box-sizing: border-box;
-	isolation: isolate;
-	pointer-events: none;
-}
-
-.volt-usage-header .volt-usage-controls {
-	pointer-events: auto;
-}
-
-/* The controls sit over a blurred copy of the page (syncHeaderBackdrop in
- * agentUsageEditor.ts), like the settings titles, and the real page fades out under them.
- * No backdrop-filter (volt-transparent-window skill). */
-.volt-usage-header-backdrop {
-	position: absolute;
-	top: 0;
-	left: 0;
-	right: 0;
-	/* The blur runs past the controls and fades out over the band where the real page fades in. */
-	bottom: -20px;
-	z-index: -1;
-	overflow: hidden;
-	pointer-events: none;
-	mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
-}
-
-/* A light veil over the copy keeps the controls readable; the copy still shows through. */
-.volt-usage-header-backdrop::after {
-	content: '';
-	position: absolute;
-	inset: 0;
-	background: color-mix(in srgb, var(--volt-agent-window-bg-base, var(--vscode-editor-background, #141414)) 20%, transparent);
-}
-
-.volt-usage-header-backdrop > .volt-usage-mirror {
-	position: absolute;
-	top: 0;
-	left: 0;
-	margin: 0;
-	filter: blur(8px);
-}
-
-/* The page fades in below the header; the strip on the right keeps the scrollbar whole. */
-.volt-usage > .volt-usage-scroll {
-	mask-image: linear-gradient(to bottom, transparent 60px, #000 80px), linear-gradient(#000, #000);
-	mask-size: calc(100% - 12px) 100%, 12px 100%;
-	mask-position: left top, right top;
-	mask-repeat: no-repeat;
-}
-
-.volt-usage-controls {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	max-width: 1084px;
-	margin: 0 auto;
-}
-
-.volt-usage-spacer {
-	flex: 1;
-}
-
-.volt-usage-bar {
-	--volt-usage-muted: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	min-width: 0;
-}
-
-/* Agent layout: the controls sit in the titlebar (placeControls in agentUsageEditor.ts), so the
- * page drops its floating header and the fade under it. */
-.volt-usage.controls-in-titlebar > .volt-usage-header {
-	display: none;
-}
-
-.volt-usage.controls-in-titlebar > .volt-usage-scroll {
-	mask-image: none;
-}
-
-/* The titlebar holds the controls, so the page only needs a short inset under it. */
-.volt-usage.controls-in-titlebar .volt-usage-content {
-	padding-top: 15px;
-}
-
-/* The ranges and refresh take the place of the IDE and panel buttons. */
-.monaco-workbench.volt-layout-agent.volt-usage-open .volt-agent-titlebar-toggles {
-	display: none !important;
-}
-
-.monaco-workbench.volt-layout-agent .part.titlebar .volt-usage-bar {
-	flex: 0 0 auto;
-	gap: 4px;
-	pointer-events: auto !important;
-	-webkit-app-region: no-drag !important;
-}
-
-.monaco-workbench.volt-layout-agent .part.titlebar .volt-usage-bar.views {
-	margin-left: 8px;
-}
-
-.monaco-workbench.volt-layout-agent .part.titlebar .volt-usage-bar.ranges {
-	margin: 0 8px 0 10px;
-}
-
-/* Sized for the 35px titlebar. The track is opaque: the same tint, mixed into the window's solid base
- * instead of over the see-through bar. */
-.part.titlebar .volt-usage-bar .volt-segmented {
-	padding: 2px;
-	background: color-mix(in srgb, var(--vscode-foreground) 5.5%, var(--volt-segmented-plate));
-}
-
-.part.titlebar .volt-usage-bar .volt-segmented-thumb {
-	top: 2px;
-	bottom: 2px;
-}
-
-.part.titlebar .volt-usage-bar .volt-segment {
-	height: 22px;
-	padding: 0 11px;
-	font-size: 12px;
-}
-
-.part.titlebar .volt-usage-bar .volt-usage-refresh {
-	width: 26px;
-	height: 26px;
-}
-
-.part.titlebar .volt-usage-bar .volt-usage-refresh .codicon {
-	font-size: 14px;
-}
-
-.part.titlebar .volt-usage-bar .volt-usage-refresh .volt-usage-spinner {
-	width: 14px;
-	height: 14px;
-}
-
-/* The range switch grows in from nothing when Cost or Tokens shows it, so the view switch beside it
- * slides over rather than jumps, and shrinks away on Limits, giving the refresh button the corner. */
-.part.titlebar .volt-usage-bar .volt-segmented.range {
-	interpolate-size: allow-keywords;
-	width: auto;
-	overflow: clip;
-	overflow-clip-margin: 4px;
-	transition:
-		width 340ms var(--volt-usage-ease, cubic-bezier(0.22, 1, 0.36, 1)),
-		opacity 220ms ease,
-		transform 340ms var(--volt-usage-ease, cubic-bezier(0.22, 1, 0.36, 1)),
-		display 340ms allow-discrete;
-}
-
-.part.titlebar .volt-usage-bar .volt-segmented.range.hidden {
-	display: none;
-	width: 0;
-	transform: translateX(8px) scale(0.96);
-}
-
-@starting-style {
-	.part.titlebar .volt-usage-bar .volt-segmented.range:not(.hidden) {
-		width: 0;
-		opacity: 0;
-		transform: translateX(8px) scale(0.96);
-	}
-}
-
-/* Segmented control with a sliding thumb, like an AppKit segmented control */
 
 .volt-usage-refresh {
 	position: relative;
@@ -294,6 +117,19 @@
 
 /* Body. The scrollable wrapper is a flex column so the scrolled element gets a real height. */
 
+/* The old Usage tab: a flex column so the scroller gets a real height. */
+.volt-usage-editor {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+/* In Volt Settings the page sits under the settings title and takes the settings column's width. */
+.volt-settings .volt-usage-content {
+	max-width: none;
+	padding: 6px 0 28px;
+}
+
 .volt-usage-scroll {
 	flex: 1;
 	min-height: 0;
@@ -310,8 +146,7 @@
 .volt-usage-content {
 	max-width: 1180px;
 	margin: 0 auto;
-	/* Clears the floating controls bar (60px). */
-	padding: 82px 48px 72px;
+	padding: 22px 48px 72px;
 	box-sizing: border-box;
 }
 
@@ -361,20 +196,6 @@
 	margin-top: 40px;
 }
 
-/* The chart rises so its dot grid starts level with the first agent: the readout (72px, the chart's
- * top padding) and the plot's own top inset (14px, PAD_TOP in agentUsageChart.ts) sit above the
- * row, in the empty space beside the headline. */
-.volt-usage-chart-column {
-	min-width: 0;
-	display: flex;
-	flex-direction: column;
-	margin-top: -86px;
-}
-
-.volt-usage-chart-column .volt-usage-chart-plot {
-	min-height: 280px;
-}
-
 .volt-usage-head {
 	display: flex;
 	align-items: center;
@@ -394,113 +215,6 @@
 
 .volt-usage-head .spacer {
 	flex: 1;
-}
-
-/* Under the headline: the agent cards stacked in a narrow column, the chart beside them taking the
- * rest of the width and stretching to the cards' height. */
-
-.volt-usage-overview {
-	display: grid;
-	grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
-	align-items: stretch;
-	gap: 64px;
-	margin-top: 28px;
-}
-
-.volt-usage-providers {
-	display: flex;
-	flex-direction: column;
-	justify-content: space-between;
-	gap: 22px;
-}
-
-.volt-usage-provider {
-	flex: none;
-	min-width: 0;
-}
-
-.volt-usage-providers-empty {
-	color: var(--volt-usage-muted);
-}
-
-.volt-usage-provider.animate {
-	animation: volt-usage-rise 520ms var(--volt-usage-ease) both;
-	animation-delay: calc(var(--volt-usage-order) * 60ms);
-}
-
-@keyframes volt-usage-rise {
-	from { opacity: 0; transform: translateY(8px); }
-	to { opacity: 1; transform: none; }
-}
-
-.volt-usage-provider-top {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	min-width: 0;
-}
-
-.volt-usage-provider-top .volt-brand-icon {
-	flex: none;
-	display: inline-flex;
-}
-
-.volt-usage-provider-top .name {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	font-size: 13px;
-	font-weight: 600;
-	white-space: nowrap;
-}
-
-.volt-usage-provider-top .share {
-	margin-left: auto;
-	padding-left: 8px;
-	color: var(--volt-usage-muted);
-	font-size: 12px;
-	font-weight: 500;
-}
-
-.volt-usage-provider-value {
-	margin-top: 7px;
-	font-family: var(--volt-usage-display);
-	font-size: 19px;
-	line-height: 1.1;
-	font-weight: 650;
-	letter-spacing: -0.015em;
-}
-
-.volt-usage-provider-meter {
-	height: 3px;
-	margin-top: 10px;
-	border-radius: 2px;
-	overflow: hidden;
-	background: color-mix(in srgb, var(--volt-usage-tint) 15%, transparent);
-}
-
-.volt-usage-provider-meter > span {
-	display: block;
-	height: 100%;
-	border-radius: 2px;
-	background: var(--volt-usage-tint);
-	transform-origin: left center;
-}
-
-.volt-usage-provider.animate .volt-usage-provider-meter > span {
-	animation: volt-usage-grow 900ms var(--volt-usage-ease) both;
-	animation-delay: calc(120ms + var(--volt-usage-order) * 60ms);
-}
-
-@keyframes volt-usage-grow {
-	from { transform: scaleX(0); }
-	to { transform: scaleX(1); }
-}
-
-.volt-usage-provider-detail {
-	margin-top: 9px;
-	color: var(--volt-usage-muted);
-	font-size: 12px;
 }
 
 .volt-usage-note {
@@ -991,17 +705,15 @@
 	margin: 4px 0 0;
 }
 
-/* Placeholder: the real page drawn from sample data, faded, while usage loads. The loading line stays readable. */
-
 /* Loading skeleton: the page laid out from sample data, every text run, icon, meter and the chart
  * drawn as flat, still bones. No shimmer. */
 
-.volt-usage-content.placeholder {
+.volt-usage-placeholder {
 	--volt-usage-bone: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
 	pointer-events: none;
 }
 
-.volt-usage-content.placeholder .volt-usage-bone {
+.volt-usage-placeholder .volt-usage-bone {
 	color: transparent;
 	background: var(--volt-usage-bone);
 	border-radius: 4px;
@@ -1009,134 +721,51 @@
 	box-decoration-break: clone;
 }
 
-.volt-usage-content.placeholder .codicon,
-.volt-usage-content.placeholder .volt-usage-dots canvas,
-.volt-usage-content.placeholder .volt-usage-provider-meter > span,
-.volt-usage-content.placeholder .volt-usage-chart-svg,
-.volt-usage-content.placeholder .volt-usage-readout,
-.volt-usage-content.placeholder .volt-segmented,
-.volt-usage-content.placeholder .volt-usage-pager-button,
-.volt-usage-content.placeholder .volt-brand-icon > *,
-.volt-usage-content.placeholder svg {
+.volt-usage-placeholder .codicon,
+.volt-usage-placeholder .volt-usage-dots canvas,
+.volt-usage-placeholder .volt-usage-chart-svg,
+.volt-usage-placeholder .volt-usage-readout,
+.volt-usage-placeholder .volt-segmented,
+.volt-usage-placeholder .volt-usage-pager-button,
+.volt-usage-placeholder .volt-brand-icon > *,
+.volt-usage-placeholder svg {
 	visibility: hidden;
 }
 
-.volt-usage-content.placeholder .volt-brand-icon {
+.volt-usage-placeholder .volt-brand-icon {
 	border-radius: 50%;
 	background: var(--volt-usage-bone);
 }
 
-.volt-usage-content.placeholder .volt-usage-provider-meter,
-.volt-usage-content.placeholder .volt-usage-dots,
-.volt-usage-content.placeholder .volt-usage-share-bar > .segment,
-.volt-usage-content.placeholder .volt-usage-share-legend .swatch {
+.volt-usage-placeholder .volt-usage-dots,
+.volt-usage-placeholder .volt-usage-share-bar > .segment,
+.volt-usage-placeholder .volt-usage-share-legend .swatch {
 	background: var(--volt-usage-bone) !important;
 	border-radius: 999px;
 }
 
-.volt-usage-content.placeholder .volt-usage-chart-plot {
+.volt-usage-placeholder .volt-usage-chart-plot {
 	border-radius: 8px;
 	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
 }
 
-.volt-usage-content.placeholder * {
+/* The runway's sample bars and marks turn to bones too, so no made-up spend or limit shows. */
+.volt-usage-placeholder .volt-usage-runway-past .part,
+.volt-usage-placeholder .volt-usage-runway-track .dry,
+.volt-usage-placeholder .volt-usage-runway-track .burn,
+.volt-usage-placeholder .volt-usage-runway-track .starved,
+.volt-usage-placeholder .volt-usage-runway-gauge .pace,
+.volt-usage-placeholder .volt-usage-calendar .cell {
+	background: var(--volt-usage-bone) !important;
+}
+
+.volt-usage-placeholder .volt-usage-runway-track .reset {
+	border-color: var(--volt-usage-bone);
+}
+
+.volt-usage-placeholder * {
 	animation: none !important;
 	transition: none !important;
-}
-
-/* Limits, laid out like Cursor's usage page: a filled panel per account, rows inside */
-
-.volt-usage-limits {
-	max-width: 1084px;
-	margin: 0 auto;
-}
-
-.volt-usage-limit-group + .volt-usage-limit-group {
-	margin-top: 30px;
-}
-
-.volt-usage-limit-group[data-provider="claude"] { --volt-usage-tint: var(--volt-usage-claude); }
-.volt-usage-limit-group[data-provider="codex"] { --volt-usage-tint: var(--volt-usage-codex); }
-.volt-usage-limit-group[data-provider="cursor"] { --volt-usage-tint: var(--volt-usage-cursor); }
-
-.volt-usage-limit-title {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	margin: 0 0 10px 2px;
-}
-
-.volt-usage-limit-title .volt-brand-icon {
-	flex: none;
-	display: inline-flex;
-}
-
-.volt-usage-limit-title .name {
-	font-size: 14px;
-	font-weight: 600;
-}
-
-.volt-usage-limit-title .plan {
-	padding: 1px 8px;
-	border-radius: 999px;
-	background: color-mix(in srgb, var(--volt-usage-tint) 15%, transparent);
-	color: color-mix(in srgb, var(--volt-usage-tint) 72%, var(--vscode-foreground));
-	font-size: 10.5px;
-	font-weight: 600;
-	letter-spacing: 0.02em;
-}
-
-.volt-usage-limit-title .stale {
-	color: var(--volt-usage-muted);
-	font-size: 12px;
-}
-
-.volt-usage-limit-panel {
-	display: flex;
-	flex-direction: column;
-	gap: 26px;
-	padding: 20px 22px;
-	border-radius: 14px;
-	background: var(--volt-usage-panel);
-}
-
-.volt-usage-limit-top {
-	display: flex;
-	align-items: baseline;
-	justify-content: space-between;
-	gap: 16px;
-	margin-bottom: 11px;
-}
-
-.volt-usage-limit-top .name {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: 14px;
-}
-
-.volt-usage-limit-top .label {
-	font-weight: 500;
-}
-
-.volt-usage-limit-top .scope {
-	color: var(--volt-usage-muted);
-}
-
-.volt-usage-limit-top .used {
-	flex: none;
-	font-size: 14px;
-	font-weight: 500;
-	font-variant-numeric: tabular-nums;
-}
-
-.volt-usage-limit.high .volt-usage-limit-top .used {
-	color: var(--vscode-editorWarning-foreground);
-}
-
-.volt-usage-limit.full .volt-usage-limit-top .used {
-	color: var(--vscode-errorForeground);
 }
 
 /* Dot-matrix meter; the canvas draws in this color. */
@@ -1150,62 +779,12 @@
 	display: block;
 }
 
-.volt-usage-limit-meta {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 6px 18px;
-	margin-top: 11px;
-	color: var(--volt-usage-muted);
-	font-size: 12.5px;
-}
-
-.volt-usage-limit-meta:empty {
-	display: none;
-}
-
-.volt-usage-limit-meta .part {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-}
-
-.volt-usage-limit-meta .pace.warn {
-	color: var(--vscode-editorWarning-foreground);
-}
-
-.volt-usage-limit-meta .pace.full {
-	color: var(--vscode-errorForeground);
-}
-
-.volt-usage-limit-note {
-	margin-top: 8px;
-	color: var(--volt-usage-muted);
-	font-size: 12.5px;
-	line-height: 1.45;
-}
-
-.volt-usage-limit.error {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	color: var(--volt-usage-muted);
-}
-
-.volt-usage-limit-credit {
-	display: inline-flex;
-	align-items: center;
-	gap: 7px;
-	color: var(--volt-usage-muted);
-	font-size: 12.5px;
-}
-
 /* Part-to-whole bars: cost by type and speed, tokens by type. One alone takes the full row. */
 
 .volt-usage-shares {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-	gap: 14px;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
 }
 
 /* Each split sits in a plain card, a lighter take on the Breakdown table's fill. */
@@ -1315,13 +894,11 @@
 
 /* The page behind an open dialog goes slightly soft. A plain filter on the page, not
  * backdrop-filter on the overlay (volt-transparent-window skill, rule 1). */
-.volt-usage > .volt-usage-scroll,
-.volt-usage > .volt-usage-header {
+.volt-usage-content {
 	transition: filter 160ms ease;
 }
 
-.volt-usage.dialog-open > .volt-usage-scroll,
-.volt-usage.dialog-open > .volt-usage-header {
+.dialog-open .volt-usage-content {
 	filter: blur(0.4px);
 }
 
@@ -1526,23 +1103,842 @@
 	justify-content: center;
 }
 
+/* Stats row: what the range cost (the range is the phrase above the number), the next reset and the
+ * limit closest to running dry, refresh at the far end. No tabs, no filter bar. */
+
+.volt-usage-stats {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 18px 44px;
+	margin-bottom: 22px;
+}
+
+.volt-usage-stat .label {
+	display: flex;
+	white-space: nowrap;
+	align-items: center;
+	gap: 4px;
+	color: var(--volt-usage-faint);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+	margin-bottom: 8px;
+}
+
+.volt-usage-stat.spent .volt-usage-headline {
+	font-size: 40px;
+}
+
+.volt-usage-stat.spent .volt-usage-subline {
+	margin-top: 8px;
+	white-space: nowrap;
+}
+
+/* The range reads as part of the label and opens a menu. */
+.volt-usage-range {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	height: 20px;
+	padding: 0 4px 0 5px;
+	margin: -2px 0;
+	border: none;
+	border-radius: 5px;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	color: var(--vscode-foreground);
+	font: inherit;
+	letter-spacing: inherit;
+	text-transform: inherit;
+	cursor: pointer;
+}
+
+.volt-usage-range:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.volt-usage-range .codicon {
+	font-size: 12px;
+}
+
+/* The two limit callouts stack beside the number, label then value on one line, so the row never wraps. */
+.volt-usage-stat-group {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding-bottom: 30px;
+}
+
+.volt-usage-stat-group .volt-usage-stat {
+	display: grid;
+	grid-template-columns: 116px auto;
+	align-items: center;
+}
+
+.volt-usage-stat-group .volt-usage-stat .label {
+	margin-bottom: 0;
+}
+
+.volt-usage-stat .value {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 15px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.volt-usage-stat .value .muted {
+	color: var(--volt-usage-muted);
+	font-weight: 500;
+}
+
+.volt-usage-stat .value.warn,
+.volt-usage-stat .value.warn .muted {
+	color: var(--vscode-charts-yellow, #e8b04b);
+}
+
+.volt-usage-stat .value.full,
+.volt-usage-stat .value.full .muted {
+	color: var(--vscode-errorForeground, #e5645a);
+}
+
+.volt-usage-stat .value.ok {
+	color: var(--vscode-charts-green, #6fbf8b);
+}
+
+.volt-usage-updated {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 14px;
+	color: var(--volt-usage-faint);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+/* The runway: one axis, spend left of NOW, each limit right of it. Rows share one grid so the NOW
+ * rule runs straight down through every lane. */
+
+.volt-usage-runway {
+	/* Share of the plot that is the past; the rest is the next week. */
+	--volt-usage-now: 56%;
+	--volt-usage-name: 220px;
+	--volt-usage-red: var(--vscode-errorForeground, #e5645a);
+	--volt-usage-yellow: var(--vscode-charts-yellow, #e8b04b);
+	--volt-usage-volt: #f5d547;
+	padding: 18px 20px 6px;
+	border-radius: 12px;
+	background: var(--volt-usage-panel);
+}
+
+.vs .volt-usage-runway,
+.hc-light .volt-usage-runway {
+	--volt-usage-volt: #c99a00;
+}
+
+.volt-usage-runway-row {
+	display: grid;
+	grid-template-columns: var(--volt-usage-name) minmax(0, 1fr);
+	align-items: center;
+}
+
+.volt-usage-runway-row.lane {
+	height: 50px;
+	border-top: 1px solid var(--volt-usage-line);
+}
+
+.volt-usage-runway-row.head {
+	align-items: stretch;
+	padding-bottom: 12px;
+}
+
+.volt-usage-runway-legend {
+	padding: 4px 20px 0 0;
+}
+
+.volt-usage-runway-legend .title {
+	display: flex;
+	gap: 6px;
+	color: var(--volt-usage-faint);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+}
+
+.volt-usage-runway-legend .title .now {
+	color: var(--volt-usage-volt);
+}
+
+.volt-usage-runway-legend .hint {
+	margin-top: 8px;
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+.volt-usage-runway-legend .agents {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 12px;
+	margin-top: 12px;
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+}
+
+.volt-usage-runway-legend .agent {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-usage-runway-legend .swatch {
+	width: 8px;
+	height: 8px;
+	border-radius: 2px;
+}
+
+.volt-usage-runway-plot {
+	position: relative;
+	height: 176px;
+}
+
+/* Spend: one stacked column per day (or hour), bottom-aligned, over the left part of the plot. */
+.volt-usage-runway-past {
+	position: absolute;
+	left: 0;
+	top: 18px;
+	bottom: 22px;
+	width: var(--volt-usage-now);
+	display: flex;
+	align-items: stretch;
+	gap: 2px;
+	padding-right: 4px;
+	box-sizing: border-box;
+}
+
+.volt-usage-runway-past .col {
+	flex: 1;
+	min-width: 1px;
+	display: flex;
+	flex-direction: column-reverse;
+	gap: 1px;
+	border-radius: 2px;
+}
+
+.volt-usage-runway-past .col:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.volt-usage-runway-past .col.empty::after {
+	content: '';
+	height: 2px;
+	border-radius: 1px;
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.volt-usage-runway-past .part {
+	display: block;
+	min-height: 2px;
+	border-radius: 2px;
+	opacity: 0.88;
+}
+
+.volt-usage-runway-past .col.animate .part {
+	transform-origin: bottom;
+	animation: volt-usage-bar-rise 520ms var(--volt-usage-ease) both;
+	animation-delay: calc(var(--volt-usage-i) * 8ms);
+}
+
+@keyframes volt-usage-bar-rise {
+	from { transform: scaleY(0); }
+	to { transform: none; }
+}
+
+/* The next week, lit faintly from the NOW line. */
+.volt-usage-runway-future {
+	position: absolute;
+	left: var(--volt-usage-now);
+	right: 0;
+	top: 18px;
+	bottom: 22px;
+	background: linear-gradient(to right, color-mix(in srgb, var(--volt-usage-volt) 7%, transparent), transparent 70%);
+}
+
+.volt-usage-runway-future .tick {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: calc(var(--volt-usage-f) * 100%);
+	width: 1px;
+	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.volt-usage-runway-axis {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 14px;
+	font-family: var(--monaco-monospace-font, monospace);
+	font-size: 10px;
+	color: var(--volt-usage-faint);
+}
+
+.volt-usage-runway-axis span {
+	position: absolute;
+	transform: translateX(-50%);
+	white-space: nowrap;
+}
+
+/* The hovered bar's time, on an opaque chip that covers the labels under it. */
+.volt-usage-runway-axis .cursor {
+	top: -3px;
+	padding: 2px 9px;
+	border-radius: 999px;
+	background: var(--vscode-foreground);
+	color: var(--volt-usage-plate);
+	font-weight: 600;
+	line-height: 16px;
+	opacity: 0;
+	transition: opacity 120ms ease, left 140ms var(--volt-usage-ease);
+	pointer-events: none;
+}
+
+.volt-usage-runway-axis.hovering .cursor {
+	opacity: 1;
+}
+
+.volt-usage-runway-axis .future {
+	left: calc(var(--volt-usage-now) + (100% - var(--volt-usage-now)) * var(--volt-usage-f));
+}
+
+.volt-usage-runway-now {
+	position: absolute;
+	left: var(--volt-usage-now);
+	top: 0;
+	bottom: -12px;
+	width: 1.5px;
+	background: var(--volt-usage-volt);
+}
+
+.volt-usage-runway-now span {
+	position: absolute;
+	left: 7px;
+	top: -2px;
+	color: var(--volt-usage-volt);
+	font-size: 10.5px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	white-space: nowrap;
+}
+
+/* A lane: the window's name, then a track where every mark sits on the shared axis. */
+.volt-usage-runway-name {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	min-width: 0;
+	padding-right: 16px;
+}
+
+.volt-usage-runway-name .text {
+	min-width: 0;
+}
+
+.volt-usage-runway-name .label {
+	font-size: 12.5px;
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-usage-runway-name .sub {
+	margin-top: 1px;
+	color: var(--volt-usage-faint);
+	font-size: 11px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-usage-runway-name .sub:empty {
+	display: none;
+}
+
+.volt-usage-runway-track {
+	position: relative;
+	height: 100%;
+}
+
+.volt-usage-runway-track .now-rule {
+	position: absolute;
+	left: var(--volt-usage-now);
+	top: -1px;
+	bottom: 0;
+	width: 1.5px;
+	background: color-mix(in srgb, var(--volt-usage-volt) 50%, transparent);
+}
+
+/* The dot meter ends just short of NOW; the white tick is where even use would put it. */
+.volt-usage-runway-gauge {
+	position: absolute;
+	right: calc(100% - var(--volt-usage-now) + 14px);
+	width: min(180px, calc(var(--volt-usage-now) - 28px));
+	top: 13px;
+}
+
+.volt-usage-runway-gauge .volt-usage-dots {
+	height: 9px;
+}
+
+.volt-usage-runway-gauge .pace {
+	position: absolute;
+	top: -3px;
+	width: 2px;
+	height: 15px;
+	margin-left: -1px;
+	border-radius: 1px;
+	background: var(--vscode-foreground);
+	opacity: 0.55;
+}
+
+.volt-usage-runway-gauge .used {
+	display: block;
+	margin-top: 5px;
+	text-align: right;
+	font-size: 11px;
+	color: var(--volt-usage-muted);
+}
+
+.volt-usage-runway-gauge .used.warn {
+	color: var(--volt-usage-yellow);
+}
+
+.volt-usage-runway-gauge .used.full {
+	color: var(--volt-usage-red);
+}
+
+.volt-usage-runway-row.full .volt-usage-dots {
+	color: var(--volt-usage-red);
+}
+
+/* The burn: dashed in the agent's color from NOW to where the window runs dry (or resets). */
+.volt-usage-runway-track .burn {
+	position: absolute;
+	left: var(--volt-usage-now);
+	width: calc((100% - var(--volt-usage-now)) * var(--volt-usage-f));
+	top: 16px;
+	height: 2px;
+	background: repeating-linear-gradient(90deg, var(--volt-usage-tint) 0 4px, transparent 4px 7px);
+	opacity: 0.75;
+}
+
+.volt-usage-runway-track .burn.full {
+	background: color-mix(in srgb, var(--volt-usage-red) 40%, transparent);
+	opacity: 1;
+}
+
+.volt-usage-runway-track .dry {
+	position: absolute;
+	left: calc(var(--volt-usage-now) + (100% - var(--volt-usage-now)) * var(--volt-usage-f));
+	top: 10px;
+	width: 10px;
+	height: 14px;
+	margin-left: -5px;
+	border-radius: 2px;
+	background: var(--volt-usage-red);
+}
+
+.volt-usage-runway-track .dry-label,
+.volt-usage-runway-track .blocked {
+	position: absolute;
+	top: 28px;
+	color: var(--volt-usage-red);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.volt-usage-runway-track .dry-label {
+	left: calc(var(--volt-usage-now) + (100% - var(--volt-usage-now)) * var(--volt-usage-f));
+	transform: translateX(-50%);
+}
+
+.volt-usage-runway-track .blocked {
+	left: calc(var(--volt-usage-now) + 10px);
+}
+
+/* Between running dry and the reset, the window is empty. */
+.volt-usage-runway-track .starved {
+	position: absolute;
+	left: calc(var(--volt-usage-now) + (100% - var(--volt-usage-now)) * var(--volt-usage-from));
+	width: calc((100% - var(--volt-usage-now)) * (var(--volt-usage-f) - var(--volt-usage-from)));
+	top: 16px;
+	height: 2px;
+	background: color-mix(in srgb, var(--volt-usage-red) 28%, transparent);
+}
+
+.volt-usage-runway-track .reset {
+	position: absolute;
+	left: calc(var(--volt-usage-now) + (100% - var(--volt-usage-now)) * var(--volt-usage-f));
+	top: 10px;
+	width: 10px;
+	height: 10px;
+	margin-left: -7px;
+	border: 2px solid var(--volt-usage-tint);
+	border-radius: 50%;
+	background: var(--volt-usage-plate);
+}
+
+.volt-usage-runway-track .reset-label {
+	position: absolute;
+	left: calc(var(--volt-usage-now) + (100% - var(--volt-usage-now)) * var(--volt-usage-f) + 12px);
+	top: 9px;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--volt-usage-muted);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.volt-usage-runway-track .reset-label.before {
+	left: auto;
+	right: calc(100% - (var(--volt-usage-now) + (100% - var(--volt-usage-now)) * var(--volt-usage-f)) + 12px);
+}
+
+.volt-usage-runway-track .reset-label.edge {
+	left: auto;
+	right: 0;
+}
+
+.volt-usage-runway-track .reset-label .codicon {
+	font-size: 11px;
+}
+
+.volt-usage-runway-message {
+	position: absolute;
+	left: calc(var(--volt-usage-now) + 12px);
+	top: 50%;
+	transform: translateY(-50%);
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.volt-usage-runway-row.lane.empty .volt-usage-runway-message {
+	position: static;
+	transform: none;
+}
+
+/* Under the runway: the costliest models and what the money went on, side by side. */
+.volt-usage-split {
+	display: grid;
+	grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+	gap: 16px;
+	margin-top: 16px;
+}
+
+.volt-usage-card {
+	min-width: 0;
+	padding: 16px 18px;
+	border-radius: 12px;
+	background: var(--volt-usage-panel);
+}
+
+.volt-usage-card-head .title {
+	display: block;
+	margin-bottom: 10px;
+	color: var(--volt-usage-faint);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+}
+
+.volt-usage-card .volt-usage-share {
+	padding: 0;
+	background: none;
+}
+
+.volt-usage-top-model {
+	display: grid;
+	grid-template-columns: 14px minmax(0, 190px) minmax(0, 1fr) 52px 70px;
+	align-items: center;
+	gap: 10px;
+	height: 30px;
+	padding: 0 6px;
+	margin: 0 -6px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.volt-usage-top-model:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.volt-usage-top-model:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-usage-top-model .name {
+	color: var(--vscode-foreground);
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-usage-top-model .meter .volt-usage-dots {
+	height: 7px;
+	color: inherit;
+}
+
+.volt-usage-top-model .tokens,
+.volt-usage-top-model .cost {
+	text-align: right;
+	font-size: 12px;
+	color: var(--volt-usage-muted);
+}
+
+.volt-usage-top-model .cost {
+	color: var(--vscode-foreground);
+}
+
+.volt-usage-saved {
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+}
+
+.volt-usage-saved b {
+	margin: 0 4px;
+	color: var(--vscode-charts-green, #6fbf8b);
+	font-weight: 600;
+}
+
+/* Activity: GitHub's contribution graph. One square per day, weeks as columns, four greens by
+ * quartile, Less/More underneath; streaks and peaks beside it. */
+
+.volt-usage-calendar {
+	--volt-usage-cell: 18px;
+	--volt-usage-gap: 4px;
+	/* GitHub's dark contribution greens. */
+	--volt-usage-l0: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	--volt-usage-l1: #0e4429;
+	--volt-usage-l2: #006d32;
+	--volt-usage-l3: #26a641;
+	--volt-usage-l4: #39d353;
+	--volt-usage-cell-edge: rgba(255, 255, 255, 0.05);
+	padding: 18px 20px 14px;
+	border-radius: 12px;
+	background: var(--volt-usage-panel);
+}
+
+.vs .volt-usage-calendar,
+.hc-light .volt-usage-calendar {
+	--volt-usage-l0: #ebedf0;
+	--volt-usage-l1: #9be9a8;
+	--volt-usage-l2: #40c463;
+	--volt-usage-l3: #30a14e;
+	--volt-usage-l4: #216e39;
+	--volt-usage-cell-edge: rgba(27, 31, 35, 0.06);
+}
+
+.volt-usage-calendar-head {
+	display: flex;
+	align-items: baseline;
+	gap: 12px;
+	margin-bottom: 16px;
+}
+
+.volt-usage-calendar-head .title {
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.volt-usage-calendar-head .total {
+	color: var(--volt-usage-muted);
+	font-size: 12.5px;
+}
+
+.volt-usage-calendar-body {
+	display: flex;
+	align-items: flex-start;
+	gap: 40px;
+}
+
+.volt-usage-calendar-graph {
+	flex: none;
+	display: grid;
+	grid-template-columns: auto auto;
+	grid-template-rows: auto auto;
+	column-gap: 8px;
+	row-gap: 6px;
+}
+
+.volt-usage-calendar-graph .months {
+	grid-column: 2;
+	display: grid;
+	grid-template-columns: repeat(var(--volt-usage-weeks), var(--volt-usage-cell));
+	column-gap: var(--volt-usage-gap);
+	height: 15px;
+	color: var(--volt-usage-muted);
+	font-size: 11px;
+}
+
+.volt-usage-calendar-graph .months span {
+	white-space: nowrap;
+}
+
+.volt-usage-calendar-graph .weekdays {
+	grid-column: 1;
+	grid-row: 2;
+	display: grid;
+	grid-template-rows: repeat(7, var(--volt-usage-cell));
+	row-gap: var(--volt-usage-gap);
+	color: var(--volt-usage-muted);
+	font-size: 11px;
+	line-height: var(--volt-usage-cell);
+}
+
+.volt-usage-calendar-graph .cells {
+	grid-column: 2;
+	grid-row: 2;
+	display: grid;
+	grid-template-columns: repeat(var(--volt-usage-weeks), var(--volt-usage-cell));
+	grid-template-rows: repeat(7, var(--volt-usage-cell));
+	gap: var(--volt-usage-gap);
+}
+
+.volt-usage-calendar .cell {
+	display: block;
+	width: var(--volt-usage-cell);
+	height: var(--volt-usage-cell);
+	border-radius: 3px;
+	background: var(--volt-usage-l0);
+	box-shadow: inset 0 0 0 1px var(--volt-usage-cell-edge);
+}
+
+.volt-usage-calendar .cell.outside {
+	visibility: hidden;
+}
+
+.volt-usage-calendar .cell[data-level="1"] { background: var(--volt-usage-l1); }
+.volt-usage-calendar .cell[data-level="2"] { background: var(--volt-usage-l2); }
+.volt-usage-calendar .cell[data-level="3"] { background: var(--volt-usage-l3); }
+.volt-usage-calendar .cell[data-level="4"] { background: var(--volt-usage-l4); }
+
+.volt-usage-calendar-graph .cell:hover {
+	box-shadow: inset 0 0 0 1px var(--vscode-foreground);
+}
+
+/* Fills in a column at a time, left to right, the first time the page shows. */
+.volt-usage-calendar-graph .cell.animate {
+	animation: volt-usage-cell-in 360ms var(--volt-usage-ease) both;
+	animation-delay: calc(var(--volt-usage-col) * 22ms);
+}
+
+@keyframes volt-usage-cell-in {
+	from { opacity: 0; transform: scale(0.6); }
+	to { opacity: 1; transform: none; }
+}
+
+.volt-usage-calendar-stats {
+	flex: 1;
+	min-width: 0;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 20px 28px;
+	padding-top: 21px;
+}
+
+.volt-usage-calendar-stats .label {
+	color: var(--volt-usage-faint);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+}
+
+.volt-usage-calendar-stats .value {
+	margin-top: 5px;
+	font-size: 18px;
+	font-weight: 650;
+	white-space: nowrap;
+}
+
+.volt-usage-calendar-stats .detail {
+	margin-top: 2px;
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+}
+
+.volt-usage-calendar-foot {
+	display: flex;
+	align-items: center;
+	margin-top: 14px;
+	color: var(--volt-usage-muted);
+	font-size: 11.5px;
+}
+
+.volt-usage-calendar-foot .note {
+	flex: 1;
+}
+
+.volt-usage-calendar-foot .legend {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+}
+
+.volt-usage-calendar-foot .legend > span:first-child {
+	margin-right: 4px;
+}
+
+.volt-usage-calendar-foot .legend > span:last-child {
+	margin-left: 4px;
+}
+
+.volt-usage-calendar-foot .legend .cell {
+	width: 11px;
+	height: 11px;
+	border-radius: 2px;
+}
+
 @container (max-width: 900px) {
+	.volt-usage-calendar-body {
+		flex-direction: column;
+		gap: 18px;
+	}
+	.volt-usage-calendar-stats {
+		width: 100%;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		padding-top: 0;
+	}
+	.volt-usage-stats {
+		flex-wrap: wrap;
+		gap: 18px 32px;
+	}
+	.volt-usage-stat-group {
+		padding-bottom: 0;
+	}
+	/* Narrow (Volt Settings): the week ahead gets more room so reset times fit beside their rings. */
+	.volt-usage-runway {
+		--volt-usage-now: 46%;
+		--volt-usage-name: 150px;
+	}
+	.volt-usage-split {
+		grid-template-columns: minmax(0, 1fr);
+	}
 	.volt-usage-chart-plot {
 		min-height: 260px;
-	}
-	.volt-usage-overview {
-		grid-template-columns: minmax(0, 1fr);
-		gap: 26px;
-	}
-	/* Stacked under the agents, the chart keeps to its own row. */
-	.volt-usage-chart-column {
-		margin-top: 0;
-	}
-	/* No room beside the chart: the agents take the full width above it. */
-	.volt-usage-providers {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-		gap: 28px;
 	}
 	.volt-usage-totals {
 		grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1560,10 +1956,7 @@
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 	.volt-usage-content {
-		padding: 78px 22px 56px;
-	}
-	.volt-usage-header {
-		padding: 16px 22px 0;
+		padding: 18px 22px 56px;
 	}
 	.volt-usage-headline {
 		font-size: 38px;
@@ -1573,10 +1966,7 @@
 @media (prefers-reduced-motion: reduce) {
 	.volt-usage *,
 	.volt-usage *::before,
-	.volt-usage *::after,
-	.volt-usage-bar *,
-	.volt-usage-bar *::before,
-	.volt-usage-bar *::after {
+	.volt-usage *::after {
 		animation-duration: 1ms !important;
 		transition-duration: 1ms !important;
 	}

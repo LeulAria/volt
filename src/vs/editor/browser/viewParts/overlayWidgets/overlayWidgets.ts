@@ -7,6 +7,7 @@ import './overlayWidgets.css';
 import { FastDomNode, createFastDomNode } from '../../../../base/browser/fastDomNode.js';
 import { IOverlayWidget, IOverlayWidgetPosition, IOverlayWidgetPositionCoordinates, OverlayWidgetPositionPreference } from '../../editorBrowser.js';
 import { PartFingerprint, PartFingerprints, ViewPart } from '../../view/viewPart.js';
+import { FixedContainingBlock } from '../../view/fixedContainingBlock.js';
 import { RenderingContext, RestrictedRenderingContext } from '../../view/renderingContext.js';
 import { ViewContext } from '../../../common/viewModel/viewContext.js';
 import * as viewEvents from '../../../common/viewEvents.js';
@@ -37,6 +38,7 @@ export class ViewOverlayWidgets extends ViewPart {
 	private _viewDomNodeRect: dom.IDomNodePagePosition;
 	private readonly _domNode: FastDomNode<HTMLElement>;
 	public readonly overflowingOverlayWidgetsDomNode: FastDomNode<HTMLElement>;
+	private readonly _fixedContainingBlock: FixedContainingBlock;
 	private _verticalScrollbarWidth: number;
 	private _minimapWidth: number;
 	private _horizontalScrollbarHeight: number;
@@ -65,10 +67,12 @@ export class ViewOverlayWidgets extends ViewPart {
 		this.overflowingOverlayWidgetsDomNode = createFastDomNode(document.createElement('div'));
 		PartFingerprints.write(this.overflowingOverlayWidgetsDomNode, PartFingerprint.OverflowingOverlayWidgets);
 		this.overflowingOverlayWidgetsDomNode.setClassName('overflowingOverlayWidgets');
+		this._fixedContainingBlock = new FixedContainingBlock(this.overflowingOverlayWidgetsDomNode.domNode);
 	}
 
 	public override dispose(): void {
 		super.dispose();
+		this._fixedContainingBlock.dispose();
 		this._widgets = {};
 	}
 
@@ -214,8 +218,22 @@ export class ViewOverlayWidgets extends ViewPart {
 		}
 	}
 
+	/** Whether a widget is placed with fixed coordinates, which are counted from the box that holds fixed elements. */
+	private _hasFixedOverflowWidgets(): boolean {
+		if (!this._context.configuration.options.get(EditorOption.fixedOverflowWidgets)) {
+			return false;
+		}
+		return Object.keys(this._widgets).some(id => {
+			const widgetData = this._widgets[id];
+			return typeof widgetData.preference === 'object' && widgetData.preference !== null && this._widgetCanOverflow(widgetData.widget);
+		});
+	}
+
 	public prepareRender(ctx: RenderingContext): void {
-		this._viewDomNodeRect = dom.getDomNodePagePosition(this._viewDomNode.domNode);
+		const rect = dom.getDomNodePagePosition(this._viewDomNode.domNode);
+		// That box is the viewport, unless an ancestor (the agent window's tools area is `contain: paint`) took it over.
+		const box = this._hasFixedOverflowWidgets() ? this._fixedContainingBlock.measure() : undefined;
+		this._viewDomNodeRect = box ? { left: rect.left - box.left, top: rect.top - box.top, width: rect.width, height: rect.height } : rect;
 	}
 
 	public render(ctx: RestrictedRenderingContext): void {

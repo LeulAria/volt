@@ -9516,3 +9516,8 @@ pre.volt-agent-searchable {
 .volt-agent-model-stack > .volt-brand-icon + .volt-brand-icon {
 	margin-left: -4px;
 }
+
+/* A new empty window opens straight on the New Agent composer: no empty watermark first. */
+.monaco-workbench.volt-new-window-starting .part.editor .editor-group-watermark {
+	display: none;
+}

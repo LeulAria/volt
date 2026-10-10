@@ -407,12 +407,7 @@ export class AgentSidePanel extends ViewPane {
 		await this.openPage(AgentCustomizeEditorInput);
 	}
 
-	/** Opens the Usage tab (cost, tokens, limits) beside the agent sessions. */
-	async openUsage(): Promise<void> {
-		await this.openPage(AgentUsageEditorInput);
-	}
-
-	private async openPage(ctor: typeof AgentCustomizeEditorInput | typeof AgentUsageEditorInput): Promise<void> {
+	private async openPage(ctor: typeof AgentCustomizeEditorInput): Promise<void> {
 		if (this.isAgentLayout()) {
 			this.revealCenterEditors();
 			const input = this.instantiationService.createInstance(ctor);

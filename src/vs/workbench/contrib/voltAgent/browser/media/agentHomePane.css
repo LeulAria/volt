@@ -20,8 +20,8 @@
 	display: flex;
 }
 
-/* Pinned top nav: New Chat … New project. No fill of its own. The sidebar
- * surface shows through, with no plate and no dissolve into the list. */
+/* Pinned header bar: Search, then Filter, Open Workspace and New Chat. No fill of its own;
+ * the sidebar surface shows through, with no plate and no dissolve into the list. */
 .volt-agent-home-nav {
 	position: relative;
 	flex: none;
@@ -32,9 +32,19 @@
 	background-image: none !important;
 }
 
+.volt-agent-home-nav-bar {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 28px;
+	/* Keep the last icon off the sidebar edge, in line with the list's scrollbar gutter. */
+	padding-right: 8px;
+}
+
 .volt-agent-home-nav-row {
 	display: block;
-	width: 100%;
+	flex: 1;
+	min-width: 0;
 	height: 28px;
 	margin: 0;
 	/* Match list pad (7px) + hidden twistie gutter (8px) so icons line up with the body. */
@@ -53,12 +63,72 @@
 	outline: none !important;
 }
 
-.volt-agent-home-nav-row:hover {
-	background: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
+.volt-agent-home-nav-row > .volt-agent-home-row > .name {
+	opacity: 0.75;
 }
 
-.volt-agent-home-nav-row:focus-visible {
-	background: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
+.volt-agent-home-nav-row:hover > .volt-agent-home-row > .name,
+.volt-agent-home-nav-row:focus-visible > .volt-agent-home-row > .name {
+	opacity: 1;
+}
+
+.volt-agent-home-nav-action {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 24px;
+	height: 24px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	/* Full-strength glyphs: near-black on light themes, white on dark ones (below). */
+	color: #1f1f1f;
+	cursor: pointer;
+	outline: none !important;
+}
+
+.monaco-workbench.vs-dark .volt-agent-home-nav-action,
+.monaco-workbench.hc-black .volt-agent-home-nav-action {
+	color: #ffffff;
+}
+
+.volt-agent-home-nav-action:hover,
+.volt-agent-home-nav-action:focus-visible,
+.volt-agent-home-nav-action.active,
+.volt-agent-home-nav-action.open {
+	opacity: 1;
+	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+.volt-agent-home-nav-action.volt-agent-home-filter.active {
+	/* Light theme: dark blue when any home filter is non-default. */
+	color: var(--vscode-textLink-foreground, #005fb8);
+}
+
+.monaco-workbench.vs-dark .volt-agent-home-nav-action.volt-agent-home-filter.active,
+.monaco-workbench.hc-black .volt-agent-home-nav-action.volt-agent-home-filter.active {
+	/* Dark theme: light blue when any home filter is non-default. */
+	color: var(--vscode-textLink-foreground, #75beff);
+}
+
+.volt-agent-home-nav-action .volt-agent-svg-icon,
+.volt-agent-home-nav-action .volt-agent-svg-icon svg {
+	width: 16px;
+	height: 16px;
+	display: block;
+}
+
+/* 1px lines on screen, whatever viewBox each glyph is drawn in. */
+.volt-agent-home-nav-action .volt-agent-svg-icon svg path,
+.volt-agent-home-nav-action .volt-agent-svg-icon svg line,
+.volt-agent-home-nav-action .volt-agent-svg-icon svg circle,
+.volt-agent-home-nav-action .volt-agent-svg-icon svg rect,
+.volt-agent-home-nav-action .volt-agent-svg-icon svg polyline {
+	stroke-width: 1px;
+	vector-effect: non-scaling-stroke;
 }
 
 .volt-agent-home-tree::before,
@@ -78,68 +148,6 @@
 .volt-agent-home-tree .monaco-scrollable-element > .shadow.top {
 	display: none !important;
 	box-shadow: none !important;
-}
-
-.volt-agent-home-filter,
-.volt-agent-home-open-workspace {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	flex: none;
-	width: 20px;
-	height: 20px;
-	/* Pull the right-side control off the scrollbar track. */
-	margin-right: 6px;
-	padding: 0;
-	border: 0;
-	border-radius: 4px;
-	background: transparent;
-	color: inherit;
-	opacity: 1;
-	cursor: pointer;
-}
-
-/* Header filter, Open Workspace and + share the row's 8px gap plus this margin. Only the last keeps it. */
-.volt-agent-home-row > .volt-agent-home-filter:not(.hidden):has(+ .volt-agent-home-open-workspace:not(.hidden)),
-.volt-agent-home-row > .volt-agent-home-open-workspace:not(.hidden):has(+ .add:not(.hidden)) {
-	margin-right: 0;
-}
-
-.volt-agent-home-row > .volt-agent-home-filter:not(.hidden) + .volt-agent-home-open-workspace:not(.hidden) {
-	margin-left: -4px;
-}
-
-.volt-agent-home-filter.hidden,
-.volt-agent-home-open-workspace.hidden {
-	display: none;
-}
-
-.volt-agent-home-filter:hover,
-.volt-agent-home-filter.active,
-.volt-agent-home-open-workspace:hover,
-.volt-agent-home-open-workspace.open {
-	opacity: 1;
-	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
-}
-
-.volt-agent-home-filter.active {
-	/* Light theme: dark blue when any home filter is non-default. */
-	color: var(--vscode-textLink-foreground, #005fb8);
-}
-
-.monaco-workbench.vs-dark .volt-agent-home-filter.active,
-.monaco-workbench.hc-black .volt-agent-home-filter.active {
-	/* Dark theme: light blue when any home filter is non-default. */
-	color: var(--vscode-textLink-foreground, #75beff);
-}
-
-.volt-agent-home-filter .volt-agent-svg-icon,
-.volt-agent-home-filter .volt-agent-svg-icon svg,
-.volt-agent-home-open-workspace .volt-agent-svg-icon,
-.volt-agent-home-open-workspace .volt-agent-svg-icon svg {
-	width: 16px;
-	height: 16px;
-	display: block;
 }
 
 .volt-agent-home-tree {
@@ -200,8 +208,17 @@
 	background: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
 }
 
-.volt-agent-home-settings .codicon {
-	font-size: 16px;
+/* Footer icons sit a step under the 16px list glyphs; the 28px hit target stays.
+ * Scoped to the footer to outrank the workbench's `.monaco-workbench .codicon[class*=codicon-]`. */
+.monaco-workbench .volt-agent-home-footer .volt-agent-home-settings .codicon {
+	font-size: 14px;
+}
+
+.volt-agent-home-settings .volt-agent-svg-icon,
+.volt-agent-home-settings .volt-agent-svg-icon svg {
+	display: block;
+	width: 14px;
+	height: 14px;
 }
 
 .volt-agent-home-footer {
@@ -487,9 +504,7 @@
 }
 
 .monaco-list-row:hover .volt-agent-home-row.is-new > .keybinding:not(:empty),
-.monaco-list-row.focused .volt-agent-home-row.is-new > .keybinding:not(:empty),
-.volt-agent-home-nav-row:hover .volt-agent-home-row.is-new > .keybinding:not(:empty),
-.volt-agent-home-nav-row:focus-visible .volt-agent-home-row.is-new > .keybinding:not(:empty) {
+.monaco-list-row.focused .volt-agent-home-row.is-new > .keybinding:not(:empty) {
 	display: block;
 }
 
@@ -547,7 +562,8 @@
 	opacity: 0.7;
 }
 
-.volt-agent-home-row > .add {
+.volt-agent-home-row > .add,
+.volt-agent-home-row > .settings {
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -565,36 +581,43 @@
 	pointer-events: auto;
 }
 
-/* Group-header + next to the filter: a bit brighter, and a step closer than the row gap. */
+/* Group-header +: a bit brighter than the row actions. */
 .volt-agent-home-row.is-group > .add:not(.hidden) {
 	opacity: 1;
 }
 
-.volt-agent-home-row > .volt-agent-home-open-workspace:not(.hidden) + .add:not(.hidden) {
-	margin-left: -4px;
+/* Project Settings sits right before the +. */
+.volt-agent-home-row > .settings {
+	margin-right: 0;
 }
 
 /* One step under the default 16px codicon; hit target stays 20px. */
-.volt-agent-home-row > .add .codicon {
+.volt-agent-home-row > .add .codicon,
+.volt-agent-home-row > .settings .codicon {
 	font-size: 14px;
 }
 
-.volt-agent-home-row > .add.hidden {
+.volt-agent-home-row > .add.hidden,
+.volt-agent-home-row > .settings.hidden {
 	display: none;
 }
 
-/* Folder +: keep the slot so the label does not jump; show only on row hover. Group + stays visible. */
-.volt-agent-home-row.is-folder > .add:not(.hidden) {
+/* Folder + and gear: keep the slot so the label does not jump; show only on row hover. Group + stays visible. */
+.volt-agent-home-row.is-folder > .add:not(.hidden),
+.volt-agent-home-row.is-folder > .settings:not(.hidden) {
 	opacity: 0;
 }
 
-.monaco-list-row:hover .volt-agent-home-row.is-folder > .add:not(.hidden) {
+.monaco-list-row:hover .volt-agent-home-row.is-folder > .add:not(.hidden),
+.monaco-list-row:hover .volt-agent-home-row.is-folder > .settings:not(.hidden) {
 	opacity: 0.7;
 }
 
 .monaco-list-row:hover .volt-agent-home-row.is-folder > .add:not(.hidden):hover,
+.monaco-list-row:hover .volt-agent-home-row.is-folder > .settings:not(.hidden):hover,
 .monaco-list-row:hover .volt-agent-home-row.is-group > .add:not(.hidden):hover,
-.volt-agent-home-row > .add:not(.hidden):focus-visible {
+.volt-agent-home-row > .add:not(.hidden):focus-visible,
+.volt-agent-home-row > .settings:not(.hidden):focus-visible {
 	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	opacity: 1;
 }
@@ -1130,7 +1153,8 @@ html.volt-layout-agent-window body {
 
 .monaco-workbench.volt-layout-agent {
 	--volt-agent-window-bg-base: var(--vscode-sideBar-background, var(--vscode-titleBar-activeBackground, #141414));
-	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 90%, transparent);
+	/* 85% of the window shows; the desktop comes through the rest, like the sidebar. */
+	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 85%, transparent);
 	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000) 55%, transparent);
 	--volt-agent-chat-bg: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
 	--volt-agent-titlebar-height: 35px;
@@ -1153,6 +1177,11 @@ html.volt-layout-agent-window body {
 .monaco-workbench.volt-layout-agent .part.panel {
 	background: var(--volt-agent-window-bg) !important;
 	background-color: var(--volt-agent-window-bg) !important;
+}
+
+/* The chat sits on the window fill. Its own opaque fill on top would hide the translucency. */
+.monaco-workbench.volt-layout-agent .part.editor .volt-agent-editor {
+	background-color: transparent;
 }
 
 .monaco-workbench.volt-layout-agent .part.titlebar,
@@ -1434,7 +1463,7 @@ html.volt-layout-agent-window body {
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle {
 	position: absolute;
 	top: calc((var(--volt-agent-titlebar-height, 35px) - 20px) / 2);
-	left: 8px;
+	left: calc(8px + var(--volt-agent-logo-slot, 22px));
 	z-index: 20;
 	display: inline-flex;
 	align-items: center;
@@ -1454,7 +1483,45 @@ html.volt-layout-agent-window body {
 }
 
 .monaco-workbench.volt-layout-agent.mac:not(.web):not(.fullscreen) .part.auxiliarybar > .volt-primary-sidebar-toggle {
+	left: calc(78px + var(--volt-agent-logo-slot, 22px));
+}
+
+/* The app icon's bolt (brand/volt-icon.svg without its tile, transparent) before the sidebar toggle: in the sidebar while it is open, in the title bar once it is closed. */
+.volt-agent-brand-logo {
+	--volt-agent-brand-logo: url('data:image/png;base64,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');
+	display: none;
+}
+
+.monaco-workbench.volt-layout-agent:not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.auxiliarybar > .volt-agent-brand-logo {
+	position: absolute;
+	top: calc((var(--volt-agent-titlebar-height, 35px) - 20px) / 2);
+	left: 8px;
+	z-index: 20;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	background: var(--volt-agent-brand-logo) center / auto 14px no-repeat;
+	pointer-events: none;
+}
+
+.monaco-workbench.volt-layout-agent.mac:not(.web):not(.fullscreen):not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.auxiliarybar > .volt-agent-brand-logo {
 	left: 78px;
+}
+
+.monaco-workbench.volt-layout-agent.volt-primary-sidebar-toggle-in-titlebar .titlebar-left > .volt-agent-brand-logo.in-titlebar,
+.monaco-workbench.volt-layout-agent.noauxiliarybar .titlebar-left > .volt-agent-brand-logo.in-titlebar,
+.monaco-workbench.volt-layout-agent.volt-agent-left-collapsed .titlebar-left > .volt-agent-brand-logo.in-titlebar {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	width: 20px;
+	height: var(--volt-agent-titlebar-height, 35px);
+	margin-right: 2px;
+	background: var(--volt-agent-brand-logo) center / auto 14px no-repeat;
+	pointer-events: none;
 }
 
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle:hover {

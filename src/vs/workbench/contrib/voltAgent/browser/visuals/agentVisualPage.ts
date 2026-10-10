@@ -31,8 +31,8 @@ const BASE_CSS = `:root{
 --card-foreground:var(--vscode-foreground);
 --popover:var(--vscode-editorHoverWidget-background,var(--vscode-editorWidget-background));
 --popover-foreground:var(--vscode-editorHoverWidget-foreground,var(--vscode-foreground));
---secondary:var(--vscode-button-secondaryBackground);
---secondary-foreground:var(--vscode-button-secondaryForeground);
+--secondary:color-mix(in srgb,var(--vscode-foreground) 8%,transparent);
+--secondary-foreground:var(--vscode-foreground);
 --border:var(--vscode-widget-border,color-mix(in srgb,var(--vscode-foreground) 12%,transparent));
 --input:var(--vscode-input-background);
 --ring:var(--vscode-focusBorder);
@@ -64,6 +64,58 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
 a{color:var(--accent)}`;
 
 /**
+ * Plain elements, styled like the rest of Volt, so a page written as bare HTML (headings, a table,
+ * two buttons) looks finished. Every rule is inside :where(), which has no specificity, and this
+ * sheet comes first: any style the page sets itself wins.
+ */
+const ELEMENT_CSS = `
+:where(h1,h2,h3,h4,h5,h6){margin:0 0 .5em;color:var(--foreground);font-weight:600;line-height:1.25;letter-spacing:-.01em;text-wrap:balance}
+:where(h1){font-size:22px}:where(h2){font-size:18px}:where(h3){font-size:15px}:where(h4){font-size:13px}
+:where(h5,h6){font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-foreground)}
+:where(* + h1,* + h2,* + h3,* + h4){margin-top:1.25em}
+:where(p){margin:0 0 .75em;text-wrap:pretty}
+:where(small){color:var(--muted-foreground);font-size:12px}
+:where(strong,b){font-weight:600}
+:where(a){text-decoration:none}:where(a:hover){text-decoration:underline;text-underline-offset:2px}
+:where(ul,ol){margin:0 0 .75em;padding-left:1.4em}:where(li){margin:.2em 0}:where(li)::marker{color:var(--muted-foreground)}
+:where(hr){height:0;margin:16px 0;border:0;border-top:1px solid var(--border)}
+:where(img,svg,video,canvas){max-width:100%}
+:where(img,video){height:auto;border-radius:calc(var(--radius) - 2px)}
+:where(:not(pre)>code){padding:.1em .38em;border-radius:5px;background:var(--muted);color:var(--code-foreground);font-size:.88em}
+:where(pre){margin:0 0 .75em;padding:12px 14px;border-radius:var(--radius);background:var(--muted);overflow:auto;font-size:12.5px;line-height:1.55}
+:where(kbd){display:inline-block;min-width:1.4em;padding:0 .4em;border-radius:5px;border:1px solid var(--border);border-bottom-width:2px;font-size:.82em;line-height:1.5;text-align:center}
+:where(blockquote){margin:0 0 .75em;padding:10px 14px;border-left:3px solid var(--accent);border-radius:0 var(--radius) var(--radius) 0;background:var(--muted);color:var(--muted-foreground)}
+:where(blockquote)>:where(:last-child){margin-bottom:0}
+:where(mark){padding:0 .2em;border-radius:3px;background:color-mix(in srgb,var(--warning) 30%,transparent);color:inherit}
+:where(table){width:100%;margin:0 0 .75em;border-collapse:collapse;border-spacing:0;font-size:13px;font-variant-numeric:tabular-nums}
+:where(th,td){padding:8px 12px 8px 0;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+:where(th:last-child,td:last-child){padding-right:0}
+:where(th){padding-top:4px;color:var(--muted-foreground);font-size:12px;font-weight:500;white-space:nowrap}
+:where(tbody tr:last-child)>:where(td){border-bottom:0}
+:where(caption){padding-bottom:8px;color:var(--muted-foreground);font-size:12px;text-align:left}
+:where(details){margin:0 0 .75em;border:1px solid var(--border);border-radius:var(--radius)}
+:where(summary){padding:9px 12px;cursor:pointer;font-weight:500}
+:where(details[open]>summary){border-bottom:1px solid var(--border)}
+:where(details)>:where(:not(summary)){margin-left:12px;margin-right:12px}
+:where(details)>:where(:not(summary):first-of-type){margin-top:10px}
+:where(button,input[type=button],input[type=submit],input[type=reset]){min-height:30px;padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:color-mix(in srgb,var(--foreground) 6%,transparent);color:var(--foreground);font:inherit;font-size:13px;font-weight:500;line-height:18px;text-align:center;cursor:pointer;transition:background-color .12s,border-color .12s,transform .06s}
+:where(button,input[type=button],input[type=submit],input[type=reset]):where(:hover){background:color-mix(in srgb,var(--foreground) 11%,transparent)}
+:where(button,input[type=button],input[type=submit],input[type=reset]):where(:active){transform:scale(.98)}
+:where(button,input,select,textarea,summary,a):where(:focus-visible){outline:2px solid var(--ring);outline-offset:1px}
+:where(button:disabled,input:disabled,select:disabled,textarea:disabled){opacity:.5;cursor:default}
+:where(button.primary,button[data-variant=primary],input[type=submit]){border-color:transparent;background:var(--primary);color:var(--primary-foreground)}
+:where(button.primary,button[data-variant=primary],input[type=submit]):where(:hover){background:color-mix(in srgb,var(--primary) 88%,var(--foreground))}
+:where(input:not([type]),input[type=text],input[type=search],input[type=email],input[type=url],input[type=number],input[type=password],input[type=date],input[type=time],select,textarea){box-sizing:border-box;height:30px;padding:0 10px;border:1px solid var(--border);border-radius:7px;background:var(--input,transparent);color:var(--foreground);font:inherit;font-size:13px}
+:where(textarea){height:auto;min-height:72px;padding:8px 10px;line-height:1.5;resize:vertical}
+:where(input,textarea)::placeholder{color:var(--muted-foreground)}
+:where(input[type=checkbox],input[type=radio],input[type=range],progress,meter){accent-color:var(--accent)}
+:where(label){font-size:13px}
+:where(progress){height:6px}
+::selection{background:color-mix(in srgb,var(--accent) 35%,transparent)}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{border:3px solid transparent;border-radius:10px;background:color-mix(in srgb,var(--foreground) 22%,transparent) padding-box}::-webkit-scrollbar-track{background:transparent}
+`;
+
+/**
  * The bridge: `window.volt.open(href)` (and openFile / openSession) asks Volt to open a chat, a
  * file or a link; theme changes arrive as messages; `[data-volt-chart]` elements and
  * `<script type="application/volt-chart+json">` blocks render once the page has loaded.
@@ -75,7 +127,7 @@ function str(v){return typeof v==='string'?v:JSON.stringify(v);}
 var data,dataRead=false;function readData(){if(!dataRead){var el=document.getElementById('volt-data');if(el){dataRead=true;try{data=JSON.parse(el.textContent||'null');}catch(e){data=null;}}}return data===undefined?null:data;}
 window.volt={preview:preview,theme:'${kind}',get data(){return readData();},open:function(h){post({type:'volt-open',href:String(h)});},openFile:function(p,l){post({type:'volt-open',href:'volt://file/'+encodeURI(String(p))+(l?'#L'+l:'')});},openSession:function(id){post({type:'volt-open',href:'volt://session/'+encodeURIComponent(String(id))});},
 send:function(t){post({type:'volt-send',text:str(t)});},prompt:function(t){post({type:'volt-prompt',text:str(t)});},setContext:function(v){post({type:'volt-context',value:str(v)});},fullscreen:function(on){post({type:'volt-display',mode:on===false?'inline':'fullscreen'});}};
-window.addEventListener('message',function(e){var d=e.data;if(d&&d.type==='volt-theme'&&typeof d.css==='string'){var s=document.getElementById('volt-visual-theme');if(s){s.textContent=d.css;}if(d.kind){window.volt.theme=d.kind;}}});
+window.addEventListener('message',function(e){var d=e.data;if(d&&d.type==='volt-theme'&&typeof d.css==='string'){var s=document.getElementById('volt-visual-theme');if(s){s.textContent=d.css;}if(d.kind){window.volt.theme=d.kind;var c=document.getElementById('volt-visual-scheme');if(c){c.textContent=':root{color-scheme:'+d.kind+'}';}}}});
 function mount(){if(preview&&document.body&&!/vscode-(light|dark|high-contrast)/.test(document.body.className)){document.body.classList.add('vscode-${kind}');}if(window.VoltCharts){window.VoltCharts.mountAll(document,{animate:!preview,onOpen:window.volt.open});}}
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',mount);}else{mount();}})();`;
 }
@@ -151,7 +203,9 @@ export function buildVisualPage(source: string, options: IVisualPageOptions): st
 	const head = [
 		'<meta charset="utf-8">',
 		/<meta\s[^>]*name\s*=\s*["']?viewport/i.test(scan) ? '' : '<meta name="viewport" content="width=device-width, initial-scale=1">',
-		`<style id="volt-visual-base">${BASE_CSS}</style>`,
+		`<style id="volt-visual-base">${BASE_CSS}${ELEMENT_CSS}</style>`,
+		// Native controls, scrollbars and form fields follow the theme (light buttons on a dark page otherwise).
+		`<style id="volt-visual-scheme">:root{color-scheme:${options.kind}}</style>`,
 		`<style id="volt-visual-theme">${options.themeCss.replace(/<\//g, '<\\/')}</style>`,
 		`<script>${scriptBody(bootstrapScript(!!options.preview, options.kind))}</script>`,
 		`<script>${scriptBody(chartsScript())}</script>`,

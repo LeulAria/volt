@@ -13,6 +13,7 @@ import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js'
 import { DomScrollableElement } from '../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
+import { isMacintosh } from '../../../../base/common/platform.js';
 import { DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
 import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
@@ -24,6 +25,7 @@ import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
+import { AWAKE_LID_CLOSED_MODE_SETTING, AWAKE_WHILE_AGENTS_WORK_SETTING, IAwakeState, IVoltAwakeService, readAwakePrefs } from '../../../../platform/voltAwake/common/voltAwake.js';
 import { DisablementReason, IUpdateService, State as UpdateState, StateType } from '../../../../platform/update/common/update.js';
 import { VOLT_RELEASE_CHANNEL_SETTING } from '../../../../platform/update/common/voltUpdateFeed.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
@@ -32,7 +34,9 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../common/editor.js';
 import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
-import { IWorkbenchLayoutService } from '../../../services/layout/browser/layoutService.js';
+import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
+import { Orientation, Sash } from '../../../../base/browser/ui/sash/sash.js';
+import { getLayoutMode } from '../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { settingsSelectBackground, settingsSelectBorder, settingsSelectForeground, settingsSelectListBorder, settingsTextInputBackground, settingsTextInputBorder, settingsTextInputForeground } from '../../preferences/common/settingsEditorColorRegistry.js';
 import { ACCESS_MODE_OPTIONS, accessModeOption, VoltAccessMode } from '../../../services/voltRuntime/common/access/accessModes.js';
 import { IPermissionRule } from '../../../services/voltRuntime/common/access/accessTypes.js';
@@ -43,6 +47,7 @@ import { IWorkbenchThemeService, ThemeSettings } from '../../../services/themes/
 import { AGENT_DEFAULT_MODEL_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_PROMPT_HISTORY_SETTING } from '../../voltAgent/common/agentComposerSettings.js';
 import { AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING } from '../../voltAgent/common/agentWorkflowSettings.js';
 import { AGENT_HOME_AUTO_SETTLE_DAYS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING } from '../../voltAgent/common/agentHomeSettings.js';
+import '../../voltAgent/common/agentAwakeSettings.js';
 
 /** Settings on the Composer page whose rows redraw when they change. */
 /** Settings on the Appearance page whose controls redraw when they change. */
@@ -56,32 +61,19 @@ import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js'
 import { AppearancePage } from './appearancePage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
+import { createSettingsIcon } from './settingsIcons.js';
+import { AgentUsagePage } from '../../voltAgent/browser/usage/agentUsagePage.js';
 
-type SettingsSection = 'general' | 'appearance' | 'providers' | 'modes' | 'composer' | 'tab' | 'security' | 'connected' | 'projects' | 'storage';
+type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'security' | 'connected' | 'projects' | 'storage';
 
 /** The Modes nav glyph (a small robot face), drawn in currentColor like the codicons beside it. */
-function createModesIcon(): SVGElement {
-	const ns = 'http://www.w3.org/2000/svg';
-	const svg = document.createElementNS(ns, 'svg');
-	svg.setAttribute('class', 'volt-settings-svg-icon');
-	svg.setAttribute('viewBox', '0 0 24 24');
-	svg.setAttribute('width', '16');
-	svg.setAttribute('height', '16');
-	svg.setAttribute('fill', 'none');
-	svg.setAttribute('aria-hidden', 'true');
-	const path = document.createElementNS(ns, 'path');
-	path.setAttribute('fill', 'currentColor');
-	path.setAttribute('d', 'M6.00049 21C3.75049 21 2.00049 19.25 2.00049 17V8.5C2.00049 6.25 3.75049 4.5 6.00049 4.5H11.2505V2C11.2505 1.575 11.5755 1.25 12.0005 1.25C12.4255 1.25 12.7505 1.575 12.7505 2V4.5H18.0005C20.2505 4.5 22.0005 6.25 22.0005 8.5V17C22.0005 19.25 20.2505 21 18.0005 21H6.00049ZM18.0005 19.65C19.4505 19.65 20.6005 18.475 20.6005 17V8.5C20.6005 7.025 19.4505 5.85 18.0005 5.85H6.00049C4.55049 5.85 3.40049 7.025 3.40049 8.5V17C3.40049 18.475 4.55049 19.65 6.00049 19.65H18.0005ZM7.67549 10H9.17549V13.825H7.67549V10ZM14.8255 10H16.3255V13.825H14.8255V10Z');
-	svg.appendChild(path);
-	return svg;
-}
-
-/** The nav, in groups separated by a gap. `svg` replaces the codicon where Volt has its own glyph. */
-const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; svg?: () => SVGElement; group: number }[] = [
+/** The nav, in groups separated by a gap. Icons come from settingsIcons.ts; the codicon is the fallback. */
+const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: number }[] = [
 	{ id: 'general', label: localize('voltSettings.general', "General"), icon: Codicon.settingsGear, group: 0 },
 	{ id: 'appearance', label: localize('voltSettings.appearance', "Appearance"), icon: Codicon.symbolColor, group: 0 },
+	{ id: 'usage', label: localize('voltSettings.usage', "Usage"), icon: Codicon.graph, group: 0 },
 	{ id: 'providers', label: localize('voltSettings.providers', "Providers & Models"), icon: Codicon.plug, group: 1 },
-	{ id: 'modes', label: localize('voltSettings.modes', "Modes"), icon: Codicon.sparkle, svg: createModesIcon, group: 1 },
+	{ id: 'modes', label: localize('voltSettings.modes', "Modes"), icon: Codicon.sparkle, group: 1 },
 	{ id: 'composer', label: localize('voltSettings.composer', "Composer"), icon: Codicon.commentDiscussion, group: 1 },
 	{ id: 'tab', label: localize('voltSettings.tab', "Tab & Prediction"), icon: Codicon.keyboard, group: 1 },
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield, group: 2 },
@@ -89,6 +81,10 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; svg?: () 
 	{ id: 'projects', label: localize('voltSettings.projects', "Projects"), icon: Codicon.repo, group: 2 },
 	{ id: 'storage', label: localize('voltSettings.storage', "Storage"), icon: Codicon.database, group: 2 },
 ];
+
+/** Bounds for dragging the nav's edge. */
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 480;
 
 /** Pages that were folded into others; links to them still land somewhere sensible. */
 const SECTION_ALIASES: Record<string, SettingsSection> = {
@@ -150,8 +146,17 @@ export class VoltSettingsEditor extends EditorPane {
 	private providers!: ProvidersPage;
 	private appearance!: AppearancePage;
 	private connectedAgents!: ConnectedAgentsPage;
+	/** Made on first visit and kept, so its data and range survive leaving the page. */
+	private usage: AgentUsagePage | undefined;
+	private sidebar!: HTMLElement;
+	private sidebarSash!: Sash;
+	/** The nav's width when there is no agent sidebar to follow (IDE layout). */
+	private ownSidebarWidth: number | undefined;
 	private readonly renderStore = this._register(new DisposableStore());
 	private readonly scrollSync = this._register(new MutableDisposable());
+	/** Lid-Closed Mode lives in the main process; absent in the web build. */
+	private readonly awake: IVoltAwakeService | undefined;
+	private awakeState: IAwakeState | undefined;
 
 	constructor(
 		group: IEditorGroup,
@@ -183,10 +188,29 @@ export class VoltSettingsEditor extends EditorPane {
 		}));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if ((this.section === 'appearance' && APPEARANCE_PAGE_SETTINGS.some(key => e.affectsConfiguration(key)))
-				|| (this.section === 'general' && e.affectsConfiguration(AGENT_DEFAULT_MODEL_SETTING))) {
+				|| (this.section === 'general' && (e.affectsConfiguration(AGENT_DEFAULT_MODEL_SETTING) || e.affectsConfiguration('volt.awake')))) {
 				this.renderContent();
 			}
 		}));
+		this.awake = this.instantiationService.invokeFunction(accessor => {
+			try {
+				return accessor.get(IVoltAwakeService);
+			} catch {
+				return undefined;
+			}
+		});
+		if (this.awake) {
+			const shown = (state: IAwakeState | undefined) => JSON.stringify(state && [state.lid, state.tier, state.blockedBy, state.lastError]);
+			const update = (state: IAwakeState) => {
+				const changed = shown(state) !== shown(this.awakeState);
+				this.awakeState = state;
+				if (changed && this.section === 'general') {
+					this.renderContent();
+				}
+			};
+			this._register(this.awake.onDidChange(update));
+			void this.awake.getState().then(update, () => undefined);
+		}
 	}
 
 	protected override createEditor(parent: HTMLElement): void {
@@ -196,7 +220,7 @@ export class VoltSettingsEditor extends EditorPane {
 			this.layoutService.mainContainer.classList.remove('volt-settings-open');
 		}));
 
-		const sidebar = append(this.container, $('.volt-settings-sidebar'));
+		const sidebar = this.sidebar = append(this.container, $('.volt-settings-sidebar'));
 
 		const searchHost = append(sidebar, $('.volt-settings-search'));
 		append(searchHost, $('span.volt-settings-search-icon')).appendChild(renderIcon(Codicon.search));
@@ -225,7 +249,7 @@ export class VoltSettingsEditor extends EditorPane {
 			}
 			const item = append(this.toc, $('button.volt-settings-toc-item')) as HTMLButtonElement;
 			item.type = 'button';
-			append(item, $('span.volt-settings-toc-icon')).appendChild(section.svg ? section.svg() : renderIcon(section.icon));
+			append(item, $('span.volt-settings-toc-icon')).appendChild(createSettingsIcon(section.id) ?? renderIcon(section.icon));
 			append(item, $('span.volt-settings-toc-text')).textContent = section.label;
 			item.dataset.section = section.id;
 			if (section.id === this.section) {
@@ -252,6 +276,8 @@ export class VoltSettingsEditor extends EditorPane {
 			useShadows: false,
 		}));
 		append(this.container, this.contentScroll.getDomNode());
+		this.createSidebarSash();
+		this._register(this.layoutService.onDidLayoutMainContainer(() => this.syncSidebarWidth()));
 		this.stickyHeads = this._register(new SettingsStickyHeads(scroll, this.content));
 		this._register(this.contentScroll.onScroll(() => this.stickyHeads.sync()));
 		// Storage sizes, projects and detected agents land after the page renders; without this the
@@ -306,12 +332,54 @@ export class VoltSettingsEditor extends EditorPane {
 			this.container.classList.add('volt-settings-overlay');
 			this.layoutService.mainContainer.classList.add('volt-settings-open');
 			this.layoutService.mainContainer.appendChild(this.container);
+			this.syncSidebarWidth();
+			this.usage?.setVisible(this.section === 'usage');
 			this.scheduleScrollSync();
 			return;
 		}
+		this.usage?.setVisible(false);
 		this.container.classList.remove('volt-settings-overlay');
 		this.layoutService.mainContainer.classList.remove('volt-settings-open');
 		this.container.remove();
+	}
+
+	/**
+	 * In the agent layout the left sidebar is the auxiliary bar. The nav takes its width, and
+	 * dragging the nav's edge resizes that sidebar too, so both always match.
+	 */
+	private agentSidebarWidth(): number | undefined {
+		if (getLayoutMode(this.layoutService) !== 'agent' || !this.layoutService.isVisible(Parts.AUXILIARYBAR_PART)) {
+			return undefined;
+		}
+		return this.layoutService.getSize(Parts.AUXILIARYBAR_PART).width || undefined;
+	}
+
+	private syncSidebarWidth(): void {
+		if (!this.container?.isConnected) {
+			return;
+		}
+		const width = this.agentSidebarWidth() ?? this.ownSidebarWidth;
+		this.container.style.setProperty('--volt-settings-sidebar-width', width ? `${width}px` : '');
+		this.sidebarSash.layout();
+	}
+
+	private createSidebarSash(): void {
+		const sash = this.sidebarSash = this._register(new Sash(this.container, {
+			getVerticalSashLeft: () => this.sidebar.offsetWidth,
+		}, { orientation: Orientation.VERTICAL }));
+		let start = 0;
+		this._register(sash.onDidStart(() => start = this.sidebar.offsetWidth));
+		this._register(sash.onDidChange(e => {
+			const width = Math.round(Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, start + e.currentX - e.startX)));
+			if (this.agentSidebarWidth() !== undefined) {
+				const { height } = this.layoutService.getSize(Parts.AUXILIARYBAR_PART);
+				this.layoutService.setSize(Parts.AUXILIARYBAR_PART, { width, height });
+			} else {
+				this.ownSidebarWidth = width;
+			}
+			// The layout may clamp the sidebar; the nav follows whatever it settled on.
+			this.syncSidebarWidth();
+		}));
 	}
 
 	private applyNavFilter(): void {
@@ -363,9 +431,15 @@ export class VoltSettingsEditor extends EditorPane {
 		this.renderGeneration++;
 		const generation = this.renderGeneration;
 		let pending: Promise<unknown> | undefined;
+		if (this.section !== 'usage') {
+			this.usage?.setVisible(false);
+		}
 		switch (this.section) {
 			case 'general':
 				this.renderGeneral();
+				break;
+			case 'usage':
+				this.renderUsage();
 				break;
 			case 'appearance':
 				pending = this.renderAppearance();
@@ -438,6 +512,17 @@ export class VoltSettingsEditor extends EditorPane {
 			this.tocScroll.scanDomNode();
 			this.stickyHeads.sync();
 		});
+	}
+
+	private renderUsage(): void {
+		this.pageHead(
+			localize('voltSettings.usage', "Usage"),
+			localize('voltSettings.usageLead', "What your agents cost at API prices, the tokens they used, and how much of each plan's limits is left."),
+		);
+		// The model dialog centers over the whole settings overlay, not the tall scrolled page.
+		this.usage ??= this._register(this.instantiationService.createInstance(AgentUsagePage, () => this.container));
+		this.target.appendChild(this.usage.element);
+		this.usage.setVisible(this.isVisible());
 	}
 
 	private get target(): HTMLElement {
@@ -539,7 +624,62 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.gitTextModelDesc', "Used for AI commit messages and pull request titles and descriptions."),
 			host => this.textGenerationPicker(host, 'git', localize('voltSettings.gitTextModel', "Git text model"), localize('voltSettings.gitTextDefault', "Default"), localize('voltSettings.gitTextDefaultDesc', "Use the text generation model")),
 		);
+		this.renderPower();
 		this.renderUpdates();
+	}
+
+	/** Lid-Closed Mode, and staying awake while agents work. */
+	private renderPower(): void {
+		if (!this.awake) {
+			return;
+		}
+		const awake = this.awake;
+		const prefs = readAwakePrefs(key => this.configurationService.getValue(key));
+		this.sectionLabel(localize('voltSettings.power', "Power"));
+		const group = this.settingsGroup();
+		this.settingSwitch(
+			group,
+			AWAKE_LID_CLOSED_MODE_SETTING,
+			localize('voltSettings.lidClosedMode', "Lid-Closed Mode"),
+			localize('voltSettings.lidClosedModeDesc', "Agents keep working when you close the laptop lid. The computer can sleep again once they finish, below {0}% battery, if it gets too hot, or after {1} hours. Use it on a hard, ventilated surface, never in a bag.", prefs.batteryFloorPercent, prefs.maxHours),
+		);
+		if (prefs.lidClosedMode) {
+			const state = this.awakeState;
+			this.settingRow(group, localize('voltSettings.lidClosedModeStatus', "Status"), describeLidClosedMode(state), host => {
+				const action = (label: string, secondary: boolean, run: () => Promise<unknown>) => {
+					const button = this.renderStore.add(new Button(host, { ...defaultButtonStyles, secondary }));
+					button.label = label;
+					this.renderStore.add(button.onDidClick(() => {
+						button.enabled = false;
+						void run().finally(() => button.enabled = true);
+					}));
+				};
+				switch (state?.lid.kind) {
+					case 'needsSetup':
+						action(localize('voltSettings.lidClosedModeSetUp', "Set Up…"), false, () => awake.setUpLidClosedMode());
+						break;
+					case 'ready':
+						if (isMacintosh) {
+							action(localize('voltSettings.lidClosedModeRemove', "Remove Permission"), true, () => awake.removeLidClosedModePermission());
+						}
+						break;
+					case 'foreign':
+					case 'unsupported':
+						action(localize('voltSettings.lidClosedModeCheck', "Check Again"), true, () => awake.refreshCapability());
+						break;
+				}
+			});
+		}
+		this.settingSwitch(
+			group,
+			AWAKE_WHILE_AGENTS_WORK_SETTING,
+			localize('voltSettings.awakeWhileWorking', "Stay awake while agents work"),
+			prefs.graceMinutes === 0
+				? localize('voltSettings.awakeWhileWorkingDescNoGrace', "The computer doesn't go to sleep while an agent is working. Without Lid-Closed Mode, closing the lid still puts it to sleep.")
+				: prefs.graceMinutes === 1
+					? localize('voltSettings.awakeWhileWorkingDescOne', "The computer doesn't go to sleep while an agent is working, or for a minute after. Without Lid-Closed Mode, closing the lid still puts it to sleep.")
+					: localize('voltSettings.awakeWhileWorkingDesc', "The computer doesn't go to sleep while an agent is working, or for {0} minutes after. Without Lid-Closed Mode, closing the lid still puts it to sleep.", prefs.graceMinutes),
+		);
 	}
 
 	/** Supervised · Accept edits · Auto · Full access, as one segmented control. */
@@ -1092,4 +1232,40 @@ function describeUpdateState(state: UpdateState): string {
 		case StateType.Idle: return state.error ? localize('voltSettings.updatesError', "The last check failed.") : '';
 		default: return '';
 	}
+}
+
+/** The status line under Lid-Closed Mode: whether it can hold, whether it holds now, and what went wrong. */
+function describeLidClosedMode(state: IAwakeState | undefined): string {
+	if (!state) {
+		return localize('voltSettings.lidChecking', "Checking this computer…");
+	}
+	const parts: string[] = [];
+	switch (state.lid.kind) {
+		case 'ready':
+			parts.push(state.tier === 'lid'
+				? localize('voltSettings.lidOn', "On now: agents are working, so closing the lid won't put the computer to sleep.")
+				: localize('voltSettings.lidReady', "Ready. It turns on by itself whenever agents are working."));
+			break;
+		case 'needsSetup':
+		case 'foreign':
+			parts.push(state.lid.detail);
+			break;
+		case 'unsupported':
+			parts.push(localize('voltSettings.lidUnsupported', "Not available: {0}", state.lid.detail));
+			break;
+		case 'checking':
+			parts.push(localize('voltSettings.lidChecking', "Checking this computer…"));
+			break;
+	}
+	if (state.blockedBy === 'battery') {
+		parts.push(localize('voltSettings.lidBattery', "Paused: the battery is low."));
+	} else if (state.blockedBy === 'thermal') {
+		parts.push(localize('voltSettings.lidThermal', "Paused: the computer is too hot."));
+	} else if (state.blockedBy === 'cap') {
+		parts.push(localize('voltSettings.lidCap', "Paused: agents hit the time limit."));
+	}
+	if (state.lastError) {
+		parts.push(localize('voltSettings.lidLastError', "Last problem: {0}", state.lastError));
+	}
+	return parts.join(' ');
 }

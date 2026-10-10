@@ -10,16 +10,22 @@ import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IFileService } from '../../../../../platform/files/common/files.js';
 import { EditorService } from '../../../../services/editor/browser/editorService.js';
 import { GroupDirection, IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { ACTIVE_GROUP, IEditorService, SIDE_GROUP } from '../../../../services/editor/common/editorService.js';
+import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { RegisteredEditorPriority } from '../../../../services/editor/common/editorResolverService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { createEditorPart, ITestInstantiationService, registerTestEditor, TestEditorPart, TestFileEditorInput, TestServiceAccessor, workbenchInstantiationService, workbenchTeardown } from '../../../../test/browser/workbenchTestServices.js';
 import { AgentEditorInput } from '../../browser/editor/agentEditorInput.js';
 import { registerAgentFileEditorRouting } from '../../browser/workspace/agentFileEditorRouting.js';
+
+/** An editor with no resource, like a webview page or the extension details. */
+class ResourcelessEditorInput extends EditorInput {
+	override get typeId(): string { return 'test.agentFileRouting.resourceless'; }
+	override get resource(): undefined { return undefined; }
+}
 
 suite('Agent file editor routing', () => {
 	const store = new DisposableStore();
@@ -33,7 +39,7 @@ suite('Agent file editor routing', () => {
 	let enabled: boolean;
 
 	setup(async () => {
-		store.add(registerTestEditor('test.agentFileRouting.editor', [new SyncDescriptor(TestFileEditorInput), new SyncDescriptor(AgentEditorInput)]));
+		store.add(registerTestEditor('test.agentFileRouting.editor', [new SyncDescriptor(TestFileEditorInput), new SyncDescriptor(AgentEditorInput), new SyncDescriptor(ResourcelessEditorInput)]));
 		instantiation = workbenchInstantiationService(undefined, store);
 		part = await createEditorPart(instantiation, store);
 		instantiation.stub(IEditorGroupsService, part);
@@ -53,7 +59,7 @@ suite('Agent file editor routing', () => {
 		await chatGroup.openEditor(chat, { pinned: true });
 		part.activateGroup(chatGroup.id);
 		enabled = true;
-		store.add(registerAgentFileEditorRouting(part, { hasProvider: resource => resource.scheme === 'file' || resource.scheme === 'vscode-remote' } as IFileService, {
+		store.add(registerAgentFileEditorRouting(part, {
 			getSessionId: () => enabled ? chat.sessionId : undefined,
 			openToolsGroup: () => toolsGroup,
 		}));
@@ -102,12 +108,26 @@ suite('Agent file editor routing', () => {
 		assert.strictEqual(toolsGroup.count, 0);
 	});
 
-	test('explicit tools destinations and non-file editors keep their destination', async () => {
+	test('explicit tools destinations and the window\'s own pages keep their destination', async () => {
 		const otherGroup = part.addGroup(toolsGroup.id, GroupDirection.DOWN);
 		assert.strictEqual((await service.openEditor({ resource: URI.file('/workspace/explicit.ts') }, otherGroup))?.group, otherGroup);
-		part.activateGroup(chatGroup.id);
-		const page = store.add(new TestFileEditorInput(URI.parse('volt-settings:/settings'), fileType));
-		assert.strictEqual((await service.openEditor(page))?.group, chatGroup);
+		for (const uri of ['volt-settings:/settings', 'volt-customize:customize', 'volt-usage:usage', 'volt-schedules:schedules', 'volt-run-group:/group', 'volt-agent:/other-chat']) {
+			part.activateGroup(chatGroup.id);
+			const page = store.add(new TestFileEditorInput(URI.parse(uri), fileType));
+			assert.strictEqual((await service.openEditor(page))?.group, chatGroup, uri);
+			await chatGroup.openEditor(chat);
+		}
 		assert.strictEqual(toolsGroup.count, 0);
+	});
+
+	test('non-file editors like a turn\'s changes or a resourceless page open in the tools too', async () => {
+		const changes = store.add(new TestFileEditorInput(URI.parse('volt-agent-changes:/chat?scope=turn:1'), fileType));
+		assert.strictEqual((await service.openEditor(changes, { pinned: true }))?.group, toolsGroup);
+		part.activateGroup(chatGroup.id);
+		const page = store.add(new ResourcelessEditorInput());
+		assert.strictEqual((await service.openEditor(page, { pinned: true }))?.group, toolsGroup);
+		assert.strictEqual(chatGroup.activeEditor, chat);
+		assert.strictEqual(chatGroup.count, 1);
+		assert.strictEqual(toolsGroup.count, 2);
 	});
 });

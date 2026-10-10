@@ -143,6 +143,8 @@ import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME } from '../../platform/v
 import { VoltBrowserMainService } from '../../platform/voltBrowser/electron-main/voltBrowserMainService.js';
 import { IVoltBadgeService, VOLT_BADGE_CHANNEL_NAME } from '../../platform/voltBadge/common/voltBadge.js';
 import { VoltBadgeMainService } from '../../platform/voltBadge/electron-main/voltBadgeMainService.js';
+import { IVoltAwakeService, VOLT_AWAKE_CHANNEL_NAME } from '../../platform/voltAwake/common/voltAwake.js';
+import { VoltAwakeMainService } from '../../platform/voltAwake/electron-main/voltAwakeMainService.js';
 import { IVoltDiagnosticsService } from '../../platform/voltDiagnostics/common/voltDiagnostics.js';
 import { registerVoltDiagnosticsMain, VoltDiagnosticsMainService } from '../../platform/voltDiagnostics/electron-main/voltDiagnosticsMainService.js';
 import { IVoltStorageService, VOLT_STORAGE_CHANNEL_NAME } from '../../platform/voltStorage/common/voltStorage.js';
@@ -1104,6 +1106,9 @@ export class CodeApplication extends Disposable {
 		// Volt app badge (chats that finished in the background)
 		services.set(IVoltBadgeService, new SyncDescriptor(VoltBadgeMainService, undefined, false /* proxied to other processes */));
 
+		// Volt Lid-Closed Mode (keeps the computer awake while agents work)
+		services.set(IVoltAwakeService, new SyncDescriptor(VoltAwakeMainService, undefined, false /* proxied to other processes */));
+
 		// Volt diagnostics (tracing export, stall log, heap snapshots)
 		services.set(IVoltDiagnosticsService, new SyncDescriptor(VoltDiagnosticsMainService, undefined, false /* proxied to other processes */));
 
@@ -1307,6 +1312,9 @@ export class CodeApplication extends Disposable {
 
 		// Volt app badge
 		mainProcessElectronServer.registerChannel(VOLT_BADGE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltBadgeService), disposables));
+
+		// Volt Lid-Closed Mode (created here, at startup, so it undoes what a crashed run left before any window asks)
+		mainProcessElectronServer.registerChannel(VOLT_AWAKE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltAwakeService), disposables));
 
 		// Volt storage cleanup and first-run import
 		mainProcessElectronServer.registerChannel(VOLT_STORAGE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltStorageService), disposables));

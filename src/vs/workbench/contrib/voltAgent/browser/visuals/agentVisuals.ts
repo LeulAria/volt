@@ -678,10 +678,12 @@ function placeActions(wrap: HTMLElement, body: HTMLElement): void {
 export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx: IVisualHostContext & { readonly store: DisposableStore }): void {
 	const wrap = append(parent, $('.volt-agent-block.volt-agent-visual'));
 	wrap.classList.add(block.kind === 'html' ? 'page' : 'chart');
-	const body = append(wrap, $('.volt-agent-visual-body'));
-	const actions = append(wrap, $('.volt-agent-visual-actions'));
 	const key = `${block.id}:${block.ref}`;
 	const title = block.title || (block.kind === 'html' ? localize('voltVisual.page', "Page") : localize('voltVisual.chart', "Chart"));
+	// A page gets a caption (its name, and its tools on the right) so nothing sits over the page's own controls.
+	const caption = block.kind === 'html' ? renderPageCaption(wrap, title, !block.ref) : undefined;
+	const body = append(wrap, $('.volt-agent-visual-body'));
+	const actions = append(caption ?? wrap, $('.volt-agent-visual-actions'));
 	if (!block.ref) {
 		// The render_chart / render_html call is still streaming in: hold its place.
 		wrap.classList.add('pending');
@@ -765,6 +767,18 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 	toolbarButton(actions, Codicon.desktopDownload, localize('voltVisual.save', "Save as HTML File"), () => {
 		void loadPage(ctx, block.ref).then(html => html !== undefined ? savePage(ctx, title, html) : undefined);
 	}, ctx.store);
+}
+
+/** The line above a page: a window glyph, its title, and "Building…" while the call streams in. */
+function renderPageCaption(wrap: HTMLElement, title: string, pending: boolean): HTMLElement {
+	const caption = append(wrap, $('.volt-agent-visual-caption'));
+	const label = append(caption, $('.volt-agent-visual-caption-label'));
+	label.appendChild(renderIcon(Codicon.window));
+	append(label, $('span.volt-agent-visual-caption-title')).textContent = title;
+	if (pending) {
+		append(label, $('span.volt-agent-visual-caption-status')).textContent = localize('voltVisual.building', "Building page");
+	}
+	return caption;
 }
 
 /** Runs `load` once `element` comes within a screen or so of the viewport (at once without IntersectionObserver). */

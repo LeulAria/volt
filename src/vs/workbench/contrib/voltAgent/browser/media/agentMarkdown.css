@@ -31,10 +31,20 @@
 	--volt-md-diff-removed-fg: oklch(0.712 0.177 12.651);
 	--volt-md-mermaid-bg: var(--volt-md-card-bg);
 	--volt-md-mermaid-fg: var(--volt-md-fg);
-	--volt-md-mermaid-line: var(--volt-md-icon-tertiary);
-	--volt-md-mermaid-accent: #88c0d0;
+	--volt-md-mermaid-accent: var(--volt-chart-accent, #88c0d0);
+	/* Nodes take a breath of the theme's accent, so a diagram reads as one drawing, not grey boxes. */
+	--volt-md-mermaid-line: color-mix(in srgb, var(--vscode-foreground) 36%, var(--volt-md-card-bg));
 	--volt-md-mermaid-muted: var(--volt-md-fg-secondary);
-	--volt-md-mermaid-surface: var(--volt-md-fill);
+	/*
+	 * Glass cards: a flat fill a shade off the canvas and a 1px edge that catches light at the top.
+	 * Both are mixed into the card colour rather than see-through, so the dot grid never beads the edge.
+	 */
+	--volt-md-mermaid-surface: color-mix(in srgb, var(--vscode-foreground) 4.5%, var(--volt-md-card-bg));
+	--volt-md-mermaid-border: color-mix(in srgb, var(--vscode-foreground) 16%, var(--volt-md-card-bg));
+	--volt-md-glass-hi: color-mix(in srgb, var(--vscode-foreground) 24%, var(--volt-md-card-bg));
+	--volt-md-glass-mid: color-mix(in srgb, var(--vscode-foreground) 13%, var(--volt-md-card-bg));
+	--volt-md-glass-lo: color-mix(in srgb, var(--vscode-foreground) 15%, var(--volt-md-card-bg));
+	--volt-md-mermaid-grid: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
 }
 
 .monaco-workbench.vs,
@@ -732,7 +742,203 @@ code.volt-md-code.volt-md-diff {
 	color: var(--volt-md-fg-quaternary);
 }
 
-/* Mermaid: the diagram centred in the code card with 8px above and below. */
+/*
+ * Diagrams (```mermaid): a head saying what it is ("Flowchart · 10 nodes · 9 links") with a
+ * Diagram / Code switch, Copy and Expand; the drawing centred on a quiet dot grid.
+ */
+
+.volt-md-code-block.volt-diagram {
+	font-size: 13px;
+	line-height: 18px;
+}
+
+.volt-diagram-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 36px;
+	padding: 0 6px 0 12px;
+	box-sizing: border-box;
+	border-bottom: 1px solid var(--volt-md-stroke-faint);
+}
+
+.volt-diagram-title {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	overflow: hidden;
+	white-space: nowrap;
+	color: var(--volt-md-fg-secondary);
+	font-size: 12.5px;
+}
+
+/* Symbol icons (class) carry their own theme colour; the diagram glyph is always the accent. */
+.monaco-workbench .volt-diagram .volt-diagram-title > .codicon {
+	flex: none;
+	font-size: 14px;
+	color: var(--volt-md-mermaid-accent);
+}
+
+.volt-diagram-kind {
+	flex: none;
+	font-weight: 500;
+	color: var(--volt-md-fg);
+}
+
+.volt-diagram-summary {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--volt-md-fg-tertiary);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-diagram-summary:not(:empty)::before {
+	content: '·';
+	margin-right: 7px;
+	color: var(--volt-md-fg-quaternary);
+}
+
+.volt-diagram-tools {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+/* Copy and Expand show on hover (or keyboard focus); the switch always shows which view is on. */
+.volt-diagram-tools > .volt-diagram-button {
+	opacity: 0;
+	transition: opacity 120ms ease, background-color 100ms ease, color 100ms ease;
+}
+
+.volt-diagram:hover .volt-diagram-tools > .volt-diagram-button,
+.volt-diagram-tools:focus-within > .volt-diagram-button {
+	opacity: 1;
+}
+
+.volt-diagram-views {
+	position: relative;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	padding: 2px;
+	margin-right: 4px;
+	border-radius: 7px;
+	background: var(--volt-md-fill-faint);
+	box-shadow: inset 0 0 0 1px var(--volt-md-stroke-faint);
+}
+
+/* The selected side: slides (with a touch of overshoot) and stretches as it goes. */
+.volt-diagram-views-thumb {
+	position: absolute;
+	top: 2px;
+	bottom: 2px;
+	left: 2px;
+	width: calc(50% - 2px);
+	border-radius: 5px;
+	background: color-mix(in srgb, var(--vscode-foreground) 11%, var(--volt-md-card-bg));
+	box-shadow: 0 1px 2px color-mix(in srgb, #000 22%, transparent);
+	transition: transform 320ms cubic-bezier(0.34, 1.3, 0.64, 1);
+	pointer-events: none;
+}
+
+.volt-diagram-views[data-view="code"] > .volt-diagram-views-thumb {
+	transform: translateX(100%);
+}
+
+.volt-diagram-views[data-view] > .volt-diagram-views-thumb {
+	animation: volt-diagram-thumb-stretch 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.volt-diagram-views[data-view="code"] > .volt-diagram-views-thumb {
+	animation-name: volt-diagram-thumb-stretch-right;
+}
+
+@keyframes volt-diagram-thumb-stretch {
+	40% { scale: 1.14 0.92; }
+}
+
+@keyframes volt-diagram-thumb-stretch-right {
+	40% { scale: 1.14 0.92; }
+}
+
+.volt-diagram-view {
+	position: relative;
+	z-index: 1;
+	appearance: none;
+	height: 22px;
+	padding: 0 11px;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--volt-md-fg-tertiary);
+	font: inherit;
+	font-size: 12px;
+	line-height: 22px;
+	cursor: pointer;
+	transition: color 220ms ease;
+}
+
+.volt-diagram-view:hover {
+	color: var(--volt-md-fg-secondary);
+}
+
+.volt-diagram-view[aria-selected="true"] {
+	color: var(--volt-md-fg);
+}
+
+/* The workbench outlines any focused button; a click is not keyboard focus, so no ring for it. */
+.volt-diagram :is(.volt-diagram-view, .volt-diagram-button, .volt-md-mermaid-content):focus:not(:focus-visible) {
+	outline: none;
+}
+
+.volt-diagram-view:focus-visible,
+.volt-diagram-button:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-diagram-button {
+	appearance: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--volt-md-fg-secondary);
+	cursor: pointer;
+}
+
+.volt-diagram-button:hover {
+	background: var(--volt-md-fill);
+	color: var(--volt-md-fg);
+}
+
+.volt-diagram-button.done {
+	color: var(--volt-chart-green, var(--volt-md-fg));
+}
+
+.volt-diagram-button .codicon {
+	font-size: 14px;
+}
+
+/* Copy: the reply footer's glyph, at the footer's size and weight. */
+.volt-diagram-button.copy .volt-agent-svg-icon,
+.volt-diagram-button.copy .volt-agent-svg-icon svg {
+	display: block;
+	width: 13px;
+	height: 13px;
+}
+
+.volt-diagram-button.copy .volt-agent-svg-icon :is(rect, path) {
+	stroke-width: 1.3px;
+}
 
 .volt-md-code-block.mermaid .volt-md-code-scroll {
 	overflow-y: hidden;
@@ -742,7 +948,10 @@ code.volt-md-code.volt-md-diff {
 	display: flex;
 	justify-content: center;
 	min-width: min-content;
-	padding: 8px 0;
+	padding: 20px 16px;
+	background-image: radial-gradient(circle at 1px 1px, var(--volt-md-mermaid-grid) 1px, transparent 1.4px);
+	background-size: 18px 18px;
+	background-position: center;
 }
 
 /* Wide diagrams shrink to the column down to 55% (text stays readable), then scroll sideways. */
@@ -767,32 +976,309 @@ code.volt-md-code.volt-md-diff {
 	mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
 }
 
+/* Code view: the mermaid source in the workbench editor (Mermaid grammar, theme colours). */
+.volt-diagram-source {
+	display: none;
+}
+
+.volt-diagram.showing-source .volt-diagram-source {
+	display: block;
+}
+
+/* Switching views: the card glides between heights (HeightGlide) and the new view fades up. */
+.volt-md-code-block.volt-diagram.volt-diagram-gliding {
+	box-sizing: border-box;
+	transition: height 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.volt-diagram-view-enter {
+	animation: volt-diagram-view-enter 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes volt-diagram-view-enter {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+}
+
+/*
+ * Line numbers with room on the left, then a hairline divider that runs the full height of the
+ * code (the editor's own padding, not the card's, is the gap above and below, so it reaches both
+ * edges), then the code.
+ */
+.volt-diagram-source .volt-md-code-editor {
+	padding-left: 10px;
+}
+
+.volt-diagram-source .monaco-editor .line-numbers {
+	color: var(--volt-md-fg-quaternary);
+}
+
+.volt-diagram-source .monaco-editor .margin::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: 6px;
+	width: 1px;
+	background: var(--volt-md-stroke-faint);
+	pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-diagram-views-thumb,
+	.volt-diagram-view-enter {
+		animation: none;
+		transition: none;
+	}
+}
+
+.volt-diagram-source-plain {
+	margin: 0;
+	padding: 6px 12px;
+	overflow-x: auto;
+	font-family: var(--volt-md-mono);
+	font-size: 12.5px;
+	line-height: 20px;
+	color: var(--volt-md-fg-secondary);
+	white-space: pre;
+}
+
+.volt-diagram.showing-source .volt-md-code-scroll {
+	display: none;
+}
+
+/*
+ * The drawing itself. beautiful-mermaid paints with presentation attributes, so plain CSS
+ * overrides them. Every card is flat glass: a see-through fill, a 1px edge brighter at the top
+ * (the diagram's own gradient, see polishDiagram), 6px corners on every shape, no shadow.
+ */
+.volt-md-mermaid-svg {
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+/* Over the drawing the pointer is a hand (it opens the zoomable view), never a text cursor. */
+.volt-md-mermaid-content.expandable {
+	cursor: pointer;
+}
+
+.volt-md-mermaid-content.expandable:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -2px;
+}
+
+.volt-md-mermaid-svg .volt-glass-hi { stop-color: var(--volt-md-glass-hi); }
+.volt-md-mermaid-svg .volt-glass-mid { stop-color: var(--volt-md-glass-mid); }
+.volt-md-mermaid-svg .volt-glass-lo { stop-color: var(--volt-md-glass-lo); }
+
+.volt-md-mermaid-svg :is(g.node, g.class-node, g.entity, g.actor) > :is(rect, path, ellipse) {
+	fill: var(--volt-md-mermaid-surface);
+	stroke: var(--volt-glass-stroke, var(--volt-md-mermaid-border));
+	stroke-width: 1px;
+	vector-effect: non-scaling-stroke;
+}
+
+.volt-md-mermaid-svg :is(g.node, g.class-node, g.entity, g.actor) > rect {
+	rx: 6px;
+	ry: 6px;
+}
+
+/* Class and entity title bars: a touch more glass, and their bottom edge is the divider. */
+.volt-md-mermaid-svg path.volt-diagram-title-bar {
+	fill: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.volt-md-mermaid-svg :is(g.class-node, g.entity) > line {
+	stroke: var(--volt-md-mermaid-border);
+	vector-effect: non-scaling-stroke;
+}
+
+/* Groups: the same glass, a size up, so the cards inside nest in it. */
+.volt-md-mermaid-svg g.subgraph > rect:first-of-type {
+	rx: 10px;
+	ry: 10px;
+	fill: color-mix(in srgb, var(--vscode-foreground) 2.5%, transparent);
+	stroke: var(--volt-glass-stroke, var(--volt-md-mermaid-border));
+	stroke-width: 1px;
+	vector-effect: non-scaling-stroke;
+}
+
+.volt-md-mermaid-svg g.subgraph > rect:nth-of-type(2) {
+	fill: transparent;
+	stroke: none;
+}
+
+.volt-md-mermaid-svg g.subgraph > text {
+	fill: var(--volt-md-mermaid-accent);
+	letter-spacing: 0.02em;
+}
+
+/* Edge labels: small glass chips, opaque so the line stops at them. */
+.volt-md-mermaid-svg g.edge-label > rect {
+	rx: 6px;
+	ry: 6px;
+	fill: var(--volt-md-card-bg);
+	stroke: var(--volt-glass-stroke, var(--volt-md-mermaid-border));
+	stroke-width: 1px;
+	vector-effect: non-scaling-stroke;
+}
+
+/* Connectors: hairlines that bend on a curve (polishDiagram rounds the elbows). */
+.volt-md-mermaid-svg :is(.edge, .class-relationship, .er-relationship),
+.volt-md-mermaid-svg g.message > line,
+.volt-md-mermaid-svg line.lifeline {
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	vector-effect: non-scaling-stroke;
+}
+
+.volt-md-mermaid-svg g.node[data-shape="state-start"] > circle {
+	fill: var(--volt-md-mermaid-accent);
+}
+
+/*
+ * Hover tracing: the node or link under the pointer and what it connects light up, the rest dims.
+ * Everything cross-fades: dimming, card tint, edge colour and weight, and an accent ring that
+ * fades in over the card's glass edge (a gradient cannot animate to a colour, a ring's opacity can).
+ */
+.volt-md-mermaid-svg :is(g[data-id]:not(.subgraph), [data-from][data-to], [data-actor]) {
+	transition: opacity 220ms ease;
+}
+
+.volt-md-mermaid-svg :is(g.node, g.class-node, g.entity, g.actor) > :is(rect, path, ellipse) {
+	transition: fill 220ms ease;
+}
+
+.volt-md-mermaid-svg :is(.edge, .class-relationship, .er-relationship),
+.volt-md-mermaid-svg g.message > line {
+	transition: stroke 220ms ease, stroke-width 220ms ease, opacity 220ms ease;
+}
+
+.volt-md-mermaid-svg :is(g.node, g.class-node, g.entity, g.actor) > .volt-diagram-ring {
+	fill: none;
+	stroke: var(--volt-md-mermaid-accent);
+	stroke-width: 1px;
+	vector-effect: non-scaling-stroke;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 220ms ease;
+}
+
+.volt-md-mermaid-svg.tracing :is(g[data-id]:not(.subgraph), [data-from][data-to], [data-actor]):not(.lit) {
+	opacity: 0.22;
+}
+
+.volt-md-mermaid-svg.tracing g.lit[data-id]:not(.subgraph) > .volt-diagram-ring {
+	opacity: 1;
+}
+
+.volt-md-mermaid-svg.tracing g.lit[data-id]:not(.subgraph) > :is(rect, path, ellipse):not(.volt-diagram-ring, .volt-diagram-title-bar) {
+	fill: color-mix(in srgb, var(--volt-md-mermaid-accent) 12%, var(--volt-md-card-bg));
+}
+
+.volt-md-mermaid-svg.tracing :is(.edge, .class-relationship, .er-relationship).lit,
+.volt-md-mermaid-svg.tracing g.message.lit > line {
+	stroke: var(--volt-md-mermaid-accent);
+	stroke-width: 1.5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-md-mermaid-svg :is(g[data-id], [data-from][data-to], [data-actor]),
+	.volt-md-mermaid-svg :is(g[data-id], [data-from][data-to], [data-actor]) > *,
+	.volt-md-mermaid-svg :is(.edge, .class-relationship, .er-relationship) {
+		transition: none;
+	}
+}
+
+/*
+ * Expanded diagram: the drawing on a canvas that zooms and pans. The zoom pill is opaque
+ * (volt-transparent-window: no backdrop-filter).
+ */
+.volt-diagram-viewer {
+	position: relative;
+	height: calc(100vh - 150px);
+	min-height: 320px;
+	overflow: hidden;
+	outline: none;
+	cursor: grab;
+	touch-action: none;
+	user-select: none;
+	background-color: var(--volt-md-card-bg);
+	background-image: radial-gradient(circle at 1px 1px, var(--volt-md-mermaid-grid) 1px, transparent 1.4px);
+	background-size: 20px 20px;
+	border-top: 1px solid var(--volt-md-stroke-faint);
+}
+
+.volt-diagram-viewer.dragging {
+	cursor: grabbing;
+}
+
+.volt-diagram-viewer-stage {
+	position: absolute;
+	top: 0;
+	left: 0;
+	transform-origin: 0 0;
+	will-change: transform;
+}
+
+.volt-diagram-viewer-stage.animate {
+	transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.volt-diagram-viewer-stage > svg {
+	display: block;
+	overflow: visible;
+}
+
+.volt-diagram-viewer-bar {
+	position: absolute;
+	left: 50%;
+	bottom: 16px;
+	transform: translateX(-50%);
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 3px;
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, var(--volt-md-card-bg));
+	box-shadow: 0 0 0 1px var(--volt-md-stroke), 0 8px 24px color-mix(in srgb, #000 30%, transparent);
+	cursor: default;
+}
+
+.volt-diagram-viewer-level {
+	appearance: none;
+	min-width: 52px;
+	height: 26px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--volt-md-fg-secondary);
+	font: inherit;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	cursor: pointer;
+}
+
+.volt-diagram-viewer-level:hover {
+	background: var(--volt-md-fill);
+	color: var(--volt-md-fg);
+}
+
+.volt-diagram-viewer-sep {
+	width: 1px;
+	height: 16px;
+	margin: 0 3px;
+	background: var(--volt-md-stroke);
+}
+
 /* Thinking text keeps its own quieter scale. */
 .volt-agent-thinking-text .volt-agent-markdown,
 .volt-agent-thinking-text .volt-agent-markdown p {
 	font-size: inherit;
 	line-height: inherit;
-}
-
-/* Expanded diagram in the preview dialog */
-.volt-agent-snapshot-diagram {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	min-width: min(720px, 80vw);
-	max-width: 90vw;
-	max-height: 80vh;
-	overflow: auto;
-	padding: 24px;
-	box-sizing: border-box;
-	background: var(--volt-md-card-bg);
-	border-radius: 8px;
-}
-
-.volt-agent-snapshot-diagram svg {
-	width: 100%;
-	height: auto;
-	max-height: calc(80vh - 48px);
 }
 
 /* Footnotes: superscript link-coloured numbers, notes as a numbered list with a back arrow. */

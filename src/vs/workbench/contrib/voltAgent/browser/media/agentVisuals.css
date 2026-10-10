@@ -36,16 +36,14 @@
 	transition: opacity 140ms ease;
 }
 
-/* Pages always: their own controls usually sit top-right, where the chip would cover them. */
-.volt-agent-visual.actions-above .volt-agent-visual-actions,
-.volt-agent-visual.page .volt-agent-visual-actions {
+/* Charts without a title row: the chip goes above, off the chart's own switchers. */
+.volt-agent-visual.actions-above .volt-agent-visual-actions {
 	top: auto;
 	bottom: calc(100% + 4px);
 }
 
 /* Bridges the gap, so the chip stays while the pointer moves up to it. */
-.volt-agent-visual.actions-above .volt-agent-visual-actions::after,
-.volt-agent-visual.page .volt-agent-visual-actions::after {
+.volt-agent-visual.actions-above .volt-agent-visual-actions::after {
 	content: '';
 	position: absolute;
 	left: 0;
@@ -86,6 +84,84 @@
 
 .volt-agent-visual-action .codicon {
 	font-size: 14px;
+}
+
+/*
+ * A page's caption: a window glyph and its name on the left, its tools on the right. The page
+ * itself stays seamless with the reply below it; the caption is what names it and holds the tools,
+ * so nothing ever covers the page's own controls.
+ */
+.volt-agent-visual-caption {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 28px;
+	margin-bottom: 8px;
+	padding-bottom: 6px;
+	border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	font-size: 12.5px;
+	line-height: 18px;
+}
+
+.volt-agent-visual-caption-label {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	color: color-mix(in srgb, var(--vscode-foreground) 74%, transparent);
+	white-space: nowrap;
+}
+
+.volt-agent-visual-caption-label > .codicon {
+	flex: none;
+	font-size: 14px;
+	color: var(--volt-chart-accent, var(--vscode-textLink-foreground));
+}
+
+.volt-agent-visual-caption-title {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 500;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-visual-caption-status {
+	flex: none;
+	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+	background: linear-gradient(90deg, currentColor 0%, var(--vscode-foreground) 50%, currentColor 100%);
+	background-size: 200% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
+	animation: volt-visual-skeleton-sweep 1.8s linear infinite;
+}
+
+.volt-agent-visual-caption-status::before {
+	content: '·';
+	margin-right: 7px;
+}
+
+/* In the caption the tools sit in line, plain: no chip, faint until the page is hovered. */
+.volt-agent-visual-caption > .volt-agent-visual-actions {
+	position: static;
+	flex: none;
+	padding: 0;
+	background: transparent;
+	box-shadow: none;
+	opacity: 0.0;
+	pointer-events: auto;
+}
+
+.volt-agent-visual.page:hover .volt-agent-visual-caption > .volt-agent-visual-actions,
+.volt-agent-visual-caption > .volt-agent-visual-actions:focus-within {
+	opacity: 1;
+}
+
+.volt-agent-visual-caption .volt-agent-visual-action {
+	width: 26px;
+	height: 24px;
 }
 
 /*
@@ -272,6 +348,27 @@
 
 .volt-usage-insight.wide {
 	grid-column: 1 / -1;
+}
+
+/* Cards in a row share a baseline: a chart without a legend sinks its plot to the card's bottom
+ * so both x-axes line up. */
+.volt-usage-insight,
+.volt-usage-insight > .vc-root,
+.volt-usage-insight .vc-blocks,
+.volt-usage-insight .vc-block {
+	display: flex;
+	flex-direction: column;
+}
+
+.volt-usage-insight > .vc-root,
+.volt-usage-insight .vc-blocks,
+.volt-usage-insight .vc-block {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.volt-usage-insight .vc-plot {
+	margin-top: auto;
 }
 
 @container (max-width: 760px) {

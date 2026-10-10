@@ -42,16 +42,16 @@ import { cloudTaskStatusText, cloudTaskTone, ICloudTask } from '../../../../serv
 import { AgentCloudTaskMenu } from '../cloud/agentCloudTaskMenu.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { limitBadgeLabel, limitParkedClock } from '../../../../services/voltRuntime/common/orchestration/limitRecovery.js';
-import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, VOLT_PROJECT_SETTINGS_COMMAND_ID } from '../../../../services/voltRuntime/common/runtime.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
-import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IRecentFolder, IRecentWorkspace, IWorkspacesService, isRecentFolder, isRecentWorkspace } from '../../../../../platform/workspaces/common/workspaces.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { OPEN_AGENT_SCHEDULES_COMMAND_ID } from '../schedules/agentScheduleCommands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { AgentUsageEditorInput, OPEN_AGENT_USAGE_COMMAND_ID } from '../usage/agentUsageEditor.js';
 import { createUsageIcon } from '../usage/agentUsageIcons.js';
-import { createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeStatusBadgeIcon } from './agentHomeIcons.js';
+import { createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeSettingsIcon, createHomeStatusBadgeIcon } from './agentHomeIcons.js';
 import { showAgentSnoozeMenu } from './agentSnoozeMenu.js';
 import { activateAgentProject, startAgentChat } from '../workspace/agentPanels.js';
 import { AgentChatStart } from '../workspace/agentShell.js';
@@ -163,8 +163,8 @@ interface IHomeTemplate {
 	readonly subPr: HTMLElement;
 	readonly subModel: HTMLElement;
 	readonly keybinding: HTMLElement;
-	readonly filter: HTMLButtonElement;
-	readonly openWorkspace: HTMLButtonElement;
+	/** Project Settings, beside the + on a project row. */
+	readonly settings: HTMLButtonElement;
 	readonly add: HTMLButtonElement;
 	readonly elementDisposables: DisposableStore;
 }
@@ -224,20 +224,13 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		const archive = append(actions, $('button.row-action.archive')) as HTMLButtonElement;
 		archive.tabIndex = -1;
 		const keybinding = append(container, $('span.keybinding'));
-		const filter = append(container, $('button.volt-agent-home-filter.hidden')) as HTMLButtonElement;
-		filter.appendChild(createHomeFilterIcon());
-		filter.tabIndex = -1;
-		filter.setAttribute('aria-label', localize('voltAgent.home.filter', "Filter and sort"));
-		setAgentTooltip(filter, localize('voltAgent.home.filter', "Filter and sort"));
-		const openWorkspace = append(container, $('button.volt-agent-home-open-workspace.hidden')) as HTMLButtonElement;
-		openWorkspace.appendChild(createHomeOpenWorkspaceIcon());
-		openWorkspace.tabIndex = -1;
-		openWorkspace.setAttribute('aria-label', localize('voltAgent.home.openWorkspace', "Open Workspace"));
-		setAgentTooltip(openWorkspace, localize('voltAgent.home.openWorkspace', "Open Workspace"));
+		const settings = append(container, $('button.settings')) as HTMLButtonElement;
+		settings.appendChild(renderIcon(Codicon.settingsGear));
+		settings.tabIndex = -1;
 		const add = append(container, $('button.add')) as HTMLButtonElement;
 		add.appendChild(renderIcon(Codicon.add));
 		add.tabIndex = -1;
-		return { container, icon, twist, glyph, name, actions, snooze, settle, wake, pin, archive, badge, meta, sub, subBranch, subPr, subModel, keybinding, filter, openWorkspace, add, elementDisposables: new DisposableStore() };
+		return { container, icon, twist, glyph, name, actions, snooze, settle, wake, pin, archive, badge, meta, sub, subBranch, subPr, subModel, keybinding, settings, add, elementDisposables: new DisposableStore() };
 	}
 
 	renderElement(node: ITreeNode<AgentHomeElement, void>, _index: number, template: IHomeTemplate): void {
@@ -251,9 +244,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.subPr.replaceChildren();
 		template.subModel.textContent = '';
 		template.keybinding.textContent = '';
-		template.filter.classList.add('hidden');
-		template.filter.classList.remove('active');
-		template.openWorkspace.classList.add('hidden');
+		template.settings.classList.add('hidden');
 		template.add.classList.add('hidden');
 		template.container.classList.remove(...ROW_STATE_CLASSES);
 		template.container.style.setProperty('--volt-home-level', String(rowLevel(node.element)));
@@ -338,24 +329,6 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.name.textContent = spec.label;
 	}
 
-	/** The filter and Open Workspace controls on a header row. Only one header carries them. */
-	private renderFilter(template: IHomeTemplate): void {
-		template.filter.classList.remove('hidden');
-		template.filter.classList.toggle('active', anyHomeFilterActive(this.host.view));
-		template.elementDisposables.add(addDisposableListener(template.filter, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			this.host.openFilterMenu(template.filter);
-			template.filter.blur();
-		}));
-		template.openWorkspace.classList.remove('hidden');
-		template.elementDisposables.add(addDisposableListener(template.openWorkspace, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			this.host.openWorkspaceMenu(template.openWorkspace);
-		}));
-	}
-
 	private renderCloudHeader(count: number, template: IHomeTemplate): void {
 		template.container.classList.add('is-section');
 		template.name.textContent = `${localize('voltAgent.home.cloud', "Cloud")} · ${count}`;
@@ -374,9 +347,6 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 	private renderSection(element: Extract<AgentHomeElement, { type: 'section' }>, template: IHomeTemplate): void {
 		template.container.classList.add('is-section');
 		template.name.textContent = agentHomeSectionLabel(element.key);
-		if (element.filter) {
-			this.renderFilter(template);
-		}
 		if (element.add) {
 			template.add.classList.remove('hidden');
 			setAgentTooltip(template.add, localize('voltAgent.home.newProject', "New Project"));
@@ -395,7 +365,24 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.glyph.appendChild(project.multi ? createHomeFoldersIcon() : createHomeFolderIcon());
 		const status = project.folder ? this.host.projectStatus(project.folder.uri) : undefined;
 		template.name.textContent = status ? `${project.label} · ${status}` : project.label;
+		this.renderProjectSettings(template, project.folder ? this.host.projectFor(project.folder.uri) : undefined);
 		this.renderAdd(template, { type: 'folder', project });
+	}
+
+	/** Gear on project rows (hover-only via CSS): the same Project Settings as the row's context menu. */
+	private renderProjectSettings(template: IHomeTemplate, project: IVoltProjectRecord | undefined): void {
+		if (!project) {
+			return;
+		}
+		template.settings.classList.remove('hidden');
+		const label = localize('voltAgent.home.projectSettings', "Project Settings");
+		template.settings.setAttribute('aria-label', label);
+		setAgentTooltip(template.settings, label);
+		template.elementDisposables.add(addDisposableListener(template.settings, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.host.openProjectSettings(project);
+		}));
 	}
 
 	/** Pinned, Today, Needs Attention, This Mac, ...: a VS Code style group header over agent tabs. */
@@ -404,9 +391,6 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.name.textContent = element.label;
 		if (element.count !== undefined) {
 			template.meta.textContent = String(element.count);
-		}
-		if (element.filter) {
-			this.renderFilter(template);
 		}
 	}
 
@@ -770,6 +754,7 @@ export class AgentHomePane extends Disposable {
 
 	readonly element: HTMLElement;
 	private readonly nav: HTMLElement;
+	private navFilter: HTMLButtonElement | undefined;
 	private readonly treeContainer: HTMLElement;
 	private readonly tree: WorkbenchObjectTree<AgentHomeElement>;
 	private readonly hover = this._register(new AgentTooltip());
@@ -956,7 +941,7 @@ export class AgentHomePane extends Disposable {
 	}
 
 	/**
-	 * Footer of the agent list: Settings and Usage. While Usage is the active page the row
+	 * Footer of the agent list: Settings, Usage, Automations and Customize. While Usage is the active page the row
 	 * turns into a Back button that closes it and returns to the chat underneath.
 	 */
 	private installSettingsButton(keybindingService: IKeybindingService): void {
@@ -975,7 +960,7 @@ export class AgentHomePane extends Disposable {
 
 		const button = append(footer, $('button.volt-agent-home-settings')) as HTMLButtonElement;
 		button.type = 'button';
-		button.appendChild(renderIcon(Codicon.settingsGear));
+		button.appendChild(createHomeSettingsIcon());
 		const label = localize('voltAgent.home.settings', "Settings");
 		button.setAttribute('aria-label', label);
 		setAgentTooltip(button, label);
@@ -988,7 +973,7 @@ export class AgentHomePane extends Disposable {
 
 		const usage = append(footer, $('button.volt-agent-home-settings.volt-agent-home-usage')) as HTMLButtonElement;
 		usage.type = 'button';
-		usage.appendChild(createUsageIcon(16));
+		usage.appendChild(createUsageIcon(14));
 		const usageLabel = localize('voltAgent.home.usage', "Usage");
 		usage.setAttribute('aria-label', usageLabel);
 		setAgentTooltip(usage, usageLabel);
@@ -998,6 +983,22 @@ export class AgentHomePane extends Disposable {
 			void this.commandService.executeCommand(OPEN_AGENT_USAGE_COMMAND_ID);
 			usage.blur();
 		}));
+
+		// Automations and Customize left the header for the footer when it became a single Search bar.
+		for (const id of ['automations', 'customize'] as const) {
+			const spec = actionSpec(id);
+			const action = append(footer, $('button.volt-agent-home-settings')) as HTMLButtonElement;
+			action.type = 'button';
+			action.appendChild(renderIcon(spec.icon));
+			action.setAttribute('aria-label', spec.label);
+			setAgentTooltip(action, spec.label);
+			this._register(addDisposableListener(action, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				void this.runAction(id);
+				action.blur();
+			}));
+		}
 
 		let wasOpen = false;
 		const sync = () => {
@@ -1058,54 +1059,53 @@ export class AgentHomePane extends Disposable {
 	}
 
 	/**
-	 * Top actions stay outside the virtualized tree so they pin while chats scroll.
-	 * Padding lives on `.volt-agent-home-nav`. The block has no fill and no fade.
+	 * Header bar outside the virtualized tree so it pins while chats scroll: Search on the left,
+	 * then Filter, Open Workspace and New Chat. Padding lives on `.volt-agent-home-nav`.
 	 */
 	private installNav(keybindingService: IKeybindingService): void {
-		const shortcut = keybindingService.lookupKeybinding(NEW_AGENT_COMMAND_ID)?.getLabel() ?? '';
-		const rows: Array<{ readonly element: Extract<AgentHomeElement, { type: 'newChat' | 'action' }>; readonly label: string }> = [
-			{ element: { type: 'newChat' }, label: localize('voltAgent.home.newChat', "New Chat") },
-			{ element: { type: 'action', id: 'search' }, label: actionSpec('search').label },
-			{ element: { type: 'action', id: 'automations' }, label: actionSpec('automations').label },
-			{ element: { type: 'action', id: 'customize' }, label: actionSpec('customize').label },
-		];
-		for (const row of rows) {
-			const button = append(this.nav, $('button.volt-agent-home-nav-row')) as HTMLButtonElement;
+		const bar = append(this.nav, $('.volt-agent-home-nav-bar'));
+
+		const searchLabel = actionSpec('search').label;
+		const search = append(bar, $('button.volt-agent-home-nav-row')) as HTMLButtonElement;
+		search.type = 'button';
+		search.setAttribute('aria-label', searchLabel);
+		const row = append(search, $('.volt-agent-home-row.is-action'));
+		const icon = append(row, $('span.icon'));
+		append(icon, $('span.twist'));
+		append(icon, $('span.glyph')).appendChild(createHomeSearchIcon());
+		append(row, $('span.name')).textContent = searchLabel;
+		this._register(addDisposableListener(search, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.runAction('search');
+			search.blur();
+		}));
+
+		const button = (className: string, label: string, glyph: HTMLElement, run: (button: HTMLButtonElement) => void) => {
+			const button = append(bar, $(`button.volt-agent-home-nav-action.${className}`)) as HTMLButtonElement;
 			button.type = 'button';
-			button.setAttribute('aria-label', row.label);
-			const container = append(button, $('.volt-agent-home-row'));
-			const icon = append(container, $('span.icon'));
-			append(icon, $('span.twist'));
-			const glyph = append(icon, $('span.glyph'));
-			append(container, $('span.name')).textContent = row.label;
-			const keybinding = append(container, $('span.keybinding'));
-			if (row.element.type === 'newChat') {
-				container.classList.add('is-new');
-				glyph.appendChild(createHomeNewChatIcon());
-				keybinding.textContent = shortcut;
-			} else {
-				container.classList.add('is-action');
-				switch (row.element.id) {
-					case 'search':
-						glyph.appendChild(createHomeSearchIcon());
-						break;
-					case 'automations':
-					case 'customize':
-						glyph.appendChild(renderIcon(actionSpec(row.element.id).icon));
-						break;
-					default: {
-						const unexpected: never = row.element.id;
-						return unexpected;
-					}
-				}
-			}
+			button.appendChild(glyph);
+			button.setAttribute('aria-label', label);
+			setAgentTooltip(button, label);
 			this._register(addDisposableListener(button, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();
-				void this.activate(row.element);
-				button.blur();
+				run(button);
 			}));
-		}
+			return button;
+		};
+		this.navFilter = button('volt-agent-home-filter', localize('voltAgent.home.filter', "Filter and sort"), createHomeFilterIcon(), button => {
+			this.openFilterMenu(button);
+			button.blur();
+		});
+		this.navFilter.classList.toggle('active', anyHomeFilterActive(this.viewState));
+		button('volt-agent-home-open-workspace', localize('voltAgent.home.openWorkspace', "Open Workspace"), createHomeOpenWorkspaceIcon(), button => this.openWorkspaceMenu(button));
+		const shortcut = keybindingService.lookupKeybinding(NEW_AGENT_COMMAND_ID)?.getLabel();
+		const newChatLabel = localize('voltAgent.home.newChat', "New Chat");
+		button('volt-agent-home-new-chat', shortcut ? `${newChatLabel} (${shortcut})` : newChatLabel, createHomeNewChatIcon(), button => {
+			void this.activate({ type: 'newChat' });
+			button.blur();
+		});
 	}
 
 	get view(): IAgentHomeViewState {
@@ -1164,6 +1164,16 @@ export class AgentHomePane extends Disposable {
 	/** Opens the Add Project menu (This PC, Git URL, GitHub) under `anchor`. Never a native dialog. */
 	async addProject(anchor?: HTMLElement): Promise<void> {
 		await this.commandService.executeCommand(VoltProjectCommands.addProject, { anchor });
+	}
+
+	/** The project a folder row stands for. A folder that is not a project has no settings. */
+	projectFor(uri: URI): IVoltProjectRecord | undefined {
+		const root = canonicalProjectRoot(uri).toString();
+		return this.voltSessionContext.projects.find(project => !project.scratch && canonicalProjectRoot(project.root).toString() === root);
+	}
+
+	openProjectSettings(project: IVoltProjectRecord): void {
+		void this.commandService.executeCommand(VOLT_PROJECT_SETTINGS_COMMAND_ID, project.id);
 	}
 
 	/** "Cloning 42%" or "Clone failed" for a project row, while that applies. */
@@ -1844,10 +1854,7 @@ export class AgentHomePane extends Disposable {
 	}
 
 	private syncFilterButton(): void {
-		const active = anyHomeFilterActive(this.viewState);
-		for (const button of this.treeContainer.querySelectorAll('.volt-agent-home-filter')) {
-			button.classList.toggle('active', active);
-		}
+		this.navFilter?.classList.toggle('active', anyHomeFilterActive(this.viewState));
 	}
 
 	private readViewState(): IAgentHomeViewState {

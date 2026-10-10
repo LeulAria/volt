@@ -68,10 +68,10 @@ export type AgentHomeActionId = 'search' | 'automations' | 'customize';
 export type AgentHomeElement =
 	| { readonly type: 'newChat' }
 	| { readonly type: 'action'; readonly id: AgentHomeActionId }
-	| { readonly type: 'section'; readonly key: AgentHomeSectionKey; readonly add?: boolean; readonly filter?: boolean }
+	| { readonly type: 'section'; readonly key: AgentHomeSectionKey; readonly add?: boolean }
 	| { readonly type: 'folder'; readonly project: IAgentHomeProject }
 	/** `count` is shown on headers that fold busy rows away (Working). */
-	| { readonly type: 'bucket'; readonly id: string; readonly label: string; readonly filter?: boolean; readonly add?: boolean; readonly count?: number }
+	| { readonly type: 'bucket'; readonly id: string; readonly label: string; readonly add?: boolean; readonly count?: number }
 	| { readonly type: 'group'; readonly id: AgentHomeGroupId; readonly count?: number }
 	/**
 	 * `nested` sessions sit under their project; the others list the project by its initials.
@@ -513,24 +513,18 @@ function buildHomeTree(
 			}
 		}
 		if (!body.length) {
-			// Every chat busy: the header keeps the filter, without "No agents yet" over the Working shelf.
+			// Every chat busy: an Agents header, without "No agents yet" over the Working shelf.
 			body.push({
-				element: { type: 'section', key: 'agents', filter: true },
+				element: { type: 'section', key: 'agents' },
 				collapsed: false,
 				children: working.length ? [] : [{ element: { type: 'empty', key: 'agents', filtered } }],
 			});
-		} else {
-			// The filter control lives on the first header, whichever bucket that is.
-			const first = body[0];
-			if (first.element.type === 'bucket') {
-				body[0] = { ...first, element: { ...first.element, filter: true } };
-			}
 		}
 	} else {
 		const key: AgentHomeSectionKey = view.grouping === 'repository' ? 'repositories' : 'workspaces';
 		const projects = projectNodes(unique, unpinned, view, workspaceFileIds, options);
 		body.push({
-			element: { type: 'section', key, filter: true },
+			element: { type: 'section', key },
 			collapsed: false,
 			children: projects.length ? projects : [{ element: { type: 'empty', key, filtered } }],
 		});

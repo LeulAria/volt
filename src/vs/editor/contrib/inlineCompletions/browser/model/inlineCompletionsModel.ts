@@ -435,7 +435,7 @@ export class InlineCompletionsModel extends Disposable {
 		const availableProviders = this.getAvailableProviders(providers.providers);
 		requestInfo.availableProviders = availableProviders.map(p => p.providerId).filter(isDefined);
 
-		return this._source.fetch(availableProviders, providers.label, context, itemToPreserve?.identity, changeSummary.shouldDebounce, userJumpedToActiveCompletion, requestInfo);
+		return this._source.fetch(availableProviders, providers.label, context, itemToPreserve?.identity, changeSummary.shouldDebounce, userJumpedToActiveCompletion, requestInfo, !!changeSummary.provider);
 	});
 
 	// TODO: This is not an ideal implementation of excludesGroupIds, however as this is currently still behind proposed API

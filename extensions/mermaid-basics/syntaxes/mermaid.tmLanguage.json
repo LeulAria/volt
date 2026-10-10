@@ -1,0 +1,1257 @@
+{
+	"name": "Mermaid",
+	"scopeName": "source.mermaid",
+	"information_for_contributors": [
+		"Written for Volt. Each diagram keyword opens a block that runs to the end of the source and holds that diagram's own rules."
+	],
+	"patterns": [
+		{
+			"include": "#directive"
+		},
+		{
+			"include": "#comment"
+		},
+		{
+			"name": "meta.diagram.flowchart.mermaid",
+			"begin": "^\\s*(flowchart|graph)(?![\\w-])(?:\\s+((?:TB|TD|BT|RL|LR)))?",
+			"beginCaptures": {
+				"1": {
+					"name": "keyword.control.diagram.mermaid"
+				},
+				"2": {
+					"name": "constant.language.direction.mermaid"
+				}
+			},
+			"end": "(?!)",
+			"patterns": [
+				{
+					"include": "#directive"
+				},
+				{
+					"include": "#comment"
+				},
+				{
+					"include": "#accessibility"
+				},
+				{
+					"include": "#style-statement"
+				},
+				{
+					"include": "#flow-keywords"
+				},
+				{
+					"include": "#class-shorthand"
+				},
+				{
+					"include": "#flow-links"
+				},
+				{
+					"include": "#flow-shapes"
+				},
+				{
+					"include": "#string"
+				},
+				{
+					"match": "\\b[\\w-]+\\b",
+					"name": "variable.other.node.mermaid"
+				}
+			]
+		},
+		{
+			"name": "meta.diagram.sequence.mermaid",
+			"begin": "^\\s*(sequenceDiagram)(?![\\w-])",
+			"beginCaptures": {
+				"1": {
+					"name": "keyword.control.diagram.mermaid"
+				}
+			},
+			"end": "(?!)",
+			"patterns": [
+				{
+					"include": "#directive"
+				},
+				{
+					"include": "#comment"
+				},
+				{
+					"include": "#accessibility"
+				},
+				{
+					"include": "#seq-statements"
+				},
+				{
+					"include": "#string"
+				}
+			]
+		},
+		{
+			"name": "meta.diagram.class.mermaid",
+			"begin": "^\\s*(classDiagram(?:-v2)?)(?![\\w-])(?:\\s+((?:TB|TD|BT|RL|LR)))?",
+			"beginCaptures": {
+				"1": {
+					"name": "keyword.control.diagram.mermaid"
+				},
+				"2": {
+					"name": "constant.language.direction.mermaid"
+				}
+			},
+			"end": "(?!)",
+			"patterns": [
+				{
+					"include": "#directive"
+				},
+				{
+					"include": "#comment"
+				},
+				{
+					"include": "#accessibility"
+				},
+				{
+					"include": "#style-statement"
+				},
+				{
+					"include": "#class-statements"
+				}
+			]
+		},
+		{
+			"name": "meta.diagram.state.mermaid",
+			"begin": "^\\s*(stateDiagram(?:-v2)?)(?![\\w-])(?:\\s+((?:TB|TD|BT|RL|LR)))?",
+			"beginCaptures": {
+				"1": {
+					"name": "keyword.control.diagram.mermaid"
+				},
+				"2": {
+					"name": "constant.language.direction.mermaid"
+				}
+			},
+			"end": "(?!)",
+			"patterns": [
+				{
+					"include": "#directive"
+				},
+				{
+					"include": "#comment"
+				},
+				{
+					"include": "#accessibility"
+				},
+				{
+					"include": "#style-statement"
+				},
+				{
+					"include": "#state-statements"
+				}
+			]
+		},
+		{
+			"name": "meta.diagram.er.mermaid",
+			"begin": "^\\s*(erDiagram)(?![\\w-])",
+			"beginCaptures": {
+				"1": {
+					"name": "keyword.control.diagram.mermaid"
+				}
+			},
+			"end": "(?!)",
+			"patterns": [
+				{
+					"include": "#directive"
+				},
+				{
+					"include": "#comment"
+				},
+				{
+					"include": "#accessibility"
+				},
+				{
+					"include": "#er-statements"
+				}
+			]
+		},
+		{
+			"name": "meta.diagram.other.mermaid",
+			"begin": "^\\s*(gantt|pie|journey|gitGraph|mindmap|timeline|quadrantChart|requirementDiagram|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment|sankey-beta|xychart-beta|xychart|block-beta|packet-beta|architecture-beta|kanban|radar-beta|zenuml)(?![\\w-])",
+			"beginCaptures": {
+				"1": {
+					"name": "keyword.control.diagram.mermaid"
+				}
+			},
+			"end": "(?!)",
+			"patterns": [
+				{
+					"include": "#directive"
+				},
+				{
+					"include": "#comment"
+				},
+				{
+					"include": "#accessibility"
+				},
+				{
+					"include": "#generic-statements"
+				}
+			]
+		}
+	],
+	"repository": {
+		"directive": {
+			"name": "meta.preprocessor.directive.mermaid",
+			"match": "%%\\{.*?\\}%%"
+		},
+		"comment": {
+			"begin": "%%",
+			"beginCaptures": {
+				"0": {
+					"name": "punctuation.definition.comment.mermaid"
+				}
+			},
+			"end": "$",
+			"name": "comment.line.double-percentage.mermaid"
+		},
+		"accessibility": {
+			"match": "^\\s*(accTitle|accDescr|title)\\s*(:?)\\s*(.*)$",
+			"captures": {
+				"1": {
+					"name": "keyword.other.mermaid"
+				},
+				"2": {
+					"name": "punctuation.separator.mermaid"
+				},
+				"3": {
+					"name": "string.unquoted.title.mermaid"
+				}
+			}
+		},
+		"string": {
+			"name": "string.quoted.double.mermaid",
+			"begin": "\"",
+			"end": "\"",
+			"beginCaptures": {
+				"0": {
+					"name": "punctuation.definition.string.begin.mermaid"
+				}
+			},
+			"endCaptures": {
+				"0": {
+					"name": "punctuation.definition.string.end.mermaid"
+				}
+			},
+			"patterns": [
+				{
+					"include": "#entity-code"
+				}
+			]
+		},
+		"entity-code": {
+			"name": "constant.character.entity.mermaid",
+			"match": "#(?:\\w+|\\d+);"
+		},
+		"number": {
+			"name": "constant.numeric.mermaid",
+			"match": "(?<![\\w.])-?\\d+(?:\\.\\d+)?(?:%|d|h|m|s|w|ms)?(?![\\w.])"
+		},
+		"style-statement": {
+			"patterns": [
+				{
+					"match": "^\\s*(classDef)\\s+([\\w,-]+)\\s+(.*)$",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "entity.other.attribute-name.class.mermaid"
+						},
+						"3": {
+							"patterns": [
+								{
+									"include": "#style-props"
+								}
+							]
+						}
+					}
+				},
+				{
+					"match": "^\\s*(style)\\s+([\\w,-]+)\\s+(.*)$",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "variable.other.node.mermaid"
+						},
+						"3": {
+							"patterns": [
+								{
+									"include": "#style-props"
+								}
+							]
+						}
+					}
+				},
+				{
+					"match": "^\\s*(linkStyle)\\s+(default|[\\d,\\s]+?)\\s+(.*)$",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "constant.numeric.mermaid"
+						},
+						"3": {
+							"patterns": [
+								{
+									"include": "#style-props"
+								}
+							]
+						}
+					}
+				},
+				{
+					"match": "^\\s*(click)\\s+([\\w-]+)\\s+(.*)$",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "variable.other.node.mermaid"
+						},
+						"3": {
+							"patterns": [
+								{
+									"include": "#string"
+								},
+								{
+									"match": "(?<![\\w-])(href|call|callback|_blank|_self|_parent|_top)(?![\\w-])",
+									"captures": {
+										"1": {
+											"name": "keyword.other.mermaid"
+										}
+									}
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		"style-props": {
+			"patterns": [
+				{
+					"match": "([\\w-]+)\\s*(:)",
+					"captures": {
+						"1": {
+							"name": "support.type.property-name.mermaid"
+						},
+						"2": {
+							"name": "punctuation.separator.key-value.mermaid"
+						}
+					}
+				},
+				{
+					"match": "#[0-9a-fA-F]{3,8}\\b",
+					"name": "constant.other.color.mermaid"
+				},
+				{
+					"include": "#number"
+				},
+				{
+					"match": "[,;]",
+					"name": "punctuation.separator.mermaid"
+				}
+			]
+		},
+		"class-shorthand": {
+			"match": "(:::)([\\w-]+)",
+			"captures": {
+				"1": {
+					"name": "punctuation.separator.mermaid"
+				},
+				"2": {
+					"name": "entity.other.attribute-name.class.mermaid"
+				}
+			}
+		},
+		"flow-shapes": {
+			"patterns": [
+				{
+					"begin": "\\(\\(\\(",
+					"end": "\\)\\)\\)",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.end.mermaid"
+						}
+					},
+					"name": "meta.node.shape.double-circle.mermaid",
+					"contentName": "string.unquoted.label.mermaid",
+					"patterns": [
+						{
+							"include": "#string"
+						},
+						{
+							"include": "#entity-code"
+						}
+					]
+				},
+				{
+					"begin": "\\(\\(",
+					"end": "\\)\\)",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.end.mermaid"
+						}
+					},
+					"name": "meta.node.shape.circle.mermaid",
+					"contentName": "string.unquoted.label.mermaid",
+					"patterns": [
+						{
+							"include": "#string"
+						},
+						{
+							"include": "#entity-code"
+						}
+					]
+				},
+				{
+					"begin": "\\(\\[",
+					"end": "\\]\\)",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.end.mermaid"
+						}
+					},
+					"name": "meta.node.shape.stadium.mermaid",
+					"contentName": "string.unquoted.label.mermaid",
+					"patterns": [
+						{
+							"include": "#string"
+						},
+						{
+							"include": "#entity-code"
+						}
+					]
+				},
+				{
+					"begin": "\\[\\[",
+					"end": "\\]\\]",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.end.mermaid"
+						}
+					},
+					"name": "meta.node.shape.subroutine.mermaid",
+					"contentName": "string.unquoted.label.mermaid",
+					"patterns": [
+						{
+							"include": "#string"
+						},
+						{
+							"include": "#entity-code"
+						}
+					]
+				},
+				{
+					"begin": "\\[\\(",
+					"end": "\\)\\]",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.end.mermaid"
+						}
+					},
+					"name": "meta.node.shape.cylinder.mermaid",
+					"contentName": "string.unquoted.label.mermaid",
+					"patterns": [
+						{
+							"include": "#string"
+						},
+						{
+							"include": "#entity-code"
+						}
+					]
+				},
+				{
+					"begin": "\\{\\{",
+					"end": "\\}\\}",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.end.mermaid"
+						}
+					},
+					"name": "meta.node.shape.hexagon.mermaid",
+					"contentName": "string.unquoted.label.mermaid",
+					"patterns": [
+						{
+							"include": "#string"
+						},
+						{
+							"include": "#entity-code"
+						}
+					]
+				},
+				{
+					"begin": "\\[[/\\\\]",
+					"end": "[/\\\\]\\]",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.end.mermaid"
+						}
+					},
+					"name": "meta.node.shape.trapezoid.mermaid",
+					"contentName": "string.unquoted.label.mermaid",
+					"patterns": [
+						{
+							"include": "#string"
+						},
+						{
+							"include": "#entity-code"
+						}
+					]
+				},
+				{
+					"begin": "(?<=[\\w-])>",
+					"end": "\\]",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.end.mermaid"
+						}
+					},
+					"name": "meta.node.shape.flag.mermaid",
+					"contentName": "string.unquoted.label.mermaid",
+					"patterns": [
+						{
+							"include": "#string"
+						},
+						{
+							"include": "#entity-code"
+						}
+					]
+				},
+				{
+					"begin": "\\[",
+					"end": "\\]",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.end.mermaid"
+						}
+					},
+					"name": "meta.node.shape.rectangle.mermaid",
+					"contentName": "string.unquoted.label.mermaid",
+					"patterns": [
+						{
+							"include": "#string"
+						},
+						{
+							"include": "#entity-code"
+						}
+					]
+				},
+				{
+					"begin": "\\(",
+					"end": "\\)",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.end.mermaid"
+						}
+					},
+					"name": "meta.node.shape.rounded.mermaid",
+					"contentName": "string.unquoted.label.mermaid",
+					"patterns": [
+						{
+							"include": "#string"
+						},
+						{
+							"include": "#entity-code"
+						}
+					]
+				},
+				{
+					"begin": "\\{",
+					"end": "\\}",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.definition.label.end.mermaid"
+						}
+					},
+					"name": "meta.node.shape.diamond.mermaid",
+					"contentName": "string.unquoted.label.mermaid",
+					"patterns": [
+						{
+							"include": "#string"
+						},
+						{
+							"include": "#entity-code"
+						}
+					]
+				}
+			]
+		},
+		"flow-links": {
+			"patterns": [
+				{
+					"match": "(?<![<\\w-])((?:--|==)(?![-=>]))\\s*([^\\s|>=-][^|>]*?)\\s*((?:-{2,}|={2,})[>xo]|-{3,}|={3,})",
+					"captures": {
+						"1": {
+							"name": "keyword.operator.link.mermaid"
+						},
+						"2": {
+							"name": "string.unquoted.link-label.mermaid"
+						},
+						"3": {
+							"name": "keyword.operator.link.mermaid"
+						}
+					}
+				},
+				{
+					"match": "(-\\.)\\s*([^\\s|>.-][^|>]*?)\\s*(\\.->|\\.-)",
+					"captures": {
+						"1": {
+							"name": "keyword.operator.link.mermaid"
+						},
+						"2": {
+							"name": "string.unquoted.link-label.mermaid"
+						},
+						"3": {
+							"name": "keyword.operator.link.mermaid"
+						}
+					}
+				},
+				{
+					"name": "keyword.operator.link.mermaid",
+					"match": "[<xo]?(?:-{2,}|={2,}|-\\.+-|~{3,})[>xo]?|[<xo]?-\\.+->|&"
+				},
+				{
+					"begin": "\\|",
+					"end": "\\|",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.definition.link-label.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.definition.link-label.end.mermaid"
+						}
+					},
+					"contentName": "string.unquoted.link-label.mermaid",
+					"patterns": [
+						{
+							"include": "#string"
+						}
+					]
+				}
+			]
+		},
+		"flow-keywords": {
+			"patterns": [
+				{
+					"match": "^\\s*(subgraph)\\s+([\\w-]+)?\\s*(.*)$",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "entity.name.section.mermaid"
+						},
+						"3": {
+							"patterns": [
+								{
+									"include": "#flow-shapes"
+								},
+								{
+									"include": "#string"
+								},
+								{
+									"match": ".+",
+									"name": "string.unquoted.label.mermaid"
+								}
+							]
+						}
+					}
+				},
+				{
+					"match": "^\\s*(direction)\\s+((?:TB|TD|BT|RL|LR))\\b",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "constant.language.direction.mermaid"
+						}
+					}
+				},
+				{
+					"match": "^\\s*(class)\\s+([\\w,-]+)\\s+([\\w-]+)",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "variable.other.node.mermaid"
+						},
+						"3": {
+							"name": "entity.other.attribute-name.class.mermaid"
+						}
+					}
+				},
+				{
+					"match": "^\\s*(end)(?![\\w-])",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						}
+					}
+				}
+			]
+		},
+		"seq-statements": {
+			"patterns": [
+				{
+					"match": "^\\s*(participant|actor|create\\s+participant|create\\s+actor)\\s+([^\\s]+?)(?:\\s+(as)\\s+(.*))?$",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "variable.other.participant.mermaid"
+						},
+						"3": {
+							"name": "keyword.other.mermaid"
+						},
+						"4": {
+							"name": "string.unquoted.label.mermaid"
+						}
+					}
+				},
+				{
+					"match": "^\\s*([Nn]ote)\\s+(left of|right of|over)\\s+([^:]+?)\\s*(:)\\s*(.*)$",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "keyword.other.mermaid"
+						},
+						"3": {
+							"name": "variable.other.participant.mermaid"
+						},
+						"4": {
+							"name": "punctuation.separator.mermaid"
+						},
+						"5": {
+							"name": "string.unquoted.note.mermaid"
+						}
+					}
+				},
+				{
+					"match": "^\\s*(loop|alt|else|opt|par|par_over|and|critical|option|break|rect|box)\\b\\s*(.*)$",
+					"captures": {
+						"1": {
+							"name": "keyword.control.flow.mermaid"
+						},
+						"2": {
+							"name": "string.unquoted.label.mermaid"
+						}
+					}
+				},
+				{
+					"match": "^\\s*(activate|deactivate|destroy)\\s+(\\S+)",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "variable.other.participant.mermaid"
+						}
+					}
+				},
+				{
+					"match": "^\\s*(end|autonumber)(?![\\w-])",
+					"captures": {
+						"1": {
+							"name": "keyword.control.flow.mermaid"
+						}
+					}
+				},
+				{
+					"match": "(\\w+(?:-\\w+)*)\\s*((?:<<)?-{1,2}(?:>>|>|x|\\)))([+-]?)\\s*(\\w+(?:-\\w+)*)\\s*(:)\\s*(.*)$",
+					"captures": {
+						"1": {
+							"name": "variable.other.participant.mermaid"
+						},
+						"2": {
+							"name": "keyword.operator.message.mermaid"
+						},
+						"3": {
+							"name": "keyword.operator.activation.mermaid"
+						},
+						"4": {
+							"name": "variable.other.participant.mermaid"
+						},
+						"5": {
+							"name": "punctuation.separator.mermaid"
+						},
+						"6": {
+							"name": "string.unquoted.message.mermaid"
+						}
+					}
+				}
+			]
+		},
+		"class-statements": {
+			"patterns": [
+				{
+					"match": "<<[^>]*>>",
+					"name": "storage.type.annotation.mermaid"
+				},
+				{
+					"match": "^\\s*(class)\\s+([\\w`]+)(~[^~]*~)?",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "entity.name.type.class.mermaid"
+						},
+						"3": {
+							"name": "entity.name.type.generic.mermaid"
+						}
+					}
+				},
+				{
+					"match": "^\\s*(namespace)\\s+([\\w.]+)",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "entity.name.namespace.mermaid"
+						}
+					}
+				},
+				{
+					"match": "^\\s*(note)(?:\\s+(for)\\s+(\\w+))?\\s+(\".*\")",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "keyword.other.mermaid"
+						},
+						"3": {
+							"name": "entity.name.type.class.mermaid"
+						},
+						"4": {
+							"name": "string.quoted.double.mermaid"
+						}
+					}
+				},
+				{
+					"match": "^\\s*([\\w`]+)\\s*(\"[^\"]*\")?\\s*(<\\|--|--\\|>|\\*--|--\\*|o--|--o|<--|-->|<\\.\\.|\\.\\.>|<\\|\\.\\.|\\.\\.\\|>|--|\\.\\.)\\s*(\"[^\"]*\")?\\s*([\\w`]+)\\s*(?:(:)\\s*(.*))?$",
+					"captures": {
+						"1": {
+							"name": "entity.name.type.class.mermaid"
+						},
+						"2": {
+							"name": "string.quoted.double.mermaid"
+						},
+						"3": {
+							"name": "keyword.operator.relation.mermaid"
+						},
+						"4": {
+							"name": "string.quoted.double.mermaid"
+						},
+						"5": {
+							"name": "entity.name.type.class.mermaid"
+						},
+						"6": {
+							"name": "punctuation.separator.mermaid"
+						},
+						"7": {
+							"name": "string.unquoted.label.mermaid"
+						}
+					}
+				},
+				{
+					"match": "<\\|--|--\\|>|\\*--|--\\*|o--|--o|<--|-->|<\\.\\.|\\.\\.>|<\\|\\.\\.|\\.\\.\\|>|--|\\.\\.",
+					"name": "keyword.operator.relation.mermaid"
+				},
+				{
+					"match": "(:)\\s*(.+)$",
+					"captures": {
+						"1": {
+							"name": "punctuation.separator.mermaid"
+						},
+						"2": {
+							"patterns": [
+								{
+									"include": "#class-member"
+								}
+							]
+						}
+					}
+				},
+				{
+					"begin": "\\{",
+					"end": "\\}",
+					"beginCaptures": {
+						"0": {
+							"name": "punctuation.section.block.begin.mermaid"
+						}
+					},
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.section.block.end.mermaid"
+						}
+					},
+					"patterns": [
+						{
+							"include": "#comment"
+						},
+						{
+							"match": "<<[^>]*>>",
+							"name": "storage.type.annotation.mermaid"
+						},
+						{
+							"include": "#class-member"
+						}
+					]
+				},
+				{
+					"include": "#string"
+				},
+				{
+					"match": "\\b[A-Z][\\w]*\\b",
+					"name": "entity.name.type.class.mermaid"
+				}
+			]
+		},
+		"class-member": {
+			"patterns": [
+				{
+					"match": "(?<![\\w)])[+\\-#~](?=\\s*\\w)",
+					"name": "storage.modifier.visibility.mermaid"
+				},
+				{
+					"match": "([\\w]+)(\\()([^)]*)(\\))([$*]?)",
+					"captures": {
+						"1": {
+							"name": "entity.name.function.mermaid"
+						},
+						"2": {
+							"name": "punctuation.definition.parameters.begin.mermaid"
+						},
+						"3": {
+							"name": "variable.parameter.mermaid"
+						},
+						"4": {
+							"name": "punctuation.definition.parameters.end.mermaid"
+						},
+						"5": {
+							"name": "storage.modifier.mermaid"
+						}
+					}
+				},
+				{
+					"match": "~[^~]+~",
+					"name": "entity.name.type.generic.mermaid"
+				},
+				{
+					"match": "(:)\\s*([\\w.\\[\\]<>~]+)",
+					"captures": {
+						"1": {
+							"name": "punctuation.separator.mermaid"
+						},
+						"2": {
+							"name": "support.type.mermaid"
+						}
+					}
+				},
+				{
+					"match": "\\b(?:int|integer|float|double|bool|boolean|string|String|char|void|long|short|byte|number|any|object|List|Map|Set|Array|UUID|Date|DateTime)\\b",
+					"name": "support.type.mermaid"
+				},
+				{
+					"match": "\\b[A-Z][\\w]*\\b",
+					"name": "entity.name.type.mermaid"
+				},
+				{
+					"match": "\\b[a-z_]\\w*\\b",
+					"name": "variable.other.property.mermaid"
+				}
+			]
+		},
+		"state-statements": {
+			"patterns": [
+				{
+					"match": "\\[\\*\\]",
+					"name": "constant.language.terminal-state.mermaid"
+				},
+				{
+					"match": "<<(fork|join|choice)>>",
+					"name": "storage.type.annotation.mermaid"
+				},
+				{
+					"match": "^\\s*(state)\\s+(\"[^\"]*\"|[\\w-]+)(?:\\s+(as)\\s+([\\w-]+))?",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "entity.name.type.state.mermaid"
+						},
+						"3": {
+							"name": "keyword.other.mermaid"
+						},
+						"4": {
+							"name": "entity.name.type.state.mermaid"
+						}
+					}
+				},
+				{
+					"match": "^\\s*(note)\\s+(left of|right of)\\s+([\\w-]+)\\s*(:)?\\s*(.*)$",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "keyword.other.mermaid"
+						},
+						"3": {
+							"name": "entity.name.type.state.mermaid"
+						},
+						"4": {
+							"name": "punctuation.separator.mermaid"
+						},
+						"5": {
+							"name": "string.unquoted.note.mermaid"
+						}
+					}
+				},
+				{
+					"match": "^\\s*(direction)\\s+((?:TB|TD|BT|RL|LR))\\b",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"name": "constant.language.direction.mermaid"
+						}
+					}
+				},
+				{
+					"match": "^\\s*(end|note)(?![\\w-])",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						}
+					}
+				},
+				{
+					"match": "-->",
+					"name": "keyword.operator.transition.mermaid"
+				},
+				{
+					"match": "--",
+					"name": "keyword.operator.concurrency.mermaid"
+				},
+				{
+					"match": "(:)\\s*(.*)$",
+					"captures": {
+						"1": {
+							"name": "punctuation.separator.mermaid"
+						},
+						"2": {
+							"name": "string.unquoted.label.mermaid"
+						}
+					}
+				},
+				{
+					"match": "[{}]",
+					"name": "punctuation.section.block.mermaid"
+				},
+				{
+					"match": "\\b[\\w-]+\\b",
+					"name": "entity.name.type.state.mermaid"
+				}
+			]
+		},
+		"er-statements": {
+			"patterns": [
+				{
+					"match": "([\\w-]+)\\s*((?:\\|\\||\\|o|o\\||\\}o|o\\{|\\}\\||\\|\\{)(?:--|\\.\\.)(?:\\|\\||\\|o|o\\||\\}o|o\\{|\\}\\||\\|\\{))\\s*([\\w-]+)\\s*(:)\\s*(.*)$",
+					"captures": {
+						"1": {
+							"name": "entity.name.type.entity.mermaid"
+						},
+						"2": {
+							"name": "keyword.operator.cardinality.mermaid"
+						},
+						"3": {
+							"name": "entity.name.type.entity.mermaid"
+						},
+						"4": {
+							"name": "punctuation.separator.mermaid"
+						},
+						"5": {
+							"patterns": [
+								{
+									"include": "#string"
+								},
+								{
+									"match": ".+",
+									"name": "string.unquoted.label.mermaid"
+								}
+							]
+						}
+					}
+				},
+				{
+					"begin": "([\\w-]+)\\s*(\\{)",
+					"beginCaptures": {
+						"1": {
+							"name": "entity.name.type.entity.mermaid"
+						},
+						"2": {
+							"name": "punctuation.section.block.begin.mermaid"
+						}
+					},
+					"end": "\\}",
+					"endCaptures": {
+						"0": {
+							"name": "punctuation.section.block.end.mermaid"
+						}
+					},
+					"patterns": [
+						{
+							"include": "#comment"
+						},
+						{
+							"match": "^\\s*([\\w()\\[\\],-]+)\\s+([\\w-]+)",
+							"captures": {
+								"1": {
+									"name": "support.type.mermaid"
+								},
+								"2": {
+									"name": "variable.other.property.mermaid"
+								}
+							}
+						},
+						{
+							"match": "\\b(PK|FK|UK)\\b",
+							"name": "keyword.other.key.mermaid"
+						},
+						{
+							"include": "#string"
+						}
+					]
+				},
+				{
+					"match": "\\b[\\w-]+\\b",
+					"name": "entity.name.type.entity.mermaid"
+				}
+			]
+		},
+		"generic-statements": {
+			"patterns": [
+				{
+					"match": "^\\s*(section|dateFormat|axisFormat|tickInterval|excludes|includes|todayMarker|weekday|x-axis|y-axis|quadrant-[1-4]|bar|line|showData|commit|branch|checkout|switch|merge|cherry-pick|root)\\b(.*)$",
+					"captures": {
+						"1": {
+							"name": "keyword.other.mermaid"
+						},
+						"2": {
+							"patterns": [
+								{
+									"include": "#string"
+								},
+								{
+									"include": "#number"
+								},
+								{
+									"match": "(?<![\\w-])(id|tag|type|order|parent|NORMAL|REVERSE|HIGHLIGHT)(?![\\w-])",
+									"captures": {
+										"1": {
+											"name": "variable.parameter.mermaid"
+										}
+									}
+								},
+								{
+									"match": "-->|:",
+									"name": "keyword.operator.mermaid"
+								}
+							]
+						}
+					}
+				},
+				{
+					"include": "#string"
+				},
+				{
+					"match": "(:)",
+					"name": "punctuation.separator.mermaid"
+				},
+				{
+					"include": "#number"
+				},
+				{
+					"match": "\\[|\\]|,",
+					"name": "punctuation.separator.mermaid"
+				}
+			]
+		}
+	}
+}

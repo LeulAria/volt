@@ -35,7 +35,7 @@ import { AgentPullRequestDockControl } from '../pullRequests/agentPullRequestDoc
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 import { setAgentTooltip } from './agentTooltip.js';
 import { closeAgentToolEditor, onDidChangeAgentToolEditors, openAgentToolsPanel, revealAgentToolEditor, SHOW_AGENT_FILES_COMMAND_ID, shownAgentToolEditors } from '../workspace/agentSurfaceHost.js';
-import { CHANGES_ICON_PATH, createSurfaceStrokeIcon, FILES_ICON_SHAPES, type SvgIconShapes } from '../workspace/agentSurfaceMenu.js';
+import { CHANGES_ICON_PATH, createSurfaceStrokeIcon, EXPLORER_ICON_SHAPES, type SvgIconShapes } from '../workspace/agentSurfaceMenu.js';
 import { AGENT_TOOLS_VISIBILITY_EVENT } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { AgentLineageDock } from './agentLineageDock.js';
@@ -58,22 +58,6 @@ export const QUICK_OPEN_NARROW_WINDOW_WIDTH = 1100;
 
 /** Below this chat column width the actions leave too little room for the conversation. */
 export const QUICK_OPEN_NARROW_CHAT_WIDTH = 900;
-
-/** Open Tabs lists every editor in these groups except the agent chat, without repeating the same tab. */
-export function dockOpenTabs(groups: readonly { readonly editors: readonly EditorInput[] }[], isChat: (editor: EditorInput) => boolean): EditorInput[] {
-	const tabs: EditorInput[] = [];
-	const seen = new Set<EditorInput>();
-	for (const group of groups) {
-		for (const editor of group.editors) {
-			if (isChat(editor) || seen.has(editor)) {
-				continue;
-			}
-			seen.add(editor);
-			tabs.push(editor);
-		}
-	}
-	return tabs;
-}
 
 /** Same editor stays the same row when its title changes, so a click is not lost to a rebuild. */
 export function dockTabKey(editor: { readonly typeId: string; readonly resource?: { toString(): string }; getName(): string }): string {
@@ -259,7 +243,12 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.panelToggle = append(this.titlebarToggles, $('button.volt-agent-titlebar-toggle.volt-agent-bottom-panel-toggle.volt-titlebar-control')) as HTMLButtonElement;
 		this.panelToggle.type = 'button';
 		this._register(addDisposableListener(this.panelToggle, 'click', () => {
-			void this.commandService.executeCommand(TOGGLE_TERMINAL_COMMAND_ID);
+			// Toggle Terminal only closes a panel that has focus, and clicking this button takes it.
+			if (this.layoutService.isVisible(Parts.PANEL_PART)) {
+				this.layoutService.setPartHidden(true, Parts.PANEL_PART);
+			} else {
+				void this.commandService.executeCommand(TOGGLE_TERMINAL_COMMAND_ID);
+			}
 		}));
 		this._register(layoutService.onDidChangePartVisibility(() => this.syncPanelToggle()));
 		this.syncPanelToggle();
@@ -391,7 +380,7 @@ class AgentViewSidebarsContribution extends Disposable {
 			{ id: 'changes', label: localize('voltAgent.dock.changes', "Changes"), iconPath: CHANGES_ICON_PATH, command: OPEN_AGENT_CHANGES_COMMAND_ID },
 			{ id: 'browser', label: localize('voltAgent.dock.browser', "Browser"), icon: Codicon.globe, command: OPEN_BROWSER_COMMAND_ID },
 			{ id: 'terminal', label: localize('voltAgent.dock.terminal', "Terminal"), icon: Codicon.terminal, command: 'workbench.action.terminal.toggleTerminal' },
-			{ id: 'files', label: localize('voltAgent.dock.files', "Files"), iconPath: FILES_ICON_SHAPES, command: SHOW_AGENT_FILES_COMMAND_ID },
+			{ id: 'files', label: localize('voltAgent.dock.explorer', "Explorer"), iconPath: EXPLORER_ICON_SHAPES, command: SHOW_AGENT_FILES_COMMAND_ID },
 		];
 	}
 
@@ -779,11 +768,9 @@ class AgentViewSidebarsContribution extends Disposable {
 		}
 	}
 
+	/** Only the right pane's tabs. Main panel pages (Customize, Scheduled Tasks, other chats) are reached from the sidebar. */
 	private collectOpenTabs(): EditorInput[] {
-		return dockOpenTabs(
-			[{ editors: shownAgentToolEditors() }, ...this.editorGroupsService.mainPart.groups],
-			editor => editor instanceof AgentEditorInput,
-		);
+		return shownAgentToolEditors();
 	}
 
 	private iconFor(editor: EditorInput): ThemeIcon {

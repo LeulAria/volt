@@ -1110,12 +1110,26 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		return result.stdout;
 	}
 
+	/** Whether the repository around `folder` has it in HEAD or anything under it in the index. */
+	private async tracksFolder(folder: string): Promise<boolean> {
+		if ((await this.run('git', ['cat-file', '-e', 'HEAD:./'], { cwd: folder, timeoutMs: 15_000 })).code === 0) {
+			return true;
+		}
+		const indexed = await this.run('git', ['ls-files', '--cached', '--', '.'], { cwd: folder, timeoutMs: 15_000 });
+		return indexed.code === 0 && !!indexed.stdout.trim();
+	}
+
 	async gitStatus(folder: string): Promise<IVoltGitStatus | undefined> {
-		const top = await this.run('git', ['rev-parse', '--show-toplevel'], { cwd: folder, timeoutMs: 15_000 });
+		const top = await this.run('git', ['rev-parse', '--show-toplevel', '--show-prefix'], { cwd: folder, timeoutMs: 15_000 });
 		if (top.code !== 0) {
 			return undefined;
 		}
-		const root = top.stdout.trim();
+		const [root, prefix] = top.stdout.split('\n').map(line => line.trim());
+		// A folder without its own repository inside one that does not track it (a scratch project in
+		// a checkout) is not under git: its files would only be the outer repository's untracked ones.
+		if (prefix && !(await this.tracksFolder(folder))) {
+			return undefined;
+		}
 		// Read-only: never take index.lock, so a terminal `git commit` running now does not fail.
 		const git = (args: string[]) => this.run('git', ['--no-optional-locks', '-c', 'core.quotepath=off', ...args], { cwd: root, timeoutMs: 30_000 });
 		const [statusOut, remotesOut, hasHead] = await Promise.all([

@@ -246,6 +246,38 @@ export function createCodeCardShell(parent: HTMLElement, options: ICodeCardOptio
 	return { card, content, scroll, overlay };
 }
 
+/**
+ * The chat's copy glyph (a reply's footer, diagram cards): two overlapping rounded squares drawn
+ * with a hairline; the button's CSS sets its size and stroke.
+ */
+export function createMessageCopyIcon(): HTMLElement {
+	const el = $('span.volt-agent-svg-icon.copy');
+	const doc = el.ownerDocument;
+	const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('width', '24');
+	svg.setAttribute('height', '24');
+	svg.setAttribute('fill', 'none');
+	svg.setAttribute('stroke', 'currentColor');
+	svg.setAttribute('stroke-width', '1');
+	svg.setAttribute('stroke-linecap', 'round');
+	svg.setAttribute('stroke-linejoin', 'round');
+	svg.setAttribute('aria-hidden', 'true');
+	const rect = doc.createElementNS('http://www.w3.org/2000/svg', 'rect');
+	rect.setAttribute('width', '14');
+	rect.setAttribute('height', '14');
+	rect.setAttribute('x', '8');
+	rect.setAttribute('y', '8');
+	rect.setAttribute('rx', '2');
+	rect.setAttribute('ry', '2');
+	const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
+	path.setAttribute('d', 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2');
+	svg.appendChild(rect);
+	svg.appendChild(path);
+	el.appendChild(svg);
+	return el;
+}
+
 /** Two overlapping rounded squares, the copy glyph on a code card. No button outline. */
 function createCodeCopyIcon(): HTMLElement {
 	const el = $('span.volt-agent-svg-icon.copy');
@@ -300,8 +332,10 @@ function strokeShape(shape: SVGElement): void {
 /**
  * A read-only Monaco editor in the card, so tabs, indent guides, and token colours are the
  * workbench editor's. Returns false when there is no instantiation service (plain HTML fallback).
+ * `display` is for diagram sources: a line-number gutter, their own top/bottom padding (so the
+ * gutter spans the card body) and no indent guides. Chat code cards keep the defaults.
  */
-function mountMonacoCode(scroll: HTMLElement, text: string, alias: string, options: ICodeCardOptions): boolean {
+export function mountMonacoCode(scroll: HTMLElement, text: string, alias: string, options: ICodeCardOptions, display: { readonly lineNumbers?: boolean; readonly padding?: number; readonly indentGuides?: boolean } = {}): boolean {
 	const instantiationService = options.instantiationService;
 	if (!instantiationService) {
 		return false;
@@ -317,7 +351,8 @@ function mountMonacoCode(scroll: HTMLElement, text: string, alias: string, optio
 			const configuredLineHeight = configurationService.getValue<number>('editor.lineHeight');
 			const lineHeight = configuredLineHeight > 0 ? configuredLineHeight : Math.round(fontSize * 1.5);
 			const lineCount = Math.max(1, text.split('\n').length);
-			host.style.height = `${lineCount * lineHeight + 12}px`;
+			const padding = display.padding ?? 6;
+			host.style.height = `${lineCount * lineHeight + padding * 2}px`;
 
 			const widgetOptions: ICodeEditorWidgetOptions = {
 				isSimpleWidget: true,
@@ -335,11 +370,11 @@ function mountMonacoCode(scroll: HTMLElement, text: string, alias: string, optio
 					...getSimpleEditorOptions(configurationService),
 					readOnly: true,
 					domReadOnly: true,
-					lineNumbers: 'off',
+					lineNumbers: display.lineNumbers ? 'on' : 'off',
 					glyphMargin: false,
 					folding: false,
-					lineDecorationsWidth: 0,
-					lineNumbersMinChars: 0,
+					lineDecorationsWidth: display.lineNumbers ? 14 : 0,
+					lineNumbersMinChars: display.lineNumbers ? 2 : 0,
 					minimap: { enabled: false },
 					scrollBeyondLastLine: false,
 					wordWrap: 'off',
@@ -356,7 +391,7 @@ function mountMonacoCode(scroll: HTMLElement, text: string, alias: string, optio
 					stickyScroll: { enabled: false },
 					mouseWheelZoom: false,
 					automaticLayout: false,
-					padding: { top: 6, bottom: 6 },
+					padding: { top: padding, bottom: padding },
 					scrollbar: {
 						vertical: 'hidden',
 						horizontal: 'auto',
@@ -367,7 +402,7 @@ function mountMonacoCode(scroll: HTMLElement, text: string, alias: string, optio
 						useShadows: false,
 					},
 					guides: {
-						indentation: configurationService.getValue<boolean>('editor.guides.indentation') !== false,
+						indentation: display.indentGuides !== false && configurationService.getValue<boolean>('editor.guides.indentation') !== false,
 						highlightActiveIndentation: false,
 						bracketPairs: false,
 						bracketPairsHorizontal: false,
@@ -422,7 +457,7 @@ function mountMonacoCode(scroll: HTMLElement, text: string, alias: string, optio
 				if (width <= 0) {
 					return;
 				}
-				const height = Math.max(lineHeight + 12, Math.ceil(editor.getContentHeight()));
+				const height = Math.max(lineHeight + padding * 2, Math.ceil(editor.getContentHeight()));
 				if (width === lastWidth && height === lastHeight) {
 					return;
 				}

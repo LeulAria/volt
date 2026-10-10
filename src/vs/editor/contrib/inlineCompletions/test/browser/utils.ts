@@ -5,6 +5,7 @@
 
 import { timeout } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
+import { Emitter } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { CoreEditingCommands, CoreNavigationCommands } from '../../../../browser/coreCommands.js';
 import { Position } from '../../../../common/core/position.js';
@@ -32,9 +33,17 @@ export class MockInlineCompletionsProvider implements InlineCompletionsProvider 
 	private callHistory = new Array<unknown>();
 	private calledTwiceIn50Ms = false;
 
+	private readonly _onDidChange = new Emitter<void>();
+	readonly onDidChangeInlineCompletions = this._onDidChange.event;
+
 	constructor(
 		public readonly enableForwardStability = false,
 	) { }
+
+	/** Tells the editor that this provider's completions changed. */
+	public fireChange(): void {
+		this._onDidChange.fire();
+	}
 
 	public setReturnValue(value: InlineCompletion | undefined, delayMs: number = 0): void {
 		this.returnValue = value ? [value] : [];

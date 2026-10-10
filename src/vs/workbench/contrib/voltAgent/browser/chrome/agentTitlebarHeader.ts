@@ -29,6 +29,7 @@ import { IWorkbenchLayoutService } from '../../../../services/layout/browser/lay
 import { IPathService } from '../../../../services/path/common/pathService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltSessionContextService, projectIdForRoot, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { AGENT_HOME_NEW_CHAT_ICON_PATH } from '../home/agentHomeIcons.js';
 import { scratchProjectLabel } from '../home/agentHomeWorkspace.js';
 import { ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
@@ -80,9 +81,9 @@ export function primaryHeaderShowsSearch(sidebarClosed: boolean): boolean {
 	return sidebarClosed;
 }
 
-/** New Agent sits there too, except while that screen is already open. */
-export function primaryHeaderShowsNewAgent(sidebarClosed: boolean, newAgentWindow: boolean): boolean {
-	return sidebarClosed && !newAgentWindow;
+/** New Agent sits there too, before Search, also while that screen is open. */
+export function primaryHeaderShowsNewAgent(sidebarClosed: boolean): boolean {
+	return sidebarClosed;
 }
 
 /** Closed when the sidebar toggle has moved onto the primary title bar. */
@@ -205,11 +206,12 @@ function createAgentHeaderSearchIcon(parent: HTMLElement): SVGElement {
 	return svg;
 }
 
-function createAgentHeaderPlusIcon(parent: HTMLElement): SVGElement {
+/** The paper plane of the sidebar's New Chat row, 1.2px lines. */
+function createAgentHeaderNewChatIcon(parent: HTMLElement): SVGElement {
 	const svg = createHeaderSvg(parent.ownerDocument, 16);
 	const path = parent.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
-	path.setAttribute('d', 'M12 5V19M5 12H19');
-	strokeAttrs(path, '1.5');
+	path.setAttribute('d', AGENT_HOME_NEW_CHAT_ICON_PATH);
+	strokeAttrs(path, '1.2');
 	svg.appendChild(path);
 	parent.appendChild(svg);
 	return svg;
@@ -358,13 +360,13 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		this.dragSpacer.hidden = true;
 		this._register({ dispose: () => this.dragSpacer.remove() });
 
+		this.newAgentButton = append(this.element, $('button.volt-agent-primary-header-button.volt-agent-primary-header-new.volt-titlebar-control')) as HTMLButtonElement;
+		this.newAgentButton.type = 'button';
+		createAgentHeaderNewChatIcon(this.newAgentButton);
+
 		this.searchButton = append(this.element, $('button.volt-agent-primary-header-button.volt-agent-primary-header-search.volt-titlebar-control')) as HTMLButtonElement;
 		this.searchButton.type = 'button';
 		createAgentHeaderSearchIcon(this.searchButton);
-
-		this.newAgentButton = append(this.element, $('button.volt-agent-primary-header-button.volt-agent-primary-header-new.volt-titlebar-control')) as HTMLButtonElement;
-		this.newAgentButton.type = 'button';
-		createAgentHeaderPlusIcon(this.newAgentButton);
 
 		this.titleCluster = append(this.element, $('.volt-agent-primary-header-title'));
 		this.projectLabel = append(this.titleCluster, $('span.volt-agent-primary-header-project'));
@@ -507,10 +509,6 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		});
 	}
 
-	private untitledTitle(): string {
-		return localize('voltAgentEditorName', "New Agent");
-	}
-
 	private folderUri(): URI | undefined {
 		const editor = this.mainEditor();
 		if (editor instanceof AgentEditorInput) {
@@ -558,13 +556,9 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		this.mount();
 		const editor = this.mainEditor();
 		const full = editor?.getName()?.replace(/\r?\n/g, ' ').trim() ?? '';
-		const turns = editor instanceof AgentEditorInput
-			? Math.max(editor.messages.length, this.history.get(editor.sessionId)?.turnCount ?? 0)
-			: 0;
-		const freshAgent = isNewAgentWindow(editor instanceof AgentEditorInput, full, this.untitledTitle(), turns);
 		const closed = this.sidebarClosed();
 		const showSearch = primaryHeaderShowsSearch(closed);
-		const showNew = primaryHeaderShowsNewAgent(closed, freshAgent);
+		const showNew = primaryHeaderShowsNewAgent(closed);
 		this.searchButton.hidden = !showSearch;
 		this.newAgentButton.hidden = !showNew;
 		this.element.classList.toggle('has-controls', showSearch || showNew);

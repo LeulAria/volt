@@ -9,6 +9,8 @@ import { Disposable, IDisposable, MutableDisposable } from '../../../../../base/
 import { URI } from '../../../../../base/common/uri.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IWorkspaceContextService, WorkbenchState } from '../../../../../platform/workspace/common/workspace.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { EditorsOrder } from '../../../../common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
@@ -18,8 +20,10 @@ import { IWorkbenchLayoutService } from '../../../../services/layout/browser/lay
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltProjectRecord, IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { getLayoutMode, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { isNewEmptyWindow } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
+import { AgentSchedulesEditorInput } from '../schedules/agentSchedulesEditor.js';
 import { AGENT_NEW_CHAT_DRAFT_SETTING } from '../../common/agentComposerSettings.js';
 import { agentPanelTabsMode, isBlankNewChat, latestSessionForFolder, unsentDraftForFolder } from '../home/agentHomeModel.js';
 import { AgentChatStart, attachSessionToProject, resolveSessionProject } from './agentShell.js';
@@ -328,6 +332,40 @@ export async function startAgentChat(
 
 registerWorkbenchContribution2(AgentPanelsContribution.ID, AgentPanelsContribution, WorkbenchPhase.AfterRestored);
 
+/** A new empty agent window (New Window) opens on the New Agent composer with no project, not the watermark. */
+class NewWindowAgentContribution {
+
+	static readonly ID = 'workbench.contrib.voltAgentNewWindow';
+
+	constructor(
+		@IStorageService storageService: IStorageService,
+		@IWorkspaceContextService contextService: IWorkspaceContextService,
+		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
+		@IVoltSessionContextService sessionContext: IVoltSessionContextService,
+		@IAgentWorkspaceService workspace: IAgentWorkspaceService,
+		@IAgentHistoryService history: IAgentHistoryService,
+		@IEditorGroupsService editorGroups: IEditorGroupsService,
+		@IInstantiationService instantiation: IInstantiationService,
+	) {
+		if (getLayoutMode(layoutService) !== 'agent'
+			|| !isNewEmptyWindow(storageService, contextService.getWorkbenchState() === WorkbenchState.EMPTY)) {
+			return;
+		}
+		// Until the composer is open the empty editor would draw its watermark for a frame or more.
+		const container = layoutService.mainContainer;
+		container.classList.add('volt-new-window-starting');
+		// The groups exist once the editor part is ready, which is before the restore ends.
+		void editorGroups.mainPart.whenReady
+			.then(() => editorGroups.mainPart.groups.some(group => !group.isEmpty)
+				? undefined
+				: startAgentChat(sessionContext, workspace, history, editorGroups, instantiation, { kind: 'none' }))
+			.finally(() => container.classList.remove('volt-new-window-starting'));
+	}
+}
+
+// Before the restore finishes: from AfterRestored the window had already painted its empty watermark.
+registerWorkbenchContribution2(NewWindowAgentContribution.ID, NewWindowAgentContribution, WorkbenchPhase.BlockRestore);
+
 /**
  * The main panel is one agent, never a tab strip, whether or not the agent list is open. A file,
  * browser or changes editor opened there gets a single title so it can still be told apart and closed.
@@ -361,10 +399,11 @@ class AgentPanelTabsContribution extends Disposable {
 		}
 		// Only an editor on screen needs a title. A file left behind in a background group would
 		// otherwise bring the chat's own tab row back under the titlebar, which already names it.
-		// Usage needs none either: the titlebar names it and holds its controls.
+		// Usage and Scheduled Tasks need none either: the titlebar names them and the page has its own heading.
 		let nonAgentEditors = 0;
 		for (const group of this.editorGroupsService.mainPart.groups) {
-			if (group.activeEditor && !(group.activeEditor instanceof AgentEditorInput) && !(group.activeEditor instanceof AgentUsageEditorInput)) {
+			const active = group.activeEditor;
+			if (active && !(active instanceof AgentEditorInput) && !(active instanceof AgentUsageEditorInput) && !(active instanceof AgentSchedulesEditorInput)) {
 				nonAgentEditors++;
 			}
 		}

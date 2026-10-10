@@ -15,6 +15,7 @@ import { IFileDialogService } from '../../../../../platform/dialogs/common/dialo
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { Registry } from '../../../../../platform/registry/common/platform.js';
@@ -331,13 +332,11 @@ registerAction2(class OpenAgentUsageAction extends Action2 {
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
-		const view = await showAgentSidePanel(accessor, false);
-		if (view) {
-			await view.openUsage();
-			return;
-		}
-		const input = accessor.get(IInstantiationService).createInstance(AgentUsageEditorInput);
-		await accessor.get(IEditorService).openEditor(input, { pinned: true });
+		// Usage is a page of Volt Settings; it opens on its last page, so jump to Usage.
+		const editorService = accessor.get(IEditorService);
+		await accessor.get(ICommandService).executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
+		const pane = editorService.activeEditorPane as unknown as { showSection?: (id: string) => void } | undefined;
+		pane?.showSection?.('usage');
 	}
 });
 

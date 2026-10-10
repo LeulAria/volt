@@ -76,6 +76,7 @@ const OPEN_TOOLS_ADD_MENU_ID = 'workbench.action.voltAgentTools.add';
 /** Called by the git extension; keep the id in step with extensions/git/src/gitEditor.ts. */
 const EDIT_IN_AGENT_TOOLS_COMMAND_ID = '_volt.agentTools.editUntilClosed';
 const TOGGLE_TOOLS_FULLSCREEN_ID = 'workbench.action.voltAgentTools.toggleFullScreen';
+const TOGGLE_TOOLS_PANEL_ID = 'workbench.action.voltAgentTools.togglePanel';
 /** Opens the Explorer in the files sidebar of the chat on screen. */
 export const SHOW_AGENT_FILES_COMMAND_ID = 'workbench.action.voltAgentTools.showFiles';
 export const SHOW_AGENT_SCM_COMMAND_ID = 'workbench.action.voltAgentTools.showSourceControl';
@@ -155,6 +156,16 @@ export function openAgentToolsPanel(): void {
 			return;
 		}
 	}
+}
+
+/** Opens or closes the right panel beside the chat on screen; false outside the agent layout. */
+export function toggleAgentToolsPanel(): boolean {
+	for (const host of hosts) {
+		if (host.toggleToolsPanel()) {
+			return true;
+		}
+	}
+	return false;
 }
 /** Each chat's tools area, shared by every chat view: it moves to whichever view shows the chat. */
 const toolParts = new Map<string, IToolsPart>();
@@ -499,7 +510,7 @@ export class AgentSurfaceHost extends Disposable {
 		this._register(toDisposable(() => resize.disconnect()));
 		this._register(onDidChangeLayoutMode(() => this.syncOpen()));
 		this._register(this.layoutService.onDidLayoutMainContainer(() => this.place()));
-		this._register(registerAgentFileEditorRouting(this.editorGroupsService, this.fileService, {
+		this._register(registerAgentFileEditorRouting(this.editorGroupsService, {
 			getSessionId: () => getLayoutMode(this.layoutService) === 'agent' && this.canOpenTools() ? this.sessionId : undefined,
 			openToolsGroup: () => this.toolsGroup(),
 		}));
@@ -557,6 +568,20 @@ export class AgentSurfaceHost extends Disposable {
 		} else {
 			this.openBrowser();
 		}
+		return true;
+	}
+
+	/** Closes the right panel like its Close Right Panel button when it shows, else opens it like the title bar button. */
+	toggleToolsPanel(): boolean {
+		if (getLayoutMode(this.layoutService) !== 'agent' || !this.canOpenTools()) {
+			return false;
+		}
+		if (!this.hasTools()) {
+			return this.openToolsPanel();
+		}
+		this.toolsHidden = true;
+		this.setPresentation('split');
+		this.chat.focus();
 		return true;
 	}
 
@@ -1068,8 +1093,14 @@ export class AgentSurfaceHost extends Disposable {
 				this.applySplit(this.ratio);
 			}
 		}
+		const columnBefore = this.lastSidebarSplit.mode === 'beside';
 		this.lastSidebarSplit = this.filesSidebarSplit();
 		this.place();
+		if (this.announcedOpen && columnBefore !== (this.lastSidebarSplit.mode === 'beside')) {
+			// The files sidebar took or gave back a column beside the tabs: the window weighs again
+			// whether the agents list still fits (agentNeedsSidebarDrawer), now that it is laid out.
+			this.layoutService.mainContainer.dispatchEvent(new CustomEvent(AGENT_TOOLS_VISIBILITY_EVENT));
+		}
 	}
 
 	private filesSidebarSplit(): IFilesSidebarSplit {
@@ -2192,6 +2223,32 @@ registerAction2(class ToggleAgentToolsFullScreenAction extends Action2 {
 				return;
 			}
 		}
+	}
+});
+
+registerAction2(class ToggleAgentToolsPanelAction extends Action2 {
+	constructor() {
+		super({
+			id: TOGGLE_TOOLS_PANEL_ID,
+			title: localize2('voltAgent.tools.togglePanel', "Toggle Right Panel"),
+			f1: true,
+			precondition: LayoutModeContext.isEqualTo('agent'),
+			keybinding: [{
+				primary: KeyMod.CtrlCmd | KeyCode.KeyL,
+				// Toggle Agents Side Bar in the IDE layout. Add to Chat (+80) still wins with a code selection.
+				weight: KeybindingWeight.WorkbenchContrib + 75,
+				when: LayoutModeContext.isEqualTo('agent'),
+			}, {
+				primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyB,
+				// Toggle Secondary Side Bar in the IDE layout.
+				weight: KeybindingWeight.WorkbenchContrib + 10,
+				when: LayoutModeContext.isEqualTo('agent'),
+			}],
+		});
+	}
+
+	override run(_accessor: ServicesAccessor): void {
+		toggleAgentToolsPanel();
 	}
 });
 

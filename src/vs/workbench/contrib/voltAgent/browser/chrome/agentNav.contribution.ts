@@ -124,6 +124,9 @@ class AgentNavContribution extends Disposable {
 			if (!aux.querySelector(':scope > .volt-agent-nav')) {
 				this.mountPair(aux, false);
 			}
+			if (!aux.querySelector(':scope > .volt-agent-brand-logo')) {
+				aux.append(this.createBrandLogo(false));
+			}
 		}
 		const titlebar = this.layoutService.getContainer(mainWindow, Parts.TITLEBAR_PART);
 		const left = titlebar?.querySelector('.titlebar-left');
@@ -134,6 +137,17 @@ class AgentNavContribution extends Disposable {
 				header.before(nav);
 			}
 		}
+		if (isHTMLElement(left) && !left.querySelector(':scope > .volt-agent-brand-logo')) {
+			left.prepend(this.createBrandLogo(true));
+		}
+	}
+
+	/** The app icon's bolt, alone, before the sidebar toggle (the image is in the CSS): in the sidebar while it is open, in the title bar when it is closed. */
+	private createBrandLogo(titlebar: boolean): HTMLElement {
+		const logo = $(titlebar ? '.volt-agent-brand-logo.in-titlebar' : '.volt-agent-brand-logo');
+		logo.setAttribute('aria-hidden', 'true');
+		this._register({ dispose: () => logo.remove() });
+		return logo;
 	}
 
 	private mountPair(parent: HTMLElement, titlebar: boolean): HTMLElement {

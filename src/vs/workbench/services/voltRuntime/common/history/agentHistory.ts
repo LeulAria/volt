@@ -268,6 +268,13 @@ export interface IAgentSessionHandle {
 	close(): Promise<void>;
 }
 
+/** Turns a chat dropped (edit and resend, restore checkpoint): `index` is the first one's position. */
+export interface IAgentSessionTruncation {
+	readonly sessionId: string;
+	readonly index: number;
+	readonly turns: readonly IAgentSessionTurn[];
+}
+
 export const IAgentHistoryService = createDecorator<IAgentHistoryService>('agentHistoryService');
 
 export interface IAgentHistoryService {
@@ -275,6 +282,8 @@ export interface IAgentHistoryService {
 
 	/** Fires when the index changes (new session, status, title, pin, ...). */
 	readonly onDidChange: Event<void>;
+	/** Fires when an open chat drops turns, with the turns as they were. */
+	readonly onDidTruncate: Event<IAgentSessionTruncation>;
 	/** Resolves once the index has been loaded from disk. */
 	readonly whenReady: Promise<void>;
 	/** Identity of the current workspace as recorded in new sessions. */
@@ -288,6 +297,8 @@ export interface IAgentHistoryService {
 
 	/** Open (creating on first append) the handle for a session id. */
 	open(id: string): IAgentSessionHandle;
+	/** A chat's transcript without opening a handle: an open chat's current state, else its log as stored. */
+	readTranscript(id: string): Promise<IAgentSessionTranscript | undefined>;
 
 	/**
 	 * Workspace written into a session that has not been saved yet.

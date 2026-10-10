@@ -10,7 +10,9 @@ import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/con
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { toErrorMessage } from '../../../../base/common/errorMessage.js';
+import { safeIntl } from '../../../../base/common/date.js';
 import { DisposableStore, IDisposable } from '../../../../base/common/lifecycle.js';
+import { language } from '../../../../base/common/platform.js';
 import { localize } from '../../../../nls.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
@@ -20,6 +22,8 @@ import { defaultButtonStyles } from '../../../../platform/theme/browser/defaultS
 import { AgentRunOn } from '../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IVoltProjectRecord } from '../../../services/voltRuntime/common/sessionContext.js';
 import { AgentModelPicker } from '../../voltAgent/browser/picker/agentModelPicker.js';
+import { IAgentProjectUsageService } from '../../voltAgent/browser/usage/agentProjectUsage.js';
+import { formatCost, formatDuration, formatTokens } from '../../voltAgent/browser/usage/agentUsageFormat.js';
 import { showVoltModal } from '../../voltProjects/browser/ui/voltModal.js';
 import { CURSOR_WORKTREES_FILE, formatEnvText, parseEnvText, stepsFromText, VOLT_WORKTREES_FILE } from '../common/projectSettings.js';
 import { IVoltProjectSettingsService } from './projectSettingsService.js';
@@ -27,7 +31,22 @@ import { VoltStorageView } from './storageView.js';
 
 let openFor: string | undefined;
 
-/** Project Settings: what new chats in one project start with, its worktree setup, its agents' environment, and its storage. */
+const sinceFormat = safeIntl.DateTimeFormat(language, { month: 'short', day: 'numeric', year: 'numeric' });
+
+/** `38s` and `2m 38s` for short totals, then hours and days like the Usage page. */
+function formatAgentTime(ms: number): string {
+	const seconds = Math.round(ms / 1000);
+	if (seconds < 60) {
+		return `${Math.max(1, seconds)}s`;
+	}
+	if (seconds < 3600) {
+		const minutes = Math.floor(seconds / 60);
+		return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`;
+	}
+	return formatDuration(ms);
+}
+
+/** Project Settings: what the project's chats have spent, what new chats start with, its worktree setup, its agents' environment, and its storage. */
 export class ProjectSettingsDialog {
 
 	constructor(
@@ -36,6 +55,7 @@ export class ProjectSettingsDialog {
 		@IVoltProjectSettingsService private readonly settings: IVoltProjectSettingsService,
 		@ILabelService private readonly labelService: ILabelService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IAgentProjectUsageService private readonly usage: IAgentProjectUsageService,
 	) { }
 
 	show(project: IVoltProjectRecord): void {
@@ -60,6 +80,8 @@ export class ProjectSettingsDialog {
 		let defaultModel = saved.defaultModel;
 		let runOn: AgentRunOn = this.settings.getRunOn(project.id);
 		const content = append(body, $('.volt-setup-content.volt-project-settings-content'));
+
+		this.renderUsage(content, project, store);
 
 		// New chats
 		this.section(content, localize('voltProjectSettings.newChats', "New chats"));
@@ -176,6 +198,46 @@ export class ProjectSettingsDialog {
 			close();
 		}));
 		return store;
+	}
+
+	/** Every chat in the project, deleted ones included: they were spent. */
+	private renderUsage(parent: HTMLElement, project: IVoltProjectRecord, store: DisposableStore): void {
+		const head = append(parent, $('.volt-project-settings-usage-head'));
+		append(head, $('.volt-setup-section')).textContent = localize('voltProjectSettings.usage', "Usage");
+		const since = append(head, $('span.since'));
+		const grid = append(parent, $('.volt-project-settings-group.volt-project-settings-usage'));
+		const stat = (label: string) => {
+			const cell = append(grid, $('.stat'));
+			append(cell, $('.label')).textContent = label;
+			return { value: append(cell, $('.value')), note: append(cell, $('.note')) };
+		};
+		const chats = stat(localize('voltProjectSettings.usageChats', "Chats"));
+		const tokens = stat(localize('voltProjectSettings.usageTokens', "Tokens"));
+		const cost = stat(localize('voltProjectSettings.usageCost', "Cost"));
+		const time = stat(localize('voltProjectSettings.usageTime', "Agent time"));
+		append(parent, $('.volt-project-settings-hint')).textContent = localize('voltProjectSettings.usageHint', "Every chat started in this project, deleted ones included. Agent time is how long agents spent on replies.");
+		const paint = () => {
+			const totals = this.usage.totals(project.root);
+			since.textContent = totals.since !== undefined ? localize('voltProjectSettings.usageSince', "Since {0}", sinceFormat.value.format(totals.since)) : '';
+			chats.value.textContent = String(totals.chats);
+			chats.note.textContent = totals.deletedChats
+				? localize('voltProjectSettings.usageTurnsDeleted', "{0} turns · {1} deleted", totals.turns, totals.deletedChats)
+				: localize('voltProjectSettings.usageTurns', "{0} turns", totals.turns);
+			// Chats from before Volt recorded tokens have none to count.
+			tokens.value.textContent = totals.tokens > 0 ? formatTokens(totals.tokens) : '\u2014';
+			tokens.note.textContent = totals.tokens > 0 ? localize('voltProjectSettings.usageTokensNote', "input, output and cache") : '';
+			const priced = totals.costUsd > 0 || (totals.tokens > 0 && totals.unpricedTurns === 0);
+			cost.value.textContent = priced ? formatCost(totals.costUsd) : '\u2014';
+			cost.note.textContent = totals.unpricedTurns > 0
+				? localize('voltProjectSettings.usageUnpriced', "{0} turns without a price", totals.unpricedTurns)
+				: '';
+			time.value.textContent = totals.activeMs > 0 ? formatAgentTime(totals.activeMs) : '\u2014';
+			time.note.textContent = '';
+		};
+		paint();
+		store.add(this.usage.onDidChange(paint));
+		// Chats that ran since they were last counted.
+		void this.usage.refresh();
 	}
 
 	private section(parent: HTMLElement, label: string): void {

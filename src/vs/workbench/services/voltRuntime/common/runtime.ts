@@ -25,6 +25,8 @@ import type { IRunMetrics } from './harness/runMetrics.js';
 export const IAgentRuntimeService = createDecorator<IAgentRuntimeService>('agentRuntimeService');
 
 export const OPEN_VOLT_SETTINGS_COMMAND_ID = 'workbench.action.openVoltSettings';
+/** Project Settings for a project id or root URI; asks which project without one. */
+export const VOLT_PROJECT_SETTINGS_COMMAND_ID = 'volt.projects.settings';
 
 export interface IVoltTaskModels {
 	agent?: string;
