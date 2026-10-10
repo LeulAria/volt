@@ -14,8 +14,9 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { asJson, asText, IRequestService } from '../../../../../platform/request/common/request.js';
+import { IVoltSkillsDirectoryService } from '../../../../../platform/voltMarketplace/common/voltMarketplace.js';
 import { IAuthenticationService } from '../../../../services/authentication/common/authentication.js';
-import { readJsonFile, safeItemName } from './agentCustomize.js';
+import { AgentCustomizationKind, readJsonFile, safeItemName } from './agentCustomize.js';
 import { IAgentCustomizeService } from './agentCustomizeService.js';
 import { frontmatterValue, parseFrontmatterDocument } from './agentFrontmatter.js';
 
@@ -35,12 +36,30 @@ export interface ISkillsShSkill {
 /** A skill's SKILL.md and the files around it, found in its GitHub repository. */
 export interface ISkillsShDetail {
 	readonly skill: ISkillsShSkill;
+	/** `owner/repo` on GitHub. */
+	readonly repo: string;
 	readonly description: string;
 	/** Repository path of the skill folder. */
 	readonly folder: string;
 	readonly files: readonly string[];
 	readonly ref: string;
 	readonly url: string;
+}
+
+/** Where a file of a listing opens: its page on GitHub (in the browser beside the page), or a file on disk. */
+export type MarketplaceLink = { readonly kind: 'url'; readonly url: string } | { readonly kind: 'file'; readonly resource: URI };
+
+/** One MCP server, skill, subagent, rule, command or hook event a plugin brings. */
+export interface IMarketplacePluginContent {
+	readonly kind: AgentCustomizationKind;
+	readonly name: string;
+	readonly link: MarketplaceLink;
+}
+
+export interface IMarketplacePluginDetail {
+	readonly contents: readonly IMarketplacePluginContent[];
+	/** The plugin's folder or repository. */
+	readonly page?: MarketplaceLink;
 }
 
 export type MarketplacePluginSource =
@@ -72,6 +91,8 @@ export interface IMarketplace {
 	readonly owner: string;
 	/** Where it was registered: Claude Code's list, or Volt's own. */
 	readonly registry: 'claude' | 'volt';
+	/** `owner/repo` on GitHub it was cloned from, when known. */
+	readonly repo?: string;
 	/** The folder holding `.claude-plugin/marketplace.json`. */
 	readonly root: URI;
 	readonly plugins: readonly IMarketplacePlugin[];
@@ -103,6 +124,9 @@ export interface IAgentMarketplaceService {
 	/** skills.sh page of the skill. */
 	skillPage(skill: ISkillsShSkill): URI;
 
+	/** What a plugin brings (MCP servers, skills, commands…), read from its folder or repository. */
+	pluginDetail(plugin: IMarketplacePlugin, token: CancellationToken): Promise<IMarketplacePluginDetail>;
+
 	/** Plugin marketplaces registered with Claude Code or with Volt, with their plugins. */
 	listMarketplaces(): Promise<readonly IMarketplace[]>;
 
@@ -132,6 +156,8 @@ const POPULAR_SEEDS = ['skill', 'react', 'test', 'git', 'design', 'docs', 'revie
 const MAX_DOWNLOAD_FILES = 400;
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
+/** Files listed when reading a plugin folder on disk. */
+const MAX_LISTED_FILES = 2000;
 
 interface IVoltMarketplaceRecord {
 	readonly name: string;
@@ -200,6 +226,7 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 
 	constructor(
 		@IRequestService private readonly requestService: IRequestService,
+		@IVoltSkillsDirectoryService private readonly skillsDirectory: IVoltSkillsDirectoryService,
 		@IFileService private readonly fileService: IFileService,
 		@IAuthenticationService private readonly authenticationService: IAuthenticationService,
 		@IAgentCustomizeService private readonly customize: IAgentCustomizeService,
@@ -218,8 +245,9 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		const key = `${q.toLowerCase()}|${limit}`;
 		let pending = this.searches.get(key);
 		if (!pending) {
-			pending = this.fetchJson<{ skills?: unknown[] }>(`${SKILLS_SH}/api/search?q=${encodeURIComponent(q)}&limit=${limit}`, {}, token)
-				.then(result => (result?.skills ?? []).map(toSkill).filter((skill): skill is ISkillsShSkill => !!skill));
+			// skills.sh has no CORS headers: the main process asks it.
+			pending = this.skillsDirectory.search(q, limit)
+				.then(skills => skills.map(toSkill).filter((skill): skill is ISkillsShSkill => !!skill));
 			pending.catch(() => this.searches.delete(key));
 			this.searches.set(key, pending);
 		}
@@ -305,6 +333,7 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 			: [path];
 		return {
 			skill,
+			repo,
 			description: frontmatterValue(doc, 'description') ?? '',
 			folder,
 			// A skill at the repository root would take the whole repository: keep only its own file then.
@@ -365,21 +394,22 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		const installedKeys = new Set(Object.keys((installed as { plugins?: Record<string, unknown> } | undefined)?.plugins ?? {}));
 		const installedNames = new Set(items.filter(item => item.kind === 'plugin' && item.plugin).map(item => item.plugin!.name));
 		const voltNames = new Set(items.filter(item => item.kind === 'plugin' && item.plugin?.origin === 'volt').map(item => item.plugin!.name));
-		const roots: { root: URI; registry: 'claude' | 'volt'; name: string }[] = [];
+		const roots: { root: URI; registry: 'claude' | 'volt'; name: string; repo?: string }[] = [];
 		if (known && typeof known === 'object') {
-			for (const [name, entry] of Object.entries(known as Record<string, { installLocation?: unknown }>)) {
+			for (const [name, entry] of Object.entries(known as Record<string, { installLocation?: unknown; source?: { repo?: unknown; url?: unknown } }>)) {
 				if (typeof entry?.installLocation === 'string') {
-					roots.push({ root: URI.file(entry.installLocation), registry: 'claude', name });
+					const repo = typeof entry.source?.repo === 'string' ? githubRepoOf(entry.source.repo) : typeof entry.source?.url === 'string' ? githubRepoOf(entry.source.url) : undefined;
+					roots.push({ root: URI.file(entry.installLocation), registry: 'claude', name, repo });
 				}
 			}
 		}
 		for (const record of voltRecords) {
 			const root = record.source.kind === 'local' ? URI.file(record.source.path) : joinPath(home, '.volt', 'marketplaces', record.name);
 			if (!roots.some(candidate => candidate.name === record.name)) {
-				roots.push({ root, registry: 'volt', name: record.name });
+				roots.push({ root, registry: 'volt', name: record.name, repo: record.source.kind === 'github' ? record.source.repo : undefined });
 			}
 		}
-		const marketplaces = await Promise.all(roots.map(async ({ root, registry, name }): Promise<IMarketplace | undefined> => {
+		const marketplaces = await Promise.all(roots.map(async ({ root, registry, name, repo }): Promise<IMarketplace | undefined> => {
 			const json = await readJsonFile(this.fileService, joinPath(root, '.claude-plugin', 'marketplace.json'), 4 * 1024 * 1024) as { name?: unknown; description?: unknown; owner?: { name?: unknown }; metadata?: { description?: unknown }; plugins?: unknown[] } | undefined;
 			if (!json || !Array.isArray(json.plugins)) {
 				return undefined;
@@ -405,9 +435,66 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 			});
 			const owner = typeof json.owner?.name === 'string' ? json.owner.name : '';
 			const description = typeof json.description === 'string' ? json.description : typeof json.metadata?.description === 'string' ? json.metadata.description : '';
-			return { name: marketplaceName, displayName: titleOf(marketplaceName), description, owner, registry, root, plugins };
+			return { name: marketplaceName, displayName: titleOf(marketplaceName), description, owner, registry, repo, root, plugins };
 		}));
 		return marketplaces.filter((marketplace): marketplace is IMarketplace => !!marketplace);
+	}
+
+	async pluginDetail(plugin: IMarketplacePlugin, token: CancellationToken): Promise<IMarketplacePluginDetail> {
+		const source = plugin.source;
+		if (source.kind === 'github') {
+			const ref = source.ref ?? 'HEAD';
+			const prefix = source.path ? `${source.path.replace(/^\.?\/+|\/+$/g, '')}/` : '';
+			const tree = await this.repoTree(source.repo, ref, token);
+			if (!tree) {
+				throw new Error(localize('voltMarketplace.repoUnavailable', "Couldn't read {0} on GitHub.", source.repo));
+			}
+			const files = tree.tree.filter(entry => entry.type === 'blob' && (!prefix || entry.path.startsWith(prefix))).map(entry => entry.path.slice(prefix.length));
+			const contents = await pluginContents(files, file => githubLink(source.repo, ref, `${prefix}${file}`), file => this.rawText(source.repo, ref, `${prefix}${file}`, token));
+			return { contents, page: { kind: 'url', url: `https://github.com/${source.repo}${prefix ? `/tree/${ref}/${prefix.slice(0, -1)}` : ''}` } };
+		}
+		if (source.kind === 'path') {
+			const marketplace = (await this.listMarketplaces()).find(candidate => candidate.name === plugin.marketplace);
+			if (!marketplace) {
+				throw new Error(localize('voltMarketplace.missingMarketplace', "The {0} marketplace is not on this computer.", plugin.marketplace));
+			}
+			const path = source.path.replace(/^\.?\/+|\/+$/g, '');
+			const folder = path ? joinPath(marketplace.root, ...path.split('/')) : marketplace.root;
+			const files = await this.listFolder(folder);
+			// A marketplace cloned from GitHub links to its files there, like a plugin from a repository.
+			const repo = marketplace.repo;
+			const link = (file: string): MarketplaceLink => repo
+				? githubLink(repo, 'HEAD', path ? `${path}/${file}` : file)
+				: { kind: 'file', resource: joinPath(folder, ...file.split('/')) };
+			const contents = await pluginContents(files, link, async file => (await this.fileService.readFile(joinPath(folder, ...file.split('/')))).value.toString());
+			return { contents, page: repo ? { kind: 'url', url: `https://github.com/${repo}${path ? `/tree/HEAD/${path}` : ''}` } : { kind: 'file', resource: folder } };
+		}
+		return { contents: [], page: plugin.homepage ? { kind: 'url', url: plugin.homepage } : undefined };
+	}
+
+	/** Paths under `folder`, relative to it; skips `.git` and `node_modules`. */
+	private async listFolder(folder: URI): Promise<string[]> {
+		const files: string[] = [];
+		const walk = async (dir: URI, prefix: string, depth: number): Promise<void> => {
+			if (depth > 6 || files.length >= MAX_LISTED_FILES) {
+				return;
+			}
+			const stat = await this.fileService.resolve(dir).catch(() => undefined);
+			for (const child of stat?.children ?? []) {
+				if (files.length >= MAX_LISTED_FILES) {
+					return;
+				}
+				if (child.isDirectory) {
+					if (child.name !== '.git' && child.name !== 'node_modules') {
+						await walk(child.resource, `${prefix}${child.name}/`, depth + 1);
+					}
+				} else {
+					files.push(`${prefix}${child.name}`);
+				}
+			}
+		};
+		await walk(folder, '', 0);
+		return files;
 	}
 
 	async installPlugin(plugin: IMarketplacePlugin, token: CancellationToken): Promise<URI> {
@@ -653,6 +740,66 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 	}
 
 	//#endregion
+}
+
+export function githubLink(repo: string, ref: string, path: string): MarketplaceLink {
+	return { kind: 'url', url: `https://github.com/${repo}/blob/${ref}/${path.split('/').map(encodeURIComponent).join('/')}` };
+}
+
+const CONTENT_ORDER: readonly AgentCustomizationKind[] = ['mcp', 'skill', 'subagent', 'rule', 'command', 'hook'];
+
+/**
+ * A plugin's MCP servers, skills, subagents, rules, commands and hook events, from the paths of
+ * its files (relative to the plugin folder). `read` opens the JSON files that name servers and hooks.
+ */
+async function pluginContents(files: readonly string[], link: (file: string) => MarketplaceLink, read: (file: string) => Promise<string>): Promise<IMarketplacePluginContent[]> {
+	const contents: IMarketplacePluginContent[] = [];
+	const readJson = async (file: string): Promise<Record<string, unknown> | undefined> => {
+		try {
+			const json = JSON.parse(await read(file));
+			return json && typeof json === 'object' && !Array.isArray(json) ? json : undefined;
+		} catch {
+			return undefined;
+		}
+	};
+	const addKeys = (kind: AgentCustomizationKind, value: unknown, file: string) => {
+		if (value && typeof value === 'object' && !Array.isArray(value)) {
+			for (const name of Object.keys(value)) {
+				if (!contents.some(content => content.kind === kind && content.name === name)) {
+					contents.push({ kind, name, link: link(file) });
+				}
+			}
+		}
+	};
+	for (const file of files) {
+		const lower = file.toLowerCase();
+		const name = basename(URI.file(`/${file}`)).replace(/\.(md|mdc)$/i, '');
+		if (/(^|\/)skill\.md$/.test(lower)) {
+			contents.push({ kind: 'skill', name: folderName(file) || name, link: link(file) });
+		} else if (/^(\.claude\/)?agents\/.+\.md$/.test(lower)) {
+			contents.push({ kind: 'subagent', name, link: link(file) });
+		} else if (/^(\.cursor\/)?rules\/.+\.mdc?$/.test(lower)) {
+			contents.push({ kind: 'rule', name, link: link(file) });
+		} else if (/^(\.claude\/)?commands\/.+\.md$/.test(lower)) {
+			contents.push({ kind: 'command', name, link: link(file) });
+		}
+	}
+	// Servers and hooks are named inside JSON files: in their own file or in the plugin manifest.
+	for (const file of files.filter(file => /^\.?mcp\.json$/i.test(file))) {
+		const json = await readJson(file);
+		addKeys('mcp', json?.mcpServers ?? json, file);
+	}
+	for (const file of files.filter(file => /^(hooks\/)?hooks\.json$/i.test(file))) {
+		const json = await readJson(file);
+		addKeys('hook', json?.hooks ?? json, file);
+	}
+	for (const file of files.filter(file => /^\.(claude|cursor)-plugin\/plugin\.json$/i.test(file))) {
+		const json = await readJson(file);
+		addKeys('mcp', json?.mcpServers, file);
+		addKeys('hook', json?.hooks, file);
+	}
+	return contents
+		.sort((a, b) => CONTENT_ORDER.indexOf(a.kind) - CONTENT_ORDER.indexOf(b.kind) || a.name.localeCompare(b.name));
 }
 
 function folderName(path: string): string {

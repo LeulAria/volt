@@ -26,6 +26,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { IFileService, IFileStat } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
@@ -54,7 +55,7 @@ import { AgentCustomizationKind, customizationGroupKey, IAgentCustomization, IAg
 import { IAgentCustomizeService } from './agentCustomizeService.js';
 import { itemNameError, showCustomizeConfirmDialog, showCustomizeInputDialog } from './agentCustomizeDialogs.js';
 import { formatInstalls, IAgentMarketplaceService, IMarketplace, IMarketplacePlugin, ISkillsShSkill, MarketplaceScope } from './agentMarketplace.js';
-import { AgentMarketplaceView, IAgentMarketplaceScope } from './agentMarketplaceView.js';
+import { AgentMarketplaceView, IAgentMarketplaceScope, IAgentPageCrumb } from './agentMarketplaceView.js';
 
 export const AGENT_CUSTOMIZE_EDITOR_ID = 'workbench.editor.voltCustomize';
 export const AGENT_CUSTOMIZE_INPUT_ID = 'workbench.input.voltCustomize';
@@ -67,6 +68,21 @@ export class AgentCustomizeEditorInput extends EditorInput {
 	static readonly EditorID = AGENT_CUSTOMIZE_EDITOR_ID;
 
 	readonly resource = URI.from({ scheme: Schemas.voltCustomize, path: 'customize' });
+
+	private _crumbs: readonly IAgentPageCrumb[] = [];
+
+	/** Where the page is past Customize, for the title bar: Marketplace, then the open skill or plugin. */
+	get crumbs(): readonly IAgentPageCrumb[] {
+		return this._crumbs;
+	}
+
+	setCrumbs(crumbs: readonly IAgentPageCrumb[]): void {
+		const same = crumbs.length === this._crumbs.length && crumbs.every((crumb, i) => crumb.label === this._crumbs[i].label);
+		this._crumbs = crumbs;
+		if (!same) {
+			this._onDidChangeLabel.fire();
+		}
+	}
 
 	override get typeId(): string {
 		return AgentCustomizeEditorInput.TypeID;
@@ -199,6 +215,8 @@ export class AgentCustomizeEditor extends EditorPane {
 	private surfaceHost: AgentSurfaceHost | undefined;
 	private presented = false;
 	private marketplaceView!: AgentMarketplaceView;
+	/** The marketplace's trail, given to each input this pane shows. */
+	private crumbs: readonly IAgentPageCrumb[] = [];
 
 	private view: View = 'manage';
 	private items: readonly IAgentCustomization[] = [];
@@ -248,6 +266,7 @@ export class AgentCustomizeEditor extends EditorPane {
 		@IAgentMarketplaceService private readonly marketplace: IAgentMarketplaceService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IVoltHooksService private readonly hooks: IVoltHooksService,
+		@IOpenerService private readonly openerService: IOpenerService,
 	) {
 		super(AgentCustomizeEditor.ID, group, telemetryService, themeService, storage);
 		this.restoreState();
@@ -292,8 +311,17 @@ export class AgentCustomizeEditor extends EditorPane {
 		this.marketplaceView = this._register(this.instantiationService.createInstance(AgentMarketplaceView, this.headerEl, this.bodyEl, {
 			scopes: () => this.installScopes(),
 			openResource: resource => void this.openResource(resource),
+			openUrl: url => this.openUrl(url),
 			dialogHost: () => this.layoutService.activeContainer,
 			relayout: () => this.scroll.scanDomNode(),
+			scrollTop: () => this.scroll.getScrollPosition().scrollTop,
+			setScrollTop: scrollTop => this.scroll.setScrollPosition({ scrollTop }),
+			setCrumbs: crumbs => {
+				this.crumbs = crumbs;
+				if (this.input instanceof AgentCustomizeEditorInput) {
+					this.input.setCrumbs(crumbs);
+				}
+			},
 		}));
 		this.marketplaceView.setVisible(false);
 
@@ -326,6 +354,7 @@ export class AgentCustomizeEditor extends EditorPane {
 		if (token.isCancellationRequested) {
 			return;
 		}
+		input.setCrumbs(this.crumbs);
 		if (!this.presented && hasSavedAgentTools(this.storage, CUSTOMIZE_TOOLS_ID)) {
 			this.presentTools();
 		}
@@ -405,6 +434,19 @@ export class AgentCustomizeEditor extends EditorPane {
 		await this.editorService.openEditor({ resource, options: { pinned: true } }, inMainPart ? SIDE_GROUP : this.editorGroupsService.mainPart.activeGroup);
 	}
 
+	/** Opens a web page in the right panel's browser, reusing a tab already on it. Without the panel it goes to the opener. */
+	private openUrl(url: string): void {
+		const host = this.surfaceHost;
+		if (host && getLayoutMode(this.layoutService) === 'agent' && this.editorGroupsService.mainPart.groups.includes(this.group)) {
+			this.presentTools();
+			if (host.canOpenTools()) {
+				host.openBrowser(url, undefined, true);
+				return;
+			}
+		}
+		void this.openerService.open(URI.parse(url));
+	}
+
 	//#endregion
 
 	//#region State changes
@@ -430,6 +472,7 @@ export class AgentCustomizeEditor extends EditorPane {
 		}
 		this.scheduleRemoteSearch();
 		this.render();
+		this.scroll.setScrollPosition({ scrollTop: 0 });
 	}
 
 	private setKind(kind: KindTab): void {
@@ -437,7 +480,6 @@ export class AgentCustomizeEditor extends EditorPane {
 		this.editingPlugins = false;
 		this.storePageState();
 		this.render();
-		this.scroll.setScrollPosition({ scrollTop: 0 });
 	}
 
 	private cancelRemote(): void {
@@ -495,6 +537,8 @@ export class AgentCustomizeEditor extends EditorPane {
 			this.scroll.scanDomNode();
 			return;
 		}
+		// Re-rendering (a filter, a scope toggle, a plugin refresh) keeps the list where it was.
+		const scrollTop = this.scroll.getScrollPosition().scrollTop;
 		this.renderFilters();
 		this.renderStore.clear();
 		clearNode(this.listEl);
@@ -509,6 +553,7 @@ export class AgentCustomizeEditor extends EditorPane {
 			}
 		}
 		this.scroll.scanDomNode();
+		this.scroll.setScrollPosition({ scrollTop });
 	}
 
 	private renderFilters(): void {
@@ -1121,6 +1166,7 @@ export class AgentCustomizeEditor extends EditorPane {
 				name: plugin.name,
 				description: plugin.description || plugin.author,
 				tooltip: plugin.description,
+				onOpen: () => this.showInMarketplace(view => view.openPlugin(plugin)),
 				trailing: row => this.addButton(row, plugin.installed, this.busy.has(id), plugin.source.kind === 'unsupported', () => void this.installPlugin(plugin, id)),
 			});
 		}
@@ -1132,10 +1178,17 @@ export class AgentCustomizeEditor extends EditorPane {
 				name: skill.name,
 				description: `${skill.source} · ${localize('voltCustomize.installs', "{0} installs", formatInstalls(skill.installs))}`,
 				tooltip: `${skill.source}/${skill.skillId}`,
+				onOpen: () => this.showInMarketplace(view => view.openSkill(skill)),
 				trailing: row => this.addButton(row, installed, this.busy.has(id), false, anchor => this.pickSkillScope(anchor, skill, id)),
 			});
 		}
 		return rows;
+	}
+
+	/** A marketplace result opens its page in the marketplace; Marketplace in the breadcrumb then lists the same search. */
+	private showInMarketplace(open: (view: AgentMarketplaceView) => void): void {
+		this.setView('marketplace');
+		open(this.marketplaceView);
 	}
 
 	private avatarTile(source: string): HTMLElement {

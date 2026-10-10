@@ -84,7 +84,7 @@
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	height: 34px;
+	height: 37px;
 	padding: 0 14px;
 	box-sizing: border-box;
 	border: 1px solid var(--volt-customize-line-strong);
@@ -123,7 +123,7 @@
 
 .volt-customize-primary {
 	flex: none;
-	height: 34px;
+	height: 37px;
 	padding: 0 16px;
 	border: 0;
 	border-radius: 999px;
@@ -256,10 +256,15 @@
 	margin-left: 8px;
 }
 
-/* Body */
+/* Body: the scrollable element must be as tall as its box, or it grows to its content, nothing
+ * overflows it and the wheel does nothing. */
 .volt-customize-scroll {
 	flex: 1;
 	min-height: 0;
+}
+
+.volt-customize-scroll > .volt-customize-body {
+	height: 100%;
 }
 
 .volt-customize-body {
@@ -784,17 +789,35 @@
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
 	column-gap: 28px;
-	row-gap: 2px;
+	row-gap: 4px;
 }
 
+/* A row fills on hover from 8px outside its icon and Add, so the content stays in line with the
+ * section titles. */
 .volt-marketplace-row {
 	display: flex;
 	align-items: center;
 	gap: 12px;
 	min-height: 52px;
-	padding: 6px 0;
+	margin: 0 -8px;
+	padding: 8px;
 	box-sizing: border-box;
 	min-width: 0;
+	border-radius: 10px;
+	outline: none;
+}
+
+.volt-marketplace-row.clickable {
+	cursor: pointer;
+}
+
+.volt-marketplace-row.clickable:hover,
+.volt-marketplace-row.clickable:focus-visible {
+	background: var(--volt-customize-hover);
+}
+
+.volt-marketplace-row.clickable:focus-visible {
+	box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
 }
 
 .volt-marketplace-row-copy {
@@ -803,7 +826,6 @@
 	display: flex;
 	flex-direction: column;
 	gap: 1px;
-	cursor: pointer;
 }
 
 .volt-marketplace-row-copy .name,
@@ -820,11 +842,6 @@
 .volt-marketplace-row-copy .description {
 	font-size: 12.5px;
 	color: var(--volt-customize-muted);
-}
-
-.volt-marketplace-row-copy:hover .name {
-	text-decoration: underline;
-	text-underline-offset: 3px;
 }
 
 .volt-marketplace-icon {
@@ -853,6 +870,69 @@
 	object-fit: cover;
 }
 
+/* Loading: still grey blocks in the shape of the cards, rows and text that are coming. No shimmer.
+ * Each block's margins make it as tall as the line of text it stands for, so nothing jumps when
+ * the content arrives. */
+.volt-marketplace-skeleton {
+	flex: none;
+	display: block;
+	border-radius: 4px;
+	background: var(--volt-customize-tile);
+}
+
+/* 13.5px names, 12.5px descriptions, the 12px publisher under a card. */
+.volt-marketplace-skeleton.name {
+	height: 10px;
+	margin: 4px 0;
+}
+
+.volt-marketplace-skeleton.text {
+	height: 9px;
+	margin: 4px 0;
+}
+
+.volt-marketplace-skeleton.meta {
+	height: 9px;
+	margin: 7px 0 4px;
+}
+
+.volt-marketplace-skeleton.pill {
+	width: 46px;
+	height: 24px;
+	border-radius: 999px;
+}
+
+.volt-marketplace-skeleton.heading {
+	height: 12px;
+	margin: 8px 0;
+}
+
+/* A detail page's 14px description at 1.5 line height, its meta line and Add to Volt. */
+.volt-marketplace-skeleton.line {
+	height: 11px;
+	margin: 5px 0;
+}
+
+.volt-marketplace-skeleton.meta-item {
+	height: 10px;
+	margin: 4px 0;
+}
+
+.volt-marketplace-skeleton.button {
+	align-self: flex-start;
+	width: 96px;
+	height: 30px;
+	border-radius: 7px;
+}
+
+.skeleton .volt-marketplace-card {
+	cursor: default;
+}
+
+.skeleton .volt-marketplace-card:hover {
+	background: transparent;
+}
+
 .volt-marketplace-icon .codicon {
 	font-size: 16px;
 }
@@ -861,7 +941,231 @@
 	font-size: 15px;
 }
 
-/* Menus opened from the page */
+/* A skill's or plugin's page: the title bar reads Customize / Marketplace / name, the search row
+ * goes away and the page starts where it was, with a large icon, title, its link and Add to Volt,
+ * then what it brings as rows that open on GitHub. */
+.volt-customize-header-area.volt-marketplace-detail-open {
+	display: none;
+}
+
+.volt-marketplace-detail {
+	padding-top: 48px;
+}
+
+.volt-marketplace-page-link {
+	flex: none;
+	align-self: flex-start;
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	height: 30px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: var(--volt-customize-muted);
+	font: inherit;
+	font-size: 12px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-marketplace-page-link:hover {
+	background: var(--volt-customize-hover);
+	color: var(--volt-customize-fg);
+}
+
+.volt-marketplace-page-link + .volt-marketplace-detail-add {
+	margin-left: -8px;
+}
+
+.volt-marketplace-page-link .codicon,
+.volt-marketplace-open-arrow .codicon {
+	font-size: 13px;
+	transform: rotate(-45deg);
+}
+
+.volt-marketplace-detail-head {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	min-width: 0;
+}
+
+.volt-marketplace-icon.large {
+	width: 56px;
+	height: 56px;
+	border-radius: 13px;
+}
+
+.volt-marketplace-icon.large .codicon {
+	font-size: 26px;
+}
+
+.volt-marketplace-detail-title {
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 22px;
+	font-weight: 500;
+	color: var(--volt-customize-fg);
+}
+
+.volt-marketplace-detail-add {
+	flex: none;
+	align-self: flex-start;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 30px;
+	padding: 0 14px;
+	border: 0;
+	border-radius: 7px;
+	background: var(--vscode-button-background, #4c8dde);
+	color: var(--vscode-button-foreground, #ffffff);
+	font: inherit;
+	font-size: 13px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-marketplace-detail-add:hover:not(:disabled):not(.added) {
+	background: var(--vscode-button-hoverBackground, #5b98e4);
+}
+
+.volt-marketplace-detail-add.added {
+	background: var(--volt-customize-pill);
+	color: var(--volt-customize-muted);
+	cursor: default;
+}
+
+.volt-marketplace-detail-add:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+
+.volt-marketplace-detail-add:focus-visible {
+	outline: 2px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.volt-marketplace-detail-add .codicon {
+	font-size: 13px;
+}
+
+.volt-marketplace-detail-description {
+	margin: 20px 0 0;
+	font-size: 14px;
+	line-height: 1.5;
+	color: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 80%, transparent);
+}
+
+.volt-marketplace-detail-description:empty {
+	color: var(--volt-customize-muted);
+}
+
+.volt-marketplace-detail-description:empty {
+	display: none;
+}
+
+.volt-marketplace-detail-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 20px;
+	margin-top: 14px;
+	color: var(--volt-customize-muted);
+	font-size: 13px;
+}
+
+.volt-marketplace-detail-meta-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+}
+
+.volt-marketplace-detail-meta-item .codicon {
+	flex: none;
+	font-size: 15px;
+}
+
+.volt-marketplace-detail-meta-item > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-marketplace-detail-meta-item.link {
+	cursor: pointer;
+}
+
+.volt-marketplace-detail-meta-item.link:hover {
+	color: var(--volt-customize-fg);
+}
+
+.volt-marketplace-detail-meta-item.link:hover > span {
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+.volt-marketplace-detail .volt-customize-section {
+	margin-top: 36px;
+}
+
+.volt-marketplace-detail .volt-customize-section-header {
+	padding: 0;
+}
+
+.volt-marketplace-detail .volt-customize-section-title {
+	font-size: 13px;
+	font-weight: 400;
+	color: var(--volt-customize-muted);
+}
+
+.volt-marketplace-detail-message {
+	margin-top: 28px;
+	padding-left: 0;
+}
+
+.volt-marketplace-contents .volt-customize-row {
+	min-height: 52px;
+	padding: 8px 16px;
+}
+
+.volt-marketplace-contents .volt-customize-row-copy .name {
+	font-size: 14px;
+}
+
+.volt-marketplace-open-arrow {
+	flex: none;
+	display: inline-flex;
+	color: var(--volt-customize-muted);
+	opacity: 0;
+	transition: opacity 100ms ease;
+}
+
+.volt-marketplace-contents .volt-customize-row:hover .volt-marketplace-open-arrow,
+.volt-marketplace-contents .volt-customize-row:focus-visible .volt-marketplace-open-arrow {
+	opacity: 1;
+}
+
+/* Menus opened from the page: one hairline ring and a soft lift. The shared menu's tight dark
+ * shadow reads as a second, darker border outside the ring on the dark page. */
+.volt-menu.volt-customize-menu {
+	box-shadow:
+		0 0 0 1px var(--vscode-widget-border, rgba(255, 255, 255, 0.1)),
+		0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
 .volt-customize-menu .volt-menu-row {
 	font-size: 13px;
 }
@@ -1034,7 +1338,8 @@
 		--volt-customize-gutter: 18px;
 	}
 
-	.volt-customize-header-area {
+	.volt-customize-header-area,
+	.volt-marketplace-detail {
 		padding-top: 28px;
 	}
 
@@ -1064,7 +1369,8 @@
 }
 
 @container volt-customize (max-width: 380px) {
-	.volt-customize-header-area {
+	.volt-customize-header-area,
+	.volt-marketplace-detail {
 		padding-top: 16px;
 	}
 

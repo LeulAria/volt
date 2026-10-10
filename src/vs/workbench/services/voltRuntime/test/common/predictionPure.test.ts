@@ -346,6 +346,145 @@ suite('Volt prediction: composer', () => {
 	});
 });
 
+suite('Volt prediction: writing (Markdown, text, comments)', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	function writing(raw: string, linePrefix: string, prefix = linePrefix, kind: 'prose' | 'comment' = 'prose', suffix = '') {
+		return postProcessInline({ raw, linePrefix, lineSuffix: '', prefix, suffix, writing: kind });
+	}
+
+	test('tells writing from code', () => {
+		assert.strictEqual(inlineWritingKind('markdown', 'one'), 'prose');
+		assert.strictEqual(inlineWritingKind('plaintext', ''), 'prose');
+		assert.strictEqual(inlineWritingKind('git-commit', 'fix(tab): '), 'prose');
+		assert.strictEqual(inlineWritingKind('typescript', '\t// Returns '), 'comment');
+		assert.strictEqual(inlineWritingKind('typescript', 'const x = 1; // the '), 'comment');
+		assert.strictEqual(inlineWritingKind('typescript', ' * Returns the '), 'comment');
+		assert.strictEqual(inlineWritingKind('typescript', 'const url = "https://'), 'code');
+		assert.strictEqual(inlineWritingKind('typescript', 'return users.'), 'code');
+		assert.strictEqual(inlineWritingKind('python', '    # average of '), 'comment');
+		assert.strictEqual(inlineWritingKind('python', `    s = '#' + `), 'code');
+		assert.strictEqual(inlineWritingKind('cpp', '#include <'), 'code');
+		assert.strictEqual(inlineWritingKind('sql', 'select 1 -- the '), 'comment');
+	});
+
+	test('a Markdown file gets the writing prompt, code keeps the code prompt', () => {
+		const md: IPredictionContext = {
+			uri: URI.file('/work/new.md'), languageId: 'markdown', prefix: 'one\ntwo\nThree\n', suffix: '', linePrefix: '', lineSuffix: '',
+			imports: '', diagnostics: [], recentEdits: [], siblings: [], modelVersionId: 1,
+		};
+		const [system, user] = buildInlinePrompt(md);
+		assert.ok(system.content.includes('<insert>'));
+		assert.ok(!/source code/i.test(system.content));
+		assert.ok(user.content.includes(`one\ntwo\nThree\n${CURSOR_MARKER}`));
+		const [codeSystem] = buildInlinePrompt({ ...md, uri: URI.file('/work/a.ts'), languageId: 'typescript', prefix: 'const a = ', linePrefix: 'const a = ' });
+		assert.ok(/source code/i.test(codeSystem.content));
+	});
+
+	test('keeps the next list item and sentence continuations', () => {
+		assert.strictEqual(writing('<insert>four</insert>', '', 'one\ntwo\nThree\n'), 'four');
+		assert.strictEqual(writing('<insert>ee</insert>', 'Thr', 'one\ntwo\nThr'), 'ee');
+		assert.strictEqual(writing('lets you edit code with an AI that reads your whole project.', 'Volt is an AI code editor that '), 'lets you edit code with an AI that reads your whole project.');
+		// A finished line may get the next one; mid-sentence a line break is a stray.
+		assert.strictEqual(writing('<insert>\nFour</insert>', 'Three', 'one\ntwo\nThree'), '\nFour');
+		assert.strictEqual(writing('\nfast', 'Volt is '), 'fast');
+	});
+
+	test('only the text inside the tags is used', () => {
+		assert.strictEqual(writing('Sure.\n<insert>day, after the review.</insert>\nThat finishes the sentence.', 'We ship on Fri'), 'day, after the review.');
+		assert.strictEqual(writing('<insert></insert>', 'some '), undefined);
+		assert.strictEqual(writing('<insert>\n</insert>', 'Three'), undefined);
+	});
+
+	test('notes, refusals and reminders are never inserted', () => {
+		assert.strictEqual(writing('(Nothing to insert: the file is plain text with no code context to continue.)', 'some '), undefined);
+		assert.strictEqual(writing('<system-reminder>(Nothing to insert: the file is plain text with no code context to continue.)</system-reminder>', 'some '), undefined);
+		assert.strictEqual(writing('<insert>(Nothing to insert: the line is complete.)</insert>', 'Three'), undefined);
+		assert.strictEqual(writing(`I'm not going to continue that text, since the completion task sits inside a system setup that's asking me to act as an autocomplete tool.`, 'some '), undefined);
+	});
+
+	test('an echo of the line or of its bullet is dropped', () => {
+		assert.strictEqual(writing(' Three', 'Three', 'one\ntwo\nThree'), undefined);
+		assert.strictEqual(writing('<insert>Three</insert>', 'Three', 'one\ntwo\nThree'), undefined);
+		assert.strictEqual(writing('- Small memory footprint', '- ', '- Fast startup\n- '), 'Small memory footprint');
+		assert.strictEqual(writing('to thank everyone.', 'I wanted to '), 'thank everyone.');
+		assert.strictEqual(writing(' AI-powered code editor that helps you write code faster.', 'Volt is an AI code editor that'), ' helps you write code faster.');
+	});
+
+	test('one sentence, one line, and Markdown stays Markdown', () => {
+		assert.strictEqual(writing('take a moment to thank you. Your patience made a difference.', 'I wanted to '), 'take a moment to thank you.');
+		assert.strictEqual(writing('Download it:\n\n```sh\nnpm i\n```', '', '## Install\n\n'), 'Download it:');
+		assert.strictEqual(writing('<insert>Run `make start` to launch it.</insert>', '', '## Install\n\n'), 'Run `make start` to launch it.');
+		assert.strictEqual(writing('<insert>Four\nFive\nSix</insert>', '', 'one\ntwo\nThree\n'), 'Four');
+		assert.strictEqual(writing('<insert>\n\nfour</insert>', 'Three', 'one\ntwo\nThree'), '\nfour');
+		assert.strictEqual(writing('<insert>\n\nNext paragraph.</insert>', 'End of the first.', 'Intro.\n\nEnd of the first.'), '\n\nNext paragraph.');
+		assert.strictEqual(writing('<insert>```sh\nnpm i\n```</insert>', '', '## Install\n\n'), '```sh\nnpm i\n```');
+		assert.strictEqual(writing('<insert>```sh\nnpm i</insert>', '', '## Install\n\n'), undefined);
+		assert.strictEqual(writing('sentence that continues the line in the document.', 'some '), undefined);
+		assert.strictEqual(writing(` ' ' + 'the' ... `, 'Volt is an AI code editor that'), undefined);
+		assert.strictEqual(writing(' (and its tests) are fast.', 'The build'), ' (and its tests) are fast.');
+		assert.strictEqual(writing('Tab autocomplete that predicts your next edit', '- '), 'Tab autocomplete that predicts your next edit');
+	});
+
+	test('a reply of only a line break is told apart', () => {
+		assert.ok(repliedLineBreakOnly('<insert>\n</insert>'));
+		assert.ok(repliedLineBreakOnly('<insert>\n<br>\n</insert>'));
+		assert.ok(!repliedLineBreakOnly('<insert>\nFive</insert>'));
+		assert.ok(!repliedLineBreakOnly('<insert></insert>'));
+		assert.strictEqual(writing('<insert>\n<br>\nFour</insert>', 'Three', 'one\ntwo\nThree'), '\nFour');
+	});
+
+	test('a comment continues on its own line only', () => {
+		assert.strictEqual(writing('the value clamped between min and max\n\treturn x;', '\t// Returns ', '\t// Returns ', 'comment'), 'the value clamped between min and max');
+	});
+});
+
+suite('Volt prediction: composer', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('finishes the unfinished word, restated or not', () => {
+		assert.strictEqual(cleanComposerCompletion('g in the login handler', 'can you fix the bu'), 'g in the login handler');
+		assert.strictEqual(cleanComposerCompletion('bug in the login handler', 'can you fix the bu'), 'g in the login handler');
+	});
+
+	test('a new word after a whole word gets its space', () => {
+		assert.strictEqual(cleanComposerCompletion('the changes', 'great, now commit'), ' the changes');
+		assert.strictEqual(cleanComposerCompletion('commit the clamp helper', 'great, now commit'), ' the clamp helper');
+		assert.strictEqual(cleanComposerCompletion(' it', 'great, now commit'), ' it');
+	});
+
+	test('after a space the last word is not said again', () => {
+		assert.strictEqual(cleanComposerCompletion('for', 'now add a test for '), undefined);
+		assert.strictEqual(cleanComposerCompletion('for clamp in src/math.ts', 'now add a test for '), 'clamp in src/math.ts');
+		assert.strictEqual(cleanComposerCompletion('clamp in src/math.ts', 'now add a test for '), 'clamp in src/math.ts');
+	});
+
+	test('drops a quote the draft never opened', () => {
+		assert.strictEqual(cleanComposerCompletion('bug" the login click listener', 'can you fix the bu'), 'g the login click listener');
+	});
+
+	test('a name from the chat beats another word', () => {
+		assert.strictEqual(cleanComposerCompletion('nent.ts so the chips wrap', 'also update agentCompo', ['agentComposerChips.ts']), undefined);
+		assert.strictEqual(cleanComposerCompletion('serChips.ts too', 'also update agentCompo', ['agentComposerChips.ts']), 'serChips.ts too');
+	});
+
+	test('an HTML line break ends the line', () => {
+		assert.strictEqual(cleanComposerCompletion('st<br>', 'please add a regression te'), 'st');
+	});
+
+	test('the local guess follows the user\'s casing over a shouted word', () => {
+		const model = new ComposerLanguageModel({ prompts: ['TAB TEST WINDOW, the login button does nothing'], vocabulary: [] });
+		assert.strictEqual(model.completeWord('add a regression te'), 'st');
+		assert.strictEqual(model.completeWord('add a regression TE'), 'ST');
+	});
+
+	test('replies about the task are dropped', () => {
+		assert.strictEqual(cleanComposerCompletion('Sure, here is the continuation', 'fix the '), undefined);
+	});
+});
+
 suite('Volt prediction: multi-edit parser', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();

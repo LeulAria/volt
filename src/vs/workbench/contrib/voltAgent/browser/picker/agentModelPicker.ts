@@ -102,6 +102,11 @@ export interface IAgentModelPickerHost {
 		readonly autoLabel: string;
 		readonly autoDescription: string;
 	};
+	/**
+	 * Picks from these instead of the agent catalog (a Settings choice that is not an agent
+	 * model, such as the voice model). Tabs follow the groups.
+	 */
+	readonly models?: () => IProviderGroup[];
 	/** Where the menu opens against its button. The composer opens it above. */
 	readonly position?: AnchorPosition;
 	/**
@@ -193,6 +198,12 @@ export class AgentModelPicker extends Disposable {
 	}
 
 	syncCatalog(): void {
+		if (this.host.models) {
+			this.catalog = this.host.models().flatMap(group => group.models);
+			this.currentModel = this.host.binding?.get() ?? '';
+			this.modelAuto = !this.currentModel;
+			return;
+		}
 		const profiles = enabledProfileIds(this.runtime.listProfiles());
 		const all = this.runtime.listCatalog();
 		this.catalog = all
@@ -374,7 +385,7 @@ export class AgentModelPicker extends Disposable {
 
 	show(anchor: HTMLElement, onHide?: () => void): void {
 		this.syncCatalog();
-		if (!this.catalog.length || this.runtime.isCatalogLoading()) {
+		if (!this.host.models && (!this.catalog.length || this.runtime.isCatalogLoading())) {
 			void this.runtime.refreshCatalog();
 		}
 		const selected = this.catalog.find(option => option.ref === this.currentModel);
@@ -700,7 +711,7 @@ export class AgentModelPicker extends Disposable {
 					tabStore.clear();
 					tabs.replaceChildren();
 					const groups = this.providerGroups();
-					if (!groups.length && this.runtime.isCatalogLoading()) {
+					if (!groups.length && this.catalogLoading()) {
 						for (let i = 0; i < 4; i++) {
 							append(tabs, $('.volt-agent-provider-tab.skeleton'));
 						}
@@ -744,7 +755,7 @@ export class AgentModelPicker extends Disposable {
 					const groups = this.providerGroups();
 					const rows: IModelPickerRow[] = [];
 					if (!groups.length) {
-						if (this.runtime.isCatalogLoading()) {
+						if (this.catalogLoading()) {
 							for (let i = 0; i < 8; i++) {
 								rows.push({ id: `skeleton:${i}`, kind: 'skeleton' });
 							}
@@ -966,7 +977,14 @@ export class AgentModelPicker extends Disposable {
 		});
 	}
 
+	private catalogLoading(): boolean {
+		return !this.host.models && this.runtime.isCatalogLoading();
+	}
+
 	private providerGroups(): IProviderGroup[] {
+		if (this.host.models) {
+			return this.host.models();
+		}
 		const groups = new Map<string, IProviderGroup>();
 		for (const option of this.catalog) {
 			let group = groups.get(option.family);

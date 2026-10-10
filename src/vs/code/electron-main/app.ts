@@ -137,6 +137,8 @@ import { IVoltUsageService, VOLT_USAGE_CHANNEL_NAME } from '../../platform/voltU
 import { IVoltVisualPreviewService, VOLT_VISUAL_PREVIEW_CHANNEL_NAME } from '../../platform/voltVisualPreview/common/voltVisualPreview.js';
 import { VoltVisualPreviewMainService } from '../../platform/voltVisualPreview/electron-main/voltVisualPreviewMainService.js';
 import { VoltUsageMainService } from '../../platform/voltUsage/electron-main/voltUsageMainService.js';
+import { IVoltSkillsDirectoryService, VOLT_SKILLS_DIRECTORY_CHANNEL_NAME } from '../../platform/voltMarketplace/common/voltMarketplace.js';
+import { VoltSkillsDirectoryMainService } from '../../platform/voltMarketplace/electron-main/voltSkillsDirectoryMainService.js';
 import { IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME } from '../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME } from '../../platform/voltBrowser/common/voltBrowser.js';
@@ -1093,6 +1095,7 @@ export class CodeApplication extends Disposable {
 
 		// Volt usage and limits
 		services.set(IVoltUsageService, new SyncDescriptor(VoltUsageMainService, undefined, true));
+		services.set(IVoltSkillsDirectoryService, new SyncDescriptor(VoltSkillsDirectoryMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltRelayService, new SyncDescriptor(VoltRelayMainService, undefined, true));
 		services.set(IVoltVisualPreviewService, new SyncDescriptor(VoltVisualPreviewMainService, undefined, true));
 
@@ -1297,6 +1300,8 @@ export class CodeApplication extends Disposable {
 		// Volt usage and limits
 		const voltUsageChannel = ProxyChannel.fromService(accessor.get(IVoltUsageService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_USAGE_CHANNEL_NAME, voltUsageChannel);
+		const voltSkillsDirectoryChannel = ProxyChannel.fromService(accessor.get(IVoltSkillsDirectoryService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_SKILLS_DIRECTORY_CHANNEL_NAME, voltSkillsDirectoryChannel);
 		const voltRelayChannel = ProxyChannel.fromService(accessor.get(IVoltRelayService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_RELAY_CHANNEL_NAME, voltRelayChannel);
 		const voltVisualPreviewChannel = ProxyChannel.fromService(accessor.get(IVoltVisualPreviewService), disposables);

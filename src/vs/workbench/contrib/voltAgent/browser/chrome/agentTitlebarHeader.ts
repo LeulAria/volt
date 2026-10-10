@@ -32,6 +32,8 @@ import { IVoltSessionContextService, projectIdForRoot, uriFromStoredRoot } from 
 import { AGENT_HOME_NEW_CHAT_ICON_PATH } from '../home/agentHomeIcons.js';
 import { scratchProjectLabel } from '../home/agentHomeWorkspace.js';
 import { ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
+import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
+import { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { localEnvironmentLabel } from '../home/agentHomeFilter.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
@@ -287,7 +289,7 @@ function headerProcessEnv(): { COMPUTERNAME?: string; HOSTNAME?: string } | unde
  * Open sidebar: project name / short tab title. Hover shows the project, its branch when there is one, and the folder,
  * with a button that copies the absolute folder path.
  * Closed sidebar: the same title, plus search, and New Agent unless that screen is already open.
- * Usage: “Usage / All environments”, a menu of this computer and Model prices.
+ * Usage: "Usage / All environments", a menu of this computer and Model prices.
  */
 class AgentTitlebarHeaderContribution extends Disposable {
 
@@ -302,6 +304,10 @@ class AgentTitlebarHeaderContribution extends Disposable {
 	private readonly projectLabel: HTMLElement;
 	private readonly projectSeparator: HTMLElement;
 	private readonly titleLabel: HTMLElement;
+	/** Customize's trail after its title: Marketplace, then the open skill or plugin. */
+	private readonly crumbsEl: HTMLElement;
+	private readonly crumbStore = this._register(new DisposableStore());
+	private crumbs: readonly IAgentPageCrumb[] = [];
 	private readonly envButton: HTMLButtonElement;
 	private readonly envLabel: HTMLElement;
 	private readonly laptop: HTMLElement;
@@ -343,7 +349,7 @@ class AgentTitlebarHeaderContribution extends Disposable {
 					if (display && !display.includes(' ') && display.includes('-')) {
 						display = display.replace(/-/g, ' ');
 					}
-					// A dotted host name is not the label in the menu. Keep “This Mac” until the real name arrives.
+					// A dotted host name is not the label in the menu. Keep "This Mac" until the real name arrives.
 					if (!display || display === this.machineLabel || (!display.includes(' ') && display.includes('.')) || this._store.isDisposed) {
 						return;
 					}
@@ -373,6 +379,8 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		this.projectSeparator = append(this.titleCluster, $('span.volt-agent-primary-header-separator'));
 		createAgentHeaderSeparatorIcon(this.projectSeparator);
 		this.titleLabel = append(this.titleCluster, $('span.volt-agent-primary-header-label'));
+		this.crumbsEl = append(this.titleCluster, $('span.volt-agent-primary-header-crumbs'));
+		this.crumbsEl.hidden = true;
 		this.envButton = append(this.titleCluster, $('button.volt-agent-primary-header-env')) as HTMLButtonElement;
 		this.envButton.type = 'button';
 		this.envButton.hidden = true;
@@ -567,6 +575,8 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		this.envButton.hidden = !usageOpen;
 		this.laptop.hidden = usageOpen;
 		this.titleLabel.hidden = usageOpen;
+		const crumbs = !usageOpen && editor instanceof AgentCustomizeEditorInput ? editor.crumbs : [];
+		this.renderCrumbs(crumbs);
 		if (usageOpen) {
 			const lead = localize('voltAgent.header.usage', "Usage");
 			const trigger = usageEnvironmentTriggerLabel(
@@ -592,7 +602,8 @@ class AgentTitlebarHeaderContribution extends Disposable {
 			this.projectLabel.hidden = !project;
 			this.projectSeparator.hidden = !project;
 			if (short.length > 0) {
-				this.titleCluster.setAttribute('aria-label', project ? `${project} / ${full}` : full);
+				const trail = [full, ...crumbs.map(crumb => crumb.label)].join(' / ');
+				this.titleCluster.setAttribute('aria-label', project ? `${project} / ${trail}` : trail);
 			} else {
 				this.titleCluster.removeAttribute('aria-label');
 			}
@@ -600,6 +611,38 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		if (!this.hover.classList.contains('hidden')) {
 			this.showHover();
 		}
+	}
+
+	/**
+	 * Each crumb after a separator; one with `run` is a link, the last is where the page is. Built
+	 * again only when the trail changes, since the bar renders on every layout and a rebuilt button
+	 * loses a click in progress. A click runs the crumb as it is now.
+	 */
+	private renderCrumbs(crumbs: readonly IAgentPageCrumb[]): void {
+		const previous = this.crumbs;
+		this.crumbs = crumbs;
+		if (crumbs.length === previous.length && crumbs.every((crumb, i) => crumb.label === previous[i].label && !crumb.run === !previous[i].run)) {
+			return;
+		}
+		this.crumbStore.clear();
+		this.crumbsEl.replaceChildren();
+		this.crumbsEl.hidden = crumbs.length === 0;
+		this.titleCluster.classList.toggle('has-crumbs', crumbs.length > 0);
+		crumbs.forEach((crumb, index) => {
+			createAgentHeaderSeparatorIcon(append(this.crumbsEl, $('span.volt-agent-primary-header-separator')));
+			if (!crumb.run) {
+				append(this.crumbsEl, $('span.volt-agent-primary-header-crumb')).textContent = crumb.label;
+				return;
+			}
+			const link = append(this.crumbsEl, $('button.volt-agent-primary-header-crumb.link')) as HTMLButtonElement;
+			link.type = 'button';
+			link.textContent = crumb.label;
+			this.crumbStore.add(addDisposableListener(link, 'click', event => {
+				event.preventDefault();
+				event.stopPropagation();
+				this.crumbs[index]?.run?.();
+			}));
+		});
 	}
 
 	private openEnvironmentMenu(): void {
