@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME } from '../hostTools.js';
+import { MOCKUPS_TOOL_NAME, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME } from '../hostTools.js';
 import { modePolicy, VoltMode } from '../modes.js';
 import { IRunPlan } from '../runPlan.js';
 import { IIntent } from './intent.js';
@@ -83,6 +83,9 @@ export function buildContextSections(input: IContextPackInput): IContextSection[
 	}
 	if (input.visuals && input.intent.lane !== 'fast') {
 		sections.push({ id: 'visuals', cacheable: true, text: VISUAL_REPLIES });
+	}
+	for (const gallery of galleryHints(input)) {
+		sections.push({ id: 'gallery', cacheable: false, text: gallery });
 	}
 
 	if (input.skills?.trim()) {
@@ -209,6 +212,9 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.visuals && input.intent.lane !== 'fast') {
 		parts.push(`[Volt] ${VISUAL_REPLIES}`);
 	}
+	for (const gallery of galleryHints(input)) {
+		parts.push(`[Volt] ${gallery}`);
+	}
 	if (input.memory?.trim()) {
 		parts.push(input.memory.trim());
 	}
@@ -248,6 +254,20 @@ export const TEST_INTEGRITY = 'Make tests pass by fixing the code. Never special
  * sent in the fast lane (small edits) or when the agent cannot reach the volt MCP server.
  */
 export const VISUAL_REPLIES = `When a visual helps explain the answer, render it proactively: call ${RENDER_CHART_TOOL_NAME} from the volt MCP server for numbers over time, comparisons, distributions, flows or hierarchies, including repo and usage analyses; use ${RENDER_HTML_TOOL_NAME} for diagrams, relationships, processes and custom layouts. Choose the chart type, variants and style controls to suit the data without asking the user to choose. Use observed data, or clearly label illustrative data. If your provider does not expose the visual tools, a fenced volt-chart block containing the same JSON chart spec renders natively in Volt; use a mermaid fence for diagrams. Render before your final text, then do not restate what it shows. Skip it for short or trivial answers.`;
+
+/**
+ * Only when the request asks for them: agents otherwise describe five sidebars in prose, or take
+ * twenty screenshots one by one. Their tools may sit behind an agent's tool search, so name them.
+ */
+export const MOCKUP_REPLIES = `For design alternatives, call ${MOCKUPS_TOOL_NAME} from the volt MCP server once with every option's HTML (shared markup in template, css and head) instead of describing them or writing files: the user compares them in the chat and their pick comes back as their next message, so end your turn after it with one short line.`;
+export const SCREENS_REPLIES = `To show the app's screens, call ${SCREENS_TOOL_NAME} from the volt MCP server once with every screen (a web url with paths, a booted simulator or emulator with deep links or act steps, a desktop window, or image files) instead of screenshotting them one by one: it captures light and dark and shows a gallery. Read the screen first (device_snapshot or browser_snapshot) only if you do not know how to reach a screen.`;
+
+function galleryHints(input: IContextPackInput): string[] {
+	if (!input.visuals) {
+		return [];
+	}
+	return [...(input.intent.wantsMockups ? [MOCKUP_REPLIES] : []), ...(input.intent.wantsScreens ? [SCREENS_REPLIES] : [])];
+}
 
 export const WORKSPACE_SCOPE = 'Keep project exploration inside this workspace. You may read a skill or instruction file explicitly supplied by the user or listed by your configured skills, including its referenced resources, even when it lives outside the workspace. Do not search the home folder, sibling projects, or other tools\' private data and chat history unless the user asks; if something the user mentions is missing, say so instead of hunting for it elsewhere.';
 

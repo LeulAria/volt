@@ -10,7 +10,7 @@ import { IVoltEvent } from '../../common/events.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { contextLabelFromTokens, pickNumber, pickText } from '../../common/models/modelMeta.js';
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
-import { IModelOptionDescriptor, MODEL_OPTION_REASONING, reasoningOption } from '../../common/models/modelOptions.js';
+import { generationParams, IModelOptionDescriptor, MODEL_OPTION_REASONING, reasoningOption } from '../../common/models/modelOptions.js';
 import { OpenAiToolAssembler } from '../../common/harness/openaiToolStream.js';
 import { IOpenAiReasoningFields, openAiReasoningText, ProviderReasoning, reasoningDetails } from '../../common/harness/reasoningStream.js';
 import { toOpenAiMessages, toOpenAiTools } from '../../common/harness/providerMessages.js';
@@ -77,6 +77,8 @@ export class OpenAICompatProvider implements IModelProvider {
 		const selected = req.options?.[MODEL_OPTION_REASONING];
 		const effort = this.supportsReasoning(req.modelId) && typeof selected === 'string' && selected !== 'auto' && selected !== 'off' ? selected : undefined;
 		const tools = req.tools?.length ? toOpenAiTools(req.tools) : undefined;
+		const params = generationParams(req.options);
+		const sampling = this.acceptsSampling(req.modelId);
 		const body = JSON.stringify({
 			model: req.modelId,
 			stream: true,
@@ -87,6 +89,9 @@ export class OpenAICompatProvider implements IModelProvider {
 			}),
 			...(effort ? this.reasoningRequest(effort) : {}),
 			...(tools ? { tools, tool_choice: 'auto' } : {}),
+			...(sampling && params.temperature !== undefined ? { temperature: params.temperature } : {}),
+			...(sampling && params.topP !== undefined ? { top_p: params.topP } : {}),
+			...(params.maxOutputTokens !== undefined ? { [this.maxTokensField]: Math.min(params.maxOutputTokens, req.maxOutputTokens ?? params.maxOutputTokens) } : {}),
 		});
 		const textId = `text-${Date.now()}`;
 		const assembler = new OpenAiToolAssembler();
@@ -172,6 +177,14 @@ export class OpenAICompatProvider implements IModelProvider {
 		return { reasoning_effort: effort };
 	}
 
+	/** The output-length field this server reads for a pinned maximum. */
+	protected readonly maxTokensField: string = 'max_tokens';
+
+	/** Whether the model takes temperature and top_p; a server that rejects them never gets them. */
+	protected acceptsSampling(_modelId: string): boolean {
+		return true;
+	}
+
 	protected headers(apiKey?: string): Record<string, string> {
 		const extra = this.extraHeaders?.(apiKey) ?? {};
 		return {
@@ -208,6 +221,11 @@ export function createOpenAIProvider(requestService: IRequestService): OpenAICom
 	return new class extends OpenAICompatProvider {
 		constructor() {
 			super('openai', 'OpenAI', requestService, 'https://api.openai.com/v1');
+		}
+		/** OpenAI's reasoning models refuse `max_tokens` and any temperature but the default. */
+		protected override readonly maxTokensField = 'max_completion_tokens';
+		protected override acceptsSampling(modelId: string): boolean {
+			return !looksLikeReasoningModel(modelId);
 		}
 		protected override fallbackModels(): IModelInfo[] {
 			return ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'o4-mini'].map(id => this.modelInfo(id));

@@ -183,6 +183,24 @@ suite('Volt intent router', () => {
 		assert.strictEqual(classifyIntent('Build design/pricing.png as a page', 'ask').matchesDesign, undefined);
 	});
 
+	test('design alternatives and the app\'s screens are recognised, and are work rather than a question', () => {
+		const mockups = classifyIntent('give me 5 sidebar alternative for our website', 'agent');
+		assert.strictEqual(mockups.wantsMockups, true);
+		assert.strictEqual(mockups.lane, 'agent');
+		assert.ok(mockups.signals.includes('gallery'));
+		assert.strictEqual(classifyIntent('mock up three empty states for the inbox', 'agent').wantsMockups, true);
+		assert.strictEqual(classifyIntent('show me 3 layout options for the pricing page', 'agent').wantsMockups, true);
+		assert.strictEqual(classifyIntent('what is a good alternative to lodash?', 'agent').wantsMockups, undefined);
+		assert.strictEqual(classifyIntent('options for caching the API', 'agent').wantsMockups, undefined);
+		const screens = classifyIntent('inspect the current mobile screens, give me all in dark and light theme', 'agent');
+		assert.strictEqual(screens.wantsScreens, true);
+		assert.strictEqual(screens.lane, 'agent');
+		assert.strictEqual(classifyIntent('screenshots of every page of the site', 'agent').wantsScreens, true);
+		assert.strictEqual(classifyIntent('fix the login page in dark mode', 'agent').wantsScreens, undefined);
+		// Ask mode answers; it does not start work.
+		assert.strictEqual(classifyIntent('give me 5 sidebar alternatives', 'ask').lane, 'chat');
+	});
+
 	test('without a workspace everything is chat', () => {
 		assert.strictEqual(classifyIntent('add pagination to the users table', 'agent', { hasWorkspace: false }).lane, 'chat');
 	});

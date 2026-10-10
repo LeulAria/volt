@@ -10,7 +10,7 @@ import { IVoltEvent } from '../../common/events.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { contextLabelFromTokens, pickText } from '../../common/models/modelMeta.js';
 import { CLAUDE_STREAM_OUTPUT_TOKENS, claudeModelMeta, IClaudeModelMeta, IListedClaudeLimits } from '../../common/models/claudeModels.js';
-import { IModelOptionDescriptor, MODEL_OPTION_REASONING, reasoningOption } from '../../common/models/modelOptions.js';
+import { generationParams, IModelOptionDescriptor, MODEL_OPTION_REASONING, reasoningOption } from '../../common/models/modelOptions.js';
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
 import { AnthropicStreamParser, IAnthropicStreamJson } from '../../common/harness/anthropicToolStream.js';
 import { buildAnthropicRequest } from '../../common/harness/anthropicRequest.js';
@@ -95,7 +95,8 @@ export class AnthropicProvider implements IModelProvider {
 
 	async *stream(req: IModelRequest, token: CancellationToken): AsyncIterable<IVoltEvent> {
 		const meta = claudeModelMeta(req.modelId, this.limits.get(req.modelId));
-		const maxTokens = Math.max(1_024, Math.min(req.maxOutputTokens ?? CLAUDE_STREAM_OUTPUT_TOKENS, meta.maxOutputTokens));
+		const params = generationParams(req.options);
+		const maxTokens = Math.max(1_024, Math.min(req.maxOutputTokens ?? CLAUDE_STREAM_OUTPUT_TOKENS, params.maxOutputTokens ?? Number.POSITIVE_INFINITY, meta.maxOutputTokens));
 		const base = baseUrl(req.profile);
 		const effort = req.options?.[MODEL_OPTION_REASONING];
 		const request = buildAnthropicRequest({
@@ -106,6 +107,8 @@ export class AnthropicProvider implements IModelProvider {
 			maxTokens,
 			effort: typeof effort === 'string' ? effort : undefined,
 			firstParty: base === DEFAULT_BASE_URL,
+			temperature: params.temperature,
+			topP: params.topP,
 		});
 		const parser = new AnthropicStreamParser(req.modelId);
 		for await (const item of requestSseStream(this.requestService, `${base}/v1/messages`, {

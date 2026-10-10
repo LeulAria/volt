@@ -28,6 +28,9 @@ export interface IAnthropicRequestInput {
 	readonly effort?: string;
 	/** api.anthropic.com. Proxies and gateways may reject newer fields, so those stay off elsewhere. */
 	readonly firstParty: boolean;
+	/** Sampling pins from Settings. Sent only while extended thinking is off (the API fixes them then). */
+	readonly temperature?: number;
+	readonly topP?: number;
 }
 
 export interface IAnthropicRequest {
@@ -46,6 +49,7 @@ export function buildAnthropicRequest(input: IAnthropicRequestInput): IAnthropic
 	}));
 	const messages = markCacheBreakpoints(toAnthropicMessages(input.messages, { model: input.modelId }));
 	const betas: string[] = [];
+	const thinking = claudeThinkingParams(input.meta, input.effort, input.maxTokens);
 	const body: Record<string, unknown> = {
 		model: input.modelId,
 		max_tokens: input.maxTokens,
@@ -53,7 +57,8 @@ export function buildAnthropicRequest(input: IAnthropicRequestInput): IAnthropic
 		...(system.length ? { system } : {}),
 		messages,
 		...(input.tools?.length ? { tools: toAnthropicTools(input.tools, { eagerInputStreaming: input.firstParty }) } : {}),
-		...claudeThinkingParams(input.meta, input.effort, input.maxTokens),
+		...thinking,
+		...samplingParams(input, thinking),
 	};
 	if (input.firstParty && input.tools?.length) {
 		// Old tool results are cleared server-side once the prompt grows. That is not a history
@@ -62,6 +67,21 @@ export function buildAnthropicRequest(input: IAnthropicRequestInput): IAnthropic
 		betas.push('context-management-2025-06-27');
 	}
 	return { body, betas };
+}
+
+/**
+ * Temperature or top_p, never both: newer Claude models reject the pair. Claude takes a temperature
+ * up to 1. With thinking on the API allows neither to move, so the pins wait until it is off.
+ */
+function samplingParams(input: IAnthropicRequestInput, thinking: Record<string, unknown>): Record<string, unknown> {
+	const mode = (thinking.thinking as { type?: string } | undefined)?.type;
+	if (mode && mode !== 'disabled') {
+		return {};
+	}
+	if (input.temperature !== undefined) {
+		return { temperature: Math.min(1, input.temperature) };
+	}
+	return input.topP !== undefined ? { top_p: input.topP } : {};
 }
 
 /** Breakpoints on the last block of the last message and of the message two turns back. */

@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, DESIGN_LOOP, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
+import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, DESIGN_LOOP, MOCKUP_REPLIES, SCREENS_REPLIES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
 import { classifyIntent } from '../../../common/harness/intent.js';
 
 suite('Volt context pack', () => {
@@ -188,5 +188,15 @@ suite('Volt context pack', () => {
 			remaining: { steps: 12, tools: 40, timeMs: 120_000 },
 		});
 		assert.ok(/Remaining budget: 12 model steps, 40 tool calls, 120s/.test(prompt));
+	});
+
+	test('the galleries are named only when the request asks for them and the agent has the volt server', () => {
+		const mockups = classifyIntent('give me 5 sidebar alternatives for our website', 'agent');
+		assert.ok(buildAcpLead({ mode: 'agent', intent: mockups, visuals: true })?.includes(MOCKUP_REPLIES));
+		assert.ok(!buildAcpLead({ mode: 'agent', intent: mockups })?.includes(MOCKUP_REPLIES), 'not without the volt MCP server');
+		assert.ok(!buildAcpLead({ mode: 'agent', intent: classifyIntent('add pagination to the users table', 'agent'), visuals: true })?.includes(MOCKUP_REPLIES));
+		const screens = classifyIntent('show all the screens of the app in light and dark', 'agent');
+		assert.ok(buildSystemPrompt({ mode: 'agent', intent: screens, visuals: true }).includes(SCREENS_REPLIES));
+		assert.ok(!buildSystemPrompt({ mode: 'agent', intent: screens, visuals: true }).includes(MOCKUP_REPLIES));
 	});
 });
