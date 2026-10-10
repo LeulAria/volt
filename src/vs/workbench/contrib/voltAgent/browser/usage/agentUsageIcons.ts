@@ -64,12 +64,12 @@ export function createPaceIcon(ahead: boolean): HTMLElement {
 	return svgIcon(ahead ? 'pace-up' : 'pace-down', [ahead ? PACE_UP_PATH : PACE_DOWN_PATH], { size: 15, strokeWidth: 1.8 });
 }
 
-/** Spoke opacities for the refresh spinner, brightest at 180° and fading back toward the top. */
+/** Spoke opacities for the refresh spinner, brightest at 180 degrees and fading back toward the top. */
 const REFRESH_SPINNER_OPACITY = [0.14, 0.29, 0.43, 0.57, 0.71, 0.86, 1];
 
 /**
  * Activity spinner shown in place of the usage refresh icon while a reload is in flight.
- * Twelve discrete 30° steps over 0.75s, same motion as the system activity indicator.
+ * Twelve discrete 30-degree steps over 0.75s, same motion as the system activity indicator.
  */
 export function createRefreshSpinner(): SVGElement {
 	const svg = document.createElementNS(SVG_NS, 'svg');

@@ -22,16 +22,159 @@ import {
 	VoltPrMergeState,
 	VoltPrState,
 } from '../voltPullRequests.js';
-import { Json, latestByName, list, num, str, time, user } from './hostParse.js';
+import { latestByName, list, num, str, time, user } from './hostParse.js';
 
 /** GitLab (`/api/v4`): merge requests, pipelines and discussions in Volt's shapes. */
+
+export interface IGitlabUserJson {
+	readonly username?: unknown;
+	readonly avatar_url?: unknown;
+}
+
+export interface IGitlabPipelineJson {
+	readonly id?: unknown;
+	readonly project_id?: unknown;
+	readonly status?: unknown;
+	readonly web_url?: unknown;
+	readonly created_at?: unknown;
+	readonly started_at?: unknown;
+	readonly finished_at?: unknown;
+}
+
+export interface IGitlabDiffRefsJson {
+	readonly base_sha?: unknown;
+	readonly start_sha?: unknown;
+	readonly head_sha?: unknown;
+}
+
+export interface IGitlabMergeRequestJson {
+	readonly id?: unknown;
+	readonly iid?: unknown;
+	readonly state?: unknown;
+	readonly draft?: unknown;
+	readonly work_in_progress?: unknown;
+	readonly title?: unknown;
+	readonly description?: unknown;
+	readonly web_url?: unknown;
+	readonly author?: IGitlabUserJson | null;
+	readonly source_branch?: unknown;
+	readonly target_branch?: unknown;
+	readonly source_project_id?: unknown;
+	readonly target_project_id?: unknown;
+	readonly sha?: unknown;
+	readonly diff_refs?: IGitlabDiffRefsJson | null;
+	readonly created_at?: unknown;
+	readonly updated_at?: unknown;
+	readonly merged_at?: unknown;
+	readonly closed_at?: unknown;
+	readonly changes_count?: unknown;
+	readonly detailed_merge_status?: unknown;
+	readonly merge_status?: unknown;
+	readonly has_conflicts?: unknown;
+	readonly head_pipeline?: IGitlabPipelineJson | null;
+	readonly pipeline?: IGitlabPipelineJson | null;
+	readonly labels?: unknown;
+	readonly assignees?: unknown;
+	readonly reviewers?: unknown;
+	readonly user_notes_count?: unknown;
+	readonly merge_when_pipeline_succeeds?: unknown;
+	readonly auto_merge_enabled?: unknown;
+	readonly user?: { readonly can_merge?: unknown } | null;
+}
+
+export interface IGitlabJobJson {
+	readonly name?: unknown;
+	readonly stage?: unknown;
+	readonly status?: unknown;
+	readonly allow_failure?: unknown;
+	readonly web_url?: unknown;
+	readonly created_at?: unknown;
+	readonly started_at?: unknown;
+	readonly finished_at?: unknown;
+}
+
+/** An external commit status (`.../repository/commits/{sha}/statuses`). */
+export interface IGitlabCommitStatusJson {
+	readonly name?: unknown;
+	readonly status?: unknown;
+	readonly allow_failure?: unknown;
+	readonly target_url?: unknown;
+	readonly description?: unknown;
+	readonly created_at?: unknown;
+	readonly started_at?: unknown;
+	readonly finished_at?: unknown;
+}
+
+export interface IGitlabLabelJson {
+	readonly name?: unknown;
+	readonly color?: unknown;
+}
+
+export interface IGitlabApprovalsJson {
+	readonly approved?: unknown;
+	readonly approved_by?: unknown;
+}
+
+export interface IGitlabNoteJson {
+	readonly id?: unknown;
+	readonly body?: unknown;
+	readonly author?: IGitlabUserJson | null;
+	readonly created_at?: unknown;
+	readonly system?: unknown;
+	readonly resolvable?: unknown;
+	readonly resolved?: unknown;
+	readonly position?: {
+		readonly new_path?: unknown;
+		readonly old_path?: unknown;
+		readonly new_line?: unknown;
+		readonly old_line?: unknown;
+	} | null;
+}
+
+export interface IGitlabDiscussionJson {
+	readonly id?: unknown;
+	readonly notes?: unknown;
+}
+
+export interface IGitlabDiffJson {
+	readonly diff?: unknown;
+	readonly old_path?: unknown;
+	readonly new_path?: unknown;
+	readonly new_file?: unknown;
+	readonly deleted_file?: unknown;
+	readonly renamed_file?: unknown;
+}
+
+export interface IGitlabCommitJson {
+	readonly id?: unknown;
+	readonly title?: unknown;
+	readonly message?: unknown;
+	readonly author_name?: unknown;
+	readonly committed_date?: unknown;
+	readonly created_at?: unknown;
+}
+
+interface IGitlabAccessJson {
+	readonly access_level?: unknown;
+}
+
+export interface IGitlabProjectJson {
+	readonly default_branch?: unknown;
+	readonly merge_method?: unknown;
+	readonly squash_option?: unknown;
+	readonly remove_source_branch_after_merge?: unknown;
+	readonly permissions?: {
+		readonly project_access?: IGitlabAccessJson | null;
+		readonly group_access?: IGitlabAccessJson | null;
+	} | null;
+}
 
 /** `group/sub/project` as GitLab's URL-encoded project id. */
 export function gitlabProjectId(repo: Pick<IVoltPrRepoRef, 'owner' | 'name'>): string {
 	return encodeURIComponent(`${repo.owner}/${repo.name}`);
 }
 
-export function gitlabState(raw: Json): VoltPrState {
+export function gitlabState(raw: IGitlabMergeRequestJson | undefined): VoltPrState {
 	switch (raw?.state) {
 		case 'merged': return 'merged';
 		case 'closed':
@@ -53,7 +196,7 @@ export function gitlabJobState(status: unknown, allowFailure?: boolean): VoltPrC
 }
 
 /** A pipeline's overall status as the checks summary of a list row (jobs are read for the detail only). */
-export function gitlabPipelineChecks(pipeline: Json): VoltPrChecksState {
+export function gitlabPipelineChecks(pipeline: IGitlabPipelineJson | null | undefined): VoltPrChecksState {
 	switch (pipeline?.status) {
 		case undefined:
 		case null: return 'none';
@@ -67,7 +210,7 @@ export function gitlabPipelineChecks(pipeline: Json): VoltPrChecksState {
 }
 
 /** A pipeline's jobs, plus external commit statuses, as checks. */
-export function parseGitlabChecks(jobs: readonly Json[], statuses: readonly Json[] = []): IVoltPrCheck[] {
+export function parseGitlabChecks(jobs: readonly IGitlabJobJson[], statuses: readonly IGitlabCommitStatusJson[] = []): IVoltPrCheck[] {
 	const fromJobs = jobs.map(job => ({
 		name: str(job.name, 'job'),
 		...(typeof job.stage === 'string' && job.stage ? { workflow: job.stage } : {}),
@@ -90,13 +233,13 @@ export function parseGitlabChecks(jobs: readonly Json[], statuses: readonly Json
 	return latestByName([...fromJobs, ...fromStatuses]);
 }
 
-function labels(raw: Json, colors?: ReadonlyMap<string, string>): IVoltPrLabel[] {
-	return list(raw).map(label => typeof label === 'string'
+function labels(raw: unknown, colors?: ReadonlyMap<string, string>): IVoltPrLabel[] {
+	return list<string | IGitlabLabelJson>(raw).map(label => typeof label === 'string'
 		? { name: label, color: colors?.get(label) ?? '888888' }
 		: { name: str(label.name), color: str(label.color, '#888888').replace(/^#/, '') }).filter(label => label.name);
 }
 
-function mergeability(raw: Json, state: VoltPrState): { mergeable: VoltPrMergeable; mergeState: VoltPrMergeState } {
+function mergeability(raw: IGitlabMergeRequestJson, state: VoltPrState): { mergeable: VoltPrMergeable; mergeState: VoltPrMergeState } {
 	if (state !== 'open' && state !== 'draft') {
 		return { mergeable: 'unknown', mergeState: 'unknown' };
 	}
@@ -128,16 +271,16 @@ function mergeability(raw: Json, state: VoltPrState): { mergeable: VoltPrMergeab
 export interface IGitlabExtras {
 	readonly checks?: readonly IVoltPrCheck[];
 	/** `GET .../approvals`. */
-	readonly approvals?: Json;
+	readonly approvals?: IGitlabApprovalsJson;
 	readonly labelColors?: ReadonlyMap<string, string>;
 }
 
-export function parseGitlabMergeRequest(raw: Json, repo: IVoltPrRepoRef, viewer: string, extras: IGitlabExtras = {}): IVoltPullRequest {
+export function parseGitlabMergeRequest(raw: IGitlabMergeRequestJson, repo: IVoltPrRepoRef, viewer: string, extras: IGitlabExtras = {}): IVoltPullRequest {
 	const number = num(raw.iid);
 	const state = gitlabState(raw);
 	const { mergeable, mergeState } = mergeability(raw, state);
 	const checks = extras.checks ? summarizeChecks(extras.checks) : pipelineSummary(raw.head_pipeline ?? raw.pipeline);
-	const approvedBy: string[] = list(extras.approvals?.approved_by).map(entry => str(entry.user?.username)).filter(Boolean);
+	const approvedBy: string[] = list<{ readonly user?: IGitlabUserJson | null }>(extras.approvals?.approved_by).map(entry => str(entry.user?.username)).filter(Boolean);
 	const reviews = approvedBy.map(author => ({ author, state: 'approved' as const, at: time(raw.updated_at) ?? 0 }));
 	const reviewDecision = str(raw.detailed_merge_status) === 'requested_changes' ? 'changesRequested' as const
 		: extras.approvals?.approved || approvedBy.length ? 'approved' as const
@@ -168,8 +311,8 @@ export function parseGitlabMergeRequest(raw: Json, repo: IVoltPrRepoRef, viewer:
 		...(reviewDecision ? { reviewDecision } : {}),
 		checks,
 		labels: labels(raw.labels, extras.labelColors),
-		assignees: list(raw.assignees).map(assignee => str(assignee.username)).filter(Boolean),
-		reviewRequests: list(raw.reviewers).map(reviewer => str(reviewer.username)).filter(name => name && !approvedBy.includes(name)),
+		assignees: list<IGitlabUserJson>(raw.assignees).map(assignee => str(assignee.username)).filter(Boolean),
+		reviewRequests: list<IGitlabUserJson>(raw.reviewers).map(reviewer => str(reviewer.username)).filter(name => name && !approvedBy.includes(name)),
 		reviews,
 		unresolvedThreads: 0,
 		comments: num(raw.user_notes_count),
@@ -178,7 +321,7 @@ export function parseGitlabMergeRequest(raw: Json, repo: IVoltPrRepoRef, viewer:
 	};
 }
 
-function pipelineSummary(pipeline: Json): IVoltPullRequest['checks'] {
+function pipelineSummary(pipeline: IGitlabPipelineJson | null | undefined): IVoltPullRequest['checks'] {
 	const state = gitlabPipelineChecks(pipeline);
 	return {
 		state,
@@ -191,7 +334,7 @@ function pipelineSummary(pipeline: Json): IVoltPullRequest['checks'] {
 	};
 }
 
-export function parseGitlabNote(raw: Json): IVoltPrComment {
+export function parseGitlabNote(raw: IGitlabNoteJson): IVoltPrComment {
 	return {
 		id: String(raw.id ?? ''),
 		...(typeof raw.id === 'number' ? { databaseId: raw.id } : {}),
@@ -203,11 +346,11 @@ export function parseGitlabNote(raw: Json): IVoltPrComment {
 }
 
 /** Discussions with a position become review threads; the rest (and plain notes) are conversation. System notes are left out. */
-export function parseGitlabDiscussions(discussions: readonly Json[], mrUrl: string): { threads: IVoltPrReviewThread[]; conversation: IVoltPrComment[] } {
+export function parseGitlabDiscussions(discussions: readonly IGitlabDiscussionJson[], mrUrl: string): { threads: IVoltPrReviewThread[]; conversation: IVoltPrComment[] } {
 	const threads: IVoltPrReviewThread[] = [];
 	const conversation: IVoltPrComment[] = [];
 	for (const discussion of discussions) {
-		const notes = list(discussion.notes).filter(note => !note.system);
+		const notes = list<IGitlabNoteJson>(discussion.notes).filter(note => !note.system);
 		if (!notes.length) {
 			continue;
 		}
@@ -235,7 +378,7 @@ export function parseGitlabDiscussions(discussions: readonly Json[], mrUrl: stri
 }
 
 /** `GET .../diffs` entries: GitLab's `diff` starts at the first `@@`, like GitHub's `patch`. */
-export function parseGitlabDiff(raw: Json): IVoltPrFilePatch {
+export function parseGitlabDiff(raw: IGitlabDiffJson): IVoltPrFilePatch {
 	const change = raw.new_file ? 'added' as const : raw.deleted_file ? 'deleted' as const : raw.renamed_file ? 'renamed' as const : 'modified' as const;
 	const diff = str(raw.diff);
 	let additions = 0;
@@ -250,7 +393,7 @@ export function parseGitlabDiff(raw: Json): IVoltPrFilePatch {
 	const path = change === 'deleted' ? str(raw.old_path) : str(raw.new_path);
 	return {
 		path,
-		...(raw.renamed_file && raw.old_path && raw.old_path !== raw.new_path ? { previousPath: raw.old_path } : {}),
+		...(raw.renamed_file && typeof raw.old_path === 'string' && raw.old_path && raw.old_path !== raw.new_path ? { previousPath: raw.old_path } : {}),
 		change,
 		additions,
 		deletions,
@@ -258,7 +401,7 @@ export function parseGitlabDiff(raw: Json): IVoltPrFilePatch {
 	};
 }
 
-export function parseGitlabCommit(raw: Json): IVoltPrCommit {
+export function parseGitlabCommit(raw: IGitlabCommitJson): IVoltPrCommit {
 	return {
 		oid: str(raw.id),
 		headline: str(raw.title ?? raw.message).split('\n')[0],
@@ -269,14 +412,14 @@ export function parseGitlabCommit(raw: Json): IVoltPrCommit {
 }
 
 export interface IGitlabDetailParts {
-	readonly mr: Json;
-	readonly project: Json;
+	readonly mr: IGitlabMergeRequestJson;
+	readonly project: IGitlabProjectJson | undefined;
 	readonly checks: readonly IVoltPrCheck[];
-	readonly diffs: readonly Json[];
-	readonly discussions: readonly Json[];
-	readonly commits: readonly Json[];
-	readonly approvals?: Json;
-	readonly labels: readonly Json[];
+	readonly diffs: readonly IGitlabDiffJson[];
+	readonly discussions: readonly IGitlabDiscussionJson[];
+	readonly commits: readonly IGitlabCommitJson[];
+	readonly approvals?: IGitlabApprovalsJson;
+	readonly labels: readonly IGitlabLabelJson[];
 }
 
 export function parseGitlabDetail(parts: IGitlabDetailParts, repo: IVoltPrRepoRef, viewer: string): IVoltPullRequestDetail {

@@ -1,0 +1,185 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* The chat's managed terminals, as chips above the transcript. */
+
+.volt-agent-terminal-bar {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	flex: none;
+	padding: 8px 20px 0;
+	min-width: 0;
+}
+
+.volt-agent-terminal-bar.hidden {
+	display: none;
+}
+
+.volt-agent-terminal-chip {
+	--volt-terminal-tone: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	display: inline-flex;
+	align-items: center;
+	max-width: 100%;
+	min-width: 0;
+	height: 26px;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 14%, transparent));
+	border-radius: 999px;
+	background: var(--vscode-editorWidget-background);
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	line-height: 24px;
+	overflow: hidden;
+	contain: layout paint;
+}
+
+.volt-agent-terminal-chip.running { --volt-terminal-tone: var(--vscode-charts-blue, #3794ff); }
+.volt-agent-terminal-chip.ready,
+.volt-agent-terminal-chip.completed { --volt-terminal-tone: var(--vscode-testing-iconPassed, #3fb950); }
+.volt-agent-terminal-chip.attention { --volt-terminal-tone: var(--vscode-editorWarning-foreground, #cca700); }
+.volt-agent-terminal-chip.failed { --volt-terminal-tone: var(--vscode-errorForeground, #f14c4c); }
+
+.volt-agent-terminal-chip.failed {
+	border-color: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 45%, transparent);
+}
+
+.volt-agent-terminal-chip.attention {
+	border-color: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 45%, transparent);
+}
+
+.volt-agent-terminal-chip button {
+	display: inline-flex;
+	align-items: center;
+	height: 100%;
+	min-width: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.volt-agent-terminal-chip button:hover {
+	color: var(--vscode-foreground);
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-agent-terminal-chip button:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-agent-terminal-chip-main {
+	gap: 6px;
+	padding: 0 6px 0 9px;
+}
+
+.volt-agent-terminal-chip-main .label {
+	color: var(--vscode-foreground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+
+.volt-agent-terminal-chip-main .detail {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+	max-width: 180px;
+	font-variant-numeric: tabular-nums;
+	opacity: 0.8;
+}
+
+.volt-agent-terminal-chip-more,
+.volt-agent-terminal-chip-close {
+	justify-content: center;
+	width: 22px;
+	flex: none;
+	padding: 0;
+}
+
+.volt-agent-terminal-chip-more {
+	border-left: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)) !important;
+}
+
+.volt-agent-terminal-chip-more .codicon,
+.volt-agent-terminal-chip-close .codicon {
+	font-size: 12px;
+}
+
+/* Status: a spinner only while genuinely pending, a steady dot while it runs. */
+.volt-agent-terminal-status {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 12px;
+	height: 12px;
+	flex: none;
+	color: var(--volt-terminal-tone);
+}
+
+.volt-agent-terminal-status .codicon {
+	font-size: 12px;
+}
+
+.volt-agent-terminal-status .dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--volt-terminal-tone);
+}
+
+/* A soft ring around a live dot: transform and opacity only, so the compositor draws it. */
+.volt-agent-terminal-status.running .dot::after,
+.volt-agent-terminal-status.ready .dot::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	margin: auto;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--volt-terminal-tone);
+	opacity: 0.45;
+	animation: volt-terminal-ring 2.4s ease-out infinite;
+	will-change: transform, opacity;
+}
+
+@keyframes volt-terminal-ring {
+	0% { transform: scale(1); opacity: 0.45; }
+	70%, 100% { transform: scale(2.4); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-agent-terminal-status .dot::after {
+		animation: none !important;
+		display: none;
+	}
+}
+
+/* Several terminals: one dot per terminal after the label. */
+.volt-agent-terminal-chip-main .dots {
+	display: inline-flex;
+	gap: 3px;
+	margin-left: 2px;
+}
+
+.volt-agent-terminal-chip-main .dots .dot {
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+}
+
+.volt-agent-terminal-chip-main .dots .dot.running { background: var(--vscode-charts-blue, #3794ff); }
+.volt-agent-terminal-chip-main .dots .dot.ready,
+.volt-agent-terminal-chip-main .dots .dot.completed { background: var(--vscode-testing-iconPassed, #3fb950); }
+.volt-agent-terminal-chip-main .dots .dot.attention { background: var(--vscode-editorWarning-foreground, #cca700); }
+.volt-agent-terminal-chip-main .dots .dot.failed { background: var(--vscode-errorForeground, #f14c4c); }

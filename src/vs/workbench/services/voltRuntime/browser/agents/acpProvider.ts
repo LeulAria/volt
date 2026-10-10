@@ -7,6 +7,7 @@ import { bareTaskToolName } from '../../common/orchestration/agentTasks.js';
 import { timeout } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -34,10 +35,11 @@ import { ACP_IDLE_TIMINGS, ACP_STALL_NOTICE_TITLE, declaredToolWaitMs, IdleWatch
 import { ACP_RUN_BUDGET, IRunSupervisorOptions, RunSupervisor, SupervisorDirective } from '../../common/harness/supervisor.js';
 import { acpResourceBlock, AcpResourcePromptBlock } from '../../common/fileAttachments.js';
 import { isCursorPlanWall, isCursorPlanWallPrefix, isCursorTransientError, nextCursorFallback, normalizeCursorModelId } from '../../common/harness/cursorQuota.js';
+import { turnWriteGate } from '../../common/turnWriteGate.js';
 import { accessBridgeFor } from './bridges/accessBridges.js';
 import { AcpJsonRpcClient, AcpRequestAbandonedError, IAcpIncomingRequest } from './acpJsonRpc.js';
 import { listClaudeModels } from './claudeCatalog.js';
-import { acpLaunchFor, cliAgentDefinition, listAntigravityModels, listGrokModels, listOpenCodeModels } from './cliAgents.js';
+import { acpLaunchFor, cliAgentDefinition, forgetAcpAdapterBin, listAntigravityModels, listGrokModels, listOpenCodeModels, resolveAcpAdapterBin } from './cliAgents.js';
 import { listCodexModels } from './codexAppServer.js';
 import { resolveAntigravityCliModelLabel } from '../../common/models/antigravityModels.js';
 import { IModelOptionDescriptor, MODEL_OPTION_REASONING, unionDescriptors } from '../../common/models/modelOptions.js';
@@ -87,6 +89,33 @@ interface IAcpSession {
 	children?: Map<string, IAcpChild>;
 	/** Tool calls that only control a native subagent (Claude's Agent call): their updates are not tool rows. */
 	subagentCalls?: Set<string>;
+	/** Background work the agent started (Claude's `run_in_background` Bash), by task id. Outlives turns. */
+	backgroundTasks?: Map<string, IAcpBackgroundTask>;
+}
+
+/** States of an AIR async task; the last three are final. */
+export type AcpBackgroundTaskState = 'running' | 'completed' | 'failed' | 'stopped';
+
+/**
+ * Background work an agent runs past the tool call that started it (Claude's `run_in_background`
+ * Bash), from the AIR `async_task_*` session updates. Reported whether or not a turn is running.
+ */
+export interface IAcpBackgroundTask {
+	/** The Volt chat (undefined until the session ran a turn for one). */
+	readonly sessionId: string | undefined;
+	/** The agent's session id. */
+	readonly providerSessionId: string;
+	readonly taskId: string;
+	readonly name?: string;
+	readonly description?: string;
+	readonly taskType?: string;
+	readonly state: AcpBackgroundTaskState;
+	/** How it ended, once it did. */
+	readonly summary?: string;
+	/** The file the agent writes the task's output to. */
+	readonly outputFilePath?: string;
+	/** The tool call that started it. */
+	readonly toolCallId?: string;
 }
 
 /** A harness subagent Volt has seen start: what its card shows and what its report is. */
@@ -216,7 +245,8 @@ const ACP_CLIENT_CAPABILITIES = {
 				version: 1,
 				// Native subagent sessions: Claude and Codex announce each subagent, stream its own
 				// updates under its session id, and report how it ended (.aInsp/research/cursor-subagents-protocol.md section 2.4).
-				capabilities: ['sessionFailure', 'nativeSubagentSessions'],
+				// Async tasks: Claude reports `run_in_background` commands as `async_task_*` updates (see onDidChangeBackgroundTasks).
+				capabilities: ['sessionFailure', 'nativeSubagentSessions', 'asyncTasks'],
 			},
 		},
 	},
@@ -238,6 +268,35 @@ const STALL_RESUME_TEXT = 'Your previous response stopped making progress and wa
 const ACP_INITIALIZE_TIMEOUT_MS = 45_000;
 /** `session/new` connects the session's MCP servers (cursor-agent waits up to 60s for each). */
 const ACP_SESSION_NEW_TIMEOUT_MS = 120_000;
+
+/** Past this much text Cursor's reply is no plan-wall banner (that is one short line); it stops being re-checked per chunk. */
+const CURSOR_WALL_SCAN_CHARS = 2048;
+
+/** How long a `which` answer is kept: a found CLI for a while, a missing one briefly (it may be installed any moment). */
+const WHICH_FOUND_TTL_MS = 10 * 60_000;
+const WHICH_MISSING_TTL_MS = 30_000;
+const whichAnswers = new WeakMap<IVoltStdioService, Map<string, { until: number; readonly path: Promise<string | undefined> }>>();
+
+/** `stdio.which`, cached per command: every new session asked again before, a process spawn each time. */
+function cachedWhich(stdio: IVoltStdioService, command: string): Promise<string | undefined> {
+	let answers = whichAnswers.get(stdio);
+	if (!answers) {
+		answers = new Map();
+		whichAnswers.set(stdio, answers);
+	}
+	const cached = answers.get(command);
+	if (cached && Date.now() < cached.until) {
+		return cached.path;
+	}
+	const entry = { until: Date.now() + WHICH_FOUND_TTL_MS, path: stdio.which(command).catch(() => undefined) };
+	void entry.path.then(path => {
+		if (!path) {
+			entry.until = Math.min(entry.until, Date.now() + WHICH_MISSING_TTL_MS);
+		}
+	});
+	answers.set(command, entry);
+	return entry.path;
+}
 
 /** The CLI's link to its backend failed, not the model: `RetriableError: Connection stalled`, `[unavailable] PING timed out`, `ECONNRESET`. */
 export function isAgentTransportError(message: string): boolean {
@@ -282,6 +341,12 @@ export class AcpAgentProvider implements IAgentProvider {
 	private questionAsker: AcpQuestionAsker | undefined;
 	private supervision: IAcpSupervisionOptions = {};
 	private readonly spares = new Map<string, IAcpSpare>();
+	private readonly _onDidChangeBackgroundTasks = new Emitter<IAcpBackgroundTask>();
+	/**
+	 * A background task of one of this provider's sessions started, reported progress or ended,
+	 * with its full current state. Fires between turns too: the tasks outlive the turn that started them.
+	 */
+	readonly onDidChangeBackgroundTasks: Event<IAcpBackgroundTask> = this._onDidChangeBackgroundTasks.event;
 
 	constructor(
 		readonly id: string,
@@ -340,12 +405,19 @@ export class AcpAgentProvider implements IAgentProvider {
 		const sessionId = live.handle.providerSessionId ?? live.handle.id;
 		const config = this.bridge.translate(policy, { configOptions: live.configOptions, modes: live.modes });
 		const strategy = this.sandboxStrategyOf(live);
-		for (const update of config.configOptions ?? []) {
-			await this.setConfigOption(live, sessionId, update.id, codexSandboxValue(update.id, update.value, strategy));
-		}
-		if (config.sessionModeId) {
-			await this.setMode(live, sessionId, config.sessionModeId);
-		}
+		const updates = (config.configOptions ?? []).map(update => ({ id: update.id, value: codexSandboxValue(update.id, update.value, strategy) }));
+		// Independent settings (permission mode, approval policy, sandbox, session mode) go out together
+		// instead of one round trip after another; values the session already has are not sent at all.
+		const applied = await Promise.all([
+			...updates.map(update => this.setConfigOption(live, sessionId, update.id, update.value)),
+			config.sessionModeId ? this.setMode(live, sessionId, config.sessionModeId) : Promise.resolve(true),
+		]);
+		// Replies that crossed may each list the options as they were before the other write.
+		updates.forEach((update, i) => {
+			if (applied[i]) {
+				markConfigValue(live, update.id, update.value);
+			}
+		});
 	}
 
 	/** `session/set_mode`, skipped when the agent is already in that mode. */
@@ -734,8 +806,17 @@ export class AcpAgentProvider implements IAgentProvider {
 		const command = profile.command || this.defaultCommand;
 		const def = cliAgentDefinition(this.id);
 		const adapter = def?.acpAdapter;
-		const adapterOnPath = !!adapter && def.commands.includes(command) && !!await this.stdio.which(adapter.command);
-		return acpLaunchFor(def, command, args, adapterOnPath);
+		const adapterOnPath = !!adapter && def.commands.includes(command) && !!await cachedWhich(this.stdio, adapter.command);
+		let adapterBin: string | undefined;
+		if (adapter && def.commands.includes(command) && !adapterOnPath) {
+			// The copy npx installed, run directly instead of through npx on every spawn.
+			adapterBin = await resolveAcpAdapterBin(this.stdio, adapter);
+			if (adapterBin && !await this.fileService.exists(URI.file(adapterBin)).catch(() => false)) {
+				forgetAcpAdapterBin(this.stdio, adapter);
+				adapterBin = undefined;
+			}
+		}
+		return acpLaunchFor(def, command, args, adapterOnPath, adapterBin);
 	}
 
 	private startArgs(req: IAgentStartRequest): string[] {
@@ -818,6 +899,9 @@ export class AcpAgentProvider implements IAgentProvider {
 			const response = await session.client.request<{ configOptions?: IAcpConfigOption[] }>('session/set_config_option', params);
 			if (response?.configOptions) {
 				session.configOptions = response.configOptions;
+			} else {
+				// Without the new list the old one would still read the previous value, and the write would go out again next time.
+				markConfigValue(session, configId, value);
 			}
 			if (typeof value === 'string' && isModel) {
 				session.currentModel = value;
@@ -972,6 +1056,17 @@ export class AcpAgentProvider implements IAgentProvider {
 				live.voltModeId = undefined;
 			}
 		}
+		const configOptions = configOptionsUpdate(params, live.handle.providerSessionId ?? live.handle.id);
+		if (configOptions) {
+			// Kept current so an unchanged value is never written again (Claude reports every change it makes).
+			live.configOptions = configOptions;
+		}
+		const task = backgroundTaskUpdate(params);
+		if (task) {
+			// Not the turn's: a background command runs on after its turn, and its updates arrive between turns.
+			this.onBackgroundTaskUpdate(live, task.kind, task.update);
+			return;
+		}
 		const turn = live.turn;
 		if (!turn || turn.ended) {
 			return;
@@ -990,7 +1085,8 @@ export class AcpAgentProvider implements IAgentProvider {
 			}
 			if (this.id === 'cursor-acp' && event.type === 'text.delta' && event.delta) {
 				turn.assistant += event.delta;
-				if (!turn.usedTools && isCursorPlanWallPrefix(turn.assistant)) {
+				// Bounded: re-reading the whole reply on every chunk made a long answer quadratic.
+				if (!turn.usedTools && turn.assistant.length <= CURSOR_WALL_SCAN_CHARS && isCursorPlanWallPrefix(turn.assistant)) {
 					turn.held.push(event);
 					turn.watchdog.modelOutput();
 					continue;
@@ -999,6 +1095,47 @@ export class AcpAgentProvider implements IAgentProvider {
 			}
 			this.pushActivity(live, turn, event);
 		}
+	}
+
+	/** Background tasks of a session the agent has reported, oldest first; finished ones included. */
+	/** Stops one background task without cancelling the turn (Claude's `_session/async_task/stop`). */
+	async stopBackgroundTask(providerSessionId: string, taskId: string): Promise<void> {
+		const live = [...this.sessions.values()].find(candidate => (candidate.handle.providerSessionId ?? candidate.handle.id) === providerSessionId);
+		if (!live || live.client.isDead) {
+			return;
+		}
+		await live.client.request('_session/async_task/stop', { sessionId: providerSessionId, asyncTaskId: taskId });
+	}
+
+	getBackgroundTasks(session: IAgentSessionHandle): readonly IAcpBackgroundTask[] {
+		return [...this.sessions.get(session.id)?.backgroundTasks?.values() ?? []];
+	}
+
+	/** Folds one `async_task_*` update into the session's task and announces the result. */
+	private onBackgroundTaskUpdate(live: IAcpSession, kind: 'spawned' | 'progress' | 'state', update: Record<string, unknown>): void {
+		const taskId = String(update.asyncTaskId);
+		const tasks = live.backgroundTasks ??= new Map<string, IAcpBackgroundTask>();
+		const previous = tasks.get(taskId);
+		if (!previous && kind !== 'spawned') {
+			// Progress of a task Volt never saw start (it began before this client attached).
+			return;
+		}
+		const state = update.state;
+		const next: IAcpBackgroundTask = {
+			...previous,
+			sessionId: previous?.sessionId ?? live.voltSessionId,
+			providerSessionId: live.handle.providerSessionId ?? live.handle.id,
+			taskId,
+			...(nonBlank(update.name) ? { name: nonBlank(update.name) } : {}),
+			...(nonBlank(update.description) ? { description: nonBlank(update.description) } : {}),
+			...(nonBlank(update.taskType) ? { taskType: nonBlank(update.taskType) } : {}),
+			...(nonBlank(update.outputFilePath) ? { outputFilePath: nonBlank(update.outputFilePath) } : {}),
+			...(nonBlank(update.toolCallId) ? { toolCallId: nonBlank(update.toolCallId) } : {}),
+			...(nonBlank(update.summary) ? { summary: nonBlank(update.summary) } : {}),
+			state: kind === 'state' && (state === 'completed' || state === 'failed' || state === 'stopped' || state === 'running') ? state : previous?.state ?? 'running',
+		};
+		tasks.set(taskId, next);
+		this._onDidChangeBackgroundTasks.fire(next);
 	}
 
 	/**
@@ -1015,7 +1152,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		const kind = String(update.sessionUpdate ?? '');
 		const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : undefined;
 		const root = live.handle.providerSessionId ?? live.handle.id;
-		const children = live.children ??= new Map();
+		const children = live.children ??= new Map<string, IAcpChild>();
 		if (kind === 'subagent_spawned' && typeof update.subagentSessionId === 'string') {
 			const childId = update.subagentSessionId;
 			const title = typeof update.name === 'string' && update.name.trim() ? update.name.trim() : 'Subagent';
@@ -1527,7 +1664,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				name: String(title || (toolKind && toolKind !== 'other' ? toolKind : undefined) || 'tool'),
 				title,
 				input,
-				cwd: this.toolCwd(update),
+				cwd: this.toolCwd(input),
 				kind: mapAcpToolKind(toolKind),
 				...(locations.length ? { locations } : {}),
 				...(diffs.length ? { diffs } : {}),
@@ -1601,9 +1738,10 @@ export class AcpAgentProvider implements IAgentProvider {
 		return events;
 	}
 
-	private toolCwd(update: Record<string, unknown>): string | undefined {
-		const input = collectAcpToolInput(update);
-		if (!input) {
+	/** The working folder a tool call's input names; `input` is its {@link collectAcpToolInput}, built once by the caller. */
+	private toolCwd(input: string | undefined): string | undefined {
+		// A cheap scan first: most inputs (a whole file for a Write) name no folder and need no parse.
+		if (!input || !/"(cwd|workdir|working_directory|workingDirectory)"\s*:/.test(input)) {
 			return undefined;
 		}
 		try {
@@ -1669,7 +1807,9 @@ export class AcpAgentProvider implements IAgentProvider {
 				this.authorizeFs(live, turn, write ? 'edit' : 'read', path ?? uri.fsPath),
 				write
 					? this.fileService.readFile(uri).then(file => file.value.toString(), () => undefined)
-					: this.readTextFile(uri, params.line, params.limit).then(text => ({ text }), error => ({ error })),
+					: this.readTextFile(uri, params.line, params.limit).then(text => ({ text }), (error: unknown) => ({ error })),
+				// The turn's checkpoint, taken while the prompt already runs, must not see this write.
+				write ? turnWriteGate(live?.voltSessionId) : undefined,
 			]);
 			if (!allowed) {
 				await client.respondError(req.id, 'Blocked by Volt access policy');
@@ -1705,6 +1845,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (req.method === 'session/request_permission' && isVoltHostToolPermission(req.params)) {
 			// Volt's own MCP tools (questions, the in-app browser) act inside Volt: asking the
 			// user before every click of a test run would make them useless.
+			await turnWriteGate(live?.voltSessionId);
 			await client.respond(req.id, allowOncePermission(req.params));
 			return;
 		}
@@ -1754,7 +1895,8 @@ export class AcpAgentProvider implements IAgentProvider {
 				await client.respond(req.id, this.bridge.toNativeResponse({ requestId: '', effect: 'deny', scope: 'once' }, req.params));
 				return;
 			}
-			const decision = await this.evaluateGate(turn, request);
+			// The edit or command runs once it is allowed: the answer also waits for the turn's checkpoint.
+			const [decision] = await Promise.all([this.evaluateGate(turn, request), turnWriteGate(live?.voltSessionId)]);
 			await client.respond(req.id, this.bridge.toNativeResponse(decision, req.params));
 			return;
 		}
@@ -1842,7 +1984,7 @@ function availableCommandsUpdate(params: unknown): ReadonlySet<string> | undefin
 	if (update?.sessionUpdate !== 'available_commands_update' || !Array.isArray(update.availableCommands)) {
 		return undefined;
 	}
-	const names = update.availableCommands
+	const names = (update.availableCommands as readonly ({ name?: unknown } | null)[])
 		.map(command => typeof command?.name === 'string' ? command.name.replace(/^\//, '').trim() : '')
 		.filter(Boolean);
 	return new Set(names);
@@ -1852,6 +1994,16 @@ function currentModeUpdate(params: unknown): string | undefined {
 	const body = params as { update?: { sessionUpdate?: string; currentModeId?: unknown } } | undefined;
 	const update = body?.update;
 	return update?.sessionUpdate === 'current_mode_update' && typeof update.currentModeId === 'string' ? update.currentModeId : undefined;
+}
+
+/** The options a `config_option_update` lists, when it is the session's own (not a subagent's). */
+function configOptionsUpdate(params: unknown, rootSessionId: string): IAcpConfigOption[] | undefined {
+	const body = params as { sessionId?: unknown; update?: { sessionUpdate?: string; configOptions?: unknown } } | undefined;
+	const update = body?.update;
+	if (update?.sessionUpdate !== 'config_option_update' || !Array.isArray(update.configOptions) || (typeof body?.sessionId === 'string' && body.sessionId !== rootSessionId)) {
+		return undefined;
+	}
+	return (update.configOptions as unknown[]).filter((option): option is IAcpConfigOption => !!option && typeof (option as { id?: unknown }).id === 'string');
 }
 
 /** `cursor/update_todos` params as a Volt plan event. */
@@ -1891,6 +2043,31 @@ export function configValueIsCurrent(option: IAcpConfigOption | undefined, value
 		return flattenChoices(option).some(choice => choice.value === 'default' && /^auto$/i.test(choice.name.trim()));
 	}
 	return false;
+}
+
+/** Records a value the agent accepted in the session's copy of its options. */
+function markConfigValue(session: IAcpSession, configId: string, value: string | boolean): void {
+	const options = session.configOptions;
+	if (options?.some(option => option.id === configId && !configValueIsCurrent(option, value))) {
+		session.configOptions = options.map(option => option.id === configId ? { ...option, currentValue: value } : option);
+	}
+}
+
+/** One AIR `async_task_*` update; undefined for any other update. */
+function backgroundTaskUpdate(params: unknown): { readonly kind: 'spawned' | 'progress' | 'state'; readonly update: Record<string, unknown> } | undefined {
+	const update = (params as { update?: Record<string, unknown> } | undefined)?.update;
+	const kind = update?.sessionUpdate;
+	if (!update || typeof update.asyncTaskId !== 'string' || !update.asyncTaskId) {
+		return undefined;
+	}
+	return kind === 'async_task_spawned' ? { kind: 'spawned', update }
+		: kind === 'async_task_progress' ? { kind: 'progress', update }
+			: kind === 'async_task_state_update' ? { kind: 'state', update }
+				: undefined;
+}
+
+function nonBlank(value: unknown): string | undefined {
+	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function formatQuiet(ms: number): string {

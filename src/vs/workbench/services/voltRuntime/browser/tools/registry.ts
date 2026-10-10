@@ -18,6 +18,7 @@ import { createGitTools } from './gitTools.js';
 import { createMetaTools, IMetaToolHost } from './metaTools.js';
 import { createSearchTools } from './searchTools.js';
 import { createShellTools } from './shellTool.js';
+import { createTerminalTools } from './terminalTool.js';
 import { createWebTools } from './webTools.js';
 
 export interface IBuiltinToolServices {
@@ -53,7 +54,8 @@ export function createBuiltinTools(services: IBuiltinToolServices): IVoltTool[] 
 		}),
 		...createSearchTools(services.searchService, services.root),
 		...(services.codeIntel ? createCodeTools(services.codeIntel, services.root) : []),
-		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog }),
+		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog, hostTools: services.hostTools }),
+		...createTerminalTools(services.hostTools),
 		...createGitTools(services.stdio, services.root),
 		...createWebTools(services.requestService),
 		...createBrowserTools(services.hostTools),

@@ -192,7 +192,7 @@ export class VoltSpeechMainService extends Disposable implements IVoltSpeechServ
 			}
 			let message: { type?: string; text?: string; message?: string };
 			try {
-				message = JSON.parse(line);
+				message = JSON.parse(line) as typeof message;
 			} catch {
 				this.logService.trace('[volt-speech] unreadable line', line);
 				continue;

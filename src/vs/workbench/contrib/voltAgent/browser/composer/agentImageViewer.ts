@@ -1176,7 +1176,7 @@ export class AgentImageViewer extends Disposable {
 				this.openTextEditor(hit.at, hit);
 			}
 		}));
-		this._register(addDisposableListener(this.stage, EventType.MOUSE_WHEEL, e => {
+		this._register(addDisposableListener(this.stage, EventType.MOUSE_WHEEL, (e: WheelEvent) => {
 			if (!e.ctrlKey && !e.metaKey) {
 				return;
 			}
@@ -1313,7 +1313,7 @@ function inflate(rect: IRect, by: number): IRect {
 	return { x: rect.x - by, y: rect.y - by, w: rect.w + by * 2, h: rect.h + by * 2 };
 }
 
-/** Shift-drag: arrows snap to 45°, boxes to squares. */
+/** Shift-drag: arrows snap to 45 degrees, boxes to squares. */
 function constrain(kind: 'arrow' | 'rect', from: IPoint, to: IPoint): IPoint {
 	const dx = to.x - from.x;
 	const dy = to.y - from.y;

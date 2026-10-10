@@ -4,12 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { $, append } from '../../../../../base/browser/dom.js';
+import { safeIntl } from '../../../../../base/common/date.js';
 import { localize } from '../../../../../nls.js';
 import { IVoltUsageSnapshot } from '../../../../../platform/voltUsage/common/voltUsage.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { formatCost, formatTokens } from './agentUsageFormat.js';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface IUsageCalendarDay {
 	/** Local midnight. */
@@ -80,7 +79,7 @@ export function usageCalendar(snapshot: IVoltUsageSnapshot, now: number): IUsage
 	const calendarDays: IUsageCalendarDay[] = days.map(day => ({ ...day, level: levelOf(day) }));
 
 	const weeks: (IUsageCalendarDay | undefined)[][] = [];
-	let week: (IUsageCalendarDay | undefined)[] = Array(new Date(first).getDay()).fill(undefined);
+	let week: (IUsageCalendarDay | undefined)[] = Array<IUsageCalendarDay | undefined>(new Date(first).getDay()).fill(undefined);
 	for (const day of calendarDays) {
 		week.push(day);
 		if (week.length === 7) {
@@ -89,7 +88,7 @@ export function usageCalendar(snapshot: IVoltUsageSnapshot, now: number): IUsage
 		}
 	}
 	if (week.length) {
-		weeks.push([...week, ...Array(7 - week.length).fill(undefined)]);
+		weeks.push([...week, ...Array<undefined>(7 - week.length).fill(undefined)]);
 	}
 
 	let longestStreak = 0;
@@ -132,9 +131,9 @@ export function usageCalendar(snapshot: IVoltUsageSnapshot, now: number): IUsage
 	};
 }
 
-const longDay = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-const shortDay = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-const monthName = new Intl.DateTimeFormat(undefined, { month: 'short' });
+const longDay = safeIntl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+const shortDay = safeIntl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+const monthName = safeIntl.DateTimeFormat(undefined, { month: 'short' });
 
 function weekdayName(day: number, long: boolean): string {
 	// 2023-01-01 was a Sunday.
@@ -183,7 +182,7 @@ export function renderUsageCalendar(parent: HTMLElement, calendar: IUsageCalenda
 				lastLabel = column;
 				const label = append(months, $('span'));
 				label.style.gridColumn = String(column + 1);
-				label.textContent = monthName.format(firstDay.start);
+				label.textContent = monthName.value.format(firstDay.start);
 			}
 		}
 	});
@@ -208,7 +207,7 @@ export function renderUsageCalendar(parent: HTMLElement, calendar: IUsageCalenda
 			cell.dataset.level = String(day.level);
 			cell.classList.toggle('animate', animate);
 			cell.style.setProperty('--volt-usage-col', String(column));
-			const date = longDay.format(day.start);
+			const date = longDay.value.format(day.start);
 			const text = day.tokens > 0
 				? localize('voltUsage.calendar.cell', "{0} · {1} tokens on {2}", formatCost(day.cost), formatTokens(day.tokens), date)
 				: localize('voltUsage.calendar.cellEmpty', "No usage on {0}", date);
@@ -229,7 +228,7 @@ export function renderUsageCalendar(parent: HTMLElement, calendar: IUsageCalenda
 	stat(localize('voltUsage.calendar.current', "Current streak"), streakText(calendar.currentStreak));
 	stat(localize('voltUsage.calendar.longest', "Longest streak"), streakText(calendar.longestStreak));
 	if (calendar.busiest) {
-		stat(localize('voltUsage.calendar.busiest', "Busiest day"), formatCost(calendar.busiest.cost), shortDay.format(calendar.busiest.start));
+		stat(localize('voltUsage.calendar.busiest', "Busiest day"), formatCost(calendar.busiest.cost), shortDay.value.format(calendar.busiest.start));
 	}
 	if (calendar.peak) {
 		stat(localize('voltUsage.calendar.peak', "Busiest hour"), localize('voltUsage.calendar.peakValue', "{0} around {1}", weekdayName(calendar.peak.weekday, false), hourName(calendar.peak.hour)), localize('voltUsage.calendar.peakDetail', "in your time zone"));

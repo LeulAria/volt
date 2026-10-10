@@ -26,7 +26,7 @@ import { IRunwayStyle, renderRunway, runwayHighlights } from './agentUsageRunway
 import { costTypeSegments, hasFasterSpeeds, renderShareBar, speedCostSegments } from './agentUsageShareBar.js';
 import { formatCost, formatDay, formatDuration, formatShare, formatSlot, formatTokens } from './agentUsageFormat.js';
 import { createRefreshSpinner } from './agentUsageIcons.js';
-import { IUsageModelRow, IUsageSummary, metricValue, placeholderLimits, placeholderUsage, summarizeUsage, UsageMetric, UsageRange } from './agentUsageModel.js';
+import { IUsageModelRow, IUsageSummary, IUsageTotals, metricValue, placeholderLimits, placeholderUsage, summarizeUsage, UsageMetric, UsageRange } from './agentUsageModel.js';
 
 const STORAGE_RANGE = 'volt.usage.range';
 const STORAGE_BREAKDOWN = 'volt.usage.breakdown';

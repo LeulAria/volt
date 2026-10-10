@@ -71,7 +71,7 @@ export function looksLikeAnswerForm(text: string): boolean {
 	if (tableRows.length >= 2) {
 		return true;
 	}
-	const items = lines.filter(line => /^\s*(?:[-*•]|\d+[.)])\s+\S/.test(line));
+	const items = lines.filter(line => /^\s*(?:[-*\u2022]|\d+[.)])\s+\S/.test(line));
 	return items.length >= 2;
 }
 

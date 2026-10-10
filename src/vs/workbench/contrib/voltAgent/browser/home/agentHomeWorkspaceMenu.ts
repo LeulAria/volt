@@ -56,7 +56,7 @@ type FlyoutKind = 'mac' | 'clone' | 'newProject';
 
 /**
  * Open Workspace popover on the sidebar's project header: Recents, then under
- * Repos — Start from scratch, Local folder, On This Mac (search, pick one or
+ * Repos - Start from scratch, Local folder, On This Mac (search, pick one or
  * several), and the clone hosts inline. Same panel look as the filter menu.
  */
 export function showAgentHomeWorkspaceMenu(

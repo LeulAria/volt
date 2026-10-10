@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * Webhook triggers for scheduled agent tasks: each task can have a secret URL on the relay
+ * Webhook triggers for automations: each event trigger can have a secret URL on the relay
  * (held there while Volt is closed) and a direct local URL. A delivery is checked (signature,
  * at the relay or locally), filtered (event type, JSON path equals/contains/matches), rendered
  * into the task's prompt (`{{payload.pull_request.title}}`), and run through the orchestrator
@@ -16,7 +16,14 @@
 
 export type AgentScheduleTriggerKind = 'schedule' | 'webhook' | 'both';
 
-export type WebhookSignatureKind = 'none' | 'github' | 'generic';
+/**
+ * How a sender signs: `github` (X-Hub-Signature-256), `slack` (v0 over `v0:<ts>:<body>`),
+ * `sentry` (Sentry-Hook-Signature), `linear` (Linear-Signature), `pagerduty` (X-PagerDuty-Signature
+ * v1=, several allowed), `teams` (outgoing webhook `Authorization: HMAC`), or any header (`generic`).
+ */
+export type WebhookSignatureKind = 'none' | 'github' | 'slack' | 'sentry' | 'linear' | 'pagerduty' | 'teams' | 'generic';
+
+export const WEBHOOK_SIGNATURE_KINDS: readonly WebhookSignatureKind[] = ['none', 'github', 'slack', 'sentry', 'linear', 'pagerduty', 'teams', 'generic'];
 
 export interface IAgentWebhookSignature {
 	readonly kind: WebhookSignatureKind;
@@ -54,6 +61,8 @@ export interface IAgentWebhookTrigger {
 	readonly signature: IAgentWebhookSignature;
 	/** All must match, else the delivery is recorded as filtered and no run starts. */
 	readonly filters: readonly IAgentWebhookFilter[];
+	/** Relay only: keep deliveries while Volt is offline (default), or refuse them so the sender retries. */
+	readonly holdOffline?: boolean;
 }
 
 export type WebhookDeliveryStatus = 'held' | 'delivered' | 'ran' | 'filtered' | 'failed' | 'expired';
@@ -125,7 +134,7 @@ export function webhookContext(input: {
 	const fromPayload = payload && typeof payload === 'object' && !Array.isArray(payload)
 		? [(payload as Record<string, unknown>).event, (payload as Record<string, unknown>).type, (payload as Record<string, unknown>).event_type].find(value => typeof value === 'string') as string | undefined
 		: undefined;
-	const event = input.event ?? headers['x-github-event'] ?? headers['x-gitlab-event'] ?? headers['x-event-type'] ?? headers['x-volt-event'] ?? fromPayload;
+	const event = input.event ?? headers['x-github-event'] ?? headers['x-gitlab-event'] ?? headers['sentry-hook-resource'] ?? headers['linear-event'] ?? headers['x-event-type'] ?? headers['x-volt-event'] ?? fromPayload;
 	return {
 		payload,
 		body: input.body,
@@ -426,7 +435,7 @@ export function parseWebhookTrigger(value: unknown): IAgentWebhookTrigger | unde
 		return undefined;
 	}
 	const signature = raw.signature as Record<string, unknown> | undefined;
-	const kind: WebhookSignatureKind = signature?.kind === 'github' || signature?.kind === 'generic' ? signature.kind : 'none';
+	const kind: WebhookSignatureKind = WEBHOOK_SIGNATURE_KINDS.includes(signature?.kind as WebhookSignatureKind) ? signature!.kind as WebhookSignatureKind : 'none';
 	return {
 		id: raw.id,
 		localToken: raw.localToken,
@@ -441,6 +450,7 @@ export function parseWebhookTrigger(value: unknown): IAgentWebhookTrigger | unde
 			...(typeof signature?.timestampHeader === 'string' && signature.timestampHeader ? { timestampHeader: signature.timestampHeader } : {}),
 			...(typeof signature?.toleranceSec === 'number' ? { toleranceSec: signature.toleranceSec } : {}),
 		},
+		...(raw.holdOffline === false ? { holdOffline: false } : {}),
 		filters: Array.isArray(raw.filters) ? raw.filters.flatMap(filter => {
 			const entry = filter as Record<string, unknown>;
 			return typeof entry?.path === 'string' && WEBHOOK_FILTER_OPS.includes(entry.op as WebhookFilterOp)

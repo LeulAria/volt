@@ -4,7 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { VSBuffer } from '../../../../../base/common/buffer.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { runWhenGlobalIdle } from '../../../../../base/common/async.js';
+import { Disposable, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -16,11 +17,16 @@ import { IRunMetrics } from '../../common/harness/runMetrics.js';
 /**
  * Each chat's event trace on disk, one JSON record per line, with timestamps: what happened in a
  * run (tools, edits, notices, retries, the answer text) and its timings, for post-mortems, replay
- * tests, and benchmarks. Live-only deltas are not stored. Writes are batched and rewrite the file
- * atomically (the user-data provider has no reliable append); old lines are dropped past a cap.
+ * tests, and benchmarks. Live-only deltas are not stored. A write rewrites the file atomically (the
+ * user-data provider has no reliable append), up to a few megabytes, so it happens when a run ends
+ * ({@link RunTraceJournal.flush}); a run that goes on long is saved now and then, when the window
+ * is idle. Old lines are dropped past a cap.
  */
 
-const SAVE_DELAY_MS = 2_000;
+/** A long run's trace is saved at most this often while it runs; its end saves it at once. */
+const SAVE_DELAY_MS = 30_000;
+/** How long an idle-time save may wait for the window to go idle. */
+const SAVE_IDLE_TIMEOUT_MS = 5_000;
 const MAX_CHARS = 4 * 1024 * 1024;
 
 interface ITraceFile {
@@ -31,6 +37,8 @@ interface ITraceFile {
 	chars: number;
 	dirty: boolean;
 	timer?: ReturnType<typeof setTimeout>;
+	/** A save waiting for the window to go idle. */
+	idle?: IDisposable;
 	writing: Promise<void>;
 }
 
@@ -67,6 +75,8 @@ export class RunTraceJournal extends Disposable {
 			clearTimeout(file.timer);
 			file.timer = undefined;
 		}
+		file.idle?.dispose();
+		file.idle = undefined;
 		return this.write(sessionId, file).then(() => {
 			if (!file.dirty && file.timer === undefined) {
 				file.lines = [];
@@ -108,10 +118,13 @@ export class RunTraceJournal extends Disposable {
 			file.chars += line.length + 1;
 		}
 		file.dirty = true;
-		if (file.timer === undefined) {
+		if (file.timer === undefined && !file.idle) {
 			file.timer = setTimeout(() => {
 				file.timer = undefined;
-				void this.write(sessionId, file);
+				file.idle = runWhenGlobalIdle(() => {
+					file.idle = undefined;
+					void this.write(sessionId, file);
+				}, SAVE_IDLE_TIMEOUT_MS);
 			}, SAVE_DELAY_MS);
 		}
 	}
@@ -154,6 +167,8 @@ export class RunTraceJournal extends Disposable {
 				clearTimeout(file.timer);
 				file.timer = undefined;
 			}
+			file.idle?.dispose();
+			file.idle = undefined;
 			void this.write(sessionId, file);
 		}
 	}

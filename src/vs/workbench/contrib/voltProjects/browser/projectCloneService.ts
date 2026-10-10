@@ -151,7 +151,7 @@ export class ProjectCloneService extends Disposable implements IProjectCloneServ
 			this.failed.set(job.projectId, job);
 			this.projects.setState(job.projectId, { kind: 'error', message, jobId: job.jobId });
 			this.notificationService.prompt(Severity.Error, localize('voltProjects.cloneFailed', "Could not clone {0}: {1}", job.request.name, message), [
-				{ label: localize('voltProjects.retry', "Retry"), run: () => void this.retry(job.projectId).catch(e => this.notificationService.error(e)) },
+				{ label: localize('voltProjects.retry', "Retry"), run: () => void this.retry(job.projectId).catch((e: Error) => this.notificationService.error(e)) },
 				{ label: localize('voltProjects.remove', "Remove"), run: () => void this.cleanUp(job).then(() => this.projects.remove(job.projectId)) },
 			]);
 		} finally {

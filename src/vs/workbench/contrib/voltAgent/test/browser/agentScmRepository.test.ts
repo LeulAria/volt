@@ -32,12 +32,14 @@ suite('Agent repository switching', () => {
 			focus: () => { },
 		} as unknown as ISCMViewService;
 		const focus = disposables.add(new AgentScmRepositoryFocus(
-			{ executeCommand: (_command: string, path: string) => {
-				opened.push(path);
-				const result = new DeferredPromise<void>();
-				pending.set(path, result);
-				return result.p;
-			} } as unknown as ICommandService,
+			{
+				executeCommand: (_command: string, path: string) => {
+					opened.push(path);
+					const result = new DeferredPromise<void>();
+					pending.set(path, result);
+					return result.p;
+				}
+			} as unknown as ICommandService,
 			{ rootFor: (session: string) => URI.file(`/projects/${session}`) } as IVoltSessionContextService,
 			{} as IWorkspaceContextService,
 			{ repositories, onDidAddRepository: added.event, getRepository: () => undefined } as unknown as ISCMService,

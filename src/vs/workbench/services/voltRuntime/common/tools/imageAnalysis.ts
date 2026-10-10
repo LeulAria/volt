@@ -1148,7 +1148,7 @@ export function describeInspection(result: IImageInspection): string[] {
 		lines.push('- Solid blocks (cards, bars, buttons), largest first:', ...result.blocks.map(block => `  - ${rectText(block.rect)} fill ${block.fill}`));
 	}
 	if (result.bands.length) {
-		lines.push('- Text-like bands, top to bottom (height ≈ line box; cap height is about 0.7× of it):', ...result.bands.map(band => `  - ${rectText(band.rect)} ink ${band.ink} on ${band.background}`));
+		lines.push('- Text-like bands, top to bottom (height \u2248 line box; cap height is about 0.7× of it):', ...result.bands.map(band => `  - ${rectText(band.rect)} ink ${band.ink} on ${band.background}`));
 	}
 	for (const region of result.regions) {
 		lines.push(`- Region ${rectText(region.rect)}: average ${region.average}; colours ${region.palette.map(color => `${color.color} ${percent(color.ratio)}`).join(', ')}${region.content ? `; content box ${rectText(region.content)}` : '; uniform'}`);

@@ -218,7 +218,7 @@ function openAiReasoningReplay(message: IModelMessage, target: IOpenAiMessageOpt
 			text = (text ?? '') + opaque.reasoning;
 		}
 		if (Array.isArray(opaque?.reasoning_details)) {
-			details.push(...opaque.reasoning_details);
+			details.push(...opaque.reasoning_details as readonly IReasoningDetail[]);
 		}
 	}
 	return {
@@ -454,7 +454,7 @@ function geminiSignatures(message: IModelMessage, model: string | undefined): Ma
 
 function stripAdditionalProperties(schema: object): object {
 	if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
-		return schema;
+		return schema as object;
 	}
 	const record = schema as Record<string, unknown>;
 	const next: Record<string, unknown> = {};
@@ -463,7 +463,7 @@ function stripAdditionalProperties(schema: object): object {
 			continue;
 		}
 		if (Array.isArray(value)) {
-			next[key] = value.map(item => item && typeof item === 'object' ? stripAdditionalProperties(item) : item);
+			next[key] = (value as unknown[]).map(item => item && typeof item === 'object' ? stripAdditionalProperties(item) : item);
 			continue;
 		}
 		next[key] = value && typeof value === 'object' ? stripAdditionalProperties(value) : value;

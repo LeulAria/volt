@@ -14,6 +14,14 @@ import {
 	apiHost,
 	classifyGhError,
 	ghErrorText,
+	IGhBranchRefJson,
+	IGhConnection,
+	IGhFileJson,
+	IGhPullRequestJson,
+	IGhRepositoryJson,
+	IGhRestFileJson,
+	IGhRestPullJson,
+	items,
 	parseBranchRef,
 	parseCheckRun,
 	parseFile,
@@ -134,7 +142,27 @@ interface IRunOptions {
 	readonly timeoutMs?: number;
 }
 
-type Json = any;
+/** An error in a GraphQL answer's `errors`, or a REST answer's message. */
+interface IGhErrorJson {
+	readonly message?: unknown;
+	readonly type?: unknown;
+	readonly code?: unknown;
+}
+
+/** `viewer { login }`: the account a query ran as. */
+interface IGhViewerData {
+	readonly viewer?: { readonly login?: string } | null;
+}
+
+interface IGhWorkflowRunJson {
+	readonly id?: unknown;
+	readonly status?: unknown;
+	readonly conclusion?: unknown;
+}
+
+interface IGhAuthStatusJson {
+	readonly hosts?: Readonly<Record<string, readonly ({ readonly login?: unknown; readonly active?: unknown; readonly state?: unknown; readonly scopes?: unknown } | null)[] | null>>;
+}
 
 export interface IVoltPullRequestServiceOptions {
 	/** `volt.sourceControl.hosts`: the user's word on which kind of server a host is. */
@@ -248,7 +276,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			return [];
 		}
 		try {
-			const parsed = JSON.parse(result.stdout) as { hosts?: Record<string, Json[]> };
+			const parsed = JSON.parse(result.stdout) as IGhAuthStatusJson | null;
 			if (!parsed || typeof parsed !== 'object') {
 				throw new Error('not json');
 			}
@@ -434,14 +462,14 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		if (other) {
 			return other.remoteBranches(request.repo);
 		}
-		const data = await this.graphql(request.repo.host, request, `query($owner: String!, $name: String!) {
+		const data = await this.graphql<{ readonly repository?: { readonly defaultBranchRef?: { readonly name?: unknown } | null; readonly refs?: IGhConnection<{ readonly name?: unknown }> | null } | null }>(request.repo.host, request, `query($owner: String!, $name: String!) {
 			repository(owner: $owner, name: $name) {
 				defaultBranchRef { name }
 				refs(refPrefix: "refs/heads/", first: 100, orderBy: { field: TAG_COMMIT_DATE, direction: DESC }) { nodes { name } }
 			}
 		}`, { owner: request.repo.owner, name: request.repo.name });
 		const repo = data.repository;
-		const names: string[] = (repo?.refs?.nodes ?? []).map((node: Json) => node?.name).filter((name: unknown): name is string => typeof name === 'string');
+		const names: string[] = (repo?.refs?.nodes ?? []).map(node => node?.name).filter((name): name is string => typeof name === 'string');
 		const main = repo?.defaultBranchRef?.name;
 		return typeof main === 'string' ? [main, ...names.filter(name => name !== main)] : names;
 	}
@@ -461,7 +489,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 
 	private async listGraphql(request: IVoltPrListRequest, limit: number): Promise<IVoltPullRequest[]> {
 		const states = request.state === 'open' ? '[OPEN]' : request.state === 'closed' ? '[CLOSED, MERGED]' : '[OPEN, CLOSED, MERGED]';
-		const { data, login } = await this.graphqlAs(request.repo.host, request, `query($owner: String!, $name: String!) {
+		const { data, login } = await this.graphqlAs<IGhViewerData & { readonly repository?: { readonly pullRequests?: IGhConnection<IGhPullRequestJson> | null } | null }>(request.repo.host, request, `query($owner: String!, $name: String!) {
 			viewer { login }
 			repository(owner: $owner, name: $name) {
 				pullRequests(first: ${limit}, states: ${states}, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ...VoltPr } }
@@ -469,14 +497,14 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		}
 		${PR_SUMMARY_FRAGMENT}`, { owner: request.repo.owner, name: request.repo.name });
 		const viewer = data.viewer?.login ?? login;
-		return this.rememberNodeIds((data.repository?.pullRequests?.nodes ?? []).filter(Boolean).map((node: Json) => parsePullRequest(node, request.repo, viewer)));
+		return this.rememberNodeIds((data.repository?.pullRequests?.nodes ?? []).filter((node): node is IGhPullRequestJson => !!node).map(node => parsePullRequest(node, request.repo, viewer)));
 	}
 
 	/** The list over REST: no checks, reviews or threads, but the pull requests are there. */
 	private async listRest(request: IVoltPrListRequest, limit: number): Promise<IVoltPullRequest[]> {
 		const state = request.state === 'open' ? 'open' : request.state === 'closed' ? 'closed' : 'all';
 		const { data, login } = await this.restAs(request.repo.host, request, 'GET', `repos/${request.repo.owner}/${request.repo.name}/pulls?state=${state}&sort=updated&direction=desc&per_page=${limit}`);
-		return (Array.isArray(data) ? data : []).filter(Boolean).map((raw: Json) => parseRestPullRequest(raw, request.repo, login));
+		return items<IGhRestPullJson>(data).map(raw => parseRestPullRequest(raw, request.repo, login));
 	}
 
 	async forBranch(request: IVoltPrBranchRequest): Promise<IVoltPullRequest[]> {
@@ -545,12 +573,12 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			params.push(`$b${i}: String!`);
 			return `b${i}: pullRequests(first: 10, headRefName: $b${i}, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { ${PR_BRANCH_REF_FIELDS} } }`;
 		});
-		const data = await this.graphql(request.repo.host, request, `query($owner: String!, $name: String!, ${params.join(', ')}) {
+		const data = await this.graphql<{ readonly repository?: Readonly<Record<string, IGhConnection<IGhBranchRefJson> | null | undefined>> | null }>(request.repo.host, request, `query($owner: String!, $name: String!, ${params.join(', ')}) {
 			repository(owner: $owner, name: $name) {
 				${fields.join('\n')}
 			}
 		}`, variables);
-		return branches.flatMap((branch, i) => ((data.repository?.[`b${i}`]?.nodes ?? []) as Json[]).filter(Boolean).map(raw => parseBranchRef(raw, request.repo, branch)));
+		return branches.flatMap((branch, i) => (data.repository?.[`b${i}`]?.nodes ?? []).filter((raw): raw is IGhBranchRefJson => !!raw).map(raw => parseBranchRef(raw, request.repo, branch)));
 	}
 
 	/** The lookup over REST, a branch a call: only branches in the repository itself (or in `headOwner`'s fork). */
@@ -558,7 +586,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		const owner = request.headOwner ?? request.repo.owner;
 		const found = await mapLimited(branches, REST_CONCURRENCY, async branch => {
 			const data = await this.rest(request.repo.host, request, 'GET', `repos/${request.repo.owner}/${request.repo.name}/pulls?state=all&sort=created&direction=desc&per_page=10&head=${encodeURIComponent(`${owner}:${branch}`)}`);
-			return (Array.isArray(data) ? data : []).filter(Boolean).map((raw: Json) => parseBranchRef(raw, request.repo, branch));
+			return items<IGhBranchRefJson>(data).map(raw => parseBranchRef(raw, request.repo, branch));
 		});
 		return found.flat();
 	}
@@ -566,7 +594,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	/** Pull request summaries over REST, one call each, for when GraphQL's quota is out. */
 	private async restPullRequests(refs: readonly { readonly repo: IVoltPrRepoRef; readonly number: number }[], auth: IVoltPrAuth): Promise<IVoltPullRequest[]> {
 		return mapLimited(refs, REST_CONCURRENCY, async ref => {
-			const { data, login } = await this.restAs(ref.repo.host, auth, 'GET', `repos/${ref.repo.owner}/${ref.repo.name}/pulls/${ref.number}`);
+			const { data, login } = await this.restAs<IGhRestPullJson>(ref.repo.host, auth, 'GET', `repos/${ref.repo.owner}/${ref.repo.name}/pulls/${ref.number}`);
 			return parseRestPullRequest(data, ref.repo, login);
 		});
 	}
@@ -605,7 +633,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			params.push(`$o${i}: String!, $n${i}: String!, $p${i}: Int!`);
 			return `f${i}: repository(owner: $o${i}, name: $n${i}) { pullRequest(number: $p${i}) { ...VoltPrFingerprint } }`;
 		});
-		const { data } = await this.graphqlAs(batch[0].repo.host, auth, `query(${params.join(', ')}) {
+		const { data } = await this.graphqlAs<Readonly<Record<string, { readonly pullRequest?: IGhPullRequestJson | null } | null | undefined>>>(batch[0].repo.host, auth, `query(${params.join(', ')}) {
 			${fields.join('\n')}
 		}
 		${PR_FINGERPRINT_FRAGMENT}`, variables, true);
@@ -680,7 +708,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			${prs.join('\n')}
 		}`;
 		}).join('\n');
-		const { data, login } = await this.graphqlAs(batch[0].repo.host, auth, `query(${params.join(', ')}) { viewer { login } ${fields} }
+		const { data, login } = await this.graphqlAs<IGhViewerData & Readonly<Record<string, Readonly<Record<string, IGhPullRequestJson | null | undefined>> | null | undefined>>>(batch[0].repo.host, auth, `query(${params.join(', ')}) { viewer { login } ${fields} }
 		${PR_SUMMARY_FRAGMENT}`, variables, true);
 		const viewer = data.viewer?.login ?? login;
 		const out: IVoltPullRequest[] = [];
@@ -700,7 +728,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		if (other) {
 			return { ...await other.detail(request.repo, request.number), provider: other.provider };
 		}
-		const { data, login } = await this.graphqlAs(request.repo.host, request, `query($owner: String!, $name: String!, $number: Int!) {
+		const { data, login } = await this.graphqlAs<IGhViewerData & { readonly repository?: IGhRepositoryJson | null }>(request.repo.host, request, `query($owner: String!, $name: String!, $number: Int!) {
 			viewer { login }
 			repository(owner: $owner, name: $name) {
 				viewerPermission mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed deleteBranchOnMerge autoMergeAllowed
@@ -732,17 +760,17 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		const viewer = data.viewer?.login ?? login;
 		this.rememberNodeIds([{ key: prKey(request.repo, request.number), id: raw.id }]);
 		const checks = (raw.headChecks?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [])
-			.map(parseCheckRun).filter((check: IVoltPrCheck | undefined): check is IVoltPrCheck => !!check);
-		const files = await this.files(request, raw.id);
+			.map(parseCheckRun).filter((check): check is IVoltPrCheck => !!check);
+		const files = await this.files(request);
 		return parsePullRequestDetail(raw, repoRaw, request.repo, viewer, { files, checks });
 	}
 
 	/** Every changed file with its viewed state, paged past GitHub's 100 per page. */
-	private async files(request: IVoltPrRequest, _id: string): Promise<IVoltPrFile[]> {
+	private async files(request: IVoltPrRequest): Promise<IVoltPrFile[]> {
 		const files: IVoltPrFile[] = [];
 		let after: string | undefined;
 		while (files.length < MAX_FILES) {
-			const data = await this.graphql(request.repo.host, request, `query($owner: String!, $name: String!, $number: Int!, $after: String) {
+			const data = await this.graphql<{ readonly repository?: { readonly pullRequest?: { readonly files?: IGhConnection<IGhFileJson> & { readonly pageInfo?: { readonly hasNextPage?: unknown; readonly endCursor?: string | null } | null } | null } | null } | null }>(request.repo.host, request, `query($owner: String!, $name: String!, $number: Int!, $after: String) {
 				repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 					files(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { path additions deletions changeType viewerViewedState } }
 				} }
@@ -770,7 +798,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		try {
 			// Nice to have: it leaves the REST reserve alone, and the files show without their old names.
 			const out = await this.rest(request.repo.host, { ...request, background: true }, 'GET', `repos/${request.repo.owner}/${request.repo.name}/pulls/${request.number}/files?per_page=100`, undefined, ['--paginate', '--slurp']);
-			const pages = Array.isArray(out) ? out.flat() : [];
+			const pages = items<readonly (IGhRestFileJson | null)[]>(out).flat();
 			const previous = new Map<string, string>();
 			for (const entry of pages) {
 				if (typeof entry?.filename === 'string' && typeof entry?.previous_filename === 'string') {
@@ -798,7 +826,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			return { ...await other.create(request), provider: other.provider };
 		}
 		const head = request.headOwner && request.headOwner.toLowerCase() !== request.repo.owner.toLowerCase() ? `${request.headOwner}:${request.head}` : request.head;
-		const created = await this.rest(request.repo.host, request, 'POST', `repos/${request.repo.owner}/${request.repo.name}/pulls`, {
+		const created = await this.rest<{ readonly number?: unknown } | undefined>(request.repo.host, request, 'POST', `repos/${request.repo.owner}/${request.repo.name}/pulls`, {
 			title: request.title,
 			body: request.body,
 			head,
@@ -845,7 +873,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 
 	/** Deletes the merged head branch on the remote. Branches in forks and protected ones stay. */
 	private async deleteHeadBranch(request: IVoltPrRequest): Promise<void> {
-		const data = await this.graphql(request.repo.host, request, `query($owner: String!, $name: String!, $number: Int!) {
+		const data = await this.graphql<{ readonly repository?: { readonly pullRequest?: { readonly isCrossRepository?: unknown; readonly headRef?: { readonly id?: unknown } | null } | null } | null }>(request.repo.host, request, `query($owner: String!, $name: String!, $number: Int!) {
 			repository(owner: $owner, name: $name) { pullRequest(number: $number) { headRefName isCrossRepository headRef { id } } }
 		}`, { owner: request.repo.owner, name: request.repo.name, number: request.number });
 		const pr = data.repository?.pullRequest;
@@ -916,9 +944,9 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			await this.rest(request.repo.host, request, 'POST', path, { labels: request.add });
 		}
 		for (const label of request.remove) {
-			await this.rest(request.repo.host, request, 'DELETE', `${path}/${encodeURIComponent(label)}`).catch(err => {
+			await this.rest(request.repo.host, request, 'DELETE', `${path}/${encodeURIComponent(label)}`).catch((err: unknown) => {
 				// Already gone is what we wanted.
-				if (!/404|not found/i.test(String(err?.message))) {
+				if (!(err instanceof Error && /404|not found/i.test(err.message))) {
 					throw err;
 				}
 			});
@@ -999,13 +1027,13 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			return other.rerunFailedChecks(request.repo, request.number);
 		}
 		// The head commit over REST: everything this does is REST, so it spends no GraphQL points.
-		const pr = await this.rest(request.repo.host, request, 'GET', `repos/${request.repo.owner}/${request.repo.name}/pulls/${request.number}`);
+		const pr = await this.rest<IGhRestPullJson | undefined>(request.repo.host, request, 'GET', `repos/${request.repo.owner}/${request.repo.name}/pulls/${request.number}`);
 		const headSha = typeof pr?.head?.sha === 'string' ? pr.head.sha : undefined;
 		if (!headSha) {
 			throw new VoltPrError('notFound', `Pull request #${request.number} was not found.`);
 		}
-		const runs = await this.rest(request.repo.host, request, 'GET', `repos/${request.repo.owner}/${request.repo.name}/actions/runs?head_sha=${headSha}&per_page=100`);
-		const failed = (runs?.workflow_runs ?? []).filter((run: Json) => run?.status === 'completed' && ['failure', 'timed_out', 'cancelled', 'startup_failure'].includes(run?.conclusion));
+		const runs = await this.rest<{ readonly workflow_runs?: readonly (IGhWorkflowRunJson | null)[] | null } | undefined>(request.repo.host, request, 'GET', `repos/${request.repo.owner}/${request.repo.name}/actions/runs?head_sha=${headSha}&per_page=100`);
+		const failed = (runs?.workflow_runs ?? []).filter((run): run is IGhWorkflowRunJson => run?.status === 'completed' && typeof run.conclusion === 'string' && ['failure', 'timed_out', 'cancelled', 'startup_failure'].includes(run.conclusion));
 		let started = 0;
 		for (const run of failed) {
 			try {
@@ -1025,7 +1053,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		}
 		const path = `repos/${request.repo.owner}/${request.repo.name}/pulls/${request.number}/reviews`;
 		try {
-			const review = await this.rest(request.repo.host, request, 'POST', path, {
+			const review = await this.rest<{ readonly html_url?: unknown } | undefined>(request.repo.host, request, 'POST', path, {
 				...(request.headOid ? { commit_id: request.headOid } : {}),
 				body: request.body,
 				event: 'COMMENT',
@@ -1037,7 +1065,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			if (!request.comments.length || voltPrErrorCode(err) === 'noAuth' || voltPrErrorCode(err) === 'network') {
 				throw err;
 			}
-			const review = await this.rest(request.repo.host, request, 'POST', path, { body: findingsAsComment(request.body, request.comments), event: 'COMMENT' });
+			const review = await this.rest<{ readonly html_url?: unknown } | undefined>(request.repo.host, request, 'POST', path, { body: findingsAsComment(request.body, request.comments), event: 'COMMENT' });
 			return { posted: request.comments.length, ...(typeof review?.html_url === 'string' ? { url: review.html_url } : {}) };
 		}
 	}
@@ -1240,7 +1268,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			? `repos/${request.repo.owner}/${request.repo.name}/commits/${request.commit}`
 			: `repos/${request.repo.owner}/${request.repo.name}/pulls/${request.number}/files?per_page=100`;
 		const out = await this.rest(request.repo.host, request, 'GET', path, undefined, request.commit ? [] : ['--paginate', '--slurp']);
-		const entries: Json[] = request.commit ? (Array.isArray(out?.files) ? out.files : []) : Array.isArray(out) ? out.flat() : [];
+		const entries = request.commit ? items<IGhRestFileJson>((out as { readonly files?: unknown } | undefined)?.files) : items<readonly (IGhRestFileJson | null)[]>(out).flat();
 		return entries.slice(0, MAX_FILES).map(parseFilePatch).filter(file => !!file.path);
 	}
 
@@ -1594,7 +1622,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		if (known) {
 			return known;
 		}
-		const data = await this.graphql(request.repo.host, request, `query($owner: String!, $name: String!, $number: Int!) {
+		const data = await this.graphql<{ readonly repository?: { readonly pullRequest?: { readonly id?: unknown } | null } | null }>(request.repo.host, request, `query($owner: String!, $name: String!, $number: Int!) {
 			repository(owner: $owner, name: $name) { pullRequest(number: $number) { id } }
 		}`, { owner: request.repo.owner, name: request.repo.name, number: request.number });
 		const id = data.repository?.pullRequest?.id;
@@ -1619,27 +1647,28 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		return prs;
 	}
 
-	private async mutate(request: IVoltPrRequest, query: string, variables: Record<string, unknown>): Promise<Json> {
-		return this.graphql(request.repo.host, request, query, variables);
+	private async mutate(request: IVoltPrRequest, query: string, variables: Record<string, unknown>): Promise<void> {
+		await this.graphql(request.repo.host, request, query, variables);
 	}
 
-	private async graphql(host: string, auth: IVoltPrAuth, query: string, variables: Record<string, unknown>): Promise<Json> {
-		return (await this.graphqlAs(host, auth, query, variables)).data;
+	private async graphql<T = unknown>(host: string, auth: IVoltPrAuth, query: string, variables: Record<string, unknown>): Promise<T> {
+		return (await this.graphqlAs<T>(host, auth, query, variables)).data;
 	}
 
 	/**
 	 * Runs one GraphQL document as the chosen account. `partial`: a batch where some aliases may
-	 * name pull requests that are gone; those come back null and the rest are kept.
+	 * name pull requests that are gone; those come back null and the rest are kept. `data` is read
+	 * as `T` unchecked: its leaves still go through the parsers' readers.
 	 */
-	private async graphqlAs(host: string, auth: IVoltPrAuth, query: string, variables: Record<string, unknown>, partial = false): Promise<{ data: Json; login: string }> {
+	private async graphqlAs<T = unknown>(host: string, auth: IVoltPrAuth, query: string, variables: Record<string, unknown>, partial = false): Promise<{ data: T; login: string }> {
 		const answer = await this.ghApi(host, auth, 'graphql', ['graphql', '--input', '-'], { input: JSON.stringify({ query, variables }) });
-		let body: Json;
+		let body: { readonly data?: T | null; readonly errors?: unknown } | null | undefined;
 		try {
-			body = answer.body.trim() ? JSON.parse(answer.body) : undefined;
+			body = answer.body.trim() ? JSON.parse(answer.body) as typeof body : undefined;
 		} catch {
 			body = undefined;
 		}
-		const errors: Json[] = Array.isArray(body?.errors) ? body.errors : [];
+		const errors = items<IGhErrorJson>(body?.errors);
 		const limited = this.rateLimited(answer, 'graphql', errors);
 		if (limited) {
 			throw limited;
@@ -1659,11 +1688,12 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		throw this.failure(result, errors);
 	}
 
-	private async rest(host: string, auth: IVoltPrAuth, method: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT', path: string, body?: unknown, extra: readonly string[] = []): Promise<Json> {
-		return (await this.restAs(host, auth, method, path, body, extra)).data;
+	private async rest<T = unknown>(host: string, auth: IVoltPrAuth, method: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT', path: string, body?: unknown, extra: readonly string[] = []): Promise<T> {
+		return (await this.restAs<T>(host, auth, method, path, body, extra)).data;
 	}
 
-	private async restAs(host: string, auth: IVoltPrAuth, method: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT', path: string, body?: unknown, extra: readonly string[] = []): Promise<{ data: Json; login: string }> {
+	/** `data` is the answer read as `T` unchecked: undefined when empty, the text when it is not JSON. */
+	private async restAs<T = unknown>(host: string, auth: IVoltPrAuth, method: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT', path: string, body?: unknown, extra: readonly string[] = []): Promise<{ data: T; login: string }> {
 		const args = ['--method', method, ...extra, path];
 		if (body !== undefined) {
 			args.push('--input', '-');
@@ -1672,9 +1702,9 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			...(body !== undefined ? { input: JSON.stringify(body) } : {}),
 			paginate: extra.includes('--paginate'),
 		});
-		let parsed: Json;
+		let parsed: { readonly message?: unknown; readonly errors?: unknown } | null | undefined;
 		try {
-			parsed = JSON.parse(answer.body);
+			parsed = JSON.parse(answer.body) as typeof parsed;
 		} catch {
 			parsed = undefined;
 		}
@@ -1684,17 +1714,17 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		}
 		const { result, login } = answer;
 		if (result.code !== 0) {
-			const detail = [parsed?.message, ...(Array.isArray(parsed?.errors) ? parsed.errors.map((error: Json) => error?.message ?? error?.code) : [])].filter(Boolean).join(': ');
+			const detail = [parsed?.message, ...items<IGhErrorJson>(parsed?.errors).map(error => error.message ?? error.code)].filter(Boolean).join(': ');
 			throw this.failure(result, detail ? [{ message: detail }] : []);
 		}
 		const text = answer.body.trim();
 		if (!text) {
-			return { data: undefined, login };
+			return { data: undefined as T, login };
 		}
 		try {
-			return { data: JSON.parse(text), login };
+			return { data: JSON.parse(text) as T, login };
 		} catch {
-			return { data: text, login };
+			return { data: text as T, login };
 		}
 	}
 
@@ -1730,7 +1760,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	 * GitHub refused for a rate limit: hold that quota until its reset (or the whole account until
 	 * `retry-after`, for a secondary limit), so later calls wait without a request, and say when.
 	 */
-	private rateLimited(answer: IGhApiAnswer, resource: VoltGithubQuotaResource, errors: readonly Json[]): VoltPrError | undefined {
+	private rateLimited(answer: IGhApiAnswer, resource: VoltGithubQuotaResource, errors: readonly IGhErrorJson[]): VoltPrError | undefined {
 		const { result, status, headers } = answer;
 		const messages = errors.map(error => typeof error?.message === 'string' ? error.message : '').filter(Boolean);
 		const graphqlLimited = errors.some(error => error?.type === 'RATE_LIMITED');
@@ -1782,7 +1812,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		}
 	}
 
-	private failure(result: IRunResult, errors: readonly Json[]): VoltPrError {
+	private failure(result: IRunResult, errors: readonly IGhErrorJson[]): VoltPrError {
 		const messages = errors.map(error => typeof error?.message === 'string' ? error.message : '').filter(Boolean);
 		const stderr = [result.stderr, ...messages].join('\n');
 		if (result.timedOut) {
@@ -1900,7 +1930,7 @@ function groupRequests(requests: readonly IVoltPrRequest[]): Map<string, IVoltPr
 
 /** `map` with at most `limit` calls in flight, results in order. */
 async function mapLimited<T, R>(items: readonly T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
-	const out: R[] = new Array(items.length);
+	const out = new Array<R>(items.length);
 	let next = 0;
 	const worker = async () => {
 		while (next < items.length) {

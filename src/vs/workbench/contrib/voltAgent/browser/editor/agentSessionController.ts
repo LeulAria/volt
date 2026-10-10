@@ -17,7 +17,7 @@ import { runStatusLine } from '../../../../services/voltRuntime/common/harness/w
 import { AgentSessionAttention, AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { appendProviderNotice, appendSandboxDenial, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isPlanTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments, isHiddenExploreToolBlock } from '../blocks/agentBlocks.js';
+import { AgentBlock, appendProviderNotice, appendSandboxDenial, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isPlanTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments, isHiddenExploreToolBlock } from '../blocks/agentBlocks.js';
 import { sameHostToolArgs } from '../blocks/agentHostToolActivity.js';
 import { classifySupervisionNotice, stampTodoSteps } from '../chrome/agentTimeline.js';
 import { agentMessagePlainText } from '../context/agentContextUsage.js';
@@ -28,10 +28,48 @@ import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import type { IAgentActivity, IAgentAssistantMessage, IAgentMessage, IAgentPromptDisplay, IAgentTurnSpend, IAgentUserMessage } from './agentEditor.js';
 
 /**
- * How often a streaming reply is snapshotted into history. Each snapshot rewrites the session log,
- * so this trades at most a second of reply text on a crash for far less disk work while streaming.
+ * How often a streaming reply is snapshotted into history (the input applies the same floor).
+ * Each snapshot freezes and encodes the whole reply, so this trades at most ten seconds of reply
+ * text on a crash for far less work while streaming. The final record is written at once.
  */
-const PARTIAL_RECORD_DELAY_MS = 1_000;
+const PARTIAL_RECORD_DELAY_MS = 10_000;
+
+/** A card a tool call draws and later events update by call id. */
+type CallBlock = ITerminalBlock | IToolBlock | IFileChangeBlock | IPlanBlock;
+
+function isCallBlock(block: AgentBlock): block is CallBlock {
+	return block.type === 'terminal' || block.type === 'tool' || block.type === 'file' || block.type === 'plan';
+}
+
+/** The live reply's calls by id: the segment index of each call's first card and activity row. */
+interface ICallIndex {
+	readonly message: IAgentAssistantMessage;
+	/** Segments indexed so far; the ones added since are read on the next lookup. */
+	scanned: number;
+	readonly blocks: Map<string, number>;
+	readonly items: Map<string, number>;
+}
+
+/** Below this an ACP fragment is also looked for anywhere in the input; above it only at its end. */
+const SNAPSHOT_SCAN_CHARS = 4_096;
+
+/**
+ * An ACP tool input update: a snapshot of the whole input so far replaces it, a fragment appends
+ * unless the input already ends with it. Cheap per update: the full-input `includes` scan that
+ * dropped repeated fragments only runs while the input is short.
+ */
+function mergeToolSnapshot(current: string | undefined, delta: string): string {
+	if (!current) {
+		return delta;
+	}
+	if (delta.startsWith(current)) {
+		return delta;
+	}
+	if (current.endsWith(delta) || (current.length <= SNAPSHOT_SCAN_CHARS && current.includes(delta))) {
+		return current;
+	}
+	return current + delta;
+}
 
 /** The part of an agent editor input the controller reads and writes. */
 export interface IAgentSessionHost {
@@ -60,8 +98,12 @@ export interface IAgentTurnSpec {
 }
 
 export interface IAgentSessionChange {
-	/** `turnStart`: a turn's messages were added (by this panel or by the orchestrator in the background). */
-	readonly kind: 'render' | 'usage' | 'runEnd' | 'turnStart';
+	/**
+	 * `turnStart`: a turn's messages were added (by this panel or by the orchestrator in the background).
+	 * `activity`: the live reply changed in a way the transcript does not draw (more reasoning under a
+	 * "Thinking" row): no redraw, only the meters that count it.
+	 */
+	readonly kind: 'render' | 'usage' | 'runEnd' | 'turnStart' | 'activity';
 	readonly turnId?: string;
 	readonly aborted?: boolean;
 	/** The run ended in an error: queued prompts wait for the user instead of going to a failing provider. */
@@ -180,6 +222,13 @@ export class AgentSessionController extends Disposable {
 	/** Raw streamed arguments per call, for native providers that send true deltas. */
 	private readonly rawInputs = new Map<string, string>();
 	private readonly rawParsedAt = new Map<string, number>();
+	/**
+	 * Calls whose raw arguments grew since they were last parsed. A delta only appends; the parse
+	 * runs once per drawn frame ({@link flushStreamedInput}), before any other event reads the card.
+	 */
+	private readonly staleInputs = new Map<string, IAgentAssistantMessage>();
+	/** Where each call's card and activity row sit in the live reply; see {@link findCallBlock}. */
+	private callIndex: ICallIndex | undefined;
 	/**
 	 * Calls that started and have not ended, with the live line each one set. When the last one
 	 * ends the line goes back to the model's own "Thinking", so a quiet model after a tool can
@@ -351,6 +400,7 @@ export class AgentSessionController extends Disposable {
 		this.partialTimer = setTimeout(() => {
 			this.partialTimer = undefined;
 			if (message.activity?.streaming) {
+				this.flushStreamedInput();
 				this.host.recordAssistant(message, false, 'running', agentMessagePlainText(message));
 			}
 		}, PARTIAL_RECORD_DELAY_MS);
@@ -550,7 +600,7 @@ export class AgentSessionController extends Disposable {
 	private applyPresentedTool(last: IAgentAssistantMessage, event: Extract<IVoltEvent, { type: 'tool.start' }>, activity: IAgentActivity): void {
 		const id = `tool-${event.callId}`;
 		if (event.card === 'terminal') {
-			const existing = findBlockByCallId(last.segments, event.callId);
+			const existing = this.findCallBlock(last, event.callId);
 			if (existing?.type === 'terminal') {
 				existing.command = event.title || existing.command;
 				existing.cwd = event.cwd || existing.cwd;
@@ -574,7 +624,7 @@ export class AgentSessionController extends Disposable {
 		if (event.card === 'diff') {
 			const diff = event.diffs?.[0];
 			const path = diff?.path || event.locations?.[0]?.path || event.title || event.name;
-			const existing = findBlockByCallId(last.segments, event.callId);
+			const existing = this.findCallBlock(last, event.callId);
 			if (existing?.type === 'file') {
 				existing.path = path;
 				existing.original = diff?.oldText ?? existing.original;
@@ -595,7 +645,7 @@ export class AgentSessionController extends Disposable {
 			activity.status = event.title || event.name;
 			return;
 		}
-		const existing = findBlockByCallId(last.segments, event.callId);
+		const existing = this.findCallBlock(last, event.callId);
 		const item = this.findActivityByCallId(last, event.callId);
 		const explore = isExploreTool(event.name, event.title, event.kind);
 		if (explore && !item) {
@@ -682,6 +732,10 @@ export class AgentSessionController extends Disposable {
 		} else if (this.activeRunId && envelope.runId !== this.activeRunId) {
 			return;
 		}
+		if (this.staleInputs.size && !(event.type === 'tool.input.delta' && event.append)) {
+			// Every other event may read a card's parsed arguments: bring them up to date first.
+			this.flushStreamedInput();
+		}
 		const last = this.host.messages.at(-1);
 		if (event.type === 'usage') {
 			this.applyUsage(event, last?.kind === 'agent' ? last : undefined);
@@ -709,6 +763,8 @@ export class AgentSessionController extends Disposable {
 			case 'run.start':
 				this.rawInputs.clear();
 				this.rawParsedAt.clear();
+				this.staleInputs.clear();
+				this.callIndex = undefined;
 				this.runningCalls.clear();
 				this.lastTextId = undefined;
 				this.runReportedUsed = false;
@@ -758,13 +814,23 @@ export class AgentSessionController extends Disposable {
 			case 'reasoning.start':
 			case 'reasoning.end':
 				break;
-			case 'reasoning.delta':
+			case 'reasoning.delta': {
+				// More reasoning in the thought already open, with the live line already "Thinking":
+				// nothing on screen changes (a live thought row shows only "Thinking"), so no redraw.
+				const thinking = localize('voltAgent.thinking', "Thinking");
+				const unchanged = last.segments.at(-1)?.kind === 'thought' && !activity.expanded && !activity.statusPinned && activity.status === thinking;
 				activity.expanded = false;
 				activity.statusPinned = false;
-				activity.status = localize('voltAgent.thinking', "Thinking");
+				activity.status = thinking;
 				activity.thinkingText = (activity.thinkingText ?? '') + (event.delta ?? '');
 				appendThoughtDelta(last.segments, event.delta ?? '');
+				if (unchanged) {
+					this.schedulePartialRecord(last);
+					this.fire({ kind: 'activity' });
+					return;
+				}
 				break;
+			}
 			case 'text.delta': {
 				// Claude speaks again after a subagent reports, with no tool between: without a break
 				// "…to finish..." and "Both subagents completed" ran together into one line.
@@ -883,10 +949,10 @@ export class AgentSessionController extends Disposable {
 			}
 			case 'tool.input.delta': {
 				if (event.append) {
-					this.applyAppendedInput(last, activity, event.callId, event.delta);
+					this.applyAppendedInput(last, event.callId, event.delta);
 					break;
 				}
-				const block = findBlockByCallId(last.segments, event.callId);
+				const block = this.findCallBlock(last, event.callId);
 				if (block?.type === 'terminal') {
 					const parsed = parseShellToolInput(event.delta);
 					if (/^\s*[{[]/.test(event.delta)) {
@@ -920,7 +986,7 @@ export class AgentSessionController extends Disposable {
 					}
 				} else {
 					if (block?.type === 'tool') {
-						block.input = block.input ? (block.input.includes(event.delta) ? block.input : block.input + event.delta) : event.delta;
+						block.input = mergeToolSnapshot(block.input, event.delta);
 					} else if (block?.type === 'file') {
 						block.input = mergeToolInput(block.input, event.delta);
 						if (isPlanTool('', undefined, block.input)) {
@@ -946,7 +1012,7 @@ export class AgentSessionController extends Disposable {
 				break;
 			}
 			case 'tool.update': {
-				const block = findBlockByCallId(last.segments, event.callId);
+				const block = this.findCallBlock(last, event.callId);
 				if (block?.type === 'file') {
 					this.applyToolDiff(block, event.diffs?.[0], event.locations?.[0]?.path);
 				}
@@ -959,7 +1025,7 @@ export class AgentSessionController extends Disposable {
 				break;
 			}
 			case 'tool.end': {
-				const block = findBlockByCallId(last.segments, event.callId);
+				const block = this.findCallBlock(last, event.callId);
 				const output = stringifyToolResult(event.result);
 				const image = extractToolImage(event.result);
 				if (image) {
@@ -1137,7 +1203,7 @@ export class AgentSessionController extends Disposable {
 				// A sub-agent or a long tool reports each step; the card shows the latest few.
 				activity.status = event.status;
 				activity.statusPinned = false;
-				const block = findBlockByCallId(last.segments, event.callId);
+				const block = this.findCallBlock(last, event.callId);
 				if (block?.type === 'tool') {
 					const lines = (block.output ? block.output.split('\n') : []).concat(event.status).slice(-6);
 					block.output = lines.join('\n');
@@ -1146,7 +1212,7 @@ export class AgentSessionController extends Disposable {
 			}
 			case 'subagent.spawned': {
 				// Native subagents arrive without a Task call in the parent's stream: draw one row for them.
-				if (!findBlockByCallId(last.segments, event.childId) && !(event.parentToolCallId && findBlockByCallId(last.segments, event.parentToolCallId))) {
+				if (!this.findCallBlock(last, event.childId) && !(event.parentToolCallId && this.findCallBlock(last, event.parentToolCallId))) {
 					last.segments.push({
 						kind: 'block',
 						block: createToolBlock({
@@ -1162,7 +1228,7 @@ export class AgentSessionController extends Disposable {
 				break;
 			}
 			case 'subagent.update': {
-				const block = findBlockByCallId(last.segments, event.childId) ?? (event.parentToolCallId ? findBlockByCallId(last.segments, event.parentToolCallId) : undefined);
+				const block = this.findCallBlock(last, event.childId) ?? (event.parentToolCallId ? this.findCallBlock(last, event.parentToolCallId) : undefined);
 				if (block?.type === 'tool' && event.activity) {
 					block.output = (block.output ? block.output.split('\n') : []).concat(event.activity).slice(-6).join('\n');
 				}
@@ -1172,7 +1238,7 @@ export class AgentSessionController extends Disposable {
 				// The child's own steps belong to its row (and its own chat), not to this reply's steps.
 				break;
 			case 'subagent.completed': {
-				const block = findBlockByCallId(last.segments, event.childId);
+				const block = this.findCallBlock(last, event.childId);
 				if (block?.type === 'tool' && block.status === 'streaming') {
 					block.status = event.status === 'failed' ? 'error' : 'complete';
 					block.stopped = event.status === 'cancelled';
@@ -1246,12 +1312,34 @@ export class AgentSessionController extends Disposable {
 	/**
 	 * Native tool arguments stream as true deltas: append them to one raw buffer per call. The
 	 * snapshot merge used for ACP drops any fragment it has already seen, which garbled previews.
-	 * Parsing a large write on every delta is quadratic, so file previews re-parse in steps.
+	 * A delta only appends (constant time); parsing the whole buffer on every delta is quadratic,
+	 * so it waits for {@link flushStreamedInput}, and file previews re-parse in steps.
 	 */
-	private applyAppendedInput(last: IAgentAssistantMessage, activity: IAgentActivity, callId: string, delta: string): void {
-		const raw = (this.rawInputs.get(callId) ?? '') + delta;
-		this.rawInputs.set(callId, raw);
-		const block = findBlockByCallId(last.segments, callId);
+	private applyAppendedInput(last: IAgentAssistantMessage, callId: string, delta: string): void {
+		this.rawInputs.set(callId, (this.rawInputs.get(callId) ?? '') + delta);
+		this.staleInputs.set(callId, last);
+	}
+
+	/**
+	 * Parses the streamed arguments that grew since the last call: once per drawn frame (the editor
+	 * calls it before it draws), before any other run event, and before the reply is recorded.
+	 */
+	flushStreamedInput(): void {
+		if (!this.staleInputs.size) {
+			return;
+		}
+		const stale = [...this.staleInputs];
+		this.staleInputs.clear();
+		for (const [callId, message] of stale) {
+			const raw = this.rawInputs.get(callId);
+			if (raw !== undefined && message.activity) {
+				this.parseAppendedInput(message, message.activity, callId, raw);
+			}
+		}
+	}
+
+	private parseAppendedInput(last: IAgentAssistantMessage, activity: IAgentActivity, callId: string, raw: string): void {
+		const block = this.findCallBlock(last, callId);
 		if (block?.type === 'terminal') {
 			const parsed = parseShellToolInput(raw);
 			if (parsed.command) {
@@ -1362,12 +1450,57 @@ export class AgentSessionController extends Disposable {
 	}
 
 	private findActivityByCallId(message: IAgentAssistantMessage, callId: string): IAgentActivityItem | undefined {
-		for (const segment of message.segments) {
-			if (segment.kind === 'activity' && segment.item.callId === callId) {
+		const index = this.indexCalls(message);
+		const at = index.items.get(callId);
+		if (at !== undefined) {
+			const segment = message.segments[at];
+			if (segment?.kind === 'activity' && segment.item.callId === callId) {
 				return segment.item;
+			}
+			// A segment moved under the index: read the reply again next time.
+			this.callIndex = undefined;
+			for (const candidate of message.segments) {
+				if (candidate.kind === 'activity' && candidate.item.callId === callId) {
+					return candidate.item;
+				}
 			}
 		}
 		return message.activity?.items.find(item => item.callId === callId);
+	}
+
+	/**
+	 * The card a call drew in `message` (the first, as {@link findBlockByCallId} finds it), through
+	 * an index of the reply that grows with it: a streamed event costs a map lookup, not a walk.
+	 */
+	private findCallBlock(message: IAgentAssistantMessage, callId: string): CallBlock | undefined {
+		const index = this.indexCalls(message);
+		const at = index.blocks.get(callId);
+		if (at === undefined) {
+			return undefined;
+		}
+		const segment = message.segments[at];
+		if (segment?.kind === 'block' && isCallBlock(segment.block) && segment.block.callId === callId) {
+			return segment.block;
+		}
+		this.callIndex = undefined;
+		return findBlockByCallId(message.segments, callId);
+	}
+
+	/** The index of `message`, extended over the segments added since the last lookup. */
+	private indexCalls(message: IAgentAssistantMessage): ICallIndex {
+		let index = this.callIndex;
+		if (!index || index.message !== message || index.scanned > message.segments.length) {
+			index = this.callIndex = { message, scanned: 0, blocks: new Map(), items: new Map() };
+		}
+		for (; index.scanned < message.segments.length; index.scanned++) {
+			const segment = message.segments[index.scanned];
+			if (segment.kind === 'block' && isCallBlock(segment.block) && segment.block.callId && !index.blocks.has(segment.block.callId)) {
+				index.blocks.set(segment.block.callId, index.scanned);
+			} else if (segment.kind === 'activity' && segment.item.callId && !index.items.has(segment.item.callId)) {
+				index.items.set(segment.item.callId, index.scanned);
+			}
+		}
+		return index;
 	}
 
 	/**
@@ -1375,7 +1508,7 @@ export class AgentSessionController extends Disposable {
 	 * as an activity row. Once its name or arguments say it is a plan, the row becomes the plan card.
 	 */
 	private promoteToPlanCard(last: IAgentAssistantMessage, callId: string, name: string, title: string | undefined, input: string | undefined): void {
-		if (!isPlanTool(name, title, input) || findBlockByCallId(last.segments, callId)) {
+		if (!isPlanTool(name, title, input) || this.findCallBlock(last, callId)) {
 			return;
 		}
 		const index = last.segments.findIndex(segment => segment.kind === 'activity' && segment.item.callId === callId);
@@ -1385,6 +1518,8 @@ export class AgentSessionController extends Disposable {
 		const id = `tool-${callId}`;
 		const parsed = parsePlanToolInput(input);
 		last.segments[index] = { kind: 'block', block: createPlanBlock({ id, callId, input, name: parsed.name, markdown: parsed.plan ?? '', openQuestions: parsed.openQuestions }) };
+		// The row became a card in place: the call index reads the reply again.
+		this.callIndex = undefined;
 		last.blockState[id] = last.blockState[id] ?? { expanded: false };
 		const items = last.activity?.items;
 		const at = items?.findIndex(item => item.callId === callId) ?? -1;

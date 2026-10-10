@@ -107,7 +107,7 @@ import {
 } from '../review/inlineCommentActions.js';
 import { InlineCommentController } from '../review/inlineCommentController.js';
 import '../../common/agentWorkflowSettings.js';
-import '../schedules/agentSchedules.contribution.js';
+import '../automations/automations.contribution.js';
 import './agentWorkflowCommands.js';
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({

@@ -287,7 +287,7 @@ function headerProcessEnv(): { COMPUTERNAME?: string; HOSTNAME?: string } | unde
  * Open sidebar: project name / short tab title. Hover shows the project, its branch when there is one, and the folder,
  * with a button that copies the absolute folder path.
  * Closed sidebar: the same title, plus search, and New Agent unless that screen is already open.
- * Usage: “Usage / All environments”, a menu of this computer and Model prices.
+ * Usage: "Usage / All environments", a menu of this computer and Model prices.
  */
 class AgentTitlebarHeaderContribution extends Disposable {
 
@@ -343,7 +343,7 @@ class AgentTitlebarHeaderContribution extends Disposable {
 					if (display && !display.includes(' ') && display.includes('-')) {
 						display = display.replace(/-/g, ' ');
 					}
-					// A dotted host name is not the label in the menu. Keep “This Mac” until the real name arrives.
+					// A dotted host name is not the label in the menu. Keep "This Mac" until the real name arrives.
 					if (!display || display === this.machineLabel || (!display.includes(' ') && display.includes('.')) || this._store.isDisposed) {
 						return;
 					}

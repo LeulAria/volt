@@ -28,7 +28,7 @@ import { AgentRunOn, agentRunOnStorageKey, AgentWorktreeTarget, normalizeAgentRu
 import { CLOUD_AUTO, cloudMachineStorageKey, normalizeCloudMachine } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
 import { canTakeAgent, cpuPressure, describeMachineLoad, IRelayMachine, memoryPressure } from '../../../../services/voltRuntime/common/relay/relayMachines.js';
 import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
-import { VOLT_RELAY_CONNECT_COMMAND_ID } from '../schedules/agentWebhookRelay.js';
+import { VOLT_RELAY_CONNECT_COMMAND_ID } from '../automations/automationHooks.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
 import { IVoltProjectsService } from '../../../voltProjects/common/projects.js';

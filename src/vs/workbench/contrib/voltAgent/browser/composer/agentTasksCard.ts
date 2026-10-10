@@ -52,7 +52,7 @@ function createTaskMark(doc: Document, state: ITasksCardItem['state']): SVGSVGEl
 
 /**
  * The agent's to-dos above the composer's chips, a card like Context Usage: one line
- * ("Tasks <current> 1/4 ▬▬▬▬") that opens into the whole list with each to-do's state and time.
+ * ("Tasks <current> 1/4 ====") that opens into the whole list with each to-do's state and time.
  */
 export class AgentTasksCard extends Disposable {
 

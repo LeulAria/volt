@@ -155,7 +155,7 @@ export interface IRunGroup {
 /** Lower-case ASCII words joined by `-`, cut at a word boundary when possible. */
 export function slugify(text: string, max: number): string {
 	// allow-any-unicode-next-line
-	const ascii = text.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
+	const ascii = text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 	const words = ascii.split(/[^a-z0-9]+/).filter(Boolean);
 	let slug = '';
 	for (const word of words) {
@@ -255,11 +255,11 @@ export function parseRememberedModels(raw: string | undefined, available: Readon
 		return [];
 	}
 	try {
-		const parsed = JSON.parse(raw);
+		const parsed: unknown = JSON.parse(raw);
 		if (!Array.isArray(parsed)) {
 			return [];
 		}
-		const refs = parsed.filter((ref): ref is string => typeof ref === 'string' && available.has(ref));
+		const refs = parsed.filter((ref: unknown): ref is string => typeof ref === 'string' && available.has(ref));
 		return [...new Set(refs)].slice(0, RUN_GROUP_MAX_MODELS);
 	} catch {
 		return [];

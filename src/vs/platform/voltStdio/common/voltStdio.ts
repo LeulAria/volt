@@ -51,6 +51,12 @@ export interface IVoltExecRequest {
 	 */
 	readonly background?: boolean;
 	readonly backgroundWaitMs?: number;
+	/**
+	 * A foreground command still running after this long hands control back: the call returns
+	 * with the output so far and `running: true`, and the command goes on as a job (read it with
+	 * `jobOutput` / `jobWait`). It is stopped only by `timeoutMs` or `cancelExec`.
+	 */
+	readonly yieldAfterMs?: number;
 	/** Characters returned inline per stream. Longer output is shaped head + tail and spilled. */
 	readonly inlineChars?: number;
 	/** Directory for the full log when output is shaped. */

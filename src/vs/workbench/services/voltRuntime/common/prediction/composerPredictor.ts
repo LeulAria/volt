@@ -370,7 +370,7 @@ export function cleanComposerCompletion(raw: string, draft: string, vocabulary: 
 		text = text.slice(0, newline);
 	}
 	// allow-any-unicode-next-line
-	text = text.replace(/^\s*(["'`“]+)/, '').replace(/(["'`”]+)\s*$/, '');
+	text = text.replace(/^\s*(["'`\u201c]+)/, '').replace(/(["'`\u201d]+)\s*$/, '');
 	if (!text.trim() || META_REPLY.test(text.trim())) {
 		return undefined;
 	}

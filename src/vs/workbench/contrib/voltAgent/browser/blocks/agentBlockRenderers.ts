@@ -7,9 +7,10 @@ import '../media/agentMarkdown.css';
 import { $, addDisposableListener, append, clearNode, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
-import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import * as marked from '../../../../../base/common/marked/marked.js';
 import { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
-import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
+import { CodeWindow } from '../../../../../base/browser/window.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { localize } from '../../../../../nls.js';
@@ -19,7 +20,6 @@ import { ILanguageService } from '../../../../../editor/common/languages/languag
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { getIconClasses } from '../../../../../editor/common/services/getIconClasses.js';
 import { FileKind } from '../../../../../platform/files/common/files.js';
-import { createAgentScrollable } from '../editor/agentScrollable.js';
 import { bindTruncatedHoverTooltip, setAgentTooltip } from '../chrome/agentTooltip.js';
 import {
 	AgentBlock,
@@ -46,7 +46,8 @@ import {
 import { renderMermaidDiagram } from './agentMermaid.js';
 import { mountChart, renderVisualBlock } from '../visuals/agentVisuals.js';
 import { highlight, ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
-import { agentMarkdownRenderOptions, decorateAgentMarkdown, fenceChartSpec, normalizeMathDelimiters, renderFenceChart } from './agentMarkdown.js';
+import { agentMarkdownRenderOptions, agentMarkedExtensions, decorateAgentMarkdown, fenceChartSpec, normalizeMathDelimiters, renderFenceChart } from './agentMarkdown.js';
+import type { IFreshTextPart } from '../chrome/agentFreshText.js';
 import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../preview/localPreview.js';
 import { AccessDecisionScope } from '../../../../services/voltRuntime/common/access/accessTypes.js';
 import { formatAttachmentSize } from '../../../../services/voltRuntime/common/fileAttachments.js';
@@ -307,26 +308,194 @@ function codeCardOptions(ctx: IBlockRenderContext): ICodeCardOptions {
 }
 
 export function renderMarkdownInto(parent: HTMLElement, text: string, ctx: IBlockRenderContext, extraClass?: string): void {
-	const result = ctx.markdownRenderer.render(new MarkdownString(linkifyPreviewUrls(normalizeMathDelimiters(text))), {
-		...agentMarkdownRenderOptions(getWindow(parent), { ...codeCardOptions(ctx), onExpandDiagram: ctx.onExpandDiagram, visualHost: ctx }),
+	const element = renderMarkdownElement(getWindow(parent), linkifyPreviewUrls(normalizeMathDelimiters(text)), ctx);
+	if (extraClass) {
+		element.classList.add(extraClass);
+	}
+	parent.appendChild(element);
+}
+
+/** Renders normalized markdown into a detached, decorated `.volt-agent-markdown` root; its listeners go to `ctx.store`. */
+function renderMarkdownElement(win: CodeWindow, source: string, ctx: IBlockRenderContext): HTMLElement {
+	const result = ctx.markdownRenderer.render(new MarkdownString(source), {
+		...agentMarkdownRenderOptions(win, { ...codeCardOptions(ctx), onExpandDiagram: ctx.onExpandDiagram, visualHost: ctx }),
 		fillInIncompleteTokens: true,
 		asyncRenderCallback: ctx.onScroll,
-		actionHandler: link => {
-			const url = extractHttpUrl(link) ?? extractLocalPreviewUrl(link);
-			if (url) {
-				ctx.onOpenUrl?.(url);
-			}
-		},
+		actionHandler: link => openMarkdownLink(link, ctx),
 	});
 	result.element.classList.add('volt-agent-markdown', 'volt-agent-searchable');
-	if (extraClass) {
-		result.element.classList.add(extraClass);
-	}
 	decorateMarkdownPills(result.element, ctx);
 	decorateAgentMarkdown(result.element, ctx.store);
 	wrapMarkdownTables(result.element, ctx);
-	parent.appendChild(result.element);
 	ctx.store.add(result);
+	return result.element;
+}
+
+function openMarkdownLink(link: string, ctx: IBlockRenderContext): void {
+	const url = extractHttpUrl(link) ?? extractLocalPreviewUrl(link);
+	if (url) {
+		ctx.onOpenUrl?.(url);
+	}
+}
+
+/** One top-level markdown block of a {@link LiveMarkdown}, as drawn. */
+interface ILiveMarkdownBlock {
+	/** Its source, as marked's lexer cut it. */
+	readonly raw: string;
+	readonly nodes: readonly HTMLElement[];
+	readonly store: DisposableStore;
+	/** Its text, for the fresh-text fade. */
+	readonly text: string;
+	/** Drawn by the latest update. */
+	fresh: boolean;
+}
+
+/**
+ * A reply's markdown while it streams in, drawn one top-level block (paragraph, list, table, quote)
+ * at a time. Every block but the last is final once the next one starts, so an update keeps their
+ * DOM (with its selection, hover and running fades) and redraws only from the first block whose
+ * source changed: normally just the last, open one. Only the text from the last block on is lexed
+ * again. Footnote numbers and link references resolve within a block until the reply is drawn whole.
+ */
+export class LiveMarkdown extends Disposable {
+
+	/** The reply's `.volt-agent-markdown` root; the blocks' elements are its children, as in a whole render. */
+	readonly element: HTMLElement;
+	private blocks: ILiveMarkdownBlock[] = [];
+	private source: string | undefined;
+	private ctx: IBlockRenderContext;
+	private lexerFor: { readonly extensions: number; readonly instance: marked.Marked } | undefined;
+
+	constructor(ctx: IBlockRenderContext) {
+		super();
+		this.ctx = ctx;
+		this.element = $('div.rendered-markdown.volt-agent-markdown.volt-agent-searchable');
+		// The renderer binds link clicks to each block's own root, which is not kept: one handler serves all.
+		const activate = (e: UIEvent) => {
+			const link = isHTMLElement(e.target) ? e.target.closest('a[data-href]') : null;
+			if (!isHTMLElement(link) || !this.element.contains(link)) {
+				return;
+			}
+			e.preventDefault();
+			const href = link.dataset['href'];
+			if (href) {
+				openMarkdownLink(href, this.ctx);
+			}
+		};
+		this._register(addDisposableListener(this.element, 'click', e => {
+			if (e.button === 0 || e.button === 1) {
+				activate(e);
+			}
+		}));
+		this._register(addDisposableListener(this.element, 'auxclick', e => {
+			if (e.button === 1) {
+				activate(e);
+			}
+		}));
+		this._register(addDisposableListener(this.element, 'keydown', e => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				activate(e);
+			}
+		}));
+		this._register(toDisposable(() => {
+			for (const block of this.blocks) {
+				block.store.dispose();
+			}
+			this.blocks = [];
+		}));
+	}
+
+	/** Draws `text`, keeping the blocks whose source did not change. */
+	update(text: string, ctx: IBlockRenderContext): void {
+		this.ctx = ctx;
+		for (const block of this.blocks) {
+			block.fresh = false;
+		}
+		if (text === this.source) {
+			return;
+		}
+		this.source = text;
+		const win = getWindow(this.element);
+		const source = linkifyPreviewUrls(normalizeMathDelimiters(text));
+		const raws = this.split(win, source);
+		let keep = 0;
+		while (keep < raws.length && keep < this.blocks.length && this.blocks[keep].raw === raws[keep]) {
+			keep++;
+		}
+		for (const block of this.blocks.splice(keep)) {
+			for (const node of block.nodes) {
+				node.remove();
+			}
+			block.store.dispose();
+		}
+		for (let index = keep; index < raws.length; index++) {
+			const store = new DisposableStore();
+			const root = renderMarkdownElement(win, raws[index], { ...ctx, store });
+			const nodes: HTMLElement[] = [];
+			for (const node of [...root.childNodes]) {
+				if (isHTMLElement(node)) {
+					nodes.push(node);
+				} else if (node.textContent?.trim()) {
+					// Loose top-level text (raw HTML) goes in a span, so the fade can walk it like the rest.
+					const span = $('span');
+					span.textContent = node.textContent;
+					nodes.push(span);
+				}
+				// Whitespace between blocks is dropped: it lays out as nothing between block elements.
+			}
+			this.element.append(...nodes);
+			this.blocks.push({ raw: raws[index], nodes, store, text: nodes.map(node => node.textContent ?? '').join(''), fresh: true });
+		}
+	}
+
+	/** The text in reading order; the blocks drawn by the latest update carry their elements. */
+	parts(): IFreshTextPart[] {
+		return this.blocks.map(block => block.fresh ? { text: block.text, roots: block.nodes } : { text: block.text });
+	}
+
+	/**
+	 * Cuts the source into top-level blocks, as the renderer's lexer does. The blocks before the
+	 * last one drawn are final, so lexing starts at the last one (at the last one with text, when
+	 * blank lines follow it: a list item can still go on after one). Sources the lexer does not
+	 * cover exactly (link definitions it sets aside) are drawn whole.
+	 */
+	private split(win: CodeWindow, source: string): string[] {
+		const settled: string[] = [];
+		let offset = 0;
+		let open = this.blocks.length - 1;
+		while (open > 0 && !this.blocks[open].raw.trim()) {
+			open--;
+		}
+		for (const block of this.blocks.slice(0, Math.max(0, open))) {
+			if (!source.startsWith(block.raw, offset)) {
+				settled.length = 0;
+				offset = 0;
+				break;
+			}
+			settled.push(block.raw);
+			offset += block.raw.length;
+		}
+		const rest = source.slice(offset);
+		const lexer = this.lexer(win);
+		const raws = lexer.lexer(rest, { ...lexer.defaults, gfm: true }).map(token => token.raw);
+		let covered = 0;
+		for (const raw of raws) {
+			covered += raw.length;
+		}
+		if (covered !== rest.length) {
+			return [source];
+		}
+		return [...settled, ...raws];
+	}
+
+	private lexer(win: CodeWindow): marked.Marked {
+		const extensions = agentMarkedExtensions(win);
+		// KaTeX loads lazily: once it is there, lex with it as the renderer does.
+		if (this.lexerFor?.extensions !== extensions.length) {
+			this.lexerFor = { extensions: extensions.length, instance: new marked.Marked(...extensions) };
+		}
+		return this.lexerFor.instance;
+	}
 }
 
 function renderMarkdownBlock(parent: HTMLElement, block: IMarkdownBlock, ctx: IBlockRenderContext): void {
@@ -357,7 +526,7 @@ function renderCodeBlock(parent: HTMLElement, block: ICodeBlock, ctx: IBlockRend
 		}, ctx, 'card');
 		return;
 	}
-	renderCodeCard(wrap, block.language, block.code, codeCardOptions(ctx));
+	renderCodeCard(wrap, block.language, block.code, { ...codeCardOptions(ctx), streaming: block.status === 'streaming' });
 }
 
 function isExpanded(block: { id: string; expanded?: boolean }, ctx: IBlockRenderContext): boolean {
@@ -415,7 +584,16 @@ function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IB
 	const showLabels = !!labelText && !titleText.toLowerCase().includes(labelText.toLowerCase()) && titleText.toLowerCase() !== (labels[0] ?? '').toLowerCase();
 	if (live) {
 		headline.classList.add('shimmer');
-		headline.textContent = showLabels ? `${titleText} ${labelText}` : titleText;
+		const text = showLabels ? `${titleText} ${labelText}` : titleText;
+		headline.textContent = text;
+		// The highlight is a copy of the text in a band that slides by transform alone (agentEditor.css),
+		// so a running command repaints nothing per frame. The copy counter-slides to stay on the text.
+		const sweep = append(headline, $('span.volt-agent-term-sweep'));
+		sweep.setAttribute('aria-hidden', 'true');
+		const copy = append(sweep, $('span.volt-agent-term-sweep-text'));
+		copy.textContent = text;
+		lockAnimationPhase(sweep, TERMINAL_SWEEP_MS);
+		lockAnimationPhase(copy, TERMINAL_SWEEP_MS);
 	} else {
 		const title = append(headline, $('span.volt-agent-term-title.volt-agent-searchable'));
 		title.textContent = titleText;
@@ -424,14 +602,13 @@ function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IB
 			meta.textContent = labelText;
 		}
 	}
-	const scanOutput: { current?: () => void } = {};
 	const setExpanded = (next: boolean) => {
 		wrap.classList.toggle('expanded', next);
 		header.setAttribute('aria-expanded', String(next));
 		ctx.blockState[block.id] = { expanded: next };
 		block.expanded = next;
-		queueMicrotask(() => scanOutput.current?.());
-		getWindow(wrap).requestAnimationFrame(() => scanOutput.current?.());
+		// The card changed height in place: the thread re-reads its scroll height this frame.
+		ctx.onScroll();
 	};
 	if (ctx.onTerminalMenu) {
 		const menuBtn = append(bar, $('button.volt-agent-term-menu')) as HTMLButtonElement;
@@ -464,7 +641,9 @@ function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IB
 	wrap.classList.add('has-term-body');
 	const body = append(wrap, $('.volt-agent-term-body'));
 	const clip = append(body, $('.volt-agent-term-output-clip'));
-	const content = $('.volt-agent-term-output-scroll');
+	// Terminal output never scrolls on its own: collapsed, the clip aligns the output to its bottom
+	// edge, so the tail shows with nothing to measure or pin (agentEditor.css); expanded shows all of it.
+	const content = append(clip, $('.volt-agent-term-output-scroll'));
 	if (block.command) {
 		const cmd = append(content, $('div.volt-agent-term-command.volt-agent-searchable'));
 		const dollar = append(cmd, $('span.prompt'));
@@ -475,10 +654,66 @@ function renderTerminalBlock(parent: HTMLElement, block: ITerminalBlock, ctx: IB
 		const out = append(content, $('pre.volt-agent-term-output.volt-agent-searchable'));
 		out.textContent = block.output.replace(/[\r\n]+$/, '');
 	}
-	// Terminal output never scrolls on its own: collapsed shows the tail, expanded shows all of it.
-	scanOutput.current = attachContainedScroll(clip, content, ctx, scroll => {
-		pinCollapsedTerminalTail(wrap, clip, content, scroll);
-	}, false);
+	observeTerminalClamp(wrap, clip, content, ctx.store);
+}
+
+/** One period of the running command's headline sweep (agentEditor.css). */
+const TERMINAL_SWEEP_MS = 900;
+
+/**
+ * Starts an infinite animation on a newly drawn element in phase with the page clock, so an element
+ * redrawn mid-stream picks up where its predecessor was instead of restarting (spinners, shimmers).
+ */
+export function lockAnimationPhase(el: HTMLElement, durationMs: number): void {
+	el.style.animationDelay = `${-Math.round(getWindow(el).performance.now() % durationMs)}ms`;
+}
+
+interface IClampTarget {
+	readonly wrap: HTMLElement;
+	readonly clip: HTMLElement;
+	readonly content: HTMLElement;
+}
+
+const clampObservers = new WeakMap<Window, ResizeObserver>();
+const clampTargets = new WeakMap<Element, IClampTarget>();
+const clampHeights = new WeakMap<Element, number>();
+
+/**
+ * Marks a terminal card `clamped` while its output is taller than the collapsed clip (the fade at
+ * the top). One observer serves every card in the window and reads sizes from its entries, so no
+ * card forces a layout, and nothing runs while the sizes hold still.
+ */
+function observeTerminalClamp(wrap: HTMLElement, clip: HTMLElement, content: HTMLElement, store: DisposableStore): void {
+	const win = getWindow(wrap);
+	let observer = clampObservers.get(win);
+	if (!observer) {
+		observer = new win.ResizeObserver(entries => {
+			const changed = new Set<IClampTarget>();
+			for (const entry of entries) {
+				clampHeights.set(entry.target, entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height);
+				const target = clampTargets.get(entry.target);
+				if (target) {
+					changed.add(target);
+				}
+			}
+			for (const target of changed) {
+				const visible = clampHeights.get(target.clip) ?? 0;
+				const full = clampHeights.get(target.content) ?? 0;
+				target.wrap.classList.toggle('clamped', visible > 0 && full > visible + 2);
+			}
+		});
+		clampObservers.set(win, observer);
+	}
+	const target: IClampTarget = { wrap, clip, content };
+	clampTargets.set(clip, target);
+	clampTargets.set(content, target);
+	observer.observe(clip);
+	observer.observe(content);
+	const watching = observer;
+	store.add(toDisposable(() => {
+		watching.unobserve(clip);
+		watching.unobserve(content);
+	}));
 }
 
 function renderToolBlock(parent: HTMLElement, block: IToolBlock, ctx: IBlockRenderContext): void {
@@ -668,12 +903,28 @@ function renderErrorBlock(parent: HTMLElement, block: IErrorBlock): void {
 	wrap.textContent = block.message;
 }
 
+/** Approval cards that already faded in, by block id (bounded). */
+const shownApprovals = new Set<string>();
+const SHOWN_APPROVALS_MAX = 500;
+
 function renderApprovalBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IBlockRenderContext): void {
 	if (block.action === 'question' && !block.blocked) {
 		renderQuestionBlock(parent, block, ctx);
 		return;
 	}
 	const wrap = append(parent, $('.volt-agent-block.approval'));
+	// The card fades in once; drawn again (a decision, a redraw of its exchange) it just appears.
+	if (shownApprovals.has(block.id)) {
+		wrap.classList.add('shown');
+	} else {
+		shownApprovals.add(block.id);
+		if (shownApprovals.size > SHOWN_APPROVALS_MAX) {
+			const oldest = shownApprovals.values().next().value;
+			if (oldest !== undefined) {
+				shownApprovals.delete(oldest);
+			}
+		}
+	}
 	if (block.blocked) {
 		wrap.classList.add('blocked');
 	}
@@ -1094,50 +1345,6 @@ function balanceTableColumns(table: HTMLTableElement): void {
 			cell.classList.add(flexible ? 'grow' : 'fit');
 		}
 	}
-}
-
-function pinCollapsedTerminalTail(wrap: HTMLElement, clip: HTMLElement, content: HTMLElement, scroll: { setScrollPosition(update: { scrollTop: number }): void }): void {
-	const visible = clip.clientHeight;
-	const full = content.scrollHeight;
-	wrap.classList.toggle('clamped', visible > 0 && full > visible + 2);
-	if (wrap.classList.contains('expanded') || visible < 8) {
-		return;
-	}
-	const top = Math.max(0, content.scrollHeight - content.clientHeight);
-	if (Math.abs(content.scrollTop - top) > 1) {
-		scroll.setScrollPosition({ scrollTop: top });
-	}
-}
-
-function attachContainedScroll(wrap: HTMLElement, content: HTMLElement, ctx: IBlockRenderContext, afterScan?: (scroll: { setScrollPosition(update: { scrollTop: number }): void }) => void, userScrollable = true): () => void {
-	if (wrap.querySelector('.monaco-scrollable-element')) {
-		return () => { };
-	}
-	const scroll = createAgentScrollable(content, {
-		horizontal: userScrollable ? ScrollbarVisibility.Auto : ScrollbarVisibility.Hidden,
-		vertical: userScrollable ? ScrollbarVisibility.Auto : ScrollbarVisibility.Hidden,
-		horizontalScrollbarSize: 10,
-		verticalScrollbarSize: 10,
-		// Not scrollable: the wheel scrolls the thread, never the block under the pointer.
-		handleMouseWheel: userScrollable,
-		alwaysConsumeMouseWheel: false,
-		consumeMouseWheelIfScrollbarIsNeeded: userScrollable,
-	});
-	wrap.appendChild(scroll.getDomNode());
-	ctx.store.add(scroll);
-	const scan = () => {
-		scroll.scanDomNode();
-		afterScan?.(scroll);
-		ctx.onScroll();
-	};
-	queueMicrotask(scan);
-	const win = getWindow(wrap);
-	win.requestAnimationFrame(scan);
-	const observer = new win.ResizeObserver(scan);
-	observer.observe(wrap);
-	observer.observe(content);
-	ctx.store.add(toDisposable(() => observer.disconnect()));
-	return scan;
 }
 
 function decorateMarkdownPills(root: HTMLElement, ctx: IBlockRenderContext): void {

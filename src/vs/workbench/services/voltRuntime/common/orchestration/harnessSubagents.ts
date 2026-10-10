@@ -56,7 +56,7 @@ export function parseToolInput(input: string | undefined): Record<string, unknow
 		return undefined;
 	}
 	try {
-		const value = JSON.parse(input);
+		const value: unknown = JSON.parse(input);
 		return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 	} catch {
 		return undefined;

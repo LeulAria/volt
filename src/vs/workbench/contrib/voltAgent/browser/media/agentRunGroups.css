@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 /* Compare view of a run group (agentRunGroupEditor.ts). Opaque surfaces only: the agent window is
-   transparent, so nothing here may be a see-through layer over scrolling content. */
+ * transparent, so nothing here may be a see-through layer over scrolling content. */
 
 .volt-run-group {
 	display: flex;

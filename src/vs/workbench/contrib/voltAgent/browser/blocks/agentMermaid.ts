@@ -779,7 +779,7 @@ const VIEWER_MAX_ZOOM = 6;
 
 /**
  * The diagram full size in the preview dialog, on a canvas that zooms (pinch, ⌘/Ctrl + wheel,
- * double-click, + / −) and pans (drag, wheel), with a zoom pill at the bottom. It opens fitted.
+ * double-click, + / -) and pans (drag, wheel), with a zoom pill at the bottom. It opens fitted.
  */
 export function createDiagramViewer(svg: SVGSVGElement, store: DisposableStore): HTMLElement {
 	const viewer = $('.volt-diagram-viewer');

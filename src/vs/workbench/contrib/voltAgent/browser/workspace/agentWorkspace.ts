@@ -395,7 +395,7 @@ export function reviveAgentWorkspaces(raw: unknown, now: number): Map<string, IA
 	if (!Array.isArray(raw)) {
 		return result;
 	}
-	const valid = raw.filter((item): item is IAgentWorkspaceState =>
+	const valid = raw.filter((item: Partial<IAgentWorkspaceState> | null): item is IAgentWorkspaceState =>
 		!!item && typeof item === 'object'
 		&& typeof item.sessionId === 'string' && !!item.sessionId
 		&& typeof item.lastActiveAt === 'number');

@@ -9,7 +9,7 @@ import { ServicesAccessor } from '../../../../../platform/instantiation/common/i
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
-import { NEW_AGENT_SCHEDULE_COMMAND_ID, OPEN_AGENT_SCHEDULES_COMMAND_ID } from '../schedules/agentScheduleCommands.js';
+import { NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
 import { registerAgentPaletteEntry } from './agentCommandPalette.js';
 import { activeAgentSessionId } from './agentSessionCommands.js';
 
@@ -50,16 +50,16 @@ registerAgentPaletteEntry({
 
 registerAgentPaletteEntry({
 	id: 'schedulePrompt',
-	label: localize('voltAgent.palette.schedule', "Schedule a Prompt…"),
-	description: localize('voltAgent.palette.scheduleDetail', "Run a prompt in this chat on a schedule"),
-	commandId: NEW_AGENT_SCHEDULE_COMMAND_ID,
+	label: localize('voltAgent.palette.newAutomation', "New Automation…"),
+	description: localize('voltAgent.palette.newAutomationDetail', "Run an agent on a schedule or on GitHub, Slack, Sentry, Linear or webhook events"),
+	commandId: NEW_AUTOMATION_COMMAND_ID,
 	args: context => [{ threadId: context.sessionId }],
 	order: 60,
 });
 
 registerAgentPaletteEntry({
 	id: 'scheduledTasks',
-	label: localize('voltAgent.palette.schedules', "Scheduled Tasks"),
-	commandId: OPEN_AGENT_SCHEDULES_COMMAND_ID,
+	label: localize('voltAgent.palette.automations', "Automations"),
+	commandId: OPEN_AUTOMATIONS_COMMAND_ID,
 	order: 61,
 });

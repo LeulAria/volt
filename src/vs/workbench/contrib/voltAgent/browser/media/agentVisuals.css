@@ -139,7 +139,7 @@
 }
 
 .volt-agent-visual-caption-status::before {
-	content: '·';
+	content: '\00b7';
 	margin-right: 7px;
 }
 

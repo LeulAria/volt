@@ -152,7 +152,7 @@ export class OllamaProvider implements IModelProvider {
 				eval_count?: number;
 			};
 			try {
-				json = JSON.parse(line);
+				json = JSON.parse(line) as typeof json;
 			} catch {
 				continue;
 			}

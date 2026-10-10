@@ -292,7 +292,7 @@ export function pullRequestHeadRef(provider: VoltPrProvider, number: number): st
 export function providerFromProbe(path: 'gitea' | 'gitlab', status: number, body: string): { provider: VoltPrSupportedProvider; flavor?: 'gitea' | 'forgejo' } | undefined {
 	let json: { version?: unknown; message?: unknown } | undefined;
 	try {
-		json = JSON.parse(body);
+		json = JSON.parse(body) as typeof json;
 	} catch {
 		json = undefined;
 	}

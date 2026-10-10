@@ -87,7 +87,7 @@ export class WarmPrintAgents extends Disposable {
 				buffer = buffer.slice(newline + 1);
 				let message: { type?: string; is_error?: boolean; result?: string; event?: { type?: string; delta?: { type?: string; text?: string } } };
 				try {
-					message = JSON.parse(line);
+					message = JSON.parse(line) as typeof message;
 				} catch {
 					continue;
 				}

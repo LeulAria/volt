@@ -48,7 +48,7 @@ export class VoltPrHttp {
 			if (value === undefined) {
 				continue;
 			}
-			if (Array.isArray(value)) {
+			if (typeof value === 'object') {
 				for (const item of value) {
 					url.searchParams.append(key, item);
 				}

@@ -50,8 +50,11 @@ export const AGENT_FIND_TOGGLE_WHOLE_WORD_COMMAND_ID = 'workbench.action.voltAge
 export const AGENT_FIND_TOGGLE_CASE_COMMAND_ID = 'workbench.action.voltAgent.toggleFindCaseSensitive';
 export const AGENT_EDITOR_LINE_NUMBERS_SETTING = 'volt.agent.editor.lineNumbers';
 
-/** Streaming replies are snapshotted to disk at most this often. */
-const PARTIAL_SNAPSHOT_INTERVAL_MS = 3000;
+/**
+ * Streaming replies are snapshotted to disk at most this often. A snapshot writes the live reply
+ * alone (beside the chat's log), so a crash loses at most this much of a reply that was streaming.
+ */
+const PARTIAL_SNAPSHOT_INTERVAL_MS = 10_000;
 
 /**
  * Inputs closed while their agent was still running. They keep recording until

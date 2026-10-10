@@ -16,6 +16,15 @@ interface IReply {
 	readonly body: string;
 }
 
+interface IRpcReply {
+	readonly result: {
+		readonly serverInfo: { readonly name: string };
+		readonly tools: { name: string; group?: string }[];
+		readonly content: readonly { readonly text: string }[];
+		readonly isError?: boolean;
+	};
+}
+
 function post(url: string, body: unknown, headers: Record<string, string> = {}, method = 'POST'): Promise<IReply> {
 	const target = new URL(url);
 	const payload = body === undefined ? '' : JSON.stringify(body);
@@ -81,7 +90,7 @@ suite('Volt host MCP server', () => {
 
 			const good = await post(`${endpoint.url}/s1`, INIT, auth);
 			assert.strictEqual(good.status, 200);
-			assert.strictEqual(JSON.parse(good.body).result.serverInfo.name, 'volt');
+			assert.strictEqual((JSON.parse(good.body) as IRpcReply).result.serverInfo.name, 'volt');
 			assert.strictEqual(good.headers['access-control-allow-origin'], undefined);
 
 			assert.strictEqual((await post(`${endpoint.url}/s1`, INIT)).status, 401);
@@ -111,17 +120,17 @@ suite('Volt host MCP server', () => {
 		try {
 			const endpoint = await service.start('w2', TOOLS);
 			const auth = { Authorization: `Bearer ${endpoint.token}` };
-			const list = async (suffix: string) => (JSON.parse((await post(`${endpoint.url}/chat%201${suffix}`, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, auth)).body).result.tools as { name: string; group?: string }[]);
+			const list = async (suffix: string) => (JSON.parse((await post(`${endpoint.url}/chat%201${suffix}`, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, auth)).body) as IRpcReply).result.tools;
 			assert.deepStrictEqual((await list('')).map(tool => tool.name), ['ask_question', 'browser_snapshot']);
 			assert.deepStrictEqual((await list('?groups=core')).map(tool => tool.name), ['ask_question']);
 			assert.ok((await list('')).every(tool => tool.group === undefined), 'groups stay internal');
 
 			const called = await post(`${endpoint.url}/chat%201`, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'browser_snapshot', arguments: { interactive: true } } }, auth);
-			assert.strictEqual(JSON.parse(called.body).result.content[0].text, 'ran browser_snapshot');
+			assert.strictEqual((JSON.parse(called.body) as IRpcReply).result.content[0].text, 'ran browser_snapshot');
 			assert.deepStrictEqual(calls.map(call => ({ sessionId: call.sessionId, name: call.name, args: call.args })), [{ sessionId: 'chat 1', name: 'browser_snapshot', args: { interactive: true } }]);
 
 			const hidden = await post(`${endpoint.url}/chat%201?groups=core`, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'browser_snapshot', arguments: {} } }, auth);
-			assert.strictEqual(JSON.parse(hidden.body).result.isError, true, 'a tool outside the listed groups is not callable');
+			assert.strictEqual((JSON.parse(hidden.body) as IRpcReply).result.isError, true, 'a tool outside the listed groups is not callable');
 			assert.strictEqual(calls.length, 1);
 		} finally {
 			await service.stop('w2');

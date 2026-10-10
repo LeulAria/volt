@@ -57,10 +57,12 @@ export function showHostToolDetail(anchor: HTMLElement, item: IAgentActivityItem
 	}
 	const markdown = item.result?.trim();
 	if (markdown) {
-		renderMarkdownInto(content, markdown, { ...ctx, store, onOpenUrl: url => {
-			dismiss();
-			onOpenUrl(url);
-		} }, 'volt-tool-detail-markdown');
+		renderMarkdownInto(content, markdown, {
+			...ctx, store, onOpenUrl: url => {
+				dismiss();
+				onOpenUrl(url);
+			}
+		}, 'volt-tool-detail-markdown');
 	}
 
 	const more = append(dialog, $('button.volt-tool-detail-more.hidden')) as HTMLButtonElement;

@@ -47,7 +47,7 @@ import { createBrandIcon } from '../../../../services/voltRuntime/browser/provid
 import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IRecentFolder, IRecentWorkspace, IWorkspacesService, isRecentFolder, isRecentWorkspace } from '../../../../../platform/workspaces/common/workspaces.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
-import { OPEN_AGENT_SCHEDULES_COMMAND_ID } from '../schedules/agentScheduleCommands.js';
+import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { AgentUsageEditorInput, OPEN_AGENT_USAGE_COMMAND_ID } from '../usage/agentUsageEditor.js';
 import { createUsageIcon } from '../usage/agentUsageIcons.js';
@@ -732,7 +732,7 @@ function actionSpec(id: AgentHomeActionId): { readonly label: string; readonly i
 		case 'search':
 			return { label: localize('voltAgent.home.search', "Search"), icon: Codicon.search };
 		case 'automations':
-			return { label: localize('voltAgent.home.automations', "Automations"), icon: Codicon.history };
+			return { label: localize('voltAgent.home.automations', "Automations"), icon: Codicon.zap };
 		case 'customize':
 			return { label: localize('voltAgent.home.customize', "Customize"), icon: Codicon.extensions };
 		default: {
@@ -1458,7 +1458,7 @@ export class AgentHomePane extends Disposable {
 				await this.commandService.executeCommand('workbench.action.showCommands');
 				return;
 			case 'automations':
-				await this.commandService.executeCommand(OPEN_AGENT_SCHEDULES_COMMAND_ID);
+				await this.commandService.executeCommand(OPEN_AUTOMATIONS_COMMAND_ID);
 				return;
 			case 'customize':
 				await this.commandService.executeCommand(OPEN_AGENT_CUSTOMIZE_COMMAND_ID);

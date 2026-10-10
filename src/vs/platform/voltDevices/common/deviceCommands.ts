@@ -114,7 +114,7 @@ function simState(state: string | undefined): VoltDeviceState {
 export function parseSimctlDevices(json: string, hostId: string): IVoltDevice[] {
 	let parsed: { devices?: Record<string, ISimctlDevice[]> };
 	try {
-		parsed = JSON.parse(json);
+		parsed = JSON.parse(json) as typeof parsed;
 	} catch {
 		return [];
 	}

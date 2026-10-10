@@ -27,7 +27,7 @@ const RING_SIZE = 32;
  */
 export class IpcActivityRecorder {
 
-	private readonly ring: (IIpcCallRecord | undefined)[] = new Array(RING_SIZE);
+	private readonly ring: (IIpcCallRecord | undefined)[] = new Array<IIpcCallRecord | undefined>(RING_SIZE);
 	private next = 0;
 
 	constructor(private readonly now: () => number = Date.now) { }

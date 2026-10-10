@@ -5,6 +5,7 @@
 
 import { MOCKUPS_TOOL_NAME, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME } from '../hostTools.js';
 import { modePolicy, VoltMode } from '../modes.js';
+import { DOCKER_ENSURE_TOOL_NAME, TERMINAL_OUTPUT_TOOL_NAME, TERMINAL_START_TOOL_NAME, TERMINAL_STOP_TOOL_NAME, TERMINAL_WAIT_TOOL_NAME } from '../terminalTools.js';
 import { IRunPlan } from '../runPlan.js';
 import { IIntent } from './intent.js';
 import { laneDefinition } from './lanes.js';
@@ -212,6 +213,9 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.visuals && input.intent.lane !== 'fast') {
 		parts.push(`[Volt] ${VISUAL_REPLIES}`);
 	}
+	if (input.intent.wantsServices && modePolicy(input.mode).allowTerminal) {
+		parts.push(`[Volt] ${MANAGED_TERMINALS}`);
+	}
 	for (const gallery of galleryHints(input)) {
 		parts.push(`[Volt] ${gallery}`);
 	}
@@ -248,6 +252,12 @@ export const CALLER_VISIBLE_CHANGES = 'This is an open-ended change. When you al
  * caller's stack to pass both. A passing suite is not the goal; correct code is.
  */
 export const TEST_INTEGRITY = 'Make tests pass by fixing the code. Never special-case tests (checking callers, stack traces, test names or env), weaken or delete assertions, or edit tests you were told not to touch. If tests contradict each other or the request, stop and explain instead of forcing a pass.';
+
+/**
+ * CLI agents start servers with their own shell, where they either block the turn until a
+ * timeout or vanish into a background job the user cannot see. Volt's terminals do neither.
+ */
+export const MANAGED_TERMINALS = `Start servers, watchers, \`docker compose up\` and anything else that keeps running with ${TERMINAL_START_TOOL_NAME} from the volt MCP server, not your own shell or background tasks: it returns once the process is up, the user sees it as a chip and can open it, and you keep working. Read it with ${TERMINAL_OUTPUT_TOOL_NAME} or ${TERMINAL_WAIT_TOOL_NAME}, stop it with ${TERMINAL_STOP_TOOL_NAME}. When Docker is needed, call ${DOCKER_ENSURE_TOOL_NAME} once instead of opening Docker and polling it. Run commands that finish on their own (builds, tests, installs) as usual.`;
 
 /**
  * Tool descriptions say what the visual tools do; this says when to reach for them unasked. Not

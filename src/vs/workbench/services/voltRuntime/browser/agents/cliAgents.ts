@@ -119,7 +119,7 @@ export function grokAcpArgs(args: readonly string[]): string[] {
  * needs an adapter (including stored `claude acp` and `codex acp` profiles) launches the adapter
  * instead; a custom command is left alone. Stored `grok acp` is rewritten to `grok agent stdio`.
  */
-export function acpLaunchFor(def: ICliAgentDefinition | undefined, command: string, args: readonly string[], adapterOnPath: boolean): { command: string; args: string[] } {
+export function acpLaunchFor(def: ICliAgentDefinition | undefined, command: string, args: readonly string[], adapterOnPath: boolean, adapterBin?: string): { command: string; args: string[] } {
 	const launchArgs = def?.id === 'grok' ? grokAcpArgs(args) : args;
 	const adapter = def?.acpAdapter;
 	if (!adapter || !def.commands.includes(command)) {
@@ -128,9 +128,73 @@ export function acpLaunchFor(def: ICliAgentDefinition | undefined, command: stri
 	if (adapterOnPath) {
 		return { command: adapter.command, args: [] };
 	}
+	if (adapterBin) {
+		// The copy npx installed earlier, started directly: npx itself costs 0.5-1.5 s per spawn.
+		return { command: adapterBin, args: [] };
+	}
 	// The adapter version is pinned, so a cached copy is the right one: --prefer-offline skips the
 	// registry round trip npx makes on every spawn (a cold start of seconds, a failure offline).
 	return { command: isWindows ? 'npx.cmd' : 'npx', args: ['-y', '--prefer-offline', adapter.package] };
+}
+
+/** How long a failed lookup of the adapter's npx copy holds; the next npx run may install it. */
+const ADAPTER_BIN_MISS_TTL_MS = 60_000;
+const adapterBins = new WeakMap<IVoltStdioService, Map<string, { readonly at: number; readonly bin: Promise<string | undefined> }>>();
+
+/**
+ * The executable of the pinned adapter in npx's cache (`<npm cache>/_npx/<hash>/node_modules/.bin`),
+ * the very copy `npx -y --prefer-offline <package>` would run. Looked up once per window; a miss
+ * is asked again after a minute. Undefined on Windows (its bin is a `.cmd` shim) and when npx
+ * has not installed this version yet. {@link forgetAcpAdapterBin} drops a path that went away.
+ */
+export function resolveAcpAdapterBin(stdio: IVoltStdioService, adapter: IAcpAdapter): Promise<string | undefined> {
+	let cache = adapterBins.get(stdio);
+	if (!cache) {
+		cache = new Map();
+		adapterBins.set(stdio, cache);
+	}
+	const cached = cache.get(adapter.package);
+	if (cached) {
+		return cached.bin.then(bin => {
+			if (bin || Date.now() - cached.at < ADAPTER_BIN_MISS_TTL_MS || cache.get(adapter.package) !== cached) {
+				return bin;
+			}
+			cache.delete(adapter.package);
+			return resolveAcpAdapterBin(stdio, adapter);
+		});
+	}
+	const entry = { at: Date.now(), bin: findNpxAdapterBin(stdio, adapter).catch(() => undefined) };
+	cache.set(adapter.package, entry);
+	return entry.bin;
+}
+
+/** Forgets a resolved adapter path (the file is gone: npx's cache was cleaned). */
+export function forgetAcpAdapterBin(stdio: IVoltStdioService, adapter: IAcpAdapter): void {
+	adapterBins.get(stdio)?.delete(adapter.package);
+}
+
+async function findNpxAdapterBin(stdio: IVoltStdioService, adapter: IAcpAdapter): Promise<string | undefined> {
+	const at = adapter.package.lastIndexOf('@');
+	const name = at > 0 ? adapter.package.slice(0, at) : '';
+	const version = at > 0 ? adapter.package.slice(at + 1) : '';
+	// The values go into a shell command: only plain package names, versions and executable names.
+	if (isWindows || !name || !/^[\w.-]+$/.test(version) || !/^(@[\w.-]+\/)?[\w.-]+$/.test(name) || !/^[\w.-]+$/.test(adapter.command)) {
+		return undefined;
+	}
+	const versionPattern = `"version"[[:space:]]*:[[:space:]]*"${version.replace(/\./g, '\\.')}"`;
+	// npx records the spec it installed in `_npx.packages`; the installed package must be that version too.
+	const script = [
+		'cache="${npm_config_cache:-$HOME/.npm}"',
+		'for dir in "$cache"/_npx/*; do',
+		`  bin="$dir/node_modules/.bin/${adapter.command}"`,
+		`  if [ -x "$bin" ] && grep -qF '"${adapter.package}"' "$dir/package.json" 2>/dev/null && grep -qE '${versionPattern}' "$dir/node_modules/${name}/package.json" 2>/dev/null; then`,
+		'    printf "%s" "$bin"',
+		'    exit 0',
+		'  fi',
+		'done',
+	].join('\n');
+	const output = (await runCli(stdio, '/bin/sh', ['-c', script]))?.trim();
+	return output && output.startsWith('/') && !output.includes('\n') ? output : undefined;
 }
 
 /** Reads a file below the user's home directory through the shell, since the renderer has no home path. */

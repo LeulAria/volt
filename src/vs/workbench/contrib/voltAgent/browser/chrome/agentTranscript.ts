@@ -117,7 +117,7 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 			return;
 		}
 		flushSteps();
-		for (const block of splitMarkdownToBlocks(text, `md-${textIndex++}`)) {
+		for (const block of splitReplyText(text, `md-${textIndex++}`, segments?.length ? segments : undefined)) {
 			if (block.type === 'markdown') {
 				rows.push({ kind: 'markdown', id: block.id, content: block.content });
 			} else {
@@ -226,6 +226,32 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 	}
 	const grouped = groupSubagents(rows);
 	return streaming ? markLive(grouped) : grouped;
+}
+
+/** Each reply's last split per text id, kept with its segments; a streamed frame re-splits only the text that grew. */
+const replySplits = new WeakMap<readonly AgentSegment[], Map<string, { readonly text: string; readonly blocks: AgentBlock[] }>>();
+
+/**
+ * {@link splitMarkdownToBlocks}, remembered per reply and id: a streaming reply is rebuilt every
+ * frame, and its earlier stretches of text come back unchanged. The same text gives back the same
+ * block objects (and the state a card keeps on its block).
+ */
+function splitReplyText(text: string, id: string, owner: readonly AgentSegment[] | undefined): AgentBlock[] {
+	if (!owner) {
+		return splitMarkdownToBlocks(text, id);
+	}
+	let splits = replySplits.get(owner);
+	if (!splits) {
+		splits = new Map();
+		replySplits.set(owner, splits);
+	}
+	const cached = splits.get(id);
+	if (cached?.text === text) {
+		return cached.blocks;
+	}
+	const blocks = splitMarkdownToBlocks(text, id);
+	splits.set(id, { text, blocks });
+	return blocks;
 }
 
 /** Two or more subagent rows in a row become one group card, as T3 and Cursor show parallel subagents. */

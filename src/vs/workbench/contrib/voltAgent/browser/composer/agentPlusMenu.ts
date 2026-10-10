@@ -97,7 +97,7 @@ function actionItem(action: AgentPlusMenuAction, modelName: string | undefined):
 		case 'mcp':
 			return { id: action, label: localize('voltAgent.plusMcp', "MCP"), icon: createPlugIcon, trailingIcon: Codicon.chevronRight, data };
 		case 'schedule':
-			return { id: action, label: localize('voltAgent.plusSchedule', "Schedule…"), keywords: 'recurring repeat cron timer later automation', icon: Codicon.history, data };
+			return { id: action, label: localize('voltAgent.plusAutomation', "Automate…"), keywords: 'schedule recurring repeat cron timer later automation webhook trigger', icon: Codicon.zap, data };
 	}
 }
 

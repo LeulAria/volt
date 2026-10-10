@@ -133,7 +133,7 @@ function firstJsonObject(text: string): Record<string, unknown> | undefined {
 		return undefined;
 	}
 	try {
-		const parsed = JSON.parse(text.slice(start, end + 1));
+		const parsed: unknown = JSON.parse(text.slice(start, end + 1));
 		return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
 	} catch {
 		return undefined;

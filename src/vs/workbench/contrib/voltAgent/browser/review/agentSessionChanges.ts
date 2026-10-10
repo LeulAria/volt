@@ -115,22 +115,28 @@ export function sumAgentChangeStats(changes: readonly IAgentSessionFileChange[])
 export function fileChangesSignature(messages: readonly IAgentChangeTranscriptMessage[]): string {
 	const parts: string[] = [];
 	for (const message of messages) {
-		if (message.kind !== 'agent') {
-			continue;
-		}
-		let turn = '';
-		for (const segment of message.segments ?? []) {
-			if (segment.kind !== 'block' || segment.block.type !== 'file') {
-				continue;
-			}
-			const block = segment.block;
-			turn += `${block.id}|${block.path}|${block.verb}|${block.status}|${block.original?.length ?? -1}|${block.modified?.length ?? -1}|${block.unifiedDiff?.length ?? -1}|${block.additions ?? ''}|${block.deletions ?? ''};`;
-		}
+		const turn = messageFileChangesSignature(message);
 		if (turn) {
 			parts.push(`${message.id ?? ''}:${turn}`);
 		}
 	}
 	return parts.join('\n');
+}
+
+/** One reply's part of {@link fileChangesSignature}; empty for a user message or a reply that changed no file. */
+export function messageFileChangesSignature(message: IAgentChangeTranscriptMessage): string {
+	if (message.kind !== 'agent') {
+		return '';
+	}
+	let turn = '';
+	for (const segment of message.segments ?? []) {
+		if (segment.kind !== 'block' || segment.block.type !== 'file') {
+			continue;
+		}
+		const block = segment.block;
+		turn += `${block.id}|${block.path}|${block.verb}|${block.status}|${block.original?.length ?? -1}|${block.modified?.length ?? -1}|${block.unifiedDiff?.length ?? -1}|${block.additions ?? ''}|${block.deletions ?? ''};`;
+	}
+	return turn;
 }
 
 /** Decides from the path as the agent wrote it (before normalizing) whether a change counts. */

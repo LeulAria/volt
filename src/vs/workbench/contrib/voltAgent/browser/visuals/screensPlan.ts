@@ -135,7 +135,7 @@ function parseViewport(value: unknown): IScreenViewport | string {
 		if (preset) {
 			return preset;
 		}
-		const size = /^(\d{3,4})\s*[x×]\s*(\d{3,4})$/.exec(key);
+		const size = /^(\d{3,4})\s*[x\u00d7]\s*(\d{3,4})$/.exec(key);
 		if (size) {
 			const width = Number(size[1]);
 			return { id: key, label: `${size[1]}×${size[2]}`, width, height: Number(size[2]), mobile: width < 600, scale: width < 600 ? 2 : 1 };

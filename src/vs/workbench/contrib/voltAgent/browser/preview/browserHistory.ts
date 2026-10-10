@@ -245,10 +245,10 @@ export class VoltBrowserHistory extends Disposable implements IVoltBrowserHistor
 		this._onDidChange.fire();
 	}
 
-	private read<T>(key: string): T[] {
+	private read<T extends { readonly url: string }>(key: string): T[] {
 		try {
-			const raw = JSON.parse(this.storageService.get(key, StorageScope.APPLICATION, '[]'));
-			return Array.isArray(raw) ? raw.filter(item => item && typeof item.url === 'string') : [];
+			const raw: unknown = JSON.parse(this.storageService.get(key, StorageScope.APPLICATION, '[]'));
+			return Array.isArray(raw) ? raw.filter((item: { url?: unknown } | null): item is T => !!item && typeof item.url === 'string') : [];
 		} catch {
 			return [];
 		}

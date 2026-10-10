@@ -107,10 +107,16 @@ function fenceKey(value: string): string {
 	return `fence:${value.length}:${hash}`;
 }
 
+/** The marked extensions replies render with (KaTeX once loaded, footnotes): a lexer that splits a reply as the renderer will. */
+export function agentMarkedExtensions(win: CodeWindow): marked.MarkedExtension[] {
+	const katex = MarkedKatexSupport.getExtension(win, { throwOnError: false });
+	return katex ? [katex, footnoteExtension()] : [footnoteExtension()];
+}
+
 /** Render options for MarkdownRenderer.render: math, sanitizer for KaTeX output, and Cursor code cards. */
 export function agentMarkdownRenderOptions(win: CodeWindow, options: IAgentMarkdownOptions): Partial<MarkdownRenderOptions> {
 	const katex = MarkedKatexSupport.getExtension(win, { throwOnError: false });
-	const markedExtensions: marked.MarkedExtension[] = katex ? [katex, footnoteExtension()] : [footnoteExtension()];
+	const markedExtensions = agentMarkedExtensions(win);
 	return {
 		markedExtensions,
 		markedOptions: { gfm: true },
@@ -274,7 +280,7 @@ export function footnoteExtension(): marked.MarkedExtension {
 					return { type: 'voltFootnoteDef', raw: match[0], id: match[1], tokens: this.lexer.inlineTokens(match[2].trim()) };
 				},
 				renderer(this: marked.RendererThis, token: marked.Tokens.Generic) {
-					const n = numberFor(token.id);
+					const n = numberFor(token.id as string);
 					return `<ol class="volt-md-footnotes" start="${n}"><li>${this.parser.parseInline(token.tokens ?? [])} <span class="volt-md-footnote-back">\u21a9</span></li></ol>`;
 				},
 			},
@@ -287,7 +293,7 @@ export function footnoteExtension(): marked.MarkedExtension {
 					return match ? { type: 'voltFootnoteRef', raw: match[0], id: match[1] } : undefined;
 				},
 				renderer(token: marked.Tokens.Generic) {
-					return `<sup class="volt-md-footnote-ref">${numberFor(token.id)}</sup>`;
+					return `<sup class="volt-md-footnote-ref">${numberFor(token.id as string)}</sup>`;
 				},
 			},
 		],

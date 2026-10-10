@@ -1463,7 +1463,7 @@ html.volt-layout-agent-window body {
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle {
 	position: absolute;
 	top: calc((var(--volt-agent-titlebar-height, 35px) - 20px) / 2);
-	left: calc(8px + var(--volt-agent-logo-slot, 22px));
+	left: 30px;
 	z-index: 20;
 	display: inline-flex;
 	align-items: center;
@@ -1483,7 +1483,7 @@ html.volt-layout-agent-window body {
 }
 
 .monaco-workbench.volt-layout-agent.mac:not(.web):not(.fullscreen) .part.auxiliarybar > .volt-primary-sidebar-toggle {
-	left: calc(78px + var(--volt-agent-logo-slot, 22px));
+	left: 100px;
 }
 
 /* The app icon's bolt (brand/volt-icon.svg without its tile, transparent) before the sidebar toggle: in the sidebar while it is open, in the title bar once it is closed. */

@@ -10,6 +10,7 @@ import { CancellationToken, CancellationTokenSource } from '../../../../base/com
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { URI } from '../../../../base/common/uri.js';
+import { localize } from '../../../../nls.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
@@ -28,7 +29,7 @@ import { IVoltSessionContextService } from '../common/sessionContext.js';
 import './sessionContextService.js';
 import { ISearchService } from '../../search/common/search.js';
 import { evaluateAccess, memoKey } from '../common/access/accessBroker.js';
-import { DEFAULT_ACCESS_MODE, normalizeVoltAccessMode, VOLT_ACCESS_MODE_STORAGE_KEY, VOLT_ACCESS_PROJECT_RULES_STORAGE_KEY, VOLT_ACCESS_SAVED_RULES_STORAGE_KEY, VoltAccessMode } from '../common/access/accessModes.js';
+import { DEFAULT_ACCESS_MODE, isVoltAccessMode, normalizeVoltAccessMode, VOLT_ACCESS_CHATS_STORAGE_KEY, VOLT_ACCESS_MODE_STORAGE_KEY, VOLT_ACCESS_PROJECT_RULES_STORAGE_KEY, VOLT_ACCESS_SAVED_RULES_STORAGE_KEY, VoltAccessMode } from '../common/access/accessModes.js';
 import { modeOverlay, presetRules, SYSTEM_HARD_DENY } from '../common/access/accessPresets.js';
 import { AccessDecisionScope, IAccessDecision, IAccessGate, IAccessRequest, ICompiledPolicy, IExecutionReceipt, IPermissionRule, PermissionEffect } from '../common/access/accessTypes.js';
 import { compilePolicy } from '../common/access/policyCompiler.js';
@@ -42,7 +43,7 @@ import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKe
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { resolveTabModel } from '../common/models/modelAccess.js';
-import { IAgentRuntimeService, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltTaskModels } from '../common/runtime.js';
+import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltTaskModels } from '../common/runtime.js';
 import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
@@ -54,7 +55,7 @@ import { withPlanModeInstruction } from '../common/plans.js';
 import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService, VISUAL_TOOL_NAMES } from '../common/hostTools.js';
 import { IVoltMemoryService } from '../common/memory/voltMemory.js';
 import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQuestionResponse } from '../common/questions.js';
-import { AcpAgentProvider, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
+import { AcpAgentProvider, IAcpBackgroundTask, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
 import { AcpLoopDetector } from '../common/harness/acpLoopDetector.js';
 import { LOOP_NOTICE_TITLE } from '../common/harness/supervisor.js';
 import { DeepseekDirective, IDeepseekStep, runDeepseekLoop } from '../common/deepseek/loop.js';
@@ -76,17 +77,17 @@ import { alwaysRules, findInstruction, instructionsIndex, ISubagentDoc, rulesFor
 import { IVoltHookRunContext, IVoltHooksService } from '../common/hooks/voltHooks.js';
 import './hooks/voltHooksService.js';
 import { applyCompaction, COMPACTION_SYSTEM, compactionBoundary, compactionRequest, DEFAULT_COMPACTION, effectiveWindow, mechanicalSummary, pruneImages, serializeForSummary, shouldCompact } from '../common/harness/nativeCompaction.js';
-import { chooseEffort, EffortLevel } from '../common/deepseek/effort.js';
+import { chooseEffort, EffortLevel, higherEffort } from '../common/deepseek/effort.js';
 import { IToolDocuments } from './tools/fileTools.js';
 import { ISubagentRequest, NATIVE_ASK_QUESTION_TOOL_NAME } from './tools/metaTools.js';
 import { CodeIntelHost } from './host/codeIntelHost.js';
 import { McpHost } from './host/mcpHost.js';
 import { NativeJournal } from './history/nativeJournal.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
-import { IInstructionsSnapshot, loadInstructions } from './prompt/instructionsLoader.js';
+import { affectsInstructions, IInstructionsSnapshot, loadInstructions } from './prompt/instructionsLoader.js';
 import { ResourceMap } from '../../../../base/common/map.js';
 import { posix } from '../../../../base/common/path.js';
-import { isEqualOrParent, joinPath, relativePath } from '../../../../base/common/resources.js';
+import { isEqual, isEqualOrParent, joinPath, relativePath } from '../../../../base/common/resources.js';
 import { ITextFileService } from '../../textfile/common/textfiles.js';
 import { IPathService } from '../../path/common/pathService.js';
 import { IMarkerService } from '../../../../platform/markers/common/markers.js';
@@ -119,6 +120,8 @@ import { OllamaProvider } from './providers/ollama.js';
 import { createCompatProvider, createLMStudioProvider, createOpenAIProvider, createOpenRouterProvider } from './providers/openaiCompat.js';
 
 const RECEIPT_LIMIT = 500;
+/** Per-chat access picks kept; the oldest fall back to the default. */
+const ACCESS_CHATS_LIMIT = 500;
 /** Access-broker session id for Tab completions that ride an ACP agent. */
 const TAB_PREDICTION_SESSION_ID = 'volt-tab-prediction';
 /**
@@ -332,7 +335,21 @@ const SUBAGENT_TOOL_ALIASES: Record<string, readonly string[]> = {
 };
 /** Times stop hooks may send the agent back to work in one run. */
 const MAX_HOOK_FOLLOWUPS = 5;
-const INSTRUCTIONS_TTL_MS = 5_000;
+/**
+ * Skills and rules are kept until a file under an instruction folder changes (file events, or a
+ * write through Volt). The age limit only catches edits outside Volt to folders nothing watches.
+ */
+const INSTRUCTIONS_TTL_MS = 60_000;
+/** How long a send waits for MCP servers still connecting. They keep connecting and join the next turn. */
+const MCP_SEND_WAIT_MS = 150;
+
+/** What a native turn reads before its request is built. */
+interface INativeTurnInputs {
+	readonly projectInstructions: string | undefined;
+	readonly instructions: IInstructionsSnapshot;
+	readonly mcpTools: IVoltTool[];
+	readonly memoryContext: string | undefined;
+}
 /** Recap of turns an agent has not seen, in estimated tokens (a few thousand, not a second prompt). */
 /** Sessions a chat keeps warm for switching back (per chat); idle ones go after IDLE_AGENT_TTL_MS. */
 const MAX_PARKED_PER_CHAT = 2;
@@ -363,12 +380,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly healthTimer = this._register(new IntervalTimer());
 	private providerRefresh: Promise<void> | undefined;
 	private providerRefreshAgain = false;
+	/** The default for chats that never picked one (Settings). */
 	private accessMode: VoltAccessMode = DEFAULT_ACCESS_MODE;
+	/** Chats that picked their own access mode from the composer. */
+	private accessChats: Record<string, VoltAccessMode> = {};
 	private sandboxDefaults: IVoltSandboxSettings = DEFAULT_SANDBOX_SETTINGS;
 	private sandboxChats: Record<string, IVoltSandboxSettings> = {};
 	private projectRules: IPermissionRule[] = [];
 	private savedRules: IPermissionRule[] = [];
-	private compiledPolicy: ICompiledPolicy = compilePolicy({});
+	/** One compiled policy per access mode in use; rebuilt when rules change. */
+	private readonly policyByMode = new Map<VoltAccessMode, ICompiledPolicy>();
 	private tabAgent: ITabAgentSession | undefined;
 	private warmTabAgents: WarmPrintAgents | undefined;
 	private readonly policyMemo = new Map<string, IAccessDecision>();
@@ -383,6 +404,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly runPlans = new Map<string, Promise<IRunPlan>>();
 	private readonly projectInstructionsByRoot = new Map<string, Promise<string | undefined>>();
 	private readonly instructionsByRoot = new Map<string, { readonly at: number; readonly value: Promise<IInstructionsSnapshot> }>();
+	/** API keys by profile id, so a send does not decrypt over IPC every turn. Dropped when the secret changes. */
+	private readonly apiKeys = new Map<string, Promise<string | undefined>>();
 	/** Chats whose `sessionStart` hooks ran. */
 	private readonly hookStartedSessions = new Set<string>();
 	/** Times a `stop` hook sent the agent back to work in the current run, per chat. */
@@ -404,6 +427,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	/** Last known result of the project's test command per folder, valid until a file there changes. */
 	private readonly checkCache = new Map<string, ICheckReport>();
 	private readonly slowChecks = new Set<string>();
+	/** The test run started after a chat's last run ended (exec id), by chat. */
+	private readonly postRunChecks = new Map<string, string>();
+	/** CLI title generation waiting for the chat's first reply text (see send). */
+	private readonly deferredTitles = new Map<string, () => void>();
 
 	private readonly _onDidChangeCatalog = this._register(new Emitter<void>());
 	readonly onDidChangeCatalog: Event<void> = this._onDidChangeCatalog.event;
@@ -413,6 +440,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	readonly onDidChangeProviderStatus: Event<void> = this._onDidChangeProviderStatus.event;
 	private readonly _onDidChangeAccess = this._register(new Emitter<void>());
 	readonly onDidChangeAccess: Event<void> = this._onDidChangeAccess.event;
+	private readonly _onDidChangeAgentBackgroundTask = this._register(new Emitter<IVoltAgentBackgroundTask>());
+	readonly onDidChangeAgentBackgroundTask: Event<IVoltAgentBackgroundTask> = this._onDidChangeAgentBackgroundTask.event;
+	/** Which agent session runs each background task, for stopping it. */
+	private readonly backgroundTaskOwners = new Map<string, { readonly provider: AcpAgentProvider; readonly providerSessionId: string }>();
 	private readonly _onDidEmit = this._register(new Emitter<IVoltEventEnvelope>());
 	readonly onDidEmit: Event<IVoltEventEnvelope> = this._onDidEmit.event;
 	private readonly editBaselines: EditBaselineTracker;
@@ -461,7 +492,19 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.editBaselines = new EditBaselineTracker(fileService, (sessionId, path) => this.editableUri(sessionId, path));
 		this.registerProviders();
 		this.hostTools.setApprover({ approve: (request, token) => this.approveHostTool(request, token) });
-		this._register(fileService.onDidFilesChange(e => this.invalidateChecks([...e.rawAdded, ...e.rawUpdated, ...e.rawDeleted])));
+		this._register(fileService.onDidFilesChange(e => {
+			const changed = [...e.rawAdded, ...e.rawUpdated, ...e.rawDeleted];
+			this.invalidateChecks(changed);
+			this.invalidateInstructions(changed);
+		}));
+		this._register(fileService.onDidRunOperation(e => this.invalidateInstructions(e.target ? [e.resource, e.target.resource] : [e.resource])));
+		this._register(this.secretStorage.onDidChangeSecret(key => {
+			for (const id of [...this.apiKeys.keys()]) {
+				if (secretKeyForProfile(id) === key) {
+					this.apiKeys.delete(id);
+				}
+			}
+		}));
 		this._register(toDisposable(() => {
 			if (this.healthAfterRun !== undefined) {
 				clearTimeout(this.healthAfterRun);
@@ -728,7 +771,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!session.titleState && session.messages.filter(message => message.role === 'user').length === 1) {
 			session.titleState = 'pending';
 			const pinned = this.taskModels.title ? this.catalog.find(item => item.ref === this.taskModels.title && item.enabled) : undefined;
-			void this.generateTitle(session, request, pinned ?? catalogItem, !!pinned);
+			const titleItem = pinned ?? catalogItem;
+			if (titleItem?.kind === 'agent') {
+				// A CLI title is a process start (`claude -p`, `codex exec`): it waits for the first reply
+				// text, or the end of the run, so it does not compete with the turn's own startup.
+				this.deferredTitles.set(session.sessionId, () => void this.generateTitle(session, request, titleItem, !!pinned));
+			} else {
+				void this.generateTitle(session, request, titleItem, !!pinned);
+			}
 		}
 		const engine = catalogItem?.kind === 'agent' ? 'agent' : 'native';
 		const run = this.beginRun(session, request.mode, engine, sendAt);
@@ -842,7 +892,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!provider) {
 			return undefined;
 		}
-		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
+		const apiKey = await this.apiKey(profile);
 		const options = { ...this.resolvedOptions(item, undefined) };
 		const levels = item.optionDescriptors?.find(option => option.id === MODEL_OPTION_REASONING)?.options?.map(option => option.value) ?? [];
 		if (levels.length && !pinned) {
@@ -869,7 +919,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	/**
 	 * Gets an agent ready before the first message, so a send does not pay the cold start
 	 * (spawn, initialize, session/new, config: about 5-9 s for cursor-agent). The spare is not
-	 * bound to this chat until a send adopts it. Native models need no warm-up.
+	 * bound to this chat until a send adopts it. For a native model it fills the caches a send
+	 * reads before its request instead (see prewarmNative).
 	 */
 	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void {
 		const session = this.getOrCreateSession(sessionId) as ISessionState;
@@ -879,6 +930,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const ref = providerRef ?? session.providerRef ?? this.defaultRef(mode);
 		const item = this.catalog.find(candidate => candidate.ref === ref && candidate.enabled);
 		const profile = item ? this.profiles.find(candidate => candidate.id === item.profileId) : undefined;
+		if (item && profile && item.kind !== 'agent') {
+			this.prewarmNative(session, profile, mode);
+			return;
+		}
 		const provider = profile ? this.agentProviders.get(profile.providerId) : undefined;
 		if (!item || item.kind !== 'agent' || !profile || !provider) {
 			return;
@@ -904,6 +959,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		this.agentPool.ensure(spare);
+	}
+
+	/**
+	 * A native model's warm-up: fills what a send reads before its request (skills and rules,
+	 * project instructions, memory, hook definitions, the API key) and starts MCP servers, so the
+	 * send finds them cached. Every part is cached and shared, so calling this on each focus is cheap.
+	 */
+	private prewarmNative(session: ISessionState, profile: IProviderProfile, mode: VoltMode): void {
+		const root = this.executionRoot(session);
+		void this.nativeTurnInputs(root, modePolicy(mode).allowMcp);
+		void this.hooks.definitions(root?.fsPath).catch(() => undefined);
+		void this.apiKey(profile).catch(() => undefined);
 	}
 
 	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode, sandbox?: IAgentSandboxStart): IAgentStartRequest {
@@ -947,7 +1014,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			start: async alias => {
 				const handle = await provider.start(this.agentStartRequest(alias, profile, item, cwd, options, 'agent', sandbox));
 				try {
-					await provider.applyAccessPolicy?.(handle, this.compiledPolicy);
+					await provider.applyAccessPolicy?.(handle, this.policyFor(undefined));
 				} catch (err) {
 					await provider.dispose(handle).catch(() => undefined);
 					throw err;
@@ -970,7 +1037,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		this.disposeSessionAgent(session);
 		this.bindAgent(session, provider, item, cwd, handle);
-		await provider.applyAccessPolicy?.(handle, this.compiledPolicy);
+		await provider.applyAccessPolicy?.(handle, this.policyFor(session.sessionId));
 	}
 
 	private bindAgent(session: ISessionState, provider: IAgentProvider, item: IVoltCatalogItem, cwd: string | undefined, handle: IAgentSessionHandle): void {
@@ -1319,7 +1386,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!provider) {
 			throw new Error(`Unknown model provider ${profile.providerId}`);
 		}
-		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
+		const apiKey = await this.apiKey(profile);
 		const resolved = this.resolvedOptions(item, options);
 		if (resolved[MODEL_OPTION_REASONING] === 'auto') {
 			// One-shot completions (Tab, titles) want the first token now, not deep thought.
@@ -1544,7 +1611,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			if (!provider) {
 				return [];
 			}
-			const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
+			const apiKey = await this.apiKey(profile);
 			let models = await provider.listModels(profile, apiKey).catch(() => []);
 			if (profile.modelId && !models.some(m => m.id === profile.modelId)) {
 				models = [{ id: profile.modelId, label: profile.modelId, capabilities: DEFAULT_MODEL_CAPABILITIES }, ...models];
@@ -1711,16 +1778,74 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this._onDidChangeCatalog.fire();
 	}
 
-	getAccessMode(): VoltAccessMode {
-		return this.accessMode;
+	private onAgentBackgroundTask(provider: AcpAgentProvider, task: IAcpBackgroundTask): void {
+		if (!task.sessionId) {
+			return;
+		}
+		const chatId = this.chatFor(task.sessionId);
+		const key = `${chatId}\0${task.taskId}`;
+		if (task.state === 'running') {
+			this.backgroundTaskOwners.set(key, { provider, providerSessionId: task.providerSessionId });
+		} else {
+			this.backgroundTaskOwners.delete(key);
+		}
+		this._onDidChangeAgentBackgroundTask.fire({
+			chatId,
+			taskId: task.taskId,
+			label: task.description ?? task.name ?? task.taskType ?? 'Background task',
+			state: task.state,
+			...(task.summary ? { summary: task.summary } : {}),
+			...(task.outputFilePath ? { outputFilePath: task.outputFilePath } : {}),
+		});
 	}
 
-	async setAccessMode(mode: VoltAccessMode): Promise<void> {
-		this.accessMode = normalizeVoltAccessMode(mode);
+	async stopAgentBackgroundTask(chatId: string, taskId: string): Promise<void> {
+		const owner = this.backgroundTaskOwners.get(`${chatId}\0${taskId}`);
+		await owner?.provider.stopBackgroundTask(owner.providerSessionId, taskId);
+	}
+
+	getAccessMode(sessionId?: string): VoltAccessMode {
+		return (sessionId ? this.accessChats[sessionId] : undefined) ?? this.accessMode;
+	}
+
+	async setAccessMode(mode: VoltAccessMode, sessionId?: string): Promise<void> {
+		const next = normalizeVoltAccessMode(mode);
+		if (sessionId) {
+			// A chat's pick holds for that chat only; the default stays what Settings says.
+			if (this.accessChats[sessionId] === next) {
+				return;
+			}
+			const chats = { ...this.accessChats, [sessionId]: next };
+			const ids = Object.keys(chats);
+			for (const id of ids.slice(0, Math.max(0, ids.length - ACCESS_CHATS_LIMIT))) {
+				delete chats[id];
+			}
+			this.accessChats = chats;
+			this.storageService.store(VOLT_ACCESS_CHATS_STORAGE_KEY, JSON.stringify(this.accessChats), StorageScope.APPLICATION, StorageTarget.USER);
+			this._onDidChangeAccess.fire();
+			await this.pushPolicyToAgent(sessionId);
+			return;
+		}
+		this.accessMode = next;
 		this.storageService.store(VOLT_ACCESS_MODE_STORAGE_KEY, this.accessMode, StorageScope.APPLICATION, StorageTarget.USER);
-		this.recompilePolicy();
 		this._onDidChangeAccess.fire();
 		await this.pushPolicyToAgents();
+	}
+
+	/** The compiled rules for a chat's access mode (the default mode without a chat). */
+	private policyFor(sessionId: string | undefined): ICompiledPolicy {
+		const mode = this.getAccessMode(sessionId);
+		let policy = this.policyByMode.get(mode);
+		if (!policy) {
+			policy = compilePolicy({
+				system: SYSTEM_HARD_DENY,
+				preset: presetRules(mode),
+				project: this.projectRules,
+				session: this.savedRules,
+			});
+			this.policyByMode.set(mode, policy);
+		}
+		return policy;
 	}
 
 	getSandboxSettings(sessionId: string): IVoltSandboxSettings {
@@ -2344,9 +2469,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.finish(session, run, 'fail');
 			return;
 		}
+		// Reads that do not depend on the previous run (or on the prompt hooks) start now and run
+		// alongside the settle wait and the hooks: skills and rules, memory, MCP connections, the key.
+		const allowMcp = modePolicy(request.mode).allowMcp;
+		const early = this.nativeTurnInputs(this.executionRoot(session), allowMcp);
+		const apiKeyRead = this.apiKey(profile);
+		void apiKeyRead.catch(() => undefined);
 		// A cancelled run's tools may still be finishing; give them a moment before this one starts its own.
 		await this.waitSettled(previous, SETTLE_WAIT_NATIVE_MS);
-		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
+		const apiKey = await apiKeyRead;
 		const root = this.executionRoot(session);
 		const cwd = root?.fsPath;
 		await this.nativeRestores.get(session.sessionId);
@@ -2387,15 +2518,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const promptText = [request.text, pasted, hookNotes.length ? `<hook_context>\n${hookNotes.join('\n\n')}\n</hook_context>` : undefined].filter(Boolean).join('\n\n');
 		this.syncNativeTranscript(session, state, promptText, images);
 
-		const [projectInstructions, instructions, mcpTools, memoryContext] = await Promise.all([
-			this.workspaceProjectInstructions(root),
-			this.workspaceInstructions(root),
-			// MCP servers get a short, bounded wait: a slow server joins the next run instead of stalling this one.
-			modePolicy(request.mode).allowMcp
-				? this.pathService.userHome().catch(() => undefined).then(home => this.mcpHost.tools(root, home, transcript.length > 1 ? 1_500 : 4_000)).catch(() => [])
-				: Promise.resolve([]),
-			this.memory.context().catch(() => undefined),
-		]);
+		// The root can only differ from the early read if the chat moved while the previous run settled.
+		const { projectInstructions, instructions, mcpTools, memoryContext } = await (isEqual(early.root, root) ? early : this.nativeTurnInputs(root, allowMcp)).read();
 		if (!this.isCurrent(session, run)) {
 			return;
 		}
@@ -2459,6 +2583,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				emit,
 				tool: name => registry.get(name),
 				cwd,
+				sessionId: session.sessionId,
 				contextWindow,
 				maxOutputTokens: 128_000,
 				prepareTurn: async (messages, step) => {
@@ -2582,7 +2707,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!descriptor || options[MODEL_OPTION_REASONING] !== 'auto') {
 			return options;
 		}
-		const level = chooseEffort(request.text, { mode: request.mode, previous: state.effort, attachments: attachmentNames(request).length });
+		// The effort is part of the cached prompt: a change re-processes the whole chat. Within a chat
+		// Auto only ever raises it, so a short follow-up does not throw away a long cached prefix.
+		const chosen = chooseEffort(request.text, { mode: request.mode, previous: state.effort, attachments: attachmentNames(request).length });
+		const level = state.effort ? higherEffort(chosen, state.effort) : chosen;
 		state.effort = level;
 		const values = (descriptor.options ?? []).map(option => option.value).filter(value => value !== 'auto' && value !== 'off');
 		options[MODEL_OPTION_REASONING] = closestLevel(level, values) ?? level;
@@ -2778,7 +2906,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (started.blocked !== undefined || started.stopRun) {
 			return { text: `A hook did not let the ${label} subagent start: ${started.blocked ?? started.stopRun}`, isError: true };
 		}
-		const apiKey = profile.hasSecret ? await this.secretStorage.get(secretKeyForProfile(profile.id)) : undefined;
+		const apiKey = await this.apiKey(profile);
 		const background = !!definition?.background;
 		const allowed = this.subagentToolNames(request, definition, background);
 		const writes = !!definition && !definition.readonly;
@@ -2840,6 +2968,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					},
 					tool: name => registry.get(name),
 					cwd: root?.fsPath,
+					sessionId: session.sessionId,
 				}, {
 					messages: [{ role: 'user', content: request.prompt }],
 					token: source.token,
@@ -3016,7 +3145,61 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return `<skill name="${doc.name}">\n${doc.body}\n</skill>${files}`;
 	}
 
-	/** Skills and rules, reloaded at most every few seconds so edits to them apply to the next run. */
+	/**
+	 * What a native turn reads before its request. The file reads start at once; MCP servers start
+	 * connecting at once too, but the tool list is taken when `read` is called, so servers that come
+	 * up meanwhile (during the settle wait and the prompt hooks) are in it.
+	 */
+	private nativeTurnInputs(root: URI | undefined, allowMcp: boolean): { readonly root: URI | undefined; read(): Promise<INativeTurnInputs> } {
+		const home = this.pathService.userHome().catch(() => undefined);
+		const projectInstructions = this.workspaceProjectInstructions(root);
+		const instructions = this.workspaceInstructions(root);
+		const memoryContext = this.memory.context().catch(() => undefined);
+		if (allowMcp) {
+			void home.then(dir => this.mcpHost.prewarm(root, dir)).catch(() => undefined);
+		}
+		return {
+			root,
+			read: async () => {
+				const [project, snapshot, mcpTools, memory] = await Promise.all([
+					projectInstructions,
+					instructions,
+					// Never held for a server still starting: it joins the next turn instead.
+					allowMcp ? home.then(dir => this.mcpHost.tools(root, dir, MCP_SEND_WAIT_MS)).catch(() => []) : Promise.resolve([]),
+					memoryContext,
+				]);
+				return { projectInstructions: project, instructions: snapshot, mcpTools, memoryContext: memory };
+			},
+		};
+	}
+
+	/** The profile's API key, read from secret storage once and kept until the secret changes. */
+	private apiKey(profile: IProviderProfile): Promise<string | undefined> {
+		if (!profile.hasSecret) {
+			return Promise.resolve(undefined);
+		}
+		const cached = this.apiKeys.get(profile.id);
+		if (cached) {
+			return cached;
+		}
+		const value = this.secretStorage.get(secretKeyForProfile(profile.id));
+		this.apiKeys.set(profile.id, value);
+		value.catch(() => {
+			if (this.apiKeys.get(profile.id) === value) {
+				this.apiKeys.delete(profile.id);
+			}
+		});
+		return value;
+	}
+
+	/** Drops cached skills and rules when a file under an instruction folder changed. */
+	private invalidateInstructions(resources: readonly URI[]): void {
+		if (this.instructionsByRoot.size && resources.some(affectsInstructions)) {
+			this.instructionsByRoot.clear();
+		}
+	}
+
+	/** Skills and rules, kept until one of their files changes (see INSTRUCTIONS_TTL_MS). */
 	private workspaceInstructions(root: URI | undefined): Promise<IInstructionsSnapshot> {
 		const key = root?.toString() ?? '';
 		const cached = this.instructionsByRoot.get(key);
@@ -3039,7 +3222,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (tool.group === 'meta' || (tool.group === 'shell' && tool.parallelSafe)) {
 			return 'allowed-once';
 		}
-		const knobs = deepseekKnobs(this.accessMode);
+		const knobs = deepseekKnobs(this.getAccessMode(session.sessionId));
 		const decision = this.evaluateAccessRequest(this.accessRequest(session, runId, profile, call, tool), false) as IAccessDecision;
 		if (decision.effect === 'allow') {
 			return 'allowed-once';
@@ -3073,7 +3256,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (tool.group === 'meta' || (tool.group === 'shell' && tool.parallelSafe)) {
 			return 'allowed-once';
 		}
-		const knobs = deepseekKnobs(this.accessMode);
+		const knobs = deepseekKnobs(this.getAccessMode(session.sessionId));
 		const decision = await this.evaluateAccessRequest(this.accessRequest(session, runId, profile, call, tool), knobs.approval === 'ask');
 		const step = resolveApproval({
 			policy: knobs.approval,
@@ -3395,7 +3578,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.agentHandle = resumed;
 		session.agentCwd = cwd;
 		session.agentUsedAt = Date.now();
-		await provider.applyAccessPolicy?.(resumed, this.compiledPolicy);
+		await provider.applyAccessPolicy?.(resumed, this.policyFor(session.sessionId));
 		return true;
 	}
 
@@ -3555,6 +3738,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		void run.settled.p.then(() => run.cancel.dispose());
 		this.recordRun(session, run);
 		this.afterRun(run);
+		if (reason === 'done') {
+			// Once the run's tools have unwound; the turn is already over for the user.
+			void run.settled.p.then(() => this.checkAfterRun(session, run));
+		}
 	}
 
 	/** Timings to the log and the trace, a sample to the eval ledger. */
@@ -3606,6 +3793,13 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			listener(envelope);
 		}
 		this._onDidEmit.fire(envelope);
+		if (this.deferredTitles.size && (event.type === 'text.delta' || event.type === 'run.end')) {
+			const startTitle = this.deferredTitles.get(session.sessionId);
+			if (startTitle) {
+				this.deferredTitles.delete(session.sessionId);
+				startTitle();
+			}
+		}
 		const baselines = this.editBaselines.observe(session.sessionId, event);
 		if (baselines) {
 			void baselines.then(found => {
@@ -3791,12 +3985,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/**
-	 * Snapshots the project's test status before the run's changes, so the end of the run can tell
-	 * new failures from old ones. Write modes only, projects that declare a test command only, and
-	 * only when the access policy already lets that command run without asking: Volt never prompts
-	 * for its own checks. A cached result for the same files is reused.
+	 * Gets the regression gate ready without running anything: the project's test command (write
+	 * modes, projects that declare one, and only when the access policy already lets it run without
+	 * asking: Volt never prompts for its own checks), with a cached result for the same files as the
+	 * baseline. The tests themselves run after the run ends (see checkAfterRun), so they never compete
+	 * with the agent for CPU and never hold the turn open.
 	 */
 	private startQualityGate(session: ISessionState, run: IRunState): void {
+		// A check left over from the previous turn would race this run's changes.
+		this.cancelPostRunCheck(session.sessionId);
 		if (!modePolicy(run.mode).allowWrites) {
 			return;
 		}
@@ -3810,63 +4007,83 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				return;
 			}
 			const rootKey = root.toString();
-			const quality: IQualityRun = { root, rootKey, command, baseline: Promise.resolve(undefined), tainted: false };
-			run.quality = quality;
+			// A change made since the send already dropped the cached result, so this is never stale.
 			const cached = this.checkCache.get(rootKey);
-			if (cached && isSameCommand(cached.command, command)) {
-				quality.baseline = Promise.resolve(cached);
-				return;
-			}
-			if (run.lastMutation || this.slowChecks.has(rootKey)) {
-				return;
-			}
-			const id = `volt-check-${generateUuid()}`;
-			quality.baselineExecId = id;
-			quality.baseline = this.runCheck(root, command, id).then(report => {
-				if (quality.baselineExecId === id) {
-					quality.baselineExecId = undefined;
-				}
-				if (!report || quality.tainted) {
-					return undefined;
-				}
-				if (report.durationMs > SLOW_CHECK_MS) {
-					this.slowChecks.add(rootKey);
-				}
-				this.cacheCheck(root, report);
-				return report;
-			});
+			const baseline = cached && isSameCommand(cached.command, command) ? cached : undefined;
+			run.quality = { root, rootKey, command, baseline: Promise.resolve(baseline), tainted: false };
 		}, err => this.logService.trace('[volt] project checks unavailable', err));
 	}
 
 	/**
-	 * Called when the engine wants to stop. Runs the tests again if the run changed files (unless the
-	 * agent already ran the same command after its last change and it passed), compares with the
-	 * baseline, and looks at open to-dos. Returns the message that sends the agent back, at most once
-	 * per reason, or undefined to let it stop.
+	 * After a run that changed files ends: runs the project's tests in the background (unless the
+	 * agent already ran them after its last change and they passed, or they are known to be slow),
+	 * compares with the baseline, and reports new failures as a notice. The result also becomes the
+	 * baseline of the next run. The next send in the chat stops a check that is still running.
+	 */
+	private checkAfterRun(session: ISessionState, run: IRunState): void {
+		const quality = run.quality;
+		// `session.run` moved on when the chat already sent again: that run's changes are under way.
+		if (!quality || session.run !== run || !modePolicy(run.mode).allowWrites || !run.lastMutation || run.lastTestPass >= run.lastMutation || this.slowChecks.has(quality.rootKey)) {
+			return;
+		}
+		const id = `volt-check-${generateUuid()}`;
+		this.postRunChecks.set(session.sessionId, id);
+		void quality.baseline.then(async cached => {
+			const before = cached ?? quality.agentBaseline;
+			const after = this.postRunChecks.get(session.sessionId) === id ? await this.runCheck(quality.root, quality.command, id) : undefined;
+			if (this.postRunChecks.get(session.sessionId) !== id) {
+				return;
+			}
+			this.postRunChecks.delete(session.sessionId);
+			if (!after) {
+				return;
+			}
+			if (after.durationMs > SLOW_CHECK_MS) {
+				this.slowChecks.add(quality.rootKey);
+			}
+			this.cacheCheck(quality.root, after);
+			const verdict = regressionVerdict(before, after);
+			if (!verdict.regressed) {
+				return;
+			}
+			run.regressed = true;
+			const count = verdict.newFailures.length;
+			const listed = verdict.newFailures.slice(0, 5).map(name => `- ${name}`).join('\n');
+			this.emit(session, run.runId, {
+				type: 'notice',
+				severity: 'warning',
+				title: count
+					? localize('volt.check.newFailures', "{0} test(s) that passed before this run now fail.", count)
+					: localize('volt.check.regressed', "The tests passed before this run and fail now."),
+				description: [
+					verdict.detail,
+					listed || undefined,
+					localize('volt.check.followUp', "Volt ran `{0}` after the run. Ask the agent to fix the failures, or review the changes.", quality.command),
+				].filter(Boolean).join('\n'),
+			});
+		}).catch(err => this.logService.trace('[volt] post-run check failed', err));
+	}
+
+	/** Stops the chat's post-run check, if one is still running. */
+	private cancelPostRunCheck(sessionId: string): void {
+		const id = this.postRunChecks.get(sessionId);
+		if (id) {
+			this.postRunChecks.delete(sessionId);
+			void this.stdio.cancelExec(id).catch(() => undefined);
+		}
+	}
+
+	/**
+	 * Called when the engine wants to stop: open to-dos may send the agent back, once. The tests are
+	 * not run here, so the run ends as soon as the agent is done; checkAfterRun reports a regression
+	 * afterwards. Returns the message that sends the agent back, or undefined to let it stop.
 	 */
 	private async qualityContinuation(session: ISessionState, run: IRunState): Promise<string | undefined> {
 		if (!this.isCurrent(session, run) || run.cancel.token.isCancellationRequested) {
 			return undefined;
 		}
 		const writes = modePolicy(session.mode).allowWrites;
-		const quality = run.quality;
-		let verdict: ReturnType<typeof regressionVerdict> | undefined;
-		let after: ICheckReport | undefined;
-		if (writes && quality && !run.continued.regression && run.lastMutation && run.lastTestPass < run.lastMutation) {
-			const before = await quality.baseline ?? quality.agentBaseline;
-			if (before && this.isCurrent(session, run)) {
-				after = await this.runCheck(quality.root, quality.command, `volt-check-${generateUuid()}`, run.cancel.token);
-				if (after && this.isCurrent(session, run)) {
-					verdict = regressionVerdict(before, after);
-					run.regressed = verdict.regressed;
-					this.cacheCheck(quality.root, after);
-				}
-			}
-		}
-		if (!this.isCurrent(session, run)) {
-			return undefined;
-		}
-		const decision = decideContinuation({ writes, verdict, after, todos: run.plan, used: run.continued });
+		const decision = decideContinuation({ writes, verdict: undefined, after: undefined, todos: run.plan, used: run.continued });
 		if (!decision.message) {
 			return undefined;
 		}
@@ -3902,8 +4119,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			risk: classifyRisk('shell', command),
 			createdAt: Date.now(),
 		};
-		const policy: ICompiledPolicy = { ...this.compiledPolicy, overlay: compilePolicy({ overlay: modeOverlay(session.mode) }).overlay };
-		return evaluateAccess(request, policy, { accessMode: this.accessMode }).effect === 'allow';
+		const policy: ICompiledPolicy = { ...this.policyFor(session.sessionId), overlay: compilePolicy({ overlay: modeOverlay(session.mode) }).overlay };
+		return evaluateAccess(request, policy, { accessMode: this.getAccessMode(session.sessionId) }).effect === 'allow';
 	}
 
 	private async runCheck(root: URI, command: string, id: string, token?: CancellationToken): Promise<ICheckReport | undefined> {
@@ -4000,6 +4217,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			provider.setFileWriteObserver(write => this.onAcpFileWrite(write));
 			provider.setQuestionAsker((sessionId, runId, draft) => this.askQuestions(sessionId, runId, draft));
 			provider.setSupervisionOptions(ACP_SUPERVISION);
+			this._register(provider.onDidChangeBackgroundTasks(task => this.onAgentBackgroundTask(provider, task)));
 			this.agentProviders.set(provider.id, provider);
 		}
 		const generic = new AcpAgentProvider('acp-generic', 'Agent', 'agent', ['acp'], this.stdio, this.workspace, this.fileService, this.logService, this.hostTools);
@@ -4007,6 +4225,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		generic.setFileWriteObserver(write => this.onAcpFileWrite(write));
 		generic.setQuestionAsker((sessionId, runId, draft) => this.askQuestions(sessionId, runId, draft));
 		generic.setSupervisionOptions(ACP_SUPERVISION);
+		this._register(generic.onDidChangeBackgroundTasks(task => this.onAgentBackgroundTask(generic, task)));
 		this.agentProviders.set(generic.id, generic);
 		this._register(toDisposable(() => {
 			for (const provider of this.agentProviders.values()) {
@@ -4046,6 +4265,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.modeProfiles = this.readJson(VOLT_MODE_PROFILES_STORAGE_KEY, {});
 		this.modelOptions = this.readJson(VOLT_MODEL_OPTIONS_STORAGE_KEY, {});
 		this.accessMode = normalizeVoltAccessMode(this.storageService.get(VOLT_ACCESS_MODE_STORAGE_KEY, StorageScope.APPLICATION));
+		const storedChats = this.readJson<Record<string, unknown>>(VOLT_ACCESS_CHATS_STORAGE_KEY, {});
+		this.accessChats = Object.fromEntries(Object.entries(storedChats).filter((entry): entry is [string, VoltAccessMode] => isVoltAccessMode(entry[1])));
 		const storedSandbox = this.readJson<{ defaults?: unknown; chats?: Record<string, unknown> }>(VOLT_SANDBOX_STORAGE_KEY, {});
 		this.sandboxDefaults = normalizeSandboxSettings(storedSandbox.defaults);
 		this.sandboxChats = Object.fromEntries(Object.entries(storedSandbox.chats ?? {}).map(([id, value]) => [id, normalizeSandboxSettings(value)]));
@@ -4228,7 +4449,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			const decision: IAccessDecision = { requestId: request.id, effect: 'ask', scope: 'once', policySource: request.reason };
 			return settleAsk ? this.askAccess(request, decision) : decision;
 		}
-		const key = `${mode}\0${memoKey(request.action, request.resource.value)}`;
+		const accessMode = this.getAccessMode(request.sessionId);
+		const key = `${accessMode}\0${mode}\0${memoKey(request.action, request.resource.value)}`;
 		const cached = this.policyMemo.get(key);
 		if (cached && cached.effect !== 'ask') {
 			const decision = { ...cached, requestId: request.id };
@@ -4239,12 +4461,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return decision;
 		}
 		const policy: ICompiledPolicy = {
-			...this.compiledPolicy,
+			...this.policyFor(request.sessionId),
 			overlay: compilePolicy({ overlay: modeOverlay(mode) }).overlay,
 		};
 		const decision = evaluateAccess(request, policy, {
-			accessMode: this.accessMode,
-			delegateMedium: accessBridgeFor(request.providerId).delegatesMediumReview === true && this.accessMode === 'auto',
+			accessMode,
+			delegateMedium: accessBridgeFor(request.providerId).delegatesMediumReview === true && accessMode === 'auto',
 		});
 		if (decision.effect === 'allow') {
 			this.policyMemo.set(key, decision);
@@ -4323,23 +4545,26 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	private recompilePolicy(): void {
-		this.compiledPolicy = compilePolicy({
-			system: SYSTEM_HARD_DENY,
-			preset: presetRules(this.accessMode),
-			project: this.projectRules,
-			session: this.savedRules,
-		});
+		this.policyByMode.clear();
 		this.policyMemo.clear();
 	}
 
 	private async pushPolicyToAgents(): Promise<void> {
 		for (const session of this.sessions.values()) {
 			if (session.agentHandle && session.agentProviderId) {
-				await this.agentProviders.get(session.agentProviderId)?.applyAccessPolicy?.(session.agentHandle, this.compiledPolicy);
+				await this.agentProviders.get(session.agentProviderId)?.applyAccessPolicy?.(session.agentHandle, this.policyFor(session.sessionId));
 			}
 		}
 		for (const spare of this.agentPool.readySpares()) {
-			await this.agentProviders.get(spare.providerId)?.applyAccessPolicy?.(spare.handle, this.compiledPolicy);
+			await this.agentProviders.get(spare.providerId)?.applyAccessPolicy?.(spare.handle, this.policyFor(undefined));
+		}
+	}
+
+	/** A chat changed its access mode: its running agent switches now, mid-turn included. */
+	private async pushPolicyToAgent(sessionId: string): Promise<void> {
+		const session = this.sessions.get(sessionId);
+		if (session?.agentHandle && session.agentProviderId) {
+			await this.agentProviders.get(session.agentProviderId)?.applyAccessPolicy?.(session.agentHandle, this.policyFor(sessionId));
 		}
 	}
 

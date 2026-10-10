@@ -380,7 +380,7 @@ export class AgentRunGroupEditor extends EditorPane {
 			append(row, $('span.path')).textContent = entry.oldPath ? `${entry.oldPath} → ${entry.path}` : entry.path;
 			const stat = append(row, $('span.stat'));
 			append(stat, $('span.add')).textContent = entry.binary ? '' : `+${entry.additions}`;
-			append(stat, $('span.del')).textContent = entry.binary ? localize('voltRun.binary', "binary") : `−${entry.deletions}`;
+			append(stat, $('span.del')).textContent = entry.binary ? localize('voltRun.binary', "binary") : `\u2212${entry.deletions}`;
 			this.renderStore.add(addDisposableListener(row, 'click', () => void this.openDiff('base', run.id)));
 		}
 	}
@@ -445,19 +445,19 @@ export class AgentRunGroupEditor extends EditorPane {
 			}
 			return valueEl;
 		};
-		const time = metric(localize('voltRun.time', "Time"), run.firstStartedAt ? formatRunTime(runWorkMs(run, now)) : '—');
+		const time = metric(localize('voltRun.time', "Time"), run.firstStartedAt ? formatRunTime(runWorkMs(run, now)) : '\u2014');
 		if (run.activeSince !== undefined) {
 			time.dataset.runTime = run.id;
 		}
 		metric(localize('voltRun.tokens', "Tokens"), formatRunTokens(run));
 		metric(localize('voltRun.cost', "Cost"), formatRunCost(run));
-		metric(localize('voltRun.files', "Files"), run.stats ? String(run.stats.files) : '—');
+		metric(localize('voltRun.files', "Files"), run.stats ? String(run.stats.files) : '\u2014');
 		const lines = metric(localize('voltRun.lines', "Lines"), '');
 		if (run.stats) {
 			append(lines, $('span.add')).textContent = `+${run.stats.additions}`;
-			append(lines, $('span.del')).textContent = ` −${run.stats.deletions}`;
+			append(lines, $('span.del')).textContent = ` \u2212${run.stats.deletions}`;
 		} else {
-			lines.textContent = '—';
+			lines.textContent = '\u2014';
 		}
 
 		if (run.setup.steps.length || run.setup.state === 'failed' || run.setup.state === 'cancelled' || run.setup.state === 'worktree') {

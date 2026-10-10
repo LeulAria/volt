@@ -571,7 +571,7 @@ export class VoltExternalMcpMainService extends Disposable implements IVoltExter
 		let message: IJsonRpc | IJsonRpc[];
 		try {
 			const body = await readBody(req, MAX_BODY_BYTES);
-			message = body ? JSON.parse(body) : {};
+			message = body ? JSON.parse(body) as IJsonRpc | IJsonRpc[] : {};
 		} catch (err) {
 			return this.json(res, err instanceof HttpError ? err.status : 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
 		}
@@ -757,8 +757,8 @@ async function readParams(req: http.IncomingMessage): Promise<Record<string, unk
 	const type = (req.headers['content-type'] ?? '').toLowerCase();
 	if (type.includes('application/json')) {
 		try {
-			const parsed = JSON.parse(body || '{}');
-			return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+			const parsed: unknown = JSON.parse(body || '{}');
+			return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
 		} catch {
 			throw new HttpError(400, 'Body is not JSON');
 		}

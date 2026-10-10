@@ -26,11 +26,11 @@ export function formatRunTime(ms: number): string {
 }
 
 export function formatRunTokens(run: Pick<IRunGroupRun, 'usage'>): string {
-	return run.usage.tokens ? formatTokens(run.usage.tokens) : '—';
+	return run.usage.tokens ? formatTokens(run.usage.tokens) : '\u2014';
 }
 
 export function formatRunCost(run: Pick<IRunGroupRun, 'usage'>): string {
-	return run.usage.costUsd !== undefined ? formatCost(run.usage.costUsd) : '—';
+	return run.usage.costUsd !== undefined ? formatCost(run.usage.costUsd) : '\u2014';
 }
 
 /** "Creating worktree", "Setting up 1/2", "Working 1m 05s", "Done", ... */

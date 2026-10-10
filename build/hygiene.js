@@ -21,7 +21,8 @@ const copyrightHeaderEnd = [
 ];
 const microsoftCopyright = ' *  Copyright (c) Microsoft Corporation. All rights reserved.';
 const voltCopyright = ' *  Copyright (c) Volt ADK. All rights reserved.';
-const voltFolderRe = /(?:^|[\\/])[^\\/]*volt[^\\/]*[\\/]/i;
+// Volt's own files: anything under a volt* folder, or a volt* file next to upstream code.
+const voltPathRe = /(?:^|[\\/])[^\\/]*volt[^\\/]*(?:[\\/]|$)/i;
 
 /**
  * @param {string[] | NodeJS.ReadWriteStream} some
@@ -108,7 +109,7 @@ function hygiene(some, linting = true) {
 
 	const copyrights = es.through(function (file) {
 		const lines = file.__lines;
-		const expectedOwner = voltFolderRe.test(file.relative) ? voltCopyright : microsoftCopyright;
+		const expectedOwner = voltPathRe.test(file.relative) ? voltCopyright : microsoftCopyright;
 		const headerOk = lines[0] === copyrightHeaderStart
 			&& lines[1] === expectedOwner
 			&& lines[2] === copyrightHeaderEnd[0]

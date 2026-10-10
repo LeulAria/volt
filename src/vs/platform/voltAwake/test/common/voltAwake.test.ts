@@ -98,16 +98,18 @@ suite('Volt awake parsers', () => {
 	test('powercfg output, English and German (labels are localized)', () => {
 		assert.strictEqual(parseActiveSchemeGuid('Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)'), '381b4222-f694-41f0-9685-ff5bb260df2e');
 		assert.strictEqual(parseActiveSchemeGuid('GUID des Energieschemas: 381B4222-F694-41F0-9685-FF5BB260DF2E  (Ausbalanciert)'), '381b4222-f694-41f0-9685-ff5bb260df2e');
-		const english = `Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)
-  Subgroup GUID: 4f971e89-eebd-4455-a8de-9e59040e7347  (Power buttons and lid)
-    Power Setting GUID: 5ca83367-6e45-459f-a27b-476b1d01c936  (Lid close action)
-      Possible Setting Index: 000
-      Possible Setting Friendly Name: Do nothing
-      Possible Setting Index: 001
-      Possible Setting Friendly Name: Sleep
-    Current AC Power Setting Index: 0x00000001
-    Current DC Power Setting Index: 0x00000002
-`;
+		const english = [
+			'Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)',
+			'  Subgroup GUID: 4f971e89-eebd-4455-a8de-9e59040e7347  (Power buttons and lid)',
+			'    Power Setting GUID: 5ca83367-6e45-459f-a27b-476b1d01c936  (Lid close action)',
+			'      Possible Setting Index: 000',
+			'      Possible Setting Friendly Name: Do nothing',
+			'      Possible Setting Index: 001',
+			'      Possible Setting Friendly Name: Sleep',
+			'    Current AC Power Setting Index: 0x00000001',
+			'    Current DC Power Setting Index: 0x00000002',
+			'',
+		].join('\n');
 		assert.deepStrictEqual(parseLidAction(english), { ac: 1, dc: 2 });
 		const german = english.replace('Current AC Power Setting Index', 'Aktueller Wechselstrom-Einstellungsindex').replace('Current DC Power Setting Index', 'Aktueller Gleichstrom-Einstellungsindex');
 		assert.deepStrictEqual(parseLidAction(german), { ac: 1, dc: 2 });

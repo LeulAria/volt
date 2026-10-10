@@ -47,7 +47,7 @@ class FakeAgentStdio {
 	initMeta: Json | undefined;
 	steeringOutcome = 'injected';
 	/** What each new session starts with; every process gets its own copy. */
-	configOptions: Json[] = JSON.parse(JSON.stringify(CONFIG_OPTIONS));
+	configOptions: Json[] = JSON.parse(JSON.stringify(CONFIG_OPTIONS)) as Json[];
 	private readonly sessionConfig = new Map<string, Json[]>();
 
 	constructor(store: Pick<DisposableStore, 'add'>) {
@@ -86,7 +86,7 @@ class FakeAgentStdio {
 			case '_session/steering':
 				return reply({ outcome: this.steeringOutcome });
 			case 'session/new':
-				this.sessionConfig.set(process, JSON.parse(JSON.stringify(this.configOptions)));
+				this.sessionConfig.set(process, JSON.parse(JSON.stringify(this.configOptions)) as Json[]);
 				return reply({ sessionId: `acp-${process}`, configOptions: this.sessionConfig.get(process), modes: { currentModeId: 'agent', availableModes: [{ id: 'agent' }, { id: 'plan' }, { id: 'ask' }] } });
 			case 'session/set_config_option': {
 				const config = this.sessionConfig.get(process) ?? [];

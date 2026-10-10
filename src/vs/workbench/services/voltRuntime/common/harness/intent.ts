@@ -37,6 +37,8 @@ export interface IIntent {
 	readonly wantsScreens?: boolean;
 	/** How they asked to be answered - form, completeness, lookup. Every lane reads this. */
 	readonly shape: IRequestShape;
+	/** Something long-running is involved: a server, a watcher, Docker. Managed terminals fit. */
+	readonly wantsServices?: boolean;
 }
 
 export interface IIntentContext {
@@ -87,6 +89,8 @@ const WORKSPACE_REF = /\b(this|the|our|my) (repo|repository|code ?base|project|a
  * The user wants to see the running thing. Pronouns ("it", "this") only count after a visual
  * verb ("show me it", "open this"): "check it with a simulation" or "run this repo's tests" is not a preview.
  */
+/** Long-running things: containers, servers, watchers, daemons. */
+const SERVICE_INTENT = /\b(?:docker|compose|container|kubernetes|k8s|dev ?server|web ?server|(?:start|run|launch|boot|restart|spin up)\b[^.?!]{0,30}\b(?:server|service|api|backend|database|db|redis|postgres|mongo|stack|worker|queue|app)|watch mode|watcher|hot reload|localhost:\d+)\b/i;
 const PREVIEW_INTENT = /\b(?:preview|open|show|see|view|look at)\b[^.?!]{0,40}\b(?:app|site|website|page|server|project|frontend|front-end|ui|it|this|the (?:thing|result|game|demo)|in (?:the |a )?browser|locally|on localhost)\b|\b(?:run|start|launch|serve|spin up|boot)\b[^.?!]{0,30}\b(?:app|site|website|page|(?:dev |web |http )?server|frontend|front-end|ui|game|demo|locally|on localhost|in (?:the |a )?browser)\b|\b(?:check|test)\b[^.?!]{0,30}\b(?:in (?:the |a )?browser|on localhost|the (?:ui|page|site|website|frontend))\b|\b(?:dev server|localhost|live preview|hot reload|in the browser|show me (?:the|what|how it looks))\b|\bmake it (?:run|work)\b|\bcan i see\b|\blet'?s see it\b/i;
 
 const CODE_FENCE = /```/;
@@ -117,7 +121,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	const sentences = raw.split(/[.!?]+\s|\n+/).filter(s => s.trim().length > 0).length;
 	const words = raw.split(/\s+/).filter(Boolean).length;
 	const conjunctions = (lower.match(/\b(and|then|also|plus|as well as|after that)\b/g) ?? []).length;
-	const bullets = (raw.match(/^\s*([-*•]|\d+[.)])\s+/gm) ?? []).length;
+	const bullets = (raw.match(/^\s*([-*\u2022]|\d+[.)])\s+/gm) ?? []).length;
 
 	if (hasUrl) { signals.push('url'); }
 	if (hasPath) { signals.push('path'); }
@@ -135,6 +139,8 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 
 	const wantsPreview = hasWorkspace && PREVIEW_INTENT.test(raw) && !(questionShape && !codingVerb && !referencesWorkspace);
 	if (wantsPreview) { signals.push('preview'); }
+	const wantsServices = wantsPreview || SERVICE_INTENT.test(raw);
+	if (wantsServices) { signals.push('services'); }
 
 	const matchesDesign = hasWorkspace && mode !== 'ask' && DESIGN_VERB.test(raw)
 		&& (IMAGE_FILE.test(raw) || (context.attachments ?? []).some(name => IMAGE_FILE.test(name)));
@@ -226,6 +232,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		...(mentionsTests ? { mentionsTests } : {}),
 		...(wantsMockups ? { wantsMockups } : {}),
 		...(wantsScreens ? { wantsScreens } : {}),
+		...(wantsServices ? { wantsServices } : {}),
 		shape,
 	};
 }

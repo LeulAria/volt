@@ -2074,7 +2074,7 @@ export class AgentMentionController extends Disposable {
 		let ranked: { file: IMentionFile; labelMatch?: IMatch[] }[];
 		if (query) {
 			const prepared = prepareQuery(query);
-			const cache: FuzzyScorerCache = Object.create(null);
+			const cache: FuzzyScorerCache = Object.create(null) as FuzzyScorerCache;
 			const accessor: IItemAccessor<IMentionFile> = {
 				getItemLabel: file => basename(file.resource.path),
 				getItemDescription: file => this.folderLabel(file.resource),

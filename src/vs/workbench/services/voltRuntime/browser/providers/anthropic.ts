@@ -135,7 +135,7 @@ export class AnthropicProvider implements IModelProvider {
 			}
 			let json: IAnthropicStreamJson;
 			try {
-				json = JSON.parse(data);
+				json = JSON.parse(data) as IAnthropicStreamJson;
 			} catch {
 				continue;
 			}

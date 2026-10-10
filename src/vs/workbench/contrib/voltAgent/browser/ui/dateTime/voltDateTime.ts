@@ -135,7 +135,7 @@ export function timeSlots(step: number, extra?: number): number[] {
  * "midnight". Undefined for anything else; never guesses past 23:59.
  */
 export function parseTimeInput(text: string): number | undefined {
-	let value = text.toLowerCase().replace(/[\s  ]+/g, ' ').trim();
+	let value = text.toLowerCase().replace(/[\s\u00a0\u202f]+/g, ' ').trim();
 	if (value === 'noon') {
 		return 12 * 60;
 	}

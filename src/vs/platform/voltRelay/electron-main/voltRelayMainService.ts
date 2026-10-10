@@ -49,6 +49,8 @@ const INFLIGHT_MS = 150_000;
 /** The stream sends a comment every 15 s; silence this long means a dead connection. */
 const STREAM_IDLE_MS = 45_000;
 const LOCAL_BODY_LIMIT = 1024 * 1024;
+/** Deliveries one local hook takes per minute (the relay's limit too). */
+const LOCAL_RATE_PER_MINUTE = 60;
 
 class RelayError extends Error {
 	constructor(message: string, readonly status: number) {
@@ -81,6 +83,8 @@ export class VoltRelayMainService extends Disposable implements IVoltRelayServic
 
 	private readonly localHooks = new Map<string, IVoltLocalHook>();
 	private readonly localSeen = new Map<string, string>();
+	/** Hook id → receive times in the last minute. */
+	private readonly localRates = new Map<string, number[]>();
 	private localServer: http.Server | undefined;
 	private localBase: string | undefined;
 	private readonly ready: Promise<void>;
@@ -105,7 +109,7 @@ export class VoltRelayMainService extends Disposable implements IVoltRelayServic
 
 	private async init(): Promise<void> {
 		try {
-			this.configFile = JSON.parse(await fs.readFile(this.file, 'utf8'));
+			this.configFile = JSON.parse(await fs.readFile(this.file, 'utf8')) as IConfigFile;
 		} catch {
 			this.configFile = {};
 		}
@@ -303,7 +307,7 @@ export class VoltRelayMainService extends Disposable implements IVoltRelayServic
 		}
 		let event: IVoltRelayEvent;
 		try {
-			event = JSON.parse(data);
+			event = JSON.parse(data) as IVoltRelayEvent;
 		} catch {
 			return;
 		}
@@ -538,8 +542,23 @@ export class VoltRelayMainService extends Disposable implements IVoltRelayServic
 		}
 		const hook = this.localHooks.get(parts[1]);
 		if (!hook) {
-			return sendJson(res, 404, { error: 'Unknown hook (or Volt has not loaded its scheduled tasks yet).' });
+			return sendJson(res, 404, { error: 'Unknown hook (or Volt has not loaded its automations yet).' });
 		}
+		// Microsoft Graph checks a subscription URL by echoing a token before it sends anything.
+		const validationToken = url.searchParams.get('validationToken');
+		if (validationToken) {
+			res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+			res.end(validationToken.slice(0, 1024));
+			return;
+		}
+		const now = Date.now();
+		const window = (this.localRates.get(hook.hookId) ?? []).filter(at => now - at < 60_000);
+		if (window.length >= LOCAL_RATE_PER_MINUTE) {
+			res.setHeader('retry-after', '30');
+			return sendJson(res, 429, { error: 'Too many deliveries for this hook; slow down.' });
+		}
+		window.push(now);
+		this.localRates.set(hook.hookId, window);
 		const body = await readBody(req, LOCAL_BODY_LIMIT);
 		if (!body) {
 			return sendJson(res, 413, { error: `Body is larger than ${LOCAL_BODY_LIMIT} bytes.` });
@@ -551,12 +570,17 @@ export class VoltRelayMainService extends Disposable implements IVoltRelayServic
 		};
 		const receivedAt = Date.now();
 		const check = verifyWebhookSignature(hook.signature, headers, body, receivedAt);
-		const event = first('x-github-event') ?? first('x-gitlab-event') ?? first('x-event-type') ?? first('x-volt-event');
+		const event = first('x-github-event') ?? first('x-gitlab-event') ?? first('sentry-hook-resource') ?? first('linear-event') ?? first('x-event-type') ?? first('x-volt-event');
 		if (!check.ok) {
 			this._onDidEvent.fire({ seq: 0, at: receivedAt, type: 'local.rejected', id: hook.hookId, data: { hookId: hook.hookId, reason: check.reason, receivedAt, event } });
 			return sendJson(res, 401, { error: check.reason });
 		}
-		const externalId = first('x-github-delivery') ?? first('x-gitlab-event-uuid') ?? first('idempotency-key') ?? first('x-delivery-id');
+		const json = parseJsonObject(body);
+		// Slack checks an Events API URL with a challenge it wants back at once.
+		if (json?.type === 'url_verification' && typeof json.challenge === 'string') {
+			return sendJson(res, 200, { challenge: json.challenge });
+		}
+		const externalId = first('x-github-delivery') ?? first('x-gitlab-event-uuid') ?? first('linear-delivery') ?? first('request-id') ?? first('idempotency-key') ?? first('x-delivery-id') ?? bodyDeliveryId(json);
 		const seenKey = externalId ? `${hook.hookId}:${externalId}` : undefined;
 		if (seenKey && this.localSeen.has(seenKey)) {
 			return sendJson(res, 200, { id: this.localSeen.get(seenKey), duplicate: true });
@@ -591,6 +615,10 @@ export class VoltRelayMainService extends Disposable implements IVoltRelayServic
 			},
 		});
 		this.wake();
+		// A Teams outgoing webhook shows the reply in the channel; anything else gets the usual 202.
+		if (hook.signature.kind === 'teams') {
+			return sendJson(res, 200, { type: 'message', text: 'Volt received it; an automation is on it.' });
+		}
 		return sendJson(res, 202, { id, status: 'held' });
 	}
 
@@ -646,7 +674,7 @@ export class VoltRelayMainService extends Disposable implements IVoltRelayServic
 		if (!response.ok) {
 			throw new Error(errorText(text, response.status));
 		}
-		return String(JSON.parse(text).id);
+		return String((JSON.parse(text) as { id?: unknown }).id);
 	}
 
 	async fetchCloudResult(taskId: string, repoRoot: string): Promise<IVoltAppliedCloudResult> {
@@ -709,7 +737,7 @@ async function fetchJson(url: string, options: { method?: string; token?: string
 		throw new RelayError(errorText(text, response.status), response.status);
 	}
 	try {
-		return text ? JSON.parse(text) : {};
+		return text ? JSON.parse(text) as Record<string, unknown> : {};
 	} catch {
 		throw new Error('The relay answered with something that is not JSON. Is that the relay\'s URL?');
 	}
@@ -717,7 +745,7 @@ async function fetchJson(url: string, options: { method?: string; token?: string
 
 function errorText(text: string, status: number): string {
 	try {
-		const parsed = JSON.parse(text);
+		const parsed = JSON.parse(text) as { error?: unknown } | null;
 		if (parsed && typeof parsed.error === 'string') {
 			return parsed.error;
 		}
@@ -755,6 +783,28 @@ function heldFromRelay(raw: Record<string, unknown>): IVoltHeldDelivery {
 		headers: record(raw.headers),
 		query: record(raw.query),
 	};
+}
+
+function parseJsonObject(body: Buffer): Record<string, unknown> | undefined {
+	const text = body.subarray(0, 1).toString() === '{' ? body.toString('utf8') : '';
+	if (!text) {
+		return undefined;
+	}
+	try {
+		const value = JSON.parse(text) as unknown;
+		return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** The sender's own delivery id inside the body: Slack's `event_id`, PagerDuty's `event.id`. Retries repeat it. */
+function bodyDeliveryId(json: Record<string, unknown> | undefined): string | undefined {
+	if (typeof json?.event_id === 'string') {
+		return json.event_id;
+	}
+	const inner = json?.event;
+	return inner && typeof inner === 'object' && typeof (inner as { id?: unknown }).id === 'string' ? (inner as { id: string }).id : undefined;
 }
 
 function sendJson(res: http.ServerResponse, status: number, value: unknown): void {

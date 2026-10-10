@@ -139,7 +139,7 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 	private loadSettings(): IPredictionSettings {
 		try {
 			const raw = this.storageService.get(VOLT_PREDICTION_SETTINGS_STORAGE_KEY, StorageScope.APPLICATION);
-			return raw ? { ...DEFAULT_PREDICTION_SETTINGS, ...JSON.parse(raw) } : { ...DEFAULT_PREDICTION_SETTINGS };
+			return raw ? { ...DEFAULT_PREDICTION_SETTINGS, ...JSON.parse(raw) as Partial<IPredictionSettings> } : { ...DEFAULT_PREDICTION_SETTINGS };
 		} catch {
 			return { ...DEFAULT_PREDICTION_SETTINGS };
 		}

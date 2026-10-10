@@ -205,7 +205,7 @@ export class AgentHistoryCodec {
 		}
 		const poster = typeof video.poster === 'string' ? (await this.history.getAttachment(video.poster))?.bytes : undefined;
 		const frames = Array.isArray(video.frames)
-			? (await Promise.all(video.frames.map(async (frame): Promise<IAgentVideoFrame | undefined> => {
+			? (await Promise.all(video.frames.map(async (frame: NonNullable<IFrozenVideo['frames']>[number]): Promise<IAgentVideoFrame | undefined> => {
 				const attachment = typeof frame?.ref === 'string' ? await this.history.getAttachment(frame.ref) : undefined;
 				return attachment && typeof frame.time === 'number' ? { time: frame.time, mime: frame.mime, bytes: attachment.bytes } : undefined;
 			}))).filter((frame): frame is IAgentVideoFrame => !!frame)

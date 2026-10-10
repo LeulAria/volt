@@ -52,6 +52,10 @@ export async function startRelayServer(options) {
 			}
 			const body = await readBody(req, WEBHOOK_BODY_LIMIT);
 			const result = await relay.receiveWebhook(parts[1], { method, headers: req.headers, query, body });
+			if (typeof result.text === 'string') {
+				res.writeHead(result.status, { 'content-type': 'text/plain; charset=utf-8' });
+				return res.end(result.text);
+			}
 			return sendJson(res, result.status, result.body);
 		}
 		if (method === 'POST' && parts[0] === 'api' && parts[1] === 'pair' && parts.length === 2) {

@@ -4,16 +4,19 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentTranscript.css';
-import { $, addDisposableListener, append, isHTMLButtonElement } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, isHTMLButtonElement, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { extname } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
 import { AgentBlock, IAgentActivityItem, IToolBlock } from '../blocks/agentBlocks.js';
 import { formatContextTokens } from '../context/agentContextUsage.js';
 import { createCompactIcon } from '../context/agentContextUsageView.js';
-import { appendHighlightedShell, IBlockRenderContext, renderMarkdownInto } from '../blocks/agentBlockRenderers.js';
+import { appendHighlightedShell, IBlockRenderContext, LiveMarkdown, lockAnimationPhase, renderMarkdownInto } from '../blocks/agentBlockRenderers.js';
+import { fenceChartSpec } from '../blocks/agentMarkdown.js';
+import { adoptVisualFrames } from '../visuals/agentVisuals.js';
+import type { IFreshTextPart } from './agentFreshText.js';
 import { highlightCodeLines } from '../blocks/agentCodeBlock.js';
 import { computeFileChangePreview, IFileChangePreviewLine } from '../review/fileChangePreviewModel.js';
 import { fileChangeSource, formatElapsed, ITodoChecklist } from './agentTimeline.js';
@@ -92,20 +95,324 @@ export function renderTranscript(parent: HTMLElement, rows: readonly TranscriptR
 	if (options.todos) {
 		renderTodoChecklist(parent, options.todos, options.streaming, host);
 	}
+	const phrase = liveTailPhrase(rows, options);
+	if (phrase !== undefined) {
+		renderTail(parent, phrase, host, options);
+	}
 	if (options.streaming) {
-		const last = rows.at(-1);
-		// A running compaction shows its own progress; once it is done the agent goes on thinking.
-		if (!last || last.kind === 'steps' || last.kind === 'thought' || last.kind === 'subagent' || last.kind === 'subagents' || last.kind === 'steer'
-			|| (last.kind === 'compaction' && last.compaction.status !== 'running')
-			|| (last.kind === 'block' && last.block.type === 'visual' && !last.block.ref)) {
-			const tail = append(parent, $('.volt-tr-tail'));
-			host.renderStatus(tail, `${options.statusKey}:tail`, tailPhrase(rows, options.status));
-			if (options.elapsedSince !== undefined) {
-				appendElapsed(tail, options.elapsedSince);
+		lockRowAnimations([...parent.childNodes]);
+	}
+	return replies;
+}
+
+/** The live line's phrase, or undefined when the reply's last row already shows what runs. */
+function liveTailPhrase(rows: readonly TranscriptRow[], options: ITranscriptRenderOptions): string | undefined {
+	if (!options.streaming) {
+		return undefined;
+	}
+	const last = rows.at(-1);
+	// A running compaction shows its own progress; once it is done the agent goes on thinking.
+	if (!last || last.kind === 'steps' || last.kind === 'thought' || last.kind === 'subagent' || last.kind === 'subagents' || last.kind === 'steer'
+		|| (last.kind === 'compaction' && last.compaction.status !== 'running')
+		|| (last.kind === 'block' && last.block.type === 'visual' && !last.block.ref)) {
+		return tailPhrase(rows, options.status);
+	}
+	return undefined;
+}
+
+function renderTail(parent: HTMLElement, phrase: string, host: ITranscriptHost, options: ITranscriptRenderOptions): void {
+	const tail = append(parent, $('.volt-tr-tail'));
+	host.renderStatus(tail, `${options.statusKey}:tail`, phrase);
+	if (options.elapsedSince !== undefined) {
+		appendElapsed(tail, options.elapsedSince);
+	}
+}
+
+/** Live transcript shimmers (agentTranscript.css, agentSubagents.css) and how long one sweep takes. */
+const ROW_SHIMMERS: readonly (readonly [selector: string, durationMs: number])[] = [
+	['.volt-tr-action.shimmer, .volt-tr-subagent-status.shimmer, .volt-tr-subagent-title.shimmer, .volt-tr-compaction-label.shimmer, .volt-tr-todo-label.shimmer', 1600],
+	['.volt-subagent-detail.shimmer', 2200],
+	['.volt-tr-subagent.live .volt-tr-subagent-icon .codicon, .volt-tr-todos.live .volt-tr-todo.current .volt-tr-todo-mark .codicon', 1500],
+];
+
+/** Shimmers and spinners in rows drawn anew start in phase with the page clock: a redrawn row does not restart them. */
+function lockRowAnimations(nodes: readonly ChildNode[]): void {
+	for (const node of nodes) {
+		if (!isHTMLElement(node)) {
+			continue;
+		}
+		for (const [selector, durationMs] of ROW_SHIMMERS) {
+			if (node.matches(selector)) {
+				lockAnimationPhase(node, durationMs);
+			}
+			for (const el of node.querySelectorAll<HTMLElement>(selector)) {
+				lockAnimationPhase(el, durationMs);
 			}
 		}
 	}
-	return replies;
+}
+
+/** What a live reply draws, in order, each under a key that stays the same from frame to frame. */
+type LiveItem =
+	| { readonly key: string; readonly kind: 'row'; readonly row: TranscriptRow }
+	| { readonly key: string; readonly kind: 'todos'; readonly todos: ITodoChecklist }
+	| { readonly key: string; readonly kind: 'tail'; readonly phrase: string };
+
+/** One drawn item of a live reply: its nodes, its listeners, and what it was drawn from. */
+interface ILiveRow {
+	readonly signature: string;
+	readonly nodes: readonly ChildNode[];
+	readonly store: DisposableStore;
+	/** A reply row, drawn block by block. */
+	readonly markdown?: LiveMarkdown;
+}
+
+/**
+ * A streaming reply's transcript, kept mounted from frame to frame. Rows are keyed by their ids
+ * (`md-0-md-1`, `steps-2`, `thought-3`, a card's block id) and redrawn only when what they show
+ * changed, so a streamed frame touches the rows that grew (the open markdown block, a running
+ * card, the live line); every other row keeps its DOM, listeners, selection, hover and running
+ * animations. Rows that went away are disposed with their listeners.
+ */
+export class LiveTranscript extends Disposable {
+
+	private readonly rows = new Map<string, ILiveRow>();
+	/** Given to the host that answers the signature questions; nothing is drawn with it. */
+	private readonly probeStore = this._register(new DisposableStore());
+
+	constructor(private readonly parent: HTMLElement) {
+		super();
+		this._register(toDisposable(() => {
+			for (const row of this.rows.values()) {
+				row.store.dispose();
+			}
+			this.rows.clear();
+		}));
+	}
+
+	get isDisposed(): boolean {
+		return this._store.isDisposed;
+	}
+
+	/**
+	 * Brings the drawn rows up to `rows` (the reply as {@link renderTranscript} would draw it while it
+	 * streams). `hostFor` makes a host whose listeners go to the given store, one per row. Returns
+	 * the reply's text in reading order for the fresh-text fade, with the elements drawn this frame.
+	 */
+	render(rows: readonly TranscriptRow[], hostFor: (store: DisposableStore) => ITranscriptHost, options: ITranscriptRenderOptions): IFreshTextPart[] {
+		const probe = hostFor(this.probeStore);
+		const items = liveItems(rows, options);
+		const seen = new Set<string>();
+		const drawn: ChildNode[] = [];
+		let previous: ChildNode | null = null;
+		for (const item of items) {
+			seen.add(item.key);
+			let entry = this.rows.get(item.key);
+			const markdown = item.kind === 'row' && item.row.kind === 'markdown' ? item.row.content : undefined;
+			if (markdown !== undefined && entry?.markdown) {
+				entry.markdown.update(markdown, probe.ctx);
+			} else {
+				const signature = markdown !== undefined ? '' : itemSignature(item, probe, options);
+				if (!entry || entry.signature !== signature) {
+					const next = this.draw(item, signature, hostFor, probe, options);
+					if (entry) {
+						// The new nodes go in before the old ones leave, so a live page can move across without reloading.
+						const anchor = entry.nodes.find(node => node.parentNode === this.parent);
+						if (anchor) {
+							for (const node of next.nodes) {
+								this.parent.insertBefore(node, anchor);
+							}
+							this.adopt(next.nodes);
+						}
+						this.discard(entry);
+					}
+					this.rows.set(item.key, next);
+					drawn.push(...next.nodes);
+					entry = next;
+				}
+			}
+			// In order: each row's nodes right after the previous row's.
+			let cursor: ChildNode | null = previous ? previous.nextSibling : this.parent.firstChild;
+			for (const node of entry.nodes) {
+				if (node === cursor) {
+					cursor = cursor.nextSibling;
+				} else {
+					this.parent.insertBefore(node, cursor);
+				}
+				previous = node;
+			}
+		}
+		for (const [key, entry] of this.rows) {
+			if (!seen.has(key)) {
+				this.discard(entry);
+				this.rows.delete(key);
+			}
+		}
+		this.adopt(drawn);
+		lockRowAnimations(drawn);
+		const parts: IFreshTextPart[] = [];
+		for (const item of items) {
+			const markdown = this.rows.get(item.key)?.markdown;
+			if (markdown) {
+				parts.push(...markdown.parts());
+			}
+		}
+		return parts;
+	}
+
+	private draw(item: LiveItem, signature: string, hostFor: (store: DisposableStore) => ITranscriptHost, probe: ITranscriptHost, options: ITranscriptRenderOptions): ILiveRow {
+		const store = new DisposableStore();
+		if (item.kind === 'row' && item.row.kind === 'markdown') {
+			const markdown = store.add(new LiveMarkdown(probe.ctx));
+			const reply = $('.volt-agent-reply');
+			reply.appendChild(markdown.element);
+			markdown.update(item.row.content, probe.ctx);
+			return { signature, nodes: [reply], store, markdown };
+		}
+		const host = hostFor(store);
+		const holder = $('div');
+		switch (item.kind) {
+			case 'row':
+				renderRow(holder, item.row, host, options, []);
+				break;
+			case 'todos':
+				renderTodoChecklist(holder, item.todos, options.streaming, host);
+				break;
+			case 'tail':
+				renderTail(holder, item.phrase, host, options);
+				break;
+		}
+		return { signature, nodes: [...holder.childNodes], store };
+	}
+
+	/** Live pages under rows drawn anew move into them; only once the reply is in the document. */
+	private adopt(nodes: readonly ChildNode[]): void {
+		if (!this.parent.isConnected) {
+			return;
+		}
+		for (const node of nodes) {
+			if (isHTMLElement(node) && node.isConnected) {
+				adoptVisualFrames(node);
+			}
+		}
+	}
+
+	private discard(entry: ILiveRow): void {
+		for (const node of entry.nodes) {
+			if (node.parentNode === this.parent) {
+				node.remove();
+			}
+		}
+		entry.store.dispose();
+	}
+}
+
+function liveItems(rows: readonly TranscriptRow[], options: ITranscriptRenderOptions): LiveItem[] {
+	const items: LiveItem[] = [];
+	const used = new Set<string>();
+	const unique = (key: string) => {
+		let candidate = key;
+		for (let n = 1; used.has(candidate); n++) {
+			candidate = `${key}#${n}`;
+		}
+		used.add(candidate);
+		return candidate;
+	};
+	for (const row of rows) {
+		items.push({ key: unique(row.kind === 'block' ? `block:${row.block.id}` : `${row.kind}:${row.id}`), kind: 'row', row });
+	}
+	if (options.todos) {
+		items.push({ key: 'todos', kind: 'todos', todos: options.todos });
+	}
+	const phrase = liveTailPhrase(rows, options);
+	if (phrase !== undefined) {
+		items.push({ key: 'tail', kind: 'tail', phrase });
+	}
+	return items;
+}
+
+/** Everything an item's drawing depends on, cheaply: a row is redrawn when this changes. */
+function itemSignature(item: LiveItem, host: ITranscriptHost, options: ITranscriptRenderOptions): string {
+	switch (item.kind) {
+		case 'tail':
+			return `${item.phrase}|${options.elapsedSince ?? ''}`;
+		case 'todos':
+			return `${host.isExpanded('todos')}|${options.streaming}|${shapeOf(item.todos, 3)}`;
+		case 'row':
+			return rowSignature(item.row, host);
+	}
+}
+
+function rowSignature(row: TranscriptRow, host: ITranscriptHost): string {
+	switch (row.kind) {
+		case 'markdown':
+			return row.content;
+		case 'steps': {
+			let signature = `${row.live}|${host.isExpanded(row.id)}`;
+			for (const step of row.steps) {
+				signature += `|${host.isExpanded(`${row.id}:${step.id}`)}:${shapeOf(step)}`;
+			}
+			return signature;
+		}
+		case 'thought':
+			// A live thought shows only "Thinking": its growing text does not redraw it.
+			return row.live ? 'live' : `${host.isExpanded(row.id)}|${shapeOf(row.step)}`;
+		case 'subagent':
+			return `${row.live}|${host.isExpanded(`sub:${row.id}`)}|${shapeOf(host.subagentView?.(row.tool, row.live))}|${shapeOf(row.tool)}`;
+		case 'subagents':
+			return row.items.map(entry => `${entry.live}|${shapeOf(host.subagentView?.(entry.tool, entry.live))}|${shapeOf(entry.tool)}`).join(';');
+		case 'notice':
+			return `${host.isExpanded(`dismiss:${row.id}`)}|${shapeOf(row)}`;
+		case 'steer':
+			return row.text;
+		case 'compaction':
+			return `${host.isExpanded(row.id)}|${shapeOf(row.compaction)}`;
+		case 'block': {
+			const block = row.block;
+			// A diagram or chart fence still streaming in shows a loader until it closes: more source
+			// does not redraw it (the loader would restart every frame).
+			const loading = block.status === 'streaming' && (
+				(block.type === 'mermaid' && isPendingChart(fenceChartSpec('mermaid', block.source, true)))
+				|| (block.type === 'code' && fenceChartSpec(block.language, block.code, true) === 'pending'));
+			return `${host.ctx.blockState[block.id]?.expanded}|${host.ctx.streaming}|${loading ? `${block.type}:${block.id}:loading` : shapeOf(block)}`;
+		}
+	}
+}
+
+/** A fence that draws a loader for now: not a chart (a mermaid diagram), or a chart whose JSON is not whole yet. */
+function isPendingChart(spec: ReturnType<typeof fenceChartSpec>): boolean {
+	return spec === undefined || spec === 'pending';
+}
+
+/**
+ * A fingerprint of a row's data, without copying it: primitives as they are, long strings by
+ * length and tail (a file's text, a command's output), objects to `depth` levels, long lists by
+ * length and their last entry.
+ */
+function shapeOf(value: unknown, depth = 2): string {
+	if (value === undefined || value === null) {
+		return '-';
+	}
+	if (typeof value === 'string') {
+		return value.length > 64 ? `${value.length}~${value.slice(-24)}` : value;
+	}
+	if (typeof value !== 'object') {
+		return String(value);
+	}
+	if (Array.isArray(value)) {
+		if (depth <= 0 || value.length > 32) {
+			return `[${value.length}:${depth > 0 ? shapeOf(value.at(-1), depth - 1) : ''}]`;
+		}
+		return `[${value.map(entry => shapeOf(entry, depth - 1)).join(',')}]`;
+	}
+	if (depth <= 0) {
+		return '{}';
+	}
+	let out = '{';
+	for (const [key, field] of Object.entries(value)) {
+		out += `${key}:${shapeOf(field, depth - 1)};`;
+	}
+	return `${out}}`;
 }
 
 /** "· 42s" after the live phrase; refreshed every second by the editor's clock. */
@@ -624,7 +931,7 @@ function parseJson(text: string | undefined): Record<string, unknown> | undefine
 	// Some agents stream the arguments as successive snapshots ("{}{"title":…}{"title":…,"task":…}"): the last one is whole.
 	for (const candidate of [text, text.slice(text.lastIndexOf('}{') + 1)]) {
 		try {
-			const value = JSON.parse(candidate);
+			const value: unknown = JSON.parse(candidate);
 			if (value && typeof value === 'object') {
 				return value as Record<string, unknown>;
 			}

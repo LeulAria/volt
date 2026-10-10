@@ -1214,7 +1214,7 @@ export interface IAgentFileTarget {
 }
 
 // allow-any-unicode-next-line
-const LINE_TAIL_RE = /(?:\s+|:)(?:#?L(?:ine)?\s*)?(\d+)(?:\s*[-–:]\s*(?:#?L(?:ine)?\s*)?(\d+))?\s*$/i;
+const LINE_TAIL_RE = /(?:\s+|:)(?:#?L(?:ine)?\s*)?(\d+)(?:\s*[-\u2013:]\s*(?:#?L(?:ine)?\s*)?(\d+))?\s*$/i;
 const PATH_RE = /(?:^|[\s`"'(])((?:~\/|\.\/|\.\.\/|\/|[A-Za-z]:[\\/])?(?:[\w.-]+[\\/])*[\w.-]+\.[A-Za-z0-9]{1,8})/;
 const VERB_RE = /^(Read|Reading|Grepped|Grep|Searched|Search|Edited|Edit|Created|Deleted|Wrote|Write|Explored|Waited|Navigated|Listed)\s+(.+)$/i;
 
@@ -1649,7 +1649,7 @@ function parseJsonRecord(value: string): Record<string, unknown> | undefined {
 	}
 	try {
 		const parsed = JSON.parse(trimmed) as unknown;
-		const o = Array.isArray(parsed) ? parsed[0] : parsed;
+		const o: unknown = Array.isArray(parsed) ? parsed[0] : parsed;
 		return o && typeof o === 'object' ? o as Record<string, unknown> : undefined;
 	} catch {
 		return undefined;
@@ -1726,7 +1726,7 @@ function parseJsonFileTarget(value: string): IAgentFileTarget | undefined {
 	}
 	try {
 		const parsed = JSON.parse(trimmed) as unknown;
-		const o = Array.isArray(parsed) ? parsed[0] : parsed;
+		const o: unknown = Array.isArray(parsed) ? parsed[0] : parsed;
 		if (!o || typeof o !== 'object') {
 			return undefined;
 		}

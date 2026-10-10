@@ -7,8 +7,9 @@ import { truncateAtWord } from './agentHistoryLog.js';
 
 /**
  * Chat titles written by a model from the first message, the way T3 Code and OpenCode do it:
- * one small, tool-less call that runs beside the agent's first turn. The sidebar shows the
- * first-line title until it lands.
+ * one small, tool-less call that runs beside the agent's first turn. A CLI agent's title call
+ * (a process start) waits for the turn's first reply text, so it never slows the turn's startup.
+ * The sidebar shows the first-line title until it lands.
  */
 
 const MAX_TITLE_LENGTH = 48;
@@ -59,7 +60,7 @@ export function sanitizeTitle(raw: string | undefined): string | undefined {
 		.replace(/^(?:\*\*)?title(?:\*\*)?\s*:\s*/i, '')
 		.replace(/^[#>*\-\s]+/, '')
 		.replace(/\*\*/g, '')
-		.replace(/^["'`“‘]+|["'`”’]+$/g, '')
+		.replace(/^["'`\u201c\u2018]+|["'`\u201d\u2019]+$/g, '')
 		.replace(/\s+/g, ' ')
 		.replace(/[.!\s]+$/, '')
 		.trim();

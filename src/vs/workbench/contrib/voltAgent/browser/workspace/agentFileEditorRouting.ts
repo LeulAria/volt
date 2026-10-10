@@ -23,7 +23,7 @@ const MAIN_PANEL_SCHEMES: ReadonlySet<string> = new Set([
 	Schemas.voltSettings,
 	Schemas.voltCustomize,
 	Schemas.voltUsage,
-	Schemas.voltSchedules,
+	Schemas.voltAutomations,
 	Schemas.voltRunGroup,
 ]);
 

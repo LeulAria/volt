@@ -468,7 +468,7 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		const text = await this.rawText(repo, 'HEAD', '.claude-plugin/marketplace.json', token);
 		let json: { name?: unknown };
 		try {
-			json = JSON.parse(text);
+			json = JSON.parse(text) as typeof json;
 		} catch {
 			throw new Error(localize('voltMarketplace.noManifest', "{0} has no .claude-plugin/marketplace.json.", repo));
 		}
@@ -477,7 +477,7 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		await this.fileService.writeFile(joinPath(root, '.claude-plugin', 'marketplace.json'), VSBuffer.fromString(text));
 		// Plugins listed by relative path live in the same repository: download those folders too.
 		const tree = await this.repoTree(repo, 'HEAD', token).catch(() => undefined);
-		const relative = (JSON.parse(text).plugins as unknown[] | undefined ?? [])
+		const relative = ((JSON.parse(text) as { plugins?: unknown[] }).plugins ?? [])
 			.map(plugin => (plugin as { source?: unknown }).source)
 			.filter((source): source is string => typeof source === 'string')
 			.map(source => source.replace(/^\.?\/+|\/+$/g, ''));
@@ -643,7 +643,7 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		if (status < 200 || status >= 300) {
 			let message = '';
 			try {
-				message = String(JSON.parse(await asText(context) ?? '')?.message ?? '');
+				message = String((JSON.parse(await asText(context) ?? '') as { message?: unknown } | null)?.message ?? '');
 			} catch {
 				// Not JSON.
 			}

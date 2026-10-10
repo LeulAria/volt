@@ -19,7 +19,7 @@ import { IVoltEvent, IVoltEventEnvelope } from '../../../../services/voltRuntime
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { AgentWorktreeTarget, IGitRunResult } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IOrchStartTurnRequest, IOrchTurnHost } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
-import { IRunGroupModel } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
+import { IRunGroup, IRunGroupModel } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { AgentRunGroupService } from '../../browser/runGroups/agentRunGroupService.js';
 
@@ -493,7 +493,7 @@ suite('Run group service', () => {
 		const group = await service.start({ prompt: { text: 'Add search' }, models: [CLAUDE, CODEX], repoRoot: '/repo' });
 		await settle();
 		await timeout(900);
-		const stored = JSON.parse((await fileService.readFile(URI.file('/user/voltRunGroups/groups.json'))).value.toString());
+		const stored = JSON.parse((await fileService.readFile(URI.file('/user/voltRunGroups/groups.json'))).value.toString()) as { groups: IRunGroup[] };
 		assert.strictEqual(stored.groups[0].id, group.id);
 		assert.strictEqual(stored.groups[0].runs[0].setup.state, 'running');
 		service.dispose();

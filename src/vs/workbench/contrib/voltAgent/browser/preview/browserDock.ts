@@ -496,7 +496,7 @@ export class BrowserAgentDock extends Disposable {
 		host.setAttribute('aria-hidden', 'true');
 		editor.create(host);
 		editor.layout(new Dimension(420, 560));
-		await editor.setInput(input, { preserveFocus: true }, Object.create(null), CancellationToken.None);
+		await editor.setInput(input, { preserveFocus: true }, {}, CancellationToken.None);
 		this._register(editor);
 		this.bindAgent(editor);
 		return editor;
@@ -639,19 +639,19 @@ export class BrowserAgentDock extends Disposable {
 			: mode === 'activity'
 				? this.activityWidth(available)
 				: mode === 'hover'
-				? 228
-				: mode === 'chip'
-					? 0
-					: Math.min(650, Math.round(available * 0.9));
+					? 228
+					: mode === 'chip'
+						? 0
+						: Math.min(650, Math.round(available * 0.9));
 		const toHeight = mode === 'idle'
 			? 8
 			: mode === 'activity'
 				? 34
 				: mode === 'hover'
-				? 36
-				: mode === 'chip'
-					? 0
-					: Math.max(this.composerHost.scrollHeight, this.composer.element.offsetHeight, 44);
+					? 36
+					: mode === 'chip'
+						? 0
+						: Math.max(this.composerHost.scrollHeight, this.composer.element.offsetHeight, 44);
 		if (from.width === toWidth && from.height === toHeight && mode !== 'expanded') {
 			return;
 		}

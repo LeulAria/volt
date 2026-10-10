@@ -17,6 +17,23 @@ interface IReply {
 	readonly body: string;
 }
 
+interface IServerMetadata {
+	readonly issuer: string;
+	readonly registration_endpoint: string;
+	readonly authorization_endpoint: string;
+	readonly token_endpoint: string;
+}
+
+interface ITokens {
+	readonly scope?: string;
+	readonly access_token: string;
+	readonly refresh_token: string;
+}
+
+interface IRpcReply {
+	readonly result: { readonly protocolVersion?: string; readonly tools: readonly { name: string }[]; readonly content?: unknown };
+}
+
 function request(url: string, options: { method?: string; body?: string; headers?: Record<string, string> } = {}): Promise<IReply> {
 	const target = new URL(url);
 	return new Promise((resolve, reject) => {
@@ -77,15 +94,15 @@ suite('Volt external MCP server (OAuth + Streamable HTTP)', () => {
 		assert.strictEqual((await json(`${base}/mcp`, {}, { Host: 'evil.com' })).status, 403, 'DNS rebinding');
 
 		// 2. Discovery.
-		const prm = JSON.parse((await request(`${base}/.well-known/oauth-protected-resource/mcp`)).body);
+		const prm = JSON.parse((await request(`${base}/.well-known/oauth-protected-resource/mcp`)).body) as { resource: string };
 		assert.strictEqual(prm.resource, `${base}/mcp`);
-		const meta = JSON.parse((await request(`${base}/.well-known/oauth-authorization-server`)).body);
+		const meta = JSON.parse((await request(`${base}/.well-known/oauth-authorization-server`)).body) as IServerMetadata;
 		assert.strictEqual(meta.issuer, base);
 
 		// 3. Dynamic client registration.
 		const registered = await json(meta.registration_endpoint, { client_name: 'Claude Code', redirect_uris: ['http://localhost:5555/callback'], token_endpoint_auth_method: 'none' });
 		assert.strictEqual(registered.status, 201, registered.body);
-		const clientId = JSON.parse(registered.body).client_id as string;
+		const clientId = (JSON.parse(registered.body) as { client_id: string }).client_id;
 		assert.strictEqual((await json(meta.registration_endpoint, { client_name: 'x', redirect_uris: ['http://evil.com/cb'] })).status, 400);
 
 		// 4. Authorize: no PKCE goes back to the client with an error; a bad redirect never redirects.
@@ -124,7 +141,7 @@ suite('Volt external MCP server (OAuth + Streamable HTTP)', () => {
 		const tokenReply = await form(meta.token_endpoint, { grant_type: 'authorization_code', code, client_id: clientId, redirect_uri: 'http://localhost:61000/callback', code_verifier: VERIFIER, resource: `${base}/mcp` });
 		assert.strictEqual(tokenReply.status, 200, tokenReply.body);
 		assert.strictEqual(tokenReply.headers['cache-control'], 'no-store');
-		const tokens = JSON.parse(tokenReply.body);
+		const tokens = JSON.parse(tokenReply.body) as ITokens;
 		assert.strictEqual(tokens.scope, 'read');
 		const auth = { Authorization: `Bearer ${tokens.access_token}`, Accept: 'application/json, text/event-stream' };
 
@@ -132,12 +149,12 @@ suite('Volt external MCP server (OAuth + Streamable HTTP)', () => {
 		const init = await json(`${base}/mcp`, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }, auth);
 		assert.strictEqual(init.status, 200, init.body);
 		assert.ok(init.headers['mcp-session-id']);
-		assert.strictEqual(JSON.parse(init.body).result.protocolVersion, '2025-06-18');
+		assert.strictEqual((JSON.parse(init.body) as IRpcReply).result.protocolVersion, '2025-06-18');
 		const session = { ...auth, 'Mcp-Session-Id': String(init.headers['mcp-session-id']) };
 		assert.strictEqual((await json(`${base}/mcp`, { jsonrpc: '2.0', method: 'notifications/initialized' }, session)).status, 202);
-		const listed = JSON.parse((await json(`${base}/mcp`, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, session)).body);
+		const listed = JSON.parse((await json(`${base}/mcp`, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, session)).body) as IRpcReply;
 		assert.deepStrictEqual(listed.result.tools.map((tool: { name: string }) => tool.name), ['thread_list']);
-		const called = JSON.parse((await json(`${base}/mcp`, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'thread_list', arguments: {} } }, session)).body);
+		const called = JSON.parse((await json(`${base}/mcp`, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'thread_list', arguments: {} } }, session)).body) as IRpcReply;
 		assert.deepStrictEqual(called.result.content, [{ type: 'text', text: 'ran thread_list' }]);
 		assert.deepStrictEqual(calls, ['Claude Code:thread_list']);
 		const outOfScope = await json(`${base}/mcp`, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'thread_launch', arguments: {} } }, session);
@@ -146,7 +163,7 @@ suite('Volt external MCP server (OAuth + Streamable HTTP)', () => {
 		assert.strictEqual((await json(`${base}/mcp`, {}, { ...auth, Origin: 'https://evil.com' })).status, 403, 'foreign origin');
 
 		// 7. Refresh rotates; the grant shows on Connected agents with its last call.
-		const refreshed = JSON.parse((await form(meta.token_endpoint, { grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: clientId })).body);
+		const refreshed = JSON.parse((await form(meta.token_endpoint, { grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: clientId })).body) as ITokens;
 		assert.ok(refreshed.access_token && refreshed.refresh_token !== tokens.refresh_token);
 		const grants = await service.listGrants();
 		assert.strictEqual(grants.length, 1);

@@ -691,6 +691,11 @@ export class AgentSurfaceHost extends Disposable {
 		void this.target()?.openTerminalInTools();
 	}
 
+	/** Shows a terminal the agent started (a chip click) as a tab in this chat's tools. Its process is untouched. */
+	revealTerminal(instance: ITerminalInstance, preserveFocus: boolean): void {
+		void this.target()?.showTerminalInTools(instance, preserveFocus);
+	}
+
 	/** Opens a tools terminal and runs a CLI login, such as `claude auth login`. */
 	runLogin(command: string): void {
 		void this.target()?.runCommandInTerminal(command);
@@ -1813,6 +1818,28 @@ export class AgentSurfaceHost extends Disposable {
 		this.syncOpen();
 		instance.setVisible(true);
 		return instance;
+	}
+
+	/** Opens an existing terminal as a tab in the tools, or brings its tab forward where it already is. */
+	private async showTerminalInTools(instance: ITerminalInstance, preserveFocus: boolean): Promise<void> {
+		if (instance.isDisposed) {
+			return;
+		}
+		const input = this.terminalEditorService.getInputFromResource(this.terminalEditorService.resolveResource(instance));
+		const open = this.editorGroupsService.groups.find(candidate => candidate.contains(input));
+		const group = open ?? this.toolsGroup();
+		if (!group) {
+			return;
+		}
+		if (!open) {
+			input.setGroup(group);
+		}
+		await group.openEditor(input, { pinned: true, preserveFocus });
+		this.syncOpen();
+		instance.setVisible(true);
+		if (!preserveFocus) {
+			await instance.focusWhenReady(true);
+		}
 	}
 
 	/** A terminal tab already in this chat's tools. Panel terminals are left alone. */

@@ -42,7 +42,7 @@ export function chooseEffort(text: string, context: IEffortContext): EffortLevel
 		return atLeast('low', floor);
 	}
 	const lines = trimmed.split('\n').filter(line => line.trim()).length;
-	const bullets = trimmed.split('\n').filter(line => /^\s*(?:[-*•]|\d+[.)])\s+/.test(line)).length;
+	const bullets = trimmed.split('\n').filter(line => /^\s*(?:[-*\u2022]|\d+[.)])\s+/.test(line)).length;
 	const action = ACTION.test(trimmed);
 	const broad = BROAD.test(trimmed);
 	let level: EffortLevel;
@@ -61,6 +61,11 @@ export function chooseEffort(text: string, context: IEffortContext): EffortLevel
 }
 
 const ORDER: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/** The higher of two levels. A chat's effort only rises: a change would invalidate its cached prompt. */
+export function higherEffort(level: EffortLevel, other: EffortLevel): EffortLevel {
+	return atLeast(level, other);
+}
 
 function atLeast(level: EffortLevel, floor: EffortLevel): EffortLevel {
 	return ORDER.indexOf(level) >= ORDER.indexOf(floor) ? level : floor;

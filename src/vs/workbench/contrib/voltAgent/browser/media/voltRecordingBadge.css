@@ -18,7 +18,7 @@
 	border-radius: 12px;
 	background: var(--vscode-editorWidget-background);
 	color: var(--vscode-foreground);
-	font-family: var(--vscode-font-family);
+	font-family: inherit;
 	font-size: 11px;
 	font-weight: 600;
 	letter-spacing: 0.02em;

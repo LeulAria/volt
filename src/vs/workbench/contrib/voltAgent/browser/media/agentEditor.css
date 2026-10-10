@@ -346,6 +346,17 @@
 	overflow: visible;
 }
 
+/*
+ * Exchanges off screen skip style, layout and paint, so a long chat costs what its visible part
+ * costs. Each keeps the height it last had on screen (600px until then). The last exchange (the one
+ * that streams) is always laid out. Sticky sent cards still pin: containment clips like overflow:
+ * clip, which is not a scroll container. Find and scrollIntoView work on skipped content.
+ */
+.volt-agent-thread-inner > .volt-agent-exchange:not(:last-child) {
+	content-visibility: auto;
+	contain-intrinsic-size: auto 600px;
+}
+
 .volt-agent-turn {
 	display: flex;
 	flex-direction: column;
@@ -1356,8 +1367,7 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-activity-progress.shimmer,
-.volt-agent-activity-label.shimmer,
-.volt-agent-term-headline.shimmer {
+.volt-agent-activity-label.shimmer {
 	display: block;
 	width: fit-content;
 	max-width: 100%;
@@ -1400,13 +1410,76 @@ pre.volt-agent-searchable {
 
 @media (prefers-reduced-motion: reduce) {
 	.volt-agent-activity-progress.shimmer,
-	.volt-agent-activity-label.shimmer,
-	.volt-agent-term-headline.shimmer {
+	.volt-agent-activity-label.shimmer {
 		background-image: none;
 		-webkit-text-fill-color: unset;
 		color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
 		animation: none;
 	}
+}
+
+/*
+ * A running command's headline: the text in the base tone, and a highlighted copy of it in a band
+ * that slides across. Band and copy move by transform only (opposite ways, so the copy stays on the
+ * text), which the compositor animates without restyling or repainting the card every frame.
+ */
+.volt-agent-term-headline.shimmer {
+	position: relative;
+	display: block;
+	width: fit-content;
+	max-width: 100%;
+	min-width: 0;
+	white-space: normal;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+	font-weight: 300;
+	color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+}
+
+.volt-agent-term-sweep {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	pointer-events: none;
+	-webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 50%, transparent 100%);
+	mask-image: linear-gradient(90deg, transparent 0%, #000 50%, transparent 100%);
+	will-change: transform;
+	animation: volt-agent-term-sweep 0.9s linear infinite;
+}
+
+.volt-agent-term-sweep-text {
+	display: block;
+	color: var(--vscode-foreground);
+	will-change: transform;
+	animation: volt-agent-term-sweep-counter 0.9s linear infinite;
+}
+
+@keyframes volt-agent-term-sweep {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: translateX(100%);
+	}
+}
+
+@keyframes volt-agent-term-sweep-counter {
+	from {
+		transform: translateX(100%);
+	}
+	to {
+		transform: translateX(-100%);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-agent-term-sweep {
+		display: none;
+	}
+}
+
+.monaco-workbench.reduce-motion .volt-agent-term-sweep {
+	display: none;
 }
 
 .volt-agent-activity.live {
@@ -2608,12 +2681,13 @@ pre.volt-agent-searchable {
 	padding-bottom: 8px;
 }
 
-.volt-agent-block.terminal:not(.expanded) .volt-agent-term-output-clip > .monaco-scrollable-element,
+/*
+ * Collapsed: the output keeps its full height and overflows the clip at the top (flex-end), so the
+ * clip shows its tail without scrolling or measuring (agentBlockRenderers.ts).
+ */
 .volt-agent-block.terminal:not(.expanded) .volt-agent-term-output-scroll {
 	flex-shrink: 0;
 	margin-top: auto;
-	max-height: calc(12.5px * 1.55 + 10px + 12px * 1.45 * 3);
-	overflow: hidden;
 }
 
 .volt-agent-block.terminal.clamped.expanded .volt-agent-term-output-clip {
@@ -2639,15 +2713,6 @@ pre.volt-agent-searchable {
 	background: linear-gradient(to bottom, color-mix(in srgb, var(--volt-agent-sidebar-bg, var(--vscode-editor-background, #1e1e1e)) 45%, transparent) 0%, transparent 100%);
 }
 
-.volt-agent-term-output-clip > .monaco-scrollable-element {
-	width: 100%;
-	max-width: 100%;
-}
-
-.volt-agent-block.terminal:not(.expanded) .volt-agent-term-output-clip .scrollbar {
-	display: none !important;
-}
-
 .volt-agent-block.terminal.expanded .volt-agent-term-output-clip {
 	max-height: none;
 	overflow: hidden;
@@ -2655,7 +2720,6 @@ pre.volt-agent-searchable {
 	justify-content: flex-start;
 }
 
-.volt-agent-block.terminal.expanded .volt-agent-term-output-clip > .monaco-scrollable-element,
 .volt-agent-block.terminal.expanded .volt-agent-term-output-scroll {
 	max-height: none;
 }
@@ -3230,7 +3294,14 @@ pre.volt-agent-searchable {
 	padding: 2px 10px 8px;
 }
 
+/* A new chat shows only its permissions under the composer; project, branch and environment sit above it. */
 .volt-agent-editor:not(.has-turns):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-composer-status {
+	max-width: 560px;
+	padding: 0 10px;
+}
+
+.volt-agent-editor:not(.has-turns):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-composer-status > :not(.volt-agent-status-start),
+.volt-agent-editor:not(.has-turns):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-status-start > :not(.volt-agent-status-access) {
 	display: none !important;
 }
 
@@ -5077,6 +5148,62 @@ pre.volt-agent-searchable {
 
 .volt-agent-status-env .icon {
 	display: inline-flex;
+}
+
+.volt-agent-status-access {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	flex-shrink: 0;
+	height: 22px;
+	padding: 0 4px 0 2px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+	font: inherit;
+	font-size: 12px;
+	line-height: 22px;
+	cursor: pointer;
+}
+
+.volt-agent-status-access:hover,
+.volt-agent-status-access[aria-expanded="true"] {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-status-access:focus,
+.volt-agent-status-access:focus-visible,
+.monaco-workbench .volt-agent-status-access:focus,
+.monaco-workbench .volt-agent-status-access:focus-visible {
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+.volt-agent-status-access .icon {
+	display: inline-flex;
+}
+
+.volt-agent-status-access .icon .volt-agent-svg-icon,
+.volt-agent-status-access .icon .volt-agent-svg-icon svg {
+	width: 13px;
+	height: 13px;
+}
+
+.volt-agent-status-access .chevron {
+	font-size: 11px;
+	opacity: 0.55;
+}
+
+/* Full access runs everything unasked: its shield reads as a warning. */
+.volt-agent-status-access[data-mode="full-access"] .icon {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-agent-access-menu .volt-agent-svg-icon,
+.volt-agent-access-menu .volt-agent-svg-icon svg {
+	width: 14px;
+	height: 14px;
 }
 
 .volt-agent-status-branch .codicon {

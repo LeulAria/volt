@@ -116,7 +116,7 @@ export function newestCandidates(candidates: readonly IVoltThemeImportCandidate[
 export function installedFolders(extensionsJson: string | undefined, obsoleteJson: string | undefined): { readonly installed: ReadonlySet<string> | undefined; readonly obsolete: ReadonlySet<string> } {
 	const obsolete = new Set<string>();
 	try {
-		const parsed = obsoleteJson ? JSON.parse(obsoleteJson) : undefined;
+		const parsed: unknown = obsoleteJson ? JSON.parse(obsoleteJson) : undefined;
 		if (parsed && typeof parsed === 'object') {
 			for (const [key, value] of Object.entries(parsed)) {
 				if (value) {
@@ -129,10 +129,10 @@ export function installedFolders(extensionsJson: string | undefined, obsoleteJso
 	}
 	let installed: Set<string> | undefined;
 	try {
-		const parsed = extensionsJson ? JSON.parse(extensionsJson) : undefined;
+		const parsed: unknown = extensionsJson ? JSON.parse(extensionsJson) : undefined;
 		if (Array.isArray(parsed)) {
 			installed = new Set();
-			for (const entry of parsed) {
+			for (const entry of parsed as ({ relativeLocation?: unknown; location?: { path?: unknown } } | null)[]) {
 				const relative = entry?.relativeLocation;
 				const path = entry?.location?.path;
 				if (typeof relative === 'string') {

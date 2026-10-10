@@ -4,17 +4,35 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { createHmac, timingSafeEqual } from 'crypto';
-import { IVoltRelaySignature } from '../common/voltRelay.js';
+import { IVoltRelaySignature, VoltRelaySignatureKind } from '../common/voltRelay.js';
 
 /**
  * Webhook signature checks for the direct local URL: the same rules as the relay's
  * (apps/relay/src/signature.mjs), so a sender set up once works on either URL.
- * GitHub: `X-Hub-Signature-256: sha256=<hex>`; generic: any header, hex or base64, optional
- * `<timestamp>.<body>` signing with a replay window.
+ * GitHub: `X-Hub-Signature-256: sha256=<hex>`; Slack: `X-Slack-Signature: v0=<hex>` over
+ * `v0:<timestamp>:<body>`; Sentry, Linear: bare hex; PagerDuty: `v1=<hex>`, several comma-separated
+ * during key rotation; Teams outgoing webhooks: `Authorization: HMAC <base64>` keyed by the
+ * base64-decoded token; generic: any header, hex or base64, optional `<timestamp>.<body>` signing.
  */
-const PRESETS = {
-	github: { header: 'x-hub-signature-256', prefix: 'sha256=', encoding: 'hex' as const },
-	generic: { header: 'x-volt-signature', prefix: 'sha256=', encoding: 'hex' as const },
+interface IPreset {
+	readonly header: string;
+	readonly prefix: string;
+	readonly encoding: 'hex' | 'base64';
+	readonly timestampHeader?: string;
+	/** How the timestamp joins the body: `<ts>.<body>` (default) or Slack's `v0:<ts>:<body>`. */
+	readonly format?: 'slack';
+	/** The secret is base64 (Teams). */
+	readonly keyBase64?: boolean;
+}
+
+const PRESETS: Readonly<Record<Exclude<VoltRelaySignatureKind, 'none'>, IPreset>> = {
+	github: { header: 'x-hub-signature-256', prefix: 'sha256=', encoding: 'hex' },
+	slack: { header: 'x-slack-signature', prefix: 'v0=', encoding: 'hex', timestampHeader: 'x-slack-request-timestamp', format: 'slack' },
+	sentry: { header: 'sentry-hook-signature', prefix: '', encoding: 'hex' },
+	linear: { header: 'linear-signature', prefix: '', encoding: 'hex' },
+	pagerduty: { header: 'x-pagerduty-signature', prefix: 'v1=', encoding: 'hex' },
+	teams: { header: 'authorization', prefix: 'HMAC ', encoding: 'base64', keyBase64: true },
+	generic: { header: 'x-volt-signature', prefix: 'sha256=', encoding: 'hex' },
 };
 
 interface ISettings {
@@ -24,6 +42,8 @@ interface ISettings {
 	readonly encoding: 'hex' | 'base64';
 	readonly timestampHeader?: string;
 	readonly toleranceSec: number;
+	readonly format?: 'slack';
+	readonly keyBase64?: boolean;
 }
 
 function settingsOf(config: IVoltRelaySignature | undefined): ISettings | undefined {
@@ -31,13 +51,16 @@ function settingsOf(config: IVoltRelaySignature | undefined): ISettings | undefi
 		return undefined;
 	}
 	const preset = PRESETS[config.kind] ?? PRESETS.generic;
+	const custom = config.kind === 'generic';
 	return {
 		secret: config.secret ?? '',
-		header: (config.header || preset.header).toLowerCase(),
-		prefix: config.prefix ?? preset.prefix,
-		encoding: config.encoding === 'base64' ? 'base64' : preset.encoding,
-		timestampHeader: config.timestampHeader ? config.timestampHeader.toLowerCase() : undefined,
+		header: ((custom && config.header) || preset.header).toLowerCase(),
+		prefix: custom && config.prefix !== undefined ? config.prefix : preset.prefix,
+		encoding: custom && config.encoding === 'base64' ? 'base64' : preset.encoding,
+		timestampHeader: custom ? (config.timestampHeader ? config.timestampHeader.toLowerCase() : undefined) : preset.timestampHeader,
 		toleranceSec: config.toleranceSec && config.toleranceSec > 0 ? config.toleranceSec : 300,
+		format: preset.format,
+		keyBase64: preset.keyBase64,
 	};
 }
 
@@ -47,8 +70,10 @@ export function signWebhookBody(config: IVoltRelaySignature, body: Uint8Array | 
 	if (!settings) {
 		return undefined;
 	}
-	const hmac = createHmac('sha256', settings.secret);
-	if (settings.timestampHeader) {
+	const hmac = createHmac('sha256', settings.keyBase64 ? Buffer.from(settings.secret, 'base64') : settings.secret);
+	if (settings.format === 'slack') {
+		hmac.update(`v0:${timestamp}:`);
+	} else if (settings.timestampHeader) {
 		hmac.update(`${timestamp}.`);
 	}
 	hmac.update(body);
@@ -83,9 +108,10 @@ export function verifyWebhookSignature(config: IVoltRelaySignature | undefined, 
 		}
 	}
 	const expected = Buffer.from(signWebhookBody(config!, body, timestamp)!);
-	// With or without the prefix, as the relay accepts.
-	const candidate = Buffer.from(settings.prefix && !given.startsWith(settings.prefix) ? settings.prefix + given : given);
-	return candidate.length === expected.length && timingSafeEqual(candidate, expected)
+	// With or without the prefix, as the relay accepts; PagerDuty sends several during key rotation.
+	const candidates = (settings.prefix === 'v1=' ? given.split(',') : [given]).map(value => value.trim()).filter(Boolean)
+		.map(value => Buffer.from(settings.prefix && !value.startsWith(settings.prefix) ? settings.prefix + value : value));
+	return candidates.some(candidate => candidate.length === expected.length && timingSafeEqual(candidate, expected))
 		? { ok: true, verified: true }
 		: { ok: false, reason: 'The signature did not match.' };
 }

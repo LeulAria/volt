@@ -45,6 +45,8 @@ export interface ICodeCardOptions {
 	readonly fileIconClasses?: (path: string) => readonly string[];
 	/** Runs a shell block in the chat's terminal; absent while the reply still streams. */
 	readonly onRunInTerminal?: (command: string) => void;
+	/** The fence is still streaming in: it is drawn again with more text in a moment. */
+	readonly streaming?: boolean;
 }
 
 const SHELL_LANGS = new Set(['sh', 'bash', 'zsh', 'fish', 'shell', 'console', 'powershell', 'pwsh']);
@@ -124,10 +126,14 @@ const lastHighlight = new Map<string, { code: string; lines: Node[][] }>();
 
 const DIFF_LANGS = new Set(['diff', 'patch']);
 
+/** Aliases whose streaming card has a highlight in flight: a growing fence asks again once it is done. */
+const streamingHighlights = new Set<string>();
+
 /**
  * Cursor's code card: a bordered card, no language label, and a copy button that appears on hover.
- * The body is a read-only Monaco editor so indent and colours match the workbench editor. The body
- * scrolls sideways instead of wrapping.
+ * The body is static highlighted HTML (the tokenizer's theme colours, the editor's font, size and tab
+ * width), not an editor: a card costs a few elements, lays out at once at its real width, and a
+ * streamed redraw does not build a widget. The body scrolls sideways instead of wrapping.
  */
 export function renderCodeCard(parent: HTMLElement, language: string | undefined, code: string, options: ICodeCardOptions): HTMLElement {
 	const citation = parseCodeCitation(language);
@@ -147,29 +153,63 @@ export function renderCodeCard(parent: HTMLElement, language: string | undefined
 	if (citation) {
 		renderCitationHeader(shell.card, citation, options);
 	}
-	if (mountMonacoCode(shell.scroll, text, lang, options)) {
-		shell.card.classList.add('has-editor');
-		return shell.card;
-	}
 	const codeEl = append(shell.scroll, $('code.volt-md-code.volt-agent-searchable'));
+	applyEditorFont(codeEl, options);
 	const key = `${lang}\n${text}`;
 	const cached = highlightCache.get(key);
 	if (cached) {
 		appendLines(codeEl, cloneLines(cached));
 		return shell.card;
 	}
+	// Lines unchanged since the last highlight keep their colours until this one lands.
 	appendLines(codeEl, provisionalLines(lang, text));
-	if (options.languageService && lang) {
+	if (options.languageService && lang && !PLAIN_ALIASES.has(lang)) {
+		// A fence still streaming re-tokenizes at most one version at a time; frames in between
+		// show the colours of the last one (provisionalLines).
+		if (options.streaming && streamingHighlights.has(lang)) {
+			return shell.card;
+		}
+		if (options.streaming) {
+			streamingHighlights.add(lang);
+		}
+		const settle = () => {
+			if (options.streaming) {
+				streamingHighlights.delete(lang);
+			}
+		};
 		highlight(options.languageService, lang, text).then(lines => {
+			settle();
 			if (!shell.card.isConnected) {
 				return;
 			}
 			codeEl.replaceChildren();
 			appendLines(codeEl, cloneLines(lines));
 			options.onDidChangeSize?.();
-		}, () => { /* keep plain text */ });
+		}, () => {
+			settle();
+			/* keep plain text */
+		});
 	}
 	return shell.card;
+}
+
+/** The workbench editor's font size, line height and tab width on a static card (the family comes from `--volt-code-font`). */
+function applyEditorFont(codeEl: HTMLElement, options: ICodeCardOptions): void {
+	const font = options.instantiationService?.invokeFunction(accessor => {
+		const configurationService = accessor.get(IConfigurationService);
+		const fontSize = configurationService.getValue<number>('editor.fontSize') || EDITOR_FONT_DEFAULTS.fontSize;
+		const configuredLineHeight = configurationService.getValue<number>('editor.lineHeight');
+		const lineHeight = configuredLineHeight > 0 ? configuredLineHeight : Math.round(fontSize * 1.5);
+		const tabSize = configurationService.getValue<number>('editor.tabSize') || 4;
+		return { fontSize, lineHeight, tabSize };
+	});
+	if (!font) {
+		return;
+	}
+	codeEl.style.fontSize = `${font.fontSize}px`;
+	codeEl.style.lineHeight = `${font.lineHeight}px`;
+	codeEl.style.tabSize = String(font.tabSize);
+	codeEl.style.setProperty('--volt-md-code-line-height', `${font.lineHeight}px`);
 }
 
 /** The header on a cited snippet: file icon, name, "Ln a-b"; clicking opens the file there. */

@@ -75,7 +75,7 @@ export function parseLegacyStorage(raw: string | undefined): string[] {
 	}
 	let parsed: Record<string, unknown>;
 	try {
-		parsed = JSON.parse(raw);
+		parsed = JSON.parse(raw) as Record<string, unknown>;
 	} catch {
 		return [];
 	}

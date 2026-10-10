@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { encodeSpan, encodeTraceRequest, hasValidIds, OtlpBatchExporter, OtlpTransport, toAnyValue, toKeyValues, toUnixNanos, tracesUrl } from '../../common/otlp.js';
+import { encodeSpan, encodeTraceRequest, hasValidIds, OtlpBatchExporter, OtlpTraceRequest, OtlpTransport, toAnyValue, toKeyValues, toUnixNanos, tracesUrl } from '../../common/otlp.js';
 import { newSpanId, newTraceId, VoltTracer } from '../../common/tracer.js';
 import { IVoltSpanData, readTracingConfig, VoltSpanKind, VoltSpanStatusCode } from '../../common/voltDiagnostics.js';
 
@@ -140,10 +140,10 @@ suite('Volt OTLP batch exporter', () => {
 
 	function setup(options: { status?: number; fail?: boolean; maxBatchSize?: number; maxQueueSize?: number } = {}) {
 		const timers = new ManualTimers();
-		const bodies: { url: string; body: any; headers: Readonly<Record<string, string>> }[] = [];
+		const bodies: { url: string; body: OtlpTraceRequest; headers: Readonly<Record<string, string>> }[] = [];
 		const errors: string[] = [];
 		const transport: OtlpTransport = async (url, body, headers) => {
-			bodies.push({ url, body: JSON.parse(body), headers });
+			bodies.push({ url, body: JSON.parse(body) as OtlpTraceRequest, headers });
 			if (options.fail) {
 				throw new Error('ECONNREFUSED');
 			}

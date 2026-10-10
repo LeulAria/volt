@@ -487,7 +487,7 @@ export function handoffToolCall(call: { readonly kind?: string; readonly name?: 
 		: call.kind === 'delete' || call.kind === 'move' ? 'edit' : 'other';
 	let input: Record<string, unknown> | undefined;
 	try {
-		const parsed = call.input?.trim() ? JSON.parse(call.input) : undefined;
+		const parsed: unknown = call.input?.trim() ? JSON.parse(call.input) : undefined;
 		input = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
 	} catch {
 		input = undefined;

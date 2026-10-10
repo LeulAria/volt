@@ -51,7 +51,7 @@ function badgeLetter(index: number): string {
 /**
  * Cursor's questionnaire tray, docked above the composer while an agent waits on questions:
  * one question at a time, lettered options (single-select advances on pick, multi-select
- * toggles), an "Other..." row that turns into an input, a "‹ 1 of 3 ›" stepper, Skip and
+ * toggles), an "Other..." row that turns into an input, a "< 1 of 3 >" stepper, Skip and
  * Next/Continue. The composer below stays live and its text goes along as extra details.
  */
 export class AgentQuestionTray extends Disposable {

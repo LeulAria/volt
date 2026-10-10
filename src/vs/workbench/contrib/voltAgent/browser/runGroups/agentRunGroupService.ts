@@ -956,7 +956,7 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 			const raw = (await this.fileService.readFile(this.storeFile)).value.toString();
 			const stored = JSON.parse(raw) as IStoredGroups;
 			if (stored?.version === STORE_VERSION && Array.isArray(stored.groups)) {
-				for (const group of stored.groups) {
+				for (const group of stored.groups as IStoredGroups['groups']) {
 					// Nothing Volt was doing survives a restart: a setup cut short can be retried, and the
 					// time between then and now was not spent working.
 					const runs = group.runs.map((run: IRunGroupRun): IRunGroupRun => stripUndefined({
@@ -1012,8 +1012,8 @@ function isSetupLive(setup: IRunSetup): boolean {
 }
 
 function stripUndefined<T extends object>(value: T): T {
-	const result = { ...value } as Record<string, unknown>;
-	for (const key of Object.keys(result)) {
+	const result: Partial<T> = { ...value };
+	for (const key of Object.keys(result) as (keyof T)[]) {
 		if (result[key] === undefined) {
 			delete result[key];
 		}

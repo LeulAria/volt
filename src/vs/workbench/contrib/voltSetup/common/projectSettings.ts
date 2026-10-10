@@ -146,9 +146,9 @@ export function writeWorktreeSetup(existing: string | undefined, steps: readonly
 	let record: Record<string, unknown> = {};
 	if (existing !== undefined) {
 		try {
-			const parsed = JSON.parse(existing);
+			const parsed: unknown = JSON.parse(existing);
 			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-				record = parsed;
+				record = parsed as Record<string, unknown>;
 			}
 		} catch {
 			// Unreadable: replaced.

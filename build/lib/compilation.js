@@ -45,6 +45,7 @@ exports.watchTask = watchTask;
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
+const child_process_1 = __importDefault(require("child_process"));
 const event_stream_1 = __importDefault(require("event-stream"));
 const fs_1 = __importDefault(require("fs"));
 const gulp_1 = __importDefault(require("gulp"));
@@ -143,7 +144,7 @@ function compileTask(src, out, build, options = {}) {
         if (os_1.default.totalmem() < 4_000_000_000) {
             throw new Error('compilation requires 4GB of RAM');
         }
-        // VOLT_BUILD_IGNORE_TYPE_ERRORS=1: report type errors but still package. Mangling needs a clean type check, so it is off too.
+        // VOLT_BUILD_IGNORE_TYPE_ERRORS=1: report type errors but still package. Mangling needs a clean type check, so then it runs only when tsgo finds no errors.
         const ignoreTypeErrors = !!process.env.VOLT_BUILD_IGNORE_TYPE_ERRORS;
         const compile = createCompile(src, { build, emitError: !ignoreTypeErrors, transpileOnly: false, preserveEnglish: !!options.preserveEnglish });
         const srcPipe = gulp_1.default.src(`${src}/**`, { base: `${src}` });
@@ -153,7 +154,7 @@ function compileTask(src, out, build, options = {}) {
         }
         // mangle: TypeScript to TypeScript
         let mangleStream = event_stream_1.default.through();
-        if (build && !options.disableMangle && !ignoreTypeErrors) {
+        if (build && !options.disableMangle && (!ignoreTypeErrors || isTypeClean(compile.projectPath))) {
             let ts2tsMangler = new index_1.Mangler(compile.projectPath, (...data) => (0, fancy_log_1.default)(ansi_colors_1.default.blue('[mangler]'), ...data), { mangleExports: true, manglePrivateFields: true });
             const newContentsByFileName = ts2tsMangler.computeNewFileContents(new Set(['saveState']));
             mangleStream = event_stream_1.default.through(async function write(data) {
@@ -179,6 +180,19 @@ function compileTask(src, out, build, options = {}) {
     };
     task.taskName = `compile-${path_1.default.basename(src)}`;
     return task;
+}
+/**
+ * Whether the project has no type errors, by the native compiler: seconds, where a second tsc pass takes
+ * minutes. The mangler renames by type information, so a lenient build mangles only when this holds.
+ */
+function isTypeClean(projectPath) {
+    const tsgo = path_1.default.join(__dirname, '../../node_modules/.bin', process.platform === 'win32' ? 'tsgo.cmd' : 'tsgo');
+    const result = child_process_1.default.spawnSync(tsgo, ['--project', projectPath, '--noEmit', '--skipLibCheck'], { encoding: 'utf8', shell: process.platform === 'win32', maxBuffer: 64 * 1024 * 1024 });
+    if (result.status !== 0) {
+        const errors = result.error ? result.error.message : `${(result.stdout ?? '').match(/error TS\d+/g)?.length ?? 0} type errors`;
+        (0, fancy_log_1.default)(ansi_colors_1.default.yellow('[mangler]'), `skipped, ${path_1.default.relative(process.cwd(), projectPath)} does not type-check: ${errors}`);
+    }
+    return result.status === 0;
 }
 function watchTask(out, build, srcPath = 'src') {
     const task = () => {

@@ -42,7 +42,7 @@ export interface IAwakeLease {
 	readonly working: number;
 	/** Chats stopped on an approval or a question. They do not keep the computer awake. */
 	readonly waitingOnUser: number;
-	/** 0–100, from the renderer's Battery Status API; absent on desktops and when unreadable. */
+	/** 0-100, from the renderer's Battery Status API; absent on desktops and when unreadable. */
 	readonly batteryPercent?: number;
 }
 

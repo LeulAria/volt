@@ -636,7 +636,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			}
 			// "$k", "EUR M", "$bn": a currency in thousands or millions reads "$148k", not "148 $k".
 			// allow-any-unicode-next-line
-			const scaled = /^\s*([$€£¥₹])\s*(k|m|mm|b|bn|t)\s*$/i.exec(value);
+			const scaled = /^\s*([$\u20ac\u00a3\u00a5\u20b9])\s*(k|m|mm|b|bn|t)\s*$/i.exec(value);
 			if (scaled) {
 				return { kind: 'custom', prefix: scaled[1], suffix: scaled[2].length > 1 ? scaled[2] : scaled[2].toUpperCase() === 'K' ? 'k' : scaled[2].toUpperCase() };
 			}
@@ -2234,8 +2234,8 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			for (const series of Array.isArray(metric.series) ? metric.series : []) {
 				const data = isRecord(series) && Array.isArray(series.data) ? series.data : [];
 				for (let index = 0; index < Math.min(data.length, 400); index++) {
-					const datum = data[index];
-					const x = Array.isArray(datum) ? datum[0] : isRecord(datum) ? datum.x : undefined;
+					const datum: unknown = data[index];
+					const x: unknown = Array.isArray(datum) ? datum[0] : isRecord(datum) ? datum.x : undefined;
 					if (typeof x === 'string') {
 						sawString = true;
 						allTimeStrings &&= looksLikeTime(x);
@@ -4229,7 +4229,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			for (const candidate of candidates) {
 				const list = isRecord(candidate) ? candidate.categories ?? candidate.labels ?? candidate.values : candidate;
 				if (Array.isArray(list) && list.length) {
-					return list;
+					return list as unknown[];
 				}
 			}
 			return undefined;
@@ -4304,7 +4304,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			const raw = grid.values;
 			this.values = this.rows.map((_, row) => this.columns.map((__, column) => {
 				const line = raw[row];
-				const value = Array.isArray(line) ? line[column] : undefined;
+				const value: unknown = Array.isArray(line) ? line[column] : undefined;
 				return isNum(value) ? value : Number.NaN;
 			}));
 			if (!this.rows.length || !this.columns.length) {
@@ -7109,7 +7109,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			const raw = (Array.isArray(spec.data) ? spec.data : []).slice(0, 5000);
 			this.time = raw.some(item => looksLikeTime(Array.isArray(item) ? item[0] : isRecord(item) ? item.x ?? item.time ?? item.date : undefined));
 			this.candles = raw.flatMap((item, index) => {
-				const [x, open, high, low, close] = Array.isArray(item) ? item : isRecord(item) ? [item.x ?? item.time ?? item.date, item.open ?? item.o, item.high ?? item.h, item.low ?? item.l, item.close ?? item.c] : [];
+				const [x, open, high, low, close] = Array.isArray(item) ? item as unknown[] : isRecord(item) ? [item.x ?? item.time ?? item.date, item.open ?? item.o, item.high ?? item.h, item.low ?? item.l, item.close ?? item.c] : [];
 				if (!isNum(open) || !isNum(high) || !isNum(low) || !isNum(close)) {
 					problems.push(`${where}: candle ${index + 1} needs numeric "open", "high", "low" and "close".`);
 					return [];
@@ -8002,7 +8002,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				table(chart.title, [['label', 'value'], ...(Array.isArray(chart.items) ? chart.items.filter(isRecord).map(item => [item.label, item.value]) : [])]);
 			} else if (type === 'heatmap') {
 				const { rows, columns, values } = heatmapGrid(chart);
-				table(chart.title, [['', ...columns], ...rows.map((row, index) => [row, ...(Array.isArray(values[index]) ? values[index] : [])])]);
+				table(chart.title, [['', ...columns], ...rows.map((row, index) => [row, ...(Array.isArray(values[index]) ? values[index] as unknown[] : [])])]);
 			} else if (type === 'treemap') {
 				const root = readTree(chart.data, [], '');
 				const rows: unknown[][] = [['path', 'value', 'color']];
@@ -8021,12 +8021,12 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 				const items = Array.isArray(chart.data) ? chart.data.filter(isRecord) : [{ label: chart.label, value: chart.value, max: chart.max }];
 				table(chart.title, [['label', 'value', 'max'], ...items.map(item => [item.label ?? item.name, item.value, item.max])]);
 			} else if (type === 'radar') {
-				const axes = (Array.isArray(chart.axes) ? chart.axes : []).map(axis => isRecord(axis) ? axis.label : axis);
-				table(chart.title, [['series', ...axes], ...(Array.isArray(chart.series) ? chart.series.filter(isRecord) : []).map(series => [series.name, ...(Array.isArray(series.data) ? series.data : [])])]);
+				const axes = (Array.isArray(chart.axes) ? chart.axes as unknown[] : []).map(axis => isRecord(axis) ? axis.label : axis);
+				table(chart.title, [['series', ...axes], ...(Array.isArray(chart.series) ? chart.series.filter(isRecord) : []).map(series => [series.name, ...(Array.isArray(series.data) ? series.data as unknown[] : [])])]);
 			} else if (type === 'sankey') {
 				table(chart.title, [['source', 'target', 'value'], ...(Array.isArray(chart.links) ? chart.links.filter(isRecord) : []).map(link => [link.source ?? link.from, link.target ?? link.to, link.value])]);
 			} else if (type === 'candlestick') {
-				table(chart.title, [['x', 'open', 'high', 'low', 'close'], ...(Array.isArray(chart.data) ? chart.data : []).map(item => Array.isArray(item) ? item.slice(0, 5) : isRecord(item) ? [item.x ?? item.time ?? item.date, item.open, item.high, item.low, item.close] : [])]);
+				table(chart.title, [['x', 'open', 'high', 'low', 'close'], ...(Array.isArray(chart.data) ? chart.data as unknown[] : []).map(item => Array.isArray(item) ? (item as unknown[]).slice(0, 5) : isRecord(item) ? [item.x ?? item.time ?? item.date, item.open, item.high, item.low, item.close] : [])]);
 			} else if (type === 'cumulative') {
 				const values = (Array.isArray(chart.values) ? chart.values : []).filter(isNum).sort((a, b) => b - a);
 				table(chart.title, [['rank', 'value'], ...values.map((value, index) => [index + 1, value])]);

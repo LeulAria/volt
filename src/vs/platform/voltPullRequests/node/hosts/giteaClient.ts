@@ -3,8 +3,22 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Json, splitUnifiedDiff, stripDraftTitle } from '../../common/hosts/hostParse.js';
-import { parseGiteaChecks, parseGiteaDetail, parseGiteaPull } from '../../common/hosts/giteaParse.js';
+import { num, splitUnifiedDiff, str, stripDraftTitle } from '../../common/hosts/hostParse.js';
+import {
+	IGiteaCombinedStatusJson,
+	IGiteaCommentJson,
+	IGiteaCommitJson,
+	IGiteaFileJson,
+	IGiteaLabelJson,
+	IGiteaPullJson,
+	IGiteaRepoJson,
+	IGiteaReviewCommentJson,
+	IGiteaReviewJson,
+	IGiteaUserJson,
+	parseGiteaChecks,
+	parseGiteaDetail,
+	parseGiteaPull,
+} from '../../common/hosts/giteaParse.js';
 import {
 	IVoltPrCheck,
 	IVoltPrCreateRequest,
@@ -20,6 +34,11 @@ import {
 } from '../../common/voltPullRequests.js';
 import { commitPathRef, IVoltPrHostClient, openFirst, parseCommitPathRef, VoltPrRestClient } from './voltPrHostClient.js';
 
+interface IGiteaBlobJson {
+	readonly content?: unknown;
+	readonly encoding?: unknown;
+}
+
 /** Gitea and Forgejo, `/api/v1`. */
 export class GiteaClient extends VoltPrRestClient implements IVoltPrHostClient {
 
@@ -30,7 +49,7 @@ export class GiteaClient extends VoltPrRestClient implements IVoltPrHostClient {
 	}
 
 	protected async readViewer(): Promise<string> {
-		const me = await this.http.get<Json>('/user');
+		const me = await this.http.get<IGiteaUserJson | undefined>('/user');
 		if (typeof me?.login !== 'string') {
 			throw new VoltPrError('noAuth', `${this.label} did not say who the token belongs to.`);
 		}
@@ -41,20 +60,20 @@ export class GiteaClient extends VoltPrRestClient implements IVoltPrHostClient {
 		if (!sha) {
 			return [];
 		}
-		const combined = await this.http.request<Json>('GET', `${this.repoPath(repo)}/commits/${sha}/status`, { allow: [404] });
+		const combined = await this.http.request<IGiteaCombinedStatusJson | undefined>('GET', `${this.repoPath(repo)}/commits/${sha}/status`, { allow: [404] });
 		return combined.status === 404 ? [] : parseGiteaChecks(combined.body);
 	}
 
-	private async withChecks(repo: IVoltPrRepoRef, raws: readonly Json[], viewer: string): Promise<IVoltPullRequest[]> {
+	private async withChecks(repo: IVoltPrRepoRef, raws: readonly IGiteaPullJson[], viewer: string): Promise<IVoltPullRequest[]> {
 		return this.eachSettled(raws, async raw => {
 			const open = raw.state === 'open';
-			const checks = open ? await this.checks(repo, raw.head?.sha ?? '') : [];
+			const checks = open ? await this.checks(repo, str(raw.head?.sha)) : [];
 			return parseGiteaPull(raw, repo, viewer, { checks });
 		}, raw => parseGiteaPull(raw, repo, viewer));
 	}
 
-	private async pulls(repo: IVoltPrRepoRef, state: 'open' | 'closed' | 'all', limit: number): Promise<Json[]> {
-		return this.http.pages<Json>(`${this.repoPath(repo)}/pulls`, { state, sort: 'recentupdate', limit: Math.min(50, limit) }, body => Array.isArray(body) ? body : [], (_response, page, got) => got >= Math.min(50, limit) ? page + 1 : undefined, limit);
+	private async pulls(repo: IVoltPrRepoRef, state: 'open' | 'closed' | 'all', limit: number): Promise<IGiteaPullJson[]> {
+		return this.http.pages<IGiteaPullJson>(`${this.repoPath(repo)}/pulls`, { state, sort: 'recentupdate', limit: Math.min(50, limit) }, body => Array.isArray(body) ? body as IGiteaPullJson[] : [], (_response, page, got) => got >= Math.min(50, limit) ? page + 1 : undefined, limit);
 	}
 
 	async list(repo: IVoltPrRepoRef, state: 'open' | 'closed' | 'all', limit: number): Promise<IVoltPullRequest[]> {
@@ -70,7 +89,7 @@ export class GiteaClient extends VoltPrRestClient implements IVoltPrHostClient {
 	}
 
 	async get(repo: IVoltPrRepoRef, number: number): Promise<IVoltPullRequest | undefined> {
-		const response = await this.http.request<Json>('GET', `${this.repoPath(repo)}/pulls/${number}`, { allow: [404] });
+		const response = await this.http.request<IGiteaPullJson | undefined>('GET', `${this.repoPath(repo)}/pulls/${number}`, { allow: [404] });
 		if (response.status === 404 || !response.body) {
 			return undefined;
 		}
@@ -80,31 +99,31 @@ export class GiteaClient extends VoltPrRestClient implements IVoltPrHostClient {
 
 	async detail(repo: IVoltPrRepoRef, number: number): Promise<IVoltPullRequestDetail> {
 		const base = this.repoPath(repo);
-		const pullResponse = await this.http.request<Json>('GET', `${base}/pulls/${number}`, { allow: [404] });
+		const pullResponse = await this.http.request<IGiteaPullJson>('GET', `${base}/pulls/${number}`, { allow: [404] });
 		if (pullResponse.status === 404) {
 			throw new VoltPrError('notFound', `Pull request #${number} was not found in ${repo.owner}/${repo.name}.`);
 		}
 		const pull = pullResponse.body;
-		const pageOf = (path: string) => this.http.pages<Json>(path, { limit: 50 }, body => Array.isArray(body) ? body : [], (_response, page, got) => got >= 50 ? page + 1 : undefined);
+		const pageOf = <T>(path: string) => this.http.pages<T>(path, { limit: 50 }, body => Array.isArray(body) ? body as T[] : [], (_response, page, got) => got >= 50 ? page + 1 : undefined);
 		const [viewer, repoRaw, checks, files, comments, reviews, commits, labels] = await Promise.all([
 			this.viewer(),
-			this.http.get<Json>(base),
-			this.checks(repo, pull.head?.sha ?? ''),
-			pageOf(`${base}/pulls/${number}/files`).catch(() => []),
-			pageOf(`${base}/issues/${number}/comments`),
-			pageOf(`${base}/pulls/${number}/reviews`),
-			pageOf(`${base}/pulls/${number}/commits`).catch(() => []),
-			pageOf(`${base}/labels`).catch(() => []),
+			this.http.get<IGiteaRepoJson | undefined>(base),
+			this.checks(repo, str(pull.head?.sha)),
+			pageOf<IGiteaFileJson>(`${base}/pulls/${number}/files`).catch(() => []),
+			pageOf<IGiteaCommentJson>(`${base}/issues/${number}/comments`),
+			pageOf<IGiteaReviewJson>(`${base}/pulls/${number}/reviews`),
+			pageOf<IGiteaCommitJson>(`${base}/pulls/${number}/commits`).catch(() => []),
+			pageOf<IGiteaLabelJson>(`${base}/labels`).catch(() => []),
 		]);
-		const reviewComments = (await this.each(reviews.filter(review => review.comments_count > 0), review =>
-			this.http.get<Json[]>(`${base}/pulls/${number}/reviews/${review.id}/comments`).catch(() => [] as Json[]))).flat();
+		const reviewComments = (await this.each(reviews.filter(review => num(review.comments_count) > 0), review =>
+			this.http.get<IGiteaReviewCommentJson[]>(`${base}/pulls/${number}/reviews/${review.id}/comments`).catch((): IGiteaReviewCommentJson[] => []))).flat();
 		return parseGiteaDetail({ pull, repo: repoRaw, checks, files, comments, reviews, reviewComments, commits, labels }, repo, viewer);
 	}
 
 	async create(request: IVoltPrCreateRequest): Promise<IVoltPullRequest> {
 		const head = request.headOwner && request.headOwner.toLowerCase() !== request.repo.owner.toLowerCase() ? `${request.headOwner}:${request.head}` : request.head;
 		const title = request.draft ? `WIP: ${stripDraftTitle(request.title)}` : request.title;
-		const created = await this.http.json<Json>('POST', `${this.repoPath(request.repo)}/pulls`, { body: { head, base: request.base, title, body: request.body } });
+		const created = await this.http.json<IGiteaPullJson | undefined>('POST', `${this.repoPath(request.repo)}/pulls`, { body: { head, base: request.base, title, body: request.body } });
 		const pr = typeof created?.number === 'number' ? await this.get(request.repo, created.number) : undefined;
 		if (!pr) {
 			throw new VoltPrError('failed', `${this.label} did not return the new pull request.`);
@@ -151,13 +170,13 @@ export class GiteaClient extends VoltPrRestClient implements IVoltPrHostClient {
 	}
 
 	async setDraft(repo: IVoltPrRepoRef, number: number, draft: boolean): Promise<void> {
-		const pull = await this.http.get<Json>(`${this.repoPath(repo)}/pulls/${number}`);
+		const pull = await this.http.get<IGiteaPullJson | undefined>(`${this.repoPath(repo)}/pulls/${number}`);
 		const plain = stripDraftTitle(String(pull?.title ?? ''));
 		await this.http.json('PATCH', `${this.repoPath(repo)}/pulls/${number}`, { body: { title: draft ? `WIP: ${plain}` : plain } });
 	}
 
 	override async setLabels(repo: IVoltPrRepoRef, number: number, add: readonly string[], remove: readonly string[]): Promise<void> {
-		const labels = await this.http.get<Json[]>(`${this.repoPath(repo)}/labels`, { limit: 100 });
+		const labels = await this.http.get<IGiteaLabelJson[] | undefined>(`${this.repoPath(repo)}/labels`, { limit: 100 });
 		const idOf = (name: string) => (labels ?? []).find(label => label.name === name)?.id;
 		const addIds = add.map(idOf).filter((id): id is number => typeof id === 'number');
 		if (addIds.length) {
@@ -180,7 +199,7 @@ export class GiteaClient extends VoltPrRestClient implements IVoltPrHostClient {
 	}
 
 	async postReview(repo: IVoltPrRepoRef, number: number, body: string, comments: readonly IVoltPrLineComment[], headOid?: string): Promise<{ posted: number; url?: string }> {
-		const review = await this.http.json<Json>('POST', `${this.repoPath(repo)}/pulls/${number}/reviews`, {
+		const review = await this.http.json<IGiteaReviewJson | undefined>('POST', `${this.repoPath(repo)}/pulls/${number}/reviews`, {
 			body: {
 				event: 'COMMENT',
 				body,
@@ -200,7 +219,7 @@ export class GiteaClient extends VoltPrRestClient implements IVoltPrHostClient {
 		const path = commit ? `${this.repoPath(repo)}/git/commits/${commit}.diff` : `${this.repoPath(repo)}/pulls/${number}.diff`;
 		const [diff, head] = await Promise.all([
 			this.http.text(path),
-			commit ? Promise.resolve(commit) : this.http.get<Json>(`${this.repoPath(repo)}/pulls/${number}`).then(pull => String(pull?.head?.sha ?? '')),
+			commit ? Promise.resolve(commit) : this.http.get<IGiteaPullJson | undefined>(`${this.repoPath(repo)}/pulls/${number}`).then(pull => String(pull?.head?.sha ?? '')),
 		]);
 		return splitUnifiedDiff(diff).map(file => file.change === 'deleted' || !head ? file : { ...file, blob: commitPathRef(head, file.path) });
 	}
@@ -210,14 +229,14 @@ export class GiteaClient extends VoltPrRestClient implements IVoltPrHostClient {
 		if (byPath) {
 			return this.http.text(`${this.repoPath(repo)}/raw/${byPath.path.split('/').map(encodeURIComponent).join('/')}`, { ref: byPath.commit });
 		}
-		const blob = await this.http.get<Json>(`${this.repoPath(repo)}/git/blobs/${ref}`);
+		const blob = await this.http.get<IGiteaBlobJson | undefined>(`${this.repoPath(repo)}/git/blobs/${ref}`);
 		return typeof blob?.content === 'string' ? Buffer.from(blob.content, blob.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8') : '';
 	}
 
 	async remoteBranches(repo: IVoltPrRepoRef): Promise<string[]> {
 		const [repoRaw, branches] = await Promise.all([
-			this.http.get<Json>(this.repoPath(repo)),
-			this.http.pages<Json>(`${this.repoPath(repo)}/branches`, { limit: 50 }, body => Array.isArray(body) ? body : [], (_response, page, got) => got >= 50 ? page + 1 : undefined),
+			this.http.get<IGiteaRepoJson | undefined>(this.repoPath(repo)),
+			this.http.pages<{ readonly name?: unknown }>(`${this.repoPath(repo)}/branches`, { limit: 50 }, body => Array.isArray(body) ? body as { readonly name?: unknown }[] : [], (_response, page, got) => got >= 50 ? page + 1 : undefined),
 		]);
 		const names = branches.map(branch => branch?.name).filter((name): name is string => typeof name === 'string');
 		const main = repoRaw?.default_branch;

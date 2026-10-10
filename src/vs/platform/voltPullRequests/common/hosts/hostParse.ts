@@ -5,9 +5,11 @@
 
 import { IVoltPrCheck, IVoltPrFilePatch, IVoltPrMergeOptions, IVoltPrUser, VoltPrFileChange } from '../voltPullRequests.js';
 
-/** Shared readers for the REST hosts' JSON (GitLab, Bitbucket, Gitea, Azure DevOps). */
-
-export type Json = any;
+/**
+ * Shared readers for the REST hosts' JSON (GitLab, Bitbucket, Gitea, Azure DevOps). Each host's
+ * parser declares the shapes it reads with `unknown` leaves: the JSON is untrusted, so every value
+ * goes through one of these readers.
+ */
 
 export function time(value: unknown): number | undefined {
 	if (typeof value !== 'string' || !value) {
@@ -32,8 +34,12 @@ export function num(value: unknown): number {
 	return 0;
 }
 
-export function list(value: unknown): Json[] {
-	return Array.isArray(value) ? value.filter(item => item !== null && item !== undefined) : [];
+/**
+ * The array's non-null entries, read as `T`: a shape with `unknown` leaves, so a host that sends
+ * something else still only yields `undefined` reads.
+ */
+export function list<T = unknown>(value: unknown): T[] {
+	return Array.isArray(value) ? value.filter((item): item is T => item !== null && item !== undefined) : [];
 }
 
 export function user(login: unknown, avatarUrl?: unknown, bot?: boolean): IVoltPrUser {

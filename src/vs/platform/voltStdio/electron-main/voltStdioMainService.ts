@@ -30,6 +30,12 @@ const HEAD_CHARS = 16_000;
 const DEFAULT_INLINE_CHARS = 30_000;
 const DEFAULT_BACKGROUND_WAIT_MS = 3_000;
 const KILL_GRACE_MS = 2_000;
+/**
+ * After the shell exits, how long its pipes may stay open before the command counts as done.
+ * A command that backgrounds a child (`server &`, `nohup ...`) leaves the child holding them,
+ * and 'close' would otherwise wait for that child to exit.
+ */
+const EXIT_DRAIN_MS = 250;
 const MAX_WAIT_MS = 10 * 60_000;
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007|\r(?!\n)/g;
 
@@ -60,6 +66,11 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 	 * folder, or closes, its agents go too. Without this every reload leaked an agent per chat.
 	 */
 	private readonly owners = new Map<string, string>();
+	/** The window of a process whose exit is being announced, while its exit event fires. */
+	private readonly exitOwners = new Map<string, string>();
+	/** Output not yet sent, per process: chunks of one tick go to the window as one event. */
+	private readonly pendingData = new Map<string, string[]>();
+	private dataFlush: NodeJS.Immediate | undefined;
 
 	constructor(
 		@ILogService private readonly logService: ILogService,
@@ -122,22 +133,65 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 		}
 		child.stdout.setEncoding('utf8');
 		child.stderr.setEncoding('utf8');
-		child.stdout.on('data', (data: string) => this._onData.fire({ id, data }));
+		child.stdout.on('data', (data: string) => this.queueData(id, data));
 		child.stderr.on('data', (data: string) => {
 			this.stderr.set(id, tailText(`${this.stderr.get(id) ?? ''}${data}`, 4_000));
 			this.logService.trace(`[volt-stdio:${id}] ${data}`);
 		});
 		// 'close' waits for stdout to drain; 'exit' can fire while output is still buffered.
 		child.on('close', code => {
+			// Output always reaches the window before the exit does.
+			this.flushData(id);
 			const stderr = this.stderr.get(id);
+			const owner = this.owners.get(id);
 			this.disposeSandbox(id);
 			this.processes.delete(id);
 			this.owners.delete(id);
 			this.stderr.delete(id);
-			this._onExit.fire({ id, code, ...(stderr ? { stderr } : {}) });
+			if (owner) {
+				this.exitOwners.set(id, owner);
+			}
+			try {
+				this._onExit.fire({ id, code, ...(stderr ? { stderr } : {}) });
+			} finally {
+				this.exitOwners.delete(id);
+			}
 		});
 		child.on('error', err => this.logService.error('[volt-stdio]', err));
 		return id;
+	}
+
+	/**
+	 * Agent output arrives in many small chunks; one IPC event per chunk floods the main process
+	 * and the window. Chunks of the same tick are joined and sent once.
+	 */
+	private queueData(id: string, data: string): void {
+		const pending = this.pendingData.get(id);
+		if (pending) {
+			pending.push(data);
+		} else {
+			this.pendingData.set(id, [data]);
+		}
+		this.dataFlush ??= setImmediate(() => {
+			this.dataFlush = undefined;
+			for (const pendingId of [...this.pendingData.keys()]) {
+				this.flushData(pendingId);
+			}
+		});
+	}
+
+	private flushData(id: string): void {
+		const pending = this.pendingData.get(id);
+		if (!pending) {
+			return;
+		}
+		this.pendingData.delete(id);
+		this._onData.fire({ id, data: pending.length === 1 ? pending[0] : pending.join('') });
+	}
+
+	/** The window that started process or command `id`, if a window did. */
+	ownerOf(id: string): string | undefined {
+		return this.owners.get(id) ?? this.exitOwners.get(id) ?? this.runs.get(id)?.owner;
 	}
 
 	async sandboxSupport(): Promise<IVoltSandboxSupportInfo> {
@@ -202,6 +256,14 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 		for (const id of ids) {
 			void this.kill(id);
 		}
+		// Commands and jobs of the window too: a dev server left behind by a reload would hold its port.
+		const runs = [...this.runs.values()].filter(run => run.owner === owner && run.running);
+		if (runs.length) {
+			this.logService.info(`[volt-stdio] stopping ${runs.length} command(s) of ${owner}`);
+		}
+		for (const run of runs) {
+			void this.cancelExec(run.id);
+		}
 	}
 
 	private killAll(): void {
@@ -226,6 +288,11 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 	// --- exec and jobs --------------------------------------------------------------------------
 
 	async exec(request: IVoltExecRequest): Promise<IVoltExecResult> {
+		return this.execFor(undefined, request);
+	}
+
+	/** {@link exec} on behalf of one window; its commands stop when it reloads or closes. */
+	async execFor(owner: string | undefined, request: IVoltExecRequest): Promise<IVoltExecResult> {
 		const env = { ...await this.env(), ...request.env };
 		const shell = shellFor(env);
 		const started = Date.now();
@@ -237,11 +304,12 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 			detached: process.platform !== 'win32',
 			windowsVerbatimArguments: process.platform === 'win32',
 		});
-		const run = new ExecRun(request.id, request.command, child, started);
+		const run = new ExecRun(request.id, request.command, child, started, owner);
 		this.runs.set(request.id, run);
 		this.pruneFinishedJobs();
 		run.onDone(() => {
-			if (!request.background) {
+			// A command that handed control back stays readable as a job.
+			if (!request.background && !run.yielded) {
 				this.runs.delete(request.id);
 			}
 		});
@@ -257,6 +325,12 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 			if (run.running) {
 				// A background job outlives the call; its own timer is the dispose of this service.
 				return this.result(run, request, started);
+			}
+		} else if (request.yieldAfterMs !== undefined && request.yieldAfterMs > 0) {
+			await Promise.race([run.done, delay(request.yieldAfterMs)]);
+			if (run.running) {
+				// Still going: the caller gets control back, the command goes on as a job under its own timeout.
+				run.yielded = true;
 			}
 		} else {
 			await run.done;
@@ -365,6 +439,8 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 		this.shellEnv ??= getResolvedShellEnv(this.configurationService, this.logService, { _: [] }, process.env)
 			.catch(err => {
 				this.logService.warn('[volt-stdio] could not resolve the shell environment', err);
+				// Not cached: the next command tries again (a slow shell at startup is often fine later).
+				this.shellEnv = undefined;
 				return {};
 			})
 			.then(resolved => ({
@@ -391,6 +467,11 @@ export class VoltStdioMainService extends Disposable implements IVoltStdioServic
 		}
 		this.runs.clear();
 		this.stderr.clear();
+		if (this.dataFlush) {
+			clearImmediate(this.dataFlush);
+			this.dataFlush = undefined;
+		}
+		this.pendingData.clear();
 		super.dispose();
 	}
 }
@@ -407,10 +488,12 @@ class ExecRun {
 	signal: string | undefined;
 	timedOut = false;
 	cancelled = false;
+	/** A foreground command that outlived its `yieldAfterMs` and is now a job. */
+	yielded = false;
 	private readonly outputListeners = new Set<() => void>();
 	private readonly doneListeners: (() => void)[] = [];
 
-	constructor(readonly id: string, readonly command: string, readonly child: ChildProcess, readonly startedAt: number) {
+	constructor(readonly id: string, readonly command: string, readonly child: ChildProcess, readonly startedAt: number, readonly owner?: string) {
 		child.stdout?.setEncoding('utf8');
 		child.stderr?.setEncoding('utf8');
 		child.stdout?.on('data', (data: string) => this.append(this.stdout, data));
@@ -429,6 +512,8 @@ class ExecRun {
 				}
 			};
 			child.on('close', finish);
+			// The shell is gone but a child it backgrounded still holds the pipes: done anyway.
+			child.on('exit', (code, signal) => setTimeout(() => finish(code, signal), EXIT_DRAIN_MS));
 			child.on('error', err => {
 				this.append(this.stderr, `${err.message}\n`);
 				finish(127, null);
@@ -565,6 +650,11 @@ async function realpathOfNearest(path: string): Promise<string> {
 	return path;
 }
 
+/** Events of processes no window owns still go to every window, as before. */
+function isFor(owner: string | undefined, ctx: string): boolean {
+	return owner === undefined || owner === ctx;
+}
+
 function windowOwner(windowId: number): string {
 	return `window:${windowId}`;
 }
@@ -580,9 +670,19 @@ export function createVoltStdioChannel(service: VoltStdioMainService, disposable
 			if (command === 'spawn') {
 				return service.spawnFor(ctx, (arg as [IVoltStdioSpawnOptions])[0]) as Promise<unknown> as Promise<T>;
 			}
+			if (command === 'exec') {
+				return service.execFor(ctx, (arg as [IVoltExecRequest])[0]) as Promise<unknown> as Promise<T>;
+			}
 			return proxied.call<T>(ctx, command, arg, cancellationToken);
 		},
 		listen<T>(ctx: string, event: string, arg?: unknown): Event<T> {
+			// A process's output and exit go only to the window that started it, not to every window.
+			if (event === 'onData') {
+				return Event.filter(service.onData, e => isFor(service.ownerOf(e.id), ctx)) as Event<unknown> as Event<T>;
+			}
+			if (event === 'onExit') {
+				return Event.filter(service.onExit, e => isFor(service.ownerOf(e.id), ctx)) as Event<unknown> as Event<T>;
+			}
 			return proxied.listen<T>(ctx, event, arg);
 		},
 	};
@@ -626,7 +726,11 @@ function commandEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	const home = homedir();
 	const extra = process.platform === 'win32'
 		? [join(home, 'AppData', 'Local', 'Microsoft', 'WindowsApps')]
-		: [join(home, '.local', 'bin'), join(home, 'bin'), '/opt/homebrew/bin', '/usr/local/bin'];
+		: [
+			join(home, '.local', 'bin'), join(home, 'bin'), '/opt/homebrew/bin', '/usr/local/bin',
+			// Docker Desktop and OrbStack put the docker CLI here; a GUI launch's PATH often lacks them.
+			join(home, '.docker', 'bin'), join(home, '.orbstack', 'bin'), '/Applications/Docker.app/Contents/Resources/bin',
+		];
 	const current = (base.PATH ?? '').split(delimiter).filter(Boolean);
 	const path = [...current, ...extra].filter((entry, index, all) => all.indexOf(entry) === index);
 	return { ...base, PATH: path.join(delimiter) };

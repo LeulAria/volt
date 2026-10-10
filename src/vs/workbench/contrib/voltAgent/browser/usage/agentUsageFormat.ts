@@ -41,7 +41,7 @@ export function formatTokens(value: number): string {
 
 export function formatShare(part: number, whole: number): string {
 	if (whole <= 0 || part <= 0) {
-		return '—';
+		return '\u2014';
 	}
 	const share = (part / whole) * 100;
 	if (share < 0.1) {
@@ -97,12 +97,12 @@ export function formatAxis(ms: number, hourly: boolean): string {
 	return hourly ? hourFormat.value.format(ms) : axisDayFormat.value.format(ms);
 }
 
-/** Tooltip heading for one slot: `Fri, Oct 3`, or `Fri 10:00 AM – 11:00 AM`. */
+/** Tooltip heading for one slot: `Fri, Oct 3`, or `Fri 10:00 AM - 11:00 AM`. */
 export function formatSlot(ms: number, hourly: boolean): string {
 	if (!hourly) {
 		return formatDay(ms);
 	}
-	return `${hourRangeFormat.value.format(ms)} – ${hourFormat.value.format(ms + HOUR_MS)}`;
+	return `${hourRangeFormat.value.format(ms)} \u2013 ${hourFormat.value.format(ms + HOUR_MS)}`;
 }
 
 /** `Tue, Oct 7, 5:00 PM`. */

@@ -712,7 +712,8 @@ code.volt-md-code {
 .volt-md-code-line {
 	padding: 0 10px;
 	white-space: pre;
-	min-height: 18px;
+	/* The editor's line height when the card set it (agentCodeBlock.ts). */
+	min-height: var(--volt-md-code-line-height, 18px);
 }
 
 /* ```diff: 20px rows, green/red tint and a 3px strip, no +/- column. */
@@ -796,7 +797,7 @@ code.volt-md-code.volt-md-diff {
 }
 
 .volt-diagram-summary:not(:empty)::before {
-	content: '·';
+	content: '\00b7';
 	margin-right: 7px;
 	color: var(--volt-md-fg-quaternary);
 }

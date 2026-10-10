@@ -146,7 +146,7 @@
 	font-size: 13px;
 }
 
-/* Only while typing the amount; − and + leave the edge alone. */
+/* Only while typing the amount; - and + leave the edge alone. */
 .volt-agent-snooze-stepper:has(.volt-agent-snooze-amount:focus) {
 	border-color: var(--vscode-focusBorder);
 }

@@ -22,6 +22,7 @@ import {
 	AgentHistoryEntry,
 	AgentHistoryRecord,
 	AgentSessionAttention,
+	IAgentAssistantEntry,
 	IAgentForkOrigin,
 	IAgentHistoryIndex,
 	IAgentHistoryListOptions,
@@ -46,7 +47,6 @@ import {
 	derivePreview,
 	deriveTitle,
 	encodeRecord,
-	encodeRecords,
 	foldTranscript,
 	metaAfterEntry,
 	normalizeIndex,
@@ -64,6 +64,8 @@ const ATTACHMENTS_DIR = 'attachments';
 const INDEX_FILE = 'index.json';
 const LOG_EXT = '.jsonl';
 const DRAFT_EXT = '.draft.json';
+/** The reply still streaming, beside its log: one record, rewritten on its own. */
+const PARTIAL_EXT = '.partial.json';
 const ATOMIC = { atomic: { postfix: '.tmp' } } as const;
 
 /** Batching window for write-behind appends. Later appends join without resetting it. */
@@ -99,12 +101,32 @@ class WriteQueue {
 	}
 }
 
+/** A streaming reply's latest snapshot: its stored form, kept as text (it is not parsed back). */
+interface IPartialRecord {
+	readonly turn: string;
+	readonly at: number;
+	readonly encoded: string;
+	written: boolean;
+}
+
 class SessionHandle implements IAgentSessionHandle {
 
 	private header: IAgentSessionHeader;
 	private entries: AgentHistoryEntry[] = [];
 	/** Encoded eagerly so later mutation of a live message object cannot leak into the log. */
 	private pending: string[] = [];
+	/** Each frozen record's line, so a rewrite does not encode a whole chat (file contents included) again. */
+	private readonly encodedRecords = new WeakMap<object, string>();
+	/**
+	 * The reply still streaming, as last recorded. Its snapshots go to a small file beside the log
+	 * (written at most once per append window), not into the log: a save writes that reply alone,
+	 * not the whole chat, and tells no one (the session's title and preview do not change). The
+	 * final record replaces it; a reload before that reads it back (doLoad).
+	 */
+	private partial: IPartialRecord | undefined;
+	private partialTimer: ReturnType<typeof setTimeout> | undefined;
+	/** A partial file may be on disk; it goes once the log holds what it had. */
+	private partialOnDisk = false;
 	private loaded: Promise<IAgentSessionTranscript> | undefined;
 	private transcript: IAgentSessionTranscript | undefined;
 	private recordCount = 0;
@@ -121,6 +143,7 @@ class SessionHandle implements IAgentSessionHandle {
 		readonly id: string,
 		private readonly logFile: URI,
 		private readonly draftFile: URI,
+		private readonly partialFile: URI,
 		private readonly service: AgentHistoryService,
 		existsOnDisk: boolean,
 		/** Resolves once a previous handle for the same id has finished writing. */
@@ -161,9 +184,11 @@ class SessionHandle implements IAgentSessionHandle {
 		if (!this.loaded) {
 			this.loaded = this.doLoad();
 		}
-		await this.loaded;
-		// Later calls see appends made since the file was read.
-		return this.transcript ?? await this.loaded;
+		const loaded = await this.loaded;
+		// Later calls see appends made since the file was read, and the reply still streaming.
+		const transcript = this.transcript ?? loaded;
+		const partial = this.partial && parsePartial(this.partial.encoded);
+		return partial ? foldTranscript(this.header, [...this.entries, partial]) : transcript;
 	}
 
 	private async doLoad(): Promise<IAgentSessionTranscript> {
@@ -175,8 +200,13 @@ class SessionHandle implements IAgentSessionHandle {
 				if (decoded.header) {
 					this.header = decoded.header;
 				}
+				// A reply that was streaming when the window went away: its last snapshot, unless the
+				// log already has that reply as recent (or final).
+				const partial = await this.readPartial();
+				const logged = partial && decoded.entries.findLast((entry): entry is IAgentAssistantEntry => entry.type === 'agent' && entry.turn === partial.turn);
+				const restored = partial && (!logged || (!logged.final && logged.at < partial.at)) ? [partial] : [];
 				// Appends that raced the load stay after the stored entries.
-				this.entries = [...decoded.entries, ...this.entries];
+				this.entries = [...decoded.entries, ...restored, ...this.entries];
 				this.recordCount = decoded.recordCount;
 				this.damaged = decoded.damaged;
 				if (!decoded.header) {
@@ -223,9 +253,71 @@ class SessionHandle implements IAgentSessionHandle {
 	}
 
 	appendAssistant(entry: IAgentSessionAppendAssistant): void {
+		if (!entry.final) {
+			this.recordPartial(entry);
+			return;
+		}
+		this.dropPartial();
 		this.append({ type: 'agent', at: Date.now(), ...entry });
-		if (entry.final) {
-			void this.flush();
+		void this.flush();
+	}
+
+	private recordPartial(entry: IAgentSessionAppendAssistant): void {
+		if (this.closed) {
+			return;
+		}
+		const record: IAgentAssistantEntry = { type: 'agent', at: Date.now(), ...entry };
+		let encoded: string;
+		try {
+			encoded = encodeRecord(record);
+		} catch (err) {
+			this.service.logService.warn(`[agent history] reply snapshot was not JSON-serializable, storing a safe subset`, err);
+			encoded = encodeRecord({ ...record, message: undefined });
+		}
+		this.partial = { turn: entry.turn, at: record.at, encoded, written: false };
+		if (this.partialTimer === undefined) {
+			this.partialTimer = setTimeout(() => {
+				this.partialTimer = undefined;
+				void this.queue.run(() => this.writePartial());
+			}, APPEND_WINDOW_MS);
+		}
+	}
+
+	/** The final record is in: the snapshot is no longer needed (its file goes with the next rewrite). */
+	private dropPartial(): void {
+		if (this.partialTimer !== undefined) {
+			clearTimeout(this.partialTimer);
+			this.partialTimer = undefined;
+		}
+		this.partial = undefined;
+	}
+
+	private async writePartial(): Promise<void> {
+		const partial = this.partial;
+		if (!partial || partial.written) {
+			return;
+		}
+		partial.written = true;
+		try {
+			await this.service.ensureDirectories();
+			await this.service.fileService.writeFile(this.partialFile, VSBuffer.fromString(partial.encoded), ATOMIC);
+			this.partialOnDisk = true;
+		} catch (err) {
+			partial.written = false;
+			this.service.logService.error(`[agent history] failed to write ${this.partialFile.toString()}`, err);
+		}
+	}
+
+	private async readPartial(): Promise<IAgentAssistantEntry | undefined> {
+		try {
+			const content = await this.service.fileService.readFile(this.partialFile);
+			this.partialOnDisk = true;
+			return parsePartial(content.value.toString());
+		} catch (err) {
+			if (!isNotFound(err)) {
+				this.service.logService.warn(`[agent history] failed to read ${this.partialFile.toString()}`, err);
+			}
+			return undefined;
 		}
 	}
 
@@ -264,13 +356,25 @@ class SessionHandle implements IAgentSessionHandle {
 	private freezeEntry(entry: AgentHistoryEntry): { encoded: string; snapshot: AgentHistoryEntry } {
 		try {
 			const encoded = encodeRecord(entry);
-			return { encoded, snapshot: JSON.parse(encoded) as AgentHistoryEntry };
+			const snapshot = JSON.parse(encoded) as AgentHistoryEntry;
+			this.encodedRecords.set(snapshot, encoded);
+			return { encoded, snapshot };
 		} catch (err) {
 			this.service.logService.warn(`[agent history] record was not JSON-serializable, storing a safe subset`, err);
 			const safe = entry.type === 'user' || entry.type === 'agent' ? { ...entry, message: undefined } : entry;
 			const encoded = encodeRecord(safe);
 			return { encoded, snapshot: safe };
 		}
+	}
+
+	/** A record's line, encoded once per record object (a stored entry's object never changes). */
+	private encodeCached(record: AgentHistoryRecord): string {
+		let encoded = this.encodedRecords.get(record);
+		if (encoded === undefined) {
+			encoded = encodeRecord(record);
+			this.encodedRecords.set(record, encoded);
+		}
+		return encoded;
 	}
 
 	saveDraft(draft: Omit<IAgentSessionDraft, 'updatedAt'> | undefined): void {
@@ -319,6 +423,11 @@ class SessionHandle implements IAgentSessionHandle {
 			clearTimeout(this.appendTimer);
 			this.appendTimer = undefined;
 		}
+		if (this.partialTimer !== undefined) {
+			clearTimeout(this.partialTimer);
+			this.partialTimer = undefined;
+			void this.queue.run(() => this.writePartial());
+		}
 		if (this.draftTimer !== undefined) {
 			clearTimeout(this.draftTimer);
 			this.draftTimer = undefined;
@@ -364,9 +473,21 @@ class SessionHandle implements IAgentSessionHandle {
 		const pendingAtStart = this.pending.length;
 		const transcript = this.transcript ?? foldTranscript(this.header, this.entries);
 		const records: AgentHistoryRecord[] = compactRecords(transcript);
-		const content = VSBuffer.fromString(encodeRecords(records));
+		let text = '';
+		for (const record of records) {
+			text += this.encodeCached(record);
+		}
 		await this.service.ensureDirectories();
-		await this.service.fileService.writeFile(this.logFile, content, ATOMIC);
+		await this.service.fileService.writeFile(this.logFile, VSBuffer.fromString(text), ATOMIC);
+		if (this.partialOnDisk && !this.partial) {
+			// The log now holds the reply the partial file kept (or that reply was dropped).
+			this.partialOnDisk = false;
+			await this.service.fileService.del(this.partialFile).catch(err => {
+				if (!isNotFound(err)) {
+					this.service.logService.warn(`[agent history] failed to delete ${this.partialFile.toString()}`, err);
+				}
+			});
+		}
 		const arrived = this.entries.slice(entriesAtStart);
 		this.entries = [...records.filter((record): record is AgentHistoryEntry => record.type !== 'header'), ...arrived];
 		this.pending = this.pending.slice(pendingAtStart);
@@ -397,6 +518,7 @@ class SessionHandle implements IAgentSessionHandle {
 	/** Discard without writing (used by delete). */
 	abandon(): void {
 		this.closed = true;
+		this.dropPartial();
 		if (this.appendTimer !== undefined) {
 			clearTimeout(this.appendTimer);
 		}
@@ -712,7 +834,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		}
 		let handle = this.handles.get(safe);
 		if (!handle) {
-			handle = new SessionHandle(safe, this.logFileFor(safe), this.draftFileFor(safe), this, this.onDisk.has(safe), this.closing.get(safe));
+			handle = new SessionHandle(safe, this.logFileFor(safe), this.draftFileFor(safe), this.partialFileFor(safe), this, this.onDisk.has(safe), this.closing.get(safe));
 			this.handles.set(safe, handle);
 		}
 		return handle;
@@ -940,6 +1062,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		await Promise.all([
 			this.fileService.del(this.logFileFor(id)).catch(err => { if (!isNotFound(err)) { this.logService.warn(`[agent history] failed to delete ${id}`, err); } }),
 			this.fileService.del(this.draftFileFor(id)).catch(() => undefined),
+			this.fileService.del(this.partialFileFor(id)).catch(() => undefined),
 		]);
 		this.scheduleIndexWrite();
 		this._onDidChange.fire();
@@ -993,6 +1116,10 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		return joinPath(this.sessionsDir, `${id}${DRAFT_EXT}`);
 	}
 
+	private partialFileFor(id: string): URI {
+		return joinPath(this.sessionsDir, `${id}${PARTIAL_EXT}`);
+	}
+
 	/** @internal */
 	ensureDirectories(): Promise<void> {
 		if (!this.directoriesReady) {
@@ -1017,6 +1144,16 @@ function describeWorkspace(workspaceContextService: IWorkspaceContextService): I
 		|| (workspace.configuration ? basename(workspace.configuration).replace(/\.code-workspace$/, '') : '')
 		|| 'Untitled';
 	return { id: workspace.id, label, folders };
+}
+
+/** A partial file's record; undefined when it is not one (torn, or another kind). */
+function parsePartial(text: string): IAgentAssistantEntry | undefined {
+	try {
+		const value = JSON.parse(text) as Partial<IAgentAssistantEntry> | null;
+		return value?.type === 'agent' && typeof value.turn === 'string' && typeof value.at === 'number' ? value as IAgentAssistantEntry : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 function shallowEqualMeta(a: IAgentSessionMeta, b: IAgentSessionMeta): boolean {

@@ -22,22 +22,36 @@ interface IReplyText {
 }
 
 /**
- * Streamed reply text shows up in the accent color and fades to the normal color. A reply is
- * rebuilt on every streamed frame, so the tracker remembers when each stretch of text first
- * appeared and wraps it again on each render with a negative animation delay: the fade picks
- * up where it was instead of restarting, and finishes on its own once the stream stops.
+ * A stretch of a reply's text, in reading order. `roots` are the elements drawn for it in this
+ * frame; a stretch without them kept its DOM from an earlier frame (and the fade spans in it).
+ */
+export interface IFreshTextPart {
+	readonly text: string;
+	readonly roots?: readonly HTMLElement[];
+}
+
+/**
+ * Streamed reply text shows up in the accent color and fades to the normal color. The tracker
+ * remembers when each stretch of text first appeared and wraps the stretches drawn anew with a
+ * negative animation delay: the fade picks up where it was instead of restarting, and finishes
+ * on its own once the stream stops. DOM kept from an earlier frame keeps its running spans.
  */
 export class FreshTextTracker {
 
 	private readonly replies = new WeakMap<object, IReplyText>();
 
 	/**
-	 * `roots` hold the reply's rendered text in reading order. Text is new when the reply grew
-	 * past what the previous render showed; a reply seen for the first time only counts as new
-	 * while it is still streaming, so reopening a finished chat does not flash.
+	 * `roots` hold the reply's rendered text in reading order, all of it drawn in this frame. Text
+	 * is new when the reply grew past what the previous render showed; a reply seen for the first
+	 * time only counts as new while it is still streaming, so reopening a finished chat does not flash.
 	 */
 	apply(owner: object, roots: readonly HTMLElement[], streaming: boolean, now = Date.now()): void {
-		const text = roots.map(root => root.textContent ?? '').join('');
+		this.applyParts(owner, roots.map(root => ({ text: root.textContent ?? '', roots: [root] })), streaming, now);
+	}
+
+	/** {@link apply} for a reply redrawn in part: only the parts with `roots` are walked and wrapped. */
+	applyParts(owner: object, parts: readonly IFreshTextPart[], streaming: boolean, now = Date.now()): void {
+		const text = parts.map(part => part.text).join('');
 		let reply = this.replies.get(owner);
 		if (!reply) {
 			if (!streaming) {
@@ -46,7 +60,9 @@ export class FreshTextTracker {
 			reply = { text: '', chunks: [] };
 			this.replies.set(owner, reply);
 		}
-		if (text.length > reply.text.length) {
+		// Growth counts only while the reply streams: the redraw once it ends lays its text out whole
+		// (a live reply is drawn block by block), which is no new text.
+		if (streaming && text.length > reply.text.length) {
 			reply.chunks.push({ start: commonPrefixLength(reply.text, text), end: text.length, at: now });
 		}
 		reply.text = text;
@@ -57,7 +73,21 @@ export class FreshTextTracker {
 			}
 			return;
 		}
-		wrapFreshText(roots, reply.chunks, now);
+		let offset = 0;
+		for (const part of parts) {
+			const start = offset;
+			offset += part.text.length;
+			if (!part.roots?.length) {
+				continue;
+			}
+			// Only the chunks that reach into this part, shifted to its own offsets.
+			const chunks = reply.chunks
+				.filter(chunk => chunk.start < offset && chunk.end > start)
+				.map(chunk => ({ start: Math.max(0, chunk.start - start), end: chunk.end - start, at: chunk.at }));
+			if (chunks.length) {
+				wrapFreshText(part.roots, chunks, now);
+			}
+		}
 	}
 }
 

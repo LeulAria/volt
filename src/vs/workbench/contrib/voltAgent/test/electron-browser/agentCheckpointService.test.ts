@@ -20,6 +20,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { VoltGitService } from '../../../../../platform/voltGit/node/voltGitService.js';
 /* eslint-enable local/code-import-patterns, local/code-layering */
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
@@ -106,7 +107,8 @@ suite('AgentCheckpointService on real repos', function () {
 		const sessionContext = { rootFor: () => URI.file(folder) } as Partial<IVoltSessionContextService> as IVoltSessionContextService;
 		const workspace = { getWorkspace: () => ({ folders: [] }) } as unknown as IWorkspaceContextService;
 		const textFiles = { files: { onDidSave: Event.None } } as unknown as ITextFileService;
-		return store.add(new AgentCheckpointService(runtime, git, edits as unknown as IAgentEditsService, sessionContext, workspace, textFiles, new NullLogService()));
+		const files = { onDidFilesChange: Event.None } as unknown as IFileService;
+		return store.add(new AgentCheckpointService(runtime, git, edits as unknown as IAgentEditsService, sessionContext, workspace, textFiles, new NullLogService(), files));
 	}
 
 	function session(sessionId: string): IVoltSession {

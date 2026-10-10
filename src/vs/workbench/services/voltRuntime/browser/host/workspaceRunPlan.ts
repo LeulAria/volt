@@ -30,7 +30,7 @@ export async function loadWorkspaceRunPlan(fileService: IFileService, workspace:
 	if (pkg) {
 		try {
 			const raw = await fileService.readFile(joinPath(root, 'package.json'));
-			packageJson = JSON.parse(raw.value.toString());
+			packageJson = JSON.parse(raw.value.toString()) as typeof packageJson;
 		} catch {
 			packageJson = undefined;
 		}
@@ -62,7 +62,7 @@ export async function loadProjectCheckFiles(fileService: IFileService, root: URI
 	if (pkg) {
 		try {
 			const raw = await fileService.readFile(joinPath(root, 'package.json'));
-			packageJson = JSON.parse(raw.value.toString());
+			packageJson = JSON.parse(raw.value.toString()) as typeof packageJson;
 		} catch {
 			packageJson = undefined;
 		}

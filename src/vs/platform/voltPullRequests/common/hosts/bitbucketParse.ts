@@ -19,11 +19,97 @@ import {
 	VoltPrFileChange,
 	VoltPrState,
 } from '../voltPullRequests.js';
-import { ALL_MERGE_OPTIONS, Json, latestByName, list, num, str, time, user } from './hostParse.js';
+import { ALL_MERGE_OPTIONS, latestByName, list, num, str, time, user } from './hostParse.js';
 
 /** Bitbucket Cloud (`/2.0`): pull requests, build statuses and comments in Volt's shapes. */
 
-export function bitbucketState(raw: Json): VoltPrState {
+interface IBitbucketLinkJson {
+	readonly href?: unknown;
+}
+
+export interface IBitbucketUserJson {
+	readonly nickname?: unknown;
+	readonly username?: unknown;
+	readonly display_name?: unknown;
+	readonly links?: { readonly avatar?: IBitbucketLinkJson };
+}
+
+export interface IBitbucketStatusJson {
+	readonly key?: unknown;
+	readonly name?: unknown;
+	readonly state?: unknown;
+	readonly url?: unknown;
+	readonly description?: unknown;
+	readonly created_on?: unknown;
+	readonly updated_on?: unknown;
+}
+
+interface IBitbucketParticipantJson {
+	readonly user?: IBitbucketUserJson;
+	readonly approved?: unknown;
+	readonly state?: unknown;
+	readonly participated_on?: unknown;
+}
+
+/** A pull request's `source` or `destination`. */
+interface IBitbucketEndpointJson {
+	readonly branch?: { readonly name?: unknown };
+	readonly commit?: { readonly hash?: unknown };
+	readonly repository?: { readonly full_name?: unknown };
+}
+
+export interface IBitbucketPullRequestJson {
+	readonly id?: unknown;
+	readonly state?: unknown;
+	readonly draft?: unknown;
+	readonly title?: unknown;
+	readonly description?: unknown;
+	readonly summary?: { readonly raw?: unknown };
+	readonly author?: IBitbucketUserJson;
+	readonly participants?: unknown;
+	readonly reviewers?: unknown;
+	readonly source?: IBitbucketEndpointJson;
+	readonly destination?: IBitbucketEndpointJson;
+	readonly links?: { readonly html?: IBitbucketLinkJson };
+	readonly created_on?: unknown;
+	readonly updated_on?: unknown;
+	readonly comment_count?: unknown;
+	readonly close_source_branch?: unknown;
+}
+
+export interface IBitbucketDiffstatJson {
+	readonly status?: unknown;
+	readonly old?: { readonly path?: unknown };
+	readonly new?: { readonly path?: unknown };
+	readonly lines_added?: unknown;
+	readonly lines_removed?: unknown;
+}
+
+export interface IBitbucketCommentJson {
+	readonly id?: unknown;
+	readonly deleted?: unknown;
+	readonly parent?: { readonly id?: unknown };
+	readonly user?: IBitbucketUserJson;
+	readonly content?: { readonly raw?: unknown };
+	readonly created_on?: unknown;
+	readonly links?: { readonly html?: IBitbucketLinkJson };
+	readonly inline?: {
+		readonly path?: unknown;
+		readonly from?: unknown;
+		readonly to?: unknown;
+		readonly outdated?: unknown;
+	};
+	readonly resolution?: unknown;
+}
+
+export interface IBitbucketCommitJson {
+	readonly hash?: unknown;
+	readonly message?: unknown;
+	readonly date?: unknown;
+	readonly author?: { readonly user?: IBitbucketUserJson; readonly raw?: unknown };
+}
+
+export function bitbucketState(raw: IBitbucketPullRequestJson | undefined): VoltPrState {
 	switch (raw?.state) {
 		case 'MERGED': return 'merged';
 		case 'DECLINED':
@@ -42,7 +128,7 @@ export function bitbucketCheckState(value: unknown): VoltPrCheckState {
 }
 
 /** `GET .../pullrequests/{id}/statuses` (`values`). */
-export function parseBitbucketChecks(statuses: readonly Json[]): IVoltPrCheck[] {
+export function parseBitbucketChecks(statuses: readonly IBitbucketStatusJson[]): IVoltPrCheck[] {
 	return latestByName(statuses.map(status => ({
 		name: str(status.name || status.key, 'build'),
 		state: bitbucketCheckState(status.state),
@@ -55,7 +141,7 @@ export function parseBitbucketChecks(statuses: readonly Json[]): IVoltPrCheck[] 
 }
 
 /** Bitbucket users are named by nickname (display name for older accounts). */
-export function bitbucketLogin(raw: Json): string {
+export function bitbucketLogin(raw: IBitbucketUserJson | undefined): string {
 	return str(raw?.nickname || raw?.username || raw?.display_name, 'ghost');
 }
 
@@ -63,10 +149,10 @@ export interface IBitbucketExtras {
 	readonly checks?: readonly IVoltPrCheck[];
 }
 
-export function parseBitbucketPull(raw: Json, repo: IVoltPrRepoRef, viewer: string, extras: IBitbucketExtras = {}): IVoltPullRequest {
+export function parseBitbucketPull(raw: IBitbucketPullRequestJson, repo: IVoltPrRepoRef, viewer: string, extras: IBitbucketExtras = {}): IVoltPullRequest {
 	const number = num(raw.id);
 	const state = bitbucketState(raw);
-	const participants = list(raw.participants);
+	const participants = list<IBitbucketParticipantJson>(raw.participants);
 	const reviews: IVoltPrReviewSummary[] = participants
 		.filter(participant => participant.approved || participant.state === 'changes_requested')
 		.map(participant => ({ author: bitbucketLogin(participant.user), state: participant.state === 'changes_requested' ? 'changesRequested' as const : 'approved' as const, at: time(participant.participated_on) ?? 0 }));
@@ -104,7 +190,7 @@ export function parseBitbucketPull(raw: Json, repo: IVoltPrRepoRef, viewer: stri
 		checks: summarizeChecks(extras.checks ?? []),
 		labels: [],
 		assignees: [],
-		reviewRequests: list(raw.reviewers).map(bitbucketLogin).filter(name => !reviews.some(review => review.author === name)),
+		reviewRequests: list<IBitbucketUserJson>(raw.reviewers).map(bitbucketLogin).filter(name => !reviews.some(review => review.author === name)),
 		reviews,
 		unresolvedThreads: 0,
 		comments: num(raw.comment_count),
@@ -124,12 +210,13 @@ export function bitbucketFileChange(value: unknown): VoltPrFileChange {
 }
 
 /** `GET .../diffstat` entries. */
-export function parseBitbucketDiffstat(raw: Json): IVoltPrFile {
+export function parseBitbucketDiffstat(raw: IBitbucketDiffstatJson): IVoltPrFile {
 	const change = bitbucketFileChange(raw.status);
 	const path = str(change === 'deleted' ? raw.old?.path : raw.new?.path ?? raw.old?.path);
+	const previous = str(raw.old?.path);
 	return {
 		path,
-		...(change === 'renamed' && raw.old?.path && raw.old.path !== path ? { previousPath: raw.old.path } : {}),
+		...(change === 'renamed' && previous && previous !== path ? { previousPath: previous } : {}),
 		change,
 		additions: num(raw.lines_added),
 		deletions: num(raw.lines_removed),
@@ -137,7 +224,7 @@ export function parseBitbucketDiffstat(raw: Json): IVoltPrFile {
 	};
 }
 
-export function parseBitbucketComment(raw: Json): IVoltPrComment {
+export function parseBitbucketComment(raw: IBitbucketCommentJson): IVoltPrComment {
 	return {
 		id: String(raw.id ?? ''),
 		...(typeof raw.id === 'number' ? { databaseId: raw.id } : {}),
@@ -149,10 +236,10 @@ export function parseBitbucketComment(raw: Json): IVoltPrComment {
 }
 
 /** Inline comments (with their replies) as threads; the rest as conversation. Deleted comments are left out. */
-export function parseBitbucketComments(comments: readonly Json[]): { threads: IVoltPrReviewThread[]; conversation: IVoltPrComment[] } {
+export function parseBitbucketComments(comments: readonly IBitbucketCommentJson[]): { threads: IVoltPrReviewThread[]; conversation: IVoltPrComment[] } {
 	const live = comments.filter(comment => !comment.deleted);
-	const byId = new Map<number, Json>(live.map(comment => [num(comment.id), comment]));
-	const rootOf = (comment: Json): Json => {
+	const byId = new Map<number, IBitbucketCommentJson>(live.map(comment => [num(comment.id), comment]));
+	const rootOf = (comment: IBitbucketCommentJson): IBitbucketCommentJson => {
 		let current = comment;
 		for (let depth = 0; current?.parent?.id && depth < 50; depth++) {
 			const parent = byId.get(num(current.parent.id));
@@ -163,7 +250,7 @@ export function parseBitbucketComments(comments: readonly Json[]): { threads: IV
 		}
 		return current;
 	};
-	const threads = new Map<number, { root: Json; comments: IVoltPrComment[] }>();
+	const threads = new Map<number, { root: IBitbucketCommentJson; comments: IVoltPrComment[] }>();
 	const conversation: IVoltPrComment[] = [];
 	for (const comment of live) {
 		const root = rootOf(comment);
@@ -182,7 +269,7 @@ export function parseBitbucketComments(comments: readonly Json[]): { threads: IV
 			const from = num(root.inline?.from);
 			return {
 				id: String(root.id),
-				path: str(root.inline.path),
+				path: str(root.inline?.path),
 				...(to || from ? { line: to || from } : {}),
 				side: to ? 'RIGHT' as const : 'LEFT' as const,
 				resolved: !!root.resolution,
@@ -195,7 +282,7 @@ export function parseBitbucketComments(comments: readonly Json[]): { threads: IV
 	};
 }
 
-export function parseBitbucketCommit(raw: Json): IVoltPrCommit {
+export function parseBitbucketCommit(raw: IBitbucketCommitJson): IVoltPrCommit {
 	return {
 		oid: str(raw.hash),
 		headline: str(raw.message).split('\n')[0],
@@ -206,11 +293,11 @@ export function parseBitbucketCommit(raw: Json): IVoltPrCommit {
 }
 
 export interface IBitbucketDetailParts {
-	readonly pull: Json;
+	readonly pull: IBitbucketPullRequestJson;
 	readonly checks: readonly IVoltPrCheck[];
-	readonly diffstat: readonly Json[];
-	readonly comments: readonly Json[];
-	readonly commits: readonly Json[];
+	readonly diffstat: readonly IBitbucketDiffstatJson[];
+	readonly comments: readonly IBitbucketCommentJson[];
+	readonly commits: readonly IBitbucketCommitJson[];
 	/** `GET /repositories/{ws}/{slug}/permissions-config` is admin-only; whether the viewer can write is a best guess. */
 	readonly canWrite: boolean;
 }
