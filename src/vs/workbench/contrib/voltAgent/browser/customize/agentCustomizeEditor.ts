@@ -430,6 +430,7 @@ export class AgentCustomizeEditor extends EditorPane {
 		}
 		this.scheduleRemoteSearch();
 		this.render();
+		this.scroll.setScrollPosition({ scrollTop: 0 });
 	}
 
 	private setKind(kind: KindTab): void {
@@ -437,7 +438,6 @@ export class AgentCustomizeEditor extends EditorPane {
 		this.editingPlugins = false;
 		this.storePageState();
 		this.render();
-		this.scroll.setScrollPosition({ scrollTop: 0 });
 	}
 
 	private cancelRemote(): void {
@@ -495,6 +495,8 @@ export class AgentCustomizeEditor extends EditorPane {
 			this.scroll.scanDomNode();
 			return;
 		}
+		// Re-rendering (a filter, a scope toggle, a plugin refresh) keeps the list where it was.
+		const scrollTop = this.scroll.getScrollPosition().scrollTop;
 		this.renderFilters();
 		this.renderStore.clear();
 		clearNode(this.listEl);
@@ -509,6 +511,7 @@ export class AgentCustomizeEditor extends EditorPane {
 			}
 		}
 		this.scroll.scanDomNode();
+		this.scroll.setScrollPosition({ scrollTop });
 	}
 
 	private renderFilters(): void {
