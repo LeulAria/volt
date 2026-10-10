@@ -28,7 +28,7 @@ import { IVoltUpdate, voltReleaseTag } from '../../../../../platform/update/comm
 import { IWorkbenchContribution } from '../../../../common/contributions.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { summarizeReleaseNotes } from '../../common/agentUpdateNotes.js';
-import { createRefreshSpinner } from '../usage/agentUsageIcons.js';
+import { createRefreshSpinner, setRefreshSpinnerRunning } from '../usage/agentUsageIcons.js';
 
 /** States worth a button in the agent sidebar footer. */
 function isActionable(state: State): boolean {
@@ -104,7 +104,7 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 	private readonly resultTimer = this._register(new MutableDisposable());
 	/** Ends a check the service never answers (it only checks from Idle; builds from sources never do). */
 	private readonly checkTimeout = this._register(new MutableDisposable());
-	/** Refresh glyph, the Usage page's spinner and a check, built once: the spinner's SMIL clock keeps running. */
+	/** Refresh glyph, the Usage page's spinner and a check, built once; the spinner's SMIL clock runs only while checking. */
 	private idleGlyph: Element[] | undefined;
 	private readonly attachment = this._register(new MutableDisposable<DisposableStore>());
 	private renderPopover: (() => void) | undefined;
@@ -243,6 +243,7 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 			}
 			button.classList.add('idle');
 			button.classList.toggle('checking', checking);
+			setRefreshSpinnerRunning(this.idleGlyph[1], checking);
 			button.classList.toggle('up-to-date', result === 'upToDate');
 			button.classList.remove('downloading', 'indeterminate', 'ready');
 			const label = checking

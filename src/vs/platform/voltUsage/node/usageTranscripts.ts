@@ -292,6 +292,11 @@ const HOUR_MS = 60 * 60 * 1000;
 const TIMESTAMP_FIELD = /(?<!\\)"timestamp":"(\d{4}-\d\d-\d\dT[^"]+)"/g;
 const SESSION_FIELD = /(?<!\\)"(?:sessionId|session_id)":"([^"]+)"/g;
 
+/** A copy of `value` that does not point into the string it was cut from. */
+export function ownString(value: string): string {
+	return Buffer.from(value, 'utf8').toString('utf8');
+}
+
 /**
  * Sessions and the hours they were active, read with regexes rather than JSON.parse so every
  * line can be visited cheaply. A Codex rollout names its session in `session_meta` only.
@@ -299,9 +304,11 @@ const SESSION_FIELD = /(?<!\\)"(?:sessionId|session_id)":"([^"]+)"/g;
 function readActivity(text: string, fallbackSessionId?: string): ITranscriptActivity | undefined {
 	const sessionIds = new Set<string>();
 	for (const match of text.matchAll(SESSION_FIELD)) {
-		// A regex match is a slice that keeps the whole transcript's text alive; the parsed transcripts
-		// are cached, so 2 GB of Claude transcripts ran the main process out of memory. Copy it out.
-		sessionIds.add(Buffer.from(match[1], 'utf8').toString('utf8'));
+		if (!sessionIds.has(match[1])) {
+			// A regex capture is a slice that keeps the whole file text alive; the ids are cached
+			// for every transcript, so keep copies (2 GB of transcripts held 4 GB of heap).
+			sessionIds.add(ownString(match[1]));
+		}
 	}
 	if (!sessionIds.size && fallbackSessionId) {
 		sessionIds.add(fallbackSessionId);

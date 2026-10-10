@@ -418,6 +418,24 @@ suite('ACP provider supervision', () => {
 		assert.strictEqual(env.provider.hasSpare(request({ cwd: '/elsewhere' })), false);
 	});
 
+	test('prewarming another chat stops the spare parked for the previous one', async () => {
+		const env = setup();
+		const a = request({ sessionId: 'chat-a', cwd: '/a' });
+		const a2 = request({ sessionId: 'chat-a', cwd: '/a2' });
+		const b = request({ sessionId: 'chat-b', cwd: '/b' });
+		await env.provider.prewarmSpare(a);
+		await env.provider.prewarmSpare(a2);
+		assert.strictEqual(env.provider.hasSpare(a), true, 'two setups of the chat in view both stay');
+		await env.provider.prewarmSpare(b);
+		assert.strictEqual(env.provider.hasSpare(a), false);
+		assert.strictEqual(env.provider.hasSpare(a2), false);
+		assert.strictEqual(env.provider.hasSpare(b), true);
+		env.provider.releaseSpares(undefined);
+		assert.strictEqual(env.provider.hasSpare(b), false);
+		await settle();
+		await env.provider.disposeSpares();
+	});
+
 	test('attached images go out as image blocks when the agent accepts them', async () => {
 		const env = setup();
 		const handle = await env.provider.start(request());

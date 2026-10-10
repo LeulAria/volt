@@ -25,9 +25,8 @@ import { getHistoryItemEditorTitle } from '../../../scm/browser/util.js';
 import { ISCMHistoryItem } from '../../../scm/common/history.js';
 import { ISCMRepository, ISCMService } from '../../../scm/common/scm.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
-import { SHOW_AGENT_SCM_COMMAND_ID } from '../workspace/agentSurfaceHost.js';
-import { agentChangesScopeLabel } from './agentChangesEditor.js';
-import { AgentChangesScope, agentScopeTurnId } from './agentSessionChanges.js';
+import { SHOW_AGENT_SCM_COMMAND_ID } from '../../common/agentGitActions.js';
+import { AgentChangesScope, IAgentChangesTurn, agentScopeTurnId } from './agentSessionChanges.js';
 import { getAgentChangesSourceUri, IAgentSessionChangesService } from './agentSessionChangesService.js';
 import { findAgentScmRepository } from './agentScmRepository.js';
 
@@ -301,5 +300,24 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 			return;
 		}
 		await this.group.replaceEditors([{ editor: this.input, replacement: next, options: { pinned: true } }]);
+	}
+}
+
+export function agentChangesScopeLabel(scope: AgentChangesScope, turn?: IAgentChangesTurn): string {
+	switch (scope) {
+		case 'pending':
+			return localize('voltAgent.changes.pending', "Pending Changes");
+		case 'lastTurn':
+			return localize('voltAgent.changes.lastTurn', "Last Agent Turn");
+		case 'staged':
+			return localize('voltAgent.changes.staged', "Staged");
+		case 'unstaged':
+			return localize('voltAgent.changes.unstaged', "Unstaged");
+		case 'uncommitted':
+			return localize('voltAgent.changes.uncommitted', "Uncommitted");
+		default:
+			return turn
+				? localize('voltAgent.changes.turnNumber', "Turn {0}", turn.number)
+				: localize('voltAgent.changes.turn', "Turn");
 	}
 }

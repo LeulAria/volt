@@ -166,6 +166,52 @@ module _nls {
 		});
 	}
 
+	function computeLineStarts(text: string): number[] {
+		const starts = [0];
+		for (let i = 0; i < text.length; i++) {
+			if (text.charCodeAt(i) === 10 /* \n */) {
+				starts.push(i + 1);
+			}
+		}
+		return starts;
+	}
+
+	/** End of the literal (string, template, or bracketed object/array) that starts at `start` in `text`. */
+	function scanExpressionEnd(ts: typeof import('typescript'), text: string, lineStarts: number[], start: ts.LineAndCharacter): ts.LineAndCharacter | undefined {
+		const offset = lineStarts[start.line] + start.character;
+		const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard);
+		scanner.setText(text, offset);
+		const open = new Set([ts.SyntaxKind.OpenBraceToken, ts.SyntaxKind.OpenBracketToken, ts.SyntaxKind.OpenParenToken]);
+		const close = new Set([ts.SyntaxKind.CloseBraceToken, ts.SyntaxKind.CloseBracketToken, ts.SyntaxKind.CloseParenToken]);
+		let depth = 0;
+		for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+			if (scanner.getTokenStart() === offset && !open.has(token)) {
+				return token === ts.SyntaxKind.StringLiteral || token === ts.SyntaxKind.NoSubstitutionTemplateLiteral ? offsetToLc(lineStarts, scanner.getTokenEnd()) : undefined;
+			}
+			if (open.has(token)) {
+				depth++;
+			} else if (close.has(token) && --depth === 0) {
+				return offsetToLc(lineStarts, scanner.getTokenEnd());
+			} else if (token === ts.SyntaxKind.TemplateHead) {
+				return undefined;
+			}
+		}
+		return undefined;
+	}
+
+	function offsetToLc(lineStarts: number[], offset: number): ts.LineAndCharacter {
+		let low = 0, high = lineStarts.length - 1;
+		while (low < high) {
+			const mid = (low + high + 1) >> 1;
+			if (lineStarts[mid] <= offset) {
+				low = mid;
+			} else {
+				high = mid - 1;
+			}
+		}
+		return { line: low, character: offset - lineStarts[low] };
+	}
+
 	function mappedPositionFrom(source: string, lc: ts.LineAndCharacter): sm.MappedPosition {
 		return { source, line: lc.line + 1, column: lc.character };
 	}
@@ -390,9 +436,10 @@ module _nls {
 		let currentLine = -1;
 		let currentLineDiff = 0;
 		let source: string | null = null;
+		// Every mapping repeats the file's one source; resolve each distinct path once.
+		const resolvedSources = new Map<string, string>();
 
 		smc.eachMapping(m => {
-			const patch = patches[patches.length - 1];
 			const original = { line: m.originalLine, column: m.originalColumn };
 			const generated = { line: m.generatedLine, column: m.generatedColumn };
 
@@ -403,7 +450,11 @@ module _nls {
 			currentLine = generated.line;
 			generated.column += currentLineDiff;
 
-			if (patch && m.generatedLine - 1 === patch.span.end.line && m.generatedColumn === patch.span.end.character) {
+			// Patches that ended on an earlier line without a mapping at their end shift nothing here.
+			while (patches.length && patches[patches.length - 1].span.end.line < m.generatedLine - 1) {
+				patches.pop();
+			}
+			for (let patch = patches.at(-1); patch && m.generatedLine - 1 === patch.span.end.line && m.generatedColumn >= patch.span.end.character; patch = patches.at(-1)) {
 				const originalLength = patch.span.end.character - patch.span.start.character;
 				const modifiedLength = patch.content.length;
 				const lengthDiff = modifiedLength - originalLength;
@@ -413,8 +464,11 @@ module _nls {
 				patches.pop();
 			}
 
-			source = rsm.sourceRoot ? path.relative(rsm.sourceRoot, m.source) : m.source;
-			source = source.replace(/\\/g, '/');
+			source = resolvedSources.get(m.source) ?? null;
+			if (source === null) {
+				source = (rsm.sourceRoot ? path.relative(rsm.sourceRoot, m.source) : m.source).replace(/\\/g, '/');
+				resolvedSources.set(m.source, source);
+			}
 			smg.addMapping({ source, name: m.name, original, generated });
 		}, null, sm.SourceMapConsumer.GENERATED_ORDER);
 
@@ -434,8 +488,10 @@ module _nls {
 	}
 
 	function patch(ts: typeof import('typescript'), typescript: string, javascript: string, sourcemap: sm.RawSourceMap, options: { preserveEnglish: boolean }): INlsPatchResult {
-		const { localizeCalls } = analyze(ts, typescript, 'localize');
-		const { localizeCalls: localize2Calls } = analyze(ts, typescript, 'localize2');
+		// Parsing a file with a language service is the expensive part; a file that never names
+		// the function cannot call it.
+		const { localizeCalls } = typescript.includes('localize') ? analyze(ts, typescript, 'localize') : { localizeCalls: [] };
+		const { localizeCalls: localize2Calls } = typescript.includes('localize2') ? analyze(ts, typescript, 'localize2') : { localizeCalls: [] };
 
 		if (localizeCalls.length === 0 && localize2Calls.length === 0) {
 			return { javascript, sourcemap };
@@ -446,10 +502,13 @@ module _nls {
 		const smc = new sm.SourceMapConsumer(sourcemap);
 		const positionFrom = mappedPositionFrom.bind(null, sourcemap.sources[0]);
 
-		// build patches
+		// build patches: the start comes from the source map, the end from scanning the emitted
+		// expression. Emitters differ in which token ends they map (Oxc maps token starts only),
+		// so a mapped end can land on the start or inside an object-literal key.
+		const lineStarts = computeLineStarts(javascript);
 		const toPatch = (c: { range: ISpan; content: string }): IPatch => {
 			const start = lcFrom(smc.generatedPositionFor(positionFrom(c.range.start)));
-			const end = lcFrom(smc.generatedPositionFor(positionFrom(c.range.end)));
+			const end = scanExpressionEnd(ts, javascript, lineStarts, start) ?? lcFrom(smc.generatedPositionFor(positionFrom(c.range.end)));
 			return { span: { start, end }, content: c.content };
 		};
 

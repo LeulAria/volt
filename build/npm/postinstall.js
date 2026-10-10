@@ -34,6 +34,54 @@ function run(command, args, opts) {
 }
 
 /**
+ * The nested installs are independent of each other, so they run a few at a time
+ * (VSCODE_NPM_INSTALL_CONCURRENCY, default: up to 6; 1 installs them one after another).
+ * @type {{ dir: string; command: string; args: string[]; opts: any }[]}
+ */
+const pending = [];
+
+async function runPending() {
+	const concurrency = Math.max(1, Number(process.env['VSCODE_NPM_INSTALL_CONCURRENCY']) || Math.min(6, os.availableParallelism()));
+	if (concurrency === 1) {
+		for (const { command, args, opts } of pending) {
+			run(command, args, opts);
+		}
+		return;
+	}
+	const queue = pending.slice();
+	let failed = 0;
+	const worker = async () => {
+		for (let job = queue.shift(); job; job = queue.shift()) {
+			const started = Date.now();
+			const code = await new Promise(resolve => {
+				const child = cp.spawn(job.command, job.args, { ...job.opts, stdio: ['ignore', 'pipe', 'pipe'] });
+				let output = '';
+				child.stdout.on('data', chunk => output += chunk);
+				child.stderr.on('data', chunk => output += chunk);
+				child.on('error', err => { output += `ERR Failed to spawn process: ${err}\n`; resolve(1); });
+				child.on('close', status => {
+					// Print each directory's output in one piece so parallel installs stay readable.
+					log(job.dir, `$ ${job.command} ${job.args.join(' ')} (${((Date.now() - started) / 1000).toFixed(1)}s)`);
+					if (output.trim()) {
+						process.stdout.write(output.endsWith('\n') ? output : `${output}\n`);
+					}
+					resolve(status ?? 1);
+				});
+			});
+			if (code !== 0) {
+				console.error(`ERR [${job.dir}] Process exited with code: ${code}`);
+				failed = failed || code;
+				queue.length = 0;
+			}
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+	if (failed) {
+		process.exit(failed);
+	}
+}
+
+/**
  * @param {string} dir
  * @param {*} [opts]
  */
@@ -69,7 +117,7 @@ function npmInstall(dir, opts) {
 		run('sudo', ['chown', '-R', `${userinfo.uid}:${userinfo.gid}`, `${path.resolve(root, dir)}`], opts);
 	} else {
 		log(dir, 'Installing dependencies...');
-		run(npm, command.split(' '), opts);
+		pending.push({ dir, command: npm, args: command.split(' '), opts });
 	}
 	removeParcelWatcherPrebuild(dir);
 }
@@ -185,5 +233,7 @@ for (let dir of dirs) {
 	npmInstall(dir, opts);
 }
 
-cp.execSync('git config pull.rebase merges');
-cp.execSync('git config blame.ignoreRevsFile .git-blame-ignore-revs');
+runPending().then(() => {
+	cp.execSync('git config pull.rebase merges');
+	cp.execSync('git config blame.ignoreRevsFile .git-blame-ignore-revs');
+});

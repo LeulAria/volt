@@ -17,7 +17,7 @@ import { IVoltPrCheck, IVoltPrRepoRef, IVoltPullRequest, VoltPrCheckState, VoltP
 import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { ITerminalService } from '../../../terminal/browser/terminal.js';
-import { AgentEditor } from '../editor/agentEditor.js';
+import type { AgentEditor } from '../editor/agentEditor.js';
 import { AgentEditorInput, OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { openInAgentTools } from '../workspace/agentSurfaceHost.js';
 import { blockedReason, primaryAction, resolveMergeMethod } from '../../common/agentPullRequests.js';
@@ -134,8 +134,9 @@ export async function composeInChat(accessor: ServicesAccessor, sessionId: strin
 		for (const part of editorGroupsService.parts.length ? editorGroupsService.parts : [editorGroupsService.mainPart]) {
 			for (const group of part.groups) {
 				const pane = group.activeEditorPane;
-				if (pane instanceof AgentEditor && pane.input instanceof AgentEditorInput && pane.input.sessionId === sessionId) {
-					return pane;
+				// Matched by editor id: importing AgentEditor's class here would close an import cycle.
+				if (pane?.getId() === AgentEditorInput.EditorID && pane.input instanceof AgentEditorInput && pane.input.sessionId === sessionId) {
+					return pane as AgentEditor;
 				}
 			}
 		}
@@ -166,7 +167,7 @@ export function visibleChatSession(accessor: ServicesAccessor): string | undefin
 	for (const part of parts) {
 		for (const group of part.groups) {
 			const pane = group.activeEditorPane;
-			if (pane instanceof AgentEditor && pane.input instanceof AgentEditorInput) {
+			if (pane?.getId() === AgentEditorInput.EditorID && pane.input instanceof AgentEditorInput) {
 				return pane.input.sessionId;
 			}
 		}

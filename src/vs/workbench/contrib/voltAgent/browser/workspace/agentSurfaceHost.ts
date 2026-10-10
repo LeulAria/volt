@@ -58,6 +58,7 @@ import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from 
 import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
 import { IAgentChatView, IAgentSurface, IAgentWorkspaceService } from './agentWorkspace.js';
+import { SHOW_AGENT_SCM_COMMAND_ID } from '../../common/agentGitActions.js';
 
 export { chooseAgentBrowserSurfaceMount, type AgentBrowserSurfaceMount } from './agentBrowserMount.js';
 export { shouldHideAgentQuickOpenRail, surfaceKindForMenuAction, agentSurfaceMenuItems } from './agentSurfaceMenu.js';
@@ -79,7 +80,6 @@ const TOGGLE_TOOLS_FULLSCREEN_ID = 'workbench.action.voltAgentTools.toggleFullSc
 const TOGGLE_TOOLS_PANEL_ID = 'workbench.action.voltAgentTools.togglePanel';
 /** Opens the Explorer in the files sidebar of the chat on screen. */
 export const SHOW_AGENT_FILES_COMMAND_ID = 'workbench.action.voltAgentTools.showFiles';
-export const SHOW_AGENT_SCM_COMMAND_ID = 'workbench.action.voltAgentTools.showSourceControl';
 /** The floating preview's gap to the chat's edges, and its smallest size. */
 const FLOAT_MARGIN = 12;
 const FLOAT_MIN_WIDTH = 260;
@@ -2372,8 +2372,7 @@ function strokeIcon(doc: Document, paths: readonly string[], rects: readonly { x
 	return svg;
 }
 
-// allow-any-unicode-next-line
-/** Cursor's ↗↙ (enter full screen) and ↙↗ inward (exit). */
+/** Cursor's diagonal arrows: pointing outward (enter full screen) and inward (exit). */
 function createExpandIcon(doc: Document, exit: boolean): SVGSVGElement {
 	return exit
 		? strokeIcon(doc, ['M4 14h6v6', 'M20 10h-6V4', 'M14 10l7-7', 'M3 21l7-7'])

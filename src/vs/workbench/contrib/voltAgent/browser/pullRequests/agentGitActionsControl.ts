@@ -14,10 +14,9 @@ import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { AgentGitAction, IAgentGitMenuItem } from '../../common/agentGitActions.js';
+import { AgentGitAction, IAgentGitMenuItem, SHOW_AGENT_SCM_COMMAND_ID } from '../../common/agentGitActions.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
-import { SHOW_AGENT_SCM_COMMAND_ID } from '../workspace/agentSurfaceHost.js';
 import { IAgentGitActionsService, IAgentGitControlState } from './agentGitActionsService.js';
 
 export interface IAgentGitActionsControlOptions {

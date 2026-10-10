@@ -128,9 +128,28 @@ export function acpLaunchFor(def: ICliAgentDefinition | undefined, command: stri
 	if (adapterOnPath) {
 		return { command: adapter.command, args: [] };
 	}
-	// The adapter version is pinned, so a cached copy is the right one: --prefer-offline skips the
-	// registry round trip npx makes on every spawn (a cold start of seconds, a failure offline).
-	return { command: isWindows ? 'npx.cmd' : 'npx', args: ['-y', '--prefer-offline', adapter.package] };
+	return isWindows ? { command: 'npx.cmd', args: ['-y', '--prefer-offline', adapter.package] } : { command: '/bin/sh', args: ['-c', npxCachedLaunchScript(adapter), adapter.command] };
+}
+
+/**
+ * `npx -y <pkg>` stays alive as the adapter's parent for the whole session (about 250 MB RSS per
+ * agent) and re-resolves the package on every launch. Once npx has installed the pinned version,
+ * exec its bin from the npx cache instead, so the shell becomes the adapter itself. Falls back to
+ * npx when the cache has no matching install (first run, custom cache, cleared cache).
+ */
+export function npxCachedLaunchScript(adapter: IAcpAdapter): string {
+	const at = adapter.package.lastIndexOf('@');
+	const name = at > 0 ? adapter.package.slice(0, at) : adapter.package;
+	const version = at > 0 ? adapter.package.slice(at + 1) : '';
+	const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+	return [
+		`for root in "\${npm_config_cache:-$HOME/.npm}"/_npx/*; do`,
+		`  bin="$root/node_modules/.bin/"${quote(adapter.command)}`,
+		`  pkg="$root/node_modules/"${quote(name)}"/package.json"`,
+		`  if [ -x "$bin" ] && grep -q '"version": *"'${quote(version)}'"' "$pkg" 2>/dev/null; then exec "$bin" "$@"; fi`,
+		'done',
+		`exec npx -y --prefer-offline ${quote(adapter.package)} "$@"`,
+	].join('\n');
 }
 
 /** Reads a file below the user's home directory through the shell, since the renderer has no home path. */

@@ -25,7 +25,7 @@ import { renderUsageCalendar, usageCalendar } from './agentUsageCalendar.js';
 import { IRunwayStyle, renderRunway, runwayHighlights } from './agentUsageRunway.js';
 import { costTypeSegments, hasFasterSpeeds, renderShareBar, speedCostSegments } from './agentUsageShareBar.js';
 import { formatCost, formatDay, formatDuration, formatShare, formatSlot, formatTokens } from './agentUsageFormat.js';
-import { createRefreshSpinner } from './agentUsageIcons.js';
+import { createRefreshSpinner, setRefreshSpinnerRunning } from './agentUsageIcons.js';
 import { IUsageModelRow, IUsageSummary, metricValue, placeholderLimits, placeholderUsage, summarizeUsage, UsageMetric, UsageRange } from './agentUsageModel.js';
 
 const STORAGE_RANGE = 'volt.usage.range';
@@ -247,6 +247,10 @@ export class AgentUsagePage extends Disposable {
 	private syncRefresh(): void {
 		const button = this.content?.querySelector<HTMLElement>('.volt-usage-refresh');
 		button?.classList.toggle('spinning', this.refreshing);
+		const spinner = button?.querySelector('svg:last-child');
+		if (spinner) {
+			setRefreshSpinnerRunning(spinner, this.refreshing);
+		}
 		if (this.refreshing) {
 			button?.setAttribute('aria-busy', 'true');
 		} else {
@@ -416,7 +420,7 @@ export class AgentUsagePage extends Disposable {
 		const button = append(refresh, $('button.volt-usage-refresh')) as HTMLButtonElement;
 		button.type = 'button';
 		button.appendChild(renderIcon(Codicon.refresh));
-		button.appendChild(createRefreshSpinner());
+		setRefreshSpinnerRunning(button.appendChild(createRefreshSpinner()), this.refreshing);
 		button.classList.toggle('spinning', this.refreshing);
 		const refreshLabel = localize('voltUsage.refresh', "Refresh");
 		button.setAttribute('aria-label', refreshLabel);

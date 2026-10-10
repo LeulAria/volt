@@ -6,9 +6,10 @@
 import assert from 'assert';
 import { Emitter } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { isWindows } from '../../../../../base/common/platform.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltExecResult, IVoltJobOutput, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../../platform/voltStdio/common/voltStdio.js';
-import { acpLaunchFor, cliAgentDefinition, cliLoginForNotice, grokAcpArgs, runCli } from '../../browser/agents/cliAgents.js';
+import { acpLaunchFor, cliAgentDefinition, cliLoginForNotice, grokAcpArgs, npxCachedLaunchScript, runCli } from '../../browser/agents/cliAgents.js';
 
 /** Emits the process output from inside spawn(), before the caller learns the id: the IPC race. */
 class FastStdio implements IVoltStdioService {
@@ -45,6 +46,17 @@ class FastStdio implements IVoltStdioService {
 	async listJobs(): Promise<readonly IVoltJobOutput[]> { return []; }
 }
 
+function assertNpxLaunch(launch: { command: string; args: string[] }, command: string, pkg: string): void {
+	if (isWindows) {
+		assert.deepStrictEqual(launch, { command: 'npx.cmd', args: ['-y', '--prefer-offline', pkg] });
+		return;
+	}
+	assert.strictEqual(launch.command, '/bin/sh');
+	assert.strictEqual(launch.args[0], '-c');
+	assert.ok(launch.args[1].endsWith(`exec npx -y --prefer-offline '${pkg}' "$@"`));
+	assert.strictEqual(launch.args[2], command);
+}
+
 suite('runCli', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
@@ -63,17 +75,22 @@ suite('runCli', () => {
 	test('Claude launches the ACP adapter, never `claude acp`', () => {
 		const claude = cliAgentDefinition('claude-code');
 		assert.deepStrictEqual(acpLaunchFor(claude, 'claude', ['acp'], true), { command: 'claude-agent-acp', args: [] });
-		const viaNpx = acpLaunchFor(claude, 'claude', [], false);
-		assert.ok(/^npx(\.cmd)?$/.test(viaNpx.command));
-		assert.deepStrictEqual(viaNpx.args, ['-y', '--prefer-offline', '@agentclientprotocol/claude-agent-acp@0.81.2']);
+		assertNpxLaunch(acpLaunchFor(claude, 'claude', [], false), 'claude-agent-acp', '@agentclientprotocol/claude-agent-acp@0.81.2');
 	});
 
 	test('Codex launches the ACP adapter, never `codex acp`', () => {
 		const codex = cliAgentDefinition('codex');
 		assert.deepStrictEqual(acpLaunchFor(codex, 'codex', ['acp'], true), { command: 'codex-acp', args: [] });
-		const viaNpx = acpLaunchFor(codex, 'codex', ['acp'], false);
-		assert.ok(/^npx(\.cmd)?$/.test(viaNpx.command));
-		assert.deepStrictEqual(viaNpx.args, ['-y', '--prefer-offline', '@agentclientprotocol/codex-acp@1.13.1']);
+		assertNpxLaunch(acpLaunchFor(codex, 'codex', ['acp'], false), 'codex-acp', '@agentclientprotocol/codex-acp@1.13.1');
+	});
+
+	test('an adapter cached by npx runs directly, without npx as its parent', () => {
+		const script = npxCachedLaunchScript({ command: 'codex-acp', package: '@agentclientprotocol/codex-acp@1.13.1' });
+		assert.ok(script.includes(`bin="$root/node_modules/.bin/"'codex-acp'`));
+		assert.ok(script.includes(`pkg="$root/node_modules/"'@agentclientprotocol/codex-acp'"/package.json"`));
+		assert.ok(script.includes(`'"version": *"''1.13.1''"'`));
+		assert.ok(script.includes('then exec "$bin" "$@"; fi'));
+		assert.ok(script.endsWith(`exec npx -y --prefer-offline '@agentclientprotocol/codex-acp@1.13.1' "$@"`));
 	});
 
 	test('Grok launches `agent stdio`, never the old `grok acp` profile args', () => {
