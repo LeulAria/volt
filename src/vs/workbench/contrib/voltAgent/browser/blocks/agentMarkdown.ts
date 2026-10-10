@@ -44,6 +44,8 @@ export interface IAgentMarkdownOptions extends ICodeCardOptions {
 	readonly onExpandDiagram?: IMermaidOptions['onExpand'];
 	/** Draws ```volt-chart fences as native charts. */
 	readonly visualHost?: IVisualHostContext;
+	/** Footnote numbers shared by the pieces of one reply rendered separately. */
+	readonly footnoteNumbers?: Map<string, number>;
 }
 
 const CHART_FENCES = new Set(['volt-chart', 'voltchart', 'chart-json', 'volt-charts']);
@@ -110,7 +112,8 @@ function fenceKey(value: string): string {
 /** Render options for MarkdownRenderer.render: math, sanitizer for KaTeX output, and Cursor code cards. */
 export function agentMarkdownRenderOptions(win: CodeWindow, options: IAgentMarkdownOptions): Partial<MarkdownRenderOptions> {
 	const katex = MarkedKatexSupport.getExtension(win, { throwOnError: false });
-	const markedExtensions: marked.MarkedExtension[] = katex ? [katex, footnoteExtension()] : [footnoteExtension()];
+	const footnotes = footnoteExtension(options.footnoteNumbers);
+	const markedExtensions: marked.MarkedExtension[] = katex ? [katex, footnotes] : [footnotes];
 	return {
 		markedExtensions,
 		markedOptions: { gfm: true },
@@ -250,8 +253,7 @@ function decorateLinkFavicons(root: HTMLElement, store: DisposableStore): void {
  * GFM footnotes, which marked lacks: `[^id]` becomes a superscript number and each
  * `[^id]: text` line a numbered note with a back arrow, as Cursor shows them.
  */
-export function footnoteExtension(): marked.MarkedExtension {
-	const numbers = new Map<string, number>();
+export function footnoteExtension(numbers = new Map<string, number>()): marked.MarkedExtension {
 	const numberFor = (id: string) => {
 		let n = numbers.get(id);
 		if (n === undefined) {

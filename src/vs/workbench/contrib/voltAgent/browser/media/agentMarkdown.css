@@ -84,6 +84,19 @@
 	margin-bottom: 0;
 }
 
+/* A streamed reply renders in pieces (StreamingMarkdownView); each piece is a contents box, so the reply lays out like one block. */
+.volt-md-chunk {
+	display: contents;
+}
+
+.volt-md-chunked > .volt-md-chunk:first-child > :first-child {
+	margin-top: 0;
+}
+
+.volt-md-chunked > .volt-md-chunk:last-child > :last-child {
+	margin-bottom: 0;
+}
+
 .volt-agent-markdown p {
 	margin: 4px 0 8px;
 }
@@ -952,6 +965,14 @@ code.volt-md-code.volt-md-diff {
 	background-image: radial-gradient(circle at 1px 1px, var(--volt-md-mermaid-grid) 1px, transparent 1.4px);
 	background-size: 18px 18px;
 	background-position: center;
+}
+
+/* While its fence streams, a diagram is one fixed-size card (MermaidDiagramView); partial drawings changed shape every frame. */
+.volt-md-code-block.mermaid.volt-md-mermaid-pending {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 140px;
 }
 
 /* Wide diagrams shrink to the column down to 55% (text stays readable), then scroll sideways. */

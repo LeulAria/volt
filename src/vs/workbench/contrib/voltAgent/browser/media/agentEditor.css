@@ -1357,7 +1357,8 @@ pre.volt-agent-searchable {
 
 .volt-agent-activity-progress.shimmer,
 .volt-agent-activity-label.shimmer,
-.volt-agent-term-headline.shimmer {
+.volt-agent-term-headline.shimmer,
+.volt-md-mermaid-pending-label.shimmer {
 	display: block;
 	width: fit-content;
 	max-width: 100%;
@@ -1401,7 +1402,8 @@ pre.volt-agent-searchable {
 @media (prefers-reduced-motion: reduce) {
 	.volt-agent-activity-progress.shimmer,
 	.volt-agent-activity-label.shimmer,
-	.volt-agent-term-headline.shimmer {
+	.volt-agent-term-headline.shimmer,
+	.volt-md-mermaid-pending-label.shimmer {
 		background-image: none;
 		-webkit-text-fill-color: unset;
 		color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
@@ -4711,8 +4713,8 @@ pre.volt-agent-searchable {
 .volt-agent-dropdown-item .volt-agent-svg-icon.ask svg,
 .volt-agent-access .volt-agent-svg-icon,
 .volt-agent-access .volt-agent-svg-icon svg,
-.volt-agent-dropdown-item .volt-agent-svg-icon[class*="access-"],
-.volt-agent-dropdown-item .volt-agent-svg-icon[class*="access-"] svg {
+.volt-agent-dropdown-item .volt-agent-svg-icon.volt-agent-access-icon,
+.volt-agent-dropdown-item .volt-agent-svg-icon.volt-agent-access-icon svg {
 	width: 16px;
 	height: 16px;
 	display: block;
@@ -9382,6 +9384,11 @@ pre.volt-agent-searchable {
 .volt-agent-turn.user:hover .volt-agent-user-restore,
 .volt-agent-user-restore:focus-visible {
 	visibility: visible;
+}
+
+/* Not while a run streams. */
+.volt-agent-thread-inner.streaming .volt-agent-user-restore {
+	display: none;
 }
 
 .volt-agent-user-restore:hover {

@@ -3,6 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { addDisposableListener, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { IDisposable } from '../../../../../base/common/lifecycle.js';
+
 /** How long streamed text takes to fade from the accent color to the normal text color. */
 export const FRESH_TEXT_FADE_MS = 1100;
 
@@ -61,6 +64,20 @@ export class FreshTextTracker {
 	}
 }
 
+/**
+ * Unwraps each fade span under `root` once its fade ends. Rows kept between redraws keep their
+ * spans, and a finished fade still holds its animation (fill mode `both`): a long chat piled up
+ * thousands of them, each one applied on every style pass.
+ */
+export function settleFreshText(root: HTMLElement): IDisposable {
+	return addDisposableListener(root, 'animationend', e => {
+		const span = e.target;
+		if (isHTMLElement(span) && span.classList.contains(FRESH_TEXT_CLASS) && e.animationName === FRESH_TEXT_CLASS) {
+			span.replaceWith(...span.childNodes);
+		}
+	});
+}
+
 const TABLE_PARTS = new Set(['TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'COLGROUP']);
 
 function commonPrefixLength(a: string, b: string): number {
@@ -81,7 +98,8 @@ function wrapFreshText(roots: readonly HTMLElement[], chunks: readonly IChunk[],
 			const length = node.nodeValue?.length ?? 0;
 			// Chips (inline code, file paths), links, quotes and math render as they are; only prose fades in.
 			// The line breaks between table parts stay bare: a span in a row becomes an extra cell.
-			if (!node.parentElement?.closest(FRESH_TEXT_SKIP) && !TABLE_PARTS.has(node.parentElement?.tagName ?? '')) {
+			// Rows kept from the last redraw already carry their fade (still running at the right point).
+			if (!node.parentElement?.closest(FRESH_TEXT_SKIP) && !TABLE_PARTS.has(node.parentElement?.tagName ?? '') && !node.parentElement?.classList.contains(FRESH_TEXT_CLASS)) {
 				nodes.push({ node: node as Text, start: offset });
 			}
 			offset += length;

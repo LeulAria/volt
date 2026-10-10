@@ -23,6 +23,10 @@ interface ISvgRect {
 
 function svgIcon(paths: ISvgPath[], rects: ISvgRect[] = [], extraClass?: string, strokeWidth = '1.5'): HTMLElement {
 	const el = extraClass ? $(`span.volt-agent-svg-icon.${extraClass}`) : $('span.volt-agent-svg-icon');
+	if (extraClass?.startsWith('access-')) {
+		// A class, not [class*="access-"]: an attribute selector on an ancestor restyles every svg under any element whose class changes.
+		el.classList.add('volt-agent-access-icon');
+	}
 	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
 	svg.setAttribute('viewBox', '0 0 16 16');
 	svg.setAttribute('width', '16');

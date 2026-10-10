@@ -6,7 +6,7 @@
 import { $, addDisposableListener, append, getWindow } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { createCodeCardShell, createMessageCopyIcon, ICodeCardOptions, mountMonacoCode, renderCodeCard } from './agentCodeBlock.js';
@@ -50,6 +50,8 @@ const MERMAID_THEME: BeautifulMermaid.RenderOptions = {
 	border: 'var(--volt-md-mermaid-border)',
 	// One family: the library quotes it, so a list here turned into one invalid name.
 	font: '-apple-system',
+	// The card already pads the diagram; the default 40px margin made wide diagrams overflow the column.
+	padding: 8,
 	transparent: true,
 };
 
@@ -283,7 +285,8 @@ function renderDiagramLoader(host: HTMLElement, source: string): void {
 	});
 }
 
-function draw(host: HTMLElement, source: string, options: IMermaidOptions): void {
+/** Draws `source` into `host`: the diagram, or its source as a code card when it cannot be drawn. True for a diagram. */
+function draw(host: HTMLElement, source: string, options: IMermaidOptions): boolean {
 	host.classList.remove('loading');
 	const markup = mermaidMarkup(source);
 	const doc = host.ownerDocument;
@@ -293,15 +296,17 @@ function draw(host: HTMLElement, source: string, options: IMermaidOptions): void
 		const root = fragment.firstElementChild;
 		if (root && root.nodeName.toLowerCase() === 'svg') {
 			svg = root as SVGSVGElement;
+			hoistDiagramStyles(svg);
 		}
 	}
 	svg ??= markup === undefined ? undefined : renderLegacyDiagram(doc, source);
 	if (!svg) {
 		// Not drawable (yet): show the source the way Cursor shows any other fence.
 		renderCodeCard(host, 'mermaid', source.trim(), options);
-		return;
+		return false;
 	}
 	renderDiagramCard(host, svg, source, options);
+	return true;
 }
 
 //#region The diagram card
@@ -486,12 +491,155 @@ function renderDiagramCard(host: HTMLElement, svg: SVGSVGElement, source: string
 	traceConnections(svg);
 	const scroll = shell.scroll;
 	const updateEdges = () => {
+		// A diagram a little wider than the column at its smallest readable scale shrinks the rest of
+		// the way: scrolling a few pixels under a 48px fade read as a cut-off right edge.
+		const over = scroll.scrollWidth - scroll.clientWidth;
+		if (over > 1 && over <= scroll.clientWidth * 0.08) {
+			svg!.style.minWidth = '0';
+		}
 		scroll.classList.toggle('volt-md-scroll-more-left', scroll.scrollLeft > 1);
 		scroll.classList.toggle('volt-md-scroll-more-right', scroll.scrollLeft + scroll.clientWidth < scroll.scrollWidth - 1);
 	};
 	scroll.addEventListener('scroll', updateEdges, { passive: true });
 	scroll.addEventListener('pointerenter', updateEdges);
 	host.ownerDocument.defaultView?.requestAnimationFrame(updateEdges);
+}
+
+/**
+ * A diagram whose fence streams in. A diagram drawn from a partial source has another shape than
+ * the finished one (nodes stack in a tall column until their groups and edges arrive), so drawing
+ * it as it streamed made the card jump between heights many times a second. While the fence
+ * streams this shows one fixed-size placeholder; when it closes the diagram is drawn once and the
+ * card eases to its height while the drawing fades in. The finished DOM is what a cold render of
+ * the reply makes.
+ */
+export class MermaidDiagramView implements IDisposable {
+
+	readonly element = $('.volt-agent-block.mermaid');
+	private readonly drawing = new DisposableStore();
+	private shown: 'placeholder' | string | undefined;
+	private disposed = false;
+
+	/** `options.store` is ignored: each drawing owns its listeners. */
+	update(source: string, streaming: boolean, options: IMermaidOptions): void {
+		if (this.disposed) {
+			return;
+		}
+		if (streaming) {
+			if (this.shown === undefined) {
+				this.showPlaceholder(source);
+				void preloadMermaid();
+			}
+			return;
+		}
+		if (this.shown === source) {
+			return;
+		}
+		if (mermaidMarkup(source) === undefined) {
+			// The renderer is still loading: keep the placeholder until it is here.
+			if (this.shown === undefined) {
+				this.showPlaceholder(source);
+			}
+			void preloadMermaid().then(() => this.update(source, false, options));
+			return;
+		}
+		const store = new DisposableStore();
+		const scratch = $('.volt-agent-block.mermaid');
+		draw(scratch, source, { ...options, store });
+		this.drawing.clear();
+		this.drawing.add(store);
+		this.swap(Array.from(scratch.childNodes), this.shown === 'placeholder');
+		this.shown = source;
+		options.onDidChangeSize?.();
+	}
+
+	private showPlaceholder(source: string): void {
+		this.shown = 'placeholder';
+		this.element.replaceChildren();
+		renderDiagramLoader(this.element, source);
+	}
+
+	/** Puts the new drawing in, easing the card from its old height to the new one. */
+	private swap(nodes: Node[], animate: boolean): void {
+		const element = this.element;
+		const before = animate && element.isConnected ? element.getBoundingClientRect().height : 0;
+		element.classList.remove('loading');
+		element.replaceChildren(...nodes);
+		const win = getWindow(element);
+		if (!before || win.matchMedia('(prefers-reduced-motion: reduce)').matches || element.closest('.reduce-motion')) {
+			return;
+		}
+		const after = element.getBoundingClientRect().height;
+		element.firstElementChild?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' });
+		if (Math.abs(after - before) >= 1) {
+			element.style.overflow = 'hidden';
+			const resize = element.animate([{ height: `${before}px` }, { height: `${after}px` }], { duration: 280, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+			resize.onfinish = resize.oncancel = () => element.style.removeProperty('overflow');
+		}
+	}
+
+	dispose(): void {
+		this.disposed = true;
+		this.drawing.dispose();
+	}
+}
+
+const DIAGRAM_SCOPE = '.volt-md-mermaid-svg';
+const hoistedStyles = new WeakMap<Document, Set<string>>();
+
+/**
+ * beautiful-mermaid puts a <style> in every diagram with rules for bare `svg` and `text`. In the
+ * document those applied to every SVG in the window, and inserting a diagram restyled all of them:
+ * a diagram redrawn while its fence streams cost a whole-window style pass per frame in a long chat.
+ * The rules move, once per distinct sheet, into one document stylesheet scoped to diagrams.
+ */
+function hoistDiagramStyles(svg: SVGSVGElement): void {
+	const doc = svg.ownerDocument;
+	const win = doc.defaultView;
+	let seen = hoistedStyles.get(doc);
+	if (!seen) {
+		seen = new Set();
+		hoistedStyles.set(doc, seen);
+	}
+	for (const style of Array.from(svg.querySelectorAll('style'))) {
+		const text = style.textContent ?? '';
+		style.remove();
+		if (!win || seen.has(text)) {
+			continue;
+		}
+		seen.add(text);
+		const sheet = new win.CSSStyleSheet();
+		try {
+			sheet.replaceSync(text);
+		} catch {
+			continue;
+		}
+		const element = doc.createElement('style');
+		element.className = 'volt-md-mermaid-styles';
+		element.textContent = Array.from(sheet.cssRules, scopeDiagramRule).join('\n');
+		doc.head.appendChild(element);
+	}
+}
+
+function scopeDiagramRule(rule: CSSRule): string {
+	if ('selectorText' in rule && 'style' in rule) {
+		const styleRule = rule as CSSStyleRule;
+		// Selectors here are plain (`svg`, `text`, `.node rect`); none has a comma inside parentheses.
+		const selectors = styleRule.selectorText.split(',').map(selector => {
+			const trimmed = selector.trim();
+			if (trimmed.includes(DIAGRAM_SCOPE)) {
+				return trimmed;
+			}
+			return /^svg\b/.test(trimmed) ? trimmed.replace(/^svg/, DIAGRAM_SCOPE) : `${DIAGRAM_SCOPE} ${trimmed}`;
+		});
+		return `${selectors.join(', ')} { ${styleRule.style.cssText} }`;
+	}
+	if ('cssRules' in rule && 'conditionText' in rule) {
+		// @media / @supports: the same prelude around scoped rules.
+		const grouping = rule as unknown as CSSGroupingRule;
+		return `${rule.cssText.slice(0, rule.cssText.indexOf('{'))}{ ${Array.from(grouping.cssRules, scopeDiagramRule).join('\n')} }`;
+	}
+	return rule.cssText;
 }
 
 /**

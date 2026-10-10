@@ -487,6 +487,17 @@
 	opacity: 0.5;
 }
 
+/* A one-line (settled) row's pull request, before its age. */
+.volt-agent-home-row > .line-pr {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+}
+
+.volt-agent-home-row > .line-pr:empty {
+	display: none;
+}
+
 .volt-agent-home-row > .keybinding {
 	flex: none;
 	/* Overlay so hiding the shortcut does not shift the New Chat label. */
