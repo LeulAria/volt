@@ -3,17 +3,25 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { isAbsolute, join } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { imagePointToInput } from '../../../../../platform/voltDevices/common/deviceCommands.js';
-import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDevicesService, VoltDeviceButton, VoltDeviceInput, VoltDevicePosture, VoltDeviceState } from '../../../../../platform/voltDevices/common/voltDevices.js';
+import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDevicesService, VoltDeviceAppearance, VoltDeviceButton, VoltDeviceInput, VoltDevicePosture, VoltDeviceState } from '../../../../../platform/voltDevices/common/voltDevices.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { scaleScreenshot } from '../../../../services/voltRuntime/browser/host/imageCodec.js';
 import { DEVICE_TOOLS, VoltDeviceToolName } from '../../../../services/voltRuntime/common/deviceTools.js';
+import { DeviceRefs, deviceView, IDeviceScreen, parseDeviceUi } from '../../../../services/voltRuntime/common/tools/deviceUi.js';
+import { IPageView, observePage, renderPage } from '../../../../services/voltRuntime/common/tools/pageModel.js';
+import { fileFlowStore, resolveActInput } from '../actFlows.js';
+import { formatActRun, formatFlowRuns, IFlowRun, unsafeToSave } from '../preview/browserAct.js';
+import { DeviceActRunner, IDeviceDriver } from './deviceAct.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { describeDevice, DEVICE_REMOTE_HOSTS_SETTING, findDevice, findHost, localDeviceHost, parseRemoteHosts, postureLabel } from '../../common/agentDevices.js';
@@ -74,6 +82,17 @@ export interface IAgentDevicesService {
 	launchApp(target: IDeviceTarget, app: string): Promise<void>;
 	postures(target: IDeviceTarget): Promise<IVoltDevicePostures>;
 	setPosture(target: IDeviceTarget, posture: VoltDevicePosture, by: 'agent' | 'user'): Promise<void>;
+	/** The device a tool call means: `device` (name or id), else the chat's last one, else the only booted one. */
+	resolveTarget(device: string | undefined, host: string | undefined, call: IVoltHostToolCall | undefined): Promise<IDeviceTarget>;
+	appearance(target: IDeviceTarget): Promise<VoltDeviceAppearance | undefined>;
+	setAppearance(target: IDeviceTarget, appearance: VoltDeviceAppearance): Promise<void>;
+	/** Runs device_act steps (a script, `${name}` vars, saved flows) and reports the run. */
+	act(target: IDeviceTarget, script: string, options: { readonly vars?: Record<string, unknown>; readonly cwd?: string; readonly token: CancellationToken }): Promise<{ readonly ok: boolean; readonly lines: readonly string[] }>;
+	/**
+	 * A screenshot for a gallery: no bigger than `maxSide`, and kept apart from the agent's and the
+	 * preview's screenshots, whose coordinates their taps refer to.
+	 */
+	capture(target: IDeviceTarget, maxSide: number): Promise<IDeviceShot>;
 }
 
 const LIST_TTL_MS = 3000;
@@ -109,6 +128,10 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 	private readonly shots = new Map<string, { image: { width: number; height: number }; screen: { width: number; height: number; scale: number } }>();
 	/** The device each chat used last. */
 	private readonly chatDevices = new Map<string, string>();
+	/** Element refs per device, stable across reads of its screen. */
+	private readonly refs = new Map<string, DeviceRefs>();
+	/** The screen as the agent last read it per device, so the next result reports only what changed. */
+	private readonly seen = new Map<string, IPageView>();
 
 	constructor(
 		@IVoltDevicesService private readonly devices: IVoltDevicesService,
@@ -116,6 +139,7 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 		@IWorkspaceContextService private readonly workspace: IWorkspaceContextService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@IFileService private readonly fileService: IFileService,
 	) {
 		super();
 		this._register(hostTools.registerToolProvider({
@@ -232,6 +256,44 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 		this._onDidAct.fire({ key: this.keyOf(target), by });
 	}
 
+	/** The screen's accessibility tree, parsed (refs stay stable per device). */
+	private async readScreen(target: IDeviceTarget): Promise<IDeviceScreen> {
+		const key = this.keyOf(target);
+		let refs = this.refs.get(key);
+		if (!refs) {
+			this.refs.set(key, refs = new DeviceRefs());
+		}
+		const ui = await this.devices.describeUi(target.host, target.device);
+		const screen = parseDeviceUi(ui.format, ui.data, refs);
+		if (!screen) {
+			throw new Error(`Could not read the screen of ${this.label(target)} (${ui.format} returned no elements).`);
+		}
+		return screen;
+	}
+
+	private driverFor(target: IDeviceTarget): IDeviceDriver {
+		const input = (value: VoltDeviceInput) => this.devices.input(target.host, target.device, value);
+		return {
+			platform: target.device.platform,
+			read: () => this.readScreen(target),
+			tap: (x, y) => input({ kind: 'tap', x, y }),
+			swipe: (x1, y1, x2, y2, durationMs) => input({ kind: 'swipe', x1, y1, x2, y2, durationMs }),
+			type: text => input({ kind: 'type', text }),
+			clear: count => input({ kind: 'clear', count }),
+			press: button => input({ kind: 'button', button }),
+			launch: app => this.devices.launchApp(target.host, target.device, app),
+		};
+	}
+
+	/** Screen lines for the agent: all of it the first time (or in another app), else the changes since its last read. */
+	private screenLines(target: IDeviceTarget, screen: IDeviceScreen, observe: 'auto' | 'full', unfold?: boolean): string[] {
+		const key = this.keyOf(target);
+		const view = deviceView(screen);
+		const observation = observe === 'full' ? { lines: ['- Screen:', '```yaml', ...renderPage(view, { unfold }), '```'] } : observePage(this.seen.get(key), view, undefined, unfold);
+		this.seen.set(key, view);
+		return [`- App: ${screen.app || '(unknown)'} · screen ${screen.width}×${screen.height} (input units)`, ...observation.lines.map(line => line.replace(/^- Page Snapshot:$/, '- Screen:').replace(/^- Page changes since your last view/, '- Screen changes since your last read').replace(/^- Page: unchanged since your last view of it\.$/, '- Screen: unchanged since your last read.'))];
+	}
+
 	private forgetShots(target: IDeviceTarget): void {
 		this.shots.delete(`${this.keyOf(target)}|agent`);
 		this.shots.delete(`${this.keyOf(target)}|user`);
@@ -255,6 +317,52 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 		// The screen changes size when the device folds: the old screenshot's coordinates no longer apply.
 		this.forgetShots(target);
 		this._onDidAct.fire({ key: this.keyOf(target), by });
+	}
+
+	resolveTarget(device: string | undefined, host: string | undefined, call: IVoltHostToolCall | undefined): Promise<IDeviceTarget> {
+		return this.resolve({ device, host }, call);
+	}
+
+	appearance(target: IDeviceTarget): Promise<VoltDeviceAppearance | undefined> {
+		return this.devices.getAppearance(target.host, target.device);
+	}
+
+	async setAppearance(target: IDeviceTarget, appearance: VoltDeviceAppearance): Promise<void> {
+		await this.devices.setAppearance(target.host, target.device, appearance);
+		this._onDidAct.fire({ key: this.keyOf(target), by: 'agent' });
+	}
+
+	async act(target: IDeviceTarget, script: string, options: { readonly vars?: Record<string, unknown>; readonly cwd?: string; readonly token: CancellationToken }): Promise<{ readonly ok: boolean; readonly lines: readonly string[] }> {
+		const store = options.cwd ? fileFlowStore(this.fileService, URI.file(options.cwd)) : undefined;
+		const input = await resolveActInput({ script, vars: options.vars }, store, 'act');
+		if ('error' in input) {
+			return { ok: false, lines: [input.error] };
+		}
+		const runner = new DeviceActRunner(this.driverFor(target), options.token);
+		const lines: string[] = [];
+		let ok = true;
+		for (const plan of input.plans) {
+			const run = await runner.run(plan.steps);
+			ok &&= run.ok;
+			lines.push(...formatActRun(run, 'act', { brief: run.ok }));
+			if (!run.ok) {
+				break;
+			}
+		}
+		this._onDidAct.fire({ key: this.keyOf(target), by: 'agent' });
+		return { ok, lines };
+	}
+
+	async capture(target: IDeviceTarget, maxSide: number): Promise<IDeviceShot> {
+		const screen = await this.devices.screenshot(target.host, target.device, maxSide);
+		const full = `data:image/${screen.format ?? 'png'};base64,${screen.imageBase64}`;
+		const geometry = { width: screen.width, height: screen.height, scale: screen.scale };
+		if (screen.imageWidth && screen.imageHeight) {
+			return { dataUrl: full, width: screen.imageWidth, height: screen.imageHeight, screen: geometry };
+		}
+		// Same-size captures come back as PNG (Android) or a JPEG of the full screen (iOS): fit and re-encode.
+		const shot = await scaleScreenshot(full, { maxSide, format: 'jpeg', quality: 0.86 });
+		return { dataUrl: shot.dataUrl, width: shot.width, height: shot.height, screen: geometry };
 	}
 
 	//#region Host tools
@@ -326,6 +434,11 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 		return `${target.device.name}${target.host.ssh ? ` on ${target.host.label}` : ''}`;
 	}
 
+	/** The chat's project folder (its worktree), for saved flows. */
+	private projectFolder(call: IVoltHostToolCall | undefined): string | undefined {
+		return call?.cwd ?? (call?.sessionId ? this.runtime.getOrCreateSession(call.sessionId).worktreePath : undefined) ?? this.workspace.getWorkspace().folders[0]?.uri.fsPath;
+	}
+
 	private resolvePath(path: string, call: IVoltHostToolCall | undefined): string {
 		if (isAbsolute(path)) {
 			return path;
@@ -368,6 +481,42 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 				const target = await this.resolve(args, call);
 				await this.shutdown(target);
 				return { text: `### Shut down ${this.label(target)}` };
+			}
+			case 'device_snapshot': {
+				const target = await this.resolve(args, call);
+				const screen = await this.readScreen(target);
+				return { text: [`### Screen of ${this.label(target)}`, ...this.screenLines(target, screen, 'full', args.unfold === true)].join('\n') };
+			}
+			case 'device_act': {
+				const target = await this.resolve(args, call);
+				const root = this.projectFolder(call);
+				const store = root ? fileFlowStore(this.fileService, URI.file(root)) : undefined;
+				const input = await resolveActInput(args, store, 'device_act');
+				if ('error' in input) {
+					return { error: input.error };
+				}
+				const tool = `device_act on ${this.label(target)}`;
+				const runner = new DeviceActRunner(this.driverFor(target), call?.token ?? CancellationToken.None);
+				const runs: IFlowRun[] = [];
+				for (const plan of input.plans) {
+					runs.push({ label: plan.label ?? 'flow', run: await runner.run(plan.steps) });
+				}
+				this._onDidAct.fire({ key: this.keyOf(target), by: 'agent' });
+				const ok = runs.every(entry => entry.run.ok);
+				const single = input.plans.length === 1 && !input.plans[0].label;
+				const lines = single ? formatActRun(runs[0].run, tool, { brief: args.observe === 'on_failure' && ok }) : formatFlowRuns(runs, tool);
+				if (single && input.save && store) {
+					const refused = ok ? unsafeToSave(runs[0].run, args.vars as Record<string, string> | undefined) : 'the run did not pass';
+					lines.push(refused ? `- Not saved as flow ${input.save.name}: ${refused}.` : `- Saved as flow ${input.save.name} (${(await store.write(input.save.name, input.save.script)).fsPath}): re-run it with {"run": "${input.save.name}"}.`);
+				}
+				const observe = args.observe === 'none' || (args.observe === 'on_failure' && ok) ? 'none' : args.observe === 'full' ? 'full' : 'auto';
+				if (observe !== 'none' && (single || !ok)) {
+					const screen = runner.last ?? await this.readScreen(target).catch(() => undefined);
+					if (screen) {
+						lines.push('', ...this.screenLines(target, screen, observe));
+					}
+				}
+				return { text: lines.join('\n') };
 			}
 			case 'device_screenshot': {
 				const target = await this.resolve(args, call);

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IVoltDevice, IVoltSshTarget, VoltDeviceButton, VoltDevicePosture, VoltDeviceState } from './voltDevices.js';
+import { IVoltDevice, IVoltSshTarget, VoltDeviceAppearance, VoltDeviceButton, VoltDevicePosture, VoltDeviceState } from './voltDevices.js';
 
 /** A program and its arguments, run without a shell. */
 export interface ICommand {
@@ -382,6 +382,18 @@ export function postureOfState(name: string): VoltDevicePosture | undefined {
 /** The state id to request for a posture; undefined when the device has none for it. */
 export function stateForPosture(states: readonly IDeviceStateEntry[], posture: VoltDevicePosture): number | undefined {
 	return states.find(state => postureOfState(state.name) === posture)?.id;
+}
+
+/** `simctl ui <udid> appearance`: `light` or `dark`; `unsupported` (watchOS, old runtimes) and anything else is undefined. */
+export function parseSimctlAppearance(output: string): VoltDeviceAppearance | undefined {
+	const value = output.trim().toLowerCase();
+	return value === 'light' || value === 'dark' ? value : undefined;
+}
+
+/** `cmd uimode night`: `Night mode: yes` is dark, `no` light; `auto` and `custom` follow the clock, so undefined. */
+export function parseNightMode(output: string): VoltDeviceAppearance | undefined {
+	const value = /Night mode:\s*(\w+)/i.exec(output)?.[1]?.toLowerCase();
+	return value === 'yes' ? 'dark' : value === 'no' ? 'light' : undefined;
 }
 
 const ANDROID_KEYCODES: Record<VoltDeviceButton, string | undefined> = {
