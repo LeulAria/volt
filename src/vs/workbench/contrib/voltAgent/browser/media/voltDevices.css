@@ -141,7 +141,7 @@
 	height: 26px;
 	padding: 0;
 	border: 0;
-	border-radius: 6px;
+	border-radius: 0;
 	background: transparent;
 	color: var(--vscode-icon-foreground);
 	cursor: pointer;
@@ -158,17 +158,52 @@
 
 .volt-device-tool:focus-visible,
 .volt-device-picker:focus-visible,
+.volt-device-posture:focus-visible,
 .volt-device-power:focus-visible {
 	outline: 1px solid var(--vscode-focusBorder);
 	outline-offset: -1px;
 }
 
 .volt-device-posture {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 24px;
 	margin-left: 6px;
+	padding: 0 6px 0 10px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	cursor: pointer;
+	white-space: nowrap;
+	transition: background-color 120ms ease, border-color 120ms ease;
 }
 
-.volt-device-posture:empty {
+.volt-device-posture:hover,
+.volt-device-posture.open {
+	background: var(--vscode-toolbar-hoverBackground);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 38%, transparent);
+}
+
+.volt-device-posture.hidden {
 	display: none;
+}
+
+.volt-device-posture-text.swap {
+	animation: volt-device-posture-swap 260ms cubic-bezier(0.32, 1.25, 0.5, 1);
+}
+
+@keyframes volt-device-posture-swap {
+	from { opacity: 0; transform: translateY(5px); }
+	to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-device-posture-text.swap {
+		animation: none;
+	}
 }
 
 .volt-device-stage {

@@ -8,7 +8,7 @@ import { $, addDisposableListener, append, clearNode, getWindow } from '../../..
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Emitter } from '../../../../../base/common/event.js';
-import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -21,7 +21,6 @@ import { DEFAULT_ORBIT, hingeAngle, IOrbit, orbitAfterDrag, postureLabel } from 
 import { RecordingBadge } from '../capture/recordingBadge.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IBrowserDevice, renderBareDeviceFrame } from '../preview/browserDevices.js';
-import { createVoltSegmented, IVoltSegmented } from '../ui/segmented/voltSegmented.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { IAgentDevicesService, IDeviceShot, IDeviceTarget } from './agentDevicesService.js';
 
@@ -85,7 +84,8 @@ export class DevicePreview extends Disposable {
 	private readonly deviceDetail: HTMLElement;
 	private readonly powerButton: HTMLButtonElement;
 	private readonly hardware: HTMLElement;
-	private readonly postureSlot: HTMLElement;
+	private readonly postureButton: HTMLButtonElement;
+	private readonly postureText: HTMLElement;
 	private readonly threeDButton: HTMLButtonElement;
 	private readonly moreButton: HTMLButtonElement;
 	private readonly stage: HTMLElement;
@@ -93,8 +93,6 @@ export class DevicePreview extends Disposable {
 	private readonly rig: HTMLElement;
 	private readonly message: HTMLElement;
 	private readonly agentPill: HTMLElement;
-	private readonly posture = this._register(new MutableDisposable<DisposableStore>());
-	private postureControl: IVoltSegmented<VoltDevicePosture> | undefined;
 	private postures: IVoltDevicePostures = { supported: [] };
 	/** The device `postures` were read for, so a list refresh does not read them again. */
 	private posturesKey: string | undefined;
@@ -150,7 +148,11 @@ export class DevicePreview extends Disposable {
 		this._register(addDisposableListener(this.powerButton, 'click', () => void this.togglePower()));
 
 		this.hardware = append(this.toolbar, $('.volt-device-hardware'));
-		this.postureSlot = append(this.toolbar, $('.volt-device-posture'));
+		this.postureButton = append(this.toolbar, $('button.volt-device-posture.hidden')) as HTMLButtonElement;
+		this.postureButton.type = 'button';
+		this.postureText = append(this.postureButton, $('span.volt-device-posture-text'));
+		this.postureButton.appendChild(renderIcon(Codicon.chevronDown));
+		this._register(addDisposableListener(this.postureButton, 'click', () => this.showPostureMenu()));
 		append(this.toolbar, $('.volt-device-toolbar-gap'));
 		this.threeDButton = iconButton(this.toolbar, Codicon.layers, localize('voltDevices.threeD', "3D View"), 'three-d');
 		this._register(addDisposableListener(this.threeDButton, 'click', () => this.setThreeD(!this.threeD)));
@@ -336,24 +338,41 @@ export class DevicePreview extends Disposable {
 
 	private renderPosture(): void {
 		const supported = this.target?.device.state === 'booted' ? this.postures.supported : [];
+		this.postureButton.classList.toggle('hidden', !supported.length);
 		if (!supported.length) {
-			this.posture.clear();
-			this.postureControl = undefined;
-			clearNode(this.postureSlot);
 			return;
 		}
-		if (this.postureControl && this.postureControl.element.childElementCount - 1 === supported.length) {
-			if (this.postures.current && this.postureControl.value !== this.postures.current) {
-				// The agent folded it, or the device did: slide the thumb there too.
-				this.postureControl.set(this.postures.current, true);
+		const current = this.postures.current ?? supported[supported.length - 1];
+		const label = postureLabel(current);
+		if (this.postureText.textContent !== label) {
+			// The agent folded it, or the device did: the new name slides in.
+			const swap = !!this.postureText.textContent;
+			this.postureText.textContent = label;
+			this.postureText.classList.remove('swap');
+			if (swap) {
+				void this.postureText.offsetWidth;
+				this.postureText.classList.add('swap');
 			}
-			return;
 		}
-		clearNode(this.postureSlot);
-		const store = new DisposableStore();
-		this.posture.value = store;
-		this.postureControl = createVoltSegmented(this.postureSlot, supported.map(id => ({ id, label: postureLabel(id) })), this.postures.current ?? supported[supported.length - 1], posture => void this.setPosture(posture), store, 'small outlined');
-		getWindow(this.element).requestAnimationFrame(() => this.postureControl?.sync());
+	}
+
+	private showPostureMenu(): void {
+		const current = this.postures.current;
+		this.postureButton.classList.add('open');
+		showVoltMenu(this.contextViewService, {
+			anchor: this.postureButton,
+			position: 'below',
+			gap: 4,
+			width: 180,
+			sections: [{
+				id: 'postures',
+				items: this.postures.supported.map((id): IVoltMenuItem<VoltDevicePosture> => ({ id, label: postureLabel(id), checked: id === current, data: id })),
+			}],
+			className: 'volt-device-menu',
+			ariaLabel: localize('voltDevices.postureMenu', "Fold"),
+			onPick: picked => void this.setPosture(picked.data),
+			onHide: () => this.postureButton.classList.remove('open'),
+		});
 	}
 
 	private async loadPostures(): Promise<void> {
@@ -474,6 +493,7 @@ export class DevicePreview extends Disposable {
 		try {
 			await this.devices.setPosture(target, posture, 'user');
 			this.postures = { ...this.postures, current: posture };
+			this.renderPosture();
 			this.layout();
 		} catch (err) {
 			this.fail(err);
