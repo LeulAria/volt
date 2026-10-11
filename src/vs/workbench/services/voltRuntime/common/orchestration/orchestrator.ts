@@ -135,6 +135,20 @@ export interface IOrchLimitPark {
 	readonly notBefore?: number;
 	/** The stopped turn's composer mode, which the resume keeps. */
 	readonly mode?: string;
+	/** The account the limit is on (`providerId:profileId`): chats on one account share one check. */
+	readonly provider?: string;
+	/** "Claude", "Codex": who the chip names. */
+	readonly providerLabel?: string;
+	/** The provider answered another chat on this account: resume at this time (staggered), reset or not. */
+	readonly wakeAt?: number;
+	/** The latest resume could not reach the provider for another reason (network, the agent process); it is retried. */
+	readonly lastError?: string;
+}
+
+/** The provider account a run used, as the service read it from the catalog. */
+export interface IOrchLimitAccount {
+	readonly provider: string;
+	readonly providerLabel?: string;
 }
 
 /**
@@ -356,9 +370,10 @@ export type OrchCommandBody =
 	/**
 	 * `limit`: the provider refused for a usage limit; the chat parks until the reset instead of failing.
 	 * `limit.stop`: it parks without resuming on its own (Claude's limit, see `LIMIT_STOP_CLAUDE_SETTING`)
-	 * unless the user already asked this chat to resume.
+	 * unless the user already asked this chat to resume. `account`: the provider account the run used
+	 * (see `IOrchLimitPark.provider`), for a park or a resume that could not reach it.
 	 */
-	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string; readonly limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean } }
+	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string; readonly limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }; readonly account?: IOrchLimitAccount }
 	/** A steer could not be delivered (the run ended first): reports go back to pending, a prompt back to the queue's head. */
 	| { readonly type: 'steer.failed'; readonly threadId: string; readonly steerId: string; readonly prompt: IOrchPrompt; readonly taskIds?: readonly string[] }
 	/** The effect that starts a turn failed before the runtime took it. */
@@ -390,6 +405,13 @@ export type OrchCommandBody =
 	| { readonly type: 'limit.resume'; readonly threadId: string }
 	/** The user's choice for a parked chat: `auto` false cancels its resume; undefined follows the setting. */
 	| { readonly type: 'limit.configure'; readonly threadId: string; readonly auto: boolean | undefined }
+	/**
+	 * A resume of a parked chat heard back from the provider (its first text or tool): the account is
+	 * usable again. The park ends, and the other chats parked on the account follow, staggered.
+	 */
+	| { readonly type: 'limit.recovered'; readonly threadId: string; readonly turnId: string }
+	/** Another Volt workbench took this chat's resume: wait until then before looking again. */
+	| { readonly type: 'limit.defer'; readonly threadId: string; readonly notBefore: number }
 	/** Move the chat to another checkout: now when idle, else when its turn ends (`stop`: stop the turn first). */
 	| { readonly type: 'thread.move'; readonly threadId: string; readonly move: IOrchMove; readonly stop?: boolean }
 	| { readonly type: 'move.cancel'; readonly threadId: string }
@@ -463,6 +485,10 @@ export type OrchEvent =
 	| { readonly type: 'limit.parked'; readonly threadId: string; readonly limit: IOrchLimitPark }
 	| { readonly type: 'limit.configured'; readonly threadId: string; readonly auto: boolean | undefined }
 	| { readonly type: 'limit.deferred'; readonly threadId: string; readonly notBefore: number }
+	/** The provider is back for this account: the parked chat resumes at `wakeAt`. */
+	| { readonly type: 'limit.woken'; readonly threadId: string; readonly wakeAt: number }
+	/** The park is over: the provider answered, the user stopped the resume, or it failed for good. */
+	| { readonly type: 'limit.cleared'; readonly threadId: string; readonly reason: 'recovered' | 'stopped' | 'failed' }
 	| { readonly type: 'move.requested'; readonly threadId: string; readonly move: IOrchMove }
 	| { readonly type: 'move.dropped'; readonly threadId: string; readonly moveId: string }
 	| { readonly type: 'move.started'; readonly threadId: string; readonly move: IOrchMove }

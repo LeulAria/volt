@@ -77,10 +77,21 @@ export function limitFromNotice(notice: { readonly severity: string; readonly ti
  */
 export function limitFromReply(reply: string | undefined, now: number, timeZone?: string): ILimitSignal | undefined {
 	const text = reply?.trim();
-	if (!text || text.length > 400 || !/^(?:you(?:'|\u2019)ve (?:hit|reached) your|you(?:'|\u2019)re out of|your (?:org|seat|group|usage)\b|claude (?:ai )?usage limit reached|usage limit reached)/i.test(text)) {
+	if (!text || text.length > 400 || !LIMIT_REPLY_START.test(text)) {
 		return undefined;
 	}
 	return withReset(clean(text), parseLimitReset(text, now, timeZone));
+}
+
+const LIMIT_REPLY_START = /^(?:you(?:'|\u2019)ve (?:hit|reached) your|you(?:'|\u2019)re out of|your (?:org|seat|group|usage)\b|claude (?:ai )?usage limit reached|usage limit reached)/i;
+
+/**
+ * The assistant text of a resume so far shows the provider answering for real: long enough to
+ * tell, and not the limit sentence some CLIs reply with in place of an error.
+ */
+export function isRealAnswer(text: string): boolean {
+	const trimmed = text.trimStart();
+	return trimmed.length >= 48 && !LIMIT_REPLY_START.test(trimmed) && !isLimitStopText(trimmed.slice(0, 400));
 }
 
 /** The latest signal wins its wording when longer; the reset is the later one either named. */
@@ -233,16 +244,26 @@ function zonedToEpoch(year: number, month: number, day: number, hour: number, mi
 export const LIMIT_RESET_GRACE_MS = 20_000;
 /** Chats that wake at the same reset go this far apart. */
 export const LIMIT_STAGGER_MS = 15_000;
-/** Probes for a limit with no reset time: one minute, then doubling-ish up to an hour. */
-export const LIMIT_PROBE_BACKOFF_MS: readonly number[] = [60_000, 2 * 60_000, 5 * 60_000, 10 * 60_000, 20 * 60_000, 40 * 60_000, 60 * 60_000];
-/** Automatic resumes one stop gets before the chat waits for the user (about half a day of probing). */
+/** Probes for a limit with no reset time: one minute, then doubling-ish up to half an hour. */
+export const LIMIT_PROBE_BACKOFF_MS: readonly number[] = [60_000, 2 * 60_000, 5 * 60_000, 10 * 60_000, 15 * 60_000, 30 * 60_000];
+/**
+ * Automatic resumes one stop gets by the setting alone before the chat waits for the user (about
+ * half a day of probing). A chat the user armed ("Resume when Claude is back") has no budget: it
+ * keeps checking until the provider answers.
+ */
 export const LIMIT_MAX_PROBES = 16;
+/**
+ * Chats parked on one account do not each ask whether it is back: one resume goes (the canary)
+ * and the others wait this long to hear how it went. When it gets an answer they follow, staggered;
+ * when it hits the limit again they move with its next check.
+ */
+export const LIMIT_CANARY_WAIT_MS = 2 * 60_000;
 
 export const LIMIT_AUTO_RESUME_SETTING = 'volt.agent.autoResumeAfterLimit';
 
 /**
  * When Claude's usage limit stops a chat, the chat stops there: no automatic resume or probe (each
- * is another request on the account) unless the user asks for it on the chat's banner, and the
+ * is another request on the account) unless the user asks for it on the chat's limit chip, and the
  * Claude subagents still working in that chat tree are stopped too.
  */
 export const LIMIT_STOP_CLAUDE_SETTING = 'volt.agent.stopAtClaudeLimit';
@@ -264,11 +285,24 @@ export interface ILimitPark {
 	readonly auto?: boolean;
 	/** A stagger slot: not before this. */
 	readonly notBefore?: number;
+	/** The provider answered another chat on this account: resume at this time, reset or not. */
+	readonly wakeAt?: number;
+	/** The account the limit is on (provider and profile); chats on one account share a canary. */
+	readonly provider?: string;
+	/** "Claude", "Codex": who the chip says is limited. */
+	readonly providerLabel?: string;
+	/** The latest resume could not reach the provider for another reason (network, the agent process). */
+	readonly lastError?: string;
+	/** The provider's sentence. */
+	readonly message?: string;
 }
 
-/** The chat resumes on its own: its own choice, else the setting. */
+/**
+ * The chat resumes on its own: its own choice, else the setting. The setting alone gives up after
+ * `LIMIT_MAX_PROBES`; a chat the user armed keeps going until the provider is back.
+ */
 export function limitAutoResumes(limit: ILimitPark, autoDefault: boolean): boolean {
-	return (limit.auto ?? autoDefault) && limit.probes < LIMIT_MAX_PROBES;
+	return (limit.auto ?? autoDefault) && (limit.auto === true || limit.probes < LIMIT_MAX_PROBES);
 }
 
 /** The probe delay after `probes` failed probes. */
@@ -277,11 +311,12 @@ export function limitBackoff(probes: number): number {
 }
 
 /**
- * When the chat may resume: the reset plus grace, or (no reset known) the stop plus the back-off,
- * never before its stagger slot. A reset that passed long ago still counts: resume now.
+ * When the chat may resume: when the provider came back for another chat, else the reset plus
+ * grace, else (no reset known) the stop plus the back-off; never before its stagger slot. A reset
+ * that passed long ago still counts: resume now.
  */
 export function limitDueAt(limit: ILimitPark): number {
-	const base = limit.resetAt !== undefined ? limit.resetAt + LIMIT_RESET_GRACE_MS : limit.at + limitBackoff(limit.probes);
+	const base = limit.wakeAt ?? (limit.resetAt !== undefined ? limit.resetAt + LIMIT_RESET_GRACE_MS : limit.at + limitBackoff(limit.probes));
 	return Math.max(base, limit.notBefore ?? 0);
 }
 
@@ -300,56 +335,88 @@ export function limitResumeTurnId(turnId: string, probe: number): string {
 
 //#endregion
 
-//#region Banner
+//#region Chip
 
-export interface ILimitBannerView {
-	readonly title: string;
-	/** "resumes at 3:40 PM (in 1h 12m)", "checking again at 3:12 PM (in 4m)", "auto-resume is off". */
-	readonly detail: string;
+/**
+ * - `waiting`: nothing is sent until the user asks (auto-resume off for this chat; Claude's default).
+ * - `armed`: Volt continues the chat on its own when the provider is back.
+ * - `checking`: a resume is out and the provider has not answered yet.
+ * - `error`: the latest resume could not reach the provider; it is tried again.
+ */
+export type LimitChipTone = 'waiting' | 'armed' | 'checking' | 'error';
+
+export interface ILimitChipView {
+	readonly tone: LimitChipTone;
+	/** "Claude limit · resumes 3:40 PM", "Checking if Claude is back…". */
+	readonly label: string;
+	/** The countdown ("1h 12m") or what comes next ("retrying 3:12 PM"). */
+	readonly detail?: string;
+	readonly tooltip: string;
+	/** What a click on the chip does: arm the resume, or open the menu. */
+	readonly primary: 'arm' | 'menu';
+	/** "Resume when Claude is back". */
+	readonly armLabel: string;
+	/** The provider's own sentence, for the menu's header. */
+	readonly message?: string;
 	/** The chat resumes on its own. */
 	readonly auto: boolean;
-	/** The reset passed and the resume is about to go (or waits for its stagger slot). */
-	readonly due: boolean;
-	/** Text of the toggle: "Cancel" while auto, "Resume at reset" otherwise. */
-	readonly toggleLabel: string;
-	readonly resetKnown: boolean;
+	/** When the chip's text next changes on its own (the countdown's target). */
+	readonly dueAt?: number;
 }
 
 /**
- * The banner above the composer of a parked chat, and the sidebar's shorter label. `auto` is the
- * effective choice (`limitAutoResumes`).
+ * The chip at the top of a parked chat. `auto` is the effective choice (`limitAutoResumes`);
+ * `checking` is true while a resume of this park is out.
  */
-export function limitBannerView(limit: ILimitPark, now: number, auto: boolean, locale?: string): ILimitBannerView {
-	const due = limitDueAt(limit);
-	const resetKnown = limit.resetAt !== undefined;
-	const gaveUp = limit.probes >= LIMIT_MAX_PROBES;
-	let detail: string;
-	if (auto && due <= now) {
-		detail = 'resuming now…';
-	} else if (auto) {
-		detail = resetKnown
-			? `resumes at ${formatClock(due, now, locale)} (in ${formatCountdown(due - now)})`
-			: `checking again at ${formatClock(due, now, locale)} (in ${formatCountdown(due - now)})`;
-	} else if (resetKnown && limit.resetAt! > now) {
-		detail = `resets at ${formatClock(limit.resetAt!, now, locale)} (in ${formatCountdown(limit.resetAt! - now)}) · auto-resume off`;
-	} else if (resetKnown) {
-		detail = 'the limit has reset';
-	} else {
-		detail = gaveUp ? 'still limited after several checks · resume when you are ready' : 'reset time unknown · auto-resume off';
+export function limitChipView(limit: ILimitPark, input: { readonly now: number; readonly auto: boolean; readonly checking: boolean; readonly locale?: string }): ILimitChipView {
+	const { now, auto, checking, locale } = input;
+	const name = limit.providerLabel;
+	const who = name ?? 'the provider';
+	const title = name ? `${name} limit` : 'Usage limit';
+	const armLabel = limit.wakeAt !== undefined ? 'Resume' : `Resume when ${name ?? 'it'} is back`;
+	const message = limit.message;
+	const base = { armLabel, auto, ...(message ? { message } : {}) };
+	if (checking) {
+		return { ...base, tone: 'checking', label: `Checking if ${who} is back…`, primary: 'menu', tooltip: lines(message, `Volt sent the chat on and is waiting for ${who} to answer. If the limit still holds, the chat waits again.`) };
 	}
-	return {
-		title: 'Usage limit reached',
-		detail,
-		auto,
-		due: due <= now,
-		toggleLabel: auto ? 'Cancel' : resetKnown ? 'Resume at reset' : 'Keep checking',
-		resetKnown,
-	};
+	const due = limitDueAt(limit);
+	if (auto) {
+		const tooltip = lines(message, limit.lastError ? `The last try could not reach ${who}: ${limit.lastError}` : undefined, `Volt continues this chat on its own when ${who} is back, and keeps checking until then. Nothing else is sent on the account.`);
+		if (due <= now) {
+			return { ...base, tone: 'armed', label: `${title} · resuming…`, primary: 'menu', tooltip };
+		}
+		const when = formatClock(due, now, locale);
+		const countdown = formatCountdown(due - now);
+		if (limit.lastError) {
+			return { ...base, tone: 'error', label: `Couldn't reach ${who}`, detail: `retrying ${when}`, primary: 'menu', tooltip, dueAt: due };
+		}
+		if (limit.wakeAt !== undefined) {
+			return { ...base, tone: 'armed', label: `${name ?? 'The provider'} is back · resuming ${when}`, primary: 'menu', tooltip, dueAt: due };
+		}
+		const verb = limit.resetAt !== undefined ? 'resumes' : 'checking';
+		return { ...base, tone: 'armed', label: `${title} · ${verb} ${when}`, detail: countdown, primary: 'menu', tooltip, dueAt: due };
+	}
+	const tooltip = lines(message, limit.lastError ? `The last try could not reach ${who}: ${limit.lastError}` : undefined, `Nothing is sent on the account while the chat waits. Click to have Volt continue it as soon as ${who} is back.`);
+	if (limit.wakeAt !== undefined) {
+		return { ...base, tone: 'waiting', label: `${name ?? 'The provider'} is back`, primary: 'arm', tooltip };
+	}
+	if (limit.resetAt !== undefined && limit.resetAt > now) {
+		return { ...base, tone: 'waiting', label: `${title} · resets ${formatClock(limit.resetAt, now, locale)}`, detail: formatCountdown(limit.resetAt - now), primary: 'arm', tooltip, dueAt: limit.resetAt };
+	}
+	if (limit.resetAt !== undefined) {
+		return { ...base, tone: 'waiting', label: `${title} has reset`, primary: 'arm', tooltip };
+	}
+	const gaveUp = limit.probes >= LIMIT_MAX_PROBES;
+	return { ...base, tone: 'waiting', label: gaveUp ? `${title} · still limited` : `${title} reached`, primary: 'arm', tooltip };
+}
+
+function lines(...parts: readonly (string | undefined)[]): string {
+	return parts.filter((part): part is string => !!part).join('\n');
 }
 
 /**
  * The parked-until time and the countdown for one parked chat, computed once from one clock reading.
- * The banner and the sidebar badge both take their numbers from here, so they cannot disagree.
+ * The chip and the sidebar badge both take their numbers from here, so they cannot disagree.
  */
 export interface ILimitParkedClock {
 	/** The chat resumes on its own (`limitAutoResumes`). */

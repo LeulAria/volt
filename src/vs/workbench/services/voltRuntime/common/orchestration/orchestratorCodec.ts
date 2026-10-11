@@ -222,6 +222,10 @@ function parseLimit(value: unknown): IOrchLimitPark | undefined {
 		...(typeof limit.auto === 'boolean' ? { auto: limit.auto } : {}),
 		...(num(limit.notBefore) !== undefined ? { notBefore: limit.notBefore as number } : {}),
 		...(str(limit.mode) ? { mode: limit.mode as string } : {}),
+		...(str(limit.provider) ? { provider: limit.provider as string } : {}),
+		...(str(limit.providerLabel) ? { providerLabel: limit.providerLabel as string } : {}),
+		...(num(limit.wakeAt) !== undefined ? { wakeAt: limit.wakeAt as number } : {}),
+		...(str(limit.lastError) ? { lastError: limit.lastError as string } : {}),
 	};
 }
 

@@ -134,7 +134,7 @@ import { AgentComposerQueue, IAgentComposerQueueState, QueuePause } from '../com
 import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
-import { AgentLimitBanner } from '../composer/agentLimitBanner.js';
+import { AgentLimitChip } from '../composer/agentLimitChip.js';
 import { AgentVoiceDictation } from '../composer/agentVoiceDictation.js';
 import { PLANS_FOLDER, planDocument, planFileName } from '../../../../services/voltRuntime/common/plans.js';
 import { AgentVoiceVisuals } from '../composer/agentVoiceVisuals.js';
@@ -750,7 +750,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	/** The user armed (true) or disarmed (false) "Compact first" for the next send; undefined: the default (armed for old, large chats). */
 	private compactFirst: boolean | undefined;
 	private worktreeSetupCard: AgentWorktreeSetupCard | undefined;
-	private limitBanner: AgentLimitBanner | undefined;
+	private limitChip: AgentLimitChip | undefined;
 	private waitingForClone: string | undefined;
 	/** Prompts reach the orchestrator in the order they were sent, even when freezing one takes longer. */
 	private submitChain: Promise<unknown> = Promise.resolve();
@@ -1027,6 +1027,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this._register(registerCitationTarget(this.citationTarget));
 		this.editorMainEl = append(this.container, $('.volt-agent-editor-main'));
 		this.runGroupBar = append(this.editorMainEl, $('.volt-agent-group-bar.hidden'));
+		// A chat stopped at the provider's usage limit: when it resumes, or one click to resume it when the provider is back.
+		this.limitChip = this._register(this.instantiationService.createInstance(AgentLimitChip, {
+			chatId: () => this.input instanceof AgentEditorInput ? this.input.sessionId : undefined,
+			switchModel: anchor => this.modelPicker.show(anchor),
+		}));
+		append(this.editorMainEl, this.limitChip.element);
 		const terminalChips = this.terminalChips = this._register(this.instantiationService.createInstance(AgentTerminalChips, { chatId: () => this.runtime.chatFor(this.sessionKey) }));
 		append(this.editorMainEl, terminalChips.element);
 		this.surfaceHost = this._register(this.instantiationService.createInstance(AgentSurfaceHost, this.container, this.editorMainEl));
@@ -1209,12 +1215,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onDidChangeHeight: () => this.layoutInputEditor(),
 		}));
 		append(this.composerEl, this.worktreeSetupCard.element);
-		// A chat parked at the provider's usage limit says when it resumes.
-		this.limitBanner = this._register(new AgentLimitBanner({
-			orchestrator: this.orchestrator,
-			switchModel: anchor => this.modelPicker.show(anchor),
-		}));
-		append(this.composerEl, this.limitBanner.element);
 		// Subagents and queued prompts sit right on top of the text area, under the chips (Cursor).
 		append(this.composerEl, this.composerQueue.element);
 		this.voiceDictation = this._register(this.instantiationService.createInstance(AgentVoiceDictation));
@@ -7251,7 +7251,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		// One pane shows every agent tab: the banner follows the tab's project.
 		this.renderCloneBanner();
 		this.worktreeSetupCard?.setChat(this.sessionKey);
-		this.limitBanner?.setSession((this.input as AgentEditorInput | undefined)?.sessionId);
+		this.limitChip?.render();
 		try {
 			await input.ensureLoaded();
 		} catch (err) {

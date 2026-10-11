@@ -80,11 +80,13 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 			});
 		case 'turn.dispatched':
 			return updateThread(state, event.threadId, thread => {
-				// Any turn that goes out ends a usage-limit park: the chat is working again.
+				// A turn that goes out ends a usage-limit park, except the resume of that park: it holds
+				// until the provider answers (`limit.recovered`) or the resume ends.
 				const { pause: _pause, wakeups: _wakeups, limit: _limit, ...rest } = thread;
+				const keep = event.turn.limitProbe !== undefined && thread.limit ? { limit: thread.limit } : {};
 				const automatic = event.turn.kind === 'notification';
 				const wakeups = automatic ? (thread.wakeups ?? 0) + 1 : event.turn.kind === 'external' ? thread.wakeups : 0;
-				return { ...rest, active: event.turn, turns: thread.turns + 1, ...(wakeups ? { wakeups } : {}) };
+				return { ...rest, ...keep, active: event.turn, turns: thread.turns + 1, ...(wakeups ? { wakeups } : {}) };
 			});
 		case 'turn.steered':
 			return state;
@@ -217,6 +219,22 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 			});
 		case 'limit.deferred':
 			return updateThread(state, event.threadId, thread => thread.limit ? { ...thread, limit: { ...thread.limit, notBefore: event.notBefore } } : thread);
+		case 'limit.woken':
+			return updateThread(state, event.threadId, thread => {
+				if (!thread.limit) {
+					return thread;
+				}
+				const { notBefore: _notBefore, lastError: _lastError, ...rest } = thread.limit;
+				return { ...thread, limit: { ...rest, wakeAt: event.wakeAt } };
+			});
+		case 'limit.cleared':
+			return updateThread(state, event.threadId, thread => {
+				if (!thread.limit) {
+					return thread;
+				}
+				const { limit: _limit, ...rest } = thread;
+				return rest;
+			});
 		case 'move.requested':
 			return updateThread(state, event.threadId, thread => ({ ...thread, pendingMove: event.move }));
 		case 'move.dropped':

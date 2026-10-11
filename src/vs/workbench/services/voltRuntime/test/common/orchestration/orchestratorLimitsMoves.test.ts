@@ -56,12 +56,13 @@ suite('Volt orchestrator: usage-limit recovery', () => {
 		assert.strictEqual(resumed.id, 'u1~l1');
 		assert.strictEqual(resumed.prompt.text, LIMIT_RESUME_TEXT);
 		assert.strictEqual(resumed.limitProbe, 1);
-		assert.strictEqual(sim.thread('a').limit, undefined);
+		assert.ok(sim.thread('a').limit, 'the park holds until the provider answers');
 		assert.strictEqual(sim.thread('a').pause, undefined);
 		assert.deepStrictEqual(sim.effectsOf('startTurn', mark).map(effect => effect.turn.id), ['u1~l1']);
 
 		// The queue goes on once the resume is done.
 		sim.complete('a');
+		assert.strictEqual(sim.thread('a').limit, undefined);
 		assert.strictEqual(sim.thread('a').active?.id, queued.turnId);
 		// A retried tick does not send it twice.
 		assert.deepStrictEqual(tickAt(sim, resetAt + LIMIT_RESET_GRACE_MS + 1).events, []);

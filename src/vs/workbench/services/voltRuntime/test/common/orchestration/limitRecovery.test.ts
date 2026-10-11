@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import {
-	epochMs, formatCountdown, isLimitStopText, LIMIT_MAX_PROBES, LIMIT_PROBE_BACKOFF_MS, LIMIT_RESET_GRACE_MS, limitAutoResumes, limitBadgeLabel, limitBannerView, limitDueAt,
+	epochMs, formatCountdown, isLimitStopText, LIMIT_MAX_PROBES, LIMIT_PROBE_BACKOFF_MS, LIMIT_RESET_GRACE_MS, isRealAnswer, limitAutoResumes, limitBadgeLabel, limitChipView, limitDueAt,
 	limitFromError, limitFromNotice, limitFromReply, limitParkedClock, mergeLimitSignals, nextBannerTick, parseLimitReset,
 } from '../../../common/orchestration/limitRecovery.js';
 import { noticesFromAcpUpdate } from '../../../common/acpNotices.js';
@@ -99,32 +99,48 @@ suite('Volt limit recovery: scheduling and banner', () => {
 		assert.strictEqual(limitDueAt({ at: NOON_UTC, resetAt: NOON_UTC, probes: 0, notBefore: NOON_UTC + 90_000 }), NOON_UTC + 90_000);
 	});
 
-	test('the setting is the default; a chat\'s own choice wins; probing stops after many tries', () => {
+	test('the setting is the default; a chat\'s own choice wins; the setting alone stops probing, an armed chat never does', () => {
 		assert.strictEqual(limitAutoResumes({ at: 0, probes: 0 }, true), true);
 		assert.strictEqual(limitAutoResumes({ at: 0, probes: 0 }, false), false);
 		assert.strictEqual(limitAutoResumes({ at: 0, probes: 0, auto: false }, true), false);
 		assert.strictEqual(limitAutoResumes({ at: 0, probes: 0, auto: true }, false), true);
-		assert.strictEqual(limitAutoResumes({ at: 0, probes: LIMIT_MAX_PROBES, auto: true }, true), false);
+		assert.strictEqual(limitAutoResumes({ at: 0, probes: LIMIT_MAX_PROBES }, true), false);
+		assert.strictEqual(limitAutoResumes({ at: 0, probes: LIMIT_MAX_PROBES * 4, auto: true }, true), true);
 	});
 
-	test('the banner reads like the provider: resumes at, countdown, checking again, auto-resume off', () => {
+	test('the provider coming back for another chat makes a park due; a real answer is told from the limit sentence', () => {
+		assert.strictEqual(limitDueAt({ at: NOON_UTC, resetAt: NOON_UTC + 3_600_000, probes: 0, wakeAt: NOON_UTC + 15_000 }), NOON_UTC + 15_000);
+		assert.strictEqual(isRealAnswer('You\'ve hit your limit · resets 3:40pm (Asia/Dubai). Upgrade to keep going.'), false);
+		assert.strictEqual(isRealAnswer('Picking up where I left off: the migration in db/schema.ts is half done, so'), true);
+		assert.strictEqual(isRealAnswer('Sure'), false);
+	});
+
+	test('the chip reads like the provider: resumes at, countdown, checking, waiting for the user, could not reach', () => {
 		const now = NOON_UTC;
 		const resetAt = now + 72 * 60_000 - LIMIT_RESET_GRACE_MS;
-		const auto = limitBannerView({ at: now, resetAt, probes: 0 }, now, true, 'en-US');
-		assert.strictEqual(auto.title, 'Usage limit reached');
-		assert.match(auto.detail, /^resumes at .+ \(in 1h 12m\)$/);
-		assert.strictEqual(auto.toggleLabel, 'Cancel');
-		const off = limitBannerView({ at: now, resetAt, probes: 0, auto: false }, now, false, 'en-US');
-		assert.match(off.detail, /^resets at .+ · auto-resume off$/);
-		assert.strictEqual(off.toggleLabel, 'Resume at reset');
-		const probing = limitBannerView({ at: now, probes: 1 }, now, true, 'en-US');
-		assert.match(probing.detail, /^checking again at .+ \(in 2m\)$/);
-		assert.strictEqual(limitBannerView({ at: now - 600_000, resetAt: now - 300_000, probes: 0 }, now, true).detail, 'resuming now…');
+		const auto = limitChipView({ at: now, resetAt, probes: 0, providerLabel: 'Claude' }, { now, auto: true, checking: false, locale: 'en-US' });
+		assert.strictEqual(auto.tone, 'armed');
+		assert.match(auto.label, /^Claude limit · resumes .+$/);
+		assert.strictEqual(auto.detail, '1h 12m');
+		assert.strictEqual(auto.primary, 'menu');
+		const waiting = limitChipView({ at: now, resetAt, probes: 0, auto: false, providerLabel: 'Claude' }, { now, auto: false, checking: false, locale: 'en-US' });
+		assert.strictEqual(waiting.tone, 'waiting');
+		assert.match(waiting.label, /^Claude limit · resets .+$/);
+		assert.strictEqual(waiting.primary, 'arm');
+		assert.strictEqual(waiting.armLabel, 'Resume when Claude is back');
+		const probing = limitChipView({ at: now, probes: 1 }, { now, auto: true, checking: false, locale: 'en-US' });
+		assert.match(probing.label, /^Usage limit · checking .+$/);
+		assert.strictEqual(probing.detail, '2m');
+		assert.strictEqual(limitChipView({ at: now, probes: 1, providerLabel: 'Codex' }, { now, auto: true, checking: true }).label, 'Checking if Codex is back…');
+		const failed = limitChipView({ at: now, probes: 1, lastError: 'socket hang up', providerLabel: 'Codex' }, { now, auto: true, checking: false, locale: 'en-US' });
+		assert.strictEqual(failed.tone, 'error');
+		assert.match(failed.detail ?? '', /^retrying .+$/);
+		assert.strictEqual(limitChipView({ at: now - 600_000, resetAt: now - 300_000, probes: 0 }, { now, auto: true, checking: false }).label, 'Usage limit · resuming…');
 		assert.strictEqual(limitBadgeLabel({ at: now, probes: 0 }, now, true), 'Resumes in 1m');
 		assert.strictEqual(limitBadgeLabel({ at: now, probes: 0 }, now, false), 'Limit reached');
 	});
 
-	test('the banner and the sidebar badge read one parked-until, also after a restart', () => {
+	test('the chip and the sidebar badge read one parked-until, also after a restart', () => {
 		// Restore the limit from its saved form, as the orchestrator does on start.
 		const parked = { at: NOON_UTC - 60_000, resetAt: NOON_UTC + 3 * 60_000 - LIMIT_RESET_GRACE_MS, probes: 0, notBefore: NOON_UTC + 3 * 60_000 + 15_000 };
 		const restored = JSON.parse(JSON.stringify(parked)) as typeof parked;
@@ -132,15 +148,14 @@ suite('Volt limit recovery: scheduling and banner', () => {
 			const clock = limitParkedClock(restored, true, now);
 			assert.strictEqual(clock.dueAt, limitDueAt(parked));
 			assert.strictEqual(clock.remainingMs, Math.max(0, clock.dueAt - now));
-			const banner = limitBannerView(restored, now, clock.auto, 'en-US');
+			const chip = limitChipView(restored, { now, auto: clock.auto, checking: false, locale: 'en-US' });
 			const badge = limitBadgeLabel(restored, now, clock.auto, 'en-US');
-			const bannerCountdown = /\(in (.+)\)$/.exec(banner.detail)?.[1];
 			const badgeCountdown = /^Resumes in (.+)$/.exec(badge)?.[1];
 			if (badgeCountdown !== undefined) {
-				assert.strictEqual(bannerCountdown, badgeCountdown, `now +${now - NOON_UTC}ms`);
+				assert.strictEqual(chip.detail, badgeCountdown, `now +${now - NOON_UTC}ms`);
 			}
 			if (clock.remainingMs === 0) {
-				assert.strictEqual(banner.detail, 'resuming now…');
+				assert.strictEqual(chip.label, 'Usage limit · resuming…');
 				assert.strictEqual(badge, 'Resuming');
 			}
 		}

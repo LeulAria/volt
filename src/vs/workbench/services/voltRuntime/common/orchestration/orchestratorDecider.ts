@@ -4,8 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { buildTaskNotification, isLiveTaskState, isTerminalTaskState, taskNotificationDisplay } from './agentTasks.js';
-import { LIMIT_RESUME_TEXT, LIMIT_STAGGER_MS, limitAutoResumes, limitDueAt, limitResumeDisplay } from './limitRecovery.js';
-import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
+import { isRetryableFailure } from '../jobs/retryPolicy.js';
+import { LIMIT_CANARY_WAIT_MS, LIMIT_RESUME_TEXT, LIMIT_STAGGER_MS, limitAutoResumes, limitDueAt, limitResumeDisplay } from './limitRecovery.js';
+import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimitPark, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
 import { applyOrchEvent, applyOrchEvents } from './orchestratorProjector.js';
 
 /**
@@ -198,7 +199,7 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			return { events: [{ type: 'queue.added', threadId: thread.id, item: { id: command.steerId, prompt: command.prompt, at: command.at }, head: true }] };
 		}
 		case 'run.settled':
-			return decideRunSettled(state, command.threadId, { runId: command.runId, turnId: command.turnId }, command.outcome, command.at, command.error, command.reply, false, command.limit);
+			return decideRunSettled(state, command.threadId, { runId: command.runId, turnId: command.turnId }, command.outcome, command.at, command.error, command.reply, false, command.limit, command.account);
 		case 'dispatch.failed': {
 			const thread = state.threads[command.threadId];
 			if (!thread?.active || thread.active.id !== command.turnId) {
@@ -446,6 +447,20 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			}
 			return thread.limit.auto === command.auto ? { events: [] } : { events: [{ type: 'limit.configured', threadId: thread.id, auto: command.auto }] };
 		}
+		case 'limit.recovered': {
+			const thread = state.threads[command.threadId];
+			if (!thread?.limit || thread.active?.id !== command.turnId || thread.active.limitProbe === undefined) {
+				return { events: [] };
+			}
+			return { events: [{ type: 'limit.cleared', threadId: thread.id, reason: 'recovered' }, ...wakeAccount(state, thread, command.at)] };
+		}
+		case 'limit.defer': {
+			const thread = state.threads[command.threadId];
+			if (!thread?.limit || thread.active || (thread.limit.notBefore ?? 0) >= command.notBefore) {
+				return { events: [] };
+			}
+			return { events: [{ type: 'limit.deferred', threadId: thread.id, notBefore: command.notBefore }] };
+		}
 		case 'thread.move':
 			return decideMove(state, command);
 		case 'move.cancel': {
@@ -499,25 +514,67 @@ function decideMove(state: IOrchState, command: Extract<OrchCommand, { type: 'th
 /**
  * Parked chats whose reset (or next probe) has come continue, one per tick: the first due goes
  * now, the others get slots `LIMIT_STAGGER_MS` apart, so twenty chats parked on the same account
- * do not hit the provider in the same second (and the limit again).
+ * do not hit the provider in the same second (and the limit again). Chats on one account wait for
+ * the one resume that is out on it (the canary) instead of each asking whether the account is back.
  */
 function decideLimitTick(state: IOrchState, at: number, autoDefault: boolean): IOrchDecision {
-	const due = sortedThreads(state)
+	const threads = sortedThreads(state);
+	const due = threads
 		.filter(thread => thread.limit && !thread.active && !thread.moving && !thread.blocked && !thread.pendingMove
 			&& limitAutoResumes(thread.limit, autoDefault) && limitDueAt(thread.limit) <= at)
 		.sort((a, b) => limitDueAt(a.limit!) - limitDueAt(b.limit!) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 	if (!due.length) {
 		return { events: [] };
 	}
-	const [first, ...rest] = due;
-	const events: OrchEvent[] = [resumeLimited(state, first, at, false)];
-	rest.forEach((thread, index) => {
-		const slot = at + (index + 1) * LIMIT_STAGGER_MS;
-		if ((thread.limit!.notBefore ?? 0) < slot) {
-			events.push({ type: 'limit.deferred', threadId: thread.id, notBefore: slot });
+	// Accounts with a resume already out.
+	const checking = new Set(threads.filter(thread => thread.limit?.provider && thread.active?.limitProbe !== undefined).map(thread => thread.limit!.provider!));
+	const events: OrchEvent[] = [];
+	const defer = (thread: IOrchThread, notBefore: number) => {
+		if ((thread.limit!.notBefore ?? 0) < notBefore) {
+			events.push({ type: 'limit.deferred', threadId: thread.id, notBefore });
 		}
-	});
+	};
+	let slot = 0;
+	for (const thread of due) {
+		const provider = thread.limit!.provider;
+		if (provider && checking.has(provider)) {
+			defer(thread, at + LIMIT_CANARY_WAIT_MS);
+			continue;
+		}
+		if (slot === 0) {
+			events.push(resumeLimited(state, thread, at, false));
+		} else {
+			defer(thread, at + slot * LIMIT_STAGGER_MS);
+		}
+		slot++;
+		if (provider) {
+			checking.add(provider);
+		}
+	}
 	return { events };
+}
+
+/** The provider answered on this account: every other chat parked on it resumes, staggered. */
+function wakeAccount(state: IOrchState, thread: IOrchThread, at: number): OrchEvent[] {
+	const provider = thread.limit?.provider;
+	if (!provider) {
+		return [];
+	}
+	return sortedThreads(state)
+		.filter(other => other.id !== thread.id && other.limit?.provider === provider && !other.active)
+		.sort((a, b) => limitDueAt(a.limit!) - limitDueAt(b.limit!) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+		.map((other, index): OrchEvent => ({ type: 'limit.woken', threadId: other.id, wakeAt: at + (index + 1) * LIMIT_STAGGER_MS }));
+}
+
+/** The canary's resume hit the limit again: the chats waiting on it move with its next check. */
+function followCanary(state: IOrchState, threadId: string, park: IOrchLimitPark): OrchEvent[] {
+	if (!park.provider) {
+		return [];
+	}
+	const next = limitDueAt(park);
+	return sortedThreads(state)
+		.filter(other => other.id !== threadId && !!other.limit && other.limit.provider === park.provider && !other.active && limitDueAt(other.limit) < next)
+		.map((other, index): OrchEvent => ({ type: 'limit.deferred', threadId: other.id, notBefore: next + (index + 1) * LIMIT_STAGGER_MS }));
 }
 
 /** The turn that continues a parked chat: "continue where you left off", on the chat's current model. */
@@ -759,7 +816,7 @@ export function externalTurnId(runId: string): string {
 	return `x-${runId}`;
 }
 
-function decideRunSettled(state: IOrchState, threadId: string, match: { readonly runId?: string; readonly turnId?: string }, outcome: OrchOutcome, at: number, error: string | undefined, reply: string | undefined, superseded = false, limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }): IOrchDecision {
+function decideRunSettled(state: IOrchState, threadId: string, match: { readonly runId?: string; readonly turnId?: string }, outcome: OrchOutcome, at: number, error: string | undefined, reply: string | undefined, superseded = false, limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }, account?: IOrchLimitAccount): IOrchDecision {
 	const thread = state.threads[threadId];
 	const active = thread?.active;
 	if (!thread || !active) {
@@ -780,27 +837,63 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 	// A usage limit parks the chat until the reset instead of failing it. A subagent's chat fails as
 	// before: its parent hears about it and decides (another model, or wait).
 	const parks = !!limit && outcome === 'failed' && !superseded && !thread.taskId;
-	if (outcome === 'failed' && !superseded) {
+	// The resume of a park that has not heard from the provider yet (its park is still on).
+	const previous = active.limitProbe !== undefined ? thread.limit : undefined;
+	// It could not reach the provider for another reason (network, the agent process, a restart):
+	// the park stays and the resume is tried again, until it gets an answer or fails for good.
+	const retries = !!previous && !parks && !superseded && !thread.taskId
+		&& (outcome === 'interrupted' || (outcome === 'failed' && isRetryableFailure(error)));
+	if ((outcome === 'failed' && !superseded) || retries) {
 		// The queue waits for the user instead of resending into a failing provider.
-		events.push({ type: 'queue.paused', threadId: thread.id, reason: parks ? 'limit' : 'failed' });
+		events.push({ type: 'queue.paused', threadId: thread.id, reason: parks || retries ? 'limit' : 'failed' });
 	}
+	const provider = account?.provider ?? previous?.provider;
+	const providerLabel = account?.providerLabel ?? previous?.providerLabel;
+	const parkBase = {
+		turnId: active.id,
+		at,
+		...(active.prompt.mode ? { mode: active.prompt.mode } : {}),
+		...(provider ? { provider } : {}),
+		...(providerLabel ? { providerLabel } : {}),
+	};
 	if (parks) {
-		// A stop limit waits for the user, unless the user already asked this chat to resume (that probe hit it again).
-		const auto = active.limitAuto ?? (limit.stop ? false : undefined);
+		// A stop limit waits for the user, unless the user asked this chat to resume (that resume hit
+		// it again). A choice made while the resume was out is the chat's latest.
+		const auto = previous?.auto ?? active.limitAuto ?? (limit.stop ? false : undefined);
+		const park: IOrchLimitPark = {
+			...parkBase,
+			// A reset at or before the stop is stale: resuming at it would only hit the limit again.
+			...(limit.resetAt !== undefined && limit.resetAt > at ? { resetAt: limit.resetAt } : {}),
+			...(limit.message ? { message: limit.message } : {}),
+			probes: active.limitProbe ?? 0,
+			...(auto !== undefined ? { auto } : {}),
+		};
+		events.push({ type: 'limit.parked', threadId: thread.id, limit: park });
+		if (previous) {
+			events.push(...followCanary(state, thread.id, park));
+		}
+	} else if (retries) {
+		const auto = previous.auto ?? active.limitAuto;
+		// A restart cut the resume off before it heard back: it goes again at once (at the reset, if
+		// the user resumed before it). Anything else waits out the back-off and says why.
+		const restarted = outcome === 'interrupted';
 		events.push({
 			type: 'limit.parked',
 			threadId: thread.id,
 			limit: {
-				turnId: active.id,
-				at,
-				// A reset at or before the stop is stale: resuming at it would only hit the limit again.
-				...(limit.resetAt !== undefined && limit.resetAt > at ? { resetAt: limit.resetAt } : {}),
-				...(limit.message ? { message: limit.message } : {}),
-				probes: active.limitProbe ?? 0,
+				...parkBase,
+				...(restarted ? { resetAt: previous.resetAt ?? at } : { lastError: (error ?? 'The resume failed.').slice(0, 300) }),
+				...(previous.message ? { message: previous.message } : {}),
+				probes: active.limitProbe ?? previous.probes,
 				...(auto !== undefined ? { auto } : {}),
-				...(active.prompt.mode ? { mode: active.prompt.mode } : {}),
 			},
 		});
+	} else if (previous) {
+		// The resume got an answer, the user stopped it, or it failed for good: the park is over.
+		events.push({ type: 'limit.cleared', threadId: thread.id, reason: outcome === 'done' ? 'recovered' : outcome === 'cancelled' ? 'stopped' : 'failed' });
+		if (outcome === 'done') {
+			events.push(...wakeAccount(state, thread, at));
+		}
 	}
 	// Harness subagents live inside the turn: whatever did not report an end ends with it (one left
 	// from an earlier turn of this chat too, so nothing shows "running" after its chat is done).
@@ -1064,7 +1157,9 @@ function decideRecover(state: IOrchState, at: number, resume: OrchRestartResume,
 		const task = current.taskId ? next.tasks[current.taskId] : undefined;
 		const keepsGoing = continuesAfterRestart(current, task, resume, limits);
 		if (current.active) {
-			if (keepsGoing && current.active.kind !== 'external') {
+			// A resume of a usage-limit park parks again (decideRunSettled) and goes at the next tick.
+			const limitResume = !!current.limit && current.active.limitProbe !== undefined;
+			if (keepsGoing && current.active.kind !== 'external' && !limitResume) {
 				push(restartTurn(next, current, current.active, task, at));
 				if (task) {
 					continued.add(task.id);
@@ -1072,7 +1167,9 @@ function decideRecover(state: IOrchState, at: number, resume: OrchRestartResume,
 				continue;
 			}
 			push(decideRunSettled(next, thread.id, { turnId: current.active.id }, 'interrupted', at, undefined, undefined).events);
-			push([{ type: 'queue.paused', threadId: thread.id, reason: 'interrupted' }]);
+			if (!next.threads[thread.id]?.limit) {
+				push([{ type: 'queue.paused', threadId: thread.id, reason: 'interrupted' }]);
+			}
 		} else if (current.queue.length && !current.pause) {
 			if (keepsGoing) {
 				// Between two rounds: the scheduler sends the next one.

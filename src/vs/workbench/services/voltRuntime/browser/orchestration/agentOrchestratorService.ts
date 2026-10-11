@@ -24,12 +24,14 @@ import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '..
 import { normalizeVoltMode } from '../../common/modes.js';
 import { AGENT_TASK_TOOLS, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, MAX_BATCH_TASKS, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchMove, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
-import { ILimitSignal, isClaudeProvider, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitAutoResumes, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
+import { ILimitSignal, isClaudeProvider, isRealAnswer, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitAutoResumes, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
 import { extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { harnessTaskId, IOrchStep, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
 import { IVoltSessionContextService } from '../../common/sessionContext.js';
+import { DeadlineTimer } from '../jobs/deadlineTimer.js';
+import { DurableClaims } from '../jobs/durableClaims.js';
 import { OrchestratorStore } from './orchestratorStore.js';
 
 /** Models one delegate_task call may run the same brief on. */
@@ -38,8 +40,6 @@ const MAX_FAN_OUT = 4;
 const CANCEL_SETTLE_MS = 6_000;
 /** A Volt chat id for a subagent's chat; the agent editor reads session ids from this shape. */
 const CHILD_ID_PREFIX = 'agent-';
-/** setTimeout's ceiling is about 24.8 days; the limit timer re-arms at least daily. */
-const LIMIT_TIMER_MAX_MS = 86_400_000;
 /** How often Volt checks that what it believes is running really is (lost run ends, stuck starts and stops). */
 const WATCHDOG_MS = 20_000;
 /** Watchdog ticks in a row a turn must look stuck before Volt acts on it (an event may be on its way). */
@@ -83,8 +83,12 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private readonly worktreesInFlight = new Set<string>();
 	/** Runs a provider's usage limit stopped, with what it said. */
 	private readonly limitedRuns = new Map<string, ILimitSignal>();
-	private limitTimer: ReturnType<typeof setTimeout> | undefined;
-	private limitTimerAt: number | undefined;
+	/** Wakes parked chats at their resume time, also after the machine slept (see DeadlineTimer). */
+	private readonly limitTimer: DeadlineTimer;
+	/** Exactly-once gates shared with the other Volt workbenches (each project runs one). */
+	private readonly claims: DurableClaims;
+	/** Assistant text of resumes that have not heard back from the provider yet, by run. */
+	private readonly probeText = new Map<string, string>();
 	private mover: IOrchWorkspaceMover | undefined;
 	private readonly waitingForMover: Extract<OrchEffect, { kind: 'moveWorkspace' }>[] = [];
 	private readonly movesInFlight = new Set<string>();
@@ -118,6 +122,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	) {
 		super();
 		this.store = new OrchestratorStore(joinPath(environmentService.userRoamingDataHome, 'voltOrchestrator'), fileService, logService);
+		this.claims = new DurableClaims(joinPath(environmentService.userRoamingDataHome, 'voltJobs', 'claims'), fileService, logService);
+		this.limitTimer = this._register(new DeadlineTimer(() => this.limitTick()));
 		this._register(runtime.onDidEmit(envelope => this.observe(envelope)));
 		this._register(hostTools.registerToolProvider({
 			tools: AGENT_TASK_TOOLS.map(tool => ({ ...tool, group: 'tasks' as const })),
@@ -135,9 +141,6 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 			for (const timer of this.cancelWatch.values()) {
 				clearTimeout(timer);
-			}
-			if (this.limitTimer !== undefined) {
-				clearTimeout(this.limitTimer);
 			}
 		}));
 		// Parked chats wake at their reset: the timer follows the state.
@@ -284,7 +287,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 	/**
 	 * Arms one timer for the earliest parked chat that resumes on its own. When it fires, the
-	 * decider resumes what is due (and staggers the rest), and the next change re-arms it.
+	 * decider resumes what is due (and staggers the rest), and the next change re-arms it. The
+	 * timer reads the wall clock, so a reset that passed while the machine slept is not missed.
 	 */
 	private scheduleLimitTick(): void {
 		const auto = this.autoResumeDefault();
@@ -294,37 +298,56 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				next = Math.min(next, limitDueAt(thread.limit));
 			}
 		}
-		if (!Number.isFinite(next)) {
-			this.clearLimitTimer();
-			return;
-		}
-		if (this.limitTimer !== undefined && this.limitTimerAt === next) {
-			return;
-		}
-		this.clearLimitTimer();
-		const delay = Math.min(Math.max(next - Date.now(), 0), LIMIT_TIMER_MAX_MS);
-		this.limitTimerAt = next;
-		this.limitTimer = setTimeout(() => {
-			this.limitTimer = undefined;
-			this.limitTimerAt = undefined;
-			const step = this.apply({ type: 'limit.tick', autoResume: this.autoResumeDefault() });
-			const resumed = step.envelopes.filter(envelope => envelope.event.type === 'turn.dispatched').map(envelope => (envelope.event as Extract<OrchEvent, { type: 'turn.dispatched' }>).threadId);
-			if (resumed.length) {
-				this.logService.info(`[volt orchestrator] usage limit reset: resuming ${resumed.join(', ')}`);
-			}
-			// Nothing changed (not due yet after a clamp): look again.
-			if (!step.envelopes.length) {
-				this.scheduleLimitTick();
-			}
-		}, delay);
+		this.limitTimer.schedule(Number.isFinite(next) ? next : undefined);
 	}
 
-	private clearLimitTimer(): void {
-		if (this.limitTimer !== undefined) {
-			clearTimeout(this.limitTimer);
-			this.limitTimer = undefined;
-			this.limitTimerAt = undefined;
+	private limitTick(): void {
+		const step = this.apply({ type: 'limit.tick', autoResume: this.autoResumeDefault() });
+		const resumed = step.envelopes.filter(envelope => envelope.event.type === 'turn.dispatched').map(envelope => (envelope.event as Extract<OrchEvent, { type: 'turn.dispatched' }>).threadId);
+		if (resumed.length) {
+			this.logService.info(`[volt orchestrator] usage limit: resuming ${resumed.join(', ')}`);
 		}
+		// Nothing changed (a stagger slot not reached yet): look again.
+		if (!step.envelopes.length) {
+			this.scheduleLimitTick();
+		}
+	}
+
+	/**
+	 * Another Volt workbench claimed this chat's resume and runs it. This one lets go of the chat
+	 * tree in memory only (the other one writes it from now on) and reads it from disk again when
+	 * the chat is opened here, so the two never send the same turn.
+	 */
+	private releaseRoot(threadId: string, why: string): void {
+		const rootId = this.state.threads[threadId]?.rootId;
+		if (!rootId) {
+			return;
+		}
+		const threads: Record<string, IOrchThread> = {};
+		const gone: string[] = [];
+		for (const [id, thread] of Object.entries(this.state.threads)) {
+			if (thread.rootId === rootId) {
+				gone.push(id);
+			} else {
+				threads[id] = thread;
+			}
+		}
+		const tasks: Record<string, IOrchTask> = {};
+		const goneTasks: string[] = [];
+		for (const [id, task] of Object.entries(this.state.tasks)) {
+			if (task.rootId === rootId) {
+				goneTasks.push(id);
+			} else {
+				tasks[id] = task;
+			}
+		}
+		const { [rootId]: _conflicts, ...conflicts } = this.state.conflicts;
+		this.state = { ...this.state, threads, tasks, conflicts };
+		this.rootEvents.delete(rootId);
+		this.dirtyRoots.delete(rootId);
+		this.knownRoots.add(rootId);
+		this.logService.info(`[volt orchestrator] ${threadId}: ${why}; this window lets go of its chat tree`);
+		this._onDidChange.fire({ threads: gone, tasks: goneTasks });
 	}
 
 	setTurnHost(host: IOrchTurnHost): IDisposable {
@@ -738,6 +761,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		this.dispatching.set(threadId, turn.id);
 		this.startingSince.set(turn.id, Date.now());
 		try {
+			// Every Volt workbench loads the same parked chats: only the one that claims this resume sends it.
+			if (isAutoLimitResume(turn) && !await this.claims.claim(`limit:${turn.id}`)) {
+				this.releaseRoot(threadId, 'another Volt window took its usage-limit resume');
+				return;
+			}
 			const thread = this.state.threads[threadId];
 			if (thread?.taskId && thread.parentId && turn.kind === 'brief') {
 				await host.prepareChild?.(threadId, thread.parentId);
@@ -918,6 +946,18 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				}
 				return;
 			}
+			case 'text.delta':
+				if (event.delta && this.isLimitResume(thread)) {
+					const text = (this.probeText.get(envelope.runId) ?? '') + event.delta;
+					this.probeText.set(envelope.runId, text.slice(0, 600));
+					if (isRealAnswer(text)) {
+						this.limitAnswered(threadId);
+					}
+				}
+				return;
+			case 'reasoning.start':
+				this.limitAnswered(threadId);
+				return;
 			case 'run.end':
 				this.settleRun(threadId, envelope.runId, event.reason);
 				return;
@@ -934,6 +974,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				this.apply({ type: 'input.closed', threadId, inputId: event.requestId });
 				return;
 			case 'tool.start': {
+				this.limitAnswered(threadId);
 				if (thread.taskId) {
 					// A Volt subagent's step is its row's live line in the parent ("Read home.html").
 					const task = this.state.tasks[thread.taskId];
@@ -1072,6 +1113,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const message = limit && outcome === 'failed' ? limit.message : error;
 		// Claude's limit stops the chat where it is: nothing more is sent on the account by itself.
 		const stop = !!limit && outcome === 'failed' && this.stopsAtClaudeLimit() && isClaudeProvider(this.providerOf(this.runtime.getOrCreateSession(threadId).providerRef ?? this.state.threads[threadId]?.modelRef));
+		this.probeText.delete(runId);
+		const account = outcome === 'failed' ? this.limitAccount(threadId) : undefined;
 		this.apply({
 			type: 'run.settled',
 			threadId,
@@ -1080,11 +1123,39 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			...(message && outcome === 'failed' ? { error: message } : {}),
 			...(reply !== undefined ? { reply } : {}),
 			...(limit && outcome === 'failed' ? { limit: { ...limit, ...(stop ? { stop: true } : {}) } } : {}),
+			...(account ? { account } : {}),
 		});
 		this.clearCancelWatch(threadId);
 		if (stop) {
 			this.stopClaudeWork(threadId);
 		}
+	}
+
+	/** The chat's active turn resumes a usage-limit park that has not heard back from the provider. */
+	private isLimitResume(thread: IOrchThread | undefined): boolean {
+		return !!thread?.limit && thread.active?.limitProbe !== undefined;
+	}
+
+	/** A resume of a parked chat heard back from the provider: the account works again, and its other parked chats follow. */
+	private limitAnswered(threadId: string): void {
+		const thread = this.state.threads[threadId];
+		if (!this.isLimitResume(thread)) {
+			return;
+		}
+		const step = this.apply({ type: 'limit.recovered', threadId, turnId: thread!.active!.id });
+		const woken = step.envelopes.filter(envelope => envelope.event.type === 'limit.woken').length;
+		this.logService.info(`[volt orchestrator] ${threadId}: ${thread!.limit!.providerLabel ?? 'the provider'} answered after the usage limit${woken ? `; waking ${woken} other parked chat(s) on the account` : ''}`);
+	}
+
+	/** The provider account behind a chat's model: chats parked on one account share one check. */
+	private limitAccount(threadId: string): IOrchLimitAccount | undefined {
+		const ref = this.runtime.getOrCreateSession(threadId).providerRef ?? this.state.threads[threadId]?.modelRef;
+		const item = ref ? this.runtime.listCatalog().find(entry => entry.ref === ref) : undefined;
+		if (!item) {
+			return undefined;
+		}
+		const label = this.runtime.listProviderStatuses().find(status => status.profileId === item.profileId)?.label ?? item.label;
+		return { provider: `${item.providerId}:${item.profileId}`, ...(label ? { providerLabel: label } : {}) };
 	}
 
 	private stopsAtClaudeLimit(): boolean {
@@ -1636,6 +1707,11 @@ function touched(event: OrchEvent): { threadIds: string[]; taskIds: string[] } {
 		default:
 			return { threadIds: 'threadId' in event ? [event.threadId] : [], taskIds: [] };
 	}
+}
+
+/** A resume the limit timer sent (`~l<n>`), as opposed to the user's own Resume now (`~m<n>`). */
+function isAutoLimitResume(turn: IOrchTurn): boolean {
+	return turn.kind === 'resume' && turn.limitProbe !== undefined && /~l\d+$/.test(turn.id);
 }
 
 registerSingleton(IAgentOrchestratorService, AgentOrchestratorService, InstantiationType.Delayed);

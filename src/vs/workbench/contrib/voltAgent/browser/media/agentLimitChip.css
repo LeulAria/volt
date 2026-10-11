@@ -1,0 +1,68 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The usage-limit chip at the top of the chat (agentLimitChip.ts). It is a terminal chip in shape
+ * (agentTerminals.css) with its own tones: amber while the chat waits for the user, blue while
+ * Volt waits for the provider on its own, a spinner while a resume is out, red when the resume
+ * could not reach the provider.
+ */
+
+.volt-agent-limit-bar + .volt-agent-terminal-bar {
+	padding-top: 6px;
+}
+
+.volt-agent-limit-chip.waiting { --volt-terminal-tone: var(--vscode-editorWarning-foreground, #cca700); }
+.volt-agent-limit-chip.armed { --volt-terminal-tone: var(--vscode-charts-blue, #3794ff); }
+.volt-agent-limit-chip.checking { --volt-terminal-tone: var(--vscode-charts-blue, #3794ff); }
+.volt-agent-limit-chip.error { --volt-terminal-tone: var(--vscode-errorForeground, #f14c4c); }
+
+.volt-agent-limit-chip {
+	border-color: color-mix(in srgb, var(--volt-terminal-tone) 45%, transparent);
+	background: color-mix(in srgb, var(--volt-terminal-tone) 7%, var(--vscode-editorWidget-background));
+}
+
+.volt-agent-limit-chip-icon {
+	color: var(--volt-terminal-tone);
+}
+
+.volt-agent-limit-chip-icon .codicon {
+	font-size: 13px;
+}
+
+/* "Resume when Claude is back": the call to action inside a waiting chip. */
+.volt-agent-limit-chip-arm {
+	flex: none;
+	margin-left: 2px;
+	padding: 0 8px;
+	height: 18px;
+	line-height: 18px;
+	border-radius: 999px;
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+	font-size: 11px;
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.volt-agent-limit-chip button:hover .volt-agent-limit-chip-arm {
+	background: var(--vscode-button-hoverBackground);
+}
+
+/* Armed: the chip breathes slowly so a chat that will continue by itself reads as alive. */
+.volt-agent-limit-chip.armed .volt-agent-limit-chip-icon {
+	animation: volt-agent-limit-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes volt-agent-limit-breathe {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-agent-limit-chip.armed .volt-agent-limit-chip-icon {
+		animation: none;
+	}
+}
