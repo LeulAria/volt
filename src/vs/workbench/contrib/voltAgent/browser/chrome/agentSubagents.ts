@@ -223,10 +223,17 @@ export function renderSubagentRow(parent: HTMLElement, view: ISubagentView, opti
 			options.onOpen?.(view);
 		}));
 	}
-	if (options.tooltip) {
-		options.store.add(options.tooltip.bind(row, () => subagentHoverRows(view, Date.now()), { placement: 'above', variant: 'card', delay: 450 }));
-	}
+	bindSubagentHover(row, view, options);
 	return row;
+}
+
+/** The hover card over a row; a click on the card opens the subagent like the row does. */
+function bindSubagentHover(row: HTMLElement, view: ISubagentView, options: ISubagentRowOptions): void {
+	if (!options.tooltip) {
+		return;
+	}
+	const onOpen = view.openable ? options.onOpen : undefined;
+	options.store.add(options.tooltip.bind(row, () => subagentHoverRows(view, Date.now()), { placement: 'above', variant: 'card', delay: 450, ...(onOpen ? { onClick: () => onOpen(view) } : {}) }));
 }
 
 /** The hover card: title, model with its mark, status with the clock, the current step. */
@@ -266,6 +273,12 @@ export function subagentStateIcon(state: OrchAgentRowState) {
 	}
 }
 
+/** Subagents started together fold into one header from this many on; fewer stay as plain rows. */
+export const SUBAGENT_GROUP_MIN = 4;
+
+/** Avatars in a group header, the last place taken by the "+N" bubble when there are more. */
+const GROUP_STACK_MAX = 4;
+
 export interface ISubagentGroupOptions extends ISubagentRowOptions {
 	readonly id: string;
 	readonly expanded: boolean;
@@ -285,8 +298,12 @@ export function renderSubagentGroup(parent: HTMLElement, views: readonly ISubage
 	head.type = 'button';
 	head.setAttribute('aria-expanded', String(options.expanded));
 	const stack = append(head, $('span.volt-subagent-stack'));
-	for (const view of views.slice(0, 4)) {
+	const shown = views.length > GROUP_STACK_MAX ? GROUP_STACK_MAX - 1 : views.length;
+	for (const view of views.slice(0, shown)) {
 		renderSubagentAvatar(stack, view, 28);
+	}
+	if (views.length > shown) {
+		append(stack, $('span.volt-subagent-more')).textContent = `+${views.length - shown}`;
 	}
 	const text = append(head, $('span.volt-subagent-group-text'));
 	append(text, $('span.volt-subagent-group-title')).textContent = views.length === 1
@@ -413,7 +430,7 @@ export function createReportStackIcon(owner: HTMLElement): SVGSVGElement {
 	return svg;
 }
 
-/** The outline paper plane Cursor puts before each running subagent in the card above the composer. */
+/** The outline paper plane Cursor puts before each running subagent in the card above the composer: tip up and left, folded down its middle. */
 export function createPlaneIcon(owner: HTMLElement): SVGSVGElement {
 	const svg = owner.ownerDocument.createElementNS(SVG_NS, 'svg');
 	svg.setAttribute('viewBox', '0 0 24 24');
@@ -423,9 +440,9 @@ export function createPlaneIcon(owner: HTMLElement): SVGSVGElement {
 	svg.setAttribute('aria-hidden', 'true');
 	svg.classList.add('volt-subagent-plane');
 	const path = owner.ownerDocument.createElementNS(SVG_NS, 'path');
-	path.setAttribute('d', 'M3.5 4.5 20.5 12 3.5 19.5 6.5 12 3.5 4.5ZM6.5 12H12');
+	path.setAttribute('d', 'M3 4.5 21 3.5 12 21 3 4.5ZM3 4.5 12.5 12');
 	path.setAttribute('stroke', 'currentColor');
-	path.setAttribute('stroke-width', '1.4');
+	path.setAttribute('stroke-width', '1.5');
 	path.setAttribute('stroke-linejoin', 'round');
 	path.setAttribute('stroke-linecap', 'round');
 	svg.appendChild(path);
@@ -516,9 +533,7 @@ export function renderCursorSubagentRow(parent: HTMLElement, view: ISubagentView
 			options.onOpen?.(view);
 		}));
 	}
-	if (options.tooltip) {
-		options.store.add(options.tooltip.bind(row, () => subagentHoverRows(view, Date.now()), { placement: 'above', variant: 'card', delay: 450 }));
-	}
+	bindSubagentHover(row, view, options);
 	return row;
 }
 
@@ -554,9 +569,7 @@ export function renderCursorCardRow(parent: HTMLElement, view: ISubagentView, op
 			options.onOpen?.(view);
 		}));
 	}
-	if (options.tooltip) {
-		options.store.add(options.tooltip.bind(row, () => subagentHoverRows(view, Date.now()), { placement: 'above', variant: 'card', delay: 450 }));
-	}
+	bindSubagentHover(row, view, options);
 	return row;
 }
 

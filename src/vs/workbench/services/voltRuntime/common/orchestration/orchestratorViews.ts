@@ -155,7 +155,8 @@ export function agentRow(task: IOrchTask): IOrchAgentRow {
 		files: task.files.length,
 		cancellable: task.source === 'volt' && isLiveTaskState(task.state),
 		stopsTurn: task.source === 'harness' && isLiveTaskState(task.state),
-		openable: !!task.childId,
+		// A harness's own subagent opens the read-only chat Volt keeps for it (harnessSubagentChatId).
+		openable: !!task.childId || task.source === 'harness',
 		multitask: isMultitaskTask(task),
 		readOnly: !isMultitaskTask(task),
 		...(task.iteration && task.iteration > 1 ? { iteration: task.iteration } : {}),

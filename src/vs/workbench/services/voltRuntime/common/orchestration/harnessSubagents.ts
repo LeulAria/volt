@@ -135,6 +135,34 @@ export function harnessFailure(result: unknown): string | undefined {
 	return undefined;
 }
 
+const HARNESS_CHAT_PREFIX = 'agent-h-';
+
+/**
+ * The read-only chat Volt keeps for a harness subagent (`agent-h-<call>`): its own steps, mirrored
+ * from the parent's stream, or what the task record knows. A harness subagent has no orchestrator
+ * thread of its own; this id ties its task to that chat.
+ */
+export function harnessSubagentChatId(taskId: string): string {
+	return `agent-${taskId}`.replace(/[^A-Za-z0-9_-]/g, '-');
+}
+
+/** A chat from {@link harnessSubagentChatId}: read only, whether or not its task is loaded yet. */
+export function isHarnessSubagentChatId(chatId: string): boolean {
+	return chatId.startsWith(HARNESS_CHAT_PREFIX);
+}
+
+/** The harness task a chat from {@link harnessSubagentChatId} shows, if that task is known. */
+export function harnessTaskOfChat<T extends { readonly id: string; readonly source: string }>(tasks: Readonly<Record<string, T>>, chatId: string): T | undefined {
+	if (!isHarnessSubagentChatId(chatId)) {
+		return undefined;
+	}
+	const direct = tasks[chatId.slice('agent-'.length)];
+	if (direct?.source === 'harness') {
+		return direct;
+	}
+	return Object.values(tasks).find(task => task.source === 'harness' && harnessSubagentChatId(task.id) === chatId);
+}
+
 function humanize(name: string): string {
 	const last = name.split('/').filter(Boolean).at(-1) ?? name;
 	const words = last.replace(/[_-]+/g, ' ').trim();

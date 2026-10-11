@@ -35,6 +35,8 @@ export interface IAgentTooltipShowOptions {
 	variant?: AgentTooltipVariant;
 	/** Milliseconds the pointer must stay on the anchor before the tooltip appears. */
 	delay?: number;
+	/** A click anywhere on the tooltip runs this; it stays open while the pointer crosses to it. */
+	onClick?: () => void;
 }
 
 export interface IAgentTooltipShortcut {
@@ -87,12 +89,23 @@ export class AgentTooltip extends Disposable {
 
 	private showHandle: number | undefined;
 	private showWindow: Window | undefined;
+	/** What a click on the shown tooltip runs ({@link IAgentTooltipShowOptions.onClick}). */
+	private click: (() => void) | undefined;
 
 	constructor() {
 		super();
 		this.domNode = $('.volt-agent-tooltip.hidden');
 		this.domNode.setAttribute('role', 'tooltip');
 		this._register(toDisposable(() => this.domNode.remove()));
+		this._register(addDisposableListener(this.domNode, 'mousedown', e => {
+			const click = this.click;
+			if (click) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.hide();
+				click();
+			}
+		}));
 	}
 
 	private cancelScheduledShow(): void {
@@ -109,6 +122,8 @@ export class AgentTooltip extends Disposable {
 		this.domNode.classList.toggle('card', options?.variant === 'card');
 		this.domNode.classList.toggle('beside', options?.placement === 'start' || options?.placement === 'end');
 		this.domNode.classList.toggle('compact', anchor.getAttribute('data-volt-tooltip-compact') === '1');
+		this.click = options?.onClick;
+		this.domNode.classList.toggle('clickable', !!this.click);
 		for (const row of rows) {
 			if (options?.variant === 'card') {
 				this.renderCardRow(row);
@@ -210,7 +225,8 @@ export class AgentTooltip extends Disposable {
 		const hide = () => {
 			clearTimer();
 			this.cancelScheduledShow();
-			if (options?.variant === 'files') {
+			// Room to cross the gap to a tooltip the pointer can use (a file list, a clickable card).
+			if (options?.variant === 'files' || options?.onClick) {
 				hideTimer = win.setTimeout(() => {
 					hideTimer = undefined;
 					this.hide();

@@ -1370,7 +1370,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const parentMode = parent?.active?.prompt.mode ? normalizeVoltMode(parent.active.prompt.mode) : 'agent';
 		// Work a Multitask chat splits up is the user's own parallel work: multitask agents, whose chats
 		// take follow-ups. A turn without a mode (a report waking the chat) keeps what the chat started.
-		const multitask = parentMode === 'multitask'
+		const multitask = args.multitask === true
+			|| parentMode === 'multitask'
 			|| previous?.origin === 'user'
 			|| (!parent?.active?.prompt.mode && Object.values(this.state.tasks).some(task => task.parentId === parentId && task.origin === 'user'));
 		// A child never gets more than its parent: a read-only chat delegates read-only work.
@@ -1427,6 +1428,32 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			lines.push('Its report is delivered to this chat as a new message when it finishes; you may end your turn. Call wait_tasks only if you need the result before you can continue.');
 		}
 		return { text: lines.join('\n') };
+	}
+
+	/**
+	 * The queue's "Start Multitasking": every queued message starts now as a multitask agent of the
+	 * chat (its own chat, running beside the others), instead of waiting its turn. Returns how many started.
+	 */
+	async multitaskQueue(threadId: string): Promise<number> {
+		await this.whenReady;
+		const items = (this.state.threads[threadId]?.queue ?? []).filter(item => (item.kind ?? 'prompt') === 'prompt').slice(0, MAX_BATCH_TASKS);
+		let started = 0;
+		for (const item of items) {
+			const display = item.prompt.display as { readonly text?: unknown } | undefined;
+			const shown = typeof display?.text === 'string' && display.text.trim() ? display.text.trim() : item.prompt.text;
+			let model: string | undefined = item.prompt.modelRef;
+			try {
+				this.resolveModel(model);
+			} catch {
+				model = undefined;
+			}
+			const result = await this.delegate(threadId, { task: item.prompt.text, title: titleFromBrief(shown), multitask: true, client_request_id: `queue:${item.id}`, ...(model ? { model } : {}) }, CancellationToken.None, undefined, true);
+			if (!result.error) {
+				this.apply({ type: 'queue.remove', threadId, itemId: item.id });
+				started++;
+			}
+		}
+		return started;
 	}
 
 	/**

@@ -215,6 +215,20 @@
 	white-space: normal;
 }
 
+/* A card that opens something (a subagent's chat): the whole card is the target. */
+.volt-agent-tooltip.card.clickable {
+	cursor: pointer;
+}
+
+.volt-agent-tooltip.card.clickable:hover {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+.monaco-workbench.vs .volt-agent-tooltip.card.clickable:hover,
+.monaco-workbench.hc-light .volt-agent-tooltip.card.clickable:hover {
+	border-color: rgba(0, 0, 0, 0.2);
+}
+
 .volt-agent-tooltip-card-title {
 	margin-bottom: 2px;
 	overflow: hidden;

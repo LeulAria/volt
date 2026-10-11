@@ -1074,34 +1074,37 @@ button.volt-tr-compaction-pill:hover .volt-tr-chevron,
 	color: var(--volt-md-fg-secondary);
 }
 
-/* A message the user steered the running agent with. */
+/*
+ * A message the user steered the running agent with: the sent card it is (`.volt-agent-turn.user
+ * .volt-agent-bubble` in agentEditor.css), out to the column edges the reply is inset from.
+ */
 
 .volt-tr-steer {
-	display: flex;
-	align-items: baseline;
-	gap: 8px;
 	min-width: 0;
-	padding: 4px 10px;
-	border-left: 2px solid var(--volt-md-stroke);
-	font-size: 14px;
-	line-height: 22px;
+	margin: 10px -13px;
+	padding: 8px 12px;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 8px;
+	background: rgba(34, 34, 34, 0.78);
+	box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+	box-sizing: border-box;
 }
 
-.volt-tr-steer-label {
-	flex: none;
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	color: var(--volt-md-fg-tertiary);
-}
-
-.volt-tr-steer-label .codicon {
-	font-size: 12px;
+.monaco-workbench.vs .volt-tr-steer,
+.monaco-workbench.hc-light .volt-tr-steer {
+	background: rgba(236, 236, 236, 0.82);
+	border-color: rgba(0, 0, 0, 0.12);
+	box-shadow: none;
 }
 
 .volt-tr-steer-text {
+	display: block;
 	min-width: 0;
-	color: var(--volt-md-fg);
+	min-height: 22px;
+	color: var(--vscode-editor-foreground);
+	font-size: 14px;
+	line-height: 22px;
+	font-weight: 300;
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 }

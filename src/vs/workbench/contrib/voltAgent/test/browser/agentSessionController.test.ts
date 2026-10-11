@@ -332,4 +332,49 @@ suite('Agent session controller', () => {
 		assert.deepStrictEqual(reply.spend, { input: 40, output: 300, cacheRead: 9000, cacheWrite: 500 });
 		assert.strictEqual(reply.costUsd, undefined);
 	});
+
+	test('a Claude turn is billed for its subagents\' tokens, and costs what its session total grew by', () => {
+		const { runtime, host } = setup();
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent', providerRef: 'claude:opus' });
+		// Mid-turn: context readings and the session cost, no token counts.
+		runtime.emit({ type: 'usage', input: 0, output: 0, used: 21_824, size: 1_000_000 });
+		runtime.emit({ type: 'usage', input: 0, output: 0, used: 24_317, size: 1_000_000, costUsd: 0.2085 });
+		const reply = host.messages.at(-1) as IAgentAssistantMessage;
+		assert.strictEqual(reply.spend, undefined);
+		assert.strictEqual(reply.costUsd, 0.2085, 'the cost lands while the turn runs');
+		// The prompt response: main-loop usage plus every model's rows.
+		runtime.emit({ type: 'usage', input: 4, output: 283, cache: 32_044, cacheWrite: 13_940, billed: { input: 935, output: 300, cacheRead: 32_044, cacheWrite: 30_709 } });
+		assert.deepStrictEqual(reply.spend, { input: 935, output: 300, cacheRead: 32_044, cacheWrite: 30_709 });
+		assert.strictEqual(reply.tokensCache, 32_044, 'the meter\'s chips keep the main loop');
+		assert.strictEqual(reply.costUsd, 0.2085);
+	});
+
+	test('a usage warning shows once per limit window, again past a higher step, and a refusal always', () => {
+		const { runtime, host, controller } = setup();
+		const resetsAt = Date.UTC(2026, 9, 11, 17, 0);
+		const warn = (utilization: number, runId: string, at = resetsAt) => runtime.emit({ type: 'notice', severity: 'warning', title: `Usage limit warning · ${Math.floor(utilization * 100)}% used · resets 5:00 PM`, rateLimit: { status: 'allowed_warning', window: 'five_hour', resetsAt: at, utilization } }, runId);
+		const notices = (reply: IAgentAssistantMessage) => reply.segments.flatMap(segment => segment.kind === 'notice' ? [segment.title] : []);
+
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
+		warn(0.8, 'run-1');
+		warn(0.82, 'run-1');
+		const first = host.messages.at(-1) as IAgentAssistantMessage;
+		assert.deepStrictEqual(notices(first), ['Usage limit warning · 82% used · resets 5:00 PM'], 'one line, keeping the latest figure');
+		runtime.emit({ type: 'run.end', runId: 'run-1', reason: 'done' });
+
+		const second = controller.beginTurn({ turnId: 'turn-2', text: 'more', mode: 'Agent' });
+		runtime.emit({ type: 'run.start', runId: 'run-2', mode: 'agent' }, 'run-2');
+		warn(0.84, 'run-2', resetsAt + 800);
+		assert.deepStrictEqual(notices(second), [], 'the same window at the same step is not news');
+		assert.notStrictEqual(second.activity?.status, 'Usage limit warning · 84% used · resets 5:00 PM');
+		warn(0.91, 'run-2');
+		assert.deepStrictEqual(notices(second), ['Usage limit warning · 91% used · resets 5:00 PM'], 'past 90% it shows again');
+		runtime.emit({ type: 'run.end', runId: 'run-2', reason: 'done' }, 'run-2');
+
+		const third = controller.beginTurn({ turnId: 'turn-3', text: 'again', mode: 'Agent' });
+		runtime.emit({ type: 'run.start', runId: 'run-3', mode: 'agent' }, 'run-3');
+		warn(0.5, 'run-3', resetsAt + 5 * 3600_000);
+		runtime.emit({ type: 'notice', severity: 'error', title: 'Usage limit reached · resets 10:00 PM', rateLimit: { status: 'rejected', window: 'five_hour', resetsAt: resetsAt + 5 * 3600_000 } }, 'run-3');
+		assert.deepStrictEqual(notices(third), ['Usage limit reached · resets 10:00 PM'], 'a new window warns again; the refusal replaces the line');
+	});
 });

@@ -71,6 +71,30 @@ export function modeLabel(mode: string | undefined): string {
 	return known[normalizeVoltMode(mode)];
 }
 
+/** A subagent's chat lives in its parent's project and is listed under it (never in the sidebar). */
+export function prepareSubagentChat(history: IAgentHistoryService, sessionContext: IVoltSessionContextService, workspace: IAgentWorkspaceService, childId: string, parentId: string): void {
+	history.pinSessionParent(childId, parentId, { subagent: true });
+	if (sessionContext.bindingFor(childId)) {
+		return;
+	}
+	const parent = workspace.get(parentId);
+	const bound = sessionContext.bindingFor(parentId);
+	let project = (bound ? sessionContext.getProject(bound.projectId) : undefined)
+		?? (parent?.projectId ? sessionContext.getProject(parent.projectId) : undefined)
+		?? sessionContext.activeProject;
+	if (!project && parent?.root) {
+		try {
+			const root = URI.parse(parent.root);
+			project = sessionContext.registerProject(root, basename(root));
+		} catch {
+			project = undefined;
+		}
+	}
+	if (project) {
+		attachSessionToProject(sessionContext, workspace, history, childId, project);
+	}
+}
+
 /**
  * Starts the orchestrator's turns in the chats they belong to: builds the transcript messages
  * through the chat's session controller (a panel may or may not show it), takes the checkpoint,
@@ -230,28 +254,8 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		return true;
 	}
 
-	/** A subagent's chat lives in its parent's project and is listed under it. */
 	private prepareChild(childId: string, parentId: string): void {
-		this.history.pinSessionParent(childId, parentId, { subagent: true });
-		if (this.sessionContext.bindingFor(childId)) {
-			return;
-		}
-		const parent = this.workspace.get(parentId);
-		const bound = this.sessionContext.bindingFor(parentId);
-		let project = (bound ? this.sessionContext.getProject(bound.projectId) : undefined)
-			?? (parent?.projectId ? this.sessionContext.getProject(parent.projectId) : undefined)
-			?? this.sessionContext.activeProject;
-		if (!project && parent?.root) {
-			try {
-				const root = URI.parse(parent.root);
-				project = this.sessionContext.registerProject(root, basename(root));
-			} catch {
-				project = undefined;
-			}
-		}
-		if (project) {
-			attachSessionToProject(this.sessionContext, this.workspace, this.history, childId, project);
-		}
+		prepareSubagentChat(this.history, this.sessionContext, this.workspace, childId, parentId);
 	}
 
 	private async thawDisplay(stored: unknown): Promise<IAgentPromptDisplay | undefined> {

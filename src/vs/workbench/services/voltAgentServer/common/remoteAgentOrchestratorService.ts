@@ -111,6 +111,10 @@ export class RemoteAgentOrchestratorService extends Disposable implements IAgent
 		return this.client.call('orchestrator.notify', threadId, prompt, turnId, options);
 	}
 
+	multitaskQueue(threadId: string): Promise<number> {
+		return this.client.call('orchestrator.multitaskQueue', threadId);
+	}
+
 	cancel(threadId: string, options?: { readonly cascade?: 'turn' | 'all' }): Promise<void> {
 		return this.client.call('orchestrator.cancel', threadId, options);
 	}

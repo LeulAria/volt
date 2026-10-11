@@ -11,13 +11,13 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { alwaysAllowPattern } from '../../../../services/voltRuntime/common/access/wildcard.js';
 import { mergeToolInput } from '../../../../services/voltRuntime/common/acpToolInput.js';
-import { IVoltEvent, IVoltEventEnvelope, IVoltToolDiff } from '../../../../services/voltRuntime/common/events.js';
+import { IVoltEvent, IVoltEventEnvelope, IVoltRateLimitReading, IVoltToolDiff } from '../../../../services/voltRuntime/common/events.js';
 import type { IVoltVisualRef } from '../../../../services/voltRuntime/common/hostTools.js';
 import { runStatusLine } from '../../../../services/voltRuntime/common/harness/workLog.js';
 import { AgentSessionAttention, AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { AgentBlock, appendProviderNotice, appendSandboxDenial, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isPlanTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments, isHiddenExploreToolBlock } from '../blocks/agentBlocks.js';
+import { AgentBlock, appendProviderNotice, appendSandboxDenial, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isNewLimitWarning, isPlanTool, isShellTool, refreshLimitWarning, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments, isHiddenExploreToolBlock } from '../blocks/agentBlocks.js';
 import { sameHostToolArgs } from '../blocks/agentHostToolActivity.js';
 import { classifySupervisionNotice, stampTodoSteps } from '../chrome/agentTimeline.js';
 import { agentMessagePlainText } from '../context/agentContextUsage.js';
@@ -111,6 +111,12 @@ export interface IAgentSessionControl extends IDisposable {
 	 * process owns the transcript (it parses them before it sends a patch).
 	 */
 	flushStreamedInput?(): void;
+	/**
+	 * Feeds the chat events that did not come from its own run: a harness subagent's steps, mirrored
+	 * from its parent's stream into the read-only chat Volt keeps for it. Absent when another process
+	 * owns the transcript.
+	 */
+	applyMirroredEvent?(envelope: IVoltEventEnvelope): void;
 }
 
 /** A change a view made to a chat's transcript, see {@link IAgentSessionControl.forwardRecord}. */
@@ -285,6 +291,8 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 	private runCostBase = 0;
 	/** The agent's session cost before this run, so the run costs the growth past it. */
 	private sessionCostBase: number | undefined;
+	/** A mirrored run is open ({@link applyMirroredEvent}): the runtime knows no run for this chat. */
+	private mirroredRun = false;
 
 	constructor(
 		private host: IAgentSessionHost,
@@ -318,8 +326,20 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 		if (last?.kind !== 'agent' || !last.activity?.streaming) {
 			return false;
 		}
+		if (this.mirroredRun) {
+			return true;
+		}
 		const status = this.runtime.getOrCreateSession(this.host.sessionId).activeRun?.status;
 		return status === 'running' || status === 'waiting' || status === 'queued';
+	}
+
+	applyMirroredEvent(envelope: IVoltEventEnvelope): void {
+		if (envelope.event.type === 'run.start') {
+			this.mirroredRun = true;
+		} else if (envelope.event.type === 'run.end') {
+			this.mirroredRun = false;
+		}
+		this.apply(envelope);
 	}
 
 	/** The user edited an earlier prompt: ignore the rest of the current run. */
@@ -576,11 +596,15 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 	 * Billing for the Session Usage panel. A report with `used` covers one model call (native loop),
 	 * so those add up; one without it is the agent's total for the turn (ACP's prompt response) and
 	 * replaces the run's sum. Claude's session cost is cumulative: the run costs its growth, or all
-	 * of it when it shrank (the agent started a new session).
+	 * of it when it shrank (the agent started a new session). `billed` (subagents included) wins
+	 * over the main loop's counts.
 	 */
 	private applySpend(event: Extract<IVoltEventEnvelope['event'], { type: 'usage' }>, last: IAgentAssistantMessage): void {
 		const count = (value: number | undefined) => value !== undefined && Number.isFinite(value) && value > 0 ? value : 0;
-		const spent: IAgentTurnSpend = { input: count(event.input), output: count(event.output), cacheRead: count(event.cache), cacheWrite: count(event.cacheWrite) };
+		const billed = event.billed;
+		const spent: IAgentTurnSpend = billed
+			? { input: count(billed.input), output: count(billed.output), cacheRead: count(billed.cacheRead), cacheWrite: count(billed.cacheWrite) }
+			: { input: count(event.input), output: count(event.output), cacheRead: count(event.cache), cacheWrite: count(event.cacheWrite) };
 		if (spent.input + spent.output + spent.cacheRead + spent.cacheWrite > 0) {
 			const base = event.used === undefined ? this.runSpendBase : last.spend ?? this.runSpendBase;
 			last.spend = {
@@ -736,16 +760,27 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 		last.blockState[block.id] = last.blockState[block.id] ?? { expanded: false };
 	}
 
-	private showProviderNotice(message: IAgentAssistantMessage, activity: IAgentActivity, severity: 'info' | 'warning' | 'error', title: string, description?: string): void {
+	private showProviderNotice(message: IAgentAssistantMessage, activity: IAgentActivity, severity: 'info' | 'warning' | 'error', title: string, description?: string, rateLimit?: IVoltRateLimitReading): void {
 		const text = title.trim();
 		if (!text) {
 			return;
 		}
 		// A run supervisor's finding (loop, stall, budget) becomes a tray with actions, not a red line.
 		const supervision = classifySupervisionNotice(`${text}\n${description ?? ''}`);
-		appendProviderNotice(message.segments, { severity, title: text, description, ...(supervision ? { supervision } : {}) });
+		appendProviderNotice(message.segments, { severity, title: text, description, ...(supervision ? { supervision } : {}), ...(rateLimit ? { rateLimit } : {}) });
 		activity.status = text;
 		activity.statusPinned = true;
+	}
+
+	/** Every reply's segments, the latest reply first. */
+	private *segmentsNewestFirst(): Iterable<readonly AgentSegment[]> {
+		const messages = this.host.messages;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const message = messages[i];
+			if (message.kind === 'agent') {
+				yield message.segments;
+			}
+		}
 	}
 
 	/** A call ended: the live line falls back to the newest call still running, else to the model. */
@@ -1302,7 +1337,11 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 				break;
 			}
 			case 'notice':
-				this.showProviderNotice(last, activity, event.severity, event.title, event.description);
+				if (event.rateLimit && event.severity !== 'error' && !isNewLimitWarning(event.rateLimit, this.segmentsNewestFirst())) {
+					refreshLimitWarning(last.segments, event.title, event.rateLimit);
+					break;
+				}
+				this.showProviderNotice(last, activity, event.severity, event.title, event.description, event.rateLimit);
 				break;
 			case 'sandbox.denial':
 				appendSandboxDenial(last.segments, event.denial);

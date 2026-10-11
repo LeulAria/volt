@@ -18,8 +18,8 @@ import { IAgentOrchestratorService } from '../../../../services/voltRuntime/comm
 import { formatElapsed, lineage, OrchThreadStatusKind } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { IAgentSubagentChatService } from '../orchestration/agentSubagentChats.js';
 import { openAgentPanel } from '../workspace/agentPanels.js';
-import { revealAgentSideChat } from '../workspace/agentSurfaceHost.js';
 import { isLiveSubagentState, ISubagentCounts, ISubagentView, subagentCounts, subagentHoverRows, subagentStateMark, subagentView, tickSubagentClocks } from './agentSubagents.js';
 import { AgentTooltip } from './agentTooltip.js';
 
@@ -63,6 +63,7 @@ class LineageRenderer implements IListRenderer<ILineageRow, ILineageTemplate> {
 	constructor(
 		private readonly tooltip: AgentTooltip,
 		private readonly onStop: (view: ISubagentView) => void,
+		private readonly onOpen: (row: ILineageRow) => void,
 	) { }
 
 	renderTemplate(container: HTMLElement): ILineageTemplate {
@@ -127,7 +128,8 @@ class LineageRenderer implements IListRenderer<ILineageRow, ILineageTemplate> {
 				this.onStop(view);
 			}));
 		}
-		template.store.add(this.tooltip.bind(template.row, () => subagentHoverRows(view, Date.now()), { placement: 'start', variant: 'card', delay: 400 }));
+		// A click on the card opens the agent, like the row.
+		template.store.add(this.tooltip.bind(template.row, () => subagentHoverRows(view, Date.now()), { placement: 'start', variant: 'card', delay: 400, onClick: () => this.onOpen(element) }));
 	}
 
 	disposeTemplate(template: ILineageTemplate): void {
@@ -261,12 +263,16 @@ class LineageGroup extends Disposable {
  * Every agent under the chat on screen, at the top of the chat's side toolbar: its parent (in a
  * subagent's chat), "Multitasks · N running" (work the user asked to run in parallel; their chats
  * take follow-ups), "Subagents · N running" (agents' own helpers, Volt's or the harness's; watched,
- * not driven), "Needs attention (N)" (waiting for an approval or an answer), then "Previous agents
- * (N)", folded. A row opens that agent in this chat's right panel; hovering a live one offers Stop.
+ * not driven) and "Needs attention (N)" (waiting for an approval or an answer). "Previous agents
+ * (N)", folded, is its own section at the bottom of the toolbar (`previousElement`): finished work
+ * stays out of the way of the tools. A row opens that agent in this chat's right panel; hovering a
+ * live one offers Stop.
  */
 export class AgentLineageDock extends Disposable {
 
 	readonly element: HTMLElement;
+	/** "Previous agents (N)": mounted at the bottom of the toolbar, below the tools and git. */
+	readonly previousElement: HTMLElement;
 	private readonly parentGroup: LineageGroup;
 	private readonly multitaskGroup: LineageGroup;
 	private readonly subagentGroup: LineageGroup;
@@ -288,13 +294,17 @@ export class AgentLineageDock extends Disposable {
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
+		@IAgentSubagentChatService private readonly subagentChats: IAgentSubagentChatService,
 	) {
 		super();
 		this.element = $('.volt-agent-dock-section.volt-agent-lineage.hidden');
 		this.element.setAttribute('role', 'region');
 		this.element.setAttribute('aria-label', localize('voltAgent.lineage.region', "Agents"));
-		const renderer = new LineageRenderer(this.tooltip, view => this.stop(view));
-		const group = (id: string, ariaLabel: string, head: 'heading' | 'divider' | 'none', open: boolean, visible: number, className?: string) => this._register(new LineageGroup(this.element, {
+		this.previousElement = $('.volt-agent-dock-section.volt-agent-lineage-previous.hidden');
+		this.previousElement.setAttribute('role', 'region');
+		this.previousElement.setAttribute('aria-label', localize('voltAgent.lineage.previousRegion', "Previous agents"));
+		const renderer = new LineageRenderer(this.tooltip, view => this.stop(view), row => this.open(row));
+		const group = (id: string, ariaLabel: string, head: 'heading' | 'divider' | 'none', open: boolean, visible: number, className?: string, parent = this.element) => this._register(new LineageGroup(parent, {
 			id,
 			ariaLabel,
 			head,
@@ -308,7 +318,7 @@ export class AgentLineageDock extends Disposable {
 		this.multitaskGroup = group('VoltAgentLineageMultitasks', localize('voltAgent.lineage.multitasks', "Multitask agents"), 'heading', true, RUNNING_VISIBLE, 'multitasks');
 		this.subagentGroup = group('VoltAgentLineageRunning', localize('voltAgent.lineage.running', "Running subagents"), 'heading', true, RUNNING_VISIBLE, 'subagents');
 		this.attentionGroup = group('VoltAgentLineageAttention', localize('voltAgent.lineage.attention', "Agents that need attention"), 'divider', true, RUNNING_VISIBLE, 'attention');
-		this.previousGroup = group('VoltAgentLineagePrevious', localize('voltAgent.lineage.previous', "Previous agents"), 'divider', false, PREVIOUS_VISIBLE, 'previous');
+		this.previousGroup = group('VoltAgentLineagePrevious', localize('voltAgent.lineage.previous', "Previous agents"), 'divider', false, PREVIOUS_VISIBLE, 'previous', this.previousElement);
 		this._register(orchestrator.onDidChange(change => {
 			if (!this.sessionId) {
 				return;
@@ -366,9 +376,10 @@ export class AgentLineageDock extends Disposable {
 		}
 		this.signature = signature;
 		this.publishSummary(subagentCounts(live));
-		const empty = !parent && !live.length && !previous.length;
-		this.element.classList.toggle('hidden', empty);
-		if (empty) {
+		const emptyTop = !parent && !live.length;
+		this.element.classList.toggle('hidden', emptyTop);
+		this.previousElement.classList.toggle('hidden', !previous.length);
+		if (emptyTop && !previous.length) {
 			return;
 		}
 
@@ -392,16 +403,15 @@ export class AgentLineageDock extends Disposable {
 			{ group: this.previousGroup, title: localize('voltAgent.lineage.previousTitle', "Previous agents ({0})", previous.length), rows: previous.map(row => ({ view: row })) },
 		];
 		const shown = groups.map(entry => entry.group.shown(entry.rows));
-		// The card's last row pads its own bottom, so its hover reaches the card edge. A folded divider
-		// or "Show N more" under it ends the card instead, and the section keeps its own bottom room.
-		const lastIndex = groups.map((entry, index) => entry.rows.length ? index : -1).filter(index => index >= 0).pop();
-		const endsInRow = lastIndex !== undefined && shown[lastIndex].length > 0 && shown[lastIndex].length === groups[lastIndex].rows.length;
+		// Previous agents end the card: its last row pads its own bottom, so its hover reaches the card
+		// edge. A folded divider or "Show N more" under it ends the card instead.
+		const previousIndex = groups.length - 1;
+		const endsInRow = shown[previousIndex].length > 0 && shown[previousIndex].length === groups[previousIndex].rows.length;
 		if (endsInRow) {
-			const rows = shown[lastIndex];
+			const rows = shown[previousIndex];
 			rows[rows.length - 1] = { ...rows[rows.length - 1], last: true };
 		}
 		groups.forEach((entry, index) => entry.group.render(entry.title, entry.rows, shown[index]));
-		this.element.classList.toggle('ends-in-previous', endsInRow);
 
 		const clocks = new DisposableStore();
 		this.clocks.value = clocks;
@@ -428,14 +438,9 @@ export class AgentLineageDock extends Disposable {
 			void openAgentPanel(this.editorGroupsService, this.instantiationService, row.view.key);
 			return;
 		}
-		const task = this.orchestrator.getTask(row.view.key);
-		if (!task?.childId) {
-			return;
-		}
-		// The agent opens as a tab in this chat's right panel; it streams there as it works.
-		if (!revealAgentSideChat(sessionId, task.childId)) {
-			void openAgentPanel(this.editorGroupsService, this.instantiationService, task.childId);
-		}
+		// The agent opens as a tab in this chat's right panel and streams there as it works; a
+		// harness's own subagent opens the read-only chat Volt keeps for it.
+		void this.subagentChats.open(sessionId, row.view.key);
 	}
 
 	/** Stops at once: a Volt agent ends now (its run is cancelled); a harness's own ends with the turn that runs it. */

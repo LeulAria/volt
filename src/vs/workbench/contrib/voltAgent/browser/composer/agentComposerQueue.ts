@@ -120,7 +120,8 @@ export class AgentComposerQueue extends Disposable {
 	private agentsSignature = '';
 	/** The side toolbar beside the chat is open and lists the agents: the card leaves them out. */
 	private agentsInDock = false;
-	private agentsCollapsed = false;
+	/** Cursor: "N subagents running" starts as its header alone; the chevron opens the rows. */
+	private agentsCollapsed = true;
 	private queueCollapsed = false;
 	private readonly agentTooltip = this._register(new AgentTooltip());
 	private readonly clockStore = this._register(new DisposableStore());
@@ -380,10 +381,12 @@ export class AgentComposerQueue extends Disposable {
 				this.options.onResume?.();
 			}));
 		}
-		if (!editing && this.mode !== 'Multitask') {
+		if (!editing) {
+			// Every queued message starts now, each as its own agent beside this chat.
 			const multi = append(actions, $('button.volt-agent-queue-multitask')) as HTMLButtonElement;
 			multi.type = 'button';
 			multi.textContent = localize('voltAgent.startMultitasking', "Start Multitasking");
+			setAgentTooltip(multi, localize('voltAgent.startMultitaskingHint', "Send every queued message now, each to its own agent running in parallel"));
 			this.listeners.add(addDisposableListener(multi, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();

@@ -9,6 +9,7 @@ import { DEFAULT_ORCH_LIMITS, emptyOrchState } from '../../../common/orchestrati
 import { extractRoot, isRootLive, mergeRoot, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { harnessTaskId, RESTART_RESUME_TEXT, scheduleOrch } from '../../../common/orchestration/orchestratorDecider.js';
 import { applyOrchEvents } from '../../../common/orchestration/orchestratorProjector.js';
+import { harnessSubagentChatId, harnessTaskOfChat, isHarnessSubagentChatId } from '../../../common/orchestration/harnessSubagents.js';
 import { agentRow, dockModel, formatElapsed, lineage, threadStatus } from '../../../common/orchestration/orchestratorViews.js';
 import { OrchSim, prompt } from './orchestratorSim.js';
 
@@ -689,6 +690,34 @@ suite('Volt orchestrator: views', () => {
 		assert.deepStrictEqual(view.previous.map(row => row.title), ['Research zed', 'Research paseo']);
 		const fromParent = lineage(sim.state, 'parent');
 		assert.deepStrictEqual(fromParent.running.map(row => row.title), ['Research cline']);
+	});
+
+	test('a harness subagent is listed in the parent\'s agents while it runs, and opens its own read-only chat', () => {
+		const sim = new OrchSim();
+		sim.submit('parent', 'go');
+		sim.start('parent');
+		sim.run({ type: 'harness.started', threadId: 'parent', toolCallId: 'a95cc45513cbaa19b', title: 'Map front-office ops', modelLabel: 'claude-opus-5-5[1m]' });
+		const running = lineage(sim.state, 'parent');
+		assert.deepStrictEqual(running.running.map(row => [row.title, row.state, row.openable]), [['Map front-office ops', 'running', true]]);
+		assert.ok(running.running[0].startedAt !== undefined, 'its clock ticks while it runs');
+		assert.deepStrictEqual(running.previous, []);
+		const taskId = harnessTaskId('a95cc45513cbaa19b');
+		const chatId = harnessSubagentChatId(taskId);
+		assert.strictEqual(chatId, 'agent-h-a95cc45513cbaa19b');
+		assert.ok(isHarnessSubagentChatId(chatId));
+		assert.ok(!isHarnessSubagentChatId('agent-7ff7153b-cd15-487c-b9e3-66e4ff636a1e'), 'a chat id is hex after "agent-": never "h-"');
+		assert.strictEqual(harnessTaskOfChat(sim.state.tasks, chatId)?.id, taskId);
+		sim.run({ type: 'harness.ended', threadId: 'parent', toolCallId: 'a95cc45513cbaa19b', ok: true, result: 'mapped' });
+		const done = lineage(sim.state, 'parent');
+		assert.deepStrictEqual(done.running, []);
+		assert.deepStrictEqual(done.previous.map(row => [row.title, row.state, row.openable]), [['Map front-office ops', 'completed', true]]);
+	});
+
+	test('harness subagent chat ids stay safe for odd call ids', () => {
+		const tasks = { [harnessTaskId('call/1 x')]: { id: harnessTaskId('call/1 x'), source: 'harness' } };
+		const chatId = harnessSubagentChatId(harnessTaskId('call/1 x'));
+		assert.strictEqual(chatId, 'agent-h-call-1-x');
+		assert.strictEqual(harnessTaskOfChat(tasks, chatId)?.id, harnessTaskId('call/1 x'));
 	});
 
 	test('elapsed time reads like Cursor and T3', () => {

@@ -146,8 +146,10 @@ export class BrowserAgentDock extends Disposable {
 			onClear: () => this.clearQueue(),
 			onMultitask: () => {
 				this.composer.setMode('Multitask');
-				this.agentEditor?.setMode('Multitask');
 				this.composerQueue.setMode('Multitask');
+				if (this.agentEditor) {
+					this.agentEditor.startMultitasking();
+				}
 			},
 			onReorder: ids => this.reorderQueued(ids),
 		}));

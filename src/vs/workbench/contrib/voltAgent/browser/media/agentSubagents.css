@@ -233,6 +233,23 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	margin-left: -8px;
 }
 
+.volt-subagent-more {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 28px;
+	height: 28px;
+	margin-left: -8px;
+	border-radius: 50%;
+	box-sizing: border-box;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, var(--volt-agent-window-bg-base, #161616));
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	color: color-mix(in srgb, var(--vscode-foreground) 60%, transparent);
+}
+
 .volt-subagent-stack > .volt-subagent-avatar .volt-subagent-dot { display: none; }
 .volt-subagent-stack > .volt-subagent-avatar.state-running::after { display: none; }
 
@@ -288,10 +305,14 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	min-height: 22px;
+	min-height: 20px;
+}
+
+.volt-agent-work-head:not(:last-child) {
 	margin-bottom: 2px;
 }
 
+/* Cursor: "4 subagents running" in the muted tone, a small chevron first. */
 .volt-agent-work-toggle {
 	display: inline-flex;
 	align-items: center;
@@ -299,15 +320,15 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	border: 0;
 	padding: 0;
 	background: transparent;
-	color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
 	font: inherit;
-	font-size: 13px;
-	font-weight: 500;
+	font-size: 12px;
+	font-weight: 400;
 	cursor: pointer;
 	font-variant-numeric: tabular-nums;
 }
 
-.volt-agent-work-toggle:hover { color: var(--vscode-foreground); }
+.volt-agent-work-toggle:hover { color: color-mix(in srgb, var(--vscode-foreground) 85%, transparent); }
 .volt-agent-work-toggle .codicon { font-size: 12px; }
 
 .volt-agent-work-agents {
@@ -457,9 +478,9 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	padding-bottom: 4px;
 }
 
-/* An open Previous list pads its own last row (LAST_ROW_PADDING), so the hover reaches the card edge. */
-.monaco-workbench.volt-layout-agent .volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body > .volt-agent-dock-section.volt-agent-lineage.ends-in-previous {
-	padding-bottom: 0;
+/* Previous agents end the card; an open list pads its own last row (LAST_ROW_PADDING), so the hover reaches the card edge. */
+.monaco-workbench.volt-layout-agent .volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body > .volt-agent-dock-section.volt-agent-lineage-previous {
+	padding: 0;
 }
 
 /* Room under Changes, the git group's last row: padding in the row, so its hover fills it. */
@@ -479,7 +500,8 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
 }
 
-.volt-agent-lineage.hidden {
+.volt-agent-lineage.hidden,
+.volt-agent-lineage-previous.hidden {
 	display: none;
 }
 
@@ -673,8 +695,28 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 /* !important: the follow-up composer's own `display: flex` rules load later at the same specificity. */
 .monaco-workbench .volt-agent-editor.subagent-chat .volt-agent-composer .volt-agent-input-box { display: none !important; }
 
+/* Its access and branch pickers change nothing there: dimmed, no hover, no menu (aria-disabled from agentEditor.ts). */
+.monaco-workbench .volt-agent-editor.subagent-chat .volt-agent-composer .volt-agent-status-start > * {
+	opacity: 0.45;
+	pointer-events: none;
+	cursor: default;
+}
+
 .volt-agent-subagent-bar .model { color: color-mix(in srgb, var(--vscode-foreground) 92%, transparent); white-space: nowrap; }
 .volt-agent-subagent-bar .state { color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent); white-space: nowrap; }
+
+/* One line however narrow the panel: state, clock and buttons keep their size; the model and the note truncate. */
+.volt-agent-subagent-bar { min-width: 0; overflow: hidden; }
+.volt-agent-subagent-bar > * { flex-shrink: 0; }
+.volt-agent-subagent-bar .volt-subagent-clock { white-space: nowrap; }
+.volt-agent-subagent-bar .model,
+.volt-agent-subagent-bar .note {
+	flex-shrink: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.volt-agent-subagent-bar .spacer { flex-shrink: 1; min-width: 0; }
 .volt-agent-subagent-bar .state.state-running { color: #4c8dff; }
 .volt-agent-subagent-bar .state.state-waiting { color: #e5a33a; }
 .volt-agent-subagent-bar .state.state-failed { color: #e5534b; }
@@ -831,6 +873,34 @@ button.volt-tr-subagent.volt-subagent-cursor:hover .volt-tr-subagent-title {
 	color: var(--vscode-foreground);
 }
 
+/* The row opens the subagent's chat: a hover fill that reaches past the text, so it reads as one target. */
+button.volt-tr-subagent.volt-subagent-cursor {
+	box-sizing: border-box;
+	width: calc(100% + 12px);
+	margin: 0 -6px;
+	padding: 2px 6px;
+}
+
+button.volt-tr-subagent.volt-subagent-cursor:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+/* A click opens the chat and leaves no box behind; the keyboard still gets a ring. */
+.monaco-workbench button.volt-tr-subagent.volt-subagent-cursor:focus,
+.monaco-workbench button.volt-agent-work-agent:focus {
+	outline: none;
+}
+
+.monaco-workbench button.volt-tr-subagent.volt-subagent-cursor:focus-visible,
+.monaco-workbench button.volt-agent-work-agent:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+button.volt-tr-subagent.volt-subagent-cursor:hover .volt-tr-subagent-status:not(.shimmer) {
+	color: var(--volt-md-fg-tertiary);
+}
+
 .volt-subagent-cursor.state-failed .volt-tr-subagent-icon { color: #e5534b; }
 .volt-subagent-cursor.state-waiting .volt-tr-subagent-icon,
 .volt-subagent-cursor.state-waiting .volt-tr-subagent-status { color: #e5a33a; }
@@ -843,34 +913,42 @@ button.volt-tr-subagent.volt-subagent-cursor:hover .volt-tr-subagent-title {
 }
 
 .volt-agent-work-agents {
-	gap: 2px;
+	gap: 0;
 }
 
+/* One row per subagent (Cursor): the plane, its title, tight rows; the whole row opens its chat. */
 .volt-agent-work-agent {
 	display: flex;
 	align-items: center;
-	gap: 10px;
+	gap: 8px;
 	width: 100%;
 	min-width: 0;
-	min-height: 30px;
+	min-height: 26px;
 	padding: 0 6px;
 	border: 0;
 	border-radius: 6px;
 	background: transparent;
 	color: var(--vscode-foreground);
 	font: inherit;
-	font-size: 13px;
+	font-size: 12px;
+	line-height: 16px;
 	text-align: left;
 	box-sizing: border-box;
 }
 
 button.volt-agent-work-agent { cursor: pointer; }
 button.volt-agent-work-agent:hover { background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent); }
+button.volt-agent-work-agent:hover .volt-agent-work-agent-title { color: var(--vscode-foreground); }
 
 .volt-agent-work-agent-icon {
 	display: inline-flex;
 	flex-shrink: 0;
-	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+.volt-agent-work-agent-icon .volt-subagent-plane {
+	width: 14px;
+	height: 14px;
 }
 
 .volt-agent-work-agent.state-failed .volt-agent-work-agent-icon { color: #e5534b; }
@@ -882,12 +960,12 @@ button.volt-agent-work-agent:hover { background: color-mix(in srgb, var(--vscode
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: color-mix(in srgb, var(--vscode-foreground) 88%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
 }
 
 .volt-agent-work-agent-state {
 	flex-shrink: 0;
-	font-size: 12px;
+	font-size: 11px;
 	color: color-mix(in srgb, var(--vscode-foreground) 48%, transparent);
 }
 
