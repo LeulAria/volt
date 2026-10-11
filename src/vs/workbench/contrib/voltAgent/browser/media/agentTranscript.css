@@ -4,9 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 /*
- * Transcript rows, measured against Cursor 3.20: 24px rows at 15/24, the verb in the
- * tertiary tone (60%), details in the quaternary tone (36%), 14px between rows, 4px between
- * the steps of an open group. Tokens come from agentMarkdown.css.
+ * Transcript rows: 22px rows at 13/22, a step quieter than the 15px reply so the work reads
+ * as a log beside it. The verb in the tertiary tone (60%), details in the quaternary tone
+ * (36%), 14px between rows, 4px between the steps of an open group. Tokens come from
+ * agentMarkdown.css.
  */
 
 .volt-agent-turn.agent .volt-agent-thread-body {
@@ -28,15 +29,15 @@
 	gap: 4px;
 	width: 100%;
 	min-width: 0;
-	height: 24px;
+	height: 22px;
 	padding: 0;
 	margin: 0;
 	border: 0;
 	background: none;
 	color: var(--volt-md-fg);
 	font: inherit;
-	font-size: 15px;
-	line-height: 24px;
+	font-size: 13px;
+	line-height: 22px;
 	font-weight: 400;
 	text-align: left;
 	white-space: nowrap;
@@ -104,7 +105,7 @@ button.volt-tr-header:hover .volt-tr-details,
 	flex: none;
 	margin-left: 6px;
 	color: color-mix(in srgb, var(--volt-md-diff-removed-fg) 80%, transparent);
-	font-size: 13px;
+	font-size: 12px;
 }
 
 .volt-tr-chevron {
@@ -180,9 +181,9 @@ button.volt-tr-header:hover .volt-tr-chevron,
 }
 
 .volt-tr-tail {
-	min-height: 24px;
-	font-size: 15px;
-	line-height: 24px;
+	min-height: 22px;
+	font-size: 13px;
+	line-height: 22px;
 }
 
 .volt-tr-tail .volt-agent-status-swap,
@@ -194,11 +195,11 @@ button.volt-tr-header:hover .volt-tr-chevron,
 	font-weight: 400;
 }
 
-/* Reasoning behind "Thought 6s": the reply's type at half strength, paragraphs 16px apart. */
+/* Reasoning behind "Thought 6s": the step rows' size at half strength, paragraphs 16px apart. */
 
 .volt-tr-thinking {
-	font-size: 15px;
-	line-height: 24px;
+	font-size: 13px;
+	line-height: 21px;
 	color: var(--volt-md-fg-tertiary);
 	opacity: 0.5;
 }
@@ -416,8 +417,8 @@ button.volt-tr-header:hover .volt-tr-chevron,
 	gap: 8px;
 	align-items: flex-start;
 	min-width: 0;
-	font-size: 15px;
-	line-height: 24px;
+	font-size: 13px;
+	line-height: 22px;
 }
 
 .volt-tr-subagent-icon {
@@ -426,7 +427,7 @@ button.volt-tr-header:hover .volt-tr-chevron,
 	align-items: center;
 	justify-content: center;
 	width: 20px;
-	height: 24px;
+	height: 22px;
 	color: var(--volt-md-fg-tertiary);
 }
 
@@ -573,6 +574,17 @@ button.volt-tr-header:hover .volt-tr-chevron,
 
 .volt-agent-block.approval.command > .volt-approval-reason {
 	padding: 8px 2px 0;
+	font-size: 13px;
+	line-height: 19px;
+	color: var(--volt-md-fg-tertiary);
+}
+
+/* A command waiting for approval shows whole, wrapped: you approve what you can read. */
+.volt-agent-block.approval.command .volt-agent-term-command {
+	width: auto;
+	min-width: 0;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 
 .volt-agent-block.approval.command > .volt-approval-footer {

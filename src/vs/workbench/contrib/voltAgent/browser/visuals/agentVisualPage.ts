@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { KIT_CSS, voltKitRuntime } from './agentVisualKit.js';
 import { voltChartsRuntime } from './voltChartsRuntime.js';
 
 /**
@@ -39,7 +40,9 @@ const BASE_CSS = `:root{
 --primary:var(--vscode-button-background);
 --primary-foreground:var(--vscode-button-foreground);
 --accent:var(--volt-chart-accent,var(--vscode-textLink-foreground));
---accent-foreground:var(--vscode-button-foreground);
+--accent-foreground:var(--vscode-editor-background);
+--accent-surface:color-mix(in srgb,var(--accent) 16%,transparent);
+--accent-surface-foreground:var(--vscode-foreground);
 --destructive:var(--volt-chart-red,var(--vscode-errorForeground));
 --warning:var(--volt-chart-yellow,var(--vscode-editorWarning-foreground));
 --success:var(--volt-chart-green,var(--vscode-charts-green));
@@ -120,19 +123,26 @@ const ELEMENT_CSS = `
  * file or a link; theme changes arrive as messages; `[data-volt-chart]` elements and
  * `<script type="application/volt-chart+json">` blocks render once the page has loaded.
  */
-function bootstrapScript(preview: boolean, kind: 'light' | 'dark'): string {
-	return `(function(){var preview=${preview ? 'true' : 'false'},api=null;try{if(typeof acquireVsCodeApi==='function'){api=acquireVsCodeApi();}}catch(e){}
+function bootstrapScript(preview: boolean, kind: 'light' | 'dark', still: boolean): string {
+	return `(function(){var preview=${preview ? 'true' : 'false'},still=${still ? 'true' : 'false'},api=null;try{if(typeof acquireVsCodeApi==='function'){api=acquireVsCodeApi();}}catch(e){}
 function post(m){if(api){api.postMessage(m);}}
 function str(v){return typeof v==='string'?v:JSON.stringify(v);}
 var data,dataRead=false;function readData(){if(!dataRead){var el=document.getElementById('volt-data');if(el){dataRead=true;try{data=JSON.parse(el.textContent||'null');}catch(e){data=null;}}}return data===undefined?null:data;}
-window.volt={preview:preview,theme:'${kind}',get data(){return readData();},open:function(h){post({type:'volt-open',href:String(h)});},openFile:function(p,l){post({type:'volt-open',href:'volt://file/'+encodeURI(String(p))+(l?'#L'+l:'')});},openSession:function(id){post({type:'volt-open',href:'volt://session/'+encodeURIComponent(String(id))});},
+window.volt={preview:preview,still:still,theme:'${kind}',get data(){return readData();},open:function(h){post({type:'volt-open',href:String(h)});},openFile:function(p,l){post({type:'volt-open',href:'volt://file/'+encodeURI(String(p))+(l?'#L'+l:'')});},openSession:function(id){post({type:'volt-open',href:'volt://session/'+encodeURIComponent(String(id))});},
 send:function(t){post({type:'volt-send',text:str(t)});},prompt:function(t){post({type:'volt-prompt',text:str(t)});},setContext:function(v){post({type:'volt-context',value:str(v)});},fullscreen:function(on){post({type:'volt-display',mode:on===false?'inline':'fullscreen'});}};
 window.addEventListener('message',function(e){var d=e.data;if(d&&d.type==='volt-theme'&&typeof d.css==='string'){var s=document.getElementById('volt-visual-theme');if(s){s.textContent=d.css;}if(d.kind){window.volt.theme=d.kind;var c=document.getElementById('volt-visual-scheme');if(c){c.textContent=':root{color-scheme:'+d.kind+'}';}}}});
-function mount(){if(preview&&document.body&&!/vscode-(light|dark|high-contrast)/.test(document.body.className)){document.body.classList.add('vscode-${kind}');}if(window.VoltCharts){window.VoltCharts.mountAll(document,{animate:!preview,onOpen:window.volt.open});}}
+function mount(){if(preview&&document.body&&!/vscode-(light|dark|high-contrast)/.test(document.body.className)){document.body.classList.add('vscode-${kind}');}if(window.VoltCharts){window.VoltCharts.mountAll(document,{animate:!preview&&!still,onOpen:window.volt.open});}}
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',mount);}else{mount();}})();`;
 }
 
 let runtimeSource: string | undefined;
+let kitSource: string | undefined;
+
+/** The UI kit (devices, flows, prototypes, Option-click references); runs after the bridge it wraps. */
+function kitScript(): string {
+	kitSource ??= `(${voltKitRuntime.toString()})(window);`;
+	return kitSource;
+}
 
 /** `window.VoltCharts`, the same engine the transcript draws native charts with. */
 function chartsScript(): string {
@@ -146,6 +156,8 @@ export interface IVisualPageOptions {
 	readonly kind: 'light' | 'dark';
 	/** Offscreen screenshot: no animations, theme classes set by the page itself. */
 	readonly preview?: boolean;
+	/** The page was shown before (scrolled back in, a reloaded host): charts appear drawn, without their intro. */
+	readonly still?: boolean;
 }
 
 /** Blanks comments, raw-text elements and templates (same length), so their contents cannot receive the head injection. */
@@ -203,12 +215,13 @@ export function buildVisualPage(source: string, options: IVisualPageOptions): st
 	const head = [
 		'<meta charset="utf-8">',
 		/<meta\s[^>]*name\s*=\s*["']?viewport/i.test(scan) ? '' : '<meta name="viewport" content="width=device-width, initial-scale=1">',
-		`<style id="volt-visual-base">${BASE_CSS}${ELEMENT_CSS}</style>`,
+		`<style id="volt-visual-base">${BASE_CSS}${ELEMENT_CSS}${KIT_CSS}</style>`,
 		// Native controls, scrollbars and form fields follow the theme (light buttons on a dark page otherwise).
 		`<style id="volt-visual-scheme">:root{color-scheme:${options.kind}}</style>`,
 		`<style id="volt-visual-theme">${options.themeCss.replace(/<\//g, '<\\/')}</style>`,
-		`<script>${scriptBody(bootstrapScript(!!options.preview, options.kind))}</script>`,
+		`<script>${scriptBody(bootstrapScript(!!options.preview, options.kind, !!options.still))}</script>`,
 		`<script>${scriptBody(chartsScript())}</script>`,
+		`<script>${scriptBody(kitScript())}</script>`,
 	].join('');
 	const headOpen = /<head(?:\s[^>]*)?>/i.exec(scan);
 	if (headOpen) {

@@ -979,6 +979,17 @@ function renderErrorBlock(parent: HTMLElement, block: IErrorBlock): void {
 	wrap.textContent = block.message;
 }
 
+/**
+ * Whether an approval's reason only repeats what it asks for: `ls -la`, "Execute `ls -la`",
+ * "Run: ls -la". Agents (Grok, Cursor) send those; the card already shows the command.
+ */
+function restatesResource(reason: string, resource: string): boolean {
+	const squash = (text: string) => text.replace(/`/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+	const said = squash(reason).replace(/^(?:execute|executing|run|running|allow|approve)(?:\s+command)?\s*:?\s*/, '');
+	const asked = squash(resource);
+	return !said || said === asked || (said.length > 12 && asked.includes(said)) || (asked.length > 12 && said.includes(asked));
+}
+
 /** Approval cards that already faded in, by block id (bounded). */
 const shownApprovals = new Set<string>();
 const SHOWN_APPROVALS_MAX = 500;
@@ -1011,7 +1022,7 @@ function renderApprovalBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IB
 	// Cursor's ACP titles wrap the command in backticks (`node --test`).
 	const unquote = (text: string) => text.trim().replace(/^`+([^`][\s\S]*?)`+$/, '$1').trim();
 	const resource = isCommand ? unquote(block.resource) : block.resource.trim();
-	const reason = block.reason?.trim() && !block.blocked && unquote(block.reason) !== resource ? block.reason.trim() : undefined;
+	const reason = block.reason?.trim() && !block.blocked && !restatesResource(block.reason, resource) ? block.reason.trim() : undefined;
 	if (isCommand && resource) {
 		// A command waiting to run reads as the terminal it will run in, highlighted, with
 		// Skip / Always Run / Run under it.

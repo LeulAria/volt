@@ -584,6 +584,30 @@ function describeShellCommand(command: string): string {
 	if (first === 'ps') {
 		return 'List processes';
 	}
+	if (first === 'lsof') {
+		return /-i\s*tcp|-i\s*:|-itcp|-i:|listen/.test(whole) ? 'Check listening ports' : 'List open files';
+	}
+	if (first === 'kill' || first === 'pkill' || first === 'killall') {
+		return 'Stop process';
+	}
+	if (first === 'which' || first === 'command' || first === 'type') {
+		return 'Find program';
+	}
+	if (first === 'mkdir') {
+		return 'Create folder';
+	}
+	if (first === 'rm') {
+		return 'Delete files';
+	}
+	if (first === 'cp') {
+		return 'Copy files';
+	}
+	if (first === 'mv') {
+		return 'Move files';
+	}
+	if (first === 'test' || first === '[') {
+		return 'Check files';
+	}
 	if (first === 'curl' || first === 'wget') {
 		return 'Fetch URL';
 	}
@@ -606,7 +630,8 @@ function describeShellCommand(command: string): string {
 		}
 		return `Run ${first}`;
 	}
-	return capitalizeCommandPhrase(first);
+	// An unknown program reads as what happens ("Run lsof"), not as a capitalised name ("Lsof").
+	return `Run ${first}`;
 }
 
 function describeLsPipeline(whole: string): string {
@@ -681,10 +706,6 @@ function hasFlag(command: string, flag: string): boolean {
 		}
 		return token.includes(flag);
 	});
-}
-
-function capitalizeCommandPhrase(command: string): string {
-	return command.charAt(0).toUpperCase() + command.slice(1);
 }
 
 export function outputLineLabel(output: string): string | undefined {

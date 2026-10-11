@@ -315,6 +315,25 @@ export function mountChart(host: HTMLElement, key: string, spec: unknown, ctx: I
 	return handle;
 }
 
+/**
+ * The height each page reached here, by key, at the width it was measured: a page mounted again
+ * (scrolled back near the screen, a reloaded host, evicted from {@link liveFrames}) opens at that
+ * height instead of growing from its estimate and pushing the chat around.
+ */
+const seenHeights = new Map<string, readonly [number, number]>();
+
+/** Keys of pages that have already loaded once in this window. */
+const shownPages = new Set<string>();
+
+/** The opening height for a page: what it reached here at this width, else the measured publish heights, else its hint. */
+function openingHeight(key: string, heights: readonly (readonly [number, number])[] | undefined, cap: number | undefined, hint: number | undefined): number {
+	const seen = seenHeights.get(key);
+	if (seen && Math.abs(seen[0] - replyWidth) <= 2) {
+		return frameHeight(seen[1]);
+	}
+	return frameHeight(pageHeightFor(replyWidth, heights, cap) ?? hint);
+}
+
 function frameHeight(height: number | undefined): number {
 	return Math.round(Math.min(VISUAL_MAX_HEIGHT, Math.max(VISUAL_MIN_HEIGHT, height ?? 360)));
 }
@@ -322,7 +341,7 @@ function frameHeight(height: number | undefined): number {
 function createFrame(key: string, title: string, html: string, height: number | undefined, ctx: IVisualHostContext, win: CodeWindow, sizing: IFrameSizing = {}): ILiveFrame {
 	const store = new DisposableStore();
 	const element = $('.volt-agent-visual-frame');
-	const opening = frameHeight(pageHeightFor(replyWidth, sizing.heights, sizing.cap) ?? height);
+	const opening = openingHeight(key, sizing.heights, sizing.cap, height);
 	element.style.height = `${opening}px`;
 	const frame: ILiveFrame = {
 		element,
@@ -354,7 +373,9 @@ function createFrame(key: string, title: string, html: string, height: number | 
 			}));
 			frame.webview = webview;
 			const theme = themeService.getColorTheme();
-			webview.setHtml(buildVisualPage(html, { themeCss: visualThemeCss(theme), kind: themeKind(theme) }));
+			const still = shownPages.has(key);
+			shownPages.add(key);
+			webview.setHtml(buildVisualPage(html, { themeCss: visualThemeCss(theme), kind: themeKind(theme), still }));
 			webviewStore.add(themeService.onDidColorThemeChange(next => {
 				void webview.postMessage({ type: 'volt-theme', css: visualThemeCss(next), kind: themeKind(next) });
 			}));
@@ -365,6 +386,7 @@ function createFrame(key: string, title: string, html: string, height: number | 
 					element.style.height = `${frame.height}px`;
 					if (element.clientWidth) {
 						replyWidth = element.clientWidth;
+						seenHeights.set(key, [element.clientWidth, frame.height]);
 					}
 					settle();
 				}
@@ -726,7 +748,7 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 	if (liveFrames.has(key)) {
 		mountFrame(body, key, title, '', block.height, ctx, sizing);
 	} else {
-		renderVisualSkeleton(body, 'page', frameHeight(pageHeightFor(replyWidth, block.heights, block.cap) ?? block.height));
+		renderVisualSkeleton(body, 'page', openingHeight(key, block.heights, block.cap, block.height));
 		const load = () => void loadPage(ctx, block.ref).then(html => {
 			if (!wrap.isConnected && !liveFrames.has(key)) {
 				// Redrawn away while loading; the new row loads it.
