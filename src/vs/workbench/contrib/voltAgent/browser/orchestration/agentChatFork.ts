@@ -48,7 +48,8 @@ export interface IAgentChatForkService {
 	forkChat(sourceId: string, options: IAgentForkChatOptions): Promise<IAgentForkChatResult>;
 	/**
 	 * Tells the chat a fork came from what the fork changed, and with `apply` merges its branch into
-	 * that chat's checkout. Throws when `forkId` was not forked from another chat.
+	 * that chat's checkout. Throws when `forkId` was not forked from another chat, or when applying
+	 * while that chat's agent is working (unless that agent is the one asking: `callerId`).
 	 */
-	mergeBack(forkId: string, options: { readonly apply: boolean }): Promise<IAgentMergeBackResult>;
+	mergeBack(forkId: string, options: { readonly apply: boolean; readonly callerId?: string }): Promise<IAgentMergeBackResult>;
 }

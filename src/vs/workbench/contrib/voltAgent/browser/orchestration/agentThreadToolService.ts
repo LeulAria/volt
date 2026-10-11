@@ -647,7 +647,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		this.refuseSubagent(caller, 'merge chats back');
 		const forkId = await this.target(caller, args.thread_id, { allowSelf: true });
 		this.spend(caller, 'sends');
-		const result = await this.mergeBack(forkId, { apply: args.apply === true });
+		const result = await this.mergeBack(forkId, { apply: args.apply === true, callerId: caller.id });
 		const { outcome } = result;
 		const state = outcome.kind === 'merged' ? `merged as commit ${outcome.commit}`
 			: outcome.kind === 'failed' ? `not merged: ${outcome.reason}`
@@ -669,6 +669,20 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		const title = options.title ?? `${sourceTitle} · fork`;
 		const forkId = `${CHILD_ID_PREFIX}${generateUuid()}`;
 		const project = this.projectOf(sourceId);
+		const sourceMeta = this.history.get(sourceId);
+		const mode = options.mode ?? sourceMeta?.mode;
+		// The checkout as it is now: its commits, not uncommitted edits. Merging back diffs from here.
+		const base = await this.headOf(sourceMeta?.worktreePath ?? project?.root.fsPath);
+		// Its own worktree comes first: when git refuses (branch taken, broken repo), no half-made
+		// fork chat is left in the sidebar.
+		let created: { readonly path: string; readonly branch: string } | undefined;
+		if (options.workspace === 'worktree') {
+			const root = project?.root.fsPath;
+			if (!root) {
+				throw new Error('The chat has no project folder to make a worktree from.');
+			}
+			created = await this.worktrees.create(root, { kind: 'new', name: `volt/${branchSlug(title)}-${forkId.slice(-4)}`, ...(base ? { from: base } : {}) });
+		}
 		if (project) {
 			attachSessionToProject(this.sessionContext, this.workspace, this.history, forkId, project);
 		}
@@ -686,10 +700,6 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 				});
 			}
 		}
-		const sourceMeta = this.history.get(sourceId);
-		const mode = options.mode ?? sourceMeta?.mode;
-		// The checkout as it is now: its commits, not uncommitted edits. Merging back diffs from here.
-		const base = await this.headOf(sourceMeta?.worktreePath ?? project?.root.fsPath);
 		handle.setMeta({
 			title,
 			...(model ? { model: model.label } : {}),
@@ -705,14 +715,11 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		]));
 		await this.orchestrator.dispatch({ type: 'thread.upsert', threadId: forkId, title, ...(model ? { modelRef: model.ref, modelLabel: model.label } : {}) });
 		let branch: string | undefined;
-		if (options.workspace === 'worktree') {
-			const root = project?.root.fsPath;
-			if (!root) {
-				throw new Error('The chat has no project folder to make a worktree from.');
-			}
-			const created = await this.createWorktree(forkId, root, { kind: 'new', name: `volt/${branchSlug(title)}-${forkId.slice(-4)}`, ...(base ? { from: base } : {}) });
+		if (created && project) {
+			this.runtime.rememberWorktree(forkId, created.path, created.branch);
+			this.history.open(forkId).setMeta({ worktreePath: created.path, worktreeBranch: created.branch });
 			branch = created.branch;
-			void this.runSetup(forkId, root, created.path, created.branch);
+			void this.runSetup(forkId, project.root.fsPath, created.path, created.branch);
 		} else if (sourceMeta?.worktreePath && sourceMeta.worktreeBranch) {
 			// Same checkout as the source: both chats edit the same files.
 			this.runtime.rememberWorktree(forkId, sourceMeta.worktreePath, sourceMeta.worktreeBranch);
@@ -748,7 +755,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		};
 	}
 
-	async mergeBack(forkId: string, options: { readonly apply: boolean }): Promise<IAgentMergeBackResult> {
+	async mergeBack(forkId: string, options: { readonly apply: boolean; readonly callerId?: string }): Promise<IAgentMergeBackResult> {
 		const fork = this.history.get(forkId);
 		const origin = fork?.forkOf;
 		if (!origin) {
@@ -764,6 +771,12 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		const forkPath = fork?.worktreePath ?? this.projectOf(forkId)?.root.fsPath;
 		let diffStat = '';
 		let outcome: MergeBackOutcome = { kind: 'shared' };
+		const parentTurn = this.orchestrator.getThread(parentId)?.active;
+		if (options.apply && parentTurn && options.callerId !== parentId && forkPath && parentPath && forkPath !== parentPath) {
+			// Merging into a checkout its agent is editing would mix the two sets of changes mid-turn
+			// (the parent's own agent asking for it knows what it is doing).
+			throw new Error(`${parentTitle} is working right now. Merge back when its turn ends, or merge without applying to send it a summary.`);
+		}
 		if (forkPath && parentPath && forkPath !== parentPath) {
 			diffStat = (await this.worktrees.git(forkPath, ['diff', '--stat', origin.base ?? 'HEAD'])).stdout;
 			outcome = options.apply && fork?.worktreeBranch

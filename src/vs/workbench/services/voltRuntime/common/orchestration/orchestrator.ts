@@ -453,6 +453,8 @@ export type OrchEvent =
 	| { readonly type: 'task.pruned'; readonly taskIds: readonly string[] }
 	| { readonly type: 'handoff.requested'; readonly threadId: string; readonly handoff: IOrchHandoff }
 	| { readonly type: 'handoff.applied'; readonly threadId: string; readonly handoff: IOrchHandoff }
+	/** The switch waiting for the turn to end was taken back (the user picked the chat's current model again). */
+	| { readonly type: 'handoff.cancelled'; readonly threadId: string }
 	| { readonly type: 'limit.parked'; readonly threadId: string; readonly limit: IOrchLimitPark }
 	| { readonly type: 'limit.configured'; readonly threadId: string; readonly auto: boolean | undefined }
 	| { readonly type: 'limit.deferred'; readonly threadId: string; readonly notBefore: number }

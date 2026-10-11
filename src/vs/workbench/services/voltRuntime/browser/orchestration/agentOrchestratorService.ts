@@ -337,6 +337,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 			return;
 		}
+		if (thread?.pendingHandoff?.by === 'user' && modelRef && modelRef === thread.modelRef) {
+			// The user switched back before their switch applied: it does not happen when the turn ends.
+			this.apply({ type: 'thread.handoff', threadId, to: modelRef, toLabel: label ?? modelRef, by: 'user' });
+		}
 		if (!thread || (title && title !== thread.title) || (ref && ref !== thread.modelRef) || (label && label !== thread.modelLabel)) {
 			this.apply({
 				type: 'thread.upsert',

@@ -183,6 +183,14 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 		}
 		case 'handoff.requested':
 			return updateThread(state, event.threadId, thread => ({ ...thread, pendingHandoff: event.handoff }));
+		case 'handoff.cancelled':
+			return updateThread(state, event.threadId, thread => {
+				if (!thread.pendingHandoff) {
+					return thread;
+				}
+				const { pendingHandoff: _pending, ...rest } = thread;
+				return rest;
+			});
 		case 'handoff.applied':
 			return updateThread(state, event.threadId, thread => {
 				const { pendingHandoff: _pending, ...rest } = thread;

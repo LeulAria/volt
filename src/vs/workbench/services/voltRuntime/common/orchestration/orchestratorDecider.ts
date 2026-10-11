@@ -409,8 +409,9 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			if (!thread) {
 				return { events: [], rejected: 'Unknown chat.' };
 			}
-			if (thread.modelRef === command.to && !thread.pendingHandoff) {
-				return { events: [] };
+			if (thread.modelRef === command.to) {
+				// Back to the model it runs on before the pending switch applied: the switch is off.
+				return { events: thread.pendingHandoff ? [{ type: 'handoff.cancelled', threadId: thread.id }] : [] };
 			}
 			const handoff = {
 				...(thread.modelRef ? { from: thread.modelRef } : {}),
