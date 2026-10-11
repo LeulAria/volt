@@ -75,6 +75,16 @@ export class BrowserCommentCard extends Disposable {
 		this.badge.setAttribute('aria-label', localize('voltBrowser.openCommentNumber', "Open comment {0}", index));
 	}
 
+	/** Sent comments keep their pin, drawn hollow; resolved ones (shown with the Resolved toggle) get a check. */
+	setStatus(status: 'open' | 'sent' | 'resolved'): void {
+		this.element.classList.toggle('sent', status === 'sent');
+		this.element.classList.toggle('resolved', status === 'resolved');
+	}
+
+	setPreview(text: string): void {
+		this.renderPreview(text);
+	}
+
 	expand(): void {
 		if (this._expanded) {
 			this.composer?.focus();

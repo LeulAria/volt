@@ -3118,3 +3118,151 @@ the background paints a solid square) and keep the glyph in the accent. */
 .volt-device-frame.landscape .volt-device-home {
 	visibility: hidden;
 }
+
+/*
+ * The inspect composer (a draft on the page) and an open comment are solid: the page under them
+ * must not read through what is being typed.
+ */
+.volt-browser-prompt > .volt-agent-input-box.follow-up.volt-browser-agent-composer,
+.volt-browser-comment.expanded > .volt-agent-input-box.follow-up.volt-browser-agent-composer {
+	--volt-composer-bg: #222222;
+	background: #222222;
+}
+
+.monaco-workbench.vs .volt-browser-prompt > .volt-agent-input-box.follow-up.volt-browser-agent-composer,
+.monaco-workbench.hc-light .volt-browser-prompt > .volt-agent-input-box.follow-up.volt-browser-agent-composer,
+.monaco-workbench.vs .volt-browser-comment.expanded > .volt-agent-input-box.follow-up.volt-browser-agent-composer,
+.monaco-workbench.hc-light .volt-browser-comment.expanded > .volt-agent-input-box.follow-up.volt-browser-agent-composer {
+	--volt-composer-bg: #ececec;
+	background: #ececec;
+}
+
+/* A sent comment keeps its pin, drawn hollow, until it is resolved; a resolved one (Resolved toggle) gets the passed colour. */
+.volt-browser-comment.sent:not(.expanded) .volt-browser-comment-badge {
+	border-style: dashed;
+	opacity: 0.85;
+}
+
+.volt-browser-comment.resolved:not(.expanded) .volt-browser-comment-badge {
+	border-color: var(--vscode-testing-iconPassed, #3fb950);
+	color: var(--vscode-testing-iconPassed, #3fb950);
+	opacity: 0.75;
+}
+
+.volt-browser-box.mark.settled {
+	border-style: dashed;
+	background: transparent;
+}
+
+/* Comments: the toolbar button (with the open count) and the list over the page's right side. */
+.volt-browser-actions .volt-browser-action.comments {
+	position: relative;
+}
+
+.volt-browser-actions .volt-browser-action.comments.active {
+	background: rgba(59, 130, 246, 0.16);
+	color: #60a5fa;
+}
+
+.volt-browser-actions .volt-browser-action.comments .codicon {
+	font-size: 15px;
+}
+
+.volt-browser-comments-count {
+	position: absolute;
+	top: -3px;
+	right: -4px;
+	min-width: 13px;
+	height: 13px;
+	padding: 0 3px;
+	box-sizing: border-box;
+	border-radius: 7px;
+	background: var(--vscode-textLink-foreground, #3b82f6);
+	color: var(--vscode-editor-background, #1e1e1e);
+	font-size: 9px;
+	font-weight: 700;
+	line-height: 13px;
+	text-align: center;
+	pointer-events: none;
+}
+
+.volt-browser-comments-count:empty {
+	display: none;
+}
+
+/* Solid, so nothing scrolls or paints through it (transparent-window rule 3). */
+.volt-browser-comments-panel {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 10;
+	display: flex;
+	flex-direction: column;
+	width: 300px;
+	max-width: 80%;
+	background: var(--vscode-editor-background);
+	border-left: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
+	box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+}
+
+.volt-browser-comments-panel > .volt-comments-pane {
+	flex: 1;
+}
+
+.volt-browser-editor.comments-open .volt-browser-dock {
+	padding-right: calc(16px + min(300px, 80%));
+}
+
+/* The comments chip: with the composer open the row shows for it even when no other chip does. */
+.volt-browser-dock.mode-expanded .volt-browser-dock-hit > .volt-browser-dock-chips.has-comments {
+	display: flex;
+	height: auto;
+	opacity: 1;
+	overflow: visible;
+	transform: none;
+	pointer-events: auto;
+}
+
+.volt-browser-dock .volt-browser-dock-chip.comments .codicon {
+	font-size: 14px;
+}
+
+/* "Send 3 comments" on the hovered bar, with the comment icon in front. */
+.volt-browser-dock-label-icon {
+	display: flex;
+	margin-right: -4px;
+}
+
+.volt-browser-dock-label-icon .codicon {
+	font-size: 14px;
+}
+
+.volt-browser-dock-label-icon:not(.hidden) + .volt-browser-dock-label-text {
+	flex: 1;
+}
+
+/* "Send 3 comments to chat" in blue above the expanded composer's text; it opens the list. */
+.volt-browser-dock-comments-line {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	align-self: flex-start;
+	margin: 10px 14px 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-textLink-foreground, #3b82f6);
+	font: inherit;
+	font-size: 12.5px;
+	cursor: pointer;
+}
+
+.volt-browser-dock-comments-line:hover {
+	color: var(--vscode-textLink-activeForeground, #60a5fa);
+	text-decoration: underline;
+}
+
+.volt-browser-dock-comments-line .codicon {
+	font-size: 13px;
+}

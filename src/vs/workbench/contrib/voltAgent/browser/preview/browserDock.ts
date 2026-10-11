@@ -24,6 +24,7 @@ import { AgentSidePanel } from '../chrome/agentSidePanel.js';
 import { AgentThreadView } from '../editor/agentThreadView.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { BrowserAgentComposer } from './browserComposer.js';
+import { IBrowserCommentMessage, IVoltBrowserComments } from './browserCommentStore.js';
 
 /**
  * idle: a thin glass bar. activity: unfocused while the agent works, the live step ("Explored
@@ -42,6 +43,13 @@ export class BrowserAgentDock extends Disposable {
 	private readonly clusterEl: HTMLElement;
 	private readonly shellEl: HTMLElement;
 	private readonly labelEl: HTMLButtonElement;
+	private readonly labelIconEl: HTMLElement;
+	private readonly labelTextEl: HTMLElement;
+	private readonly labelKbEl: HTMLElement;
+	private readonly commentsChip: HTMLButtonElement;
+	private readonly commentsLine: HTMLButtonElement;
+	/** The browser tab whose comments go with the next message. */
+	private commentViewId: string | undefined;
 	private readonly activityEl: HTMLElement;
 	private readonly activityTextEl: HTMLElement;
 	private readonly activityMoreEl: HTMLElement;
@@ -73,6 +81,7 @@ export class BrowserAgentDock extends Disposable {
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IEditorService private readonly editorService: IEditorService,
+		@IVoltBrowserComments private readonly commentStore: IVoltBrowserComments,
 	) {
 		super();
 		this.element = $('.volt-browser-dock');
@@ -104,8 +113,12 @@ export class BrowserAgentDock extends Disposable {
 		this.shellEl = append(this.clusterEl, $('.volt-browser-dock-shell'));
 		this.labelEl = append(this.shellEl, $('button.volt-browser-dock-label')) as HTMLButtonElement;
 		this.labelEl.type = 'button';
-		append(this.labelEl, $('span.volt-browser-dock-label-text')).textContent = localize('voltBrowser.messageAgent', "Message Volt");
-		append(this.labelEl, $('span.volt-browser-dock-label-kb')).textContent = formatAgentTooltipShortcut({ meta: true, key: 'L' });
+		this.labelIconEl = append(this.labelEl, $('span.volt-browser-dock-label-icon.hidden'));
+		this.labelIconEl.appendChild(renderIcon(Codicon.comment));
+		this.labelTextEl = append(this.labelEl, $('span.volt-browser-dock-label-text'));
+		this.labelTextEl.textContent = localize('voltBrowser.messageAgent', "Message Volt");
+		this.labelKbEl = append(this.labelEl, $('span.volt-browser-dock-label-kb'));
+		this.labelKbEl.textContent = formatAgentTooltipShortcut({ meta: true, key: 'L' });
 		this.activityEl = append(this.shellEl, $('.volt-browser-dock-activity'));
 		this.activityEl.setAttribute('aria-live', 'polite');
 		append(this.activityEl, createThinkingDots());
@@ -154,6 +167,25 @@ export class BrowserAgentDock extends Disposable {
 			onReorder: ids => this.reorderQueued(ids),
 		}));
 		this.hitEl.insertBefore(this.composerQueue.element, this.chips.element);
+		// The tab's comments waiting to go: a chip in the row, a blue line in the composer. Both open the list.
+		this.commentsChip = $('button.volt-agent-composer-chip.comments.volt-browser-dock-chip.hidden') as HTMLButtonElement;
+		this.commentsChip.type = 'button';
+		this.commentsChip.appendChild(renderIcon(Codicon.comment));
+		append(this.commentsChip, $('span.volt-agent-composer-chip-label'));
+		this.chips.element.insertBefore(this.commentsChip, this.chips.element.firstChild);
+		this.commentsLine = append(this.composerHost, $('button.volt-browser-dock-comments-line.hidden')) as HTMLButtonElement;
+		this.commentsLine.type = 'button';
+		this.commentsLine.appendChild(renderIcon(Codicon.comment));
+		append(this.commentsLine, $('span'));
+		for (const button of [this.commentsChip, this.commentsLine]) {
+			this._register(addDisposableListener(button, 'mousedown', e => e.preventDefault()));
+			this._register(addDisposableListener(button, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.showComments();
+			}));
+		}
+		this._register(this.commentStore.onDidChange(() => this.sync()));
 		append(this.composerHost, this.composer.element);
 
 		this._register(addDisposableListener(this.shellEl, 'click', e => {
@@ -221,6 +253,31 @@ export class BrowserAgentDock extends Disposable {
 
 	setChatResolver(resolver: () => string | undefined): void {
 		this.chatResolver = resolver;
+	}
+
+	/** Comments made in browser tab `viewId` queue here and go with the next message. */
+	setCommentScope(viewId: string): void {
+		this.commentViewId = viewId;
+		this.sync();
+	}
+
+	private pendingComments(): number {
+		return this.commentViewId ? this.commentStore.pending({ viewId: this.commentViewId }).length : 0;
+	}
+
+	private showComments(): void {
+		if (this.commentViewId) {
+			this.commentStore.show({ viewId: this.commentViewId });
+		}
+	}
+
+	/** The comments waiting to go, taken (marked sent) for the message being sent now. */
+	private takeComments(): IBrowserCommentMessage | undefined {
+		if (!this.commentViewId) {
+			return undefined;
+		}
+		this.commentStore.setSession(this.commentViewId, this.chatResolver?.());
+		return this.commentStore.take({ viewId: this.commentViewId });
 	}
 
 	/**
@@ -298,9 +355,10 @@ export class BrowserAgentDock extends Disposable {
 		}
 	}
 
+	/** Sends what the page asked for as is (the page already took its comments). */
 	async submitFromBrowser(text: string, display?: IAgentPromptDisplay): Promise<void> {
 		this.setBlocked(false);
-		await this.submit(text, display, false);
+		await this.submit(text, display, false, false);
 	}
 
 	prefillFromBrowser(text: string): void {
@@ -425,9 +483,19 @@ export class BrowserAgentDock extends Disposable {
 		}
 	}
 
-	private async submit(text: string, display?: IAgentPromptDisplay, openFloat = true): Promise<void> {
-		const displayText = display?.text ?? this.composer.getDisplayText();
-		const mentions = display?.mentions ?? this.composer.getDisplayMentions();
+	private async submit(text: string, display?: IAgentPromptDisplay, openFloat = true, withComments = true): Promise<void> {
+		let displayText = display?.text ?? this.composer.getDisplayText();
+		let mentions = display?.mentions ?? this.composer.getDisplayMentions();
+		// The tab's queued comments go with the message, ahead of what was typed.
+		const comments = withComments ? this.takeComments() : undefined;
+		if (comments) {
+			text = text.trim() ? `${comments.agentText}\n\n${text}` : comments.agentText;
+			displayText = displayText.trim() ? `${comments.displayText}\n${displayText}` : comments.displayText;
+			mentions = [...comments.mentions, ...mentions];
+		}
+		if (!text.trim()) {
+			return;
+		}
 		const promptDisplay: IAgentPromptDisplay | undefined = mentions.length ? { text: displayText, mentions } : undefined;
 		this.browserOwned = true;
 		this.pendingWork = true;
@@ -601,6 +669,7 @@ export class BrowserAgentDock extends Disposable {
 		this.element.classList.toggle('float-open', this.floatOpen);
 		this.chips.setStatus({ label: chipLabel, working });
 		this.chips.setHostOpen(this.expanded);
+		this.syncComments();
 		this.syncQueueStack();
 		this.composer.setWorking(working);
 		this.composer.setPlaceholder(hasTurns || working
@@ -610,6 +679,27 @@ export class BrowserAgentDock extends Disposable {
 			this.floatTitle.textContent = state?.title || localize('voltAgent.chat', "Agent");
 		}
 		this.morphTo(mode);
+	}
+
+	/** "N comments" in the chip row, "Send N comments" on the hovered bar, a blue line in the composer. */
+	private syncComments(): void {
+		const count = this.pendingComments();
+		const has = count > 0;
+		this.commentsChip.classList.toggle('hidden', !has);
+		this.chips.element.classList.toggle('has-comments', has);
+		this.commentsChip.lastElementChild!.textContent = count === 1
+			? localize('voltBrowser.oneComment', "1 comment")
+			: localize('voltBrowser.comments', "{0} comments", count);
+		this.commentsLine.classList.toggle('hidden', !has);
+		this.commentsLine.lastElementChild!.textContent = count === 1
+			? localize('voltBrowser.sendOneChatComment', "Send 1 comment to chat")
+			: localize('voltBrowser.sendChatComments', "Send {0} comments to chat", count);
+		this.labelIconEl.classList.toggle('hidden', !has);
+		this.labelKbEl.classList.toggle('hidden', has);
+		this.labelTextEl.textContent = !has
+			? localize('voltBrowser.messageAgent', "Message Volt")
+			: count === 1 ? localize('voltBrowser.sendOneComment', "Send 1 comment") : localize('voltBrowser.sendComments', "Send {0} comments", count);
+		this.composer.setExtraContent(has);
 	}
 
 	private activityWidth(available: number): number {

@@ -33,6 +33,7 @@ import { AgentGitActionsControl } from '../pullRequests/agentGitActionsControl.j
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { currentLink, IAgentPrLink, isOpenState } from '../../common/agentPullRequests.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
+import { IVoltBrowserComments } from '../preview/browserCommentStore.js';
 
 /** A reader this close to the last line is at the end, so the arrow stays hidden. */
 export const SCROLL_END_SLACK_PX = 96;
@@ -157,6 +158,10 @@ export class AgentComposerChips extends Disposable {
 	private readonly prHoverCard: AgentPullRequestHoverCard | undefined;
 	private pr: { readonly kind: 'link'; readonly link: IAgentPrLink } | undefined;
 	private prGen = 0;
+	/** Comments left in the chat's browser tab, waiting to go with the next message. */
+	private readonly commentsChip: HTMLButtonElement;
+	private readonly commentsLabelEl: HTMLElement;
+	private pendingComments = 0;
 	private readonly compactChip: HTMLButtonElement;
 	private readonly compactLabelEl: HTMLElement;
 	private compactState: AgentCompactChipState = 'hidden';
@@ -195,6 +200,7 @@ export class AgentComposerChips extends Disposable {
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
+		@IVoltBrowserComments private readonly browserComments: IVoltBrowserComments,
 	) {
 		super();
 		this.element = $(options.dock ? '.volt-agent-composer-chips.volt-browser-dock-chips' : '.volt-agent-composer-chips');
@@ -217,6 +223,23 @@ export class AgentComposerChips extends Disposable {
 		if (terminalRuns) {
 			this.element.appendChild(terminalRuns.element);
 			this._register(terminalRuns.onDidChange(() => this.render()));
+		}
+
+		// The dock shows its tab's comments itself.
+		this.commentsChip = append(this.element, $('button.volt-agent-composer-chip.comments.volt-browser-dock-chip.hidden')) as HTMLButtonElement;
+		this.commentsChip.type = 'button';
+		this.commentsChip.appendChild(renderIcon(Codicon.comment));
+		this.commentsLabelEl = append(this.commentsChip, $('span.volt-agent-composer-chip-label'));
+		setAgentTooltip(this.commentsChip, localize('voltAgent.commentsChip', "Browser comments that go with your next message"));
+		if (!options.dock) {
+			this._register(this.browserComments.onDidChange(() => this.syncComments()));
+			this._register(addDisposableListener(this.commentsChip, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				if (this.sessionId) {
+					this.browserComments.show({ sessionId: this.sessionId });
+				}
+			}));
 		}
 
 		this.compactChip = append(this.element, $('button.volt-agent-composer-chip.compact.volt-browser-dock-chip.hidden')) as HTMLButtonElement;
@@ -401,11 +424,20 @@ export class AgentComposerChips extends Disposable {
 			return;
 		}
 		this.sessionId = sessionId;
+		this.syncComments();
 		// Now, not after the debounce: the last chat's chips would show on this one, then vanish.
 		if (sessionId) {
 			void this.refresh();
 		} else {
 			this.scheduleRefresh();
+		}
+	}
+
+	private syncComments(): void {
+		const count = !this.options.dock && this.sessionId ? this.browserComments.pending({ sessionId: this.sessionId }).length : 0;
+		if (count !== this.pendingComments) {
+			this.pendingComments = count;
+			this.render();
 		}
 	}
 
@@ -654,6 +686,7 @@ export class AgentComposerChips extends Disposable {
 		// The chat's own terminals say more than the window's count of busy ones: never both.
 		const showTerminals = this.runningTerminals > 0 && !showRuns;
 		const showAgents = !!this.agents;
+		const showComments = this.pendingComments > 0;
 		// Steps aside while Source Control shows this chat's changes in the right panel.
 		const showCommit = this.gitVisible && !this.newChat && !(this.sessionId && isAgentScmShown(this.sessionId));
 		const showScroll = this.scrolledUp && !!this.options.onScrollToBottom;
@@ -662,7 +695,7 @@ export class AgentComposerChips extends Disposable {
 		this.toggleChip(this.changesChip, showChanges, this.changesExit);
 		this.toggleChip(this.gitControl.element, showCommit, this.commitExit);
 		this.toggleChip(this.prChip, showPr, this.prExit);
-		const visible = this.hostOpen && (showStatus || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
+		const visible = this.hostOpen && (showStatus || showComments || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
 		this.element.classList.toggle('is-visible', visible);
 		// A chat hosted in another chat's tools hides the row but keeps its terminals (agentEditor.css).
 		this.element.classList.toggle('has-terminal-runs', showRuns);
@@ -673,6 +706,10 @@ export class AgentComposerChips extends Disposable {
 
 		this.compactChip.classList.toggle('hidden', !showCompact);
 
+		this.commentsChip.classList.toggle('hidden', !showComments);
+		this.commentsLabelEl.textContent = this.pendingComments === 1
+			? localize('voltAgent.oneComment', "1 comment")
+			: localize('voltAgent.manyComments', "{0} comments", this.pendingComments);
 
 		this.agentsChip.classList.toggle('hidden', !showAgents);
 		if (this.agents) {
@@ -700,7 +737,7 @@ export class AgentComposerChips extends Disposable {
 	/** The chips that fold into "..." when the row runs out of room, in row order. The arrow never does. */
 	private overflowableChips(): HTMLElement[] {
 		const runs = this.options.terminalRuns?.element;
-		return [this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
+		return [this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
 	}
 
 	private scheduleLayout(): void {

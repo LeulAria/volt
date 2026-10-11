@@ -36,8 +36,9 @@ import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { IAgentMention, browserMentionColor, cloneDisplayMentions } from '../composer/agentMentions.js';
 import { BrowserCommentCard } from './browserCommentCard.js';
+import { IBrowserComment, IBrowserCommentRef, IVoltBrowserComments } from './browserCommentStore.js';
+import { IVoltCommentItem, VoltCommentsPane } from '../chrome/voltCommentsPane.js';
 import { BrowserAgentComposer } from './browserComposer.js';
-import { commentPreviewText } from './browserComments.js';
 import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { BrowserDeviceMode } from './browserDevices.js';
@@ -51,10 +52,13 @@ import { sanitizeBrowserUrl } from './localPreview.js';
 
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
+/** A comment's pin on the page. Its card's composer, once opened, maps each chip to what it points at. */
 interface IPinnedBrowserComment {
-	card: BrowserCommentCard;
-	selection: IBrowserSelection;
-	markId: string;
+	readonly commentId: string;
+	readonly card: BrowserCommentCard;
+	readonly refs: Map<string, IBrowserCommentRef>;
+	markIds: string[];
+	bounds: { x: number; y: number; w: number; h: number };
 }
 const PROBE_SCRIPT = `(() => {
 	const x = __X__;
@@ -384,7 +388,15 @@ export class VoltBrowserView extends Disposable {
 	private hintPathEl!: HTMLElement;
 	private hintTextEl!: HTMLElement;
 	private promptEl!: HTMLElement;
-	private readonly comments: IPinnedBrowserComment[] = [];
+	/** This tab, as the comment store knows it. */
+	private readonly viewId = generateUuid();
+	private readonly pins = new Map<string, IPinnedBrowserComment>();
+	/** The draft's chips: each element or region clicked while it is open. */
+	private readonly draftRefs = new Map<string, IBrowserCommentRef>();
+	private commentsPanel!: HTMLElement;
+	private commentsPane!: VoltCommentsPane;
+	private commentsButton!: HTMLButtonElement;
+	private commentsOpen = false;
 	private composer: BrowserAgentComposer | undefined;
 	private dock: BrowserAgentDock | undefined;
 	private errorEl!: HTMLElement;
@@ -402,6 +414,8 @@ export class VoltBrowserView extends Disposable {
 	private designMode = false;
 	private hoverHit: IBrowserHit | undefined;
 	private selection: IBrowserSelection | undefined;
+	/** The first element of the open draft: the draft box stays beside it while more are added. */
+	private draftAnchor: IBrowserSelection | undefined;
 	private readonly marks = new Map<string, { box: HTMLElement; accent: number; bounds: { x: number; y: number; w: number; h: number } }>();
 	private drawing: { startX: number; startY: number; currentX: number; currentY: number } | undefined;
 	private probeHandle: number | undefined;
@@ -424,6 +438,7 @@ export class VoltBrowserView extends Disposable {
 		@IHostService private readonly hostService: IHostService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IVoltBrowserHistory private readonly history: IVoltBrowserHistory,
+		@IVoltBrowserComments private readonly commentStore: IVoltBrowserComments,
 	) {
 		super();
 		this.element = $('.volt-browser-view.parked');
@@ -573,6 +588,9 @@ export class VoltBrowserView extends Disposable {
 		this.urlDisplay.setAttribute('aria-hidden', 'true');
 
 		const actions = append(toolbar, $('.volt-browser-actions'));
+		this.commentsButton = this.actionButton(actions, 'comments', localize('voltBrowser.comments', "Comments"), () => this.setCommentsOpen(!this.commentsOpen));
+		this.commentsButton.appendChild(renderIcon(Codicon.comment));
+		append(this.commentsButton, $('span.volt-browser-comments-count'));
 		this.designButton = this.actionButton(actions, 'design', localize('voltBrowser.design', "Design"), () => this.setDesignMode(!this.designMode));
 		setAgentTooltip(this.designButton, localize('voltBrowser.designMode', "Design Mode"), formatAgentTooltipShortcut({ meta: true, shift: true, key: 'D' }));
 		this.responsiveButton = this.actionButton(actions, 'responsive', localize('voltBrowser.responsive', "Responsive Design Mode"), () => this.toggleResponsive());
@@ -610,8 +628,10 @@ export class VoltBrowserView extends Disposable {
 			setUserAgent: userAgent => this.applyUserAgent(userAgent),
 			onDidDisable: () => this.syncResponsiveButton(),
 		}));
+		this.buildCommentsPanel();
 		this.dock = this._register(this.instantiationService.createInstance(BrowserAgentDock));
 		this.dock.setChatResolver(() => this.ownerSession());
+		this.dock.setCommentScope(this.viewId);
 		append(this.container, this.dock.element);
 		this._register(disposableWindowInterval(getWindow(this.container), () => { void this.sampleDockTone(); }, 1000));
 		// The stage changes size without the view moving (bookmark bar, floating chrome): lay the page out again.
@@ -627,7 +647,7 @@ export class VoltBrowserView extends Disposable {
 		this._register(addDisposableListener(this.container, 'keydown', e => {
 			const event = new StandardKeyboardEvent(e);
 			if (event.keyCode === KeyCode.Escape) {
-				const openPin = this.comments.find(pin => pin.card.expanded);
+				const openPin = this.openPin();
 				if (openPin) {
 					this.collapseComment(openPin);
 					e.preventDefault();
@@ -1231,7 +1251,7 @@ export class VoltBrowserView extends Disposable {
 		this.loadRetries = 0;
 		this.hideError();
 		this.closeDraft();
-		this.clearComments();
+		this.collapseOpenPin();
 		if (!url) {
 			// An empty address is the start page. A page already loaded makes way for it.
 			if (this.webview && this.guestReady) {
@@ -1293,6 +1313,7 @@ export class VoltBrowserView extends Disposable {
 			this.syncStar();
 		}
 		this.syncNavButtons();
+		this.syncPins();
 	}
 
 	private syncNavButtons(): void {
@@ -1428,7 +1449,7 @@ export class VoltBrowserView extends Disposable {
 		if (this.selection) {
 			this.positionPrompt();
 		}
-		for (const pin of this.comments) {
+		for (const pin of this.pins.values()) {
 			this.placeComment(pin);
 		}
 	}
@@ -1826,22 +1847,39 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	private finishSelection(): void {
-		if (!this.selection) {
+		const selection = this.selection;
+		if (!selection) {
 			return;
-		}
-		for (const pin of this.comments) {
-			if (pin.card.expanded) {
-				pin.card.collapse();
-				this.placeComment(pin);
-			}
 		}
 		this.hoverBox.classList.add('hidden');
 		this.hintEl.classList.add('hidden');
+		const ref = this.selectionRef(selection);
+		// A comment open on the page takes the element as one more chip: one comment can point at several.
+		const openPin = this.openPin();
+		const pinComposer = openPin?.card.input;
+		if (openPin && pinComposer) {
+			const mention = pinComposer.setSelectionChip(ref.label, ref.payload);
+			if (mention) {
+				openPin.refs.set(mention.id, ref);
+				this.savePin(openPin);
+			}
+			this.selection = undefined;
+			this.syncHint();
+			return;
+		}
+		// So does the draft: it stays open until it is sent or pinned, and every click adds to it.
+		const drafting = !this.promptEl.classList.contains('hidden') && !!this.composer?.hasDraft() && !!this.draftAnchor;
+		if (!drafting) {
+			this.composer?.clear();
+			this.draftRefs.clear();
+			this.draftAnchor = cloneBrowserSelection(selection);
+		}
+		this.selection = this.draftAnchor;
 		this.promptEl.classList.remove('hidden');
-		this.composer?.clear();
-		const mention = this.composer?.setSelectionChip(this.selectionChipLabel(), this.formatBrowserElement());
-		if (mention && this.selection) {
-			this.addMark(mention, this.selection.bounds);
+		const mention = this.composer?.setSelectionChip(ref.label, ref.payload);
+		if (mention) {
+			this.draftRefs.set(mention.id, ref);
+			this.addMark(mention, ref.bounds);
 		}
 		this.composer?.layout();
 		this.positionPrompt();
@@ -1849,8 +1887,12 @@ export class VoltBrowserView extends Disposable {
 		getWindow(this.promptEl).requestAnimationFrame(() => this.positionPrompt());
 	}
 
-	private selectionChipLabel(): string {
-		return this.selection?.tag || (this.selection?.kind === 'region' ? 'region' : 'node');
+	private selectionChipLabel(selection = this.selection): string {
+		return selection?.tag || (selection?.kind === 'region' ? 'region' : 'node');
+	}
+
+	private selectionRef(selection: IBrowserSelection): IBrowserCommentRef {
+		return { label: this.selectionChipLabel(selection), payload: this.formatBrowserElement(selection), bounds: { ...selection.bounds } };
 	}
 
 	private clearSelection(exitPrompt = false): void {
@@ -1866,17 +1908,22 @@ export class VoltBrowserView extends Disposable {
 
 	private closeDraft(): void {
 		this.selection = undefined;
+		this.draftAnchor = undefined;
 		this.selectBox.classList.add('hidden');
 		this.drawBox.classList.add('hidden');
 		this.promptEl?.classList.add('hidden');
 		this.composer?.clear();
+		for (const id of this.draftRefs.keys()) {
+			this.removeMark(id);
+		}
+		this.draftRefs.clear();
 		this.syncDockBlocked();
 		this.syncHint();
 	}
 
 	private syncDockBlocked(): void {
 		const draftOpen = !!this.selection && !this.promptEl.classList.contains('hidden');
-		const commentOpen = this.comments.some(pin => pin.card.expanded);
+		const commentOpen = !!this.openPin();
 		this.dock?.setBlocked(draftOpen || commentOpen);
 	}
 
@@ -1970,99 +2017,287 @@ export class VoltBrowserView extends Disposable {
 		this.applyPromptBox({ left: placed.left, top: placed.top, width, height }, false);
 	}
 
-	private pinPromptAsComment(): void {
+	//#region Comments
+
+	/** The page a comment belongs to: its pins show there only (a hash or query change keeps them). */
+	private commentPage(url: string | undefined): string {
+		try {
+			const parsed = new URL(url ?? '');
+			return `${parsed.origin}${parsed.pathname}`;
+		} catch {
+			return url ?? '';
+		}
+	}
+
+	private openPin(): IPinnedBrowserComment | undefined {
+		for (const pin of this.pins.values()) {
+			if (pin.card.expanded) {
+				return pin;
+			}
+		}
+		return undefined;
+	}
+
+	/** The draft (its chips and words) becomes a comment pinned on the page, queued for the next message. */
+	private pinPromptAsComment(): IBrowserComment | undefined {
 		const composer = this.composer;
-		const selection = this.selection;
-		if (!composer || !selection || this.promptEl.classList.contains('hidden') || !composer.hasDraft()) {
+		if (!composer || this.promptEl.classList.contains('hidden') || !composer.hasDraft()) {
+			return undefined;
+		}
+		const refs = [...this.draftRefs.values()];
+		const comment = this.commentStore.add({
+			viewId: this.viewId,
+			sessionId: this.ownerSession(),
+			url: this.browserInput()?.url ?? '',
+			refs,
+			text: this.commentWords(composer),
+			prompt: composer.getSubmitText(),
+			displayText: composer.getDisplayText(),
+			mentions: cloneDisplayMentions(composer.getDisplayMentions()),
+		});
+		this.closeDraft();
+		// The list shows up with the first comment, so it can be picked and sent from there.
+		if (this.commentStore.list({ viewId: this.viewId }).length === 1) {
+			this.setCommentsOpen(true);
+		}
+		return comment;
+	}
+
+	/** The words of a comment, without its chips. */
+	private commentWords(composer: BrowserAgentComposer): string {
+		let text = composer.getDisplayText();
+		for (const mention of composer.getDisplayMentions()) {
+			text = text.replace(mention.label, ' ');
+		}
+		return text.replace(/\s+/g, ' ').trim();
+	}
+
+	private buildCommentsPanel(): void {
+		this.commentsPanel = append(this.stage, $('.volt-browser-comments-panel.hidden'));
+		this.commentsPane = this._register(this.instantiationService.createInstance(VoltCommentsPane, this.commentsPanel, {
+			listId: 'VoltBrowserComments',
+			onClose: () => this.setCommentsOpen(false),
+			onOpen: id => this.revealComment(id),
+			onSend: ids => void this.sendComments(ids),
+			onSetStatus: (id, status) => this.commentStore.update(id, { status }),
+			onDelete: id => this.commentStore.remove(id),
+			onArchiveResolved: () => this.commentStore.archiveResolved({ viewId: this.viewId }),
+			onShowResolved: () => this.syncPins(),
+			onPick: (id, picked) => this.commentStore.update(id, { picked }),
+		}));
+		this._register(this.commentsPane.onDidChangeHeight(() => this.layoutCommentsPanel()));
+		this._register(addDisposableListener(this.commentsPanel, 'pointerdown', e => e.stopPropagation()));
+		this._register(this.commentStore.onDidChange(() => this.renderComments()));
+		this._register(this.commentStore.onDidRequestShow(scope => {
+			if ('viewId' in scope ? scope.viewId === this.viewId : scope.sessionId === this.ownerSession()) {
+				this.setCommentsOpen(true);
+			}
+		}));
+		this.renderComments();
+	}
+
+	private setCommentsOpen(open: boolean): void {
+		this.commentsOpen = open;
+		this.commentsPanel.classList.toggle('hidden', !open);
+		this.container.classList.toggle('comments-open', open);
+		this.commentsButton.classList.toggle('active', open);
+		if (open) {
+			this.layoutCommentsPanel();
+		}
+		this.dock?.layout();
+	}
+
+	private layoutCommentsPanel(): void {
+		if (!this.commentsOpen) {
 			return;
 		}
-		const label = this.selectionChipLabel();
-		const preview = commentPreviewText(composer.getDisplayText(), label);
-		const payload = this.formatBrowserElement();
-		const body = preview === label ? '' : preview;
-		const markId = `comment:${generateUuid()}`;
-		const pinnedSelection = cloneBrowserSelection(selection);
-		this.addBoundsMark(markId, pinnedSelection.bounds, this.comments.length);
+		this.commentsPane.fill(this.commentsPanel.clientHeight, this.commentsPanel.clientWidth);
+	}
+
+	private renderComments(): void {
+		const comments = this.commentStore.list({ viewId: this.viewId });
+		const page = this.commentPage(this.browserInput()?.url);
+		const items: IVoltCommentItem[] = comments.map(comment => ({
+			id: comment.id,
+			number: comment.number,
+			where: [this.commentPage(comment.url) === page ? '' : shortBrowserUrl(comment.url), comment.refs.map(ref => ref.label).join(', ')].filter(Boolean).join(' \u203A '),
+			text: comment.text || comment.refs.map(ref => ref.label).join(', '),
+			status: comment.status,
+			picked: comment.picked,
+		}));
+		this.commentsPane.setItems(items);
+		const open = comments.filter(comment => comment.status !== 'resolved').length;
+		this.commentsButton.classList.toggle('hidden', !comments.length && !this.commentsOpen);
+		const count = this.commentsButton.querySelector('.volt-browser-comments-count');
+		if (count) {
+			count.textContent = open ? String(open) : '';
+		}
+		this.syncPins();
+		this.layoutCommentsPanel();
+	}
+
+	/** Pins for this page's comments: sent ones stay until resolved; resolved ones show with the Resolved toggle. */
+	private syncPins(): void {
+		if (!this.commentsPane) {
+			return;
+		}
+		const page = this.commentPage(this.browserInput()?.url);
+		const showResolved = this.commentsPane.showResolved;
+		const shown = this.commentStore.list({ viewId: this.viewId }).filter(comment => this.commentPage(comment.url) === page && (showResolved || comment.status !== 'resolved'));
+		for (const [id, pin] of this.pins) {
+			if (!shown.some(comment => comment.id === id)) {
+				this.disposePin(pin);
+			}
+		}
+		for (const comment of shown) {
+			const pin = this.pins.get(comment.id) ?? this.createPin(comment);
+			pin.card.setIndex(comment.number);
+			pin.card.setStatus(comment.status);
+			if (!pin.card.expanded) {
+				pin.card.setPreview(comment.text || comment.refs.map(ref => ref.label).join(', '));
+			}
+			this.syncPinMarks(pin, comment);
+			this.placeComment(pin);
+		}
+		this.syncDockBlocked();
+	}
+
+	private createPin(comment: IBrowserComment): IPinnedBrowserComment {
 		// eslint-disable-next-line prefer-const -- card callbacks close over the pin, filled in once the card exists
 		let pin!: IPinnedBrowserComment;
-		const card = this._register(new BrowserCommentCard({
-			index: this.comments.length + 1,
-			preview,
-			selectionLabel: label,
+		const card = new BrowserCommentCard({
+			index: comment.number,
+			preview: comment.text,
+			selectionLabel: comment.refs[0]?.label ?? '',
 			onOpen: () => this.openComment(pin),
 			createComposer: () => this.instantiationService.createInstance(BrowserAgentComposer, {
-				onSubmit: text => { void this.sendPinned(pin, text); },
+				onSubmit: () => void this.sendPinned(pin),
 				onPrefill: text => { this.dock?.prefillFromBrowser(text); },
 				onComment: () => this.collapseComment(pin),
 				onLayout: () => this.placeComment(pin),
 				onHoverMention: mention => this.glowMark(mention),
+				onRemoveMention: mention => {
+					if (pin.refs.delete(mention.id) && pin.card.expanded) {
+						this.savePin(pin);
+					}
+				},
 			}),
 			seed: next => {
+				const current = this.commentStore.get(pin.commentId);
 				next.setDraft('');
-				next.setSelectionChip(label, payload);
-				next.appendPlainText(body);
+				pin.refs.clear();
+				for (const ref of current?.refs ?? []) {
+					const mention = next.setSelectionChip(ref.label, ref.payload);
+					if (mention) {
+						pin.refs.set(mention.id, ref);
+					}
+				}
+				next.appendPlainText(current?.text ?? '');
 			},
-		}));
-		pin = { card, selection: pinnedSelection, markId };
-		this.comments.push(pin);
+		});
+		pin = { commentId: comment.id, card, refs: new Map(), markIds: [], bounds: { ...comment.refs[0]?.bounds ?? { x: 8, y: 8, w: 0, h: 0 } } };
+		this.pins.set(comment.id, pin);
 		this.overlay.appendChild(card.element);
-		this.closeDraft();
-		this.placeComment(pin);
 		getWindow(card.element).requestAnimationFrame(() => this.placeComment(pin));
+		return pin;
+	}
+
+	private syncPinMarks(pin: IPinnedBrowserComment, comment: IBrowserComment): void {
+		const ids = comment.refs.map((_ref, index) => `pin:${comment.id}:${index}`);
+		for (const id of pin.markIds) {
+			this.removeMark(id);
+		}
+		comment.refs.forEach((ref, index) => this.addBoundsMark(ids[index], ref.bounds, comment.number - 1));
+		for (const id of ids) {
+			this.marks.get(id)?.box.classList.toggle('settled', comment.status !== 'open');
+		}
+		pin.markIds = ids;
+		pin.bounds = { ...comment.refs[0]?.bounds ?? pin.bounds };
+	}
+
+	private disposePin(pin: IPinnedBrowserComment): void {
+		for (const id of pin.markIds) {
+			this.removeMark(id);
+		}
+		this.pins.delete(pin.commentId);
+		pin.card.dispose();
+	}
+
+	/** An open comment's chips and words go back to the store as it is edited. */
+	private savePin(pin: IPinnedBrowserComment): void {
+		const composer = pin.card.input;
+		if (!composer) {
+			return;
+		}
+		this.commentStore.update(pin.commentId, {
+			refs: [...pin.refs.values()],
+			text: this.commentWords(composer),
+			prompt: composer.getSubmitText(),
+			displayText: composer.getDisplayText(),
+			mentions: cloneDisplayMentions(composer.getDisplayMentions()),
+		});
+	}
+
+	/** A row in the list was clicked: its page's pin opens (other pages' comments just stay listed). */
+	private revealComment(id: string): void {
+		const pin = this.pins.get(id);
+		if (pin) {
+			this.openComment(pin);
+		}
 	}
 
 	private openComment(pin: IPinnedBrowserComment): void {
 		this.closeDraft();
-		for (const other of this.comments) {
+		for (const other of this.pins.values()) {
 			if (other !== pin && other.card.expanded) {
-				other.card.collapse();
-				this.placeComment(other);
+				this.collapseComment(other);
 			}
 		}
 		pin.card.expand();
 		this.placeComment(pin);
+		this.commentsPane.reveal(pin.commentId);
 		this.syncDockBlocked();
 	}
 
 	private collapseComment(pin: IPinnedBrowserComment): void {
+		const wasOpen = pin.card.expanded;
 		pin.card.collapse();
+		if (wasOpen) {
+			this.savePin(pin);
+		}
 		this.placeComment(pin);
 		this.syncDockBlocked();
 	}
 
-	private removeComment(pin: IPinnedBrowserComment): void {
-		const index = this.comments.indexOf(pin);
-		if (index >= 0) {
-			this.comments.splice(index, 1);
+	private collapseOpenPin(): void {
+		const pin = this.openPin();
+		if (pin) {
+			this.collapseComment(pin);
 		}
-		this.removeMark(pin.markId);
-		pin.card.dispose();
-		this.comments.forEach((item, itemIndex) => item.card.setIndex(itemIndex + 1));
-		this.syncDockBlocked();
 	}
 
-	private clearComments(): void {
-		for (const pin of this.comments) {
-			this.removeMark(pin.markId);
-			pin.card.dispose();
+	/** The send arrow on an open comment: saves it and sends it, with every other comment ticked to go. */
+	private async sendPinned(pin: IPinnedBrowserComment): Promise<void> {
+		this.collapseComment(pin);
+		const ids = [...this.commentStore.pending({ viewId: this.viewId }).map(comment => comment.id)];
+		if (!ids.includes(pin.commentId)) {
+			ids.push(pin.commentId);
 		}
-		this.comments.length = 0;
+		await this.sendComments(ids);
 	}
 
-	private async sendPinned(pin: IPinnedBrowserComment, prompt: string): Promise<void> {
-		const text = prompt.trim();
-		if (!text) {
+	/** Comments `ids` as one message to the chat; they stay pinned, marked sent, until resolved. */
+	private async sendComments(ids?: readonly string[]): Promise<void> {
+		this.commentStore.setSession(this.viewId, this.ownerSession());
+		const message = this.commentStore.take({ viewId: this.viewId }, ids);
+		if (!message) {
 			return;
 		}
-		const composer = pin.card.input;
-		const displayText = composer?.getDisplayText() ?? text;
-		const mentions = cloneDisplayMentions(composer?.getDisplayMentions() ?? []);
-		const display = mentions.length ? { text: displayText, mentions } : undefined;
-		await Promise.resolve();
-		this.removeComment(pin);
 		this.clearHover();
-		await this.dock?.submitFromBrowser(text, display);
+		await this.dock?.submitFromBrowser(message.agentText, { text: message.displayText, mentions: [...message.mentions] });
 	}
+
+	//#endregion
 
 	private placeComment(pin: IPinnedBrowserComment): void {
 		const el = pin.card.element;
@@ -2071,7 +2306,7 @@ export class VoltBrowserView extends Disposable {
 		}
 		const stage = this.stage.getBoundingClientRect();
 		const pad = 8;
-		const sel = pin.selection.bounds;
+		const sel = pin.bounds;
 		if (pin.card.expanded) {
 			const width = Math.min(350, Math.max(160, stage.width - pad * 2));
 			const nextWidth = `${width}px`;
@@ -2112,7 +2347,7 @@ export class VoltBrowserView extends Disposable {
 		const obstacles = [
 			sel,
 			...[...this.marks.values()].map(mark => mark.bounds),
-			...this.comments.map(pin => pin.selection.bounds),
+			...[...this.pins.values()].map(pin => pin.bounds),
 		];
 		const candidates = [
 			clamp(sel.x + sel.w / 2 - width / 2, sel.y + sel.h + gap),
@@ -2148,21 +2383,20 @@ export class VoltBrowserView extends Disposable {
 		if (!prompt && submit) {
 			return;
 		}
-		const text = prompt.trim() || localize('voltBrowser.defaultPrompt', "Update this selection.");
-		const displayText = this.composer?.getDisplayText() ?? text;
-		const mentions = cloneDisplayMentions(this.composer?.getDisplayMentions() ?? []);
-		const display = mentions.length ? { text: displayText, mentions } : undefined;
-		this.closeDraft();
-		this.clearHover();
 		if (submit) {
-			await this.dock?.submitFromBrowser(text, display);
+			// Send: the draft joins the comments (pinned until resolved) and goes with every one ticked.
+			if (this.pinPromptAsComment()) {
+				await this.sendComments();
+			}
 			return;
 		}
+		const text = prompt.trim() || localize('voltBrowser.defaultPrompt', "Update this selection.");
+		this.closeDraft();
+		this.clearHover();
 		this.dock?.prefillFromBrowser(text);
 	}
 
-	private formatBrowserElement(): string {
-		const selection = this.selection;
+	private formatBrowserElement(selection: IBrowserSelection | undefined): string {
 		const bounds = selection?.bounds;
 		const top = Math.round(bounds?.y ?? 0);
 		const left = Math.round(bounds?.x ?? 0);
@@ -2250,7 +2484,8 @@ export class VoltBrowserView extends Disposable {
 			return false;
 		}
 		return this.promptEl.contains(target)
-			|| this.comments.some(pin => pin.card.element.contains(target))
+			|| [...this.pins.values()].some(pin => pin.card.element.contains(target))
+			|| this.commentsPanel.contains(target)
 			|| !!this.dock?.element.contains(target);
 	}
 
@@ -2460,9 +2695,10 @@ export class VoltBrowserView extends Disposable {
 		if (this.selection) {
 			this.positionPrompt();
 		}
-		for (const pin of this.comments) {
+		for (const pin of this.pins.values()) {
 			this.placeComment(pin);
 		}
+		this.layoutCommentsPanel();
 		this.dock?.layout();
 	}
 
@@ -2478,7 +2714,7 @@ export class VoltBrowserView extends Disposable {
 			this.composer?.focus();
 			return;
 		}
-		const open = this.comments.find(pin => pin.card.expanded);
+		const open = this.openPin();
 		if (open) {
 			open.card.focus();
 			return;
@@ -2488,6 +2724,9 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	override dispose(): void {
+		for (const pin of [...this.pins.values()]) {
+			this.disposePin(pin);
+		}
 		if (this.probeHandle !== undefined && this.container) {
 			getWindow(this.container).cancelAnimationFrame(this.probeHandle);
 		}

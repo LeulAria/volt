@@ -9870,3 +9870,13 @@ pre.volt-agent-searchable {
 .monaco-workbench.volt-new-window-starting .part.editor .editor-group-watermark {
 	display: none;
 }
+
+/* "3 comments": browser comments that go with the next message; it opens the tab's comment list. */
+.volt-agent-composer-chip.comments {
+	gap: 6px;
+}
+
+.volt-agent-composer-chip.comments .codicon {
+	font-size: 14px;
+	color: var(--vscode-textLink-foreground);
+}

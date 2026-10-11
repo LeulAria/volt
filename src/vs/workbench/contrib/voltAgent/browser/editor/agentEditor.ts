@@ -120,6 +120,7 @@ import { IAction } from '../../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
 import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { getSimpleCodeEditorWidgetOptions } from '../../../codeEditor/browser/simpleEditorOptions.js';
+import { IVoltBrowserComments } from '../preview/browserCommentStore.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { completeStreamingBlocks } from './agentSessionController.js';
 import { AgentSurfaceHost, agentSideChatParents } from '../workspace/agentSurfaceHost.js';
@@ -1194,6 +1195,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}));
 		// "Open parent" shows only while the parent chat has no tab.
 		this._register(this.editorService.onDidEditorsChange(() => this.renderSubagentBar()));
+		this._register(this.browserComments().onDidChange(() => this.updateSendButton()));
 		this.composerChips = this._register(this.instantiationService.createInstance(AgentComposerChips, {
 			onChangesClick: () => void this.openSessionChanges(),
 			onTerminalClick: () => this.surfaceHost.openTerminal(),
@@ -5729,6 +5731,23 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
+	private browserComments(): IVoltBrowserComments {
+		return this.instantiationService.invokeFunction(accessor => accessor.get(IVoltBrowserComments));
+	}
+
+	/** The browser comments ticked for this chat, put ahead of the message (they stay pinned, marked sent). */
+	private takeBrowserComments(agentText: string, display: IAgentPromptDisplay | undefined): { agentText: string; display: IAgentPromptDisplay | undefined } {
+		const message = this.browserComments().take({ sessionId: this.sessionId });
+		if (!message) {
+			return { agentText, display };
+		}
+		const typed = display?.text ?? this.inputModel?.getValue() ?? '';
+		return {
+			agentText: agentText ? `${message.agentText}\n\n${agentText}` : message.agentText,
+			display: { text: typed.trim() ? `${message.displayText}\n${typed}` : message.displayText, mentions: [...message.mentions, ...display?.mentions ?? []] },
+		};
+	}
+
 	/** What the composer holds: the text the agent reads, and what the bubble shows. */
 	private readComposer(): { agentText: string; display: IAgentPromptDisplay | undefined } {
 		const displayText = this.inputModel?.getValue() ?? '';
@@ -5738,7 +5757,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private doSend(): void {
-		const { agentText, display } = this.readComposer();
+		let { agentText, display } = this.readComposer();
 		if (this.queueEdit) {
 			// The composer holds a queued prompt being edited: Enter saves it back into the queue.
 			if (agentText) {
@@ -5751,8 +5770,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.editingUserIndex !== undefined && agentText) {
 			this.cancelUserEdit(false);
 		}
-		if (agentText && this.modelPicker.isMulti() && !this.messages.length && !this.isStreaming()) {
+		// Comments left in this chat's browser tab go with the message, ahead of what was typed.
+		const comments = this.browserComments().pending({ sessionId: this.sessionId }).length > 0;
+		const withComments = () => ({ agentText, display } = this.takeBrowserComments(agentText, display));
+		if ((agentText || comments) && this.modelPicker.isMulti() && !this.messages.length && !this.isStreaming()) {
 			// Several models picked: one chat and one worktree per model, grouped for comparison.
+			withComments();
 			void this.startRunGroup(agentText, display);
 			return;
 		}
@@ -5766,12 +5789,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				void this.orchestrator.dispatch({ type: 'thread.block', threadId: this.sessionKey, reason: 'cloning' });
 				this.waitForClone(cloning.id);
 			}
-			if (agentText) {
+			if (agentText || comments) {
+				withComments();
 				this.enqueuePrompt(agentText, display);
 			}
 			return;
 		}
-		if (!agentText) {
+		if (!agentText && !comments) {
 			return;
 		}
 		if (!this.messages.length && this.landingChrome?.worktreeNeedsCommit()) {
@@ -5786,6 +5810,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!this.messages.length) {
 			this.adoptVisibleProject();
 		}
+		withComments();
 		this._onDidComposerSend.fire();
 		if (this.compactOffered() && this.compactFirstArmed() && !isCompactCommand(agentText)) {
 			// "Compact first": the compaction is its own turn, and the prompt queues behind it.
@@ -6822,7 +6847,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.composerQueue?.setState(this.queueState());
 		const canSend = this.composerCanSend();
 		// While dictating, the mic button shows the waveform and the send button stays send.
-		const kind: 'mic' | 'send' = this.isFollowUpComposer() || this.hasDraft() || this.voiceDictation?.active ? 'send' : 'mic';
+		const comments = this.browserComments().pending({ sessionId: this.sessionId }).length > 0;
+		const kind: 'mic' | 'send' = this.isFollowUpComposer() || this.hasDraft() || comments || this.voiceDictation?.active ? 'send' : 'mic';
 		this.sendButton.disabled = !canSend;
 		this.sendButton.classList.toggle('disabled', !canSend);
 		const motion = this.sendKind !== kind && this.sendButton.childElementCount ? this.captureMicMotion() : undefined;

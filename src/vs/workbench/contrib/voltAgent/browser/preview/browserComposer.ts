@@ -173,6 +173,8 @@ export class BrowserAgentComposer extends Disposable {
 	private readonly modelPicker: AgentModelPicker;
 	private sendKind: 'mic' | 'send' | 'stop' = 'mic';
 	private working = false;
+	/** Something rides along without text (the browser tab's comments): Send works on an empty box. */
+	private extraContent = false;
 	private currentMode = 'Agent';
 	private plusMenu: IVoltMenuHandle | undefined;
 
@@ -262,7 +264,7 @@ export class BrowserAgentComposer extends Disposable {
 				this.callbacks.onStop?.();
 				return;
 			}
-			if (this.value.trim()) {
+			if (this.value.trim() || this.extraContent) {
 				this.submit();
 			}
 		}));
@@ -362,6 +364,13 @@ export class BrowserAgentComposer extends Disposable {
 	setPlaceholder(text: string): void {
 		this.placeholderText = text;
 		this.placeholderEl.textContent = this.placeholderForMode();
+	}
+
+	setExtraContent(on: boolean): void {
+		if (this.extraContent !== on) {
+			this.extraContent = on;
+			this.syncSend();
+		}
 	}
 
 	hasDraft(): boolean {
@@ -518,7 +527,7 @@ export class BrowserAgentComposer extends Disposable {
 
 	private submit(): void {
 		const text = this.getSubmitText();
-		if (!text) {
+		if (!text && !this.extraContent) {
 			return;
 		}
 		this.callbacks.onSubmit(text);
@@ -598,7 +607,7 @@ export class BrowserAgentComposer extends Disposable {
 
 	/** Empty composer stays a single-line pill; a mention or typed text reveals model + send. */
 	private syncSend(): void {
-		const hasContent = this.hasContent();
+		const hasContent = this.hasContent() || this.extraContent;
 		this.element.classList.toggle('empty', !hasContent && !this.working);
 		this.element.classList.toggle('has-content', hasContent || this.working);
 		const kind: 'mic' | 'send' | 'stop' = this.working ? 'stop' : hasContent ? 'send' : 'mic';
