@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { $, addDisposableListener, append, clearNode, EventHelper, getActiveElement, getDomNodePagePosition, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { AnchorAlignment, AnchorPosition, IAnchor } from '../../../../../base/browser/ui/contextview/contextview.js';
 import { HighlightedLabel } from '../../../../../base/browser/ui/highlightedlabel/highlightedLabel.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
@@ -47,6 +48,8 @@ export interface IAgentMentionItemRow {
 	readonly trailingTone?: 'error' | 'warning';
 	/** Opens another list in place instead of adding context. */
 	readonly submenu?: boolean;
+	/** Not focused when the list opens (Back, Add this folder): Enter starts on the content. */
+	readonly passive?: boolean;
 	readonly run: () => void;
 }
 
@@ -58,6 +61,10 @@ export interface IAgentMentionFileRow {
 	readonly fileKind: FileKind;
 	readonly labelMatches?: readonly IMatch[];
 	readonly description?: string;
+	/** A folder that opens in place (This Mac): a chevron at the end. */
+	readonly submenu?: boolean;
+	/** The hover button, in place of "Open to the Side" (files only). */
+	readonly action?: { readonly icon: ThemeIcon; readonly title: string; readonly run: () => void };
 	readonly run: () => void;
 }
 
@@ -82,9 +89,23 @@ export interface IAgentMentionTreeContent {
 	readonly pick: (entry: IAgentMentionTreeEntry) => void;
 }
 
+/**
+ * A search field over the rows (Files & Folders). Unlike the rest of the panel it takes focus;
+ * its keys go to `onKeyDown` so arrows, Enter and Esc work as they do from the composer.
+ */
+export interface IAgentMentionSearch {
+	readonly value: string;
+	readonly placeholder: string;
+	/** Focus the field with this content: the view just opened. */
+	readonly focus: boolean;
+	readonly onInput: (value: string) => void;
+	readonly onKeyDown: (e: StandardKeyboardEvent) => void;
+	readonly onBlur: () => void;
+}
+
 export type AgentMentionMenuContent =
-	| { readonly kind: 'list'; readonly rows: readonly AgentMentionRow[] }
-	| { readonly kind: 'tree'; readonly tree: IAgentMentionTreeContent };
+	| { readonly kind: 'list'; readonly rows: readonly AgentMentionRow[]; readonly search?: IAgentMentionSearch }
+	| { readonly kind: 'tree'; readonly tree: IAgentMentionTreeContent; readonly search?: IAgentMentionSearch };
 
 export interface IAgentMentionMenuOptions {
 	/** The composer box; the panel spans its width. Absent: the panel opens at the cursor. */
@@ -110,6 +131,12 @@ function isNavigable(element: TreeElement | undefined): boolean {
 	return !!element && (element.kind === 'item' || element.kind === 'file' || element.kind === 'entry');
 }
 
+/** The row Enter picks first: the first file or entry rather than Back, which Esc already does. */
+function firstPick(rows: readonly TreeElement[]): number {
+	const pick = rows.findIndex(row => isNavigable(row) && !(row.kind === 'item' && row.passive));
+	return pick >= 0 ? pick : rows.findIndex(row => isNavigable(row));
+}
+
 function heightOf(element: TreeElement): number {
 	switch (element.kind) {
 		case 'header': return HEADER_HEIGHT;
@@ -120,8 +147,9 @@ function heightOf(element: TreeElement): number {
 
 /**
  * The @ panel of the agent composer: a VS Code list (or, for Files & Folders, an explorer tree)
- * under or over the composer, like Cursor. It never takes focus; the query is the text typed
- * after @ in the editor, and the editor forwards Up / Down / Left / Right / Enter here.
+ * under or over the composer, like Cursor. Only its search field (Files & Folders) takes focus;
+ * otherwise the query is the text typed after @ in the editor, and the editor forwards
+ * Up / Down / Left / Right / Enter here.
  */
 export class AgentMentionMenu extends Disposable {
 
@@ -152,6 +180,21 @@ export class AgentMentionMenu extends Disposable {
 	get containsFocus(): boolean {
 		const element = this.menuElement;
 		return !!element && element.contains(getActiveElement());
+	}
+
+	/** The highlighted row (not a tree entry). */
+	get focusedRow(): AgentMentionRow | undefined {
+		const element = this.view?.focused();
+		return element && element.kind !== 'entry' ? element : undefined;
+	}
+
+	/** The search field has the keyboard (typing goes there, not to the composer). */
+	get searchFocused(): boolean {
+		return this.view?.searchFocused ?? false;
+	}
+
+	focusSearch(): void {
+		this.view?.focusSearch();
 	}
 
 	/** True when Enter would pick something. */
@@ -229,8 +272,12 @@ export class AgentMentionMenu extends Disposable {
 		const anchor = this.options.anchor();
 		const width = anchor?.isConnected ? anchor.getBoundingClientRect().width : CURSOR_MENU_WIDTH;
 		menu.style.width = `${width}px`;
-		// The editor keeps focus: nothing in the panel may take it on press.
-		store.add(addDisposableListener(menu, 'mousedown', e => e.preventDefault()));
+		// The editor (or the search field) keeps focus: nothing else in the panel may take it on press.
+		store.add(addDisposableListener(menu, 'mousedown', e => {
+			if (!this.view?.isSearchInput(e.target)) {
+				e.preventDefault();
+			}
+		}));
 		store.add(addDisposableListener(getWindow(container).document, 'mousedown', e => {
 			if (!(e.target instanceof Node) || menu.contains(e.target) || anchor?.contains(e.target)) {
 				return;
@@ -247,6 +294,9 @@ export class AgentMentionMenu extends Disposable {
 /** The list and the tree inside the panel; one of them shows at a time. */
 class MentionMenuView extends Disposable {
 
+	private readonly searchHost: HTMLElement;
+	private readonly searchInput: HTMLInputElement;
+	private search: IAgentMentionSearch | undefined;
 	private readonly listHost: HTMLElement;
 	private readonly list: List<AgentMentionRow>;
 	private readonly treeHost: HTMLElement;
@@ -275,6 +325,23 @@ class MentionMenuView extends Disposable {
 			listInactiveFocusOutline: 'transparent',
 			listFocusAndSelectionOutline: 'transparent',
 		});
+
+		this.searchHost = append(menu, $('.volt-agent-mention-search.hidden'));
+		this.searchHost.appendChild(renderIcon(Codicon.search));
+		const input = this.searchInput = append(this.searchHost, $('input.volt-agent-mention-search-input')) as HTMLInputElement;
+		input.type = 'text';
+		input.spellcheck = false;
+		input.autocomplete = 'off';
+		this._register(addDisposableListener(input, 'input', () => this.search?.onInput(input.value)));
+		this._register(addDisposableListener(input, 'keydown', e => this.search?.onKeyDown(new StandardKeyboardEvent(e))));
+		this._register(addDisposableListener(input, 'blur', () => this.search?.onBlur()));
+		// A press beside the field (its icon, padding) puts the caret in it.
+		this._register(addDisposableListener(this.searchHost, 'mousedown', e => {
+			if (e.target !== input) {
+				e.preventDefault();
+				input.focus();
+			}
+		}));
 
 		this.listHost = append(menu, $('.volt-agent-mention-list'));
 		this.list = this._register(new List<AgentMentionRow>('VoltAgentMentions', this.listHost, new RowDelegate(), [
@@ -368,7 +435,39 @@ class MentionMenuView extends Disposable {
 		}));
 	}
 
+	get searchFocused(): boolean {
+		return !!this.search && getActiveElement() === this.searchInput;
+	}
+
+	isSearchInput(target: EventTarget | null): boolean {
+		return !!this.search && target === this.searchInput;
+	}
+
+	focusSearch(): void {
+		if (this.search) {
+			this.searchInput.focus();
+		}
+	}
+
+	private setSearch(search: IAgentMentionSearch | undefined): void {
+		this.search = search;
+		this.searchHost.classList.toggle('hidden', !search);
+		if (!search) {
+			return;
+		}
+		this.searchInput.placeholder = search.placeholder;
+		this.searchInput.setAttribute('aria-label', search.placeholder);
+		// Only when it changed elsewhere (the composer's @ text): rewriting it would move the caret.
+		if (this.searchInput.value !== search.value) {
+			this.searchInput.value = search.value;
+		}
+		if (search.focus) {
+			this.searchInput.focus();
+		}
+	}
+
 	setContent(content: AgentMentionMenuContent): void {
+		this.setSearch(content.search);
 		if (content.kind === 'list') {
 			this.mode = 'list';
 			this.treeHost.style.display = 'none';
@@ -378,7 +477,7 @@ class MentionMenuView extends Disposable {
 			const height = Math.min(MAX_HEIGHT, content.rows.reduce((sum, row) => sum + heightOf(row), 0));
 			this.listHost.style.height = `${height}px`;
 			this.list.layout(height, this.width);
-			const first = content.rows.findIndex(row => isNavigable(row));
+			const first = firstPick(content.rows);
 			this.list.setFocus(first >= 0 ? [first] : []);
 			if (first >= 0) {
 				this.list.reveal(first);
@@ -401,7 +500,8 @@ class MentionMenuView extends Disposable {
 			}
 			this.layoutTree();
 			if (!isNavigable(this.tree.getFocus()[0])) {
-				const first = this.treeTopLevel().find(isNavigable);
+				const top = this.treeTopLevel();
+				const first = top[firstPick(top)];
 				this.tree.setFocus(first ? [first] : []);
 			}
 		});
@@ -628,9 +728,11 @@ interface IFileTemplate {
 	readonly row: HTMLElement;
 	readonly label: IResourceLabel;
 	readonly action: HTMLElement;
+	/** A folder that opens in place. */
+	readonly chevron: HTMLElement;
 	readonly store: DisposableStore;
-	resource?: URI;
-	isDirectory?: boolean;
+	/** What the hover button does for this row, if anything. */
+	runAction?: () => void;
 }
 
 /**
@@ -655,15 +757,13 @@ class FileRenderer implements IListRenderer<TreeElement, IFileTemplate> {
 		const label = this.labels.create(row, { supportHighlights: true, supportDescriptionHighlights: true });
 		const action = append(row, $('span.volt-agent-mention-file-action'));
 		action.setAttribute('role', 'button');
-		action.appendChild(renderIcon(Codicon.goToFile));
-		action.title = localize('voltAgent.mention.openFile', "Open to the Side");
-		const template: IFileTemplate = { row, label, action, store: new DisposableStore() };
+		const chevron = append(row, $('span.volt-menu-trailing.volt-agent-mention-file-chevron'));
+		chevron.appendChild(renderIcon(Codicon.chevronRight));
+		const template: IFileTemplate = { row, label, action, chevron, store: new DisposableStore() };
 		template.store.add(addDisposableListener(action, 'mousedown', e => EventHelper.stop(e, true)));
 		template.store.add(addDisposableListener(action, 'click', e => {
 			EventHelper.stop(e, true);
-			if (template.resource && !template.isDirectory) {
-				this.open(template.resource);
-			}
+			template.runAction?.();
 		}));
 		return template;
 	}
@@ -673,8 +773,12 @@ class FileRenderer implements IListRenderer<TreeElement, IFileTemplate> {
 			return;
 		}
 		const isDirectory = element.kind === 'entry' ? element.isDirectory : element.fileKind === FileKind.FOLDER;
-		template.resource = element.resource;
-		template.isDirectory = isDirectory;
+		const resource = element.resource;
+		const action = element.kind === 'file' ? element.action : undefined;
+		template.runAction = action ? action.run : isDirectory ? undefined : () => this.open(resource);
+		template.action.replaceChildren(renderIcon(action?.icon ?? Codicon.goToFile));
+		template.action.title = action?.title ?? localize('voltAgent.mention.openFile', "Open to the Side");
+		template.chevron.classList.toggle('hidden', !(element.kind === 'file' && element.submenu));
 		template.label.setResource(
 			{ resource: element.resource, name: basename(element.resource), description: element.kind === 'file' ? element.description : undefined },
 			{
@@ -683,7 +787,7 @@ class FileRenderer implements IListRenderer<TreeElement, IFileTemplate> {
 				fileDecorations: { colors: true, badges: false },
 			},
 		);
-		template.action.classList.toggle('hidden', isDirectory);
+		template.action.classList.toggle('hidden', !template.runAction);
 	}
 
 	disposeTemplate(template: IFileTemplate): void {

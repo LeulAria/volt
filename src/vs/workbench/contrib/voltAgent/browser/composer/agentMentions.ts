@@ -14,10 +14,10 @@ import { IExpression, match as glob } from '../../../../../base/common/glob.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename } from '../../../../../base/common/path.js';
-import { dirname, isEqualOrParent, relativePath } from '../../../../../base/common/resources.js';
+import { dirname, isEqual, isEqualOrParent, relativePath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
-import { isMacintosh } from '../../../../../base/common/platform.js';
+import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { ICodeEditor, IEditorMouseEvent, MouseTargetType } from '../../../../../editor/browser/editorBrowser.js';
@@ -52,7 +52,7 @@ import { extensionForMime } from '../../../../services/voltRuntime/common/histor
 import { searchFilesAndFolders } from '../../../search/browser/searchChatContext.js';
 import { ITerminalService } from '../../../terminal/browser/terminal.js';
 import { compactSessionAge } from '../home/agentHomeModel.js';
-import { AgentMentionMenu, AgentMentionMenuContent, AgentMentionRow, IAgentMentionFileRow, IAgentMentionTreeEntry } from './agentMentionMenu.js';
+import { AgentMentionMenu, AgentMentionMenuContent, AgentMentionRow, IAgentMentionFileRow, IAgentMentionSearch, IAgentMentionTreeEntry } from './agentMentionMenu.js';
 import { MentionCodePreview } from './mentionCodePreview.js';
 import { AgentAttachmentStore } from './agentAttachmentStore.js';
 import { attachmentRoute, countLines, fileChipDetail, heicJpegName, IAgentFilePayload, isTextAttachment, largePasteBytes, PASTED_TEXT_NAME, shouldFoldPaste, storageMime } from './agentFileAttachments.js';
@@ -66,6 +66,7 @@ import { showCitationCommentEditor } from './agentCitationComment.js';
 import { formatDuration, IAgentVideoFrame, ITimeRange, mapRangesToSource, MAX_VIDEO_BYTES, normalizeVideoMime, probeVideo, rangesDuration, videoExtensionForMime, videoMimeForExtension } from './agentVideoAttachments.js';
 import { AgentVideoViewer, IAgentVideoClip, showAgentVideoViewer } from './agentVideoViewer.js';
 import { IAgentCustomizeService, IAgentSlashItem } from '../customize/agentCustomizeService.js';
+import { IPathService } from '../../../../services/path/common/pathService.js';
 import { AgentSlashMenu, rankSlashItems } from './agentSlashMenu.js';
 import { AgentSkillHoverCard } from './agentSkillHoverCard.js';
 
@@ -239,7 +240,18 @@ export interface IAgentMentionHost {
 	currentModelLabel?(): string | undefined;
 }
 
-type MentionMenuView = 'root' | 'files' | 'terminals' | 'chats';
+type MentionMenuView = 'root' | 'files' | 'computer' | 'terminals' | 'chats';
+
+/** An entry of the folder This Mac shows. */
+interface IComputerEntry {
+	readonly resource: URI;
+	readonly name: string;
+	readonly isDirectory: boolean;
+}
+
+/** Listed first in the home folder, in this order. */
+const HOME_FIRST = ['Desktop', 'Documents', 'Downloads'];
+const THIS_MACHINE = isMacintosh ? localize('voltAgent.mention.thisMac', "This Mac") : localize('voltAgent.mention.thisPC', "This PC");
 
 interface IMentionFile {
 	readonly resource: URI;
@@ -371,6 +383,15 @@ export class AgentMentionController extends Disposable {
 	private dismissedToken: string | undefined;
 	private menuRange: IRange | undefined;
 	private menuQuery = '';
+	/** Typed in the Files & Folders search field; undefined while the @ text in the composer is the query. */
+	private filesQuery: string | undefined;
+	/** The Files & Folders view just opened: its search field takes focus on the next paint. */
+	private focusMenuSearch = false;
+	/** This Mac: the user's home, the folder shown (home until the user goes in), and its entries once read. */
+	private computerHome: URI | undefined;
+	private computerFolder: URI | undefined;
+	private computerEntries: readonly IComputerEntry[] | 'error' | undefined;
+	private computerLoading: URI | undefined;
 	private menuTyped = false;
 	private menuRefreshQueued = false;
 	private menuGeneration = 0;
@@ -428,6 +449,7 @@ export class AgentMentionController extends Disposable {
 		@IOpenerService private readonly openerService: IOpenerService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IAgentCustomizeService private readonly customize: IAgentCustomizeService,
+		@IPathService private readonly pathService: IPathService,
 	) {
 		super();
 		this.attachmentStore = instantiationService.createInstance(AgentAttachmentStore);
@@ -1184,7 +1206,8 @@ export class AgentMentionController extends Disposable {
 			// Pressing a row focuses the panel's list: hand focus back and keep the panel for the click.
 			// Anything else means the user left the composer.
 			setTimeout(() => {
-				if (this.disposed) {
+				// The Files & Folders search field took the keyboard on purpose.
+				if (this.disposed || this.mentionMenu.searchFocused) {
 					return;
 				}
 				if (this.mentionMenu.containsFocus || this.slashMenu.containsFocus) {
@@ -1351,11 +1374,17 @@ export class AgentMentionController extends Disposable {
 			}
 			this.menuToken = token;
 			this.menuView = this.pendingMenuView ?? 'root';
+			this.filesQuery = undefined;
+			this.focusMenuSearch = this.menuView === 'files';
 		}
 		this.pendingMenuView = undefined;
 		if (this.dismissedToken === token || (!this.mentionMenu.isVisible && !allowOpen)) {
 			this.closeMentionMenu();
 			return;
+		}
+		if (at.query !== this.menuQuery) {
+			// Typed after the @ again: the composer's text is the query once more.
+			this.filesQuery = undefined;
 		}
 		this.menuRange = at.range;
 		this.menuQuery = at.query;
@@ -1368,19 +1397,37 @@ export class AgentMentionController extends Disposable {
 		this.searchCts?.dispose(true);
 		this.searchCts = undefined;
 		this.mcpServers = undefined;
+		this.filesQuery = undefined;
+		this.focusMenuSearch = false;
+		// This Mac starts at home again next time, read afresh.
+		this.computerFolder = undefined;
+		this.computerEntries = undefined;
+		// The search field goes with the panel: typing carries on in the composer.
+		const searchFocused = this.mentionMenu.searchFocused;
 		this.mentionMenu.hide();
+		if (searchFocused) {
+			this.editor.focus();
+		}
 	}
 
 	private paintMentionMenu(): void {
 		const generation = ++this.menuGeneration;
 		const view = this.menuView;
-		const query = this.menuQuery;
+		const searchable = view === 'files' || view === 'computer';
+		const query = searchable && this.filesQuery !== undefined ? this.filesQuery : this.menuQuery;
+		let focusSearch = this.focusMenuSearch;
+		this.focusMenuSearch = false;
 		clearTimeout(this.menuSearchTimer);
 		this.searchCts?.dispose(true);
 		this.searchCts = undefined;
 		const searches = !!query && (view === 'root' || view === 'files');
 		let found: readonly IMentionFile[] | undefined = searches ? undefined : [];
-		const paint = () => this.mentionMenu.show(this.menuContent(view, query, found));
+		const paint = () => {
+			const content = this.menuContent(view, query, found);
+			// Files & Folders gets a search field, focused when the view opens; later paints leave focus alone.
+			this.mentionMenu.show(searchable ? { ...content, search: this.menuSearch(view, query, focusSearch) } : content);
+			focusSearch = false;
+		};
 		paint();
 		if (view === 'root' && !this.mcpServers) {
 			this.mcpServers = [];
@@ -1390,6 +1437,9 @@ export class AgentMentionController extends Disposable {
 					paint();
 				}
 			}, () => undefined);
+		}
+		if (view === 'computer' && this.computerEntries === undefined) {
+			void this.loadComputerFolder();
 		}
 		if (!searches) {
 			return;
@@ -1424,6 +1474,9 @@ export class AgentMentionController extends Disposable {
 				return true;
 			case KeyCode.RightArrow:
 			case KeyCode.LeftArrow:
+				if (this.menuView === 'computer') {
+					return this.handleComputerArrow(e.keyCode === KeyCode.RightArrow, consume);
+				}
 				if (!this.mentionMenu.isTree) {
 					return false;
 				}
@@ -1451,7 +1504,7 @@ export class AgentMentionController extends Disposable {
 			case KeyCode.Escape:
 				consume();
 				if (this.menuView !== 'root') {
-					this.setMenuView('root');
+					this.menuBack();
 				} else {
 					this.dismissedToken = this.menuToken;
 					this.closeMentionMenu();
@@ -1460,13 +1513,212 @@ export class AgentMentionController extends Disposable {
 			case KeyCode.Backspace:
 				if (this.menuView !== 'root' && !this.menuQuery) {
 					consume();
-					this.setMenuView('root');
+					this.menuBack();
 					return true;
 				}
 				return false;
 		}
 		return false;
 	}
+
+	/** The Files & Folders search field: its text filters the tree into the workspace search, like @text. */
+	private menuSearch(view: MentionMenuView, value: string, focus: boolean): IAgentMentionSearch {
+		const folder = view === 'computer' ? this.computerFolder : undefined;
+		return {
+			value,
+			placeholder: view !== 'computer'
+				? localize('voltAgent.mention.searchFiles', "Search files and folders")
+				: folder && !(this.computerHome && isEqual(folder, this.computerHome))
+					? localize('voltAgent.mention.searchFolder', "Search {0}", basename(folder.path) || folder.path)
+					: localize('voltAgent.mention.searchHome', "Search home folder"),
+			focus,
+			onInput: text => {
+				this.filesQuery = text;
+				this.paintMentionMenu();
+			},
+			onKeyDown: e => this.handleMenuSearchKey(e),
+			onBlur: () => setTimeout(() => {
+				if (this.disposed || !this.mentionMenu.isVisible || this.mentionMenu.searchFocused) {
+					return;
+				}
+				if (this.mentionMenu.containsFocus) {
+					// A press on a row focuses the panel's list: the field keeps the keyboard.
+					this.mentionMenu.focusSearch();
+				} else if (!this.editor.hasTextFocus()) {
+					this.closeMentionMenu();
+				}
+			}, 0),
+		};
+	}
+
+	/** Keys in the search field: Esc (or Backspace when empty) goes back, the rest drive the panel as from the composer. */
+	private handleMenuSearchKey(e: IKeyboardEvent): void {
+		const consume = () => {
+			e.preventDefault();
+			e.stopPropagation();
+		};
+		const back = e.keyCode === KeyCode.Escape || (e.keyCode === KeyCode.Backspace && !(this.filesQuery ?? this.menuQuery));
+		if (back && !e.altKey && !e.metaKey && !e.ctrlKey) {
+			consume();
+			this.menuBack();
+			return;
+		}
+		if (e.keyCode === KeyCode.Escape || e.keyCode === KeyCode.Backspace) {
+			return;
+		}
+		this.handleMenuKey(e, consume);
+		if (!this.mentionMenu.isVisible && !this.editor.hasTextFocus()) {
+			this.editor.focus();
+		}
+	}
+
+	/** Back one level: This Mac goes up a folder until it reaches home; every other view goes to the main list. */
+	private menuBack(): void {
+		const home = this.computerHome;
+		const folder = this.computerFolder;
+		if (this.menuView === 'computer' && home && folder && !isEqual(folder, home) && isEqualOrParent(folder, home)) {
+			this.openComputer(dirname(folder));
+			return;
+		}
+		this.setMenuView('root');
+	}
+
+	//#region This Mac
+
+	/** This Mac at `folder`, or at the user's home. Each folder starts with an empty search. */
+	private openComputer(folder: URI | undefined): void {
+		this.computerFolder = folder;
+		this.computerEntries = undefined;
+		if (this.menuView !== 'computer') {
+			this.setMenuView('computer');
+			return;
+		}
+		this.filesQuery = '';
+		this.paintMentionMenu();
+	}
+
+	/** Right opens the focused folder; Left goes up while the search is empty (otherwise it moves the caret). */
+	private handleComputerArrow(right: boolean, consume: () => void): boolean {
+		if (right) {
+			const row = this.mentionMenu.focusedRow;
+			if (row?.kind !== 'file' || !row.submenu) {
+				return false;
+			}
+			consume();
+			row.run();
+			return true;
+		}
+		if (this.filesQuery ?? this.menuQuery) {
+			return false;
+		}
+		consume();
+		this.menuBack();
+		return true;
+	}
+
+	/** `~/Documents` under home (a full path on Windows, where `~` means nothing). */
+	private computerLabel(folder: URI): string {
+		const inHome = this.computerHome && !isWindows ? relativePath(this.computerHome, folder) : undefined;
+		return inHome === undefined ? this.labelService.getUriLabel(folder) : inHome ? `~/${inHome}` : '~';
+	}
+
+	/** Reads the folder shown (home the first time) and repaints if the user is still there. */
+	private async loadComputerFolder(): Promise<void> {
+		const home = this.computerHome ??= await this.pathService.userHome({ preferLocal: true });
+		const folder = this.computerFolder ??= home;
+		if (this.computerLoading && isEqual(this.computerLoading, folder)) {
+			return;
+		}
+		this.computerLoading = folder;
+		let entries: readonly IComputerEntry[] | 'error';
+		try {
+			const stat = await this.fileService.resolve(folder, { resolveMetadata: false });
+			entries = (stat.children ?? []).map(child => ({ resource: child.resource, name: child.name, isDirectory: child.isDirectory }));
+		} catch {
+			entries = 'error'; // no permission (macOS asks per folder) or gone
+		}
+		if (this.computerLoading === folder) {
+			this.computerLoading = undefined;
+		}
+		if (this.disposed || this.menuView !== 'computer' || !this.mentionMenu.isVisible || !isEqual(this.computerFolder, folder)) {
+			return;
+		}
+		this.computerEntries = entries;
+		this.paintMentionMenu();
+	}
+
+	/**
+	 * Back (with the folder's path), Add this folder, then the folder's entries: Desktop, Documents and
+	 * Downloads first at home, folders before files. The search filters this folder only; dot entries
+	 * show only for a search that starts with a dot.
+	 */
+	private computerRows(query: string): AgentMentionRow[] {
+		const home = this.computerHome;
+		const folder = this.computerFolder ?? home;
+		const atHome = !folder || !home || isEqual(folder, home);
+		const rows: AgentMentionRow[] = [{
+			kind: 'item',
+			id: 'back',
+			label: localize('voltAgent.mention.back', "Back"),
+			description: folder ? this.computerLabel(folder) : THIS_MACHINE,
+			icon: Codicon.arrowLeft,
+			trailing: localize('voltAgent.mention.esc', "Esc"),
+			passive: true,
+			run: () => this.menuBack(),
+		}];
+		if (folder && !atHome && !query) {
+			rows.push({
+				kind: 'item',
+				id: 'computer:add',
+				label: localize('voltAgent.mention.addFolder', "Add {0}", basename(folder.path)),
+				description: localize('voltAgent.mention.thisFolder', "This folder"),
+				icon: Codicon.add,
+				passive: true,
+				run: () => this.pickResource({ resource: folder, kind: FileKind.FOLDER }, true),
+			});
+		}
+		const entries = this.computerEntries;
+		if (entries === undefined || entries === 'error') {
+			rows.push(this.message(entries === 'error'
+				? localize('voltAgent.mention.cannotReadFolder', "Can't read this folder")
+				: localize('voltAgent.mention.loadingFolder', "Loading...")));
+			return rows;
+		}
+		const showHidden = query.startsWith('.');
+		const rank = (entry: IComputerEntry) => {
+			const index = atHome ? HOME_FIRST.indexOf(entry.name) : -1;
+			return index < 0 ? HOME_FIRST.length : index;
+		};
+		const matched = entries
+			.filter(entry => showHidden || !entry.name.startsWith('.'))
+			.map(entry => ({ entry, labelMatches: query ? matchesFuzzy(query, entry.name, true) : undefined }))
+			.filter(item => !query || !!item.labelMatches)
+			.sort((a, b) => rank(a.entry) - rank(b.entry)
+				|| (a.entry.isDirectory !== b.entry.isDirectory ? (a.entry.isDirectory ? -1 : 1) : compareFileNamesDefault(a.entry.name, b.entry.name)));
+		if (!matched.length) {
+			rows.push(this.message(query
+				? localize('voltAgent.mention.noMatchingEntries', "Nothing here matches")
+				: localize('voltAgent.mention.emptyFolder', "Empty folder")));
+			return rows;
+		}
+		for (const { entry, labelMatches } of matched) {
+			const file: IMentionFile = { resource: entry.resource, kind: entry.isDirectory ? FileKind.FOLDER : FileKind.FILE };
+			rows.push({
+				kind: 'file',
+				id: entry.resource.toString(),
+				resource: entry.resource,
+				fileKind: file.kind,
+				labelMatches: labelMatches ?? undefined,
+				submenu: entry.isDirectory,
+				// A folder's row goes in; its hover button adds it without going in.
+				action: entry.isDirectory ? { icon: Codicon.add, title: localize('voltAgent.addToChat', "Add to Chat"), run: () => this.pickResource(file, true) } : undefined,
+				run: entry.isDirectory ? () => this.openComputer(entry.resource) : () => this.pickResource(file, true),
+			});
+		}
+		return rows;
+	}
+
+	//#endregion
 
 	//#region Slash menu
 
@@ -1809,6 +2061,12 @@ export class AgentMentionController extends Disposable {
 
 	private setMenuView(view: MentionMenuView): void {
 		this.menuView = view;
+		this.filesQuery = undefined;
+		this.focusMenuSearch = view === 'files' || view === 'computer';
+		if (this.mentionMenu.containsFocus) {
+			// Back clicked while the search field (or the list under it) had the keyboard: the panel follows the composer's @.
+			this.editor.focus();
+		}
 		const range = this.menuRange;
 		if (range && this.menuQuery) {
 			// The typed text picked the category; the sub list starts unfiltered.
@@ -1826,6 +2084,7 @@ export class AgentMentionController extends Disposable {
 			label: localize('voltAgent.mention.back', "Back"),
 			icon: Codicon.arrowLeft,
 			trailing: localize('voltAgent.mention.esc', "Esc"),
+			passive: true,
 			run: () => this.setMenuView('root'),
 		};
 		const searching = searched === undefined;
@@ -1858,6 +2117,10 @@ export class AgentMentionController extends Disposable {
 			};
 		}
 
+		if (view === 'computer') {
+			return { kind: 'list', rows: this.computerRows(query) };
+		}
+
 		if (view === 'terminals') {
 			const terminals = this.terminalRows(query);
 			return { kind: 'list', rows: [back, ...(terminals.length ? terminals : [this.message(localize('voltAgent.mention.noTerminals', "No open terminals"))])] };
@@ -1870,6 +2133,7 @@ export class AgentMentionController extends Disposable {
 
 		const categories: AgentMentionRow[] = [
 			{ kind: 'item', id: 'files', label: localize('voltAgent.mention.files', "Files & Folders"), icon: Codicon.folder, submenu: true, run: () => this.setMenuView('files') },
+			{ kind: 'item', id: 'computer', label: THIS_MACHINE, icon: Codicon.deviceDesktop, submenu: true, run: () => this.openComputer(undefined) },
 			{ kind: 'item', id: 'terminals', label: localize('voltAgent.mention.terminals', "Terminals"), icon: Codicon.terminal, submenu: true, run: () => this.setMenuView('terminals') },
 			{ kind: 'item', id: 'chats', label: localize('voltAgent.mention.chats', "Chats"), icon: Codicon.commentDiscussion, submenu: true, run: () => this.setMenuView('chats') },
 			{
@@ -2072,12 +2336,13 @@ export class AgentMentionController extends Disposable {
 		}
 	}
 
-	private pickResource(file: IMentionFile): void {
+	/** `attaching`: from outside the project (This Mac), a file is copied in like a dropped one. */
+	private pickResource(file: IMentionFile, attaching = false): void {
 		const range = this.menuRange;
 		this.menuToken = undefined;
 		this.closeMentionMenu();
 		if (range) {
-			void this.insertResource(file.resource, range, file.kind);
+			void this.insertResource(file.resource, range, file.kind, attaching);
 		}
 	}
 

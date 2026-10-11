@@ -33,7 +33,7 @@ import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../comm
 import { EditorExtensions, IEditorFactoryRegistry } from '../../../../common/editor.js';
 import { Extensions as ViewExtensions, IViewContainersRegistry, IViewsRegistry, ViewContainerLocation } from '../../../../common/views.js';
 import { getMultiSelectedResources, IExplorerService } from '../../../files/browser/files.js';
-import { ExplorerFolderContext } from '../../../files/common/files.js';
+import { ExplorerFolderContext, FilesExplorerFocusCondition } from '../../../files/common/files.js';
 import { GroupDirection, GroupsOrder, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorResolverService, RegisteredEditorPriority } from '../../../../services/editor/common/editorResolverService.js';
 import { VoltProjectCommands } from '../../../voltProjects/common/projects.js';
@@ -784,6 +784,12 @@ async function addResourcesToAgent(accessor: ServicesAccessor, resource: URI | u
 
 	const layoutService = accessor.get(IWorkbenchLayoutService);
 	const viewsService = accessor.get(IViewsService);
+	// The agent layout's chat is on screen already: adding to it must not open the agents list.
+	const onScreen = !newSession && getLayoutMode(layoutService) === 'agent' ? agentLayoutChat(accessor) : undefined;
+	if (onScreen) {
+		await onScreen.addResourceMentions(resources);
+		return;
+	}
 	revealAgentSidePanel(layoutService);
 	const view = await viewsService.openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, true);
 	if (!view) {
@@ -794,6 +800,56 @@ async function addResourcesToAgent(accessor: ServicesAccessor, resource: URI | u
 	}
 	await view.getActiveAgentEditor()?.addResourceMentions(resources);
 }
+
+/** The chat the agent layout shows, found like AgentSidePanel.getActiveAgentEditor: the active one, else the most recent. */
+function agentLayoutChat(accessor: ServicesAccessor): AgentEditor | undefined {
+	const active = accessor.get(IEditorService).activeEditorPane;
+	if (active instanceof AgentEditor) {
+		return active;
+	}
+	for (const group of accessor.get(IEditorGroupsService).getGroups(GroupsOrder.MOST_RECENTLY_ACTIVE)) {
+		if (group.activeEditorPane instanceof AgentEditor) {
+			return group.activeEditorPane;
+		}
+	}
+	return undefined;
+}
+
+const ADD_EXPLORER_SELECTION_TO_AGENT_COMMAND_ID = 'workbench.action.voltAgent.addExplorerSelectionToChat';
+
+/** Files and folders: a folder goes in as a folder mention. */
+const attachableExplorerResource = ContextKeyExpr.or(
+	ResourceContextKey.Scheme.isEqualTo(Schemas.file),
+	ResourceContextKey.Scheme.isEqualTo(Schemas.vscodeRemote)
+);
+
+registerAction2(class AddExplorerSelectionToAgentAction extends Action2 {
+	constructor() {
+		super({
+			id: ADD_EXPLORER_SELECTION_TO_AGENT_COMMAND_ID,
+			title: localize2('voltAgent.addToChat', "Add to Chat"),
+			category: Categories.View,
+			keybinding: {
+				primary: KeyMod.CtrlCmd | KeyCode.KeyL,
+				// Above Toggle Right Panel (+75) and Toggle Agents Side Bar (+70), which keep Cmd+L everywhere else.
+				weight: KeybindingWeight.WorkbenchContrib + 85,
+				when: FilesExplorerFocusCondition,
+			},
+			menu: [
+				{
+					id: MenuId.ExplorerContext,
+					group: '5_chat',
+					order: 1,
+					when: attachableExplorerResource,
+				},
+			],
+		});
+	}
+
+	override async run(accessor: ServicesAccessor, resource?: URI): Promise<void> {
+		await addResourcesToAgent(accessor, URI.isUri(resource) ? resource : undefined, false);
+	}
+});
 
 registerAction2(class AddFileToAgentAction extends Action2 {
 	constructor() {
@@ -806,14 +862,7 @@ registerAction2(class AddFileToAgentAction extends Action2 {
 				primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyMod.Shift | KeyCode.KeyA,
 				weight: KeybindingWeight.WorkbenchContrib + 50,
 			},
-			menu: [
-				{
-					id: MenuId.ExplorerContext,
-					group: '5_chat',
-					order: 2,
-					when: attachableFileResource,
-				},
-			],
+			// The Explorer's menu has Add to Chat, for files and folders.
 		});
 	}
 
