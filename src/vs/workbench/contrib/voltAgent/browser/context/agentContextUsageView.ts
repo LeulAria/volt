@@ -488,7 +488,8 @@ export class AgentContextUsageView extends Disposable {
 		const priced = summary.turns.length > summary.unpricedTurns;
 		this.sessionLabel.textContent = priced ? formatCost(summary.costUsd) : '';
 		this.sessionLabel.hidden = !priced;
-		const tokens = formatContextTokens(summary.total);
+		// A running Claude turn reports its cost before its tokens.
+		const tokens = summary.total > 0 || !summary.uncountedTurns ? formatContextTokens(summary.total) : '\u2014';
 		const detail = priced
 			? localize('voltAgent.sessionUsage.button', "Session usage: {0} tokens · {1}", tokens, formatCost(summary.costUsd))
 			: localize('voltAgent.sessionUsage.buttonTokens', "Session usage: {0} tokens", tokens);

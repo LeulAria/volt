@@ -1562,9 +1562,13 @@
 	white-space: nowrap;
 }
 
+/* A box from just right of NOW to the red block, its text ending at the block. When the block is too
+ * close to NOW for the text, `safe` lets it run on to the right instead of back across the gauge's label. */
 .volt-usage-runway-track .dry-label {
-	left: calc(var(--volt-usage-now) + (100% - var(--volt-usage-now)) * var(--volt-usage-f));
-	transform: translateX(-50%);
+	left: calc(var(--volt-usage-now) + 8px);
+	width: max(0px, calc((100% - var(--volt-usage-now)) * var(--volt-usage-f) - 3px));
+	display: flex;
+	justify-content: safe flex-end;
 }
 
 .volt-usage-runway-track .blocked {

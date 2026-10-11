@@ -1342,6 +1342,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			title,
 			...(notice.description ? { description: notice.description } : {}),
 			...(notice.resetAt !== undefined ? { resetAt: notice.resetAt } : {}),
+			...(notice.rateLimit ? { rateLimit: notice.rateLimit } : {}),
 		});
 	}
 
@@ -1796,6 +1797,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				title: notice.title,
 				...(notice.description ? { description: notice.description } : {}),
 				...(notice.resetAt !== undefined ? { resetAt: notice.resetAt } : {}),
+				...(notice.rateLimit ? { rateLimit: notice.rateLimit } : {}),
 			});
 		}
 		return events;

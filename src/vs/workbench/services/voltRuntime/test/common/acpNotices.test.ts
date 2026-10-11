@@ -54,7 +54,7 @@ suite('ACP provider notices', () => {
 			used: 10,
 			size: 200,
 			_meta: { '_claude/rateLimit': { status: 'rejected', resetsAt } },
-		}, { timeZone: 'UTC', locale: 'en-US' });
+		}, { timeZone: 'UTC', locale: 'en-US', now: Date.UTC(2026, 8, 27, 1, 0) });
 		assert.strictEqual(rejected[0]?.severity, 'error');
 		assert.strictEqual(rejected[0]?.title.replace(/\s/g, ' '), 'Usage limit reached · resets 3:20 AM');
 
@@ -74,6 +74,35 @@ suite('ACP provider notices', () => {
 				jetbrains: { air: { version: 1, sessionFailure: { severity: 'error', title } } },
 			},
 		});
-		assert.deepStrictEqual(notices, [{ severity: 'error', title }]);
+		assert.deepStrictEqual(notices, [{ severity: 'error', title, rateLimit: { status: 'rejected' } }]);
+	});
+
+	test('a usage warning says how much of the window is used, and keeps the reading', () => {
+		const now = Date.UTC(2026, 9, 11, 13, 0);
+		const resetsAt = Date.UTC(2026, 9, 11, 17, 0) / 1000;
+		const [warning] = noticesFromAcpUpdate({
+			sessionUpdate: 'usage_update',
+			used: 29_128,
+			size: 1_000_000,
+			_meta: { '_claude/rateLimit': { status: 'allowed_warning', resetsAt, rateLimitType: 'five_hour', utilization: 0.829, surpassedThreshold: 0.75, isUsingOverage: false } },
+		}, { timeZone: 'UTC', locale: 'en-US', now });
+		assert.strictEqual(warning.severity, 'warning');
+		assert.strictEqual(warning.title.replace(/\s/g, ' '), 'Usage limit warning · 82% used · resets 5:00 PM');
+		assert.strictEqual(warning.resetAt, undefined, 'a warning does not park the chat');
+		assert.deepStrictEqual(warning.rateLimit, { status: 'allowed_warning', window: 'five_hour', resetsAt: resetsAt * 1000, utilization: 0.829, threshold: 0.75 });
+
+		// A weekly window resetting on another day names the day.
+		const [weekly] = noticesFromAcpUpdate({
+			sessionUpdate: 'usage_update',
+			_meta: { '_claude/rateLimit': { status: 'allowed_warning', resetsAt: Date.UTC(2026, 9, 13, 17, 0) / 1000, rateLimitType: 'seven_day', utilization: 0.9 } },
+		}, { timeZone: 'UTC', locale: 'en-US', now });
+		assert.strictEqual(weekly.title.replace(/\s/g, ' '), 'Usage limit warning · 90% used · resets Tue 5:00 PM');
+
+		// Without a utilization figure the line stays as it was.
+		const [bare] = noticesFromAcpUpdate({
+			sessionUpdate: 'usage_update',
+			_meta: { '_claude/rateLimit': { status: 'allowed_warning', resetsAt } },
+		}, { timeZone: 'UTC', locale: 'en-US', now });
+		assert.strictEqual(bare.title.replace(/\s/g, ' '), 'Usage limit warning · resets 5:00 PM');
 	});
 });

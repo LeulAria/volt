@@ -7,7 +7,7 @@ import { isSubagentToolName } from '../../../../services/voltRuntime/common/orch
 import { sameProviderNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 import { planProposalFromArgs, PROPOSE_PLAN_TOOL_NAME } from '../../../../services/voltRuntime/common/plans.js';
-import type { IVoltToolView } from '../../../../services/voltRuntime/common/events.js';
+import type { IVoltRateLimitReading, IVoltToolView } from '../../../../services/voltRuntime/common/events.js';
 import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
 import { presentOutput, type OutputView } from '../../../../services/voltRuntime/common/harness/adaptiveOutput.js';
 import { describeHostToolActivity, hostToolCall } from './agentHostToolActivity.js';
@@ -275,7 +275,7 @@ export type AgentSegment =
 	 * Provider or harness status. `supervision` marks a run supervisor's finding (a loop, a stall,
 	 * a budget stop): the transcript draws it as a tray with actions instead of a plain line.
 	 */
-	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind; sandbox?: ISandboxDenial }
+	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind; sandbox?: ISandboxDenial; rateLimit?: IVoltRateLimitReading }
 	/** The agent compacted the conversation here: a divider while it summarizes, then what it kept. */
 	| { kind: 'compaction'; compaction: IAgentCompaction };
 
@@ -306,7 +306,7 @@ export function isCompactCommand(text: string | undefined): boolean {
 export type SupervisionKind = 'loop' | 'stall' | 'budget';
 
 /** Keep one visible provider status line. A later, more specific limit message replaces the shorter one. */
-export function appendProviderNotice(segments: AgentSegment[], notice: { severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind }): void {
+export function appendProviderNotice(segments: AgentSegment[], notice: { severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind; rateLimit?: IVoltRateLimitReading }): void {
 	const title = notice.title.trim();
 	if (!title) {
 		return;
@@ -321,7 +321,8 @@ export function appendProviderNotice(segments: AgentSegment[], notice: { severit
 		if (segment.kind !== 'notice' || !sameProviderNotice(segment.title, title)) {
 			continue;
 		}
-		if (title.length >= segment.title.length) {
+		// A newer usage reading replaces the older one even when its line is shorter ("9% used" after "85% used").
+		if (title.length >= segment.title.length || (notice.rateLimit && segment.rateLimit)) {
 			segment.title = title;
 			segment.severity = notice.severity;
 			segment.description = description;
@@ -329,9 +330,65 @@ export function appendProviderNotice(segments: AgentSegment[], notice: { severit
 		if (notice.supervision) {
 			segment.supervision = notice.supervision;
 		}
+		if (notice.rateLimit) {
+			segment.rateLimit = notice.rateLimit;
+		}
 		return;
 	}
-	segments.push({ kind: 'notice', severity: notice.severity, title, ...(description ? { description } : {}), ...(notice.supervision ? { supervision: notice.supervision } : {}) });
+	segments.push({ kind: 'notice', severity: notice.severity, title, ...(description ? { description } : {}), ...(notice.supervision ? { supervision: notice.supervision } : {}), ...(notice.rateLimit ? { rateLimit: notice.rateLimit } : {}) });
+}
+
+/** Warning steps of a usage window (share used): a chat shows the warning again only past a higher one. */
+const LIMIT_WARNING_STEPS = [0.5, 0.75, 0.9, 0.95];
+
+function limitWarningStep(reading: IVoltRateLimitReading): number {
+	const share = Math.max(reading.utilization ?? 0, reading.threshold ?? 0);
+	return LIMIT_WARNING_STEPS.filter(step => share >= step).length;
+}
+
+/** Two readings of the same window: same kind, same reset (Claude's reset times jitter by a second or so). */
+function sameLimitWindow(a: IVoltRateLimitReading, b: IVoltRateLimitReading): boolean {
+	if (a.window !== b.window) {
+		return false;
+	}
+	if (a.resetsAt === undefined || b.resetsAt === undefined) {
+		return a.resetsAt === b.resetsAt;
+	}
+	return Math.abs(a.resetsAt - b.resetsAt) < 60_000;
+}
+
+/**
+ * Whether a usage-limit warning is news for the chat. Claude repeats its rate-limit status on
+ * every turn: show it once per limit window, and again when the window passes a higher step or the
+ * status gets worse. A refusal (the limit was hit) is always news.
+ */
+export function isNewLimitWarning(next: IVoltRateLimitReading, segmentLists: Iterable<readonly AgentSegment[]>): boolean {
+	if (next.status === 'rejected') {
+		return true;
+	}
+	for (const segments of segmentLists) {
+		for (let i = segments.length - 1; i >= 0; i--) {
+			const segment = segments[i];
+			if (segment.kind !== 'notice' || !segment.rateLimit || !sameLimitWindow(segment.rateLimit, next)) {
+				continue;
+			}
+			// The newest reading shown for this window decides.
+			return segment.rateLimit.status !== 'rejected' && limitWarningStep(next) > limitWarningStep(segment.rateLimit);
+		}
+	}
+	return true;
+}
+
+/** A repeat reading of a window this reply already warns about: its line keeps the latest figure instead of adding one. */
+export function refreshLimitWarning(segments: AgentSegment[], title: string, next: IVoltRateLimitReading): void {
+	for (let i = segments.length - 1; i >= 0; i--) {
+		const segment = segments[i];
+		if (segment.kind === 'notice' && segment.severity !== 'error' && segment.rateLimit && sameLimitWindow(segment.rateLimit, next)) {
+			segment.title = title.trim() || segment.title;
+			segment.rateLimit = next;
+			return;
+		}
+	}
 }
 
 /** Each refusal keeps its own row: it names a different path or host, so it is never merged. */
@@ -351,7 +408,7 @@ export function workCountsForSegments(segments: readonly AgentSegment[]): IWorkC
 			const block = segment.block;
 			if (block.type === 'terminal') {
 				commands++;
-			} else if (block.type === 'file') {
+			} else if (block.type === 'file' && !isPhantomFileBlock(block)) {
 				files.add(block.path);
 			} else if (block.type === 'tool' && /\b(task|subagent|delegate|spawn)\b/i.test(block.name)) {
 				subagents++;
@@ -1307,6 +1364,10 @@ export function isExploreTool(name: string, title?: string, kind?: ToolKind): bo
 	if (isSubagentToolName(name, title)) {
 		return false;
 	}
+	// Volt's own tools (canvas_update, memory_write, ...) get their activity rows, whatever their name says.
+	if (voltHostToolName(name, title)) {
+		return true;
+	}
 	if (kind === 'read' || kind === 'search' || kind === 'fetch' || kind === 'browser' || kind === 'think') {
 		return true;
 	}
@@ -1322,6 +1383,10 @@ export function isExploreTool(name: string, title?: string, kind?: ToolKind): bo
 }
 
 export function isFileChangeTool(name: string, title?: string, kind?: ToolKind): boolean {
+	// "mcp__volt__canvas_update" says update, but it edits a canvas, not a file.
+	if (voltHostToolName(name, title)) {
+		return false;
+	}
 	if (kind === 'edit') {
 		return true;
 	}
@@ -1330,6 +1395,14 @@ export function isFileChangeTool(name: string, title?: string, kind?: ToolKind):
 	}
 	const s = `${name} ${title ?? ''}`.toLowerCase().replace(/[_-]+/g, ' ');
 	return MUTATING_TOOL_RE.test(s);
+}
+
+/**
+ * A file block that is no file: older chats recorded Volt's own tools as edits (the path was the
+ * tool's name, or a stray "}" guessed from its output).
+ */
+export function isPhantomFileBlock(block: IFileChangeBlock): boolean {
+	return !/[\p{L}\p{N}]/u.test(block.path) || !!voltHostToolName(block.path);
 }
 
 export function isHiddenExploreToolBlock(block: AgentBlock): boolean {

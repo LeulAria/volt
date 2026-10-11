@@ -47,6 +47,33 @@ suite('Agent session usage', () => {
 		assert.ok(Math.abs(summary.costUsd - (listCost + 0.5)) < 1e-12);
 	});
 
+	test('a running Claude turn has a cost before its tokens, and counts that miss most of the cost are flagged', () => {
+		const opus = { ref: 'claude:opus', id: 'claude-opus-5', label: 'Opus 5' };
+		const running: ISessionUsageMessage[] = [
+			{ kind: 'user', id: 't1', text: 'Explore' },
+			{ kind: 'agent', id: 't1', model: opus, costUsd: 5.29, activity: { streaming: true } },
+		];
+		const live = buildSessionUsage(running, { rates });
+		assert.strictEqual(live.turns.length, 1);
+		assert.strictEqual(live.running, true);
+		assert.strictEqual(live.uncountedTurns, 1);
+		assert.deepStrictEqual([live.turns[0].running, live.turns[0].uncounted, live.turns[0].partial], [true, true, false]);
+		assert.strictEqual(live.costUsd, 5.29);
+
+		// It ended: the main loop's counts price at a few cents of the $6.83 (background subagents report cost only).
+		const ended: ISessionUsageMessage[] = [
+			{ kind: 'user', id: 't1', text: 'Explore' },
+			{ kind: 'agent', id: 't1', model: opus, costUsd: 6.83, spend: { input: 4, output: 1601, cacheRead: 44_653, cacheWrite: 20_157 }, activity: { streaming: false } },
+			{ kind: 'user', id: 't2', text: 'Next' },
+			{ kind: 'agent', id: 't2', model: opus, costUsd: 0.2, spend: { input: 6, output: 287, cacheRead: 32_044, cacheWrite: 30_709 } },
+		];
+		const done = buildSessionUsage(ended, { rates });
+		assert.strictEqual(done.running, false);
+		assert.deepStrictEqual(done.turns.map(turn => turn.partial), [true, false]);
+		assert.strictEqual(done.partialTurns, 1);
+		assert.strictEqual(done.uncountedTurns, 0);
+	});
+
 	test('replies recorded before turns kept their model count under the chat model, from their last usage report', () => {
 		const messages: ISessionUsageMessage[] = [
 			{ kind: 'user', id: 't1', text: 'hi' },

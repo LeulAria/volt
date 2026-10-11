@@ -9,6 +9,8 @@
  * instead of treating the turn as empty or as a dead process.
  */
 
+import type { IVoltRateLimitReading } from './events.js';
+
 export type AcpNoticeSeverity = 'info' | 'warning' | 'error';
 
 export interface IAcpNotice {
@@ -17,11 +19,15 @@ export interface IAcpNotice {
 	readonly description?: string;
 	/** When a usage limit resets (epoch ms), from the provider's rate-limit payload. */
 	readonly resetAt?: number;
+	/** The structured reading behind a usage-limit line. */
+	readonly rateLimit?: IVoltRateLimitReading;
 }
 
 export interface IAcpNoticeOptions {
 	readonly timeZone?: string;
 	readonly locale?: string;
+	/** For tests: a reset on another day names the day. */
+	readonly now?: number;
 }
 
 const HANDLED_UPDATES = new Set([
@@ -177,21 +183,54 @@ function rateLimitNotice(meta: unknown, options?: IAcpNoticeOptions): IAcpNotice
 	const message = readString(info.message) ?? readString(info.title);
 	// The exact reset, for limit recovery; only a refusal parks the chat.
 	const resetAt = status === 'rejected' ? resetEpoch(info.resetsAt ?? info.resets_at) : undefined;
+	const reading = rateLimitReading(info, status);
 	if (message) {
 		if (status === 'allowed' && !LIMIT_FAMILY.test(message)) {
 			return undefined;
 		}
 		const severity: AcpNoticeSeverity = status === 'rejected' || LIMIT_FAMILY.test(message) ? 'error' : 'warning';
-		return withReset(notice(severity, message, readString(info.description)), resetAt);
+		return withReading(withReset(notice(severity, message, readString(info.description)), resetAt), reading);
 	}
 	if (status !== 'rejected' && status !== 'allowed_warning') {
 		return undefined;
 	}
 	const resets = formatReset(info.resetsAt ?? info.resets_at, options);
-	const title = status === 'rejected'
-		? (resets ? `Usage limit reached · resets ${resets}` : 'Usage limit reached')
-		: (resets ? `Usage limit warning · resets ${resets}` : 'Usage limit warning');
-	return withReset(notice(status === 'rejected' ? 'error' : 'warning', title), resetAt);
+	// Claude's `utilization` is a share (0.82); the CLI floors it to a percent the same way.
+	const used = reading?.utilization !== undefined ? `${Math.floor(reading.utilization * 100)}% used` : undefined;
+	const head = status === 'rejected' ? 'Usage limit reached' : 'Usage limit warning';
+	const title = [head, used, resets ? `resets ${resets}` : undefined].filter(Boolean).join(' · ');
+	return withReading(withReset(notice(status === 'rejected' ? 'error' : 'warning', title), resetAt), reading);
+}
+
+/** Claude's `rate_limit_info`, kept beside the notice so the chat can show a warning once per window. */
+function rateLimitReading(info: Record<string, unknown>, status: string | undefined): IVoltRateLimitReading | undefined {
+	if (status !== 'allowed' && status !== 'allowed_warning' && status !== 'rejected') {
+		return undefined;
+	}
+	const window = readString(info.rateLimitType) ?? readString(info.rate_limit_type);
+	const resetsAt = resetEpoch(info.resetsAt ?? info.resets_at);
+	const utilization = readShare(info.utilization);
+	const threshold = readShare(info.surpassedThreshold ?? info.surpassed_threshold);
+	return {
+		status,
+		...(window ? { window } : {}),
+		...(resetsAt !== undefined ? { resetsAt } : {}),
+		...(utilization !== undefined ? { utilization } : {}),
+		...(threshold !== undefined ? { threshold } : {}),
+	};
+}
+
+/** A 0-1 share; a figure over 1.5 is taken as a percent already. */
+function readShare(value: unknown): number | undefined {
+	const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN;
+	if (!Number.isFinite(n) || n < 0) {
+		return undefined;
+	}
+	return n > 1.5 ? n / 100 : n;
+}
+
+function withReading(value: IAcpNotice, reading: IVoltRateLimitReading | undefined): IAcpNotice {
+	return reading ? { ...value, rateLimit: reading } : value;
 }
 
 /**
@@ -256,7 +295,11 @@ function formatReset(value: unknown, options?: IAcpNoticeOptions): string | unde
 	if (Number.isNaN(date.getTime())) {
 		return undefined;
 	}
+	// A weekly window can reset days from now: "resets 5:00 PM" alone would read as today.
+	const day = (at: Date) => new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: options?.timeZone }).format(at);
+	const otherDay = day(date) !== day(new Date(options?.now ?? Date.now()));
 	return new Intl.DateTimeFormat(options?.locale, {
+		...(otherDay ? { weekday: 'short' } : {}),
 		hour: 'numeric',
 		minute: '2-digit',
 		hour12: true,
@@ -303,8 +346,8 @@ function dedupe(notices: readonly IAcpNotice[]): IAcpNotice[] {
 			continue;
 		}
 		const longer = item.title.length > kept[match].title.length ? item : kept[match];
-		// The wording comes from the longer notice; a reset time from either.
-		kept[match] = withReset(longer, longer.resetAt ?? item.resetAt ?? kept[match].resetAt);
+		// The wording comes from the longer notice; a reset time and a reading from either.
+		kept[match] = withReading(withReset(longer, longer.resetAt ?? item.resetAt ?? kept[match].resetAt), longer.rateLimit ?? item.rateLimit ?? kept[match].rateLimit);
 	}
 	return kept;
 }

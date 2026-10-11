@@ -41,10 +41,11 @@ export interface ISessionUsagePanelHost {
  */
 export class AgentSessionUsagePanel extends Disposable {
 
-	private readonly heroCost: HTMLElement;
-	private readonly heroCostNote: HTMLElement;
-	private readonly heroTokens: HTMLElement;
-	private readonly heroTokensNote: HTMLElement;
+	/** The big figure is the metric the toggle shows; the small one at the end is the other. */
+	private readonly heroMain: HTMLElement;
+	private readonly heroMainNote: HTMLElement;
+	private readonly heroSide: HTMLElement;
+	private readonly heroSideNote: HTMLElement;
 	private readonly metricButtons = new Map<SessionMetric, HTMLButtonElement>();
 	private readonly chart: HTMLElement;
 	private readonly chartMax: HTMLElement;
@@ -83,12 +84,12 @@ export class AgentSessionUsagePanel extends Disposable {
 		}));
 
 		const hero = append(panel, $('.volt-session-usage-hero'));
-		const costStat = append(hero, $('.stat'));
-		this.heroCost = append(costStat, $('span.value'));
-		this.heroCostNote = append(costStat, $('span.note'));
-		const tokenStat = append(hero, $('.stat.end'));
-		this.heroTokens = append(tokenStat, $('span.value'));
-		this.heroTokensNote = append(tokenStat, $('span.note'));
+		const mainStat = append(hero, $('.stat'));
+		this.heroMain = append(mainStat, $('span.value'));
+		this.heroMainNote = append(mainStat, $('span.note'));
+		const sideStat = append(hero, $('.stat.end'));
+		this.heroSide = append(sideStat, $('span.value'));
+		this.heroSideNote = append(sideStat, $('span.note'));
 
 		const toolbar = append(panel, $('.volt-session-usage-toolbar'));
 		append(toolbar, $('span.caption')).textContent = localize('voltAgent.sessionUsage.perTurn', "Per turn");
@@ -140,16 +141,30 @@ export class AgentSessionUsagePanel extends Disposable {
 			return;
 		}
 		const priced = summary.turns.length - summary.unpricedTurns;
-		this.heroCost.textContent = priced ? formatCost(summary.costUsd) : '\u2014';
-		this.heroCostNote.textContent = !priced
+		const cost = priced ? formatCost(summary.costUsd) : '\u2014';
+		const costNote = !priced
 			? localize('voltAgent.sessionUsage.noPrice', "No price known")
-			: summary.reportedTurns === summary.turns.length
-				? localize('voltAgent.sessionUsage.reported', "Cost reported by the agent")
-				: localize('voltAgent.sessionUsage.estimated', "Estimated cost");
-		this.heroTokens.textContent = formatContextTokens(summary.total);
-		this.heroTokensNote.textContent = summary.turns.length === 1
+			: summary.running
+				? localize('voltAgent.sessionUsage.costSoFar', "Cost so far")
+				: summary.reportedTurns === summary.turns.length
+					? localize('voltAgent.sessionUsage.reported', "Cost reported by the agent")
+					: localize('voltAgent.sessionUsage.estimated', "Estimated cost");
+		// Claude counts a turn's tokens when it ends: until then a dash, not a zero.
+		const pending = summary.turns.some(turn => turn.running && turn.uncounted);
+		const tokens = summary.total > 0 || !summary.uncountedTurns ? formatContextTokens(summary.total) : '\u2014';
+		const turns = summary.turns.length === 1
 			? localize('voltAgent.sessionUsage.oneTurn', "Tokens · 1 turn")
 			: localize('voltAgent.sessionUsage.turns', "Tokens · {0} turns", summary.turns.length);
+		const tokensNote = !pending
+			? turns
+			: summary.total > 0
+				? localize('voltAgent.sessionUsage.tokensSoFar', "Tokens so far · running turn counted when it ends")
+				: localize('voltAgent.sessionUsage.tokensAtEnd', "Tokens counted when the turn ends");
+		const [main, mainNote, side, sideNote] = this.metric === 'cost' ? [cost, costNote, tokens, tokensNote] : [tokens, tokensNote, cost, costNote];
+		this.heroMain.textContent = main;
+		this.heroMainNote.textContent = mainNote;
+		this.heroSide.textContent = side;
+		this.heroSideNote.textContent = sideNote;
 
 		for (const [metric, button] of this.metricButtons) {
 			button.classList.toggle('active', metric === this.metric);
@@ -165,6 +180,15 @@ export class AgentSessionUsagePanel extends Disposable {
 			notes.push(localize('voltAgent.sessionUsage.mixed', "Agent-reported cost where given, list prices otherwise."));
 		} else if (summary.reportedTurns === 0 && priced > 0) {
 			notes.push(localize('voltAgent.sessionUsage.listPrices', "At public API list prices; subscriptions bill differently."));
+		}
+		if (summary.partialTurns > 0) {
+			notes.push(localize('voltAgent.sessionUsage.partial', "Some turns cost more than their counted tokens: the agent reports the cost of background subagents but not their tokens."));
+		}
+		const stoppedUncounted = summary.turns.filter(turn => turn.uncounted && !turn.running).length;
+		if (stoppedUncounted > 0) {
+			notes.push(stoppedUncounted === 1
+				? localize('voltAgent.sessionUsage.uncountedOne', "1 turn ended before the agent counted its tokens.")
+				: localize('voltAgent.sessionUsage.uncounted', "{0} turns ended before the agent counted their tokens.", stoppedUncounted));
 		}
 		if (summary.unpricedTurns > 0) {
 			notes.push(summary.unpricedTurns === 1
@@ -193,7 +217,8 @@ export class AgentSessionUsagePanel extends Disposable {
 		this.columns.classList.toggle('many', summary.turns.length > 16 && summary.turns.length <= 40);
 		summary.turns.forEach((turn, at) => {
 			const column = append(this.columns, $('.column'));
-			column.classList.toggle('unpriced', this.metric === 'cost' && turn.costUsd === undefined);
+			column.classList.toggle('unpriced', this.metric === 'cost' ? turn.costUsd === undefined : turn.uncounted);
+			column.classList.toggle('running', turn.running);
 			column.setAttribute('role', 'button');
 			column.tabIndex = -1;
 			column.setAttribute('aria-label', localize('voltAgent.sessionUsage.turnLabel', "Turn {0}, {1}, {2}", turn.index, turn.modelLabel, this.format(this.value(turn))));
@@ -261,9 +286,13 @@ export class AgentSessionUsagePanel extends Disposable {
 			const line = append(this.readout, $('.line'));
 			append(line, $('span.turn')).textContent = localize('voltAgent.sessionUsage.turn', "Turn {0}", turn.index);
 			append(line, $('span.model')).textContent = turn.modelLabel;
-			append(line, $('span.figure')).textContent = turn.costUsd !== undefined
-				? localize('voltAgent.sessionUsage.turnFigure', "{0} tokens · {1}", formatContextTokens(turn.total), formatCost(turn.costUsd))
-				: localize('voltAgent.sessionUsage.turnTokens', "{0} tokens", formatContextTokens(turn.total));
+			append(line, $('span.figure')).textContent = turn.uncounted && turn.costUsd !== undefined
+				? (turn.running
+					? localize('voltAgent.sessionUsage.turnRunning', "{0} so far · tokens when it ends", formatCost(turn.costUsd))
+					: localize('voltAgent.sessionUsage.turnUncounted', "{0} · tokens not reported", formatCost(turn.costUsd)))
+				: turn.costUsd !== undefined
+					? localize('voltAgent.sessionUsage.turnFigure', "{0} tokens · {1}", formatContextTokens(turn.total), formatCost(turn.costUsd))
+					: localize('voltAgent.sessionUsage.turnTokens', "{0} tokens", formatContextTokens(turn.total));
 			append(this.readout, $('.prompt')).textContent = turn.prompt || '\u00a0';
 		} else {
 			append(this.readout, $('.hint')).textContent = summary.turns.length
@@ -276,6 +305,8 @@ export class AgentSessionUsagePanel extends Disposable {
 			: localize('voltAgent.sessionUsage.breakdown', "By token type");
 		const tokens = turn ? turn.tokens : summary.tokens;
 		const costs = turn ? turn.costByKind : summary.costByKind;
+		// Nothing counted yet: dashes, not a row of zeros.
+		const uncounted = turn ? turn.uncounted : summary.total <= 0 && summary.uncountedTurns > 0;
 		this.detailStore.clear();
 		this.breakdown.replaceChildren();
 		for (const kind of SESSION_SPEND_KINDS) {
@@ -283,7 +314,7 @@ export class AgentSessionUsagePanel extends Disposable {
 			row.classList.toggle('active', this.hoveredKind === kind);
 			append(row, $(`span.swatch.${KIND_CLASSES[kind]}`));
 			append(row, $('span.label')).textContent = KIND_LABELS[kind];
-			append(row, $('span.count')).textContent = formatContextTokens(tokens[kind]);
+			append(row, $('span.count')).textContent = uncounted ? '\u2014' : formatContextTokens(tokens[kind]);
 			append(row, $('span.cost')).textContent = costs && costs[kind] > 0 ? formatCost(costs[kind]) : '\u2014';
 			this.detailStore.add(addDisposableListener(row, 'mouseenter', () => {
 				this.hoveredKind = kind;
@@ -310,7 +341,7 @@ export class AgentSessionUsagePanel extends Disposable {
 			append(top, $('span.meta')).textContent = model.turns === 1
 				? localize('voltAgent.sessionUsage.modelOneTurn', "1 turn")
 				: localize('voltAgent.sessionUsage.modelTurns', "{0} turns", model.turns);
-			append(top, $('span.count')).textContent = formatContextTokens(model.total);
+			append(top, $('span.count')).textContent = model.total > 0 ? formatContextTokens(model.total) : '\u2014';
 			append(top, $('span.cost')).textContent = model.unpricedTurns === model.turns ? '\u2014' : formatCost(model.costUsd);
 			const track = append(row, $('.share'));
 			const part = this.metric === 'cost' ? model.costUsd : model.total;

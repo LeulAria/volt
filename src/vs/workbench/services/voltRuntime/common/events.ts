@@ -14,6 +14,27 @@ import type { IVoltVisualRef } from './hostTools.js';
 import { VoltMode } from './modes.js';
 import type { IAgentAnsweredQuestion, IAgentQuestionRequest, IAgentQuestionResponse } from './questions.js';
 
+/** Tokens by kind, every model call summed. `input` is uncached prompt tokens. */
+export interface IVoltBilledTokens {
+	readonly input: number;
+	readonly output: number;
+	readonly cacheRead: number;
+	readonly cacheWrite: number;
+}
+
+/** A provider's usage-limit reading (Claude's `rate_limit_info`). */
+export interface IVoltRateLimitReading {
+	readonly status: 'allowed' | 'allowed_warning' | 'rejected';
+	/** The limit window: `five_hour`, `seven_day`, `seven_day_opus`, `overage`, … */
+	readonly window?: string;
+	/** When the window resets, epoch ms. */
+	readonly resetsAt?: number;
+	/** Share of the window used, 0-1. */
+	readonly utilization?: number;
+	/** The warning threshold the window passed, 0-1. */
+	readonly threshold?: number;
+}
+
 /** DeepSeek tool card. The editor picks a Volt block from this instead of the tool name. */
 export type IVoltToolCard = 'generic' | 'terminal' | 'diff' | 'search' | 'read' | 'web';
 
@@ -91,8 +112,11 @@ export type IVoltEvent =
 	 * `input` is uncached prompt tokens, `cache` is prompt tokens read from the provider cache,
 	 * and `cacheWrite` is prompt tokens written to it. `used` is the whole prompt the model saw.
 	 * `costUsd` is the agent's own running total for its session (Claude's ACP `usage_update.cost`).
+	 * `billed` is what the turn was billed for across every model call, subagents and internal
+	 * calls included (Claude's prompt-response `_meta.quota.model_usage`), when that is more than
+	 * the main loop's `input`/`output`/`cache`.
 	 */
-	| { type: 'usage'; input: number; output: number; used?: number; cache?: number; cacheWrite?: number; size?: number; costUsd?: number }
+	| { type: 'usage'; input: number; output: number; used?: number; cache?: number; cacheWrite?: number; size?: number; costUsd?: number; billed?: IVoltBilledTokens }
 	/**
 	 * The agent compacted the conversation (`/compact`, or on its own near the end of the window).
 	 * Later events with the same `id` patch the first: an absent field keeps its value. `preTokens`
@@ -112,7 +136,8 @@ export type IVoltEvent =
 	| { type: 'error'; message: string; retryable?: boolean }
 	/** Provider status that is not assistant prose: usage limits, retries, and other ACP notices. */
 	/** `resetAt`: when a usage limit resets (epoch ms), from the provider's structured rate-limit data. */
-	| { type: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; resetAt?: number }
+	/** `rateLimit`: the structured reading behind a usage-limit line, so a chat shows a warning once per window. */
+	| { type: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; resetAt?: number; rateLimit?: IVoltRateLimitReading }
 	/** The chat's OS sandbox stopped something the agent tried (a write outside the workspace, a host while network is off). */
 	| { type: 'sandbox.denial'; denial: ISandboxDenial }
 	/** A memory was saved, read or deleted through Volt's memory tools: the transcript shows a recall chip. */

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IVoltEvent } from './events.js';
+import { IVoltBilledTokens, IVoltEvent } from './events.js';
 
 export type IVoltUsageEvent = Extract<IVoltEvent, { type: 'usage' }>;
 
@@ -30,6 +30,8 @@ export function parseTokenUsage(raw: unknown): IVoltUsageEvent | undefined {
 	const resolvedOutput = output ?? (total !== undefined ? Math.max(0, total - resolvedInput) : 0);
 	const cache = readTokenCount(usage.cachedReadTokens ?? usage.cached_read_tokens ?? usage.cacheReadTokens ?? usage.cache);
 	const cacheWrite = readTokenCount(usage.cachedWriteTokens ?? usage.cached_write_tokens ?? usage.cacheWriteTokens);
+	const billed = readBilledTokens(o._meta);
+	const own = resolvedInput + resolvedOutput + (cache ?? 0) + (cacheWrite ?? 0);
 	return {
 		type: 'usage',
 		input: resolvedInput,
@@ -39,7 +41,34 @@ export function parseTokenUsage(raw: unknown): IVoltUsageEvent | undefined {
 		...(cache !== undefined ? { cache } : {}),
 		...(cacheWrite !== undefined ? { cacheWrite } : {}),
 		...(costUsd !== undefined ? { costUsd } : {}),
+		...(billed && billed.input + billed.output + billed.cacheRead + billed.cacheWrite > own ? { billed } : {}),
 	};
+}
+
+/**
+ * claude-agent-acp's prompt response: `usage` counts the main agent loop only, while
+ * `_meta.quota.model_usage` rows (one per model) also count Task subagents, compaction and
+ * internal calls. Their sum is what the turn was billed for.
+ */
+function readBilledTokens(meta: unknown): IVoltBilledTokens | undefined {
+	const quota = meta && typeof meta === 'object' ? (meta as { quota?: unknown }).quota : undefined;
+	const rows = quota && typeof quota === 'object' ? (quota as { model_usage?: unknown }).model_usage : undefined;
+	if (!Array.isArray(rows) || !rows.length) {
+		return undefined;
+	}
+	const billed = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+	for (const row of rows) {
+		const tally = row && typeof row === 'object' ? (row as { token_count?: unknown }).token_count : undefined;
+		if (!tally || typeof tally !== 'object') {
+			continue;
+		}
+		const t = tally as Record<string, unknown>;
+		billed.input += readTokenCount(t.inputTokens) ?? 0;
+		billed.output += readTokenCount(t.outputTokens) ?? 0;
+		billed.cacheRead += readTokenCount(t.cachedInputTokens) ?? 0;
+		billed.cacheWrite += readTokenCount(t.cachedWriteTokens) ?? 0;
+	}
+	return billed;
 }
 
 /** ACP's `cost: { amount, currency }`, in US dollars only. */

@@ -37,6 +37,8 @@ export interface ISessionUsageMessage {
 	readonly tokensCache?: number;
 	readonly costUsd?: number;
 	readonly durationMs?: number;
+	/** `streaming` while the reply's run is still going. */
+	readonly activity?: { readonly streaming: boolean };
 }
 
 export interface ISessionUsageOptions {
@@ -65,6 +67,15 @@ export interface ISessionUsageTurn {
 	/** The agent reported the cost; otherwise it is a list-price estimate. */
 	readonly reported: boolean;
 	readonly durationMs?: number;
+	/** The run is still going: Claude reports cost as it goes but token counts only when the turn ends. */
+	readonly running: boolean;
+	/** A cost without token counts (still running, or stopped before the agent counted them). */
+	readonly uncounted: boolean;
+	/**
+	 * The counted tokens price at well under the reported cost: the agent left calls out of its
+	 * counts (Claude reports background subagents' cost but not their tokens).
+	 */
+	readonly partial: boolean;
 }
 
 export interface ISessionUsageModelRow {
@@ -88,7 +99,20 @@ export interface ISessionUsageSummary {
 	readonly costByKind: SessionSpend;
 	readonly unpricedTurns: number;
 	readonly reportedTurns: number;
+	/** A turn is still running: the totals are so far. */
+	readonly running: boolean;
+	/** Turns with a cost but no token counts. */
+	readonly uncountedTurns: number;
+	/** Turns whose token counts miss part of their reported cost. */
+	readonly partialTurns: number;
 }
+
+/**
+ * Counted tokens at list price under this share of the reported cost mark a turn's counts partial.
+ * Complete Claude turns price at 0.4-0.8 of what the CLI reports (its rates and 1h cache writes run
+ * above the list table); a turn whose background subagents went uncounted priced at 0.02.
+ */
+const PARTIAL_COVERAGE = 0.25;
 
 export function emptySpend(): SessionSpend {
 	return { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
@@ -121,7 +145,7 @@ function promptLine(text: string | undefined): string {
 }
 
 /** A reported cost wins; list rates then only split it by token kind. */
-function priceTurn(tokens: SessionSpend, rates: IVoltTokenRates | undefined, reported: number | undefined): { costUsd?: number; costByKind?: SessionSpend } {
+function priceTurn(tokens: SessionSpend, rates: IVoltTokenRates | undefined, reported: number | undefined): { costUsd?: number; costByKind?: SessionSpend; listCost?: number } {
 	const list = rates ? { input: tokens.input * rates.input, cacheRead: tokens.cacheRead * rates.cacheRead, cacheWrite: tokens.cacheWrite * rates.cacheWrite, output: tokens.output * rates.output } : undefined;
 	const listCost = list ? spendTotal(list) : 0;
 	if (reported !== undefined) {
@@ -129,9 +153,9 @@ function priceTurn(tokens: SessionSpend, rates: IVoltTokenRates | undefined, rep
 			return { costUsd: reported };
 		}
 		const scale = reported / listCost;
-		return { costUsd: reported, costByKind: { input: list.input * scale, cacheRead: list.cacheRead * scale, cacheWrite: list.cacheWrite * scale, output: list.output * scale } };
+		return { costUsd: reported, costByKind: { input: list.input * scale, cacheRead: list.cacheRead * scale, cacheWrite: list.cacheWrite * scale, output: list.output * scale }, listCost };
 	}
-	return list ? { costUsd: listCost, costByKind: list } : {};
+	return list ? { costUsd: listCost, costByKind: list, listCost } : {};
 }
 
 export function buildSessionUsage(messages: readonly ISessionUsageMessage[], options: ISessionUsageOptions): ISessionUsageSummary {
@@ -142,6 +166,9 @@ export function buildSessionUsage(messages: readonly ISessionUsageMessage[], opt
 	let costUsd = 0;
 	let unpricedTurns = 0;
 	let reportedTurns = 0;
+	let uncountedTurns = 0;
+	let partialTurns = 0;
+	let anyRunning = false;
 	let prompts = 0;
 	let prompt: ISessionUsageMessage | undefined;
 
@@ -161,7 +188,9 @@ export function buildSessionUsage(messages: readonly ISessionUsageMessage[], opt
 		const modelId = ref?.id ?? today?.id;
 		const modelKey = ref?.ref ?? 'unknown';
 		const modelLabel = ref?.label ?? today?.label ?? modelId ?? 'Unknown model';
-		const price = priceTurn(spent, modelId ? options.rates(modelId) : undefined, reported);
+		const { listCost, ...price } = priceTurn(spent, modelId ? options.rates(modelId) : undefined, reported);
+		const running = !!message.activity?.streaming;
+		const total = spendTotal(spent);
 		const turn: ISessionUsageTurn = {
 			index: Math.max(prompts, 1),
 			turnId: message.id ?? prompt?.id,
@@ -169,12 +198,23 @@ export function buildSessionUsage(messages: readonly ISessionUsageMessage[], opt
 			modelKey,
 			modelLabel,
 			tokens: spent,
-			total: spendTotal(spent),
+			total,
 			...price,
 			reported: reported !== undefined,
 			...(message.durationMs !== undefined ? { durationMs: message.durationMs } : {}),
+			running,
+			uncounted: total <= 0,
+			// Not while running: mid-turn Claude has reported the cost so far but none of the tokens yet.
+			partial: !running && total > 0 && reported !== undefined && listCost !== undefined && listCost < reported * PARTIAL_COVERAGE,
 		};
 		turns.push(turn);
+		anyRunning ||= running;
+		if (turn.uncounted) {
+			uncountedTurns++;
+		}
+		if (turn.partial) {
+			partialTurns++;
+		}
 
 		addSpend(tokens, spent);
 		if (turn.costUsd !== undefined) {
@@ -205,7 +245,7 @@ export function buildSessionUsage(messages: readonly ISessionUsageMessage[], opt
 	const modelRows = [...models.values()]
 		.map(row => ({ ...row, total: spendTotal(row.tokens) }))
 		.sort((a, b) => b.costUsd - a.costUsd || b.total - a.total);
-	return { turns, models: modelRows, tokens, total: spendTotal(tokens), costUsd, costByKind, unpricedTurns, reportedTurns };
+	return { turns, models: modelRows, tokens, total: spendTotal(tokens), costUsd, costByKind, unpricedTurns, reportedTurns, running: anyRunning, uncountedTurns, partialTurns };
 }
 
 /** The model ids whose prices the summary needs. */

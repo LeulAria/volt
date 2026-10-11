@@ -20,6 +20,9 @@ const DAY_MS = 24 * HOUR_MS;
 /** How far right of "now" the timeline reaches. Resets further out get an arrow at the edge. */
 const HORIZON_MS = 7 * DAY_MS;
 
+/** A reset sooner than this share of the horizon sits too close to NOW for its label beside "Limit reached". */
+const MERGED_RESET_FRACTION = 0.3;
+
 export interface IRunwayStyle {
 	label(provider: VoltUsageProvider): string;
 	color(provider: VoltUsageProvider): string;
@@ -256,9 +259,13 @@ function renderLane(parent: HTMLElement, lane: IRunwayLane, style: IRunwayStyle,
 		burn.classList.toggle('full', full);
 		atFuture(burn, emptyIn !== undefined ? emptyIn / HORIZON_MS : resetAt);
 	}
+	// A reset right after NOW would land its label on top of "Limit reached": one label says both.
+	const mergedReset = full && resetAt < MERGED_RESET_FRACTION && resetIn <= HORIZON_MS;
 	if (full) {
 		const blocked = append(track, $('span.blocked'));
-		blocked.textContent = localize('voltUsage.limitReached', "Limit reached");
+		blocked.textContent = mergedReset
+			? localize('voltUsage.limitReachedResets', "Limit reached \u00b7 resets {0}", shortReset(window.resetsAt, now))
+			: localize('voltUsage.limitReached', "Limit reached");
 	} else if (emptyIn !== undefined) {
 		const dry = append(track, $('span.dry'));
 		atFuture(dry, emptyIn / HORIZON_MS);
@@ -273,6 +280,9 @@ function renderLane(parent: HTMLElement, lane: IRunwayLane, style: IRunwayStyle,
 	if (resetIn <= HORIZON_MS) {
 		const ring = append(track, $('span.reset'));
 		atFuture(ring, resetAt);
+		if (mergedReset) {
+			return;
+		}
 		const label = append(track, $('span.reset-label'));
 		atFuture(label, resetAt);
 		label.classList.toggle('before', resetAt > 0.8);
