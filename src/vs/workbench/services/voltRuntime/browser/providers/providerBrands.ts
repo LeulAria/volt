@@ -73,6 +73,13 @@ export const PROVIDER_BRANDS: Record<string, IProviderBrand> = {
 		viewBox: '0 0 24 24',
 		paths: [{ d: 'M22 24H2V0h20zM17 4.8H7v14.4h10z' }],
 	},
+	pi: {
+		id: 'pi',
+		label: 'Pi',
+		viewBox: '0 0 24 24',
+		// The letter pi: a bar with two legs, the right one turning out at the foot.
+		paths: [{ d: 'M3 5h18v2.6h-3.2v8.7c0 .9.4 1.2 1.2 1.2H21V20h-2.6c-2.4 0-3.6-1.2-3.6-3.6V7.6h-4.1V12c0 4-1.1 6.7-3.3 8.3l-1.9-1.9c1.5-1.2 2.2-3.2 2.2-6.4V7.6H3z' }],
+	},
 	antigravity: {
 		id: 'antigravity',
 		label: 'Antigravity',
@@ -125,6 +132,7 @@ const FAMILY_LABELS: Record<string, string> = {
 	cursor: 'Cursor',
 	grok: 'Grok',
 	opencode: 'OpenCode',
+	pi: 'Pi',
 	antigravity: 'Antigravity',
 	kimi: 'Kimi Code',
 	muse: 'Muse Code',

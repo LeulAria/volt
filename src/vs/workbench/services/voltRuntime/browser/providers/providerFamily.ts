@@ -21,6 +21,7 @@ const PROVIDER_FAMILIES: Record<string, string> = {
 	grok: 'grok',
 	xai: 'grok',
 	opencode: 'opencode',
+	pi: 'pi',
 	antigravity: 'antigravity',
 	agy: 'antigravity',
 	gemini: 'antigravity',

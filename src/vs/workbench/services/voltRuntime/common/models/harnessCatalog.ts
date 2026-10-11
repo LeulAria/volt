@@ -321,6 +321,34 @@ export function parseClaudeCatalog(payload: unknown): IModelInfo[] {
 	return models;
 }
 
+/**
+ * How many upstream providers OpenCode is signed in to, from `opencode auth list --format json`
+ * (OpenCode 2 keeps credentials in its database, not `auth.json`): a JSON array, or an object
+ * holding one, or keyed by provider. OpenCode 1 ignores the flag and prints "N credentials".
+ * Undefined when the answer says nothing either way.
+ */
+export function parseOpenCodeAuthList(output: string): number | undefined {
+	const text = output.replace(/\x1b\[[0-9;]*m/g, '');
+	const start = text.search(/[[{]/);
+	if (start >= 0) {
+		try {
+			const parsed: unknown = JSON.parse(text.slice(start).trim());
+			if (Array.isArray(parsed)) {
+				return parsed.length;
+			}
+			if (parsed && typeof parsed === 'object') {
+				const record = parsed as Record<string, unknown>;
+				const list = [record.credentials, record.providers, record.auth, record.items].find(Array.isArray);
+				return list ? list.length : Object.keys(record).length;
+			}
+		} catch {
+			// Not JSON: OpenCode 1's table.
+		}
+	}
+	const counted = /(\d+)\s+credentials?\b/i.exec(text);
+	return counted ? Number(counted[1]) : undefined;
+}
+
 /** `opencode models` prints `provider/model` lines and nothing else. */
 export function parseOpenCodeModelLines(output: string): IModelInfo[] {
 	const models: IModelInfo[] = [];

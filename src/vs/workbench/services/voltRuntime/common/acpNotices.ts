@@ -72,18 +72,31 @@ const ERROR_KIND_LABEL: Record<string, string> = {
 	auth_required: 'Sign in to continue',
 };
 
+/**
+ * Codes agents put in a failed prompt's `error.data` when the account is out of quota: OpenCode 2's
+ * `errorName`, codex-acp's `codexErrorInfo`, claude-agent-acp's `errorKind`.
+ */
+const QUOTA_CODES = new Set(['provider.quota', 'usageLimitExceeded', 'usage_limit_exceeded', 'rate_limit', 'billing_error', 'quota_exhausted']);
+
+function isQuotaData(data: unknown): boolean {
+	const record = asRecord(data);
+	return !!record && [record.errorName, record.codexErrorInfo, record.errorKind].some(code => typeof code === 'string' && QUOTA_CODES.has(code));
+}
+
 /** JSON-RPC `error.message` is often "Internal error" while the sentence the CLI shows sits in the suffix or in `data`. */
 export function acpRpcErrorMessage(error: { message?: string; data?: unknown } | undefined): string {
 	const raw = typeof error?.message === 'string' ? error.message.trim() : '';
 	const stripped = raw.replace(/^(?:internal error|authentication required|request cancelled):\s*/i, '').trim();
 	const detail = humanDetail(error?.data, 0);
+	let message = raw || 'ACP error';
 	if (stripped && !MACHINE_TOKEN.test(stripped) && !/^internal error\.?$/i.test(stripped)) {
-		return stripped;
+		message = stripped;
+	} else if (detail) {
+		message = detail;
 	}
-	if (detail) {
-		return detail;
-	}
-	return raw || 'ACP error';
+	// The agent said in its error code that the quota is out, in words the limit detector may not know
+	// ("Insufficient balance"): say it, so the chat parks at the limit instead of failing.
+	return isQuotaData(error?.data) && !LIMIT_FAMILY.test(message) ? `Usage limit reached: ${message}` : message;
 }
 
 export function noticesFromAcpPayload(payload: unknown, options?: IAcpNoticeOptions): IAcpNotice[] {
@@ -111,6 +124,10 @@ export function noticesFromAcpUpdate(update: Record<string, unknown>, options?: 
 	const limit = rateLimitNotice(update._meta, options);
 	if (limit) {
 		notices.push(limit);
+	}
+	const retry = openCodeRetryNotice(update._meta, options);
+	if (retry) {
+		notices.push(retry);
 	}
 	if (!HANDLED_UPDATES.has(kind)) {
 		const loose = looseStatusNotice(update);
@@ -175,6 +192,26 @@ function rateLimitNotice(meta: unknown, options?: IAcpNoticeOptions): IAcpNotice
 		? (resets ? `Usage limit reached · resets ${resets}` : 'Usage limit reached')
 		: (resets ? `Usage limit warning · resets ${resets}` : 'Usage limit warning');
 	return withReset(notice(status === 'rejected' ? 'error' : 'warning', title), resetAt);
+}
+
+/**
+ * OpenCode 2 waits between retries of a failed provider call and says so in
+ * `_meta["opencode/retry"] = { attempt, nextRetryAt, error: { type, message } }` (null when it
+ * retries). A warning: OpenCode retries by itself; a quota it gives up on fails the prompt.
+ */
+function openCodeRetryNotice(meta: unknown, options?: IAcpNoticeOptions): IAcpNotice | undefined {
+	const retry = asRecord(asRecord(meta)?.['opencode/retry']);
+	if (!retry) {
+		return undefined;
+	}
+	const error = asRecord(retry.error);
+	const type = readString(error?.type);
+	const message = readString(error?.message);
+	const next = typeof retry.nextRetryAt === 'string' ? Date.parse(retry.nextRetryAt) : NaN;
+	const when = Number.isFinite(next) ? formatReset(next, options) : undefined;
+	const title = type === 'provider.rate-limit' ? 'Rate limited by the provider' : 'The provider call failed';
+	const attempt = typeof retry.attempt === 'number' ? ` (attempt ${retry.attempt})` : '';
+	return notice('warning', `${title} · retrying${when ? ` at ${when}` : ''}${attempt}`, message);
 }
 
 function withReset(value: IAcpNotice, resetAt: number | undefined): IAcpNotice {

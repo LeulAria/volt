@@ -37,6 +37,7 @@ const LIMIT_STOP = new RegExp([
 	String.raw`\bout of usage credits\b`,
 	String.raw`\bno available quota\b`,
 	String.raw`\bquota (?:exceeded|exhausted)\b`,
+	String.raw`\bexceeded your (?:current )?quota\b`,
 	String.raw`\binsufficient_quota\b`,
 	String.raw`\bresource_exhausted\b`,
 	String.raw`\brate_limit_error\b`,
@@ -83,7 +84,7 @@ export function limitFromReply(reply: string | undefined, now: number, timeZone?
 	return withReset(clean(text), parseLimitReset(text, now, timeZone));
 }
 
-const LIMIT_REPLY_START = /^(?:you(?:'|\u2019)ve (?:hit|reached) your|you(?:'|\u2019)re out of|your (?:org|seat|group|usage)\b|claude (?:ai )?usage limit reached|usage limit reached)/i;
+const LIMIT_REPLY_START = /^(?:you(?:'|\u2019)ve (?:hit|reached) your|you have (?:hit|reached) your|you(?:'|\u2019)re out of|your (?:org|seat|group|usage)\b|(?:claude (?:ai )?|chatgpt )?usage limit reached)/i;
 
 /**
  * The assistant text of a resume so far shows the provider answering for real: long enough to
@@ -123,10 +124,10 @@ const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', '
 const EPOCH_SUFFIX = /\|(\d{9,13})\s*$/;
 /** "resets at 2026-10-08T15:40:00Z". */
 const ISO_RESET = /\b(?:resets?|try again|retry|available)(?:\s+again)?\s+(?:at|on|after)\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)/i;
-/** "try again in 2h 30m", "in 4 days 3 hours 2 minutes", "retry in 23.5s", "reset after 1h2m3s". */
-const RELATIVE_RESET = /\b(?:resets?|try again|retry|available again|wait)\s+(?:in|after)\s+((?:\d+(?:\.\d+)?\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b[\s,]*(?:and\s+)?)+)/i;
-/** "resets 3pm", "resets 12:40am (Asia/Dubai)", "resets Oct 7, 3pm", "try again at 3:05 PM", "resets at 15:00". */
-const CLOCK_RESET = /\b(?:resets?|try again|retry|available again)\s+(?:on\s+)?(?:(?<month>jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(?<day>\d{1,2})(?:st|nd|rd|th)?,?\s+)?(?:at\s+)?(?<hour>\d{1,2})(?::(?<minute>\d{2}))?\s*(?<ampm>[ap]\.?m\.?)?(?:\s*\((?<zone>[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*|UTC|GMT)\))?/i;
+/** "try again in 2h 30m", "in 4 days 3 hours 2 minutes", "retry in 23.5s", "reset after 1h2m3s", Pi's "Try again in ~12 min". */
+const RELATIVE_RESET = /\b(?:resets?|try again|retry|available again|wait)\s+(?:in|after)\s+(?:~\s*|about\s+|approximately\s+)?((?:\d+(?:\.\d+)?\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b[\s,]*(?:and\s+)?)+)/i;
+/** "resets 3pm", "resets 12:40am (Asia/Dubai)", "resets Oct 7, 3pm", "try again at 3:05 PM", "resets at 15:00", Codex's "try again at Oct 12th, 2026 3:05 PM". */
+const CLOCK_RESET = /\b(?:resets?|try again|retry|available again)\s+(?:on\s+|at\s+)?(?:(?<month>jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(?<day>\d{1,2})(?:st|nd|rd|th)?,?\s+(?:(?<year>\d{4}),?\s+)?)?(?:at\s+)?(?<hour>\d{1,2})(?::(?<minute>\d{2}))?\s*(?<ampm>[ap]\.?m\.?)?(?:\s*\((?<zone>[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*|UTC|GMT)\))?/i;
 
 /**
  * When the limit resets, read from the provider's sentence. A clock time without a date is the
@@ -157,7 +158,7 @@ export function parseLimitReset(text: string | undefined, now: number, timeZone?
 	if (!clock?.groups) {
 		return undefined;
 	}
-	const { month, day, hour, minute, ampm, zone } = clock.groups;
+	const { month, day, year, hour, minute, ampm, zone } = clock.groups;
 	let h = Number(hour);
 	const m = minute ? Number(minute) : 0;
 	// A bare number ("resets 5") is not a time; "resets 15:00" and "resets 5pm" are.
@@ -174,6 +175,10 @@ export function parseLimitReset(text: string | undefined, now: number, timeZone?
 	const today = zonedParts(now, tz);
 	if (month && day) {
 		const monthIndex = MONTHS.indexOf(month.slice(0, 3).toLowerCase());
+		if (year) {
+			const at = zonedToEpoch(Number(year), monthIndex, Number(day), h, m, tz);
+			return at > now ? at : undefined;
+		}
 		let at = zonedToEpoch(today.year, monthIndex, Number(day), h, m, tz);
 		// "Jan 2" read on Dec 30 is next year's.
 		if (at < now - 86_400_000) {

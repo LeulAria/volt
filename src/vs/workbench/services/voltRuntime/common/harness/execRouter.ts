@@ -44,6 +44,8 @@ const CLI_PROVIDERS = new Set([
 	'claude',
 	'codex',
 	'opencode',
+	// Pi runs through the pi-acp adapter, which does not pass Volt's MCP servers to it.
+	'pi',
 	'cline',
 	'roo',
 ]);

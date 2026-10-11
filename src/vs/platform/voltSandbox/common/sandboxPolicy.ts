@@ -127,13 +127,20 @@ const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		domains: ['x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
 	},
 	opencode: {
+		// OpenCode 2 keeps credentials and sessions in `.local/share/opencode/opencode.db` and its CLI settings in `.config/opencode/cli.json`.
 		homeDirs: ['.local/share/opencode', '.config/opencode', '.opencode', '.omo', '.local/share/oh-my-opencode', '.claude/transcripts'],
-		protectedHome: ['.config/opencode/opencode.json', '.config/opencode/opencode.jsonc', '.config/opencode/plugin', '.config/opencode/plugins'],
+		protectedHome: ['.config/opencode/opencode.json', '.config/opencode/opencode.jsonc', '.config/opencode/cli.json', '.config/opencode/plugin', '.config/opencode/plugins'],
 		domains: ['opencode.ai', '*.opencode.ai', 'models.dev', 'api.anthropic.com', 'api.openai.com', 'openrouter.ai', '*.openrouter.ai', 'generativelanguage.googleapis.com', 'api.x.ai', 'api.deepseek.com', 'api.moonshot.ai', 'api.z.ai'],
 	},
 	antigravity: {
 		homeDirs: ['.gemini', '.antigravity', '.config/antigravity'],
 		domains: ['*.googleapis.com', 'accounts.google.com', 'oauth2.googleapis.com'],
+	},
+	pi: {
+		// `.pi/agent/auth.json` stays writable: Pi refreshes its OAuth tokens there.
+		homeDirs: ['.pi'],
+		protectedHome: ['.pi/agent/settings.json', '.pi/agent/models.json', '.pi/agent/mcp.json', '.pi/agent/keybindings.json'],
+		domains: ['pi.dev', '*.pi.dev', 'api.anthropic.com', 'api.openai.com', 'chatgpt.com', '*.chatgpt.com', 'auth.openai.com', 'openrouter.ai', '*.openrouter.ai', 'generativelanguage.googleapis.com', 'api.x.ai', 'api.deepseek.com', 'api.moonshot.ai', 'api.z.ai', 'api.groq.com', 'api.mistral.ai', 'api.cerebras.ai'],
 	},
 	kimi: {
 		homeDirs: ['.kimi', '.kimi-code'],

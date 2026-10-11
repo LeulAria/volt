@@ -9,6 +9,8 @@
  * verify, the wizard links the install guide instead of running a script.
  */
 
+import { parseOpenCodeAuthList } from '../../../services/voltRuntime/common/models/harnessCatalog.js';
+
 export type SetupPlatform = 'mac' | 'linux' | 'windows';
 
 /** A non-interactive check that prints whether the CLI is signed in. */
@@ -19,6 +21,11 @@ export type AgentAuthCheck =
 	| { readonly kind: 'codexStatus' }
 	/** `cursor-agent status --format json`: `{ isAuthenticated, userInfo.email }`; exit 0 either way. */
 	| { readonly kind: 'cursorStatus' }
+	/**
+	 * `opencode auth list --format json`: OpenCode 2 keeps credentials in its database, so its
+	 * `auth.json` no longer says; OpenCode 1 ignores the flag and prints "N credentials".
+	 */
+	| { readonly kind: 'opencodeStatus' }
 	/** A credentials file below the home folder; present means signed in, absent means signed out. */
 	| { readonly kind: 'file'; readonly path: string }
 	/** Nothing to ask: the CLI signs in inside its own UI and keeps the token where Volt cannot see it. */
@@ -64,10 +71,20 @@ export const AGENT_SETUP: readonly IAgentSetupInfo[] = [
 	},
 	{
 		id: 'opencode',
-		install: { mac: 'curl -fsSL https://opencode.ai/install | bash', linux: 'curl -fsSL https://opencode.ai/install | bash', windows: 'npm install -g opencode-ai' },
-		docsUrl: 'https://opencode.ai/docs/',
+		// OpenCode 2 (one server behind the terminal, desktop and web apps). Its installer replaces OpenCode 1.
+		install: { mac: 'curl -fsSL https://opencode.ai/v2/install | bash', linux: 'curl -fsSL https://opencode.ai/v2/install | bash', windows: 'npm install -g @opencode/cli' },
+		docsUrl: 'https://opencode.ai/v2/docs/',
 		login: 'opencode auth login',
-		authCheck: { kind: 'file', path: '.local/share/opencode/auth.json' },
+		authCheck: { kind: 'opencodeStatus' },
+	},
+	{
+		id: 'pi',
+		install: { mac: 'curl -fsSL https://pi.dev/install.sh | sh', linux: 'curl -fsSL https://pi.dev/install.sh | sh', windows: 'npm install -g --ignore-scripts @earendil-works/pi-coding-agent' },
+		docsUrl: 'https://pi.dev',
+		// Pi signs in from its own prompt.
+		login: 'pi',
+		loginHint: '/login',
+		authCheck: { kind: 'file', path: '.pi/agent/auth.json' },
 	},
 	{
 		id: 'antigravity',
@@ -116,6 +133,7 @@ export function authCheckCommand(check: AgentAuthCheck, command: string): string
 		case 'claudeStatus': return `${command} auth status`;
 		case 'codexStatus': return `${command} login status`;
 		case 'cursorStatus': return `${command} status --format json`;
+		case 'opencodeStatus': return `${command} auth list --format json`;
 		default: return undefined;
 	}
 }
@@ -187,6 +205,13 @@ export function parseAuthCheck(check: AgentAuthCheck, exitCode: number | null, s
 			}
 			const match = /logged in as\s+(\S+)/i.exec(text);
 			return match ? { kind: 'signedIn', account: match[1] } : { kind: 'unknown' };
+		}
+		case 'opencodeStatus': {
+			const count = parseOpenCodeAuthList(stdout);
+			if (count === undefined) {
+				return { kind: 'unknown' };
+			}
+			return count > 0 ? { kind: 'signedIn', plan: `${count} provider${count === 1 ? '' : 's'}` } : { kind: 'signedOut' };
 		}
 		default:
 			return { kind: 'unknown' };

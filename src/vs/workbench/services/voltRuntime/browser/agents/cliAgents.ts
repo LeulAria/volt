@@ -8,7 +8,7 @@ import { isWindows } from '../../../../../base/common/platform.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { antigravityModelsToInfo, parseAntigravityModelLines } from '../../common/models/antigravityModels.js';
 import { grokModelsToInfo, IGrokCachedModel, parseGrokModelLines } from '../../common/models/grokModels.js';
-import { parseOpenCodeModelLines } from '../../common/models/harnessCatalog.js';
+import { parseOpenCodeAuthList, parseOpenCodeModelLines } from '../../common/models/harnessCatalog.js';
 import { isSignInNotice } from '../../common/acpNotices.js';
 import { providerFamily } from '../providers/providerFamily.js';
 import { IDetectResult, IModelInfo } from '../../common/providers.js';
@@ -33,8 +33,8 @@ export interface ICliAgentDefinition {
 	readonly acpAdapter?: IAcpAdapter;
 	/** Extra environment for the ACP process. */
 	readonly acpEnv?: Readonly<Record<string, string>>;
-	/** Reads the CLI's own config to work out who is signed in. */
-	readonly probeAuth?: (stdio: IVoltStdioService) => Promise<{ account?: string; plan?: string } | undefined>;
+	/** Reads the CLI's own config to work out who is signed in. `command` is the executable that was found. */
+	readonly probeAuth?: (stdio: IVoltStdioService, command?: string) => Promise<{ account?: string; plan?: string } | undefined>;
 }
 
 const CLI_TIMEOUT_MS = 4000;
@@ -339,15 +339,36 @@ export async function listAntigravityModels(stdio: IVoltStdioService, command: s
 	return antigravityModelsToInfo(parseAntigravityModelLines(output ?? ''));
 }
 
-export async function probeOpenCodeAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
+/**
+ * Who OpenCode is signed in to. OpenCode 1 keeps credentials in `auth.json`; OpenCode 2 imports
+ * that file once into its database and never writes it again, so a sign-in made with 2 is only
+ * known to `opencode auth list`. The file is read first (no process), the CLI asked otherwise.
+ */
+export async function probeOpenCodeAuth(stdio: IVoltStdioService, command = 'opencode'): Promise<{ account?: string; plan?: string } | undefined> {
 	const auth = await readHomeJson<Record<string, unknown>>(stdio, '.local/share/opencode/auth.json');
-	const upstream = auth ? Object.keys(auth).length : 0;
+	let upstream = auth ? Object.keys(auth).length : 0;
+	if (!upstream) {
+		upstream = parseOpenCodeAuthList(await runCli(stdio, command, ['auth', 'list', '--format', 'json']) ?? '') ?? 0;
+	}
 	if (!upstream) {
 		return undefined;
 	}
 	return {
 		account: 'opencode',
 		plan: `${upstream} upstream provider${upstream === 1 ? '' : 's'} connected through OpenCode`,
+	};
+}
+
+/** Pi keeps the providers it is signed in to in `~/.pi/agent/auth.json`, keyed by provider. */
+export async function probePiAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
+	const auth = await readHomeJson<Record<string, unknown>>(stdio, '.pi/agent/auth.json');
+	const providers = auth ? Object.keys(auth).length : 0;
+	if (!providers) {
+		return undefined;
+	}
+	return {
+		account: 'pi',
+		plan: `${providers} provider${providers === 1 ? '' : 's'} signed in through Pi`,
 	};
 }
 
@@ -397,10 +418,24 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 	{
 		id: 'opencode',
 		label: 'OpenCode',
-		commands: ['opencode'],
+		// OpenCode 2's npm package also installs `opencode2`; its installer replaces `opencode` itself.
+		// `--version` prints "opencode v2.0.26" on 2 and "1.19.0" on 1. ACP is `opencode acp` on both.
+		commands: ['opencode', 'opencode2'],
 		versionArgs: ['--version'],
 		acpArgs: ['acp'],
 		probeAuth: probeOpenCodeAuth,
+	},
+	{
+		id: 'pi',
+		label: 'Pi',
+		commands: ['pi'],
+		versionArgs: ['--version'],
+		// Pi speaks its own JSON-lines RPC (`pi --mode rpc`), not ACP; the pi-acp adapter drives it
+		// with the same login and settings.
+		acpArgs: [],
+		acpAdapter: { command: 'pi-acp', package: 'pi-acp@0.0.34' },
+		earlyAccess: true,
+		probeAuth: probePiAuth,
 	},
 	{
 		id: 'antigravity',
@@ -427,14 +462,21 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 	},
 ];
 
-/** OpenCode's model command. Empty when the CLI is missing or nobody is signed in. */
+/**
+ * OpenCode's model command. Empty when the CLI is missing or nobody is signed in. OpenCode 2's
+ * `models` starts (and leaves running) its shared background server unless told `--standalone`;
+ * OpenCode 1 has no such flag, so a listing that comes back empty is asked again without it.
+ */
 export async function listOpenCodeModels(stdio: IVoltStdioService, command = 'opencode'): Promise<IModelInfo[]> {
-	const auth = await probeOpenCodeAuth(stdio).catch(() => undefined);
+	const auth = await probeOpenCodeAuth(stdio, command).catch(() => undefined);
 	if (!auth) {
 		return [];
 	}
-	const output = await runCli(stdio, command, ['models'], MODEL_LIST_TIMEOUT_MS);
-	return parseOpenCodeModelLines(output ?? '');
+	const standalone = parseOpenCodeModelLines(await runCli(stdio, command, ['models', '--standalone'], MODEL_LIST_TIMEOUT_MS) ?? '');
+	if (standalone.length) {
+		return standalone;
+	}
+	return parseOpenCodeModelLines(await runCli(stdio, command, ['models'], MODEL_LIST_TIMEOUT_MS) ?? '');
 }
 
 export function cliAgentDefinition(providerId: string): ICliAgentDefinition | undefined {
@@ -517,7 +559,7 @@ export async function detectCliAgent(stdio: IVoltStdioService, def: ICliAgentDef
 
 	const [version, auth] = await Promise.all([
 		runCli(stdio, command, def.versionArgs).then(parseVersion),
-		def.probeAuth?.(stdio).catch(() => undefined) ?? Promise.resolve(undefined),
+		def.probeAuth?.(stdio, command).catch(() => undefined) ?? Promise.resolve(undefined),
 	]);
 
 	if (auth?.account || auth?.plan) {
