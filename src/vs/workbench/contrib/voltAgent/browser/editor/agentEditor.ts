@@ -5,7 +5,8 @@
 
 import '../media/agentEditor.css';
 import '../media/agentComposerInput.css';
-import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, runAtThisOrScheduleAtNextAnimationFrame, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, isSVGElement, runAtThisOrScheduleAtNextAnimationFrame, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import type { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
@@ -70,8 +71,10 @@ import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/co
 import { IAgentRuntimeService, type IVoltCompactionPlan } from '../../../../services/voltRuntime/common/runtime.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchQueueItem, OrchDelivery } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentPromptHostOptions, stashTurnDisplay } from '../orchestration/agentTurnHost.js';
+import { IAgentSubagentChatService } from '../orchestration/agentSubagentChats.js';
 import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
 import { agentRow, dockModel, formatElapsed as formatOrchElapsed, isMultitaskTask } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
+import { harnessSubagentChatId, harnessTaskOfChat, isHarnessSubagentChatId } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
 import { createReportStackIcon, isLiveSubagentState, ISubagentView, renderCursorSubagentRow, renderSubagentAvatar, subagentCounts, subagentCountsLabel, subagentStateIcon, subagentView, tickSubagentClocks } from '../chrome/agentSubagents.js';
 import type { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { type IAgentQuestionResponse, questionResponseText } from '../../../../services/voltRuntime/common/questions.js';
@@ -119,8 +122,8 @@ import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actio
 import { getSimpleCodeEditorWidgetOptions } from '../../../codeEditor/browser/simpleEditorOptions.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { completeStreamingBlocks } from './agentSessionController.js';
-import { AgentSurfaceHost, agentSideChatParents, revealAgentSideChat } from '../workspace/agentSurfaceHost.js';
-import { prefersReducedMotion } from './agentThreadScroll.js';
+import { AgentSurfaceHost, agentSideChatParents } from '../workspace/agentSurfaceHost.js';
+import { nativeScrollerTakesWheel, prefersReducedMotion, ThreadFollow } from './agentThreadScroll.js';
 import { openAgentPanel } from '../workspace/agentPanels.js';
 import { AgentComposerChips, shouldOfferScrollToBottom } from '../composer/agentComposerChips.js';
 import { AgentPendingChanges, MINI_FILE_DIFF_VIEWER_ENABLED } from '../composer/agentPendingChanges.js';
@@ -293,7 +296,7 @@ interface IStashedThread {
 }
 
 function createPlusIcon(): HTMLElement {
-	return createSvgIcon('0 0 14 14', 'M7 2.5v9M2.5 7h9', 'plus', true, '1');
+	return createSvgIcon('0 0 14 14', 'M7 2.5v9M2.5 7h9', 'plus', true, '0.875');
 }
 
 function createOpenNewAgentIcon(): HTMLElement {
@@ -757,6 +760,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private subagentBar!: HTMLElement;
 	private readonly subagentBarStore = this._register(new DisposableStore());
 	private subagentBarKey = '';
+	/** The harness subagent chat whose parent's agents were asked to load (once per chat). */
+	private harnessParentLoaded: string | undefined;
 	/** The agent handoff the composer's model already followed. */
 	private followedHandoffAt: number | undefined;
 	/** The chat and the stored model last followed by the composer. */
@@ -808,6 +813,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private sessionTokensWindow: number | undefined;
 	private toolbarLayoutHandle: number | undefined;
 	private stickToBottom = true;
+	/** Glides the thread to its end while a pinned reply grows (see {@link syncThreadScroll}). */
+	private threadFollow!: ThreadFollow;
 	/** A scroll sync waiting for the end of this frame (or the next one); see {@link scheduleScrollSync}. */
 	private scrollSyncFrame: IDisposable | undefined;
 	private contextUsageTimer: IDisposable | undefined;
@@ -1018,6 +1025,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this._register(toDisposable(() => turnsObserver.disconnect()));
 		syncHasTurns();
 		this.threadScroll = this.threadView.scroll;
+		const threadFollow = this.threadFollow = new ThreadFollow(this.threadScroll, this.threadEl, () => this.stickToBottom && !this.threadScrollFrozen && this.editingUserIndex === undefined);
+		this._register(toDisposable(() => threadFollow.cancel()));
 		this.turnNav = this._register(new AgentTurnNav(this.threadView));
 		this._register(new AgentThreadSelectionActions(this.threadEl, {
 			isVisible: () => this.isVisible(),
@@ -1057,12 +1066,24 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.applyCodeFont();
 		this._register(this.threadScroll.onScroll(e => {
 			if (!this.threadScrollFrozen && !this.applyingEditPin) {
-				// The reply grew under a reader at the end: the follow scroll lands next. Until then this is
-				// not a scroll up, or the arrow blinks in and out with every streamed line.
+				const following = this.threadFollow.isWriting;
+				const gap = e.scrollHeight - (e.scrollTop + e.height);
+				// The reply grew under a reader at the end: the follow glide is on its way. Until it lands this
+				// is not a scroll up, or the arrow blinks in and out with every streamed line.
 				const grewAtEnd = this.stickToBottom && !e.scrollTopChanged && e.scrollHeightChanged;
-				this.stickToBottom = grewAtEnd || e.scrollTop + e.height >= e.scrollHeight - 32;
+				const movedUp = e.scrollTopChanged && e.scrollTop < e.oldScrollTop - 0.5;
+				// A pinned reader who moves up (and is no longer at the end) lets go at once; one who is not
+				// pinned is pinned again by moving to within 32px of the end, not by the reply growing. A native
+				// scroll (anchoring as an exchange above lays out, find) is not always the reader: it keeps the
+				// pin while it stays near the end.
+				this.stickToBottom = following
+					|| (this.threadView.isAdoptingNativeScroll ? gap <= 32
+						: this.stickToBottom ? !(movedUp && gap > 1) : e.scrollTopChanged && gap <= 32);
+				if (!this.stickToBottom) {
+					this.threadFollow.cancel();
+				}
 				// Empty chats and a reader already at the end get no jump-back arrow.
-				this.composerChips?.setScrolledUp(!grewAtEnd && shouldOfferScrollToBottom(this.messages.length > 0, e.scrollHeight - (e.scrollTop + e.height)));
+				this.composerChips?.setScrolledUp(!following && !grewAtEnd && shouldOfferScrollToBottom(this.messages.length > 0, gap));
 				if (!this.restoringChat) {
 					this.scheduleChatSave();
 				}
@@ -1075,12 +1096,29 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				}
 				// Exchanges off screen are not laid out (content-visibility); one scrolled into view
 				// takes its real height, so the scroll height is read again once this frame settles.
-				if (e.scrollTopChanged && this.editingUserIndex === undefined) {
+				if (e.scrollTopChanged && this.editingUserIndex === undefined && !following) {
 					this.scheduleScrollSync();
 				}
 			}
 			// The sticky pass itself runs once per frame (AgentThreadView listens to the same scroll).
 		}));
+		// A wheel anywhere over the chat scrolls the transcript. The message rail in the gutter, the
+		// composer and the rows around it sit outside the transcript's scrollable and swallowed it.
+		// What scrolls on its own (the scrollable itself, code, a menu, a list that can still move)
+		// keeps its wheel. On the thread too, for when it is hosted outside this editor.
+		const forwardWheel = (e: WheelEvent) => {
+			const target = e.target;
+			if (e.defaultPrevented || e.ctrlKey || this.threadScrollFrozen || !(isHTMLElement(target) || isSVGElement(target))
+				|| this.threadScroll.getDomNode().contains(target)
+				|| target.closest('[role="menu"], [role="listbox"], [role="dialog"], .monaco-menu-container')
+				|| nativeScrollerTakesWheel(target, this.container, e.deltaX, e.deltaY)) {
+				return;
+			}
+			// The same browser event the scrollable's own wheel listener gets.
+			this.threadScroll.delegateScrollFromMouseWheelEvent(e as unknown as IMouseWheelEvent);
+		};
+		this._register(addDisposableListener(this.threadEl, 'wheel', forwardWheel));
+		this._register(addDisposableListener(this.editorMainEl, 'wheel', forwardWheel));
 		const threadWindow = getWindow(this.threadInner);
 		// Also watches the live exchange, so a reply that grows on its own (a highlight, an image, a
 		// diagram) is followed in the frame it grew, with the layout already done.
@@ -1115,7 +1153,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.composerQueue = this._register(this.instantiationService.createInstance(AgentComposerQueue, {
 			onRemove: id => this.removeQueuedPrompt(id),
 			onClear: () => this.clearPromptQueue(),
-			onMultitask: () => this.setMode('Multitask'),
+			onMultitask: () => this.startMultitasking(),
 			onReorder: ids => this.reorderQueuedPrompts(ids),
 			onEdit: id => this.editQueuedPrompt(id),
 			onSendNow: id => this.sendQueuedNow(id),
@@ -1148,6 +1186,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				if (change.tasks.length) {
 					this.scheduleThreadRender();
 				}
+			} else if (change.tasks.some(taskId => harnessSubagentChatId(taskId) === this.sessionKey)) {
+				// A harness subagent's chat has no thread: its bar follows its task.
+				this.renderSubagentBar();
 			}
 		}));
 		// "Open parent" shows only while the parent chat has no tab.
@@ -1267,7 +1308,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.zoomButton = append(this.toolbarEndEl, $('button.volt-agent-icon-btn.volt-agent-zoom-btn')) as HTMLButtonElement;
 		this.updateZoomButton();
 		const toolbarWindow = getWindow(this.toolbarEl);
-		const toolbarResizeObserver = new toolbarWindow.ResizeObserver(() => this.scheduleToolbarLayout());
+		let inputBoxWidth = 0;
+		const toolbarResizeObserver = new toolbarWindow.ResizeObserver(() => {
+			this.scheduleToolbarLayout();
+			// The composer can change width without this pane's layout() (a tab beside the chat
+			// closing): lay the editor out again, or text keeps wrapping at the old width.
+			const width = this.inputBox.clientWidth;
+			if (width !== inputBoxWidth) {
+				const first = !inputBoxWidth;
+				inputBoxWidth = width;
+				if (!first && width) {
+					this.layoutInputEditor();
+				}
+			}
+		});
 		toolbarResizeObserver.observe(this.toolbarEl);
 		toolbarResizeObserver.observe(this.inputBox);
 		this._register(toDisposable(() => {
@@ -3348,7 +3402,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.setSearchableText(el, chip);
 			}
 		}
-		if (this.isStreaming() && this.isLatestUser(index)) {
+		// A read-only subagent chat: its brief takes no stop-and-edit and no checkpoint restore.
+		const readOnly = this.isReadOnlyTaskChat();
+		if (!readOnly && this.isStreaming() && this.isLatestUser(index)) {
 			turn.classList.add('running');
 			const stop = append(bubble, $('button.volt-agent-user-stop')) as HTMLButtonElement;
 			stop.type = 'button';
@@ -3360,7 +3416,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				e.stopPropagation();
 				this.stopAndEditPrompt();
 			}));
-		} else if (message.id && hasCommand(CHECKPOINT_RESTORE_COMMAND)) {
+		} else if (!readOnly && message.id && hasCommand(CHECKPOINT_RESTORE_COMMAND)) {
 			// Drawn even while a run streams (hidden then, see syncStreamingClass): a settled message is not redrawn when the run ends.
 			const turnId = message.id;
 			const restore = append(bubble, $('button.volt-agent-user-restore')) as HTMLButtonElement;
@@ -4120,9 +4176,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.writeBackThreadScrollTop();
 			return;
 		}
-		if (scrollToEnd || this.stickToBottom) {
-			this.threadScroll.setScrollPosition({ scrollTop: scrollHeight });
+		if (scrollToEnd) {
+			this.threadFollow.jumpToEnd();
 			this.stickToBottom = true;
+			this.composerChips?.setScrolledUp(false);
+		} else if (this.stickToBottom) {
+			// A pinned reply that grew: glide after it frame by frame rather than snap on every chunk.
+			this.threadFollow.follow();
 			this.composerChips?.setScrolledUp(false);
 		}
 		this.writeBackThreadScrollTop();
@@ -4201,7 +4261,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.ensureClock();
 		}
 		this.freshText.apply(message, replies, streaming);
-		const tray = runEndTray(message, message === this.messages.at(-1));
+		// A read-only subagent chat offers no Try again or Resume: only the agent that delegated it runs its rounds.
+		const tray = runEndTray(message, message === this.messages.at(-1) && !this.isReadOnlyTaskChat());
 		// A reply that only compacted the chat is its divider: no footer, and its own "stopped" line.
 		const compactionOnly = isCompactionOnlyReply(message);
 		// A login failure already has the sign-in card (and its login button). The generic tray repeats it.
@@ -5109,6 +5170,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private syncTasksCard(): void {
 		this.tasksCard?.set(this.getTasksCard());
+	}
+
+	/** The queue's Start Multitasking: Multitask mode, and every queued message starts now as its own agent. */
+	startMultitasking(): void {
+		this.setMode('Multitask');
+		void this.orchestrator.multitaskQueue(this.sessionKey).catch(err => this.logService.warn('[volt agent] could not start the queue as multitask agents', err));
 	}
 
 	getPromptQueue(): readonly { id: string; text: string; display?: IAgentPromptDisplay }[] {
@@ -6193,11 +6260,34 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		const thread = this.orchestrator.getThread(this.sessionKey);
-		const task = thread?.taskId ? this.orchestrator.getTask(thread.taskId) : undefined;
+		const task = this.ownTask();
+		// A harness subagent's chat has no thread of its own: its task names the parent.
+		const parentId = thread?.parentId ?? (task?.source === 'harness' ? task.parentId : undefined);
 		const multitask = !!task && isMultitaskTask(task);
-		this.container.classList.toggle('subagent-chat', !!thread?.taskId && !multitask);
+		const harnessChat = isHarnessSubagentChatId(this.sessionKey);
+		if (harnessChat && !task && this.harnessParentLoaded !== this.sessionKey) {
+			// Reopened before its parent's agents were loaded: load them (once), then the bar shows.
+			this.harnessParentLoaded = this.sessionKey;
+			const parent = this.history.sessionParent(this.sessionKey);
+			if (parent) {
+				void this.orchestrator.ensureThreadLoaded(parent).then(() => this.renderSubagentBar());
+			}
+		}
+		this.container.classList.toggle('subagent-chat', (!!task && !multitask) || harnessChat);
+		// A read-only chat's access and branch pickers show the parent's settings and change nothing
+		// (agentSubagents.css dims them and turns off their pointer).
+		const lockPickers = (!!task && !multitask) || harnessChat;
+		for (const picker of this.composerEl?.querySelectorAll<HTMLElement>('.volt-agent-status-start > *') ?? []) {
+			if (lockPickers) {
+				picker.setAttribute('aria-disabled', 'true');
+				picker.tabIndex = -1;
+			} else if (picker.getAttribute('aria-disabled') === 'true') {
+				picker.removeAttribute('aria-disabled');
+				picker.removeAttribute('tabindex');
+			}
+		}
 		this.container.classList.toggle('multitask-chat', multitask);
-		const parentOpen = !!thread?.parentId && this.isChatOpen(thread.parentId);
+		const parentOpen = !!parentId && this.isChatOpen(parentId);
 		const key = task ? JSON.stringify([this.sessionKey, task.state, task.modelLabel, task.startedAt, task.endedAt, task.waitingOn, parentOpen, multitask]) : '';
 		if (key === this.subagentBarKey) {
 			return;
@@ -6206,7 +6296,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.subagentBarStore.clear();
 		this.subagentBar.classList.toggle('hidden', !task);
 		this.subagentBar.replaceChildren();
-		if (!task || !thread?.parentId) {
+		if (!task || !parentId) {
 			return;
 		}
 		const view = subagentView(agentRow(task), ref => this.providerOf(ref));
@@ -6235,13 +6325,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			stop.type = 'button';
 			stop.appendChild(renderIcon(Codicon.debugStop));
 			append(stop, $('span')).textContent = localize('voltAgent.subagentBar.stop', "Stop");
-			setAgentTooltip(stop, localize('voltAgent.subagentBar.stopHint', "Stop this agent now"));
+			const harness = task.source === 'harness';
+			setAgentTooltip(stop, harness
+				? localize('voltAgent.subagentBar.stopTurnHint', "Stop the agent turn that runs it")
+				: localize('voltAgent.subagentBar.stopHint', "Stop this agent now"));
 			const taskId = task.id;
-			this.subagentBarStore.add(addDisposableListener(stop, 'click', () => void this.orchestrator.dispatch({ type: 'task.cancel', taskId, reason: 'The user stopped it.' })));
+			// A harness's own subagent ends with the turn that runs it.
+			this.subagentBarStore.add(addDisposableListener(stop, 'click', () => void (harness
+				? this.orchestrator.cancel(parentId, { cascade: 'turn' })
+				: this.orchestrator.dispatch({ type: 'task.cancel', taskId, reason: 'The user stopped it.' }))));
 		}
 		// Nested in the parent's right panel, or the parent has a tab already: nothing to open.
 		if (!parentOpen) {
-			const parentId = thread.parentId;
 			const open = append(this.subagentBar, $('button.open-parent')) as HTMLButtonElement;
 			open.type = 'button';
 			open.appendChild(renderIcon(Codicon.arrowUp));
@@ -6296,13 +6391,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** This chat runs a task another chat delegated. */
 	private isSubagentChat(): boolean {
-		return !!this.orchestrator.getThread(this.sessionKey)?.taskId;
+		return !!this.orchestrator.getThread(this.sessionKey)?.taskId || isHarnessSubagentChatId(this.sessionKey);
 	}
 
-	/** The task this chat runs, when another chat delegated it. */
+	/** The task this chat runs, when another chat delegated it (or the harness subagent whose chat this is). */
 	private ownTask() {
 		const taskId = this.orchestrator.getThread(this.sessionKey)?.taskId;
-		return taskId ? this.orchestrator.getTask(taskId) : undefined;
+		return taskId ? this.orchestrator.getTask(taskId) : harnessTaskOfChat(this.orchestrator.getState().tasks, this.sessionKey);
 	}
 
 	/** A multitask agent's chat: the user drives it too (follow-ups, edits); its reports still go to the parent. */
@@ -6411,13 +6506,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** A subagent's chat opens in this chat's right panel, as a tab, streaming as it works. */
 	private openSubagent(taskId: string): void {
-		const task = this.orchestrator.getTask(taskId);
-		if (!task?.childId) {
-			return;
-		}
-		if (!revealAgentSideChat(this.sessionKey, task.childId)) {
-			void openAgentPanel(this.editorGroupsService, this.instantiationService, task.childId);
-		}
+		// A harness's own subagent opens the read-only chat Volt keeps for it.
+		void this.instantiationService.invokeFunction(accessor => accessor.get(IAgentSubagentChatService)).open(this.sessionKey, taskId);
 	}
 
 	/** Every live agent of this chat stops now; the harness's own stop with the turn that runs them. */
@@ -7043,7 +7133,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.dockSyncAt = now;
 				this.persistInputState();
 			}
-			this.renderThreadTail(this.stickToBottom);
+			// Not a jump to the end: a pinned reader is followed by the glide (syncThreadScroll).
+			this.renderThreadTail(false);
 			if (syncDock) {
 				this._onDidChangeDock.fire();
 			}

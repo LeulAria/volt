@@ -105,3 +105,132 @@ export function threadGlide(scroll: DomScrollableElement, element: HTMLElement):
 	}
 	return glide;
 }
+
+/** About how long the view takes to catch up with a reply that grew at the end. */
+export const THREAD_FOLLOW_SMOOTH_MS = 120;
+
+/**
+ * One frame of following the end: a critically damped spring from `position` toward `target`, so
+ * the view eases in and out of each streamed chunk and its speed carries over from one chunk to
+ * the next (no jerk when a line lands mid-glide). `velocity` is in px/ms. It never passes the
+ * target and never trails it by more than `maxLag` px; it lands exactly once it is within half a
+ * pixel and nearly still.
+ */
+export function followScrollStep(position: number, target: number, velocity: number, elapsedMs: number, maxLag = Infinity, smoothMs = THREAD_FOLLOW_SMOOTH_MS): { position: number; velocity: number; done: boolean } {
+	if (target - position > maxLag) {
+		position = target - maxLag;
+	}
+	const dt = Math.min(64, Math.max(1, elapsedMs));
+	const omega = 2 / smoothMs;
+	const x = omega * dt;
+	const decay = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+	const change = position - target;
+	const temp = (velocity + omega * change) * dt;
+	let nextVelocity = (velocity - omega * temp) * decay;
+	let next = target + (change + temp) * decay;
+	if ((target - position > 0) === (next > target)) {
+		next = target;
+		nextVelocity = 0;
+	}
+	if (Math.abs(target - next) <= 0.5 && Math.abs(nextVelocity) < 0.05) {
+		return { position: target, velocity: 0, done: true };
+	}
+	return { position: next, velocity: nextVelocity, done: false };
+}
+
+/** Runs after the frame's redraw and scroll sync (-1000), before the sticky pass (-2000). */
+const FOLLOW_PRIORITY = -1500;
+
+/**
+ * Keeps a thread pinned to its end while the reply streams, gliding there frame by frame instead
+ * of snapping on each chunk. It is the only writer while it runs: it stops as soon as `follows`
+ * says no (the reader scrolled up), when a glide takes over, or once it has landed.
+ */
+export class ThreadFollow {
+
+	private frame: IDisposable | undefined;
+	private velocity = 0;
+	private last = 0;
+	private writing = false;
+
+	constructor(private readonly scroll: DomScrollableElement, private readonly element: HTMLElement, private readonly follows: () => boolean) { }
+
+	/** True during the follow's own scroll write: its scroll event is not the reader moving. */
+	get isWriting(): boolean {
+		return this.writing;
+	}
+
+	/** Glides to the end over the next frames; with reduced motion it jumps there now. */
+	follow(): void {
+		if (this.frame) {
+			return;
+		}
+		if (prefersReducedMotion(this.element)) {
+			this.jumpToEnd();
+			return;
+		}
+		this.last = 0;
+		this.frame = scheduleAtNextAnimationFrame(getWindow(this.element), this.step, FOLLOW_PRIORITY);
+	}
+
+	jumpToEnd(): void {
+		this.cancel();
+		const dims = this.scroll.getScrollDimensions();
+		this.write(Math.max(0, dims.scrollHeight - dims.height));
+	}
+
+	cancel(): void {
+		this.frame?.dispose();
+		this.frame = undefined;
+		this.velocity = 0;
+	}
+
+	private readonly step = () => {
+		this.frame = undefined;
+		const now = getWindow(this.element).performance.now();
+		const elapsed = this.last ? now - this.last : 16;
+		this.last = now;
+		if (!this.follows() || !this.element.isConnected || glides.get(this.scroll)?.running) {
+			this.velocity = 0;
+			return;
+		}
+		const dims = this.scroll.getScrollDimensions();
+		const target = Math.max(0, dims.scrollHeight - dims.height);
+		const next = followScrollStep(this.scroll.getScrollPosition().scrollTop, target, this.velocity, elapsed, Math.max(dims.height, 200));
+		this.velocity = next.velocity;
+		this.write(next.position);
+		if (!next.done) {
+			this.frame = scheduleAtNextAnimationFrame(getWindow(this.element), this.step, FOLLOW_PRIORITY);
+		}
+	};
+
+	private write(scrollTop: number): void {
+		this.writing = true;
+		try {
+			this.scroll.setScrollPosition({ scrollTop });
+		} finally {
+			this.writing = false;
+		}
+	}
+}
+
+/**
+ * Whether an element from `target` up to (not including) `boundary` scrolls natively and can still
+ * move the wheel's way: that element takes the wheel, not the thread.
+ */
+export function nativeScrollerTakesWheel(target: Element, boundary: Element, deltaX: number, deltaY: number): boolean {
+	const view = getWindow(target);
+	for (let el: Element | null = target; el && el !== boundary; el = el.parentElement) {
+		if (el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1) {
+			continue;
+		}
+		const style = view.getComputedStyle(el);
+		const y = /auto|scroll/.test(style.overflowY);
+		const x = /auto|scroll/.test(style.overflowX);
+		if ((y && deltaY < 0 && el.scrollTop > 0) || (y && deltaY > 0 && el.scrollTop + el.clientHeight < el.scrollHeight - 1)
+			|| (x && deltaX < 0 && el.scrollLeft > 0) || (x && deltaX > 0 && el.scrollLeft + el.clientWidth < el.scrollWidth - 1)) {
+			return true;
+		}
+	}
+	return false;
+}

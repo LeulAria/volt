@@ -29,6 +29,7 @@ export class AgentThreadView extends Disposable {
 	private stuckFrame: IDisposable | undefined;
 	/** The exchange whose sent card the last pass found pinned. */
 	private stuckExchange: HTMLElement | undefined;
+	private adoptingNative = false;
 
 	constructor() {
 		super();
@@ -58,9 +59,19 @@ export class AgentThreadView extends Disposable {
 			const scrollTop = this.inner.scrollTop;
 			if (Math.abs(this.scroll.getScrollPosition().scrollTop - scrollTop) > 1) {
 				this.scroll.scanDomNode();
-				this.scroll.setScrollPosition({ scrollTop });
+				this.adoptingNative = true;
+				try {
+					this.scroll.setScrollPosition({ scrollTop });
+				} finally {
+					this.adoptingNative = false;
+				}
 			}
 		}));
+	}
+
+	/** True during the scroll event of a native scroll being adopted (see the constructor), which may not be the reader's. */
+	get isAdoptingNativeScroll(): boolean {
+		return this.adoptingNative;
 	}
 
 	/** {@link syncStuckTurns} once, at the end of this frame (or the next one): scrolls and redraws share it. */
