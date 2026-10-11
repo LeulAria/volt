@@ -293,7 +293,62 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	border-color: #ffffff;
 }
 
-/* The work card above the composer: subagents and queue share one card. */
+/*
+ * "N subagents running" over the chip row, under the Tasks card and drawn like it (agentEditor.css
+ * .volt-agent-tasks-card): the same fill, edge and corners, a 40px header line that opens into the
+ * rows. The card is the only surface: no wrapper paints around it.
+ */
+.volt-agent-agents-card {
+	position: relative;
+	z-index: 6;
+	flex: 0 0 auto;
+	width: 100%;
+	max-width: 720px;
+	margin: 0 auto 8px;
+	padding: 0 16px;
+	box-sizing: border-box;
+	border-radius: 12px;
+	background: var(--vscode-editor-background, #1e1e1e);
+	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	color: var(--vscode-foreground);
+	font-size: 13px;
+	overflow: hidden;
+}
+
+.monaco-workbench.vs .volt-agent-agents-card,
+.monaco-workbench.hc-light .volt-agent-agents-card {
+	background: var(--vscode-editor-background, #ffffff);
+	border-color: var(--vscode-widget-border, rgba(0, 0, 0, 0.1));
+}
+
+.volt-agent-agents-card.hidden {
+	display: none;
+}
+
+.volt-agent-agents-card .volt-agent-work-head {
+	min-height: 38px;
+}
+
+.volt-agent-agents-card .volt-agent-work-head:not(:last-child) {
+	margin-bottom: 0;
+}
+
+.volt-agent-agents-card .volt-agent-work-toggle {
+	gap: 6px;
+	font-size: 13px;
+	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+}
+
+.volt-agent-agents-card .volt-agent-work-toggle:hover {
+	color: color-mix(in srgb, var(--vscode-foreground) 85%, transparent);
+}
+
+.volt-agent-agents-card .volt-agent-work-agents,
+.volt-agent-agents-card .volt-agent-work-conflict:last-child {
+	margin-bottom: 8px;
+}
+
+/* The queue card above the input: its sections share one card. */
 
 .volt-agent-work-section + .volt-agent-work-section {
 	margin-top: 6px;

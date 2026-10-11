@@ -1043,8 +1043,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			switchModel: anchor => this.modelPicker.show(anchor),
 		}));
 		append(this.editorMainEl, this.limitChip.element);
-		const terminalChips = this.terminalChips = this._register(this.instantiationService.createInstance(AgentTerminalChips, { chatId: () => this.runtime.chatFor(this.sessionKey) }));
-		append(this.editorMainEl, terminalChips.element);
+		// The chat's terminals: a chip in the row above the composer (placed by AgentComposerChips).
+		this.terminalChips = this._register(this.instantiationService.createInstance(AgentTerminalChips, { chatId: () => this.runtime.chatFor(this.sessionKey) }));
 		this.surfaceHost = this._register(this.instantiationService.createInstance(AgentSurfaceHost, this.container, this.editorMainEl));
 		// A chip click opens that terminal beside this chat; starting one never does.
 		this._register(this.instantiationService.invokeFunction(accessor => accessor.get(IAgentTerminalsService)).onDidRequestReveal(e => {
@@ -1201,11 +1201,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onCompactClick: () => this.toggleCompactFirst(),
 			onStatusClick: () => this.scrollThreadToEnd(),
 			onAgentsClick: anchor => this.showAgentsMenu(anchor),
+			terminalRuns: this.terminalChips,
 		}));
+		// Over the chips, two cards of one look: the agent's to-dos, then its subagents.
 		this.tasksCard = this._register(new AgentTasksCard(() => this.layoutInputEditor(), target => target.kind === 'file'
 			? void this.openWorkspaceFile(target.path)
 			: void this.commandService.executeCommand(OPEN_CANVAS_COMMAND_ID, target.id)));
 		append(this.composerEl, this.tasksCard.element);
+		append(this.composerEl, this.composerQueue.agentsElement);
 		append(this.composerEl, this.composerChips.element);
 		// The same run status chip the browser's dock shows ("Waiting for approval", "Worked 2m").
 		this._register(this.onDidChangeDock(() => this.syncStatusChip()));
@@ -1259,7 +1262,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onDidChangeHeight: () => this.layoutInputEditor(),
 		}));
 		append(this.composerEl, this.worktreeSetupCard.element);
-		// Subagents and queued prompts sit right on top of the text area, under the chips (Cursor).
+		// Queued prompts sit right on top of the text area, under the chips (Cursor).
 		append(this.composerEl, this.composerQueue.element);
 		this.voiceDictation = this._register(this.instantiationService.createInstance(AgentVoiceDictation));
 		this.voiceDictation.textBefore = () => this.textBeforeDictation();

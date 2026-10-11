@@ -10,10 +10,6 @@
  * could not reach the provider.
  */
 
-.volt-agent-limit-bar + .volt-agent-terminal-bar {
-	padding-top: 6px;
-}
-
 .volt-agent-limit-chip.waiting { --volt-terminal-tone: var(--vscode-editorWarning-foreground, #cca700); }
 .volt-agent-limit-chip.armed { --volt-terminal-tone: var(--vscode-charts-blue, #3794ff); }
 .volt-agent-limit-chip.checking { --volt-terminal-tone: var(--vscode-charts-blue, #3794ff); }

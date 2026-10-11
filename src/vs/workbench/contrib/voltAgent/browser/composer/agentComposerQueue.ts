@@ -9,7 +9,6 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
-import { ITerminalService } from '../../../terminal/browser/terminal.js';
 import { AgentTooltip, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { groupSummary, isLiveSubagentState, ISubagentView, renderCursorCardRow, tickSubagentClocks } from '../chrome/agentSubagents.js';
 import { ITasksCard } from '../chrome/agentTimeline.js';
@@ -108,7 +107,13 @@ function createGripIcon(): HTMLElement {
 
 export class AgentComposerQueue extends Disposable {
 
+	/** Queued prompts (and, in the browser's dock, the to-dos): the stack right above the input. */
 	readonly element: HTMLElement;
+	/**
+	 * "N subagents running": its own card, drawn like the Tasks card. The chat puts it over the
+	 * chip row, under its Tasks card; nothing shows it where it is never placed (the dock).
+	 */
+	readonly agentsElement: HTMLElement;
 
 	private readonly queueEl: HTMLElement;
 	/** The agent's to-dos, last in the stack so it tucks under the input box. */
@@ -133,15 +138,13 @@ export class AgentComposerQueue extends Disposable {
 
 	constructor(
 		private readonly options: IAgentComposerQueueOptions,
-		@ITerminalService private readonly terminalService: ITerminalService,
 	) {
 		super();
+		this.agentsElement = $('.volt-agent-agents-card.hidden');
 		this.element = $('.volt-agent-composer-stack');
 		this.queueEl = append(this.element, $('.volt-agent-queue-card.hidden'));
 		this.tasksCard = this._register(new AgentTasksCard(() => this.syncStackClass()));
 		append(this.element, this.tasksCard.element);
-		this._register(this.terminalService.onDidChangeInstances(() => this.render()));
-		this._register(this.terminalService.onAnyInstancePrimaryStatusChange(() => this.render()));
 	}
 
 	setMode(mode: string): void {
@@ -206,10 +209,6 @@ export class AgentComposerQueue extends Disposable {
 		});
 	}
 
-	private terminals(): number {
-		return this.terminalService.instances.filter(instance => instance.hasChildProcesses).length;
-	}
-
 	private render(): void {
 		if (this.dragging) {
 			this.renderPending = true;
@@ -219,24 +218,24 @@ export class AgentComposerQueue extends Disposable {
 		this.listeners.clear();
 		this.clockStore.clear();
 		this.queueEl.replaceChildren();
+		this.agentsElement.replaceChildren();
 		const count = this.items.length;
 		const agents = this.shownAgents().length || (this.agentsInDock ? this.agents.conflicts.length : 0);
-		this.queueEl.classList.toggle('hidden', count === 0 && agents === 0);
+		this.queueEl.classList.toggle('hidden', count === 0);
+		this.agentsElement.classList.toggle('hidden', agents === 0);
 		this.syncStackClass();
 		this.queueEl.classList.toggle('paused', false);
 		this.queueEl.classList.toggle('editing', false);
 		if (agents) {
-			this.renderAgents(append(this.queueEl, $('.volt-agent-work-section.agents')));
+			this.renderAgents(append(this.agentsElement, $('.volt-agent-work-section.agents')));
 		}
 		if (count) {
 			this.renderQueue(append(this.queueEl, $('.volt-agent-work-section.queue')));
 		}
-		this.renderTerminals();
 	}
 
 	private syncStackClass(): void {
-		const cards = this.items.length > 0 || this.shownAgents().length > 0 || (this.agentsInDock && this.agents.conflicts.length > 0);
-		this.element.classList.toggle('has-stack', cards || this.tasksCard.visible);
+		this.element.classList.toggle('has-stack', this.items.length > 0 || this.tasksCard.visible);
 		this.element.classList.toggle('has-tasks', this.tasksCard.visible);
 	}
 
@@ -606,17 +605,5 @@ export class AgentComposerQueue extends Disposable {
 			}
 		}, true));
 		this.dragListeners.add(addDisposableListener(targetWindow, 'blur', () => finish(false)));
-	}
-
-	private renderTerminals(): void {
-		const terminals = this.terminals();
-		if (terminals > 0) {
-			const chips = append(this.queueEl, $('.volt-agent-queue-chips'));
-			const chip = append(chips, $('span.volt-agent-queue-chip'));
-			append(chip, $('span.volt-agent-composer-chip-dot'));
-			append(chip, $('span')).textContent = terminals === 1
-				? localize('voltAgent.oneTerminal', "1 Terminal")
-				: localize('voltAgent.manyTerminals', "{0} Terminals", terminals);
-		}
 	}
 }

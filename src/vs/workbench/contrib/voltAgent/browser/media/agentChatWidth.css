@@ -32,7 +32,7 @@
 	max-width: var(--volt-chat-max-width, 728px);
 }
 
-/* The tasks card sits 4px inside the composer on each side. */
-.monaco-workbench.volt-chat-width-custom .volt-agent-editor:not(.browser-hosted) .volt-agent-tasks-card {
+/* The tasks and subagents cards sit 4px inside the composer on each side. */
+.monaco-workbench.volt-chat-width-custom .volt-agent-editor:not(.browser-hosted) :is(.volt-agent-tasks-card, .volt-agent-agents-card) {
 	max-width: calc(var(--volt-chat-max-width, 728px) - 8px);
 }

@@ -7,6 +7,7 @@ import '../media/agentTerminals.css';
 import { $, addDisposableListener, append, EventHelper } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
@@ -44,15 +45,19 @@ const STATUS_WEIGHT: Record<AgentTerminalStatus, number> = {
 };
 
 /**
- * The chat's managed terminals as chips at the top of the chat: one chip per terminal, or one
- * "2 terminals running" chip for several. A spinner only while a terminal is genuinely starting;
- * a running server shows a steady dot. Clicking opens the terminal in the chat's tools on the
- * right; starting a terminal never opens them by itself.
+ * The chat's managed terminals as one chip in the composer's chip row (agentComposerChips.ts): the
+ * terminal itself, or "2 terminals running" for several, with a chevron for the menu. A spinner
+ * only while a terminal is genuinely starting; a running server shows a steady dot. Clicking opens
+ * the terminal in the chat's tools on the right; starting a terminal never opens them by itself.
  */
 export class AgentTerminalChips extends Disposable {
 
+	/** The chip itself; the chip row places it and folds it into "..." when the row is full. */
 	readonly element: HTMLElement;
 	private readonly renderStore = this._register(new DisposableStore());
+	private readonly _onDidChange = this._register(new Emitter<void>());
+	/** After every redraw: the chip row lays itself out again. */
+	readonly onDidChange: Event<void> = this._onDidChange.event;
 
 	constructor(
 		private readonly host: IAgentTerminalChipsHost,
@@ -62,8 +67,8 @@ export class AgentTerminalChips extends Disposable {
 		@IOpenerService private readonly openerService: IOpenerService,
 	) {
 		super();
-		this.element = $('.volt-agent-terminal-bar.hidden');
-		this.element.setAttribute('role', 'toolbar');
+		this.element = $('.volt-agent-composer-chip.terminal-runs.volt-browser-dock-chip.hidden');
+		this.element.setAttribute('role', 'group');
 		this.element.setAttribute('aria-label', localize('voltAgent.terminals', "Terminals"));
 		this._register(this.terminals.onDidChange(chatId => {
 			if (chatId === this.host.chatId()) {
@@ -73,19 +78,21 @@ export class AgentTerminalChips extends Disposable {
 		this.render();
 	}
 
+	get visible(): boolean {
+		return !this.element.classList.contains('hidden');
+	}
+
 	render(): void {
 		this.renderStore.clear();
 		this.element.replaceChildren();
 		const list = this.sorted(this.terminals.list(this.host.chatId()));
 		this.element.classList.toggle('hidden', !list.length);
-		if (!list.length) {
-			return;
-		}
 		if (list.length === 1) {
 			this.renderChip(list[0]);
-		} else {
+		} else if (list.length) {
 			this.renderSummary(list);
 		}
+		this._onDidChange.fire();
 	}
 
 	/** Live first, newest first. */
@@ -93,15 +100,24 @@ export class AgentTerminalChips extends Disposable {
 		return [...list].sort((a, b) => Number(isTerminalLive(b.status)) - Number(isTerminalLive(a.status)) || b.startedAt - a.startedAt);
 	}
 
+	/** The chip's tone (the status dot's colour) and whether it reads as one terminal or several. */
+	private setTone(status: AgentTerminalStatus, summary: boolean): void {
+		const chip = this.element;
+		chip.classList.remove(...Object.keys(STATUS_WEIGHT));
+		chip.classList.add(status);
+		chip.classList.toggle('summary', summary);
+	}
+
 	private renderChip(info: IAgentTerminalInfo): void {
-		const chip = append(this.element, $(`.volt-agent-terminal-chip.${info.status}`));
-		const main = append(chip, $('button.volt-agent-terminal-chip-main')) as HTMLButtonElement;
+		const chip = this.element;
+		this.setTone(info.status, false);
+		const main = append(chip, $('button.volt-agent-terminal-runs-main')) as HTMLButtonElement;
 		main.type = 'button';
 		main.appendChild(statusIndicator(info.status));
-		append(main, $('span.label')).textContent = info.label;
+		append(main, $('span.volt-agent-composer-chip-label.volt-agent-terminal-runs-label')).textContent = info.label;
 		const detail = chipDetail(info);
 		if (detail) {
-			append(main, $('span.detail')).textContent = detail;
+			append(main, $('span.volt-agent-terminal-runs-detail')).textContent = detail;
 		}
 		setAgentTooltip(main, tooltipFor(info));
 		main.setAttribute('aria-label', `${info.label}, ${statusLabel(info)}`);
@@ -115,7 +131,7 @@ export class AgentTerminalChips extends Disposable {
 		}));
 		this.appendMenuButton(chip, [info]);
 		if (!isTerminalLive(info.status)) {
-			const close = append(chip, $('button.volt-agent-terminal-chip-close')) as HTMLButtonElement;
+			const close = append(chip, $('button.volt-agent-terminal-runs-close')) as HTMLButtonElement;
 			close.type = 'button';
 			close.appendChild(renderIcon(Codicon.close));
 			setAgentTooltip(close, localize('voltAgent.terminal.dismiss', "Dismiss"));
@@ -130,8 +146,9 @@ export class AgentTerminalChips extends Disposable {
 		const live = list.filter(info => isTerminalLive(info.status));
 		const failed = list.filter(info => info.status === 'failed');
 		const top = [...list].sort((a, b) => STATUS_WEIGHT[b.status] - STATUS_WEIGHT[a.status])[0];
-		const chip = append(this.element, $(`.volt-agent-terminal-chip.summary.${top.status}`));
-		const main = append(chip, $('button.volt-agent-terminal-chip-main')) as HTMLButtonElement;
+		const chip = this.element;
+		this.setTone(top.status, true);
+		const main = append(chip, $('button.volt-agent-terminal-runs-main')) as HTMLButtonElement;
 		main.type = 'button';
 		main.appendChild(statusIndicator(top.status));
 		const label = live.length
@@ -139,8 +156,8 @@ export class AgentTerminalChips extends Disposable {
 				? localize('voltAgent.terminal.summaryFailed', "{0} terminals running \u00b7 {1} failed", live.length, failed.length)
 				: localize('voltAgent.terminal.summary', "{0} terminals running", live.length)
 			: localize('voltAgent.terminal.summaryDone', "{0} terminals", list.length);
-		append(main, $('span.label')).textContent = label;
-		const dots = append(main, $('span.dots'));
+		append(main, $('span.volt-agent-composer-chip-label.volt-agent-terminal-runs-label')).textContent = label;
+		const dots = append(main, $('span.volt-agent-terminal-runs-dots'));
 		for (const info of list.slice(0, 5)) {
 			append(dots, $(`span.dot.${info.status}`));
 		}
@@ -169,7 +186,7 @@ export class AgentTerminalChips extends Disposable {
 	}
 
 	private appendMenuButton(chip: HTMLElement, list: readonly IAgentTerminalInfo[]): void {
-		const more = append(chip, $('button.volt-agent-terminal-chip-more')) as HTMLButtonElement;
+		const more = append(chip, $('button.volt-agent-terminal-runs-more')) as HTMLButtonElement;
 		more.type = 'button';
 		more.setAttribute('aria-haspopup', 'menu');
 		more.appendChild(renderIcon(Codicon.chevronDown));
@@ -188,7 +205,8 @@ export class AgentTerminalChips extends Disposable {
 		}));
 		showVoltMenu<IChipPick>(this.contextViewService, {
 			anchor,
-			position: 'below',
+			// The chip sits right above the composer: the menu opens upward, over the transcript.
+			position: 'above',
 			align: 'left',
 			width: 300,
 			ariaLabel: localize('voltAgent.terminals', "Terminals"),

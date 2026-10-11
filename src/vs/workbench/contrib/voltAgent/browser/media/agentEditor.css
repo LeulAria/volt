@@ -3217,8 +3217,23 @@ pre.volt-agent-searchable {
 
 .volt-agent-edit-slot .volt-agent-composer-chips,
 .volt-agent-edit-slot .volt-agent-composer-stack,
+.volt-agent-edit-slot .volt-agent-agents-card,
 .volt-agent-editor.browser-hosted .volt-agent-composer-chips,
-.volt-agent-editor.browser-hosted .volt-agent-composer-stack {
+.volt-agent-editor.browser-hosted .volt-agent-composer-stack,
+.volt-agent-editor.browser-hosted .volt-agent-agents-card {
+	display: none !important;
+}
+
+/*
+ * A chat in another chat's tools (compact chrome) keeps one chip: its terminals. The rest of the
+ * row stays hidden; agentComposerChips.ts sets `has-terminal-runs` and skips hidden chips when it
+ * folds the row into "...".
+ */
+.volt-agent-editor.browser-hosted:not(.editing-user) .volt-agent-composer > .volt-agent-composer-chips.is-visible.has-terminal-runs {
+	display: flex !important;
+}
+
+.volt-agent-editor.browser-hosted .volt-agent-composer > .volt-agent-composer-chips.has-terminal-runs > :not(.terminal-runs) {
 	display: none !important;
 }
 
@@ -3775,8 +3790,9 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
-/* The chips float up over the transcript; under the card they stay in flow, as under Context Usage. */
-.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-tasks-card:not(.hidden) ~ .volt-agent-composer-chips.is-visible {
+/* The chips float up over the transcript; under the cards (Tasks, subagents) they stay in flow, as under Context Usage. */
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-tasks-card:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-agents-card:not(.hidden) ~ .volt-agent-composer-chips.is-visible {
 	margin-top: 0;
 }
 
