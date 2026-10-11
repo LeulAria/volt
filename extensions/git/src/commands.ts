@@ -3,13 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Command, commands, Disposable, MessageOptions, Position, ProgressLocation, QuickPickItem, Range, SourceControlResourceState, TextDocumentShowOptions, TextEditor, Uri, ViewColumn, window, workspace, WorkspaceEdit, WorkspaceFolder, TimelineItem, env, Selection, TextDocumentContentProvider, InputBoxValidationSeverity, TabInputText, TabInputTextMerge, QuickPickItemKind, TextDocument, LogOutputChannel, l10n, Memento, UIKind, QuickInputButton, ThemeIcon, SourceControlHistoryItem, SourceControl, InputBoxValidationMessage, Tab, TabInputNotebook, QuickInputButtonLocation, languages } from 'vscode';
 import TelemetryReporter from '@vscode/extension-telemetry';
 import { uniqueNamesGenerator, adjectives, animals, colors, NumberDictionary } from '@joaomoreno/unique-names-generator';
 import { ForcePushMode, GitErrorCodes, RefType, Status, CommitOptions, RemoteSourcePublisher, Remote, Branch, Ref } from './api/git';
-import { Git, Stash, Worktree } from './git';
+import { getLockFilePath, Git, Stash, Worktree } from './git';
 import { Model } from './model';
 import { GitResourceGroup, Repository, Resource, ResourceGroupType } from './repository';
 import { DiffEditorSelectionHunkToolbarContext, LineChange, applyLineChanges, getIndexDiffInformation, getModifiedRange, getWorkingTreeDiffInformation, intersectDiffWithRange, invertLineChange, toLineChanges, toLineRanges, compareLineChanges } from './staging';
@@ -1591,7 +1592,10 @@ export class CommandCenter {
 		if (uris.length > 0) {
 			const config = workspace.getConfiguration('git', Uri.file(repository.root));
 			const untrackedChanges = config.get<'mixed' | 'separate' | 'hidden'>('untrackedChanges');
-			await repository.add(uris, untrackedChanges === 'mixed' ? undefined : { update: true });
+			// With no conflicts, "everything" is exactly what `git add -- .` stages; conflicts
+			// must keep their explicit paths so they aren't marked resolved behind the user's back
+			const wholeTree = repository.mergeGroup.resourceStates.length === 0;
+			await repository.add(uris, { update: untrackedChanges !== 'mixed', wholeTree });
 		}
 	}
 
@@ -5288,6 +5292,27 @@ export class CommandCenter {
 					case GitErrorCodes.DirtyWorkTree:
 						message = l10n.t('Please clean your repository working tree before checkout.');
 						break;
+					case GitErrorCodes.RepositoryIsLocked: {
+						const lockPath = getLockFilePath(err.stderr);
+						if (!lockPath) {
+							message = l10n.t('Another git process is running in this repository. Try again once it finishes.');
+							break;
+						}
+						// The extension already waited for the lock, so it is most likely stale
+						message = l10n.t('Git is locked by \'{0}\'.\n\nAnother git process is still running, or one was killed and left the lock behind. Delete the lock file only if no other git process is working in this repository.', lockPath);
+						choices.clear();
+						choices.set(l10n.t('Delete Lock File and Retry'), async () => {
+							try {
+								await fs.promises.rm(lockPath, { force: true });
+							} catch (rmErr) {
+								window.showErrorMessage(l10n.t('Could not delete \'{0}\': {1}', lockPath, rmErr.message));
+								return;
+							}
+							(this as any)[key](...args);
+						});
+						choices.set(openOutputChannelChoice, () => outputChannelLogger.show());
+						break;
+					}
 					case GitErrorCodes.PushRejected:
 						message = l10n.t('Can\'t push refs to remote. Try running "Pull" first to integrate your changes.');
 						break;

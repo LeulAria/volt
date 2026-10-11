@@ -346,8 +346,16 @@ export interface IGitOptions {
 	env?: { [key: string]: string };
 }
 
+/**
+ * The lock file git failed to create, from stderr like
+ * `fatal: Unable to create '/repo/.git/index.lock': File exists.`
+ */
+export function getLockFilePath(stderr: string | undefined): string | undefined {
+	return stderr ? /Unable to create '(.+?\.lock)': File exists/.exec(stderr)?.[1] : undefined;
+}
+
 function getGitErrorCode(stderr: string): string | undefined {
-	if (/Another git process seems to be running in this repository|If no other git process is currently running/.test(stderr)) {
+	if (/Another git process seems to be running in this repository|If no other git process is currently running|\.lock': File exists/.test(stderr)) {
 		return GitErrorCodes.RepositoryIsLocked;
 	} else if (/Authentication failed/i.test(stderr)) {
 		return GitErrorCodes.AuthenticationFailed;

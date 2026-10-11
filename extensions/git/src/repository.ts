@@ -14,7 +14,7 @@ import { Branch, BranchQuery, Change, CommitOptions, FetchOptions, ForcePushMode
 import { AutoFetcher } from './autofetch';
 import { GitBranchProtectionProvider, IBranchProtectionProviderRegistry } from './branchProtection';
 import { debounce, memoize, sequentialize, throttle } from './decorators';
-import { Repository as BaseRepository, BlameInformation, Commit, GitError, LogFileOptions, LsTreeElement, PullOptions, RefQuery, Stash, Submodule, Worktree } from './git';
+import { Repository as BaseRepository, BlameInformation, Commit, getLockFilePath, GitError, LogFileOptions, LsTreeElement, PullOptions, RefQuery, Stash, Submodule, Worktree } from './git';
 import { GitHistoryProvider } from './historyProvider';
 import { Operation, OperationKind, OperationManager, OperationResult } from './operation';
 import { CommitCommandsCenter, IPostCommitCommandsProviderRegistry } from './postCommitCommands';
@@ -1252,24 +1252,28 @@ export class Repository implements Disposable {
 		return this.run(Operation.HashObject, () => this.repository.hashObject(data));
 	}
 
-	async add(resources: Uri[], opts?: { update?: boolean }): Promise<void> {
+	/**
+	 * `wholeTree` means `resources` is every change in the working tree, so git can take
+	 * a single `.` pathspec instead of thousands of paths spread over many invocations.
+	 */
+	async add(resources: Uri[], opts?: { update?: boolean; wholeTree?: boolean }): Promise<void> {
 		await this.run(
 			Operation.Add(!this.optimisticUpdateEnabled()),
 			async () => {
-				await this.repository.add(resources.map(r => r.fsPath), opts);
+				await this.repository.add(opts?.wholeTree ? [] : resources.map(r => r.fsPath), { update: opts?.update });
 				this.closeDiffEditors([], [...resources.map(r => r.fsPath)]);
 
 				// Accept working set changes across all chat sessions
 				commands.executeCommand('_chat.editSessions.accept', resources);
 			},
 			() => {
-				const resourcePaths = resources.map(r => r.fsPath);
-				const indexGroupResourcePaths = this.indexGroup.resourceStates.map(r => r.resourceUri.fsPath);
+				const resourcePaths = new Set(resources.map(r => r.fsPath));
+				const indexGroupResourcePaths = new Set(this.indexGroup.resourceStates.map(r => r.resourceUri.fsPath));
 
 				// Collect added resources
 				const addedResourceStates: Resource[] = [];
 				for (const resource of [...this.mergeGroup.resourceStates, ...this.untrackedGroup.resourceStates, ...this.workingTreeGroup.resourceStates]) {
-					if (resourcePaths.includes(resource.resourceUri.fsPath) && !indexGroupResourcePaths.includes(resource.resourceUri.fsPath)) {
+					if (resourcePaths.has(resource.resourceUri.fsPath) && !indexGroupResourcePaths.has(resource.resourceUri.fsPath)) {
 						addedResourceStates.push(resource.clone(ResourceGroupType.Index));
 					}
 				}
@@ -1279,15 +1283,15 @@ export class Repository implements Disposable {
 
 				// Remove resource(s) from merge group
 				const mergeGroup = this.mergeGroup.resourceStates
-					.filter(r => !resourcePaths.includes(r.resourceUri.fsPath));
+					.filter(r => !resourcePaths.has(r.resourceUri.fsPath));
 
 				// Remove resource(s) from working group
 				const workingTreeGroup = this.workingTreeGroup.resourceStates
-					.filter(r => !resourcePaths.includes(r.resourceUri.fsPath));
+					.filter(r => !resourcePaths.has(r.resourceUri.fsPath));
 
 				// Remove resource(s) from untracked group
 				const untrackedGroup = this.untrackedGroup.resourceStates
-					.filter(r => !resourcePaths.includes(r.resourceUri.fsPath));
+					.filter(r => !resourcePaths.has(r.resourceUri.fsPath));
 
 				return { indexGroup, mergeGroup, workingTreeGroup, untrackedGroup };
 			});
@@ -2344,15 +2348,21 @@ export class Repository implements Disposable {
 
 	private async retryRun<T>(operation: Operation, runOperation: () => Promise<T> = () => Promise.resolve<any>(null)): Promise<T> {
 		let attempt = 0;
+		const lockDeadline = Date.now() + Repository.LockWaitTimeout;
 
 		while (true) {
 			try {
 				attempt++;
 				return await runOperation();
 			} catch (err) {
+				// Another git process (a terminal, an agent, another editor) holds a lock:
+				// wait for it to let go rather than failing a long-running operation of theirs
+				if (err.gitErrorCode === GitErrorCodes.RepositoryIsLocked && await Repository.waitForLockRelease(getLockFilePath(err.stderr), attempt, lockDeadline)) {
+					continue;
+				}
+
 				const shouldRetry = attempt <= 10 && (
-					(err.gitErrorCode === GitErrorCodes.RepositoryIsLocked)
-					|| (operation.retry && (err.gitErrorCode === GitErrorCodes.CantLockRef || err.gitErrorCode === GitErrorCodes.CantRebaseMultipleBranches))
+					operation.retry && (err.gitErrorCode === GitErrorCodes.CantLockRef || err.gitErrorCode === GitErrorCodes.CantRebaseMultipleBranches)
 				);
 
 				if (shouldRetry) {
@@ -2363,6 +2373,31 @@ export class Repository implements Disposable {
 				}
 			}
 		}
+	}
+
+	private static readonly LockWaitTimeout = 120_000;
+
+	/**
+	 * Resolves `true` once the lock is gone and the operation is worth retrying, `false`
+	 * when it is still held at the deadline (likely a stale lock left by a killed process).
+	 */
+	private static async waitForLockRelease(lockPath: string | undefined, attempt: number, deadline: number): Promise<boolean> {
+		if (!lockPath) {
+			// Unknown lock file: fall back to quadratic backoff
+			if (attempt > 10) {
+				return false;
+			}
+			await timeout(Math.pow(attempt, 2) * 50);
+			return true;
+		}
+
+		while (Date.now() < deadline) {
+			if (!await new Promise<boolean>(c => fs.exists(lockPath, c))) {
+				return true;
+			}
+			await timeout(100);
+		}
+		return false;
 	}
 
 	private static KnownHugeFolderNames = ['node_modules'];
