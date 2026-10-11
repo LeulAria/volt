@@ -107,11 +107,11 @@ suite('Agent primary header', () => {
 		assert.strictEqual(folder.getAttribute('viewBox'), '0 0 24 24');
 		assert.strictEqual(folder.querySelector('path')?.getAttribute('d'), AGENT_HEADER_FOLDER_PATH);
 		assert.strictEqual(folder.querySelector('path')?.getAttribute('stroke'), 'currentColor');
-		assert.strictEqual(folder.querySelector('path')?.getAttribute('stroke-width'), '1');
+		assert.strictEqual(folder.querySelector('path')?.getAttribute('stroke-width'), '1.5');
 		assert.strictEqual(git.querySelector('path')?.getAttribute('d'), AGENT_HEADER_GIT_PATH);
 		assert.strictEqual(git.querySelector('line')?.getAttribute('x1'), '6');
 		assert.strictEqual(git.querySelector('line')?.getAttribute('y2'), '15');
 		assert.strictEqual(git.querySelectorAll('circle').length, 2);
-		assert.strictEqual(git.querySelector('circle')?.getAttribute('stroke-width'), '1');
+		assert.strictEqual(git.querySelector('circle')?.getAttribute('stroke-width'), '1.5');
 	});
 });

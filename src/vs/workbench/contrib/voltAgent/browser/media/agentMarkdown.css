@@ -951,7 +951,7 @@ code.volt-md-code.volt-md-diff {
 }
 
 .volt-diagram-button.copy .volt-agent-svg-icon :is(rect, path) {
-	stroke-width: 1.3px;
+	stroke-width: 1.5;
 }
 
 .volt-md-code-block.mermaid .volt-md-code-scroll {

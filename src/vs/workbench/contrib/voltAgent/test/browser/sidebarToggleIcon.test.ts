@@ -25,7 +25,7 @@ suite('Primary sidebar toggle', () => {
 		assert.strictEqual(frame?.getAttribute('rx'), '2');
 		assert.strictEqual(frame?.getAttribute('stroke'), 'currentColor');
 		assert.strictEqual(frame?.getAttribute('stroke-width'), '1.5');
-		assert.strictEqual(frame?.getAttribute('vector-effect'), 'non-scaling-stroke');
+		assert.strictEqual(frame?.hasAttribute('vector-effect'), false);
 		assert.strictEqual(divider?.getAttribute('d'), PRIMARY_SIDEBAR_TOGGLE_OPEN_DIVIDER_PATH);
 		assert.strictEqual(divider?.getAttribute('stroke'), 'currentColor');
 		assert.strictEqual(divider?.getAttribute('stroke-width'), '1.5');

@@ -912,7 +912,7 @@ function rotateIcon(doc: Document): SVGSVGElement {
 		root.setAttribute('viewBox', '0 0 24 24');
 		root.setAttribute('fill', 'none');
 		root.setAttribute('stroke', 'currentColor');
-		root.setAttribute('stroke-width', '1.6');
+		root.setAttribute('stroke-width', '1.5');
 		root.setAttribute('stroke-linecap', 'round');
 		root.setAttribute('stroke-linejoin', 'round');
 		shape(root, 'path', { d: 'M3 2v6h6' });

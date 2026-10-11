@@ -1912,7 +1912,8 @@ the background paints a solid square) and keep the glyph in the accent. */
 .volt-browser-action.responsive svg,
 .volt-browser-action.devtools svg,
 .volt-browser-action.float svg {
-	stroke-width: 1.6;
+	/* 1.5 in the 24 grid: the codicon line (1px at 16px) of Back / Forward / Reload beside them. */
+	stroke-width: 1.5;
 }
 
 .volt-browser-nav.star.active {
@@ -2088,7 +2089,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 }
 
 .volt-browser-icon.favicon svg {
-	stroke-width: 1.4;
+	stroke-width: 1.5;
 }
 
 /* Address suggestions: history matches with their title and address, under the field. */
@@ -2203,7 +2204,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 }
 
 .volt-browser-start-field svg {
-	stroke-width: 1.6;
+	stroke-width: 1.5;
 }
 
 .monaco-workbench input.volt-browser-start-input,

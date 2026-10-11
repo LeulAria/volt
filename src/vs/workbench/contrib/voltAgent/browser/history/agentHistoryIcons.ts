@@ -6,6 +6,7 @@
 import { $ } from '../../../../../base/browser/dom.js';
 import { AgentSessionStatus } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 
+/** 16-unit glyphs drawn at 16px; strokes of 1 match a codicon's line. */
 function createHistorySvg(extraClass: string, inner: (svg: SVGSVGElement) => void): HTMLElement {
 	const el = $(`span.volt-agent-svg-icon.${extraClass}`);
 	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -25,7 +26,7 @@ function strokeCircle(svg: SVGSVGElement, extra?: (circle: SVGCircleElement) => 
 	circle.setAttribute('cy', '8');
 	circle.setAttribute('r', '5.25');
 	circle.setAttribute('stroke', 'currentColor');
-	circle.setAttribute('stroke-width', '1.5');
+	circle.setAttribute('stroke-width', '1');
 	extra?.(circle);
 	svg.appendChild(circle);
 }
@@ -44,7 +45,7 @@ export function createDoneHistoryIcon(): HTMLElement {
 		const check = svg.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
 		check.setAttribute('d', 'M5.25 8.15l1.85 1.85 3.65-3.7');
 		check.setAttribute('stroke', 'currentColor');
-		check.setAttribute('stroke-width', '1.5');
+		check.setAttribute('stroke-width', '1');
 		check.setAttribute('stroke-linecap', 'round');
 		check.setAttribute('stroke-linejoin', 'round');
 		svg.appendChild(check);
@@ -57,7 +58,7 @@ export function createRunningHistoryIcon(): HTMLElement {
 		const path = svg.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
 		path.setAttribute('d', 'M8 2.5v2.25M8 11.25V13.5M13.5 8h-2.25M4.75 8H2.5M11.9 4.1l-1.6 1.6M5.7 10.3l-1.6 1.6M11.9 11.9l-1.6-1.6M5.7 5.7L4.1 4.1');
 		path.setAttribute('stroke', 'currentColor');
-		path.setAttribute('stroke-width', '1.5');
+		path.setAttribute('stroke-width', '1');
 		path.setAttribute('stroke-linecap', 'round');
 		svg.appendChild(path);
 	});

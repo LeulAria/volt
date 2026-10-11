@@ -38,8 +38,8 @@ export function createPrimarySidebarToggleIcon(owner: HTMLElement, glyph: Primar
 		frame.setAttribute('rx', '2');
 		frame.setAttribute('fill', 'none');
 		frame.setAttribute('stroke', 'currentColor');
+		// 1.5 in the 24 grid: a codicon's line (1px at 16px), scaled with the icon like the rest.
 		frame.setAttribute('stroke-width', '1.5');
-		frame.setAttribute('vector-effect', 'non-scaling-stroke');
 		frame.setAttribute('stroke-linecap', 'round');
 		frame.setAttribute('stroke-linejoin', 'round');
 		const divider = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -47,7 +47,6 @@ export function createPrimarySidebarToggleIcon(owner: HTMLElement, glyph: Primar
 		divider.setAttribute('fill', 'none');
 		divider.setAttribute('stroke', 'currentColor');
 		divider.setAttribute('stroke-width', '1.5');
-		divider.setAttribute('vector-effect', 'non-scaling-stroke');
 		svg.append(frame, divider);
 	} else if (glyph === 'closed') {
 		svg.setAttribute('viewBox', '0 0 16 16');

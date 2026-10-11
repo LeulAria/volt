@@ -109,7 +109,8 @@ export function createSurfaceStrokeIcon(doc: Document, shape: string | SvgIconSh
 	svg.setAttribute('height', '16');
 	svg.setAttribute('fill', 'none');
 	svg.setAttribute('stroke', 'currentColor');
-	svg.setAttribute('stroke-width', '1');
+	// 1.5 in the 24 grid matches a codicon's line (1px at 16px) at whatever size the icon is drawn.
+	svg.setAttribute('stroke-width', '1.5');
 	svg.setAttribute('stroke-linecap', 'round');
 	svg.setAttribute('stroke-linejoin', 'round');
 	svg.setAttribute('aria-hidden', 'true');

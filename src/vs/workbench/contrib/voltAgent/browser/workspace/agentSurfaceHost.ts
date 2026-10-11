@@ -2402,7 +2402,7 @@ function strokeIcon(doc: Document, paths: readonly string[], rects: readonly { x
 	svg.setAttribute('height', '16');
 	svg.setAttribute('fill', 'none');
 	svg.setAttribute('stroke', 'currentColor');
-	svg.setAttribute('stroke-width', '1.6');
+	svg.setAttribute('stroke-width', '1.5');
 	svg.setAttribute('stroke-linecap', 'round');
 	svg.setAttribute('stroke-linejoin', 'round');
 	svg.setAttribute('aria-hidden', 'true');

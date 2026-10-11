@@ -2690,9 +2690,10 @@ const ARIA_ICONS = {
 	},
 	ellipsis: {
 		circles: [
-			{ cx: '12', cy: '12', r: '1' },
-			{ cx: '19', cy: '12', r: '1' },
-			{ cx: '5', cy: '12', r: '1' },
+			// With the 1.5 stroke these stay 2px dots at 16px, the codicon "..." size.
+			{ cx: '12', cy: '12', r: '0.75' },
+			{ cx: '19', cy: '12', r: '0.75' },
+			{ cx: '5', cy: '12', r: '0.75' },
 		],
 	},
 	x: {
@@ -2710,7 +2711,8 @@ function createAriaIcon(spec: IAriaIconSpec, extraClass?: string): HTMLElement {
 	svg.setAttribute('height', size);
 	svg.setAttribute('fill', 'none');
 	svg.setAttribute('stroke', 'currentColor');
-	svg.setAttribute('stroke-width', '1');
+	// 1.5 in the 24 grid: a codicon's line (1px at 16px) at whatever size the icon is drawn.
+	svg.setAttribute('stroke-width', '1.5');
 	svg.setAttribute('stroke-linecap', 'round');
 	svg.setAttribute('stroke-linejoin', 'round');
 	svg.setAttribute('aria-hidden', 'true');
@@ -2763,7 +2765,7 @@ function createDesignSelectorIcon(): HTMLElement {
 	group.setAttribute('stroke', 'currentColor');
 	group.setAttribute('stroke-linecap', 'round');
 	group.setAttribute('stroke-linejoin', 'round');
-	group.setAttribute('stroke-width', '1.3');
+	group.setAttribute('stroke-width', '1.5');
 	for (const d of DESIGN_SELECTOR_PATHS) {
 		const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
 		path.setAttribute('d', d);

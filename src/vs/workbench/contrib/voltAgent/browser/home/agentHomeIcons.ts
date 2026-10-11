@@ -50,7 +50,7 @@ function createHomeSvgIcon(extraClass: string, pathD: string, options?: {
 	} else {
 		path.setAttribute('fill', 'none');
 		path.setAttribute('stroke', 'currentColor');
-		path.setAttribute('stroke-width', options?.strokeWidth ?? '2');
+		path.setAttribute('stroke-width', options?.strokeWidth ?? '1.5');
 		path.setAttribute('stroke-linecap', options?.strokeLinecap ?? 'round');
 		if (options?.strokeLinejoin !== null) {
 			path.setAttribute('stroke-linejoin', options?.strokeLinejoin ?? 'round');
@@ -256,19 +256,19 @@ const STATUS_ALERT_PATHS = [STATUS_RING, 'M12 7.5v5.5', 'M12 16.5v.01'];
 export function createHomeStatusBadgeIcon(kind: 'input' | 'working' | 'woke' | 'done' | 'draft' | 'limited' | 'failed'): HTMLElement {
 	switch (kind) {
 		case 'input':
-			return createHomeStrokeIcon('status-input', STATUS_INPUT_PATHS, '2');
+			return createHomeStrokeIcon('status-input', STATUS_INPUT_PATHS, '1.5');
 		case 'woke':
-			return createHomeStrokeIcon('status-woke', STATUS_ALARM_PATHS, '2');
+			return createHomeStrokeIcon('status-woke', STATUS_ALARM_PATHS, '1.5');
 		case 'working':
-			return createHomeStrokeIcon('status-working', AGENT_HOME_STATUS_ICON_PATHS, '2');
+			return createHomeStrokeIcon('status-working', AGENT_HOME_STATUS_ICON_PATHS, '1.5');
 		case 'done':
-			return createHomeStrokeIcon('status-done', [STATUS_RING, 'M8.5 12.5l2.5 2.5l4.5 -5'], '2');
+			return createHomeStrokeIcon('status-done', [STATUS_RING, 'M8.5 12.5l2.5 2.5l4.5 -5'], '1.5');
 		case 'draft':
-			return createHomeStrokeIcon('status-draft', STATUS_DRAFT_PATHS, '2');
+			return createHomeStrokeIcon('status-draft', STATUS_DRAFT_PATHS, '1.5');
 		case 'limited':
-			return createHomeStrokeIcon('status-limited', STATUS_ALERT_PATHS, '2');
+			return createHomeStrokeIcon('status-limited', STATUS_ALERT_PATHS, '1.5');
 		case 'failed':
-			return createHomeStrokeIcon('status-failed', STATUS_ALERT_PATHS, '2');
+			return createHomeStrokeIcon('status-failed', STATUS_ALERT_PATHS, '1.5');
 		default: {
 			const unexpected: never = kind;
 			return unexpected;

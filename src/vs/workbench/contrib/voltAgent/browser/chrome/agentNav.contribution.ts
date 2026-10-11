@@ -72,7 +72,8 @@ function arrowIcon(direction: 'back' | 'forward'): SVGElement {
 	head.setAttribute('d', direction === 'back' ? 'M7 4.5L3.5 8L7 11.5' : 'M9 4.5L12.5 8L9 11.5');
 	for (const path of [shaft, head]) {
 		path.setAttribute('stroke', 'currentColor');
-		path.setAttribute('stroke-width', '1.5');
+		// 1 in the 16 grid: a codicon's line weight at any size.
+		path.setAttribute('stroke-width', '1');
 		path.setAttribute('stroke-linecap', 'round');
 		path.setAttribute('stroke-linejoin', 'round');
 		svg.appendChild(path);

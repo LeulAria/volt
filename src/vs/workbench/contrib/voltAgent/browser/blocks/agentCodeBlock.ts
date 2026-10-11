@@ -364,7 +364,7 @@ function strokeSvg(el: HTMLElement): SVGSVGElement {
 function strokeShape(shape: SVGElement): void {
 	shape.setAttribute('fill', 'none');
 	shape.setAttribute('stroke', 'currentColor');
-	shape.setAttribute('stroke-width', '2');
+	shape.setAttribute('stroke-width', '1.5');
 	shape.setAttribute('stroke-linecap', 'round');
 	shape.setAttribute('stroke-linejoin', 'round');
 }

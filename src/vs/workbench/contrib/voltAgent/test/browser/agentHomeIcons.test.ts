@@ -34,7 +34,7 @@ suite('Agent home icons', () => {
 		assert.ok(icon.classList.contains('search'));
 		assert.strictEqual(path?.getAttribute('d'), AGENT_HOME_SEARCH_ICON_PATH);
 		assert.strictEqual(path?.getAttribute('stroke'), 'currentColor');
-		assert.strictEqual(path?.getAttribute('stroke-width'), '2');
+		assert.strictEqual(path?.getAttribute('stroke-width'), '1.5');
 	});
 
 	test('new chat icon is the paper plane at stroke 1', () => {
