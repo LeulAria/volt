@@ -79,7 +79,8 @@ export interface IChartBlock extends IAgentBaseBlock {
  */
 export interface IVisualBlock extends IAgentBaseBlock {
 	readonly type: 'visual';
-	kind: 'chart' | 'html';
+	/** `canvas`: a design canvas update, drawn as a card that opens the canvas. */
+	kind: 'chart' | 'html' | 'canvas';
 	title: string;
 	/** The stored spec (`volt-attachment:<hash>.json`) or page (`.html`). */
 	ref: string;
@@ -91,6 +92,12 @@ export interface IVisualBlock extends IAgentBaseBlock {
 	cap?: number;
 	/** Still streaming in: a single round chart (pie, donut, gauge) holds a round placeholder. */
 	shape?: 'circle';
+	/** A design canvas page or update: its id (Open, live sync). `pending` while canvas_render streams in. */
+	canvas?: string;
+	/** Canvas updates: what changed. */
+	detail?: string;
+	/** canvas_render streaming in: the frames it has named so far. */
+	frames?: readonly string[];
 }
 
 export interface IMermaidBlock extends IAgentBaseBlock {

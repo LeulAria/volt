@@ -30,7 +30,9 @@ export type PageRequest =
 	| { readonly kind: 'prompt'; readonly text: string }
 	| { readonly kind: 'context'; readonly value: string }
 	| { readonly kind: 'display'; readonly mode: 'fullscreen' | 'inline' }
-	| { readonly kind: 'open'; readonly href: string };
+	| { readonly kind: 'open'; readonly href: string }
+	/** A Volt-built page (the design canvas) talking to its own host: see `registerPageChannel`. */
+	| { readonly kind: 'channel'; readonly channel: string; readonly payload: unknown };
 
 function textOfContent(content: unknown): string | undefined {
 	if (typeof content === 'string') {
@@ -63,6 +65,8 @@ export function parsePageRequest(raw: unknown): PageRequest | undefined {
 			return typeof message.value === 'string' ? { kind: 'context', value: clipped(message.value, PAGE_CONTEXT_CHARS) } : undefined;
 		case 'volt-display':
 			return { kind: 'display', mode: message.mode === 'inline' ? 'inline' : 'fullscreen' };
+		case 'volt-channel':
+			return typeof message.channel === 'string' && message.channel ? { kind: 'channel', channel: message.channel.slice(0, 40), payload: message.payload } : undefined;
 	}
 	// MCP Apps (JSON-RPC 2.0), for pages written against that API.
 	const params = (message.params && typeof message.params === 'object' ? message.params : {}) as Record<string, unknown>;
@@ -109,6 +113,49 @@ export function pageHeightFor(width: number, heights: readonly (readonly [number
 	const height = Math.max(below[1], above[1]);
 	return cap !== undefined ? Math.min(cap, height) : height;
 }
+
+//#region Channels
+
+/** Where a channel message came from, and how to answer it. */
+export interface IPageChannelPort {
+	/** Identifies the mounted page (one webview): stable until it is disposed or reloaded. */
+	readonly id: string;
+	/** The page's title. */
+	readonly title: string;
+	/** The chat the page is shown in, when it is in one. */
+	readonly sessionId?: string;
+	/** Posts a message to the page. */
+	post(message: unknown): void;
+	/** The page has the user's focus (they clicked in it), so it may send a message as them. */
+	focused(): boolean;
+	/** Sends a message to the chat as the user (`send`), or puts it in the composer. */
+	prompt?(text: string, send: boolean): void;
+	/** Opens a link (`volt://`, local path, URL). */
+	open?(href: string): void;
+	/** Copies text to the clipboard. */
+	copy?(text: string): void;
+	/** Fires once when the page goes away (its webview is disposed or reloads). */
+	onDispose(listener: () => void): void;
+}
+
+export type PageChannelHandler = (port: IPageChannelPort, payload: unknown) => void;
+
+const channels = new Map<string, PageChannelHandler>();
+
+/**
+ * Volt-built pages (the design canvas) talk to their own host code over `window.volt.channel(name,
+ * payload)`. A channel is registered once per window; a message on an unknown channel is dropped.
+ */
+export function registerPageChannel(name: string, handler: PageChannelHandler): { dispose(): void } {
+	channels.set(name, handler);
+	return { dispose: () => channels.get(name) === handler && channels.delete(name) };
+}
+
+export function dispatchPageChannel(port: IPageChannelPort, channel: string, payload: unknown): void {
+	channels.get(channel)?.(port, payload);
+}
+
+//#endregion
 
 //#region Page state for the next turn
 

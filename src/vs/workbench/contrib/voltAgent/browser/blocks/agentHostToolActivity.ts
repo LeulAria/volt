@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { isMemoryToolName } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
-import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, MOCKUPS_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME, THREAD_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, CANVAS_READ_TOOL_NAME, CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, MOCKUPS_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME, THREAD_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /** How one of Volt's own MCP tools reads in the activity trail, the way Cursor words its browser actions. */
 export interface IHostToolActivity {
@@ -109,6 +109,16 @@ export function describeHostToolActivity(name: string | undefined, title: string
 	if (tool === MOCKUPS_TOOL_NAME) {
 		const count = Array.isArray(args.options) ? args.options.length : 0;
 		return { tool, label: count ? `Showed ${count} mockup${count === 1 ? '' : 's'}` : 'Showed mockups', detail: text(args.title, 80) };
+	}
+	if (tool === CANVAS_RENDER_TOOL_NAME) {
+		const count = Array.isArray(args.frames) ? args.frames.length : 0;
+		return { tool, label: count ? `Designed ${count} screen${count === 1 ? '' : 's'}` : 'Designed canvas', detail: text(args.title, 80) };
+	}
+	if (tool === CANVAS_UPDATE_TOOL_NAME) {
+		return { tool, label: 'Updated canvas', detail: text(args.title, 80) };
+	}
+	if (tool === CANVAS_READ_TOOL_NAME) {
+		return { tool, label: 'Read canvas', detail: Array.isArray(args.frames) ? args.frames.filter(frame => typeof frame === 'string').slice(0, 4).join(', ') : undefined };
 	}
 	if (tool === SCREENS_TOOL_NAME) {
 		if (typeof args.job === 'string' && !args.title) {

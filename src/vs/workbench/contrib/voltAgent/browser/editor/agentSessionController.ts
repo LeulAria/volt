@@ -485,7 +485,7 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 		if (last.segments.some(segment => segment.kind === 'block' && segment.block.id === id)) {
 			return;
 		}
-		last.segments.push({ kind: 'block', block: { id, type: 'visual', status: 'complete', kind: visual.kind, title: visual.title, ref: visual.ref, ...(visual.height ? { height: visual.height } : {}), ...(visual.heights?.length ? { heights: visual.heights } : {}), ...(visual.cap ? { cap: visual.cap } : {}) } });
+		last.segments.push({ kind: 'block', block: { id, type: 'visual', status: 'complete', kind: visual.kind, title: visual.title, ref: visual.ref, ...(visual.height ? { height: visual.height } : {}), ...(visual.heights?.length ? { heights: visual.heights } : {}), ...(visual.cap ? { cap: visual.cap } : {}), ...(visual.canvas ? { canvas: visual.canvas } : {}), ...(visual.detail ? { detail: visual.detail } : {}) } });
 		for (const segment of last.segments) {
 			if (segment.kind === 'activity' && segment.item.browserTool === tool && segment.item.input && segment.item.input.length > 2000) {
 				segment.item.input = JSON.stringify({ title: visual.title });

@@ -260,6 +260,7 @@ function mockupStrings(): IMockupStrings {
 		combineMessage: localize('voltMockups.combineMessage', "Combine options {0} from \"{1}\" into one design."),
 		refinePrompt: localize('voltMockups.refinePrompt', "Refine option {0} \"{1}\" from \"{2}\": "),
 		selectedContext: localize('voltMockups.selectedContext', "Mockups selected in \"{0}\": {1}"),
+		openCanvas: localize('voltMockups.openCanvas', "Open on Canvas"),
 	};
 }
 

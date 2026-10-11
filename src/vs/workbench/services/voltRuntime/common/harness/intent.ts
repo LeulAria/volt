@@ -35,6 +35,8 @@ export interface IIntent {
 	readonly wantsMockups?: boolean;
 	/** The app's own screens shown back ("all the screens in light and dark"): screens_capture. */
 	readonly wantsScreens?: boolean;
+	/** Screens, flows or a design board to work on ("design the onboarding flow", "mobile screens", "figma"): canvas_render. */
+	readonly wantsCanvas?: boolean;
 	/** How they asked to be answered - form, completeness, lookup. Every lane reads this. */
 	readonly shape: IRequestShape;
 	/** Something long-running is involved: a server, a watcher, Docker. Managed terminals fit. */
@@ -98,6 +100,8 @@ const CODE_FENCE = /```/;
 /** Parts of a UI that alternatives are asked for. */
 const UI_NOUN = '(?:side ?bar|nav ?bar|nav(?:igation)?|header|footer|page|screen|ui|ux|layout|button|card|form|modal|dialog|menu|hero|landing|dashboard|component|widget|design|logo|icon|theme|palette|onboarding|empty state|table|chart|list|tabs?|toolbar|banner|pricing|profile|settings|log ?in|sign ?(?:in|up)|checkout|home ?page|website|site|app|style|look)';
 const MOCKUP_INTENT = new RegExp(`\\bmock[- ]?ups?\\b|\\bwire ?frames?\\b|\\b${UI_NOUN}s? (?:alternatives?|variations?|variants?|options|ideas|concepts|directions|versions|designs|explorations)\\b|\\b(?:alternatives?|variations?|variants?|options|ideas|concepts|directions|versions|designs|explorations) (?:for|of) (?:the |our |my |a |an |this )?[\\w -]{0,30}?${UI_NOUN}\\b|\\bdesign (?:alternatives?|options|ideas|directions|concepts)\\b`, 'i');
+/** Designing several screens, a flow or a board: the design canvas. */
+const CANVAS_INTENT = /\b(?:design canvas|figma|(?:user|screen|ux) flows?|(?:design|mock ?up|prototype|sketch|wireframe)\b[^.?!]{0,40}\b(?:screens|flows?|(?:mobile|ios|android|iphone) app|website|landing page|prototype)|(?:mobile|ios|android|iphone|ipad|tablet|app) (?:screens|ui|design|mockups?|prototype)|clickable prototype|screen designs?|responsive (?:design|layouts?|previews?)|(?:phone|tablet|desktop) (?:and|&|\/) (?:phone|tablet|desktop))\b/i;
 const SCREENS_INTENT = /\b(?:(?:all|every|each) (?:of )?(?:the |our |my )?(?:app'?s? |current |existing |mobile |web )?(?:screens|pages|views)|(?:current|existing|app'?s?|mobile) screens|screen ?shots? of (?:all|every|each|the)|inspect (?:the |our |my )?(?:app|ui|screens|pages|mobile)|(?:light|dark) (?:and|&|\/) (?:light|dark)(?: (?:mode|theme)s?)?)\b/i;
 
 export function classifyIntent(text: string, mode: VoltMode, context: IIntentContext = {}): IIntent {
@@ -156,6 +160,8 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	if (wantsMockups) { signals.push('mockups'); }
 	const wantsScreens = SCREENS_INTENT.test(raw);
 	if (wantsScreens) { signals.push('screens'); }
+	const wantsCanvas = CANVAS_INTENT.test(raw);
+	if (wantsCanvas) { signals.push('canvas'); }
 
 	let lane: VoltLane;
 
@@ -195,7 +201,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 
 	// "5 sidebar alternatives" has no coding verb, but it is work on the project shown as a gallery,
 	// not a question to answer in prose.
-	if (lane === 'chat' && (wantsMockups || wantsScreens) && hasWorkspace && mode !== 'ask' && !slashChat) {
+	if (lane === 'chat' && (wantsMockups || wantsScreens || wantsCanvas) && hasWorkspace && mode !== 'ask' && !slashChat) {
 		lane = 'agent';
 		signals.push('gallery');
 	}
@@ -232,6 +238,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		...(mentionsTests ? { mentionsTests } : {}),
 		...(wantsMockups ? { wantsMockups } : {}),
 		...(wantsScreens ? { wantsScreens } : {}),
+		...(wantsCanvas ? { wantsCanvas } : {}),
 		...(wantsServices ? { wantsServices } : {}),
 		shape,
 	};

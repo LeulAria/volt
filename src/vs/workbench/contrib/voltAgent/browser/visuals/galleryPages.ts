@@ -77,6 +77,8 @@ export interface IMockupStrings {
 	readonly refinePrompt: string;
 	/** "Selected in "{0}": {1}" */
 	readonly selectedContext: string;
+	/** Opens the options as a design canvas beside the chat. */
+	readonly openCanvas?: string;
 }
 
 export interface IMockupsPageData extends IMockupShared {
@@ -327,6 +329,8 @@ export function mockupDocument(shared: IMockupShared, option: IMockupOption, the
 
 interface IGalleryBridge {
 	readonly theme?: string;
+	readonly preview?: boolean;
+	channel?(name: string, payload: unknown): void;
 	send(text: string): void;
 	prompt(text: string): void;
 	setContext(value: string): void;
@@ -366,6 +370,7 @@ export function mockupsRuntime(win: Window & typeof globalThis, documentFor: (sh
 		check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 8.6 6.4 11.8 12.8 4.6"/></svg>',
 		edit: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M10.6 2.6 13.4 5.4 6 12.8H3.2V10z"/></svg>',
 		merge: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5v3.2c0 1.6 1.3 2.3 4 2.3s4 .7 4 2.3v3.2M12 2.5v3.2c0 .8-.4 1.4-1.2 1.8M5.2 9.5c-.8.4-1.2 1-1.2 1.8v2.2"/></svg>',
+		canvas: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="1.6"/><rect x="4" y="5" width="3" height="5.6" rx=".7"/><rect x="9" y="5" width="3" height="5.6" rx=".7"/></svg>',
 	};
 
 	const fmt = (template: string, ...args: (string | number)[]): string => template.replace(/\{(\d+)\}/g, (match, index) => String(args[Number(index)] ?? match));
@@ -567,6 +572,11 @@ export function mockupsRuntime(win: Window & typeof globalThis, documentFor: (sh
 			state.look = id as GalleryTheme | 'both';
 			sync();
 		}));
+	}
+	// The options as a design canvas beside the chat: a board to pan, compare at full size, comment on and choose from.
+	if (S.openCanvas && volt?.channel && !volt.preview) {
+		const channel = volt.channel.bind(volt);
+		tools.append(button(S.openCanvas, '', 'canvas', () => channel('canvas', { op: 'import', id: 'new', mockups: { title: data.title, subtitle: data.subtitle, head: data.head, css: data.css, template: data.template, viewports: data.viewports, theme: data.theme, options: data.options, recommended: data.recommended } })));
 	}
 	head.append(heading, tools);
 

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { MOCKUPS_TOOL_NAME, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME } from '../hostTools.js';
+import { CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, MOCKUPS_TOOL_NAME, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME } from '../hostTools.js';
 import { modePolicy, VoltMode } from '../modes.js';
 import { DOCKER_ENSURE_TOOL_NAME, TERMINAL_OUTPUT_TOOL_NAME, TERMINAL_START_TOOL_NAME, TERMINAL_STOP_TOOL_NAME, TERMINAL_WAIT_TOOL_NAME } from '../terminalTools.js';
 import { IRunPlan } from '../runPlan.js';
@@ -272,11 +272,13 @@ export const VISUAL_REPLIES = `When a visual helps explain the answer, render it
 export const MOCKUP_REPLIES = `For design alternatives, call ${MOCKUPS_TOOL_NAME} from the volt MCP server once with every option's HTML (shared markup in template, css and head) instead of describing them or writing files: the user compares them in the chat and their pick comes back as their next message, so end your turn after it with one short line.`;
 export const SCREENS_REPLIES = `To show the app's screens, call ${SCREENS_TOOL_NAME} from the volt MCP server once with every screen (a web url with paths, a booted simulator or emulator with deep links or act steps, a desktop window, or image files) instead of screenshotting them one by one: it captures light and dark and shows a gallery. Read the screen first (device_snapshot or browser_snapshot) only if you do not know how to reach a screen.`;
 
+export const CANVAS_REPLIES = `To design screens or a flow, call ${CANVAS_RENDER_TOOL_NAME} from the volt MCP server once with every screen as a frame (iphone, android, tablet, browser, desktop or component; real copy and styling; shared markup in head, css and components; data-next on the element that leads to the next screen) instead of describing them or writing throwaway files: the user moves, plays and comments on it, and you change it afterwards with ${CANVAS_UPDATE_TOOL_NAME} edits rather than a new canvas.`;
+
 function galleryHints(input: IContextPackInput): string[] {
 	if (!input.visuals) {
 		return [];
 	}
-	return [...(input.intent.wantsMockups ? [MOCKUP_REPLIES] : []), ...(input.intent.wantsScreens ? [SCREENS_REPLIES] : [])];
+	return [...(input.intent.wantsCanvas ? [CANVAS_REPLIES] : []), ...(input.intent.wantsMockups ? [MOCKUP_REPLIES] : []), ...(input.intent.wantsScreens ? [SCREENS_REPLIES] : [])];
 }
 
 export const WORKSPACE_SCOPE = 'Keep project exploration inside this workspace. You may read a skill or instruction file explicitly supplied by the user or listed by your configured skills, including its referenced resources, even when it lives outside the workspace. Do not search the home folder, sibling projects, or other tools\' private data and chat history unless the user asks; if something the user mentions is missing, say so instead of hunting for it elsewhere.';

@@ -50,7 +50,17 @@ export const PREVIEW_HTML_TOOL_NAME = 'html_preview';
  */
 export const MOCKUPS_TOOL_NAME = 'mockups_render';
 export const SCREENS_TOOL_NAME = 'screens_capture';
-export const VISUAL_TOOL_NAMES = [RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, MOCKUPS_TOOL_NAME, SCREENS_TOOL_NAME, 'render_html', 'preview_html'] as const;
+/**
+ * The design canvas: a persistent, Figma-like board of live screens (phones, tablets, browsers,
+ * windows, components) with flows between them, which the user moves, resizes, plays and comments
+ * on, and the agent patches frame by frame. Read returns its state; it draws nothing.
+ */
+export const CANVAS_RENDER_TOOL_NAME = 'canvas_render';
+export const CANVAS_UPDATE_TOOL_NAME = 'canvas_update';
+export const CANVAS_READ_TOOL_NAME = 'canvas_read';
+export const VISUAL_TOOL_NAMES = [RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, MOCKUPS_TOOL_NAME, SCREENS_TOOL_NAME, CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, CANVAS_READ_TOOL_NAME, 'render_html', 'preview_html'] as const;
+/** Visual tools that show nothing in the reply (checks and reads). */
+export const SILENT_VISUAL_TOOL_NAMES: readonly string[] = [PREVIEW_HTML_TOOL_NAME, CANVAS_READ_TOOL_NAME, 'preview_html'];
 
 /** Earlier names of host tools, still accepted from agents and read in stored transcripts. */
 export const LEGACY_TOOL_NAMES: Readonly<Record<string, string>> = {
@@ -65,8 +75,9 @@ export function canonicalHostToolName(name: string): string {
 
 /** A visual a render tool published: where its spec or page is stored, for the transcript to draw. */
 export interface IVoltVisualRef {
-	readonly kind: 'chart' | 'html';
-	/** `volt-attachment:<hash>.json` (chart spec) or `.html` (page). */
+	/** `canvas`: a design canvas update, drawn as a card that opens the canvas (its page is the canvas_render visual). */
+	readonly kind: 'chart' | 'html' | 'canvas';
+	/** `volt-attachment:<hash>.json` (chart spec) or `.html` (page); `volt-canvas:<id>@<version>` for an update. */
 	readonly ref: string;
 	readonly title: string;
 	/** Pages: the height the page needed at the reply column's width, so the frame opens at its size. */
@@ -75,6 +86,10 @@ export interface IVoltVisualRef {
 	readonly heights?: readonly (readonly [number, number])[];
 	/** Pages: the agent's cap on the frame height; taller content scrolls inside. */
 	readonly cap?: number;
+	/** A design canvas page or update: the canvas id, for Open and live sync. */
+	readonly canvas?: string;
+	/** Canvas updates: what changed, one line. */
+	readonly detail?: string;
 }
 export const BROWSER_NETWORK_TOOL_NAME = 'browser_network';
 export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';

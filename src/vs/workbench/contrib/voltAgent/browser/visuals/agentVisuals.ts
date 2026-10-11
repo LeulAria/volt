@@ -29,7 +29,8 @@ import { IWebviewElement, IWebviewService, WebviewContentPurpose } from '../../.
 import type { IVisualBlock } from '../blocks/agentBlocks.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { DotLoaderShape, renderDotLoader } from './agentDotLoader.js';
-import { pageHeightFor, PAGE_SEND_INTERVAL_MS, PageRequest, parsePageRequest, setPageContext } from './agentVisualBridge.js';
+import { dispatchPageChannel, IPageChannelPort, pageHeightFor, PAGE_SEND_INTERVAL_MS, PageRequest, parsePageRequest, setPageContext } from './agentVisualBridge.js';
+import { openCanvas, renderCanvasBuilding, renderCanvasCard } from './canvas/canvasCard.js';
 import { buildVisualPage, VISUAL_COLUMN_WIDTH, VISUAL_MAX_HEIGHT, VISUAL_MIN_HEIGHT } from './agentVisualPage.js';
 import { IVoltChartsHandle, IVoltChartsRuntime, IVoltChartsStrings, voltChartsRuntime } from './voltChartsRuntime.js';
 
@@ -233,6 +234,51 @@ interface ILiveFrame {
 	/** Shown over the chat (top layer), in place: the page keeps its state. */
 	fullscreen?: DisposableStore;
 	lastSend?: number;
+	/** The mounted page's channel port (Volt-built pages talk to their host through it). */
+	port?: IPageChannelPort;
+}
+
+let portSeq = 0;
+
+/** A channel port for the page mounted in `webview`; it goes with `store`. */
+function createPort(frame: ILiveFrame, webview: IWebviewElement, store: DisposableStore, win: CodeWindow): IPageChannelPort {
+	const listeners: (() => void)[] = [];
+	store.add(toDisposable(() => {
+		for (const listener of listeners.splice(0)) {
+			listener();
+		}
+	}));
+	return {
+		id: `page-${++portSeq}`,
+		get title() {
+			return frame.title;
+		},
+		get sessionId() {
+			return frame.ctx.sessionId;
+		},
+		post: message => void webview.postMessage(message),
+		focused: () => frame.element.contains(win.document.activeElement),
+		prompt: (text, send) => {
+			const now = Date.now();
+			if (send && frame.lastSend && now - frame.lastSend < PAGE_SEND_INTERVAL_MS) {
+				send = false;
+			}
+			if (send) {
+				frame.lastSend = now;
+				setFrameFullscreen(frame, false, win);
+			}
+			frame.ctx.onPagePrompt?.(text, frame.title, send);
+		},
+		open: href => openVisualHref(href, frame.ctx),
+		copy: text => frame.ctx.onCopyText?.(text),
+		onDispose: listener => {
+			if (store.isDisposed) {
+				listener();
+			} else {
+				listeners.push(listener);
+			}
+		},
+	};
 }
 
 /** How a page frame opens: heights measured at several widths, and the agent's cap. */
@@ -395,6 +441,7 @@ function createFrame(key: string, title: string, html: string, height: number | 
 			// preventDefault/stopPropagation on what it handles, so give it no-op ones (as chat does).
 			webviewStore.add(webview.onDidWheel(event => frame.ctx.onWheel?.({ ...event, preventDefault: () => { }, stopPropagation: () => { } })));
 			webviewStore.add(webview.onDidClickLink(link => openVisualHref(link, frame.ctx)));
+			frame.port = createPort(frame, webview, webviewStore, win);
 			webviewStore.add(webview.onMessage(event => {
 				const request = parsePageRequest(event.message);
 				if (request) {
@@ -530,6 +577,11 @@ function handlePageRequest(frame: ILiveFrame, request: PageRequest, win: CodeWin
 			return;
 		case 'prompt':
 			frame.ctx.onPagePrompt?.(request.text, frame.title, false);
+			return;
+		case 'channel':
+			if (frame.port) {
+				dispatchPageChannel(frame.port, request.channel, request.payload);
+			}
 			return;
 		case 'send': {
 			const focused = frame.element.contains(win.document.activeElement);
@@ -695,18 +747,26 @@ function placeActions(wrap: HTMLElement, body: HTMLElement): void {
  * Expand and Copy on hover. Loading holds the visual's own height, so nothing below it jumps.
  */
 export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx: IVisualHostContext & { readonly store: DisposableStore }): void {
+	if (block.kind === 'canvas') {
+		renderCanvasCard(parent, block, ctx);
+		return;
+	}
 	const wrap = append(parent, $('.volt-agent-block.volt-agent-visual'));
 	wrap.classList.add(block.kind === 'html' ? 'page' : 'chart');
 	const key = `${block.id}:${block.ref}`;
 	const title = block.title || (block.kind === 'html' ? localize('voltVisual.page', "Page") : localize('voltVisual.chart', "Chart"));
 	// A page gets a caption (its name, and its tools on the right) so nothing sits over the page's own controls.
-	const caption = block.kind === 'html' ? renderPageCaption(wrap, title, !block.ref) : undefined;
+	const caption = block.kind === 'html' ? renderPageCaption(wrap, title, !block.ref, !!block.canvas) : undefined;
 	const body = append(wrap, $('.volt-agent-visual-body'));
 	const actions = append(caption ?? wrap, $('.volt-agent-visual-actions'));
 	if (!block.ref) {
 		// The render_chart / render_html call is still streaming in: hold its place.
 		wrap.classList.add('pending');
-		renderVisualSkeleton(body, block.kind, block.kind === 'html' ? frameHeight(block.height) : undefined, { shape: block.shape, creating: true });
+		if (block.canvas) {
+			renderCanvasBuilding(body, block.frames ?? []);
+		} else {
+			renderVisualSkeleton(body, block.kind, block.kind === 'html' ? frameHeight(block.height) : undefined, { shape: block.shape, creating: true });
+		}
 		return;
 	}
 	if (block.kind === 'chart') {
@@ -763,6 +823,17 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 		});
 		whenNearScreen(wrap, load, ctx.store);
 	}
+	const canvasId = block.canvas;
+	if (canvasId) {
+		// A design canvas opens as a tab beside the chat, where it has room (and stays in step with this one).
+		const open = toolbarButton(actions, Codicon.layoutSidebarRight, localize('voltVisual.openCanvas', "Open Canvas Beside the Chat"), () => openCanvas(ctx, canvasId), ctx.store);
+		open.classList.add('labeled');
+		append(open, $('span')).textContent = localize('voltVisual.open', "Open");
+		toolbarButton(actions, Codicon.desktopDownload, localize('voltVisual.save', "Save as HTML File"), () => {
+			void loadPage(ctx, block.ref).then(html => html !== undefined ? savePage(ctx, title, html) : undefined);
+		}, ctx.store);
+		return;
+	}
 	toolbarButton(actions, Codicon.screenFull, localize('voltVisual.fullscreen', "Full Screen"), () => {
 		const live = liveFrames.get(key);
 		if (live && setFrameFullscreen(live, true, getWindow(parent))) {
@@ -789,13 +860,13 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 }
 
 /** The line above a page: a window glyph, its title, and "Building…" while the call streams in. */
-function renderPageCaption(wrap: HTMLElement, title: string, pending: boolean): HTMLElement {
+function renderPageCaption(wrap: HTMLElement, title: string, pending: boolean, canvas = false): HTMLElement {
 	const caption = append(wrap, $('.volt-agent-visual-caption'));
 	const label = append(caption, $('.volt-agent-visual-caption-label'));
-	label.appendChild(renderIcon(Codicon.window));
+	label.appendChild(renderIcon(canvas ? Codicon.symbolColor : Codicon.window));
 	append(label, $('span.volt-agent-visual-caption-title')).textContent = title;
 	if (pending) {
-		append(label, $('span.volt-agent-visual-caption-status')).textContent = localize('voltVisual.building', "Building page");
+		append(label, $('span.volt-agent-visual-caption-status')).textContent = canvas ? localize('voltVisual.designing', "Designing") : localize('voltVisual.building', "Building page");
 	}
 	return caption;
 }

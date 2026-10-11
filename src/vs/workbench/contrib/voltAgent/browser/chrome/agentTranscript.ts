@@ -13,7 +13,8 @@ import { AgentBlock, AgentSegment, createPlanBlock, IAgentActivityItem, IAgentCo
 import { computeChangeStats } from '../review/fileChangePreviewModel.js';
 import { isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
-import { PREVIEW_HTML_TOOL_NAME, RENDER_CHART_TOOL_NAME, VISUAL_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
+import { CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, RENDER_CHART_TOOL_NAME, SILENT_VISUAL_TOOL_NAMES, VISUAL_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
+import { peekCanvasInput } from '../visuals/canvas/canvasModel.js';
 import { chartLoaderShape } from '../visuals/agentDotLoader.js';
 
 /**
@@ -379,7 +380,7 @@ export function formatThoughtDuration(ms: number | undefined): string {
  */
 function pendingVisualBlock(item: IAgentActivityItem, source: readonly AgentSegment[], index: number): IVisualBlock | undefined {
 	const tool = item.browserTool;
-	if (!tool || tool === PREVIEW_HTML_TOOL_NAME || !(VISUAL_TOOL_NAMES as readonly string[]).includes(tool) || item.result !== undefined || item.error !== undefined) {
+	if (!tool || SILENT_VISUAL_TOOL_NAMES.includes(tool) || !(VISUAL_TOOL_NAMES as readonly string[]).includes(tool) || item.result !== undefined || item.error !== undefined) {
 		return undefined;
 	}
 	if (source.slice(index + 1).some(segment => segment.kind === 'block' && segment.block.type === 'visual')) {
@@ -387,17 +388,21 @@ function pendingVisualBlock(item: IAgentActivityItem, source: readonly AgentSegm
 	}
 	const title = typeof item.hostArgs?.title === 'string' ? item.hostArgs.title : (/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(item.input ?? '')?.[1] ?? '');
 	const height = typeof item.hostArgs?.height === 'number' ? item.hostArgs.height : undefined;
-	const kind = tool === RENDER_CHART_TOOL_NAME ? 'chart' : 'html';
+	const kind = tool === RENDER_CHART_TOOL_NAME ? 'chart' : tool === CANVAS_UPDATE_TOOL_NAME ? 'canvas' : 'html';
 	const round = kind === 'chart' && chartLoaderShape(item.input ?? (item.hostArgs ? JSON.stringify(item.hostArgs) : '')) === 'circle';
+	// A canvas names its frames as it streams in: the placeholder shows them arriving.
+	const canvas = tool === CANVAS_RENDER_TOOL_NAME ? peekCanvasInput(item.input ?? '') : undefined;
 	return {
 		id: `visual-pending-${item.callId ?? index}`,
 		type: 'visual',
 		status: 'streaming',
 		kind,
-		title,
+		title: title || canvas?.title || '',
 		ref: '',
 		...(height ? { height } : {}),
 		...(round ? { shape: 'circle' as const } : {}),
+		...(canvas ? { canvas: 'pending', frames: canvas.frames } : {}),
+		...(kind === 'canvas' ? { canvas: 'pending' } : {}),
 	};
 }
 
@@ -405,7 +410,7 @@ function activityStep(id: string, item: IAgentActivityItem): ITranscriptStep {
 	if (!item.browserTool && isSnapshotActivity(item)) {
 		return { id, kind: 'snapshot', action: item.label || localize('voltAgent.step.tookScreenshot', "Took screenshot"), detail: item.detail, item };
 	}
-	if (item.browserTool && (VISUAL_TOOL_NAMES as readonly string[]).includes(item.browserTool) && item.browserTool !== PREVIEW_HTML_TOOL_NAME) {
+	if (item.browserTool && (VISUAL_TOOL_NAMES as readonly string[]).includes(item.browserTool) && !SILENT_VISUAL_TOOL_NAMES.includes(item.browserTool)) {
 		return { id, kind: 'visual', action: item.label, detail: item.detail, item };
 	}
 	if (item.browserTool) {
