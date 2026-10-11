@@ -242,7 +242,7 @@ jobs:
       - name: Mix in ${{ inputs.channel }}
         run: node build/volt/mixin-quality.mjs --channel ${{ inputs.channel }} --version "$VOLT_VERSION"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: compilation
 
@@ -309,7 +309,7 @@ jobs:
       - name: Mix in ${{ inputs.channel }}
         run: node build/volt/mixin-quality.mjs --channel ${{ inputs.channel }} --version "$VOLT_VERSION"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: unsigned-darwin-*
           merge-multiple: true
@@ -426,7 +426,7 @@ jobs:
       - name: Mix in ${{ inputs.channel }}
         run: node build/volt/mixin-quality.mjs --channel ${{ inputs.channel }} --version "$VOLT_VERSION"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: compilation
 
@@ -535,7 +535,7 @@ jobs:
         shell: pwsh
         run: node build/volt/mixin-quality.mjs --channel ${{ inputs.channel }} --version "$env:VOLT_VERSION"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: compilation
 
@@ -594,7 +594,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: volt-*
           path: assets
