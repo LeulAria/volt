@@ -16,6 +16,7 @@ import { ILogService } from '../../../../../platform/log/common/log.js';
 import { asJson, asText, IRequestService } from '../../../../../platform/request/common/request.js';
 import { IVoltSkillsDirectoryService } from '../../../../../platform/voltMarketplace/common/voltMarketplace.js';
 import { IAuthenticationService } from '../../../../services/authentication/common/authentication.js';
+import { IVoltQueryCache } from '../../../../services/voltRuntime/browser/queryCache.js';
 import { AgentCustomizationKind, readJsonFile, safeItemName } from './agentCustomize.js';
 import { IAgentCustomizeService } from './agentCustomizeService.js';
 import { frontmatterValue, parseFrontmatterDocument } from './agentFrontmatter.js';
@@ -106,6 +107,9 @@ export interface IAgentMarketplaceService {
 	/** Marketplaces were added or removed, or a plugin was installed or removed. */
 	readonly onDidChange: Event<void>;
 
+	/** A skills.sh listing shown from the cache was fetched again and changed: draw it anew. */
+	readonly onDidRefresh: Event<void>;
+
 	/** skills.sh search; needs at least two characters. */
 	searchSkills(query: string, limit: number, token: CancellationToken): Promise<readonly ISkillsShSkill[]>;
 
@@ -153,6 +157,14 @@ const SKILLS_SH = 'https://skills.sh';
 const GITHUB_API = 'https://api.github.com';
 const GITHUB_RAW = 'https://raw.githubusercontent.com';
 const POPULAR_SEEDS = ['skill', 'react', 'test', 'git', 'design', 'docs', 'review', 'python'];
+
+/** Query cache keys: the popular list, searches by query, and found skill folders by id. */
+const POPULAR_KEY = 'marketplace.popular';
+const SEARCH_KEY = 'marketplace.search:';
+const DETAIL_KEY = 'marketplace.skill:';
+/** Listings change slowly; a skill's folder even more so. */
+const LISTING_STALE_MS = 30 * 60_000;
+const DETAIL_STALE_MS = 24 * 60 * 60_000;
 const MAX_DOWNLOAD_FILES = 400;
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -219,10 +231,10 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	readonly onDidChange = this._onDidChange.event;
 
-	private readonly searches = new Map<string, Promise<readonly ISkillsShSkill[]>>();
-	private readonly details = new Map<string, Promise<ISkillsShDetail | undefined>>();
+	private readonly _onDidRefresh = this._register(new Emitter<void>());
+	readonly onDidRefresh = this._onDidRefresh.event;
+
 	private readonly trees = new Map<string, Promise<IGitTree | undefined>>();
-	private popular: Promise<readonly ISkillsShSkill[]> | undefined;
 
 	constructor(
 		@IRequestService private readonly requestService: IRequestService,
@@ -231,8 +243,15 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		@IAuthenticationService private readonly authenticationService: IAuthenticationService,
 		@IAgentCustomizeService private readonly customize: IAgentCustomizeService,
 		@ILogService private readonly logService: ILogService,
+		@IVoltQueryCache private readonly cache: IVoltQueryCache,
 	) {
 		super();
+		// Listings show from the cache (IndexedDB across restarts) and refetch behind it.
+		this._register(this.cache.onDidUpdate(key => {
+			if (key === POPULAR_KEY || key.startsWith(SEARCH_KEY)) {
+				this._onDidRefresh.fire();
+			}
+		}));
 	}
 
 	//#region skills.sh
@@ -242,35 +261,36 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		if (q.length < 2) {
 			return Promise.resolve([]);
 		}
-		const key = `${q.toLowerCase()}|${limit}`;
-		let pending = this.searches.get(key);
-		if (!pending) {
-			// skills.sh has no CORS headers: the main process asks it.
-			pending = this.skillsDirectory.search(q, limit)
-				.then(skills => skills.map(toSkill).filter((skill): skill is ISkillsShSkill => !!skill));
-			pending.catch(() => this.searches.delete(key));
-			this.searches.set(key, pending);
-		}
-		return pending;
+		return this.cache.read({
+			key: `${SEARCH_KEY}${q.toLowerCase()}|${limit}`,
+			fetch: () => this.fetchSearch(q, limit),
+			staleTime: LISTING_STALE_MS,
+		});
+	}
+
+	/** skills.sh has no CORS headers: the main process asks it. */
+	private async fetchSearch(query: string, limit: number): Promise<readonly ISkillsShSkill[]> {
+		const skills = await this.skillsDirectory.search(query, limit);
+		return skills.map(toSkill).filter((skill): skill is ISkillsShSkill => !!skill);
 	}
 
 	popularSkills(token: CancellationToken): Promise<readonly ISkillsShSkill[]> {
-		if (!this.popular) {
-			this.popular = Promise.all(POPULAR_SEEDS.map(seed => this.searchSkills(seed, 20, token).catch(() => [] as readonly ISkillsShSkill[])))
-				.then(lists => {
-					const byId = new Map<string, ISkillsShSkill>();
-					for (const skill of lists.flat()) {
-						byId.set(skill.id, skill);
-					}
-					return [...byId.values()].sort((a, b) => b.installs - a.installs);
-				});
-			this.popular.then(list => {
-				if (!list.length) {
-					this.popular = undefined;
+		return this.cache.read({
+			key: POPULAR_KEY,
+			fetch: async () => {
+				const lists = await Promise.all(POPULAR_SEEDS.map(seed => this.fetchSearch(seed, 20).catch(() => [] as readonly ISkillsShSkill[])));
+				const byId = new Map<string, ISkillsShSkill>();
+				for (const skill of lists.flat()) {
+					byId.set(skill.id, skill);
 				}
-			}, () => this.popular = undefined);
-		}
-		return this.popular;
+				if (!byId.size) {
+					// Offline: keep the last list rather than caching an empty one.
+					throw new Error(localize('voltMarketplace.offline', "Couldn't reach skills.sh. Check your connection and try again."));
+				}
+				return [...byId.values()].sort((a, b) => b.installs - a.installs);
+			},
+			staleTime: LISTING_STALE_MS,
+		});
 	}
 
 	skillPage(skill: ISkillsShSkill): URI {
@@ -278,13 +298,18 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 	}
 
 	skillDetail(skill: ISkillsShSkill, token: CancellationToken): Promise<ISkillsShDetail | undefined> {
-		let pending = this.details.get(skill.id);
-		if (!pending) {
-			pending = this.findSkill(skill, token);
-			pending.then(detail => { if (!detail) { this.details.delete(skill.id); } }, () => this.details.delete(skill.id));
-			this.details.set(skill.id, pending);
-		}
-		return pending;
+		// A skill that could not be found is not cached, so the next look tries again.
+		return this.cache.read({
+			key: `${DETAIL_KEY}${skill.id}`,
+			fetch: async () => {
+				const detail = await this.findSkill(skill, token);
+				if (!detail) {
+					throw new Error('not found');
+				}
+				return detail;
+			},
+			staleTime: DETAIL_STALE_MS,
+		}).catch(() => undefined);
 	}
 
 	private async findSkill(skill: ISkillsShSkill, token: CancellationToken): Promise<ISkillsShDetail | undefined> {

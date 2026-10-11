@@ -25,6 +25,7 @@ import { IVoltPrRepo, IVoltPullRequest, voltPrErrorCode, voltPrErrorMessage } fr
 import { IViewPaneOptions, ViewPane } from '../../../../browser/parts/views/viewPane.js';
 import { IViewDescriptorService } from '../../../../common/views.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
+import { IVoltQuery, IVoltQueryCache, IVoltQueryHandle } from '../../../../services/voltRuntime/browser/queryCache.js';
 import { AgentPrSort, blockedReason, groupAndRank, IAgentPrLink, isOpenState, resolveMergeMethod, visibleLinks } from '../../common/agentPullRequests.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
@@ -37,6 +38,23 @@ import { ago, avatar, checkIcon, checksLabel, iconSpan, openPullRequest, problem
 const SORT_KEY = 'volt.pullRequests.sort';
 const STATE_KEY = 'volt.pullRequests.state';
 const LIST_POLL_MS = 60_000;
+
+/**
+ * The folder's repository and its pull requests go through the query cache: the list opens on the
+ * last read (this window's, or IndexedDB's after a restart) and reads again behind it when stale,
+ * with the refresh button spinning meanwhile. `null` is a folder with no remote Volt can read.
+ */
+function repoQuery(pullRequests: IAgentPullRequestService, folder: string): IVoltQuery<IVoltPrRepo | null> {
+	return { key: `pr.repo:${folder}`, fetch: async force => await pullRequests.repoForFolder(folder, force) ?? null, staleTime: 30_000 };
+}
+
+function listKey(repo: IVoltPrRepo, state: StateFilter): string {
+	return `pr.list:${repo.host}/${repo.owner}/${repo.name}:${state}`.toLowerCase();
+}
+
+function listQuery(pullRequests: IAgentPullRequestService, repo: IVoltPrRepo, state: StateFilter): IVoltQuery<readonly IVoltPullRequest[]> {
+	return { key: listKey(repo, state), fetch: () => pullRequests.api.list({ repo, state, limit: 100 }), staleTime: 30_000 };
+}
 
 const SORT_LABELS: Record<AgentPrSort, string> = {
 	blocked: localize('voltPr.sort.blocked', "Blocked on Me"),
@@ -60,12 +78,20 @@ export class AgentPullRequestsViewPane extends ViewPane {
 	private content!: HTMLElement;
 	private readonly renderStore = this._register(new DisposableStore());
 	private readonly poll = this._register(new RunOnceScheduler(() => void this.load(false), LIST_POLL_MS));
+	private readonly repoStore = this._register(new DisposableStore());
+	private readonly listStore = this._register(new DisposableStore());
+	private repoHandle: IVoltQueryHandle<IVoltPrRepo | null> | undefined;
+	private listHandle: IVoltQueryHandle<readonly IVoltPullRequest[]> | undefined;
+	/** The list key watched: a repository or filter change watches another one. */
+	private listKey: string | undefined;
+	private refreshButton: HTMLButtonElement | undefined;
 	private repo: IVoltPrRepo | undefined;
+	/** The folder's repository was read at least once (it may have none). */
+	private repoResolved = false;
 	private folder: string | undefined;
-	private prs: IVoltPullRequest[] | undefined;
+	private prs: readonly IVoltPullRequest[] | undefined;
 	private error: unknown;
 	private loading = false;
-	private loadSeq = 0;
 	private sort: AgentPrSort;
 	private stateFilter: StateFilter;
 	private shiftHeld = false;
@@ -87,17 +113,18 @@ export class AgentPullRequestsViewPane extends ViewPane {
 		@IStorageService private readonly storageService: IStorageService,
 		@IEditorService private readonly editorService: IEditorService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IVoltQueryCache private readonly cache: IVoltQueryCache,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 		const sort = this.storageService.get(SORT_KEY, StorageScope.PROFILE);
 		this.sort = sort && sort in SORT_LABELS ? sort as AgentPrSort : 'blocked';
 		const state = this.storageService.get(STATE_KEY, StorageScope.PROFILE);
 		this.stateFilter = state === 'closed' || state === 'all' ? state : 'open';
-		this._register(Event.any(onDidChangePullRequestsViewSession, this.editorService.onDidActiveEditorChange)(() => void this.syncFolder()));
+		this._register(Event.any(onDidChangePullRequestsViewSession, this.editorService.onDidActiveEditorChange)(() => this.syncFolder()));
 		this._register(this.pullRequests.onDidChange(() => this.paint()));
 		this._register(this.onDidChangeBodyVisibility(visible => {
 			if (visible) {
-				void this.syncFolder(true);
+				this.syncFolder(true);
 			} else {
 				this.poll.cancel();
 			}
@@ -121,7 +148,7 @@ export class AgentPullRequestsViewPane extends ViewPane {
 			this.shiftHeld = false;
 			this.content.classList.remove('shift-held');
 		}));
-		void this.syncFolder(true);
+		this.syncFolder(true);
 	}
 
 	protected override layoutBody(height: number, width: number): void {
@@ -139,63 +166,78 @@ export class AgentPullRequestsViewPane extends ViewPane {
 		return active instanceof AgentEditorInput ? active.sessionId : agentToolsSessionOnScreen();
 	}
 
-	private async syncFolder(force = false): Promise<void> {
+	/**
+	 * Follows the chat's folder. `rewatch` (shown again) watches its queries anew, which reads
+	 * behind the cached list only when that is stale.
+	 */
+	private syncFolder(rewatch = false): void {
 		if (!this.content) {
 			return;
 		}
 		const sessionId = this.sessionId();
 		const folder = sessionId ? this.pullRequests.folderFor(sessionId) : undefined;
-		if (folder === this.folder && !force) {
+		if (folder === this.folder && !rewatch) {
 			this.paint();
 			return;
 		}
 		this.folder = folder;
-		this.repo = undefined;
-		this.prs = undefined;
-		this.error = undefined;
-		await this.load(true);
+		this.watchRepo();
 	}
 
-	private async load(force: boolean): Promise<void> {
-		const seq = ++this.loadSeq;
-		const folder = this.folder;
-		if (!folder) {
-			this.paint();
+	private watchRepo(): void {
+		this.repoStore.clear();
+		this.repoHandle = undefined;
+		this.listKey = undefined;
+		if (this.folder) {
+			const handle = this.repoStore.add(this.cache.watch(repoQuery(this.pullRequests, this.folder)));
+			this.repoHandle = handle;
+			this.repoStore.add(handle.onDidChange(() => this.sync()));
+		}
+		this.sync();
+	}
+
+	/** Watches the list of the repository and filter shown, unless it already does. */
+	private watchList(): void {
+		const repo = this.repo?.provider === 'github' ? this.repo : undefined;
+		const key = repo ? listKey(repo, this.stateFilter) : undefined;
+		if (key === this.listKey && (!key || this.listHandle)) {
 			return;
 		}
-		this.loading = true;
-		if (force) {
+		this.listStore.clear();
+		this.listHandle = undefined;
+		this.listKey = key;
+		if (repo) {
+			const handle = this.listStore.add(this.cache.watch(listQuery(this.pullRequests, repo, this.stateFilter)));
+			this.listHandle = handle;
+			this.listStore.add(handle.onDidChange(() => this.sync()));
+		}
+	}
+
+	/** Takes what the cache holds; a read starting or ending with nothing new only turns the refresh button. */
+	private sync(): void {
+		const before = { repo: this.repo, repoResolved: this.repoResolved, prs: this.prs, error: this.error };
+		const repoState = this.repoHandle?.state;
+		this.repo = repoState?.data ?? undefined;
+		this.repoResolved = repoState?.updatedAt !== undefined;
+		this.watchList();
+		const listState = this.listHandle?.state;
+		// Another code host's repository has no list to read (yet).
+		this.prs = listState ? listState.data : this.repo ? [] : undefined;
+		this.error = listState?.error;
+		this.loading = !!repoState?.fetching || !!listState?.fetching;
+		if (before.repo !== this.repo || before.repoResolved !== this.repoResolved || before.prs !== this.prs || before.error !== this.error) {
 			this.paint();
+		} else {
+			this.syncRefresh();
 		}
-		try {
-			const repo = await this.pullRequests.repoForFolder(folder, force);
-			if (seq !== this.loadSeq) {
-				return;
-			}
-			this.repo = repo;
-			if (repo && repo.provider === 'github') {
-				const prs = await this.pullRequests.api.list({ repo, state: this.stateFilter, limit: 100 });
-				if (seq !== this.loadSeq) {
-					return;
-				}
-				this.prs = prs;
-			} else {
-				this.prs = [];
-			}
-			this.error = undefined;
-		} catch (err) {
-			if (seq === this.loadSeq) {
-				this.error = err;
-			}
-		} finally {
-			if (seq === this.loadSeq) {
-				this.loading = false;
-				this.paint();
-				if (this.isBodyVisible()) {
-					this.poll.schedule();
-				}
-			}
+		if (!this.loading && this.isBodyVisible()) {
+			this.poll.schedule();
 		}
+	}
+
+	/** Reads the repository and its list again; `force` (the refresh button) skips the service's own caches. */
+	private async load(force: boolean): Promise<void> {
+		await Promise.all([this.repoHandle?.refetch(force), this.listHandle?.refetch(force)]);
 	}
 
 	private paint(): void {
@@ -214,7 +256,7 @@ export class AgentPullRequestsViewPane extends ViewPane {
 			this.empty(localize('voltPr.list.unsupported', "Volt does not know this project's code host yet. Sign in to it to read its pull requests."));
 			return;
 		}
-		if (!this.repo && !this.loading && !this.error) {
+		if (!this.repo && this.repoResolved && !this.error) {
 			this.empty(localize('voltPr.list.noRemote', "This folder has no GitHub remote."));
 			return;
 		}
@@ -262,7 +304,7 @@ export class AgentPullRequestsViewPane extends ViewPane {
 	private renderToolbar(): void {
 		const bar = append(this.content, $('.volt-pr-list-toolbar'));
 		const repo = append(bar, $('span.volt-pr-list-repo'));
-		repo.textContent = this.repo ? `${this.repo.owner}/${this.repo.name}` : this.loading ? localize('voltPr.list.loading', "Loading…") : '';
+		repo.textContent = this.repo ? `${this.repo.owner}/${this.repo.name}` : this.repoResolved ? '' : localize('voltPr.list.loading', "Loading…");
 		if (this.repo?.branch) {
 			setAgentTooltip(repo, localize('voltPr.list.onBranch', "{0}/{1} · on {2}", this.repo.owner, this.repo.name, this.repo.branch));
 		}
@@ -274,8 +316,7 @@ export class AgentPullRequestsViewPane extends ViewPane {
 				onPick: item => {
 					this.stateFilter = item.data;
 					this.storageService.store(STATE_KEY, item.data, StorageScope.PROFILE, StorageTarget.USER);
-					this.prs = undefined;
-					void this.load(true);
+					this.sync();
 				},
 			});
 		});
@@ -291,17 +332,28 @@ export class AgentPullRequestsViewPane extends ViewPane {
 				},
 			});
 		});
-		const refresh = this.toolbarButton(bar, this.loading ? ThemeIcon.modify(Codicon.loading, 'spin') : Codicon.refresh, undefined, localize('voltPr.refresh', "Refresh"), () => {
+		this.refreshButton = this.toolbarButton(bar, undefined, undefined, localize('voltPr.refresh', "Refresh"), () => {
 			void this.pullRequests.refresh();
 			void this.load(true);
 		});
-		refresh.disabled = this.loading;
+		this.syncRefresh();
 		const create = this.toolbarButton(bar, Codicon.gitPullRequestCreate, undefined, localize('voltPr.list.new', "New Pull Request"), () => {
 			if (this.folder) {
 				void this.instantiationService.invokeFunction(accessor => openPullRequest(accessor, { kind: 'new', folder: this.folder! }, this.sessionId()));
 			}
 		});
 		create.disabled = !this.folder || !this.repo;
+	}
+
+	/** The refresh button is the only sign of a read in flight: the cached list stays as it is. */
+	private syncRefresh(): void {
+		const button = this.refreshButton;
+		if (!button) {
+			return;
+		}
+		clearNode(button);
+		button.appendChild(renderIcon(this.loading ? ThemeIcon.modify(Codicon.loading, 'spin') : Codicon.refresh));
+		button.disabled = this.loading;
 	}
 
 	private toolbarButton(parent: HTMLElement, icon: ThemeIcon | undefined, text: string | undefined, label: string, run: (button: HTMLButtonElement) => void): HTMLButtonElement {

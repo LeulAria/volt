@@ -337,7 +337,7 @@ export class AgentSkillEditor extends EditorPane {
 		super.clearInput();
 	}
 
-	override setEditorVisible(visible: boolean): void {
+	protected override setEditorVisible(visible: boolean): void {
 		super.setEditorVisible(visible);
 		if (!visible) {
 			this.flushHeader();

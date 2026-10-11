@@ -28,13 +28,16 @@ import {
 	IVoltPrFilePatch,
 	IVoltPrReview,
 	IVoltPrReviewThread,
+	IVoltPrRequest,
 	IVoltPrStackView,
+	IVoltPullRequest,
 	IVoltPullRequestDetail,
 	VoltPrMergeMethod,
 	voltPrErrorCode,
 	voltPrErrorMessage,
 } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { IHostService } from '../../../../services/host/browser/host.js';
+import { IVoltQuery, IVoltQueryCache, IVoltQueryHandle, IVoltQueryState } from '../../../../services/voltRuntime/browser/queryCache.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import {
 	buildExplainPrompt,
@@ -75,6 +78,15 @@ const MERGE_METHOD_NAMES: Record<VoltPrMergeMethod, string> = {
 	rebase: localize('voltPr.method.rebase', "rebase"),
 };
 
+/**
+ * The full read goes through the query cache, so a pull request opens on its last read (this
+ * window's, or IndexedDB's after a restart) and is read again behind it. Every read skips the
+ * service's few-second reuse: one asked for here (a poll, after an action) must be GitHub's now.
+ */
+function detailQuery(pullRequests: IAgentPullRequestService, request: IVoltPrRequest): IVoltQuery<IVoltPullRequestDetail> {
+	return { key: `pr.detail:${prKey(request.repo, request.number)}`, fetch: () => pullRequests.detail(request, true), staleTime: 10_000 };
+}
+
 interface IPatchLoad {
 	readonly files?: readonly IVoltPrFilePatch[];
 	readonly error?: unknown;
@@ -98,6 +110,10 @@ export class AgentPullRequestView extends Disposable {
 	private readonly viewedFlush = this._register(new RunOnceScheduler(() => void this.flushViewed(), VIEWED_FLUSH_MS));
 
 	private input: AgentPullRequestEditorInput | undefined;
+	private readonly queryStore = this._register(new DisposableStore());
+	private query: IVoltQueryHandle<IVoltPullRequestDetail> | undefined;
+	/** A refresh the user asked for redraws when it lands, even when nothing changed. */
+	private renderOnSettle = false;
 	private detail: IVoltPullRequestDetail | undefined;
 	/** The last read as JSON, to tell a re-read that changed nothing. */
 	private detailSignature: string | undefined;
@@ -106,7 +122,6 @@ export class AgentPullRequestView extends Disposable {
 	private loading = false;
 	private visible = false;
 	private busy: string | undefined;
-	private loadSeq = 0;
 	/** When the last read finished; its own change event must not start another. */
 	private loadedAt = 0;
 	/** Drafts typed into reply boxes, kept across re-renders. */
@@ -144,6 +159,7 @@ export class AgentPullRequestView extends Disposable {
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@IAgentPrReviewService private readonly reviews: IAgentPrReviewService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IVoltQueryCache private readonly cache: IVoltQueryCache,
 	) {
 		super();
 		this._register(this.reviews.onDidChange(key => {
@@ -177,6 +193,7 @@ export class AgentPullRequestView extends Disposable {
 				this.detailSignature = signature;
 				this.detail = detail;
 				this.error = undefined;
+				this.cache.set(`pr.detail:${detail.key}`, detail);
 				if (changed) {
 					this.renderSoon();
 				}
@@ -234,10 +251,19 @@ export class AgentPullRequestView extends Disposable {
 		this.codeCommit = undefined;
 		this.composeOpen = false;
 		this.element.classList.remove('scrolled');
-		this.render();
-		if (input) {
-			void this.load(true);
+		this.queryStore.clear();
+		this.query = undefined;
+		this.renderOnSettle = false;
+		this.loading = false;
+		const target = this.target;
+		if (target) {
+			// Opens on the cached read at once; the cache reads again behind it when that is stale.
+			const query = this.queryStore.add(this.cache.watch(detailQuery(this.pullRequests, { repo: target.repo, number: target.number })));
+			this.query = query;
+			this.queryStore.add(query.onDidChange(() => this.sync()));
+			this.apply(query.state);
 		}
+		this.render();
 	}
 
 	setVisible(visible: boolean): void {
@@ -277,50 +303,63 @@ export class AgentPullRequestView extends Disposable {
 		return this.pullRequests.links(sessionId).find(link => link.key === key && link.source !== 'dismissed');
 	}
 
+	/** Reads the pull request again through the cache; `force` (Refresh, Retry) redraws even when nothing changed. */
 	async load(force: boolean): Promise<void> {
-		const target = this.target;
-		if (!target) {
+		const query = this.query;
+		if (!query) {
 			return;
 		}
-		const seq = ++this.loadSeq;
-		let unchanged = false;
-		this.loading = true;
-		if (force) {
+		this.renderOnSettle ||= force;
+		// A new read, never one already in flight: after an action the page must show its outcome.
+		await query.refetch(true);
+	}
+
+	/** The cache changed: take it, and redraw only when what is shown changed. */
+	private sync(): void {
+		const query = this.query;
+		if (!query) {
+			return;
+		}
+		const wasLoading = this.loading;
+		const changed = this.apply(query.state);
+		const settled = wasLoading && !this.loading;
+		if (settled) {
+			this.loadedAt = Date.now();
+			if (this.visible) {
+				this.poll.schedule();
+			}
+		}
+		if (settled && this.renderOnSettle) {
+			this.renderOnSettle = false;
+			if (this.detail && !changed) {
+				void this.readStack(this.detail.headRefName);
+			}
 			this.render();
+		} else if (changed) {
+			this.renderSoon();
 		}
-		try {
-			const detail = await this.pullRequests.detail({ repo: target.repo, number: target.number }, true);
-			if (seq !== this.loadSeq) {
-				return;
-			}
+	}
+
+	/** Takes the cached read; true when what is shown changed. */
+	private apply(state: IVoltQueryState<IVoltPullRequestDetail>): boolean {
+		this.loading = state.fetching;
+		let changed = false;
+		if (state.data && state.data !== this.detail) {
 			// Nothing changed on GitHub: keep the page as it is (open diffs, a text selection, colours).
-			const signature = JSON.stringify(detail);
-			unchanged = !force && !this.error && signature === this.detailSignature;
+			const signature = JSON.stringify(state.data);
+			changed = signature !== this.detailSignature;
 			this.detailSignature = signature;
-			this.detail = detail;
-			this.error = undefined;
-			if (!unchanged) {
-				void this.readStack(detail.headRefName);
-			}
-		} catch (err) {
-			if (seq !== this.loadSeq) {
-				return;
-			}
-			this.error = err;
-		} finally {
-			if (seq === this.loadSeq) {
-				this.loading = false;
-				this.loadedAt = Date.now();
-				if (force) {
-					this.render();
-				} else if (!unchanged) {
-					this.renderSoon();
-				}
-				if (this.visible) {
-					this.poll.schedule();
-				}
+			this.detail = state.data;
+			if (changed) {
+				void this.readStack(state.data.headRefName);
 			}
 		}
+		// A failed read leaves the last copy under the stale banner; the next good one clears it.
+		if (!state.fetching && state.error !== this.error) {
+			this.error = state.error;
+			changed = true;
+		}
+		return changed;
 	}
 
 	//#region Render
@@ -358,6 +397,11 @@ export class AgentPullRequestView extends Disposable {
 			if (this.error) {
 				this.renderProblem(this.body, this.error, target.repo.host);
 			} else {
+				// No full read cached yet: the linked snapshot (or the list's copy) paints the header.
+				const snapshot = this.pullRequests.snapshot(prKey(target.repo, target.number));
+				if (snapshot) {
+					this.renderPreview(snapshot);
+				}
 				this.renderSkeleton();
 			}
 			this.renderCompose(undefined);
@@ -385,6 +429,32 @@ export class AgentPullRequestView extends Disposable {
 			append(skeleton, $('.volt-pr-skeleton-line')).style.width = `${width}%`;
 		}
 		skeleton.setAttribute('aria-label', localize('voltPr.loading', "Loading pull request"));
+	}
+
+	/** The snapshot's header (no actions: those need the full read) over the skeleton of the rest. */
+	private renderPreview(pr: IVoltPullRequest): void {
+		const crumbs = append(append(this.header, $('.volt-pr-header-row')), $('.volt-pr-crumbs'));
+		const full = append(crumbs, $('.volt-pr-crumbs-full'));
+		const repo = append(full, $('a.volt-pr-repo')) as HTMLAnchorElement;
+		repo.textContent = `${pr.repo.owner}/${pr.repo.name}`.toLowerCase();
+		repo.href = `https://${pr.repo.host}/${pr.repo.owner}/${pr.repo.name}`;
+		this.onClick(repo, () => this.openerService.open(repo.href));
+		const number = append(full, $(`a.volt-pr-number.state-${pr.state}`)) as HTMLAnchorElement;
+		append(number, $('span')).textContent = `#${pr.number}`;
+		number.appendChild(renderIcon(Codicon.linkExternal));
+		number.href = pr.url;
+		this.onClick(number, () => this.openerService.open(pr.url));
+		const fold = append(this.header, $('.volt-pr-fold'));
+		append(fold, $('h1.volt-pr-title')).textContent = pr.title;
+		const byline = append(fold, $('.volt-pr-byline'));
+		avatar(byline, pr.author.login, pr.author.avatarUrl, 18);
+		append(byline, $('strong')).textContent = pr.author.login;
+		append(byline, $('span.volt-pr-dot')).textContent = '·';
+		append(byline, $('span.muted')).textContent = localize('voltPr.updatedAgo', "updated {0}", ago(pr.updatedAt));
+		const branches = append(fold, $('.volt-pr-branches'));
+		this.branchName(branches, pr.baseRefName);
+		append(branches, $('span.volt-pr-arrow')).appendChild(renderIcon(Codicon.arrowLeft));
+		this.branchName(branches, pr.crossRepository && pr.headOwner ? `${pr.headOwner}:${pr.headRefName}` : pr.headRefName);
 	}
 
 	private renderProblem(parent: HTMLElement, err: unknown, host: string): void {

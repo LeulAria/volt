@@ -140,6 +140,18 @@ export class AgentMarketplaceView extends Disposable {
 				void this.loadMarketplaces();
 			}
 		}));
+		// The listing showed from the cache and a refetch behind it brought new data: take it.
+		this._register(this.marketplace.onDidRefresh(() => {
+			this.popular = undefined;
+			if (this.visible) {
+				this.load();
+				if (this.query.length >= 2) {
+					this.search(this.query);
+				}
+			} else {
+				this.searchResults = undefined;
+			}
+		}));
 		this._register(this.customize.onDidChange(() => {
 			if (this.visible) {
 				this.render();

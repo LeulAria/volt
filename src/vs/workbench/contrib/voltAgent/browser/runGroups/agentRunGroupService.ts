@@ -20,6 +20,7 @@ import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IVoltUsageService } from '../../../../../platform/voltUsage/common/voltUsage.js';
+import { IVoltQueryCache } from '../../../../services/voltRuntime/browser/queryCache.js';
 import { IAgentWorktreeService } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentOrchestratorService, IOrchPrompt } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
@@ -68,6 +69,7 @@ import {
 } from '../../../../services/voltRuntime/common/runGroups/worktreeSetup.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { stashTurnDisplay } from '../orchestration/agentTurnDisplays.js';
+import { limitsQuery, usageQuery } from '../usage/agentUsageModel.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 
@@ -658,9 +660,12 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 		if (!usage) {
 			return estimateRunGroup(models, empty);
 		}
+		// The Usage page's cache keys: any cached numbers answer at once (refetching behind them);
+		// only a first-ever read waits on the main process.
+		const cache = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltQueryCache));
 		const [snapshot, limits] = await Promise.all([
-			raceTimeout(usage.getUsage().catch(() => undefined), 4000),
-			raceTimeout(usage.getLimits().catch(() => undefined), 4000),
+			raceTimeout((cache ? cache.read(usageQuery(usage)) : usage.getUsage()).catch(() => undefined), 4000),
+			raceTimeout((cache ? cache.read(limitsQuery(usage)) : usage.getLimits()).catch(() => undefined), 4000),
 		]);
 		const costPerSession = new Map<string, number>();
 		if (snapshot) {
