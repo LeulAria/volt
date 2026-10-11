@@ -64,18 +64,8 @@ interface IClaudeCredentials {
 	readonly rateLimitTier?: string;
 }
 
-async function readClaudeCredentials(home: string): Promise<IClaudeCredentials | undefined> {
-	const fromKeychain = await readKeychain('Claude Code-credentials');
-	let parsed: Record<string, unknown> | undefined;
-	if (fromKeychain) {
-		try {
-			parsed = record(JSON.parse(fromKeychain));
-		} catch {
-			parsed = undefined;
-		}
-	}
-	parsed ??= await readJson(join(home, '.claude', '.credentials.json'));
-	const oauth = record(parsed?.claudeAiOauth);
+/** The fields of a stored `claudeAiOauth` the limits need. */
+export function claudeCredentialsOf(oauth: Record<string, unknown> | undefined): IClaudeCredentials | undefined {
 	const accessToken = typeof oauth?.accessToken === 'string' ? oauth.accessToken : undefined;
 	if (!accessToken) {
 		return undefined;
@@ -88,8 +78,22 @@ async function readClaudeCredentials(home: string): Promise<IClaudeCredentials |
 	};
 }
 
+async function readClaudeCredentials(home: string): Promise<IClaudeCredentials | undefined> {
+	const fromKeychain = await readKeychain('Claude Code-credentials');
+	let parsed: Record<string, unknown> | undefined;
+	if (fromKeychain) {
+		try {
+			parsed = record(JSON.parse(fromKeychain));
+		} catch {
+			parsed = undefined;
+		}
+	}
+	parsed ??= await readJson(join(home, '.claude', '.credentials.json'));
+	return claudeCredentialsOf(record(parsed?.claudeAiOauth));
+}
+
 /** "default_claude_max_5x" → "Max 5x"; falls back to the subscription type. */
-function claudePlan(credentials: IClaudeCredentials): string | undefined {
+export function claudePlan(credentials: IClaudeCredentials): string | undefined {
 	const tier = credentials.rateLimitTier?.match(/(max|pro|team|enterprise)_?(\d+x)?$/i);
 	if (tier) {
 		return [tier[1][0].toUpperCase() + tier[1].slice(1).toLowerCase(), tier[2]].filter(Boolean).join(' ');
@@ -98,7 +102,7 @@ function claudePlan(credentials: IClaudeCredentials): string | undefined {
 	return type ? type[0].toUpperCase() + type.slice(1) : undefined;
 }
 
-interface IClaudeFetch {
+export interface IClaudeFetch {
 	readonly group?: IVoltUsageLimitGroup;
 	/** The endpoint said 429; wait this long before asking again. */
 	readonly retryAfterMs?: number;
@@ -107,11 +111,13 @@ interface IClaudeFetch {
 }
 
 async function fetchClaudeLimits(home: string): Promise<IClaudeFetch> {
-	const checkedAt = Date.now();
 	const credentials = await readClaudeCredentials(home);
-	if (!credentials) {
-		return {};
-	}
+	return credentials ? fetchClaudeLimitsFor(credentials) : {};
+}
+
+/** One account's limits, from its own access token (Volt's saved accounts read theirs this way). */
+export async function fetchClaudeLimitsFor(credentials: IClaudeCredentials): Promise<IClaudeFetch> {
+	const checkedAt = Date.now();
 	const plan = claudePlan(credentials);
 	if (credentials.expiresAt && credentials.expiresAt < checkedAt) {
 		return { group: { provider: 'claude', plan, windows: [], checkedAt, error: 'Claude Code\u2019s sign-in has expired. Send any Claude message to renew it, then refresh.' } };
@@ -157,12 +163,21 @@ export class ClaudeLimitsReader {
 	private last: IVoltUsageLimitGroup | undefined;
 	private backoffUntil = 0;
 	private loaded = false;
+	/** The access token behind {@link last}; another one (an account switch) is read at once. */
+	private lastToken: string | undefined;
 
 	constructor(private readonly home: string, private readonly cachePath: string) { }
 
 	async read(): Promise<IVoltUsageLimitGroup | undefined> {
 		await this.load();
 		const now = Date.now();
+		const token = (await readClaudeCredentials(this.home))?.accessToken;
+		if (token !== this.lastToken && this.lastToken !== undefined) {
+			// A rate limit and the last numbers belong to the token (the account) they came from.
+			this.last = undefined;
+			this.backoffUntil = 0;
+		}
+		this.lastToken = token;
 		if (this.last && (now < this.backoffUntil || now - this.last.checkedAt < CLAUDE_MIN_INTERVAL_MS)) {
 			return this.last;
 		}

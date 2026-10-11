@@ -5,6 +5,7 @@
 
 import { $, addDisposableListener, append, isHTMLElement } from '../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { IListRenderer, IListVirtualDelegate } from '../../../../base/browser/ui/list/list.js';
 import { IInputBoxStyles, InputBox, MessageType } from '../../../../base/browser/ui/inputbox/inputBox.js';
 import { ISelectBoxStyles, ISelectOptionItem, SelectBox } from '../../../../base/browser/ui/selectBox/selectBox.js';
 import { Codicon } from '../../../../base/common/codicons.js';
@@ -20,7 +21,10 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
+import { WorkbenchList } from '../../../../platform/list/browser/listService.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { CLAUDE_ACCOUNT_SWITCHING_SETTING, CLAUDE_AUTO_SWITCH_THRESHOLD_SETTING, IVoltAccountsService, IVoltClaudeAccount, IVoltClaudeAccountsState } from '../../../../platform/voltAccounts/common/voltAccounts.js';
+import { IVoltUsageLimitWindow } from '../../../../platform/voltUsage/common/voltUsage.js';
 import { CLI_AGENT_DEFINITIONS } from '../../../services/voltRuntime/browser/agents/cliAgents.js';
 import { createBrandIcon } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { IModelOptionDescriptor, IModelParamSpec, isSelectableDescriptor, MODEL_GENERATION_PARAMS, MODEL_OPTION_CONTEXT, MODEL_OPTION_FAST, MODEL_OPTION_REASONING, MODEL_OPTION_SERVICE_TIER, MODEL_OPTION_THINKING, MODEL_PARAM_MAX_OUTPUT, MODEL_PARAM_TEMPERATURE, MODEL_PARAM_TOP_P, optionValue, parseModelParam, traitDescriptors } from '../../../services/voltRuntime/common/models/modelOptions.js';
@@ -83,14 +87,51 @@ type Selection =
 	| { readonly kind: 'model'; readonly ref: string }
 	| { readonly kind: 'add'; readonly what: 'api' | 'agent' };
 
-/** A provider in the left list, with its model rows, for filtering in place. */
-interface IListBlock {
-	readonly profileId: string;
-	readonly block: HTMLElement;
-	readonly row: HTMLElement;
-	readonly models: HTMLElement;
-	readonly text: string;
-	readonly rows: readonly { readonly row: HTMLElement; readonly text: string }[];
+/** A row of the left list. */
+type ListRow =
+	| { readonly kind: 'overview'; readonly attention: number }
+	| { readonly kind: 'group'; readonly label: string }
+	| { readonly kind: 'provider'; readonly status: IVoltProviderStatus }
+	| { readonly kind: 'add'; readonly what: 'api' | 'agent'; readonly label: string }
+	| { readonly kind: 'none' };
+
+function listRowId(row: ListRow): string {
+	switch (row.kind) {
+		case 'provider': return `provider:${row.status.profileId}`;
+		case 'add': return `add:${row.what}`;
+		case 'group': return `group:${row.label}`;
+		default: return row.kind;
+	}
+}
+
+function listRowLabel(row: ListRow): string {
+	switch (row.kind) {
+		case 'overview': return localize('voltSettings.overview', "Overview");
+		case 'provider': return row.status.label;
+		case 'none': return localize('voltSettings.noProviderMatch', "Nothing matches your search.");
+		default: return row.label;
+	}
+}
+
+class ProviderRowDelegate implements IListVirtualDelegate<ListRow> {
+	getHeight(row: ListRow): number {
+		return row.kind === 'group' ? 34 : row.kind === 'none' ? 44 : 32;
+	}
+	getTemplateId(): string {
+		return 'row';
+	}
+}
+
+class ProviderRowRenderer implements IListRenderer<ListRow, HTMLElement> {
+	readonly templateId = 'row';
+	constructor(private readonly page: ProvidersPage) { }
+	renderTemplate(container: HTMLElement): HTMLElement {
+		return append(container, $('.volt-pm-item'));
+	}
+	renderElement(row: ListRow, _index: number, element: HTMLElement): void {
+		this.page.renderListRow(element, row);
+	}
+	disposeTemplate(): void { }
 }
 
 export interface IProvidersPageHost {
@@ -130,9 +171,9 @@ function formatContext(tokens: number): string {
 }
 
 /**
- * Volt Settings > Providers & Models: every coding agent CLI and model API, as a list on the left
- * with each provider's models under it, and whatever is picked on the right. A provider shows its
- * setup (Install, Sign In, Add Key, Download), connection and models; a model shows what Volt sends
+ * Volt Settings > Providers & Models: every coding agent CLI and model API, as a list on the left,
+ * and whatever is picked on the right. A provider shows its setup (Install, Sign In, Add Key,
+ * Download), connection, accounts (Claude) and models; a model shows what Volt sends
  * with it (option defaults, sampling pins), where else it is used and what it can do.
  */
 export class ProvidersPage {
@@ -144,6 +185,16 @@ export class ProvidersPage {
 	private readonly configurationService: IConfigurationService;
 	private readonly clipboard: IClipboardService;
 	private readonly setup: AgentSetupService;
+	/** Saved Claude accounts (desktop only). */
+	private readonly accounts: IVoltAccountsService | undefined;
+	private accountsState: IVoltClaudeAccountsState | undefined;
+	private accountsLoading = false;
+	private limitsRequestedAt = 0;
+	/** A terminal sign-in adding a Claude account, polled until it lands. */
+	private accountLogin: { readonly id: string; readonly email?: string } | undefined;
+	/** The account a switch is running for, and the last thing that went wrong. */
+	private accountBusy: string | undefined;
+	private accountError: string | undefined;
 
 	/**
 	 * Install and sign-in state per CLI id, from asking each CLI directly. The last answers are kept
@@ -162,8 +213,6 @@ export class ProvidersPage {
 	private refreshing = false;
 
 	private selection: Selection = { kind: 'overview' };
-	/** Providers whose models are open in the list. */
-	private readonly expanded = new Set<string>();
 	private listFilter = '';
 	/** Both panes scroll on their own; a re-render puts them back where they were. */
 	private listScrollTop = 0;
@@ -175,7 +224,7 @@ export class ProvidersPage {
 	/** A pointer is down on the page; a field it pulled focus from saves once its click has landed. */
 	private pointerDown = false;
 
-	constructor(instantiationService: IInstantiationService, private readonly host: IProvidersPageHost) {
+	constructor(private readonly instantiationService: IInstantiationService, private readonly host: IProvidersPageHost) {
 		({
 			runtime: this.runtime,
 			stdio: this.stdio,
@@ -194,11 +243,40 @@ export class ProvidersPage {
 			cache: accessor.get(IVoltQueryCache),
 		})));
 		this.setup = instantiationService.createInstance(AgentSetupService);
+		this.accounts = instantiationService.invokeFunction(accessor => {
+			try {
+				return accessor.get(IVoltAccountsService);
+			} catch {
+				return undefined;
+			}
+		});
+		if (this.accounts) {
+			this.setupStore.add(this.accounts.onDidChangeClaudeAccounts(() => void this.loadAccounts(false)));
+		}
+	}
+
+	/** Reads the saved accounts; `refreshLimits` also reads limits that are stale. Redraws when they arrive. */
+	private async loadAccounts(refreshLimits: boolean): Promise<void> {
+		if (!this.accounts || this.accountsLoading) {
+			return;
+		}
+		this.accountsLoading = true;
+		try {
+			this.accountsState = await this.accounts.getClaudeAccounts(refreshLimits);
+		} catch (error) {
+			this.accountError = error instanceof Error ? error.message : String(error);
+		} finally {
+			this.accountsLoading = false;
+		}
+		if (!this.disposed && this.selection.kind === 'provider' && this.profile(this.selection.profileId)?.providerId === 'claude-code') {
+			this.host.rerender();
+		}
 	}
 
 	dispose(): void {
 		this.disposed = true;
 		this.setupStore.dispose();
+		this.loginWatch?.dispose();
 	}
 
 	private setupQuery(id: string): IVoltQuery<IAgentSetupState> {
@@ -310,14 +388,6 @@ export class ProvidersPage {
 		this.detailScrollTop = 0;
 		this.drafts.clear();
 		this.focusKey = undefined;
-		if (selection.kind === 'provider') {
-			this.expanded.add(selection.profileId);
-		} else if (selection.kind === 'model') {
-			const owner = this.runtime.listProviderStatuses().find(status => status.models.some(model => model.ref === selection.ref));
-			if (owner) {
-				this.expanded.add(owner.profileId);
-			}
-		}
 		this.host.rerender();
 	}
 
@@ -350,6 +420,11 @@ export class ProvidersPage {
 
 	//#region List
 
+	/**
+	 * Overview, then each group's providers and its Add row, in a workbench list. A provider row
+	 * opens it on the right, models included, so the list does not repeat them. The filter narrows
+	 * the rows in place (by provider or model name), so typing never loses focus to a re-render.
+	 */
 	private renderList(pane: HTMLElement, statuses: IVoltProviderStatus[]): void {
 		const filter = this.host.store.add(new InputBox(append(pane, $('.volt-pm-filter')), this.contextViewService, {
 			placeholder: localize('voltSettings.filterProviders', "Filter providers and models"),
@@ -360,98 +435,159 @@ export class ProvidersPage {
 		this.trackFocus(filter.inputElement, 'list-filter');
 
 		const scroller = append(pane, $('.volt-pm-scroll'));
-		scroller.setAttribute('role', 'tree');
-		scroller.setAttribute('aria-label', localize('voltSettings.providersAndModels', "Providers and models"));
-
-		const all = this.runtime.listProviderStatuses();
-		const attention = all.filter(status => this.needsAction(status)).length;
-		const overview = this.listItem(scroller, 'overview', this.selection.kind === 'overview');
-		append(overview, $('span.volt-pm-glyph')).appendChild(renderIcon(Codicon.dashboard));
-		append(overview, $('span.volt-pm-name')).textContent = localize('voltSettings.overview', "Overview");
-		if (attention) {
-			const badge = append(overview, $('span.volt-pm-count.warn'));
-			badge.textContent = String(attention);
-			setAgentTooltip(badge, localize('voltSettings.needSetupCount', "{0} need setup", attention));
-		}
-		this.onActivate(overview, () => this.select({ kind: 'overview' }));
-
-		const blocks: IListBlock[] = [];
-		const groups: { label: HTMLElement; add: HTMLElement; blocks: IListBlock[] }[] = [];
-		const group = (label: string, items: IVoltProviderStatus[], addLabel: string, what: 'api' | 'agent') => {
-			const heading = append(scroller, $('.volt-pm-group'));
-			heading.textContent = label;
-			const own: IListBlock[] = [];
-			for (const status of this.sorted(items)) {
-				own.push(this.listProvider(scroller, status));
-			}
-			const add = append(scroller, $('button.volt-pm-add')) as HTMLButtonElement;
-			add.type = 'button';
-			add.classList.toggle('selected', this.selection.kind === 'add' && this.selection.what === what);
-			add.appendChild(renderIcon(Codicon.add));
-			append(add, $('span')).textContent = addLabel;
-			this.host.store.add(addDisposableListener(add, 'click', () => this.select({ kind: 'add', what })));
-			blocks.push(...own);
-			groups.push({ label: heading, add, blocks: own });
-		};
-		group(localize('voltSettings.codingAgents', "Coding agents"), statuses.filter(status => status.kind === 'agent'), localize('voltSettings.addCustomAgentShort', "Add custom agent"), 'agent');
-		group(localize('voltSettings.apiProviders', "API & local models"), statuses.filter(status => status.kind === 'model'), localize('voltSettings.addApiProvider', "Add API provider"), 'api');
-
-		const none = append(scroller, $('.volt-pm-none'));
-		none.textContent = localize('voltSettings.noProviderMatch', "Nothing matches your search.");
-
-		const apply = () => {
-			const needle = this.listFilter.trim().toLowerCase();
-			let shown = 0;
-			for (const item of blocks) {
-				const open = this.expanded.has(item.profileId);
-				item.block.classList.toggle('expanded', open);
-				item.row.setAttribute('aria-expanded', String(open));
-				if (!needle || item.text.includes(needle)) {
-					item.block.hidden = false;
-					item.models.hidden = !open;
-					item.rows.forEach(({ row }) => row.hidden = false);
-					shown++;
-					continue;
+		const attention = this.runtime.listProviderStatuses().filter(status => this.needsAction(status)).length;
+		const agents = this.sorted(statuses.filter(status => status.kind === 'agent'));
+		const apis = this.sorted(statuses.filter(status => status.kind === 'model'));
+		const rowsFor = (value: string): ListRow[] => {
+			const needle = value.trim().toLowerCase();
+			const matches = (status: IVoltProviderStatus) => !needle
+				|| `${status.label} ${status.providerId}`.toLowerCase().includes(needle)
+				|| status.models.some(model => `${model.label} ${model.id} ${model.qualifier ?? ''}`.toLowerCase().includes(needle));
+			const rows: ListRow[] = [{ kind: 'overview', attention }];
+			const group = (label: string, items: IVoltProviderStatus[], addLabel: string, what: 'api' | 'agent') => {
+				const shown = items.filter(matches);
+				if (needle && !shown.length) {
+					return;
 				}
-				let hits = 0;
-				for (const { row, text } of item.rows) {
-					row.hidden = !text.includes(needle);
-					hits += row.hidden ? 0 : 1;
+				rows.push({ kind: 'group', label });
+				rows.push(...shown.map(status => ({ kind: 'provider' as const, status })));
+				if (!needle) {
+					rows.push({ kind: 'add', what, label: addLabel });
 				}
-				item.block.hidden = hits === 0;
-				item.models.hidden = hits === 0;
-				item.block.classList.toggle('expanded', hits > 0);
-				item.row.setAttribute('aria-expanded', String(hits > 0));
-				shown += hits ? 1 : 0;
+			};
+			group(localize('voltSettings.codingAgents', "Coding agents"), agents, localize('voltSettings.addCustomAgentShort', "Add custom agent"), 'agent');
+			group(localize('voltSettings.apiProviders', "API & local models"), apis, localize('voltSettings.addApiProvider', "Add API provider"), 'api');
+			if (rows.length === 1 && needle) {
+				rows.push({ kind: 'none' });
 			}
-			for (const { label, add, blocks: own } of groups) {
-				label.hidden = !!needle && own.every(item => item.block.hidden);
-				add.hidden = !!needle;
-			}
-			none.hidden = shown > 0 || !needle;
+			return rows;
 		};
-		apply();
+
+		const list = this.host.store.add(this.instantiationService.createInstance(WorkbenchList<ListRow>, 'VoltProvidersList', scroller, new ProviderRowDelegate(), [new ProviderRowRenderer(this)], {
+			multipleSelectionSupport: false,
+			horizontalScrolling: false,
+			paddingTop: 4,
+			paddingBottom: 10,
+			identityProvider: { getId: row => listRowId(row) },
+			accessibilityProvider: {
+				getWidgetAriaLabel: () => localize('voltSettings.providersAndModels', "Providers and models"),
+				getRole: row => row.kind === 'group' || row.kind === 'none' ? 'presentation' : 'listitem',
+				getAriaLabel: row => listRowLabel(row),
+			},
+			// Rows paint their own rounded hover and selection; the list's full-width ones stay off.
+			overrideStyles: {
+				listBackground: 'transparent',
+				listFocusBackground: 'transparent',
+				listInactiveFocusBackground: 'transparent',
+				listActiveSelectionBackground: 'transparent',
+				listInactiveSelectionBackground: 'transparent',
+				listHoverBackground: 'transparent',
+				listActiveSelectionForeground: 'inherit',
+				listInactiveSelectionForeground: 'inherit',
+				listFocusForeground: 'inherit',
+				listFocusOutline: 'transparent',
+				listInactiveFocusOutline: 'transparent',
+				listFocusAndSelectionOutline: 'transparent',
+				listSelectionOutline: 'transparent',
+			},
+		}));
+		let rows = rowsFor(this.listFilter);
+		const show = (next: ListRow[]) => {
+			rows = next;
+			list.splice(0, list.length, rows);
+			const selected = rows.findIndex(row => this.isSelectedRow(row));
+			list.setSelection(selected >= 0 ? [selected] : []);
+		};
+		show(rows);
+		this.host.store.add(list.onDidOpen(e => {
+			const row = e.element;
+			if (row?.kind === 'overview') {
+				this.select({ kind: 'overview' });
+			} else if (row?.kind === 'provider') {
+				this.select({ kind: 'provider', profileId: row.status.profileId });
+			} else if (row?.kind === 'add') {
+				this.select({ kind: 'add', what: row.what });
+			}
+		}));
 		this.host.store.add(filter.onDidChange(value => {
 			this.listFilter = value;
-			apply();
+			show(rowsFor(value));
 		}));
-		for (const item of blocks) {
-			const twistie = item.block.querySelector<HTMLElement>('.volt-pm-twistie');
-			if (twistie) {
-				this.host.store.add(addDisposableListener(twistie, 'click', e => {
-					e.stopPropagation();
-					if (this.expanded.has(item.profileId)) {
-						this.expanded.delete(item.profileId);
-					} else {
-						this.expanded.add(item.profileId);
-					}
-					apply();
-				}));
+		// Arrow Down from the filter walks the list.
+		this.host.store.add(addDisposableListener(filter.inputElement, 'keydown', e => {
+			if (e.key === 'ArrowDown' && list.length) {
+				e.preventDefault();
+				list.domFocus();
+				list.focusFirst();
+			}
+		}));
+
+		const resize = new ResizeObserver(() => {
+			list.layout(scroller.clientHeight, scroller.clientWidth);
+			if (this.listScrollTop) {
+				list.scrollTop = this.listScrollTop;
+			}
+		});
+		resize.observe(scroller);
+		this.host.store.add(toDisposable(() => resize.disconnect()));
+		this.host.store.add(list.onDidScroll(e => this.listScrollTop = e.scrollTop));
+	}
+
+	private isSelectedRow(row: ListRow): boolean {
+		const selection = this.selection;
+		switch (row.kind) {
+			case 'overview': return selection.kind === 'overview';
+			case 'add': return selection.kind === 'add' && selection.what === row.what;
+			case 'provider':
+				return (selection.kind === 'provider' && selection.profileId === row.status.profileId)
+					|| (selection.kind === 'model' && row.status.models.some(model => model.ref === selection.ref));
+			default: return false;
+		}
+	}
+
+	/** Fills one list row. Called by the list's renderer, so the row's look stays here with the page. */
+	renderListRow(element: HTMLElement, row: ListRow): void {
+		element.replaceChildren();
+		element.className = `volt-pm-item ${row.kind}`;
+		switch (row.kind) {
+			case 'overview': {
+				append(element, $('span.volt-pm-glyph')).appendChild(renderIcon(Codicon.dashboard));
+				append(element, $('span.volt-pm-name')).textContent = localize('voltSettings.overview', "Overview");
+				if (row.attention) {
+					const badge = append(element, $('span.volt-pm-count.warn'));
+					badge.textContent = String(row.attention);
+					setAgentTooltip(badge, localize('voltSettings.needSetupCount', "{0} need setup", row.attention));
+				}
+				break;
+			}
+			case 'group':
+				element.textContent = row.label;
+				break;
+			case 'add':
+				append(element, $('span.volt-pm-glyph')).appendChild(renderIcon(Codicon.add));
+				append(element, $('span.volt-pm-name')).textContent = row.label;
+				break;
+			case 'none':
+				element.textContent = localize('voltSettings.noProviderMatch', "Nothing matches your search.");
+				break;
+			case 'provider': {
+				const status = row.status;
+				const setup = status.kind === 'agent' ? this.setupStates.get(status.providerId) : undefined;
+				element.classList.toggle('not-installed', status.kind === 'agent' && !!setup && !setup.installed);
+				element.classList.toggle('off', !status.enabled);
+				append(element, $('span.volt-pm-icon')).appendChild(createBrandIcon(status.providerId, 14));
+				append(element, $('span.volt-pm-name')).textContent = status.label;
+				if (status.models.length) {
+					const count = append(element, $('span.volt-pm-count'));
+					count.textContent = String(status.models.length);
+					setAgentTooltip(count, localize('voltSettings.modelCount', "{0} models", status.models.length));
+				}
+				const { tone, label } = this.statusLine(status, setup, this.running.get(status.profileId));
+				const dot = append(element, $(`span.volt-settings-dot.${tone}`));
+				setAgentTooltip(dot, label);
+				break;
 			}
 		}
-
-		scroller.scrollTop = this.listScrollTop;
-		this.host.store.add(addDisposableListener(scroller, 'scroll', () => this.listScrollTop = scroller.scrollTop));
 	}
 
 	/** Ready first, then the ones that need a step, then the rest; by name within each. */
@@ -468,15 +604,6 @@ export class ProvidersPage {
 		return [...statuses].sort((a, b) => rank(a) - rank(b) || a.label.localeCompare(b.label));
 	}
 
-	private listItem(parent: HTMLElement, kind: string, selected: boolean): HTMLElement {
-		const item = append(parent, $(`.volt-pm-item.${kind}`));
-		item.tabIndex = 0;
-		item.setAttribute('role', 'treeitem');
-		item.setAttribute('aria-selected', String(selected));
-		item.classList.toggle('selected', selected);
-		return item;
-	}
-
 	private onActivate(element: HTMLElement, run: () => void): void {
 		this.host.store.add(addDisposableListener(element, 'click', run));
 		this.host.store.add(addDisposableListener(element, 'keydown', e => {
@@ -486,50 +613,6 @@ export class ProvidersPage {
 				run();
 			}
 		}));
-	}
-
-	private listProvider(parent: HTMLElement, status: IVoltProviderStatus): IListBlock {
-		const setup = status.kind === 'agent' ? this.setupStates.get(status.providerId) : undefined;
-		const installed = status.kind !== 'agent' || !setup || setup.installed;
-		const block = append(parent, $('.volt-pm-block'));
-		block.classList.toggle('not-installed', !installed);
-		block.classList.toggle('off', !status.enabled);
-
-		const selected = this.selection.kind === 'provider' && this.selection.profileId === status.profileId;
-		const row = this.listItem(block, 'provider', selected);
-		const twistie = append(row, $('span.volt-pm-twistie'));
-		twistie.classList.toggle('empty', !status.models.length);
-		twistie.appendChild(renderIcon(Codicon.chevronRight));
-		append(row, $('span.volt-pm-icon')).appendChild(createBrandIcon(status.providerId, 14));
-		append(row, $('span.volt-pm-name')).textContent = status.label;
-		if (status.models.length) {
-			append(row, $('span.volt-pm-count')).textContent = String(status.models.length);
-		}
-		const { tone, label } = this.statusLine(status, setup, this.running.get(status.profileId));
-		const dot = append(row, $(`span.volt-settings-dot.${tone}`));
-		setAgentTooltip(dot, label);
-		this.onActivate(row, () => this.select({ kind: 'provider', profileId: status.profileId }));
-
-		const models = append(block, $('.volt-pm-models'));
-		models.setAttribute('role', 'group');
-		const rows: { row: HTMLElement; text: string }[] = [];
-		for (const model of [...status.models].sort((a, b) => Number(b.enabled) - Number(a.enabled))) {
-			const modelSelected = this.selection.kind === 'model' && this.selection.ref === model.ref;
-			const item = this.listItem(models, 'model', modelSelected);
-			item.classList.toggle('off', !model.enabled);
-			append(item, $('span.volt-pm-name')).textContent = model.label;
-			if (!model.enabled) {
-				const hidden = append(item, $('span.volt-pm-hidden'));
-				hidden.appendChild(renderIcon(Codicon.eyeClosed));
-				setAgentTooltip(hidden, localize('voltSettings.hiddenFromPicker', "Hidden from the model picker"));
-			}
-			if (model.qualifier && model.qualifier.toLowerCase() !== status.label.toLowerCase()) {
-				setAgentTooltip(item, `${model.label} · ${model.qualifier}`);
-			}
-			this.onActivate(item, () => this.select({ kind: 'model', ref: model.ref }));
-			rows.push({ row: item, text: `${model.label} ${model.id} ${model.qualifier ?? ''}`.toLowerCase() });
-		}
-		return { profileId: status.profileId, block, row, models, text: `${status.label} ${status.providerId}`.toLowerCase(), rows };
 	}
 
 	//#endregion
@@ -859,6 +942,9 @@ export class ProvidersPage {
 
 		if (status.kind === 'agent') {
 			this.renderAgentConnection(parent, status, setup, profile);
+			if (status.providerId === 'claude-code' && this.accounts && installed) {
+				this.renderClaudeAccounts(parent);
+			}
 		} else if (profile) {
 			this.renderApiConnection(parent, status, profile);
 		}
@@ -1368,6 +1454,284 @@ export class ProvidersPage {
 			chip.appendChild(renderIcon(on ? Codicon.check : Codicon.dash));
 			append(chip, $('span')).textContent = label;
 		}
+	}
+
+	//#endregion
+
+	//#region Claude accounts
+
+	/**
+	 * Saved Claude logins with their limits, the one in use marked. Switch makes another one
+	 * Claude Code's login without a browser sign-in; Add account signs in once, in a terminal, in a
+	 * folder of its own. Under the list: manual or automatic switching.
+	 */
+	private renderClaudeAccounts(parent: HTMLElement): void {
+		const state = this.accountsState;
+		// Limits are read behind what is shown (the answer redraws the page), at most once a minute:
+		// the main process keeps each account to its own interval anyway.
+		const stale = !state || state.accounts.some(account => !account.needsSignIn && (!account.limits || Date.now() - account.limits.checkedAt > 5 * 60_000));
+		if (stale && Date.now() - this.limitsRequestedAt > 60_000) {
+			this.limitsRequestedAt = Date.now();
+			mainWindow.setTimeout(() => void this.loadAccounts(true));
+		}
+		const heading = this.sectionTitle(parent, localize('voltSettings.claudeAccounts', "Accounts"), localize('voltSettings.claudeAccountsHint', "Sign in to each Claude account once. Switching changes the account Claude Code uses on this computer, in Volt and in the terminal; running chats pick it up within about 30 seconds."));
+		const adding = !!this.accountLogin;
+		const add = this.link(heading, adding ? localize('voltSettings.claudeAddingAccount', "Waiting for sign-in") : localize('voltSettings.claudeAddAccount', "Add account"), adding ? ThemeIcon.modify(Codicon.loading, 'spin') : Codicon.add, () => {
+			if (this.accountLogin) {
+				this.cancelAccountLogin();
+			} else {
+				void this.addClaudeAccount();
+			}
+		});
+		setAgentTooltip(add, adding
+			? localize('voltSettings.claudeAddingHint', "Finish the sign-in in the terminal and the browser. Click to cancel.")
+			: localize('voltSettings.claudeAddHint', "Opens Claude's sign-in in a terminal. Your current login stays as it is."));
+
+		if (this.accountError) {
+			const failure = append(parent, $('.volt-settings-provider-failure'));
+			append(failure, $('.title')).textContent = this.accountError;
+		}
+		const group = append(parent, $('.volt-settings-group.volt-pm-accounts'));
+		if (!state) {
+			append(group, $('.volt-settings-empty')).textContent = localize('voltSettings.claudeAccountsLoading', "Reading saved accounts…");
+			return;
+		}
+		if (state.error) {
+			append(group, $('.volt-settings-empty')).textContent = state.error;
+		} else if (!state.accounts.length) {
+			append(group, $('.volt-settings-empty')).textContent = state.signedOut
+				? localize('voltSettings.claudeNoAccountsSignedOut', "Claude Code is not signed in. Add an account to start.")
+				: localize('voltSettings.claudeNoAccounts', "No saved accounts yet.");
+		}
+		const sorted = [...state.accounts].sort((a, b) => Number(b.active) - Number(a.active) || a.addedAt - b.addedAt);
+		for (const account of sorted) {
+			this.accountRow(group, account);
+		}
+		if (state.accounts.length) {
+			this.renderAccountSwitching(parent, state);
+		}
+	}
+
+	private accountRow(group: HTMLElement, account: IVoltClaudeAccount): void {
+		const row = append(group, $('.volt-pm-account'));
+		row.classList.toggle('active', account.active);
+		row.classList.toggle('needs-sign-in', !!account.needsSignIn);
+		append(row, $('span.volt-pm-account-avatar')).textContent = (account.displayName ?? account.email).trim().charAt(0).toUpperCase() || '?';
+		const copy = append(row, $('.volt-pm-account-copy'));
+		const name = append(copy, $('.name'));
+		append(name, $('span.email')).textContent = account.email;
+		if (account.active) {
+			append(name, $('span.volt-pm-account-badge')).textContent = localize('voltSettings.claudeAccountActive', "In use");
+		}
+		const detail = append(copy, $('.detail'));
+		if (account.needsSignIn) {
+			detail.classList.add('warn');
+			detail.textContent = localize('voltSettings.claudeAccountExpired', "The saved sign-in expired. Sign in to this account again.");
+		} else {
+			detail.textContent = [account.plan ? localize('voltSettings.claudePlanName', "Claude {0}", account.plan) : undefined, account.organizationName].filter(Boolean).join(' · ');
+		}
+		this.accountLimits(append(row, $('.volt-pm-account-limits')), account);
+
+		const actions = append(row, $('.volt-pm-actions'));
+		if (this.accountBusy === account.id) {
+			append(actions, $('span.volt-settings-spinner')).appendChild(renderIcon(ThemeIcon.modify(Codicon.loading, 'spin')));
+			return;
+		}
+		if (account.needsSignIn) {
+			this.button(actions, localize('voltSettings.signIn', "Sign In"), true, localize('voltSettings.claudeSignInAgainHint', "Signs in to {0} again in a terminal", account.email), () => void this.addClaudeAccount(account.email));
+		} else if (!account.active) {
+			this.button(actions, localize('voltSettings.claudeSwitch', "Switch"), false, localize('voltSettings.claudeSwitchHint', "Make {0} Claude Code's account", account.email), () => void this.switchClaudeAccount(account));
+		}
+		if (!account.active) {
+			const remove = this.button(actions, '', false, localize('voltSettings.claudeRemoveAccount', "Forget {0}", account.email), () => void this.removeClaudeAccount(account), Codicon.trash);
+			remove.classList.add('volt-pm-account-remove');
+		}
+	}
+
+	/** Session and all-models week as small bars, the way Claude Code's /usage words them. */
+	private accountLimits(host: HTMLElement, account: IVoltClaudeAccount): void {
+		const limits = account.limits;
+		const pick = (test: (window: IVoltUsageLimitWindow) => boolean) => limits?.windows.find(test);
+		const windows: [string, IVoltUsageLimitWindow | undefined][] = [
+			[localize('voltSettings.claudeLimitSession', "Session"), pick(window => window.label === 'Current session')],
+			[localize('voltSettings.claudeLimitWeek', "Week"), pick(window => window.scope === 'All models')],
+		];
+		if (!limits || !windows.some(([, window]) => window)) {
+			host.classList.add('empty');
+			host.textContent = limits?.error ?? (account.needsSignIn ? '' : localize('voltSettings.claudeLimitsUnknown', "Limits not read yet"));
+			if (limits?.error) {
+				setAgentTooltip(host, limits.error);
+			}
+			return;
+		}
+		const now = Date.now();
+		for (const [label, window] of windows) {
+			if (!window) {
+				continue;
+			}
+			const reset = window.resetsAt !== undefined && window.resetsAt <= now;
+			const used = reset ? 0 : Math.round(window.usedPercent);
+			const meter = append(host, $('.volt-pm-meter'));
+			meter.classList.toggle('high', used >= 80);
+			meter.classList.toggle('full', used >= 100);
+			append(meter, $('span.label')).textContent = label;
+			const bar = append(meter, $('span.bar'));
+			append(bar, $('span.fill')).style.width = `${Math.min(100, used)}%`;
+			append(meter, $('span.value')).textContent = `${used}%`;
+			const resets = window.resetsAt && !reset ? localize('voltSettings.claudeLimitResets', "resets {0}", fromNow(window.resetsAt, true, true)) : undefined;
+			setAgentTooltip(meter, [`${window.label}${window.scope ? ` (${window.scope})` : ''}: ${used}%`, resets, localize('voltSettings.claudeLimitChecked', "checked {0}", fromNow(limits.checkedAt, true, true))].filter(Boolean).join(' · '));
+		}
+	}
+
+	private renderAccountSwitching(parent: HTMLElement, state: IVoltClaudeAccountsState): void {
+		this.sectionTitle(parent, localize('voltSettings.claudeSwitching', "Switching"));
+		const group = append(parent, $('.volt-settings-group'));
+		const auto = state.switching === 'auto';
+		const autoTitle = localize('voltSettings.claudeAutoSwitch', "Switch automatically");
+		const autoDesc = state.accounts.length < 2
+			? localize('voltSettings.claudeAutoSwitchNeedsTwo', "Add a second account first. Then, near a limit, Volt moves Claude to the saved account with the most left.")
+			: localize('voltSettings.claudeAutoSwitchDesc', "When the account in use reaches {0}% of its session or weekly limit, Volt moves Claude to the saved account with the most left. Off: Claude stays on the account you pick.", state.threshold);
+		this.host.switch(this.row(group, autoTitle, autoDesc), auto, autoTitle, () => {
+			void this.configurationService.updateValue(CLAUDE_ACCOUNT_SWITCHING_SETTING, auto ? 'manual' : 'auto').then(() => this.loadAccounts(false));
+		});
+		if (auto) {
+			const control = this.row(group, localize('voltSettings.claudeSwitchAt', "Switch at"), localize('voltSettings.claudeSwitchAtDesc', "How full the session or weekly limit gets before Volt moves on. Volt checks every 2 minutes."));
+			const choices = [70, 80, 85, 90, 95];
+			const select = this.host.store.add(new SelectBox(choices.map(value => ({ text: localize('voltSettings.percentUsed', "{0}% used", value) })), 0, this.contextViewService, this.host.selectBoxStyles(), { useCustomDrawn: true, ariaLabel: localize('voltSettings.claudeSwitchAt', "Switch at") }));
+			select.select(choices.reduce((best, value, index) => Math.abs(value - state.threshold) < Math.abs(choices[best] - state.threshold) ? index : best, 0));
+			select.render(append(control, $('.volt-settings-select')));
+			this.host.store.add(select.onDidSelect(e => void this.configurationService.updateValue(CLAUDE_AUTO_SWITCH_THRESHOLD_SETTING, choices[e.index]).then(() => this.loadAccounts(false))));
+		}
+		const last = state.lastSwitch;
+		if (last) {
+			const how = last.reason === 'auto' ? localize('voltSettings.claudeSwitchAuto', "automatically") : localize('voltSettings.claudeSwitchManual', "by you");
+			const text = [localize('voltSettings.claudeLastSwitchTo', "To {0} {1}, {2}", last.toEmail, how, fromNow(last.at, true, true)), last.detail].filter(Boolean).join(' · ');
+			this.valueRow(group, localize('voltSettings.claudeLastSwitch', "Last switch"), text);
+		}
+	}
+
+	private async switchClaudeAccount(account: IVoltClaudeAccount): Promise<void> {
+		if (!this.accounts || this.accountBusy) {
+			return;
+		}
+		this.accountBusy = account.id;
+		this.accountError = undefined;
+		this.host.rerender();
+		try {
+			this.accountsState = await this.accounts.switchClaudeAccount(account.id);
+		} catch (error) {
+			this.accountError = error instanceof Error ? error.message : String(error);
+		} finally {
+			this.accountBusy = undefined;
+		}
+		// The connection facts (account, plan) come from the provider check.
+		await Promise.allSettled([this.runtime.refreshProviders(), this.checkSetup(true)]);
+		if (!this.disposed) {
+			this.host.rerender();
+		}
+	}
+
+	private async removeClaudeAccount(account: IVoltClaudeAccount): Promise<void> {
+		if (!this.accounts) {
+			return;
+		}
+		this.accountError = undefined;
+		try {
+			this.accountsState = await this.accounts.removeClaudeAccount(account.id);
+		} catch (error) {
+			this.accountError = error instanceof Error ? error.message : String(error);
+		}
+		if (!this.disposed) {
+			this.host.rerender();
+		}
+	}
+
+	/**
+	 * Runs `claude auth login` in a terminal with a throwaway `CLAUDE_CONFIG_DIR`, so the browser
+	 * sign-in lands there and not on the login in use, then asks the main process until it has
+	 * picked the new account up. `email` signs in to a saved account whose sign-in expired.
+	 */
+	private async addClaudeAccount(email?: string): Promise<void> {
+		if (!this.accounts || this.accountLogin) {
+			return;
+		}
+		this.accountError = undefined;
+		let login;
+		let onClosed;
+		try {
+			login = await this.accounts.beginClaudeLogin(email);
+			onClosed = await this.setup.runInTerminal('login', 'Claude', login.command);
+		} catch (error) {
+			this.accountError = error instanceof Error ? error.message : String(error);
+			this.host.rerender();
+			return;
+		}
+		const id = login.id;
+		this.accountLogin = { id, email };
+		this.host.rerender();
+		this.host.revealWorkbench();
+
+		const accounts = this.accounts;
+		const watch = new DisposableStore();
+		const started = Date.now();
+		let checking = false;
+		const finish = (error?: string) => {
+			watch.dispose();
+			if (this.accountLogin?.id !== id) {
+				return;
+			}
+			this.accountLogin = undefined;
+			this.accountError = error;
+			void accounts.cancelClaudeLogin(id);
+			void this.loadAccounts(true);
+			if (!this.disposed) {
+				this.host.rerender();
+			}
+		};
+		const check = async (last: boolean) => {
+			if (checking || this.accountLogin?.id !== id) {
+				return;
+			}
+			checking = true;
+			try {
+				const result = await accounts.completeClaudeLogin(id);
+				if (result.status === 'added') {
+					finish();
+				} else if (result.status === 'failed') {
+					finish(result.error);
+				} else if (last) {
+					finish();
+				}
+			} catch (error) {
+				finish(error instanceof Error ? error.message : String(error));
+			} finally {
+				checking = false;
+			}
+		};
+		const handle = mainWindow.setInterval(() => {
+			if (Date.now() - started > SIGN_IN_POLL_LIMIT_MS) {
+				finish(localize('voltSettings.claudeSignInTimeout', "The sign-in did not finish in time. Add the account again to retry."));
+				return;
+			}
+			void check(false);
+		}, SIGN_IN_POLL_MS);
+		watch.add(toDisposable(() => mainWindow.clearInterval(handle)));
+		// The terminal can close a moment before the credential is readable; one last look, then stop.
+		watch.add(onClosed(() => mainWindow.setTimeout(() => void check(true), 500)));
+		this.loginWatch = watch;
+	}
+
+	private loginWatch: DisposableStore | undefined;
+
+	private cancelAccountLogin(): void {
+		const login = this.accountLogin;
+		this.loginWatch?.dispose();
+		this.loginWatch = undefined;
+		this.accountLogin = undefined;
+		if (login) {
+			void this.accounts?.cancelClaudeLogin(login.id);
+		}
+		this.host.rerender();
 	}
 
 	//#endregion
