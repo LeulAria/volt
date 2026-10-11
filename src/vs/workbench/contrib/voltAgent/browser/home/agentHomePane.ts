@@ -48,10 +48,9 @@ import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService, u
 import { IRecentFolder, IRecentWorkspace, IWorkspacesService, isRecentFolder, isRecentWorkspace } from '../../../../../platform/workspaces/common/workspaces.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
-import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
-import { AgentUsageEditorInput, OPEN_AGENT_USAGE_COMMAND_ID } from '../usage/agentUsageEditor.js';
-import { createUsageIcon } from '../usage/agentUsageIcons.js';
-import { createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeSettingsIcon, createHomeStatusBadgeIcon } from './agentHomeIcons.js';
+import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
+import { appendAgentFooterActions } from './agentHomeFooterActions.js';
+import { createHomeAutomationsIcon, createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeStatusBadgeIcon } from './agentHomeIcons.js';
 import { showAgentSnoozeMenu } from './agentSnoozeMenu.js';
 import { activateAgentProject, startAgentChat } from '../workspace/agentPanels.js';
 import { AgentChatStart } from '../workspace/agentShell.js';
@@ -329,6 +328,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 				template.glyph.appendChild(createHomeSearchIcon());
 				break;
 			case 'automations':
+				template.glyph.appendChild(createHomeAutomationsIcon());
+				break;
 			case 'customize':
 				template.glyph.appendChild(renderIcon(spec.icon));
 				break;
@@ -975,47 +976,8 @@ export class AgentHomePane extends Disposable {
 			void this.closeUsage();
 		}));
 
-		const button = append(footer, $('button.volt-agent-home-settings')) as HTMLButtonElement;
-		button.type = 'button';
-		button.appendChild(createHomeSettingsIcon());
-		const label = localize('voltAgent.home.settings', "Settings");
-		button.setAttribute('aria-label', label);
-		setAgentTooltip(button, label);
-		this._register(addDisposableListener(button, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
-			button.blur();
-		}));
-
-		const usage = append(footer, $('button.volt-agent-home-settings.volt-agent-home-usage')) as HTMLButtonElement;
-		usage.type = 'button';
-		usage.appendChild(createUsageIcon(14));
-		const usageLabel = localize('voltAgent.home.usage', "Usage");
-		usage.setAttribute('aria-label', usageLabel);
-		setAgentTooltip(usage, usageLabel);
-		this._register(addDisposableListener(usage, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			void this.commandService.executeCommand(OPEN_AGENT_USAGE_COMMAND_ID);
-			usage.blur();
-		}));
-
-		// Automations and Customize left the header for the footer when it became a single Search bar.
-		for (const id of ['automations', 'customize'] as const) {
-			const spec = actionSpec(id);
-			const action = append(footer, $('button.volt-agent-home-settings')) as HTMLButtonElement;
-			action.type = 'button';
-			action.appendChild(renderIcon(spec.icon));
-			action.setAttribute('aria-label', spec.label);
-			setAgentTooltip(action, spec.label);
-			this._register(addDisposableListener(action, 'click', e => {
-				e.preventDefault();
-				e.stopPropagation();
-				void this.runAction(id);
-				action.blur();
-			}));
-		}
+		const store = this._register(new DisposableStore());
+		appendAgentFooterActions(footer, this.commandService, store);
 
 		let wasOpen = false;
 		const sync = () => {

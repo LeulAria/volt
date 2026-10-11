@@ -36,6 +36,7 @@ import { trackLentPanesCollapsed } from '../review/agentChangesEditor.js';
 import { AgentScmRepositoryFocus } from '../review/agentScmRepository.js';
 import { setAgentChangesSession } from '../review/agentTurnsView.js';
 import { EXPLORER_ICON_SHAPES, type SvgIconShapes } from './agentSurfaceMenu.js';
+import { createPrimarySidebarToggleIcon } from '../../../../browser/parts/titlebar/sidebarToggleIcon.js';
 import { AGENT_PULL_REQUESTS_CONTAINER_ID, setPullRequestsViewSession } from '../pullRequests/agentPullRequestsViewState.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 
@@ -117,6 +118,9 @@ export class AgentFilesSidebar extends Disposable {
 	readonly element: HTMLElement;
 	/** Shows or hides the sidebar; it sits at the end of the tools' first tab row. */
 	readonly toggleButton: HTMLButtonElement;
+	private readonly showTabsEmitter = this._register(new Emitter<void>());
+	/** Open Right Panel in the header, shown while the sidebar fills the area: the tabs come back beside it. */
+	readonly onDidRequestShowTabs: Event<void> = this.showTabsEmitter.event;
 	private readonly header: HTMLElement;
 	private readonly body: HTMLElement;
 	private readonly repositoryStatus: HTMLElement;
@@ -192,12 +196,21 @@ export class AgentFilesSidebar extends Disposable {
 			this._register(addDisposableListener(button, 'click', () => AgentFilesSidebar.show(this.storageService, view.id)));
 			this.buttons.set(view.id, button);
 		}
+		// While the sidebar fills the area (tabs closed), the tabs' own toggle sits here.
+		const showTabs = append(this.header, $('button.volt-agent-files-sidebar-tab.show-tabs')) as HTMLButtonElement;
+		showTabs.type = 'button';
+		const showTabsLabel = localize('voltAgent.tools.openPanel', "Open Right Panel");
+		showTabs.setAttribute('aria-label', showTabsLabel);
+		setAgentTooltip(showTabs, showTabsLabel);
+		showTabs.appendChild(createPrimarySidebarToggleIcon(showTabs, 'closed'));
+		this._register(addDisposableListener(showTabs, 'click', () => this.showTabsEmitter.fire()));
 		const hide = append(this.header, $('button.volt-agent-files-sidebar-tab.hide')) as HTMLButtonElement;
 		hide.type = 'button';
 		const hideLabel = localize('voltAgent.filesSidebar.hide', "Hide Files Sidebar");
 		hide.setAttribute('aria-label', hideLabel);
 		setAgentTooltip(hide, hideLabel);
-		hide.appendChild(createSidebarRightIcon(hide.ownerDocument));
+		// The title bar's sidebar glyph (thin frame, filled bar), mirrored by CSS to sit on the right.
+		hide.appendChild(createPrimarySidebarToggleIcon(hide, 'closed'));
 		this._register(addDisposableListener(hide, 'click', () => AgentFilesSidebar.setOpen(this.storageService, false)));
 		this.body = append(this.element, $('.volt-agent-files-sidebar-body.volt-agent-changes-scm'));
 		const unavailable = append(this.body, $('.volt-agent-changes-scm-unavailable'));
@@ -523,6 +536,8 @@ export class AgentFilesSidebar extends Disposable {
 		this.toggleButton.setAttribute('aria-label', label);
 		this.toggleButton.setAttribute('aria-pressed', String(state.open));
 		this.toggleButton.classList.toggle('active', state.open);
+		// The sidebar's own header has Hide: the tab row's button only offers Show.
+		this.toggleButton.classList.toggle('hidden', state.open);
 		setAgentTooltip(this.toggleButton, label);
 	}
 
@@ -655,27 +670,5 @@ function createTabIcon(doc: Document, shapes: SvgIconShapes): SVGSVGElement {
 		}
 		svg.appendChild(shape);
 	}
-	return svg;
-}
-
-/** A window with a panel on its right, like the tools' other title actions (16px on a 24 grid). */
-function createSidebarRightIcon(doc: Document): SVGSVGElement {
-	const svg = doc.createElementNS(SVG_NS, 'svg');
-	svg.setAttribute('viewBox', '0 0 24 24');
-	svg.setAttribute('width', '16');
-	svg.setAttribute('height', '16');
-	svg.setAttribute('fill', 'none');
-	svg.setAttribute('stroke', 'currentColor');
-	svg.setAttribute('stroke-width', '1.6');
-	svg.setAttribute('stroke-linecap', 'round');
-	svg.setAttribute('stroke-linejoin', 'round');
-	svg.setAttribute('aria-hidden', 'true');
-	const rect = doc.createElementNS(SVG_NS, 'rect');
-	for (const [name, value] of Object.entries({ x: 3, y: 4, width: 18, height: 16, rx: 2.5 })) {
-		rect.setAttribute(name, String(value));
-	}
-	const line = doc.createElementNS(SVG_NS, 'path');
-	line.setAttribute('d', 'M15 4v16');
-	svg.append(rect, line);
 	return svg;
 }

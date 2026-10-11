@@ -24,6 +24,7 @@ import { isNewEmptyWindow } from '../../../../browser/parts/titlebar/layoutModeS
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { AutomationsEditorInput } from '../automations/automationsEditor.js';
+import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
 import { AGENT_NEW_CHAT_DRAFT_SETTING } from '../../common/agentComposerSettings.js';
 import { agentPanelTabsMode, isBlankNewChat, latestSessionForFolder, unsentDraftForFolder } from '../home/agentHomeModel.js';
 import { AgentChatStart, attachSessionToProject, resolveSessionProject } from './agentShell.js';
@@ -399,11 +400,11 @@ class AgentPanelTabsContribution extends Disposable {
 		}
 		// Only an editor on screen needs a title. A file left behind in a background group would
 		// otherwise bring the chat's own tab row back under the titlebar, which already names it.
-		// Usage and Automations need none either: the titlebar names them and the page has its own heading.
+		// Usage, Automations and Customize need none either: the titlebar names them (and their trail).
 		let nonAgentEditors = 0;
 		for (const group of this.editorGroupsService.mainPart.groups) {
 			const active = group.activeEditor;
-			if (active && !(active instanceof AgentEditorInput) && !(active instanceof AgentUsageEditorInput) && !(active instanceof AutomationsEditorInput)) {
+			if (active && !(active instanceof AgentEditorInput) && !(active instanceof AgentUsageEditorInput) && !(active instanceof AutomationsEditorInput) && !(active instanceof AgentCustomizeEditorInput)) {
 				nonAgentEditors++;
 			}
 		}

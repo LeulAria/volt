@@ -142,11 +142,30 @@
 	display: none;
 }
 
-/* Customize's trail: once a marketplace page is open, Customize dims like the project and
- * Marketplace links back to the listing. */
+/* A page trail (Customize's marketplace, an automation): the page title dims like the project,
+ * and links back where a page has a home (Automations → the list). */
 .monaco-workbench.volt-layout-agent .volt-agent-primary-header-title.has-crumbs > .volt-agent-primary-header-label {
 	flex-shrink: 0;
 	opacity: 0.6;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-label.link {
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-title.has-crumbs > .volt-agent-primary-header-label.link:hover {
+	opacity: 1;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-label.link:focus {
+	outline: none;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-label.link:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+	border-radius: 4px;
 }
 
 .monaco-workbench.volt-layout-agent .volt-agent-primary-header-crumbs {

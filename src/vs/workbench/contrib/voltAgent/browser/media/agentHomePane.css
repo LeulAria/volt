@@ -1521,6 +1521,15 @@ html.volt-layout-agent-window body {
 	left: 78px;
 }
 
+/* Full screen has no traffic lights before the logo: give it 5px off the window edge. */
+.monaco-workbench.volt-layout-agent.fullscreen:not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.auxiliarybar > .volt-agent-brand-logo {
+	left: 13px;
+}
+
+.monaco-workbench.volt-layout-agent.fullscreen .titlebar-left > .volt-agent-brand-logo.in-titlebar {
+	margin-left: 5px;
+}
+
 .monaco-workbench.volt-layout-agent.volt-primary-sidebar-toggle-in-titlebar .titlebar-left > .volt-agent-brand-logo.in-titlebar,
 .monaco-workbench.volt-layout-agent.noauxiliarybar .titlebar-left > .volt-agent-brand-logo.in-titlebar,
 .monaco-workbench.volt-layout-agent.volt-agent-left-collapsed .titlebar-left > .volt-agent-brand-logo.in-titlebar {

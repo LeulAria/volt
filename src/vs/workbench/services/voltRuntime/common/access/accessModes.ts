@@ -12,7 +12,7 @@ export const VOLT_ACCESS_MODES: readonly VoltAccessMode[] = [
 	'full-access',
 ];
 
-export const DEFAULT_ACCESS_MODE: VoltAccessMode = 'supervised';
+export const DEFAULT_ACCESS_MODE: VoltAccessMode = 'full-access';
 
 export const VOLT_ACCESS_MODE_STORAGE_KEY = 'volt.runtime.accessMode';
 /** Per-chat overrides of the default access mode, keyed by session id. */

@@ -85,14 +85,18 @@
 	height: 14px;
 }
 
-.volt-agent-right-panel-toggle > svg,
-.volt-agent-tools-close-panel > svg {
+.volt-agent-right-panel-toggle > svg {
 	transform: scaleX(-1);
 }
 
 /* The sidebar glyph's bar is on the left; a quarter turn counterclockwise puts it at the bottom. */
 .volt-agent-bottom-panel-toggle > svg {
 	transform: rotate(-90deg);
+}
+
+.volt-agent-files-panel-toggle > svg {
+	width: 15px;
+	height: 15px;
 }
 
 .volt-agent-quick-open-visibility > svg {
@@ -109,7 +113,8 @@
 	display: none;
 }
 
-.monaco-workbench.volt-layout-agent .volt-agent-right-panel-toggle.tools-open {
+.monaco-workbench.volt-layout-agent .volt-agent-right-panel-toggle.tools-open,
+.monaco-workbench.volt-layout-agent .volt-agent-files-panel-toggle.tools-open {
 	display: none;
 }
 
@@ -145,11 +150,6 @@
 
 .volt-agent-tools-close-panel > svg {
 	transform: scaleX(-1);
-}
-
-.volt-agent-tools-close-panel > svg rect,
-.volt-agent-tools-close-panel > svg path {
-	vector-effect: none;
 }
 
 .monaco-workbench .volt-agent-tools-close-panel:hover,
@@ -576,4 +576,35 @@
 .monaco-workbench.volt-layout-agent .volt-agent-editor.has-surfaces,
 .monaco-workbench.volt-layout-agent .volt-agent-editor.has-surfaces.has-quick-open {
 	--volt-agent-quick-open-reserve: 0px;
+}
+
+/* No room beside the chat: the toolbar opens under its title bar button (agentViewSidebars.ts setPopupOpen). Opaque, no
+ * backdrop-filter: it sits over the transparent window. */
+.monaco-workbench .volt-agent-quick-open-actions.volt-agent-quick-open-popup {
+	position: absolute;
+	z-index: 2550;
+	display: flex;
+	flex-direction: column;
+	width: 228px;
+	max-height: calc(100% - 60px);
+	overflow-y: auto;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, rgba(255, 255, 255, 0.1)));
+	border-radius: 10px;
+	background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+	color: var(--vscode-menu-foreground, var(--vscode-foreground));
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
+	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions.volt-agent-quick-open-popup.hidden {
+	display: none;
+}
+
+.volt-agent-quick-open-popup .volt-agent-quick-open-body > .volt-agent-dock-section:first-child > .volt-agent-dock-heading {
+	padding-right: 12px;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggle.popup-open {
+	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 }

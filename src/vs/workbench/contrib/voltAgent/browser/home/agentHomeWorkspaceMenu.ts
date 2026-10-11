@@ -105,6 +105,11 @@ interface IRowOptions {
 	readonly flyout?: string;
 	/** The project the menu was opened from: a trailing check. */
 	readonly current?: boolean;
+	/**
+	 * `action`: icon tile, title and a line on what it does under it (the ways to start).
+	 * `tile`: a compact cell of the clone grid.
+	 */
+	readonly variant?: 'action' | 'tile';
 	readonly onClick?: () => void;
 	readonly onHover?: () => void;
 }
@@ -141,7 +146,9 @@ class AgentHomeWorkspaceMenu extends Disposable {
 		this.menu = append(container, $('.volt-agent-home-filter-menu.volt-agent-home-workspace-menu'));
 		this.flyout = append(container, $('.volt-agent-home-filter-flyout.volt-agent-home-workspace-flyout.hidden'));
 
-		this.search = this.input(this.menu, localize('voltAgent.workspace.search', "Search repos and folders..."));
+		const searchBox = append(this.menu, $('.volt-agent-home-workspace-searchbox'));
+		searchBox.appendChild(renderIcon(Codicon.search));
+		this.search = this.input(searchBox, localize('voltAgent.workspace.searchProjects', "Search projects and folders"));
 		this.search.classList.add('volt-agent-home-workspace-search');
 		this._register(addDisposableListener(this.search, 'input', () => {
 			this.query = this.search.value;
@@ -161,6 +168,20 @@ class AgentHomeWorkspaceMenu extends Disposable {
 		}));
 		this.body = append(this.menu, $('.volt-agent-home-workspace-body'));
 		this.paintBody();
+		this._register(addDisposableListener(this.body, 'scroll', () => this.placeFlyout()));
+		const hints = append(this.menu, $('.volt-agent-home-workspace-hints'));
+		for (const [keys, label] of [
+			[['\u2191', '\u2193'], localize('voltAgent.workspace.hintNavigate', "Navigate")],
+			[['\u21b5'], localize('voltAgent.workspace.hintSelect', "Select")],
+			[['\u2192'], localize('voltAgent.workspace.hintOpen', "More")],
+			[['esc'], localize('voltAgent.workspace.hintClose', "Close")],
+		] as const) {
+			const hint = append(hints, $('span.hint'));
+			for (const key of keys) {
+				append(hint, $('kbd')).textContent = key;
+			}
+			append(hint, $('span')).textContent = label;
+		}
 
 		this._register(addDisposableListener(container, 'keydown', e => this.onKeyDown(e)));
 		this.search.focus();
@@ -195,56 +216,69 @@ class AgentHomeWorkspaceMenu extends Disposable {
 
 		const recents = this.host.entries.slice(0, AGENT_HOME_RECENT_LIMIT);
 		if (recents.length) {
-			this.heading(this.body, localize('voltAgent.workspace.recents', "Recents"));
+			this.heading(this.body, localize('voltAgent.workspace.recent', "Recent"));
 			for (const entry of recents) {
 				this.row(this.body, store, {
 					label: entry.name,
+					description: entry.path,
 					icon: createHomeFolderIcon(),
 					current: this.isCurrent(entry.uri),
 					onClick: () => this.open([entry.uri]),
 					onHover: closeHover,
 				});
 			}
-			this.separator(this.body);
 		}
 
-		this.heading(this.body, localize('voltAgent.workspace.repos', "Repos"));
+		this.heading(this.body, localize('voltAgent.workspace.start', "Start"));
 		this.row(this.body, store, {
-			label: localize('voltAgent.workspace.fromScratch', "Start from scratch"),
-			icon: Codicon.add,
-			onClick: () => this.run(() => this.host.startFromScratch()),
-			onHover: closeHover,
-		});
-		this.row(this.body, store, {
-			label: localize('voltAgent.workspace.newProject', "New Project..."),
+			variant: 'action',
+			label: localize('voltAgent.workspace.newProjectAction', "New project"),
+			description: localize('voltAgent.workspace.newProjectDesc', "A new Git repository from a name"),
 			icon: Codicon.repo,
 			flyout: 'newProject',
 			onClick: () => this.openFlyout('newProject', true),
 			onHover: closeHover,
 		});
 		this.row(this.body, store, {
+			variant: 'action',
+			label: localize('voltAgent.workspace.blankProject', "Start from scratch"),
+			description: localize('voltAgent.workspace.blankProjectDesc', "An empty folder, ready for the agent"),
+			icon: Codicon.add,
+			onClick: () => this.run(() => this.host.startFromScratch()),
+			onHover: closeHover,
+		});
+		this.row(this.body, store, {
+			variant: 'action',
 			label: localize('voltAgent.workspace.localFolder', "Local folder"),
+			description: localize('voltAgent.workspace.localFolderDesc', "Browse a folder on disk"),
 			icon: Codicon.folderOpened,
 			onClick: () => this.run(() => this.host.browse()),
 			onHover: closeHover,
 		});
 		this.row(this.body, store, {
+			variant: 'action',
 			label: localize('voltAgent.workspace.onThisMac', "On This Mac"),
+			description: localize('voltAgent.workspace.onThisMacDesc', "Every folder you have opened, one or several"),
 			icon: createHomeLaptopIcon(),
 			submenu: 'mac',
 			onHover: () => this.openFlyout('mac'),
 		});
-		this.separator(this.body);
-		this.heading(this.body, localize('voltAgent.workspace.cloneFrom', "Clone Repository"));
+
+		this.heading(this.body, localize('voltAgent.workspace.cloneRepository', "Clone a repository"));
 		this.row(this.body, store, {
-			label: localize('voltAgent.workspace.browseGitHub', "Your GitHub repositories..."),
+			variant: 'action',
+			label: localize('voltAgent.workspace.yourGitHub', "Your GitHub repositories"),
+			description: localize('voltAgent.workspace.yourGitHubDesc', "Search yours and clone one"),
 			icon: Codicon.github,
 			onClick: () => this.run(() => this.host.browseGitHub()),
 			onHover: closeHover,
 		});
+		const grid = append(this.body, $('.volt-agent-home-workspace-grid'));
 		for (const provider of AGENT_CLONE_PROVIDERS) {
-			this.row(this.body, store, {
+			this.row(grid, store, {
+				variant: 'tile',
 				label: cloneProviderLabel(provider),
+				description: cloneProviderHint(provider),
 				icon: providerIcon(provider),
 				flyout: cloneFlyoutKey(provider),
 				onClick: () => {
@@ -643,7 +677,7 @@ class AgentHomeWorkspaceMenu extends Disposable {
 				: Math.max(margin, win.innerWidth - margin - width) - box.left;
 		}
 		// Less the flyout's border, so its first row lines up with this one.
-		let top = row ? row.offsetTop - 1 : 0;
+		let top = row ? row.getBoundingClientRect().top - box.top - 1 : 0;
 		top = Math.min(top, win.innerHeight - margin - box.top - height);
 		top = Math.max(top, margin - box.top);
 		this.flyout.style.position = 'absolute';
@@ -675,6 +709,9 @@ class AgentHomeWorkspaceMenu extends Disposable {
 	private row(parent: HTMLElement, store: DisposableStore, options: IRowOptions): HTMLButtonElement {
 		const row = append(parent, $('button.volt-agent-home-filter-row.volt-agent-home-workspace-row')) as HTMLButtonElement;
 		row.type = 'button';
+		if (options.variant) {
+			row.classList.add(options.variant);
+		}
 		const flyout = options.flyout ?? options.submenu;
 		if (flyout) {
 			row.dataset.flyout = flyout;
@@ -695,10 +732,19 @@ class AgentHomeWorkspaceMenu extends Disposable {
 			// An element has a string `id` too, so test for the element rather than the theme icon.
 			leading.appendChild(isHTMLElement(options.icon) ? options.icon : renderIcon(options.icon));
 		}
-		append(row, $('span.label')).textContent = options.label;
-		if (options.description) {
-			row.classList.add('has-description');
-			append(row, $('span.description')).textContent = options.description;
+		if (options.variant) {
+			// Title over a line on what it does.
+			const text = append(row, $('span.text'));
+			append(text, $('span.label')).textContent = options.label;
+			if (options.description) {
+				append(text, $('span.description')).textContent = options.description;
+			}
+		} else {
+			append(row, $('span.label')).textContent = options.label;
+			if (options.description) {
+				row.classList.add('has-description');
+				append(row, $('span.description')).textContent = options.description;
+			}
 		}
 		const trailing = append(row, $('span.trailing'));
 		if (options.current) {
@@ -809,6 +855,20 @@ class AgentHomeWorkspaceMenu extends Disposable {
 
 function cloneFlyoutKey(provider: AgentCloneProvider): string {
 	return `clone:${provider}`;
+}
+
+/** The tile's second line: what to paste. */
+function cloneProviderHint(provider: AgentCloneProvider): string {
+	switch (provider) {
+		case 'github': return localize('voltAgent.workspace.githubHint', "owner/repo");
+		case 'gitlab': return localize('voltAgent.workspace.gitlabHint', "group/project");
+		case 'bitbucket': return localize('voltAgent.workspace.bitbucketHint', "workspace/repo");
+		case 'url': return localize('voltAgent.workspace.urlHint', "Any remote URL");
+		default: {
+			const unexpected: never = provider;
+			return unexpected;
+		}
+	}
 }
 
 function providerIcon(provider: AgentCloneProvider): ThemeIcon | HTMLElement {

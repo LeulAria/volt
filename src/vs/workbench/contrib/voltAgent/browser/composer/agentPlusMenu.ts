@@ -7,6 +7,7 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { localize } from '../../../../../nls.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { createModeIcon, createStrokeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
+import { createHomeAutomationsIcon } from '../home/agentHomeIcons.js';
 import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 
 export interface IAgentPlusMenuMode {
@@ -97,7 +98,7 @@ function actionItem(action: AgentPlusMenuAction, modelName: string | undefined):
 		case 'mcp':
 			return { id: action, label: localize('voltAgent.plusMcp', "MCP"), icon: createPlugIcon, trailingIcon: Codicon.chevronRight, data };
 		case 'schedule':
-			return { id: action, label: localize('voltAgent.plusAutomation', "Automate…"), keywords: 'schedule recurring repeat cron timer later automation webhook trigger', icon: Codicon.zap, data };
+			return { id: action, label: localize('voltAgent.plusAutomation', "Automate…"), keywords: 'schedule recurring repeat cron timer later automation webhook trigger', icon: () => createHomeAutomationsIcon(), data };
 	}
 }
 

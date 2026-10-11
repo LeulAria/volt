@@ -162,9 +162,15 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly quickOpenToggle: HTMLButtonElement;
 	private readonly panelToggle: HTMLButtonElement;
 	private readonly rightToggle: HTMLButtonElement;
+	private readonly filesToggle: HTMLButtonElement;
 	private readonly chevron: HTMLButtonElement;
 	private readonly chevronLabel: HTMLElement;
 	private readonly tabsSection: HTMLElement;
+	/** The rows under the rail; they move into the popup while it is open. */
+	private readonly body: HTMLElement;
+	/** Without room for the toolbar beside the chat, the title bar button opens it here instead. */
+	private readonly popup: HTMLElement;
+	private readonly popupListeners = this._register(new DisposableStore());
 	private readonly tabList: HTMLElement;
 	/** "On <project>" over Files, Terminal and Browser. */
 	private readonly workspaceHeading: HTMLElement;
@@ -236,6 +242,10 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.quickOpenToggle.type = 'button';
 		this.quickOpenToggle.appendChild(createStrokeIcon(this.quickOpenToggle, QUICK_OPEN_ICON_PATH, '1.5'));
 		this._register(addDisposableListener(this.quickOpenToggle, 'click', () => {
+			if (this.windowNarrow) {
+				this.setPopupOpen(!this.popupOpen);
+				return;
+			}
 			this.storageService.store(QUICK_OPEN_HIDDEN_KEY, !this.quickOpenHidden, StorageScope.PROFILE, StorageTarget.USER);
 			this.syncQuickOpenVisibility();
 		}));
@@ -252,6 +262,15 @@ class AgentViewSidebarsContribution extends Disposable {
 		}));
 		this._register(layoutService.onDidChangePartVisibility(() => this.syncPanelToggle()));
 		this.syncPanelToggle();
+
+		// The files sidebar's own toggle, beside the right panel's: each opens on its own.
+		this.filesToggle = append(this.titlebarToggles, $('button.volt-agent-titlebar-toggle.volt-agent-files-panel-toggle.volt-titlebar-control')) as HTMLButtonElement;
+		this.filesToggle.type = 'button';
+		this.filesToggle.appendChild(createSurfaceStrokeIcon(this.filesToggle.ownerDocument, EXPLORER_ICON_SHAPES));
+		const filesLabel = localize('voltAgent.filesSidebar.show', "Show Files Sidebar");
+		this.filesToggle.setAttribute('aria-label', filesLabel);
+		setAgentTooltip(this.filesToggle, filesLabel);
+		this._register(addDisposableListener(this.filesToggle, 'click', () => void this.commandService.executeCommand(SHOW_AGENT_FILES_COMMAND_ID)));
 
 		this.rightToggle = append(this.titlebarToggles, $('button.volt-agent-titlebar-toggle.volt-agent-right-panel-toggle.volt-titlebar-control')) as HTMLButtonElement;
 		this.rightToggle.type = 'button';
@@ -271,7 +290,17 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.chevron.appendChild(chevronIcon);
 
 		const rail = append(this.quickOpen, $('.volt-agent-quick-open-rail'));
-		const body = append(this.quickOpen, $('.volt-agent-quick-open-body'));
+		const body = this.body = append(this.quickOpen, $('.volt-agent-quick-open-body'));
+		this.popup = $('.volt-agent-quick-open-actions.expanded.volt-agent-quick-open-popup.hidden');
+		this.popup.setAttribute('aria-label', localize('voltAgent.chatSideToolbar', "Chat Side Toolbar"));
+		this._register(toDisposable(() => this.popup.remove()));
+		// A row ran its action: the popup has done its job. The git menu's chevron opens a menu anchored in it, so it stays.
+		this._register(addDisposableListener(this.popup, 'click', e => {
+			const target = e.target as HTMLElement | null;
+			if (target?.closest('button, [role="button"]') && !target.closest('.volt-git-control-chevron')) {
+				this.setPopupOpen(false);
+			}
+		}));
 		this.tabsSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-tabs.hidden'));
 		const tabsHeading = append(this.tabsSection, $('.volt-agent-dock-heading'));
 		tabsHeading.textContent = localize('voltAgent.dock.openTabs', "Open Tabs");
@@ -591,6 +620,10 @@ class AgentViewSidebarsContribution extends Disposable {
 		if (narrow !== this.windowNarrow) {
 			this.windowNarrow = narrow;
 			this.narrowOverride = undefined;
+			if (!narrow) {
+				this.setPopupOpen(false);
+			}
+			this.syncQuickOpenVisibility();
 		}
 		const collapsed = typeof this.narrowOverride === 'boolean'
 			? this.narrowOverride
@@ -614,6 +647,47 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.applyDock(collapsed);
 	}
 
+	private get popupOpen(): boolean {
+		return !this.popup.classList.contains('hidden');
+	}
+
+	/** Opens the toolbar under its title bar button, as a menu: the chat has no room for it beside the transcript. */
+	private setPopupOpen(open: boolean): void {
+		if (open === this.popupOpen) {
+			return;
+		}
+		this.popupListeners.clear();
+		this.quickOpenToggle.setAttribute('aria-expanded', String(open));
+		this.quickOpenToggle.classList.toggle('popup-open', open);
+		if (!open) {
+			this.popup.classList.add('hidden');
+			this.quickOpen.appendChild(this.body);
+			return;
+		}
+		const container = this.layoutService.mainContainer;
+		container.appendChild(this.popup);
+		this.popup.appendChild(this.body);
+		const anchor = this.quickOpenToggle.getBoundingClientRect();
+		const bounds = container.getBoundingClientRect();
+		this.popup.style.top = `${anchor.bottom - bounds.top + 6}px`;
+		this.popup.style.right = `${Math.max(8, bounds.right - anchor.right)}px`;
+		this.popup.classList.remove('hidden');
+		const doc = container.ownerDocument;
+		this.popupListeners.add(addDisposableListener(doc, 'mousedown', e => {
+			const target = e.target as Node | null;
+			if (target && !this.popup.contains(target) && !this.quickOpenToggle.contains(target)) {
+				this.setPopupOpen(false);
+			}
+		}, true));
+		this.popupListeners.add(addDisposableListener(doc, 'keydown', e => {
+			if (e.key === 'Escape') {
+				this.setPopupOpen(false);
+				this.quickOpenToggle.focus();
+			}
+		}, true));
+		this.popupListeners.add(this.layoutService.onDidLayoutMainContainer(() => this.setPopupOpen(false)));
+	}
+
 	private applyDock(collapsed: boolean): void {
 		this.collapsed = collapsed;
 		this.quickOpen.classList.toggle('collapsed', collapsed);
@@ -631,6 +705,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		const open = !!this.layoutService.mainContainer.querySelector('.volt-agent-tools-area:not(.hidden):not(.floating)');
 		// Hidden while the panel is open (agentViewSidebars.css).
 		this.rightToggle.classList.toggle('tools-open', open);
+		this.filesToggle.classList.toggle('tools-open', open);
 		const label = localize('voltAgent.tools.openPanel', "Open Right Panel");
 		this.rightToggle.setAttribute('aria-label', label);
 		this.rightToggle.setAttribute('aria-expanded', String(open));
@@ -644,14 +719,26 @@ class AgentViewSidebarsContribution extends Disposable {
 
 	/** Hidden takes the whole list away, rail included; collapsed only narrows it. */
 	private syncQuickOpenVisibility(): void {
-		const hidden = this.quickOpenHidden;
+		// No room beside the chat: the toolbar leaves the column and opens from the title bar button.
+		const popup = this.windowNarrow;
+		const hidden = this.quickOpenHidden || popup;
 		this.quickOpen.classList.toggle('user-hidden', hidden);
 		this.syncQuickOpenHost();
-		const label = hidden
-			? localize('voltAgent.chatSideToolbar.show', "Show Chat Side Toolbar")
-			: localize('voltAgent.chatSideToolbar.hide', "Hide Chat Side Toolbar");
+		const label = popup
+			? localize('voltAgent.chatSideToolbar.open', "Chat Side Toolbar")
+			: hidden
+				? localize('voltAgent.chatSideToolbar.show', "Show Chat Side Toolbar")
+				: localize('voltAgent.chatSideToolbar.hide', "Hide Chat Side Toolbar");
 		this.quickOpenToggle.setAttribute('aria-label', label);
-		this.quickOpenToggle.setAttribute('aria-pressed', String(!hidden));
+		if (popup) {
+			this.quickOpenToggle.removeAttribute('aria-pressed');
+			this.quickOpenToggle.setAttribute('aria-haspopup', 'true');
+			this.quickOpenToggle.setAttribute('aria-expanded', String(this.popupOpen));
+		} else {
+			this.quickOpenToggle.setAttribute('aria-pressed', String(!hidden));
+			this.quickOpenToggle.removeAttribute('aria-haspopup');
+			this.quickOpenToggle.removeAttribute('aria-expanded');
+		}
 		setAgentTooltip(this.quickOpenToggle, label);
 	}
 

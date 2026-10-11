@@ -852,14 +852,28 @@
 	height: 16px;
 }
 
-/* Hide sits at the far end of the row. */
-.monaco-workbench .volt-agent-files-sidebar-tab.hide {
+/* Open Right Panel (only while the sidebar fills the area) and Hide sit at the far end of the row. */
+.monaco-workbench .volt-agent-files-sidebar-tab.show-tabs {
 	margin-left: auto;
 }
 
+.monaco-workbench .volt-agent-files-sidebar:not(.fills) .volt-agent-files-sidebar-tab.show-tabs {
+	display: none;
+}
+
+.monaco-workbench .volt-agent-files-sidebar:not(.fills) .volt-agent-files-sidebar-tab.hide {
+	margin-left: auto;
+}
+
+.volt-agent-files-sidebar-tab.show-tabs > svg {
+	width: 16px;
+	height: 16px;
+}
+
 .volt-agent-files-sidebar-tab.hide > svg {
-	width: 14px;
-	height: 14px;
+	width: 16px;
+	height: 16px;
+	transform: scaleX(-1);
 }
 
 .volt-agent-files-sidebar-body {
@@ -922,6 +936,10 @@
 .monaco-workbench .volt-agent-tools-files-toggle:hover,
 .monaco-workbench .volt-agent-tools-files-toggle:focus-visible {
 	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.monaco-workbench .volt-agent-tools-files-toggle.hidden {
+	display: none;
 }
 
 .volt-agent-tools-files-toggle > svg {

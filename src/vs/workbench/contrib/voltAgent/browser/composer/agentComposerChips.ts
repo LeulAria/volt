@@ -135,6 +135,11 @@ export class AgentComposerChips extends Disposable {
 	private readonly compactCountEl: HTMLElement;
 	private readonly scrollChip: HTMLButtonElement;
 	private scrolledUp = false;
+	/** The "..." at the end of a row too narrow for its chips: it opens the ones that did not fit. */
+	private readonly moreChip: HTMLButtonElement;
+	private readonly overflowPanel: HTMLElement;
+	private overflowOpen = false;
+	private layoutHandle: number | undefined;
 	private readonly scrollExit = this._register(new MutableDisposable());
 	private readonly changesExit = this._register(new MutableDisposable());
 	private readonly commitExit = this._register(new MutableDisposable());
@@ -224,6 +229,38 @@ export class AgentComposerChips extends Disposable {
 			e.stopPropagation();
 			this.options.onScrollToBottom?.();
 		}));
+
+		this.moreChip = append(this.element, $('button.volt-agent-composer-chip.more.hidden')) as HTMLButtonElement;
+		this.moreChip.type = 'button';
+		this.moreChip.setAttribute('aria-label', localize('voltAgent.moreChips', "More"));
+		this.moreChip.setAttribute('aria-haspopup', 'true');
+		this.moreChip.setAttribute('aria-expanded', 'false');
+		setAgentTooltip(this.moreChip, localize('voltAgent.moreChips', "More"));
+		this.moreChip.appendChild(renderIcon(Codicon.ellipsis));
+		this.overflowPanel = append(this.element, $('.volt-agent-composer-chips-overflow.hidden'));
+		this._register(addDisposableListener(this.moreChip, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.setOverflowOpen(!this.overflowOpen);
+		}));
+		const doc = this.element.ownerDocument;
+		this._register(addDisposableListener(doc, 'mousedown', e => {
+			const target = e.target as Node | null;
+			if (this.overflowOpen && target && !this.moreChip.contains(target) && !this.overflowPanel.contains(target)) {
+				this.setOverflowOpen(false);
+			}
+		}, true));
+		this._register(addDisposableListener(doc, 'keydown', e => {
+			if (this.overflowOpen && e.key === 'Escape') {
+				this.setOverflowOpen(false);
+				this.moreChip.focus();
+			}
+		}, true));
+		// Chips grow in from nothing: measure again once they reach their width.
+		this._register(addDisposableListener(this.element, 'animationend', () => this.scheduleLayout()));
+		const resizeObserver = new (getWindow(this.element).ResizeObserver)(() => this.scheduleLayout());
+		resizeObserver.observe(this.element);
+		this._register({ dispose: () => resizeObserver.disconnect() });
 
 		this._register(addDisposableListener(this.statusChip, 'click', e => {
 			e.preventDefault();
@@ -576,6 +613,103 @@ export class AgentComposerChips extends Disposable {
 		this.terminalsLabelEl.textContent = this.runningTerminals === 1
 			? localize('voltAgent.oneTerminal', "1 Terminal")
 			: localize('voltAgent.manyTerminals', "{0} Terminals", this.runningTerminals);
+		this.scheduleLayout();
+	}
+
+	/** The chips that fold into "..." when the row runs out of room, in row order. The arrow never does. */
+	private overflowableChips(): HTMLElement[] {
+		return [this.statusChip, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
+	}
+
+	private scheduleLayout(): void {
+		if (this.layoutHandle !== undefined) {
+			return;
+		}
+		this.layoutHandle = getWindow(this.element).requestAnimationFrame(() => {
+			this.layoutHandle = undefined;
+			this.layoutOverflow();
+		});
+	}
+
+	/**
+	 * Keeps the row on one line: chips that do not fit before the arrow and "..." move into the
+	 * "..." panel, from the end. Chips are measured where they sit (the closed panel still lays
+	 * them out) and only moved when their place changes: re-inserting a chip restarts its grow-in
+	 * animation, which measured it narrow and made the row flicker and overlap while resizing.
+	 */
+	private layoutOverflow(): void {
+		const row = this.element;
+		const chips = this.overflowableChips();
+		const shown = chips.filter(chip => !chip.classList.contains('hidden'));
+		const available = row.clientWidth;
+		let kept = shown.length;
+		if (row.classList.contains('is-visible') && available) {
+			const gap = parseFloat(getWindow(row).getComputedStyle(row).columnGap) || 0;
+			// Each chip with the gap after it; the arrow (when shown) and "..." follow. A chip
+			// still growing in reports its full width through scrollWidth.
+			const widths = shown.map(chip => Math.max(chip.offsetWidth, chip.scrollWidth) + gap);
+			const arrow = this.scrollChip.classList.contains('hidden') ? 0 : this.scrollChip.offsetWidth + gap;
+			const total = widths.reduce((sum, width) => sum + width, 0) + arrow - gap;
+			if (total > available) {
+				// Measured while hidden it would be 0: the chip's round 30px.
+				const room = available - arrow - 30;
+				let used = 0;
+				kept = 0;
+				while (kept < widths.length && used + widths[kept] <= room) {
+					used += widths[kept++];
+				}
+			}
+		}
+		const overflowed = new Set(shown.slice(kept));
+		for (let index = 0; index < chips.length; index++) {
+			const chip = chips[index];
+			if (overflowed.has(chip)) {
+				continue;
+			}
+			chip.classList.remove('overflowed');
+			if (chip.parentElement !== row) {
+				const next = chips.slice(index + 1).find(later => later.parentElement === row) ?? this.scrollChip;
+				row.insertBefore(chip, next);
+			}
+		}
+		// Same for the panel: a chip already in order stays put, so an open panel does not redraw.
+		let previous: HTMLElement | null = null;
+		for (const chip of overflowed) {
+			chip.classList.add('overflowed');
+			const first: Element | null = this.overflowPanel.firstElementChild;
+			if (chip.parentElement !== this.overflowPanel || chip.previousElementSibling !== previous) {
+				this.overflowPanel.insertBefore(chip, previous ? previous.nextElementSibling : first);
+			}
+			previous = chip;
+		}
+		this.showMoreChip(overflowed.size > 0);
+	}
+
+	private showMoreChip(show: boolean): void {
+		this.moreChip.classList.toggle('hidden', !show);
+		if (!show) {
+			this.setOverflowOpen(false);
+		} else if (this.overflowOpen) {
+			this.positionOverflowPanel();
+		}
+	}
+
+	private setOverflowOpen(open: boolean): void {
+		if (open && this.moreChip.classList.contains('hidden')) {
+			open = false;
+		}
+		this.overflowOpen = open;
+		this.moreChip.setAttribute('aria-expanded', String(open));
+		this.moreChip.classList.toggle('open', open);
+		this.overflowPanel.classList.toggle('hidden', !open);
+		if (open) {
+			this.positionOverflowPanel();
+		}
+	}
+
+	/** Right edge on the "..." chip's right edge, just above the row. */
+	private positionOverflowPanel(): void {
+		this.overflowPanel.style.left = `${this.moreChip.offsetLeft + this.moreChip.offsetWidth}px`;
 	}
 
 	/** No status, changes, or terminal chip sits beside the arrow. */
@@ -659,6 +793,10 @@ export class AgentComposerChips extends Disposable {
 		if (this.refreshHandle !== undefined) {
 			win.clearTimeout(this.refreshHandle);
 			this.refreshHandle = undefined;
+		}
+		if (this.layoutHandle !== undefined) {
+			win.cancelAnimationFrame(this.layoutHandle);
+			this.layoutHandle = undefined;
 		}
 		super.dispose();
 	}

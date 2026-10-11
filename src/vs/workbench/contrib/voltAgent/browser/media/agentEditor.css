@@ -2842,11 +2842,63 @@ pre.volt-agent-searchable {
 	display: none;
 	align-items: center;
 	justify-content: flex-start;
-	flex-wrap: wrap;
+	/* One line: chips that do not fit fold into the "..." chip (agentComposerChips.ts layoutOverflow). */
+	flex-wrap: nowrap;
+	position: relative;
 	gap: 8px;
 	width: 100%;
 	max-width: 728px;
 	margin: 0 auto 8px;
+}
+
+.volt-agent-composer-chips > .volt-agent-composer-chip {
+	flex-shrink: 0;
+	white-space: nowrap;
+}
+
+/* Always the row's right end, whatever is left beside it. */
+.volt-agent-composer-chip.more {
+	margin-left: auto;
+	width: 30px;
+	padding: 0;
+	justify-content: center;
+}
+
+.volt-agent-composer-chip.more .codicon {
+	font-size: 14px;
+}
+
+.volt-agent-composer-chip.more:hover,
+.volt-agent-composer-chip.more.open {
+	color: var(--vscode-foreground);
+}
+
+/* The chips that did not fit, stacked above the "..." chip, right edges aligned. */
+.volt-agent-composer-chips-overflow {
+	position: absolute;
+	bottom: calc(100% + 6px);
+	z-index: 10;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 6px;
+	transform: translateX(-100%);
+	pointer-events: auto;
+}
+
+/* Laid out while closed, so agentComposerChips.ts can measure the chips inside. */
+.volt-agent-composer-chips-overflow.hidden {
+	visibility: hidden;
+	pointer-events: none;
+}
+
+.volt-agent-composer-chips-overflow > .volt-agent-composer-chip {
+	white-space: nowrap;
+}
+
+/* Outranks the Changes/Commit grow-in (.changes:not(.hidden)): no motion inside the panel. */
+.volt-agent-composer-chips-overflow > .volt-agent-composer-chip.volt-agent-composer-chip:not(.hidden) {
+	animation: none;
 }
 
 .volt-agent-composer-chips.is-visible {
@@ -3882,11 +3934,22 @@ pre.volt-agent-searchable {
 	margin-bottom: 4px;
 }
 
-.volt-agent-queue-title {
+.volt-agent-work-toggle.volt-agent-queue-title {
 	font-size: 13px;
-	font-weight: 500;
+	font-weight: 400;
 	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
 	font-variant-numeric: tabular-nums;
+}
+
+/* The queue bar sits low: a collapsed queue is one 20px line in 6px of padding. */
+.volt-agent-queue-card {
+	padding-top: 6px;
+	padding-bottom: 6px;
+}
+
+.volt-agent-queue-head:last-child {
+	min-height: 20px;
+	margin-bottom: 0;
 }
 
 .volt-agent-queue-head-actions {
@@ -3903,6 +3966,7 @@ pre.volt-agent-searchable {
 	cursor: pointer;
 	font: inherit;
 	font-size: 13px;
+	font-weight: 400;
 	padding: 0;
 }
 
@@ -5033,6 +5097,12 @@ pre.volt-agent-searchable {
 	border-radius: 6px;
 }
 
+/* The permissions picker joins the row in a new chat (agentEditor.ts placeAccess). */
+.volt-agent-landing-chrome .volt-agent-status-access {
+	padding: 0 6px;
+	color: color-mix(in srgb, var(--vscode-foreground) 68%, transparent);
+}
+
 .volt-agent-landing-pick .label {
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -5152,6 +5222,10 @@ pre.volt-agent-searchable {
 	display: inline-flex;
 }
 
+.volt-agent-status-env.hidden {
+	display: none;
+}
+
 .volt-agent-status-access {
 	display: inline-flex;
 	align-items: center;
@@ -5188,6 +5262,7 @@ pre.volt-agent-searchable {
 
 .volt-agent-status-access .icon .volt-agent-svg-icon,
 .volt-agent-status-access .icon .volt-agent-svg-icon svg {
+	display: block;
 	width: 13px;
 	height: 13px;
 }
@@ -5204,6 +5279,7 @@ pre.volt-agent-searchable {
 
 .volt-agent-access-menu .volt-agent-svg-icon,
 .volt-agent-access-menu .volt-agent-svg-icon svg {
+	display: block;
 	width: 14px;
 	height: 14px;
 }

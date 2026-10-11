@@ -32,6 +32,7 @@ import { IVoltSessionContextService, projectIdForRoot, uriFromStoredRoot } from 
 import { AGENT_HOME_NEW_CHAT_ICON_PATH } from '../home/agentHomeIcons.js';
 import { scratchProjectLabel } from '../home/agentHomeWorkspace.js';
 import { ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
+import { AutomationsEditorInput } from '../automations/automationsEditor.js';
 import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
 import { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
@@ -208,12 +209,17 @@ function createAgentHeaderSearchIcon(parent: HTMLElement): SVGElement {
 	return svg;
 }
 
-/** The paper plane of the sidebar's New Chat row, 1.2px lines. */
+/**
+ * The paper plane of the sidebar's New Chat row, matched to the search beside it: the plane spans
+ * 18 of 24 units where the glass spans 20, so the view box is cropped to scale it up, and the
+ * stroke is thinned in user units so both draw the same 1px line.
+ */
 function createAgentHeaderNewChatIcon(parent: HTMLElement): SVGElement {
 	const svg = createHeaderSvg(parent.ownerDocument, 16);
+	svg.setAttribute('viewBox', '1.1 1.1 21.8 21.8');
 	const path = parent.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
 	path.setAttribute('d', AGENT_HOME_NEW_CHAT_ICON_PATH);
-	strokeAttrs(path, '1.2');
+	strokeAttrs(path, '1.36');
 	svg.appendChild(path);
 	parent.appendChild(svg);
 	return svg;
@@ -247,7 +253,8 @@ function createAgentHeaderCheckIcon(parent: HTMLElement): SVGElement {
 	return svg;
 }
 
-function createAgentHeaderSeparatorIcon(parent: HTMLElement): SVGElement {
+/** The slanted slash between title bar crumbs. */
+export function createAgentHeaderSeparatorIcon(parent: HTMLElement): SVGElement {
 	const svg = createHeaderSvg(parent.ownerDocument, 14);
 	const path = parent.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
 	path.setAttribute('d', 'M15.256 3.04243C15.6453 3.18399 15.8461 3.61434 15.7046 4.00364L9.7046 20.504C9.56304 20.8933 9.13271 21.0942 8.74342 20.9526C8.35414 20.811 8.15331 20.3807 8.29487 19.9914L14.2948 3.49099C14.4364 3.1017 14.8667 2.90087 15.256 3.04243Z');
@@ -308,6 +315,7 @@ class AgentTitlebarHeaderContribution extends Disposable {
 	private readonly crumbsEl: HTMLElement;
 	private readonly crumbStore = this._register(new DisposableStore());
 	private crumbs: readonly IAgentPageCrumb[] = [];
+	private titleHome: (() => void) | undefined;
 	private readonly envButton: HTMLButtonElement;
 	private readonly envLabel: HTMLElement;
 	private readonly laptop: HTMLElement;
@@ -379,6 +387,19 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		this.projectSeparator = append(this.titleCluster, $('span.volt-agent-primary-header-separator'));
 		createAgentHeaderSeparatorIcon(this.projectSeparator);
 		this.titleLabel = append(this.titleCluster, $('span.volt-agent-primary-header-label'));
+		this._register(addDisposableListener(this.titleLabel, 'click', event => {
+			if (this.titleHome) {
+				event.preventDefault();
+				event.stopPropagation();
+				this.titleHome();
+			}
+		}));
+		this._register(addDisposableListener(this.titleLabel, 'keydown', event => {
+			if (this.titleHome && (event.key === 'Enter' || event.key === ' ')) {
+				event.preventDefault();
+				this.titleHome();
+			}
+		}));
 		this.crumbsEl = append(this.titleCluster, $('span.volt-agent-primary-header-crumbs'));
 		this.crumbsEl.hidden = true;
 		this.envButton = append(this.titleCluster, $('button.volt-agent-primary-header-env')) as HTMLButtonElement;
@@ -575,8 +596,18 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		this.envButton.hidden = !usageOpen;
 		this.laptop.hidden = usageOpen;
 		this.titleLabel.hidden = usageOpen;
-		const crumbs = !usageOpen && editor instanceof AgentCustomizeEditorInput ? editor.crumbs : [];
+		const crumbs = !usageOpen && (editor instanceof AgentCustomizeEditorInput || editor instanceof AutomationsEditorInput) ? editor.crumbs : [];
 		this.renderCrumbs(crumbs);
+		// Automations links back to its list from a page past it.
+		this.titleHome = editor instanceof AutomationsEditorInput && crumbs.length ? editor.home : undefined;
+		this.titleLabel.classList.toggle('link', !!this.titleHome);
+		if (this.titleHome) {
+			this.titleLabel.setAttribute('role', 'link');
+			this.titleLabel.tabIndex = 0;
+		} else {
+			this.titleLabel.removeAttribute('role');
+			this.titleLabel.removeAttribute('tabindex');
+		}
 		if (usageOpen) {
 			const lead = localize('voltAgent.header.usage', "Usage");
 			const trigger = usageEnvironmentTriggerLabel(

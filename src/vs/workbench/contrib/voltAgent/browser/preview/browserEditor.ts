@@ -2763,7 +2763,7 @@ function createDesignSelectorIcon(): HTMLElement {
 	group.setAttribute('stroke', 'currentColor');
 	group.setAttribute('stroke-linecap', 'round');
 	group.setAttribute('stroke-linejoin', 'round');
-	group.setAttribute('stroke-width', '1');
+	group.setAttribute('stroke-width', '1.3');
 	for (const d of DESIGN_SELECTOR_PATHS) {
 		const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
 		path.setAttribute('d', d);

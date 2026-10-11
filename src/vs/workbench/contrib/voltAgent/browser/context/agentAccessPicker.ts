@@ -12,7 +12,7 @@ import { IContextViewService } from '../../../../../platform/contextview/browser
 import { describeSandbox, IVoltSandboxSettings, VoltSandboxLevel } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { ACCESS_MODE_OPTIONS, accessModeOption, VoltAccessMode } from '../../../../services/voltRuntime/common/access/accessModes.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
-import { createAccessIcon } from '../chrome/accessIcons.js';
+import { createAccessIcon, createSandboxIcon } from '../chrome/accessIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 
@@ -104,13 +104,13 @@ export class AgentAccessPicker extends Disposable {
 	}
 
 	private sandboxSection(settings: IVoltSandboxSettings): IVoltMenuSection<AccessPick> {
-		const level = (id: VoltSandboxLevel, icon: typeof Codicon.edit, label: string, subtitle: string): IVoltMenuItem<AccessPick> => ({
-			id: `sandbox:${id}`, label, subtitle, icon, checked: settings.level === id, data: { kind: 'sandbox', level: id },
+		const level = (id: VoltSandboxLevel, label: string, subtitle: string): IVoltMenuItem<AccessPick> => ({
+			id: `sandbox:${id}`, label, subtitle, icon: () => createSandboxIcon(id), checked: settings.level === id, data: { kind: 'sandbox', level: id },
 		});
 		const items: IVoltMenuItem<AccessPick>[] = [
-			level('off', Codicon.circleSlash, localize('voltAgent.sandbox.off', "Off"), localize('voltAgent.sandbox.off.desc', "The agent runs with your permissions")),
-			level('workspace-write', Codicon.edit, localize('voltAgent.sandbox.workspace', "Workspace write"), localize('voltAgent.sandbox.workspace.desc', "Writes stay in this project, its worktree and temp folders")),
-			level('read-only', Codicon.lock, localize('voltAgent.sandbox.readOnly', "Read-only"), localize('voltAgent.sandbox.readOnly.desc', "Nothing is written except temp folders and folders you allow")),
+			level('off', localize('voltAgent.sandbox.off', "Off"), localize('voltAgent.sandbox.off.desc', "The agent runs with your permissions")),
+			level('workspace-write', localize('voltAgent.sandbox.workspace', "Workspace write"), localize('voltAgent.sandbox.workspace.desc', "Writes stay in this project, its worktree and temp folders")),
+			level('read-only', localize('voltAgent.sandbox.readOnly', "Read-only"), localize('voltAgent.sandbox.readOnly.desc', "Nothing is written except temp folders and folders you allow")),
 		];
 		if (settings.level !== 'off') {
 			items.push({
@@ -119,7 +119,7 @@ export class AgentAccessPicker extends Disposable {
 				subtitle: settings.network
 					? localize('voltAgent.sandbox.network.on', "The agent can reach the internet")
 					: localize('voltAgent.sandbox.network.off', "Only the agent's own API and the hosts you allow"),
-				icon: Codicon.globe,
+				icon: () => createSandboxIcon('network'),
 				checked: settings.network,
 				data: { kind: 'network' },
 			});

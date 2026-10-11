@@ -28,6 +28,7 @@ import { AgentRunOn, agentRunOnStorageKey, AgentWorktreeTarget, normalizeAgentRu
 import { CLOUD_AUTO, cloudMachineStorageKey, normalizeCloudMachine } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
 import { canTakeAgent, cpuPressure, describeMachineLoad, IRelayMachine, memoryPressure } from '../../../../services/voltRuntime/common/relay/relayMachines.js';
 import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
+import { IVoltQuery, IVoltQueryCache } from '../../../../services/voltRuntime/browser/queryCache.js';
 import { VOLT_RELAY_CONNECT_COMMAND_ID } from '../automations/automationHooks.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
@@ -105,6 +106,7 @@ export class AgentLandingChrome extends Disposable {
 		@IVoltGitService private readonly gitService: IVoltGitService,
 		@IVoltStdioService private readonly stdio: IVoltStdioService,
 		@IAgentCloudTasksService private readonly cloud: IAgentCloudTasksService,
+		@IVoltQueryCache private readonly cache: IVoltQueryCache,
 	) {
 		super();
 		this.element = $('.volt-agent-landing-chrome');
@@ -575,11 +577,19 @@ export class AgentLandingChrome extends Disposable {
 		// The branch button shows the worktree's branch only in Worktree mode.
 		this.renderBranch();
 		if (cloud && this.cloudMachine !== CLOUD_AUTO) {
-			void this.cloud.runners().then(runners => {
-				const machine = runners.find(candidate => candidate.id === this.cloudMachine);
+			void this.cache.read(this.runnersQuery()).then(runners => {
+				const machine = runners?.find(candidate => candidate.id === this.cloudMachine);
 				this.envLabel.textContent = machine ? `${localize('voltAgent.env.cloud', "Cloud")} · ${machine.name}` : this.envLabel.textContent;
 			}, () => undefined);
 		}
+	}
+
+	/**
+	 * The relay's runners, cached so the Run on menu opens on the last list while it is asked again.
+	 * Undefined (cached too) means the relay could not be reached: the menu offers to connect.
+	 */
+	private runnersQuery(): IVoltQuery<IRelayMachine[] | undefined> {
+		return { key: 'cloud.runners', staleTime: 30_000, maxAge: 24 * 60 * 60_000, fetch: () => this.cloud.runners().catch(() => undefined) };
 	}
 
 	/** "Run on", as in Cursor: this machine, a new worktree, or a Volt Relay runner in the cloud. */
@@ -587,7 +597,7 @@ export class AgentLandingChrome extends Disposable {
 		const repo = this.hasRepository();
 		const unborn = !!this.branch.unborn;
 		// Runners and their load come from the relay; without a connection the Cloud section offers to connect.
-		const runners = await this.cloud.runners().catch(() => undefined);
+		const runners = await this.cache.read(this.runnersQuery()).catch(() => undefined);
 		const cloudItem = (machineId: string, label: string, extra: Partial<IVoltMenuItem<RunOnPick>> = {}): IVoltMenuItem<RunOnPick> => ({
 			id: `cloud:${machineId}`,
 			label,

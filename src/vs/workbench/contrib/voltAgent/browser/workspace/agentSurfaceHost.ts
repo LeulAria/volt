@@ -405,6 +405,8 @@ export class AgentSurfaceHost extends Disposable {
 	private shown: IToolsPart | undefined;
 	private open = false;
 	private toolsHidden = false;
+	/** Close Right Panel with the files sidebar open: the tabs go, the sidebar stays and fills the area. */
+	private tabsHidden = false;
 	/** How the tools are drawn: beside the chat, floating over it (a preview), or across the whole window. */
 	private presentation: BrowserPresentation = 'split';
 	private readonly closePanelButton: HTMLButtonElement;
@@ -462,17 +464,8 @@ export class AgentSurfaceHost extends Disposable {
 		const closeLabel = localize('voltAgent.tools.closePanel', "Close Right Panel");
 		this.closePanelButton.setAttribute('aria-label', closeLabel);
 		setAgentTooltip(this.closePanelButton, closeLabel);
-		const closeIcon = createPrimarySidebarToggleIcon(this.closePanelButton, 'open');
-		// The shared glyph locks a 1.5 stroke to the screen. Here it should scale on the 24-grid, like the expand icon beside it.
-		for (const shape of closeIcon.querySelectorAll('rect, path')) {
-			shape.removeAttribute('vector-effect');
-		}
-		this.closePanelButton.appendChild(closeIcon);
-		this._register(addDisposableListener(this.closePanelButton, 'click', () => {
-			this.toolsHidden = true;
-			this.syncOpen();
-			this.chat.focus();
-		}));
+		this.closePanelButton.appendChild(createPrimarySidebarToggleIcon(this.closePanelButton, 'open'));
+		this._register(addDisposableListener(this.closePanelButton, 'click', () => this.closeTabs()));
 		this.fullscreenButton = $('button.volt-agent-tools-fullscreen') as HTMLButtonElement;
 		this.fullscreenButton.type = 'button';
 		this._register(addDisposableListener(this.fullscreenButton, 'click', () => this.toggleFullscreen()));
@@ -481,6 +474,7 @@ export class AgentSurfaceHost extends Disposable {
 		this.partsHost = append(this.area, $('.volt-agent-tools-parts'));
 		this.filesSidebar = this._register(this.instantiationService.createInstance(AgentFilesSidebar, this.area));
 		this._register(AgentFilesSidebar.onDidChange(() => this.onDidChangeFilesSidebar()));
+		this._register(this.filesSidebar.onDidRequestShowTabs(() => this.openToolsPanel()));
 		this.lead = append(this.area, $('.volt-agent-tools-lead'));
 		append(this.lead, $('.volt-agent-tools-lead-lights'));
 		const leadSidebar = append(this.lead, $('button.volt-agent-tools-lead-button.sidebar')) as HTMLButtonElement;
@@ -584,17 +578,30 @@ export class AgentSurfaceHost extends Disposable {
 		return true;
 	}
 
+	/**
+	 * The tabs and the files sidebar open and close on their own: with the sidebar open, closing the
+	 * panel leaves it filling the area. Without it, the whole right panel closes.
+	 */
+	private closeTabs(): void {
+		if (this.filesSidebarOpen() && this.presentation === 'split') {
+			this.tabsHidden = true;
+		} else {
+			this.toolsHidden = true;
+		}
+		this.syncOpen();
+		this.chat.focus();
+	}
+
 	/** Closes the right panel like its Close Right Panel button when it shows, else opens it like the title bar button. */
 	toggleToolsPanel(): boolean {
 		if (getLayoutMode(this.layoutService) !== 'agent' || !this.canOpenTools()) {
 			return false;
 		}
-		if (!this.hasTools()) {
+		if (!this.hasTools() || this.tabsHidden) {
 			return this.openToolsPanel();
 		}
-		this.toolsHidden = true;
 		this.setPresentation('split');
-		this.chat.focus();
+		this.closeTabs();
 		return true;
 	}
 
@@ -605,6 +612,7 @@ export class AgentSurfaceHost extends Disposable {
 		}
 		if (this.sessionId !== sessionId) {
 			this.toolsHidden = false;
+			this.tabsHidden = false;
 			this.setPresentation('split', false);
 			this.hidePart();
 			this.sessionId = sessionId;
@@ -746,7 +754,15 @@ export class AgentSurfaceHost extends Disposable {
 	private onDidChangeFilesSidebar(): void {
 		if (this.filesSidebarOpen() && this.canOpenTools() && (!this.open || this.toolsHidden)) {
 			this.toolsGroup();
+			// Opened on its own: the sidebar, not the tabs closed before it.
+			this.tabsHidden = true;
+			this.syncOpen();
 			return;
+		}
+		if (!this.filesSidebarOpen() && this.tabsHidden) {
+			// Nothing left showing: the panel closes, and opens with its tabs next time.
+			this.tabsHidden = false;
+			this.toolsHidden = true;
 		}
 		this.syncOpen();
 	}
@@ -939,6 +955,7 @@ export class AgentSurfaceHost extends Disposable {
 			return undefined;
 		}
 		this.toolsHidden = false;
+		this.tabsHidden = false;
 		const entry = toolParts.get(sessionId) ?? this.createPart(sessionId);
 		this.showPart(entry);
 		// After Close Right Panel the tabs are still there: re-opening one that is already in front
@@ -1131,8 +1148,13 @@ export class AgentSurfaceHost extends Disposable {
 		if (!this.open || this.presentation !== 'split' || !entry || !this.filesSidebarOpen()) {
 			return { mode: 'none', width: 0 };
 		}
-		const fills = !entry.part.groups.some(group => group.count > 0);
+		const fills = !this.showsTabs(entry);
 		return { mode: fills ? 'fills' : 'beside', width: AgentFilesSidebar.preferredWidth(this.storageService) };
+	}
+
+	/** Whether the tabs show beside the files sidebar: they have one, and Close Right Panel did not hide them. */
+	private showsTabs(entry: IToolsPart): boolean {
+		return !(this.tabsHidden && this.presentation === 'split') && entry.part.groups.some(group => group.count > 0);
 	}
 
 	/** The room the chat and the tabs split: the row less the split line and a sidebar beside the tabs. */
@@ -1286,7 +1308,7 @@ export class AgentSurfaceHost extends Disposable {
 	private layoutFilesSidebar(entry: IToolsPart, available: number, height: number): number {
 		const open = this.presentation !== 'floating' && this.filesSidebarOpen();
 		// No tab beside it: the sidebar is the whole tools area, without an empty editor group next to it.
-		const fills = open && !entry.part.groups.some(group => group.count > 0);
+		const fills = open && !this.showsTabs(entry);
 		const width = fills ? available : open ? this.filesSidebar.widthFor(available) : 0;
 		this.partsHost.classList.toggle('hidden', fills);
 		// The sidebar is see-through like the chat; only the tabs keep the area's solid fill (agentEditor.css).

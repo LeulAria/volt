@@ -143,6 +143,7 @@ import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING, shouldComp
 import type { IVoltEvent } from '../../../../services/voltRuntime/common/events.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
+import { createHomeAutomationsIcon } from '../home/agentHomeIcons.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
@@ -1325,7 +1326,23 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			sessionId: () => this.sessionKey,
 			isAgent: () => this.activeIsAgent(),
 		}));
-		this.contextUsageView.startElement.appendChild(accessPicker.element);
+		// Permission first, then the branch. A new chat shows it above the composer instead, after
+		// project, branch and machine; the landing row hides once the chat has turns (or is zoomed,
+		// resized, hosted), and the picker goes back under the composer.
+		const landing = this.landingChrome;
+		const statusStart = this.contextUsageView.startElement;
+		const placeAccess = () => {
+			const onLanding = landing.element.offsetWidth > 0;
+			if (onLanding && accessPicker.element.parentElement !== landing.element) {
+				landing.element.appendChild(accessPicker.element);
+			} else if (!onLanding && accessPicker.element.parentElement !== statusStart) {
+				statusStart.prepend(accessPicker.element);
+			}
+		};
+		statusStart.prepend(accessPicker.element);
+		const landingObserver = new (getWindow(this.container).ResizeObserver)(placeAccess);
+		landingObserver.observe(landing.element);
+		this._register(toDisposable(() => landingObserver.disconnect()));
 		this._register(this.landingChrome.onDidChangeBranch(() => this.contextUsageView.refreshBranch()));
 		// The first send in Worktree mode makes the checkout just before the run starts.
 		this._register(this.runtime.onDidEmit(e => {
@@ -2628,6 +2645,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private renderThread(scrollToEnd = false): void {
+		// An open edit survives the redraw: its composer moves into the new slot, keeps its place on
+		// screen (applyEditAnchor, from syncThreadScroll) and keeps the caret.
+		const editing = this.editingUserIndex !== undefined ? this.threadInner.querySelector<HTMLElement>('.volt-agent-turn.user.editing') : null;
+		const editHadFocus = !!editing && !!this.editEditor?.hasTextFocus();
+		if (editing) {
+			this.captureEditAnchor(editing);
+		}
+		this.renderThreadNow(scrollToEnd);
+		if (editHadFocus && this.editingUserIndex !== undefined) {
+			this.focusEditEditor();
+		}
+	}
+
+	private renderThreadNow(scrollToEnd: boolean): void {
 		this.fullRenderAfterStream = false;
 		this.settledListeners.clear();
 		this.tailListeners.clear();
@@ -2916,7 +2947,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private renderScheduledPill(turn: HTMLElement, scheduled: NonNullable<IAgentUserMessage['scheduled']>): void {
 		const divider = append(turn, $('.volt-agent-subagent-of.scheduled'));
 		const pill = append(divider, $('span.volt-agent-subagent-of-pill'));
-		pill.appendChild(renderIcon(scheduled.webhook ? Codicon.plug : Codicon.zap));
+		pill.appendChild(scheduled.webhook ? renderIcon(Codicon.plug) : createHomeAutomationsIcon());
 		append(pill, $('span.label')).textContent = scheduled.webhook ? localize('voltAgent.webhookRun', "Webhook") : localize('voltAgent.automationRun', "Automation");
 		append(pill, $('span.parent')).textContent = `· ${scheduled.title}`;
 		pill.setAttribute('role', 'button');
@@ -4079,6 +4110,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		});
 		if (this.editingUserIndex !== undefined) {
 			this.applyEditAnchor();
+			// A reply streaming under an open edit redraws the whole thread (nothing patches in place
+			// while editing), so the same clamp below happens on every update: write it back here too,
+			// or the chat jumps to the top while you type.
+			this.writeBackThreadScrollTop();
 			return;
 		}
 		if (scrollToEnd || this.stickToBottom) {
@@ -4086,15 +4121,21 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.stickToBottom = true;
 			this.composerChips?.setScrolledUp(false);
 		}
-		// A redraw empties the thread for a moment, so the browser clamps the element's scrollTop (to 0
-		// in a short chat). The scrollable never moved, so it never writes it back; left alone, the
-		// clamp's scroll event reaches AgentThreadView's native-scroll catch-up as a scroll to the top,
-		// and the chat stops following the reply.
-		const scrollTop = this.threadScroll.getScrollPosition().scrollTop;
-		if (Math.abs(this.threadInner.scrollTop - scrollTop) > 1) {
+		this.writeBackThreadScrollTop();
+		this.threadView.scheduleSyncStuckTurns();
+	}
+
+	/**
+	 * A redraw empties the thread for a moment, so the browser clamps the element's scrollTop (to 0
+	 * in a short chat). The scrollable never moved, so it never writes it back; left alone, the
+	 * clamp's scroll event reaches AgentThreadView's native-scroll catch-up as a scroll to the top,
+	 * and the chat stops following the reply.
+	 */
+	private writeBackThreadScrollTop(): void {
+		const scrollTop = this.threadScroll?.getScrollPosition().scrollTop;
+		if (scrollTop !== undefined && Math.abs(this.threadInner.scrollTop - scrollTop) > 1) {
 			this.threadInner.scrollTop = scrollTop;
 		}
-		this.threadView.scheduleSyncStuckTurns();
 	}
 
 	private scrollThreadToEnd(): void {
