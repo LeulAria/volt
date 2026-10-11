@@ -154,6 +154,8 @@ export interface ICanvasDoc {
 	readonly pick?: boolean;
 	/** The chat the canvas was made in. */
 	readonly chat?: string;
+	/** The canvas's own agent chat (its sidebar): comments and changes to the canvas go there. */
+	readonly agentChat?: string;
 	readonly createdAt: number;
 	readonly updatedAt: number;
 	/** What the last agent change did, one line (shown on the canvas and in the update card). */

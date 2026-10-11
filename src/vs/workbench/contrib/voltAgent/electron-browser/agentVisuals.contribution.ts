@@ -22,6 +22,8 @@ import { IVoltHostToolService } from '../../../services/voltRuntime/common/hostT
 import { AgentGalleryToolProvider } from '../browser/visuals/agentGalleryTools.js';
 import { disposeLiveVisuals } from '../browser/visuals/agentVisuals.js';
 import { AgentVisualToolProvider } from '../browser/visuals/agentVisualTools.js';
+import { setCanvasAgentChatFactory } from '../browser/visuals/canvas/canvasAgent.js';
+import { createCanvasAgentChat } from '../browser/visuals/canvas/canvasAgentChat.js';
 import { OPEN_CANVAS_COMMAND_ID } from '../browser/visuals/canvas/canvasCard.js';
 import { CANVAS_EDITOR_ID, CanvasEditor, CanvasEditorInput, CanvasEditorInputSerializer } from '../browser/visuals/canvas/canvasEditor.js';
 import { IVoltCanvasService, VoltCanvasService } from '../browser/visuals/canvas/canvasService.js';
@@ -60,6 +62,8 @@ registerWorkbenchContribution2(AgentVisualsContribution.ID, AgentVisualsContribu
 
 // The design canvas: one store per window, a tab beside the chat, and the command that opens it.
 registerSingleton(IVoltCanvasService, VoltCanvasService, InstantiationType.Delayed);
+// Each canvas's own agent, in its sidebar, is a real chat.
+setCanvasAgentChatFactory(createCanvasAgentChat);
 
 Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
 	EditorPaneDescriptor.create(CanvasEditor, CANVAS_EDITOR_ID, localize('voltCanvas.editorLabel', "Design Canvas")),

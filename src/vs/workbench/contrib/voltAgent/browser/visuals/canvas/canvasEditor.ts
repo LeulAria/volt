@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, Dimension, getWindow } from '../../../../../../base/browser/dom.js';
+import { Dimension } from '../../../../../../base/browser/dom.js';
 import { CancellationToken } from '../../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../../base/common/codicons.js';
 import { Emitter } from '../../../../../../base/common/event.js';
@@ -11,10 +11,8 @@ import { DisposableStore, MutableDisposable, toDisposable } from '../../../../..
 import { ThemeIcon } from '../../../../../../base/common/themables.js';
 import { URI } from '../../../../../../base/common/uri.js';
 import { localize } from '../../../../../../nls.js';
-import { IClipboardService } from '../../../../../../platform/clipboard/common/clipboardService.js';
 import { IEditorOptions } from '../../../../../../platform/editor/common/editor.js';
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
-import { IOpenerService } from '../../../../../../platform/opener/common/opener.js';
 import { IStorageService } from '../../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../../platform/theme/common/themeService.js';
@@ -22,12 +20,7 @@ import { EditorPane } from '../../../../../browser/parts/editor/editorPane.js';
 import { EditorInputCapabilities, IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../../../../../common/editor.js';
 import { EditorInput } from '../../../../../common/editor/editorInput.js';
 import { IEditorGroup } from '../../../../../services/editor/common/editorGroupsService.js';
-import { IWebviewElement, IWebviewService, WebviewContentPurpose } from '../../../../webview/browser/webview.js';
-import { dispatchPageChannel, IPageChannelPort, parsePageRequest } from '../agentVisualBridge.js';
-import { buildVisualPage } from '../agentVisualPage.js';
-import { themeKind, visualThemeCss } from '../agentVisuals.js';
-import { buildCanvasPage } from './canvasPage.js';
-import { IVoltCanvasService } from './canvasService.js';
+import { CanvasView, renderCanvasMissing } from './canvasView.js';
 
 export const CANVAS_EDITOR_ID = 'workbench.editor.voltCanvas';
 export const CANVAS_SCHEME = 'volt-canvas';
@@ -111,23 +104,18 @@ export class CanvasEditorInputSerializer implements IEditorSerializer {
 	}
 }
 
-let panelSeq = 0;
-
 export class CanvasEditor extends EditorPane {
 
 	private container: HTMLElement | undefined;
-	private readonly view = this._register(new MutableDisposable<DisposableStore>());
-	private webview: IWebviewElement | undefined;
+	private readonly session = this._register(new MutableDisposable<DisposableStore>());
+	private view: CanvasView | undefined;
 
 	constructor(
 		group: IEditorGroup,
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IThemeService themeService: IThemeService,
 		@IStorageService storageService: IStorageService,
-		@IVoltCanvasService private readonly canvas: IVoltCanvasService,
-		@IWebviewService private readonly webviewService: IWebviewService,
-		@IOpenerService private readonly openerService: IOpenerService,
-		@IClipboardService private readonly clipboardService: IClipboardService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) {
 		super(CANVAS_EDITOR_ID, group, telemetryService, themeService, storageService);
 	}
@@ -143,124 +131,37 @@ export class CanvasEditor extends EditorPane {
 		if (!container || token.isCancellationRequested) {
 			return;
 		}
-		const store = new DisposableStore();
-		this.view.value = store;
 		container.replaceChildren();
-		const doc = await this.canvas.get(input.canvasId);
-		if (token.isCancellationRequested || this.view.value !== store) {
-			return;
-		}
-		if (!doc) {
-			append(container, $('.volt-canvas-editor-empty')).textContent = localize('voltCanvas.missing', "This canvas is no longer stored.");
-			return;
-		}
-		input.setTitle(doc.title);
-		store.add(this.canvas.onDidChange(change => {
-			if (change.id === input.canvasId) {
-				input.setTitle(change.doc.title);
-			}
-		}));
-		const host = append(container, $('.volt-canvas-editor-host'));
-		store.add(toDisposable(() => host.remove()));
-		const current = store.add(new MutableDisposable<DisposableStore>());
-		const mount = async () => {
-			const latest = await this.canvas.get(input.canvasId) ?? doc;
-			if (store.isDisposed) {
-				return;
-			}
-			const webviewStore = new DisposableStore();
-			current.value = webviewStore;
-			const webview = webviewStore.add(this.webviewService.createWebviewElement({
-				title: latest.title,
-				origin: `volt-canvas-${input.canvasId}`,
-				options: { enableFindWidget: false, purpose: WebviewContentPurpose.WebviewView, tryRestoreScrollPosition: false, disableServiceWorker: true },
-				contentOptions: { allowScripts: true, localResourceRoots: [] },
-				extension: undefined,
-			}));
-			this.webview = webview;
-			webviewStore.add(toDisposable(() => {
-				if (this.webview === webview) {
-					this.webview = undefined;
-				}
-			}));
-			const theme = this.themeService.getColorTheme();
-			const page = buildCanvasPage(this.canvas.pageData(latest, 'panel', input.focusFrame));
-			input.focusFrame = undefined;
-			webview.setHtml(buildVisualPage(page, { themeCss: visualThemeCss(theme), kind: themeKind(theme) }));
-			webviewStore.add(this.themeService.onDidColorThemeChange(next => {
-				void webview.postMessage({ type: 'volt-theme', css: visualThemeCss(next), kind: themeKind(next) });
-			}));
-			const port = this.createPort(webview, webviewStore, host, latest.title);
-			webviewStore.add(webview.onMessage(event => {
-				const request = parsePageRequest(event.message);
-				if (request?.kind === 'channel') {
-					dispatchPageChannel(port, request.channel, request.payload);
-				} else if (request?.kind === 'open') {
-					port.open?.(request.href);
-				}
-			}));
-			webviewStore.add(input.onDidRequestFocus(frame => void webview.postMessage({ type: 'volt-canvas', op: 'focus', id: input.canvasId, frame })));
-			webview.mountTo(host, getWindow(host));
-			// A webview whose iframe left the document (the tab moved to another group) comes back
-			// empty: load the canvas again, from the store, so nothing is lost.
-			const iframe = host.querySelector('iframe');
-			if (iframe) {
-				let loaded = false;
-				webviewStore.add(addDisposableListener(iframe, 'load', () => {
-					if (!iframe.getAttribute('src')) {
-						return;
-					}
-					if (loaded) {
-						getWindow(host).setTimeout(() => {
-							if (current.value === webviewStore && !store.isDisposed) {
-								void mount();
-							}
-						}, 0);
-					}
-					loaded = true;
-				}));
-			}
-		};
-		await mount();
-	}
-
-	/** The tab's port: it has no composer of its own, so the service routes prompts to the chat. */
-	private createPort(webview: IWebviewElement, store: DisposableStore, host: HTMLElement, title: string): IPageChannelPort {
-		const listeners: (() => void)[] = [];
+		const focus = input.focusFrame;
+		input.focusFrame = undefined;
+		const store = new DisposableStore();
+		this.session.value = store;
+		const view = store.add(this.instantiationService.createInstance(CanvasView, container, { canvasId: input.canvasId, focusFrame: focus, onTitle: title => input.setTitle(title) }));
+		this.view = view;
+		view.element.classList.add('volt-canvas-editor-host');
 		store.add(toDisposable(() => {
-			for (const listener of listeners.splice(0)) {
-				listener();
+			if (this.view === view) {
+				this.view = undefined;
 			}
 		}));
-		const win = getWindow(host);
-		return {
-			id: `canvas-tab-${++panelSeq}`,
-			title,
-			post: message => void webview.postMessage(message),
-			focused: () => host.contains(win.document.activeElement),
-			open: href => void this.openerService.open(URI.parse(href), { openExternal: /^https?:/i.test(href) }),
-			copy: text => void this.clipboardService.writeText(text),
-			onDispose: listener => {
-				if (store.isDisposed) {
-					listener();
-				} else {
-					listeners.push(listener);
-				}
-			},
-		};
+		store.add(input.onDidRequestFocus(frame => view.focusFrame(frame)));
+		if (!await view.load() && this.session.value === store) {
+			this.session.clear();
+			renderCanvasMissing(container);
+		}
 	}
 
 	override clearInput(): void {
-		this.view.clear();
+		this.session.clear();
 		super.clearInput();
 	}
 
 	override focus(): void {
 		super.focus();
-		this.webview?.focus();
+		this.view?.focus();
 	}
 
 	override layout(_dimension: Dimension): void {
-		// The page fills the tab and lays itself out.
+		// The view fills the tab and lays itself out.
 	}
 }

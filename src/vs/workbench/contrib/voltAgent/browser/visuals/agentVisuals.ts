@@ -31,6 +31,9 @@ import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { DotLoaderShape, renderDotLoader } from './agentDotLoader.js';
 import { dispatchPageChannel, IPageChannelPort, pageHeightFor, PAGE_SEND_INTERVAL_MS, PageRequest, parsePageRequest, setPageContext } from './agentVisualBridge.js';
 import { openCanvas, renderCanvasBuilding, renderCanvasCard } from './canvas/canvasCard.js';
+import { buildCanvasPage } from './canvas/canvasPage.js';
+import { IVoltCanvasService } from './canvas/canvasService.js';
+import { CanvasView, renderCanvasMissing } from './canvas/canvasView.js';
 import { buildVisualPage, VISUAL_COLUMN_WIDTH, VISUAL_MAX_HEIGHT, VISUAL_MIN_HEIGHT } from './agentVisualPage.js';
 import { IVoltChartsHandle, IVoltChartsRuntime, IVoltChartsStrings, voltChartsRuntime } from './voltChartsRuntime.js';
 
@@ -322,6 +325,36 @@ function loadSpec(ctx: IVisualHostContext, ref: string): Promise<unknown> {
 		specs.set(ref, pending);
 		if (specs.size > 64) {
 			specs.delete(specs.keys().next().value!);
+		}
+	}
+	return pending;
+}
+
+const canvasPages = new Map<string, Promise<string | undefined>>();
+
+/**
+ * A canvas in the chat: the canvas as this call left it (canvas_render: v1, canvas_update: its
+ * version), pinned there so later changes do not rewrite the chat's history. A canvas kept before
+ * versions were stored shows as it is now; one no longer stored falls back to the page saved with the call.
+ */
+function loadCanvasPage(ctx: IVisualHostContext, block: IVisualBlock): Promise<string | undefined> {
+	const canvasId = block.canvas!;
+	const version = Number(/@(\d+)$/.exec(block.ref)?.[1]) || 1;
+	const key = `${canvasId}@${version}`;
+	let pending = canvasPages.get(key);
+	if (!pending) {
+		const canvas = ctx.instantiationService.invokeFunction(accessor => accessor.get(IVoltCanvasService));
+		pending = (async () => {
+			const kept = await canvas.getVersion(canvasId, version);
+			const doc = kept ?? await canvas.get(canvasId);
+			if (!doc) {
+				return block.kind === 'html' ? loadPage(ctx, block.ref) : undefined;
+			}
+			return buildCanvasPage(canvas.pageData(doc, 'inline', undefined, !!kept));
+		})().catch(() => undefined);
+		canvasPages.set(key, pending);
+		if (canvasPages.size > 16) {
+			canvasPages.delete(canvasPages.keys().next().value!);
 		}
 	}
 	return pending;
@@ -747,16 +780,22 @@ function placeActions(wrap: HTMLElement, body: HTMLElement): void {
  * Expand and Copy on hover. Loading holds the visual's own height, so nothing below it jumps.
  */
 export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx: IVisualHostContext & { readonly store: DisposableStore }): void {
-	if (block.kind === 'canvas') {
+	// A canvas_update still streaming in: a line saying so. Once applied, the canvas itself as it changed.
+	// In the canvas's own agent chat the canvas is right beside it: a line per change is enough there.
+	const besideCanvas = block.kind === 'canvas' && !!block.canvas && !!ctx.sessionId
+		&& ctx.instantiationService.invokeFunction(accessor => accessor.get(IVoltCanvasService)).isAgentChat(block.canvas, ctx.sessionId);
+	if (block.kind === 'canvas' && (!block.ref || !block.canvas || besideCanvas)) {
 		renderCanvasCard(parent, block, ctx);
 		return;
 	}
 	const wrap = append(parent, $('.volt-agent-block.volt-agent-visual'));
-	wrap.classList.add(block.kind === 'html' ? 'page' : 'chart');
+	wrap.classList.add(block.kind === 'chart' ? 'chart' : 'page');
 	const key = `${block.id}:${block.ref}`;
-	const title = block.title || (block.kind === 'html' ? localize('voltVisual.page', "Page") : localize('voltVisual.chart', "Chart"));
+	const title = block.title || (block.kind === 'chart' ? localize('voltVisual.chart', "Chart") : localize('voltVisual.page', "Page"));
 	// A page gets a caption (its name, and its tools on the right) so nothing sits over the page's own controls.
-	const caption = block.kind === 'html' ? renderPageCaption(wrap, title, !block.ref, !!block.canvas) : undefined;
+	const caption = block.kind !== 'chart' ? renderPageCaption(wrap, title, !block.ref, !!block.canvas) : undefined;
+	// A canvas is built from the canvas store with today's canvas code, as it was at this point of the chat.
+	const loadSource = () => block.canvas ? loadCanvasPage(ctx, block) : loadPage(ctx, block.ref);
 	const body = append(wrap, $('.volt-agent-visual-body'));
 	const actions = append(caption ?? wrap, $('.volt-agent-visual-actions'));
 	if (!block.ref) {
@@ -765,7 +804,7 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 		if (block.canvas) {
 			renderCanvasBuilding(body, block.frames ?? []);
 		} else {
-			renderVisualSkeleton(body, block.kind, block.kind === 'html' ? frameHeight(block.height) : undefined, { shape: block.shape, creating: true });
+			renderVisualSkeleton(body, block.kind === 'chart' ? 'chart' : 'html', block.kind === 'chart' ? undefined : frameHeight(block.height), { shape: block.shape, creating: true });
 		}
 		return;
 	}
@@ -809,7 +848,7 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 		mountFrame(body, key, title, '', block.height, ctx, sizing);
 	} else {
 		renderVisualSkeleton(body, 'page', openingHeight(key, block.heights, block.cap, block.height));
-		const load = () => void loadPage(ctx, block.ref).then(html => {
+		const load = () => void loadSource().then(html => {
 			if (!wrap.isConnected && !liveFrames.has(key)) {
 				// Redrawn away while loading; the new row loads it.
 				return;
@@ -829,8 +868,22 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 		const open = toolbarButton(actions, Codicon.layoutSidebarRight, localize('voltVisual.openCanvas', "Open Canvas Beside the Chat"), () => openCanvas(ctx, canvasId), ctx.store);
 		open.classList.add('labeled');
 		append(open, $('span')).textContent = localize('voltVisual.open', "Open");
+		// Expand: the same full canvas (frames, comments) in a dialog over the chat instead of a tab.
+		toolbarButton(actions, Codicon.screenFull, localize('voltVisual.expandCanvas', "Expand"), () => {
+			if (!ctx.onExpandVisual) {
+				return;
+			}
+			const content = $('.volt-agent-visual-expanded.page.volt-canvas-modal');
+			const view = ctx.instantiationService.createInstance(CanvasView, content, { canvasId });
+			ctx.onExpandVisual(title, content, view);
+			void view.load().then(found => {
+				if (!found) {
+					renderCanvasMissing(content);
+				}
+			});
+		}, ctx.store);
 		toolbarButton(actions, Codicon.desktopDownload, localize('voltVisual.save', "Save as HTML File"), () => {
-			void loadPage(ctx, block.ref).then(html => html !== undefined ? savePage(ctx, title, html) : undefined);
+			void loadSource().then(html => html !== undefined ? savePage(ctx, title, html) : undefined);
 		}, ctx.store);
 		return;
 	}

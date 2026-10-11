@@ -216,6 +216,15 @@
 	background: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
 }
 
+/* A page on its way ("Building page") waits under a quieter field: smaller, fainter dots. */
+.volt-agent-visual-skeleton.page {
+	--volt-dot-loader-dot-scale: 0.75;
+}
+
+.volt-agent-visual-skeleton.page .volt-dot-loader-canvas {
+	opacity: 0.3;
+}
+
 /* Expanded: the same visual, larger, in the preview dialog. */
 .volt-agent-snapshot-dialog.wide {
 	width: min(1240px, calc(100vw - 64px));

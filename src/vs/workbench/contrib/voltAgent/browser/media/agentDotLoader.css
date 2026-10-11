@@ -7,7 +7,7 @@
  * The dot loader (agentDotLoader.ts): a halftone field of shivering dots in the shape of the
  * picture on its way. The box holds that picture's height, so nothing below jumps when it lands.
  * The dots are drawn on one canvas; the colors below are read from it, so keep them plain colors
- * (hex or rgb), not color-mix().
+ * (hex or rgb), not color-mix(). `--volt-dot-loader-dot-scale` (a number, 1 when unset) sizes the dots.
  */
 .volt-dot-loader {
 	--volt-dot-loader-height: 240px;

@@ -9,7 +9,7 @@ import { basename } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
 import { isSnapshotActivity } from '../preview/browserSnapshot.js';
 import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
-import { AgentBlock, AgentSegment, createPlanBlock, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPlanTool, IVisualBlock, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
+import { AgentBlock, AgentSegment, createPlanBlock, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPhantomFileBlock, isPlanTool, IVisualBlock, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
 import { computeChangeStats } from '../review/fileChangePreviewModel.js';
 import { isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
@@ -194,7 +194,7 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 					rows.push({ kind: 'block', block: createPlanBlock({ id: block.id, callId: block.callId, input: block.input, name: plan.name, markdown: plan.plan ?? '', status: block.status }) });
 				} else if (block.type === 'file') {
 					// Older chats recorded Cursor's to-do tool as an edit to a file named "Update TODOs".
-					if (!/(^|[\\/])update todos\b/i.test(block.path)) {
+					if (!/(^|[\\/])update todos\b/i.test(block.path) && !isPhantomFileBlock(block)) {
 						pending.push(editStep(block));
 					}
 				} else if (block.type === 'tool') {

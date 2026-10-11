@@ -45,6 +45,8 @@ import { IAgentSessionChangesService } from '../review/agentSessionChangesServic
 import { autorun } from '../../../../../base/common/observable.js';
 import { ISCMRepository, ISCMService } from '../../../scm/common/scm.js';
 import { isEqual } from '../../../../../base/common/resources.js';
+import { OPEN_CANVAS_COMMAND_ID } from '../visuals/canvas/canvasCard.js';
+import { IVoltCanvasService } from '../visuals/canvas/canvasService.js';
 
 /** Chevrons point right. Collapsed state rotates this 180deg. */
 const CHEVRON_RIGHT_PATH = 'M6 7L11 12L6 17M13 7L18 12L13 17';
@@ -201,6 +203,13 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly agentsRail: HTMLButtonElement;
 	private readonly agentsBadge: HTMLElement;
 	private readonly tabListeners = this._register(new DisposableStore());
+	/** The chat's design canvases: each opens beside the chat. */
+	private readonly designsSection: HTMLElement;
+	private readonly designList: HTMLElement;
+	private readonly designListeners = this._register(new DisposableStore());
+	private readonly canvases: IVoltCanvasService | undefined;
+	private designSession: string | undefined;
+	private designKeys = '';
 	/** Editors currently painted in Open Tabs. Unchanged focus events must not rebuild those rows. */
 	private tabKeys = '';
 	private editorObserver: MutationObserver | undefined;
@@ -208,6 +217,8 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly chatResize: ResizeObserver;
 	private observedChat: HTMLElement | undefined;
 	private windowNarrow = false;
+	/** Last {@link usesPopup}; the button's label and the popup follow its changes. */
+	private popupMode = false;
 	/** The user's choice while the space is narrow. Cleared whenever narrow flips. */
 	private narrowOverride: boolean | undefined;
 	private placeScheduled = false;
@@ -249,7 +260,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.quickOpenToggle.type = 'button';
 		this.quickOpenToggle.appendChild(createStrokeIcon(this.quickOpenToggle, QUICK_OPEN_ICON_PATH, '1.5'));
 		this._register(addDisposableListener(this.quickOpenToggle, 'click', () => {
-			if (this.windowNarrow) {
+			if (this.usesPopup()) {
 				this.setPopupOpen(!this.popupOpen);
 				return;
 			}
@@ -319,6 +330,19 @@ class AgentViewSidebarsContribution extends Disposable {
 		const tabsHeading = append(this.tabsSection, $('.volt-agent-dock-heading'));
 		tabsHeading.textContent = localize('voltAgent.dock.openTabs', "Open Tabs");
 		this.tabList = append(this.tabsSection, $('.volt-agent-dock-tab-list'));
+		this.designsSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-designs.hidden'));
+		append(this.designsSection, $('.volt-agent-dock-heading')).textContent = localize('voltAgent.dock.designs', "Designs");
+		this.designList = append(this.designsSection, $('.volt-agent-dock-tab-list'));
+		this.canvases = instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltCanvasService));
+		if (this.canvases) {
+			this._register(this.canvases.onDidChange(change => {
+				// A new canvas, or one renamed.
+				if (change.kind === 'doc' && (!change.doc.chat || change.doc.chat === this.designSession)) {
+					this.designKeys = '';
+					this.renderDesigns();
+				}
+			}));
+		}
 
 		// Sections like Cursor's project menu: the project's tools, then git, then the agents.
 		const [changes, browser, terminal, files] = this.dockActions();
@@ -357,7 +381,9 @@ class AgentViewSidebarsContribution extends Disposable {
 		}));
 		this.lineage = this._register(instantiationService.createInstance(AgentLineageDock));
 		// Agents come first, at the top right of the chat: what runs in parallel is what the user checks most.
+		// Finished agents go last, under the tools and git.
 		body.prepend(this.lineage.element);
+		body.append(this.lineage.previousElement);
 		this._register(this.lineage.onDidChangeSummary(summary => this.syncAgentsRail(summary)));
 		this._register(CommandsRegistry.registerCommand(SHOW_AGENTS_IN_SIDE_TOOLBAR_COMMAND_ID, () => this.revealAgents()));
 
@@ -415,7 +441,7 @@ class AgentViewSidebarsContribution extends Disposable {
 	 * title bar button when it has no room there (narrow, hidden by the user, tools open beside the chat).
 	 */
 	private revealAgents(): void {
-		const inline = !this.windowNarrow && !this.quickOpenHidden && !!this.quickOpenEditor && !this.quickOpenEditor.classList.contains('has-surfaces');
+		const inline = !this.usesPopup() && !this.quickOpenHidden && !!this.quickOpenEditor;
 		if (!inline) {
 			this.setPopupOpen(true);
 			return;
@@ -674,6 +700,15 @@ class AgentViewSidebarsContribution extends Disposable {
 			}
 			this.syncQuickOpenVisibility();
 		}
+		// The files sidebar or a tab opened beside a wide chat hides the toolbar there too (agentViewSidebars.css).
+		const popup = this.usesPopup();
+		if (popup !== this.popupMode) {
+			this.popupMode = popup;
+			if (!popup) {
+				this.setPopupOpen(false);
+			}
+			this.syncQuickOpenVisibility();
+		}
 		const collapsed = typeof this.narrowOverride === 'boolean'
 			? this.narrowOverride
 			: narrow || isAgentRightDockCollapsed(this.storageService);
@@ -694,6 +729,14 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.narrowOverride = undefined;
 		this.storageService.store(AGENT_RIGHT_DOCK_COLLAPSED_KEY, collapsed, StorageScope.PROFILE, StorageTarget.USER);
 		this.applyDock(collapsed);
+	}
+
+	/**
+	 * The title bar button opens the toolbar as a popup: the window is narrow, or the chat holding it
+	 * has tools open beside it, which hide the toolbar in the column however wide the chat is.
+	 */
+	private usesPopup(): boolean {
+		return this.windowNarrow || !!this.quickOpen.closest('.volt-agent-editor')?.classList.contains('has-surfaces');
 	}
 
 	private get popupOpen(): boolean {
@@ -769,7 +812,7 @@ class AgentViewSidebarsContribution extends Disposable {
 	/** Hidden takes the whole list away, rail included; collapsed only narrows it. */
 	private syncQuickOpenVisibility(): void {
 		// No room beside the chat: the toolbar leaves the column and opens from the title bar button.
-		const popup = this.windowNarrow;
+		const popup = this.usesPopup();
 		const hidden = this.quickOpenHidden || popup;
 		this.quickOpen.classList.toggle('user-hidden', hidden);
 		this.syncQuickOpenHost();
@@ -881,6 +924,39 @@ class AgentViewSidebarsContribution extends Disposable {
 		}
 	}
 
+	/** The canvases this chat made, newest first: a row opens one beside the chat. */
+	private renderDesigns(): void {
+		const sessionId = this.designSession;
+		const canvases = this.canvases;
+		if (!sessionId || !canvases) {
+			this.designsSection.classList.add('hidden');
+			return;
+		}
+		void canvases.listFor(sessionId).then(docs => {
+			if (sessionId !== this.designSession) {
+				return;
+			}
+			const keys = docs.map(doc => `${doc.id}\u0001${doc.title}`).join('\n');
+			this.designsSection.classList.toggle('hidden', !docs.length);
+			if (keys === this.designKeys) {
+				return;
+			}
+			this.designKeys = keys;
+			this.designListeners.clear();
+			this.designList.replaceChildren();
+			for (const doc of docs) {
+				const row = append(this.designList, $('button.volt-agent-dock-row')) as HTMLButtonElement;
+				row.type = 'button';
+				row.appendChild(renderIcon(Codicon.symbolColor));
+				append(row, $('span.volt-agent-dock-row-label')).textContent = doc.title;
+				setAgentTooltip(row, localize('voltAgent.dock.openDesign', "Open {0} beside the chat", doc.title));
+				this.designListeners.add(addDisposableListener(row, 'click', () => {
+					void this.commandService.executeCommand(OPEN_CANVAS_COMMAND_ID, doc.id);
+				}));
+			}
+		});
+	}
+
 	/** Close the tab in whichever group shows it: a chat's tools area, else the main editor part. */
 	private closeTab(editor: EditorInput): void {
 		if (closeAgentToolEditor(editor)) {
@@ -898,6 +974,10 @@ class AgentViewSidebarsContribution extends Disposable {
 		const sessionId = host ?? (active instanceof AgentEditorInput ? active.sessionId : undefined);
 		this.lineage.setSession(sessionId);
 		this.pullRequestControl.setSession(sessionId);
+		if (sessionId !== this.designSession) {
+			this.designSession = sessionId;
+			this.renderDesigns();
+		}
 		if (sessionId !== this.changesSessionId) {
 			this.changesSessionId = sessionId;
 			this.renderChangesStats();
@@ -915,6 +995,9 @@ class AgentViewSidebarsContribution extends Disposable {
 		}
 		if (editor.typeId === 'workbench.input.voltAgentPullRequest') {
 			return Codicon.gitPullRequest;
+		}
+		if (editor.typeId === 'workbench.input.voltCanvas') {
+			return Codicon.symbolColor;
 		}
 		return Codicon.file;
 	}

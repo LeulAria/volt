@@ -8,7 +8,7 @@ import { extractLocalPreviewUrl } from '../preview/localPreview.js';
 import { isSnapshotActivity } from '../preview/browserSnapshot.js';
 import { ACP_STALL_NOTICE_TITLE } from '../../../../services/voltRuntime/common/harness/acpStall.js';
 import { BUDGET_NOTICE_TITLE, LOOP_NOTICE_TITLE } from '../../../../services/voltRuntime/common/harness/supervisor.js';
-import { AgentSegment, IAgentActivityItem, IFileChangeBlock, ITerminalBlock, isExploreTool, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
+import { AgentSegment, IAgentActivityItem, IFileChangeBlock, ITerminalBlock, isExploreTool, isPhantomFileBlock, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
 import { computeChangeStats, formatChangeStats, netFileEdit } from '../review/fileChangePreviewModel.js';
 
 export type ThreadPart =
@@ -569,7 +569,7 @@ export interface ITurnFileChange {
 
 /** Every file a reply changed, once each with its summed stats: the end-of-turn "N Files Changed" card. */
 export function turnFileChanges(segments: readonly AgentSegment[] | undefined): ITurnFileChange[] {
-	const files = (segments ?? []).flatMap(segment => segment.kind === 'block' && segment.block.type === 'file' ? [segment.block] : []);
+	const files = (segments ?? []).flatMap(segment => segment.kind === 'block' && segment.block.type === 'file' && !isPhantomFileBlock(segment.block) ? [segment.block] : []);
 	return mergeFileBlocks(files).map(file => ({ path: file.path, verb: file.verb, ...computeChangeStats(fileChangeSource(file)) }));
 }
 

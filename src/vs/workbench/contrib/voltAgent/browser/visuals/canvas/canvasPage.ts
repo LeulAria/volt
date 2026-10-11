@@ -35,6 +35,8 @@ export interface ICanvasStrings {
 	readonly hand: string;
 	readonly comment: string;
 	readonly play: string;
+	/** The Play button's label. */
+	readonly playShort: string;
 	readonly zoomIn: string;
 	readonly zoomOut: string;
 	readonly fit: string;
@@ -131,6 +133,11 @@ export interface ICanvasPageData {
 	readonly presets: readonly ICanvasPreset[];
 	/** Frame to center on first. */
 	readonly focus?: string;
+	/**
+	 * A view in the chat's history: it keeps showing the canvas as it was at its version (the agent's
+	 * later changes show further down the chat and in the canvas's tab). Comments still update.
+	 */
+	readonly pinned?: boolean;
 }
 
 /** What every frame shares. */
@@ -153,10 +160,11 @@ interface ICanvasBridge {
 
 const CANVAS_CSS = `
 html,body{margin:0;padding:0;overflow:hidden;background:transparent}
-.cv{--cv-bg:color-mix(in srgb,var(--foreground) 4.5%,var(--background));--cv-dot:color-mix(in srgb,var(--foreground) 20%,transparent);--cv-glass:color-mix(in srgb,var(--popover) 90%,transparent);--cv-line:color-mix(in srgb,var(--foreground) 11%,transparent);--cv-accent:var(--accent);--cv-agent:var(--chart-4,#a371f7);position:relative;display:flex;overflow:hidden;font:13px/1.4 var(--font-sans);color:var(--foreground);-webkit-user-select:none;user-select:none;outline:none;box-sizing:border-box}
+.cv{--cv-bg:color-mix(in srgb,var(--foreground) 4.5%,var(--background));--cv-dot:color-mix(in srgb,var(--foreground) 20%,transparent);--cv-glass:light-dark(#fff,#1d1d1d);--cv-glass-line:light-dark(rgb(0 0 0/.12),rgb(255 255 255/.12));--cv-hover-fill:light-dark(rgb(0 0 0/.06),rgb(255 255 255/.08));--cv-on-fill:light-dark(rgb(0 0 0/.1),rgb(255 255 255/.13));--cv-spring:cubic-bezier(.34,1.56,.64,1);--cv-line:color-mix(in srgb,var(--foreground) 11%,transparent);--cv-accent:var(--accent);--cv-agent:var(--chart-4,#a371f7);position:relative;display:flex;overflow:hidden;font:13px/1.4 var(--font-sans);color:var(--foreground);-webkit-user-select:none;user-select:none;outline:none;box-sizing:border-box}
 .cv *,.cv *::before,.cv *::after{box-sizing:border-box}
 .cv [hidden]{display:none!important}
-.cv.inline{height:clamp(440px,72vw,620px);border:1px solid var(--border);border-radius:12px;background:var(--cv-bg)}
+.cv.inline{height:clamp(440px,72vw,620px);border:1px solid var(--border);border-radius:12px;background:var(--cv-bg);transition:border-color .18s ease,box-shadow .18s ease}
+.cv.inline.engaged{border-color:color-mix(in srgb,var(--foreground) 42%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--foreground) 16%,transparent)}
 .cv.panel{height:100vh;background:var(--cv-bg)}
 .cv-stage{position:relative;flex:1;min-width:0;overflow:hidden}
 .cv-viewport{position:absolute;inset:0;overflow:hidden;outline:none;cursor:default;background-image:radial-gradient(circle,var(--cv-dot) 1px,transparent 1.2px);touch-action:none}
@@ -235,11 +243,13 @@ html,body{margin:0;padding:0;overflow:hidden;background:transparent}
 .cv-dim{position:absolute;left:0;top:0;padding:1px 7px;border-radius:5px;background:var(--cv-accent);color:var(--accent-foreground);font:600 11px/17px var(--font-sans);white-space:nowrap;font-variant-numeric:tabular-nums;transform:translateX(-50%)}
 .cv-guide{position:absolute;left:0;top:0;background:var(--destructive,#f43f5e)}
 .cv-marquee{position:absolute;left:0;top:0;border:1px solid var(--cv-accent);background:color-mix(in srgb,var(--cv-accent) 10%,transparent);border-radius:2px}
-.cv-hover{position:absolute;left:0;top:0;border:1.5px solid var(--cv-accent);border-radius:3px;background:color-mix(in srgb,var(--cv-accent) 9%,transparent);transition:transform .06s,width .06s,height .06s}
+.cv-hover{position:absolute;left:0;top:0;border:1.5px solid var(--cv-accent);border-radius:3px;background:color-mix(in srgb,var(--cv-accent) 9%,transparent);opacity:0;scale:.97;visibility:hidden;transition:opacity .14s ease,scale .14s ease,visibility 0s linear .14s}
+.cv-hover.on{opacity:1;scale:1;visibility:visible;transition:opacity .16s ease,scale .34s var(--cv-spring),visibility 0s}
 .cv-hover-tag{position:absolute;left:-1.5px;bottom:100%;margin-bottom:4px;padding:2px 7px;border-radius:5px;background:var(--cv-accent);color:var(--accent-foreground);font:500 11px/16px var(--font-mono);white-space:nowrap;max-width:320px;overflow:hidden;text-overflow:ellipsis}
 .cv-region{position:absolute;left:0;top:0;border:1.5px dashed var(--cv-accent);border-radius:4px;background:color-mix(in srgb,var(--cv-accent) 10%,transparent)}
-.cv-pin{position:absolute;left:0;top:0;display:grid;place-items:center;min-width:26px;height:26px;padding:0 6px;border-radius:13px 13px 13px 3px;background:var(--cv-accent);color:var(--accent-foreground);font:700 11.5px/1 var(--font-sans);box-shadow:0 0 0 2px var(--background),0 6px 16px -4px rgb(0 0 0/.45);pointer-events:auto;cursor:pointer;transition:transform .12s;animation:cv-pin-in .28s cubic-bezier(.2,.8,.2,1)}
-@keyframes cv-pin-in{from{opacity:0;scale:.4}}
+.cv-pin{position:absolute;left:0;top:0;display:grid;place-items:center;min-width:26px;height:26px;padding:0 6px;border-radius:13px 13px 13px 3px;background:var(--cv-accent);color:var(--accent-foreground);font:700 11.5px/1 var(--font-sans);box-shadow:0 0 0 2px var(--background),0 6px 16px -4px rgb(0 0 0/.45);pointer-events:auto;cursor:pointer;transform-origin:0 100%;transition:scale .3s var(--cv-spring),opacity .18s ease;animation:cv-pin-in .42s var(--cv-spring)}
+@keyframes cv-pin-in{from{opacity:0;scale:.35}}
+.cv-pin.cv-out{opacity:0;scale:.5;pointer-events:none;transition:scale .18s ease,opacity .16s ease}
 .cv-pin:hover,.cv-pin.open{scale:1.12}
 .cv-pin.agent{background:var(--cv-agent);color:#fff}
 .cv-pin.sent{background:var(--background);color:var(--cv-accent);box-shadow:0 0 0 2px var(--cv-accent),0 6px 16px -4px rgb(0 0 0/.45)}
@@ -247,42 +257,46 @@ html,body{margin:0;padding:0;overflow:hidden;background:transparent}
 .cv-pin.outdated{opacity:.55;border:1.5px dashed currentColor}
 .cv-pin.pending{background:var(--background);color:var(--cv-accent);box-shadow:0 0 0 2px var(--cv-accent)}
 .cv-pin svg{width:12px;height:12px}
-.cv-glass{background:var(--cv-glass);color:var(--popover-foreground,var(--foreground));-webkit-backdrop-filter:blur(16px) saturate(1.5);backdrop-filter:blur(16px) saturate(1.5);box-shadow:0 0 0 1px var(--border),0 10px 30px -10px rgb(0 0 0/.4)}
+.cv-glass{background:var(--cv-glass);color:var(--foreground);box-shadow:0 0 0 1px var(--cv-glass-line),0 8px 24px light-dark(rgb(0 0 0/.12),rgb(0 0 0/.4))}
 .cv-top{position:absolute;left:10px;top:10px;right:10px;display:flex;align-items:flex-start;justify-content:space-between;gap:8px;pointer-events:none;z-index:20}
 .cv-top>*{pointer-events:auto}
-.cv-title{display:flex;align-items:center;gap:8px;min-width:0;max-width:60%;height:32px;padding:0 10px 0 12px;border-radius:10px}
+.cv-title{display:flex;align-items:center;gap:7px;min-width:0;max-width:60%;height:34px;padding:0 4px;font-size:12px}
 .cv-title b{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cv-ver{flex:none;font:600 10.5px/16px var(--font-mono);padding:0 6px;border-radius:5px;background:color-mix(in srgb,var(--foreground) 9%,transparent);color:var(--muted-foreground)}
-.cv-change{min-width:0;color:var(--muted-foreground);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv-ver{flex:none;font:500 11px/16px var(--font-sans);color:var(--muted-foreground)}
+.cv-change{min-width:0;color:var(--muted-foreground);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cv-actions{display:flex;align-items:center;gap:6px}
-.cv-group{display:flex;align-items:center;gap:2px;padding:3px;border-radius:10px}
-.cv-btn{appearance:none;margin:0;border:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:28px;height:28px;padding:0 7px;border-radius:7px;background:transparent;color:var(--muted-foreground);font:500 12px/1 var(--font-sans);cursor:pointer;white-space:nowrap;transition:background .12s,color .12s}
-.cv-btn:hover{background:color-mix(in srgb,var(--foreground) 9%,transparent);color:var(--foreground)}
-.cv-btn[aria-pressed="true"]{background:color-mix(in srgb,var(--cv-accent) 18%,transparent);color:var(--foreground)}
+.cv-group{display:flex;align-items:center;gap:2px;height:34px;padding:0 4px;border-radius:999px}
+.cv-btn{appearance:none;margin:0;border:0;display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:28px;height:26px;padding:0 7px;border-radius:999px;background:transparent;color:color-mix(in srgb,var(--foreground) 78%,transparent);font:500 12.5px/1 var(--font-sans);cursor:pointer;white-space:nowrap;transition:background .12s,color .12s}
+.cv-btn:hover{background:var(--cv-hover-fill);color:var(--foreground)}
+.cv-btn svg *{stroke-width:1}
+.cv-btn[aria-pressed="true"],.cv-btn.chip{background:var(--cv-on-fill);color:var(--foreground)}
+.cv-btn.chip{padding:0 11px 0 9px}
+.cv-btn.chip:hover{background:color-mix(in srgb,var(--foreground) 18%,transparent)}
+.cv-btn.labeled{padding:0 10px 0 8px}
 .cv-btn.primary{background:var(--primary);color:var(--primary-foreground);padding:0 11px}
 .cv-btn.primary:hover{filter:brightness(1.1)}
 .cv-btn:disabled{opacity:.4;cursor:default}
 .cv-btn:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
-.cv-btn svg{width:16px;height:16px;flex:none}
-.cv-sep{width:1px;height:18px;margin:0 3px;background:var(--cv-line)}
+.cv-btn svg{width:15px;height:15px;flex:none}
+.cv-sep{width:1px;height:16px;margin:0 4px;background:var(--cv-glass-line)}
 .cv-zoom{min-width:52px;font-variant-numeric:tabular-nums;color:var(--foreground)}
 .cv-toolbar{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:20}
-.cv-hint{position:absolute;left:50%;bottom:58px;transform:translateX(-50%);z-index:19;padding:5px 11px;border-radius:99px;font-size:11.5px;color:var(--muted-foreground);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}
+.cv-hint{position:absolute;left:50%;bottom:60px;transform:translateX(-50%);z-index:19;padding:5px 11px;border-radius:99px;font-size:11.5px;color:var(--muted-foreground);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}
 .cv-hint.on{opacity:1}
-.cv-minimap{position:absolute;right:12px;bottom:12px;z-index:20;width:168px;height:112px;border-radius:10px;overflow:hidden;cursor:pointer}
+.cv-minimap{position:absolute;right:12px;bottom:12px;z-index:20;width:168px;height:112px;overflow:hidden;cursor:pointer}
 .cv.inline .cv-minimap{width:132px;height:88px}
 .cv-mini-frame{position:absolute;left:0;top:0;border-radius:1.5px;background:color-mix(in srgb,var(--foreground) 32%,transparent)}
 .cv-mini-frame.sel{background:var(--cv-accent)}
-.cv-mini-view{position:absolute;left:0;top:0;border:1.5px solid var(--cv-accent);border-radius:3px;background:color-mix(in srgb,var(--cv-accent) 8%,transparent)}
-.cv-tray{position:absolute;left:50%;bottom:58px;transform:translateX(-50%);z-index:21;display:flex;align-items:center;gap:10px;padding:5px 5px 5px 12px;border-radius:12px;white-space:nowrap;animation:cv-rise .25s cubic-bezier(.2,.8,.2,1)}
+.cv-mini-view{position:absolute;left:0;top:0;border:1.5px solid color-mix(in srgb,var(--foreground) 45%,transparent);border-radius:3px;background:color-mix(in srgb,var(--foreground) 5%,transparent)}
+.cv-tray{position:absolute;left:50%;bottom:60px;transform:translateX(-50%);z-index:21;display:flex;align-items:center;gap:10px;height:34px;padding:0 4px 0 14px;border-radius:999px;white-space:nowrap;animation:cv-rise .25s cubic-bezier(.2,.8,.2,1)}
 @keyframes cv-rise{from{opacity:0;translate:0 8px}}
 .cv-tray-count{display:flex;align-items:center;gap:7px;font-weight:500}
 .cv-tray-dot{width:8px;height:8px;border-radius:50%;background:var(--cv-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--cv-accent) 25%,transparent)}
 .cv-toast{position:absolute;left:50%;top:52px;transform:translateX(-50%);z-index:25;display:flex;align-items:center;gap:8px;max-width:80%;padding:6px 12px;border-radius:99px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:cv-rise .25s cubic-bezier(.2,.8,.2,1);pointer-events:none}
 .cv-toast svg{width:14px;height:14px;flex:none;color:var(--cv-agent)}
-.cv-selbar{position:absolute;left:0;top:0;z-index:18;display:flex;align-items:center;gap:2px;padding:3px;border-radius:10px;transform:translate(-50%,-100%);white-space:nowrap}
-.cv-select{appearance:none;height:28px;padding:0 24px 0 9px;border:0;border-radius:7px;background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 8px center;color:var(--foreground);font:500 12px var(--font-sans);cursor:pointer}
-.cv-select:hover{background-color:color-mix(in srgb,var(--foreground) 9%,transparent)}
+.cv-selbar{position:absolute;left:0;top:0;z-index:18;display:flex;align-items:center;gap:2px;height:34px;padding:0 4px;border-radius:999px;transform:translate(-50%,-100%);white-space:nowrap}
+.cv-select{appearance:none;height:26px;padding:0 26px 0 11px;border:0;border-radius:999px;background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 8px center;color:var(--foreground);font:500 12px var(--font-sans);cursor:pointer}
+.cv-select:hover{background-color:var(--cv-hover-fill)}
 .cv-select option{background:var(--popover);color:var(--popover-foreground,var(--foreground))}
 .cv-pop{position:absolute;left:0;top:0;z-index:30;width:316px;display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:14px;animation:cv-rise .2s cubic-bezier(.2,.8,.2,1);-webkit-user-select:text;user-select:text}
 .cv-pop-head{display:flex;align-items:center;gap:6px;min-width:0}
@@ -307,36 +321,8 @@ html,body{margin:0;padding:0;overflow:hidden;background:transparent}
 .cv-tweaks input[type=text],.cv-tweaks select{flex:1;min-width:0;height:26px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--input,transparent);color:var(--foreground);font:12px var(--font-mono)}
 .cv-tweaks input[type=color]{flex:none;width:26px;height:26px;padding:0;border:1px solid var(--border);border-radius:6px;background:none;cursor:pointer}
 .cv-tweaks input[type=color]::-webkit-color-swatch-wrapper{padding:2px}.cv-tweaks input[type=color]::-webkit-color-swatch{border:0;border-radius:4px}
-.cv-side{flex:none;display:flex;flex-direction:column;min-height:0;background:color-mix(in srgb,var(--background) 70%,var(--cv-bg));border-color:var(--cv-line);border-style:solid;border-width:0}
-.cv-layers{width:232px;border-right-width:1px}
-.cv-comments{width:300px;border-left-width:1px}
-.cv-side-head{display:flex;align-items:center;gap:6px;height:42px;padding:0 8px 0 14px;font-weight:600;border-bottom:1px solid var(--cv-line)}
-.cv-side-head .cv-grow{flex:1}
-.cv-side-count{font-weight:500;color:var(--muted-foreground);font-size:12px}
-.cv-side-body{flex:1;min-height:0;overflow:auto;padding:6px}
-.cv-side-foot{display:flex;flex-direction:column;gap:6px;padding:10px;border-top:1px solid var(--cv-line)}
-.cv-side-foot textarea{width:100%;min-height:38px;max-height:120px;resize:none;padding:7px 9px;border-radius:8px;border:1px solid var(--border);background:var(--input,transparent);color:var(--foreground);font:12.5px/1.4 var(--font-sans);outline:none}
-.cv-side-foot textarea:focus{border-color:var(--ring)}
-.cv-sec-title{padding:10px 8px 4px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted-foreground)}
-.cv-row{display:flex;align-items:center;gap:8px;width:100%;min-height:30px;padding:4px 8px;border:0;border-radius:7px;background:transparent;color:var(--foreground);font:inherit;text-align:left;cursor:pointer}
-.cv-row:hover{background:color-mix(in srgb,var(--foreground) 7%,transparent)}
-.cv-row.sel{background:color-mix(in srgb,var(--cv-accent) 16%,transparent)}
-.cv-row svg{width:14px;height:14px;flex:none;color:var(--muted-foreground)}
-.cv-row-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cv-row-meta{flex:none;color:var(--muted-foreground);font-size:11px;font-variant-numeric:tabular-nums}
-.cv-card{display:flex;gap:9px;width:100%;padding:9px;border:0;border-radius:10px;background:transparent;color:var(--foreground);font:inherit;text-align:left;cursor:pointer}
-.cv-card:hover{background:color-mix(in srgb,var(--foreground) 6%,transparent)}
-.cv-card.open{background:color-mix(in srgb,var(--cv-accent) 12%,transparent)}
-.cv-card .cv-pin{position:static;flex:none;animation:none;box-shadow:none;pointer-events:none}
-.cv-card-body{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
-.cv-card-where{font-size:11px;color:var(--muted-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cv-card-text{font-size:12.5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
-.cv-card-reply{font-size:12px;color:var(--muted-foreground);border-left:2px solid var(--cv-agent);padding-left:7px}
-.cv-empty{padding:28px 18px;text-align:center;color:var(--muted-foreground);font-size:12.5px;line-height:1.5}
-.cv-check{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted-foreground);font-weight:500;cursor:pointer}
-.cv-check input{margin:0;accent-color:var(--cv-accent)}
 .cv-back{animation:cv-rise .2s}
-@media (max-width:620px){.cv-change,.cv.inline .cv-viewgroup,.cv-undo{display:none}.cv-minimap{width:110px!important;height:74px!important}.cv-title{max-width:46%}}
+@media (max-width:620px){.cv-change,.cv-viewgroup,.cv-undo,.cv-btn.labeled .cv-btn-label{display:none}.cv-btn.labeled{padding:0 7px}.cv-minimap{width:110px!important;height:74px!important}.cv-title{max-width:46%}}
 @media (max-width:440px){.cv-minimap{display:none}}
 @media (prefers-reduced-motion:reduce){.cv *{animation:none!important;transition:none!important}}
 `;
@@ -508,7 +494,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			node.append(icon(iconName));
 		}
 		if (showLabel) {
-			node.append(doc.createTextNode(label));
+			node.append(el('span', 'cv-btn-label', label));
 		} else {
 			node.setAttribute('aria-label', label);
 		}
@@ -545,9 +531,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 
 	root.className = `cv ${inline ? 'inline' : 'panel'} tool-move`;
 	root.tabIndex = -1;
-	const layersPane = el('aside', 'cv-side cv-layers');
 	const stage = el('div', 'cv-stage');
-	const commentsPane = el('aside', 'cv-side cv-comments');
 	const viewport = el('div', 'cv-viewport');
 	viewport.tabIndex = 0;
 	viewport.setAttribute('role', 'application');
@@ -565,7 +549,6 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	const hoverBox = el('div', 'cv-hover');
 	const hoverTag = el('div', 'cv-hover-tag');
 	hoverBox.append(hoverTag);
-	hoverBox.hidden = true;
 	const marquee = el('div', 'cv-marquee');
 	marquee.hidden = true;
 	const regionBox = el('div', 'cv-region');
@@ -573,13 +556,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	overlay.append(links, labelsLayer, selLayer, guidesLayer, hoverBox, regionBox, marquee, pinsLayer);
 	viewport.append(world, overlay);
 	stage.append(viewport);
-	if (!inline) {
-		root.append(layersPane);
-	}
 	root.append(stage);
-	if (!inline) {
-		root.append(commentsPane);
-	}
 
 	//#endregion
 
@@ -636,6 +613,8 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	const redoStack: ICanvasLayout[][] = [];
 	let fitted = false;
 	let scrollHinted = false;
+	/** Where the pointer last was over the viewport (the comment highlight follows the camera). */
+	let lastPointer: { x: number; y: number } | undefined;
 
 	//#endregion
 
@@ -956,11 +935,17 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			requestRender();
 		}, true);
 		idoc.addEventListener('click', event => onFrameClick(v, event), true);
+		idoc.addEventListener('pointerdown', () => engage(), true);
 		idoc.addEventListener('wheel', event => {
 			if (event.ctrlKey || event.metaKey) {
 				event.preventDefault();
 				const r = (v.content as HTMLElement).getBoundingClientRect();
 				zoomBy(event.deltaY, r.left + event.clientX * cam.z, r.top + event.clientY * cam.z, event.deltaMode);
+			} else if (inline && !state.engaged) {
+				// Play makes screens take the pointer; until the canvas is clicked the chat still scrolls.
+				// The page's own window passes wheel events on to the chat.
+				event.preventDefault();
+				win.dispatchEvent(new win.WheelEvent('wheel', { deltaX: event.deltaX, deltaY: event.deltaY, deltaMode: event.deltaMode }));
 			}
 		}, { passive: false });
 		idoc.addEventListener('keydown', event => {
@@ -1382,6 +1367,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		renderLinks(vw, vh);
 		renderSelection();
 		renderPins(vw, vh);
+		renderHover();
 		renderMinimap();
 		zoomLabel.textContent = `${Math.round(cam.z * 100)}%`;
 		positionSelectionBar();
@@ -1484,7 +1470,6 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			state.selected.add(id);
 		}
 		syncSelectionBar();
-		syncLayers();
 		post('select', { frames: [...state.selected] });
 		requestRender();
 	}
@@ -1505,6 +1490,10 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	let layoutTimer = 0;
 	const pendingLayout = new Set<string>();
 	function sendLayout(ids: Iterable<string>): void {
+		if (boot.pinned) {
+			// An old version's frames are not the canvas's frames any more: moves stay in this view.
+			return;
+		}
 		for (const id of ids) {
 			pendingLayout.add(id);
 		}
@@ -1746,7 +1735,6 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 				select(undefined);
 			} else {
 				syncSelectionBar();
-				syncLayers();
 				post('select', { frames: [...state.selected] });
 			}
 			requestRender();
@@ -1757,10 +1745,21 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 
 	//#region Pointer and keyboard
 
+	/**
+	 * Inline, the canvas only takes the wheel (and keys) after a click in it, and shows that with a
+	 * brighter outline; the chat scrolls over it until then. A click anywhere else gives it back.
+	 */
 	function engage(): void {
 		if (!state.engaged) {
 			state.engaged = true;
 			hint.classList.remove('on');
+			root!.classList.toggle('engaged', inline);
+		}
+	}
+	function disengage(): void {
+		if (inline && state.engaged) {
+			state.engaged = false;
+			root!.classList.remove('engaged');
 		}
 	}
 
@@ -1845,40 +1844,62 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	}, { passive: false });
 
 	root.addEventListener('pointerleave', () => {
-		if (inline) {
-			state.engaged = false;
-		}
+		lastPointer = undefined;
 		state.hoverFrame = undefined;
-		hoverBox.hidden = true;
+		showHover(false);
 		requestRender();
 	});
 	win.addEventListener('blur', () => {
 		state.space = false;
 		root.classList.remove('space');
-		if (inline) {
-			state.engaged = false;
-		}
+		// Focus that went into a screen (Play) is still in the canvas.
+		win.setTimeout(() => {
+			if (!doc.hasFocus()) {
+				disengage();
+			}
+		}, 0);
 	});
 
 	function onHover(event: PointerEvent): void {
-		const p = toWorld(event.clientX, event.clientY);
-		const hit = hitFrame(p);
+		// Over a pin, a popover or a label the highlight would sit under what the pointer is on.
+		const over = (event.target as Element | null)?.closest?.('.cv-pin, .cv-pop, .cv-label, .cv-top, .cv-toolbar, .cv-minimap, .cv-selbar, .cv-tray');
+		lastPointer = over ? undefined : { x: event.clientX, y: event.clientY };
+		const hit = over ? undefined : hitFrame(toWorld(event.clientX, event.clientY));
 		const id = hit?.frame.id;
 		if (id !== state.hoverFrame) {
 			state.hoverFrame = id;
 			requestRender();
 		}
-		if (state.tool === 'comment' && hit && !popover) {
-			const picked = pick(hit, event.clientX, event.clientY);
-			if (picked?.rect) {
-				const o = toScreen(screenOrigin(hit));
-				hoverBox.hidden = false;
-				Object.assign(hoverBox.style, { transform: `translate(${o.x + picked.rect.x * cam.z}px,${o.y + picked.rect.y * cam.z}px)`, width: `${picked.rect.w * cam.z}px`, height: `${picked.rect.h * cam.z}px` });
-				hoverTag.textContent = picked.anchor.element ?? hit.frame.name;
-				return;
-			}
+		placeHover();
+	}
+
+	let hoverShown = false;
+	function showHover(on: boolean): void {
+		if (on !== hoverShown) {
+			hoverShown = on;
+			hoverBox.classList.toggle('on', on);
 		}
-		hoverBox.hidden = true;
+	}
+	/** Comment mode: outlines the element under the pointer, and says which it is. */
+	function placeHover(): void {
+		const hit = lastPointer && state.tool === 'comment' && !popover && !drag ? hitFrame(toWorld(lastPointer.x, lastPointer.y)) : undefined;
+		const picked = hit && lastPointer ? pick(hit, lastPointer.x, lastPointer.y) : undefined;
+		if (!hit || !picked?.rect) {
+			showHover(false);
+			return;
+		}
+		const o = toScreen(screenOrigin(hit));
+		Object.assign(hoverBox.style, { translate: `${o.x + picked.rect.x * cam.z}px ${o.y + picked.rect.y * cam.z}px`, width: `${picked.rect.w * cam.z}px`, height: `${picked.rect.h * cam.z}px` });
+		const label = picked.anchor.element ?? hit.frame.name;
+		if (hoverTag.textContent !== label) {
+			hoverTag.textContent = label;
+		}
+		showHover(true);
+	}
+	function renderHover(): void {
+		if (hoverShown) {
+			placeHover();
+		}
 	}
 
 	doc.addEventListener('keydown', event => {
@@ -1926,7 +1947,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			event.preventDefault();
 			state.selected = new Set(views.keys());
 			syncSelectionBar();
-			syncLayers();
+			post('select', { frames: [...state.selected] });
 			requestRender();
 			return;
 		}
@@ -2001,13 +2022,14 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		state.tool = tool;
 		root!.classList.remove('tool-move', 'tool-hand', 'tool-comment', 'tool-play');
 		root!.classList.add(`tool-${tool}`);
-		hoverBox.hidden = true;
+		showHover(false);
 		if (tool !== 'comment' && popover?.draft) {
 			closePopover();
 		}
 		for (const [name, node] of toolButtons) {
 			node.setAttribute('aria-pressed', String(name === tool));
 		}
+		playButton.setAttribute('aria-pressed', String(tool === 'play'));
 		if (tool === 'comment') {
 			showHint(S.commentModeHint, 2600);
 		} else if (tool === 'play') {
@@ -2139,7 +2161,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			const x2 = clamp(Math.max(startClient.x, ev.clientX), r.left, r.right);
 			const y2 = clamp(Math.max(startClient.y, ev.clientY), r.top, r.bottom);
 			regionBox.hidden = false;
-			hoverBox.hidden = true;
+			showHover(false);
 			Object.assign(regionBox.style, { transform: `translate(${x1 - vr.left}px,${y1 - vr.top}px)`, width: `${x2 - x1}px`, height: `${y2 - y1}px` });
 		}, (moved, ev) => {
 			regionBox.hidden = true;
@@ -2216,58 +2238,99 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		return `cv-pin${comment.author === 'agent' ? ' agent' : ''}${comment.status === 'sent' ? ' sent' : ''}${comment.status === 'resolved' ? ' resolved' : ''}${outdated ? ' outdated' : ''}${popover?.comment === comment.id ? ' open' : ''}`;
 	}
 
+	/** Same spot, same pin: a draft's pin becomes the saved comment's, and the store's id swap keeps it. */
+	function anchorKey(anchor: ICanvasAnchor): string {
+		return [anchor.frame, anchor.selector ?? '', anchor.x, anchor.y, anchor.w ?? '', anchor.h ?? ''].join('\u0001');
+	}
+	function pinNode(id: string, key: string, wanted: ReadonlySet<string>): HTMLElement {
+		let node = pinNodes.get(id);
+		if (node) {
+			return node;
+		}
+		for (const [other, existing] of pinNodes) {
+			if (!wanted.has(other) && existing.dataset.key === key) {
+				pinNodes.delete(other);
+				pinNodes.set(id, existing);
+				return existing;
+			}
+		}
+		node = el('div');
+		node.addEventListener('pointerdown', event => event.stopPropagation());
+		node.addEventListener('click', event => {
+			event.stopPropagation();
+			const open = [...pinNodes].find(([, other]) => other === node)?.[0];
+			if (open && open !== 'pending') {
+				openThread(open);
+			}
+		});
+		pinsLayer.append(node);
+		pinNodes.set(id, node);
+		return node;
+	}
+
 	function renderPins(vw: number, vh: number): void {
-		const seen = new Set<string>();
-		for (const comment of visibleComments()) {
+		const comments = visibleComments();
+		const wanted = new Set(comments.map(comment => comment.id));
+		if (pendingPin) {
+			wanted.add('pending');
+		}
+		for (const comment of comments) {
 			const at = anchorPoint(comment.anchor);
 			if (!at) {
+				wanted.delete(comment.id);
 				continue;
 			}
 			const s = toScreen(at.p);
-			let node = pinNodes.get(comment.id);
-			if (!node) {
-				node = el('div');
-				const id = comment.id;
-				node.addEventListener('pointerdown', event => event.stopPropagation());
-				node.addEventListener('click', event => {
-					event.stopPropagation();
-					openThread(id);
-				});
-				pinsLayer.append(node);
-				pinNodes.set(comment.id, node);
+			const node = pinNode(comment.id, anchorKey(comment.anchor), wanted);
+			node.dataset.key = anchorKey(comment.anchor);
+			const className = pinClass(comment, at.outdated);
+			if (node.className !== className) {
+				node.className = className;
 			}
-			seen.add(comment.id);
-			node.className = pinClass(comment, at.outdated);
-			if (comment.author === 'agent') {
-				node.innerHTML = ICONS.sparkle;
-			} else if (comment.status === 'resolved') {
-				node.innerHTML = ICONS.check;
-			} else {
-				node.textContent = String(commentNumber(comment.id));
+			const glyph = comment.author === 'agent' ? 'sparkle' : comment.status === 'resolved' ? 'check' : String(commentNumber(comment.id));
+			if (node.dataset.glyph !== glyph) {
+				node.dataset.glyph = glyph;
+				if (ICONS[glyph]) {
+					node.innerHTML = ICONS[glyph];
+				} else {
+					node.textContent = glyph;
+				}
 			}
-			node.title = `${comment.author === 'agent' ? S.agent : S.you}: ${comment.text}`;
-			node.hidden = s.x < -30 || s.y < -30 || s.x > vw + 30 || s.y > vh + 30 || cam.z < 0.06;
-			node.style.transform = `translate(${s.x}px,${s.y - 26}px)`;
+			node.setAttribute('aria-label', `${comment.author === 'agent' ? S.agent : S.you}: ${comment.text}`);
+			// visibility, not [hidden]: display:none would replay the pop-in each time it scrolls back into view.
+			node.style.visibility = s.x < -30 || s.y < -30 || s.x > vw + 30 || s.y > vh + 30 || cam.z < 0.06 ? 'hidden' : '';
+			node.style.translate = `${s.x}px ${s.y - 26}px`;
 		}
 		if (pendingPin) {
 			const at = anchorPoint(pendingPin.anchor);
 			if (at) {
-				let node = pinNodes.get('pending');
-				if (!node) {
-					node = el('div', 'cv-pin pending');
-					node.append(icon('plus'));
-					pinsLayer.append(node);
-					pinNodes.set('pending', node);
+				const node = pinNode('pending', anchorKey(pendingPin.anchor), wanted);
+				node.dataset.key = anchorKey(pendingPin.anchor);
+				if (node.className !== 'cv-pin pending') {
+					node.className = 'cv-pin pending';
 				}
-				seen.add('pending');
+				if (node.dataset.glyph !== 'plus') {
+					node.dataset.glyph = 'plus';
+					node.innerHTML = ICONS.plus;
+				}
 				const s = toScreen(at.p);
-				node.style.transform = `translate(${s.x}px,${s.y - 26}px)`;
+				node.style.translate = `${s.x}px ${s.y - 26}px`;
 			}
 		}
-		for (const [id, node] of pinNodes) {
-			if (!seen.has(id)) {
-				node.remove();
+		for (const [id, node] of [...pinNodes]) {
+			if (!wanted.has(id)) {
 				pinNodes.delete(id);
+				// Kept a moment for a comment saved from this draft (or the store's copy) to take over.
+				if (still || reduced) {
+					node.remove();
+				} else {
+					node.classList.add('cv-out');
+					win.setTimeout(() => {
+						if (![...pinNodes.values()].includes(node)) {
+							node.remove();
+						}
+					}, 200);
+				}
 			}
 		}
 	}
@@ -2623,7 +2686,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		stage.append(box);
 		popover = { node: box, at: () => anchorPoint(comment.anchor)?.p, draft: false, comment: comment.id, cleanup: () => undefined };
 		positionPopover();
-		syncCommentsPane();
+		post('thread', { comment: comment.id });
 		requestRender();
 	}
 
@@ -2661,7 +2724,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	//#region Chrome: top bar, toolbar, minimap, tray, panes
 
 	const top = el('div', 'cv-top');
-	const titleBox = el('div', 'cv-title cv-glass');
+	const titleBox = el('div', 'cv-title');
 	const backButton = button(S.back, 'back', () => {
 		const prev = playHistory.pop();
 		if (prev) {
@@ -2700,26 +2763,54 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	});
 	viewGroup.append(devicesButton, flowsButton, minimapButton);
 	actions.append(lookGroup, viewGroup);
+	// Play: the prototype from its first screen, every hotspot live.
+	const playGroup = el('div', 'cv-group cv-glass');
+	const playButton = button(S.play, 'play', () => {
+		if (state.tool === 'play') {
+			setTool('move');
+			return;
+		}
+		setTool('play');
+		const first = startFrame();
+		if (first) {
+			select(first);
+			zoomToFrame(first, true);
+		}
+	}, 'labeled', true);
+	playButton.lastChild!.textContent = S.playShort;
+	playButton.setAttribute('aria-pressed', 'false');
+	playGroup.append(playButton);
+	actions.append(playGroup);
+	/** Panel: shows or hides the workbench panes beside the page (the host may ask too). */
+	let setPanes: ((layers: boolean, comments: boolean) => void) | undefined;
 	if (!inline) {
+		// The frame list and the comments are workbench panes beside the page (canvasView.ts).
 		const paneGroup = el('div', 'cv-group cv-glass');
+		setPanes = (layers, comments) => {
+			state.layers = layers;
+			state.commentsOpen = comments;
+			syncPanes();
+		};
+		const syncPanes = () => {
+			layersButton.setAttribute('aria-pressed', String(state.layers));
+			commentsButton.setAttribute('aria-pressed', String(state.commentsOpen));
+			post('panes', { layers: state.layers, comments: state.commentsOpen });
+			syncComments();
+		};
 		const layersButton = button(S.layers, 'layers', () => {
 			state.layers = !state.layers;
-			layersButton.setAttribute('aria-pressed', String(state.layers));
-			layersPane.hidden = !state.layers;
-			requestRender();
+			syncPanes();
 		});
 		const commentsButton = button(S.comments, 'comment', () => {
 			state.commentsOpen = !state.commentsOpen;
-			commentsButton.setAttribute('aria-pressed', String(state.commentsOpen));
-			commentsPane.hidden = !state.commentsOpen;
-			requestRender();
+			syncPanes();
 		});
 		layersButton.setAttribute('aria-pressed', String(state.layers));
 		commentsButton.setAttribute('aria-pressed', String(state.commentsOpen));
 		paneGroup.append(layersButton, commentsButton);
 		actions.append(paneGroup);
 	} else if (hosted) {
-		const open = button(S.openPanel, 'panel', () => post('open', { frame: [...state.selected][0] }), 'primary', true);
+		const open = button(S.openPanel, 'panel', () => post('open', { frame: [...state.selected][0] }), 'chip', true);
 		const wrap = el('div', 'cv-group cv-glass');
 		wrap.append(open);
 		actions.append(wrap);
@@ -2740,6 +2831,19 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		for (const entry of lookButtons) {
 			entry.node.setAttribute('aria-pressed', String(entry.kind === look));
 		}
+	}
+
+	/** Where the prototype starts: the first frame nothing leads to, among frames that lead on. */
+	function startFrame(): string | undefined {
+		const list = ordered();
+		const flows = linkTriggers();
+		const targets = new Set(flows.map(entry => entry.t.to));
+		const sources = new Set(flows.map(entry => entry.v.frame.id));
+		const selected = [...state.selected][0];
+		if (selected && views.has(selected)) {
+			return selected;
+		}
+		return list.find(v => sources.has(v.frame.id) && !targets.has(v.frame.id))?.frame.id ?? list[0]?.frame.id;
 	}
 
 	function setLook(kind: CanvasTheme): void {
@@ -2802,7 +2906,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		}, 3200);
 	}
 
-	const minimap = el('div', 'cv-minimap cv-glass');
+	const minimap = el('div', 'cv-minimap');
 	const miniView = el('div', 'cv-mini-view');
 	minimap.append(miniView);
 	minimap.hidden = !state.minimap;
@@ -2950,128 +3054,11 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		selbar.style.transform = `translate(${x}px,${y}px) translate(-50%,-100%)`;
 	}
 
-	// The side panes (panel mode).
-	const layersBody = el('div', 'cv-side-body');
-	const layersCount = el('span', 'cv-side-count');
-	if (!inline) {
-		const head = el('div', 'cv-side-head');
-		head.append(el('span', undefined, S.frames), layersCount, el('span', 'cv-grow'));
-		layersPane.append(head, layersBody);
-		layersPane.hidden = !state.layers;
-	}
-	function syncLayers(): void {
-		if (inline) {
-			return;
-		}
-		layersCount.textContent = String(model.frames.length);
-		layersBody.replaceChildren();
-		const groups = new Map<string, ICanvasFrame[]>();
-		for (const frame of model.frames) {
-			groups.set(frame.section ?? '', [...groups.get(frame.section ?? '') ?? [], frame]);
-		}
-		for (const [section, frames] of groups) {
-			if (section) {
-				layersBody.append(el('div', 'cv-sec-title', section));
-			}
-			for (const frame of frames) {
-				const row = el('button', `cv-row${state.selected.has(frame.id) ? ' sel' : ''}`);
-				row.type = 'button';
-				const kindIcon = frame.kind === 'iphone' || frame.kind === 'android' ? 'phone' : frame.kind;
-				row.append(icon(kindIcon), el('span', 'cv-row-name', frame.name), el('span', 'cv-row-meta', `${frame.width}\u00d7${frame.height || 'auto'}`));
-				row.addEventListener('click', () => {
-					select(frame.id);
-					zoomToFrame(frame.id);
-				});
-				row.addEventListener('pointerenter', () => {
-					state.hoverFrame = frame.id;
-					requestRender();
-				});
-				row.addEventListener('pointerleave', () => {
-					state.hoverFrame = undefined;
-					requestRender();
-				});
-				layersBody.append(row);
-			}
-		}
-	}
-
-	const commentsBody = el('div', 'cv-side-body');
-	const commentsCount = el('span', 'cv-side-count');
-	const noteArea = el('textarea');
-	const sendButton = button(S.sendAll, 'send', () => {
-		sendAll(noteArea.value);
-		noteArea.value = '';
-	}, 'primary', true);
-	if (!inline) {
-		const head = el('div', 'cv-side-head');
-		const resolvedToggle = el('label', 'cv-check');
-		const box = el('input');
-		box.type = 'checkbox';
-		box.addEventListener('change', () => {
-			state.showResolved = box.checked;
-			syncComments();
-		});
-		resolvedToggle.append(box, doc.createTextNode(S.showResolved));
-		head.append(el('span', undefined, S.comments), commentsCount, el('span', 'cv-grow'), resolvedToggle);
-		const foot = el('div', 'cv-side-foot');
-		noteArea.placeholder = S.notePlaceholder;
-		noteArea.rows = 1;
-		noteArea.addEventListener('input', () => {
-			noteArea.style.height = 'auto';
-			noteArea.style.height = `${Math.min(120, noteArea.scrollHeight + 2)}px`;
-		});
-		noteArea.addEventListener('keydown', event => {
-			if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-				event.preventDefault();
-				sendAll(noteArea.value);
-				noteArea.value = '';
-			}
-		});
-		foot.append(noteArea, sendButton);
-		commentsPane.append(head, commentsBody, foot);
-		commentsPane.hidden = !state.commentsOpen;
-	}
-	function syncCommentsPane(): void {
-		if (inline) {
-			return;
-		}
-		const list = visibleComments();
-		commentsCount.textContent = String(model.comments.filter(c => c.status !== 'resolved').length);
-		commentsBody.replaceChildren();
-		if (!list.length) {
-			commentsBody.append(el('div', 'cv-empty', S.noComments));
-		}
-		for (const comment of list) {
-			const card = el('button', `cv-card${popover?.comment === comment.id ? ' open' : ''}`);
-			card.type = 'button';
-			const pin = el('span', pinClass(comment, false));
-			if (comment.author === 'agent') {
-				pin.innerHTML = ICONS.sparkle;
-			} else if (comment.status === 'resolved') {
-				pin.innerHTML = ICONS.check;
-			} else {
-				pin.textContent = String(commentNumber(comment.id));
-			}
-			const body = el('span', 'cv-card-body');
-			body.append(el('span', 'cv-card-where', `${anchorLabel(comment.anchor)}${comment.status === 'sent' ? ` \u00b7 ${S.sent}` : ''}`), el('span', 'cv-card-text', comment.text || (comment.tweaks ?? []).map(t => `${t.property}: ${t.value}`).join(', ')));
-			if (comment.reply) {
-				body.append(el('span', 'cv-card-reply', comment.reply));
-			}
-			card.append(pin, body);
-			card.addEventListener('click', () => flyToComment(comment.id));
-			commentsBody.append(card);
-		}
-		const ready = model.comments.filter(c => c.status === 'open' && c.author === 'user').length;
-		sendButton.disabled = !ready;
-		sendButton.lastChild!.textContent = fmt(S.sendAll, ready);
-	}
-
 	function syncComments(): void {
 		const ready = model.comments.filter(c => c.status === 'open' && c.author === 'user').length;
 		tray.hidden = !ready || (!inline && state.commentsOpen);
 		trayCount.replaceChildren(el('span', 'cv-tray-dot'), doc.createTextNode(fmt(S.ready, ready)));
 		trayButton.lastChild!.textContent = fmt(S.sendAll, ready);
-		syncCommentsPane();
 		for (const v of views.values()) {
 			v.rects.clear();
 		}
@@ -3122,7 +3109,6 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			collectTriggers(v);
 		}
 		syncTop();
-		syncLayers();
 		syncSelectionBar();
 		syncComments();
 		if (origin === 'agent' && next.version !== previousVersion) {
@@ -3135,13 +3121,17 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	}
 
 	win.addEventListener('message', event => {
-		const data = event.data as { type?: unknown; op?: unknown; id?: unknown; doc?: ICanvasDoc; origin?: string; frame?: string; comments?: ICanvasComment[]; frames?: ICanvasLayout[] } | null;
+		const data = event.data as { type?: unknown; op?: unknown; id?: unknown; doc?: ICanvasDoc; origin?: string; frame?: string; comment?: unknown; show?: unknown; layers?: unknown; comments?: ICanvasComment[] | boolean; frames?: ICanvasLayout[] } | null;
 		if (!data || data.type !== 'volt-canvas' || (data.id !== undefined && data.id !== model.id)) {
 			return;
 		}
 		switch (data.op) {
 			case 'doc':
-				if (data.doc) {
+				if (data.doc && boot.pinned) {
+					// History keeps its version; only the comments follow the canvas.
+					model = { ...model, comments: data.doc.comments };
+					syncComments();
+				} else if (data.doc) {
 					syncDoc(data.doc, data.origin ?? 'user', data.frame);
 				}
 				return;
@@ -3153,7 +3143,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 				}
 				return;
 			case 'layout':
-				if (Array.isArray(data.frames)) {
+				if (Array.isArray(data.frames) && !boot.pinned) {
 					for (const entry of data.frames) {
 						const dragged = (state.dragging || resizing) && state.selected.has(entry.id);
 						if (!dragged) {
@@ -3168,6 +3158,22 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 					zoomToFrame(data.frame);
 				}
 				return;
+			case 'hover':
+				state.hoverFrame = typeof data.frame === 'string' ? data.frame : undefined;
+				requestRender();
+				return;
+			case 'comment':
+				if (typeof data.comment === 'string') {
+					flyToComment(data.comment);
+				}
+				return;
+			case 'resolved':
+				state.showResolved = !!data.show;
+				syncComments();
+				return;
+			case 'panes':
+				setPanes?.(data.layers !== false, data.comments !== false);
+				return;
 		}
 	});
 
@@ -3179,7 +3185,6 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		views.set(frame.id, createView(frame));
 	}
 	syncTop();
-	syncLayers();
 	syncComments();
 
 	const fitFirst = () => {
@@ -3187,7 +3192,8 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			return;
 		}
 		const r = viewportRect();
-		if (!r.width || !r.height) {
+		// A host still laying out (a webview mounting) can report a sliver: fit once it has room.
+		if (r.width < 120 || r.height < 120) {
 			return;
 		}
 		fitted = true;
@@ -3202,11 +3208,18 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		}
 	};
 	let lastSize = { w: 0, h: 0 };
+	let untouched = true;
+	for (const type of ['pointerdown', 'wheel', 'keydown'] as const) {
+		root.addEventListener(type, () => untouched = false, { capture: true, passive: true });
+	}
 	if (typeof win.ResizeObserver === 'function') {
 		new win.ResizeObserver(() => {
 			const r = viewportRect();
 			if (!fitted) {
 				fitFirst();
+			} else if (untouched && r.width >= 120 && r.height >= 120 && (r.width !== lastSize.w || r.height !== lastSize.h)) {
+				// Panes opening or closing before the user moved anything: fit again.
+				fitAll(false);
 			} else if (lastSize.w && (r.width !== lastSize.w || r.height !== lastSize.h)) {
 				// Keep what was centered centered.
 				setCamera(cam.x + (r.width - lastSize.w) / 2, cam.y + (r.height - lastSize.h) / 2, cam.z);
@@ -3216,7 +3229,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	}
 	fitFirst();
 	requestRender();
-	post('hello', { version: model.version });
+	post('hello', { version: model.version, ...(boot.pinned ? { pinned: true } : {}) });
 
 	//#endregion
 }

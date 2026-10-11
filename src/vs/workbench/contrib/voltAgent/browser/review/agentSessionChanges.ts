@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { AgentSegment, FileChangeVerb, IFileChangeBlock } from '../blocks/agentBlocks.js';
+import { AgentSegment, FileChangeVerb, IFileChangeBlock, isPhantomFileBlock } from '../blocks/agentBlocks.js';
 import { computeChangeStats, netFileEdit } from './fileChangePreviewModel.js';
 
 export type AgentChangeKind = 'added' | 'modified' | 'deleted';
@@ -172,7 +172,7 @@ export function collectLastTurnFileChanges(messages: readonly IAgentChangeTransc
 export function collectFileChangesFromSegments(segments: readonly AgentSegment[] | undefined, turnId?: string, keep?: AgentChangePathFilter): IAgentSessionFileChange[] {
 	const byPath = new Map<string, IAgentSessionFileChange>();
 	for (const segment of segments ?? []) {
-		if (segment.kind !== 'block' || segment.block.type !== 'file') {
+		if (segment.kind !== 'block' || segment.block.type !== 'file' || isPhantomFileBlock(segment.block)) {
 			continue;
 		}
 		if (keep && !keep(segment.block.path)) {

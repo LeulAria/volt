@@ -121,7 +121,9 @@ const ELEMENT_CSS = `
 /**
  * The bridge: `window.volt.open(href)` (and openFile / openSession) asks Volt to open a chat, a
  * file or a link; theme changes arrive as messages; `[data-volt-chart]` elements and
- * `<script type="application/volt-chart+json">` blocks render once the page has loaded.
+ * `<script type="application/volt-chart+json">` blocks render once the page has loaded. A wheel
+ * the page uses (a panel in it that can still scroll that way, or its own handler) stays in the
+ * page; the rest reaches the webview host, which hands it to the transcript.
  */
 function bootstrapScript(preview: boolean, kind: 'light' | 'dark', still: boolean): string {
 	return `(function(){var preview=${preview ? 'true' : 'false'},still=${still ? 'true' : 'false'},api=null;try{if(typeof acquireVsCodeApi==='function'){api=acquireVsCodeApi();}}catch(e){}
@@ -132,7 +134,9 @@ window.volt={preview:preview,still:still,theme:'${kind}',get data(){return readD
 send:function(t){post({type:'volt-send',text:str(t)});},prompt:function(t){post({type:'volt-prompt',text:str(t)});},setContext:function(v){post({type:'volt-context',value:str(v)});},fullscreen:function(on){post({type:'volt-display',mode:on===false?'inline':'fullscreen'});},channel:function(c,p){post({type:'volt-channel',channel:String(c),payload:p});}};
 window.addEventListener('message',function(e){var d=e.data;if(d&&d.type==='volt-theme'&&typeof d.css==='string'){var s=document.getElementById('volt-visual-theme');if(s){s.textContent=d.css;}if(d.kind){window.volt.theme=d.kind;var c=document.getElementById('volt-visual-scheme');if(c){c.textContent=':root{color-scheme:'+d.kind+'}';}}}});
 function mount(){if(preview&&document.body&&!/vscode-(light|dark|high-contrast)/.test(document.body.className)){document.body.classList.add('vscode-${kind}');}if(window.VoltCharts){window.VoltCharts.mountAll(document,{animate:!preview&&!still,onOpen:window.volt.open});}}
-if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',mount);}else{mount();}})();`;
+if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',mount);}else{mount();}
+function scrolls(el,dy,dx){if(!(el instanceof Element)){return false;}var root=el===document.scrollingElement,s=getComputedStyle(el),y=root||/auto|scroll/.test(s.overflowY),x=root||/auto|scroll/.test(s.overflowX);return(y&&dy<0&&el.scrollTop>0)||(y&&dy>0&&el.scrollTop+el.clientHeight<el.scrollHeight-1)||(x&&dx<0&&el.scrollLeft>0)||(x&&dx>0&&el.scrollLeft+el.clientWidth<el.scrollWidth-1);}
+document.addEventListener('wheel',function(e){var p=e.composedPath();for(var i=0;i<p.length&&!e.defaultPrevented;i++){if(scrolls(p[i],e.deltaY,e.deltaX)){break;}}if(e.defaultPrevented||i<p.length){e.stopPropagation();}},{passive:true});})();`;
 }
 
 let runtimeSource: string | undefined;

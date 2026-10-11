@@ -774,8 +774,10 @@ function collectFileChange(value: unknown, acc: {
 			acc.unifiedDiff ??= trimmed;
 			return;
 		}
-		if (!acc.path && (trimmed.includes('/') || trimmed.includes('\\') || /\.\w{1,8}$/.test(trimmed.split(/\s+/).pop() ?? ''))) {
-			acc.path ??= trimmed.split(/\s+/).pop();
+		const last = trimmed.split(/\s+/).pop() ?? '';
+		// The last word is a path only if it has letters or digits ("}" closing a JSON dump is not one).
+		if (!acc.path && /[\p{L}\p{N}]/u.test(last) && (trimmed.includes('/') || trimmed.includes('\\') || /\.\w{1,8}$/.test(last))) {
+			acc.path ??= last;
 		}
 		return;
 	}

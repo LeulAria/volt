@@ -199,8 +199,8 @@ function levelStyles(base: Color, highlight: Color): string[] {
 	return styles;
 }
 
-/** Sizes each dot for time `t` (seconds) and draws them, batched by brightness. */
-function paint(context: CanvasRenderingContext2D, grid: IDotGrid, styles: readonly string[], t: number): void {
+/** Sizes each dot for time `t` (seconds) and draws them, batched by brightness; `dotScale` shrinks or grows every dot. */
+function paint(context: CanvasRenderingContext2D, grid: IDotGrid, styles: readonly string[], t: number, dotScale = 1): void {
 	context.clearRect(0, 0, grid.width, grid.height);
 	const { count, u, v, edge, seed, rate, radius, level, order, spanU, spanV } = grid;
 	// Three soft blobs drift on slow Lissajous paths; wide fields get larger ones to fill them.
@@ -213,8 +213,8 @@ function paint(context: CanvasRenderingContext2D, grid: IDotGrid, styles: readon
 	const k1 = 1 / Math.pow(0.95 * spread, 2), k2 = 1 / Math.pow(0.75 * spread, 2), k3 = 1 / Math.pow(0.6 * spread, 2);
 	// A band of light crossing corner to corner, then a short rest off the field.
 	const sweep = -1.6 + 3.2 * ((t % SWEEP) / SWEEP);
-	const maxRadius = PITCH * 0.32;
-	const minRadius = 0.55;
+	const maxRadius = PITCH * 0.32 * dotScale;
+	const minRadius = 0.55 * dotScale;
 	const counts = new Uint32Array(LEVELS);
 	for (let i = 0; i < count; i++) {
 		const du1 = u[i] - b1x, dv1 = v[i] - b1y;
@@ -274,6 +274,8 @@ function animateDots(field: HTMLElement, canvas: HTMLCanvasElement, round: boole
 	let grid: IDotGrid | undefined;
 	let styles: string[] = [];
 	let colorKey = '';
+	/** `--volt-dot-loader-dot-scale`: a placeholder can ask for smaller dots (pages do). */
+	let dotScale = 1;
 	let frame = 0;
 	let frames = 0;
 	let visible = true;
@@ -284,6 +286,8 @@ function animateDots(field: HTMLElement, canvas: HTMLCanvasElement, round: boole
 		const style = getWindow(field).getComputedStyle(field);
 		const base = readColor(style, '--volt-dot-loader-color', FALLBACK_COLOR);
 		const highlight = readColor(style, '--volt-dot-loader-highlight', FALLBACK_HIGHLIGHT);
+		const scale = parseFloat(style.getPropertyValue('--volt-dot-loader-dot-scale'));
+		dotScale = scale > 0 ? scale : 1;
 		const key = `${base}|${highlight}`;
 		if (key !== colorKey) {
 			colorKey = key;
@@ -309,7 +313,7 @@ function animateDots(field: HTMLElement, canvas: HTMLCanvasElement, round: boole
 			readColors();
 		}
 		if (visible) {
-			paint(context, grid, styles, now());
+			paint(context, grid, styles, now(), dotScale);
 		}
 		frame = getWindow(canvas).requestAnimationFrame(tick);
 	};
@@ -332,7 +336,7 @@ function animateDots(field: HTMLElement, canvas: HTMLCanvasElement, round: boole
 		readColors();
 		visible = true;
 		// Reduced motion: one still frame of the same field.
-		paint(context, grid, styles, still ? 2.2 : now());
+		paint(context, grid, styles, still ? 2.2 : now(), dotScale);
 		if (!still && !frame) {
 			frame = view.requestAnimationFrame(tick);
 		}
