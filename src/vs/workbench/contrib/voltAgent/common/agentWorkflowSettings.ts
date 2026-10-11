@@ -9,7 +9,7 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING } from '../../../services/voltRuntime/common/compaction.js';
 import { HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_DEFAULT_MAX_TOKENS, HANDOFF_DEFAULT_PERCENT, HANDOFF_MAX_TOKENS_SETTING, HANDOFF_MIN_TOKENS } from '../../../services/voltRuntime/common/contextHandoff.js';
 import { ORCH_RESUME_AFTER_RESTART_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
-import { LIMIT_AUTO_RESUME_SETTING } from '../../../services/voltRuntime/common/orchestration/limitRecovery.js';
+import { LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING } from '../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 
 export { ORCH_RESUME_AFTER_RESTART_SETTING as AGENT_RESUME_AFTER_RESTART_SETTING, COMPACT_OLD_THREADS_SETTING as AGENT_COMPACT_OLD_THREADS_SETTING, LIMIT_AUTO_RESUME_SETTING as AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING };
 
@@ -33,6 +33,11 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			type: 'boolean',
 			default: true,
 			description: localize('voltAgent.autoResumeAfterLimit', "When a provider's usage limit stops a chat, continue it on its own once the limit resets (\"Continue where you left off\"). Without a reset time, Volt checks again with a growing delay. Each chat's banner can cancel or ask for it."),
+		},
+		[LIMIT_STOP_CLAUDE_SETTING]: {
+			type: 'boolean',
+			default: true,
+			description: localize('voltAgent.stopAtClaudeLimit', "When Claude's usage limit stops a chat, stop there: the chat does not continue on its own or check again, and the Claude subagents still working in it are stopped, so Volt sends nothing more on the account. Resume from the chat's banner. Volt cannot turn off extra usage on your Claude account; with it on, Claude keeps going on credit without reporting a limit."),
 		},
 		[COMPACT_OLD_THREADS_SETTING]: {
 			type: 'boolean',

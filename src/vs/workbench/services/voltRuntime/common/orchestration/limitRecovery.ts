@@ -240,6 +240,20 @@ export const LIMIT_MAX_PROBES = 16;
 
 export const LIMIT_AUTO_RESUME_SETTING = 'volt.agent.autoResumeAfterLimit';
 
+/**
+ * When Claude's usage limit stops a chat, the chat stops there: no automatic resume or probe (each
+ * is another request on the account) unless the user asks for it on the chat's banner, and the
+ * Claude subagents still working in that chat tree are stopped too.
+ */
+export const LIMIT_STOP_CLAUDE_SETTING = 'volt.agent.stopAtClaudeLimit';
+
+/** Providers that run on a Claude account or Anthropic key (Claude Code, the Claude ACP agent, the API). */
+const CLAUDE_PROVIDERS = new Set(['claude-code', 'claude', 'anthropic']);
+
+export function isClaudeProvider(providerId: string | undefined): boolean {
+	return !!providerId && CLAUDE_PROVIDERS.has(providerId);
+}
+
 /** What the decider knows about a parked chat (see `IOrchLimitPark`). */
 export interface ILimitPark {
 	readonly at: number;

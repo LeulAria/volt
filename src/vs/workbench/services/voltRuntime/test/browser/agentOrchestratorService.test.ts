@@ -115,6 +115,7 @@ suite('Agent orchestrator service', () => {
 			stub({ rootFor: () => URI.file('/repo') }),
 			stub({ getValue: () => existing?.resume ?? 'off', onDidChangeConfiguration: () => toDisposable(() => undefined) }),
 			stub({ run: async () => undefined, needsRetry: () => false }),
+			stub({ onWillShutdown: () => toDisposable(() => undefined) }),
 		));
 		await service.whenReady;
 		const host = new FakeHost(runtime);

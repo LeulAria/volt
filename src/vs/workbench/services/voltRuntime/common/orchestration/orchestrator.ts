@@ -353,8 +353,12 @@ export type OrchCommandBody =
 	| { readonly type: 'turn.resume'; readonly threadId: string; readonly turnId: string; readonly prompt: IOrchPrompt }
 	/** The runtime started the run for a turn (or one Volt did not dispatch). */
 	| { readonly type: 'run.started'; readonly threadId: string; readonly runId: string; readonly turnId?: string; readonly steerable?: boolean }
-	/** `limit`: the provider refused for a usage limit; the chat parks until the reset instead of failing. */
-	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string; readonly limit?: { readonly resetAt?: number; readonly message: string } }
+	/**
+	 * `limit`: the provider refused for a usage limit; the chat parks until the reset instead of failing.
+	 * `limit.stop`: it parks without resuming on its own (Claude's limit, see `LIMIT_STOP_CLAUDE_SETTING`)
+	 * unless the user already asked this chat to resume.
+	 */
+	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string; readonly limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean } }
 	/** A steer could not be delivered (the run ended first): reports go back to pending, a prompt back to the queue's head. */
 	| { readonly type: 'steer.failed'; readonly threadId: string; readonly steerId: string; readonly prompt: IOrchPrompt; readonly taskIds?: readonly string[] }
 	/** The effect that starts a turn failed before the runtime took it. */
@@ -393,9 +397,10 @@ export type OrchCommandBody =
 	| { readonly type: 'move.finished'; readonly threadId: string; readonly result: IOrchMoveResult }
 	/**
 	 * After a restart: nothing that was running is running any more. `resume` picks what continues
-	 * on its own (see `OrchRestartResume`); everything else waits for the user.
+	 * on its own (see `OrchRestartResume`); everything else waits for the user. `rootId` limits it to
+	 * one chat tree (one loaded from disk later, whose runs died with an earlier window).
 	 */
-	| { readonly type: 'recover'; readonly resume?: OrchRestartResume };
+	| { readonly type: 'recover'; readonly resume?: OrchRestartResume; readonly rootId?: string };
 
 /**
  * What continues by itself after Volt restarts mid-run (the agent processes died with the window).

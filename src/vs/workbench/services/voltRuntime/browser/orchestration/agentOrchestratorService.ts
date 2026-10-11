@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { DeferredPromise, timeout } from '../../../../../base/common/async.js';
+import { DeferredPromise, IntervalTimer, raceTimeout, timeout } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
@@ -14,6 +14,7 @@ import { IEnvironmentService } from '../../../../../platform/environment/common/
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
+import { ILifecycleService } from '../../../lifecycle/common/lifecycle.js';
 import { IVoltEventEnvelope } from '../../common/events.js';
 import { IAgentWorktreeService } from '../../common/git/agentWorktree.js';
 import { IWorkspaceMoveSpec, workspaceTargetLabel } from '../../common/git/workspaceMove.js';
@@ -23,9 +24,9 @@ import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '..
 import { normalizeVoltMode } from '../../common/modes.js';
 import { AGENT_TASK_TOOLS, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchMove, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_RESUME_AFTER_RESTART_SETTING, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
-import { ILimitSignal, LIMIT_AUTO_RESUME_SETTING, limitAutoResumes, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
-import { extractRoot, IOrchIndex, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchMove, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
+import { ILimitSignal, isClaudeProvider, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitAutoResumes, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
+import { extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { harnessTaskId, IOrchStep, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
 import { IVoltSessionContextService } from '../../common/sessionContext.js';
@@ -39,6 +40,16 @@ const CANCEL_SETTLE_MS = 15_000;
 const CHILD_ID_PREFIX = 'agent-';
 /** setTimeout's ceiling is about 24.8 days; the limit timer re-arms at least daily. */
 const LIMIT_TIMER_MAX_MS = 86_400_000;
+/** How often Volt checks that what it believes is running really is (lost run ends, stuck starts and stops). */
+const WATCHDOG_MS = 20_000;
+/** Watchdog ticks in a row a turn must look stuck before Volt acts on it (an event may be on its way). */
+const WATCHDOG_STRIKES = 2;
+/** A turn whose start has not reached the runtime after this long fails, so its chat does not hang on "Starting". */
+const START_STALL_MS = 180_000;
+/** A message put into a running agent that is not taken within this long goes back to the queue instead. */
+const STEER_TIMEOUT_MS = 60_000;
+/** Failed writes are tried again after 1 s, doubling up to this. */
+const PERSIST_RETRY_MAX_MS = 30_000;
 
 export class AgentOrchestratorService extends Disposable implements IAgentOrchestratorService {
 
@@ -52,12 +63,20 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private readonly dirtyRoots = new Set<string>();
 	private persistTimer: ReturnType<typeof setTimeout> | undefined;
 	private persisting: Promise<void> = Promise.resolve();
+	private persistRetry: ReturnType<typeof setTimeout> | undefined;
+	private persistFailures = 0;
 	private knownRoots = new Set<string>();
 	private lastIndex = '';
 	private host: IOrchTurnHost | undefined;
 	private readonly waitingForHost: Extract<OrchEffect, { kind: 'startTurn' }>[] = [];
 	/** The turn whose start is in flight per chat: a `run.start` seen now belongs to it. */
 	private readonly dispatching = new Map<string, string>();
+	/** When each in-flight start began, by turn: a start that never reaches the runtime is failed. */
+	private readonly startingSince = new Map<string, number>();
+	/** Turns whose start effect is decided but not begun (waiting for the write, or for a host). */
+	private readonly owedStarts = new Set<string>();
+	/** Watchdog ticks in a row each suspect looked stuck. */
+	private suspects = new Map<string, number>();
 	private readonly cancelWatch = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly lastError = new Map<string, string>();
 	private readonly worktreesInFlight = new Set<string>();
@@ -69,7 +88,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private readonly waitingForMover: Extract<OrchEffect, { kind: 'moveWorkspace' }>[] = [];
 	private readonly movesInFlight = new Set<string>();
 	/** `delegate_task` calls seen in a chat's stream, oldest first, waiting for the MCP call that matches. */
-	private readonly delegateCalls = new Map<string, string[]>();
+	private readonly delegateCalls = new Map<string, { readonly callId: string; readonly turnId: string | undefined }[]>();
 	/** Harness Task calls that launched asynchronously: their "completed" was the launch, not the end. */
 	private readonly asyncHarness = new Set<string>();
 	private readonly loading = new Map<string, Promise<void>>();
@@ -94,6 +113,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IAgentWorktreeSetupService private readonly worktreeSetup: IAgentWorktreeSetupService,
+		@ILifecycleService lifecycleService: ILifecycleService,
 	) {
 		super();
 		this.store = new OrchestratorStore(joinPath(environmentService.userRoamingDataHome, 'voltOrchestrator'), fileService, logService);
@@ -102,9 +122,15 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			tools: AGENT_TASK_TOOLS.map(tool => ({ ...tool, group: 'tasks' as const })),
 			invoke: (name, args, call) => this.invokeTaskTool(name, args, call),
 		}));
+		// Changes from the last quarter second (and writes still retrying) reach the disk before the window closes.
+		this._register(lifecycleService.onWillShutdown(e => e.join(this.flush(), { id: 'volt.agentOrchestrator', label: 'Saving agent orchestration' })));
+		this._register(new IntervalTimer()).cancelAndSet(() => this.checkLiveness(), WATCHDOG_MS);
 		this._register(toDisposable(() => {
 			if (this.persistTimer !== undefined) {
 				clearTimeout(this.persistTimer);
+			}
+			if (this.persistRetry !== undefined) {
+				clearTimeout(this.persistRetry);
 			}
 			for (const timer of this.cancelWatch.values()) {
 				clearTimeout(timer);
@@ -148,7 +174,23 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	async dispatch(command: OrchCommandBody & { readonly id?: string }): Promise<readonly OrchEvent[]> {
+		const loading = this.loadedFor(commandThreadId(command));
+		if (loading) {
+			await loading;
+		}
 		return this.apply(command, command.id).decision.events;
+	}
+
+	/**
+	 * What a command must wait for: the restore (a command applied before it would be dropped when
+	 * the saved state lands) and the chat's saved tree (a command creating the chat would otherwise
+	 * replace that tree on the next write). Undefined when both are there, so the command applies at once.
+	 */
+	private loadedFor(threadId: string | undefined): Promise<void> | undefined {
+		if (this.ready.isSettled && (threadId === undefined || this.state.threads[threadId])) {
+			return undefined;
+		}
+		return threadId === undefined ? this.whenReady : this.ensureThreadLoaded(threadId);
 	}
 
 	async submit(threadId: string, prompt: IOrchPrompt, delivery: OrchDelivery, turnId = generateUuid()): Promise<IOrchSubmitResult> {
@@ -177,6 +219,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	async configureLimit(threadId: string, auto: boolean | undefined): Promise<void> {
+		const loading = this.loadedFor(threadId);
+		if (loading) {
+			await loading;
+		}
 		this.apply({ type: 'limit.configure', threadId, auto });
 	}
 
@@ -190,6 +236,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	async cancel(threadId: string, options?: { readonly cascade?: 'turn' | 'all' }): Promise<void> {
+		const loading = this.loadedFor(threadId);
+		if (loading) {
+			await loading;
+		}
 		this.apply({ type: 'turn.cancel', threadId, ...(options?.cascade ? { cascade: options.cascade } : {}) });
 		this._onDidStop.fire(threadId);
 	}
@@ -340,11 +390,21 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			this._onDidChange.fire({ threads: [...threads], tasks: [...tasks] });
 		}
 		if (step.effects.length) {
+			for (const effect of step.effects) {
+				if (effect.kind === 'startTurn') {
+					this.owedStarts.add(effect.turn.id);
+				}
+			}
 			// Outbox: the events that asked for these effects are on disk before the effects run.
 			const persisted = this.persistNow();
 			void persisted.then(() => {
 				for (const effect of step.effects) {
-					this.runEffect(effect);
+					try {
+						this.runEffect(effect);
+					} catch (err) {
+						// One effect failing must not drop the others; the watchdog picks up a turn left behind.
+						this.logService.error('[volt orchestrator] effect failed', effect.kind, err);
+					}
 				}
 			});
 		} else if (step.envelopes.length) {
@@ -397,17 +457,24 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		this.dirtyRoots.clear();
 		const state = this.state;
 		const now = Date.now();
-		const writes: Promise<void>[] = [];
+		const writes: Promise<boolean>[] = [];
+		// A write that did not land is written again (with what the state holds then), not forgotten.
+		const track = (write: Promise<boolean>, onFailure: () => void) => writes.push(write.then(ok => {
+			if (!ok) {
+				onFailure();
+			}
+			return ok;
+		}));
 		for (const rootId of roots) {
 			const hasThreads = Object.values(state.threads).some(thread => thread.rootId === rootId);
 			if (!hasThreads) {
 				this.knownRoots.delete(rootId);
 				this.rootEvents.delete(rootId);
-				writes.push(this.store.deleteRoot(rootId));
+				track(this.store.deleteRoot(rootId), () => this.dirtyRoots.add(rootId));
 				continue;
 			}
 			this.knownRoots.add(rootId);
-			writes.push(this.store.saveRoot(extractRoot(state, rootId, this.rootEvents.get(rootId) ?? [], now)));
+			track(this.store.saveRoot(extractRoot(state, rootId, this.rootEvents.get(rootId) ?? [], now)), () => this.dirtyRoots.add(rootId));
 		}
 		const index: Omit<IOrchIndex, 'version'> = {
 			seq: state.seq,
@@ -417,27 +484,73 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const signature = JSON.stringify([index.live, index.roots]);
 		if (signature !== this.lastIndex) {
 			this.lastIndex = signature;
-			writes.push(this.store.saveIndex(index));
+			track(this.store.saveIndex(index), () => {
+				if (this.lastIndex === signature) {
+					this.lastIndex = '';
+				}
+			});
 		}
-		this.persisting = Promise.all([this.persisting, ...writes]).then(() => undefined);
+		const round = Promise.all(writes).then(results => {
+			if (results.every(ok => ok)) {
+				this.persistFailures = 0;
+			} else {
+				this.retryPersist();
+			}
+		});
+		this.persisting = Promise.all([this.persisting, round]).then(() => undefined);
 		return this.persisting;
+	}
+
+	private retryPersist(): void {
+		if (this.persistRetry !== undefined || this._store.isDisposed) {
+			return;
+		}
+		const delay = Math.min(1000 * 2 ** Math.min(this.persistFailures, 5), PERSIST_RETRY_MAX_MS);
+		this.persistFailures++;
+		this.logService.warn(`[volt orchestrator] saving failed; trying again in ${Math.round(delay / 1000)} s`);
+		this.persistRetry = setTimeout(() => {
+			this.persistRetry = undefined;
+			void this.persistNow();
+		}, delay);
+	}
+
+	/** Everything changed so far is written (one retry for what fails now). */
+	private async flush(): Promise<void> {
+		if (this.persistRetry !== undefined) {
+			clearTimeout(this.persistRetry);
+			this.persistRetry = undefined;
+		}
+		await this.persistNow();
+		if (this.dirtyRoots.size || !this.lastIndex) {
+			await this.persistNow();
+		}
+		await this.store.flush();
 	}
 
 	/** Loads the roots a restart must reconcile, then marks everything that was running as interrupted. */
 	private async restore(): Promise<void> {
 		try {
 			await this.history.whenReady;
-			const index = await this.store.loadIndex();
+			const { index, loaded, rebuilt } = await this.loadIndex();
 			this.knownRoots = new Set(index.roots);
-			let state = this.state;
+			const snapshots: IOrchRootSnapshot[] = [];
 			for (const rootId of index.live) {
-				const snapshot = await this.store.loadRoot(rootId);
+				const snapshot = loaded.get(rootId) ?? await this.store.loadRoot(rootId);
 				if (snapshot) {
-					state = mergeRoot(state, snapshot);
-					this.rootEvents.set(rootId, [...snapshot.events]);
+					snapshots.push(snapshot);
 				}
 			}
+			// Folded into the state as it is after the reads, so nothing applied meanwhile is dropped.
+			let state = this.state;
+			for (const snapshot of snapshots) {
+				state = mergeRoot(state, snapshot);
+				this.rootEvents.set(snapshot.rootId, [...snapshot.events]);
+			}
 			this.state = { ...state, seq: Math.max(state.seq, index.seq) };
+			if (rebuilt) {
+				// Write the rebuilt index now, not with the next change.
+				this.schedulePersist();
+			}
 			const step = this.apply({ type: 'recover', resume: this.restartResume() }, `recover:${generateUuid()}`);
 			if (step.envelopes.length) {
 				const continued = step.envelopes.filter(envelope => envelope.event.type === 'turn.dispatched').length;
@@ -451,6 +564,37 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		} finally {
 			this.ready.complete();
 		}
+	}
+
+	/**
+	 * The index, or one rebuilt from the root files when it is missing or unreadable (a crash before
+	 * its first write, a damaged file): without it every running chat would stay "running" forever.
+	 */
+	private async loadIndex(): Promise<{ readonly index: IOrchIndex; readonly loaded: ReadonlyMap<string, IOrchRootSnapshot>; readonly rebuilt: boolean }> {
+		const loaded = new Map<string, IOrchRootSnapshot>();
+		const saved = await this.store.loadIndex();
+		if (saved) {
+			return { index: saved, loaded, rebuilt: false };
+		}
+		const ids = await this.store.listRootIds();
+		if (!ids.length) {
+			return { index: { version: ORCHESTRATOR_STATE_VERSION, seq: 0, live: [], roots: [] }, loaded, rebuilt: false };
+		}
+		let seq = 0;
+		const live: string[] = [];
+		for (const rootId of ids) {
+			const snapshot = await this.store.loadRoot(rootId);
+			if (!snapshot) {
+				continue;
+			}
+			seq = Math.max(seq, snapshot.seq);
+			if (isRootLive(mergeRoot(emptyOrchState(), snapshot), rootId)) {
+				live.push(rootId);
+				loaded.set(rootId, snapshot);
+			}
+		}
+		this.logService.warn(`[volt orchestrator] the index was missing or unreadable; rebuilt it from ${ids.length} saved chat tree(s), ${live.length} with work`);
+		return { index: { version: ORCHESTRATOR_STATE_VERSION, seq, live, roots: ids }, loaded, rebuilt: true };
 	}
 
 	private restartResume(): OrchRestartResume {
@@ -474,8 +618,17 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 					this.state = mergeRoot(this.state, snapshot);
 					this.rootEvents.set(rootId, [...snapshot.events]);
 					this._onDidChange.fire({ threads: snapshot.threads.map(thread => thread.id), tasks: snapshot.tasks.map(task => task.id) });
+					if (isRootLive(this.state, rootId)) {
+						// The index missed this tree, so the restart never reconciled it: whatever it was running
+						// died with an earlier window. Settle that now (nothing resumes on its own) instead of
+						// showing a chat that runs forever.
+						const step = this.apply({ type: 'recover', resume: 'off', rootId }, `recover:${rootId}:${generateUuid()}`);
+						if (step.envelopes.length) {
+							this.logService.info(`[volt orchestrator] reconciled ${rootId} on load: ${step.envelopes.length} change(s)`);
+						}
+					}
 				}
-			}).finally(() => this.loading.delete(rootId));
+			}, err => this.logService.warn(`[volt orchestrator] could not load ${rootId}`, err)).finally(() => this.loading.delete(rootId));
 			this.loading.set(rootId, loading);
 		}
 		await loading;
@@ -547,6 +700,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private async startTurn(effect: Extract<OrchEffect, { kind: 'startTurn' }>): Promise<void> {
 		const { threadId, turn } = effect;
 		if (!this.isTurnCurrent(threadId, turn.id)) {
+			this.owedStarts.delete(turn.id);
 			return;
 		}
 		const host = this.host;
@@ -554,7 +708,14 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			this.waitingForHost.push(effect);
 			return;
 		}
+		if (this.dispatching.get(threadId) === turn.id) {
+			// Already being started (the watchdog and a late effect can both ask): never send a turn twice.
+			this.owedStarts.delete(turn.id);
+			return;
+		}
+		this.owedStarts.delete(turn.id);
 		this.dispatching.set(threadId, turn.id);
+		this.startingSince.set(turn.id, Date.now());
 		try {
 			const thread = this.state.threads[threadId];
 			if (thread?.taskId && thread.parentId && turn.kind === 'brief') {
@@ -563,6 +724,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			const runId = await host.startTurn({ threadId, turn, thread: this.state.threads[threadId] ?? thread, isCurrent: () => this.isTurnCurrent(threadId, turn.id) });
 			if (runId) {
 				this.apply({ type: 'run.started', threadId, runId, turnId: turn.id, steerable: this.runtime.canSteer(threadId) });
+				this.stopStrayRun(threadId, runId);
 			} else {
 				const active = this.state.threads[threadId]?.active;
 				if (active?.id === turn.id && !active.runId) {
@@ -575,16 +737,37 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		} catch (err) {
 			this.apply({ type: 'dispatch.failed', threadId, turnId: turn.id, error: err instanceof Error ? err.message : String(err) });
 		} finally {
+			this.startingSince.delete(turn.id);
 			if (this.dispatching.get(threadId) === turn.id) {
 				this.dispatching.delete(threadId);
 			}
 		}
 	}
 
+	/**
+	 * A run started for a turn that is already over (stopped, or failed as stuck, while it was being
+	 * sent). Nobody waits for it and the chat may start its next turn: stop it, but only while it is
+	 * still the chat's current run.
+	 */
+	private stopStrayRun(threadId: string, runId: string): void {
+		if (this.state.threads[threadId]?.active?.runId === runId) {
+			return;
+		}
+		const run = this.runtime.getOrCreateSession(threadId).activeRun;
+		if (run?.runId !== runId || !isRunLive(run.status)) {
+			return;
+		}
+		this.logService.info(`[volt orchestrator] ${threadId}: run ${runId} started for a turn that already ended; stopping it`);
+		void this.runtime.cancel(threadId).catch(err => this.logService.warn('[volt orchestrator] stopping a stray run failed', err));
+	}
+
 	private async steer(effect: Extract<OrchEffect, { kind: 'steer' }>): Promise<void> {
 		let delivered = false;
 		try {
-			delivered = await (this.host?.steer ? this.host.steer(effect.threadId, effect.prompt, effect.steerId) : this.runtime.steerAsync(effect.threadId, effect.prompt.text));
+			const sending = Promise.resolve(this.host?.steer ? this.host.steer(effect.threadId, effect.prompt, effect.steerId) : this.runtime.steerAsync(effect.threadId, effect.prompt.text));
+			// An agent that never answers must not swallow the message (or a subagent's report): it goes
+			// back to the queue, where a second copy is better than none.
+			delivered = await raceTimeout(sending, STEER_TIMEOUT_MS, () => this.logService.warn(`[volt orchestrator] ${effect.threadId}: the agent did not take a message within ${STEER_TIMEOUT_MS / 1000} s; queueing it`)) ?? false;
 		} catch (err) {
 			this.logService.warn('[volt orchestrator] steer failed', err);
 		}
@@ -669,6 +852,16 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 	/** Every runtime event of a chat the orchestrator knows becomes a command (most are no-ops). */
 	private observe(envelope: IVoltEventEnvelope): void {
+		try {
+			this.observeEvent(envelope);
+		} catch (err) {
+			// A throw here would lose the event for good (a run's end, a question); the watchdog
+			// reconciles what it can, and the log says what happened.
+			this.logService.error('[volt orchestrator] could not apply a runtime event', envelope.event.type, err);
+		}
+	}
+
+	private observeEvent(envelope: IVoltEventEnvelope): void {
 		const threadId = envelope.sessionId;
 		const thread = this.state.threads[threadId];
 		if (!thread) {
@@ -679,6 +872,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			case 'run.start': {
 				const turnId = this.dispatching.get(threadId);
 				this.apply({ type: 'run.started', threadId, runId: envelope.runId, ...(turnId ? { turnId } : {}), steerable: this.runtime.canSteer(threadId) });
+				this.stopStrayRun(threadId, envelope.runId);
 				return;
 			}
 			case 'error': {
@@ -696,36 +890,9 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				}
 				return;
 			}
-			case 'run.end': {
-				let outcome: OrchOutcome = event.reason === 'done' ? 'done' : event.reason === 'abort' ? 'cancelled' : 'failed';
-				const error = this.lastError.get(envelope.runId);
-				this.lastError.delete(envelope.runId);
-				let reply = outcome === 'done' ? this.lastReply(threadId) : undefined;
-				// Some CLIs end the turn normally with the limit sentence as the whole reply.
-				let limit = this.limitedRuns.get(envelope.runId);
-				this.limitedRuns.delete(envelope.runId);
-				const replyLimit = outcome === 'done' ? limitFromReply(reply, Date.now()) : undefined;
-				if (replyLimit) {
-					limit = mergeLimitSignals(limit, replyLimit);
-				}
-				if (limit && outcome !== 'cancelled') {
-					// Stopped by the provider's usage limit: the chat parks until the reset.
-					outcome = 'failed';
-					reply = undefined;
-				}
-				this.clearCancelWatch(threadId);
-				const message = limit && outcome === 'failed' ? limit.message : error;
-				this.apply({
-					type: 'run.settled',
-					threadId,
-					runId: envelope.runId,
-					outcome,
-					...(message && outcome === 'failed' ? { error: message } : {}),
-					...(reply !== undefined ? { reply } : {}),
-					...(limit && outcome === 'failed' ? { limit } : {}),
-				});
+			case 'run.end':
+				this.settleRun(threadId, envelope.runId, event.reason);
 				return;
-			}
 			case 'question.ask':
 				this.apply({ type: 'input.opened', threadId, inputId: event.request.id, kind: 'question' });
 				return;
@@ -749,7 +916,9 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				}
 				if (bareTaskToolName(event.name) === DELEGATE_TASK_TOOL_NAME || bareTaskToolName(event.title) === DELEGATE_TASK_TOOL_NAME) {
 					const calls = this.delegateCalls.get(threadId) ?? [];
-					calls.push(event.callId);
+					if (!calls.some(call => call.callId === event.callId)) {
+						calls.push({ callId: event.callId, turnId: thread.active?.id });
+					}
 					this.delegateCalls.set(threadId, calls.slice(-16));
 					return;
 				}
@@ -854,13 +1023,147 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		});
 	}
 
+	/** A run ended (its `run.end`, or the watchdog saw the runtime finish it): settle its turn. */
+	private settleRun(threadId: string, runId: string, reason: 'done' | 'abort' | 'fail', fallbackError?: string): void {
+		let outcome: OrchOutcome = reason === 'done' ? 'done' : reason === 'abort' ? 'cancelled' : 'failed';
+		const error = this.lastError.get(runId) ?? fallbackError;
+		this.lastError.delete(runId);
+		let reply = outcome === 'done' ? this.lastReply(threadId) : undefined;
+		// Some CLIs end the turn normally with the limit sentence as the whole reply.
+		let limit = this.limitedRuns.get(runId);
+		this.limitedRuns.delete(runId);
+		const replyLimit = outcome === 'done' ? limitFromReply(reply, Date.now()) : undefined;
+		if (replyLimit) {
+			limit = mergeLimitSignals(limit, replyLimit);
+		}
+		if (limit && outcome !== 'cancelled') {
+			// Stopped by the provider's usage limit: the chat parks until the reset.
+			outcome = 'failed';
+			reply = undefined;
+		}
+		const message = limit && outcome === 'failed' ? limit.message : error;
+		// Claude's limit stops the chat where it is: nothing more is sent on the account by itself.
+		const stop = !!limit && outcome === 'failed' && this.stopsAtClaudeLimit() && isClaudeProvider(this.providerOf(this.runtime.getOrCreateSession(threadId).providerRef ?? this.state.threads[threadId]?.modelRef));
+		this.apply({
+			type: 'run.settled',
+			threadId,
+			runId,
+			outcome,
+			...(message && outcome === 'failed' ? { error: message } : {}),
+			...(reply !== undefined ? { reply } : {}),
+			...(limit && outcome === 'failed' ? { limit: { ...limit, ...(stop ? { stop: true } : {}) } } : {}),
+		});
+		this.clearCancelWatch(threadId);
+		if (stop) {
+			this.stopClaudeWork(threadId);
+		}
+	}
+
+	private stopsAtClaudeLimit(): boolean {
+		return this.configurationService.getValue<boolean>(LIMIT_STOP_CLAUDE_SETTING) !== false;
+	}
+
+	private providerOf(ref: string | undefined): string | undefined {
+		return ref ? this.runtime.listCatalog().find(item => item.ref === ref)?.providerId : undefined;
+	}
+
+	/**
+	 * Claude's usage limit stopped a chat: the Claude subagents still working anywhere in its tree
+	 * would only spend more on the same account (or be refused), so they stop too. Subagents on other
+	 * providers keep working.
+	 */
+	private stopClaudeWork(threadId: string): void {
+		const rootId = this.state.threads[threadId]?.rootId;
+		if (!rootId) {
+			return;
+		}
+		const stopped: string[] = [];
+		for (const task of Object.values(this.state.tasks)) {
+			if (task.rootId !== rootId || task.source !== 'volt' || !isLiveTaskState(task.state) || task.childId === threadId) {
+				continue;
+			}
+			const ref = task.modelRef ?? this.state.threads[task.parentId]?.modelRef;
+			if (!isClaudeProvider(this.providerOf(ref))) {
+				continue;
+			}
+			// A task stopped by an ancestor earlier in this loop is already settled; the decider skips it.
+			const step = this.apply({ type: 'task.cancel', taskId: task.id, reason: 'Claude\'s usage limit was reached, so Volt stopped it instead of spending more.' });
+			if (step.envelopes.length) {
+				stopped.push(task.id);
+			}
+		}
+		if (stopped.length) {
+			this.logService.info(`[volt orchestrator] Claude's usage limit stopped ${threadId}; stopped its Claude subagents ${stopped.join(', ')}`);
+		}
+	}
+
+	/** Stop timers for turns of this chat that are over (an earlier run's end must not disarm the current stop). */
 	private clearCancelWatch(threadId: string): void {
+		const current = this.state.threads[threadId]?.active?.id;
 		for (const [key, timer] of this.cancelWatch) {
-			if (key.startsWith(`${threadId}\0`)) {
+			if (key.startsWith(`${threadId}\0`) && key !== `${threadId}\0${current}`) {
 				clearTimeout(timer);
 				this.cancelWatch.delete(key);
 			}
 		}
+	}
+
+	/**
+	 * The watchdog: compares what the orchestrator believes with what the runtime knows, so no chat
+	 * hangs on a lost event. Each finding must hold for `WATCHDOG_STRIKES` ticks before Volt acts.
+	 * - A running turn whose run the runtime already finished (its `run.end` was lost) is settled.
+	 * - A turn stopped without a stop timer (it was disarmed) gets one again.
+	 * - A start that never reached the runtime fails after `START_STALL_MS`.
+	 * - A turn waiting to start with no start owed or in flight (its effect was lost) is started.
+	 */
+	private checkLiveness(): void {
+		const now = Date.now();
+		const previous = this.suspects;
+		const suspects = new Map<string, number>();
+		const strike = (key: string): boolean => {
+			const count = (previous.get(key) ?? 0) + 1;
+			suspects.set(key, count);
+			return count >= WATCHDOG_STRIKES;
+		};
+		// Read each chat afresh: settling one can start or stop turns in others.
+		for (const threadId of Object.keys(this.state.threads)) {
+			const thread = this.state.threads[threadId];
+			const active = thread?.active;
+			if (!active) {
+				continue;
+			}
+			const key = `${thread.id}\0${active.id}`;
+			if (active.runId) {
+				const run = this.runtime.getOrCreateSession(thread.id).activeRun;
+				if (run?.runId === active.runId && !isRunLive(run.status) && strike(`ended\0${key}`)) {
+					this.logService.warn(`[volt orchestrator] ${thread.id}: run ${active.runId} ended (${run.status}) without Volt hearing of it; settling its turn`);
+					this.settleRun(thread.id, active.runId, run.status === 'completed' ? 'done' : run.status === 'cancelled' ? 'abort' : 'fail', 'The run ended without reporting why.');
+					continue;
+				}
+			}
+			if (active.phase === 'cancelling') {
+				if (!this.cancelWatch.has(key) && strike(`stop\0${key}`)) {
+					this.cancelTurn({ kind: 'cancelTurn', threadId: thread.id, turnId: active.id, ...(active.runId ? { runId: active.runId } : {}) });
+				}
+				continue;
+			}
+			if (active.phase !== 'dispatching' || active.runId) {
+				continue;
+			}
+			if (this.dispatching.get(thread.id) === active.id) {
+				const since = this.startingSince.get(active.id) ?? now;
+				if (now - since >= START_STALL_MS) {
+					this.logService.warn(`[volt orchestrator] ${thread.id}: turn ${active.id} did not start within ${START_STALL_MS / 1000} s; failing it`);
+					this.apply({ type: 'dispatch.failed', threadId: thread.id, turnId: active.id, error: `The agent did not start within ${Math.round(START_STALL_MS / 60_000)} minutes. Send again to retry.` });
+				}
+				continue;
+			}
+			if (!this.owedStarts.has(active.id) && this.host && strike(`orphan\0${key}`)) {
+				this.logService.warn(`[volt orchestrator] ${thread.id}: turn ${active.id} was waiting to start with nothing starting it; starting it`);
+				void this.startTurn({ kind: 'startTurn', threadId: thread.id, turn: active });
+			}
+		}
+		this.suspects = suspects;
 	}
 
 	private lastReply(threadId: string): string | undefined {
@@ -877,14 +1180,15 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		if (!threadId) {
 			return { error: `${name} only works from a Volt chat.` };
 		}
-		await this.whenReady;
+		await this.ensureThreadLoaded(threadId);
 		const token = call?.token ?? CancellationToken.None;
 		try {
 			switch (name) {
 				case LIST_MODELS_TOOL_NAME:
 					return { text: this.listModels(threadId) };
 				case DELEGATE_TASK_TOOL_NAME:
-					return await this.delegate(threadId, args, token);
+					// Taken first: a call refused below must not leave its id for the next call's row.
+					return await this.delegate(threadId, args, token, this.takeDelegateCall(threadId));
 				case TASK_STATUS_TOOL_NAME:
 					return { text: this.taskStatus(threadId, typeof args.task_id === 'string' ? args.task_id : undefined) };
 				case WAIT_TASKS_TOOL_NAME:
@@ -926,14 +1230,28 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return { ref: match.ref, label: match.label };
 	}
 
-	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken, binding?: { readonly toolCallId: string | undefined }): Promise<IVoltHostToolResult> {
+	/** The parent's `delegate_task` row this MCP call belongs to: the oldest one seen in the chat's current turn. */
+	private takeDelegateCall(threadId: string): string | undefined {
+		const turnId = this.state.threads[threadId]?.active?.id;
+		// Rows from earlier turns never got their call (refused, or the stream and the call crossed): drop them.
+		const calls = (this.delegateCalls.get(threadId) ?? []).filter(call => call.turnId === turnId);
+		const next = calls.shift();
+		if (calls.length) {
+			this.delegateCalls.set(threadId, calls);
+		} else {
+			this.delegateCalls.delete(threadId);
+		}
+		return next?.callId;
+	}
+
+	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken, toolCallId: string | undefined, single = false): Promise<IVoltHostToolResult> {
 		const brief = typeof args.task === 'string' ? args.task.trim() : '';
 		if (!brief) {
 			return { error: 'delegate_task needs a `task`: the complete brief for the subagent.' };
 		}
 		const fanOut = Array.isArray(args.models) ? [...new Set(args.models.filter((name): name is string => typeof name === 'string' && !!name.trim()).map(name => name.trim()))] : [];
-		if (fanOut.length > 1 && !binding) {
-			return this.delegateToModels(parentId, args, fanOut, token);
+		if (fanOut.length > 1 && !single) {
+			return this.delegateToModels(parentId, args, fanOut, token, toolCallId);
 		}
 		const parent = this.state.threads[parentId];
 		const previousId = typeof args.previous_task_id === 'string' && args.previous_task_id.trim() ? args.previous_task_id.trim() : undefined;
@@ -953,7 +1271,6 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const title = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 80) : previous?.title ?? titleFromBrief(brief);
 		const taskId = newTaskId(id => !!this.state.tasks[id]);
 		const depth = (parent?.depth ?? 0) + 1;
-		const toolCallId = binding ? binding.toolCallId : this.delegateCalls.get(parentId)?.shift();
 		const step = this.apply({
 			type: 'task.spawn',
 			spawn: {
@@ -1009,13 +1326,12 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	 * One brief, several models: a task each (independent reviews, competing designs). The parent's
 	 * delegate_task row belongs to the first; every report comes back like any task's.
 	 */
-	private async delegateToModels(parentId: string, args: Record<string, unknown>, names: readonly string[], token: CancellationToken): Promise<IVoltHostToolResult> {
+	private async delegateToModels(parentId: string, args: Record<string, unknown>, names: readonly string[], token: CancellationToken, toolCallId: string | undefined): Promise<IVoltHostToolResult> {
 		if (names.length > MAX_FAN_OUT) {
 			return { error: `delegate_task runs one brief on at most ${MAX_FAN_OUT} models at once.` };
 		}
 		// Resolve every model first: an unknown one starts nothing.
 		const models = names.map(name => this.resolveModel(name)!);
-		const toolCallId = this.delegateCalls.get(parentId)?.shift();
 		const key = typeof args.client_request_id === 'string' && args.client_request_id.trim() ? args.client_request_id.trim() : undefined;
 		const baseTitle = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 60) : titleFromBrief(String(args.task));
 		const ids: string[] = [];
@@ -1028,7 +1344,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				wait: false,
 				title: `${baseTitle} · ${model.label}`,
 				...(key ? { client_request_id: `${key}:${model.ref}` } : {}),
-			}, token, { toolCallId: index === 0 ? toolCallId : undefined });
+			}, token, index === 0 ? toolCallId : undefined, true);
 			const id = /\b(t-[0-9a-f]{6})\b/.exec(result.text ?? '')?.[1];
 			if (id) {
 				ids.push(id);
@@ -1181,6 +1497,18 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	//#endregion
+}
+
+function isRunLive(status: string): boolean {
+	return status === 'running' || status === 'queued' || status === 'waiting';
+}
+
+/** The chat a command is about, when it names one (task commands find theirs through the task). */
+function commandThreadId(command: OrchCommandBody): string | undefined {
+	if ('threadId' in command) {
+		return command.threadId;
+	}
+	return command.type === 'task.spawn' ? command.spawn.parentId : undefined;
 }
 
 function touched(event: OrchEvent): { threadIds: string[]; taskIds: string[] } {

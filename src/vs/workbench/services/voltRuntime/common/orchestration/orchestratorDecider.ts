@@ -425,7 +425,7 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			return { events: [thread.active ? { type: 'handoff.requested', threadId: thread.id, handoff } : { type: 'handoff.applied', threadId: thread.id, handoff }] };
 		}
 		case 'recover':
-			return decideRecover(state, command.at, command.resume ?? 'off', limits);
+			return decideRecover(state, command.at, command.resume ?? 'off', limits, command.rootId);
 		case 'limit.tick':
 			return decideLimitTick(state, command.at, command.autoResume);
 		case 'limit.resume': {
@@ -758,7 +758,7 @@ export function externalTurnId(runId: string): string {
 	return `x-${runId}`;
 }
 
-function decideRunSettled(state: IOrchState, threadId: string, match: { readonly runId?: string; readonly turnId?: string }, outcome: OrchOutcome, at: number, error: string | undefined, reply: string | undefined, superseded = false, limit?: { readonly resetAt?: number; readonly message: string }): IOrchDecision {
+function decideRunSettled(state: IOrchState, threadId: string, match: { readonly runId?: string; readonly turnId?: string }, outcome: OrchOutcome, at: number, error: string | undefined, reply: string | undefined, superseded = false, limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }): IOrchDecision {
 	const thread = state.threads[threadId];
 	const active = thread?.active;
 	if (!thread || !active) {
@@ -770,6 +770,11 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 	if (match.runId !== undefined && active.runId !== undefined && active.runId !== match.runId) {
 		return { events: [] };
 	}
+	if (match.runId !== undefined && match.turnId === undefined && active.runId === undefined && active.phase === 'dispatching') {
+		// A run's start always reaches the turn before its end, so this turn has started no run yet:
+		// the run that ended is an earlier turn's (one Volt settled itself after a stop that hung).
+		return { events: [] };
+	}
 	const events: OrchEvent[] = [{ type: 'turn.settled', threadId: thread.id, turnId: active.id, outcome, at, ...(error ? { error } : {}) }];
 	// A usage limit parks the chat until the reset instead of failing it. A subagent's chat fails as
 	// before: its parent hears about it and decides (another model, or wait).
@@ -779,6 +784,8 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 		events.push({ type: 'queue.paused', threadId: thread.id, reason: parks ? 'limit' : 'failed' });
 	}
 	if (parks) {
+		// A stop limit waits for the user, unless the user already asked this chat to resume (that probe hit it again).
+		const auto = active.limitAuto ?? (limit.stop ? false : undefined);
 		events.push({
 			type: 'limit.parked',
 			threadId: thread.id,
@@ -789,7 +796,7 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 				...(limit.resetAt !== undefined && limit.resetAt > at ? { resetAt: limit.resetAt } : {}),
 				...(limit.message ? { message: limit.message } : {}),
 				probes: active.limitProbe ?? 0,
-				...(active.limitAuto !== undefined ? { auto: active.limitAuto } : {}),
+				...(auto !== undefined ? { auto } : {}),
 				...(active.prompt.mode ? { mode: active.prompt.mode } : {}),
 			},
 		});
@@ -969,15 +976,16 @@ function decideFileChanged(state: IOrchState, threadId: string, path: string, at
  * the user (its queue held, its parent told). A turn that already went through
  * `maxRestartResumes` restarts waits too, so a crash it causes cannot loop.
  */
-function decideRecover(state: IOrchState, at: number, resume: OrchRestartResume, limits: IOrchLimits): IOrchDecision {
+function decideRecover(state: IOrchState, at: number, resume: OrchRestartResume, limits: IOrchLimits, rootId?: string): IOrchDecision {
 	const events: OrchEvent[] = [];
 	let next = state;
 	const push = (more: readonly OrchEvent[]) => {
 		events.push(...more);
 		next = applyOrchEvents(next, more);
 	};
+	const inScope = (candidate: { readonly rootId: string }) => rootId === undefined || candidate.rootId === rootId;
 	const continued = new Set<string>();
-	for (const thread of sortedThreads(state)) {
+	for (const thread of sortedThreads(state).filter(inScope)) {
 		const current = next.threads[thread.id];
 		if (!current) {
 			continue;
@@ -1012,13 +1020,13 @@ function decideRecover(state: IOrchState, at: number, resume: OrchRestartResume,
 			push([{ type: 'queue.paused', threadId: thread.id, reason: 'interrupted' }]);
 		}
 	}
-	for (const task of Object.values(next.tasks)) {
+	for (const task of Object.values(next.tasks).filter(inScope)) {
 		if ((task.state === 'running' || task.state === 'waiting') && !continued.has(task.id)) {
 			push([{ type: 'task.settled', taskId: task.id, state: 'interrupted', at }]);
 		}
 	}
 	// A parent waiting on those reports does not start working on its own at launch: the user resumes it.
-	for (const task of Object.values(next.tasks)) {
+	for (const task of Object.values(next.tasks).filter(inScope)) {
 		const parent = next.threads[task.parentId];
 		if (task.delivery === 'pending' && parent && !parent.pause && !parent.active) {
 			push([{ type: 'queue.paused', threadId: parent.id, reason: 'interrupted' }]);
@@ -1282,6 +1290,14 @@ export function effectsFor(events: readonly OrchEvent[], state: IOrchState): Orc
 					effects.push({ kind: 'startTurn', threadId: event.threadId, turn: event.turn });
 				}
 				break;
+			case 'turn.bound': {
+				// The run started after the user stopped its turn (the stop raced the send): stop the run too.
+				const active = state.threads[event.threadId]?.active;
+				if (active?.id === event.turnId && active.phase === 'cancelling') {
+					effects.push({ kind: 'cancelTurn', threadId: event.threadId, turnId: event.turnId, runId: event.runId });
+				}
+				break;
+			}
 			case 'turn.steered':
 				effects.push({ kind: 'steer', threadId: event.threadId, turnId: event.turnId, prompt: event.prompt, steerId: event.steerId, ...(event.taskIds ? { taskIds: event.taskIds } : {}) });
 				break;

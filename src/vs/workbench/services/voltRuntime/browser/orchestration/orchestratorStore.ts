@@ -18,11 +18,12 @@ const ROOTS_DIR = 'roots';
 /**
  * Orchestration on disk: one JSON file per root chat and an index of the roots a restart has to
  * look at. Every write replaces a whole file atomically (the user data provider can lose offset
- * appends across a reload), and writes to one file never overlap.
+ * appends across a reload), and writes to one file never overlap. Writes resolve with whether they
+ * landed, so the service can write a failed root again instead of trusting a stale file.
  */
 export class OrchestratorStore {
 
-	private readonly chains = new Map<string, Promise<void>>();
+	private readonly chains = new Map<string, Promise<boolean>>();
 	private ensured: Promise<void> | undefined;
 
 	constructor(
@@ -39,9 +40,26 @@ export class OrchestratorStore {
 		return joinPath(this.home, INDEX_FILE);
 	}
 
-	async loadIndex(): Promise<IOrchIndex> {
+	/** The index, or undefined when it is missing or unreadable (the caller rebuilds it from the roots). */
+	async loadIndex(): Promise<IOrchIndex | undefined> {
 		const raw = await this.readJson(this.indexFile);
-		return parseIndex(raw);
+		return raw === undefined ? undefined : parseIndex(raw);
+	}
+
+	/** Every root with a file on disk, read from the folder (the index lost or never written). */
+	async listRootIds(): Promise<string[]> {
+		try {
+			const stat = await this.fileService.resolve(joinPath(this.home, ROOTS_DIR));
+			return (stat.children ?? [])
+				.filter(child => child.isFile && child.name.endsWith('.json'))
+				.map(child => child.name.slice(0, -'.json'.length))
+				.filter(isSafeId);
+		} catch (err) {
+			if (!isNotFound(err)) {
+				this.logService.warn('[volt orchestrator] could not list saved chat trees', err);
+			}
+			return [];
+		}
 	}
 
 	async loadRoot(rootId: string): Promise<IOrchRootSnapshot | undefined> {
@@ -60,16 +78,16 @@ export class OrchestratorStore {
 		return isSafeId(rootId) ? this.fileService.exists(this.rootFile(rootId)) : Promise.resolve(false);
 	}
 
-	saveRoot(snapshot: IOrchRootSnapshot): Promise<void> {
+	saveRoot(snapshot: IOrchRootSnapshot): Promise<boolean> {
 		if (!isSafeId(snapshot.rootId)) {
-			return Promise.resolve();
+			return Promise.resolve(true);
 		}
 		return this.write(this.rootFile(snapshot.rootId), JSON.stringify(snapshot));
 	}
 
-	deleteRoot(rootId: string): Promise<void> {
+	deleteRoot(rootId: string): Promise<boolean> {
 		if (!isSafeId(rootId)) {
-			return Promise.resolve();
+			return Promise.resolve(true);
 		}
 		const file = this.rootFile(rootId);
 		return this.serialize(file, async () => {
@@ -81,7 +99,7 @@ export class OrchestratorStore {
 		});
 	}
 
-	saveIndex(index: Omit<IOrchIndex, 'version'>): Promise<void> {
+	saveIndex(index: Omit<IOrchIndex, 'version'>): Promise<boolean> {
 		return this.write(this.indexFile, JSON.stringify({ version: ORCHESTRATOR_STATE_VERSION, ...index }));
 	}
 
@@ -90,7 +108,7 @@ export class OrchestratorStore {
 		await Promise.all([...this.chains.values()]);
 	}
 
-	private write(file: URI, content: string): Promise<void> {
+	private write(file: URI, content: string): Promise<boolean> {
 		return this.serialize(file, async () => {
 			await this.ensureDirectories();
 			// Atomic where the provider can (the user data folder can); a plain write elsewhere.
@@ -99,11 +117,14 @@ export class OrchestratorStore {
 		});
 	}
 
-	/** Writes to one file run one at a time, in order; a failure is logged and never blocks the next. */
-	private serialize(file: URI, work: () => Promise<void>): Promise<void> {
+	/** Writes to one file run one at a time, in order; a failure is logged, resolves false, and never blocks the next. */
+	private serialize(file: URI, work: () => Promise<void>): Promise<boolean> {
 		const key = file.toString();
-		const previous = this.chains.get(key) ?? Promise.resolve();
-		const next = previous.then(work, work).catch(err => this.logService.error(`[volt orchestrator] failed to write ${key}`, err));
+		const previous = this.chains.get(key) ?? Promise.resolve(true);
+		const next = previous.then(work, work).then(() => true, err => {
+			this.logService.error(`[volt orchestrator] failed to write ${key}`, err);
+			return false;
+		});
 		this.chains.set(key, next);
 		void next.then(() => {
 			if (this.chains.get(key) === next) {
@@ -114,7 +135,10 @@ export class OrchestratorStore {
 	}
 
 	private ensureDirectories(): Promise<void> {
-		this.ensured ??= this.fileService.createFolder(joinPath(this.home, ROOTS_DIR)).then(() => undefined, () => undefined);
+		// A failed attempt is not remembered: the next write tries again.
+		this.ensured ??= this.fileService.createFolder(joinPath(this.home, ROOTS_DIR)).then(() => undefined, () => {
+			this.ensured = undefined;
+		});
 		return this.ensured;
 	}
 

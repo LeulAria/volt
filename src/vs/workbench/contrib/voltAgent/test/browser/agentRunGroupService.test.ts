@@ -184,6 +184,7 @@ suite('Run group service', () => {
 			stub({ rootFor: () => URI.file('/repo') }),
 			stub({ getValue: () => undefined, onDidChangeConfiguration: () => toDisposable(() => undefined) }),
 			stub({ run: async () => undefined }),
+			stub({ onWillShutdown: () => toDisposable(() => undefined) }),
 		));
 		await orchestrator.whenReady;
 		disposables.add(orchestrator.setTurnHost(new FakeHost(runtime)));
