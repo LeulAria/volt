@@ -6,7 +6,8 @@
 import { addDisposableListener, getWindow, isHTMLElement } from '../../../../base/browser/dom.js';
 import { Action } from '../../../../base/common/actions.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
-import { basename } from '../../../../base/common/resources.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
+import { basename, joinPath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
@@ -14,6 +15,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
@@ -26,6 +28,7 @@ import { getLayoutMode, onDidChangeLayoutMode } from '../../../browser/parts/tit
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../services/layout/browser/layoutService.js';
+import { IPathService } from '../../../services/path/common/pathService.js';
 import { IAgentHistoryService } from '../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltProjectRecord, IVoltSessionContextService, projectIdForRoot } from '../../../services/voltRuntime/common/sessionContext.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
@@ -42,6 +45,8 @@ registerSingleton(IVoltProjectSettingsService, VoltProjectSettingsService, Insta
 
 const FIRST_RUN_STORAGE_KEY = 'volt.setup.firstRunShown';
 const SHOW_ON_FIRST_LAUNCH_SETTING = 'volt.setup.showOnFirstLaunch';
+/** ~/.volt/<this>: setup already opened once on this machine, in any profile. */
+const FIRST_RUN_MARKER_FILE = 'setup-shown';
 
 const category = localize2('volt', "Volt");
 
@@ -121,6 +126,9 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 /**
  * Opens setup once, the first time the agent window shows on a machine with no chats yet.
  * Someone who already has chats is not new and never sees it unasked.
+ *
+ * "Once" is per machine, not per profile: besides application storage, a marker in ~/.volt
+ * keeps it from opening again in a fresh user-data-dir (a second build, a test instance).
  */
 class VoltFirstRunContribution extends Disposable implements IWorkbenchContribution {
 
@@ -134,13 +142,34 @@ class VoltFirstRunContribution extends Disposable implements IWorkbenchContribut
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IFileService private readonly fileService: IFileService,
+		@IPathService private readonly pathService: IPathService,
 	) {
 		super();
-		if (this.storageService.getBoolean(FIRST_RUN_STORAGE_KEY, StorageScope.APPLICATION, false) || this.configurationService.getValue<boolean>(SHOW_ON_FIRST_LAUNCH_SETTING) === false) {
+		if (this.storageService.getBoolean(FIRST_RUN_STORAGE_KEY, StorageScope.APPLICATION, false)) {
+			// Profiles that saw it before the marker existed still mark the machine.
+			void this.markMachine();
+			return;
+		}
+		if (this.configurationService.getValue<boolean>(SHOW_ON_FIRST_LAUNCH_SETTING) === false) {
 			return;
 		}
 		this._register(onDidChangeLayoutMode(() => void this.maybeShow()));
 		void this.maybeShow();
+	}
+
+	private get machineMarker(): URI {
+		return joinPath(this.pathService.userHome({ preferLocal: true }), '.volt', FIRST_RUN_MARKER_FILE);
+	}
+
+	private async markMachine(): Promise<void> {
+		try {
+			if (!await this.fileService.exists(this.machineMarker)) {
+				await this.fileService.writeFile(this.machineMarker, VSBuffer.fromString(new Date().toISOString() + '\n'));
+			}
+		} catch {
+			// Best effort: application storage still holds the flag for this profile.
+		}
 	}
 
 	private async maybeShow(): Promise<void> {
@@ -149,7 +178,12 @@ class VoltFirstRunContribution extends Disposable implements IWorkbenchContribut
 		}
 		this.shown = true;
 		await this.history.whenReady;
+		const seenOnMachine = await this.fileService.exists(this.machineMarker).catch(() => false);
 		this.storageService.store(FIRST_RUN_STORAGE_KEY, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
+		await this.markMachine();
+		if (seenOnMachine) {
+			return;
+		}
 		// A fresh profile opens on an empty "New Agent" draft; only chats with turns mean an existing user.
 		if (this.history.list({ includeArchived: true }).some(session => session.turnCount > 0)) {
 			return;
