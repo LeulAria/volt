@@ -27,8 +27,16 @@ export const AUTOMATIONS_STATE_VERSION = 1;
 export const AUTOMATION_RUNS_KEPT = 100;
 export const AUTOMATION_SKIPPED_RUNS_KEPT = 30;
 
-/** A fixed-time run missed while Volt was closed still runs within this long; later it is skipped. */
-export const SCHEDULE_MISSED_GRACE_MS = 10 * 60_000;
+/**
+ * A fixed-time run missed while Volt was closed or the machine slept still runs once when Volt is
+ * back within this long (Temporal's catch-up window); a slot missed by more is skipped. Several
+ * missed slots of one trigger run once.
+ */
+export const SCHEDULE_MISSED_GRACE_MS = 12 * 3_600_000;
+/** A run that was late by more than this says so ("Ran late: scheduled for 9:00"). */
+export const SCHEDULE_LATE_NOTE_MS = 2 * 60_000;
+/** Deleted automations are remembered this long, so another Volt window does not write them back. */
+export const AUTOMATION_TOMBSTONE_TTL_MS = 30 * 86_400_000;
 export const MIN_INTERVAL_MS = 60_000;
 /** One automation fans out to at most this many repositories per run. */
 export const MAX_REPOSITORIES_PER_RUN = 5;
@@ -106,6 +114,12 @@ export interface IAutomationRun {
 	readonly note?: string;
 	readonly deliveryId?: string;
 	readonly tools?: readonly IAutomationRunTool[];
+	/** Schedule runs: the slot it serves (epoch ms), which keys it across Volt windows. */
+	readonly slotAt?: number;
+	/** Times Volt tried to send it; a send that failed for a passing reason is tried again. */
+	readonly attempts?: number;
+	/** The run's chat is parked at a provider usage limit; the run continues when the chat does. */
+	readonly limited?: boolean;
 }
 
 export interface IAutomationRepository {
@@ -424,7 +438,11 @@ export function isActiveRun(run: Pick<IAutomationRun, 'status'>): boolean {
 
 /** Appends a run; non-skipped and skipped runs are capped separately, newest kept. */
 export function recordRun(automation: IAutomation, run: IAutomationRun): IAutomation {
-	const runs = [...automation.runs, run];
+	return { ...automation, runs: capRuns([...automation.runs, run]), runCount: automation.runCount + (run.status === 'skipped' ? 0 : 1) };
+}
+
+/** Non-skipped and skipped runs are capped separately, newest kept; active runs are never dropped. */
+function capRuns(runs: readonly IAutomationRun[]): IAutomationRun[] {
 	let skipped = runs.filter(entry => entry.status === 'skipped').length - AUTOMATION_SKIPPED_RUNS_KEPT;
 	let other = runs.length - Math.max(0, runs.filter(entry => entry.status === 'skipped').length) - AUTOMATION_RUNS_KEPT;
 	const kept = runs.filter(entry => {
@@ -438,7 +456,7 @@ export function recordRun(automation: IAutomation, run: IAutomationRun): IAutoma
 		}
 		return true;
 	});
-	return { ...automation, runs: kept, runCount: automation.runCount + (run.status === 'skipped' ? 0 : 1) };
+	return kept;
 }
 
 export function patchRun(automation: IAutomation, runId: string, patch: Partial<IAutomationRun>): IAutomation {
@@ -630,6 +648,8 @@ export function nameFromInstructions(text: string, max = 48): string {
 export interface IAutomationsFile {
 	readonly version: number;
 	readonly automations: readonly IAutomation[];
+	/** Automation id → when it was deleted (see `AUTOMATION_TOMBSTONE_TTL_MS`). */
+	readonly deleted?: Readonly<Record<string, number>>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -713,6 +733,9 @@ function parseRun(value: unknown): IAutomationRun | undefined {
 		...(typeof value.startedAt === 'number' ? { startedAt: value.startedAt } : {}),
 		...(typeof value.finishedAt === 'number' ? { finishedAt: value.finishedAt } : {}),
 		...(tools?.length ? { tools } : {}),
+		...(typeof value.slotAt === 'number' ? { slotAt: value.slotAt } : {}),
+		...(typeof value.attempts === 'number' ? { attempts: value.attempts } : {}),
+		...(value.limited === true ? { limited: true } : {}),
 	};
 }
 
@@ -768,6 +791,103 @@ export function parseAutomation(value: unknown): IAutomation | undefined {
 export function parseAutomationsFile(raw: unknown): IAutomation[] {
 	const automations = isRecord(raw) && Array.isArray(raw.automations) ? raw.automations : [];
 	return automations.map(parseAutomation).filter((automation): automation is IAutomation => !!automation);
+}
+
+/** The deleted-automation tombstones of a file, without the expired ones. */
+export function parseDeletedAutomations(raw: unknown, now: number): Record<string, number> {
+	const deleted = isRecord(raw) && isRecord(raw.deleted) ? raw.deleted : {};
+	const out: Record<string, number> = {};
+	for (const [id, at] of Object.entries(deleted)) {
+		if (typeof at === 'number' && Number.isFinite(at) && now - at < AUTOMATION_TOMBSTONE_TTL_MS) {
+			out[id] = at;
+		}
+	}
+	return out;
+}
+
+export interface IAutomationsState {
+	readonly automations: readonly IAutomation[];
+	readonly deleted: Readonly<Record<string, number>>;
+}
+
+/**
+ * Two Volt windows' views of the automations, made one. Every window keeps the whole list and
+ * writes the whole file, so each write first merges with what is on disk instead of replacing it:
+ * - an automation deleted in either (a tombstone newer than its last edit) stays deleted;
+ * - one only one side has is kept (made in another window, or not written yet);
+ * - for one both have, the newer edit's definition wins; runs are the union by id (a run that
+ *   moved on, finished or started, wins over the same run still queued); each schedule's next
+ *   run is the later one, so a slot one window used is used for both.
+ * `local` wins ties. Pure; the result is in creation order.
+ */
+export function mergeAutomations(local: IAutomationsState, disk: IAutomationsState): IAutomationsState {
+	const deleted: Record<string, number> = { ...disk.deleted };
+	for (const [id, at] of Object.entries(local.deleted)) {
+		deleted[id] = Math.max(at, deleted[id] ?? 0);
+	}
+	const alive = (automation: IAutomation) => deleted[automation.id] === undefined || deleted[automation.id] < automation.updatedAt;
+	const onDisk = new Map(disk.automations.map(automation => [automation.id, automation]));
+	const out: IAutomation[] = [];
+	const seen = new Set<string>();
+	for (const mine of local.automations) {
+		seen.add(mine.id);
+		const theirs = onDisk.get(mine.id);
+		const merged = theirs ? mergeAutomation(mine, theirs) : mine;
+		if (alive(merged)) {
+			out.push(merged);
+		}
+	}
+	for (const theirs of disk.automations) {
+		if (!seen.has(theirs.id) && alive(theirs)) {
+			out.push(theirs);
+		}
+	}
+	// A tombstone is only needed while some window may still hold the automation.
+	for (const automation of out) {
+		delete deleted[automation.id];
+	}
+	// One order for every window (the order they were made in), so two windows never rewrite each other's file over order alone.
+	out.sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+	return { automations: out, deleted };
+}
+
+function mergeAutomation(mine: IAutomation, theirs: IAutomation): IAutomation {
+	const base = theirs.updatedAt > mine.updatedAt ? theirs : mine;
+	const runs = new Map<string, IAutomationRun>();
+	for (const run of [...theirs.runs, ...mine.runs]) {
+		const other = runs.get(run.id);
+		runs.set(run.id, other ? newerRun(other, run) : run);
+	}
+	const nextRuns: Record<string, number> = {};
+	for (const trigger of base.triggers) {
+		const a = mine.nextRuns[trigger.id];
+		const b = theirs.nextRuns[trigger.id];
+		const next = a === undefined ? b : b === undefined ? a : Math.max(a, b);
+		if (next !== undefined && base.nextRuns[trigger.id] !== undefined) {
+			nextRuns[trigger.id] = next;
+		}
+	}
+	return {
+		...base,
+		nextRuns,
+		runs: capRuns([...runs.values()].sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))),
+		runCount: Math.max(mine.runCount, theirs.runCount),
+	};
+}
+
+/** Of two copies of one run, the one further along; `b` (local) on a tie. */
+function newerRun(a: IAutomationRun, b: IAutomationRun): IAutomationRun {
+	const rank = (run: IAutomationRun) => run.finishedAt !== undefined || !isActiveRun(run) ? 2 : run.status === 'running' ? 1 : 0;
+	const diff = rank(a) - rank(b);
+	if (diff !== 0) {
+		return diff > 0 ? a : b;
+	}
+	return (a.finishedAt ?? a.startedAt ?? a.at) > (b.finishedAt ?? b.startedAt ?? b.at) ? a : b;
+}
+
+/** The orchestrator turn a run's turn became (`auto-r1~l1` continues `auto-r1` after a usage limit). */
+export function isTurnOfRun(turnId: string | undefined, runTurnId: string | undefined): boolean {
+	return !!turnId && !!runTurnId && (turnId === runTurnId || turnId.replace(/(?:~[lmr]\d+)+$/, '') === runTurnId);
 }
 
 /**

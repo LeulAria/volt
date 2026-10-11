@@ -22,8 +22,11 @@ import { ILifecycleService } from '../../../../services/lifecycle/common/lifecyc
 import {
 	AUTOMATIONS_STATE_VERSION, AutomationRunToolKind, AutomationToolStatus, automationRunPrompt, describeSchedule, dueSchedules, IAutomation, IAutomationCreateInput, IAutomationDeliveryInput,
 	IAutomationDraft, IAutomationRepository, IAutomationRun, IAutomationService, isActiveRun, MAX_REPOSITORIES_PER_RUN, migrateScheduledTasks, nameFromInstructions,
-	nextDueAt, parseAutomationsFile, parseScheduleText, patchRun, planNextRuns, recordRun, withRunTool,
+	IAutomationsState, isTurnOfRun, mergeAutomations, nextDueAt, parseAutomationsFile, parseDeletedAutomations, parseScheduleText, patchRun, planNextRuns, recordRun, SCHEDULE_LATE_NOTE_MS, withRunTool,
 } from '../../../../services/voltRuntime/common/automations/automations.js';
+import { isRetryableFailure, retryAllowed, retryDelay, RUN_START_RETRY } from '../../../../services/voltRuntime/common/jobs/retryPolicy.js';
+import { DeadlineTimer } from '../../../../services/voltRuntime/browser/jobs/deadlineTimer.js';
+import { DurableClaims } from '../../../../services/voltRuntime/browser/jobs/durableClaims.js';
 import { AutomationProvider } from '../../../../services/voltRuntime/common/automations/automationTriggers.js';
 import { newWebhookTrigger } from '../../../../services/voltRuntime/common/automations/automationWebhooks.js';
 import { IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
@@ -37,10 +40,12 @@ import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { IAutomationRunHost } from './automationCommands.js';
 
-/** The timer never sleeps longer than this, so a clock change or a machine waking up is noticed. */
-const MAX_TIMER_MS = 5 * 60_000;
 /** Status and tool updates are batched into one write; a run's start is written at once. */
 const SAVE_DELAY_MS = 400;
+/** A write that failed is tried again, waiting at most this long. */
+const SAVE_RETRY_MAX_MS = 30_000;
+/** Another Volt window wrote the file: read it this soon after (its writes come in bursts). */
+const RELOAD_DELAY_MS = 300;
 const MEMORY_FILE = 'MEMORIES.md';
 const MEMORY_FILE_NAME = /^[\w][\w.-]{0,79}$/;
 /** What a run reads from Slack or Teams, at most. */
@@ -53,6 +58,8 @@ interface IRunOrigin {
 	readonly triggerId?: string;
 	readonly deliveryId?: string;
 	readonly at?: number;
+	/** Schedule runs: the slot it serves. */
+	readonly slotAt?: number;
 	readonly instructions?: string;
 	readonly eventLines?: readonly string[];
 	readonly payload?: string;
@@ -76,6 +83,12 @@ function errorText(err: unknown): string {
  * tasks), fires their schedules, starts runs (one new chat per repository, or the automation's
  * chat), follows each run's turn until it settles, and records the tools it used. A run is written
  * down before it is sent, so a crash cannot send it twice.
+ *
+ * Durable the way Temporal schedules are: the clock reads wall time (a slot passed while the Mac
+ * slept runs on waking, within the catch-up window), each slot is claimed across every Volt window
+ * so exactly one window runs it, every write merges with what other windows wrote, a send that
+ * failed for a passing reason is retried with back-off (also after a restart), and a run whose
+ * chat hit a usage limit stays running until the chat continues and finishes.
  */
 export class AutomationService extends Disposable implements IAutomationService {
 
@@ -88,7 +101,19 @@ export class AutomationService extends Disposable implements IAutomationService 
 	private loaded = false;
 	private writes: Promise<void> = Promise.resolve();
 	private readonly saveSoon = this._register(new RunOnceScheduler(() => void this.save(), SAVE_DELAY_MS));
-	private readonly timer = this._register(new RunOnceScheduler(() => void this.tick(), MAX_TIMER_MS));
+	private readonly reloadSoon = this._register(new RunOnceScheduler(() => void this.save(), RELOAD_DELAY_MS));
+	private readonly timer: DeadlineTimer;
+	private ticking = false;
+	private tickAgain = false;
+	/** Deleted automation id → when: other windows drop it too instead of writing it back. */
+	private deleted: Record<string, number> = {};
+	/** The file as this window last read or wrote it: anything else on disk came from another window. */
+	private lastWritten: string | undefined;
+	private saveFailures = 0;
+	private saveRetry: ReturnType<typeof setTimeout> | undefined;
+	/** Sends that failed for a passing reason, waiting for their next attempt. */
+	private readonly retries = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly claims: DurableClaims;
 	private readonly firing = new Set<string>();
 	/** Thread id → the runs whose turns go there and have not settled. */
 	private readonly tracked = new Map<string, ITracked[]>();
@@ -122,6 +147,15 @@ export class AutomationService extends Disposable implements IAutomationService 
 		this.file = joinPath(root, 'automations.json');
 		this.memoryRoot = joinPath(root, 'memory');
 		this.legacyFile = joinPath(environmentService.userRoamingDataHome, 'voltSchedules', 'schedules.json');
+		this.claims = new DurableClaims(joinPath(environmentService.userRoamingDataHome, 'voltJobs', 'claims'), fileService, logService);
+		this.timer = this._register(new DeadlineTimer(() => void this.tick()));
+		// Another Volt window (each project runs one) changed the automations: take its changes in.
+		this._register(fileService.watch(this.file));
+		this._register(fileService.onDidFilesChange(e => {
+			if (this.loaded && e.contains(this.file)) {
+				this.reloadSoon.schedule();
+			}
+		}));
 		this.scratch = instantiationService.createInstance(AgentScratchFolders);
 		this.whenReady = this.load();
 		this._register(hostTools.registerToolProvider({
@@ -129,7 +163,14 @@ export class AutomationService extends Disposable implements IAutomationService 
 			invoke: (name, args, call) => this.invokeTool(name, args, call),
 		}));
 		this._register(lifecycleService.onWillShutdown(e => e.join(this.flush(), { id: 'voltAutomations', label: localize('voltAutomations.saving', "Saving automations") })));
-		this._register(toDisposable(() => this.timer.cancel()));
+		this._register(toDisposable(() => {
+			if (this.saveRetry !== undefined) {
+				clearTimeout(this.saveRetry);
+			}
+			for (const handle of this.retries.values()) {
+				clearTimeout(handle);
+			}
+		}));
 		this._register(orchestrator.onDidChange(change => {
 			for (const threadId of change.threads) {
 				if (this.tracked.has(threadId)) {
@@ -148,13 +189,19 @@ export class AutomationService extends Disposable implements IAutomationService 
 	private async load(): Promise<void> {
 		try {
 			const content = await this.fileService.readFile(this.file);
-			this.automations = parseAutomationsFile(JSON.parse(content.value.toString()));
+			const text = content.value.toString();
+			const raw: unknown = JSON.parse(text);
+			this.automations = parseAutomationsFile(raw);
+			this.deleted = parseDeletedAutomations(raw, Date.now());
+			this.lastWritten = text;
 		} catch (err) {
 			if (err instanceof FileOperationError && err.fileOperationResult === FileOperationResult.FILE_NOT_FOUND) {
 				await this.migrate();
 			} else {
-				this.logService.warn('[volt automations] could not read automations; keeping a copy as automations.json.broken', err);
-				await this.fileService.copy(this.file, joinPath(this.file, '..', 'automations.json.broken'), true).catch(() => undefined);
+				// Kept under its own name: a second broken read must not overwrite the first copy.
+				const copy = `automations.json.broken-${Date.now()}`;
+				this.logService.warn(`[volt automations] could not read automations; keeping a copy as ${copy}`, err);
+				await this.fileService.copy(this.file, joinPath(this.file, '..', copy), true).catch(() => undefined);
 			}
 		}
 		this.loaded = true;
@@ -183,11 +230,73 @@ export class AutomationService extends Disposable implements IAutomationService 
 			return this.whenReady.then(() => this.save());
 		}
 		this.saveSoon.cancel();
-		const content = JSON.stringify({ version: AUTOMATIONS_STATE_VERSION, automations: this.automations }, null, '\t');
-		const atomic = this.fileService.hasCapability(this.file, FileSystemProviderCapabilities.FileAtomicWrite) ? { atomic: { postfix: '.vsctmp' } } as const : undefined;
-		this.writes = this.writes.then(() => this.fileService.writeFile(this.file, VSBuffer.fromString(content), atomic).then(() => undefined))
-			.catch(err => this.logService.error('[volt automations] could not save automations', err));
+		this.reloadSoon.cancel();
+		this.writes = this.writes.then(() => this.sync()).then(ok => {
+			if (ok) {
+				this.saveFailures = 0;
+			} else {
+				this.retrySave();
+			}
+		});
 		return this.writes;
+	}
+
+	/**
+	 * Merges with what other Volt windows wrote since this one last read the file, then writes the
+	 * result atomically when it differs from the disk. False when the write failed.
+	 */
+	private async sync(): Promise<boolean> {
+		let diskText: string | undefined;
+		try {
+			diskText = (await this.fileService.readFile(this.file)).value.toString();
+		} catch {
+			// Missing or unreadable: this window's state is all there is.
+		}
+		if (diskText !== undefined && diskText !== this.lastWritten) {
+			let disk: IAutomationsState | undefined;
+			try {
+				const raw: unknown = JSON.parse(diskText);
+				disk = { automations: parseAutomationsFile(raw), deleted: parseDeletedAutomations(raw, Date.now()) };
+			} catch {
+				// A broken file is replaced by this window's state.
+			}
+			if (disk) {
+				const merged = mergeAutomations({ automations: this.automations, deleted: this.deleted }, disk);
+				this.automations = [...merged.automations];
+				this.deleted = { ...merged.deleted };
+				// Another window's runs and edits are in: redraw and re-arm the clock.
+				this._onDidChange.fire();
+				this.reschedule();
+			}
+		}
+		const deleted = Object.keys(this.deleted).length ? { deleted: this.deleted } : {};
+		const content = JSON.stringify({ version: AUTOMATIONS_STATE_VERSION, automations: this.automations, ...deleted }, null, '\t');
+		if (content === diskText) {
+			this.lastWritten = content;
+			return true;
+		}
+		const atomic = this.fileService.hasCapability(this.file, FileSystemProviderCapabilities.FileAtomicWrite) ? { atomic: { postfix: '.vsctmp' } } as const : undefined;
+		try {
+			await this.fileService.writeFile(this.file, VSBuffer.fromString(content), atomic);
+			this.lastWritten = content;
+			return true;
+		} catch (err) {
+			this.logService.error('[volt automations] could not save automations; trying again', err);
+			return false;
+		}
+	}
+
+	/** A failed write is not dropped: it is tried again with a growing wait until it lands. */
+	private retrySave(): void {
+		this.saveFailures++;
+		if (this.saveRetry !== undefined) {
+			return;
+		}
+		const delay = Math.min(SAVE_RETRY_MAX_MS, 1_000 * (2 ** Math.min(this.saveFailures - 1, 5)));
+		this.saveRetry = setTimeout(() => {
+			this.saveRetry = undefined;
+			void this.save();
+		}, delay);
 	}
 
 	private flush(): Promise<void> {
@@ -328,6 +437,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 			return;
 		}
 		this.automations = this.automations.filter(automation => automation.id !== id);
+		this.deleted = { ...this.deleted, [id]: Date.now() };
 		await this.changed(true);
 		await this.fileService.del(joinPath(this.memoryRoot, id), { recursive: true }).catch(() => undefined);
 	}
@@ -457,20 +567,41 @@ export class AutomationService extends Disposable implements IAutomationService 
 		if (!this.loaded) {
 			return;
 		}
-		const due = nextDueAt(this.automations);
-		if (due === undefined) {
-			this.timer.cancel();
-			return;
-		}
-		this.timer.schedule(Math.max(1_000, Math.min(MAX_TIMER_MS, due - Date.now())));
+		this.timer.schedule(nextDueAt(this.automations));
 	}
 
 	private async tick(): Promise<void> {
+		if (this.ticking) {
+			this.tickAgain = true;
+			return;
+		}
+		this.ticking = true;
+		try {
+			await this.tickOnce();
+		} finally {
+			this.ticking = false;
+			if (this.tickAgain) {
+				this.tickAgain = false;
+				void this.tick();
+			}
+		}
+	}
+
+	private async tickOnce(): Promise<void> {
 		const now = Date.now();
 		for (const automation of [...this.automations]) {
-			const decisions = dueSchedules(automation, now);
-			if (!decisions.length) {
+			const due = dueSchedules(automation, now);
+			if (!due.length) {
 				continue;
+			}
+			// Every Volt window runs this clock: each slot is claimed, and only the window that claims it records and runs it.
+			const decisions: typeof due = [];
+			const claimed = new Set<string>();
+			for (const decision of due) {
+				decisions.push(decision);
+				if (await this.claims.claim(`auto:${automation.id}:${decision.triggerId}:${decision.due}`)) {
+					claimed.add(decision.triggerId);
+				}
 			}
 			// The next runs are written before anything is sent: a crash mid-run never repeats the slot.
 			const updated = this.mutate(automation.id, current => {
@@ -483,21 +614,21 @@ export class AutomationService extends Disposable implements IAutomationService 
 					}
 				}
 				let result: IAutomation = { ...current, nextRuns };
-				for (const decision of decisions.filter(entry => entry.kind === 'skip')) {
+				for (const decision of decisions.filter(entry => entry.kind === 'skip' && claimed.has(entry.triggerId))) {
 					const trigger = current.triggers.find(candidate => candidate.id === decision.triggerId);
 					result = recordRun(result, {
 						id: shortId('r'), at: decision.due, status: 'skipped', provider: 'schedule', ...(trigger ? { event: trigger.event } : {}), triggerId: decision.triggerId,
 						label: trigger?.schedule ? describeSchedule(trigger.schedule) : 'Scheduled', finishedAt: now,
-						note: localize('voltAutomations.missed', "Volt was not running at the scheduled time."),
+						note: localize('voltAutomations.missed', "Missed: Volt was closed or the computer was asleep for too long after the scheduled time."),
 					});
 				}
 				return result;
 			});
 			await this.changed(true);
-			const run = decisions.find(entry => entry.kind === 'run');
+			const run = decisions.find(entry => entry.kind === 'run' && claimed.has(entry.triggerId));
 			const trigger = run && updated?.triggers.find(candidate => candidate.id === run.triggerId);
 			if (updated && run && trigger?.schedule) {
-				await this.start(updated, { provider: 'schedule', event: trigger.event, triggerId: trigger.id, label: describeSchedule(trigger.schedule), at: now });
+				await this.start(updated, { provider: 'schedule', event: trigger.event, triggerId: trigger.id, label: describeSchedule(trigger.schedule), at: now, slotAt: run.due });
 			}
 		}
 		this.reschedule();
@@ -524,9 +655,11 @@ export class AutomationService extends Disposable implements IAutomationService 
 			this.firing.add(key);
 		}
 		const id = shortId('r');
+		const at = origin.at ?? Date.now();
+		const late = origin.slotAt !== undefined && at - origin.slotAt > SCHEDULE_LATE_NOTE_MS;
 		const run: IAutomationRun = {
 			id,
-			at: origin.at ?? Date.now(),
+			at,
 			status: 'queued',
 			provider: origin.provider,
 			label: origin.label,
@@ -534,6 +667,8 @@ export class AutomationService extends Disposable implements IAutomationService 
 			...(origin.event ? { event: origin.event } : {}),
 			...(origin.triggerId ? { triggerId: origin.triggerId } : {}),
 			...(origin.deliveryId ? { deliveryId: origin.deliveryId } : {}),
+			...(origin.slotAt !== undefined ? { slotAt: origin.slotAt } : {}),
+			...(late ? { note: localize('voltAutomations.late', "Ran late: it was scheduled for {0}.", new Date(origin.slotAt!).toLocaleString()) } : {}),
 			...(repository ? { repository: repository.owner ? `${repository.owner}/${repository.name}` : repository.name } : {}),
 		};
 		try {
@@ -541,24 +676,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 				return undefined;
 			}
 			await this.changed(true);
-			try {
-				const sent = await this.send(automationId, run, origin, repository);
-				const now = Date.now();
-				const status = sent.outcome === 'duplicate' ? 'skipped' : sent.outcome === 'started' ? 'running' : 'queued';
-				this.mutate(automationId, automation => patchRun(automation, id, {
-					threadId: sent.threadId,
-					status,
-					...(status === 'running' ? { startedAt: now } : {}),
-					...(status === 'skipped' ? { note: localize('voltAutomations.duplicate', "Already sent"), finishedAt: now } : {}),
-				}));
-				if (status !== 'skipped') {
-					this.track(sent.threadId, { automationId, runId: id });
-				}
-			} catch (err) {
-				this.logService.warn(`[volt automations] run of ${automationId} failed: ${errorText(err)}`);
-				this.mutate(automationId, automation => patchRun(automation, id, { status: 'failed', error: errorText(err), finishedAt: Date.now() }));
-			}
-			await this.changed(false);
+			await this.attempt(automationId, id, origin, repository);
 			return this.get(automationId)?.runs.find(entry => entry.id === id) ?? run;
 		} finally {
 			if (key) {
@@ -567,7 +685,58 @@ export class AutomationService extends Disposable implements IAutomationService 
 		}
 	}
 
-	private async send(automationId: string, run: IAutomationRun, origin: IRunOrigin, repository: IAutomationRepository | undefined): Promise<{ threadId: string; outcome: string }> {
+	/**
+	 * Sends a recorded run. Its chat is written down before the prompt goes, so a restart never
+	 * sends it twice; a send that failed for a passing reason (the chat was busy moving, no folder
+	 * yet, the agent did not start) is tried again with back-off, up to `RUN_START_RETRY`.
+	 */
+	private async attempt(automationId: string, runId: string, origin: IRunOrigin, repository: IAutomationRepository | undefined): Promise<void> {
+		this.retries.delete(runId);
+		const run = this.get(automationId)?.runs.find(entry => entry.id === runId);
+		if (!run || run.status !== 'queued') {
+			return;
+		}
+		const attempts = (run.attempts ?? 0) + 1;
+		try {
+			const sent = await this.send(automationId, run, origin, repository, async threadId => {
+				if (this.get(automationId)?.runs.find(entry => entry.id === runId)?.threadId !== threadId) {
+					this.mutate(automationId, automation => patchRun(automation, runId, { threadId, attempts }));
+					await this.changed(true);
+				}
+			});
+			const now = Date.now();
+			const status = sent.outcome === 'duplicate' ? 'skipped' : sent.outcome === 'started' ? 'running' : 'queued';
+			this.mutate(automationId, automation => patchRun(automation, runId, {
+				threadId: sent.threadId,
+				status,
+				attempts,
+				error: undefined,
+				...(status === 'running' ? { startedAt: now } : {}),
+				...(status === 'skipped' ? { note: localize('voltAutomations.duplicate', "Already sent"), finishedAt: now } : {}),
+			}));
+			if (status !== 'skipped') {
+				this.track(sent.threadId, { automationId, runId });
+			}
+		} catch (err) {
+			const message = errorText(err);
+			if (this.get(automationId) && isRetryableFailure(message) && retryAllowed(RUN_START_RETRY, attempts)) {
+				const delay = retryDelay(RUN_START_RETRY, attempts, { key: runId });
+				this.logService.warn(`[volt automations] run ${runId} of ${automationId} could not start (attempt ${attempts}): ${message}; trying again in ${Math.round(delay / 1000)}s`);
+				this.mutate(automationId, automation => patchRun(automation, runId, {
+					attempts,
+					error: message,
+					note: localize('voltAutomations.retrying', "Could not start; trying again at {0}.", new Date(Date.now() + delay).toLocaleTimeString()),
+				}));
+				this.retries.set(runId, setTimeout(() => void this.attempt(automationId, runId, origin, repository), delay));
+			} else {
+				this.logService.warn(`[volt automations] run of ${automationId} failed: ${message}`);
+				this.mutate(automationId, automation => patchRun(automation, runId, { status: 'failed', attempts, error: message, finishedAt: Date.now() }));
+			}
+		}
+		await this.changed(false);
+	}
+
+	private async send(automationId: string, run: IAutomationRun, origin: IRunOrigin, repository: IAutomationRepository | undefined, onThread: (threadId: string) => Promise<void>): Promise<{ threadId: string; outcome: string }> {
 		const automation = this.get(automationId);
 		if (!automation) {
 			throw new Error(localize('voltAutomations.gone', "The automation was deleted."));
@@ -578,6 +747,9 @@ export class AutomationService extends Disposable implements IAutomationService 
 			if (!this.history.get(threadId) && !this.orchestrator.getThread(threadId)) {
 				throw new Error(localize('voltAutomations.chatGone', "Its chat was deleted."));
 			}
+		} else if (run.threadId) {
+			// An earlier attempt made the run's chat and bound it; this one uses it.
+			threadId = run.threadId;
 		} else {
 			threadId = `agent-${generateUuid()}`;
 			if (repository) {
@@ -603,6 +775,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 		});
 		const modelRef = automation.modelRef ?? (automation.sourceThreadId ? this.orchestrator.getThread(automation.sourceThreadId)?.modelRef : undefined);
 		const host: IAutomationRunHost = { scheduled: { id: automation.id, title: automation.name, runId: run.id, ...(origin.provider !== 'schedule' && origin.provider !== 'manual' ? { webhook: true } : {}) } };
+		await onThread(threadId);
 		const result = await this.orchestrator.submit(threadId, {
 			text,
 			display: { text: (origin.instructions ?? automation.instructions).trim() || automation.name },
@@ -660,17 +833,25 @@ export class AutomationService extends Disposable implements IAutomationService 
 				this.untrack(threadId, entry.runId);
 				continue;
 			}
-			if (thread.active?.id === run.turnId) {
-				if (run.status !== 'running') {
-					this.mutate(entry.automationId, automation => patchRun(automation, run.id, { status: 'running', startedAt: Date.now() }));
+			if (isTurnOfRun(thread.active?.id, run.turnId)) {
+				if (run.status !== 'running' || run.limited) {
+					this.mutate(entry.automationId, automation => patchRun(automation, run.id, { status: 'running', limited: undefined, ...(run.startedAt === undefined ? { startedAt: Date.now() } : {}) }));
+					changed = true;
+				}
+				continue;
+			}
+			// Its chat stopped at a provider's usage limit: the run is not over, it continues with the chat.
+			if (thread.limit && isTurnOfRun(thread.limit.turnId, run.turnId)) {
+				if (!run.limited) {
+					this.mutate(entry.automationId, automation => patchRun(automation, run.id, { status: 'running', limited: true, note: localize('voltAutomations.limited', "Waiting for {0}'s usage limit; the run continues with its chat.", thread.limit?.providerLabel ?? localize('voltAutomations.provider', "the provider")) }));
 					changed = true;
 				}
 				continue;
 			}
 			const last = thread.last;
-			if (last && last.turnId === run.turnId) {
+			if (last && isTurnOfRun(last.turnId, run.turnId)) {
 				const status = last.outcome === 'done' ? 'succeeded' : last.outcome === 'failed' ? 'failed' : 'cancelled';
-				this.finish(entry, status, last.at, last.error ?? (status === 'cancelled' ? localize('voltAutomations.stopped', "Stopped") : undefined));
+				this.finish(entry, status, last.at, last.error ?? (status === 'cancelled' ? localize('voltAutomations.stopped', "Stopped") : run.limited ? localize('voltAutomations.continued', "Finished after the usage limit reset") : undefined));
 				this.untrack(threadId, entry.runId);
 				changed = true;
 				continue;
@@ -679,6 +860,9 @@ export class AutomationService extends Disposable implements IAutomationService 
 				continue;
 			}
 			// Neither running, queued nor the last turn: it ran and another turn followed in the same batch.
+			if (thread.queue.some(item => isTurnOfRun(item.id, run.turnId))) {
+				continue;
+			}
 			if (run.status === 'running' || recovering) {
 				this.finish(entry, recovering && run.status !== 'running' ? 'failed' : 'succeeded', Date.now(), recovering ? localize('voltAutomations.interrupted', "Volt closed before the run finished.") : undefined);
 				this.untrack(threadId, entry.runId);
@@ -698,7 +882,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 			}
 			// A tool call still pending when the turn ended did not finish.
 			const tools = run.tools?.map(tool => tool.status === 'pending' ? { ...tool, status: (status === 'succeeded' ? 'success' : 'failed') as AutomationToolStatus } : tool);
-			return patchRun(automation, run.id, { status, finishedAt: at, ...(tools ? { tools } : {}), ...(error ? (status === 'succeeded' ? { note: error } : { error }) : {}) });
+			return patchRun(automation, run.id, { status, finishedAt: at, limited: undefined, ...(tools ? { tools } : {}), ...(error ? (status === 'succeeded' ? { note: error } : { error }) : {}) });
 		});
 	}
 
@@ -708,11 +892,27 @@ export class AutomationService extends Disposable implements IAutomationService 
 		for (const automation of this.automations) {
 			for (const run of automation.runs.filter(isActiveRun)) {
 				touched = true;
-				if (!run.threadId) {
-					this.mutate(automation.id, current => patchRun(current, run.id, { status: 'failed', error: localize('voltAutomations.notStarted', "Volt closed before the run started."), finishedAt: Date.now() }));
+				if (run.threadId) {
+					await this.orchestrator.ensureThreadLoaded(run.threadId).catch(() => undefined);
+				}
+				// Never sent (no chat, or a chat of its own the orchestrator has no turn for): a schedule or
+				// manual run is sent again; a webhook run's event payload did not survive, so it fails.
+				const thread = run.threadId ? this.orchestrator.getThread(run.threadId) : undefined;
+				const unsent = !run.threadId || (!automation.threadId && (!thread || (thread.turns === 0 && !thread.queue.some(item => item.id === run.turnId))));
+				if (unsent) {
+					if ((run.provider === 'schedule' || run.provider === 'manual') && retryAllowed(RUN_START_RETRY, run.attempts ?? 0)) {
+						const origin: IRunOrigin = { provider: run.provider, label: run.label, at: run.at, ...(run.event ? { event: run.event } : {}), ...(run.triggerId ? { triggerId: run.triggerId } : {}), ...(run.slotAt !== undefined ? { slotAt: run.slotAt } : {}) };
+						const repository = run.repository ? automation.repositories.find(entry => (entry.owner ? `${entry.owner}/${entry.name}` : entry.name) === run.repository) : undefined;
+						this.logService.info(`[volt automations] run ${run.id} of ${automation.id} was not sent before Volt closed; sending it now`);
+						void this.attempt(automation.id, run.id, origin, repository);
+					} else {
+						this.mutate(automation.id, current => patchRun(current, run.id, { status: 'failed', error: localize('voltAutomations.notStarted', "Volt closed before the run started."), finishedAt: Date.now() }));
+					}
 					continue;
 				}
-				await this.orchestrator.ensureThreadLoaded(run.threadId).catch(() => undefined);
+				if (!run.threadId) {
+					continue;
+				}
 				this.tracked.set(run.threadId, [...(this.tracked.get(run.threadId) ?? []), { automationId: automation.id, runId: run.id }]);
 				this.settleThread(run.threadId, !this.orchestrator.getThread(run.threadId)?.active);
 			}

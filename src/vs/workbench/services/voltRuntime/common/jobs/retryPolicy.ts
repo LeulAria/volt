@@ -49,7 +49,7 @@ export function retryAllowed(policy: IRetryPolicy, attempt: number): boolean {
  * gone, the request itself is malformed. Everything else (network, overload, a crashed agent
  * process, timeouts) is worth another attempt.
  */
-const NON_RETRYABLE = /\b(?:not (?:signed|logged) in|sign in|log ?in (?:again|required|to)|unauthori[sz]ed|authentication (?:failed|required|error)|invalid[_ ](?:api[_ ])?key|invalid x-api-key|permission[_ ]denied|forbidden|401\b|403\b|model[_ ]not[_ ]found|unknown model|no such model|invalid[_ ]request|not found: (?:thread|chat|session)|the chat (?:is gone|was deleted))/i;
+const NON_RETRYABLE = /\b(?:not (?:signed|logged) in|sign in|log ?in (?:again|required|to)|unauthori[sz]ed|authentication (?:failed|required|error)|invalid[_ ](?:api[_ ])?key|invalid x-api-key|permission[_ ]denied|forbidden|401\b|403\b|model[_ ]not[_ ]found|unknown model|no such model|invalid[_ ]request|not found: (?:thread|chat|session)|(?:chat|automation) (?:is gone|was deleted))/i;
 
 export function isRetryableFailure(message: string | undefined): boolean {
 	return !message || !NON_RETRYABLE.test(message);
