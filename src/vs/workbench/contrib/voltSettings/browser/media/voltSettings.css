@@ -1175,7 +1175,6 @@
 	overflow: hidden;
 }
 
-.volt-pm-scroll,
 .volt-pm-detail-scroll {
 	flex: 1;
 	min-height: 0;
@@ -1202,85 +1201,81 @@
 	background: transparent !important;
 }
 
+/* The list scrolls itself (a workbench list); each row insets a rounded item that paints hover and selection. */
 .volt-pm-scroll {
-	padding: 4px 6px 10px;
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
 }
 
-.volt-pm-group {
-	padding: 14px 8px 4px;
-	font-size: 11px;
-	color: var(--vscode-descriptionForeground);
+.volt-pm-scroll .monaco-list-row {
+	box-sizing: border-box;
+	padding: 1px 6px;
 }
 
 .volt-pm-item {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	height: 30px;
-	padding: 0 8px 0 4px;
+	box-sizing: border-box;
+	height: 100%;
+	padding: 0 8px;
 	border-radius: 6px;
 	color: var(--vscode-foreground);
 	font-size: 13px;
 	cursor: pointer;
 	user-select: none;
-	outline: none;
 }
 
-.volt-pm-item:hover {
+.volt-pm-scroll .monaco-list-row:hover .volt-pm-item:is(.overview, .provider, .add) {
 	background: var(--volt-settings-hover);
 }
 
-.volt-pm-item.selected {
+.volt-pm-scroll .monaco-list-row.selected .volt-pm-item {
 	background: var(--volt-settings-selected);
 }
 
-.volt-pm-item:focus-visible {
+.volt-pm-scroll .monaco-list:focus .monaco-list-row.focused .volt-pm-item {
 	outline: 1px solid var(--vscode-focusBorder);
 	outline-offset: -1px;
 }
 
-.volt-pm-item.overview {
-	padding-left: 8px;
+.volt-pm-item.group {
+	align-items: flex-end;
+	padding: 0 8px 5px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	cursor: default;
+}
+
+.volt-pm-item.none {
+	padding: 0 10px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	cursor: default;
+}
+
+.volt-pm-item.add {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12.5px;
+}
+
+.volt-pm-scroll .monaco-list-row:hover .volt-pm-item.add,
+.volt-pm-scroll .monaco-list-row.selected .volt-pm-item.add {
+	color: var(--vscode-foreground);
 }
 
 .volt-pm-glyph {
 	display: inline-flex;
-	width: 16px;
+	flex: none;
+	width: 22px;
 	justify-content: center;
 	opacity: 0.8;
 }
 
 .volt-pm-glyph .codicon {
 	font-size: 14px;
-}
-
-.volt-pm-twistie {
-	flex: none;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	border-radius: 4px;
-	opacity: 0.55;
-}
-
-.volt-pm-twistie:hover {
-	opacity: 1;
-	background: var(--volt-settings-hover);
-}
-
-.volt-pm-twistie .codicon {
-	font-size: 12px;
-	transition: transform 120ms ease;
-}
-
-.volt-pm-block.expanded .volt-pm-twistie .codicon {
-	transform: rotate(90deg);
-}
-
-.volt-pm-twistie.empty {
-	visibility: hidden;
 }
 
 .volt-pm-icon {
@@ -1326,79 +1321,10 @@
 	background: color-mix(in srgb, #f59e0b 14%, transparent);
 }
 
-.volt-pm-block.not-installed .volt-pm-name,
-.volt-pm-block.not-installed .volt-pm-icon,
-.volt-pm-block.off > .provider .volt-pm-name {
+.volt-pm-item.not-installed .volt-pm-name,
+.volt-pm-item.not-installed .volt-pm-icon,
+.volt-pm-item.off .volt-pm-name {
 	opacity: 0.6;
-}
-
-.volt-pm-item.model {
-	height: 26px;
-	padding-left: 54px;
-	font-size: 12.5px;
-	color: color-mix(in srgb, var(--vscode-foreground) 88%, transparent);
-}
-
-.volt-pm-item.model.off .volt-pm-name {
-	opacity: 0.5;
-}
-
-.volt-pm-hidden {
-	display: inline-flex;
-	opacity: 0.45;
-}
-
-.volt-pm-hidden .codicon {
-	font-size: 12px;
-}
-
-.volt-pm-add {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	width: 100%;
-	height: 28px;
-	margin-top: 2px;
-	padding: 0 8px 0 7px;
-	border: 0;
-	border-radius: 6px;
-	background: transparent;
-	color: var(--vscode-descriptionForeground);
-	font: inherit;
-	font-size: 12.5px;
-	text-align: left;
-	cursor: pointer;
-}
-
-.volt-pm-add:hover,
-.volt-pm-add.selected {
-	color: var(--vscode-foreground);
-	background: var(--volt-settings-hover);
-}
-
-.volt-pm-add.selected {
-	background: var(--volt-settings-selected);
-}
-
-.volt-pm-add .codicon {
-	width: 22px;
-	font-size: 13px;
-	text-align: center;
-}
-
-.volt-pm-block[hidden],
-.volt-pm-models[hidden],
-.volt-pm-item[hidden],
-.volt-pm-group[hidden],
-.volt-pm-add[hidden],
-.volt-pm-none[hidden] {
-	display: none;
-}
-
-.volt-pm-none {
-	padding: 16px 10px;
-	font-size: 12px;
-	color: var(--vscode-descriptionForeground);
 }
 
 /* Detail */
@@ -1640,6 +1566,149 @@ code.volt-pm-value {
 	margin-top: 3px;
 	font-size: 12px;
 	color: var(--vscode-descriptionForeground);
+}
+
+/* Claude accounts: avatar, email and plan, session and week bars, Switch and Forget. */
+
+.volt-pm-account {
+	display: grid;
+	grid-template-columns: 28px minmax(0, 1fr) auto;
+	grid-template-areas: "avatar copy actions" ". limits limits";
+	align-items: center;
+	column-gap: 12px;
+	row-gap: 8px;
+	min-height: 56px;
+	padding: 10px 14px;
+}
+
+.volt-pm-account + .volt-pm-account {
+	border-top: 1px solid var(--volt-settings-border);
+}
+
+.volt-pm-account-avatar {
+	grid-area: avatar;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+}
+
+.volt-pm-account.active .volt-pm-account-avatar {
+	color: #d97757;
+	background: color-mix(in srgb, #d97757 16%, transparent);
+}
+
+.volt-pm-account-copy .name {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font-size: 13px;
+}
+
+.volt-pm-account-copy .email {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-pm-account-badge {
+	flex: none;
+	padding: 0 6px;
+	border-radius: 999px;
+	font-size: 10.5px;
+	line-height: 16px;
+	color: #4ade80;
+	background: color-mix(in srgb, #4ade80 13%, transparent);
+}
+
+.volt-pm-account-copy .detail {
+	margin-top: 3px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pm-account-copy .detail.warn {
+	color: #f59e0b;
+}
+
+.volt-pm-account-copy {
+	grid-area: copy;
+	min-width: 0;
+}
+
+.volt-pm-account-limits {
+	grid-area: limits;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 24px;
+}
+
+.volt-pm-account-limits.empty {
+	font-size: 11.5px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pm-meter {
+	display: grid;
+	grid-template-columns: 52px minmax(80px, 140px) 34px;
+	align-items: center;
+	gap: 8px;
+	font-size: 11.5px;
+	color: var(--vscode-descriptionForeground);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-pm-meter .bar {
+	height: 4px;
+	border-radius: 999px;
+	overflow: hidden;
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-pm-meter .fill {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	background: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+.volt-pm-meter.high .fill {
+	background: #f59e0b;
+}
+
+.volt-pm-meter.full .fill {
+	background: #ef4444;
+}
+
+.volt-pm-meter .value {
+	text-align: right;
+	color: var(--vscode-foreground);
+}
+
+.volt-pm-account .volt-pm-actions {
+	grid-area: actions;
+	justify-content: flex-end;
+	min-width: 64px;
+}
+
+.volt-pm-account:not(:hover):not(:focus-within) .volt-pm-account-remove {
+	opacity: 0;
+}
+
+.volt-pm-accounts .volt-settings-empty {
+	margin: 0;
+	border: 0;
 }
 
 .volt-settings-stats {
