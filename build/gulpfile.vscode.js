@@ -251,7 +251,10 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 
 		const extensions = gulp.src(['.build/extensions/**', ...platformSpecificBuiltInExtensionsExclusions], { base: '.build', dot: true });
 
-		const sources = es.merge(src, extensions)
+		// Volt's web app (apps/web, built into out-volt-web), served by the agent server to browsers and phones.
+		const voltWeb = gulp.src('out-volt-web/**', { base: '.', dot: true });
+
+		const sources = es.merge(src, extensions, voltWeb)
 			.pipe(filter(['**', '!**/*.{js,mjs,cjs,css}.map'], { dot: true }));
 
 		let version = packageJson.version;

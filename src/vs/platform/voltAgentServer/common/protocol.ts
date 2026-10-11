@@ -139,6 +139,74 @@ export interface IAgentServerRuntimeInfo {
 	readonly commit?: string;
 }
 
+//#region Pairing (phones and browsers)
+
+/** Public, unauthenticated: what a client checks before it pairs with or connects to a server. */
+export const VOLT_ENVIRONMENT_PATH = '/.well-known/volt/environment';
+/** `POST`: trade a one-time pairing code for a device token ({@link IVoltPairRequest}). */
+export const VOLT_PAIR_PATH = '/api/auth/pair';
+/** `POST`, loopback only: a token for the browser on the server's own machine. */
+export const VOLT_LOCAL_SESSION_PATH = '/api/auth/local';
+
+export interface IVoltEnvironmentDescriptor {
+	/** Stable per profile: a client never sends its token to an address that answers with another id. */
+	readonly environmentId: string;
+	/** The machine's name ("Leul's MacBook Pro"). */
+	readonly label: string;
+	readonly platform: { readonly os: string; readonly arch: string };
+	readonly serverVersion: string;
+	readonly protocol: number;
+	/** The server listens on the network, not only on loopback: phones can reach it. */
+	readonly network: boolean;
+	readonly capabilities: { readonly pairing: boolean };
+}
+
+export type VoltPairingClientKind = 'mobile' | 'tablet' | 'web';
+
+export interface IVoltPairRequest {
+	readonly code: string;
+	readonly client: {
+		readonly label: string;
+		readonly kind: VoltPairingClientKind;
+		readonly os?: string;
+		readonly model?: string;
+	};
+}
+
+export interface IVoltPairResponse {
+	readonly token: string;
+	readonly deviceId: string;
+	readonly environmentId: string;
+	readonly label: string;
+	readonly role: 'owner' | 'device';
+}
+
+export type VoltRouteKind = 'loopback' | 'lan' | 'tailnet' | 'public';
+
+export interface IVoltPairingCode {
+	readonly code: string;
+	readonly expiresAt: number;
+	/** Pairing links for each address the server can be reached at, best first. */
+	readonly urls: readonly { readonly kind: VoltRouteKind; readonly url: string }[];
+	readonly network: boolean;
+}
+
+export interface IVoltPairedDevice {
+	readonly id: string;
+	readonly label: string;
+	readonly kind: VoltPairingClientKind;
+	readonly role: 'owner' | 'device';
+	readonly os?: string;
+	readonly model?: string;
+	readonly createdAt: number;
+	readonly lastSeenAt?: number;
+	readonly connected: boolean;
+	/** The device asking. */
+	readonly current?: boolean;
+}
+
+//#endregion
+
 /** Parses one frame; returns undefined for anything that isn't a well-formed frame object. */
 export function parseFrame<T extends { t: string }>(text: string): T | undefined {
 	let value: unknown;

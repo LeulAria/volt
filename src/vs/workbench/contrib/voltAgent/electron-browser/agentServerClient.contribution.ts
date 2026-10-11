@@ -28,6 +28,7 @@ import { IWebSocketLike } from '../../../../platform/voltAgentServer/common/conn
 import { DEFAULT_TOPICS } from '../../../../platform/voltAgentServer/common/protocol.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { IHostService } from '../../../services/host/browser/host.js';
 import { AGENT_SERVER_ENABLED_SETTING, AgentServerClient, agentServerEnabled, IAgentServerClientService } from '../../../services/voltAgentServer/common/agentServerClient.js';
 import { RemoteAgentHistoryService } from '../../../services/voltAgentServer/common/remoteAgentHistoryService.js';
 import { RemoteAgentOrchestratorService } from '../../../services/voltAgentServer/common/remoteAgentOrchestratorService.js';
@@ -301,5 +302,103 @@ registerAction2(class extends Action2 {
 		const environment = accessor.get(INativeEnvironmentService);
 		const editors = accessor.get(IEditorService);
 		await editors.openEditor({ resource: URI.joinPath(URI.file(environment.userDataPath), 'logs', 'agent-server.log'), options: { pinned: true } });
+	}
+});
+
+/** The web app on this machine. It signs itself in over loopback, so no token goes in the URL. */
+function localWebUrl(port: number, path = '/'): string {
+	return `http://127.0.0.1:${port}${path}`;
+}
+
+/** Turns the agent server on (it needs a restart) when it is off. Resolves whether it is on. */
+async function ensureServerMode(configurationService: IConfigurationService, dialogs: IDialogService, host: IHostService): Promise<boolean> {
+	if (agentServerEnabled(configurationService)) {
+		return true;
+	}
+	const { confirmed } = await dialogs.confirm({
+		message: localize('voltAgentServer.needed', "Phones and browsers reach Volt through its agent server"),
+		detail: localize('voltAgentServer.neededDetail', "Turn on the agent server so chats keep running in the background and your other devices can follow and steer them. Volt restarts to apply it."),
+		primaryButton: localize({ key: 'voltAgentServer.turnOn', comment: ['&& denotes a mnemonic'] }, "&&Turn On and Restart"),
+	});
+	if (confirmed) {
+		await configurationService.updateValue(AGENT_SERVER_ENABLED_SETTING, true);
+		await host.restart();
+	}
+	return false;
+}
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({ id: 'volt.agentServer.pairDevice', title: localize2('voltAgentServer.pairDevice', "Pair a Phone or Browser..."), category: localize2('volt', "Volt"), f1: true });
+	}
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const mainService = accessor.get(IVoltAgentServerMainService);
+		const configurationService = accessor.get(IConfigurationService);
+		const dialogs = accessor.get(IDialogService);
+		const nativeHost = accessor.get(INativeHostService);
+		const notifications = accessor.get(INotificationService);
+		const host = accessor.get(IHostService);
+		if (!await ensureServerMode(configurationService, dialogs, host)) {
+			return;
+		}
+		try {
+			let endpoint = await mainService.ensureRunning();
+			if (!endpoint.network) {
+				const { confirmed } = await dialogs.confirm({
+					message: localize('voltAgentServer.allowNetwork', "Let your devices on this network connect?"),
+					detail: localize('voltAgentServer.allowNetworkDetail', "Phones and computers on this Wi-Fi or your Tailscale network can reach Volt once you pair them with a one-time code. Each device gets its own key, which you can remove at any time. The agent server restarts; running turns can be resumed."),
+					primaryButton: localize({ key: 'voltAgentServer.allowNetworkButton', comment: ['&& denotes a mnemonic'] }, "&&Allow"),
+				});
+				if (confirmed) {
+					endpoint = await mainService.setNetworkAccess(true);
+				}
+			}
+			await nativeHost.openExternal(localWebUrl(endpoint.port, '/devices'));
+		} catch (err) {
+			notifications.error(localize('voltAgentServer.pairFailed', "Could not open pairing: {0}", err instanceof Error ? err.message : String(err)));
+		}
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({ id: 'volt.agentServer.openWebApp', title: localize2('voltAgentServer.openWebApp', "Open Volt in the Browser"), category: localize2('volt', "Volt"), f1: true });
+	}
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const mainService = accessor.get(IVoltAgentServerMainService);
+		const configurationService = accessor.get(IConfigurationService);
+		const dialogs = accessor.get(IDialogService);
+		const nativeHost = accessor.get(INativeHostService);
+		const notifications = accessor.get(INotificationService);
+		const host = accessor.get(IHostService);
+		if (!await ensureServerMode(configurationService, dialogs, host)) {
+			return;
+		}
+		try {
+			const endpoint = await mainService.ensureRunning();
+			await nativeHost.openExternal(localWebUrl(endpoint.port));
+		} catch (err) {
+			notifications.error(localize('voltAgentServer.openWebFailed', "Could not open the web app: {0}", err instanceof Error ? err.message : String(err)));
+		}
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({ id: 'volt.agentServer.stopNetwork', title: localize2('voltAgentServer.stopNetwork', "Stop Sharing Volt on This Network"), category: localize2('volt', "Volt"), f1: true });
+	}
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const mainService = accessor.get(IVoltAgentServerMainService);
+		const configurationService = accessor.get(IConfigurationService);
+		const notifications = accessor.get(INotificationService);
+		if (!agentServerEnabled(configurationService)) {
+			return;
+		}
+		try {
+			await mainService.setNetworkAccess(false);
+			notifications.info(localize('voltAgentServer.networkOff', "Volt is reachable only from this computer now. Paired devices reconnect when you share it again."));
+		} catch (err) {
+			notifications.error(localize('voltAgentServer.networkOffFailed', "Could not stop sharing: {0}", err instanceof Error ? err.message : String(err)));
+		}
 	}
 });

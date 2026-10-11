@@ -195,7 +195,13 @@ export class AgentServerApi extends Disposable {
 			resolved: (_ctx, resolution) => this.edits.resolved(resolution as Parameters<ServerEditsJournal['resolved']>[0]),
 		}));
 		this._register(this.protocol.registerMethods('secrets', {
-			importMissing: (_ctx, secrets) => this.importSecrets(secrets && typeof secrets === 'object' ? secrets as Record<string, string> : {}),
+			importMissing: (ctx, secrets) => {
+				// Only a Volt window hands over provider keys; a paired phone never writes secrets.
+				if (ctx.client.role !== 'owner') {
+					throw Object.assign(new Error('Only Volt on this computer can import provider keys.'), { code: 'Forbidden' });
+				}
+				return this.importSecrets(secrets && typeof secrets === 'object' ? secrets as Record<string, string> : {});
+			},
 		}));
 		this._register(this.protocol.onDidChangeClients(() => {
 			// Chats held by connections that went away are no longer held, and their tools are gone.

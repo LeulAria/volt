@@ -21,12 +21,27 @@ export interface IServerSocket {
 	readonly onClose: Event<void>;
 }
 
+/**
+ * Who a token belongs to. `owner`: the server's own token (Volt windows, the browser on this
+ * machine). `device`: a phone or browser paired with a one-time code; it can use every chat but
+ * cannot pair or revoke other devices.
+ */
+export type AgentServerRole = 'owner' | 'device';
+
+export interface IAgentServerAuth {
+	readonly role: AgentServerRole;
+	/** The paired device the token was issued to. */
+	readonly deviceId?: string;
+}
+
 export interface IAgentServerClientInfo {
 	readonly connectionId: number;
 	readonly kind: IAgentServerHello['client']['kind'];
 	readonly clientId: string;
 	readonly capabilities: readonly AgentServerCapability[];
 	readonly connectedAt: number;
+	readonly role: AgentServerRole;
+	readonly deviceId?: string;
 }
 
 /** What a method handler gets besides its params. */
@@ -38,6 +53,8 @@ export type AgentServerMethod = (ctx: IAgentServerCallContext, ...params: unknow
 
 export interface IAgentServerProtocolOptions {
 	readonly token: string;
+	/** Other tokens the server accepts (paired devices). The server's own `token` is always `owner`. */
+	readonly authorize?: (token: string) => IAgentServerAuth | undefined;
 	readonly epoch: string;
 	readonly serverVersion: string;
 	readonly pid: number;
@@ -214,6 +231,18 @@ export class AgentServerProtocol extends Disposable {
 		listeners?.forEach(l => l.dispose());
 	}
 
+	/** Disconnects the clients `filter` picks (a revoked device). */
+	closeWhere(filter: (info: IAgentServerClientInfo) => boolean, code: number, reason: string): number {
+		let closed = 0;
+		for (const client of [...this.clients.values()]) {
+			if (filter(client.info)) {
+				client.socket.close(code, reason);
+				closed++;
+			}
+		}
+		return closed;
+	}
+
 	/** Closes every client (the server is stopping). */
 	closeAll(reason = 'server shutting down'): void {
 		for (const client of [...this.clients.values()]) {
@@ -227,7 +256,8 @@ export class AgentServerProtocol extends Disposable {
 			socket.close(AgentServerCloseCode.BadHello, 'expected hello');
 			return undefined;
 		}
-		if (!tokensEqual(frame.token, this.options.token)) {
+		const auth: IAgentServerAuth | undefined = tokensEqual(frame.token, this.options.token) ? { role: 'owner' } : this.options.authorize?.(frame.token);
+		if (!auth) {
 			socket.close(AgentServerCloseCode.Unauthorized, 'bad token');
 			return undefined;
 		}
@@ -242,6 +272,8 @@ export class AgentServerProtocol extends Disposable {
 				clientId: frame.client.id,
 				capabilities: [...(frame.client.capabilities ?? [])],
 				connectedAt: this.now(),
+				role: auth.role,
+				...(auth.deviceId ? { deviceId: auth.deviceId } : {}),
 			},
 			socket,
 			topics: new Set(frame.client.topics ?? DEFAULT_TOPICS),

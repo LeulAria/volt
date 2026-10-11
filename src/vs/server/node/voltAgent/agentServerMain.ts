@@ -43,7 +43,7 @@ import { ISecretStorageService } from '../../../platform/secrets/common/secrets.
 import { getResolvedShellEnv } from '../../../platform/shell/node/shellEnv.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../platform/workspace/common/workspace.js';
-import { ICollectionDelta, IAgentServerRuntimeInfo } from '../../../platform/voltAgentServer/common/protocol.js';
+import { AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo } from '../../../platform/voltAgentServer/common/protocol.js';
 import { AgentServerProtocol } from '../../../platform/voltAgentServer/common/protocolServer.js';
 import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
 import { acceptWebSocket } from '../../../platform/voltAgentServer/node/webSocket.js';
@@ -87,6 +87,7 @@ import { IAgentServerClients } from './serverClients.js';
 import { ServerEditsJournal } from './serverEditsJournal.js';
 import { importDesktopStorage, ServerCommandService, ServerConsoleLogger, ServerLifecycleService, ServerNotificationService, ServerPathService, ServerSearchService, ServerSecretStorageService, ServerStorageService, ServerTextModelService, serverTextFileService, ServerWorkspaceContextService } from './serverPlatformServices.js';
 import { ServerSessionHost } from './serverSessionHost.js';
+import { IPairingHttpContext, ServerPairing } from './serverPairing.js';
 
 /** Settings keys the server takes over from the desktop's storage the first time it starts. */
 const IMPORTED_STORAGE_PREFIXES = ['volt.runtime.', 'volt.agent.', 'volt.pullRequests.', 'volt.access.'];
@@ -125,6 +126,9 @@ export async function main(argv: string[]): Promise<void> {
 
 	const token = await ensureAgentServerToken(paths);
 	const epoch = randomBytes(8).toString('hex');
+	const pairing = disposables.add(await ServerPairing.load(paths.dir, logService));
+	// The port is known once the server listens; pairing links are made after that.
+	let httpContext: IPairingHttpContext = { port: 0, network: args.host !== '127.0.0.1' && args.host !== 'localhost', serverVersion: SERVER_VERSION };
 
 	//#region Platform services
 
@@ -192,6 +196,7 @@ export async function main(argv: string[]): Promise<void> {
 	const collections = createCollections(delta => sendDelta.fire(delta));
 	const protocol = disposables.add(new AgentServerProtocol({
 		token,
+		authorize: deviceToken => pairing.authorize(deviceToken),
 		epoch,
 		serverVersion: SERVER_VERSION,
 		pid: process.pid,
@@ -199,7 +204,14 @@ export async function main(argv: string[]): Promise<void> {
 	}));
 	disposables.add(sendDelta.event(delta => protocol.publish('col', delta)));
 	const clientsChanged = disposables.add(new Emitter<void>());
-	disposables.add(protocol.onDidChangeClients(() => clientsChanged.fire()));
+	disposables.add(protocol.onDidChangeClients(() => {
+		clientsChanged.fire();
+		for (const client of protocol.listClients()) {
+			if (client.deviceId) {
+				pairing.touch(client.deviceId);
+			}
+		}
+	}));
 	services.set(IAgentServerClients, {
 		_serviceBrand: undefined,
 		onDidChange: clientsChanged.event,
@@ -260,9 +272,40 @@ export async function main(argv: string[]): Promise<void> {
 		}
 		return imported;
 	}));
+	const ownerOnly = (role: string) => {
+		if (role !== 'owner') {
+			throw Object.assign(new Error('Only Volt on this computer can pair or remove devices.'), { code: 'Forbidden' });
+		}
+	};
+	disposables.add(protocol.registerMethods('pairing', {
+		createCode: ctx => {
+			ownerOnly(ctx.client.role);
+			return pairing.createCode(httpContext);
+		},
+		environment: () => pairing.descriptor(httpContext),
+		devices: ctx => pairing.list(new Set(protocol.listClients().map(client => client.deviceId).filter((id): id is string => !!id)), ctx.client.deviceId),
+		rename: (ctx, id, label) => {
+			if (ctx.client.deviceId !== id) {
+				ownerOnly(ctx.client.role);
+			}
+			return pairing.rename(String(id), String(label ?? ''));
+		},
+		revoke: async (ctx, id) => {
+			// A device may always remove itself (sign out); only the owner removes others.
+			if (ctx.client.deviceId !== id) {
+				ownerOnly(ctx.client.role);
+			}
+			const revoked = await pairing.revoke(String(id));
+			if (revoked) {
+				setTimeout(() => protocol.closeWhere(client => client.deviceId === id, AgentServerCloseCode.Unauthorized, 'device removed'), 50);
+			}
+			return revoked;
+		},
+	}));
 	disposables.add(protocol.registerMethods('server', {
-		info: () => ({ pid: process.pid, epoch, version: SERVER_VERSION, userDataDir: args.userDataDir, clients: protocol.listClients() }),
-		shutdown: () => {
+		info: () => ({ pid: process.pid, epoch, version: SERVER_VERSION, environmentId: pairing.environmentId, userDataDir: args.userDataDir, clients: protocol.listClients() }),
+		shutdown: ctx => {
+			ownerOnly(ctx.client.role);
 			setTimeout(() => void stop(0), 10);
 			return true;
 		},
@@ -275,7 +318,7 @@ export async function main(argv: string[]): Promise<void> {
 	// The checkout in dev, the app's Resources/app when packaged (where this module is bundled into out/).
 	const appRoot = FileAccess.asFileUri('').fsPath.replace(/[\\/]out[\\/]?$/, '');
 	const webRoot = args.webRoot ?? join(appRoot, 'out-volt-web');
-	const server = http.createServer((req, res) => void serveHttp(req, res, webRoot, token, epoch));
+	const server = http.createServer((req, res) => void serveHttp(req, res, webRoot, token, epoch, pairing, httpContext));
 	server.on('upgrade', (req, socket: Socket) => {
 		const url = new URL(req.url ?? '/', 'http://localhost');
 		if (url.pathname !== '/ws' || !originAllowed(req.headers.origin, req.headers.host)) {
@@ -288,6 +331,7 @@ export async function main(argv: string[]): Promise<void> {
 		}
 	});
 	const port = await listen(server, args.host, args.port ?? preferredAgentServerPort(args.userDataDir), args.port === undefined);
+	httpContext = { ...httpContext, port };
 	const info: IAgentServerRuntimeInfo = {
 		version: 1,
 		pid: process.pid,
@@ -380,9 +424,15 @@ const MIME: Record<string, string> = {
 	'.ttf': 'font/ttf',
 	'.woff2': 'font/woff2',
 	'.map': 'application/json; charset=utf-8',
+	'.webmanifest': 'application/manifest+json; charset=utf-8',
+	'.ico': 'image/x-icon',
+	'.webp': 'image/webp',
 };
 
-async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, webRoot: string, token: string, epoch: string): Promise<void> {
+async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, webRoot: string, token: string, epoch: string, pairing: ServerPairing, ctx: IPairingHttpContext): Promise<void> {
+	if (await pairing.handleHttp(req, res, ctx)) {
+		return;
+	}
 	const url = new URL(req.url ?? '/', 'http://localhost');
 	if (url.pathname === '/health') {
 		// Answers only with the token, so a stray process on the port can't pass for the server.
@@ -398,9 +448,11 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, we
 		return;
 	}
 	try {
-		const data = await fs.readFile(file);
+		// The web app routes on the client (/pair, /t/<chat>): a path without an extension is the app.
+		const data = await fs.readFile(file).catch(err => extname(file) ? Promise.reject(err) : fs.readFile(join(webRoot, 'index.html')));
+		const served = extname(file) ? file : join(webRoot, 'index.html');
 		res.writeHead(200, {
-			'Content-Type': MIME[extname(file)] ?? 'application/octet-stream',
+			'Content-Type': MIME[extname(served)] ?? 'application/octet-stream',
 			// Revalidate every time: a rebuilt app must never mix with a cached older bundle.
 			'Cache-Control': 'no-cache',
 			'X-Content-Type-Options': 'nosniff',
