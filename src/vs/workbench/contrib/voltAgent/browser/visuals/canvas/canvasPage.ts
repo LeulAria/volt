@@ -2229,7 +2229,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	}
 
 	function visibleComments(): ICanvasComment[] {
-		return model.comments.filter(comment => views.has(comment.anchor.frame) && (state.showResolved || comment.status !== 'resolved'));
+		return model.comments.filter(comment => !comment.archived && views.has(comment.anchor.frame) && (state.showResolved || comment.status !== 'resolved'));
 	}
 	function commentNumber(id: string): number {
 		return model.comments.findIndex(comment => comment.id === id) + 1;

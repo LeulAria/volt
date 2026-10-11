@@ -21,7 +21,7 @@ import { IThemeService } from '../../../../../../platform/theme/common/themeServ
 import { IPageChannelPort, registerPageChannel, setPageContext } from '../agentVisualBridge.js';
 import { themeKind } from '../agentVisuals.js';
 import { OPEN_CANVAS_COMMAND_ID } from './canvasCard.js';
-import { applyCanvasLayout, applyCanvasUpdate, CANVAS_SIZE_PRESETS, canvasFromMockups, CanvasCommentStatus, formatCanvasChoice, formatCanvasFeedback, ICanvasAnchor, ICanvasCreate, ICanvasDoc, ICanvasLayout, ICanvasTweak, ICanvasUpdateResult, removeCanvasComment, upsertCanvasComment } from './canvasModel.js';
+import { applyCanvasLayout, applyCanvasUpdate, CANVAS_SIZE_PRESETS, canvasFromMockups, CanvasCommentStatus, formatCanvasChoice, formatCanvasFeedback, ICanvasAnchor, ICanvasCreate, ICanvasDoc, ICanvasLayout, ICanvasTweak, ICanvasUpdateResult, archiveResolvedCanvasComments, removeCanvasComment, upsertCanvasComment } from './canvasModel.js';
 import { ICanvasPageData, ICanvasStrings } from './canvasPage.js';
 
 export const IVoltCanvasService = createDecorator<IVoltCanvasService>('voltCanvasService');
@@ -565,6 +565,13 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 					if (next !== doc) {
 						this.commit(next, 'comments', 'user');
 					}
+				}
+				return;
+			}
+			case 'comments-archive': {
+				const next = archiveResolvedCanvasComments(doc);
+				if (next !== doc) {
+					this.commit(next, 'comments', 'user');
 				}
 				return;
 			}

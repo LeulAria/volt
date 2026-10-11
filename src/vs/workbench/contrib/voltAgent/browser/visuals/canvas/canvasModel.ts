@@ -133,6 +133,8 @@ export interface ICanvasComment {
 	/** Inspector edits on the anchored element. */
 	readonly tweaks?: readonly ICanvasTweak[];
 	readonly at: number;
+	/** A resolved comment the user archived: kept (its id stays taken), never shown again. */
+	readonly archived?: boolean;
 }
 
 export interface ICanvasDoc {
@@ -855,6 +857,13 @@ function sanitizeAnchor(anchor: ICanvasAnchor): ICanvasAnchor {
 
 export function removeCanvasComment(doc: ICanvasDoc, id: string, now = Date.now()): ICanvasDoc {
 	return doc.comments.some(comment => comment.id === id) ? { ...doc, comments: doc.comments.filter(comment => comment.id !== id), updatedAt: now } : doc;
+}
+
+/** Archives every resolved comment: the pins and the list drop them for good. */
+export function archiveResolvedCanvasComments(doc: ICanvasDoc, now = Date.now()): ICanvasDoc {
+	return doc.comments.some(comment => comment.status === 'resolved' && !comment.archived)
+		? { ...doc, comments: doc.comments.map(comment => comment.status === 'resolved' && !comment.archived ? { ...comment, archived: true } : comment), updatedAt: now }
+		: doc;
 }
 
 //#endregion

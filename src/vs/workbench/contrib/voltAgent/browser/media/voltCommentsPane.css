@@ -1,0 +1,291 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* The comments of a design canvas or a browser tab (chrome/voltCommentsPane.ts). Solid: it sits over pages. */
+.volt-comments-pane {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-foreground);
+}
+
+.volt-comments-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 38px;
+	padding: 0 10px 0 14px;
+	font-size: 13px;
+	font-weight: 600;
+	user-select: none;
+}
+
+.volt-comments-head.collapsible {
+	padding-left: 8px;
+	cursor: pointer;
+}
+
+.volt-comments-head.collapsible:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-comments-twistie {
+	display: flex;
+	color: var(--vscode-descriptionForeground);
+	transition: transform 120ms ease;
+}
+
+.volt-comments-twistie .codicon {
+	font-size: 14px;
+}
+
+.volt-comments-pane.collapsed .volt-comments-twistie {
+	transform: rotate(-90deg);
+}
+
+.volt-comments-count {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.volt-comments-grow {
+	flex: 1;
+}
+
+.volt-comments-head-tools {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	cursor: default;
+}
+
+.volt-comments-icon-button {
+	display: grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+}
+
+.volt-comments-icon-button:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+.volt-comments-icon-button[hidden] {
+	display: none;
+}
+
+.volt-comments-icon-button .codicon {
+	font-size: 14px;
+}
+
+.volt-comments-resolved {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	font-weight: 400;
+}
+
+.volt-comments-resolved .monaco-custom-toggle.monaco-checkbox {
+	margin: 0;
+}
+
+.volt-comments-resolved-label {
+	cursor: pointer;
+}
+
+.volt-comments-body-slot {
+	position: relative;
+	flex: none;
+	min-height: 0;
+}
+
+.volt-comments-pane.collapsed > .volt-comments-body-slot,
+.volt-comments-pane.collapsed > .volt-comments-foot {
+	display: none;
+}
+
+.volt-comments-body-slot > .monaco-list {
+	height: 100%;
+}
+
+.volt-comments-empty {
+	position: absolute;
+	inset: 0 0 auto;
+	padding: 12px 16px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	pointer-events: none;
+}
+
+.volt-comments-empty[hidden] {
+	display: none;
+}
+
+/* A row: checkbox (open comments), pin, where + state, the words, the agent's reply; actions on hover. */
+.volt-comments-row {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 9px 10px 9px 12px;
+}
+
+.volt-comments-check {
+	flex: none;
+	display: flex;
+	padding-top: 2px;
+}
+
+.volt-comments-check[hidden] {
+	display: none;
+}
+
+.volt-comments-check .monaco-custom-toggle.monaco-checkbox {
+	margin: 0;
+}
+
+.volt-comments-pin {
+	flex: none;
+	display: grid;
+	place-items: center;
+	min-width: 20px;
+	height: 20px;
+	padding: 0 5px;
+	box-sizing: border-box;
+	border-radius: 10px 10px 10px 3px;
+	background: var(--vscode-textLink-foreground);
+	color: var(--vscode-editor-background);
+	font-size: 11px;
+	font-weight: 700;
+}
+
+.volt-comments-pin.sent {
+	background: transparent;
+	color: var(--vscode-textLink-foreground);
+	box-shadow: inset 0 0 0 1.5px var(--vscode-textLink-foreground);
+}
+
+.volt-comments-pin.resolved {
+	background: var(--vscode-testing-iconPassed, #3fb950);
+}
+
+.volt-comments-pin.agent {
+	background: var(--vscode-charts-purple, #a371f7);
+	color: #fff;
+}
+
+.volt-comments-pin .codicon {
+	font-size: 12px;
+}
+
+.volt-comments-body {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	white-space: normal;
+}
+
+.volt-comments-top {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	font-size: 11px;
+	line-height: 16px;
+}
+
+.volt-comments-where {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-comments-state {
+	flex: none;
+	color: var(--vscode-textLink-foreground);
+}
+
+.volt-comments-row.resolved .volt-comments-state {
+	color: var(--vscode-testing-iconPassed, #3fb950);
+}
+
+.volt-comments-state[hidden] {
+	display: none;
+}
+
+.volt-comments-text {
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	font-size: 13px;
+	line-height: 18px;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.volt-comments-row.resolved .volt-comments-text {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-comments-reply {
+	display: -webkit-box;
+	-webkit-line-clamp: 1;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	line-height: 17px;
+	word-break: break-word;
+}
+
+.volt-comments-reply[hidden] {
+	display: none;
+}
+
+.volt-comments-actions {
+	position: absolute;
+	top: 6px;
+	right: 8px;
+	display: none;
+	border-radius: 6px;
+	background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+	box-shadow: 0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+}
+
+.monaco-list-row:hover .volt-comments-actions,
+.monaco-list-row.focused .volt-comments-actions {
+	display: block;
+}
+
+.volt-comments-foot {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	padding: 10px 12px 12px;
+	border-top: 1px solid var(--vscode-panel-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+.volt-comments-foot[hidden] {
+	display: none;
+}

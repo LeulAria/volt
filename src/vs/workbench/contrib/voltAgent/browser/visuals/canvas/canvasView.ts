@@ -7,7 +7,6 @@ import '../../media/agentCanvas.css';
 import { $, addDisposableListener, append, clearNode, getWindow } from '../../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IListRenderer, IListVirtualDelegate } from '../../../../../../base/browser/ui/list/list.js';
-import { Checkbox } from '../../../../../../base/browser/ui/toggle/toggle.js';
 import { Codicon } from '../../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../../base/common/themables.js';
@@ -17,14 +16,13 @@ import { IClipboardService } from '../../../../../../platform/clipboard/common/c
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { WorkbenchList } from '../../../../../../platform/list/browser/listService.js';
 import { IOpenerService } from '../../../../../../platform/opener/common/opener.js';
-import { defaultCheckboxStyles } from '../../../../../../platform/theme/browser/defaultStyles.js';
 import { IThemeService } from '../../../../../../platform/theme/common/themeService.js';
 import { IWebviewElement, IWebviewService, WebviewContentPurpose } from '../../../../webview/browser/webview.js';
-import { createVoltButton } from '../../chrome/voltButton.js';
+import { IVoltCommentItem, VoltCommentsPane } from '../../chrome/voltCommentsPane.js';
 import { dispatchPageChannel, IPageChannelPort, parsePageRequest } from '../agentVisualBridge.js';
 import { buildVisualPage } from '../agentVisualPage.js';
 import { themeKind, visualThemeCss } from '../agentVisuals.js';
-import type { CanvasFrameKind, ICanvasAnchor, ICanvasComment, ICanvasDoc, ICanvasFrame } from './canvasModel.js';
+import type { CanvasFrameKind, ICanvasAnchor, ICanvasDoc, ICanvasFrame } from './canvasModel.js';
 import { buildCanvasPage } from './canvasPage.js';
 import { attachCanvasAgent } from './canvasAgent.js';
 import { canvasStrings, IVoltCanvasService } from './canvasService.js';
@@ -106,66 +104,6 @@ class FrameRenderer implements IListRenderer<FrameRow, IFrameTemplate> {
 
 //#endregion
 
-//#region Comments list
-
-interface ICommentRow {
-	readonly comment: ICanvasComment;
-	readonly number: number;
-	readonly where: string;
-}
-
-class CommentRowDelegate implements IListVirtualDelegate<ICommentRow> {
-	getHeight(row: ICommentRow): number {
-		return 52 + (row.comment.reply ? 18 : 0);
-	}
-	getTemplateId(): string {
-		return 'comment';
-	}
-	hasDynamicHeight(): boolean {
-		return true;
-	}
-}
-
-interface ICommentTemplate {
-	readonly pin: HTMLElement;
-	readonly where: HTMLElement;
-	readonly text: HTMLElement;
-	readonly reply: HTMLElement;
-}
-
-class CommentRenderer implements IListRenderer<ICommentRow, ICommentTemplate> {
-	readonly templateId = 'comment';
-	renderTemplate(container: HTMLElement): ICommentTemplate {
-		const row = append(container, $('.volt-canvas-comment-row'));
-		const pin = append(row, $('span.volt-canvas-comment-pin'));
-		const body = append(row, $('.volt-canvas-comment-body'));
-		return {
-			pin,
-			where: append(body, $('.volt-canvas-comment-where')),
-			text: append(body, $('.volt-canvas-comment-text')),
-			reply: append(body, $('.volt-canvas-comment-reply')),
-		};
-	}
-	renderElement(row: ICommentRow, _index: number, template: ICommentTemplate): void {
-		const { comment } = row;
-		template.pin.className = `volt-canvas-comment-pin ${comment.author === 'agent' ? 'agent' : comment.status}`;
-		if (comment.author === 'agent') {
-			template.pin.replaceChildren(renderIcon(Codicon.sparkle));
-		} else if (comment.status === 'resolved') {
-			template.pin.replaceChildren(renderIcon(Codicon.check));
-		} else {
-			template.pin.textContent = String(row.number);
-		}
-		template.where.textContent = row.where;
-		template.text.textContent = comment.text || (comment.tweaks ?? []).map(tweak => `${tweak.property}: ${tweak.value}`).join(', ');
-		template.reply.textContent = comment.reply ?? '';
-		template.reply.hidden = !comment.reply;
-	}
-	disposeTemplate(): void { }
-}
-
-//#endregion
-
 /**
  * A design canvas with room: the page (the board itself, in a webview) between two workbench
  * panes, the frame list and the comments. The tab beside the chat and Expand both show one.
@@ -177,13 +115,8 @@ export class CanvasView extends Disposable {
 	private readonly commentsPane: HTMLElement;
 	private readonly host: HTMLElement;
 	private readonly frames: WorkbenchList<FrameRow>;
-	private readonly comments: WorkbenchList<ICommentRow>;
+	private readonly comments: VoltCommentsPane;
 	private readonly framesCount: HTMLElement;
-	private readonly commentsCount: HTMLElement;
-	private readonly commentsEmpty: HTMLElement;
-	private readonly showResolved: Checkbox;
-	private readonly commentsFoot: HTMLElement;
-	private readonly sendButton: ReturnType<typeof createVoltButton>;
 	private readonly mounted = this._register(new MutableDisposable<DisposableStore>());
 	private readonly strings = canvasStrings();
 	private webview: IWebviewElement | undefined;
@@ -240,50 +173,19 @@ export class CanvasView extends Disposable {
 		this.host = append(this.element, $('.volt-canvas-view-host'));
 
 		this.commentsPane = append(this.element, $('.volt-canvas-pane.comments'));
-		const commentsHead = append(this.commentsPane, $('.volt-canvas-pane-head'));
-		append(commentsHead, $('span.volt-canvas-pane-title')).textContent = this.strings.comments;
-		this.commentsCount = append(commentsHead, $('span.volt-canvas-pane-count'));
-		append(commentsHead, $('span.volt-canvas-pane-grow'));
-		const resolvedToggle = append(commentsHead, $('.volt-canvas-pane-check'));
-		this.showResolved = this._register(new Checkbox(this.strings.showResolved, false, defaultCheckboxStyles));
-		resolvedToggle.appendChild(this.showResolved.domNode);
-		const resolvedLabel = append(resolvedToggle, $('span.volt-canvas-pane-check-label'));
-		resolvedLabel.textContent = this.strings.showResolved;
-		this._register(addDisposableListener(resolvedLabel, 'click', () => {
-			this.showResolved.checked = !this.showResolved.checked;
-			this.renderComments();
+		// The comments fold away under their head, so the agent below can have the whole column.
+		this.comments = this._register(instantiationService.createInstance(VoltCommentsPane, this.commentsPane, {
+			listId: 'VoltCanvasComments',
+			title: this.strings.comments,
+			collapsible: true,
+			onOpen: id => this.post({ op: 'comment', comment: id }),
+			onSend: ids => this.sendComments(ids),
+			onSetStatus: (id, status) => this.handle({ op: 'comment', comment: { id, status } }),
+			onDelete: id => this.handle({ op: 'comment-delete', comment: id }),
+			onArchiveResolved: () => this.handle({ op: 'comments-archive' }),
+			onShowResolved: show => this.post({ op: 'resolved', show }),
 		}));
-		this._register(this.showResolved.onChange(() => this.renderComments()));
-		const commentsBody = append(this.commentsPane, $('.volt-canvas-pane-body'));
-		this.commentsEmpty = append(commentsBody, $('.volt-canvas-pane-empty'));
-		this.commentsEmpty.textContent = this.strings.noComments;
-		this.comments = this._register(instantiationService.createInstance(
-			WorkbenchList<ICommentRow>,
-			'VoltCanvasComments',
-			commentsBody,
-			new CommentRowDelegate(),
-			[new CommentRenderer()],
-			{
-				identityProvider: { getId: row => row.comment.id },
-				accessibilityProvider: {
-					getAriaLabel: row => `${row.where}: ${row.comment.text}${row.comment.reply ? `. ${row.comment.reply}` : ''}`,
-					getWidgetAriaLabel: () => this.strings.comments,
-				},
-				multipleSelectionSupport: false,
-				horizontalScrolling: false,
-				setRowLineHeight: false,
-				supportDynamicHeights: true,
-			},
-		));
-		this._register(this.comments.onDidChangeContentHeight(() => this.layoutLists()));
-		this._register(this.comments.onDidOpen(event => {
-			if (event.element) {
-				this.post({ op: 'comment', comment: event.element.comment.id });
-			}
-		}));
-		this.commentsFoot = append(this.commentsPane, $('.volt-canvas-pane-foot'));
-		this.sendButton = this._register(createVoltButton(this.commentsFoot, 'primary'));
-		this._register(this.sendButton.onDidClick(() => this.sendAll()));
+		this._register(this.comments.onDidChangeHeight(() => this.layoutLists()));
 		// The canvas's own agent: comments and every change asked for here go to it, and its changes
 		// land on the canvas as it makes them.
 		const agentHead = append(this.commentsPane, $('.volt-canvas-pane-head.agent'));
@@ -295,7 +197,7 @@ export class CanvasView extends Disposable {
 		const observer = new (getWindow(container).ResizeObserver)(() => this.layoutLists());
 		observer.observe(this.element);
 		observer.observe(framesBody);
-		observer.observe(commentsBody);
+		observer.observe(this.commentsPane);
 		this._register(toDisposable(() => observer.disconnect()));
 
 		this._register(this.canvas.onDidChange(change => {
@@ -430,6 +332,7 @@ export class CanvasView extends Disposable {
 		switch (message.op) {
 			case 'hello':
 				this.sizePanes();
+				this.post({ op: 'resolved', show: this.comments.showResolved });
 				return;
 			case 'select':
 				this.selected = Array.isArray(message.frames) ? message.frames.filter((frame): frame is string => typeof frame === 'string') : [];
@@ -440,15 +343,11 @@ export class CanvasView extends Disposable {
 				this.commentsPane.hidden = message.comments === false;
 				this.layoutLists();
 				return;
-			case 'thread': {
-				const index = this.commentRows().findIndex(row => row.comment.id === message.comment);
-				if (index >= 0) {
-					this.comments.setFocus([index]);
-					this.comments.setSelection([index]);
-					this.comments.reveal(index);
+			case 'thread':
+				if (typeof message.comment === 'string') {
+					this.comments.reveal(message.comment);
 				}
 				return;
-			}
 		}
 	}
 
@@ -505,15 +404,22 @@ export class CanvasView extends Disposable {
 		}
 	}
 
-	private commentRows(): ICommentRow[] {
+	private commentItems(): IVoltCommentItem[] {
 		const doc = this.doc;
 		if (!doc) {
 			return [];
 		}
-		const show = this.showResolved.checked;
 		return doc.comments
-			.filter(comment => doc.frames.some(frame => frame.id === comment.anchor.frame) && (show || comment.status !== 'resolved'))
-			.map(comment => ({ comment, number: doc.comments.indexOf(comment) + 1, where: this.anchorLabel(doc, comment.anchor) }));
+			.filter(comment => !comment.archived && doc.frames.some(frame => frame.id === comment.anchor.frame))
+			.map(comment => ({
+				id: comment.id,
+				number: doc.comments.indexOf(comment) + 1,
+				where: this.anchorLabel(doc, comment.anchor),
+				text: comment.text || (comment.tweaks ?? []).map(tweak => `${tweak.property}: ${tweak.value}`).join(', '),
+				reply: comment.reply,
+				status: comment.status,
+				author: comment.author,
+			}));
 	}
 
 	private anchorLabel(doc: ICanvasDoc, anchor: ICanvasAnchor): string {
@@ -523,30 +429,20 @@ export class CanvasView extends Disposable {
 	}
 
 	private renderComments(): void {
-		const rows = this.commentRows();
-		const doc = this.doc;
-		this.commentsCount.textContent = String(doc?.comments.filter(comment => comment.status !== 'resolved').length ?? 0);
-		this.comments.splice(0, this.comments.length, rows);
-		this.commentsEmpty.hidden = rows.length > 0;
-		const ready = this.readyComments().length;
-		this.sendButton.label = this.strings.sendAll.replace('{0}', String(ready));
-		this.sendButton.enabled = ready > 0;
-		this.commentsFoot.hidden = !ready;
-		this.post({ op: 'resolved', show: this.showResolved.checked });
+		this.comments.setItems(this.commentItems());
 		this.layoutLists();
 	}
 
-	private readyComments(): ICanvasComment[] {
-		return this.doc?.comments.filter(comment => comment.status === 'open' && comment.author === 'user') ?? [];
+	private handle(payload: Record<string, unknown>): void {
+		const doc = this.doc;
+		if (doc && this.port) {
+			this.canvas.handle(this.port, { ...payload, id: doc.id });
+		}
 	}
 
-	private sendAll(): void {
-		const ready = this.readyComments();
-		const doc = this.doc;
-		if (!ready.length || !doc || !this.port) {
-			return;
-		}
-		this.canvas.handle(this.port, { op: 'send', id: doc.id, comments: ready.map(comment => comment.id) });
+	/** The ticked comments as one message to the canvas's agent; they turn "sent". */
+	private sendComments(ids: readonly string[]): void {
+		this.handle({ op: 'send', comments: ids });
 	}
 
 	private layoutLists(): void {
@@ -554,14 +450,10 @@ export class CanvasView extends Disposable {
 		if (!this.framesPane.hidden && framesBody) {
 			this.frames.layout(framesBody.clientHeight, framesBody.clientWidth);
 		}
-		const commentsBody = this.comments.getHTMLElement().parentElement;
-		if (!this.commentsPane.hidden && commentsBody) {
-			// The comments take what they need, up to a third of the pane; the agent gets the rest.
-			const height = this.comments.length ? Math.min(this.comments.contentHeight, Math.round(this.commentsPane.clientHeight * 0.34)) : 64;
-			if (commentsBody.style.height !== `${height}px`) {
-				commentsBody.style.height = `${height}px`;
-			}
-			this.comments.layout(height, commentsBody.clientWidth);
+		if (!this.commentsPane.hidden) {
+			// The comments take what they need, up to a third of the column; the agent gets the rest.
+			const height = this.comments.collapsed ? 0 : Math.min(this.comments.contentHeight, Math.round(this.commentsPane.clientHeight * 0.34));
+			this.comments.layout(height, this.commentsPane.clientWidth);
 		}
 	}
 }
