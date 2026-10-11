@@ -74,7 +74,7 @@ export type AgentHomeElement =
 	| { readonly type: 'bucket'; readonly id: string; readonly label: string; readonly add?: boolean; readonly count?: number }
 	| { readonly type: 'group'; readonly id: AgentHomeGroupId; readonly count?: number }
 	/**
-	 * `nested` sessions sit under their project; the others list the project by its initials.
+	 * `nested` sessions sit under their project; the others name it on their second line.
 	 * `sideDepth` is set on a side chat, listed right under the chat it was opened in.
 	 */
 	| { readonly type: 'session'; readonly session: IAgentSessionMeta; readonly folderKey: string; readonly nested: boolean; readonly sideDepth?: number; readonly runMember?: IAgentHomeRunMember }
@@ -915,6 +915,12 @@ export function sessionMetaParts(session: IAgentSessionMeta, context: IAgentHome
 /** Agent tabs take two lines while the Show menu puts anything on the second (branch, PR, model). */
 export function isTwoLineView(view: IAgentHomeViewState): boolean {
 	return view.show.has('branch') || view.show.has('pr') || view.show.has('model');
+}
+
+/** A project name short enough for a chat row's second line: 8 characters, then an ellipsis. */
+export function shortProjectName(name: string, max = 8): string {
+	const chars = [...name];
+	return chars.length > max ? `${chars.slice(0, max).join('')}\u2026` : name;
 }
 
 export interface IAgentHomeSecondLine {

@@ -98,8 +98,9 @@ import {
 	sessionShowsStatusBadge,
 	sessionStatusBadge,
 	sessionsWithOpenDrafts,
+	shortProjectName,
 } from './agentHomeModel.js';
-import { AgentRepoResolver, dominantRepoOwner, IAgentRepoInfo, repoDisplayName, repoInitials } from './agentRepoInfo.js';
+import { AgentRepoResolver, dominantRepoOwner, IAgentRepoInfo, repoDisplayName } from './agentRepoInfo.js';
 import { agentSessionHoverRows, agentSessionStatusNote } from './agentSessionHover.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
@@ -175,7 +176,7 @@ const ROW_STATE_CLASSES = [
 	'is-nested', 'is-flat', 'is-collapsible', 'current', 'unread', 'archived', 'pinned',
 	'status-needsAttention', 'status-working', 'status-draft', 'status-done',
 	'actions-cover-name', 'active-chat', 'shelf-active', 'shelf-settled', 'shelf-snooze', 'group-working', 'group-settled', 'group-snooze', 'two-line',
-	'is-run-group', 'is-run-member', 'run-winner', 'run-discarded',
+	'is-run-group', 'is-run-member', 'run-winner', 'run-discarded', 'no-glyph',
 ];
 
 /** Settled chats are done with: one line each, their pull request at its end. */
@@ -213,6 +214,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		twist.appendChild(renderIcon(Codicon.chevronDown));
 		const glyph = append(icon, $('span.glyph'));
 		const name = append(container, $('span.name'));
+		// Unread mark for rows without a glyph slot (CSS shows it only there).
+		append(container, $('span.unread-dot'));
 		const linePr = append(container, $('span.line-pr'));
 		const meta = append(container, $('span.meta'));
 		const badge = append(container, $('span.status-badge'));
@@ -449,10 +452,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.container.classList.toggle('pinned', !!session.pinned);
 		template.container.classList.toggle('active-chat', this.host.isActiveChat(session.id));
 
-		// In a flat list the project's initials say where the tab lives; under a project the title stands alone.
-		if (!element.nested && context.initials) {
-			append(template.glyph, $('span.volt-agent-home-initials')).textContent = context.initials;
-		}
+		// Flat rows start at the title: no glyph slot. The project is named on the second line instead.
+		template.container.classList.toggle('no-glyph', !element.nested);
 		template.name.textContent = session.title || localize('voltAgent.home.untitled', "New Agent");
 		const oneLine = isOneLineSession(session);
 		const twoLine = this.host.twoLine && !oneLine;
@@ -460,7 +461,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		// On two lines the branch moves to the second line, beside the pull request and the model.
 		template.meta.textContent = sessionMetaParts(session, twoLine || oneLine ? { workspace: context.workspace } : context, this.host.view, now).join(' · ');
 		if (twoLine) {
-			this.renderSecondLine(template, session, context);
+			this.renderSecondLine(template, session, context, element.nested ? undefined : context.project);
 		} else if (oneLine) {
 			const pr = this.host.view.show.has('pr') ? this.host.prBadge(session.id) : undefined;
 			if (pr) {
@@ -566,10 +567,21 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		setAgentTooltip(template.container, `${member.label} · ${member.branch}\n${live.label}`);
 	}
 
-	/** Branch (or project), the pull request badge, and the model, under the title. */
-	private renderSecondLine(template: IHomeTemplate, session: IAgentSessionMeta, context: IAgentHomeSessionContext): void {
+	/**
+	 * Branch (or project), the pull request badge, and the model, under the title. `project` is
+	 * named before the branch on flat rows; under a project row it would repeat it.
+	 */
+	private renderSecondLine(template: IHomeTemplate, session: IAgentSessionMeta, context: IAgentHomeSessionContext, project?: string): void {
 		const line = sessionSecondLine(session, context, this.host.view, this.host.modelLabel(session));
 		if (line.branch) {
+			if (project) {
+				template.subBranch.appendChild(renderIcon(Codicon.folder));
+				const label = append(template.subBranch, $('span.sub-project'));
+				label.textContent = shortProjectName(project);
+				if (label.textContent !== project) {
+					setAgentTooltip(label, project);
+				}
+			}
 			template.subBranch.appendChild(renderIcon(Codicon.gitBranch));
 			append(template.subBranch, $('span.sub-text')).textContent = line.branch;
 		} else if (line.place) {
@@ -1301,11 +1313,11 @@ export class AgentHomePane extends Disposable {
 		return active instanceof AgentEditorInput && active.sessionId === sessionId;
 	}
 
-	/** Where a session lives, as far as the row can tell: repository or folder name, branch, initials. */
-	sessionContext(session: IAgentSessionMeta): IAgentHomeSessionContext & { readonly initials: string } {
+	/** Where a session lives, as far as the row can tell: repository or folder name, branch, short project name. */
+	sessionContext(session: IAgentSessionMeta): IAgentHomeSessionContext & { readonly project?: string } {
 		if (isScratchSession(session)) {
 			const label = scratchProjectLabel();
-			return { workspace: label, initials: repoInitials(label) };
+			return { workspace: label, project: label };
 		}
 		const primary = sessionFolders(session)[0];
 		const repo = primary ? this.repos.get(primary) : undefined;
@@ -1314,7 +1326,7 @@ export class AgentHomePane extends Disposable {
 		return {
 			workspace: repo ? repoDisplayName(repo, dominantRepoOwner(this.repos.values())) : (folderName || session.workspaceLabel || undefined),
 			branch: repo?.branch,
-			initials: name ? repoInitials(name) : '',
+			project: name || undefined,
 		};
 	}
 

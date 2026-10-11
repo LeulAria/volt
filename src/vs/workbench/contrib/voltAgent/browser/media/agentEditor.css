@@ -1198,8 +1198,8 @@ pre.volt-agent-searchable {
 .volt-agent-footer-btn .volt-agent-svg-icon.copy rect,
 .volt-agent-footer-btn .volt-agent-svg-icon.copy path,
 .volt-agent-footer-btn .volt-agent-svg-icon.fork path {
-	stroke-width: 1.3px;
-	vector-effect: non-scaling-stroke;
+	/* 1.5 in the 24 grid scales like the codicon bookmark beside them (0.75px at 12px). */
+	stroke-width: 1.5;
 }
 
 .volt-agent-turn.user .volt-agent-bubble.has-edit {
@@ -3348,10 +3348,20 @@ pre.volt-agent-searchable {
 	padding: 2px 10px 8px;
 }
 
-/* A new chat shows only its permissions under the composer; project, branch and environment sit above it. */
+/*
+ * A new chat shows at most its permissions under the composer; project, branch and environment sit
+ * above it, and the permissions too while that row shows (placeAccess in agentEditor.ts). The row
+ * then is empty and takes no room, so the suggest chips sit 12px under the composer.
+ */
 .volt-agent-editor:not(.has-turns):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-composer-status {
 	max-width: 560px;
+	min-height: 0;
+	margin-top: 0;
 	padding: 0 10px;
+}
+
+.volt-agent-editor:not(.has-turns):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-suggest {
+	margin-top: 12px;
 }
 
 .volt-agent-editor:not(.has-turns):not(.zoomed):not(.resized):not(.browser-hosted) .volt-agent-composer-status > :not(.volt-agent-status-start),
@@ -8068,6 +8078,15 @@ pre.volt-agent-searchable {
 	font-size: 14px;
 }
 
+/* This Mac: a folder opens in place, like a submenu row. */
+.volt-agent-mention-file-chevron {
+	margin-left: 4px;
+}
+
+.volt-agent-mention-file-chevron.hidden {
+	display: none;
+}
+
 /* Tree: entries sit after the twistie like the explorer; Back, Recent and dividers stay flush. */
 .volt-agent-mention-tree .volt-agent-mention-file:not(.flush) {
 	padding-left: 0;
@@ -8080,6 +8099,44 @@ pre.volt-agent-searchable {
 .volt-agent-mention-tree .monaco-tl-twistie {
 	color: var(--vscode-icon-foreground, var(--vscode-foreground));
 	opacity: 0.8;
+}
+
+/* Files & Folders: a search field over Back and the tree; it has the keyboard while the view is open. */
+.volt-agent-mention-search {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 32px;
+	padding: 0 10px;
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+	color: var(--vscode-descriptionForeground);
+	cursor: text;
+}
+
+.volt-agent-mention-search.hidden {
+	display: none;
+}
+
+.volt-agent-mention-search .codicon {
+	flex: none;
+	font-size: 14px;
+}
+
+.volt-agent-mention-search-input {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	padding: 0;
+	border: 0;
+	outline: none !important;
+	background: none;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 13px;
+}
+
+.volt-agent-mention-search-input::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
 }
 
 .volt-agent-dropdown-empty {

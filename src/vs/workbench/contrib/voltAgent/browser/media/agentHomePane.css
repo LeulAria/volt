@@ -766,44 +766,25 @@
 	border: none !important;
 }
 
-/* Agent tab rows: the project's initials in flat lists; nothing under a project. */
-
-.volt-agent-home-initials {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	font-size: 9.5px;
-	font-weight: 700;
-	line-height: 16px;
-	letter-spacing: 0.02em;
-	text-transform: uppercase;
-	white-space: nowrap;
-	opacity: 0.6;
+/* Agent tab rows in flat lists start at the title (no glyph slot); the project is named on the
+ * second line. Under a project the empty slot stays, so nested titles indent past their folder. */
+.volt-agent-home-row.is-session.no-glyph > .icon {
+	display: none;
 }
 
-.volt-agent-home-row.is-session.unread .volt-agent-home-initials {
-	color: var(--vscode-charts-blue, var(--vscode-textLink-foreground, #3794ff));
-	opacity: 1;
+/* Unread on a flat row (no glyph slot to hold the dot): a blue dot at the title's end, before the age. */
+.volt-agent-home-row > .unread-dot {
+	display: none;
 }
 
-.volt-agent-home-row.is-session.status-needsAttention .volt-agent-home-initials {
-	color: var(--vscode-editorWarning-foreground, #cca700);
-	opacity: 1;
-}
-
-.volt-agent-home-row.is-session.status-working .volt-agent-home-initials {
-	animation: volt-agent-home-working 1.4s ease-in-out infinite;
-}
-
-.volt-agent-home-row.is-session.status-draft .volt-agent-home-initials {
-	opacity: 0.35;
-}
-
-@keyframes volt-agent-home-working {
-	0%, 100% { opacity: 0.9; }
-	50% { opacity: 0.25; }
+.volt-agent-home-row.is-session.no-glyph.unread > .unread-dot {
+	display: block;
+	flex: none;
+	width: 6px;
+	height: 6px;
+	margin-left: -2px;
+	border-radius: 50%;
+	background: var(--vscode-charts-blue, #3794ff);
 }
 
 .volt-agent-home-row.is-session.archived > .name {
@@ -854,6 +835,19 @@
 	min-width: 0;
 	max-width: 60%;
 	overflow: hidden;
+}
+
+/* Flat rows have no glyph slot: the second line starts under the title's first letter. */
+.volt-agent-home-row.is-session.no-glyph.two-line > .sub {
+	padding-left: 0;
+}
+
+/* The project ahead of the branch on flat rows (folder icon, bold name cut to 8 characters in code). */
+.volt-agent-home-row.is-session.two-line > .sub > .sub-branch > .sub-project {
+	flex: none;
+	margin-right: 3px;
+	font-weight: 600;
+	white-space: nowrap;
 }
 
 .volt-agent-home-row.is-session.two-line > .sub > .sub-branch:empty,
