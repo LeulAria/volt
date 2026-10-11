@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { EventEmitter, requireNativeModule } from 'expo-modules-core';
+import { type EventEmitter, requireNativeModule } from 'expo-modules-core';
 import type { IActivityHost } from './driver.ts';
 import type { IAgentActivityAttributes, IAgentActivityContentState, IWidgetSnapshot } from './model.ts';
 
@@ -70,8 +70,12 @@ interface IVoltWidgetsModule {
 	setConnection(server: string | null, token: string | null): void;
 }
 
-const module = requireNativeModule<IVoltWidgetsModule>('VoltWidgets');
-const emitter = new EventEmitter<INativeEvents>(module);
+/** Listener signatures: the shape expo-modules-core's `EventEmitter` is typed with. */
+type NativeEventListeners = { [K in keyof INativeEvents]: (event: INativeEvents[K]) => void };
+
+// Native modules are event emitters themselves (expo-modules-core 2+).
+const module = requireNativeModule<IVoltWidgetsModule & InstanceType<EventEmitter<NativeEventListeners>>>('VoltWidgets');
+const emitter = module;
 
 export function isSupported(): boolean {
 	return module.getInfo().supported;

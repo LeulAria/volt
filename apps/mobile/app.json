@@ -1,0 +1,75 @@
+{
+	"expo": {
+		"name": "Volt",
+		"slug": "volt",
+		"scheme": "volt",
+		"version": "0.1.0",
+		"orientation": "default",
+		"userInterfaceStyle": "automatic",
+		"icon": "./assets/icon.png",
+		"backgroundColor": "#141414",
+		"primaryColor": "#81A1C1",
+		"ios": {
+			"bundleIdentifier": "com.voltadk.volt",
+			"supportsTablet": true,
+			"infoPlist": {
+				"NSCameraUsageDescription": "Volt scans the pairing code your computer shows.",
+				"NSLocalNetworkUsageDescription": "Volt connects to the agent server on your computer over your local network.",
+				"NSAppTransportSecurity": {
+					"NSAllowsLocalNetworking": true,
+					"NSAllowsArbitraryLoads": true
+				},
+				"ITSAppUsesNonExemptEncryption": false
+			}
+		},
+		"android": {
+			"package": "com.voltadk.volt",
+			"adaptiveIcon": {
+				"foregroundImage": "./assets/adaptive-icon.png",
+				"monochromeImage": "./assets/adaptive-icon-mono.png",
+				"backgroundColor": "#141414"
+			},
+			"edgeToEdgeEnabled": true,
+			"predictiveBackGestureEnabled": true,
+			"permissions": [
+				"android.permission.CAMERA"
+			]
+		},
+		"plugins": [
+			"expo-router",
+			"expo-secure-store",
+			[
+				"expo-camera",
+				{
+					"cameraPermission": "Volt scans the pairing code your computer shows.",
+					"recordAudioAndroid": false
+				}
+			],
+			[
+				"expo-splash-screen",
+				{
+					"image": "./assets/splash-icon.png",
+					"imageWidth": 96,
+					"resizeMode": "contain",
+					"backgroundColor": "#FCFCFC",
+					"dark": {
+						"image": "./assets/splash-icon.png",
+						"backgroundColor": "#141414"
+					}
+				}
+			],
+			[
+				"expo-build-properties",
+				{
+					"android": {
+						"usesCleartextTraffic": true
+					}
+				}
+			],
+			"volt-mobile-widgets"
+		],
+		"experiments": {
+			"typedRoutes": true
+		}
+	}
+}

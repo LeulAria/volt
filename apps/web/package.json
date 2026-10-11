@@ -1,0 +1,28 @@
+{
+	"name": "volt-web",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Volt in the browser: follow and steer the agents running on your computer. Served by the Volt agent server.",
+	"license": "MIT",
+	"author": "Volt ADK",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "vite build",
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"preview": "vite preview"
+	},
+	"dependencies": {
+		"@volt/client-core": "file:../client-core",
+		"qrcode-generator": "^2.0.4",
+		"react": "19.2.3",
+		"react-dom": "19.2.3"
+	},
+	"devDependencies": {
+		"@types/react": "^19.2.0",
+		"@types/react-dom": "^19.2.0",
+		"@vitejs/plugin-react": "^6.1.2",
+		"typescript": "~5.9.3",
+		"vite": "^8.3.4"
+	}
+}
