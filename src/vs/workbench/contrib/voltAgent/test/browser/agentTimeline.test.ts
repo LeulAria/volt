@@ -5,8 +5,8 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { createFileChangeBlock, createTerminalBlock } from '../../browser/blocks/agentBlocks.js';
-import { buildThreadParts, classifySupervisionNotice, composerTasks, createdPlanPrompt, failureTitle, fileChangeGroupTitle, formatElapsed, isProcessNarration, looksLikeAnswerForm, partitionAssistantText, runEndTray, STATUS_ROTATE_MS, stampTodoSteps, streamingActivityLines, supervisionActions, tasksCard, todoChecklist, visibleReplyParts } from '../../browser/chrome/agentTimeline.js';
+import { AgentSegment, createFileChangeBlock, createTerminalBlock } from '../../browser/blocks/agentBlocks.js';
+import { buildThreadParts, carryTodoSteps, classifySupervisionNotice, composerTasks, createdPlanPrompt, failureTitle, fileChangeGroupTitle, formatElapsed, isProcessNarration, looksLikeAnswerForm, partitionAssistantText, runEndTray, STATUS_ROTATE_MS, stampTodoSteps, streamingActivityLines, supervisionActions, tasksCard, todoChecklist, todoOutcome, visibleReplyParts } from '../../browser/chrome/agentTimeline.js';
 
 suite('Agent timeline', () => {
 
@@ -415,6 +415,54 @@ suite('Agent run state', () => {
 			{ label: 'Run tasks', state: 'done', startedAt: 10_000, endedAt: 70_000 });
 		// Done without ever showing in progress: no start, so no duration.
 		assert.deepStrictEqual(stampTodoSteps([], [{ label: 'Quick', state: 'done' }], 5_000), [{ label: 'Quick', state: 'done', endedAt: 5_000 }]);
+	});
+
+	test('a finished to-do keeps what the reply produced while it was in progress', () => {
+		const file = (path: string, additions: number, deletions: number, verb: 'Created' | 'Edited' = 'Edited'): AgentSegment =>
+			({ kind: 'block', block: createFileChangeBlock({ id: `${path}-${additions}`, path, verb, additions, deletions, status: 'complete' }) });
+		const canvas = (id: string, title: string, kind: 'html' | 'canvas'): AgentSegment =>
+			({ kind: 'block', block: { id: `visual-${id}-${kind}`, type: 'visual', status: 'complete', kind, title, ref: `volt-canvas:${id}@1`, canvas: id } });
+		const segments: AgentSegment[] = [{ kind: 'text', text: 'Planning' }];
+		const plan = (next: { label: string; state: 'done' | 'current' | 'pending' }[], previous: ReturnType<typeof stampTodoSteps>, now: number) => stampTodoSteps(previous, next, now, segments);
+
+		let steps = plan([{ label: 'Design', state: 'current' }, { label: 'Build', state: 'pending' }, { label: 'Docs', state: 'pending' }], [], 0);
+		assert.deepStrictEqual(steps[0], { label: 'Design', state: 'current', startedAt: 0, fromSegment: 1 });
+		segments.push(canvas('c1', 'Onboarding', 'html'));
+		steps = plan([{ label: 'Design', state: 'done' }, { label: 'Build', state: 'current' }, { label: 'Docs', state: 'pending' }], steps, 10);
+		assert.deepStrictEqual(steps[0].outcome, { files: 0, additions: 0, deletions: 0, canvas: { id: 'c1', title: 'Onboarding', created: true } });
+		// Two edits to one file fold into it; the canvas made before this to-do started is not its own.
+		segments.push(file('/w/src/app.ts', 100, 5), { kind: 'text', text: 'More' }, file('/w/src/app.ts', 20, 3));
+		steps = plan([{ label: 'Design', state: 'done' }, { label: 'Building', state: 'current' }, { label: 'Docs', state: 'pending' }], steps, 20);
+		steps = plan([{ label: 'Design', state: 'done' }, { label: 'Build', state: 'done' }, { label: 'Docs', state: 'pending' }], steps, 30);
+		assert.deepStrictEqual(steps[1].outcome, { files: 1, additions: 120, deletions: 8, file: { path: '/w/src/app.ts', created: false } });
+		assert.strictEqual(steps[1].startedAt, 10, 'still matched while it ran under its active name');
+		// Done without showing in progress: what came after the last one done.
+		segments.push(file('/w/PLAN.md', 12, 0, 'Created'), file('/w/README.md', 3, 1));
+		steps = plan([{ label: 'Design', state: 'done' }, { label: 'Build', state: 'done' }, { label: 'Docs', state: 'done' }], steps, 40);
+		assert.deepStrictEqual(steps[2].outcome, { files: 2, additions: 15, deletions: 1 });
+		// A later update keeps outcomes as they were, though the reply goes on.
+		segments.push(file('/w/other.ts', 1, 0));
+		const again = plan([{ label: 'Design', state: 'done' }, { label: 'Build', state: 'done' }, { label: 'Docs', state: 'done' }], steps, 50);
+		assert.deepStrictEqual(again.map(step => step.outcome), steps.map(step => step.outcome));
+		// Nothing produced: no outcome.
+		assert.strictEqual(stampTodoSteps([], [{ label: 'Think', state: 'done' }], 0, [{ kind: 'text', text: 'Hmm' }])[0].outcome, undefined);
+	});
+
+	test('a to-do carried into the next reply counts that reply from its start', () => {
+		const earlier = stampTodoSteps([], [{ label: 'A', state: 'done' }, { label: 'B', state: 'current' }], 0, new Array<AgentSegment>(7).fill({ kind: 'text', text: 'x' }));
+		const carried = carryTodoSteps(earlier);
+		assert.deepStrictEqual(carried.map(step => [step.fromSegment, step.toSegment]), [[undefined, undefined], [undefined, undefined]]);
+		const segments: AgentSegment[] = [{ kind: 'block', block: createFileChangeBlock({ id: 'f', path: '/w/b.ts', verb: 'Created', additions: 4, deletions: 0, status: 'complete' }) }];
+		const next = stampTodoSteps(carried, [{ label: 'A', state: 'done' }, { label: 'B', state: 'done' }], 10, segments);
+		assert.deepStrictEqual(next[1].outcome, { files: 1, additions: 4, deletions: 0, file: { path: '/w/b.ts', created: true } });
+	});
+
+	test('a to-do outcome names the canvas it last rendered or updated', () => {
+		const update: AgentSegment = { kind: 'block', block: { id: 'u', type: 'visual', status: 'complete', kind: 'canvas', title: 'Checkout', ref: 'volt-canvas:c2@3', canvas: 'c2', detail: 'Changed 2 frames' } };
+		const pending: AgentSegment = { kind: 'block', block: { id: 'p', type: 'visual', status: 'streaming', kind: 'canvas', title: '', ref: '', canvas: 'pending' } };
+		const chart: AgentSegment = { kind: 'block', block: { id: 'c', type: 'visual', status: 'complete', kind: 'chart', title: 'Sales', ref: 'volt-attachment:x.json' } };
+		assert.deepStrictEqual(todoOutcome([update, pending, chart])?.canvas, { id: 'c2', title: 'Checkout', created: false });
+		assert.strictEqual(todoOutcome([pending, chart]), undefined);
 	});
 
 	test('the Tasks card shows progress, the current to-do and times', () => {

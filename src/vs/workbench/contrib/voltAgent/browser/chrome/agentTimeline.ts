@@ -790,12 +790,56 @@ export function todoChecklist(steps: readonly { readonly label: string; readonly
 	return { items, done, total: items.length, current: done === items.length ? undefined : current, title };
 }
 
+/** What a finished to-do produced: the files changed and the design canvas made while it was in progress. */
+export interface ITodoOutcome {
+	readonly files: number;
+	readonly additions: number;
+	readonly deletions: number;
+	/** The one file it changed, when it changed exactly one: the outcome opens it. */
+	readonly file?: { readonly path: string; readonly created: boolean };
+	/** The last design canvas it rendered (`created`) or updated: the outcome opens it. */
+	readonly canvas?: { readonly id: string; readonly title: string; readonly created: boolean };
+}
+
 /** One of the agent's to-dos, with when it started and finished (as far as its updates told us). */
 export interface IAgentTodoStep {
 	label: string;
 	state: 'done' | 'current' | 'pending';
 	startedAt?: number;
 	endedAt?: number;
+	/** The reply's segment count when it showed in progress: its outcome reads the segments from here. */
+	fromSegment?: number;
+	/** The reply's segment count when it showed done: the next to-do's outcome starts here at the latest. */
+	toSegment?: number;
+	outcome?: ITodoOutcome;
+}
+
+/**
+ * What a stretch of a reply produced, or undefined when it changed nothing: the files (merged per
+ * path, as the turn's "Files Changed" card counts them) and the last design canvas.
+ */
+export function todoOutcome(segments: readonly AgentSegment[]): ITodoOutcome | undefined {
+	const files = turnFileChanges(segments);
+	let canvas: ITodoOutcome['canvas'];
+	for (const segment of segments) {
+		const block = segment.kind === 'block' ? segment.block : undefined;
+		// canvas_render publishes a page tied to its canvas; canvas_update a `canvas` card with what changed.
+		if (block?.type === 'visual' && block.ref && block.canvas && block.canvas !== 'pending') {
+			canvas = { id: block.canvas, title: block.title, created: block.kind !== 'canvas' };
+		}
+	}
+	if (!files.length && !canvas) {
+		return undefined;
+	}
+	const additions = files.reduce((sum, file) => sum + file.additions, 0);
+	const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
+	return {
+		files: files.length,
+		additions,
+		deletions,
+		...(files.length === 1 ? { file: { path: files[0].path, created: files[0].verb === 'Created' } } : {}),
+		...(canvas ? { canvas } : {}),
+	};
 }
 
 /**
@@ -803,25 +847,55 @@ export interface IAgentTodoStep {
  * shows in progress and ends when it first shows done. To-dos match by label, else by position in a
  * list of the same length for the one that was in progress: Claude names it differently while it runs
  * ("Verifying …" for "Verify …").
+ *
+ * With the reply's `segments`, each to-do also marks where it started and, once done, keeps what was
+ * produced from then on as its outcome. A to-do done without showing in progress (or carried over from
+ * an earlier reply) takes what came after the last one done.
  */
-export function stampTodoSteps(previous: readonly IAgentTodoStep[], next: readonly Pick<IAgentTodoStep, 'label' | 'state'>[], now: number): IAgentTodoStep[] {
+export function stampTodoSteps(previous: readonly IAgentTodoStep[], next: readonly Pick<IAgentTodoStep, 'label' | 'state'>[], now: number, segments?: readonly AgentSegment[]): IAgentTodoStep[] {
 	const before = new Map(previous.map(step => [step.label, step]));
 	const labels = new Set(next.map(step => step.label));
 	const renamed = (index: number) => {
 		const step = previous.length === next.length ? previous[index] : undefined;
 		return step?.state === 'current' && !labels.has(step.label) ? step : undefined;
 	};
+	const cursor = segments?.length;
+	let lastDone = previous.reduce((mark, step) => Math.max(mark, step.toSegment ?? 0), 0);
 	return next.map(({ label, state }, index) => {
 		const prior = before.get(label) ?? renamed(index);
 		const startedAt = prior?.startedAt ?? (state === 'current' ? now : undefined);
 		const endedAt = state === 'done' ? prior?.endedAt ?? now : undefined;
-		return {
+		const step: IAgentTodoStep = {
 			label,
 			state,
 			...(startedAt !== undefined && state !== 'pending' ? { startedAt } : {}),
 			...(endedAt !== undefined ? { endedAt } : {}),
 		};
+		if (cursor === undefined || state === 'pending') {
+			return step;
+		}
+		if (prior?.state === 'done') {
+			return {
+				...step,
+				...(prior.fromSegment !== undefined ? { fromSegment: prior.fromSegment } : {}),
+				...(prior.toSegment !== undefined ? { toSegment: prior.toSegment } : {}),
+				...(prior.outcome ? { outcome: prior.outcome } : {}),
+			};
+		}
+		// In progress before this update: from its mark, or (carried into this reply) from the last one done.
+		const fromSegment = prior?.state === 'current' ? prior.fromSegment ?? lastDone : state === 'current' ? cursor : lastDone;
+		if (state === 'current') {
+			return { ...step, fromSegment };
+		}
+		const outcome = todoOutcome(segments!.slice(fromSegment, cursor));
+		lastDone = cursor;
+		return { ...step, fromSegment, toSegment: cursor, ...(outcome ? { outcome } : {}) };
 	});
+}
+
+/** A list carried into a new reply: segment marks point into the old reply, so only the outcomes stay. */
+export function carryTodoSteps(steps: readonly IAgentTodoStep[]): IAgentTodoStep[] {
+	return steps.map(({ fromSegment: _from, toSegment: _to, ...step }) => step);
 }
 
 export interface ITasksCardItem {
@@ -829,6 +903,8 @@ export interface ITasksCardItem {
 	readonly state: 'done' | 'current' | 'pending';
 	/** "1m 32s" for a finished to-do whose start we saw, "now" for the one in progress. */
 	readonly time?: string;
+	/** What a finished to-do produced, shown under its label. */
+	readonly outcome?: ITodoOutcome;
 }
 
 /** The "Tasks" card docked on the composer while the agent works through its to-dos. */
@@ -847,8 +923,9 @@ export function tasksCard(steps: readonly IAgentTodoStep[], live: boolean): ITas
 		return undefined;
 	}
 	const items = shown.map((step): ITasksCardItem => {
-		if (step.state === 'done' && step.startedAt !== undefined && step.endedAt !== undefined) {
-			return { label: step.label, state: step.state, time: formatElapsed(step.endedAt - step.startedAt) };
+		if (step.state === 'done') {
+			const time = step.startedAt !== undefined && step.endedAt !== undefined ? formatElapsed(step.endedAt - step.startedAt) : undefined;
+			return { label: step.label, state: step.state, ...(time ? { time } : {}), ...(step.outcome ? { outcome: step.outcome } : {}) };
 		}
 		if (step.state === 'current' && live) {
 			return { label: step.label, state: step.state, time: localize('voltAgent.tasks.now', "now") };

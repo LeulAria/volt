@@ -15,6 +15,7 @@ import { IVoltSessionContextService } from '../../../../services/voltRuntime/com
 import type { IAgentAssistantMessage, IAgentMessage } from '../../browser/editor/agentEditor.js';
 import { AgentSessionController, IAgentSessionChange, IAgentSessionHost } from '../../browser/editor/agentSessionController.js';
 import { IAgentWorkspaceService } from '../../browser/workspace/agentWorkspace.js';
+import { carryTodoSteps } from '../../browser/chrome/agentTimeline.js';
 
 class FakeRuntime {
 	private readonly listeners = new Set<(e: IVoltEventEnvelope) => void>();
@@ -278,7 +279,8 @@ suite('Agent session controller', () => {
 		const reply = controller.beginTurn({ turnId: 'turn-2', text: 'Format too', mode: 'Agent' });
 		runtime.emit({ type: 'run.start', runId: 'run-2', mode: 'agent' }, 'run-2');
 		runtime.emit({ type: 'plan', entries: [{ content: 'Lint', status: 'completed' }, { content: 'Format', status: 'pending' }] }, 'run-2');
-		assert.deepStrictEqual(reply.steps[0], first, 'the finished to-do keeps its times');
+		// Its segment marks point into the last reply, so they stay behind; times and outcome carry over.
+		assert.deepStrictEqual(reply.steps[0], carryTodoSteps([first])[0], 'the finished to-do keeps its times');
 		const notes = reply.segments.flatMap(segment => segment.kind === 'activity' && segment.item.kind === 'note' ? [segment.item.label] : []);
 		assert.deepStrictEqual(notes, ['Added 1 to-do']);
 	});

@@ -3895,41 +3895,101 @@ pre.volt-agent-searchable {
 .volt-agent-tasks-item.current .volt-agent-tasks-mark { color: var(--volt-tasks-current); }
 
 .volt-agent-tasks-label {
-	flex: 1 1 auto;
+	flex: 0 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-/* The to-do being worked on shimmers, like the transcript's live line. */
+/* What a finished to-do produced ("New design: Onboarding · App.tsx +120 -8"), quiet beside its label. */
+.volt-agent-tasks-outcome {
+	/* Gives way to the label less, and never below the counts and a few letters of the name. */
+	flex: 0 0.5 auto;
+	display: inline-flex;
+	align-items: baseline;
+	gap: 5px;
+	min-width: min-content;
+	max-width: 55%;
+	white-space: nowrap;
+	font-size: 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 38%, transparent);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-tasks-outcome-text,
+.volt-agent-tasks-outcome-link {
+	flex: 0 1 auto;
+	min-width: 5ch;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-agent-tasks-outcome-link {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.volt-agent-tasks-outcome-link:hover {
+	color: var(--vscode-foreground);
+	text-decoration: underline;
+}
+
+.volt-agent-tasks-outcome-link:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+	border-radius: 2px;
+}
+
+.volt-agent-tasks-outcome-sep,
+.volt-agent-tasks-outcome-add,
+.volt-agent-tasks-outcome-del {
+	flex: none;
+}
+
+.volt-agent-tasks-outcome-add { color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950); }
+.volt-agent-tasks-outcome-del { color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149); }
+
+/*
+ * The to-do being worked on shimmers, as "Thinking" does: the band sweeps by animating the registered
+ * --volt-shimmer (volt-agent-shimmer). Moving background-position instead never shows a band, since
+ * --volt-shimmer then stays at its -50% initial value and the highlight sits outside the gradient.
+ */
 .volt-agent-tasks-current.shimmer,
 .volt-agent-tasks-label.shimmer {
-	background: linear-gradient(90deg,
-		color-mix(in srgb, var(--vscode-foreground) 45%, transparent) 0%,
-		color-mix(in srgb, var(--vscode-foreground) 45%, transparent) calc(var(--volt-shimmer, 0%) - 18%),
-		var(--vscode-foreground) var(--volt-shimmer, 0%),
-		color-mix(in srgb, var(--vscode-foreground) 45%, transparent) calc(var(--volt-shimmer, 0%) + 18%),
-		color-mix(in srgb, var(--vscode-foreground) 45%, transparent) 100%);
-	background-size: 200% 100%;
+	--volt-shimmer-base: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
+	--volt-shimmer-hi: var(--vscode-foreground);
+	color: var(--volt-shimmer-base);
+	background-image: linear-gradient(90deg,
+		var(--volt-shimmer-base) 0%,
+		var(--volt-shimmer-base) calc(var(--volt-shimmer) - 40%),
+		var(--volt-shimmer-hi) var(--volt-shimmer),
+		var(--volt-shimmer-base) calc(var(--volt-shimmer) + 40%),
+		var(--volt-shimmer-base) 100%);
 	-webkit-background-clip: text;
 	background-clip: text;
-	color: transparent;
-	animation: volt-tr-shimmer 1.6s linear infinite;
+	-webkit-text-fill-color: transparent;
+	animation: volt-agent-shimmer 0.9s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
 	.volt-agent-tasks-current.shimmer,
 	.volt-agent-tasks-label.shimmer {
 		animation: none;
-		background: none;
+		background-image: none;
+		-webkit-text-fill-color: unset;
 		color: var(--vscode-foreground);
 	}
 }
 
 .volt-agent-tasks-time {
 	flex: none;
-	margin-left: 12px;
+	margin-left: auto;
+	padding-left: 12px;
 	font-size: 12px;
 	color: color-mix(in srgb, var(--vscode-foreground) 38%, transparent);
 	font-variant-numeric: tabular-nums;

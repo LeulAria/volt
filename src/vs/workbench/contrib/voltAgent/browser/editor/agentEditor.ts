@@ -180,6 +180,7 @@ import { MentionCodePreview } from '../composer/mentionCodePreview.js';
 import { dayjs } from '../chrome/dayjs.js';
 import { createTableCopyIcon, flashCopyIconSuccess, renderAgentBlock, IBlockRenderContext } from '../blocks/agentBlockRenderers.js';
 import { adoptVisualFrames, parkVisualFrames } from '../visuals/agentVisuals.js';
+import { OPEN_CANVAS_COMMAND_ID } from '../visuals/canvas/canvasCard.js';
 import { AgentSegment, IAgentActivityItem, IAgentCompaction, IPlanBlock, isCompactCommand, SupervisionKind } from '../blocks/agentBlocks.js';
 import { composerTasks, createdPlanPrompt, IAgentTodoStep, IRunEndTray, ITasksCard, ITurnFileChange, PLANNING_PHRASE, runEndTray, STATUS_ROTATE_MS, STATUS_SWAP_MS, streamingActivityLines, SupervisionAction, supervisionActions, supervisionTitle, todoChecklist, turnFileChanges } from '../chrome/agentTimeline.js';
 import { AgentTurnFilesTree } from './agentTurnFilesTree.js';
@@ -1201,7 +1202,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onStatusClick: () => this.scrollThreadToEnd(),
 			onAgentsClick: anchor => this.showAgentsMenu(anchor),
 		}));
-		this.tasksCard = this._register(new AgentTasksCard(() => this.layoutInputEditor()));
+		this.tasksCard = this._register(new AgentTasksCard(() => this.layoutInputEditor(), target => target.kind === 'file'
+			? void this.openWorkspaceFile(target.path)
+			: void this.commandService.executeCommand(OPEN_CANVAS_COMMAND_ID, target.id)));
 		append(this.composerEl, this.tasksCard.element);
 		append(this.composerEl, this.composerChips.element);
 		// The same run status chip the browser's dock shows ("Waiting for approval", "Worked 2m").

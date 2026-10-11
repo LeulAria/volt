@@ -7,9 +7,16 @@ import { $, addDisposableListener, append } from '../../../../../base/browser/do
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { basename } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
-import { ITasksCard, ITasksCardItem } from '../chrome/agentTimeline.js';
+import { ITasksCard, ITasksCardItem, ITodoOutcome } from '../chrome/agentTimeline.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { formatChangeStats } from '../review/fileChangePreviewModel.js';
+
+/** The one thing a finished to-do produced, opened beside the chat when its outcome is clicked. */
+export type TaskOutcomeTarget =
+	| { readonly kind: 'file'; readonly path: string }
+	| { readonly kind: 'canvas'; readonly id: string };
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -63,7 +70,8 @@ export class AgentTasksCard extends Disposable {
 	private signature = '';
 	private expanded = false;
 
-	constructor(private readonly onDidChangeVisibility: () => void) {
+	/** `onOpen`: without it a to-do's outcome is plain text. */
+	constructor(private readonly onDidChangeVisibility: () => void, private readonly onOpen?: (target: TaskOutcomeTarget) => void) {
 		super();
 		this.element = $('.volt-agent-tasks-card.hidden');
 	}
@@ -137,9 +145,54 @@ export class AgentTasksCard extends Disposable {
 			label.textContent = item.label;
 			label.classList.toggle('shimmer', card.live && item.state === 'current');
 			setAgentTooltip(label, item.label);
+			if (item.outcome) {
+				this.renderOutcome(row, item.outcome);
+			}
 			if (item.time) {
 				append(row, $('span.volt-agent-tasks-time')).textContent = item.time;
 			}
+		}
+	}
+
+	/** "New design: Onboarding · App.tsx +120 -8", quiet beside the label; a single file or canvas opens. */
+	private renderOutcome(row: HTMLElement, outcome: ITodoOutcome): void {
+		const el = append(row, $('span.volt-agent-tasks-outcome'));
+		const part = (text: string, target: TaskOutcomeTarget | undefined, tooltip?: string) => {
+			if (el.childElementCount) {
+				append(el, $('span.volt-agent-tasks-outcome-sep')).textContent = '\u00b7';
+			}
+			const onOpen = this.onOpen;
+			if (!target || !onOpen) {
+				append(el, $('span.volt-agent-tasks-outcome-text')).textContent = text;
+				return;
+			}
+			const link = append(el, $('button.volt-agent-tasks-outcome-link')) as HTMLButtonElement;
+			link.type = 'button';
+			link.textContent = text;
+			setAgentTooltip(link, tooltip ?? text);
+			this.listeners.add(addDisposableListener(link, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				onOpen(target);
+			}));
+		};
+		if (outcome.canvas) {
+			const title = outcome.canvas.title || localize('voltAgent.tasks.untitledDesign', "Untitled");
+			part(outcome.canvas.created
+				? localize('voltAgent.tasks.newDesign', "New design: {0}", title)
+				: localize('voltAgent.tasks.design', "Design: {0}", title), { kind: 'canvas', id: outcome.canvas.id });
+		}
+		if (outcome.file) {
+			part(basename(outcome.file.path), { kind: 'file', path: outcome.file.path }, outcome.file.path);
+		} else if (outcome.files) {
+			part(localize('voltAgent.tasks.files', "{0} files", outcome.files), undefined);
+		}
+		const stats = formatChangeStats(outcome.additions, outcome.deletions);
+		if (stats.added) {
+			append(el, $('span.volt-agent-tasks-outcome-add')).textContent = stats.added;
+		}
+		if (stats.removed) {
+			append(el, $('span.volt-agent-tasks-outcome-del')).textContent = stats.removed;
 		}
 	}
 }

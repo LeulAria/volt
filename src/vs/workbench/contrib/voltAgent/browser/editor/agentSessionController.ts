@@ -19,7 +19,7 @@ import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/ru
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { AgentBlock, appendProviderNotice, appendSandboxDenial, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isNewLimitWarning, isPlanTool, isShellTool, refreshLimitWarning, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments, isHiddenExploreToolBlock } from '../blocks/agentBlocks.js';
 import { sameHostToolArgs } from '../blocks/agentHostToolActivity.js';
-import { classifySupervisionNotice, stampTodoSteps } from '../chrome/agentTimeline.js';
+import { carryTodoSteps, classifySupervisionNotice, stampTodoSteps } from '../chrome/agentTimeline.js';
 import { agentMessagePlainText } from '../context/agentContextUsage.js';
 import { extractToolImage } from '../preview/browserSnapshot.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
@@ -1149,12 +1149,13 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 			}
 			case 'plan': {
 				// A turn's first update continues the chat's list: Claude's task tools and Cursor's to-dos outlive a turn.
-				const previous = last.steps.length ? last.steps : this.host.messages.findLast((message): message is IAgentAssistantMessage => message !== last && message.kind === 'agent' && message.steps.length > 0)?.steps ?? [];
+				const previous = last.steps.length ? last.steps : carryTodoSteps(this.host.messages.findLast((message): message is IAgentAssistantMessage => message !== last && message.kind === 'agent' && message.steps.length > 0)?.steps ?? []);
 				last.title = localize('voltAgent.planTitle', "Plan");
+				// Each to-do done keeps what this reply produced while it was in progress (the Tasks card's outcome line).
 				last.steps = stampTodoSteps(previous, event.entries.map(entry => ({
 					label: entry.content,
 					state: entry.status === 'completed' ? 'done' : entry.status === 'in_progress' ? 'current' : 'pending',
-				})), Date.now());
+				})), Date.now(), last.segments);
 				// Cursor writes to-do changes into the timeline: "Added 4 to-dos", "Completed 2 of 6 Fix the bug".
 				const todo = describeTodoUpdate(previous, last.steps);
 				if (todo) {
