@@ -122,10 +122,14 @@ export interface IOrchAgentRow {
 	readonly files: number;
 	/** Volt subagents the user can stop on their own; harness ones stop with their turn. */
 	readonly cancellable: boolean;
+	/** A live harness subagent: stopping it stops the agent turn that runs it (the harness owns it). */
+	readonly stopsTurn: boolean;
 	/** Has a chat to open (Volt subagents). */
 	readonly openable: boolean;
-	/** Started by the Multitask composer (the user), not by an agent. */
+	/** A multitask agent: work the user asked to run in parallel (a Multitask chat delegated it). */
 	readonly multitask: boolean;
+	/** Its chat is watched, not driven: only the agent that delegated it sends its rounds. Multitask agents take follow-ups. */
+	readonly readOnly: boolean;
 	/** A later round of earlier work (a second review): 2, 3, ... */
 	readonly iteration?: number;
 	readonly role?: IOrchTask['role'];
@@ -150,11 +154,18 @@ export function agentRow(task: IOrchTask): IOrchAgentRow {
 		...(task.error ? { error: task.error } : {}),
 		files: task.files.length,
 		cancellable: task.source === 'volt' && isLiveTaskState(task.state),
+		stopsTurn: task.source === 'harness' && isLiveTaskState(task.state),
 		openable: !!task.childId,
-		multitask: task.origin === 'user',
+		multitask: isMultitaskTask(task),
+		readOnly: !isMultitaskTask(task),
 		...(task.iteration && task.iteration > 1 ? { iteration: task.iteration } : {}),
 		...(task.role !== 'general' ? { role: task.role } : {}),
 	};
+}
+
+/** Work the user asked to run in parallel: it shows as a multitask agent and its chat takes follow-ups and edits. */
+export function isMultitaskTask(task: Pick<IOrchTask, 'origin' | 'source'>): boolean {
+	return task.source === 'volt' && task.origin === 'user';
 }
 
 export function taskStateLabel(task: Pick<IOrchTask, 'state' | 'waitingOn'>): string {

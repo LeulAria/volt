@@ -698,6 +698,118 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 .volt-agent-subagent-bar .open-parent .codicon { transform: rotate(-45deg); font-size: 13px; }
 .volt-agent-subagent-bar .open-parent:hover { background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent); }
 
+/* A multitask agent's chat takes follow-ups; a subagent's is read only. The bar says which, and offers Stop while it works. */
+.volt-agent-subagent-bar .kind {
+	padding: 1px 6px;
+	border-radius: 4px;
+	font-size: 11px;
+	line-height: 16px;
+	white-space: nowrap;
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.volt-agent-subagent-bar .kind.multitask {
+	color: #4c8dff;
+	background: color-mix(in srgb, #4c8dff 14%, transparent);
+}
+
+.volt-agent-subagent-bar .model:empty { display: none; }
+
+.volt-agent-subagent-bar .stop-agent {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	border: 0;
+	padding: 2px 6px;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.volt-agent-subagent-bar .stop-agent .codicon { font-size: 12px; color: #e5534b; }
+.volt-agent-subagent-bar .stop-agent:hover { background: color-mix(in srgb, #e5534b 14%, transparent); }
+
+/* The side toolbar's agents: Stop takes the clock's place while the row is hovered. */
+.volt-agent-lineage-stop {
+	display: none;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 18px;
+	height: 18px;
+	border-radius: 4px;
+	cursor: pointer;
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+}
+
+.volt-agent-lineage-stop .codicon { font-size: 12px; }
+.volt-agent-lineage-row.stoppable:hover .volt-agent-lineage-stop { display: inline-flex; }
+.volt-agent-lineage-row.stoppable:hover .volt-subagent-clock { display: none; }
+.volt-agent-lineage-stop:hover { color: #e5534b; background: color-mix(in srgb, #e5534b 14%, transparent); }
+
+.volt-agent-lineage-state:empty { display: none; }
+
+/* A multitask agent's mark is tinted, so the two groups read apart at a glance. */
+.volt-agent-lineage-row.multitask .volt-agent-lineage-title { color: var(--vscode-foreground); }
+
+/* The collapsed toolbar's agents button: their count in a corner badge, amber when one waits on the user. */
+.volt-agent-rail-btn.volt-agent-rail-agents.hidden { display: none; }
+
+.volt-agent-rail-agents .volt-agent-svg-icon,
+.volt-agent-rail-agents .volt-agent-svg-icon svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+	color: color-mix(in srgb, var(--vscode-foreground) 75%, transparent);
+}
+
+.volt-agent-rail-badge {
+	position: absolute;
+	top: 1px;
+	right: 0;
+	min-width: 13px;
+	height: 13px;
+	padding: 0 3px;
+	box-sizing: border-box;
+	border-radius: 7px;
+	background: #4c8dff;
+	color: #fff;
+	font-size: 9px;
+	font-weight: 600;
+	line-height: 13px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+	pointer-events: none;
+}
+
+.volt-agent-rail-agents.waiting .volt-agent-rail-badge { background: #e5a33a; color: #1e1e1e; }
+
+/* "3 multitasks running" above the text area: the dots while any works, an amber note when one needs the user. */
+.volt-agent-composer-chip.agents {
+	padding-left: 10px;
+	gap: 6px;
+}
+
+.volt-agent-composer-chip.agents .volt-agent-composer-chip-waiting {
+	color: #e5a33a;
+	white-space: nowrap;
+}
+
+.volt-agent-composer-chip.agents .volt-agent-composer-chip-waiting:empty { display: none; }
+
+.volt-agent-composer-chip.agents.waiting:not(.working)::before {
+	content: '';
+	flex-shrink: 0;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: #e5a33a;
+}
+
 /* Cursor's look for subagents: transcript rows, the card above the composer, queued messages. */
 
 

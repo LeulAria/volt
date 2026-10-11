@@ -3,10 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, EventHelper } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IListRenderer, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -19,13 +20,13 @@ import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/ru
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { openAgentPanel } from '../workspace/agentPanels.js';
 import { revealAgentSideChat } from '../workspace/agentSurfaceHost.js';
-import { ISubagentView, subagentHoverRows, subagentStateMark, subagentView, tickSubagentClocks } from './agentSubagents.js';
+import { isLiveSubagentState, ISubagentCounts, ISubagentView, subagentCounts, subagentHoverRows, subagentStateMark, subagentView, tickSubagentClocks } from './agentSubagents.js';
 import { AgentTooltip } from './agentTooltip.js';
 
 const ROW_HEIGHT = 26;
-/** Room under the group's last row, inside the row so its hover reaches the card edge. */
+/** Room under the dock's last row, inside the row so its hover reaches the card edge. */
 const LAST_ROW_PADDING = 5;
-/** Running agents shown before "Show N more". */
+/** Live agents shown per group before "Show N more". */
 const RUNNING_VISIBLE = 6;
 const PREVIOUS_VISIBLE = 8;
 
@@ -50,6 +51,7 @@ interface ILineageTemplate {
 	readonly title: HTMLElement;
 	readonly clock: HTMLElement;
 	readonly state: HTMLElement;
+	readonly stop: HTMLElement;
 	readonly row: HTMLElement;
 	readonly store: DisposableStore;
 }
@@ -58,7 +60,10 @@ class LineageRenderer implements IListRenderer<ILineageRow, ILineageTemplate> {
 	static readonly TEMPLATE_ID = 'voltAgentLineage';
 	readonly templateId = LineageRenderer.TEMPLATE_ID;
 
-	constructor(private readonly tooltip: AgentTooltip) { }
+	constructor(
+		private readonly tooltip: AgentTooltip,
+		private readonly onStop: (view: ISubagentView) => void,
+	) { }
 
 	renderTemplate(container: HTMLElement): ILineageTemplate {
 		container.classList.add('volt-agent-lineage-row');
@@ -66,7 +71,11 @@ class LineageRenderer implements IListRenderer<ILineageRow, ILineageTemplate> {
 		const title = append(container, $('span.volt-agent-lineage-title'));
 		const clock = append(container, $('span.volt-subagent-clock'));
 		const state = append(container, $('span.volt-agent-lineage-state'));
-		return { avatar, title, clock, state, row: container, store: new DisposableStore() };
+		// A span, not a button: the row is the list's. Shown on hover (agentSubagents.css).
+		const stop = append(container, $('span.volt-agent-lineage-stop'));
+		stop.setAttribute('role', 'button');
+		stop.appendChild(renderIcon(Codicon.debugStop));
+		return { avatar, title, clock, state, stop, row: container, store: new DisposableStore() };
 	}
 
 	renderElement(element: ILineageRow, _index: number, template: ILineageTemplate): void {
@@ -74,7 +83,6 @@ class LineageRenderer implements IListRenderer<ILineageRow, ILineageTemplate> {
 		const view = element.view;
 		template.avatar.replaceChildren();
 		if (element.parent) {
-			template.avatar.classList.add('parent');
 			template.avatar.appendChild(renderIcon(Codicon.arrowUp));
 			append(template.avatar, $(`span.volt-agent-lineage-dot.state-${view.state}`));
 		} else if (view.providerId) {
@@ -87,8 +95,10 @@ class LineageRenderer implements IListRenderer<ILineageRow, ILineageTemplate> {
 		}
 		template.avatar.className = `volt-agent-lineage-avatar state-${view.state}${element.parent ? ' parent' : ''}`;
 		template.row.classList.toggle('multitask', !!view.multitask);
+		template.row.classList.toggle('read-only', !!view.readOnly);
 		template.title.textContent = view.title;
-		template.state.textContent = view.stateLabel;
+		// A running agent's clock says enough; anything else names its state.
+		template.state.textContent = view.state === 'running' && !element.parent ? '' : view.stateLabel;
 		template.state.className = `volt-agent-lineage-state state-${view.state}`;
 		delete template.clock.dataset.startedAt;
 		delete template.clock.dataset.endedAt;
@@ -101,6 +111,22 @@ class LineageRenderer implements IListRenderer<ILineageRow, ILineageTemplate> {
 		} else {
 			template.clock.textContent = '';
 		}
+		const stoppable = !element.parent && isLiveSubagentState(view.state) && (view.cancellable || !!view.stopsTurn);
+		template.row.classList.toggle('stoppable', stoppable);
+		if (stoppable) {
+			const label = view.stopsTurn
+				? localize('voltAgent.lineage.stopTurn', "Stop (stops the agent turn that runs it)")
+				: localize('voltAgent.lineage.stop', "Stop {0}", view.title);
+			template.stop.setAttribute('aria-label', label);
+			// The list opens a row on pointer events: the stop keeps them to itself.
+			for (const type of ['pointerdown', 'mousedown', 'mouseup', 'dblclick']) {
+				template.store.add(addDisposableListener(template.stop, type, e => EventHelper.stop(e, true)));
+			}
+			template.store.add(addDisposableListener(template.stop, 'click', e => {
+				EventHelper.stop(e, true);
+				this.onStop(view);
+			}));
+		}
 		template.store.add(this.tooltip.bind(template.row, () => subagentHoverRows(view, Date.now()), { placement: 'start', variant: 'card', delay: 400 }));
 	}
 
@@ -109,34 +135,152 @@ class LineageRenderer implements IListRenderer<ILineageRow, ILineageTemplate> {
 	}
 }
 
+/** One group of the dock: an optional heading (a label, or a pane header that folds), a list, and "Show N more". */
+class LineageGroup extends Disposable {
+
+	readonly head: HTMLElement | undefined;
+	private readonly host: HTMLElement;
+	private readonly more: HTMLButtonElement;
+	private readonly list: WorkbenchList<ILineageRow>;
+	private showAll = false;
+	private open: boolean;
+
+	constructor(
+		parent: HTMLElement,
+		private readonly options: {
+			readonly id: string;
+			readonly ariaLabel: string;
+			readonly head: 'heading' | 'divider' | 'none';
+			readonly open: boolean;
+			readonly visible: number;
+			readonly className?: string;
+			readonly onOpen: (row: ILineageRow) => void;
+			readonly onChange: () => void;
+		},
+		renderer: LineageRenderer,
+		instantiationService: IInstantiationService,
+	) {
+		super();
+		this.open = options.open;
+		if (options.head === 'heading') {
+			this.head = append(parent, $('.volt-agent-dock-heading.volt-agent-lineage-head'));
+		} else if (options.head === 'divider') {
+			const divider = append(parent, $('button.volt-agent-lineage-divider')) as HTMLButtonElement;
+			divider.type = 'button';
+			this._register(addDisposableListener(divider, 'click', () => {
+				this.open = !this.open;
+				this.options.onChange();
+			}));
+			this.head = divider;
+		}
+		if (this.head && options.className) {
+			this.head.classList.add(options.className);
+		}
+		this.host = append(parent, $('.volt-agent-lineage-list'));
+		if (options.className) {
+			this.host.classList.add(options.className);
+		}
+		this.more = append(parent, $('button.volt-agent-dock-row.volt-agent-lineage-more')) as HTMLButtonElement;
+		this.more.type = 'button';
+		this.more.style.display = 'none';
+		this._register(addDisposableListener(this.more, 'click', () => {
+			this.showAll = !this.showAll;
+			this.options.onChange();
+		}));
+		this.list = this._register(instantiationService.createInstance(WorkbenchList<ILineageRow>, options.id, this.host, new LineageDelegate(), [renderer], {
+			identityProvider: { getId: (row: ILineageRow) => `${row.parent ? 'p:' : ''}${row.view.key}` },
+			multipleSelectionSupport: false,
+			horizontalScrolling: false,
+			alwaysConsumeMouseWheel: false,
+			accessibilityProvider: {
+				getWidgetAriaLabel: () => options.ariaLabel,
+				getAriaLabel: (row: ILineageRow) => `${row.view.title}, ${row.view.stateLabel}${row.view.multitask ? `, ${localize('voltAgent.lineage.multitaskAria', "multitask agent")}` : ''}`,
+			},
+		}));
+		this._register(this.list.onDidOpen(e => e.element && this.options.onOpen(e.element)));
+	}
+
+	get listHost(): HTMLElement {
+		return this.host;
+	}
+
+	/** The rows the group shows once folding and "Show N more" are applied. */
+	shown(rows: readonly ILineageRow[]): ILineageRow[] {
+		if (!this.isOpen()) {
+			return [];
+		}
+		return this.showAll ? [...rows] : rows.slice(0, this.options.visible);
+	}
+
+	isOpen(): boolean {
+		return this.options.head !== 'divider' || this.open;
+	}
+
+	/** What the user toggled (folded, "Show N more"): part of the dock's redraw signature. */
+	viewState(): string {
+		return `${this.isOpen()}:${this.showAll}`;
+	}
+
+	resetShowAll(): void {
+		this.showAll = false;
+	}
+
+	/** `title` undefined hides the heading; no rows hides the group. */
+	render(title: string | undefined, rows: readonly ILineageRow[], shown: readonly ILineageRow[]): void {
+		const visible = rows.length > 0;
+		if (this.head) {
+			this.head.style.display = visible && title !== undefined ? '' : 'none';
+			this.head.replaceChildren();
+			if (this.options.head === 'divider') {
+				this.head.setAttribute('aria-expanded', String(this.open));
+				// A VS Code pane header: chevron, then the title.
+				this.head.appendChild(renderIcon(this.open ? Codicon.chevronDown : Codicon.chevronRight));
+				append(this.head, $('span.label')).textContent = title ?? '';
+			} else {
+				append(this.head, $('span')).textContent = title ?? '';
+			}
+		}
+		const height = shown.reduce((sum, row) => sum + (row.last ? ROW_HEIGHT + LAST_ROW_PADDING : ROW_HEIGHT), 0);
+		this.host.style.height = `${height}px`;
+		this.host.style.display = height ? '' : 'none';
+		this.list.layout(height);
+		this.list.splice(0, this.list.length, [...shown]);
+		const hidden = this.isOpen() ? rows.length - Math.min(rows.length, this.options.visible) : 0;
+		const showMore = hidden > 0;
+		this.more.style.display = showMore ? '' : 'none';
+		if (showMore) {
+			this.more.replaceChildren(renderIcon(this.showAll ? Codicon.remove : Codicon.add));
+			append(this.more, $('span')).textContent = this.showAll
+				? localize('voltAgent.lineage.less', "Show less")
+				: localize('voltAgent.lineage.more', "Show {0} more", hidden);
+		}
+	}
+}
+
 /**
- * The agents of the chat on screen, in the dock beside it: "Agents · N running" (subagents and
- * multitask agents under its root, except its own working ones: those are in the card above the
- * composer), then "Needs attention (N)" (agents waiting for an
- * approval or an answer; open, and gone when there are none), then "Previous agents (N)",
- * collapsed. In a subagent's chat the parent comes first. A row opens that agent in this chat's
- * right panel.
+ * Every agent under the chat on screen, at the top of the chat's side toolbar: its parent (in a
+ * subagent's chat), "Multitasks · N running" (work the user asked to run in parallel; their chats
+ * take follow-ups), "Subagents · N running" (agents' own helpers, Volt's or the harness's; watched,
+ * not driven), "Needs attention (N)" (waiting for an approval or an answer), then "Previous agents
+ * (N)", folded. A row opens that agent in this chat's right panel; hovering a live one offers Stop.
  */
 export class AgentLineageDock extends Disposable {
 
 	readonly element: HTMLElement;
-	private readonly runningHead: HTMLElement;
-	private readonly runningHost: HTMLElement;
-	private readonly moreButton: HTMLButtonElement;
-	private readonly attentionHead: HTMLButtonElement;
-	private readonly attentionHost: HTMLElement;
-	private readonly attention: WorkbenchList<ILineageRow>;
-	private readonly previousHead: HTMLButtonElement;
-	private readonly previousHost: HTMLElement;
-	private readonly running: WorkbenchList<ILineageRow>;
-	private readonly previous: WorkbenchList<ILineageRow>;
+	private readonly parentGroup: LineageGroup;
+	private readonly multitaskGroup: LineageGroup;
+	private readonly subagentGroup: LineageGroup;
+	private readonly attentionGroup: LineageGroup;
+	private readonly previousGroup: LineageGroup;
 	private readonly tooltip = this._register(new AgentTooltip());
 	private readonly clocks = this._register(new MutableDisposable<DisposableStore>());
 	private sessionId: string | undefined;
-	private showAll = false;
-	private previousOpen = false;
-	private attentionOpen = true;
 	private signature = '';
+	private summary: ISubagentCounts = { multitask: 0, subagents: 0, waiting: 0, queued: 0 };
+
+	private readonly _onDidChangeSummary = this._register(new Emitter<ISubagentCounts>());
+	/** Live agents under the chat's tree changed: the collapsed toolbar's badge follows. */
+	readonly onDidChangeSummary: Event<ISubagentCounts> = this._onDidChangeSummary.event;
 
 	constructor(
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
@@ -147,45 +291,24 @@ export class AgentLineageDock extends Disposable {
 	) {
 		super();
 		this.element = $('.volt-agent-dock-section.volt-agent-lineage.hidden');
-		this.runningHead = append(this.element, $('.volt-agent-dock-heading.volt-agent-lineage-head'));
-		this.runningHost = append(this.element, $('.volt-agent-lineage-list'));
-		this.moreButton = append(this.element, $('button.volt-agent-dock-row.volt-agent-lineage-more')) as HTMLButtonElement;
-		this.moreButton.type = 'button';
-		this.attentionHead = append(this.element, $('button.volt-agent-lineage-divider.attention')) as HTMLButtonElement;
-		this.attentionHead.type = 'button';
-		this.attentionHost = append(this.element, $('.volt-agent-lineage-list.attention'));
-		this.previousHead = append(this.element, $('button.volt-agent-lineage-divider')) as HTMLButtonElement;
-		this.previousHead.type = 'button';
-		this.previousHost = append(this.element, $('.volt-agent-lineage-list.previous'));
-		const renderer = new LineageRenderer(this.tooltip);
-		const options = (label: string) => ({
-			identityProvider: { getId: (row: ILineageRow) => `${row.parent ? 'p:' : ''}${row.view.key}` },
-			multipleSelectionSupport: false,
-			horizontalScrolling: false,
-			alwaysConsumeMouseWheel: false,
-			accessibilityProvider: {
-				getWidgetAriaLabel: () => label,
-				getAriaLabel: (row: ILineageRow) => `${row.view.title}, ${row.view.stateLabel}`,
-			},
-		});
-		this.running = this._register(instantiationService.createInstance(WorkbenchList<ILineageRow>, 'VoltAgentLineageRunning', this.runningHost, new LineageDelegate(), [renderer], options(localize('voltAgent.lineage.running', "Running agents"))));
-		this.attention = this._register(instantiationService.createInstance(WorkbenchList<ILineageRow>, 'VoltAgentLineageAttention', this.attentionHost, new LineageDelegate(), [renderer], options(localize('voltAgent.lineage.attention', "Agents that need attention"))));
-		this.previous = this._register(instantiationService.createInstance(WorkbenchList<ILineageRow>, 'VoltAgentLineagePrevious', this.previousHost, new LineageDelegate(), [renderer], options(localize('voltAgent.lineage.previous', "Previous agents"))));
-		for (const list of [this.running, this.attention, this.previous]) {
-			this._register(list.onDidOpen(e => e.element && this.open(e.element)));
-		}
-		this._register(addDisposableListener(this.moreButton, 'click', () => {
-			this.showAll = !this.showAll;
-			this.render(true);
-		}));
-		this._register(addDisposableListener(this.attentionHead, 'click', () => {
-			this.attentionOpen = !this.attentionOpen;
-			this.render(true);
-		}));
-		this._register(addDisposableListener(this.previousHead, 'click', () => {
-			this.previousOpen = !this.previousOpen;
-			this.render(true);
-		}));
+		this.element.setAttribute('role', 'region');
+		this.element.setAttribute('aria-label', localize('voltAgent.lineage.region', "Agents"));
+		const renderer = new LineageRenderer(this.tooltip, view => this.stop(view));
+		const group = (id: string, ariaLabel: string, head: 'heading' | 'divider' | 'none', open: boolean, visible: number, className?: string) => this._register(new LineageGroup(this.element, {
+			id,
+			ariaLabel,
+			head,
+			open,
+			visible,
+			...(className ? { className } : {}),
+			onOpen: row => this.open(row),
+			onChange: () => this.render(true),
+		}, renderer, instantiationService));
+		this.parentGroup = group('VoltAgentLineageParent', localize('voltAgent.lineage.parentList', "Parent chat"), 'none', true, 1, 'parent');
+		this.multitaskGroup = group('VoltAgentLineageMultitasks', localize('voltAgent.lineage.multitasks', "Multitask agents"), 'heading', true, RUNNING_VISIBLE, 'multitasks');
+		this.subagentGroup = group('VoltAgentLineageRunning', localize('voltAgent.lineage.running', "Running subagents"), 'heading', true, RUNNING_VISIBLE, 'subagents');
+		this.attentionGroup = group('VoltAgentLineageAttention', localize('voltAgent.lineage.attention', "Agents that need attention"), 'divider', true, RUNNING_VISIBLE, 'attention');
+		this.previousGroup = group('VoltAgentLineagePrevious', localize('voltAgent.lineage.previous', "Previous agents"), 'divider', false, PREVIOUS_VISIBLE, 'previous');
 		this._register(orchestrator.onDidChange(change => {
 			if (!this.sessionId) {
 				return;
@@ -197,12 +320,19 @@ export class AgentLineageDock extends Disposable {
 		}));
 	}
 
+	/** Live agents under the chat on screen. */
+	getSummary(): ISubagentCounts {
+		return this.summary;
+	}
+
 	setSession(sessionId: string | undefined): void {
 		if (sessionId === this.sessionId) {
 			return;
 		}
 		this.sessionId = sessionId;
-		this.showAll = false;
+		for (const group of [this.multitaskGroup, this.subagentGroup, this.attentionGroup, this.previousGroup]) {
+			group.resetShowAll();
+		}
 		if (sessionId) {
 			void this.orchestrator.ensureThreadLoaded(sessionId).then(() => this.render(true));
 		}
@@ -216,75 +346,77 @@ export class AgentLineageDock extends Disposable {
 	private render(force: boolean): void {
 		const sessionId = this.sessionId;
 		const view = sessionId ? lineage(this.orchestrator.getState(), sessionId) : undefined;
-		// This chat's own working agents show in the card above its composer; the dock keeps the
-		// ones elsewhere under the root (a sibling's, or the parent's from a subagent's chat).
-		const live = view?.running
-			.filter(row => this.orchestrator.getTask(row.taskId)?.parentId !== sessionId)
-			.map(row => subagentView(row, ref => this.providerOf(ref))) ?? [];
+		const live = view?.running.map(row => subagentView(row, ref => this.providerOf(ref))) ?? [];
 		// Agents blocked on an approval or a question get their own group: they wait on the user.
-		const running = live.filter(row => row.state !== 'waiting');
-		const attention = live.filter(row => row.state === 'waiting');
+		const attention = live.filter(row => row.state === 'waiting').sort((a, b) => Number(!!b.multitask) - Number(!!a.multitask));
+		const working = live.filter(row => row.state !== 'waiting');
+		const multitasks = working.filter(row => row.multitask);
+		const subagents = working.filter(row => !row.multitask);
 		const previous = view?.previous.map(row => subagentView(row, ref => this.providerOf(ref))) ?? [];
 		const parent = view?.parent;
-		const signature = JSON.stringify([sessionId, this.showAll, this.previousOpen, this.attentionOpen, parent?.status.kind, parent?.title, live.map(row => [row.key, row.state, row.stateLabel, row.title, row.startedAt]), previous.map(row => [row.key, row.state, row.endedAt])]);
+		const signature = JSON.stringify([
+			sessionId,
+			[this.multitaskGroup, this.subagentGroup, this.attentionGroup, this.previousGroup].map(group => group.viewState()),
+			parent?.status.kind, parent?.title,
+			live.map(row => [row.key, row.state, row.stateLabel, row.title, row.startedAt, row.multitask, row.cancellable, row.stopsTurn, row.providerId]),
+			previous.map(row => [row.key, row.state, row.endedAt, row.title]),
+		]);
 		if (!force && signature === this.signature) {
 			return;
 		}
 		this.signature = signature;
+		this.publishSummary(subagentCounts(live));
 		const empty = !parent && !live.length && !previous.length;
 		this.element.classList.toggle('hidden', empty);
 		if (empty) {
 			return;
 		}
 
-		// Only running agents get a heading; "Previous agents" heads its own group.
-		this.runningHead.replaceChildren();
-		this.runningHead.style.display = running.length ? '' : 'none';
-		append(this.runningHead, $('span')).textContent = localize('voltAgent.lineage.title', "Agents · {0} running", running.length);
-		const rows: ILineageRow[] = [];
-		if (parent && sessionId) {
-			rows.push({ parent: true, view: { key: parent.threadId, title: parent.title ?? this.history.get(parent.threadId)?.title ?? localize('voltAgent.lineage.parent', "Parent chat"), state: statusState(parent.status.kind), stateLabel: statusLabel(parent.status.kind), openable: true, cancellable: false, source: 'volt' } });
+		const parentRows: ILineageRow[] = parent && sessionId ? [{
+			parent: true,
+			view: {
+				key: parent.threadId,
+				title: parent.title ?? this.history.get(parent.threadId)?.title ?? localize('voltAgent.lineage.parent', "Parent chat"),
+				state: statusState(parent.status.kind),
+				stateLabel: statusLabel(parent.status.kind),
+				openable: true,
+				cancellable: false,
+				source: 'volt',
+			},
+		}] : [];
+		const groups: { readonly group: LineageGroup; readonly title: string | undefined; readonly rows: ILineageRow[] }[] = [
+			{ group: this.parentGroup, title: undefined, rows: parentRows },
+			{ group: this.multitaskGroup, title: groupTitle('multitask', multitasks), rows: multitasks.map(row => ({ view: row })) },
+			{ group: this.subagentGroup, title: groupTitle('subagent', subagents), rows: subagents.map(row => ({ view: row })) },
+			{ group: this.attentionGroup, title: localize('voltAgent.lineage.attentionTitle', "Needs attention ({0})", attention.length), rows: attention.map(row => ({ view: row })) },
+			{ group: this.previousGroup, title: localize('voltAgent.lineage.previousTitle', "Previous agents ({0})", previous.length), rows: previous.map(row => ({ view: row })) },
+		];
+		const shown = groups.map(entry => entry.group.shown(entry.rows));
+		// The card's last row pads its own bottom, so its hover reaches the card edge. A folded divider
+		// or "Show N more" under it ends the card instead, and the section keeps its own bottom room.
+		const lastIndex = groups.map((entry, index) => entry.rows.length ? index : -1).filter(index => index >= 0).pop();
+		const endsInRow = lastIndex !== undefined && shown[lastIndex].length > 0 && shown[lastIndex].length === groups[lastIndex].rows.length;
+		if (endsInRow) {
+			const rows = shown[lastIndex];
+			rows[rows.length - 1] = { ...rows[rows.length - 1], last: true };
 		}
-		const visible = this.showAll ? running : running.slice(0, RUNNING_VISIBLE);
-		rows.push(...visible.map(row => ({ view: row })));
-		this.runningHost.style.height = `${rows.length * ROW_HEIGHT}px`;
-		this.running.layout(rows.length * ROW_HEIGHT);
-		this.running.splice(0, this.running.length, rows);
-		const hidden = running.length - visible.length;
-		this.moreButton.style.display = hidden > 0 || (this.showAll && running.length > RUNNING_VISIBLE) ? '' : 'none';
-		this.moreButton.replaceChildren(renderIcon(this.showAll ? Codicon.remove : Codicon.add));
-		append(this.moreButton, $('span')).textContent = this.showAll
-			? localize('voltAgent.lineage.less', "Show less")
-			: localize('voltAgent.lineage.more', "Show {0} more", hidden);
-
-		this.attentionHead.style.display = attention.length ? '' : 'none';
-		this.attentionHead.replaceChildren();
-		this.attentionHead.setAttribute('aria-expanded', String(this.attentionOpen));
-		this.attentionHead.appendChild(renderIcon(this.attentionOpen ? Codicon.chevronDown : Codicon.chevronRight));
-		append(this.attentionHead, $('span.label')).textContent = localize('voltAgent.lineage.attentionTitle', "Needs attention ({0})", attention.length);
-		const shownAttention = this.attentionOpen ? attention : [];
-		const attentionHeight = shownAttention.length * ROW_HEIGHT;
-		this.attentionHost.style.height = `${attentionHeight}px`;
-		this.attention.layout(attentionHeight);
-		this.attention.splice(0, this.attention.length, shownAttention.map(row => ({ view: row })));
-
-		this.previousHead.style.display = previous.length ? '' : 'none';
-		this.previousHead.replaceChildren();
-		this.previousHead.setAttribute('aria-expanded', String(this.previousOpen));
-		// A VS Code pane header: chevron, then the title.
-		this.previousHead.appendChild(renderIcon(this.previousOpen ? Codicon.chevronDown : Codicon.chevronRight));
-		append(this.previousHead, $('span.label')).textContent = localize('voltAgent.lineage.previousTitle', "Previous agents ({0})", previous.length);
-		const shownPrevious = this.previousOpen ? previous.slice(0, PREVIOUS_VISIBLE) : [];
-		const previousHeight = shownPrevious.length ? shownPrevious.length * ROW_HEIGHT + LAST_ROW_PADDING : 0;
-		this.previousHost.style.height = `${previousHeight}px`;
-		this.previous.layout(previousHeight);
-		this.previous.splice(0, this.previous.length, shownPrevious.map((row, index) => ({ view: row, last: index === shownPrevious.length - 1 })));
-		this.element.classList.toggle('ends-in-previous', shownPrevious.length > 0);
+		groups.forEach((entry, index) => entry.group.render(entry.title, entry.rows, shown[index]));
+		this.element.classList.toggle('ends-in-previous', endsInRow);
 
 		const clocks = new DisposableStore();
 		this.clocks.value = clocks;
-		tickSubagentClocks(this.runningHost, clocks);
-		tickSubagentClocks(this.attentionHost, clocks);
+		for (const entry of groups) {
+			tickSubagentClocks(entry.group.listHost, clocks);
+		}
+	}
+
+	private publishSummary(summary: ISubagentCounts): void {
+		const current = this.summary;
+		if (current.multitask === summary.multitask && current.subagents === summary.subagents && current.waiting === summary.waiting && current.queued === summary.queued) {
+			return;
+		}
+		this.summary = summary;
+		this._onDidChangeSummary.fire(summary);
 	}
 
 	private open(row: ILineageRow): void {
@@ -305,6 +437,36 @@ export class AgentLineageDock extends Disposable {
 			void openAgentPanel(this.editorGroupsService, this.instantiationService, task.childId);
 		}
 	}
+
+	/** Stops at once: a Volt agent ends now (its run is cancelled); a harness's own ends with the turn that runs it. */
+	private stop(view: ISubagentView): void {
+		const task = this.orchestrator.getTask(view.key);
+		if (!task) {
+			return;
+		}
+		if (task.source === 'harness') {
+			void this.orchestrator.cancel(task.parentId, { cascade: 'turn' });
+			return;
+		}
+		void this.orchestrator.dispatch({ type: 'task.cancel', taskId: task.id, reason: 'The user stopped it.' });
+	}
+}
+
+/** "Multitasks · 3 running", "Subagents · 1 running · 2 queued", "Multitasks · 2 queued". */
+function groupTitle(kind: 'multitask' | 'subagent', views: readonly ISubagentView[]): string {
+	const queued = views.filter(view => view.state === 'queued').length;
+	const running = views.length - queued;
+	const name = kind === 'multitask'
+		? localize('voltAgent.lineage.multitaskHead', "Multitasks")
+		: localize('voltAgent.lineage.subagentHead', "Subagents");
+	const parts = [name];
+	if (running || !queued) {
+		parts.push(localize('voltAgent.lineage.runningCount', "{0} running", running));
+	}
+	if (queued) {
+		parts.push(localize('voltAgent.lineage.queuedCount', "{0} queued", queued));
+	}
+	return parts.join(' · ');
 }
 
 function statusState(kind: OrchThreadStatusKind): ISubagentView['state'] {

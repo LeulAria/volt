@@ -8,7 +8,7 @@ import { Extensions, IConfigurationRegistry } from '../../../../platform/configu
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING } from '../../../services/voltRuntime/common/compaction.js';
 import { HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_DEFAULT_MAX_TOKENS, HANDOFF_DEFAULT_PERCENT, HANDOFF_MAX_TOKENS_SETTING, HANDOFF_MIN_TOKENS } from '../../../services/voltRuntime/common/contextHandoff.js';
-import { ORCH_RESUME_AFTER_RESTART_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING } from '../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 
 export { ORCH_RESUME_AFTER_RESTART_SETTING as AGENT_RESUME_AFTER_RESTART_SETTING, COMPACT_OLD_THREADS_SETTING as AGENT_COMPACT_OLD_THREADS_SETTING, LIMIT_AUTO_RESUME_SETTING as AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING };
@@ -28,6 +28,20 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			],
 			default: 'subagents',
 			description: localize('voltAgent.resumeAfterRestart', "What continues on its own when Volt restarts while agents are working. A turn continues through at most two restarts in a row."),
+		},
+		[ORCH_MAX_PARALLEL_SETTING]: {
+			type: 'number',
+			default: DEFAULT_ORCH_LIMITS.runningPerParent,
+			minimum: 1,
+			maximum: 16,
+			description: localize('voltAgent.multitaskMaxParallel', "How many multitask agents and subagents one chat runs at once. More wait their turn and start as others finish. Each one is its own agent session, so more at once costs more memory and usage."),
+		},
+		[ORCH_MAX_PARALLEL_TOTAL_SETTING]: {
+			type: 'number',
+			default: DEFAULT_ORCH_LIMITS.runningTotal,
+			minimum: 1,
+			maximum: 32,
+			description: localize('voltAgent.multitaskMaxParallelTotal', "How many multitask agents and subagents run at once across all chats in this window."),
 		},
 		[LIMIT_AUTO_RESUME_SETTING]: {
 			type: 'boolean',

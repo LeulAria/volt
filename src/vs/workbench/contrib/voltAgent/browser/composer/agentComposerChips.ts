@@ -59,8 +59,21 @@ export interface IAgentCompactChipDetail {
 	readonly tooltip?: string;
 }
 
+/** The chat's own agents that are live, for the agents chip ("3 multitasks running"). */
+export interface IAgentComposerAgentsChip {
+	/** "3 multitasks running", "2 subagents running", "3 multitasks · 2 subagents". */
+	readonly label: string;
+	readonly live: number;
+	/** Agents blocked on an approval or an answer. */
+	readonly waiting: number;
+	/** One line per agent, for the hover. */
+	readonly tooltip: string;
+}
+
 export interface IAgentComposerChipsOptions {
 	onStatusClick?: () => void;
+	/** The agents chip was clicked: list them (anchored to the chip). */
+	onAgentsClick?: (anchor: HTMLElement) => void;
 	onChangesClick?: () => void;
 	onTerminalClick?: () => void;
 	/** The Compact context chip, offered when the context window is nearly full. */
@@ -112,6 +125,11 @@ export class AgentComposerChips extends Disposable {
 	private readonly changesDelEl: HTMLElement;
 	private readonly terminalsChip: HTMLButtonElement;
 	private readonly terminalsLabelEl: HTMLElement;
+	/** The chat's live multitask agents and subagents, counted. */
+	private readonly agentsChip: HTMLButtonElement;
+	private readonly agentsLabelEl: HTMLElement;
+	private readonly agentsWaitingEl: HTMLElement;
+	private agents: IAgentComposerAgentsChip | undefined;
 	/** Commit, Push & PR: T3 Code's git actions, the next step for the chat's branch. */
 	private readonly gitControl: AgentGitActionsControl;
 	private gitVisible = false;
@@ -174,6 +192,14 @@ export class AgentComposerChips extends Disposable {
 		this.statusChip.type = 'button';
 		append(this.statusChip, createThinkingDots());
 		this.chipLabelEl = append(this.statusChip, $('span.volt-agent-composer-chip-label.volt-browser-dock-chip-label'));
+
+		// Right after the run's status: what runs in parallel with it.
+		this.agentsChip = append(this.element, $('button.volt-agent-composer-chip.agents.volt-browser-dock-chip.hidden')) as HTMLButtonElement;
+		this.agentsChip.type = 'button';
+		this.agentsChip.setAttribute('aria-haspopup', 'menu');
+		append(this.agentsChip, createThinkingDots());
+		this.agentsLabelEl = append(this.agentsChip, $('span.volt-agent-composer-chip-label'));
+		this.agentsWaitingEl = append(this.agentsChip, $('span.volt-agent-composer-chip-waiting'));
 
 		this.compactChip = append(this.element, $('button.volt-agent-composer-chip.compact.volt-browser-dock-chip.hidden')) as HTMLButtonElement;
 		this.compactChip.type = 'button';
@@ -266,6 +292,11 @@ export class AgentComposerChips extends Disposable {
 			e.preventDefault();
 			e.stopPropagation();
 			this.options.onStatusClick?.();
+		}));
+		this._register(addDisposableListener(this.agentsChip, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.options.onAgentsClick?.(this.agentsChip);
 		}));
 		this._register(addDisposableListener(this.changesChip, 'click', e => {
 			e.preventDefault();
@@ -385,6 +416,17 @@ export class AgentComposerChips extends Disposable {
 		this.render();
 	}
 
+	/** The chat's live agents, or undefined to hide the chip. */
+	setAgents(agents: IAgentComposerAgentsChip | undefined): void {
+		const next = agents && agents.live > 0 ? agents : undefined;
+		const current = this.agents;
+		if (current?.label === next?.label && current?.waiting === next?.waiting && current?.tooltip === next?.tooltip && current?.live === next?.live) {
+			return;
+		}
+		this.agents = next;
+		this.render();
+	}
+
 	/** Shows the Compact first chip as an offer, armed, while the agent compacts, or just after; or hides it. */
 	setCompactState(state: AgentCompactChipState, detail: IAgentCompactChipDetail = {}): void {
 		const next = this.options.onCompactClick ? state : 'hidden';
@@ -425,7 +467,7 @@ export class AgentComposerChips extends Disposable {
 	}
 
 	hasVisibleChips(): boolean {
-		return this.hostOpen && (this.hasStatus() || this.hasChanges || this.showsGit() || this.runningTerminals > 0 || this.compactState !== 'hidden' || !!this.pr);
+		return this.hostOpen && (this.hasStatus() || this.hasChanges || this.showsGit() || this.runningTerminals > 0 || this.compactState !== 'hidden' || !!this.pr || !!this.agents);
 	}
 
 	private showsGit(): boolean {
@@ -587,6 +629,7 @@ export class AgentComposerChips extends Disposable {
 		const showCompact = this.compactState !== 'hidden';
 		const showChanges = this.hasChanges && !(this.sessionId && isAgentChangesShown(this.sessionId));
 		const showTerminals = this.runningTerminals > 0;
+		const showAgents = !!this.agents;
 		// Steps aside while Source Control shows this chat's changes in the right panel.
 		const showCommit = this.gitVisible && !this.newChat && !(this.sessionId && isAgentScmShown(this.sessionId));
 		const showScroll = this.scrolledUp && !!this.options.onScrollToBottom;
@@ -595,7 +638,7 @@ export class AgentComposerChips extends Disposable {
 		this.toggleChip(this.changesChip, showChanges, this.changesExit);
 		this.toggleChip(this.gitControl.element, showCommit, this.commitExit);
 		this.toggleChip(this.prChip, showPr, this.prExit);
-		const visible = this.hostOpen && (showStatus || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
+		const visible = this.hostOpen && (showStatus || showAgents || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
 		this.element.classList.toggle('is-visible', visible);
 
 		this.statusChip.classList.toggle('hidden', !showStatus);
@@ -603,6 +646,17 @@ export class AgentComposerChips extends Disposable {
 		this.chipLabelEl.textContent = this.status.label;
 
 		this.compactChip.classList.toggle('hidden', !showCompact);
+
+		this.agentsChip.classList.toggle('hidden', !showAgents);
+		if (this.agents) {
+			const agents = this.agents;
+			this.agentsChip.classList.toggle('waiting', agents.waiting > 0);
+			this.agentsChip.classList.toggle('working', agents.live > agents.waiting);
+			this.agentsLabelEl.textContent = agents.label;
+			this.agentsWaitingEl.textContent = agents.waiting ? localize('voltAgent.agentsChip.waiting', "\u00b7 {0} needs you", agents.waiting) : '';
+			this.agentsChip.setAttribute('aria-label', agents.waiting ? `${agents.label}, ${localize('voltAgent.agentsChip.waitingAria', "{0} need you", agents.waiting)}` : agents.label);
+			setAgentTooltip(this.agentsChip, agents.tooltip);
+		}
 
 		this.changesAddEl.textContent = this.insertions > 0 ? `+${this.insertions}` : '';
 		this.changesDelEl.textContent = this.deletions > 0 ? `-${this.deletions}` : '';
@@ -618,7 +672,7 @@ export class AgentComposerChips extends Disposable {
 
 	/** The chips that fold into "..." when the row runs out of room, in row order. The arrow never does. */
 	private overflowableChips(): HTMLElement[] {
-		return [this.statusChip, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
+		return [this.statusChip, this.agentsChip, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
 	}
 
 	private scheduleLayout(): void {
@@ -714,7 +768,7 @@ export class AgentComposerChips extends Disposable {
 
 	/** No status, changes, or terminal chip sits beside the arrow. */
 	private scrollChipIsAlone(): boolean {
-		return !this.hasStatus() && !this.hasChanges && !this.showsGit() && this.runningTerminals <= 0 && this.compactState === 'hidden' && !this.pr;
+		return !this.hasStatus() && !this.hasChanges && !this.showsGit() && this.runningTerminals <= 0 && this.compactState === 'hidden' && !this.pr && !this.agents;
 	}
 
 	private updateScrollChip(show: boolean): void {

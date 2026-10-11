@@ -71,8 +71,8 @@ import { IAgentRuntimeService, type IVoltCompactionPlan } from '../../../../serv
 import { IAgentOrchestratorService, IOrchPrompt, IOrchQueueItem, OrchDelivery } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentPromptHostOptions, stashTurnDisplay } from '../orchestration/agentTurnHost.js';
 import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
-import { agentRow, dockModel, formatElapsed as formatOrchElapsed } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
-import { createReportStackIcon, isLiveSubagentState, renderCursorSubagentRow, renderSubagentAvatar, subagentView, tickSubagentClocks } from '../chrome/agentSubagents.js';
+import { agentRow, dockModel, formatElapsed as formatOrchElapsed, isMultitaskTask } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
+import { createReportStackIcon, isLiveSubagentState, ISubagentView, renderCursorSubagentRow, renderSubagentAvatar, subagentCounts, subagentCountsLabel, subagentStateIcon, subagentView, tickSubagentClocks } from '../chrome/agentSubagents.js';
 import type { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { type IAgentQuestionResponse, questionResponseText } from '../../../../services/voltRuntime/common/questions.js';
 import { AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -86,7 +86,7 @@ import { createAccessIcon } from '../chrome/accessIcons.js';
 import { AgentAccessPicker } from '../context/agentAccessPicker.js';
 import { AgentTerminalChips } from '../terminals/agentTerminalChips.js';
 import { IAgentTerminalsService } from '../terminals/agentTerminals.js';
-import { mountAgentQuickOpenActions } from '../chrome/agentViewSidebars.js';
+import { mountAgentQuickOpenActions, SHOW_AGENTS_IN_SIDE_TOOLBAR_COMMAND_ID } from '../chrome/agentViewSidebars.js';
 import { agentMessagePlainText, formatContextTokens, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
 import { AgentContextUsageView, type IAgentCompactState, type IAgentStatusBranch } from '../context/agentContextUsageView.js';
 import { AgentModelPicker, type IModelOption } from '../picker/agentModelPicker.js';
@@ -165,7 +165,7 @@ import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCo
 import { NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
 import { createModeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
 import { showAgentPlusMenu } from '../composer/agentPlusMenu.js';
-import { IVoltMenuHandle } from '../ui/menu/voltMenu.js';
+import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { AgentMentionController, IAgentDisplayMention, IAgentImageAttachment, IAgentMentionHost, browserMentionColor, cloneDisplayMentions, imageAttachmentsFromMentions, mentionIconClasses, videoDetail } from '../composer/agentMentions.js';
 import { AgentImageStrip, formatImageSize, IAgentImageStripItem, imageThumbClass } from '../composer/agentImageAttachments.js';
 import { AgentImageViewer, showAgentImageViewer } from '../composer/agentImageViewer.js';
@@ -1116,7 +1116,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onResume: () => this.resumeQueue(),
 			onCancelEdit: () => this.cancelQueueEdit(),
 			onOpenAgent: view => this.openSubagent(view.key),
-			onStopAgent: view => void this.orchestrator.dispatch({ type: 'task.cancel', taskId: view.key, reason: 'The user stopped it.' }),
+			onStopAgent: view => this.stopSubagentNow(view),
 			onStopAllAgents: () => this.stopAllSubagents(),
 		}));
 		// The dock beside a follow-up chat lists its finished agents while it is open; the card above
@@ -1152,6 +1152,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onScrollToBottom: () => this.scrollThreadToEnd(),
 			onCompactClick: () => this.toggleCompactFirst(),
 			onStatusClick: () => this.scrollThreadToEnd(),
+			onAgentsClick: anchor => this.showAgentsMenu(anchor),
 		}));
 		this.tasksCard = this._register(new AgentTasksCard(() => this.layoutInputEditor()));
 		append(this.composerEl, this.tasksCard.element);
@@ -1900,6 +1901,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.currentMode === 'Ask') {
 			return localize('voltAgent.askPlaceholder', "Ask a question");
 		}
+		if (this.isMultitaskAgentChat()) {
+			return localize('voltAgent.multitaskAgentPlaceholder', "Send a follow-up to this agent");
+		}
 		if (this.currentMode === 'Multitask') {
 			return localize('voltAgent.multitaskPlaceholder', "Run subagents");
 		}
@@ -2392,7 +2396,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onOpenPath: (path, startLine, endLine) => void this.openWorkspaceFile(path, startLine, endLine),
 			onOpenUrl: url => void this.openLocalPreview(url, true),
 			onTerminalMenu: (anchor, command) => this.showTerminalBlockMenu(anchor, command),
-			...(this.isSubagentChat() ? {} : { onRunInTerminal: (command: string) => this.surfaceHost.runCommand(command) }),
+			...(this.isReadOnlyTaskChat() ? {} : { onRunInTerminal: (command: string) => this.surfaceHost.runCommand(command) }),
 			onTableCopyMenu: (anchor, plain, markdown) => this.showTableCopyMenu(anchor, plain, markdown),
 			onCopyText: text => void this.clipboardService.writeText(text),
 			onAccessDecision: (requestId, effect, scope, pattern) => this.runtime.respondToAccessRequest(requestId, effect, scope, pattern),
@@ -2420,7 +2424,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	 * message now; anything else lands in the composer for the user to send.
 	 */
 	private promptFromPage(text: string, page: string, send: boolean): void {
-		if (!send || this.isSubagentChat()) {
+		if (!send || this.isReadOnlyTaskChat()) {
 			const existing = (this.input instanceof AgentEditorInput ? this.input.draft ?? '' : '').trim();
 			this.prefillDraft(existing ? `${existing}\n\n${text}` : text);
 			return;
@@ -3370,7 +3374,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				void this.restoreCheckpoint(turnId);
 			}));
 		}
-		if (message.id && !this.isSubagentChat()) {
+		if (message.id && !this.isReadOnlyTaskChat()) {
 			const turnId = message.id;
 			const rewind = append(bubble, $('button.volt-agent-user-restore.volt-agent-user-rewind')) as HTMLButtonElement;
 			rewind.type = 'button';
@@ -3392,7 +3396,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	 * picks Revert Files too. Any unsent draft stays above the restored prompt.
 	 */
 	private async rewindTo(turnId: string): Promise<void> {
-		if (this.isStreaming() || this.isSubagentChat()) {
+		if (this.isStreaming() || this.isReadOnlyTaskChat()) {
 			return;
 		}
 		const sessionId = this.sessionKey;
@@ -3631,8 +3635,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private canEditUser(index: number): boolean {
 		const message = this.messages[index];
-		// A subagent's chat is the parent's task: only the parent sends into it.
-		return !!message && message.kind === 'user' && !this.isSubagentChat();
+		// A subagent's chat is the parent's task: only the parent sends into it. A multitask agent's takes edits.
+		return !!message && message.kind === 'user' && !this.isReadOnlyTaskChat();
 	}
 
 	private canResendCancelledUser(index: number): boolean {
@@ -4323,8 +4327,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				const task = this.orchestrator.taskForToolCall(this.sessionKey, tool.callId);
 				return task ? subagentView(agentRow(task), ref => this.providerOf(ref)) : fallbackSubagentView(tool, live);
 			},
+			// One delegate_task call that started several agents (a batch, or one brief on several models): a row each.
+			subagentViews: tool => {
+				const tasks = tool.callId ? this.orchestrator.tasksOf(this.sessionKey).filter(task => task.toolCallId === tool.callId) : [];
+				return tasks.length > 1 ? tasks.map(task => subagentView(agentRow(task), ref => this.providerOf(ref))) : undefined;
+			},
 			openSubagent: view => this.openSubagent(view.key),
-			stopSubagent: view => void this.orchestrator.dispatch({ type: 'task.cancel', taskId: view.key, reason: 'The user stopped it.' }),
+			stopSubagent: view => this.stopSubagentNow(view),
 			subagentTooltip: this.tooltip,
 		};
 	}
@@ -5540,7 +5549,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.questionTray.advance();
 			return;
 		}
-		if (this.submitting || !this.composerCanSend() || this.isSubagentChat()) {
+		if (this.submitting || !this.composerCanSend() || this.isReadOnlyTaskChat()) {
 			return;
 		}
 		// A video just attached is still being cut into stills; send once they are ready.
@@ -5925,7 +5934,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** Whether the chat's agent offers `/compact`, and why it cannot run right now. */
 	private compactState(): IAgentCompactState | undefined {
-		if (!this.compactPlan() || this.isSubagentChat()) {
+		if (!this.compactPlan() || this.isReadOnlyTaskChat()) {
 			return undefined;
 		}
 		if (this.compactionRunning()) {
@@ -6174,19 +6183,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	/**
-	 * In a subagent's chat: "<model> · Working 5m 31s · Runs on its own · Open parent" (T3). It keeps
-	 * the composer: a message here is another round of the task, and its report goes to the parent.
+	 * In an agent's chat: "Multitask · <model> · Running 5m 31s · Send follow-ups here · Stop · Open
+	 * parent" (T3). A subagent's chat is read only: no composer, no edits, its rounds come from the
+	 * agent that delegated it. A multitask agent's keeps the composer: a message is another round of
+	 * its task (it waits for the running one, or steers it), and the new report goes to the parent.
 	 */
 	private renderSubagentBar(): void {
 		if (!this.subagentBar) {
 			return;
 		}
 		const thread = this.orchestrator.getThread(this.sessionKey);
-		// Read only: no composer, no edits. Its rounds come from the parent.
-		this.container.classList.toggle('subagent-chat', !!thread?.taskId);
 		const task = thread?.taskId ? this.orchestrator.getTask(thread.taskId) : undefined;
+		const multitask = !!task && isMultitaskTask(task);
+		this.container.classList.toggle('subagent-chat', !!thread?.taskId && !multitask);
+		this.container.classList.toggle('multitask-chat', multitask);
 		const parentOpen = !!thread?.parentId && this.isChatOpen(thread.parentId);
-		const key = task ? JSON.stringify([this.sessionKey, task.state, task.modelLabel, task.startedAt, task.endedAt, task.waitingOn, parentOpen]) : '';
+		const key = task ? JSON.stringify([this.sessionKey, task.state, task.modelLabel, task.startedAt, task.endedAt, task.waitingOn, parentOpen, multitask]) : '';
 		if (key === this.subagentBarKey) {
 			return;
 		}
@@ -6199,7 +6211,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		const view = subagentView(agentRow(task), ref => this.providerOf(ref));
 		renderSubagentAvatar(this.subagentBar, view, 22);
-		append(this.subagentBar, $('span.model')).textContent = view.modelLabel ?? localize('voltAgent.subagentBar.model', "Subagent");
+		const kind = append(this.subagentBar, $(`span.kind${multitask ? '.multitask' : ''}`));
+		kind.textContent = multitask ? localize('voltAgent.subagentBar.multitask', "Multitask") : localize('voltAgent.subagentBar.subagent', "Subagent");
+		append(this.subagentBar, $('span.model')).textContent = view.modelLabel ?? '';
 		const state = append(this.subagentBar, $(`span.state.state-${view.state}`));
 		state.textContent = view.stateLabel;
 		const clock = append(this.subagentBar, $('span.volt-subagent-clock'));
@@ -6211,9 +6225,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			clock.textContent = formatOrchElapsed((view.endedAt ?? Date.now()) - view.startedAt);
 		}
 		append(this.subagentBar, $('span.spacer'));
-		append(this.subagentBar, $('span.note')).textContent = isLiveSubagentState(view.state)
-			? localize('voltAgent.subagentBar.own', "Runs on its own")
-			: localize('voltAgent.subagentBar.reported', "Reported to its parent");
+		const live = isLiveSubagentState(view.state);
+		append(this.subagentBar, $('span.note')).textContent = multitask
+			? (live ? localize('voltAgent.subagentBar.followUps', "Send follow-ups here") : localize('voltAgent.subagentBar.continue', "Reported · a message continues it"))
+			: (live ? localize('voltAgent.subagentBar.readOnlyLive', "Read only · runs on its own") : localize('voltAgent.subagentBar.readOnlyDone', "Read only · reported to its parent"));
+		if (live) {
+			// Stops now: its run is cancelled and the task ends, whatever the agent is doing.
+			const stop = append(this.subagentBar, $('button.stop-agent')) as HTMLButtonElement;
+			stop.type = 'button';
+			stop.appendChild(renderIcon(Codicon.debugStop));
+			append(stop, $('span')).textContent = localize('voltAgent.subagentBar.stop', "Stop");
+			setAgentTooltip(stop, localize('voltAgent.subagentBar.stopHint', "Stop this agent now"));
+			const taskId = task.id;
+			this.subagentBarStore.add(addDisposableListener(stop, 'click', () => void this.orchestrator.dispatch({ type: 'task.cancel', taskId, reason: 'The user stopped it.' })));
+		}
 		// Nested in the parent's right panel, or the parent has a tab already: nothing to open.
 		if (!parentOpen) {
 			const parentId = thread.parentId;
@@ -6274,6 +6299,110 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		return !!this.orchestrator.getThread(this.sessionKey)?.taskId;
 	}
 
+	/** The task this chat runs, when another chat delegated it. */
+	private ownTask() {
+		const taskId = this.orchestrator.getThread(this.sessionKey)?.taskId;
+		return taskId ? this.orchestrator.getTask(taskId) : undefined;
+	}
+
+	/** A multitask agent's chat: the user drives it too (follow-ups, edits); its reports still go to the parent. */
+	private isMultitaskAgentChat(): boolean {
+		const task = this.ownTask();
+		return !!task && isMultitaskTask(task);
+	}
+
+	/** A subagent's chat: watched, not driven. Only the agent that delegated it sends its rounds. */
+	private isReadOnlyTaskChat(): boolean {
+		return this.isSubagentChat() && !this.isMultitaskAgentChat();
+	}
+
+	/** Stops an agent at once: a Volt agent's run is cancelled; a harness's own stops with the turn that runs it. */
+	private stopSubagentNow(view: ISubagentView): void {
+		const task = this.orchestrator.getTask(view.key);
+		if (!task) {
+			return;
+		}
+		if (task.source === 'harness') {
+			void this.orchestrator.cancel(task.parentId, { cascade: 'turn' });
+			return;
+		}
+		void this.orchestrator.dispatch({ type: 'task.cancel', taskId: task.id, reason: 'The user stopped it.' });
+	}
+
+	/** "3 multitasks running" above the text area while this chat's agents work. */
+	private syncAgentsChip(views: readonly ISubagentView[]): void {
+		const counts = subagentCounts(views);
+		const live = counts.multitask + counts.subagents;
+		if (!live) {
+			this.composerChips?.setAgents(undefined);
+			return;
+		}
+		const lines = views.filter(view => isLiveSubagentState(view.state)).slice(0, 12)
+			.map(view => [view.title, view.stateLabel, view.modelLabel].filter(Boolean).join(' \u00b7 '));
+		this.composerChips?.setAgents({ label: subagentCountsLabel(counts), live, waiting: counts.waiting, tooltip: lines.join('\n') });
+	}
+
+	/** The agents chip's list: this chat's multitask agents and subagents; a pick opens one beside the chat. */
+	private showAgentsMenu(anchor: HTMLElement): void {
+		type AgentPick = { readonly kind: 'open'; readonly key: string } | { readonly kind: 'stopAll' } | { readonly kind: 'toolbar' };
+		const now = Date.now();
+		const views = dockModel(this.orchestrator.getState(), this.sessionKey).agents.map(row => subagentView(row, ref => this.providerOf(ref)));
+		const item = (view: ISubagentView): IVoltMenuItem<AgentPick> => ({
+			id: view.key,
+			label: view.title,
+			detail: [view.modelLabel ?? view.kindLabel, view.startedAt !== undefined ? formatOrchElapsed((view.endedAt ?? now) - view.startedAt) : undefined].filter(Boolean).join(' \u00b7 '),
+			...(view.state === 'running' ? {} : { badge: view.stateLabel }),
+			icon: subagentStateIcon(view.state),
+			busy: view.state === 'running',
+			disabled: !view.openable,
+			...(view.openable ? { trailingIcon: view.readOnly ? Codicon.eye : Codicon.commentDiscussion } : {}),
+			tooltip: view.openable
+				? (view.readOnly ? localize('voltAgent.agentsMenu.watch', "Watch its chat (read only)") : localize('voltAgent.agentsMenu.open', "Open its chat to send follow-ups"))
+				: localize('voltAgent.agentsMenu.harness', "Runs inside the agent's turn"),
+			data: { kind: 'open', key: view.key },
+		});
+		const multitasks = views.filter(view => view.multitask);
+		const subagents = views.filter(view => !view.multitask);
+		const sections: IVoltMenuSection<AgentPick>[] = [];
+		if (multitasks.length) {
+			sections.push({ id: 'multitasks', title: localize('voltAgent.agentsMenu.multitasks', "Multitasks"), items: multitasks.map(item) });
+		}
+		if (subagents.length) {
+			sections.push({ id: 'subagents', title: localize('voltAgent.agentsMenu.subagents', "Subagents"), items: subagents.map(item) });
+		}
+		const stoppable = views.filter(view => isLiveSubagentState(view.state) && (view.cancellable || view.stopsTurn)).length;
+		const footer: IVoltMenuItem<AgentPick>[] = [{
+			id: 'toolbar',
+			label: localize('voltAgent.agentsMenu.toolbar', "Show in Side Toolbar"),
+			icon: Codicon.layoutSidebarRight,
+			data: { kind: 'toolbar' },
+		}];
+		if (stoppable) {
+			footer.push({ id: 'stopAll', label: localize('voltAgent.agentsMenu.stopAll', "Stop All Agents"), icon: Codicon.debugStop, badge: String(stoppable), data: { kind: 'stopAll' } });
+		}
+		showVoltMenu<AgentPick>(this.contextViewService, {
+			anchor,
+			position: 'above',
+			align: 'left',
+			width: 320,
+			ariaLabel: localize('voltAgent.agentsMenu', "Agents"),
+			className: 'volt-agent-agents-menu',
+			sections,
+			footer,
+			emptyMessage: localize('voltAgent.agentsMenu.empty', "No agents are running."),
+			onPick: picked => {
+				const data = picked.data;
+				if (data.kind === 'open') {
+					this.openSubagent(data.key);
+				} else if (data.kind === 'toolbar') {
+					void this.commandService.executeCommand(SHOW_AGENTS_IN_SIDE_TOOLBAR_COMMAND_ID);
+				} else {
+					this.stopAllSubagents();
+				}
+			},
+		});
+	}
+
 	/** The harness behind a catalog ref, for its mark on a subagent's avatar. */
 	private providerOf(modelRef: string | undefined): string | undefined {
 		const ref = modelRef ?? this.orchestrator.getThread(this.sessionKey)?.modelRef;
@@ -6291,11 +6420,21 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
+	/** Every live agent of this chat stops now; the harness's own stop with the turn that runs them. */
 	private stopAllSubagents(): void {
+		let harness = false;
 		for (const task of this.orchestrator.tasksOf(this.sessionKey)) {
-			if (task.source === 'volt' && (task.state === 'queued' || task.state === 'running' || task.state === 'waiting')) {
-				void this.orchestrator.dispatch({ type: 'task.cancel', taskId: task.id, reason: 'The user stopped all subagents.' });
+			if (!isLiveSubagentState(task.state)) {
+				continue;
 			}
+			if (task.source === 'volt') {
+				void this.orchestrator.dispatch({ type: 'task.cancel', taskId: task.id, reason: 'The user stopped all subagents.' });
+			} else {
+				harness = true;
+			}
+		}
+		if (harness) {
+			void this.orchestrator.cancel(this.sessionKey, { cascade: 'turn' });
 		}
 	}
 
@@ -6741,7 +6880,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		})));
 		this.renderSubagentBar();
 		const dock = dockModel(this.orchestrator.getState(), this.sessionKey);
-		this.composerQueue.setAgents({ views: dock.agents.map(row => subagentView(row, ref => this.providerOf(ref))), conflicts: dock.conflicts });
+		const agentViews = dock.agents.map(row => subagentView(row, ref => this.providerOf(ref)));
+		this.composerQueue.setAgents({ views: agentViews, conflicts: dock.conflicts });
+		this.syncAgentsChip(agentViews);
 		this.composerQueue.setState(this.queueState());
 		this.updateInputPlaceholder();
 		this._onDidChangeQueue.fire();

@@ -43,10 +43,12 @@ export function isLiveTaskState(state: OrchTaskState): boolean {
 	return state === 'queued' || state === 'running' || state === 'waiting';
 }
 
-/** Children per parent that run at once; more wait their turn. */
-export const MAX_RUNNING_TASKS_PER_CHAT = 4;
-/** Children across the window that run at once. */
-export const MAX_RUNNING_TASKS = 8;
+/** Children per parent that run at once; more wait their turn (the default; Settings can change it). */
+export const MAX_RUNNING_TASKS_PER_CHAT = 6;
+/** Children across the window that run at once (the default; Settings can change it). */
+export const MAX_RUNNING_TASKS = 12;
+/** Tasks one delegate_task call may start with `tasks`. */
+export const MAX_BATCH_TASKS = 8;
 /** A task may start tasks of its own, one level down. */
 export const MAX_TASK_DEPTH = 2;
 /**
@@ -118,13 +120,31 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 		description: [
 			'Run one task on a Volt subagent: a separate chat, on any model from list_models, that starts with only your brief (it does not see this conversation). Use it to work in parallel (several independent tasks at once), to get a second opinion from a different model (review, research), or to give a self-contained piece of work to a model better suited to it.',
 			'Write the brief like a hand-off to a capable colleague who knows nothing: the goal, the relevant files and facts you already found, constraints, and what the report should contain. Do not delegate work that depends on finishing something else first, and do not delegate trivial lookups you can do faster yourself.',
+			'To run several independent parts at once, start them all in ONE call with `tasks` (one entry per part, each with its own complete brief) instead of one call per part.',
 			'Returns a task_id at once (wait=false, the default). Several tasks run in parallel. When a task finishes its report is delivered to this chat as a new message, so after starting tasks you may end your turn instead of polling; call wait_tasks only when you need the results before you can continue in this turn. task_status reads progress.',
 			'Review rounds: for each new round of a review (or any work you send back after changes), call delegate_task again with previous_task_id set to the last round and a fresh client_request_id (keep that id when you retry the same round). Do not use message_task for a new round: a fresh subagent reviews the current code without the previous reviewer\'s assumptions. Tasks and their reports survive a Volt restart.',
 		].join(' '),
 		inputSchema: {
 			type: 'object',
 			properties: {
-				task: { type: 'string', description: 'The complete brief for the subagent.' },
+				task: { type: 'string', description: 'The complete brief for the subagent. Give `task` for one subagent, or `tasks` for several.' },
+				tasks: {
+					type: 'array',
+					maxItems: MAX_BATCH_TASKS,
+					description: `Start up to ${MAX_BATCH_TASKS} independent subagents in one call, one entry per part of the work. Each entry takes the same fields as a single task (task, title, model, role, isolation, scope); fields left out use this call's top-level values. Use instead of \`task\`.`,
+					items: {
+						type: 'object',
+						properties: {
+							task: { type: 'string', description: 'The complete brief for this subagent.' },
+							title: { type: 'string', description: 'A short title shown in Volt (3-6 words).' },
+							model: MODEL_ARG,
+							role: { type: 'string', enum: AGENT_TASK_ROLES },
+							isolation: { type: 'string', enum: ['shared', 'worktree'] },
+							scope: { type: 'array', items: { type: 'string' }, description: 'Paths (prefixes) this part owns, so Volt can flag two parts editing the same files.' },
+						},
+						required: ['task'],
+					},
+				},
 				previous_task_id: {
 					type: 'string',
 					description: 'Start the next round of earlier work as a new task: the task_id of the previous round (e.g. a second review after you fixed what the first review found). Volt gives the new subagent that round\'s brief and report; your `task` should add what changed since, your responses to its findings, and the objections still open.',
@@ -149,7 +169,6 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 				wait: { type: 'boolean', description: 'Wait for the result in this call (up to about 45 s, then call wait_tasks). Default false.' },
 				client_request_id: { type: 'string', description: 'Optional idempotency key: a retry with the same key returns the same task instead of starting another.' },
 			},
-			required: ['task'],
 		},
 	},
 	{
@@ -256,6 +275,8 @@ export function buildTaskPrompt(brief: string, context: ITaskBriefContext): stri
 	}
 	if (context.depth >= MAX_TASK_DEPTH) {
 		lines.push('[Volt subagent] Do the work yourself: do not delegate it further.');
+	} else {
+		lines.push('[Volt subagent] If your task splits into independent parts, you may run them in parallel with delegate_task (one level down, all parts in one call with `tasks`). Never hand your whole task to another subagent, and never delegate the same brief again after it ran: read its report instead.');
 	}
 	if (context.previous) {
 		const previous = context.previous;

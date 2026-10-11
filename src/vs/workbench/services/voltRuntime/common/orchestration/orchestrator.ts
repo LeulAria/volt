@@ -412,6 +412,11 @@ export type OrchRestartResume = 'off' | 'subagents' | 'all';
 
 export const ORCH_RESUME_AFTER_RESTART_SETTING = 'volt.agent.resumeAfterRestart';
 
+/** Multitask agents and subagents one chat runs at once (`runningPerParent`); more wait their turn. */
+export const ORCH_MAX_PARALLEL_SETTING = 'volt.agent.multitask.maxParallel';
+/** Multitask agents and subagents the whole window runs at once (`runningTotal`). */
+export const ORCH_MAX_PARALLEL_TOTAL_SETTING = 'volt.agent.multitask.maxParallelTotal';
+
 export type OrchCommand = OrchCommandBody & {
 	/** Idempotency key. A command id seen before is acknowledged without effect. */
 	readonly id: string;
@@ -498,6 +503,15 @@ export interface IOrchLimits {
 	/** Volt subagents across the window that run at once. */
 	readonly runningTotal: number;
 	readonly maxDepth: number;
+	/**
+	 * Delegation doom-loop guards. Subagents one turn may start: an agent that keeps delegating in
+	 * one turn is refused and told to wait for the reports it has.
+	 */
+	readonly maxSpawnsPerTurn: number;
+	/** Finished runs of the same brief under one parent before another is refused (read the report instead). */
+	readonly maxBriefRepeats: number;
+	/** Rounds of one piece of work (`previous_task_id` chains) before the next is refused. */
+	readonly maxRounds: number;
 	/** Command ids remembered for idempotency. */
 	readonly receipts: number;
 	/** Finished tasks kept per root (the oldest are dropped from state). */
@@ -509,9 +523,12 @@ export interface IOrchLimits {
 }
 
 export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
-	runningPerParent: 4,
-	runningTotal: 8,
+	runningPerParent: 6,
+	runningTotal: 12,
 	maxDepth: 2,
+	maxSpawnsPerTurn: 16,
+	maxBriefRepeats: 3,
+	maxRounds: 6,
 	receipts: 512,
 	finishedTasksPerRoot: 60,
 	maxWakeups: 8,

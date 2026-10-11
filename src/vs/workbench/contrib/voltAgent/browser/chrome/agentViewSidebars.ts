@@ -12,7 +12,7 @@ import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '..
 import { disposableTimeout } from '../../../../../base/common/async.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
@@ -39,6 +39,8 @@ import { CHANGES_ICON_PATH, createSurfaceStrokeIcon, EXPLORER_ICON_SHAPES, type 
 import { AGENT_TOOLS_VISIBILITY_EVENT } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { AgentLineageDock } from './agentLineageDock.js';
+import { createModeIcon } from './agentModeIcons.js';
+import { ISubagentCounts } from './agentSubagents.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
 import { autorun } from '../../../../../base/common/observable.js';
 import { ISCMRepository, ISCMService } from '../../../scm/common/scm.js';
@@ -53,6 +55,8 @@ const QUICK_OPEN_HIDDEN_KEY = 'volt.agent.quickOpenActions.hidden';
 const TOGGLE_TERMINAL_COMMAND_ID = 'workbench.action.terminal.toggleTerminal';
 /** An arrow out to the top right, after the "IDE" label. */
 const ARROW_UP_RIGHT_PATH = 'M7 7h10v10M7 17 17 7';
+/** Opens the chat side toolbar on its agents: expanded beside the chat, or as a popup under its title bar button when there is no room. */
+export const SHOW_AGENTS_IN_SIDE_TOOLBAR_COMMAND_ID = 'volt.agent.showAgentsInSideToolbar';
 /** Expanded Quick Open Actions are 228px. Below this window width they collapse. */
 export const QUICK_OPEN_NARROW_WINDOW_WIDTH = 1100;
 
@@ -193,6 +197,9 @@ class AgentViewSidebarsContribution extends Disposable {
 	private changesSessionId: string | undefined;
 	/** The agents of the chat on screen: running, previous, and its parent in a subagent's chat. */
 	private readonly lineage: AgentLineageDock;
+	/** The collapsed toolbar's agents button: how many are live, and a click opens the list. */
+	private readonly agentsRail: HTMLButtonElement;
+	private readonly agentsBadge: HTMLElement;
 	private readonly tabListeners = this._register(new DisposableStore());
 	/** Editors currently painted in Open Tabs. Unchanged focus events must not rebuild those rows. */
 	private tabKeys = '';
@@ -290,6 +297,13 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.chevron.appendChild(chevronIcon);
 
 		const rail = append(this.quickOpen, $('.volt-agent-quick-open-rail'));
+		// First on the rail while agents run: the collapsed toolbar still says how many.
+		this.agentsRail = append(rail, $('button.volt-agent-rail-btn.volt-agent-rail-agents.hidden')) as HTMLButtonElement;
+		this.agentsRail.type = 'button';
+		append(this.agentsRail, $('span.volt-agent-dock-label'));
+		this.agentsRail.appendChild(createModeIcon('multitask'));
+		this.agentsBadge = append(this.agentsRail, $('span.volt-agent-rail-badge'));
+		this._register(addDisposableListener(this.agentsRail, 'click', () => this.revealAgents()));
 		const body = this.body = append(this.quickOpen, $('.volt-agent-quick-open-body'));
 		this.popup = $('.volt-agent-quick-open-actions.expanded.volt-agent-quick-open-popup.hidden');
 		this.popup.setAttribute('aria-label', localize('voltAgent.chatSideToolbar', "Chat Side Toolbar"));
@@ -342,7 +356,10 @@ class AgentViewSidebarsContribution extends Disposable {
 			}
 		}));
 		this.lineage = this._register(instantiationService.createInstance(AgentLineageDock));
-		body.appendChild(this.lineage.element);
+		// Agents come first, at the top right of the chat: what runs in parallel is what the user checks most.
+		body.prepend(this.lineage.element);
+		this._register(this.lineage.onDidChangeSummary(summary => this.syncAgentsRail(summary)));
+		this._register(CommandsRegistry.registerCommand(SHOW_AGENTS_IN_SIDE_TOOLBAR_COMMAND_ID, () => this.revealAgents()));
 
 		this.chatResize = new ResizeObserver(() => this.syncDockToWindow());
 		this._register(toDisposable(() => this.chatResize.disconnect()));
@@ -375,6 +392,38 @@ class AgentViewSidebarsContribution extends Disposable {
 			this.watchBranch();
 		}));
 		this._register(workspaceContextService.onDidChangeWorkspaceName(() => this.updateWorkspaceHeading()));
+	}
+
+	/** The rail's agents button: shown while agents work, with their count (amber when one waits on the user). */
+	private syncAgentsRail(summary: ISubagentCounts): void {
+		const live = summary.multitask + summary.subagents;
+		this.agentsRail.classList.toggle('hidden', live === 0);
+		this.agentsRail.classList.toggle('waiting', summary.waiting > 0);
+		this.agentsBadge.textContent = live > 99 ? '99+' : String(live);
+		const label = summary.waiting
+			? localize('voltAgent.dock.agentsWaiting', "Agents: {0} running, {1} need you", live - summary.waiting, summary.waiting)
+			: localize('voltAgent.dock.agentsRunning', "Agents: {0} running", live);
+		this.agentsRail.setAttribute('aria-label', label);
+		const tip = this.agentsRail.querySelector('.volt-agent-dock-label');
+		if (tip) {
+			tip.textContent = label;
+		}
+	}
+
+	/**
+	 * Shows the agents list: the toolbar expands beside the chat, or opens as a popup under its
+	 * title bar button when it has no room there (narrow, hidden by the user, tools open beside the chat).
+	 */
+	private revealAgents(): void {
+		const inline = !this.windowNarrow && !this.quickOpenHidden && !!this.quickOpenEditor && !this.quickOpenEditor.classList.contains('has-surfaces');
+		if (!inline) {
+			this.setPopupOpen(true);
+			return;
+		}
+		if (this.collapsed) {
+			this.toggleDock();
+		}
+		this.lineage.element.scrollIntoView({ block: 'nearest' });
 	}
 
 	/** Watch the editor part once it exists. Observing the whole workbench during startup would run on every node. */

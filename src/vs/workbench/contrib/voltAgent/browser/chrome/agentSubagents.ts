@@ -35,9 +35,61 @@ export interface ISubagentView {
 	readonly endedAt?: number;
 	readonly openable: boolean;
 	readonly cancellable: boolean;
-	/** Started from the Multitask composer, not by an agent. */
+	/** A live harness subagent: its Stop stops the agent turn that runs it. */
+	readonly stopsTurn?: boolean;
+	/** A multitask agent: work the user asked to run in parallel; its chat takes follow-ups and edits. */
 	readonly multitask?: boolean;
+	/** Its chat is watched, not driven (a subagent): only the agent that delegated it sends its rounds. */
+	readonly readOnly?: boolean;
 	readonly source: 'volt' | 'harness';
+}
+
+/** How many agents of a list are live, by kind: the composer chip and the dock headings. */
+export interface ISubagentCounts {
+	/** Multitask agents queued, running or waiting. */
+	readonly multitask: number;
+	/** Subagents (Volt or the harness's own) queued, running or waiting. */
+	readonly subagents: number;
+	/** Of those, the ones blocked on an approval or an answer. */
+	readonly waiting: number;
+	readonly queued: number;
+}
+
+export function subagentCounts(views: readonly Pick<ISubagentView, 'state' | 'multitask'>[]): ISubagentCounts {
+	let multitask = 0;
+	let subagents = 0;
+	let waiting = 0;
+	let queued = 0;
+	for (const view of views) {
+		if (!isLiveSubagentState(view.state)) {
+			continue;
+		}
+		if (view.multitask) {
+			multitask++;
+		} else {
+			subagents++;
+		}
+		if (view.state === 'waiting') {
+			waiting++;
+		} else if (view.state === 'queued') {
+			queued++;
+		}
+	}
+	return { multitask, subagents, waiting, queued };
+}
+
+/** "3 multitasks running", "2 subagents running", "3 multitasks · 2 subagents": the chip's words. */
+export function subagentCountsLabel(counts: ISubagentCounts): string {
+	const { multitask, subagents } = counts;
+	if (multitask && subagents) {
+		return localize('voltAgent.agents.mixed', "{0} · {1}",
+			multitask === 1 ? localize('voltAgent.agents.oneMultitask', "1 multitask") : localize('voltAgent.agents.multitasks', "{0} multitasks", multitask),
+			subagents === 1 ? localize('voltAgent.agents.oneSubagent', "1 subagent") : localize('voltAgent.agents.subagents', "{0} subagents", subagents));
+	}
+	if (multitask) {
+		return multitask === 1 ? localize('voltAgent.agents.oneMultitaskRunning', "1 multitask running") : localize('voltAgent.agents.multitasksRunning', "{0} multitasks running", multitask);
+	}
+	return subagents === 1 ? localize('voltAgent.agents.oneSubagentRunning', "1 subagent running") : localize('voltAgent.agents.subagentsRunning', "{0} subagents running", subagents);
 }
 
 export function isLiveSubagentState(state: OrchAgentRowState): boolean {
@@ -77,7 +129,9 @@ export function subagentView(row: IOrchAgentRow, providerFor: (modelRef: string 
 		...(row.endedAt !== undefined ? { endedAt: row.endedAt } : {}),
 		openable: row.openable,
 		cancellable: row.cancellable,
+		...(row.stopsTurn ? { stopsTurn: true } : {}),
 		multitask: row.multitask,
+		readOnly: row.readOnly,
 		source: row.source,
 	};
 }
@@ -182,17 +236,25 @@ export function subagentHoverRows(view: ISubagentView, now: number): IAgentToolt
 		rows.push({ label: view.modelLabel, ...(view.providerId ? { icon: () => createBrandIcon(view.providerId!, 14) } : { icon: Codicon.hubot }) });
 	}
 	const elapsed = elapsedText(view, now);
-	rows.push({ label: view.stateLabel, ...(elapsed ? { detail: elapsed } : {}), icon: stateIcon(view.state) });
+	rows.push({ label: view.stateLabel, ...(elapsed ? { detail: elapsed } : {}), icon: subagentStateIcon(view.state) });
 	if (view.detail) {
 		rows.push({ label: view.detail, icon: Codicon.terminal, muted: true });
 	}
 	if (view.openable) {
-		rows.push({ label: localize('voltAgent.subagent.openHint', "Click to open its chat beside this one"), muted: true });
+		rows.push({
+			label: view.readOnly
+				? localize('voltAgent.subagent.watchHint', "Click to watch its chat beside this one (read only)")
+				: localize('voltAgent.subagent.openFollowUpHint', "Click to open its chat beside this one and send follow-ups"),
+			muted: true,
+		});
+	} else if (view.stopsTurn) {
+		rows.push({ label: localize('voltAgent.subagent.harnessHint', "Runs inside the agent's turn; stopping it stops that turn"), muted: true });
 	}
 	return rows;
 }
 
-function stateIcon(state: OrchAgentRowState) {
+/** The state as a codicon: a spinner while it works, a bell when it needs the user, a check when done. */
+export function subagentStateIcon(state: OrchAgentRowState) {
 	switch (state) {
 		case 'running': return Codicon.loading;
 		case 'waiting': return Codicon.bellDot;

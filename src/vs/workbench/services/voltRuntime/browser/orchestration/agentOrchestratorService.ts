@@ -22,9 +22,9 @@ import { IAgentWorktreeSetupService } from '../../common/git/worktreeSetupPlan.j
 import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
 import { normalizeVoltMode } from '../../common/modes.js';
-import { AGENT_TASK_TOOLS, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
+import { AGENT_TASK_TOOLS, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, MAX_BATCH_TASKS, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchMove, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchMove, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
 import { ILimitSignal, isClaudeProvider, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitAutoResumes, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
 import { extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { harnessTaskId, IOrchStep, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
@@ -35,7 +35,7 @@ import { OrchestratorStore } from './orchestratorStore.js';
 /** Models one delegate_task call may run the same brief on. */
 const MAX_FAN_OUT = 4;
 /** A cancelled run that does not report its end within this long is settled by Volt. */
-const CANCEL_SETTLE_MS = 15_000;
+const CANCEL_SETTLE_MS = 6_000;
 /** A Volt chat id for a subagent's chat; the agent editor reads session ids from this shape. */
 const CHILD_ID_PREFIX = 'agent-';
 /** setTimeout's ceiling is about 24.8 days; the limit timer re-arms at least daily. */
@@ -56,7 +56,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	declare readonly _serviceBrand: undefined;
 
 	private state: IOrchState = emptyOrchState();
-	private readonly limits: IOrchLimits = DEFAULT_ORCH_LIMITS;
+	/** Concurrency from Settings (multitask agents and subagents at once), the rest the defaults. */
+	private limits: IOrchLimits = DEFAULT_ORCH_LIMITS;
 	private readonly store: OrchestratorStore;
 	/** Newest events per root, persisted with the root as its audit trail. */
 	private readonly rootEvents = new Map<string, IOrchEventEnvelope[]>();
@@ -141,13 +142,29 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		}));
 		// Parked chats wake at their reset: the timer follows the state.
 		this._register(this.onDidChange(() => this.scheduleLimitTick()));
+		this.limits = this.readLimits();
 		this._register(configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(ORCH_MAX_PARALLEL_SETTING) || e.affectsConfiguration(ORCH_MAX_PARALLEL_TOTAL_SETTING)) {
+				this.limits = this.readLimits();
+				// A no-op command runs the scheduler: queued agents start at once when there is more room.
+				this.apply({ type: 'task.ack', taskIds: [] });
+			}
 			if (e.affectsConfiguration(LIMIT_AUTO_RESUME_SETTING)) {
 				this.scheduleLimitTick();
 				this._onDidChange.fire({ threads: Object.values(this.state.threads).filter(thread => thread.limit).map(thread => thread.id), tasks: [] });
 			}
 		}));
 		void this.restore();
+	}
+
+	private readLimits(): IOrchLimits {
+		const read = (key: string, fallback: number, max: number) => {
+			const value = this.configurationService.getValue<unknown>(key);
+			return typeof value === 'number' && Number.isFinite(value) ? Math.max(1, Math.min(max, Math.floor(value))) : fallback;
+		};
+		const runningPerParent = read(ORCH_MAX_PARALLEL_SETTING, DEFAULT_ORCH_LIMITS.runningPerParent, 16);
+		const runningTotal = Math.max(runningPerParent, read(ORCH_MAX_PARALLEL_TOTAL_SETTING, DEFAULT_ORCH_LIMITS.runningTotal, 32));
+		return { ...DEFAULT_ORCH_LIMITS, runningPerParent, runningTotal };
 	}
 
 	//#region State and commands
@@ -794,6 +811,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		}
 		if (active.runId) {
 			void this.runtime.cancel(threadId).catch(err => this.logService.warn('[volt orchestrator] cancel failed', err));
+			// Stop means now: a run the runtime no longer has live (it ended, or another replaced it)
+			// leaves nothing to wait for, so the turn ends here instead of after the grace period.
+			const run = this.runtime.getOrCreateSession(threadId).activeRun;
+			if (this.state.threads[threadId]?.active?.id === turnId && (!run || run.runId !== active.runId || !isRunLive(run.status))) {
+				this.apply({ type: 'run.settled', threadId, turnId, outcome: 'cancelled' });
+				return;
+			}
 		}
 		// The start in flight sees the turn is no longer current and does not send it. Either way,
 		// a stop that never reports back is settled here so the chat cannot stay "Stopping".
@@ -1249,6 +1273,9 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken, toolCallId: string | undefined, single = false): Promise<IVoltHostToolResult> {
+		if (Array.isArray(args.tasks) && args.tasks.length && !single) {
+			return this.delegateBatch(parentId, args, args.tasks, token, toolCallId);
+		}
 		const brief = typeof args.task === 'string' ? args.task.trim() : '';
 		if (!brief) {
 			return { error: 'delegate_task needs a `task`: the complete brief for the subagent.' };
@@ -1270,6 +1297,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const role = typeof args.role === 'string' || !previous ? normalizeTaskRole(args.role) : previous.role;
 		const isolation = args.isolation === 'worktree' ? 'worktree' : 'shared';
 		const parentMode = parent?.active?.prompt.mode ? normalizeVoltMode(parent.active.prompt.mode) : 'agent';
+		// Work a Multitask chat splits up is the user's own parallel work: multitask agents, whose chats
+		// take follow-ups. A turn without a mode (a report waking the chat) keeps what the chat started.
+		const multitask = parentMode === 'multitask'
+			|| previous?.origin === 'user'
+			|| (!parent?.active?.prompt.mode && Object.values(this.state.tasks).some(task => task.parentId === parentId && task.origin === 'user'));
 		// A child never gets more than its parent: a read-only chat delegates read-only work.
 		const mode = parentMode === 'ask' || parentMode === 'plan' ? 'ask' : modeForTaskRole(role, undefined);
 		const title = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 80) : previous?.title ?? titleFromBrief(brief);
@@ -1282,7 +1314,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				brief,
 				title,
 				role,
-				origin: 'agent',
+				origin: multitask ? 'user' : 'agent',
 				isolation,
 				taskId,
 				childId: `${CHILD_ID_PREFIX}${generateUuid()}`,
@@ -1327,8 +1359,75 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	/**
+	 * Several independent parts in one call: a task each, all asked for at once (as many run as the
+	 * limits allow; the rest queue and start as slots free up). The parent's delegate_task row lists
+	 * every one of them, and each report comes back like any task's.
+	 */
+	private async delegateBatch(parentId: string, args: Record<string, unknown>, list: readonly unknown[], token: CancellationToken, toolCallId: string | undefined): Promise<IVoltHostToolResult> {
+		const entries = list.filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object');
+		if (entries.length !== list.length) {
+			return { error: 'delegate_task `tasks` takes objects, one per part: { task, title?, model?, role?, isolation?, scope? }.' };
+		}
+		if (entries.length > MAX_BATCH_TASKS) {
+			return { error: `delegate_task starts at most ${MAX_BATCH_TASKS} tasks in one call. Start the most important ones now and the rest once these report.` };
+		}
+		const missing = entries.findIndex(entry => typeof entry.task !== 'string' || !entry.task.trim());
+		if (missing >= 0) {
+			return { error: `tasks[${missing}] has no \`task\`: every part needs its complete brief.` };
+		}
+		// Resolve every model first: an unknown one starts nothing.
+		for (const entry of entries) {
+			this.resolveModel(entry.model ?? args.model);
+		}
+		const key = typeof args.client_request_id === 'string' && args.client_request_id.trim() ? args.client_request_id.trim() : undefined;
+		const ids: string[] = [];
+		const lines: string[] = [];
+		for (const [index, entry] of entries.entries()) {
+			const result = await this.delegate(parentId, {
+				...args,
+				tasks: undefined,
+				models: undefined,
+				previous_task_id: undefined,
+				wait: false,
+				task: entry.task,
+				title: typeof entry.title === 'string' ? entry.title : undefined,
+				model: entry.model ?? args.model,
+				role: entry.role ?? args.role,
+				isolation: entry.isolation ?? args.isolation,
+				scope: entry.scope ?? args.scope,
+				client_request_id: key ? `${key}:${index}` : undefined,
+			}, token, toolCallId, true);
+			const id = /\b(t-[0-9a-f]{6})\b/.exec(result.text ?? '')?.[1];
+			if (id) {
+				ids.push(id);
+			}
+			lines.push(`${index + 1}. ${result.error ? `not started: ${result.error}` : result.text?.split('\n')[0] ?? ''}`);
+		}
+		if (args.wait === true && ids.length) {
+			await this.waitFor(ids, false, TASK_WAIT_MS, token);
+		}
+		const now = Date.now();
+		const tasks = ids.map(id => this.state.tasks[id]).filter((task): task is IOrchTask => !!task);
+		const finished = tasks.filter(task => isTerminalTaskState(task.state));
+		if (finished.length) {
+			this.apply({ type: 'task.ack', taskIds: finished.map(task => task.id) });
+		}
+		if (!tasks.length) {
+			return { error: ['No task was started:', ...lines].join('\n') };
+		}
+		return {
+			text: [
+				`Started ${tasks.length} of ${entries.length} tasks:`,
+				...lines,
+				...tasks.map(task => describeTask(task, now, { includeResult: isTerminalTaskState(task.state) })),
+				finished.length === tasks.length ? '' : 'Their reports are delivered to this chat as they finish: end your turn now unless there is other work to do. wait_tasks returns them sooner if you cannot continue without them.',
+			].filter(Boolean).join('\n'),
+		};
+	}
+
+	/**
 	 * One brief, several models: a task each (independent reviews, competing designs). The parent's
-	 * delegate_task row belongs to the first; every report comes back like any task's.
+	 * delegate_task row lists them all; every report comes back like any task's.
 	 */
 	private async delegateToModels(parentId: string, args: Record<string, unknown>, names: readonly string[], token: CancellationToken, toolCallId: string | undefined): Promise<IVoltHostToolResult> {
 		if (names.length > MAX_FAN_OUT) {
@@ -1340,7 +1439,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const baseTitle = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 60) : titleFromBrief(String(args.task));
 		const ids: string[] = [];
 		const lines: string[] = [];
-		for (const [index, model] of models.entries()) {
+		for (const model of models) {
 			const result = await this.delegate(parentId, {
 				...args,
 				models: undefined,
@@ -1348,7 +1447,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				wait: false,
 				title: `${baseTitle} · ${model.label}`,
 				...(key ? { client_request_id: `${key}:${model.ref}` } : {}),
-			}, token, index === 0 ? toolCallId : undefined, true);
+			}, token, toolCallId, true);
 			const id = /\b(t-[0-9a-f]{6})\b/.exec(result.text ?? '')?.[1];
 			if (id) {
 				ids.push(id);

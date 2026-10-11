@@ -118,7 +118,7 @@ export class AgentComposerQueue extends Disposable {
 	private items: IQueuedPrompt[] = [];
 	private agents: IAgentComposerAgents = { views: [], conflicts: [] };
 	private agentsSignature = '';
-	/** The dock beside the chat is open and lists the finished agents: the card shows only the working ones. */
+	/** The side toolbar beside the chat is open and lists the agents: the card leaves them out. */
 	private agentsInDock = false;
 	private agentsCollapsed = false;
 	private queueCollapsed = false;
@@ -239,9 +239,15 @@ export class AgentComposerQueue extends Disposable {
 		this.element.classList.toggle('has-tasks', this.tasksCard.visible);
 	}
 
-	/** With the dock open, finished agents sit under its "Previous agents": the card keeps the working ones. */
+	/**
+	 * With the side toolbar open beside the chat, its agents list (and the composer's agents chip)
+	 * show this chat's agents: the card keeps them only while their reports wait for Resume.
+	 */
 	private shownAgents(): readonly ISubagentView[] {
-		return this.agentsInDock ? this.agents.views.filter(view => isLiveSubagentState(view.state)) : this.agents.views;
+		if (!this.agentsInDock) {
+			return this.agents.views;
+		}
+		return this.state.paused ? this.agents.views.filter(view => isLiveSubagentState(view.state)) : [];
 	}
 
 	private renderAgents(section: HTMLElement): void {
@@ -252,9 +258,16 @@ export class AgentComposerQueue extends Disposable {
 		toggle.type = 'button';
 		toggle.setAttribute('aria-expanded', String(!this.agentsCollapsed));
 		toggle.appendChild(renderIcon(this.agentsCollapsed ? Codicon.chevronRight : Codicon.chevronDown));
-		append(toggle, $('span')).textContent = live.length
-			? (live.length === 1 ? localize('voltAgent.work.oneRunning', "1 subagent running") : localize('voltAgent.work.manyRunning', "{0} subagents running", live.length))
-			: (views.length === 1 ? localize('voltAgent.work.one', "1 subagent") : localize('voltAgent.work.many', "{0} subagents", views.length));
+		let heading: string;
+		if (!views.length) {
+			// Only conflicts: the agents themselves are in the side toolbar.
+			heading = localize('voltAgent.work.conflictsOnly', "Agents editing the same files");
+		} else if (live.length) {
+			heading = live.length === 1 ? localize('voltAgent.work.oneRunning', "1 subagent running") : localize('voltAgent.work.manyRunning', "{0} subagents running", live.length);
+		} else {
+			heading = views.length === 1 ? localize('voltAgent.work.one', "1 subagent") : localize('voltAgent.work.many', "{0} subagents", views.length);
+		}
+		append(toggle, $('span')).textContent = heading;
 		const finished = views.length - live.length;
 		if (finished && live.length) {
 			const summary = append(head, $('span.volt-agent-queue-paused'));

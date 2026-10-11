@@ -5,7 +5,7 @@
 
 import { buildTaskNotification, isLiveTaskState, isTerminalTaskState, taskNotificationDisplay } from './agentTasks.js';
 import { LIMIT_RESUME_TEXT, LIMIT_STAGGER_MS, limitAutoResumes, limitDueAt, limitResumeDisplay } from './limitRecovery.js';
-import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchState, IOrchTask, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
 import { applyOrchEvent, applyOrchEvents } from './orchestratorProjector.js';
 
 /**
@@ -802,9 +802,10 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 			},
 		});
 	}
-	// Harness subagents live inside the turn: whatever did not report an end ends with it.
+	// Harness subagents live inside the turn: whatever did not report an end ends with it (one left
+	// from an earlier turn of this chat too, so nothing shows "running" after its chat is done).
 	for (const task of Object.values(state.tasks)) {
-		if (task.source === 'harness' && task.parentId === thread.id && task.parentTurnId === active.id && !isTerminalTaskState(task.state)) {
+		if (task.source === 'harness' && task.parentId === thread.id && !isTerminalTaskState(task.state)) {
 			events.push({ type: 'task.settled', taskId: task.id, state: harnessEndState(outcome), at });
 		}
 	}
@@ -890,6 +891,11 @@ function decideSpawn(state: IOrchState, command: Extract<OrchCommand, { type: 't
 	if (spawn.previousTaskId && (!previous || previous.rootId !== parent.rootId)) {
 		return { events: [], rejected: `No task ${spawn.previousTaskId} in this chat to continue from.` };
 	}
+	// Delegation doom loops are refused with what to do instead (a retry above already got its task back).
+	const loop = delegationLoop(state, parent, spawn, previous, limits);
+	if (loop) {
+		return { events: [], rejected: loop };
+	}
 	const task: IOrchTask = {
 		id: spawn.taskId,
 		source: 'volt',
@@ -934,6 +940,63 @@ function decideSpawn(state: IOrchState, command: Extract<OrchCommand, { type: 't
 
 export function normalizeBrief(brief: string): string {
 	return brief.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/** Two briefs ask for the same work: equal once normalized, or (long ones) nearly the same words. */
+export function sameBrief(a: string, b: string): boolean {
+	const left = normalizeBrief(a);
+	const right = normalizeBrief(b);
+	if (left === right) {
+		return true;
+	}
+	const words = (text: string) => new Set(text.split(' ').filter(Boolean));
+	const x = words(left);
+	const y = words(right);
+	// Short briefs differ by a word that matters ("research one", "research two").
+	if (x.size < 8 || y.size < 8) {
+		return false;
+	}
+	let shared = 0;
+	for (const word of x) {
+		if (y.has(word)) {
+			shared++;
+		}
+	}
+	return shared / (x.size + y.size - shared) >= 0.9;
+}
+
+/**
+ * Why a delegation would loop, or undefined when it may start. Agents fall into these: a subagent
+ * that hands its whole task on (and its child does the same), a chat that runs a brief again and
+ * again after it reported (often after it failed), a turn that keeps delegating instead of reading
+ * the reports it has, and review rounds without end.
+ */
+function delegationLoop(state: IOrchState, parent: IOrchThread, spawn: IOrchTaskSpawn, previous: IOrchTask | undefined, limits: IOrchLimits): string | undefined {
+	const own = parent.taskId ? state.tasks[parent.taskId] : undefined;
+	if (own && sameBrief(own.brief, spawn.brief)) {
+		return `This is the task you were given (${own.id}). Do it yourself instead of handing it to another subagent.`;
+	}
+	const turnId = parent.active?.id;
+	if (turnId) {
+		const thisTurn = Object.values(state.tasks).filter(task => task.parentId === parent.id && task.source === 'volt' && task.parentTurnId === turnId).length;
+		if (thisTurn >= limits.maxSpawnsPerTurn) {
+			return `This turn already started ${thisTurn} subagents. Wait for their reports (wait_tasks, or end your turn and they arrive as messages) or do the rest yourself before delegating more.`;
+		}
+	}
+	if (previous) {
+		const round = (previous.iteration ?? 1) + 1;
+		return round > limits.maxRounds
+			? `This work already went ${round - 1} rounds (latest ${previous.id}). Do not delegate another round: tell the user what is still open and let them decide.`
+			: undefined;
+	}
+	const repeats = Object.values(state.tasks)
+		.filter(task => task.parentId === parent.id && task.source === 'volt' && isTerminalTaskState(task.state) && sameBrief(task.brief, spawn.brief))
+		.sort(byCreated);
+	if (repeats.length >= limits.maxBriefRepeats) {
+		const failed = repeats.filter(task => task.state === 'failed').length;
+		return `This brief already ran ${repeats.length} times (${repeats.slice(-3).map(task => task.id).join(', ')})${failed ? `, ${failed} of them failed` : ''}. Read their reports with task_status instead of running it again; if it keeps failing, change the approach or do it yourself.`;
+	}
+	return undefined;
 }
 
 function decideFileChanged(state: IOrchState, threadId: string, path: string, at: number): IOrchDecision {
@@ -1070,7 +1133,7 @@ function restartTurn(state: IOrchState, thread: IOrchThread, active: IOrchTurn, 
 	const events: OrchEvent[] = [{ type: 'turn.settled', threadId: thread.id, turnId: active.id, outcome: 'interrupted', at }];
 	// Harness subagents live inside the turn and died with it.
 	for (const other of Object.values(state.tasks)) {
-		if (other.source === 'harness' && other.parentId === thread.id && other.parentTurnId === active.id && !isTerminalTaskState(other.state)) {
+		if (other.source === 'harness' && other.parentId === thread.id && !isTerminalTaskState(other.state)) {
 			events.push({ type: 'task.settled', taskId: other.id, state: 'interrupted', at });
 		}
 	}
@@ -1130,8 +1193,22 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 		next = applyOrchEvent(next, event);
 	};
 
-	// Queued subagents start in the order they were asked for, within the limits.
-	const queued = Object.values(next.tasks).filter(task => task.source === 'volt' && task.state === 'queued').sort(byCreated);
+	// A harness's own subagent lives inside its turn: one whose turn is over without reporting its
+	// end is over too, so no row keeps "running" after the work is done.
+	for (const task of Object.values(next.tasks)) {
+		if (task.source !== 'harness' || isTerminalTaskState(task.state)) {
+			continue;
+		}
+		const parent = next.threads[task.parentId];
+		if (!parent || parent.active?.id !== task.parentTurnId) {
+			const outcome = parent?.last?.turnId === task.parentTurnId ? parent?.last?.outcome : undefined;
+			push({ type: 'task.settled', taskId: task.id, state: outcome ? harnessEndState(outcome) : 'completed', at });
+		}
+	}
+
+	// Queued subagents start in the order they were asked for, within the limits, taking turns
+	// between chats so one chat's long batch does not hold every free slot.
+	const queued = fairOrder(Object.values(next.tasks).filter(task => task.source === 'volt' && task.state === 'queued'));
 	for (const task of queued) {
 		const running = Object.values(next.tasks).filter(other => other.source === 'volt' && (other.state === 'running' || other.state === 'waiting'));
 		if (running.length >= limits.runningTotal) {
@@ -1368,6 +1445,28 @@ export function liveChildren(state: IOrchState, threadId: string): IOrchTask[] {
 
 function sortedThreads(state: IOrchState): IOrchThread[] {
 	return Object.values(state.threads).sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/** Oldest first per chat, one from each chat in turn (chats in the order of their oldest). */
+function fairOrder(tasks: readonly IOrchTask[]): IOrchTask[] {
+	const lanes = new Map<string, IOrchTask[]>();
+	for (const task of [...tasks].sort(byCreated)) {
+		const lane = lanes.get(task.parentId);
+		if (lane) {
+			lane.push(task);
+		} else {
+			lanes.set(task.parentId, [task]);
+		}
+	}
+	const order: IOrchTask[] = [];
+	for (let index = 0; order.length < tasks.length; index++) {
+		for (const lane of lanes.values()) {
+			if (index < lane.length) {
+				order.push(lane[index]);
+			}
+		}
+	}
+	return order;
 }
 
 function byCreated(a: IOrchTask, b: IOrchTask): number {

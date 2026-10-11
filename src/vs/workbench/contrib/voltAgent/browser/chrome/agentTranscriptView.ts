@@ -45,6 +45,8 @@ export interface ITranscriptHost {
 	bindSearchHits?(el: HTMLElement, files: readonly string[]): void;
 	/** A subagent row as the orchestrator knows it (live state, model, clock); undefined draws it from the tool call alone. */
 	subagentView?(tool: IToolBlock, live: boolean): ISubagentView | undefined;
+	/** Every agent one call started (a batch delegate_task, one brief on several models), when it started more than one. */
+	subagentViews?(tool: IToolBlock, live: boolean): readonly ISubagentView[] | undefined;
 	openSubagent?(view: ISubagentView): void;
 	stopSubagent?(view: ISubagentView): void;
 	readonly subagentTooltip?: AgentTooltip;
@@ -413,9 +415,9 @@ function rowSignature(row: TranscriptRow, host: ITranscriptHost): string {
 			// A live thought shows only "Thinking": its growing text does not redraw it.
 			return row.live ? 'live' : `${host.isExpanded(row.id)}|${shapeOf(row.step)}`;
 		case 'subagent':
-			return `${row.live}|${host.isExpanded(`sub:${row.id}`)}|${shapeOf(host.subagentView?.(row.tool, row.live))}|${shapeOf(row.tool)}`;
+			return `${row.live}|${host.isExpanded(`sub:${row.id}`)}|${shapeOf(host.subagentViews?.(row.tool, row.live) ?? host.subagentView?.(row.tool, row.live))}|${shapeOf(row.tool)}`;
 		case 'subagents':
-			return row.items.map(entry => `${entry.live}|${shapeOf(host.subagentView?.(entry.tool, entry.live))}|${shapeOf(entry.tool)}`).join(';');
+			return row.items.map(entry => `${entry.live}|${shapeOf(host.subagentViews?.(entry.tool, entry.live) ?? host.subagentView?.(entry.tool, entry.live))}|${shapeOf(entry.tool)}`).join(';');
 		case 'notice':
 			return `${host.isExpanded(`dismiss:${row.id}`)}|${shapeOf(row)}`;
 		case 'steer':
@@ -683,6 +685,14 @@ function renderRow(parent: HTMLElement, row: TranscriptRow, host: ITranscriptHos
 			renderThoughtRow(parent, row.id, row.step, row.live, host);
 			return;
 		case 'subagent': {
+			const many = host.subagentViews?.(row.tool, row.live);
+			if (many?.length) {
+				const holder = append(parent, $('.volt-tr-subagents'));
+				for (const view of many) {
+					renderCursorSubagentRow(holder, view, subagentOptions(host));
+				}
+				return;
+			}
 			const view = host.subagentView?.(row.tool, row.live);
 			if (view) {
 				renderCursorSubagentRow(parent, view, subagentOptions(host));
@@ -695,7 +705,10 @@ function renderRow(parent: HTMLElement, row: TranscriptRow, host: ITranscriptHos
 			// Cursor lists parallel subagents one under another, each with its own line.
 			const holder = append(parent, $('.volt-tr-subagents'));
 			for (const item of row.items) {
-				renderCursorSubagentRow(holder, host.subagentView?.(item.tool, item.live) ?? fallbackSubagentView(item.tool, item.live), subagentOptions(host));
+				const views = host.subagentViews?.(item.tool, item.live) ?? [host.subagentView?.(item.tool, item.live) ?? fallbackSubagentView(item.tool, item.live)];
+				for (const view of views) {
+					renderCursorSubagentRow(holder, view, subagentOptions(host));
+				}
 			}
 			return;
 		}

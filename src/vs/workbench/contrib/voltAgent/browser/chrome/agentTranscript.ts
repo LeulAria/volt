@@ -202,7 +202,8 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 					}
 					if (isSubagentTool(block)) {
 						flushSteps();
-						rows.push({ kind: 'subagent', id: block.id, tool: block, live: block.status === 'streaming' });
+						// A finished reply's call that never reported its end is over: it ended with the turn.
+						rows.push({ kind: 'subagent', id: block.id, tool: block, live: streaming && block.status === 'streaming' });
 					} else {
 						pending.push(toolStep(block));
 					}
