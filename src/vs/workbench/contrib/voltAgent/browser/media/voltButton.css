@@ -1,0 +1,134 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Volt's button (voltButton.ts), on monaco Buttons and plain <button>s alike. Every colour is mixed
+ * from the theme's foreground and editor background, so it reads the same in dark and light themes:
+ * a soft lit surface with a hairline edge, a highlight along the top and a small drop shadow.
+ * Selectors carry .monaco-workbench to win over the generic .monaco-button and page rules.
+ */
+.monaco-workbench .volt-button {
+	--volt-button-fg: var(--vscode-foreground);
+	--volt-button-bg: var(--vscode-editor-background);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	box-sizing: border-box;
+	width: auto;
+	min-width: 0;
+	height: 28px;
+	padding: 0 12px;
+	margin: 0;
+	border: 1px solid color-mix(in srgb, var(--volt-button-fg) 12%, transparent);
+	border-radius: 8px;
+	background: linear-gradient(180deg,
+		color-mix(in srgb, var(--volt-button-fg) 11%, transparent),
+		color-mix(in srgb, var(--volt-button-fg) 7.5%, transparent));
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent),
+		0 1px 2px rgba(0, 0, 0, 0.16);
+	color: color-mix(in srgb, var(--volt-button-fg) 92%, transparent);
+	font-family: inherit;
+	font-size: 12.5px;
+	font-weight: 500;
+	line-height: 1;
+	letter-spacing: -0.003em;
+	text-decoration: none;
+	white-space: nowrap;
+	cursor: pointer;
+	user-select: none;
+	outline: none;
+	-webkit-app-region: no-drag;
+	transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease, transform 80ms ease;
+}
+
+.monaco-workbench .volt-button:hover {
+	color: var(--volt-button-fg);
+	border-color: color-mix(in srgb, var(--volt-button-fg) 18%, transparent);
+	background: linear-gradient(180deg,
+		color-mix(in srgb, var(--volt-button-fg) 15%, transparent),
+		color-mix(in srgb, var(--volt-button-fg) 10.5%, transparent));
+}
+
+.monaco-workbench .volt-button:active {
+	transform: translateY(0.5px);
+	background: color-mix(in srgb, var(--volt-button-fg) 8%, transparent);
+	box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.monaco-workbench .volt-button:focus-visible {
+	outline: 2px solid color-mix(in srgb, var(--vscode-focusBorder) 80%, transparent);
+	outline-offset: 2px;
+}
+
+/* Primary: the near-white (in light themes near-black) fill of the setup steps and Sign In. */
+.monaco-workbench .volt-button.volt-button-primary {
+	color: var(--volt-button-bg);
+	border-color: transparent;
+	background: linear-gradient(180deg,
+		var(--volt-button-fg),
+		color-mix(in srgb, var(--volt-button-fg) 88%, var(--volt-button-bg)));
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, #fff 30%, transparent),
+		0 1px 2px rgba(0, 0, 0, 0.28),
+		0 0 0 0.5px color-mix(in srgb, var(--volt-button-fg) 40%, transparent);
+	font-weight: 600;
+}
+
+.monaco-workbench .volt-button.volt-button-primary:hover {
+	color: var(--volt-button-bg);
+	background: var(--volt-button-fg);
+}
+
+.monaco-workbench .volt-button.volt-button-primary:active {
+	background: color-mix(in srgb, var(--volt-button-fg) 82%, var(--volt-button-bg));
+	box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+/* Ghost: text until hovered. */
+.monaco-workbench .volt-button.volt-button-ghost {
+	border-color: transparent;
+	background: transparent;
+	box-shadow: none;
+	color: color-mix(in srgb, var(--volt-button-fg) 72%, transparent);
+}
+
+.monaco-workbench .volt-button.volt-button-ghost:hover {
+	color: var(--volt-button-fg);
+	background: color-mix(in srgb, var(--volt-button-fg) 8%, transparent);
+}
+
+/* Danger: the secondary surface with the error colour in the label, tinted on hover. */
+.monaco-workbench .volt-button.volt-button-danger {
+	color: var(--vscode-errorForeground);
+}
+
+.monaco-workbench .volt-button.volt-button-danger:hover {
+	color: var(--vscode-errorForeground);
+	border-color: color-mix(in srgb, var(--vscode-errorForeground) 35%, transparent);
+	background: color-mix(in srgb, var(--vscode-errorForeground) 12%, transparent);
+}
+
+.monaco-workbench .volt-button.disabled,
+.monaco-workbench .volt-button:disabled {
+	opacity: 0.45;
+	cursor: default;
+	transform: none;
+	pointer-events: none;
+}
+
+.monaco-workbench .volt-button .codicon {
+	font-size: 14px;
+	color: inherit;
+}
+
+/* Small: dense rows (provider actions). */
+.monaco-workbench .volt-button.volt-button-small {
+	height: 26px;
+	padding: 0 10px;
+	border-radius: 7px;
+	font-size: 12px;
+}

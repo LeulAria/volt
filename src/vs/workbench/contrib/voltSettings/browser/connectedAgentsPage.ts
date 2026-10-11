@@ -5,7 +5,6 @@
 
 import '../../voltAgent/browser/media/externalMcp.css';
 import { $, addDisposableListener, append } from '../../../../base/browser/dom.js';
-import { Button } from '../../../../base/browser/ui/button/button.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IInputBoxStyles, InputBox, MessageType } from '../../../../base/browser/ui/inputbox/inputBox.js';
 import { Codicon } from '../../../../base/common/codicons.js';
@@ -17,7 +16,6 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
-import { defaultButtonStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { connectSnippets } from '../../../../platform/voltExternalMcp/common/externalMcpConnect.js';
 import { describeRedirect, normalizePublicUrl } from '../../../../platform/voltExternalMcp/common/externalMcpOAuth.js';
 import {
@@ -25,6 +23,7 @@ import {
 } from '../../../../platform/voltExternalMcp/common/voltExternalMcp.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { scopeCopy } from '../../voltAgent/browser/externalMcp/externalMcpScopes.js';
+import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 
 export interface IConnectedAgentsPageHost {
 	readonly store: DisposableStore;
@@ -177,7 +176,7 @@ export class ConnectedAgentsPage {
 				localize('connectedAgents.calls', "{0} calls", grant.calls),
 				describeRedirect(grant.redirectUri).label,
 			].join(' · ');
-			const revoke = host.store.add(new Button(row, { ...defaultButtonStyles, secondary: true }));
+			const revoke = host.store.add(createVoltButton(row, 'danger'));
 			revoke.label = localize('connectedAgents.revoke', "Revoke");
 			revoke.element.classList.add('revoke');
 			host.store.add(revoke.onDidClick(() => void this.confirmRevoke(grant, host)));

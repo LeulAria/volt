@@ -5,7 +5,6 @@
 
 import { $, addDisposableListener, append, clearNode, EventHelper, getWindow } from '../../../../../base/browser/dom.js';
 import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
-import { Button } from '../../../../../base/browser/ui/button/button.js';
 import { HighlightedLabel } from '../../../../../base/browser/ui/highlightedlabel/highlightedLabel.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { InputBox } from '../../../../../base/browser/ui/inputbox/inputBox.js';
@@ -19,8 +18,11 @@ import { IMatch, matchesFuzzy } from '../../../../../base/common/filters.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
-import { defaultButtonStyles, defaultInputBoxStyles, getListStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
-import { IGitHubRepo, IGitHubReposService } from '../githubRepos.js';
+import { defaultInputBoxStyles, getListStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
+import { ThemeIcon } from '../../../../../base/common/themables.js';
+import { IVoltQueryHandle } from '../../../../services/voltRuntime/browser/queryCache.js';
+import { IGitHubRepo, IGitHubRepoPage, IGitHubReposService } from '../githubRepos.js';
+import { createVoltButton } from '../../../voltAgent/browser/chrome/voltButton.js';
 
 type Row =
 	| { readonly kind: 'repo'; readonly id: string; readonly repo: IGitHubRepo; readonly matches?: IMatch[] }
@@ -40,12 +42,14 @@ export class GitHubPane extends Disposable {
 	private readonly list: List<Row>;
 	private readonly searchScheduler: RunOnceScheduler;
 	private readonly accountStore = this._register(new DisposableStore());
-	private repos: IGitHubRepo[] = [];
+	private readonly pageStore = this._register(new DisposableStore());
+	/** The pages scrolled into so far; each starts on its last fetched repos and refetches when stale. */
+	private pages: IVoltQueryHandle<IGitHubRepoPage>[] = [];
+	/** Turns while a page refetches behind repos already shown. */
+	private refreshing: HTMLElement | undefined;
 	private remote: IGitHubRepo[] = [];
 	private rows: Row[] = [];
-	private nextPage = 1;
-	private hasMore = true;
-	private loading = false;
+	private login: string | undefined;
 	private signedIn: boolean | undefined;
 	private error: string | undefined;
 	private everywhere = false;
@@ -91,7 +95,7 @@ export class GitHubPane extends Disposable {
 		}));
 		this._register(this.list.onDidScroll(e => {
 			if (e.scrollTop + e.height > e.scrollHeight - ROW_HEIGHT * 6) {
-				void this.loadMore();
+				this.loadMore();
 			}
 		}));
 		this.searchScheduler = this._register(new RunOnceScheduler(() => void this.serverSearch(), 300));
@@ -121,59 +125,51 @@ export class GitHubPane extends Disposable {
 	private async reset(): Promise<void> {
 		this.cts.dispose(true);
 		this.cts = new CancellationTokenSource();
-		this.repos = [];
+		const token = this.cts.token;
+		this.pageStore.clear();
+		this.pages = [];
 		this.remote = [];
-		this.nextPage = 1;
-		this.hasMore = true;
 		this.error = undefined;
 		const account = await this.github.account();
+		if (token.isCancellationRequested) {
+			return;
+		}
+		this.login = account?.login;
 		this.signedIn = !!account;
 		this.renderAccount(account?.login);
 		this.search.setPlaceHolder(account ? localize('voltGitHub.search', "Search your repositories") : localize('voltGitHub.searchPublic', "Search public repositories"));
 		this.render(true);
-		if (account) {
-			await this.loadMore();
-		}
+		this.loadMore();
 	}
 
 	private renderAccount(login: string | undefined): void {
 		this.accountStore.clear();
 		clearNode(this.account);
 		this.account.appendChild(renderIcon(Codicon.github));
+		this.refreshing = undefined;
 		if (login) {
 			append(this.account, $('span')).textContent = localize('voltGitHub.signedInAs', "Signed in as @{0}", login);
+			this.refreshing = append(this.account, renderIcon(ThemeIcon.modify(Codicon.loading, 'spin')));
+			this.refreshing.title = localize('voltGitHub.refreshing', "Refreshing repositories");
+			this.refreshing.style.display = 'none';
 			return;
 		}
 		append(this.account, $('span')).textContent = localize('voltGitHub.signedOut', "Sign in to see your repositories, including private ones.");
-		const button = this.accountStore.add(new Button(this.account, { ...defaultButtonStyles, secondary: true }));
+		const button = this.accountStore.add(createVoltButton(this.account));
 		button.label = localize('voltGitHub.signIn', "Sign in with GitHub");
 		this.accountStore.add(button.onDidClick(() => void this.github.signIn()));
 	}
 
-	private async loadMore(): Promise<void> {
-		if (this.loading || !this.hasMore || !this.signedIn) {
+	/** Watches the next page once the last one has repos and says there are more. */
+	private loadMore(): void {
+		const last = this.pages.at(-1)?.state.data;
+		if (!this.login || (this.pages.length && !last?.hasMore)) {
 			return;
 		}
-		this.loading = true;
+		const handle = this.pageStore.add(this.github.watchPage(this.login, this.pages.length + 1));
+		this.pages.push(handle);
+		this.pageStore.add(handle.onDidChange(() => this.render()));
 		this.render();
-		const token = this.cts.token;
-		try {
-			const page = await this.github.page(this.nextPage, token);
-			if (token.isCancellationRequested) {
-				return;
-			}
-			this.repos.push(...page.repos);
-			this.hasMore = page.hasMore;
-			this.nextPage++;
-		} catch (err) {
-			this.error = err instanceof Error ? err.message : String(err);
-			this.hasMore = false;
-		} finally {
-			this.loading = false;
-			if (!token.isCancellationRequested) {
-				this.render();
-			}
-		}
 	}
 
 	private async serverSearch(): Promise<void> {
@@ -209,8 +205,16 @@ export class GitHubPane extends Disposable {
 				rows.push({ kind: 'repo', id: repo.fullName, repo, matches });
 			}
 		};
+		const last = this.pages.at(-1)?.state;
+		// Only a page with nothing to show yet says so; a refetch behind cached repos turns the spinner.
+		const loading = !!last && !last.data && (!last.loaded || last.fetching);
+		const pageError = last && !last.data && !last.fetching && last.error ? (last.error instanceof Error ? last.error.message : String(last.error)) : undefined;
+		const error = this.error ?? pageError;
+		if (this.refreshing) {
+			this.refreshing.style.display = this.pages.some(page => page.state.fetching && page.state.data) ? '' : 'none';
+		}
 		if (!this.everywhere) {
-			for (const repo of this.repos) {
+			for (const repo of this.pages.flatMap(page => page.state.data?.repos ?? [])) {
 				if (!query) {
 					push(repo);
 					continue;
@@ -224,10 +228,10 @@ export class GitHubPane extends Disposable {
 		for (const repo of this.remote) {
 			push(repo, query ? matchesFuzzy(query, repo.fullName, true) ?? undefined : undefined);
 		}
-		if (this.loading) {
+		if (loading) {
 			rows.push({ kind: 'message', id: 'loading', text: localize('voltGitHub.loading', "Loading repositories...") });
-		} else if (this.error) {
-			rows.push({ kind: 'message', id: 'error', text: this.error });
+		} else if (error) {
+			rows.push({ kind: 'message', id: 'error', text: error });
 		} else if (!rows.length && this.signedIn === false && !query) {
 			rows.push({ kind: 'message', id: 'hint', text: localize('voltGitHub.publicHint', "Type to search public repositories, or paste a URL in the Git URL tab.") });
 		} else if (this.searching) {

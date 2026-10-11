@@ -15,12 +15,13 @@ import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { defaultButtonStyles, defaultCheckboxStyles, defaultInputBoxStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
+import { defaultCheckboxStyles, defaultInputBoxStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
 import { IVoltFsBrowseService } from '../../../../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { nextFreeName, parseCloneUrl, resolveCloneDestination, sameRemote, sanitizeFolderName } from '../../common/cloneUrl.js';
 import { tildify } from '../../common/browsePath.js';
 import { ICloneProjectRequest } from '../projectCloneService.js';
 import { FolderBrowser, IFolderBrowserOptions } from './folderBrowser.js';
+import { createVoltButton } from '../../../voltAgent/browser/chrome/voltButton.js';
 
 export interface IGitUrlPaneHost {
 	readonly home: () => string;
@@ -101,10 +102,10 @@ export class GitUrlPane extends Disposable {
 
 		const footer = append(this.form, $('.volt-add-footer'));
 		append(footer, $('span.volt-add-footer-hint')).textContent = localize('voltProjects.cloneHint', "The project opens right away; you can prompt the agent while it clones.");
-		const cancel = this._register(new Button(footer, { ...defaultButtonStyles, secondary: true }));
+		const cancel = this._register(createVoltButton(footer));
 		cancel.label = localize('voltProjects.cancel', "Cancel");
 		this._register(cancel.onDidClick(() => this.host.cancel()));
-		this.primary = this._register(new Button(footer, defaultButtonStyles));
+		this.primary = this._register(createVoltButton(footer, 'primary'));
 		this.primary.label = localize('voltProjects.clone', "Clone");
 		this._register(this.primary.onDidClick(() => void this.submit()));
 

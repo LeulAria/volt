@@ -5,7 +5,6 @@
 
 import '../media/agentUpdate.css';
 import { $, addDisposableListener, append, getWindow } from '../../../../../base/browser/dom.js';
-import { Button } from '../../../../../base/browser/ui/button/button.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { disposableTimeout } from '../../../../../base/common/async.js';
@@ -22,13 +21,13 @@ import { ILayoutService } from '../../../../../platform/layout/browser/layoutSer
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IProductService } from '../../../../../platform/product/common/productService.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
-import { defaultButtonStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
 import { IUpdateService, State, StateType } from '../../../../../platform/update/common/update.js';
 import { IVoltUpdate, voltReleaseTag } from '../../../../../platform/update/common/voltUpdateFeed.js';
 import { IWorkbenchContribution } from '../../../../common/contributions.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { summarizeReleaseNotes } from '../../common/agentUpdateNotes.js';
 import { createRefreshSpinner, setRefreshSpinnerRunning } from '../usage/agentUsageIcons.js';
+import { createVoltButton } from '../chrome/voltButton.js';
 
 /** States worth a button in the agent sidebar footer. */
 function isActionable(state: State): boolean {
@@ -401,13 +400,13 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 
 		const actions = append(root, $('.volt-update-popover-actions'));
 		if (!notes.items.length && releaseUrl) {
-			const notesButton = store.add(new Button(actions, { ...defaultButtonStyles, secondary: true }));
+			const notesButton = store.add(createVoltButton(actions));
 			notesButton.label = localize('voltUpdate.releaseNotes', "Release Notes");
 			store.add(notesButton.onDidClick(() => void this.openerService.open(URI.parse(releaseUrl))));
 		}
 		const primary = this.primaryAction(state);
 		if (primary) {
-			const button = store.add(new Button(actions, defaultButtonStyles));
+			const button = store.add(createVoltButton(actions, 'primary'));
 			button.label = primary.label;
 			store.add(button.onDidClick(() => {
 				this.hidePopover?.();

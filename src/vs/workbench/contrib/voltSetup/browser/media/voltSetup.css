@@ -358,9 +358,9 @@
 	gap: 8px;
 }
 
-.volt-setup-running-actions .monaco-button,
-.volt-setup-footer .monaco-button,
-.volt-setup-settings-button .monaco-button {
+.volt-setup-running-actions .monaco-button:not(.volt-button),
+.volt-setup-footer .monaco-button:not(.volt-button),
+.volt-setup-settings-button .monaco-button:not(.volt-button) {
 	width: auto;
 	min-width: 72px;
 	padding: 4px 14px;

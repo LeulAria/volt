@@ -116,7 +116,7 @@
 	flex-shrink: 0;
 }
 
-.volt-add-footer .monaco-button {
+.volt-add-footer .monaco-button:not(.volt-button) {
 	width: auto;
 	min-width: 72px;
 	padding: 4px 14px;
@@ -565,8 +565,11 @@
 }
 
 .volt-github-account .monaco-button {
-	width: auto;
 	margin-left: auto;
+}
+
+.volt-github-account .monaco-button:not(.volt-button) {
+	width: auto;
 	padding: 4px 12px;
 	border-radius: 6px;
 }

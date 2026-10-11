@@ -6,7 +6,6 @@
 import './media/voltSettings.css';
 import '../../voltAgent/browser/media/agentEditor.css';
 import { $, addDisposableListener, append, Dimension, getWindow, scheduleAtNextAnimationFrame } from '../../../../base/browser/dom.js';
-import { Button } from '../../../../base/browser/ui/button/button.js';
 import { InputBox } from '../../../../base/browser/ui/inputbox/inputBox.js';
 import { ISelectOptionItem, SelectBox } from '../../../../base/browser/ui/selectBox/selectBox.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
@@ -30,7 +29,7 @@ import { AWAKE_LID_CLOSED_MODE_SETTING, AWAKE_WHILE_AGENTS_WORK_SETTING, IAwakeS
 import { DisablementReason, IUpdateService, State as UpdateState, StateType } from '../../../../platform/update/common/update.js';
 import { VOLT_RELEASE_CHANNEL_SETTING } from '../../../../platform/update/common/voltUpdateFeed.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
-import { defaultButtonStyles, getInputBoxStyle, getSelectBoxStyles } from '../../../../platform/theme/browser/defaultStyles.js';
+import { getInputBoxStyle, getSelectBoxStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../common/editor.js';
@@ -64,6 +63,9 @@ import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
 import { createSettingsIcon } from './settingsIcons.js';
 import { AgentUsagePage } from '../../voltAgent/browser/usage/agentUsagePage.js';
+import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
+import { createAgentHeaderSeparatorIcon } from '../../voltAgent/browser/chrome/agentTitlebarHeader.js';
+import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/browser/home/agentHomeFooterActions.js';
 
 type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'security' | 'connected' | 'projects' | 'storage';
 
@@ -150,6 +152,8 @@ export class VoltSettingsEditor extends EditorPane {
 	/** Made on first visit and kept, so its data and range survive leaving the page. */
 	private usage: AgentUsagePage | undefined;
 	private sidebar!: HTMLElement;
+	private crumb!: HTMLElement;
+	private footerActions!: Record<AgentFooterAction, HTMLButtonElement>;
 	private sidebarSash!: Sash;
 	/** The nav's width when there is no agent sidebar to follow (IDE layout). */
 	private ownSidebarWidth: number | undefined;
@@ -222,9 +226,19 @@ export class VoltSettingsEditor extends EditorPane {
 		}));
 
 		const sidebar = this.sidebar = append(this.container, $('.volt-settings-sidebar'));
+		const commandService = this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService));
+
+		// Back to the chat, above the search.
+		const head = append(sidebar, $('.volt-settings-sidebar-head'));
+		const back = append(head, $('button.volt-settings-back')) as HTMLButtonElement;
+		back.type = 'button';
+		back.appendChild(renderIcon(Codicon.arrowLeft));
+		append(back, $('span')).textContent = localize('voltSettings.back', "Back");
+		back.setAttribute('aria-label', localize('voltSettings.backToChat', "Close settings"));
+		this._register(addDisposableListener(back, 'click', () => this.close()));
 
 		const searchHost = append(sidebar, $('.volt-settings-search'));
-		append(searchHost, $('span.volt-settings-search-icon')).appendChild(renderIcon(Codicon.search));
+		append(searchHost, $('span.volt-settings-search-icon')).appendChild(createSettingsIcon('search') ?? renderIcon(Codicon.search));
 		const search = this._register(new InputBox(searchHost, this.contextViewService, {
 			placeholder: localize('voltSettings.search', "Search Settings"),
 			ariaLabel: localize('voltSettings.search', "Search Settings"),
@@ -269,14 +283,16 @@ export class VoltSettingsEditor extends EditorPane {
 			void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand('workbench.action.voltAgent.customize'));
 		}));
 
-		// Back sits at the foot of the nav, where the agent list puts it while Usage is open.
+		// The agent list's footer row, so Usage, Automations and Customize are a click away here too.
 		const footer = append(sidebar, $('.volt-settings-footer'));
-		const back = append(footer, $('button.volt-settings-back')) as HTMLButtonElement;
-		back.type = 'button';
-		back.appendChild(renderIcon(Codicon.arrowLeft));
-		append(back, $('span')).textContent = localize('voltSettings.back', "Back");
-		back.setAttribute('aria-label', localize('voltSettings.backToChat', "Close settings"));
-		this._register(addDisposableListener(back, 'click', () => this.close()));
+		this.footerActions = appendAgentFooterActions(footer, commandService, this._store);
+
+		// Where the page is, as the title bar puts it over a chat ("Settings / Usage"); the overlay covers that bar.
+		const main = append(this.container, $('.volt-settings-main'));
+		const topbar = append(main, $('.volt-settings-topbar'));
+		append(topbar, $('span.volt-settings-crumb.root')).textContent = localize('voltSettings.title', "Settings");
+		createAgentHeaderSeparatorIcon(append(topbar, $('span.volt-settings-crumb-sep')));
+		this.crumb = append(topbar, $('span.volt-settings-crumb'));
 
 		const scroll = $('.volt-settings-content');
 		this.content = append(scroll, $('.volt-settings-content-inner'));
@@ -286,7 +302,7 @@ export class VoltSettingsEditor extends EditorPane {
 			vertical: ScrollbarVisibility.Auto,
 			useShadows: false,
 		}));
-		append(this.container, this.contentScroll.getDomNode());
+		append(main, this.contentScroll.getDomNode());
 		this.createSidebarSash();
 		this._register(this.layoutService.onDidLayoutMainContainer(() => this.syncSidebarWidth()));
 		this.stickyHeads = this._register(new SettingsStickyHeads(scroll, this.content));
@@ -324,6 +340,7 @@ export class VoltSettingsEditor extends EditorPane {
 				this.renderContent();
 			}
 		}));
+		this.syncCrumb();
 		this.renderContent();
 	}
 
@@ -409,6 +426,13 @@ export class VoltSettingsEditor extends EditorPane {
 		}
 	}
 
+	/** The top bar's section name, and which footer icon is lit (Usage on Usage, else Settings). */
+	private syncCrumb(): void {
+		this.crumb.textContent = SECTIONS.find(entry => entry.id === this.section)?.label ?? '';
+		this.footerActions.settings.classList.toggle('active', this.section !== 'usage');
+		this.footerActions.usage.classList.toggle('active', this.section === 'usage');
+	}
+
 	private setSection(section: SettingsSection): void {
 		this.section = section;
 		if (section === 'providers') {
@@ -417,6 +441,7 @@ export class VoltSettingsEditor extends EditorPane {
 		for (const child of this.toc.querySelectorAll('.volt-settings-toc-item')) {
 			child.classList.toggle('active', (child as HTMLElement).dataset.section === section);
 		}
+		this.syncCrumb();
 		this.contentScroll.setScrollPosition({ scrollTop: 0 });
 		this.renderContent();
 	}
@@ -664,7 +689,7 @@ export class VoltSettingsEditor extends EditorPane {
 			const state = this.awakeState;
 			this.settingRow(group, localize('voltSettings.lidClosedModeStatus', "Status"), describeLidClosedMode(state), host => {
 				const action = (label: string, secondary: boolean, run: () => Promise<unknown>) => {
-					const button = this.renderStore.add(new Button(host, { ...defaultButtonStyles, secondary }));
+					const button = this.renderStore.add(createVoltButton(host, secondary ? 'secondary' : 'primary'));
 					button.label = label;
 					this.renderStore.add(button.onDidClick(() => {
 						button.enabled = false;
@@ -825,7 +850,7 @@ export class VoltSettingsEditor extends EditorPane {
 			host => {
 				host.classList.add('volt-settings-update-control');
 				const status = append(host, $('span.volt-settings-update-status'));
-				const check = this.renderStore.add(new Button(host, { ...defaultButtonStyles, secondary: true }));
+				const check = this.renderStore.add(createVoltButton(host));
 				check.label = localize('voltSettings.checkForUpdates', "Check for Updates");
 				const render = (state: UpdateState) => {
 					status.textContent = describeUpdateState(state);
@@ -1201,7 +1226,7 @@ export class VoltSettingsEditor extends EditorPane {
 			saved.forEach((rule, index) => {
 				const row = append(list, $('.volt-settings-card'));
 				append(append(row, $('.volt-settings-card-copy')), $('div.title')).textContent = `${rule.action} ${rule.resource} -> ${rule.effect}`;
-				const revoke = this.renderStore.add(new Button(row, { ...defaultButtonStyles, secondary: true }));
+				const revoke = this.renderStore.add(createVoltButton(row, 'danger'));
 				revoke.label = localize('voltSettings.revoke', "Revoke");
 				this.renderStore.add(revoke.onDidClick(() => void this.runtime.revokeSavedApproval(index)));
 			});
@@ -1246,7 +1271,7 @@ export class VoltSettingsEditor extends EditorPane {
 			effect = (['deny', 'ask', 'allow'][e.index] ?? 'deny') as IPermissionRule['effect'];
 		}));
 		const actions = append(form, $('.volt-settings-actions'));
-		const add = this.renderStore.add(new Button(actions, defaultButtonStyles));
+		const add = this.renderStore.add(createVoltButton(actions, 'primary'));
 		add.label = localize('voltSettings.addRule', "Add rule");
 		this.renderStore.add(add.onDidClick(() => {
 			const next = [...rules, { action: action.value.trim() || '*', resource: resource.value.trim() || '*', effect, source: 'project' as const }];
@@ -1257,7 +1282,7 @@ export class VoltSettingsEditor extends EditorPane {
 			for (const [index, rule] of rules.entries()) {
 				const row = append(list, $('.volt-settings-card'));
 				append(append(row, $('.volt-settings-card-copy')), $('div.title')).textContent = `${rule.action} ${rule.resource} -> ${rule.effect}`;
-				const remove = this.renderStore.add(new Button(row, { ...defaultButtonStyles, secondary: true }));
+				const remove = this.renderStore.add(createVoltButton(row, 'danger'));
 				remove.label = localize('voltSettings.removeRule', "Remove");
 				this.renderStore.add(remove.onDidClick(() => {
 					void this.runtime.setProjectRules(rules.filter((_, i) => i !== index));

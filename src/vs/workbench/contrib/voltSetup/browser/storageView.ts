@@ -16,6 +16,7 @@ import { formatBytes } from '../../../../platform/voltStorage/common/voltStorage
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../services/voltRuntime/common/history/agentHistory.js';
+import { IVoltQueryCache, IVoltQueryHandle } from '../../../services/voltRuntime/browser/queryCache.js';
 import { IVoltProjectRecord, sessionBelongsToProject } from '../../../services/voltRuntime/common/sessionContext.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { AgentEditorInput } from '../../voltAgent/browser/editor/agentEditorInput.js';
@@ -150,9 +151,13 @@ function isChatRow(id: VoltStorageId): boolean {
 	return id === 'chatHistory' || id === 'project.chats';
 }
 
+/** A report this recent is shown without measuring again (switching sections back and forth). */
+const STORAGE_STALE_MS = 15_000;
+
 /**
  * Sizes of what Volt stores, machine-wide or for one project, with a Clean button per row.
- * Sizes are measured in the main process; nothing in use is ever removed.
+ * Sizes are measured in the main process; nothing in use is ever removed. The last report shows
+ * at once (kept across restarts) while the folders are measured again behind it.
  */
 export class VoltStorageView extends Disposable {
 
@@ -162,6 +167,7 @@ export class VoltStorageView extends Disposable {
 	private readonly busy = new Set<VoltStorageId>();
 	private readonly rowStore = this._register(new DisposableStore());
 	private measuring = false;
+	private readonly query: IVoltQueryHandle<IVoltStorageReport>;
 
 	constructor(
 		parent: HTMLElement,
@@ -171,11 +177,36 @@ export class VoltStorageView extends Disposable {
 		@IWorkspaceContextService private readonly workspaceContext: IWorkspaceContextService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
+		@IVoltQueryCache cache: IVoltQueryCache,
 	) {
 		super();
 		this.element = append(parent, $('.volt-storage'));
+		this.query = this._register(cache.watch({
+			key: project ? `storage.project:${project.id}` : 'storage.machine',
+			staleTime: STORAGE_STALE_MS,
+			fetch: () => {
+				const request = this.request();
+				return request ? this.storage.projectReport(request) : this.storage.machineReport(this.context());
+			},
+		}));
+		this._register(this.query.onDidChange(() => this.apply()));
+		this.apply();
+	}
+
+	/** Takes the cached report; while a measure runs the button turns and the last sizes stay. */
+	private apply(): void {
+		const state = this.query.state;
+		const error = state.error && !state.fetching ? (state.error instanceof Error ? state.error.message : String(state.error)) : undefined;
+		if (state.data) {
+			this.report = state.data;
+		} else if (error) {
+			this.report = { items: [], measuredAt: Date.now(), durationMs: 0 };
+		}
+		if (error) {
+			this.results.set('logs', error);
+		}
+		this.measuring = state.fetching || !state.loaded;
 		this.render();
-		void this.measure();
 	}
 
 	private context(): IVoltStorageContext {
@@ -206,19 +237,8 @@ export class VoltStorageView extends Disposable {
 		return this.project ? { ...this.context(), root: this.project.root.fsPath, projectSessionIds: this.projectSessions().map(session => session.id) } : undefined;
 	}
 
-	async measure(): Promise<void> {
-		this.measuring = true;
-		this.render();
-		try {
-			const request = this.request();
-			this.report = request ? await this.storage.projectReport(request) : await this.storage.machineReport(this.context());
-		} catch (err) {
-			this.report = { items: [], measuredAt: Date.now(), durationMs: 0 };
-			this.results.set('logs', err instanceof Error ? err.message : String(err));
-		} finally {
-			this.measuring = false;
-			this.render();
-		}
+	measure(): Promise<void> {
+		return this.query.refetch();
 	}
 
 	/** Archived chats a chat row's Clean would delete, with their bytes. */

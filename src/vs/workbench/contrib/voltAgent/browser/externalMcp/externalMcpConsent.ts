@@ -11,11 +11,11 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { ILayoutService } from '../../../../../platform/layout/browser/layoutService.js';
-import { defaultButtonStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
 import { describeRedirect } from '../../../../../platform/voltExternalMcp/common/externalMcpOAuth.js';
 import { ExternalMcpScope, IExternalMcpConsentDecision, IExternalMcpConsentRequest } from '../../../../../platform/voltExternalMcp/common/voltExternalMcp.js';
 import { showVoltModal } from '../../../voltProjects/browser/ui/voltModal.js';
 import { scopeCopy } from './externalMcpScopes.js';
+import { createVoltButton } from '../chrome/voltButton.js';
 
 /**
  * "Connect Claude Code to Volt?": what an outside agent asks for, where the approval goes, and
@@ -102,14 +102,14 @@ export function showExternalMcpConsent(layoutService: ILayoutService, request: I
 			const window = getWindow(body);
 			const interval = window.setInterval(tick, 1000);
 			store.add(toDisposable(() => window.clearInterval(interval)));
-			const deny = store.add(new Button(footer, { ...defaultButtonStyles, secondary: true }));
+			const deny = store.add(createVoltButton(footer));
 			deny.label = localize('externalMcp.consent.deny', "Deny");
 			deny.element.classList.add('deny');
 			store.add(deny.onDidClick(() => {
 				decide({ approve: false });
 				close();
 			}));
-			const allow = buttons.allow = store.add(new Button(footer, defaultButtonStyles));
+			const allow = buttons.allow = store.add(createVoltButton(footer, 'primary'));
 			allow.label = localize('externalMcp.consent.allow', "Allow");
 			allow.element.classList.add('allow');
 			store.add(allow.onDidClick(() => {

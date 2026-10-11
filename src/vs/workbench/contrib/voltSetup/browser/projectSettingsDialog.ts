@@ -5,7 +5,6 @@
 
 import './media/voltSetup.css';
 import { $, addDisposableListener, append } from '../../../../base/browser/dom.js';
-import { Button } from '../../../../base/browser/ui/button/button.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../base/common/codicons.js';
@@ -18,7 +17,6 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { ILabelService } from '../../../../platform/label/common/label.js';
 import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
-import { defaultButtonStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { AgentRunOn } from '../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IVoltProjectRecord } from '../../../services/voltRuntime/common/sessionContext.js';
 import { AgentModelPicker } from '../../voltAgent/browser/picker/agentModelPicker.js';
@@ -28,6 +26,7 @@ import { showVoltModal } from '../../voltProjects/browser/ui/voltModal.js';
 import { CURSOR_WORKTREES_FILE, formatEnvText, parseEnvText, stepsFromText, VOLT_WORKTREES_FILE } from '../common/projectSettings.js';
 import { IVoltProjectSettingsService } from './projectSettingsService.js';
 import { VoltStorageView } from './storageView.js';
+import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 
 let openFor: string | undefined;
 
@@ -179,10 +178,10 @@ export class ProjectSettingsDialog {
 
 		const footer = append(body, $('.volt-add-footer.volt-setup-footer'));
 		append(footer, $('span.volt-add-footer-hint')).textContent = localize('voltProjectSettings.footer', "Applies to new chats.");
-		const cancel = store.add(new Button(footer, { ...defaultButtonStyles, secondary: true }));
+		const cancel = store.add(createVoltButton(footer));
 		cancel.label = localize('voltProjectSettings.cancel', "Cancel");
 		store.add(cancel.onDidClick(() => close()));
-		const save = store.add(new Button(footer, defaultButtonStyles));
+		const save = store.add(createVoltButton(footer, 'primary'));
 		save.label = localize('voltProjectSettings.save', "Save");
 		store.add(save.onDidClick(async () => {
 			this.settings.set(project.id, { defaultModel, env: parseEnvText(env.value).env });

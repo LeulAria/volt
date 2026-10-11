@@ -5,15 +5,14 @@
 
 import './media/voltSetup.css';
 import { $, append } from '../../../../base/browser/dom.js';
-import { Button } from '../../../../base/browser/ui/button/button.js';
 import { DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
-import { defaultButtonStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { IAgentRuntimeService, VOLT_PROJECT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../services/voltRuntime/common/sessionContext.js';
+import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { VoltProjectCommands } from '../../voltProjects/common/projects.js';
 import { IVoltProjectSettingsService } from './projectSettingsService.js';
 import { VoltStorageView } from './storageView.js';
@@ -25,8 +24,8 @@ export const VOLT_MANAGE_STORAGE_COMMAND_ID = 'volt.storage.manage';
 /** Volt Settings > Agents: a way back into the first-run wizard. */
 export function renderSetupButton(parent: HTMLElement, instantiationService: IInstantiationService, store: DisposableStore): void {
 	const commandService = instantiationService.invokeFunction(accessor => accessor.get(ICommandService));
-	const button = store.add(new Button(append(parent, $('.volt-setup-settings-button')), { ...defaultButtonStyles, secondary: true }));
-	button.label = localize('voltSetup.openWizard', "Set Up Agents and Projects...");
+	const button = store.add(createVoltButton(append(parent, $('.volt-setup-settings-button'))));
+	button.label = localize('voltSetup.openWizard', "Set Up Agents and Projects");
 	store.add(button.onDidClick(() => void commandService.executeCommand(VOLT_SETUP_COMMAND_ID)));
 }
 
@@ -71,13 +70,13 @@ export function renderProjectsSection(target: HTMLElement, instantiationService:
 				].filter(Boolean);
 				append(copy, $('.desc')).textContent = facts.join(' · ');
 				const control = append(row, $('.volt-settings-row-control'));
-				const button = rowStore.add(new Button(control, { ...defaultButtonStyles, secondary: true }));
-				button.label = localize('voltSetup.projectSettingsButton', "Settings...");
+				const button = rowStore.add(createVoltButton(control));
+				button.label = localize('voltSetup.projectSettingsButton', "Settings");
 				rowStore.add(button.onDidClick(() => void commandService.executeCommand(VOLT_PROJECT_SETTINGS_COMMAND_ID, project.id)));
 			}
 		}
-		const add = rowStore.add(new Button(append(host, $('.volt-setup-settings-button')), { ...defaultButtonStyles, secondary: true }));
-		add.label = localize('voltSetup.addProject', "Add Project...");
+		const add = rowStore.add(createVoltButton(append(host, $('.volt-setup-settings-button')), 'secondary', { supportIcons: true }));
+		add.label = localize('voltSetup.addProjectIcon', "$(add) Add Project");
 		rowStore.add(add.onDidClick(() => void commandService.executeCommand(VoltProjectCommands.addProject)));
 	};
 	store.add(sessionContext.onDidChangeProjects(render));

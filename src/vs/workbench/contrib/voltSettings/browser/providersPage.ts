@@ -28,9 +28,12 @@ import { IProviderProfile, IProviderProfileDraft, VoltApiStyle, VoltAuthKind } f
 import { IVoltCatalogItem, IVoltProviderStatus } from '../../../services/voltRuntime/common/providers.js';
 import { IAgentRuntimeService, IVoltTaskModels } from '../../../services/voltRuntime/common/runtime.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
-import { createRefreshSpinner } from '../../voltAgent/browser/usage/agentUsageIcons.js';
+import { createRefreshSpinner, setRefreshSpinnerRunning } from '../../voltAgent/browser/usage/agentUsageIcons.js';
 import { AGENT_DEFAULT_MODEL_SETTING } from '../../voltAgent/common/agentComposerSettings.js';
 import { AgentSetupService, IAgentSetupState } from '../../voltSetup/browser/agentSetupService.js';
+import { agentSetupInfo } from '../../voltSetup/common/agentSetup.js';
+import { IVoltQuery, IVoltQueryCache, IVoltQueryHandle } from '../../../services/voltRuntime/browser/queryCache.js';
+import { voltButtonClasses } from '../../voltAgent/browser/chrome/voltButton.js';
 
 /** How long a background install may run before it is called failed. */
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
@@ -142,9 +145,16 @@ export class ProvidersPage {
 	private readonly clipboard: IClipboardService;
 	private readonly setup: AgentSetupService;
 
-	/** Install and sign-in state per CLI id, from asking each CLI directly. */
+	/**
+	 * Install and sign-in state per CLI id, from asking each CLI directly. The last answers are kept
+	 * (across restarts too), so the page draws them at once while the CLIs are asked again.
+	 */
 	private readonly setupStates = new Map<string, IAgentSetupState>();
-	private setupChecking: Promise<void> | undefined;
+	private setupHandles: IVoltQueryHandle<IAgentSetupState>[] | undefined;
+	private readonly setupStore = new DisposableStore();
+	private readonly cache: IVoltQueryCache;
+	/** The head's refresh button, turned while any CLI is asked again behind its last answer. */
+	private refreshButton: HTMLElement | undefined;
 	private readonly running = new Map<string, RunningAction>();
 	private readonly keyEditor = new Set<string>();
 	private disposed = false;
@@ -173,6 +183,7 @@ export class ProvidersPage {
 			contextViewService: this.contextViewService,
 			configurationService: this.configurationService,
 			clipboard: this.clipboard,
+			cache: this.cache,
 		} = instantiationService.invokeFunction(accessor => ({
 			runtime: accessor.get(IAgentRuntimeService),
 			stdio: accessor.get(IVoltStdioService),
@@ -180,30 +191,84 @@ export class ProvidersPage {
 			contextViewService: accessor.get(IContextViewService),
 			configurationService: accessor.get(IConfigurationService),
 			clipboard: accessor.get(IClipboardService),
+			cache: accessor.get(IVoltQueryCache),
 		})));
 		this.setup = instantiationService.createInstance(AgentSetupService);
 	}
 
 	dispose(): void {
 		this.disposed = true;
+		this.setupStore.dispose();
 	}
 
-	/** Asks every CLI whether it is installed and signed in. Runs once per page visit, and on Refresh. */
+	private setupQuery(id: string): IVoltQuery<IAgentSetupState> {
+		const def = this.setup.definitions().find(candidate => candidate.id === id);
+		return {
+			key: `providers.setup:${id}`,
+			staleTime: 60_000,
+			fetch: () => def ? this.setup.detect(def) : Promise.reject(new Error(`Unknown CLI ${id}`)),
+		};
+	}
+
+	/**
+	 * Asks every CLI whether it is installed and signed in, behind the last known answers. Runs on
+	 * each page visit (`force`) and on Refresh; without `force` only stale answers are asked again.
+	 */
 	checkSetup(force = false): Promise<void> {
-		if (this.setupChecking && !force) {
-			return this.setupChecking;
+		if (!this.setupHandles) {
+			this.setupHandles = this.setup.definitions().map(def => {
+				const handle = this.setupStore.add(this.cache.watch(this.setupQuery(def.id)));
+				this.setupStore.add(handle.onDidChange(() => this.applySetup()));
+				return handle;
+			});
+			this.applySetup();
 		}
-		this.setupChecking = Promise.all(this.setup.definitions().map(async def => {
-			const state = await this.setup.detect(def).catch(() => undefined);
-			if (state) {
-				this.setupStates.set(def.id, state);
+		if (!force) {
+			return Promise.resolve();
+		}
+		return Promise.all(this.setupHandles.map(handle => handle.refetch())).then(() => undefined);
+	}
+
+	/** Takes the cached answers; a new answer redraws the page, a check starting or ending only turns the spinner. */
+	private applySetup(): void {
+		let changed = false;
+		for (const handle of this.setupHandles ?? []) {
+			const state = handle.state.data;
+			const previous = state && this.setupStates.get(state.id);
+			if (state && previous !== state && JSON.stringify(previous) !== JSON.stringify(state)) {
+				// Saved answers may predate this build's setup recipes; those come from code.
+				this.setupStates.set(state.id, { ...state, info: agentSetupInfo(state.id) });
+				changed = true;
 			}
-		})).then(() => {
-			if (!this.disposed) {
-				this.host.rerender();
-			}
-		});
-		return this.setupChecking;
+		}
+		this.syncRefresh();
+		if (changed && !this.disposed) {
+			this.host.rerender();
+		}
+	}
+
+	/** An answer the page got itself (after an install or sign-in) replaces the cached one. */
+	private storeSetup(state: IAgentSetupState): void {
+		this.setupStates.set(state.id, state);
+		this.cache.set(this.setupQuery(state.id).key, state);
+	}
+
+	private syncRefresh(): void {
+		const button = this.refreshButton;
+		if (!button) {
+			return;
+		}
+		const spinning = this.refreshing || !!this.setupHandles?.some(handle => handle.state.fetching);
+		button.classList.toggle('spinning', spinning);
+		if (spinning) {
+			button.setAttribute('aria-busy', 'true');
+		} else {
+			button.removeAttribute('aria-busy');
+		}
+		const spinner = button.querySelector('svg:last-child');
+		if (spinner) {
+			setRefreshSpinnerRunning(spinner, spinning);
+		}
 	}
 
 	refresh(): void {
@@ -276,10 +341,8 @@ export class ProvidersPage {
 		refresh.type = 'button';
 		refresh.appendChild(renderIcon(Codicon.refresh));
 		refresh.appendChild(createRefreshSpinner());
-		refresh.classList.toggle('spinning', this.refreshing);
-		if (this.refreshing) {
-			refresh.setAttribute('aria-busy', 'true');
-		}
+		this.refreshButton = refresh;
+		this.syncRefresh();
 		refresh.setAttribute('aria-label', localize('voltSettings.refreshProviders', "Check providers now"));
 		setAgentTooltip(refresh, localize('voltSettings.refreshProviders', "Check providers now"));
 		this.host.store.add(addDisposableListener(refresh, 'click', () => this.refresh()));
@@ -741,6 +804,9 @@ export class ProvidersPage {
 		button.type = 'button';
 		button.classList.toggle('primary', primary);
 		button.classList.toggle('icon-only', !label);
+		if (label) {
+			button.classList.add(...voltButtonClasses(primary ? 'primary' : 'secondary'), 'volt-button-small');
+		}
 		if (icon) {
 			button.appendChild(renderIcon(icon));
 		}
@@ -1083,6 +1149,7 @@ export class ProvidersPage {
 		});
 		const back = this.button(actions, localize('voltSettings.providerShort', "Provider"), false, localize('voltSettings.openProvider', "Open {0}", status.label), () => this.select({ kind: 'provider', profileId: status.profileId }), Codicon.arrowLeft);
 		back.classList.add('ghost');
+		back.classList.replace('volt-button-secondary', 'volt-button-ghost');
 		this.host.switch(actions, model.enabled, localize('voltSettings.showInPicker', "Show {0} in the model picker", model.label), () => void this.runtime.setModelEnabled(model.ref, !model.enabled));
 
 		if (model.description || model.detail) {
@@ -1378,7 +1445,7 @@ export class ProvidersPage {
 		const def = CLI_AGENT_DEFINITIONS.find(candidate => candidate.id === status.providerId);
 		const next = def ? await this.setup.detect(def).catch(() => undefined) : undefined;
 		if (next) {
-			this.setupStates.set(next.id, next);
+			this.storeSetup(next);
 		}
 		if (ok || next?.installed) {
 			this.running.delete(status.profileId);
@@ -1428,7 +1495,7 @@ export class ProvidersPage {
 		const check = async () => {
 			const next = await this.setup.detect(def).catch(() => undefined);
 			if (next) {
-				this.setupStates.set(next.id, next);
+				this.storeSetup(next);
 			}
 			return next && (action === 'install' ? next.installed : next.signIn.kind === 'signedIn');
 		};

@@ -66,12 +66,29 @@
 	border-right: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
 }
 
+.volt-settings-sidebar-head {
+	flex: none;
+	display: flex;
+	margin: 0 10px 8px;
+}
+
+/* The agent list's footer row (agentHomePane.css styles the buttons). */
 .volt-settings-footer {
 	flex: none;
 	display: flex;
 	align-items: center;
+	gap: 2px;
 	height: 44px;
-	padding: 0 10px 6px;
+	padding: 0 10px 6px 12px;
+}
+
+.monaco-workbench .volt-settings-footer .volt-agent-home-settings .codicon {
+	font-size: 14px;
+}
+
+.volt-settings-footer .volt-agent-home-settings.active {
+	opacity: 1;
+	background: var(--volt-settings-selected);
 }
 
 /* The same Back as the agent list's footer while Usage is open (agentHomePane.css). */
@@ -109,18 +126,25 @@
 .volt-settings-search {
 	position: relative;
 	flex: 0 0 auto;
-	margin: 0 12px 10px;
+	margin: 0 10px 10px;
 }
 
+/* Same glyph family, size and column as the nav icons below; the placeholder lines up with their labels. */
 .volt-settings-search-icon {
 	position: absolute;
-	left: 10px;
+	left: 8px;
 	top: 50%;
 	transform: translateY(-50%);
 	z-index: 1;
-	opacity: 0.45;
+	opacity: 0.55;
 	pointer-events: none;
 	display: inline-flex;
+}
+
+.volt-settings-search-icon .volt-settings-svg-icon {
+	display: block;
+	width: 17px;
+	height: 17px;
 }
 
 .volt-settings-search .monaco-inputbox {
@@ -133,7 +157,7 @@
 
 .volt-settings-search .monaco-inputbox > .ibwrapper > .input,
 .volt-settings-search .monaco-inputbox input {
-	padding-left: 28px !important;
+	padding-left: 35px !important;
 	background: transparent !important;
 }
 
@@ -207,11 +231,58 @@
 
 /* Content */
 
+/* The page column: the top bar's trail over the scrolling content. */
+.volt-settings-main {
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	background: var(--volt-agent-window-bg, var(--vscode-sideBar-background, var(--vscode-editor-background, #141414)));
+}
+
+/* Lines up with the title bar's trail over a chat (agentTitlebarHeader.css). */
+.volt-settings-topbar {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 34px;
+	padding: 0 20px;
+	font-size: 13px;
+	line-height: 18px;
+	white-space: nowrap;
+	-webkit-app-region: drag;
+}
+
+.volt-settings-crumb {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-settings-crumb.root {
+	flex-shrink: 0;
+	opacity: 0.6;
+}
+
+.volt-settings-crumb-sep {
+	display: inline-flex;
+	flex-shrink: 0;
+	margin: 0 -3px;
+	opacity: 0.4;
+}
+
+.volt-settings-crumb-sep svg {
+	display: block;
+	width: 14px;
+	height: 14px;
+}
+
 .volt-settings-content-scroll {
 	flex: 1;
 	min-width: 0;
 	min-height: 0;
-	background: var(--volt-agent-window-bg, var(--vscode-sideBar-background, var(--vscode-editor-background, #141414)));
 }
 
 .volt-settings-content {
@@ -222,8 +293,8 @@
 .volt-settings-content-inner {
 	width: min(1040px, 100%);
 	margin-inline: auto;
-	/* 44px to the title text; the title's own top padding is the rest. */
-	padding: 30px 40px 80px;
+	/* Under the top bar; the title's own top padding is the rest. */
+	padding: 14px 40px 80px;
 }
 
 /* Titles stick to the top while their block scrolls under them, over a blurred copy of the page
@@ -581,7 +652,7 @@
 	margin-top: 16px;
 }
 
-.volt-settings .monaco-button {
+.volt-settings .monaco-button:not(.volt-button) {
 	padding: 5px 12px;
 	font-size: 12px;
 	border-radius: 7px;

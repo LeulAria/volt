@@ -6,7 +6,6 @@
 import './media/voltSetup.css';
 import { $, addDisposableListener, append, EventHelper, isHTMLElement } from '../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../base/browser/window.js';
-import { Button } from '../../../../base/browser/ui/button/button.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
@@ -16,7 +15,6 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
-import { defaultButtonStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { IVoltEditorImportService, IVoltImportedEditor } from '../../../../platform/voltEditorImport/common/voltEditorImport.js';
 import { IVoltFsBrowseService } from '../../../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { createBrandIcon } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
@@ -28,18 +26,11 @@ import { IVoltProjectsService, VoltProjectCommands } from '../../voltProjects/co
 import { IVoltFolderPickerService } from '../../voltProjects/browser/folderPickerService.js';
 import { showVoltModal } from '../../voltProjects/browser/ui/voltModal.js';
 import { AgentSetupService, IAgentSetupState } from './agentSetupService.js';
+import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 
 export type SetupStep = 'agents' | 'projects' | 'done';
 
 const STEPS: readonly SetupStep[] = ['agents', 'projects', 'done'];
-/** Setup uses neutral "white" primaries (foreground on editor background), not the theme's blue button. */
-const setupPrimaryButtonStyles = {
-	...defaultButtonStyles,
-	buttonBackground: 'var(--vscode-foreground)',
-	buttonForeground: 'var(--vscode-editor-background)',
-	buttonHoverBackground: 'color-mix(in srgb, var(--vscode-foreground) 84%, var(--vscode-editor-background))',
-	buttonBorder: 'transparent',
-} as const;
 /** How often a CLI is checked while its install or sign-in runs in the terminal. */
 const WATCH_INTERVAL_MS = 3000;
 /** A forgotten terminal stops being watched after this. */
@@ -331,7 +322,7 @@ export class VoltSetupWizard {
 	private footerButtons(footer: HTMLElement, hint: string, buttons: readonly { label: string; secondary?: boolean; run: () => void; enabled?: boolean }[]): void {
 		append(footer, $('span.volt-add-footer-hint')).textContent = hint;
 		for (const spec of buttons) {
-			const button = this.renderStore.add(new Button(footer, { ...setupPrimaryButtonStyles, secondary: !!spec.secondary }));
+			const button = this.renderStore.add(createVoltButton(footer, spec.secondary ? 'secondary' : 'primary'));
 			button.label = spec.label;
 			button.enabled = spec.enabled !== false;
 			this.renderStore.add(button.onDidClick(spec.run));
@@ -462,7 +453,7 @@ export class VoltSetupWizard {
 		append(card, $('code.volt-setup-command')).textContent = running.command;
 		append(card, $('.volt-setup-running-hint')).textContent = localize('voltSetup.runningHint', "Follow the prompts in the terminal. Setup comes back when it is done.");
 		const actions = append(card, $('.volt-setup-running-actions'));
-		const check = this.renderStore.add(new Button(actions, { ...defaultButtonStyles, secondary: true }));
+		const check = this.renderStore.add(createVoltButton(actions));
 		check.label = localize('voltSetup.checkAgain', "Check again");
 		this.renderStore.add(check.onDidClick(() => {
 			const def = this.agentSetup.definitions().find(candidate => candidate.id === running.id);
@@ -470,7 +461,7 @@ export class VoltSetupWizard {
 				void this.detectOne(def);
 			}
 		}));
-		const back = this.renderStore.add(new Button(actions, setupPrimaryButtonStyles));
+		const back = this.renderStore.add(createVoltButton(actions, 'primary'));
 		back.label = localize('voltSetup.backToSetup', "Back to Setup");
 		this.renderStore.add(back.onDidClick(() => {
 			this.running = undefined;
