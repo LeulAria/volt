@@ -403,6 +403,11 @@
 	display: none;
 }
 
+/* A folded group (Open Tabs, Designs, Pull requests) keeps only its header. */
+.volt-agent-dock-group-body.hidden {
+	display: none;
+}
+
 .volt-agent-quick-open-actions.expanded .volt-agent-dock-heading {
 	padding-right: 36px;
 }

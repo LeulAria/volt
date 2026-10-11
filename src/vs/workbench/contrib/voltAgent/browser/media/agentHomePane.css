@@ -1167,6 +1167,13 @@ html.volt-layout-agent-window body {
 	background-color: transparent !important;
 }
 
+/* Full screen has no desktop behind the window, only the vibrancy material: the see-through
+ * fills wash out over it. The sidebar and the window paint solid there (layout.ts sets `fullscreen`). */
+.monaco-workbench.volt-layout-agent.fullscreen {
+	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000);
+}
+
 .monaco-workbench.volt-layout-agent .monaco-grid-view,
 .monaco-workbench.volt-layout-agent .monaco-grid-branch-node,
 .monaco-workbench.volt-layout-agent .monaco-split-view2,

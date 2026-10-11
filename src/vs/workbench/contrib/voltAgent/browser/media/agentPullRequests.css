@@ -2947,6 +2947,21 @@
 	color: var(--vscode-foreground);
 }
 
+/* The chat's other pull requests under its row: list rows of the same shape, without checks or Merge. */
+.volt-pr-dock-links .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-pr-dock-link {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 26px;
+	padding: 0 12px;
+	min-width: 0;
+	cursor: pointer;
+}
+
 .volt-pr-dock {
 	--volt-pr-merge-accent: #d4537e;
 	--volt-pr-merge-accent-hover: #ec6f98;

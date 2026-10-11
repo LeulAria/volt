@@ -5,16 +5,19 @@
 
 import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { IListRenderer, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { WorkbenchList } from '../../../../../platform/list/browser/listService.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IVoltPrCheck, voltPrErrorMessage } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
-import { blockedReason, currentLink, IAgentPrLink, isOpenState, isReadyToMerge } from '../../common/agentPullRequests.js';
+import { blockedReason, currentLink, IAgentPrLink, isOpenState, isReadyToMerge, visibleLinks } from '../../common/agentPullRequests.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from './agentPullRequestCommands.js';
@@ -28,10 +31,53 @@ export interface IAgentPullRequestDockOptions {
 	readonly emptyLabel: string;
 }
 
+const LINK_ROW_HEIGHT = 26;
+
+class LinkDelegate implements IListVirtualDelegate<IAgentPrLink> {
+	getHeight(): number {
+		return LINK_ROW_HEIGHT;
+	}
+	getTemplateId(): string {
+		return LinkRenderer.TEMPLATE_ID;
+	}
+}
+
+interface ILinkTemplate {
+	readonly icon: HTMLElement;
+	readonly label: HTMLElement;
+}
+
+/** One of the chat's other pull requests: its state and "#8: title". */
+class LinkRenderer implements IListRenderer<IAgentPrLink, ILinkTemplate> {
+	static readonly TEMPLATE_ID = 'voltPrDockLink';
+	readonly templateId = LinkRenderer.TEMPLATE_ID;
+
+	renderTemplate(container: HTMLElement): ILinkTemplate {
+		container.classList.add('volt-pr-dock-link');
+		const icon = append(container, $('span.volt-pr-dock-icon'));
+		const label = append(container, $('span.volt-pr-dock-label'));
+		return { icon, label };
+	}
+
+	renderElement(link: IAgentPrLink, _index: number, template: ILinkTemplate): void {
+		const pr = link.snapshot;
+		template.icon.replaceChildren();
+		if (pr) {
+			iconSpan(template.icon, prStateIcon(pr.state), `state-${pr.state}`);
+		} else {
+			template.icon.appendChild(renderIcon(Codicon.gitPullRequest));
+		}
+		template.label.textContent = pr ? `#${pr.number}: ${pr.title}` : localize('voltPr.dockNumber', "#{0}", link.number);
+	}
+
+	disposeTemplate(): void { }
+}
+
 /**
- * The chat's pull request in the side panel's git group, the way Cursor shows it: the state and
- * "#8: title" (opens it), its checks (the list drops down), and Merge when nothing blocks it.
- * Without a linked pull request it is a plain row with `emptyLabel`.
+ * The chat's pull request in the side panel's Pull requests group, the way Cursor shows it: the
+ * state and "#8: title" (opens it), its checks (the list drops down), and Merge when nothing blocks
+ * it. Without a linked pull request it is a plain row with `emptyLabel`. The chat's other pull
+ * requests (merged ones, a stack's lower layers) list under it; each opens its pull request.
  */
 export class AgentPullRequestDockControl extends Disposable {
 
@@ -44,9 +90,16 @@ export class AgentPullRequestDockControl extends Disposable {
 	private readonly checksIcon: HTMLElement;
 	private readonly mergeSep: HTMLElement;
 	private readonly merge: HTMLButtonElement;
+	private readonly othersHost: HTMLElement;
+	private readonly others: WorkbenchList<IAgentPrLink>;
 	private sessionId: string | undefined;
 	private link: IAgentPrLink | undefined;
 	private merging = false;
+	private _linkCount = 0;
+
+	private readonly _onDidRender = this._register(new Emitter<void>());
+	/** The chat's pull requests changed: the group heading's count follows. */
+	readonly onDidRender: Event<void> = this._onDidRender.event;
 
 	constructor(
 		parent: HTMLElement,
@@ -72,6 +125,23 @@ export class AgentPullRequestDockControl extends Disposable {
 		this.merge = append(this.element, $('button.volt-pr-dock-merge')) as HTMLButtonElement;
 		this.merge.type = 'button';
 		this.merge.textContent = localize('voltPr.dockMerge', "Merge");
+		this.othersHost = append(parent, $('.volt-pr-dock-links'));
+		this.others = this._register(instantiationService.createInstance(WorkbenchList<IAgentPrLink>, 'VoltAgentDockPullRequests', this.othersHost, new LinkDelegate(), [new LinkRenderer()], {
+			identityProvider: { getId: (link: IAgentPrLink) => link.key },
+			multipleSelectionSupport: false,
+			horizontalScrolling: false,
+			alwaysConsumeMouseWheel: false,
+			accessibilityProvider: {
+				getWidgetAriaLabel: () => localize('voltPr.dockOthersAria', "Other pull requests of this chat"),
+				getAriaLabel: (link: IAgentPrLink) => link.snapshot ? `${prStateLabel(link.snapshot.state)}, #${link.number}: ${link.snapshot.title}` : `#${link.number}`,
+			},
+		}));
+		this._register(this.others.onDidOpen(e => {
+			const link = e.element;
+			if (link) {
+				void this.commandService.executeCommand(OPEN_PULL_REQUEST_COMMAND_ID, { host: link.repo.host, owner: link.repo.owner, name: link.repo.name, number: link.number }, this.sessionId);
+			}
+		}));
 
 		this._register(addDisposableListener(this.main, 'click', () => {
 			void this.commandService.executeCommand(this.options.openCommandId, this.sessionId);
@@ -107,7 +177,31 @@ export class AgentPullRequestDockControl extends Disposable {
 		this.render();
 	}
 
+	/** The chat's pull requests (dismissed ones aside). */
+	get linkCount(): number {
+		return this._linkCount;
+	}
+
 	private render(): void {
+		this.renderRow();
+		this.renderOthers();
+		this._onDidRender.fire();
+	}
+
+	private renderOthers(): void {
+		const links = this.sessionId && this.pullRequests ? visibleLinks(this.pullRequests.links(this.sessionId)) : [];
+		this._linkCount = links.length;
+		const others = links
+			.filter(link => link.key !== this.link?.key)
+			.sort((a, b) => (b.snapshot?.updatedAt ?? b.linkedAt) - (a.snapshot?.updatedAt ?? a.linkedAt));
+		const height = others.length * LINK_ROW_HEIGHT;
+		this.othersHost.style.height = `${height}px`;
+		this.othersHost.style.display = height ? '' : 'none';
+		this.others.layout(height);
+		this.others.splice(0, this.others.length, others);
+	}
+
+	private renderRow(): void {
 		const link = this.sessionId && this.pullRequests ? currentLink(this.pullRequests.links(this.sessionId)) : undefined;
 		this.link = link;
 		const pr = link?.snapshot;

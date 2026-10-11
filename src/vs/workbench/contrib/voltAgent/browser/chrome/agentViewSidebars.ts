@@ -30,7 +30,6 @@ import { OPEN_BROWSER_COMMAND_ID, VoltBrowserEditorInput } from '../preview/brow
 import { AgentChangesEditorInput, OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
 import { createPrimarySidebarToggleIcon } from '../../../../browser/parts/titlebar/sidebarToggleIcon.js';
 import { SHOW_PULL_REQUESTS_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
-import { AgentGitActionsControl } from '../pullRequests/agentGitActionsControl.js';
 import { AgentPullRequestDockControl } from '../pullRequests/agentPullRequestDockControl.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 import { setAgentTooltip } from './agentTooltip.js';
@@ -137,6 +136,51 @@ export function mountAgentQuickOpenActions(host: HTMLElement, quickOpen: HTMLEle
 	}
 }
 
+/**
+ * A folding group of the toolbar (Open Tabs, Designs, Pull requests), headed like "Previous agents
+ * (N)" in {@link AgentLineageDock}: a pane header with a chevron, the title in capitals, the count.
+ * Folding lasts while the window is open, as it does for Previous agents.
+ */
+class DockGroup extends Disposable {
+
+	/** The group's rows go here; folding hides it. */
+	readonly body: HTMLElement;
+	private readonly head: HTMLButtonElement;
+	private open = true;
+	private count: number | undefined;
+
+	constructor(section: HTMLElement, private readonly title: string) {
+		super();
+		// The lineage divider's class: the same header as Previous agents (agentSubagents.css).
+		this.head = append(section, $('button.volt-agent-lineage-divider.volt-agent-dock-group-head')) as HTMLButtonElement;
+		this.head.type = 'button';
+		this.body = append(section, $('.volt-agent-dock-group-body'));
+		this._register(addDisposableListener(this.head, 'click', () => {
+			this.open = !this.open;
+			this.render();
+		}));
+		this.render();
+	}
+
+	/** Undefined drops the count from the title. */
+	setCount(count: number | undefined): void {
+		if (count === this.count) {
+			return;
+		}
+		this.count = count;
+		this.render();
+	}
+
+	private render(): void {
+		this.head.setAttribute('aria-expanded', String(this.open));
+		this.head.replaceChildren(renderIcon(this.open ? Codicon.chevronDown : Codicon.chevronRight));
+		append(this.head, $('span.label')).textContent = this.count === undefined
+			? this.title
+			: localize('voltAgent.dock.groupTitle', "{0} ({1})", this.title, this.count);
+		this.body.classList.toggle('hidden', !this.open);
+	}
+}
+
 function createStrokeIcon(owner: HTMLElement, pathD: string, strokeWidth = '1.5'): SVGElement {
 	const svg = owner.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
 	svg.setAttribute('viewBox', '0 0 24 24');
@@ -190,9 +234,9 @@ class AgentViewSidebarsContribution extends Disposable {
 	private statsGen = 0;
 	private readonly changesAdd: HTMLElement;
 	private readonly changesDel: HTMLElement;
-	/** Commit, Push & PR (T3 Code's git actions), in place of a plain Commit & push row. */
-	private readonly gitControl: AgentGitActionsControl;
-	/** The chat's pull request with its checks and Merge (Cursor's row), or "Pull requests": the title opens the right sidebar's list. */
+	/** "Pull requests (N)": the chat's pull request with its checks and Merge (Cursor's row), then its others. */
+	private readonly pullRequestsGroup: DockGroup;
+	/** The chat's pull request, or "All pull requests" without one: the title opens the right sidebar's list. */
 	private readonly pullRequestControl: AgentPullRequestDockControl;
 	private readonly pullRequests: IAgentPullRequestService | undefined;
 	/** The chat whose changes the Changes row counts. */
@@ -203,8 +247,10 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly agentsRail: HTMLButtonElement;
 	private readonly agentsBadge: HTMLElement;
 	private readonly tabListeners = this._register(new DisposableStore());
+	private readonly tabsGroup: DockGroup;
 	/** The chat's design canvases: each opens beside the chat. */
 	private readonly designsSection: HTMLElement;
+	private readonly designsGroup: DockGroup;
 	private readonly designList: HTMLElement;
 	private readonly designListeners = this._register(new DisposableStore());
 	private readonly canvases: IVoltCanvasService | undefined;
@@ -319,20 +365,19 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.popup = $('.volt-agent-quick-open-actions.expanded.volt-agent-quick-open-popup.hidden');
 		this.popup.setAttribute('aria-label', localize('voltAgent.chatSideToolbar', "Chat Side Toolbar"));
 		this._register(toDisposable(() => this.popup.remove()));
-		// A row ran its action: the popup has done its job. The git menu's chevron opens a menu anchored in it, so it stays.
+		// A row ran its action: the popup has done its job. Group headers only fold their rows, so it stays.
 		this._register(addDisposableListener(this.popup, 'click', e => {
 			const target = e.target as HTMLElement | null;
-			if (target?.closest('button, [role="button"]') && !target.closest('.volt-git-control-chevron')) {
+			if (target?.closest('button, [role="button"]') && !target.closest('.volt-agent-lineage-divider')) {
 				this.setPopupOpen(false);
 			}
 		}));
 		this.tabsSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-tabs.hidden'));
-		const tabsHeading = append(this.tabsSection, $('.volt-agent-dock-heading'));
-		tabsHeading.textContent = localize('voltAgent.dock.openTabs', "Open Tabs");
-		this.tabList = append(this.tabsSection, $('.volt-agent-dock-tab-list'));
+		this.tabsGroup = this._register(new DockGroup(this.tabsSection, localize('voltAgent.dock.openTabs', "Open Tabs")));
+		this.tabList = append(this.tabsGroup.body, $('.volt-agent-dock-tab-list'));
 		this.designsSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-designs.hidden'));
-		append(this.designsSection, $('.volt-agent-dock-heading')).textContent = localize('voltAgent.dock.designs', "Designs");
-		this.designList = append(this.designsSection, $('.volt-agent-dock-tab-list'));
+		this.designsGroup = this._register(new DockGroup(this.designsSection, localize('voltAgent.dock.designs', "Designs")));
+		this.designList = append(this.designsGroup.body, $('.volt-agent-dock-tab-list'));
 		this.canvases = instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltCanvasService));
 		if (this.canvases) {
 			this._register(this.canvases.onDidChange(change => {
@@ -357,17 +402,20 @@ class AgentViewSidebarsContribution extends Disposable {
 		// The project's repository goes along, or git first asks which repository (agent worktrees are repositories too).
 		this.branchLabel = this.createActionRow(git, { id: 'branch', label: '', icon: Codicon.gitBranch, command: 'git.checkout', args: () => this.branchRepository?.provider.rootUri ? [this.branchRepository.provider.rootUri] : [] });
 		this.branchRow = this.branchLabel.parentElement!;
-		this.pullRequests = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
-		// The chat's pull request: its title opens the Pull Requests tab of the right sidebar, its list first.
-		this.pullRequestControl = this._register(instantiationService.createInstance(AgentPullRequestDockControl, git, this.pullRequests, {
-			openCommandId: SHOW_PULL_REQUESTS_COMMAND_ID,
-			emptyLabel: localize('voltAgent.dock.pullRequests', "Pull requests"),
-		}));
-		// Commit, Push & PR runs the next step; its menu has each step and Source Control.
-		this.gitControl = this._register(instantiationService.createInstance(AgentGitActionsControl, git, { look: 'dock', target: () => this.gitTarget() }));
 		const changesLabel = this.createActionRow(git, changes);
 		this.changesAdd = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.add'));
 		this.changesDel = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.del'));
+		// Commit, Push & PR stays on the composer; the toolbar keeps the branch, the changes and the pull requests.
+		this.pullRequests = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
+		this.pullRequestsGroup = this._register(new DockGroup(append(body, $('.volt-agent-dock-section.volt-agent-dock-pull-requests')), localize('voltAgent.dock.pullRequests', "Pull requests")));
+		// The chat's pull request: its title opens the Pull Requests tab of the right sidebar, its list first.
+		this.pullRequestControl = this._register(instantiationService.createInstance(AgentPullRequestDockControl, this.pullRequestsGroup.body, this.pullRequests, {
+			openCommandId: SHOW_PULL_REQUESTS_COMMAND_ID,
+			emptyLabel: localize('voltAgent.dock.allPullRequests', "All pull requests"),
+		}));
+		const syncPullRequestsCount = () => this.pullRequestsGroup.setCount(this.pullRequestControl.linkCount || undefined);
+		this._register(this.pullRequestControl.onDidRender(syncPullRequestsCount));
+		syncPullRequestsCount();
 		this._register(scmService.onDidAddRepository(() => this.watchBranch()));
 		this._register(scmService.onDidRemoveRepository(() => this.watchBranch()));
 		this.watchBranch();
@@ -538,19 +586,7 @@ class AgentViewSidebarsContribution extends Disposable {
 	 * changes when git has no answer. Debounced; SCM fires a burst per save.
 	 */
 	private renderChangesStats(): void {
-		this.statsTimer.value = disposableTimeout(() => {
-			void this.refreshChangesStats();
-			void this.gitControl.refresh();
-		}, 300);
-	}
-
-	/** The chat on screen and the folder its agent works in (its worktree), else the window's folder. */
-	private gitTarget(): { sessionId?: string; folder?: string } {
-		const sessionId = this.changesSessionId;
-		const folder = (sessionId ? this.pullRequests?.folderFor(sessionId) : undefined)
-			?? this.branchRepository?.provider.rootUri?.fsPath
-			?? this.workspaceContextService.getWorkspace().folders[0]?.uri.fsPath;
-		return { ...(sessionId ? { sessionId } : {}), ...(folder ? { folder } : {}) };
+		this.statsTimer.value = disposableTimeout(() => void this.refreshChangesStats(), 300);
 	}
 
 	private async refreshChangesStats(): Promise<void> {
@@ -857,6 +893,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		const keys = tabs.map(editor => dockTabKey(editor)).join('\n');
 		// A class, not display: the divider rule skips hidden sections (agentSubagents.css).
 		this.tabsSection.classList.toggle('hidden', !tabs.length);
+		this.tabsGroup.setCount(tabs.length);
 		// Focusing a row fires an editor event. Rebuilding here removes the button before mouseup, so the click never lands.
 		if (keys === this.tabKeys && this.tabList.childElementCount === tabs.length) {
 			const rows = this.tabList.querySelectorAll('.volt-agent-dock-row');
@@ -938,6 +975,7 @@ class AgentViewSidebarsContribution extends Disposable {
 			}
 			const keys = docs.map(doc => `${doc.id}\u0001${doc.title}`).join('\n');
 			this.designsSection.classList.toggle('hidden', !docs.length);
+			this.designsGroup.setCount(docs.length);
 			if (keys === this.designKeys) {
 				return;
 			}
