@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { join } from '../../../base/common/path.js';
 import { ILogService } from '../../log/common/log.js';
@@ -17,6 +18,9 @@ const DAY_MS = 24 * HOUR_MS;
 const SNAPSHOT_TTL_MS = 20_000;
 const LIMITS_TTL_MS = 60_000;
 const CURSOR_TTL_MS = 2 * 60_000;
+/** The last snapshot and limits, kept in the cache folder across restarts. */
+const SAVED_FILE = 'last-usage.json';
+const SAVED_VERSION = 1;
 
 interface ICachedTranscript extends IParsedTranscript {
 	readonly provider: 'claude' | 'codex';
@@ -64,11 +68,13 @@ export class VoltUsageService implements IVoltUsageService {
 	private limitsReading: Promise<readonly IVoltUsageLimitGroup[]> | undefined;
 	private cursor: { at: number; value: ICursorUsage | undefined } | undefined;
 	private codexSample: ICodexRateLimitSample | undefined;
+	/** The last snapshot and limits of an earlier run, read once from disk for {@link peekUsage}. */
+	private saved: Promise<{ snapshot?: IVoltUsageSnapshot; limits?: { at: number; value: readonly IVoltUsageLimitGroup[] } }> | undefined;
 
 	constructor(
 		private readonly resolveEnv: () => Promise<NodeJS.ProcessEnv>,
 		private readonly logService: ILogService,
-		cacheDir: string,
+		private readonly cacheDir: string,
 		private readonly home = homedir(),
 	) {
 		this.pricing = new UsagePricing(join(cacheDir, 'litellm-prices.json'));
@@ -81,6 +87,38 @@ export class VoltUsageService implements IVoltUsageService {
 		}
 		this.building ??= this.build(!!force).finally(() => this.building = undefined);
 		return this.building;
+	}
+
+	async peekUsage(): Promise<IVoltUsageSnapshot | undefined> {
+		const snapshot = this.snapshot ?? (await this.readSaved()).snapshot;
+		if (!snapshot || Date.now() - snapshot.generatedAt >= SNAPSHOT_TTL_MS) {
+			void this.getUsage().catch(() => undefined);
+		}
+		return this.snapshot ?? snapshot;
+	}
+
+	async peekLimits(): Promise<readonly IVoltUsageLimitGroup[] | undefined> {
+		const limits = this.limits ?? (await this.readSaved()).limits;
+		if (!limits || Date.now() - limits.at >= LIMITS_TTL_MS) {
+			void this.getLimits().catch(() => undefined);
+		}
+		return (this.limits ?? limits)?.value;
+	}
+
+	/** What the previous run saved, so the Usage page has numbers the moment it opens after a restart. */
+	private readSaved(): Promise<{ snapshot?: IVoltUsageSnapshot; limits?: { at: number; value: readonly IVoltUsageLimitGroup[] } }> {
+		this.saved ??= fs.readFile(join(this.cacheDir, SAVED_FILE), 'utf8')
+			.then(text => JSON.parse(text))
+			.then(saved => saved && saved.version === SAVED_VERSION ? { snapshot: saved.snapshot, limits: saved.limits } : {})
+			.catch(() => ({}));
+		return this.saved;
+	}
+
+	private save(): void {
+		const saved = { version: SAVED_VERSION, snapshot: this.snapshot, limits: this.limits };
+		void fs.mkdir(this.cacheDir, { recursive: true })
+			.then(() => fs.writeFile(join(this.cacheDir, SAVED_FILE), JSON.stringify(saved)))
+			.catch(error => this.logService.trace('[volt-usage] could not save the last snapshot', error));
 	}
 
 	async getLimits(force?: boolean): Promise<readonly IVoltUsageLimitGroup[]> {
@@ -124,6 +162,7 @@ export class VoltUsageService implements IVoltUsageService {
 			}
 		}
 		this.limits = { at: Date.now(), value };
+		this.save();
 		return value;
 	}
 
@@ -288,6 +327,7 @@ export class VoltUsageService implements IVoltUsageService {
 			pricingSource: this.pricing.description,
 		};
 		this.logService.info(`[volt-usage] ${files.length} transcripts (${parsedFiles} parsed), ${out.length} buckets in ${Date.now() - started}ms`);
+		this.save();
 		return this.snapshot;
 	}
 

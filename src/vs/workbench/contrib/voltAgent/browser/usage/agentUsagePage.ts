@@ -6,16 +6,17 @@
 import '../media/agentUsage.css';
 import { $, addDisposableListener, append, clearNode, EventType, getWindow } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Action } from '../../../../../base/common/actions.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { fromNow } from '../../../../../base/common/date.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
-import { IContextMenuService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IVoltUsageLimitGroup, IVoltUsageService, IVoltUsageSnapshot, VOLT_USAGE_PROVIDERS, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { IVoltQueryCache, IVoltQueryHandle, IVoltQueryState } from '../../../../services/voltRuntime/browser/queryCache.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { showVoltMenu } from '../ui/menu/voltMenu.js';
 import { createVoltSegmented } from '../ui/segmented/voltSegmented.js';
 import { usageInsights } from './agentUsageInsights.js';
 import { voltCharts, voltChartStrings } from '../visuals/agentVisuals.js';
@@ -26,7 +27,7 @@ import { IRunwayStyle, renderRunway, runwayHighlights } from './agentUsageRunway
 import { costTypeSegments, hasFasterSpeeds, renderShareBar, speedCostSegments } from './agentUsageShareBar.js';
 import { formatCost, formatDay, formatDuration, formatShare, formatSlot, formatTokens } from './agentUsageFormat.js';
 import { createRefreshSpinner, setRefreshSpinnerRunning } from './agentUsageIcons.js';
-import { IUsageModelRow, IUsageSummary, IUsageTotals, metricValue, placeholderLimits, placeholderUsage, summarizeUsage, UsageMetric, UsageRange } from './agentUsageModel.js';
+import { IUsageModelRow, IUsageSummary, IUsageTotals, limitsQuery, metricValue, placeholderLimits, placeholderUsage, summarizeUsage, usageQuery, UsageMetric, UsageRange } from './agentUsageModel.js';
 
 const STORAGE_RANGE = 'volt.usage.range';
 const STORAGE_BREAKDOWN = 'volt.usage.breakdown';
@@ -107,11 +108,14 @@ export class AgentUsagePage extends Disposable {
 	private loadingUsage = false;
 	private loadingLimits = false;
 	private refreshing = false;
-	private loadVersion = 0;
+	/** The cache watches while the page shows. */
+	private handles: { readonly usage: IVoltQueryHandle<IVoltUsageSnapshot>; readonly limits: IVoltQueryHandle<readonly IVoltUsageLimitGroup[]> } | undefined;
 	/** Headline value last shown, so the next one counts from it. */
 	private shownHeadline: { metric: UsageMetric; value: number } | undefined;
 	/** Set when what the page shows changed, so bars and meters animate in once. */
 	private animateNext = true;
+	/** The next render builds the sections under the runway over a few frames (the page just opened). */
+	private stagger = true;
 
 	private readonly renderStore = this._register(new DisposableStore());
 	/** The open model dialog, if any. */
@@ -126,7 +130,8 @@ export class AgentUsagePage extends Disposable {
 		private readonly dialogHost: () => HTMLElement,
 		@IStorageService private readonly storage: IStorageService,
 		@IVoltUsageService private readonly usageService: IVoltUsageService,
-		@IContextMenuService private readonly contextMenuService: IContextMenuService,
+		@IVoltQueryCache private readonly cache: IVoltQueryCache,
+		@IContextViewService private readonly contextViewService: IContextViewService,
 	) {
 		super();
 		this.range = this.readStored(STORAGE_RANGE, RANGES.map(range => range.id), '30d');
@@ -159,13 +164,30 @@ export class AgentUsagePage extends Disposable {
 			return;
 		}
 		const window = getWindow(this.element);
-		const poll = window.setInterval(() => void this.load(false, true), POLL_MS);
+		this.stagger = true;
+		const usage = this.visibleStore.add(this.cache.watch(usageQuery(this.usageService)));
+		const limits = this.visibleStore.add(this.cache.watch(limitsQuery(this.usageService)));
+		this.handles = { usage, limits };
+		const sync = () => {
+			const before = { snapshot: this.snapshot, limits: this.limits, usageError: this.usageError, limitsError: this.limitsError };
+			this.apply(usage.state, limits.state);
+			this.refreshing = usage.state.fetching || limits.state.fetching;
+			this.syncRefresh();
+			// A fetch starting or ending with nothing new only turns the spinner; data redraws the page.
+			if (before.snapshot !== this.snapshot || before.limits !== this.limits || before.usageError !== this.usageError || before.limitsError !== this.limitsError) {
+				this.render();
+			}
+		};
+		this.visibleStore.add(usage.onDidChange(sync));
+		this.visibleStore.add(limits.onDidChange(sync));
+		const poll = window.setInterval(() => void this.load(false), POLL_MS);
 		const tick = window.setInterval(() => this.render(), 60_000);
 		this.visibleStore.add(toDisposable(() => {
 			window.clearInterval(poll);
 			window.clearInterval(tick);
+			this.handles = undefined;
 		}));
-		void this.load(false, !!this.snapshot);
+		sync();
 	}
 
 	focus(): void {
@@ -184,64 +206,40 @@ export class AgentUsagePage extends Disposable {
 	}
 
 	private pickRange(anchor: HTMLElement): void {
-		this.contextMenuService.showContextMenu({
-			getAnchor: () => anchor,
-			getActions: () => RANGES.map(range => {
-				const action = new Action(`volt.usage.range.${range.id}`, range.label, undefined, true, () => this.setRange(range.id));
-				action.checked = range.id === this.range;
-				return action;
-			}),
+		showVoltMenu(this.contextViewService, {
+			anchor,
+			position: 'below',
+			align: 'left',
+			gap: 4,
+			width: 160,
+			ariaLabel: localize('voltUsage.rangeMenu', "Range"),
+			sections: [{ id: 'ranges', items: RANGES.map(range => ({ id: range.id, label: range.label, checked: range.id === this.range, data: range.id })) }],
+			onPick: picked => this.setRange(picked.data),
 		});
 	}
 
-	private async load(force: boolean, quiet = false): Promise<void> {
-		const version = ++this.loadVersion;
-		this.loadingUsage = true;
-		this.loadingLimits = true;
-		if (!quiet) {
-			this.refreshing = true;
-			this.syncRefresh();
+	/** Takes what the cache holds; `loading*` is true until the source answered once (or failed). */
+	private apply(usage: IVoltQueryState<IVoltUsageSnapshot>, limits: IVoltQueryState<readonly IVoltUsageLimitGroup[]>): void {
+		if (usage.data && usage.data !== this.snapshot) {
+			this.animateNext ||= !this.snapshot;
+			this.snapshot = usage.data;
 		}
-		if (!this.snapshot || !this.limits) {
-			this.render();
+		if (limits.data && limits.data !== this.limits) {
+			this.animateNext ||= !this.limits;
+			this.limits = limits.data;
 		}
-		const usage = this.usageService.getUsage(force).then(snapshot => {
-			if (version === this.loadVersion) {
-				this.animateNext ||= !this.snapshot;
-				this.snapshot = snapshot;
-				this.usageError = false;
-			}
-		}, () => {
-			if (version === this.loadVersion) {
-				this.usageError = true;
-			}
-		}).finally(() => {
-			if (version === this.loadVersion) {
-				this.loadingUsage = false;
-				this.render();
-			}
-		});
-		const limits = this.usageService.getLimits(force).then(groups => {
-			if (version === this.loadVersion) {
-				this.animateNext ||= !this.limits;
-				this.limits = groups;
-				this.limitsError = false;
-			}
-		}, () => {
-			if (version === this.loadVersion) {
-				this.limitsError = true;
-			}
-		}).finally(() => {
-			if (version === this.loadVersion) {
-				this.loadingLimits = false;
-				this.render();
-			}
-		});
-		await Promise.allSettled([usage, limits]);
-		if (version === this.loadVersion) {
-			this.refreshing = false;
-			this.syncRefresh();
+		this.usageError = !!usage.error && !usage.fetching;
+		this.limitsError = !!limits.error && !limits.fetching;
+		this.loadingUsage = !usage.data && (!usage.loaded || usage.fetching);
+		this.loadingLimits = !limits.data && (!limits.loaded || limits.fetching);
+	}
+
+	/** Refetches both; `force` (the refresh button) also skips the main process's own caches. */
+	private async load(force: boolean): Promise<void> {
+		if (!this.handles) {
+			return;
 		}
+		await Promise.all([this.handles.usage.refetch(force), this.handles.limits.refetch(force)]);
 	}
 
 	private syncRefresh(): void {
@@ -325,23 +323,56 @@ export class AgentUsagePage extends Disposable {
 			this.fadePlaceholder(runway);
 		}
 
-		const split = append(this.content, $('.volt-usage-split'));
-		this.renderTopModels(split, summary, animate);
-		this.renderShares(split, summary);
-		const activity = append(this.content, $('.volt-usage-section'));
-		sectionHead(activity, localize('voltUsage.activity', "Activity"));
-		renderUsageCalendar(activity, usageCalendar(snapshot, now), animate);
-		this.renderTotals(summary);
-		this.renderBreakdown(summary, METRIC);
-		if (!usagePending) {
-			this.renderInsights(snapshot, summary, METRIC, animate);
-		}
-		this.renderFootnote();
-		if (usagePending) {
-			for (const section of this.content.querySelectorAll<HTMLElement>(':scope > .volt-usage-split, :scope > .volt-usage-section')) {
+		// Below the runway, in steps: on opening, the top shows at once and the rest follows over the
+		// next frames instead of holding the first paint until every section is built.
+		const fade = (section: HTMLElement) => {
+			if (usagePending) {
 				this.fadePlaceholder(section);
 			}
+		};
+		const steps = [
+			() => {
+				const split = append(this.content, $('.volt-usage-split'));
+				this.renderTopModels(split, summary, animate);
+				this.renderShares(split, summary);
+				fade(split);
+				const activity = append(this.content, $('.volt-usage-section'));
+				sectionHead(activity, localize('voltUsage.activity', "Activity"));
+				renderUsageCalendar(activity, usageCalendar(snapshot, now), animate);
+				fade(activity);
+			},
+			() => {
+				const before = new Set(this.content.children);
+				this.renderTotals(summary);
+				this.renderBreakdown(summary, METRIC);
+				if (!usagePending) {
+					this.renderInsights(snapshot, summary, METRIC, animate);
+				}
+				this.renderFootnote();
+				for (const section of this.content.querySelectorAll<HTMLElement>(':scope > .volt-usage-section')) {
+					if (!before.has(section)) {
+						fade(section);
+					}
+				}
+			},
+		];
+		if (!this.stagger) {
+			steps.forEach(step => step());
+			return;
 		}
+		this.stagger = false;
+		const window = getWindow(this.element);
+		let frame = 0;
+		const next = (index: number) => {
+			frame = window.requestAnimationFrame(() => {
+				steps[index]();
+				if (index + 1 < steps.length) {
+					next(index + 1);
+				}
+			});
+		};
+		next(0);
+		this.renderStore.add(toDisposable(() => window.cancelAnimationFrame(frame)));
 	}
 
 	/**
@@ -649,18 +680,20 @@ export class AgentUsagePage extends Disposable {
 		append(size, $('span')).textContent = localize('voltUsage.rows', "Rows: {0}", this.pageSize);
 		size.appendChild(renderIcon(Codicon.chevronDown));
 		this.renderStore.add(addDisposableListener(size, EventType.CLICK, () => {
-			this.contextMenuService.showContextMenu({
-				getAnchor: () => size,
-				getActions: () => PAGE_SIZES.map(option => {
-					const action = new Action(`volt.usage.rows.${option}`, String(option), undefined, true, () => {
-						this.pageSize = option;
-						this.page = 0;
-						this.store(STORAGE_PAGE_SIZE, String(option));
-						this.render();
-					});
-					action.checked = option === this.pageSize;
-					return action;
-				}),
+			showVoltMenu(this.contextViewService, {
+				anchor: size,
+				position: 'below',
+				align: 'left',
+				gap: 4,
+				width: 120,
+				ariaLabel: localize('voltUsage.rowsMenu', "Rows per page"),
+				sections: [{ id: 'rows', items: PAGE_SIZES.map(option => ({ id: String(option), label: String(option), checked: option === this.pageSize, data: option })) }],
+				onPick: picked => {
+					this.pageSize = picked.data;
+					this.page = 0;
+					this.store(STORAGE_PAGE_SIZE, String(picked.data));
+					this.render();
+				},
 			});
 		}));
 		const first = this.page * this.pageSize + 1;

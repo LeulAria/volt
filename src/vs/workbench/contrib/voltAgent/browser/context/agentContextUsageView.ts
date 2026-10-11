@@ -254,6 +254,8 @@ export class AgentContextUsageView extends Disposable {
 		this.paintBranchIcon();
 
 		this.envChip.classList.toggle('worktree', worktree);
+		// A chat in your own checkout needs no marker: only a worktree says where it runs.
+		this.envChip.classList.toggle('hidden', !worktree);
 		const doc = this.envIcon.ownerDocument;
 		this.envIcon.replaceChildren(worktree ? createWorktreeIcon(doc) : createLocalIcon(doc));
 		this.envLabel.textContent = worktree ? localize('voltAgent.status.worktree', "Worktree") : localize('voltAgent.status.local', "Local");

@@ -213,6 +213,7 @@ import './contrib/mcp/browser/mcp.contribution.js';
 import './services/voltRuntime/browser/voltRuntimeService.js';
 import './services/voltRuntime/browser/history/agentHistoryService.js';
 import './services/voltRuntime/browser/git/agentWorktreeService.js';
+import './services/voltRuntime/browser/queryCache.js';
 import './contrib/voltSettings/browser/voltSettings.contribution.js';
 
 // New Agent editor

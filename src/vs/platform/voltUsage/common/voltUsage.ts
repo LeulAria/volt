@@ -128,6 +128,13 @@ export interface IVoltUsageService {
 	getUsage(force?: boolean): Promise<IVoltUsageSnapshot>;
 	/** Live rate limits per provider the user is signed in to. */
 	getLimits(force?: boolean): Promise<readonly IVoltUsageLimitGroup[]>;
+	/**
+	 * The last snapshot at hand, however old (also one saved by an earlier run), without waiting
+	 * for a scan; starts a rescan when it is stale. Undefined when there has never been one.
+	 */
+	peekUsage(): Promise<IVoltUsageSnapshot | undefined>;
+	/** {@link peekUsage} for {@link getLimits}. */
+	peekLimits(): Promise<readonly IVoltUsageLimitGroup[] | undefined>;
 	/** List prices for model ids (`claude-opus-5`, `gpt-6-sol`), from the same table as the usage page; null when unknown. */
 	getModelRates(models: readonly string[]): Promise<Record<string, IVoltTokenRates | null>>;
 }

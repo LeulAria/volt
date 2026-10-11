@@ -1596,7 +1596,8 @@
 .volt-usage-runway-track .reset-label {
 	position: absolute;
 	left: calc(var(--volt-usage-now) + (100% - var(--volt-usage-now)) * var(--volt-usage-f) + 12px);
-	top: 9px;
+	/* Under the dashed burn line (top 16px), level with the dry label, so the two never cross. */
+	top: 28px;
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;

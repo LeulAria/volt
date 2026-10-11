@@ -3,7 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IVoltUsageActivity, IVoltUsageBucket, IVoltUsageLimitGroup, IVoltUsageLimitWindow, IVoltUsageSnapshot, VOLT_USAGE_HISTORY_DAYS, VOLT_USAGE_PROVIDERS, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
+import { IVoltUsageActivity, IVoltUsageBucket, IVoltUsageLimitGroup, IVoltUsageLimitWindow, IVoltUsageService, IVoltUsageSnapshot, VOLT_USAGE_HISTORY_DAYS, VOLT_USAGE_PROVIDERS, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
+import { IVoltQuery } from '../../../../services/voltRuntime/browser/queryCache.js';
 
 export type UsageView = 'cost' | 'tokens' | 'limits';
 export type UsageRange = '24h' | '7d' | '30d' | '90d';
@@ -11,6 +12,19 @@ export type UsageMetric = 'cost' | 'tokens';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * Usage and limits go through the query cache: a page opens on the last numbers (this window's,
+ * or IndexedDB's after a restart) and refetches behind them when they are stale. Everything that
+ * reads them (the Usage page, run-group estimates) shares these keys.
+ */
+export function usageQuery(service: IVoltUsageService): IVoltQuery<IVoltUsageSnapshot> {
+	return { key: 'usage.snapshot', fetch: force => service.getUsage(force), staleTime: 20_000 };
+}
+
+export function limitsQuery(service: IVoltUsageService): IVoltQuery<readonly IVoltUsageLimitGroup[]> {
+	return { key: 'usage.limits', fetch: force => service.getLimits(force), staleTime: 60_000 };
+}
 
 export const USAGE_RANGE_DAYS: Record<Exclude<UsageRange, '24h'>, number> = { '7d': 7, '30d': 30, '90d': 90 };
 
