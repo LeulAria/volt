@@ -82,30 +82,6 @@ export function pillTabs<T extends string>(parent: HTMLElement, tabs: readonly {
 }
 
 /** "Automations > Find critical bugs > Runs"; every part but the last navigates. */
-export function breadcrumb(parent: HTMLElement, parts: readonly { readonly label: string; readonly onClick?: () => void }[], store: DisposableStore): HTMLElement {
-	const nav = append(parent, $('nav.volt-auto-breadcrumb'));
-	nav.setAttribute('aria-label', localize('voltAutomations.breadcrumb', "Breadcrumb"));
-	parts.forEach((part, index) => {
-		if (index) {
-			append(nav, $('span.sep')).appendChild(renderIcon(Codicon.chevronRight));
-		}
-		const last = index === parts.length - 1;
-		const element = append(nav, $(last ? 'span.crumb.current' : 'a.crumb'));
-		element.textContent = part.label;
-		if (!last && part.onClick) {
-			element.tabIndex = 0;
-			const go = part.onClick;
-			store.add(addDisposableListener(element, 'click', () => go()));
-			store.add(addDisposableListener(element, 'keydown', e => {
-				if (e.key === 'Enter') {
-					go();
-				}
-			}));
-		}
-	});
-	return nav;
-}
-
 export function sectionLabel(parent: HTMLElement, text: string): HTMLElement {
 	const element = append(parent, $('.volt-auto-section-label'));
 	element.textContent = text;

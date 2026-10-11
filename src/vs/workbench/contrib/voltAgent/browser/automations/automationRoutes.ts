@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IDisposable } from '../../../../../base/common/lifecycle.js';
+import type { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 
 /** A new automation's starting point: a template, or a prompt from a chat's composer. */
 export interface IAutomationSeed {
@@ -20,10 +21,12 @@ export type AutomationsRoute =
 	| { readonly page: 'detail'; readonly id?: string; readonly tab: 'settings' | 'runs'; readonly seed?: IAutomationSeed }
 	| { readonly page: 'runs' };
 
-/** What a page draws into: the bar at the top (breadcrumb, actions) and the scrolling content. */
+/** What a page draws into: the bar at the top (actions) and the scrolling content. */
 export interface IAutomationsHost {
 	readonly bar: HTMLElement;
 	readonly content: HTMLElement;
+	/** The trail after Automations in the window's title bar; empty on the list. */
+	setCrumbs(crumbs: readonly IAgentPageCrumb[]): void;
 	navigate(route: AutomationsRoute): void;
 	/** Records where the page is (a new automation that was saved) without redrawing it. */
 	setRoute(route: AutomationsRoute): void;

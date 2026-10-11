@@ -44,6 +44,8 @@ export interface IVoltMenuItem<T> {
 	readonly disabled?: boolean;
 	/** Right-aligned hint such as "⌘⌥A". */
 	readonly keybinding?: string;
+	/** A small right-aligned count chip, e.g. how many filters a submenu has on. */
+	readonly badge?: string;
 	/** Right-aligned glyph, e.g. an arrow for items that leave the menu. */
 	readonly trailingIcon?: ThemeIcon;
 	readonly tooltip?: string;
@@ -252,6 +254,8 @@ class VoltMenuWidget<T> extends Disposable {
 	private readonly flyout = this._register(new MutableDisposable<DisposableStore>());
 	private flyoutWidget: VoltMenuWidget<T> | undefined;
 	private flyoutItem: IVoltMenuItem<T> | undefined;
+	/** The open flyout's row; a refresh renders rows anew, so it is found again after one. */
+	private flyoutRow: HTMLElement | undefined;
 	private flyoutTimer: ReturnType<typeof setTimeout> | undefined;
 	private rows: Row<T>[] = [];
 	private sections: readonly IVoltMenuSection<T>[] = [];
@@ -401,6 +405,7 @@ class VoltMenuWidget<T> extends Disposable {
 
 	refresh(): void {
 		this.load(true);
+		this.flyoutWidget?.refresh();
 	}
 
 	private get query(): string {
@@ -508,7 +513,21 @@ class VoltMenuWidget<T> extends Disposable {
 			rows.push({ kind: 'message', id: 'empty', text });
 		}
 		const previous = this.active >= 0 && this.active < this.rows.length ? this.rows[this.active]?.id : undefined;
+		// A refresh hands out new items; keep the open flyout tied to its row's new one.
+		const flyoutId = this.flyoutItem?.id;
+		const flyoutRow = flyoutId === undefined ? undefined : rows.find(row => row.kind === 'item' && row.item.id === flyoutId);
+		if (flyoutRow?.kind === 'item') {
+			this.flyoutItem = flyoutRow.item;
+		}
 		this.showRows(rows);
+		if (flyoutRow && this.flyoutRow) {
+			const element = this.list.getHTMLElement().querySelector<HTMLElement>(`.monaco-list-row[data-index="${rows.indexOf(flyoutRow)}"]`);
+			if (element && element !== this.flyoutRow) {
+				this.flyoutRow.classList.remove('flyout-open');
+				element.classList.add('flyout-open');
+				this.flyoutRow = element;
+			}
+		}
 		// Keep the same row active across refreshes; otherwise start on the checked row or the first one.
 		let next = previous && !query ? rows.findIndex(row => row.id === previous && row.kind === 'item') : -1;
 		if (next < 0 && !query && !this.idle) {
@@ -775,17 +794,19 @@ class VoltMenuWidget<T> extends Disposable {
 		}
 		this.closeFlyout();
 		this.flyoutItem = item;
+		this.flyoutRow = row;
 		row.classList.add('flyout-open');
 		const store = new DisposableStore();
 		const host = append(this.host, $('.volt-menu-flyout'));
 		store.add(toDisposable(() => {
 			host.remove();
-			row.classList.remove('flyout-open');
+			this.flyoutRow?.classList.remove('flyout-open');
+			this.flyoutRow = undefined;
 			this.flyoutWidget = undefined;
 		}));
 		const widget = store.add(new VoltMenuWidget<T>(host, submenu, {
 			hide: this.context.hide,
-			relayout: () => this.placeFlyout(host, row),
+			relayout: () => this.placeFlyout(host, this.flyoutRow ?? row),
 			pick: this.context.pick,
 			ariaLabel: item.label,
 			idle: !focus,
@@ -1003,6 +1024,9 @@ function renderItem<T>(host: HTMLElement, item: IVoltMenuItem<T>, matches: IMatc
 	}
 	if (item.keybinding) {
 		append(host, $('span.volt-menu-keybinding')).textContent = item.keybinding;
+	}
+	if (item.badge) {
+		append(host, $('span.volt-menu-badge')).textContent = item.badge;
 	}
 	const trailing = item.submenu ? Codicon.chevronRight : item.checked ? Codicon.check : item.trailingIcon;
 	if (trailing) {

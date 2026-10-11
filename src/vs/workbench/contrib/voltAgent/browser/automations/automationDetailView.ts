@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { $, addDisposableListener, append, clearNode, getWindow } from '../../../../../base/browser/dom.js';
+import { AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
@@ -31,17 +32,19 @@ import { automationTemplate } from '../../../../services/voltRuntime/common/auto
 import { AutomationProvider, eventLabel, eventOption, providerLabel, providerSignature } from '../../../../services/voltRuntime/common/automations/automationTriggers.js';
 import { formatWebhookFilter, IAgentWebhookFilter, IAgentWebhookTrigger, newWebhookTrigger, parseWebhookFilter } from '../../../../services/voltRuntime/common/automations/automationWebhooks.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { IVoltQueryCache } from '../../../../services/voltRuntime/browser/queryCache.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { AgentModelPicker } from '../picker/agentModelPicker.js';
 import { IVoltMenuHandle, IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { formatNextRun, formatScheduleWhen } from './automationFormat.js';
 import { connectVoltRelay, hookUrl } from './automationHooks.js';
 import { clockIcon, mcpIcon, memoriesIcon, providerIcon, toolKindIcon } from './automationIcons.js';
-import { forgetRemoteNames, IRepositoryCandidate, modelButtonLabel, modelChoices, showMinuteMenu, showModelMenu, showRepositoryMenu, showTimeMenu, showToolMenu, showTriggerMenu, showWeekdayMenu, ToolPick } from './automationPickers.js';
+import { forgetRemoteNames, IRepositoryCandidate, showMinuteMenu, showRepositoryMenu, showTimeMenu, showToolMenu, showTriggerMenu, showWeekdayMenu, ToolPick } from './automationPickers.js';
 import { AutomationsRoute, IAutomationSeed, IAutomationsHost, IAutomationsPage } from './automationRoutes.js';
 import { RunHistoryPanel } from './automationRunsView.js';
-import { breadcrumb, button, field, flashLabel, iconButton, pillTabs, sectionLabel, showAutomationDialog, toggleSwitch } from './automationUi.js';
+import { button, field, flashLabel, iconButton, pillTabs, sectionLabel, showAutomationDialog, toggleSwitch } from './automationUi.js';
 
 type Tab = 'settings' | 'runs';
 
@@ -119,6 +122,9 @@ function setupHint(provider: AutomationProvider): string {
 		case 'slack': return localize('voltAutomations.hintSlack', "Slack app: Event Subscriptions → Request URL (Volt answers the challenge), subscribe to message.channels / reaction_added / channel_created. Signing secret from Basic Information.");
 		case 'teams': return localize('voltAutomations.hintTeams', "Teams: create an Outgoing Webhook with this URL; its security token goes in the secret. Or a Microsoft Graph subscription to channel messages.");
 		case 'sentry': return localize('voltAutomations.hintSentry', "Sentry: Settings → Developer Settings → Internal Integration. Webhook URL, enable Issue alerts; the client secret signs requests.");
+		case 'gitlab': return localize('voltAutomations.hintGitlab', "GitLab: Settings → Webhooks → Add new webhook. Paste the URL and tick Merge request, Comments, Push and Pipeline events. GitLab sends its secret token as is, not a signature; to check it, add headers.x-gitlab-token = <token> under Only when.");
+		case 'jira': return localize('voltAutomations.hintJira', "Jira: Settings → System → WebHooks → Create a WebHook. Paste the URL, pick Issue, Comment or Sprint events, and set a secret; Jira signs with it in X-Hub-Signature.");
+		case 'atlassian': return localize('voltAutomations.hintAtlassian', "Confluence: Settings → Webhooks. Bitbucket: Repository settings → Webhooks, with Pull request and Push events. Paste the URL; a secret signs requests in X-Hub-Signature.");
 		case 'linear': return localize('voltAutomations.hintLinear', "Linear: Settings → API → Webhooks → New webhook. Resource types Issues and Cycles; copy its signing secret here.");
 		case 'pagerduty': return localize('voltAutomations.hintPagerDuty', "PagerDuty: Integrations → Generic Webhooks (v3). Add this URL, choose incident events, and copy the signing secret.");
 		default: return localize('voltAutomations.hintWebhook', "POST JSON to the URL from anything. Use {{payload.field}} in the instructions to insert a value. With a secret, sign the body as HMAC-SHA256 in X-Volt-Signature: sha256=<hex>.");
@@ -185,7 +191,6 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 
 	private readonly page: HTMLElement;
 	private saveButton: HTMLButtonElement | undefined;
-	private crumbName: HTMLElement | undefined;
 	private titleInput!: HTMLInputElement;
 	private switchEl!: HTMLButtonElement;
 	private statusLabel!: HTMLElement;
@@ -215,6 +220,7 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 		@IWorkspacesService private readonly workspaces: IWorkspacesService,
 		@ILayoutService private readonly layoutService: ILayoutService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IVoltQueryCache private readonly queryCache: IVoltQueryCache,
 	) {
 		super();
 		this.tab = route.tab;
@@ -378,7 +384,7 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 	//#region Layout
 
 	private renderMissing(): void {
-		breadcrumb(this.host.bar, [{ label: localize('voltAutomations.tab', "Automations"), onClick: () => this.host.navigate({ page: 'list' }) }, { label: localize('voltAutomations.notFound', "Not found") }], this.barStore);
+		this.host.setCrumbs([{ label: localize('voltAutomations.notFound', "Not found") }]);
 		append(this.page, $('.volt-auto-empty')).textContent = localize('voltAutomations.missing', "This automation was deleted.");
 	}
 
@@ -392,9 +398,7 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 		this.titleInput.spellcheck = false;
 		this._register(addDisposableListener(this.titleInput, 'input', () => {
 			this.setDraft({ name: this.titleInput.value });
-			if (this.crumbName) {
-				this.crumbName.textContent = this.titleInput.value || localize('voltAutomations.untitled', "Untitled");
-			}
+			this.syncCrumbs();
 		}));
 		this._register(addDisposableListener(this.titleInput, 'keydown', e => {
 			if (e.key === 'Enter') {
@@ -433,16 +437,18 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 		this.renderBody();
 	}
 
+	/** The title bar's trail: the automation's name, then Runs on the Run History tab. */
+	private syncCrumbs(): void {
+		const name = this.draft.name.trim() || localize('voltAutomations.untitled', "Untitled");
+		this.host.setCrumbs(this.tab === 'runs'
+			? [{ label: name, run: () => this.switchTab('settings') }, { label: localize('voltAutomations.runs', "Runs") }]
+			: [{ label: name }]);
+	}
+
 	private renderBar(): void {
 		this.barStore.clear();
 		clearNode(this.host.bar);
-		const parts = [
-			{ label: localize('voltAutomations.tab', "Automations"), onClick: () => this.host.navigate({ page: 'list' }) },
-			{ label: this.draft.name || localize('voltAutomations.untitled', "Untitled"), ...(this.tab === 'runs' ? { onClick: () => this.switchTab('settings') } : {}) },
-			...(this.tab === 'runs' ? [{ label: localize('voltAutomations.runs', "Runs") }] : []),
-		];
-		const nav = breadcrumb(this.host.bar, parts, this.barStore);
-		this.crumbName = nav.querySelectorAll<HTMLElement>('.crumb')[1];
+		this.syncCrumbs();
 		const actions = append(this.host.bar, $('.volt-auto-bar-actions'));
 		if (this.tab === 'runs') {
 			this.saveButton = undefined;
@@ -898,21 +904,23 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 			store.add(addDisposableListener(input, 'input', () => this.updateTrigger(trigger.id, { option: input.value.trim() || undefined }, false)));
 		}
 
-		const secretField = field(panel, localize('voltAutomations.secret', "Signing secret"));
-		const secret = append(secretField, $('input.volt-auto-input')) as HTMLInputElement;
-		secret.type = 'password';
-		secret.autocomplete = 'off';
-		secret.placeholder = hook.signature.secret
-			? localize('voltAutomations.secretSaved', "Saved. Type to replace it; clear the field and save to remove.")
-			: localize('voltAutomations.secretPlaceholder', "Recommended: the secret the sender signs with");
-		store.add(addDisposableListener(secret, 'input', () => {
-			const value = secret.value.trim();
-			const kind = trigger.provider === 'webhook' ? 'generic' : providerSignature(trigger.provider);
-			this.updateHook(trigger, { signature: value ? { kind, secret: value } : hook.signature.secret ? hook.signature : { kind: 'none' } });
-		}));
-		if (hook.signature.secret) {
-			const removeSecret = button(secretField, 'volt-auto-link-button', localize('voltAutomations.removeSecret', "Remove secret"), store, () => this.updateHook(trigger, { signature: { kind: 'none' } }, true));
-			removeSecret.classList.add('inline');
+		const preset = trigger.provider === 'webhook' ? { kind: 'generic' as const } : providerSignature(trigger.provider);
+		if (preset) {
+			const secretField = field(panel, localize('voltAutomations.secret', "Signing secret"));
+			const secret = append(secretField, $('input.volt-auto-input')) as HTMLInputElement;
+			secret.type = 'password';
+			secret.autocomplete = 'off';
+			secret.placeholder = hook.signature.secret
+				? localize('voltAutomations.secretSaved', "Saved. Type to replace it; clear the field and save to remove.")
+				: localize('voltAutomations.secretPlaceholder', "Recommended: the secret the sender signs with");
+			store.add(addDisposableListener(secret, 'input', () => {
+				const value = secret.value.trim();
+				this.updateHook(trigger, { signature: value ? { ...preset, secret: value } : hook.signature.secret ? hook.signature : { kind: 'none' } });
+			}));
+			if (hook.signature.secret) {
+				const removeSecret = button(secretField, 'volt-auto-link-button', localize('voltAutomations.removeSecret', "Remove secret"), store, () => this.updateHook(trigger, { signature: { kind: 'none' } }, true));
+				removeSecret.classList.add('inline');
+			}
 		}
 
 		const filters = append(field(panel, localize('voltAutomations.onlyWhen', "Only when")), $('textarea.volt-auto-input.filters')) as HTMLTextAreaElement;
@@ -947,11 +955,23 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 	private renderDeliveries(box: HTMLElement, hookId: string): void {
 		append(box, $('.volt-auto-field-label')).textContent = localize('voltAutomations.deliveries', "Recent deliveries");
 		const list = append(box, $('.volt-auto-delivery-list'));
-		void this.relay.request<{ deliveries: { id: string; status: string; receivedAt: number; event?: string; result?: { error?: string; note?: string; threadId?: string } }[] }>('GET', `/deliveries?hook=${encodeURIComponent(hookId)}&limit=6`).then(reply => {
-			if (!box.isConnected) {
+		// Cached per hook: the last deliveries show at once while the relay is asked again.
+		const deliveries = this.triggerStore.add(this.queryCache.watch({
+			key: `automations.deliveries:${hookId}`,
+			staleTime: 10_000,
+			fetch: () => this.relay.request<{ deliveries: { id: string; status: string; receivedAt: number; event?: string; result?: { error?: string; note?: string; threadId?: string } }[] }>('GET', `/deliveries?hook=${encodeURIComponent(hookId)}&limit=6`).then(reply => reply.deliveries),
+		}));
+		const rowStore = this.triggerStore.add(new DisposableStore());
+		let shown: unknown;
+		const draw = () => {
+			const data = deliveries.state.data;
+			if (!data || data === shown || !box.isConnected) {
 				return;
 			}
-			const rows = [...reply.deliveries].reverse();
+			shown = data;
+			rowStore.clear();
+			clearNode(list);
+			const rows = [...data].reverse();
 			if (!rows.length) {
 				append(list, $('.volt-auto-note')).textContent = localize('voltAutomations.noDeliveries', "No deliveries yet.");
 			}
@@ -962,14 +982,16 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 				append(row, $('span.what')).textContent = [delivery.event, delivery.result?.error ?? delivery.result?.note].filter(Boolean).join(' · ');
 				if (delivery.result?.threadId) {
 					const threadId = delivery.result.threadId;
-					button(row, 'volt-auto-link-button', localize('voltAutomations.openChat', "Open chat"), this.triggerStore, () => void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, threadId));
+					button(row, 'volt-auto-link-button', localize('voltAutomations.openChat', "Open chat"), rowStore, () => void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, threadId));
 				}
 				if (delivery.status !== 'held') {
-					button(row, 'volt-auto-link-button', localize('voltAutomations.redeliver', "Redeliver"), this.triggerStore, () => void this.relay.request('POST', `/deliveries/${encodeURIComponent(delivery.id)}/redeliver`).catch(err => this.notifications.error(String(err))));
+					button(row, 'volt-auto-link-button', localize('voltAutomations.redeliver', "Redeliver"), rowStore, () => void this.relay.request('POST', `/deliveries/${encodeURIComponent(delivery.id)}/redeliver`).catch(err => this.notifications.error(String(err))));
 				}
 			}
 			this.host.relayout();
-		}, () => undefined);
+		};
+		this.triggerStore.add(deliveries.onDidChange(draw));
+		draw();
 	}
 
 	//#endregion
@@ -997,17 +1019,28 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 		getWindow(area).requestAnimationFrame(fit);
 
 		const footer = append(card, $('.volt-auto-instructions-footer'));
-		const choices = modelChoices(this.runtime.listCatalog());
-		const modelButton = button(footer, 'volt-auto-model-button', modelButtonLabel(choices, this.draft.modelRef), this.bodyStore, () => {
-			showModelMenu(this.contextView, modelButton, modelChoices(this.runtime.listCatalog()), this.draft.modelRef, ref => {
-				this.setDraft({ modelRef: ref });
-				const label = modelButton.querySelector('.label');
-				if (label) {
-					label.textContent = modelButtonLabel(modelChoices(this.runtime.listCatalog()), ref);
-				}
-			});
-		});
-		modelButton.appendChild(renderIcon(Codicon.chevronDown));
+		// The composer's picker, kept on the draft: Auto leaves the run on the default model.
+		const modelButton = append(footer, $('button.volt-agent-model.volt-auto-model-button')) as HTMLButtonElement;
+		modelButton.type = 'button';
+		modelButton.setAttribute('aria-haspopup', 'dialog');
+		modelButton.setAttribute('aria-label', localize('voltAutomations.model', "Model"));
+		const picker = this.bodyStore.add(this.instantiationService.createInstance(AgentModelPicker, {
+			binding: {
+				get: () => this.draft.modelRef,
+				set: ref => this.setDraft({ modelRef: ref }),
+				autoLabel: localize('voltAutomations.auto', "Auto"),
+				autoDescription: localize('voltAutomations.autoDesc', "Run on the default model"),
+			},
+			position: AnchorPosition.ABOVE,
+			onDidChange: () => paint(),
+		}));
+		const paint = () => {
+			modelButton.replaceChildren();
+			picker.renderTrigger(modelButton);
+			modelButton.appendChild(renderIcon(Codicon.chevronDown));
+		};
+		paint();
+		this.bodyStore.add(addDisposableListener(modelButton, 'click', () => picker.show(modelButton, () => paint())));
 	}
 
 	/** `@` lists tools (adding one adds it to Tools), `/` lists snippets, at the start of a word. */

@@ -11,8 +11,7 @@
  */
 
 .volt-automations,
-.volt-auto-dialog-layer,
-.volt-auto-filter {
+.volt-auto-dialog-layer {
 	--volt-auto-fg: var(--vscode-foreground);
 	--volt-auto-muted: color-mix(in srgb, var(--vscode-foreground) 58%, transparent);
 	--volt-auto-soft: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
@@ -42,61 +41,30 @@
 	outline-offset: 1px;
 }
 
-/* Bar: breadcrumb left, page actions right (the window's own IDE button sits beyond them). */
+/* Bar: page actions on the right (the trail is in the window's title bar). */
 .volt-automations-bar {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
+	justify-content: flex-end;
 	gap: 16px;
 	height: 44px;
 	padding: 0 16px;
 	flex-shrink: 0;
 }
 
-.volt-automations-body {
+/* The scroller takes the rest of the column; its content must be exactly that tall for the
+ * scrollbar to see what overflows. */
+.volt-automations > .volt-agent-scrollable {
 	flex: 1;
 	min-height: 0;
 }
 
+.volt-automations-body {
+	height: 100%;
+}
+
 .volt-automations-content {
 	container-type: inline-size;
-}
-
-.volt-auto-breadcrumb {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	min-width: 0;
-	font-size: 13px;
-	white-space: nowrap;
-}
-
-.volt-auto-breadcrumb .crumb {
-	color: var(--volt-auto-soft);
-	overflow: hidden;
-	text-overflow: ellipsis;
-	text-decoration: none;
-}
-
-.volt-auto-breadcrumb a.crumb {
-	cursor: pointer;
-}
-
-.volt-auto-breadcrumb a.crumb:hover {
-	color: var(--volt-auto-fg);
-}
-
-.volt-auto-breadcrumb .crumb.current {
-	color: var(--volt-auto-fg);
-}
-
-.volt-auto-breadcrumb .sep {
-	display: inline-flex;
-	color: var(--volt-auto-muted);
-}
-
-.volt-auto-breadcrumb .sep .codicon {
-	font-size: 12px;
 }
 
 .volt-auto-bar-actions {
@@ -1355,141 +1323,6 @@ textarea.volt-auto-input.filters {
 
 .volt-automation-svg.skipped {
 	color: var(--volt-auto-muted, currentColor);
-}
-
-/* Filter popover (opaque). */
-.volt-auto-filter {
-	width: 238px;
-	padding: 5px;
-	box-sizing: border-box;
-	border-radius: 10px;
-	background: var(--vscode-editor-background, #1e1e1e);
-	color: var(--vscode-foreground);
-	box-shadow:
-		0 0 0 1px var(--vscode-widget-border, rgba(255, 255, 255, 0.1)),
-		0 6px 20px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
-	font-size: 13px;
-	outline: none;
-	margin-top: 4px;
-}
-
-.volt-auto-filter-title {
-	padding: 6px 10px 4px;
-	color: color-mix(in srgb, var(--vscode-foreground) 58%, transparent);
-	font-size: 12.5px;
-}
-
-.volt-auto-filter-list {
-	display: flex;
-	flex-direction: column;
-	gap: 1px;
-}
-
-.volt-auto-filter-list.scroll {
-	max-height: 360px;
-	overflow-y: auto;
-}
-
-.volt-auto-filter-row {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	width: 100%;
-	height: 27px;
-	padding: 0 8px 0 10px;
-	box-sizing: border-box;
-	border: none;
-	border-radius: 6px;
-	background: transparent;
-	color: var(--vscode-foreground);
-	font: inherit;
-	font-size: 13px;
-	text-align: left;
-	cursor: pointer;
-	flex-shrink: 0;
-}
-
-.volt-auto-filter-row:hover,
-.volt-auto-filter-row:focus {
-	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
-	outline: none;
-}
-
-.volt-auto-filter-row.indent {
-	padding-left: 30px;
-}
-
-.volt-auto-filter-row .icon {
-	display: inline-flex;
-	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
-}
-
-.volt-auto-filter-row .label {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.volt-auto-filter-row .count {
-	color: color-mix(in srgb, var(--vscode-foreground) 58%, transparent);
-	font-size: 12px;
-}
-
-.volt-auto-filter-row .trailing {
-	display: inline-flex;
-	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
-}
-
-.volt-auto-filter-row .trailing .codicon {
-	font-size: 14px;
-}
-
-.volt-auto-filter-head {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 2px 4px 5px;
-	margin: 0 -5px 4px;
-	padding-left: 9px;
-	border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
-	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
-	font-size: 12.5px;
-}
-
-.volt-auto-filter-back {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 22px;
-	height: 22px;
-	padding: 0;
-	border: none;
-	border-radius: 5px;
-	background: transparent;
-	color: inherit;
-	cursor: pointer;
-}
-
-.volt-auto-filter-back:hover {
-	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
-	color: var(--vscode-foreground);
-}
-
-.volt-auto-filter-search {
-	width: calc(100% + 10px);
-	height: 30px;
-	margin: -4px -5px 4px;
-	padding: 0 14px;
-	box-sizing: border-box;
-	border: none;
-	border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
-	background: transparent;
-	color: var(--vscode-foreground);
-	font: inherit;
-	font-size: 13px;
-	outline: none;
 }
 
 /* Menus built on voltMenu. */

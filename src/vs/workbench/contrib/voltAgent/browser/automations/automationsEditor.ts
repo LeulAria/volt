@@ -27,6 +27,7 @@ import { createAgentScrollable } from '../editor/agentScrollable.js';
 import { AutomationDetailView } from './automationDetailView.js';
 import { AutomationListView } from './automationListView.js';
 import { AllRunsView } from './automationRunsView.js';
+import { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 import { AutomationsRoute, IAutomationsHost, IAutomationsPage } from './automationRoutes.js';
 
 export const AUTOMATIONS_EDITOR_ID = 'workbench.editor.voltAutomations';
@@ -39,6 +40,28 @@ export class AutomationsEditorInput extends EditorInput {
 
 	readonly resource = URI.from({ scheme: Schemas.voltAutomations, path: 'automations' });
 	route: AutomationsRoute = { page: 'list' };
+
+	private _crumbs: readonly IAgentPageCrumb[] = [];
+	private _home: (() => void) | undefined;
+
+	/** Where the page is past Automations, for the title bar: an automation, then its runs. */
+	get crumbs(): readonly IAgentPageCrumb[] {
+		return this._crumbs;
+	}
+
+	/** Back to the list, from the title bar's Automations while a page is open past it. */
+	get home(): (() => void) | undefined {
+		return this._home;
+	}
+
+	setCrumbs(crumbs: readonly IAgentPageCrumb[], home: (() => void) | undefined): void {
+		const same = crumbs.length === this._crumbs.length && crumbs.every((crumb, i) => crumb.label === this._crumbs[i].label && !crumb.run === !this._crumbs[i].run);
+		this._crumbs = crumbs;
+		this._home = home;
+		if (!same) {
+			this._onDidChangeLabel.fire();
+		}
+	}
 
 	override get typeId(): string {
 		return AutomationsEditorInput.TypeID;
@@ -160,6 +183,7 @@ export class AutomationsEditor extends EditorPane {
 		this.page.clear();
 		clearNode(this.bar);
 		clearNode(this.content);
+		input?.setCrumbs([], undefined);
 		this.container.dataset.page = route.page;
 		const host: IAutomationsHost = {
 			bar: this.bar,
@@ -168,6 +192,11 @@ export class AutomationsEditor extends EditorPane {
 			setRoute: next => {
 				if (this.input instanceof AutomationsEditorInput) {
 					this.input.route = next;
+				}
+			},
+			setCrumbs: crumbs => {
+				if (this.input instanceof AutomationsEditorInput) {
+					this.input.setCrumbs(crumbs, crumbs.length ? () => void this.navigate({ page: 'list' }) : undefined);
 				}
 			},
 			relayout: () => this.scroll.scanDomNode(),

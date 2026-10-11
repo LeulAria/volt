@@ -122,48 +122,6 @@ export function showWeekdayMenu(contextView: IContextViewService, anchor: HTMLEl
 
 //#endregion
 
-//#region Model
-
-export interface IModelChoice {
-	readonly ref: string;
-	readonly id: string;
-	readonly label: string;
-}
-
-/** Models a run can use (agents like Cursor's Grok and local models). */
-export function modelChoices(catalog: readonly { readonly ref: string; readonly id: string; readonly label: string; readonly enabled: boolean; readonly kind: string }[]): IModelChoice[] {
-	return catalog.filter(item => item.enabled && (item.kind === 'model' || item.kind === 'agent')).map(item => ({ ref: item.ref, id: item.id, label: item.label }));
-}
-
-/** What the model button says: the model's id ("grok-4.7-high-fast"), or Auto. */
-export function modelButtonLabel(choices: readonly IModelChoice[], ref: string | undefined): string {
-	const choice = ref ? choices.find(entry => entry.ref === ref) : undefined;
-	return choice ? choice.id : ref ? ref.split('/').pop() ?? ref : localize('voltAutomations.auto', "Auto");
-}
-
-/** The current model first (checked), then Auto, then the rest, with a search field. */
-export function showModelMenu(contextView: IContextViewService, anchor: HTMLElement, choices: readonly IModelChoice[], current: string | undefined, onPick: (ref: string | undefined) => void): IVoltMenuHandle {
-	const selected = current ? choices.find(choice => choice.ref === current) : undefined;
-	const items: IVoltMenuItem<string | undefined>[] = [
-		...(selected ? [{ id: `cur:${selected.ref}`, label: selected.id, checked: true, keywords: selected.label, data: selected.ref }] : []),
-		{ id: 'auto', label: localize('voltAutomations.auto', "Auto"), checked: !selected, data: undefined },
-		...choices.filter(choice => choice !== selected).map(choice => ({ id: choice.ref, label: choice.label, keywords: choice.id, data: choice.ref })),
-	];
-	return showVoltMenu<string | undefined>(contextView, {
-		anchor,
-		position: 'above',
-		gap: 6,
-		width: 260,
-		className: 'volt-auto-menu',
-		ariaLabel: localize('voltAutomations.model', "Model"),
-		search: { placeholder: localize('voltAutomations.searchModels', "Search models...") },
-		sections: [{ id: 'models', items }],
-		onPick: item => onPick(item.data),
-	});
-}
-
-//#endregion
-
 //#region Repositories
 
 export interface IRepositoryCandidate {

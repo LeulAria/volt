@@ -14,11 +14,12 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { activeFilterCount, AutomationRunStatus, filterRuns, formatDuration, IAutomationRun, IAutomationService, isActiveRun, runDuration, runStats } from '../../../../services/voltRuntime/common/automations/automations.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { createHomeFilterIcon } from '../home/agentHomeIcons.js';
 import { IMutableRunFilter, newRunFilter, runToolLabel, showRunFilterMenu, statusLabel } from './automationFilterMenu.js';
 import { formatScheduleWhen } from './automationFormat.js';
 import { providerIcon, statusIcon, toolKindIcon } from './automationIcons.js';
 import { IAutomationsHost, IAutomationsPage } from './automationRoutes.js';
-import { breadcrumb, button, iconButton } from './automationUi.js';
+import { button, iconButton } from './automationUi.js';
 
 interface IRunRow extends IAutomationRun {
 	readonly automationId: string;
@@ -84,7 +85,7 @@ export class RunHistoryPanel extends Disposable {
 				this.searchBox.focus();
 			}
 		});
-		const filterButton = iconButton(tools, Codicon.filter, localize('voltAutomations.filter', "Filter"), store, () => showRunFilterMenu(contextView, filterButton, this.filter, () => this.render()));
+		const filterButton = iconButton(tools, () => createHomeFilterIcon(), localize('voltAutomations.filter', "Filter"), store, () => showRunFilterMenu(contextView, filterButton, this.filter, () => this.render()));
 		filterButton.classList.add('volt-auto-filter-button');
 		this.badge = append(filterButton, $('span.volt-auto-badge'));
 		this.stats = append(parent, $('.volt-auto-stats'));
@@ -248,10 +249,7 @@ export class AllRunsView extends Disposable implements IAutomationsPage {
 	) {
 		super();
 		const store = this._register(new DisposableStore());
-		breadcrumb(host.bar, [
-			{ label: localize('voltAutomations.tab', "Automations"), onClick: () => host.navigate({ page: 'list' }) },
-			{ label: localize('voltAutomations.allRuns', "All Runs") },
-		], store);
+		host.setCrumbs([{ label: localize('voltAutomations.allRuns', "All Runs") }]);
 		const actions = append(host.bar, $('.volt-auto-bar-actions'));
 		const stopAll = button(actions, 'volt-auto-outline-button', localize('voltAutomations.stopAll', "Stop All Runs"), store, () => void automations.stopRuns(), Codicon.debugStop);
 		const syncStop = () => stopAll.disabled = !automations.list().some(automation => automation.runs.some(isActiveRun));

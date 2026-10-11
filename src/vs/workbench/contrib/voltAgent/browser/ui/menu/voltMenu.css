@@ -39,6 +39,14 @@
 	overflow: hidden;
 }
 
+/* The menu takes focus for its keys; the workbench's focus outline would draw a second edge
+ * inside its ring. */
+.monaco-workbench .volt-menu:focus,
+.monaco-workbench .volt-menu:focus-visible,
+.monaco-workbench .volt-menu:focus-within {
+	outline: none !important;
+}
+
 .monaco-workbench.vs .volt-menu,
 .monaco-workbench.hc-light .volt-menu {
 	box-shadow:
@@ -272,6 +280,23 @@
 	font-size: 12px;
 	flex-shrink: 0;
 	opacity: 0.55;
+}
+
+.volt-menu-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 5px;
+	box-sizing: border-box;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	font-size: 10.5px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
 }
 
 .volt-menu-trailing {

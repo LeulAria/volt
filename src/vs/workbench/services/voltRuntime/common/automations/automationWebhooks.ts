@@ -132,9 +132,9 @@ export function webhookContext(input: {
 	}
 	const payload = parseBody(input.body, headers['content-type']);
 	const fromPayload = payload && typeof payload === 'object' && !Array.isArray(payload)
-		? [(payload as Record<string, unknown>).event, (payload as Record<string, unknown>).type, (payload as Record<string, unknown>).event_type].find(value => typeof value === 'string') as string | undefined
+		? [(payload as Record<string, unknown>).event, (payload as Record<string, unknown>).type, (payload as Record<string, unknown>).event_type, (payload as Record<string, unknown>).webhookEvent].find(value => typeof value === 'string') as string | undefined
 		: undefined;
-	const event = input.event ?? headers['x-github-event'] ?? headers['x-gitlab-event'] ?? headers['sentry-hook-resource'] ?? headers['linear-event'] ?? headers['x-event-type'] ?? headers['x-volt-event'] ?? fromPayload;
+	const event = input.event ?? headers['x-github-event'] ?? headers['x-gitlab-event'] ?? headers['sentry-hook-resource'] ?? headers['linear-event'] ?? headers['x-event-key'] ?? headers['x-event-type'] ?? headers['x-volt-event'] ?? fromPayload;
 	return {
 		payload,
 		body: input.body,

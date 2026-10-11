@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IWebhookContext, resolveWebhookPath, truncateLines, WebhookSignatureKind } from './automationWebhooks.js';
+import { IAgentWebhookSignature, IWebhookContext, resolveWebhookPath, truncateLines } from './automationWebhooks.js';
 
 /**
  * What can start an automation: the clock, or an event from a service that posts webhooks. Each
@@ -12,27 +12,30 @@ import { IWebhookContext, resolveWebhookPath, truncateLines, WebhookSignatureKin
  * (a pull request that was merged, not just closed). Everything is pure.
  */
 
-export type AutomationProvider = 'schedule' | 'github' | 'slack' | 'teams' | 'sentry' | 'linear' | 'webhook' | 'pagerduty';
+export type AutomationProvider = 'schedule' | 'github' | 'gitlab' | 'slack' | 'teams' | 'sentry' | 'linear' | 'jira' | 'atlassian' | 'webhook' | 'pagerduty';
 
 /** The trigger menu order (Add Trigger). */
-export const AUTOMATION_PROVIDERS: readonly AutomationProvider[] = ['schedule', 'github', 'slack', 'teams', 'sentry', 'linear', 'webhook', 'pagerduty'];
+export const AUTOMATION_PROVIDERS: readonly AutomationProvider[] = ['schedule', 'github', 'gitlab', 'slack', 'teams', 'sentry', 'linear', 'jira', 'atlassian', 'webhook', 'pagerduty'];
 
 /** Run history groups GitHub and GitLab as "Git". The filter menu order. */
-export type AutomationTriggerGroup = 'git' | 'slack' | 'teams' | 'linear' | 'schedule' | 'pagerduty' | 'sentry' | 'webhook' | 'manual';
-export const AUTOMATION_TRIGGER_GROUPS: readonly Exclude<AutomationTriggerGroup, 'manual'>[] = ['git', 'slack', 'teams', 'linear', 'schedule', 'pagerduty', 'sentry', 'webhook'];
+export type AutomationTriggerGroup = 'git' | 'slack' | 'teams' | 'linear' | 'jira' | 'atlassian' | 'schedule' | 'pagerduty' | 'sentry' | 'webhook' | 'manual';
+export const AUTOMATION_TRIGGER_GROUPS: readonly Exclude<AutomationTriggerGroup, 'manual'>[] = ['git', 'slack', 'teams', 'linear', 'jira', 'atlassian', 'schedule', 'pagerduty', 'sentry', 'webhook'];
 
 export function triggerGroupOf(provider: AutomationProvider | 'manual'): AutomationTriggerGroup {
-	return provider === 'github' ? 'git' : provider;
+	return provider === 'github' || provider === 'gitlab' ? 'git' : provider;
 }
 
 export function providerLabel(provider: AutomationProvider): string {
 	switch (provider) {
 		case 'schedule': return 'Scheduled';
 		case 'github': return 'GitHub';
+		case 'gitlab': return 'GitLab';
 		case 'slack': return 'Slack';
 		case 'teams': return 'Microsoft Teams';
 		case 'sentry': return 'Sentry';
 		case 'linear': return 'Linear';
+		case 'jira': return 'Jira';
+		case 'atlassian': return 'Atlassian';
 		case 'webhook': return 'Webhook Triggered';
 		case 'pagerduty': return 'PagerDuty';
 	}
@@ -48,16 +51,23 @@ export function triggerGroupLabel(group: AutomationTriggerGroup): string {
 	}
 }
 
-/** The signing scheme a provider uses, preset on its trigger. */
-export function providerSignature(provider: AutomationProvider): WebhookSignatureKind {
+/**
+ * The signing scheme a provider uses, preset on its trigger. Jira, Bitbucket and Confluence sign
+ * like GitHub but in `X-Hub-Signature`, so they take the generic check with that header. GitLab
+ * sends its secret token as is, not a signature: undefined, and the trigger shows no secret field.
+ */
+export function providerSignature(provider: AutomationProvider): Omit<IAgentWebhookSignature, 'secret'> | undefined {
 	switch (provider) {
-		case 'github': return 'github';
-		case 'slack': return 'slack';
-		case 'sentry': return 'sentry';
-		case 'linear': return 'linear';
-		case 'pagerduty': return 'pagerduty';
-		case 'teams': return 'teams';
-		default: return 'none';
+		case 'github': return { kind: 'github' };
+		case 'slack': return { kind: 'slack' };
+		case 'sentry': return { kind: 'sentry' };
+		case 'linear': return { kind: 'linear' };
+		case 'pagerduty': return { kind: 'pagerduty' };
+		case 'teams': return { kind: 'teams' };
+		case 'jira':
+		case 'atlassian': return { kind: 'generic', header: 'x-hub-signature', prefix: 'sha256=', encoding: 'hex' };
+		case 'gitlab': return undefined;
+		default: return { kind: 'generic' };
 	}
 }
 
@@ -77,6 +87,8 @@ export interface IAutomationEventNode {
 
 const BRANCH = { label: 'Branch', placeholder: 'main (empty: any branch)' };
 const CHANNEL = { label: 'Channel', placeholder: '#alerts or C0123 (empty: any channel)' };
+const PROJECT = { label: 'Project', placeholder: 'ENG (empty: any project)' };
+const SPACE = { label: 'Space', placeholder: 'DOCS (empty: any space)' };
 
 export const SCHEDULE_EVENTS = ['hourly', 'daily', 'weekly', 'cron'] as const;
 export type AutomationScheduleKind = typeof SCHEDULE_EVENTS[number];
@@ -124,6 +136,25 @@ export const AUTOMATION_EVENTS: Readonly<Record<AutomationProvider, readonly IAu
 			],
 		},
 	],
+	gitlab: [
+		{ label: 'Draft opened', event: 'draft_opened' },
+		{
+			label: 'Merge request…', children: [
+				{ label: 'Opened', event: 'pr.opened' },
+				{ label: 'Pushed', event: 'pr.pushed' },
+				{ label: 'Merged', event: 'pr.merged' },
+			],
+		},
+		{ label: 'Comment added', event: 'comment_added' },
+		{ label: 'New push to branch', event: 'push', option: BRANCH },
+		{
+			label: 'Pipeline…', children: [
+				{ label: 'Succeeded', event: 'pipeline.success' },
+				{ label: 'Failed', event: 'pipeline.failed' },
+				{ label: 'Any result', event: 'pipeline.any' },
+			],
+		},
+	],
 	slack: [
 		{ label: 'New message in channel', event: 'message', option: CHANNEL },
 		{ label: 'Reaction added to message', event: 'reaction', option: { label: 'Emoji', placeholder: 'eyes (empty: any reaction)' } },
@@ -154,6 +185,42 @@ export const AUTOMATION_EVENTS: Readonly<Record<AutomationProvider, readonly IAu
 			],
 		},
 		{ label: 'End of cycle', event: 'cycle.ended' },
+	],
+	jira: [
+		{
+			label: 'Issue…', children: [
+				{ label: 'Created', event: 'issue.created', option: PROJECT },
+				{ label: 'Updated', event: 'issue.updated', option: PROJECT },
+				{ label: 'Status changed', event: 'issue.status_changed', option: PROJECT },
+				{ label: 'Assigned', event: 'issue.assigned', option: PROJECT },
+				{ label: 'Deleted', event: 'issue.deleted', option: PROJECT },
+			],
+		},
+		{ label: 'Comment added', event: 'comment.created', option: PROJECT },
+		{
+			label: 'Sprint…', children: [
+				{ label: 'Started', event: 'sprint.started' },
+				{ label: 'Closed', event: 'sprint.closed' },
+			],
+		},
+	],
+	atlassian: [
+		{
+			label: 'Page…', section: 'Confluence', children: [
+				{ label: 'Created', event: 'page.created', option: SPACE },
+				{ label: 'Updated', event: 'page.updated', option: SPACE },
+			],
+		},
+		{ label: 'Page comment added', event: 'page.comment', option: SPACE },
+		{
+			label: 'Pull request…', section: 'Bitbucket', children: [
+				{ label: 'Opened', event: 'bitbucket.pr.opened' },
+				{ label: 'Updated', event: 'bitbucket.pr.updated' },
+				{ label: 'Merged', event: 'bitbucket.pr.merged' },
+				{ label: 'Comment added', event: 'bitbucket.pr.comment' },
+			],
+		},
+		{ label: 'New push to branch', event: 'bitbucket.push', option: BRANCH },
 	],
 	webhook: [],
 	pagerduty: [
@@ -246,10 +313,13 @@ export function matchAutomationEvent(provider: AutomationProvider, event: string
 		case 'schedule': return no('A scheduled trigger has no webhook.');
 		case 'webhook': return YES;
 		case 'github': return matchGit(event, option, context);
+		case 'gitlab': return matchGitLab(event, option, context);
 		case 'slack': return matchSlack(event, option, context);
 		case 'teams': return matchTeams(event, option, context);
 		case 'sentry': return matchSentry(event, context);
 		case 'linear': return matchLinear(event, context);
+		case 'jira': return matchJira(event, option, context);
+		case 'atlassian': return matchAtlassian(event, option, context);
 		case 'pagerduty': return matchPagerDuty(event, context);
 	}
 }
@@ -319,6 +389,24 @@ function matchGit(event: string, option: string | undefined, context: IWebhookCo
 		}
 	}
 	return no(`Unknown GitHub trigger ${event}.`);
+}
+
+function matchGitLab(event: string, option: string | undefined, context: IWebhookContext): IEventMatch {
+	const gl = context.headers['x-gitlab-event'];
+	if (!gl) {
+		return no('Not a GitLab event.');
+	}
+	if (event === 'pipeline.success' || event === 'pipeline.failed' || event === 'pipeline.any') {
+		if (gl !== 'Pipeline Hook') {
+			return no(`${gl} is not a pipeline.`);
+		}
+		const status = str(get(context, 'payload.object_attributes.status'));
+		if (status !== 'success' && status !== 'failed' && status !== 'canceled') {
+			return no(`Pipeline ${status ?? '?'}, not finished.`);
+		}
+		return event === 'pipeline.any' || status === event.slice('pipeline.'.length) ? YES : no(`Pipeline ${status}.`);
+	}
+	return matchGit(event, option, context);
 }
 
 function matchSlack(event: string, option: string | undefined, context: IWebhookContext): IEventMatch {
@@ -415,6 +503,68 @@ function matchLinear(event: string, context: IWebhookContext): IEventMatch {
 	return no(`Unknown Linear trigger ${event}.`);
 }
 
+/** Jira Cloud webhooks: `webhookEvent` names it; a status or assignee change shows in the changelog. */
+function matchJira(event: string, option: string | undefined, context: IWebhookContext): IEventMatch {
+	const type = str(get(context, 'payload.webhookEvent'));
+	const project = str(get(context, 'payload.issue.fields.project.key'));
+	const inProject = () => optionMatches(option, project) ? YES : no(`Project ${project ?? '?'}, not ${option}.`);
+	const changed = (field: string) => {
+		const items = get(context, 'payload.changelog.items');
+		return Array.isArray(items) && items.some(item => !!item && typeof item === 'object' && str((item as Record<string, unknown>).field)?.toLowerCase() === field);
+	};
+	switch (event) {
+		case 'issue.created':
+			return type === 'jira:issue_created' ? inProject() : no(`Jira ${type ?? 'event'}.`);
+		case 'issue.updated':
+			return type === 'jira:issue_updated' ? inProject() : no(`Jira ${type ?? 'event'}.`);
+		case 'issue.status_changed':
+			return type === 'jira:issue_updated' && changed('status') ? inProject() : no('The issue status did not change.');
+		case 'issue.assigned':
+			return type === 'jira:issue_updated' && changed('assignee') ? inProject() : no('The assignee did not change.');
+		case 'issue.deleted':
+			return type === 'jira:issue_deleted' ? inProject() : no(`Jira ${type ?? 'event'}.`);
+		case 'comment.created':
+			return type === 'comment_created' && get(context, 'payload.issue') !== undefined ? inProject() : no(`Jira ${type ?? 'event'} is not a new comment.`);
+		case 'sprint.started':
+		case 'sprint.closed':
+			return type === event.replace('.', '_') ? YES : no(`Jira ${type ?? 'event'}.`);
+	}
+	return no(`Unknown Jira trigger ${event}.`);
+}
+
+/** Confluence posts `webhookEvent` like Jira; Bitbucket names the event in `X-Event-Key`. */
+function matchAtlassian(event: string, option: string | undefined, context: IWebhookContext): IEventMatch {
+	if (event.startsWith('bitbucket.')) {
+		const key = context.headers['x-event-key'];
+		if (key === 'diagnostics:ping') {
+			return { match: false, ping: true, reason: 'Bitbucket ping (the URL works).' };
+		}
+		switch (event) {
+			case 'bitbucket.pr.opened': return key === 'pullrequest:created' ? YES : no(`Bitbucket ${key ?? 'event'}.`);
+			case 'bitbucket.pr.updated': return key === 'pullrequest:updated' ? YES : no(`Bitbucket ${key ?? 'event'}.`);
+			case 'bitbucket.pr.merged': return key === 'pullrequest:fulfilled' ? YES : no(`Bitbucket ${key ?? 'event'}.`);
+			case 'bitbucket.pr.comment': return key === 'pullrequest:comment_created' ? YES : no(`Bitbucket ${key ?? 'event'}.`);
+			case 'bitbucket.push': {
+				if (key !== 'repo:push') {
+					return no(`Bitbucket ${key ?? 'event'} is not a push.`);
+				}
+				const branch = str(get(context, 'payload.push.changes[0].new.name'));
+				return optionMatches(option, branch) ? YES : no(`Push to ${branch ?? 'a ref'}, not ${option}.`);
+			}
+		}
+		return no(`Unknown Bitbucket trigger ${event}.`);
+	}
+	const type = str(get(context, 'payload.webhookEvent')) ?? str(get(context, 'payload.event'));
+	const space = str(get(context, 'payload.page.spaceKey')) ?? str(get(context, 'payload.comment.parent.spaceKey')) ?? str(get(context, 'payload.comment.spaceKey'));
+	const inSpace = () => optionMatches(option, space) ? YES : no(`Space ${space ?? '?'}, not ${option}.`);
+	switch (event) {
+		case 'page.created': return type === 'page_created' ? inSpace() : no(`Confluence ${type ?? 'event'}.`);
+		case 'page.updated': return type === 'page_updated' ? inSpace() : no(`Confluence ${type ?? 'event'}.`);
+		case 'page.comment': return type === 'comment_created' && get(context, 'payload.issue') === undefined ? inSpace() : no(`Confluence ${type ?? 'event'} is not a new comment.`);
+	}
+	return no(`Unknown Atlassian trigger ${event}.`);
+}
+
 function matchPagerDuty(event: string, context: IWebhookContext): IEventMatch {
 	const type = str(get(context, 'payload.event.event_type')) ?? str(get(context, 'payload.messages[0].event'));
 	if (type === 'pagey.ping') {
@@ -470,6 +620,48 @@ export function summarizeAutomationEvent(provider: AutomationProvider, context: 
 			add('By', get(context, 'payload.sender.login'));
 			break;
 		}
+		case 'gitlab':
+			add('Event', [context.headers['x-gitlab-event'], str(get(context, 'payload.object_attributes.action') ?? get(context, 'payload.object_attributes.status'))].filter(Boolean).join(' '));
+			add('Project', get(context, 'payload.project.path_with_namespace'));
+			add('Merge request', get(context, 'payload.merge_request.iid') !== undefined
+				? `!${str(get(context, 'payload.merge_request.iid'))} ${str(get(context, 'payload.merge_request.title')) ?? ''}`
+				: context.headers['x-gitlab-event'] === 'Merge Request Hook' ? `!${str(get(context, 'payload.object_attributes.iid')) ?? '?'} ${str(get(context, 'payload.object_attributes.title')) ?? ''}` : undefined);
+			add('Branches', [str(get(context, 'payload.object_attributes.source_branch')), str(get(context, 'payload.object_attributes.target_branch'))].filter(Boolean).join(' → '));
+			add('Ref', get(context, 'payload.ref') ?? get(context, 'payload.object_attributes.ref'));
+			add('Comment', get(context, 'payload.object_attributes.note'), 1200);
+			add('URL', get(context, 'payload.object_attributes.url'));
+			add('By', get(context, 'payload.user.username') ?? get(context, 'payload.user_username'));
+			break;
+		case 'jira':
+			add('Event', get(context, 'payload.webhookEvent'));
+			add('Issue', [str(get(context, 'payload.issue.key')), str(get(context, 'payload.issue.fields.summary'))].filter(Boolean).join(' '));
+			add('Type', get(context, 'payload.issue.fields.issuetype.name'));
+			add('Status', get(context, 'payload.issue.fields.status.name'));
+			add('Priority', get(context, 'payload.issue.fields.priority.name'));
+			add('Assignee', get(context, 'payload.issue.fields.assignee.displayName'));
+			add('Comment', get(context, 'payload.comment.body'), 1200);
+			add('Sprint', get(context, 'payload.sprint.name'));
+			add('Description', get(context, 'payload.issue.fields.description'), 1500);
+			add('By', get(context, 'payload.user.displayName'));
+			break;
+		case 'atlassian':
+			if (context.headers['x-event-key']) {
+				add('Event', context.headers['x-event-key']);
+				add('Repository', get(context, 'payload.repository.full_name'));
+				add('Pull request', get(context, 'payload.pullrequest.id') !== undefined ? `#${str(get(context, 'payload.pullrequest.id'))} ${str(get(context, 'payload.pullrequest.title')) ?? ''}` : undefined);
+				add('Branches', [str(get(context, 'payload.pullrequest.source.branch.name')), str(get(context, 'payload.pullrequest.destination.branch.name'))].filter(Boolean).join(' → '));
+				add('Branch', get(context, 'payload.push.changes[0].new.name'));
+				add('Comment', get(context, 'payload.comment.content.raw'), 1200);
+				add('URL', get(context, 'payload.pullrequest.links.html.href'));
+				add('By', get(context, 'payload.actor.display_name'));
+			} else {
+				add('Event', get(context, 'payload.webhookEvent') ?? get(context, 'payload.event'));
+				add('Page', get(context, 'payload.page.title'));
+				add('Space', get(context, 'payload.page.spaceKey'));
+				add('URL', get(context, 'payload.page.self'));
+				add('By', get(context, 'payload.userAccountId'));
+			}
+			break;
 		case 'slack':
 			add('Event', get(context, 'payload.event.type'));
 			add('Channel', get(context, 'payload.event.channel') ?? get(context, 'payload.event.channel.name'));
