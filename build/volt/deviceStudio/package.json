@@ -1,0 +1,14 @@
+{
+  "name": "volt-device-studio",
+  "private": true,
+  "description": "Builds src/vs/workbench/contrib/voltAgent/browser/preview/deviceStudio/vendor/voltDeviceStudio.js: the 3D device frames of the browser's responsive design mode (three.js).",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "shoot": "node harness/shoot.mjs"
+  },
+  "devDependencies": {
+    "@types/three": "0.180.0",
+    "three": "0.180.0"
+  }
+}

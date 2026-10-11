@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;height:100%;background:#101010;overflow:hidden}
+body.light{background:#e9e9eb}
+#stage{position:absolute;inset:0;overflow:hidden;contain:paint}
+.volt-device-studio{position:absolute;left:0;top:0;z-index:0;touch-action:none;cursor:grab}
+.page{position:absolute;transform-origin:0 0;border:0;z-index:1;background:#fbfbfd;overflow:hidden}
+.page img{display:block;width:100%;height:100%;object-fit:cover;object-position:top}
+.volt-device-glare{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;z-index:2}
+</style></head>
+<body><div id="stage"><div class="page" id="page"><img id="page-img"></div></div>
+<script type="module" src="./harness.js"></script>
+</body></html>

@@ -176,6 +176,18 @@ export default tseslint.config(
 			]
 		}
 	},
+	// Device studio: a standalone three.js bundle with no localized strings
+	{
+		files: [
+			'build/volt/deviceStudio/**/*.{ts,mjs}'
+		],
+		plugins: {
+			'local': pluginLocal,
+		},
+		rules: {
+			'local/code-no-unexternalized-strings': 'off',
+		}
+	},
 	// Tests
 	{
 		files: [
