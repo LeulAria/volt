@@ -1,0 +1,80 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Volt in a browser tab, made to look like the desktop app. The desktop's agent window is
+ * see-through (the macOS material shows behind it); a tab has nothing behind the page, so the
+ * window paints solid, exactly as the desktop does in full screen. There are no traffic lights
+ * either, so nothing makes room for them.
+ */
+
+.monaco-workbench.web {
+	-webkit-tap-highlight-color: transparent;
+}
+
+.monaco-workbench.web.volt-layout-agent {
+	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000);
+	background: var(--volt-agent-window-bg-base) !important;
+	background-color: var(--volt-agent-window-bg-base) !important;
+}
+
+/* The brand bolt sits where full screen puts it: 5px past the sidebar toggle's edge. */
+.monaco-workbench.web.volt-layout-agent:not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.auxiliarybar > .volt-agent-brand-logo {
+	left: 13px;
+}
+
+.monaco-workbench.web.volt-layout-agent .titlebar-left > .volt-agent-brand-logo.in-titlebar {
+	margin-left: 5px;
+}
+
+/* Full-screen tools: the chat's tab leads the row from the edge (no traffic lights before it). */
+.monaco-workbench.web .volt-agent-tools-lead-lights {
+	width: 6px;
+}
+
+/*
+ * Touch screens have no hover: what the desktop reveals under the pointer stays in reach.
+ */
+@media (hover: none) {
+	.volt-agent-home-row.is-folder > .add:not(.hidden),
+	.volt-agent-home-row.is-folder > .settings:not(.hidden) {
+		opacity: 0.7;
+	}
+
+	/* A tapped (selected) chat shows its Snooze and Settle. */
+	.monaco-list-row.selected .volt-agent-home-row.is-session > .actions,
+	.monaco-list-row.focused .volt-agent-home-row.is-session > .actions {
+		display: flex;
+	}
+
+	.volt-agent-turn.user .volt-agent-user-restore {
+		visibility: visible;
+	}
+
+	.volt-agent-turn.user.running .volt-agent-user-stop {
+		display: inline-flex;
+	}
+
+	.volt-agent-table-cell .volt-agent-table-cell-copy {
+		opacity: 1;
+		pointer-events: auto;
+	}
+}
+
+/*
+ * Phone-wide windows (narrower than the desktop's smallest window): the title bar keeps the chat's
+ * title and its own controls, and drops what does not fit.
+ */
+@media (max-width: 480px) {
+	.monaco-workbench.web .part.titlebar .command-center .search-label {
+		display: none;
+	}
+
+	.monaco-workbench.web.volt-layout-agent .part.titlebar > .titlebar-container > .titlebar-center {
+		min-width: 0;
+		overflow: hidden;
+	}
+}

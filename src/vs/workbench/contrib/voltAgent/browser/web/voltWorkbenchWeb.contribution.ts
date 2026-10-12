@@ -9,6 +9,7 @@
 // (processes, git, the folder picker, pull requests, usage) the agent server does here, over the
 // workbench's remote connection.
 
+import './media/voltWorkbenchWeb.css';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
@@ -20,7 +21,9 @@ import { InstantiationType, registerSingleton } from '../../../../../platform/in
 import { BrandedService, IInstantiationService, ServiceIdentifier, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
-import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
+import { editorBackground } from '../../../../../platform/theme/common/colorRegistry.js';
+import { isDark } from '../../../../../platform/theme/common/theme.js';
+import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IVoltAccountsService } from '../../../../../platform/voltAccounts/common/voltAccounts.js';
 import { IWebSocketLike } from '../../../../../platform/voltAgentServer/common/connection.js';
 import { DEFAULT_TOPICS } from '../../../../../platform/voltAgentServer/common/protocol.js';
@@ -37,6 +40,7 @@ import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../../../../platf
 import { IVoltUsageService, VOLT_USAGE_CHANNEL_NAME } from '../../../../../platform/voltUsage/common/voltUsage.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
+import { SIDE_BAR_BACKGROUND, TITLE_BAR_ACTIVE_BACKGROUND } from '../../../../common/theme.js';
 import { IBrowserWorkbenchEnvironmentService } from '../../../../services/environment/browser/environmentService.js';
 import { IRemoteAgentService } from '../../../../services/remote/common/remoteAgentService.js';
 import { AgentServerClient, IAgentServerClientService } from '../../../../services/voltAgentServer/common/agentServerClient.js';
@@ -230,7 +234,6 @@ class WebAgentServerClientContribution extends Disposable implements IWorkbenchC
 		const workspace = accessor.get(IAgentWorkspaceService);
 		const edits = accessor.get(IAgentEditsService);
 		const notifications = accessor.get(INotificationService);
-		const opener = accessor.get(IOpenerService);
 		const environmentService = accessor.get(IBrowserWorkbenchEnvironmentService);
 		const logService = accessor.get(ILogService);
 		// Made now so they listen from the first snapshot.
@@ -241,7 +244,7 @@ class WebAgentServerClientContribution extends Disposable implements IWorkbenchC
 			notifications.notify({
 				severity: Severity.Warning,
 				message: localize('volt.web.signIn', "This browser isn't signed in to Volt yet, so chats can't load."),
-				actions: { primary: [{ id: 'volt.web.signIn', label: localize('volt.web.signInAction', "Sign In"), tooltip: '', class: undefined, enabled: true, run: () => opener.open(signInUrl()) }] },
+				actions: { primary: [{ id: 'volt.web.signIn', label: localize('volt.web.signInAction', "Sign In"), tooltip: '', class: undefined, enabled: true, run: () => mainWindow.location.assign(signInUrl()) }] },
 				sticky: true,
 			});
 		}
@@ -322,12 +325,61 @@ class WebAgentServerClientContribution extends Disposable implements IWorkbenchC
 
 registerWorkbenchContribution2(WebAgentServerClientContribution.ID, WebAgentServerClientContribution, WorkbenchPhase.BlockRestore);
 
+/**
+ * The page around the workbench in the theme's colours: what shows when a phone over-scrolls,
+ * and the browser's own bar (Safari's tab bar, an installed app's title bar).
+ */
+class WebPageChromeContribution extends Disposable implements IWorkbenchContribution {
+
+	static readonly ID = 'workbench.contrib.voltWebPageChrome';
+
+	constructor(@IThemeService private readonly themeService: IThemeService) {
+		super();
+		this.apply();
+		this._register(themeService.onDidColorThemeChange(() => this.apply()));
+	}
+
+	private apply(): void {
+		const theme = this.themeService.getColorTheme();
+		const background = theme.getColor(SIDE_BAR_BACKGROUND) ?? theme.getColor(editorBackground);
+		const bar = theme.getColor(TITLE_BAR_ACTIVE_BACKGROUND) ?? background;
+		const page = mainWindow.document;
+		if (background) {
+			for (const element of [page.documentElement, page.body]) {
+				element.style.setProperty('background-color', background.toString(), 'important');
+			}
+		}
+		if (bar) {
+			let meta = page.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+			if (!meta) {
+				meta = page.createElement('meta');
+				meta.name = 'theme-color';
+				page.head.appendChild(meta);
+			}
+			meta.content = bar.toString();
+		}
+		page.documentElement.style.colorScheme = isDark(theme.type) ? 'dark' : 'light';
+	}
+}
+
+registerWorkbenchContribution2(WebPageChromeContribution.ID, WebPageChromeContribution, WorkbenchPhase.BlockStartup);
+
 registerAction2(class extends Action2 {
 	constructor() {
 		super({ id: 'volt.web.openLiteApp', title: localize2('volt.web.openLiteApp', "Open the Lightweight Web App"), category: localize2('volt', "Volt"), f1: true });
 	}
-	override run(accessor: ServicesAccessor): void {
-		void accessor.get(IOpenerService).open('/?lite=1');
+	override run(): void {
+		mainWindow.location.assign('/?lite=1');
+	}
+});
+
+// The desktop's command, for the same entry points: pairing happens on the web app's Devices page.
+registerAction2(class extends Action2 {
+	constructor() {
+		super({ id: 'volt.agentServer.pairDevice', title: localize2('voltAgentServer.pairDevice', "Pair a Phone or Browser..."), category: localize2('volt', "Volt"), f1: true });
+	}
+	override run(): void {
+		mainWindow.open(new URL('/devices', mainWindow.location.origin).toString(), '_blank', 'noopener');
 	}
 });
 
