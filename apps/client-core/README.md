@@ -10,6 +10,12 @@ TypeScript with no runtime dependencies: anything platform specific (WebSocket, 
 - `client.ts`: `VoltClient`, the state a UI reads (mirrored collections, open transcripts, pending
   sends) and every action it takes (send, steer, stop, approve, answer, pin, archive...).
 - `selectors.ts` / `rows.ts`: the chat list sections and the transcript rows both apps draw.
+- `client.ts` also has the IDE parts: image attachments (`uploadAttachment`, `loadAttachment`),
+  editing sent prompts (`editMessage`, `rewindTo`, `retryTurn`), checkpoints (`restoreCheckpoint`,
+  `redoCheckpoint`), a chat's changes (`getChanges`) and the server's files (`readFile`,
+  `writeFile`, `listDir`, `fileIndex`, `grep`, `gitStatus`, `gitShow`, `gitCommit`...).
+- `diff.ts`: line diffs (patience diff with an LCS table between anchors) and a unified diff
+  parser, with word-level changes. `languages.ts`: a file's language from its name.
 - `markdown/`: an incremental GFM parser (only the tail block is re-parsed while a reply streams)
   and a small syntax highlighter.
 - `theme.ts` / `icons.ts`: the design tokens and icon paths the Volt desktop app uses, so web and

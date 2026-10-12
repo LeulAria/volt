@@ -14,7 +14,10 @@ import {
 import type { IPendingSend, PendingState } from './rows';
 import type { Collections } from './selectors';
 import { threadsOf } from './selectors';
-import type { AccessMode, AgentMessage, ComposerMode, IOrchPrompt, IProjectRecord, IQuestionResponse } from './types';
+import type {
+	AccessMode, AgentMessage, ComposerMode, IAgentChange, ICheckpointState, IFileContent, IFileEntry, IFileRoot, IGitStatus, IGrepMatch, IGrepOptions, IOrchPrompt, IProjectRecord,
+	IPromptAttachment, IQuestionResponse, IRestorePreview, IUserMessage
+} from './types';
 
 /** Async key-value storage (localStorage on the web, AsyncStorage on phones). */
 export interface IStorage {
@@ -62,6 +65,26 @@ export interface ISendRequest {
 	readonly modelRef?: string;
 	readonly options?: Record<string, string | boolean>;
 	readonly delivery?: Delivery;
+	/** Images uploaded with {@link VoltClient.uploadAttachment}. */
+	readonly attachments?: readonly IPromptAttachment[];
+}
+
+/** A picked or pasted image before it is uploaded: base64 without a `data:` prefix. */
+export interface IAttachmentSource {
+	readonly base64: string;
+	readonly mime: string;
+	readonly name?: string;
+}
+
+/** Editing a sent prompt: the new text (and images); the chat is cut back to before it. */
+export interface IEditRequest {
+	readonly text: string;
+	readonly attachments?: readonly IPromptAttachment[];
+	readonly mode?: ComposerMode;
+	readonly modelRef?: string;
+	readonly options?: Record<string, string | boolean>;
+	/** Also put the files back as they were before the prompt ran. */
+	readonly revertFiles?: boolean;
 }
 
 export interface INewChatRequest extends Omit<ISendRequest, 'threadId' | 'delivery'> {
@@ -92,6 +115,10 @@ export interface IClientStatus {
 }
 
 const CACHED_COLLECTIONS = ['history', 'projects', 'orch.threads', 'runtime', 'sessions'];
+/** Images kept as data URLs; a phone keeps fewer. */
+const ATTACHMENT_CACHE_CHARS = 48 * 1024 * 1024;
+/** Images the model takes. */
+export const SENDABLE_IMAGE_MIMES: readonly string[] = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const RUNTIME_CACHE_FIELDS = ['catalog', 'providerStatuses', 'modelOptions', 'enabledModels', 'accessMode', 'activeCatalogRef', 'modeProfiles', 'autoResumeDefault'];
 const TRANSCRIPT_CACHE_LIMIT = 16;
 const TRANSCRIPT_CACHE_MESSAGES = 160;
@@ -127,6 +154,10 @@ export class VoltClient {
 	private readonly flushing = new Set<string>();
 	private toasts: readonly IToast[] = [];
 	private nextToastId = 1;
+	private readonly attachmentUrls = new Map<string, string>();
+	private attachmentChars = 0;
+	private readonly attachmentLoads = new Map<string, Promise<string | undefined>>();
+	private readonly checkpointStates = new Map<string, ICheckpointState>();
 
 	private readonly dirtyKeys = new Set<string>();
 	private notifyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -467,6 +498,126 @@ export class VoltClient {
 		return turnId;
 	}
 
+	/**
+	 * Edits a sent prompt, the way the desktop's "edit and resend" does: a running reply is stopped,
+	 * the prompt and everything after it leave the chat and the agent's context, files go back too
+	 * when asked, and the edited prompt is sent in its place.
+	 */
+	async editMessage(chatId: string, turnId: string, request: IEditRequest): Promise<boolean> {
+		if (!await this.cutBefore(chatId, turnId, request.revertFiles ?? false)) {
+			return false;
+		}
+		this.send({ threadId: chatId, ...request, delivery: 'auto' });
+		return true;
+	}
+
+	/** "Rewind to here": the prompt and everything after it leave the chat; the prompt is returned to edit. */
+	async rewindTo(chatId: string, turnId: string, revertFiles = false): Promise<IUserMessage | undefined> {
+		const message = this.userMessage(chatId, turnId);
+		return message && await this.cutBefore(chatId, turnId, revertFiles) ? message : undefined;
+	}
+
+	/** Sends a prompt again as it was (the reply under it is replaced). */
+	retryTurn(chatId: string, turnId: string): Promise<boolean> {
+		const message = this.userMessage(chatId, turnId);
+		if (!message) {
+			return Promise.resolve(false);
+		}
+		const mode = message.mode as ComposerMode | undefined;
+		return this.editMessage(chatId, turnId, { text: message.text, attachments: attachmentsOf(message), ...(mode ? { mode } : {}) });
+	}
+
+	private userMessage(chatId: string, turnId: string): IUserMessage | undefined {
+		const message = this.transcripts.get(chatId)?.messages.find(m => m.kind === 'user' && m.id === turnId);
+		return message?.kind === 'user' ? message : undefined;
+	}
+
+	private async cutBefore(chatId: string, turnId: string, revertFiles: boolean): Promise<boolean> {
+		const messages = this.transcripts.get(chatId)?.messages ?? [];
+		const index = messages.findIndex(m => m.kind === 'user' && m.id === turnId);
+		if (index < 0) {
+			this.toast('error', 'That message is no longer in the chat.');
+			return false;
+		}
+		const userTurns = messages.slice(0, index).filter(m => m.kind === 'user').length;
+		try {
+			const thread = threadsOf(this.cols)[chatId];
+			const last = messages[messages.length - 1];
+			if (thread?.active || (last?.kind === 'agent' && last.activity?.streaming)) {
+				await this.connection.call('session.skipCurrentRun', [chatId], { requireOpen: true }).catch(() => undefined);
+				await this.connection.call('orchestrator.cancel', [chatId], { requireOpen: true });
+			}
+			if (revertFiles) {
+				await this.connection.call('checkpoints.restoreCheckpoint', [chatId, turnId, { overwrite: true }], { requireOpen: true, timeoutMs: 60_000 });
+			}
+			await this.connection.call('session.truncate', [chatId, turnId], { requireOpen: true });
+			await this.connection.call('runtime.truncateSession', [chatId, userTurns], { requireOpen: true });
+			return true;
+		} catch (err) {
+			this.toast('error', `Couldn't edit: ${errorMessage(err)}`);
+			return false;
+		}
+	}
+
+	/**
+	 * Puts an image in the server's attachment store (where the desktop keeps pasted images) and
+	 * returns it ready to send. The preview is cached, so the sent bubble shows it at once.
+	 */
+	async uploadAttachment(source: IAttachmentSource): Promise<IPromptAttachment> {
+		const mime = source.mime.toLowerCase() === 'image/jpg' ? 'image/jpeg' : source.mime.toLowerCase();
+		const ref = await this.connection.call<string>('history.putAttachment', [{ $u8: source.base64 }, mime], { requireOpen: true, timeoutMs: 120_000 });
+		this.rememberAttachment(ref, `data:${mime};base64,${source.base64}`);
+		return { id: uuid(), name: source.name || `image.${mime.split('/')[1] ?? 'png'}`, mime, ref, size: Math.floor(source.base64.length * 0.75) };
+	}
+
+	/** An attachment's image as a data URL, when it is loaded (see {@link loadAttachment}). */
+	getAttachmentUrl(ref: string): string | undefined {
+		return this.attachmentUrls.get(ref);
+	}
+
+	/** Loads an attachment's image; listeners of `attachment:<ref>` hear when it is there. */
+	loadAttachment(ref: string): Promise<string | undefined> {
+		const known = this.attachmentUrls.get(ref);
+		if (known) {
+			return Promise.resolve(known);
+		}
+		let load = this.attachmentLoads.get(ref);
+		if (!load) {
+			load = this.connection.call<{ bytes?: { $u8?: string }; mime?: string } | undefined>('history.getAttachment', [ref], { timeoutMs: 60_000 })
+				.then(result => {
+					const base64 = result?.bytes?.$u8;
+					if (!base64) {
+						return undefined;
+					}
+					const url = `data:${result?.mime ?? 'image/png'};base64,${base64}`;
+					this.rememberAttachment(ref, url);
+					return url;
+				})
+				.catch(() => undefined)
+				.finally(() => this.attachmentLoads.delete(ref));
+			this.attachmentLoads.set(ref, load);
+		}
+		return load;
+	}
+
+	private rememberAttachment(ref: string, url: string): void {
+		const old = this.attachmentUrls.get(ref);
+		if (old) {
+			this.attachmentChars -= old.length;
+			this.attachmentUrls.delete(ref);
+		}
+		this.attachmentUrls.set(ref, url);
+		this.attachmentChars += url.length;
+		for (const [key, value] of this.attachmentUrls) {
+			if (this.attachmentChars <= ATTACHMENT_CACHE_CHARS || key === ref) {
+				break;
+			}
+			this.attachmentUrls.delete(key);
+			this.attachmentChars -= value.length;
+		}
+		this.notifier.notify(`attachment:${ref}`);
+	}
+
 	/** Starts a chat in a project with its first prompt; resolves its id at once. */
 	startChat(request: INewChatRequest): string {
 		const threadId = newChatId();
@@ -490,7 +641,7 @@ export class VoltClient {
 			return;
 		}
 		this.removePending(chatId, turnId);
-		this.send({ threadId: chatId, text: failed.text });
+		this.send({ threadId: chatId, text: failed.text, ...(failed.attachments ? { attachments: failed.attachments } : {}) });
 	}
 
 	dismissPending(chatId: string, turnId: string): void {
@@ -500,7 +651,8 @@ export class VoltClient {
 	}
 
 	private enqueue(item: IOutboxItem, text: string): void {
-		this.setPending(item.threadId, { turnId: item.turnId, text, state: 'sending', at: item.createdAt });
+		const attachments = promptAttachments(item.prompt);
+		this.setPending(item.threadId, { turnId: item.turnId, text, state: 'sending', at: item.createdAt, ...(attachments.length ? { attachments } : {}) });
 		this.outbox.push(item);
 		void this.persistOutbox();
 		void this.flush(item);
@@ -523,7 +675,7 @@ export class VoltClient {
 			const result = await this.connection.call<{ outcome: string; reason?: string }>('orchestrator.submit', [item.threadId, item.prompt, item.delivery, item.turnId], { requireOpen: true });
 			this.removeFromOutbox(item.turnId);
 			if (result.outcome === 'rejected') {
-				this.setPending(item.threadId, { turnId: item.turnId, text: item.prompt.text, state: 'failed', at: item.createdAt, error: result.reason ?? 'Volt did not take the prompt.' });
+				this.setPending(item.threadId, { turnId: item.turnId, text: item.prompt.text, state: 'failed', at: item.createdAt, error: result.reason ?? 'Volt did not take the prompt.', attachments: promptAttachments(item.prompt) });
 				this.toast('error', result.reason ? `Not sent: ${result.reason}` : 'Volt did not take the prompt.');
 			} else if (result.outcome === 'queued' || result.outcome === 'steered') {
 				// Queued prompts show in the queue tray; steers land inside the running reply.
@@ -538,7 +690,7 @@ export class VoltClient {
 				item.state = 'unsent';
 			} else {
 				this.removeFromOutbox(item.turnId);
-				this.setPending(item.threadId, { turnId: item.turnId, text: item.prompt.text, state: 'failed', at: item.createdAt, error: errorMessage(err) });
+				this.setPending(item.threadId, { turnId: item.turnId, text: item.prompt.text, state: 'failed', at: item.createdAt, error: errorMessage(err), attachments: promptAttachments(item.prompt) });
 				this.toast('error', `Couldn't send: ${errorMessage(err)}`);
 			}
 			void this.persistOutbox();
@@ -745,6 +897,116 @@ export class VoltClient {
 
 	//#endregion
 
+	//#region Checkpoints and changes
+
+	/** A chat's checkpoints: the server's published copy, or the one loaded here. */
+	getCheckpoints(chatId: string): ICheckpointState | undefined {
+		return (this.cols['checkpoints']?.[chatId] as ICheckpointState | undefined) ?? this.checkpointStates.get(chatId);
+	}
+
+	/** Loads a chat's checkpoints (the server only publishes them once a run or a load touched them). */
+	async loadCheckpoints(chatId: string): Promise<ICheckpointState | undefined> {
+		try {
+			const checkpoints = await this.connection.call<ICheckpointState['checkpoints']>('checkpoints.loadCheckpoints', [chatId], { requireOpen: true });
+			const state: ICheckpointState = { checkpoints: Array.isArray(checkpoints) ? checkpoints : [], canRedo: this.getCheckpoints(chatId)?.canRedo ?? false };
+			this.checkpointStates.set(chatId, state);
+			this.notifier.notify(`checkpoints:${chatId}`);
+			return state;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** What restoring the files to before `turnId` would do. */
+	previewRestore(chatId: string, turnId: string): Promise<IRestorePreview | undefined> {
+		return this.run<IRestorePreview>('checkpoints.previewRestore', [chatId, turnId], 'Couldn\'t check the files');
+	}
+
+	/** Puts the files back as they were before `turnId` ran (the desktop's Restore Checkpoint). */
+	async restoreCheckpoint(chatId: string, turnId: string, overwrite = false): Promise<IRestorePreview | undefined> {
+		const result = await this.run<IRestorePreview>('checkpoints.restoreCheckpoint', [chatId, turnId, { overwrite }], 'Couldn\'t restore the checkpoint');
+		if (result?.applied) {
+			this.toast('success', result.files.length ? `Restored ${result.files.length} ${result.files.length === 1 ? 'file' : 'files'}` : 'Files already match the checkpoint');
+		}
+		return result;
+	}
+
+	/** Undoes the latest restore of a chat. */
+	async redoCheckpoint(chatId: string): Promise<IRestorePreview | undefined> {
+		const result = await this.run<IRestorePreview>('checkpoints.redo', [chatId, { overwrite: true }], 'Couldn\'t redo');
+		if (result?.applied) {
+			this.toast('success', 'Changes put back');
+		}
+		return result;
+	}
+
+	/** Files the agent changed: over the whole chat, in its last turn that changed any, or in one turn. */
+	async getChanges(chatId: string, scope: 'session' | 'lastTurn' | { readonly turnId: string } = 'session'): Promise<readonly IAgentChange[]> {
+		return await this.connection.call<readonly IAgentChange[]>('checkpoints.getChanges', [chatId, scope], { timeoutMs: 60_000 }) ?? [];
+	}
+
+	//#endregion
+
+	//#region Files (throw RemoteError; the views show it where it happened)
+
+	listRoots(): Promise<readonly IFileRoot[]> {
+		return this.connection.call<readonly IFileRoot[]>('files.roots', []);
+	}
+
+	listDir(path: string): Promise<readonly IFileEntry[]> {
+		return this.connection.call<readonly IFileEntry[]>('files.list', [path]);
+	}
+
+	readFile(path: string): Promise<IFileContent> {
+		return this.connection.call<IFileContent>('files.read', [path], { timeoutMs: 60_000 });
+	}
+
+	/** `mtime`: the version it was read at; a newer one on disk fails with `Conflict`. */
+	writeFile(path: string, text: string, options: { readonly mtime?: number; readonly create?: boolean } = {}): Promise<{ readonly mtime: number; readonly size: number }> {
+		return this.connection.call('files.write', [path, text, options], { requireOpen: true, timeoutMs: 60_000 });
+	}
+
+	createFile(path: string, kind: 'file' | 'dir' = 'file'): Promise<IFileEntry> {
+		return this.connection.call<IFileEntry>('files.create', [path, kind], { requireOpen: true });
+	}
+
+	renamePath(from: string, to: string): Promise<boolean> {
+		return this.connection.call<boolean>('files.rename', [from, to], { requireOpen: true });
+	}
+
+	deletePath(path: string): Promise<boolean> {
+		return this.connection.call<boolean>('files.delete', [path], { requireOpen: true });
+	}
+
+	/** Every file under a root (relative, `/`-separated), for quick open. */
+	fileIndex(root: string): Promise<{ readonly files: readonly string[]; readonly truncated: boolean }> {
+		return this.connection.call('files.index', [root], { timeoutMs: 60_000 });
+	}
+
+	grep(root: string, query: string, options: IGrepOptions = {}): Promise<{ readonly matches: readonly IGrepMatch[]; readonly truncated: boolean }> {
+		return this.connection.call('files.grep', [root, query, options], { timeoutMs: 60_000 });
+	}
+
+	gitStatus(root: string): Promise<IGitStatus> {
+		return this.connection.call<IGitStatus>('files.gitStatus', [root], { timeoutMs: 30_000 });
+	}
+
+	/** A file as git has it at `ref` (default HEAD): the left side of a diff. */
+	gitShow(path: string, ref = 'HEAD'): Promise<{ readonly text: string; readonly exists: boolean }> {
+		return this.connection.call('files.gitShow', [path, ref], { timeoutMs: 30_000 });
+	}
+
+	gitBlob(repoRoot: string, sha: string): Promise<{ readonly text: string; readonly exists: boolean }> {
+		return this.connection.call('files.gitBlob', [repoRoot, sha], { timeoutMs: 30_000 });
+	}
+
+	/** Stages every change in the root's repository and commits it. */
+	gitCommit(root: string, message: string): Promise<{ readonly commit: string }> {
+		return this.connection.call('files.gitCommit', [root, message], { requireOpen: true, timeoutMs: 60_000 });
+	}
+
+	//#endregion
+
 	//#region Pairing
 
 	environmentInfo(): Promise<IEnvironmentDescriptor | undefined> {
@@ -814,7 +1076,8 @@ export class VoltClient {
 				if (Array.isArray(items)) {
 					this.outbox = items.filter(item => item && typeof item.turnId === 'string');
 					for (const item of this.outbox) {
-						this.setPending(item.threadId, { turnId: item.turnId, text: item.prompt.text, state: 'sending', at: item.createdAt });
+						const attachments = promptAttachments(item.prompt);
+						this.setPending(item.threadId, { turnId: item.turnId, text: item.prompt.text, state: 'sending', at: item.createdAt, ...(attachments.length ? { attachments } : {}) });
 					}
 				}
 			}
@@ -918,14 +1181,37 @@ export class VoltClient {
 
 const EMPTY_PENDING: readonly IPendingSend[] = [];
 
-function promptOf(request: Pick<ISendRequest, 'text' | 'mode' | 'modelRef' | 'options'>): IOrchPrompt {
+/**
+ * The prompt the orchestrator takes. Images ride as the desktop composer's image mentions (frozen:
+ * an attachment ref instead of bytes): the server's turn host thaws them and sends the pixels.
+ */
+function promptOf(request: Pick<ISendRequest, 'text' | 'mode' | 'modelRef' | 'options' | 'attachments'>): IOrchPrompt {
+	const mentions = (request.attachments ?? []).map(a => ({ label: a.name, kind: 'image', image: { id: a.id, mime: a.mime, ref: a.ref, name: a.name } }));
 	return {
 		text: request.text,
-		display: { text: request.text },
+		display: mentions.length ? { text: request.text, mentions } : { text: request.text },
 		mode: request.mode ?? 'Agent',
 		...(request.modelRef ? { modelRef: request.modelRef } : {}),
 		...(request.options && Object.keys(request.options).length ? { options: request.options } : {}),
 	};
+}
+
+/** The images a stored prompt carries. */
+function promptAttachments(prompt: IOrchPrompt): IPromptAttachment[] {
+	const mentions = (prompt.display as { mentions?: unknown } | undefined)?.mentions;
+	return Array.isArray(mentions) ? attachmentsOf({ kind: 'user', text: prompt.text, mentions }) : [];
+}
+
+/** The images of a sent prompt, ready to send again. */
+export function attachmentsOf(message: Pick<IUserMessage, 'mentions'> & { readonly kind: 'user'; readonly text: string }): IPromptAttachment[] {
+	const out: IPromptAttachment[] = [];
+	for (const mention of message.mentions ?? []) {
+		const image = mention.image;
+		if (image?.ref) {
+			out.push({ id: image.id ?? uuid(), name: mention.label ?? image.name ?? 'image', mime: image.mime ?? 'image/png', ref: image.ref });
+		}
+	}
+	return out;
 }
 
 /**

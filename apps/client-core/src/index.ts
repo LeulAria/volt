@@ -12,6 +12,8 @@ export * from './types';
 export * from './selectors';
 export * from './rows';
 export * from './format';
+export * from './diff';
+export * from './languages';
 export * from './ids';
 export * from './icons';
 export * from './theme';

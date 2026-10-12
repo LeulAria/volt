@@ -5,7 +5,7 @@
 
 import { basename, firstLine, pluralize } from './format';
 import type { IconName } from './icons';
-import type { ActivityKind, AgentBlock, AgentMessage, IActivityItem, IAssistantMessage, ITodoStep, IUserMessage } from './types';
+import type { ActivityKind, AgentBlock, AgentMessage, IActivityItem, IAssistantMessage, IPromptAttachment, ITodoStep, IUserMessage } from './types';
 
 export type StepStatus = 'running' | 'done' | 'error';
 
@@ -30,7 +30,7 @@ export type StepCategory = 'read' | 'search' | 'command' | 'edit' | 'web' | 'age
 export type PendingState = 'sending' | 'queued' | 'failed';
 
 export type TranscriptRow =
-	| { readonly kind: 'user'; readonly key: string; readonly text: string; readonly chips: readonly string[]; readonly turnId?: string; readonly mode?: string; readonly from?: string; readonly pending?: PendingState }
+	| { readonly kind: 'user'; readonly key: string; readonly text: string; readonly chips: readonly string[]; readonly images?: readonly IRowImage[]; readonly turnId?: string; readonly mode?: string; readonly from?: string; readonly pending?: PendingState; readonly steer?: boolean }
 	| { readonly kind: 'divider'; readonly key: string; readonly icon: IconName; readonly label: string; readonly detail?: string; readonly live?: boolean }
 	| { readonly kind: 'system'; readonly key: string; readonly icon: IconName; readonly title: string; readonly body: string }
 	| { readonly kind: 'markdown'; readonly key: string; readonly docKey: string; readonly text: string; readonly streaming: boolean }
@@ -53,6 +53,13 @@ export type TranscriptRow =
 
 export type RowKind = TranscriptRow['kind'];
 
+/** An image sent with a prompt: shown from the server's attachment store by its ref. */
+export interface IRowImage {
+	readonly ref: string;
+	readonly mime: string;
+	readonly name: string;
+}
+
 /** A prompt this client sent that the transcript doesn't show yet. */
 export interface IPendingSend {
 	readonly turnId: string;
@@ -60,6 +67,7 @@ export interface IPendingSend {
 	readonly state: PendingState;
 	readonly at: number;
 	readonly error?: string;
+	readonly attachments?: readonly IPromptAttachment[];
 }
 
 //#region Steps
@@ -243,12 +251,24 @@ function userRows(message: IUserMessage, mkey: string): TranscriptRow[] {
 		rows.push({ kind: 'system', key: mkey, icon: 'listChecks', title: 'Task', body: message.text });
 		return rows;
 	}
-	const chips = message.chips?.length ? message.chips : (message.mentions ?? []).map(m => m.label ?? m.name ?? '').filter(Boolean);
+	const images: IRowImage[] = [];
+	const labels: string[] = [];
+	for (const mention of message.mentions ?? []) {
+		const ref = mention.image?.ref;
+		if (ref) {
+			images.push({ ref, mime: mention.image?.mime ?? 'image/png', name: mention.label ?? mention.image?.name ?? 'image' });
+		} else if (mention.label ?? mention.name) {
+			labels.push(mention.label ?? mention.name ?? '');
+		}
+	}
+	const chips = message.chips?.length ? message.chips.filter(chip => !images.some(image => image.name === chip)) : labels;
 	rows.push({
 		kind: 'user',
 		key: mkey,
 		text: message.text,
 		chips,
+		...(images.length ? { images } : {}),
+		...(message.steer ? { steer: true } : {}),
 		...(message.id ? { turnId: message.id } : {}),
 		...(message.mode && message.mode !== 'Agent' ? { mode: message.mode } : {}),
 		...(message.fromThread ? { from: message.fromThread.title } : {}),
@@ -450,7 +470,8 @@ export function buildRows(messages: readonly AgentMessage[], pending: readonly I
 	});
 	for (const send of pending) {
 		if (!shown.has(send.turnId)) {
-			rows.push({ kind: 'user', key: `p:${send.turnId}`, text: send.text, chips: [], turnId: send.turnId, pending: send.state });
+			const images = send.attachments?.map(a => ({ ref: a.ref, mime: a.mime, name: a.name }));
+			rows.push({ kind: 'user', key: `p:${send.turnId}`, text: send.text, chips: [], ...(images?.length ? { images } : {}), turnId: send.turnId, pending: send.state });
 		}
 	}
 	return rows;

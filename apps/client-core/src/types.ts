@@ -267,12 +267,31 @@ export interface IProjectRecord {
 
 //#region Transcript
 
+/** A prompt's mention as the transcript keeps it; images carry an attachment ref. */
+export interface IMessageMention {
+	readonly label?: string;
+	readonly kind?: string;
+	readonly name?: string;
+	readonly image?: { readonly id?: string; readonly mime?: string; readonly ref?: string; readonly name?: string };
+	readonly file?: { readonly path?: string; readonly mime?: string; readonly size?: number };
+}
+
+/** An image uploaded to the server's attachment store, ready to go out with a prompt. */
+export interface IPromptAttachment {
+	readonly id: string;
+	readonly name: string;
+	readonly mime: string;
+	/** The server's attachment ref (`history.putAttachment`). */
+	readonly ref: string;
+	readonly size?: number;
+}
+
 export interface IUserMessage {
 	readonly kind: 'user';
 	readonly id?: string;
 	readonly text: string;
 	readonly chips?: readonly string[];
-	readonly mentions?: readonly { readonly label?: string; readonly kind?: string; readonly name?: string }[];
+	readonly mentions?: readonly IMessageMention[];
 	readonly mode?: string;
 	readonly origin?: 'notification' | 'brief';
 	readonly taskIds?: readonly string[];
@@ -374,5 +393,119 @@ export interface IAssistantMessage {
 }
 
 export type AgentMessage = IUserMessage | IAssistantMessage;
+
+//#endregion
+
+//#region Checkpoints and changes
+
+/** A turn's file snapshot (IAgentCheckpoint, voltAgent/browser/review/agentCheckpointService.ts). */
+export interface ICheckpoint {
+	readonly sessionId: string;
+	readonly turnId: string;
+	readonly userTurn: number;
+	readonly before: string;
+	readonly after?: string;
+	readonly running: boolean;
+}
+
+export interface ICheckpointState {
+	readonly checkpoints: readonly ICheckpoint[];
+	readonly canRedo: boolean;
+}
+
+/** One file an agent changed (IAgentSnapshotChange). Blobs are git object ids in `repoRoot`. */
+export interface IAgentChange {
+	readonly uri: IUriLike;
+	readonly path: string;
+	readonly oldPath?: string;
+	readonly kind: 'added' | 'modified' | 'deleted' | 'renamed';
+	readonly binary: boolean;
+	readonly additions: number;
+	readonly deletions: number;
+	readonly repoRoot: string;
+	readonly oldBlob?: string;
+	readonly newBlob?: string;
+	readonly turnId: string;
+}
+
+export interface IRestoreFile {
+	readonly uri: IUriLike;
+	/** Repo-relative. */
+	readonly path: string;
+	readonly action: string;
+	readonly outcome: string;
+	readonly binary: boolean;
+	/** Changed after the agent's last write (by you or another chat). */
+	readonly editedSince: boolean;
+}
+
+/** What restoring to before a turn does (IAgentRestorePreview); `applied`/`canRedo` once it ran. */
+export interface IRestorePreview {
+	readonly checkpoint: ICheckpoint;
+	readonly files: readonly IRestoreFile[];
+	readonly conflicts: readonly IRestoreFile[];
+	readonly applied?: boolean;
+	readonly canRedo?: boolean;
+}
+
+//#endregion
+
+//#region Files (ServerFiles, src/vs/server/node/voltAgent/serverFiles.ts)
+
+export interface IFileRoot {
+	readonly id: string;
+	readonly name: string;
+	readonly path: string;
+	readonly kind: 'project' | 'worktree';
+	readonly scratch?: boolean;
+	readonly sessionId?: string;
+}
+
+export interface IFileEntry {
+	readonly name: string;
+	readonly path: string;
+	readonly kind: 'file' | 'dir';
+	readonly link?: boolean;
+}
+
+export type IFileContent =
+	| { readonly path: string; readonly size: number; readonly mtime: number; readonly kind: 'text'; readonly text: string }
+	| { readonly path: string; readonly size: number; readonly mtime: number; readonly kind: 'image'; readonly mime: string; readonly base64: string }
+	| { readonly path: string; readonly size: number; readonly mtime: number; readonly kind: 'binary' | 'tooLarge' };
+
+export interface IGrepOptions {
+	readonly regex?: boolean;
+	readonly caseSensitive?: boolean;
+	readonly wholeWord?: boolean;
+	/** Comma-separated globs. */
+	readonly include?: string;
+	readonly exclude?: string;
+	readonly maxResults?: number;
+}
+
+export interface IGrepMatch {
+	readonly path: string;
+	readonly line: number;
+	readonly text: string;
+	readonly ranges: readonly (readonly [number, number])[];
+}
+
+export type GitChangeStatus = 'M' | 'A' | 'D' | 'R' | 'U' | '?';
+
+export interface IGitChange {
+	readonly path: string;
+	readonly rel: string;
+	readonly status: GitChangeStatus;
+	readonly staged: boolean;
+	readonly oldPath?: string;
+	readonly additions?: number;
+	readonly deletions?: number;
+}
+
+export interface IGitStatus {
+	readonly repoRoot?: string;
+	readonly branch?: string;
+	readonly changes: readonly IGitChange[];
+}
 
 //#endregion
