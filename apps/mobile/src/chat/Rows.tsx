@@ -3,14 +3,17 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { basename, compactNumber, dirname, duration, type IStepItem, money, pendingLabel, RADIUS, type TranscriptRow } from '@volt/client-core';
+import { basename, compactNumber, dirname, duration, type IRowImage, type IStepItem, languageForPath, money, pendingLabel, RADIUS, type TranscriptRow } from '@volt/client-core';
 import { memo, type ReactNode, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
-import { useClient } from '../state/client';
+import { useAttachment, useClient } from '../state/client';
 import { FONT, useTheme } from '../theme/theme';
-import { Icon, LiveTimer, Shimmer, T, Tap } from '../ui/core';
-import { CodeBlock, copyWithHaptic, DiffView, Inline, Markdown, TableView } from './Markdown';
+import { haptic, Icon, LiveTimer, Shimmer, T, Tap } from '../ui/core';
+import { showImage } from '../ui/ImageViewer';
+import { useChatContext } from './context';
+import { InlineDiff } from './Diff';
+import { CodeBlock, copyWithHaptic, Inline, Markdown, TableView } from './Markdown';
 
 type RowOf<K extends TranscriptRow['kind']> = Extract<TranscriptRow, { kind: K }>;
 
@@ -26,12 +29,44 @@ function Disclosure({ open, onToggle, children, onLongPress }: { readonly open: 
 	);
 }
 
+/** A sent image: a rounded thumbnail that opens full screen. */
+const MessageImage = memo(function MessageImage({ image, size }: { readonly image: IRowImage; readonly size: number }) {
+	const { p } = useTheme();
+	const uri = useAttachment(image.ref);
+	return (
+		<Tap haptics="light" disabled={!uri} onPress={() => uri && showImage(uri, image.name)} accessibilityLabel={`Image ${image.name}`} style={{ width: size, height: size, borderRadius: 14, overflow: 'hidden', backgroundColor: p.fill, borderWidth: StyleSheet.hairlineWidth, borderColor: p.bubbleBorder, alignItems: 'center', justifyContent: 'center' }}>
+			{uri ? <Image source={{ uri }} style={{ width: size, height: size }} resizeMode="cover" /> : <ActivityIndicator size="small" color={p.fgTertiary} />}
+		</Tap>
+	);
+});
+
+function MessageImages({ images }: { readonly images: readonly IRowImage[] }) {
+	const size = images.length === 1 ? 180 : images.length === 2 ? 118 : 86;
+	return (
+		<View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 6, maxWidth: '88%' }}>
+			{images.map(image => <MessageImage key={image.ref} image={image} size={size} />)}
+		</View>
+	);
+}
+
 function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId: string }) {
 	const { p, mode } = useTheme();
 	const client = useClient();
+	const ctx = useChatContext();
 	const [expanded, setExpanded] = useState(false);
 	const long = row.text.length > 700 || row.text.split('\n').length > 14;
 	const tint = row.mode ? mode(row.mode as Parameters<typeof mode>[0]) : undefined;
+	// Sent prompts typed here or on the desktop take the menu; another chat's message, a steer or a pending one don't.
+	const actionable = !!ctx && !!row.turnId && !row.pending && !row.from && !row.steer;
+	const menu = () => {
+		if (actionable) {
+			haptic.medium();
+			ctx.onMessageMenu(row);
+		} else {
+			copyWithHaptic(row.text);
+		}
+	};
+	const imageOnly = !!row.images?.length && /^See the (\d+ )?attached images?\.$/.test(row.text);
 	return (
 		<Animated.View entering={row.pending ? FadeInDown.duration(220) : undefined} style={{ alignItems: 'flex-end', gap: 5 }}>
 			{row.from ? (
@@ -40,29 +75,43 @@ function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId
 					<T variant="footnote" color={p.fgTertiary}>From {row.from}</T>
 				</View>
 			) : null}
-			<Tap onLongPress={() => copyWithHaptic(row.text)} onPress={long ? () => setExpanded(e => !e) : undefined} style={{
-				maxWidth: '88%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18, borderBottomRightRadius: 6,
-				backgroundColor: p.bubble, borderWidth: StyleSheet.hairlineWidth, borderColor: row.pending === 'failed' ? p.danger : p.bubbleBorder,
-				opacity: row.pending && row.pending !== 'failed' ? 0.7 : 1,
-			}}>
-				{row.mode && tint ? (
-					<View style={{ alignSelf: 'flex-start', paddingHorizontal: 7, height: 19, borderRadius: 6, backgroundColor: tint.bg, justifyContent: 'center', marginBottom: 5 }}>
-						<T variant="caption" weight="700" color={tint.fg}>{row.mode}</T>
-					</View>
+			{row.images?.length ? <MessageImages images={row.images} /> : null}
+			<View style={styles.userLine}>
+				{actionable ? (
+					<Tap haptics="selection" onPress={menu} hitSlop={8} accessibilityLabel="Message actions" style={styles.userMore}>
+						<Icon name="more" size={15} color={p.fgQuaternary} />
+					</Tap>
 				) : null}
-				<Text selectable={!long} numberOfLines={long && !expanded ? 12 : undefined} style={{ color: p.fg, fontSize: 15.5, lineHeight: 22 }}>{row.text}</Text>
-				{row.chips.length ? (
-					<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
-						{row.chips.map(chip => (
-							<View key={chip} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, height: 22, paddingHorizontal: 7, borderRadius: 6, backgroundColor: p.fill }}>
-								<Icon name="file" size={11} color={p.fgTertiary} />
-								<T variant="footnote" color={p.fgSecondary} numberOfLines={1}>{chip}</T>
+				{imageOnly ? null : (
+					<Tap onLongPress={menu} delayLongPress={320} onPress={long ? () => setExpanded(e => !e) : undefined} style={[styles.bubble, {
+						backgroundColor: p.bubble, borderColor: row.pending === 'failed' ? p.danger : p.bubbleBorder, opacity: row.pending && row.pending !== 'failed' ? 0.7 : 1,
+					}]}>
+						{row.mode && tint ? (
+							<View style={[styles.userMode, { backgroundColor: tint.bg }]}>
+								<T variant="caption" weight="700" color={tint.fg}>{row.mode}</T>
 							</View>
-						))}
-					</View>
-				) : null}
-				{long ? <T variant="footnote" weight="600" color={p.fgTertiary} style={{ marginTop: 6 }}>{expanded ? 'Show less' : 'Show more'}</T> : null}
-			</Tap>
+						) : null}
+						<Text selectable={!long} numberOfLines={long && !expanded ? 12 : undefined} style={[styles.userText, { color: p.fg }]}>{row.text}</Text>
+						{row.chips.length ? (
+							<View style={styles.chips}>
+								{row.chips.map(chip => (
+									<View key={chip} style={[styles.chip, { backgroundColor: p.fill }]}>
+										<Icon name="file" size={11} color={p.fgTertiary} />
+										<T variant="footnote" color={p.fgSecondary} numberOfLines={1}>{chip}</T>
+									</View>
+								))}
+							</View>
+						) : null}
+						{long ? <T variant="footnote" weight="600" color={p.fgTertiary} style={{ marginTop: 6 }}>{expanded ? 'Show less' : 'Show more'}</T> : null}
+					</Tap>
+				)}
+			</View>
+			{ctx && row.turnId && ctx.redoTurnId === row.turnId ? (
+				<Tap haptics="light" onPress={ctx.onRedo} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 28, paddingHorizontal: 11, borderRadius: 14, backgroundColor: p.fill }}>
+					<Icon name="undo" size={13} color={p.fgSecondary} />
+					<T variant="footnote" weight="600" color={p.fgSecondary}>Redo checkpoint</T>
+				</Tap>
+			) : null}
 			{row.pending ? (
 				<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
 					{row.pending === 'sending' ? <ActivityIndicator size="small" color={p.fgTertiary} style={{ transform: [{ scale: 0.7 }] }} /> : <Icon name={row.pending === 'failed' ? 'alertCircle' : 'clock'} size={13} color={row.pending === 'failed' ? p.danger : p.fgTertiary} />}
@@ -117,7 +166,7 @@ function StepBody({ step }: { readonly step: IStepItem }) {
 		);
 	}
 	if (body.kind === 'diff') {
-		return <View style={box}><DiffView diff={body.diff} /></View>;
+		return <View style={box}><InlineDiff diff={body.diff} /></View>;
 	}
 	return (
 		<Animated.View entering={FadeIn.duration(180)} style={box}>
@@ -186,7 +235,7 @@ function FileRow({ row }: { readonly row: RowOf<'file'> }) {
 				{row.deletions ? <T variant="footnote" mono color={p.diffRemovedFg}>{'−'}{row.deletions}</T> : null}
 				{row.diff ? <View style={{ transform: [{ rotate: open ? '180deg' : '0deg' }] }}><Icon name="chevronDown" size={13} color={p.fgQuaternary} /></View> : null}
 			</Tap>
-			{open && row.diff ? <View style={{ borderTopWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}><DiffView diff={row.diff} /></View> : null}
+			{open && row.diff ? <View style={{ borderTopWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}><InlineDiff diff={row.diff} fence={languageForPath(row.path).fence} /></View> : null}
 		</View>
 	);
 }
@@ -238,6 +287,7 @@ function TodosRow({ row }: { readonly row: RowOf<'todos'> }) {
 
 function FooterRow({ row }: { readonly row: RowOf<'footer'> }) {
 	const { p } = useTheme();
+	const ctx = useChatContext();
 	const [copied, setCopied] = useState(false);
 	const parts = [row.outcome === 'stopped' ? 'Stopped' : row.outcome === 'failed' ? 'Failed' : undefined, duration(row.durationMs), row.model, row.tokens ? `${compactNumber(row.tokens)} tokens` : undefined, money(row.costUsd)].filter(Boolean);
 	return (
@@ -249,6 +299,11 @@ function FooterRow({ row }: { readonly row: RowOf<'footer'> }) {
 					setTimeout(() => setCopied(false), 1400);
 				}} style={{ width: 30, height: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 8 }} accessibilityLabel="Copy reply">
 					<Icon name={copied ? 'check' : 'copy'} size={14} color={copied ? p.success : p.fgTertiary} />
+				</Tap>
+			) : null}
+			{ctx && row.turnId ? (
+				<Tap haptics="light" hitSlop={6} onPress={() => ctx.onRetry(row.turnId!)} style={{ width: 30, height: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 8 }} accessibilityLabel="Retry">
+					<Icon name="refresh" size={14} color={p.fgTertiary} />
 				</Tap>
 			) : null}
 			<T variant="footnote" color={p.fgQuaternary} numberOfLines={1} style={{ flex: 1 }}>{parts.join(' · ')}</T>
@@ -433,3 +488,13 @@ export function rowGap(row: TranscriptRow, prev: TranscriptRow | undefined): num
 	}
 	return 10;
 }
+
+const styles = StyleSheet.create({
+	userLine: { alignSelf: 'stretch', flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'flex-end', gap: 4 },
+	userMore: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+	bubble: { maxWidth: '86%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18, borderBottomRightRadius: 6, borderWidth: StyleSheet.hairlineWidth },
+	userMode: { alignSelf: 'flex-start', paddingHorizontal: 7, height: 19, borderRadius: 6, justifyContent: 'center', marginBottom: 5 },
+	userText: { fontSize: 15.5, lineHeight: 22 },
+	chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 8 },
+	chip: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 22, paddingHorizontal: 7, borderRadius: 6 },
+});

@@ -15,6 +15,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ClientProvider, useOptionalClient } from '../src/state/client';
 import { loadEnvironments, useActiveEnvironment, useEnvironments } from '../src/state/environments';
 import { ThemeProvider, useTheme } from '../src/theme/theme';
+import { ImageViewerHost } from '../src/ui/ImageViewer';
 import { Toasts } from '../src/ui/sheets';
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
@@ -78,8 +79,13 @@ function Root() {
 				<Stack.Screen name="settings/index" options={{ title: 'Settings', headerLargeTitle: Platform.OS === 'ios' }} />
 				<Stack.Screen name="settings/devices" options={{ title: 'Devices' }} />
 				<Stack.Screen name="settings/models" options={{ title: 'Models' }} />
+				<Stack.Screen name="changes/[id]" options={{ title: 'Changes' }} />
+				<Stack.Screen name="diff" options={{ title: 'Diff', contentStyle: { backgroundColor: p.codeBg } }} />
+				<Stack.Screen name="files/index" options={{ title: 'Files' }} />
+				<Stack.Screen name="file" options={{ title: 'File', contentStyle: { backgroundColor: p.codeBg } }} />
 			</Stack>
 			<ToastHost />
+			<ImageViewerHost />
 		</ClientProvider>
 	);
 }

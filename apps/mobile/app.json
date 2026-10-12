@@ -13,7 +13,8 @@
 			"bundleIdentifier": "com.voltadk.volt",
 			"supportsTablet": true,
 			"infoPlist": {
-				"NSCameraUsageDescription": "Volt scans the pairing code your computer shows.",
+				"NSCameraUsageDescription": "Volt scans the pairing code your computer shows, and takes photos you send to your agents.",
+				"NSPhotoLibraryUsageDescription": "Volt sends the photos and screenshots you pick to your agents.",
 				"NSLocalNetworkUsageDescription": "Volt connects to the agent server on your computer over your local network.",
 				"NSAppTransportSecurity": {
 					"NSAllowsLocalNetworking": true,
@@ -64,6 +65,14 @@
 					"android": {
 						"usesCleartextTraffic": true
 					}
+				}
+			],
+			[
+				"expo-image-picker",
+				{
+					"photosPermission": "Volt sends the photos and screenshots you pick to your agents.",
+					"cameraPermission": "Volt takes photos you send to your agents.",
+					"microphonePermission": false
 				}
 			],
 			"volt-mobile-widgets"

@@ -4,13 +4,16 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	highlight, type IVoltPalette, languageLabel, markdownFor, type MdBlock, type MdCallout, type MdInline, parseInline, parseMarkdown, RADIUS, stripHtml, TYPE
+	highlight, type IVoltPalette, languageLabel, markdownFor, type MdBlock, type MdCallout, type MdInline, parseInline, parseMarkdown, RADIUS, resolveLanguage, stripHtml, TYPE
 } from '@volt/client-core';
 import * as Clipboard from 'expo-clipboard';
-import { Fragment, memo, type ReactNode, useMemo, useState } from 'react';
-import { Linking, ScrollView, StyleSheet, Text, type TextStyle, View } from 'react-native';
+import { Fragment, memo, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { Image, Linking, ScrollView, StyleSheet, Text, type TextStyle, useWindowDimensions, View } from 'react-native';
 import { haptic, Icon, T, Tap } from '../ui/core';
+import { showImage } from '../ui/ImageViewer';
 import { FONT, useTheme } from '../theme/theme';
+import { openFile, resolveFileLink, useChatContext } from './context';
+import { InlineDiff } from './Diff';
 
 /**
  * Markdown as native text. A paragraph is one `<Text>` with nested spans (one attributed string,
@@ -22,7 +25,12 @@ import { FONT, useTheme } from '../theme/theme';
 interface IInlineContext {
 	readonly p: IVoltPalette;
 	readonly size: number;
+	/** The chat's folder: file paths in replies open in the file viewer. */
+	readonly folder?: string;
 }
+
+/** A path-looking inline code span (`src/app.ts`, `app.ts:12`) that opens the file. */
+const CODE_PATH = /^(?:\/|\.{0,2}\/)?[\w@.-]+(?:\/[\w@.-]+)+(?::\d+)?$/;
 
 function renderInlines(nodes: readonly MdInline[], ctx: IInlineContext, key = ''): ReactNode[] {
 	return nodes.map((node, i) => {
@@ -32,8 +40,14 @@ function renderInlines(nodes: readonly MdInline[], ctx: IInlineContext, key = ''
 				return node.v;
 			case 'br':
 				return '\n';
-			case 'code':
-				return <Text key={k} style={{ fontFamily: FONT.mono, fontSize: ctx.size - 2, color: ctx.p.fg, backgroundColor: ctx.p.fill }}>{` ${node.v} `}</Text>;
+			case 'code': {
+				const file = CODE_PATH.test(node.v) ? resolveFileLink(node.v, ctx.folder) : undefined;
+				return (
+					<Text key={k} onPress={file ? () => openFile(file.path, file.line) : undefined} suppressHighlighting={!file} style={{ fontFamily: FONT.mono, fontSize: ctx.size - 2, color: file ? ctx.p.link : ctx.p.fg, backgroundColor: ctx.p.fill }}>
+						{`\u2009${node.v}\u2009`}
+					</Text>
+				);
+			}
 			case 'strong':
 				return <Text key={k} style={styles.strong}>{renderInlines(node.c, ctx, `${k}.`)}</Text>;
 			case 'em':
@@ -41,11 +55,13 @@ function renderInlines(nodes: readonly MdInline[], ctx: IInlineContext, key = ''
 			case 'del':
 				return <Text key={k} style={{ textDecorationLine: 'line-through', color: ctx.p.fgTertiary }}>{renderInlines(node.c, ctx, `${k}.`)}</Text>;
 			case 'image':
-				return <Text key={k} style={{ color: ctx.p.link }} onPress={() => void Linking.openURL(node.src).catch(() => undefined)}>{`[${node.alt || 'image'}]`}</Text>;
+				return <Text key={k} style={{ color: ctx.p.link }} onPress={() => /^(https?:|data:image\/)/i.test(node.src) ? showImage(node.src, node.alt) : void Linking.openURL(node.src).catch(() => undefined)}>{`[${node.alt || 'image'}]`}</Text>;
 			case 'link': {
 				const href = /^(https?:|mailto:)/i.test(node.href) ? node.href : undefined;
+				const file = href ? undefined : resolveFileLink(node.href, ctx.folder);
+				const onPress = href ? () => void Linking.openURL(href).catch(() => undefined) : file ? () => openFile(file.path, file.line) : undefined;
 				return (
-					<Text key={k} style={href ? { color: ctx.p.link } : { textDecorationLine: 'underline', textDecorationColor: ctx.p.fgQuaternary }} onPress={href ? () => void Linking.openURL(href).catch(() => undefined) : undefined} suppressHighlighting={false}>
+					<Text key={k} style={href || file ? { color: ctx.p.link } : { textDecorationLine: 'underline', textDecorationColor: ctx.p.fgQuaternary }} onPress={onPress} suppressHighlighting={false}>
 						{renderInlines(node.c, ctx, `${k}.`)}
 					</Text>
 				);
@@ -56,7 +72,40 @@ function renderInlines(nodes: readonly MdInline[], ctx: IInlineContext, key = ''
 
 export function Inline({ text, open, style, size = TYPE.reading.size }: { readonly text: string; readonly open?: boolean; readonly style?: TextStyle; readonly size?: number }) {
 	const { p } = useTheme();
-	return <Text style={[{ color: p.fg, fontSize: size }, style]}>{renderInlines(parseInline(text, open), { p, size })}</Text>;
+	const folder = useChatContext()?.folder;
+	return <Text style={[{ color: p.fg, fontSize: size }, style]}>{renderInlines(parseInline(text, open), { p, size, ...(folder ? { folder } : {}) })}</Text>;
+}
+
+/** A picture on its own line in a reply: drawn at its aspect ratio, opened full screen on tap. */
+function MarkdownImage({ src, alt }: { readonly src: string; readonly alt: string }) {
+	const { p } = useTheme();
+	const { width: screen } = useWindowDimensions();
+	const [ratio, setRatio] = useState<number | undefined>();
+	const [failed, setFailed] = useState(false);
+	useEffect(() => {
+		let live = true;
+		Image.getSize(src, (w, h) => {
+			if (live && h > 0) {
+				setRatio(w / h);
+			}
+		}, () => {
+			if (live) {
+				setFailed(true);
+			}
+		});
+		return () => {
+			live = false;
+		};
+	}, [src]);
+	if (failed) {
+		return <Text style={{ color: p.link, marginVertical: 4 }} onPress={() => void Linking.openURL(src).catch(() => undefined)}>{`[${alt || 'image'}]`}</Text>;
+	}
+	const width = Math.min(screen - 40, 520);
+	return (
+		<Tap haptics="light" onPress={() => showImage(src, alt)} accessibilityLabel={alt || 'Image'} style={{ marginVertical: 8, alignSelf: 'flex-start', borderRadius: RADIUS.md, overflow: 'hidden', backgroundColor: p.fill, borderWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}>
+			<Image source={{ uri: src }} style={{ width, height: ratio ? Math.min(width / ratio, 480) : 180 }} resizeMode="contain" accessibilityIgnoresInvertColors />
+		</Tap>
+	);
 }
 
 const HEADING: Record<number, { readonly size: number; readonly line: number }> = { 1: { size: 21, line: 28 }, 2: { size: 19, line: 26 }, 3: { size: 17, line: 24 }, 4: { size: 16, line: 23 }, 5: { size: 15, line: 22 }, 6: { size: 15, line: 22 } };
@@ -69,21 +118,27 @@ function Caret() {
 
 const BlockView = memo(function BlockView({ block, open, depth, compact }: { readonly block: MdBlock; readonly open: boolean; readonly depth: number; readonly compact?: boolean }): ReactNode {
 	const { p } = useTheme();
+	const folder = useChatContext()?.folder;
 	const body = compact ? TYPE.small : TYPE.reading;
-	const ctx: IInlineContext = { p, size: body.size };
+	const ctx: IInlineContext = { p, size: body.size, ...(folder ? { folder } : {}) };
 	switch (block.type) {
-		case 'paragraph':
+		case 'paragraph': {
+			const only = open ? undefined : soleImage(block.text);
+			if (only) {
+				return <MarkdownImage src={only.src} alt={only.alt} />;
+			}
 			return (
 				<Text selectable style={{ color: p.fg, fontSize: body.size, lineHeight: body.line, marginVertical: compact ? 2 : 4 }}>
 					{renderInlines(parseInline(block.text, open), ctx)}
 					{open ? <Caret /> : null}
 				</Text>
 			);
+		}
 		case 'heading': {
 			const h = HEADING[block.level] ?? HEADING[4];
 			return (
-				<Text selectable accessibilityRole="header" style={{ color: p.fg, fontSize: h.size, lineHeight: h.line, fontWeight: '600', marginTop: 16, marginBottom: 4, letterSpacing: -0.2 }}>
-					{renderInlines(parseInline(block.text, open), { p, size: h.size })}
+				<Text selectable accessibilityRole="header" style={{ color: p.fg, fontSize: h.size, lineHeight: h.line, fontWeight: block.level <= 2 ? '700' : '600', marginTop: depth ? 10 : block.level <= 2 ? 20 : 14, marginBottom: block.level <= 2 ? 6 : 4, letterSpacing: block.level <= 2 ? -0.3 : -0.2 }}>
+					{renderInlines(parseInline(block.text, open), { ...ctx, size: h.size })}
 				</Text>
 			);
 		}
@@ -149,6 +204,20 @@ function Blocks({ blocks, open, depth, compact }: { readonly blocks: readonly Md
 	);
 }
 
+/** The image when a paragraph is nothing but one (`![alt](https://…)`). */
+function soleImage(text: string): { readonly src: string; readonly alt: string } | undefined {
+	const nodes = parseInline(text.trim()).filter(node => !(node.t === 'text' && !node.v.trim()));
+	const node = nodes.length === 1 ? nodes[0] : undefined;
+	if (node?.t === 'image' && /^(https?:|data:image\/)/i.test(node.src)) {
+		return { src: node.src, alt: node.alt };
+	}
+	const inner = node?.t === 'link' && node.c.length === 1 ? node.c[0] : undefined;
+	if (inner?.t === 'image' && /^(https?:|data:image\/)/i.test(inner.src)) {
+		return { src: inner.src, alt: inner.alt };
+	}
+	return undefined;
+}
+
 export const Markdown = memo(function Markdown({ text, docKey, streaming = false, compact }: { readonly text: string; readonly docKey?: string; readonly streaming?: boolean; readonly compact?: boolean }) {
 	const doc = useMemo(() => docKey ? markdownFor(docKey, text) : parseMarkdown(text), [docKey, text]);
 	return <View><Blocks blocks={doc.blocks} open={streaming} depth={0} compact={compact} /></View>;
@@ -187,7 +256,8 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, path, streaming }
 	const { p } = useTheme();
 	const [copied, setCopied] = useState(false);
 	const [expanded, setExpanded] = useState(false);
-	const all = useMemo(() => highlight(code, lang), [code, lang]);
+	const isDiff = !streaming && resolveLanguage(lang) === 'diff' && /^@@ /m.test(code);
+	const all = useMemo(() => isDiff ? [] : highlight(code, lang), [code, lang, isDiff]);
 	const long = !streaming && all.length > COLLAPSE_LINES;
 	const lines = long && !expanded ? all.slice(0, COLLAPSE_LINES - 20) : all;
 	return (
@@ -206,7 +276,7 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, path, streaming }
 					<T variant="footnote" color={p.fgTertiary}>{copied ? 'Copied' : 'Copy'}</T>
 				</Tap>
 			</View>
-			<ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
+			{isDiff ? <InlineDiff diff={code} /> : <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
 				<Text selectable style={{ fontFamily: FONT.mono, fontSize: 12.5, lineHeight: 19, color: p.syntax.plain, paddingHorizontal: 14, paddingVertical: 12 }}>
 					{lines.map((tokens, i) => (
 						<Fragment key={i}>
@@ -215,7 +285,7 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, path, streaming }
 						</Fragment>
 					))}
 				</Text>
-			</ScrollView>
+			</ScrollView>}
 			{long ? (
 				<Tap haptics="selection" onPress={() => setExpanded(e => !e)} style={{ height: 38, alignItems: 'center', justifyContent: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}>
 					<T variant="footnote" weight="600" color={p.fgSecondary}>{expanded ? 'Show less' : `Show all ${all.length} lines`}</T>
@@ -224,28 +294,6 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, path, streaming }
 		</View>
 	);
 });
-
-export function DiffView({ diff, maxLines = 400 }: { readonly diff: string; readonly maxLines?: number }) {
-	const { p } = useTheme();
-	const lines = useMemo(() => highlight(diff, 'diff'), [diff]);
-	const shown = lines.slice(0, maxLines);
-	return (
-		<ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false} style={{ backgroundColor: p.codeBg }}>
-			<View style={{ paddingVertical: 6, minWidth: '100%' }}>
-				{shown.map((tokens, i) => {
-					const kind = tokens[0]?.k;
-					const text = tokens.map(t => t.v).join('');
-					return (
-						<Text key={i} style={{ fontFamily: FONT.mono, fontSize: 12, lineHeight: 18, paddingHorizontal: 12, color: kind === 'inserted' ? p.diffAddedFg : kind === 'deleted' ? p.diffRemovedFg : kind === 'meta' ? p.fgQuaternary : p.fgSecondary, backgroundColor: kind === 'inserted' ? p.diffAdded : kind === 'deleted' ? p.diffRemoved : 'transparent' }}>
-							{text || ' '}
-						</Text>
-					);
-				})}
-				{lines.length > maxLines ? <T variant="footnote" color={p.fgTertiary} style={{ paddingHorizontal: 12, paddingVertical: 6 }}>{lines.length - maxLines} more lines</T> : null}
-			</View>
-		</ScrollView>
-	);
-}
 
 export function copyWithHaptic(text: string): void {
 	void Clipboard.setStringAsync(text);

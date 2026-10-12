@@ -35,11 +35,19 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 	const pending = usePending(chatId);
 	const list = useRef<FlatList<ICell>>(null);
 	const [away, setAway] = useState(false);
+	// A cell keeps its object while its row and spacing hold, so only the rows a patch touched re-render.
+	const cellCache = useRef(new WeakMap<TranscriptRow, ICell>());
 	const cells = useMemo(() => {
 		const rows = buildRows(transcript?.messages ?? [], pending);
 		const out: ICell[] = new Array(rows.length);
 		for (let i = 0; i < rows.length; i++) {
-			out[rows.length - 1 - i] = { row: rows[i], gap: rowGap(rows[i], rows[i - 1]) };
+			const gap = rowGap(rows[i], rows[i - 1]);
+			let cell = cellCache.current.get(rows[i]);
+			if (!cell || cell.gap !== gap) {
+				cell = { row: rows[i], gap };
+				cellCache.current.set(rows[i], cell);
+			}
+			out[rows.length - 1 - i] = cell;
 		}
 		return out;
 	}, [transcript?.messages, pending]);

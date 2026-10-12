@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	type Collections, type IChatListItem, type IClientStatus, type IPendingSend, type IRuntimeState, type ISavedEnvironment, type IToast, type ITranscript,
+	type Collections, type IChatListItem, type ICheckpointState, type IClientStatus, type IPendingSend, type IRuntimeState, type ISavedEnvironment, type IToast, type ITranscript,
 	runtimeOf, selectChatItems, VoltClient
 } from '@volt/client-core';
 import * as Network from 'expo-network';
@@ -146,5 +146,41 @@ export function useNow(ms = 1000, active = true): number {
 		},
 		() => (active ? Math.floor(Date.now() / ms) * ms : 0),
 		() => 0,
+	);
+}
+
+/** An attachment's image (a data URL), loaded on first use; only this hook's owner re-renders. */
+export function useAttachment(ref: string | undefined): string | undefined {
+	const client = useClient();
+	const url = useSyncExternalStore(
+		listener => ref ? client.subscribe(`attachment:${ref}`, listener) : () => undefined,
+		() => ref ? client.getAttachmentUrl(ref) : undefined,
+		() => undefined,
+	);
+	useEffect(() => {
+		if (ref && !url) {
+			void client.loadAttachment(ref);
+		}
+	}, [client, ref, url]);
+	return url;
+}
+
+/** A chat's checkpoints (loaded once when the chat opens; the server publishes changes). */
+export function useCheckpoints(chatId: string): ICheckpointState | undefined {
+	const client = useClient();
+	useEffect(() => {
+		void client.loadCheckpoints(chatId);
+	}, [client, chatId]);
+	return useSyncExternalStore(
+		listener => {
+			const a = client.subscribe(`checkpoints:${chatId}`, listener);
+			const b = client.subscribe('col:checkpoints', listener);
+			return () => {
+				a();
+				b();
+			};
+		},
+		() => client.getCheckpoints(chatId),
+		() => undefined,
 	);
 }

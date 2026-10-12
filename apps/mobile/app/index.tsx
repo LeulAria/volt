@@ -114,7 +114,12 @@ function ChatList() {
 				headerBlurEffect: p.scheme === 'dark' ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight',
 				headerLargeStyle: { backgroundColor: p.canvas },
 				headerLeft: () => <ConnectionPill />,
-				headerRight: () => <IconButton icon="settings" label="Settings" onPress={() => router.push('/settings')} color={p.fg} />,
+				headerRight: () => (
+					<View style={{ flexDirection: 'row' }}>
+						<IconButton icon="folder" label="Files" onPress={() => router.push('/files')} color={p.fg} />
+						<IconButton icon="settings" label="Settings" onPress={() => router.push('/settings')} color={p.fg} />
+					</View>
+				),
 				...(Platform.OS === 'ios' ? {
 					headerSearchBarOptions: {
 						placeholder: 'Search chats',

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { type AccessMode, type ComposerMode, type IProjectItem, selectProjects, shortPath } from '@volt/client-core';
+import { type AccessMode, type ComposerMode, type IProjectItem, type IPromptAttachment, selectProjects, shortPath } from '@volt/client-core';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
@@ -73,13 +73,13 @@ function NewChat() {
 	const effectiveModel = modelTouched ? modelRef : runtime.activeCatalogRef;
 	const recent = items.filter(item => !item.archived && item.projectId === projectId).slice(0, 4);
 
-	const start = (text: string) => {
+	const start = (text: string, attachments: readonly IPromptAttachment[] = []) => {
 		if (!projectId) {
 			setAdding(true);
 			return false;
 		}
 		void AsyncStorage.setItem(LAST_PROJECT_KEY, projectId);
-		const id = client.startChat({ projectId, text, mode, ...(effectiveModel ? { modelRef: effectiveModel } : {}), ...(access ? { accessMode: access } : {}) });
+		const id = client.startChat({ projectId, text, mode, ...(effectiveModel ? { modelRef: effectiveModel } : {}), ...(access ? { accessMode: access } : {}), ...(attachments.length ? { attachments } : {}) });
 		haptic.success();
 		router.dismiss();
 		router.push({ pathname: '/chat/[id]', params: { id } });
@@ -152,7 +152,7 @@ function NewChat() {
 						}}
 						accessMode={access ?? runtime.accessMode}
 						onAccessChange={setAccess}
-						onSend={text => start(text)}
+						onSend={(text, _delivery, attachments) => start(text, attachments)}
 						placeholder={project ? `What should Volt do in ${project.name}?` : 'Add a project to start'}
 						leading={project ? <Pill label={project.name} icon="folder" onPress={() => setPicking(true)} maxWidth={110} /> : undefined}
 					/>

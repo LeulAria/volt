@@ -92,6 +92,27 @@ function Details({ chatId }: { readonly chatId: string }) {
 					) : null}
 				</Section>
 
+				<Section title="Work">
+					<Tap haptics="selection" onPress={() => {
+						router.back();
+						router.push({ pathname: '/changes/[id]', params: { id: chatId } });
+					}} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, minHeight: 48 }}>
+						<Icon name="fileDiff" size={17} color={p.fgTertiary} />
+						<T variant="body" style={{ flex: 1 }}>Changes</T>
+						<Icon name="chevronRight" size={14} color={p.fgQuaternary} />
+					</Tap>
+					{folder ? (
+						<Tap haptics="selection" onPress={() => {
+							router.back();
+							router.push({ pathname: '/files', params: { root: folder, dir: folder, ...(project?.displayName ? { name: project.displayName } : {}) } });
+						}} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, minHeight: 48, borderTopWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}>
+							<Icon name="folder" size={17} color={p.fgTertiary} />
+							<T variant="body" style={{ flex: 1 }}>Files</T>
+							<Icon name="chevronRight" size={14} color={p.fgQuaternary} />
+						</Tap>
+					) : null}
+				</Section>
+
 				<Section title="Access">
 					{ACCESS_MODES.map((mode, i) => (
 						<Tap key={mode.id} haptics="selection" onPress={() => void client.setAccessMode(mode.id, chatId)} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 11, borderTopWidth: i ? StyleSheet.hairlineWidth : 0, borderColor: p.strokeFaint }}>

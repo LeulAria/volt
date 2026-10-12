@@ -25,13 +25,30 @@ all and uses the best one that answers with the same environment id, so a token 
 a different machine. Devices can be removed from either side; a removed device is disconnected at
 once.
 
+## What it does
+
+- Every chat live, with approvals, questions, the queue, usage-limit pauses and subagents.
+- New chats in any project (the **New chat** button), with mode, model and access.
+- Images: **+** in the composer picks photos or takes one; they are downscaled to 2048 px JPEG,
+  uploaded to Volt's attachment store and sent to the model like images pasted on the desktop.
+- Sent messages (long-press, or **…**): **Edit** (the composer switches to edit mode; sending
+  replaces the message and everything after it, optionally reverting files), **Retry**, **Copy**,
+  **Rewind to here** and **Restore checkpoint** (with **Redo checkpoint** until the next send).
+- **Changes**: every file the chat's agent changed (whole chat or last turn), each with a
+  diff: line numbers, hunk headers, word-level highlights, wrap or scroll sideways.
+- **Files**: browse projects and chat worktrees, fuzzy-search every file, read code with line
+  numbers and colours, see git status, compare a file with its last commit. File paths in replies
+  open here.
+
 ## How it is built
 
 - `../client-core`: connection (resume from the last event, hole detection, heartbeat, jittered
   backoff), pairing, the state store, transcript rows, the incremental markdown parser and the
   syntax highlighter, design tokens and icons. Shared with the web app.
-- `app/`: screens (home list, chat, details sheet, new chat, connect, settings).
-- `src/chat`: the transcript (inverted list, rows memoized by message identity), native-text
-  markdown (only the block being written re-renders while a reply streams), composer and trays.
+- `app/`: screens (home list, chat, details sheet, new chat, changes, diff, files, file, connect,
+  settings).
+- `src/chat`: the transcript (inverted list, rows and cells memoized by message identity),
+  native-text markdown (only the block being written re-renders while a reply streams), composer
+  (images, edit mode) and trays, and `Diff.tsx` (diffs from `client-core/diff.ts`).
 - `src/state/liveActivities.ts`: drives Live Activities and the Dynamic Island with the planner
   from `../mobile-widgets` (iOS builds that include the widget extension only).
