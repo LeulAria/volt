@@ -26,6 +26,8 @@ import { IVoltSessionContextService, uriFromStoredRoot } from '../../../workbenc
 import { ServerEditsJournal } from './serverEditsJournal.js';
 import { ServerSessionHost } from './serverSessionHost.js';
 import { ServerClientTools } from './serverClientTools.js';
+import { IServerFileRoot, ServerFiles } from './serverFiles.js';
+import { basename } from '../../../base/common/path.js';
 
 /** Replicated collections the server publishes. Clients' mirrors answer synchronous getters from them. */
 export const AGENT_SERVER_COLLECTIONS = [
@@ -108,6 +110,7 @@ export class AgentServerApi extends Disposable {
 		this.runtimeRefresh = this._register(new RunOnceScheduler(() => this.publishRuntime(), 20));
 		this.historyRefresh = this._register(new RunOnceScheduler(() => this.publishHistory(), 50));
 		this.clientTools = this._register(new ServerClientTools(protocol, hostTools));
+		this._register(new ServerFiles(protocol, () => this.fileRoots(), logService));
 		this.registerMethods();
 		this.observe();
 		this.publishRuntime();
@@ -209,6 +212,29 @@ export class AgentServerApi extends Disposable {
 			this.sessions.releaseExcept(live);
 			this.clientTools.retain(live);
 		}));
+	}
+
+	/** The folders paired clients may browse and edit: every local project and every chat's worktree. */
+	private fileRoots(): IServerFileRoot[] {
+		const roots: IServerFileRoot[] = [];
+		const seen = new Set<string>();
+		for (const project of (this.sessionContext as VoltSessionContextService).exportState().projects) {
+			if (project.root.scheme === 'file' && !seen.has(project.root.fsPath)) {
+				seen.add(project.root.fsPath);
+				roots.push({ id: project.id, name: project.displayName, path: project.root.fsPath, kind: 'project', ...(project.scratch ? { scratch: true } : {}) });
+			}
+		}
+		const sessions = this.col('sessions');
+		for (const sessionId of sessions.keys()) {
+			const session = sessions.get(sessionId) as { worktreePath?: unknown; workingFolder?: unknown } | undefined;
+			for (const folder of [session?.worktreePath, session?.workingFolder]) {
+				if (typeof folder === 'string' && folder && !seen.has(folder)) {
+					seen.add(folder);
+					roots.push({ id: `worktree:${sessionId}`, name: basename(folder), path: folder, kind: 'worktree', sessionId });
+				}
+			}
+		}
+		return roots;
 	}
 
 	/**

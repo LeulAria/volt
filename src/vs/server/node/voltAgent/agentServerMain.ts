@@ -6,6 +6,7 @@
 import { randomBytes } from 'crypto';
 import { promises as fs } from 'fs';
 import * as http from 'http';
+import * as zlib from 'zlib';
 import type { AddressInfo, Socket } from 'net';
 import minimist from 'minimist';
 import { Emitter } from '../../../base/common/event.js';
@@ -427,7 +428,37 @@ const MIME: Record<string, string> = {
 	'.webmanifest': 'application/manifest+json; charset=utf-8',
 	'.ico': 'image/x-icon',
 	'.webp': 'image/webp',
+	'.woff': 'font/woff',
+	'.jpg': 'image/jpeg',
+	'.jpeg': 'image/jpeg',
+	'.gif': 'image/gif',
+	'.wasm': 'application/wasm',
+	'.txt': 'text/plain; charset=utf-8',
 };
+
+/** Text assets worth compressing; the web IDE's editor bundle shrinks to about a quarter. */
+const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg', '.map', '.webmanifest', '.ttf', '.txt', '.wasm']);
+/** Compressed copies of the served files, by path and modification time (the app is a few MB). */
+const compressed = new Map<string, { readonly mtime: number; readonly encoding: 'br' | 'gzip'; readonly data: Promise<Buffer> }>();
+
+function preferredEncoding(header: string | string[] | undefined): 'br' | 'gzip' | undefined {
+	const value = Array.isArray(header) ? header.join(',') : header ?? '';
+	return /\bbr\b/.test(value) ? 'br' : /\bgzip\b/.test(value) ? 'gzip' : undefined;
+}
+
+function compressedCopy(file: string, mtime: number, data: Buffer, encoding: 'br' | 'gzip'): Promise<Buffer> {
+	const key = `${encoding}:${file}`;
+	const hit = compressed.get(key);
+	if (hit && hit.mtime === mtime) {
+		return hit.data;
+	}
+	const result = new Promise<Buffer>((resolve, reject) => encoding === 'br'
+		? zlib.brotliCompress(data, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 7, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: data.length } }, (err, out) => err ? reject(err) : resolve(out))
+		: zlib.gzip(data, { level: 7 }, (err, out) => err ? reject(err) : resolve(out)));
+	compressed.set(key, { mtime, encoding, data: result });
+	result.catch(() => compressed.delete(key));
+	return result;
+}
 
 async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, webRoot: string, token: string, epoch: string, pairing: ServerPairing, ctx: IPairingHttpContext): Promise<void> {
 	if (await pairing.handleHttp(req, res, ctx)) {
@@ -449,15 +480,32 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, we
 	}
 	try {
 		// The web app routes on the client (/pair, /t/<chat>): a path without an extension is the app.
-		const data = await fs.readFile(file).catch(err => extname(file) ? Promise.reject(err) : fs.readFile(join(webRoot, 'index.html')));
 		const served = extname(file) ? file : join(webRoot, 'index.html');
-		res.writeHead(200, {
+		const stat = await fs.stat(served);
+		const etag = `W/"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}"`;
+		// Hashed bundles never change under their name: cached for good. Everything else (the page,
+		// the manifest) revalidates, so a rebuilt app never mixes with an older bundle.
+		const immutable = relative.startsWith('assets/');
+		const headers: Record<string, string> = {
 			'Content-Type': MIME[extname(served)] ?? 'application/octet-stream',
-			// Revalidate every time: a rebuilt app must never mix with a cached older bundle.
-			'Cache-Control': 'no-cache',
+			'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
 			'X-Content-Type-Options': 'nosniff',
-		});
-		res.end(data);
+			'ETag': etag,
+			'Vary': 'Accept-Encoding',
+		};
+		if (req.headers['if-none-match'] === etag) {
+			res.writeHead(304, headers).end();
+			return;
+		}
+		let data = await fs.readFile(served);
+		const encoding = COMPRESSIBLE.has(extname(served)) && data.length > 1024 ? preferredEncoding(req.headers['accept-encoding']) : undefined;
+		if (encoding) {
+			data = await compressedCopy(served, stat.mtimeMs, data, encoding);
+			headers['Content-Encoding'] = encoding;
+		}
+		headers['Content-Length'] = String(data.length);
+		res.writeHead(200, headers);
+		res.end(req.method === 'HEAD' ? undefined : data);
 	} catch {
 		res.writeHead(404, { 'Content-Type': 'text/plain' }).end(`Not found. The web app is built into ${webRoot}.`);
 	}
