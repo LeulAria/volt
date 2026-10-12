@@ -164,8 +164,9 @@ export function setPrefersLiteApp(lite: boolean): void {
 
 /**
  * Where a signed-in page goes instead of the lightweight app: the workbench page it was sent
- * from (`?next=/code/…`), or the workbench itself on a computer (a wide window with a mouse),
- * unless this browser chose the lightweight app (`?lite=1`). Phones stay here.
+ * from (`?next=/code/…`), or the workbench itself (the desktop's UI, laid out for any width),
+ * unless this browser chose the lightweight app (`?lite=1`). The app's own pages (Devices, a
+ * chat link) stay here.
  */
 export function workbenchTarget(workbench: boolean | undefined): string | undefined {
 	const params = new URLSearchParams(window.location.search);
@@ -179,10 +180,10 @@ export function workbenchTarget(workbench: boolean | undefined): string | undefi
 	if (next && /^\/code(\/|$|\?)/.test(next)) {
 		return next;
 	}
-	if (!workbench || prefersLiteApp() || window.location.pathname !== '/') {
+	if (!workbench || prefersLiteApp() || (window.location.pathname !== '/' && window.location.pathname !== '/pair')) {
 		return undefined;
 	}
-	return window.matchMedia('(min-width: 900px) and (pointer: fine)').matches ? '/code/' : undefined;
+	return '/code/';
 }
 
 /**

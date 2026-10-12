@@ -20,9 +20,9 @@ Signing in (then, on a computer, on to Volt's workbench; see below):
 
 ## Volt's workbench (VS Code in the browser)
 
-On a computer (a wide window with a mouse), a signed-in page moves on to `/code/`: Volt's own
-workbench, the desktop's UI running in the tab, the way code-server serves VS Code. The agent
-server runs VS Code's server inside itself (`src/vs/server/node/voltAgent/serverWorkbench.ts`):
+A signed-in page moves on to `/code/`: Volt's own workbench, the desktop's UI running in the tab,
+the way code-server serves VS Code. The agent server runs VS Code's server inside itself
+(`src/vs/server/node/voltAgent/serverWorkbench.ts`):
 the remote extension host with the desktop's extensions, terminals, files, search and git on this
 computer. It starts with the first page load. The agent UI is the desktop's with the agent server
 on, opening in the Agent layout with the desktop's settings (theme, fonts, editor) as defaults.
@@ -31,15 +31,23 @@ on, opening in the Agent layout with the desktop's settings (theme, fonts, edito
   the device token) sets an http-only cookie the server checks on every workbench request and
   socket, so removing a device locks it out at once. `/code/` without it comes back here first.
 - **Files**: `file:` paths are the computer's, as on the desktop (`voltServerDiskFileSystemProvider.ts`).
+- **Looks like the desktop**: the agent window paints solid, as the desktop does in full screen
+  (a tab has no macOS material behind it), with no room kept for traffic lights; the page and the
+  browser's bar take the theme's colours (`contrib/voltAgent/browser/web/media/voltWorkbenchWeb.css`).
+- **Any width**: the agent layout's own responsive rules apply (the agents list becomes a drawer
+  when the chat would be too narrow; a phone is about the desktop's smallest window). Touch screens
+  keep hover-only buttons visible, and the on-screen keyboard resizes the layout (iOS through the
+  visual viewport, Android through `interactive-widget=resizes-content`).
 - **Desktop only**: Lid-Closed Mode, dictation, the in-app browser, Claude account sign-in, the
-  relay and connecting other agents say so when used.
-- **The lightweight app** stays for phones and narrow windows; on a computer, `/?lite=1` keeps it
-  (`/?lite=0` goes back to the workbench) and **Volt: Open the Lightweight Web App** opens it.
+  relay and connecting other agents say so when used. A few shortcuts the browser keeps for itself
+  (⌘L, ⌘N, ⌘W, ⌘T) reach the browser, not Volt.
+- **The lightweight app** stays the fallback (a build without the workbench) and the Devices page;
+  `/?lite=1` keeps it (`/?lite=0` goes back) and **Volt: Open the Lightweight Web App** opens it.
 
 ## The lightweight app
 
-On a wide window the app is laid out like Volt on the desktop: a title bar with the command
-center, an activity bar (Chats, Explorer, Search, Source Control), editor tabs, the agent panel on
+On a wide window the lightweight app is laid out like Volt on the desktop: a title bar with the
+command center, an activity bar (Chats, Explorer, Search, Source Control), editor tabs, the agent panel on
 the right and a status bar. Narrow windows and phones get one pane at a time.
 
 - **Chats** open as editor tabs; the agent panel keeps one beside the files you're editing
