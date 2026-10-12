@@ -3,11 +3,20 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { basename, compactNumber, dirname, duration, highlight, type IStepItem, money, pendingLabel, type TranscriptRow } from '@volt/client-core';
-import { Fragment, memo, type ReactNode, useMemo, useState } from 'react';
-import { useClient } from '../app/client';
-import { Icon, LiveTimer, Shimmer, Spinner } from '../ui/primitives';
+import {
+	attachmentsOf, basename, compactNumber, dirname, duration, errorMessage, type IPromptAttachment, type IRestorePreview, type IRowImage, type IStepItem, money, pendingLabel,
+	type TranscriptRow, uuid
+} from '@volt/client-core';
+import { Fragment, memo, type ReactNode, useState } from 'react';
+import { useAttachment, useClient } from '../app/client';
+import { Dialog } from '../ui/overlays';
+import { Button, Icon, LiveTimer, Shimmer, Spinner } from '../ui/primitives';
+import { openTab } from '../ide/workbench';
+import { Composer } from './Composer';
+import { DiffLines } from './DiffLines';
+import { openLightbox } from './Lightbox';
 import { CodeBlock, Inline, Markdown } from './Markdown';
+import { useChatRow } from './rowContext';
 
 type RowOf<K extends TranscriptRow['kind']> = Extract<TranscriptRow, { kind: K }>;
 
@@ -24,19 +33,135 @@ function copyText(text: string) {
 	void navigator.clipboard?.writeText(text);
 }
 
+function RowImage({ image, onlyOne }: { readonly image: IRowImage; readonly onlyOne: boolean }) {
+	const url = useAttachment(image.ref);
+	return (
+		<button type="button" className={`user-image${onlyOne ? ' single' : ''}`} title={image.name} onClick={() => url && openLightbox(url, image.name)}>
+			{url ? <img src={url} alt={image.name} loading="lazy" /> : <span className="user-image-loading"><Spinner size={13} /></span>}
+		</button>
+	);
+}
+
+function UserImages({ images }: { readonly images: readonly IRowImage[] }) {
+	return (
+		<div className={`user-images count-${Math.min(images.length, 4)}`}>
+			{images.map(image => <RowImage key={image.ref} image={image} onlyOne={images.length === 1} />)}
+		</div>
+	);
+}
+
+type UserDialog = { readonly kind: 'rewind' } | { readonly kind: 'restore'; readonly preview?: IRestorePreview; readonly loading: boolean } | undefined;
+
 function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId: string }) {
 	const client = useClient();
+	const ctx = useChatRow();
 	const [expanded, setExpanded] = useState(false);
+	const [copied, setCopied] = useState(false);
+	const [dialog, setDialog] = useState<UserDialog>();
+	const [busy, setBusy] = useState(false);
+	const [revert, setRevert] = useState(false);
+	const [editMode, setEditMode] = useState(ctx?.mode ?? 'Agent');
 	const long = row.text.length > 600 || row.text.split('\n').length > 12;
+	const turnId = row.turnId;
+	const actionable = !!ctx && !!turnId && !row.pending && !row.from && !row.steer;
+	const checkpoint = actionable && !!ctx?.checkpoints?.checkpoints.some(c => c.turnId === turnId);
+	const editing = actionable && ctx?.editingTurnId === turnId;
+
+	const attachments = (): IPromptAttachment[] => (row.images ?? []).map(image => ({ id: uuid(), name: image.name, mime: image.mime, ref: image.ref }));
+
+	const rewind = async (revertFiles: boolean) => {
+		if (!turnId || !ctx) {
+			return;
+		}
+		setBusy(true);
+		const message = await client.rewindTo(chatId, turnId, revertFiles);
+		setBusy(false);
+		setDialog(undefined);
+		if (message) {
+			ctx.onRewound(message.text, attachmentsOf(message));
+		}
+	};
+
+	const openRestore = async () => {
+		if (!turnId) {
+			return;
+		}
+		setDialog({ kind: 'restore', loading: true });
+		const preview = await client.previewRestore(chatId, turnId);
+		setDialog(current => current?.kind === 'restore' ? { kind: 'restore', loading: false, ...(preview ? { preview } : {}) } : current);
+	};
+
+	const restore = async () => {
+		if (!turnId || !ctx || dialog?.kind !== 'restore') {
+			return;
+		}
+		setBusy(true);
+		const result = await client.restoreCheckpoint(chatId, turnId, !!dialog.preview?.conflicts.length);
+		setBusy(false);
+		setDialog(undefined);
+		if (result?.applied) {
+			ctx.onRestored(turnId);
+			ctx.startEdit(turnId);
+		}
+	};
+
+	if (editing && ctx && turnId) {
+		return (
+			<div className="row-user editing">
+				<Composer
+					edit={{ text: row.text, attachments: attachments(), onCancel: () => ctx.startEdit(undefined), label: revert ? 'Revert files and send' : 'Send' }}
+					mode={editMode}
+					onModeChange={setEditMode}
+					modelRef={ctx.modelRef}
+					onModelChange={() => undefined}
+					accessMode={ctx.accessMode}
+					onAccessChange={mode => void client.setAccessMode(mode, chatId)}
+					mentionRoot={ctx.root}
+					leading={checkpoint ? (
+						<button type="button" className={`pill pill-quiet revert-toggle${revert ? ' on' : ''}`} aria-pressed={revert} title="Also put the files back as they were before this message" onClick={() => setRevert(r => !r)}>
+							<Icon name="undo" size={13} /><span className="pill-text">Revert files</span>
+						</button>
+					) : undefined}
+					onSend={async (text, _delivery, images) => {
+						const ok = await client.editMessage(chatId, turnId, { text, attachments: images, mode: editMode, ...(ctx.modelRef ? { modelRef: ctx.modelRef } : {}), revertFiles: revert });
+						if (ok) {
+							ctx.startEdit(undefined);
+						}
+						return ok;
+					}}
+				/>
+				<div className="edit-hint">Sending replaces this message and everything after it.{ctx.running ? ' The running reply stops.' : ''}</div>
+			</div>
+		);
+	}
+
 	return (
-		<div className={`row-user${row.pending ? ` pending pending-${row.pending}` : ''}`}>
+		<div className={`row-user${row.pending ? ` pending pending-${row.pending}` : ''}${actionable ? ' actionable' : ''}`}>
 			{row.from ? <div className="user-from"><Icon name="message" size={12} />From {row.from}</div> : null}
-			<div className={`user-bubble${long && !expanded ? ' clamped' : ''}`}>
+			<div className={`user-bubble${long && !expanded ? ' clamped' : ''}`} onDoubleClick={() => actionable && !window.getSelection()?.toString() && ctx?.startEdit(turnId)}>
 				{row.mode ? <span className={`user-mode mode-${row.mode.toLowerCase()}`}>{row.mode}</span> : null}
+				{row.images?.length ? <UserImages images={row.images} /> : null}
 				<div className="user-text">{row.text}</div>
 				{row.chips.length ? <div className="user-chips">{row.chips.map(chip => <span key={chip} className="chip"><Icon name="file" size={11} />{chip}</span>)}</div> : null}
 				{long ? <button type="button" className="user-more" onClick={() => setExpanded(e => !e)}>{expanded ? 'Show less' : 'Show more'}</button> : null}
+				{actionable ? (
+					<div className="user-actions" role="toolbar" aria-label="Message actions">
+						<button type="button" className="user-action" title="Edit and resend" onClick={() => ctx?.startEdit(turnId)}><Icon name="pencil" size={13} /></button>
+						<button type="button" className="user-action" title={copied ? 'Copied' : 'Copy'} onClick={() => {
+							copyText(row.text);
+							setCopied(true);
+							setTimeout(() => setCopied(false), 1400);
+						}}><Icon name={copied ? 'check' : 'copy'} size={13} /></button>
+						<button type="button" className="user-action" title="Rewind the chat to before this message" onClick={() => setDialog({ kind: 'rewind' })}><Icon name="history" size={13} /></button>
+						{checkpoint ? <button type="button" className="user-action" title="Restore checkpoint: put the files back as they were before this message" onClick={() => void openRestore()}><Icon name="undo" size={13} /></button> : null}
+					</div>
+				) : null}
 			</div>
+			{actionable && ctx?.restoredTurnId === turnId && ctx.checkpoints?.canRedo ? (
+				<button type="button" className="redo-checkpoint" onClick={() => void client.redoCheckpoint(chatId).then(result => result?.applied && ctx.onRestored(undefined))}>
+					<Icon name="refresh" size={12} />Redo checkpoint
+				</button>
+			) : null}
 			{row.pending ? (
 				<div className="user-pending">
 					{row.pending === 'sending' ? <Spinner size={11} /> : <Icon name={row.pending === 'failed' ? 'alertCircle' : 'clock'} size={12} />}
@@ -47,6 +172,39 @@ function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId
 					</> : null}
 				</div>
 			) : null}
+			<Dialog open={dialog?.kind === 'rewind'} onClose={() => setDialog(undefined)} title="Rewind the chat to before this message?" width={460} footer={<>
+				<Button variant="ghost" onClick={() => setDialog(undefined)}>Cancel</Button>
+				{checkpoint ? <Button busy={busy} onClick={() => void rewind(true)}>Rewind and revert files</Button> : null}
+				<Button variant="primary" busy={busy} onClick={() => void rewind(false)}>Rewind</Button>
+			</>}>
+				<div className="dialog-text">This message and everything after it leave the chat and the agent's context, and the message goes back to the composer. Files stay as they are{checkpoint ? ' unless you revert them too' : ''}.</div>
+			</Dialog>
+			<Dialog open={dialog?.kind === 'restore'} onClose={() => setDialog(undefined)} title="Discard all changes up to this checkpoint?" width={480} footer={<>
+				<Button variant="ghost" onClick={() => setDialog(undefined)}>Cancel</Button>
+				<Button variant="primary" busy={busy} disabled={dialog?.kind === 'restore' && dialog.loading} onClick={() => void restore()}>{dialog?.kind === 'restore' && dialog.preview?.conflicts.length ? 'Restore anyway' : 'Restore'}</Button>
+			</>}>
+				{dialog?.kind === 'restore' ? <RestoreBody dialog={dialog} /> : null}
+			</Dialog>
+		</div>
+	);
+}
+
+function RestoreBody({ dialog }: { readonly dialog: Extract<UserDialog, { kind: 'restore' }> }) {
+	if (dialog.loading) {
+		return <div className="dialog-text"><Spinner size={12} /> Checking the files…</div>;
+	}
+	const preview = dialog.preview;
+	const changed = preview?.files.filter(f => f.action !== 'none') ?? [];
+	return (
+		<div className="dialog-text">
+			<p>Files go back to how they were before this message ran, and the message opens for editing. You can redo this until you send again.</p>
+			{changed.length ? (
+				<ul className="restore-files">
+					{changed.slice(0, 8).map(file => <li key={file.path} className={file.editedSince ? 'conflict' : undefined}><Icon name={file.editedSince ? 'alert' : 'file'} size={12} />{file.path}</li>)}
+					{changed.length > 8 ? <li className="dim">and {changed.length - 8} more</li> : null}
+				</ul>
+			) : <p className="dim">No files need to change.</p>}
+			{preview?.conflicts.length ? <p className="restore-warning"><Icon name="alert" size={13} />{preview.conflicts.length} {preview.conflicts.length === 1 ? 'file was' : 'files were'} edited after the agent changed {preview.conflicts.length === 1 ? 'it' : 'them'}; restoring discards those edits.</p> : null}
 		</div>
 	);
 }
@@ -80,7 +238,7 @@ function StepBodyView({ step }: { readonly step: IStepItem }) {
 		);
 	}
 	if (body.kind === 'diff') {
-		return <div className="step-body"><DiffView diff={body.diff} /></div>;
+		return <div className="step-body flush"><DiffLines diff={body.diff} /></div>;
 	}
 	return <pre className={`step-body${body.mono ? ' mono' : ''}`}>{body.text.length > 8000 ? `${body.text.slice(0, 8000)}\n…` : body.text}</pre>;
 }
@@ -122,35 +280,52 @@ function StepsRow({ row }: { readonly row: RowOf<'steps'> }) {
 	);
 }
 
-export function DiffView({ diff }: { readonly diff: string }) {
-	const lines = useMemo(() => highlight(diff, 'diff'), [diff]);
-	return (
-		<pre className="diff">
-			{lines.map((tokens, i) => {
-				const kind = tokens[0]?.k;
-				return <div key={i} className={`diff-line${kind === 'inserted' ? ' add' : kind === 'deleted' ? ' del' : kind === 'meta' ? ' meta' : ''}`}>{tokens.map(t => t.v).join('') || '​'}</div>;
-			})}
-		</pre>
-	);
+export function DiffView({ diff, path }: { readonly diff: string; readonly path?: string }) {
+	return <DiffLines diff={diff} {...(path ? { path } : {})} />;
 }
 
 function FileRow({ row }: { readonly row: RowOf<'file'> }) {
+	const ctx = useChatRow();
+	const client = useClient();
 	const [open, setOpen] = useState(false);
 	const dir = dirname(row.path);
+	const absolute = row.path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(row.path) ? row.path : ctx?.root ? `${ctx.root}/${row.path}` : undefined;
+	const openDiff = async () => {
+		if (!ctx || !absolute) {
+			return;
+		}
+		try {
+			const changes = await client.getChanges(ctx.chatId, 'session');
+			const hit = changes.find(c => c.path === row.path || absolute.endsWith(`/${c.path}`));
+			openTab(hit
+				? { name: 'diff', path: absolute, base: { kind: 'agent', chatId: ctx.chatId, repo: hit.repoRoot, ...(hit.oldBlob ? { old: hit.oldBlob } : {}), ...(hit.newBlob ? { new: hit.newBlob } : {}) } }
+				: { name: 'diff', path: absolute, base: { kind: 'head' } });
+		} catch (err) {
+			client.toast('error', errorMessage(err));
+		}
+	};
 	return (
-		<div className={`row-file file-${row.status}`}>
-			<button type="button" className="file-head" onClick={() => row.diff && setOpen(o => !o)} disabled={!row.diff}>
-				<span className="file-icon">{row.status === 'running' ? <Spinner size={11} /> : <Icon name={row.verb === 'Created' ? 'plus' : row.verb === 'Deleted' ? 'trash' : 'pencil'} size={13} />}</span>
-				<span className="file-verb">{row.verb}</span>
-				<span className="file-name">{basename(row.path)}</span>
-				{dir ? <span className="file-dir">{dir}</span> : null}
-				<span className="file-stats">
-					{row.additions ? <span className="add">+{row.additions}</span> : null}
-					{row.deletions ? <span className="del">{'−'}{row.deletions}</span> : null}
-				</span>
-				{row.diff ? <Icon name="chevronDown" size={12} className={`file-chevron${open ? ' open' : ''}`} /> : null}
-			</button>
-			{open && row.diff ? <DiffView diff={row.diff} /> : null}
+		<div className={`row-file file-${row.status}${open ? ' open' : ''}`}>
+			<div className="file-head">
+				<button type="button" className="file-toggle" onClick={() => row.diff && setOpen(o => !o)} disabled={!row.diff}>
+					<span className="file-icon">{row.status === 'running' ? <Spinner size={11} /> : <Icon name={row.verb === 'Created' ? 'plus' : row.verb === 'Deleted' ? 'trash' : 'pencil'} size={13} />}</span>
+					<span className="file-verb">{row.verb}</span>
+					<span className="file-name">{basename(row.path)}</span>
+					{dir ? <span className="file-dir">{dir}</span> : null}
+					<span className="file-stats">
+						{row.additions ? <span className="add">+{row.additions}</span> : null}
+						{row.deletions ? <span className="del">{'−'}{row.deletions}</span> : null}
+					</span>
+					{row.diff ? <Icon name="chevronDown" size={12} className={`file-chevron${open ? ' open' : ''}`} /> : null}
+				</button>
+				{absolute && ctx?.openPath && row.verb !== 'Deleted' ? (
+					<span className="file-actions">
+						<button type="button" className="file-action" title="Open the diff in the editor" onClick={() => void openDiff()}><Icon name="fileDiff" size={13} /></button>
+						<button type="button" className="file-action" title="Open the file" onClick={() => ctx.openPath?.(absolute)}><Icon name="external" size={13} /></button>
+					</span>
+				) : null}
+			</div>
+			{open && row.diff ? <DiffLines diff={row.diff} path={row.path} /> : null}
 		</div>
 	);
 }
@@ -212,7 +387,18 @@ function ChartRow({ row }: { readonly row: RowOf<'chart'> }) {
 }
 
 function FooterRow({ row }: { readonly row: RowOf<'footer'> }) {
+	const client = useClient();
+	const ctx = useChatRow();
 	const [copied, setCopied] = useState(false);
+	const retry = () => {
+		if (!ctx || !row.turnId) {
+			return;
+		}
+		if (row.turnId !== ctx.lastTurnId && !window.confirm('Retrying this reply removes everything after it. Retry?')) {
+			return;
+		}
+		void client.retryTurn(ctx.chatId, row.turnId);
+	};
 	const parts = [row.outcome === 'stopped' ? 'Stopped' : row.outcome === 'failed' ? 'Failed' : undefined, duration(row.durationMs), row.model, row.tokens ? `${compactNumber(row.tokens)} tokens` : undefined, money(row.costUsd)].filter(Boolean);
 	return (
 		<div className="row-footer">
@@ -221,8 +407,9 @@ function FooterRow({ row }: { readonly row: RowOf<'footer'> }) {
 					copyText(row.copyText);
 					setCopied(true);
 					setTimeout(() => setCopied(false), 1400);
-				}} aria-label="Copy reply"><Icon name={copied ? 'check' : 'copy'} size={13} /></button>
+				}} aria-label="Copy reply" title="Copy"><Icon name={copied ? 'check' : 'copy'} size={13} /></button>
 			) : null}
+			{ctx && row.turnId && !ctx.running ? <button type="button" className="footer-btn" onClick={retry} aria-label="Retry" title="Retry: send the prompt again"><Icon name="refresh" size={13} /></button> : null}
 			<span className="footer-meta">{parts.join(' · ')}</span>
 		</div>
 	);

@@ -6,23 +6,43 @@
 import { highlight, type MdBlock, type MdCallout, type MdInline, languageLabel, markdownFor, parseInline, parseMarkdown, stripHtml } from '@volt/client-core';
 import { Fragment, memo, type ReactNode, useMemo, useState } from 'react';
 import { Icon } from '../ui/primitives';
+import { DiffLines } from './DiffLines';
+import { openLightbox } from './Lightbox';
+import { parseFileRef, useChatRow } from './rowContext';
+
+/** A link or code span naming a file in the project: opens it in the editor. */
+function FileRef({ target, children, className }: { readonly target: string; readonly children: ReactNode; readonly className: string }) {
+	const ctx = useChatRow();
+	const ref = ctx?.openPath ? parseFileRef(target) : undefined;
+	if (!ref || !ctx?.openPath) {
+		return className === 'md-code' ? <code className={className}>{children}</code> : <span className={className}>{children}</span>;
+	}
+	const absolute = ref.path.startsWith('/') ? ref.path : ctx.root ? `${ctx.root}/${ref.path.replace(/^\.\//, '')}` : ref.path;
+	return (
+		<button type="button" className={`${className} md-file-ref`} title={`Open ${ref.path}${ref.line ? `:${ref.line}` : ''}`} onClick={() => ctx.openPath?.(absolute, ref.line)}>
+			{children}
+		</button>
+	);
+}
 
 function renderInlines(nodes: readonly MdInline[], key = ''): ReactNode[] {
 	return nodes.map((node, i) => {
 		const k = `${key}${i}`;
 		switch (node.t) {
 			case 'text': return <Fragment key={k}>{node.v}</Fragment>;
-			case 'code': return <code key={k} className="md-code">{node.v}</code>;
+			case 'code': return /[/.]/.test(node.v) && !/\s/.test(node.v.trim()) ? <FileRef key={k} target={node.v} className="md-code">{node.v}</FileRef> : <code key={k} className="md-code">{node.v}</code>;
 			case 'strong': return <strong key={k}>{renderInlines(node.c, `${k}.`)}</strong>;
 			case 'em': return <em key={k}>{renderInlines(node.c, `${k}.`)}</em>;
 			case 'del': return <del key={k}>{renderInlines(node.c, `${k}.`)}</del>;
 			case 'br': return <br key={k} />;
-			case 'image': return <a key={k} className="md-link" href={node.src} target="_blank" rel="noreferrer noopener"><Icon name="image" size={13} /> {node.alt || 'image'}</a>;
+			case 'image': return /^(https?:|data:image\/)/i.test(node.src)
+				? <img key={k} className="md-image" src={node.src} alt={node.alt} loading="lazy" referrerPolicy="no-referrer" onClick={() => openLightbox(node.src, node.alt || 'image')} />
+				: <span key={k} className="md-link md-link-local"><Icon name="image" size={13} /> {node.alt || 'image'}</span>;
 			case 'link': {
 				const safe = /^(https?:|mailto:)/i.test(node.href) ? node.href : undefined;
 				return safe
 					? <a key={k} className="md-link" href={safe} target="_blank" rel="noreferrer noopener">{renderInlines(node.c, `${k}.`)}</a>
-					: <span key={k} className="md-link md-link-local">{renderInlines(node.c, `${k}.`)}</span>;
+					: <FileRef key={k} target={node.href} className="md-link md-link-local">{renderInlines(node.c, `${k}.`)}</FileRef>;
 			}
 		}
 	});
@@ -43,7 +63,9 @@ const BlockView = memo(function BlockView({ block, open }: { readonly block: MdB
 			return <Tag><Inline text={block.text} open={open} /></Tag>;
 		}
 		case 'code':
-			return <CodeBlock code={block.code} lang={block.lang} streaming={open && !block.closed} />;
+			return block.lang === 'diff' || block.lang === 'patch'
+				? <div className="code-card"><div className="code-head"><span className="code-lang">DIFF</span></div><DiffLines diff={block.code} /></div>
+				: <CodeBlock code={block.code} lang={block.lang} streaming={open && !block.closed} />;
 		case 'math':
 			return <pre className="md-math">{block.text}</pre>;
 		case 'hr':

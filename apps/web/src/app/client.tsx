@@ -4,7 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	type Collections, type IChatListItem, type IClientStatus, type IPendingSend, type IRuntimeState, type IToast, type ITranscript, runtimeOf, selectChatItems, type VoltClient
+	type Collections, type IChatListItem, type ICheckpointState, type IClientStatus, type IPendingSend, type IRuntimeState, type IToast, type ITranscript, runtimeOf, selectChatItems,
+	type VoltClient
 } from '@volt/client-core';
 import { createContext, type ReactNode, useContext, useEffect, useSyncExternalStore } from 'react';
 
@@ -84,4 +85,44 @@ export function useNow(ms = 1000, active = true): number {
 		() => (active ? Math.floor(Date.now() / ms) * ms : 0),
 		() => 0,
 	);
+}
+
+/** An attachment's image as a data URL, loading it on first use. */
+export function useAttachment(ref: string | undefined): string | undefined {
+	const client = useClient();
+	const url = useSyncExternalStore(
+		listener => ref ? client.subscribe(`attachment:${ref}`, listener) : () => undefined,
+		() => (ref ? client.getAttachmentUrl(ref) : undefined),
+		() => undefined,
+	);
+	useEffect(() => {
+		if (ref && !url) {
+			void client.loadAttachment(ref);
+		}
+	}, [client, ref, url]);
+	return url;
+}
+
+/** A chat's checkpoints (loaded once the chat opens); restore and redo read them. */
+export function useCheckpoints(chatId: string): ICheckpointState | undefined {
+	const client = useClient();
+	const live = useStatus().live;
+	const state = useSyncExternalStore(
+		listener => {
+			const a = client.subscribe(`checkpoints:${chatId}`, listener);
+			const b = client.subscribe('col:checkpoints', listener);
+			return () => {
+				a();
+				b();
+			};
+		},
+		() => client.getCheckpoints(chatId),
+		() => undefined,
+	);
+	useEffect(() => {
+		if (live) {
+			void client.loadCheckpoints(chatId);
+		}
+	}, [client, chatId, live]);
+	return state;
 }

@@ -4,16 +4,18 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	ACCESS_MODES, type AccessMode, approvalsFor, buildRows, chatStatus, type ComposerMode, compactNumber, COMPOSER_MODES, duration, historyOf, isStreaming, modelLabel,
-	projectOf, questionsFor, relativeTime, runtimeOf, sessionsOf, shortPath, tasksOf, threadsOf, uriPath
+	ACCESS_MODES, type AccessMode, approvalsFor, buildRows, chatStatus, type ComposerMode, compactNumber, COMPOSER_MODES, duration, historyOf, type IPromptAttachment, isStreaming,
+	modelLabel, projectOf, questionsFor, relativeTime, runtimeOf, sessionsOf, shortPath, tasksOf, threadsOf, uriPath
 } from '@volt/client-core';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useClient, useCollections, usePending, useTranscript } from '../app/client';
-import { navigate } from '../app/router';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCheckpoints, useClient, useCollections, usePending, useTranscript } from '../app/client';
+import { changesPath, chatPath, filePath, navigate } from '../app/router';
+import { revealInFile } from '../ide/workbench';
 import { ConfirmDialog, type IMenuItem, MenuButton, PromptDialog } from '../ui/overlays';
 import { Button, EmptyState, Icon, IconButton, LiveTimer, Spinner, StatusIcon } from '../ui/primitives';
 import { Composer } from './Composer';
 import { TranscriptRowView } from './Rows';
+import { ChatRowContext, type IChatRowContext } from './rowContext';
 import { ApprovalCard, LimitTray, PausedTray, QuestionCard, QueueTray } from './Trays';
 
 const CHAT_COLLECTIONS = ['history', 'orch.threads', 'orch.tasks', 'sessions', 'access', 'questions', 'projects', 'runtime'];
@@ -97,7 +99,24 @@ function readDetailsOpen(): boolean {
 	}
 }
 
-export function ChatView({ chatId }: { readonly chatId: string }) {
+export interface IChatViewProps {
+	readonly chatId: string;
+	/** `panel`: the agent panel beside the editor (its own header, no details pane). */
+	readonly variant?: 'page' | 'tab' | 'panel';
+	/** Opens a file a reply names (the web IDE's editor). */
+	readonly openPath?: (path: string, line?: number) => void;
+}
+
+/** Opens files in the IDE's editor (a line puts the cursor there). */
+export function openPathInEditor(path: string, line?: number): void {
+	if (line) {
+		revealInFile(path, line);
+	} else {
+		navigate(filePath(path));
+	}
+}
+
+export function ChatView({ chatId, variant = 'page', openPath }: IChatViewProps) {
 	const client = useClient();
 	const cols = useCollections(CHAT_COLLECTIONS);
 	const transcript = useTranscript(chatId);
@@ -127,10 +146,16 @@ export function ChatView({ chatId }: { readonly chatId: string }) {
 	const [detailsOpen, setDetailsOpen] = useState(readDetailsOpen);
 	const [renaming, setRenaming] = useState(false);
 	const [deleting, setDeleting] = useState(false);
+	const [editingTurnId, setEditingTurnId] = useState<string | undefined>();
+	const [restoredTurnId, setRestoredTurnId] = useState<string | undefined>();
+	const [seed, setSeed] = useState<{ key: number; text: string; attachments: readonly IPromptAttachment[] } | undefined>();
+	const checkpoints = useCheckpoints(chatId);
 
 	useEffect(() => {
 		setModelTouched(false);
 		setModelRef(undefined);
+		setEditingTurnId(undefined);
+		setRestoredTurnId(undefined);
 	}, [chatId]);
 	useEffect(() => {
 		const known = COMPOSER_MODES.find(m => m.id.toLowerCase() === (lastMode ?? '').toLowerCase());
@@ -143,11 +168,43 @@ export function ChatView({ chatId }: { readonly chatId: string }) {
 	}, [client, chatId, meta?.unread]);
 
 	useEffect(() => {
+		if (variant === 'panel') {
+			return;
+		}
 		document.title = meta?.title ? `${meta.title} · Volt` : 'Volt';
 		return () => {
 			document.title = 'Volt';
 		};
-	}, [meta?.title]);
+	}, [meta?.title, variant]);
+
+	const folder = session?.worktreePath ?? session?.workingFolder ?? meta?.workspaceFolder ?? uriPath(project?.root);
+	const lastTurnId = useMemo(() => {
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const m = messages[i];
+			if (m.kind === 'user' && m.id) {
+				return m.id;
+			}
+		}
+		return undefined;
+	}, [messages]);
+	const startEdit = useCallback((turnId: string | undefined) => setEditingTurnId(turnId), []);
+	const onRewound = useCallback((text: string, attachments: readonly IPromptAttachment[]) => setSeed(s => ({ key: (s?.key ?? 0) + 1, text, attachments })), []);
+	const rowContext = useMemo((): IChatRowContext => ({
+		chatId,
+		running,
+		...(folder ? { root: folder } : {}),
+		mode,
+		...(effectiveModel ? { modelRef: effectiveModel } : {}),
+		...(session?.accessMode ?? runtime.accessMode ? { accessMode: session?.accessMode ?? runtime.accessMode } : {}),
+		...(checkpoints ? { checkpoints } : {}),
+		...(editingTurnId ? { editingTurnId } : {}),
+		...(restoredTurnId ? { restoredTurnId } : {}),
+		...(lastTurnId ? { lastTurnId } : {}),
+		startEdit,
+		onRewound,
+		onRestored: setRestoredTurnId,
+		...(openPath ? { openPath } : {}),
+	}), [chatId, running, folder, mode, effectiveModel, session?.accessMode, runtime.accessMode, checkpoints, editingTurnId, restoredTurnId, lastTurnId, startEdit, onRewound, openPath]);
 
 	const toggleDetails = () => {
 		setDetailsOpen(open => {
@@ -168,12 +225,13 @@ export function ChatView({ chatId }: { readonly chatId: string }) {
 		);
 	}
 
-	const folder = session?.worktreePath ?? session?.workingFolder ?? meta?.workspaceFolder ?? uriPath(project?.root);
 	const branch = session?.worktreeBranch ?? meta?.worktreeBranch;
 	const menu: IMenuItem[] = [
 		{ id: 'pin', label: meta?.pinned ? 'Unpin' : 'Pin', icon: 'pin', onSelect: () => void client.setPinned(chatId, !meta?.pinned) },
 		{ id: 'rename', label: 'Rename', icon: 'pencil', onSelect: () => setRenaming(true) },
 		{ id: 'unread', label: 'Mark as unread', icon: 'dot', onSelect: () => void client.markUnread(chatId) },
+		{ id: 'changes', label: 'Review changes', icon: 'fileDiff', onSelect: () => navigate(changesPath(chatId)) },
+		...(variant === 'panel' ? [{ id: 'open', label: 'Open as editor tab', icon: 'external' as const, onSelect: () => navigate(chatPath(chatId)) }] : []),
 		{ id: 'sep1', label: '', separator: true },
 		{ id: 'settle', label: meta?.settled ? 'Unsettle' : 'Settle', icon: 'inbox', onSelect: () => void client.setSettled(chatId, !meta?.settled) },
 		meta?.snoozed
@@ -184,62 +242,72 @@ export function ChatView({ chatId }: { readonly chatId: string }) {
 		{ id: 'delete', label: 'Delete', icon: 'trash', danger: true, onSelect: () => setDeleting(true) },
 	];
 
+	const showDetails = detailsOpen && variant !== 'panel';
 	return (
-		<div className={`chat${detailsOpen ? ' with-details' : ''}`}>
-			<div className="chat-main">
-				<header className="chat-header">
-					<IconButton className="back-btn" icon="chevronLeft" label="Chats" onClick={() => navigate('/')} />
-					<div className="chat-heading">
-						<button type="button" className="chat-title" onClick={() => setRenaming(true)} title="Rename">{meta?.title || 'New chat'}</button>
-						<div className="chat-sub">
-							{project?.displayName || meta?.workspaceLabel ? <span className="sub-item"><Icon name="folder" size={12} />{project?.displayName ?? meta?.workspaceLabel}</span> : null}
-							{branch ? <span className="sub-item mono"><Icon name="branch" size={12} />{branch}</span> : null}
-							{status.status !== 'idle' ? <span className={`sub-item status-text status-${status.status}`}>{status.label}</span> : meta?.updatedAt ? <span className="sub-item">{relativeTime(meta.updatedAt)}</span> : null}
+		<ChatRowContext.Provider value={rowContext}>
+			<div className={`chat chat-${variant}${showDetails ? ' with-details' : ''}`}>
+				<div className="chat-main">
+					{variant !== 'panel' ? (
+						<header className="chat-header">
+							<IconButton className="back-btn" icon="chevronLeft" label="Chats" onClick={() => navigate('/')} />
+							<div className="chat-heading">
+								<button type="button" className="chat-title" onClick={() => setRenaming(true)} title="Rename">{meta?.title || 'New chat'}</button>
+								<div className="chat-sub">
+									{project?.displayName || meta?.workspaceLabel ? <span className="sub-item"><Icon name="folder" size={12} />{project?.displayName ?? meta?.workspaceLabel}</span> : null}
+									{branch ? <span className="sub-item mono"><Icon name="branch" size={12} />{branch}</span> : null}
+									{status.status !== 'idle' ? <span className={`sub-item status-text status-${status.status}`}>{status.label}</span> : meta?.updatedAt ? <span className="sub-item">{relativeTime(meta.updatedAt)}</span> : null}
+								</div>
+							</div>
+							{running && thread?.active ? <span className="header-timer"><Spinner size={11} /><LiveTimer since={thread.active.at} /></span> : null}
+							<IconButton icon="fileDiff" label="Review changes" onClick={() => navigate(changesPath(chatId))} />
+							<IconButton icon="sidebar" label="Details" active={detailsOpen} onClick={toggleDetails} />
+							<MenuButton className="icon-btn" items={menu} placement="bottom-end" width={220} label="Chat actions"><Icon name="more" size={16} /></MenuButton>
+						</header>
+					) : null}
+					<Transcript chatId={chatId} />
+					<div className="chat-bottom">
+						<div className="trays">
+							{approvals.map(request => <ApprovalCard key={request.id} request={request} />)}
+							{questions[0] ? <QuestionCard key={questions[0].id} request={questions[0]} /> : null}
+							{thread?.limit ? <LimitTray chatId={chatId} thread={thread} /> : null}
+							{thread && !thread.active && thread.pause && thread.pause !== 'limit' && thread.queue.length ? <PausedTray chatId={chatId} thread={thread} /> : null}
+							{thread ? <QueueTray chatId={chatId} thread={thread} /> : null}
 						</div>
+						<Composer
+							draftKey={chatId}
+							running={running}
+							mode={mode}
+							onModeChange={setMode}
+							modelRef={effectiveModel}
+							onModelChange={ref => {
+								setModelTouched(true);
+								setModelRef(ref);
+							}}
+							accessMode={session?.accessMode ?? runtime.accessMode}
+							onAccessChange={(m: AccessMode) => void client.setAccessMode(m, chatId)}
+							onSend={(text, delivery, attachments) => {
+								client.send({ threadId: chatId, text, mode, ...(effectiveModel ? { modelRef: effectiveModel } : {}), delivery, ...(attachments.length ? { attachments } : {}) });
+							}}
+							onStop={() => void client.stop(chatId)}
+							contextUsed={transcript?.contextUsed}
+							contextWindow={transcript?.contextWindow}
+							mentionRoot={folder}
+							acceptsInserts
+							compact={variant === 'panel'}
+							{...(seed ? { seed } : {})}
+							autoFocus={variant !== 'panel'}
+						/>
 					</div>
-					{running && thread?.active ? <span className="header-timer"><Spinner size={11} /><LiveTimer since={thread.active.at} /></span> : null}
-					<IconButton icon="sidebar" label="Details" active={detailsOpen} onClick={toggleDetails} />
-					<MenuButton className="icon-btn" items={menu} placement="bottom-end" width={220} label="Chat actions"><Icon name="more" size={16} /></MenuButton>
-				</header>
-				<Transcript chatId={chatId} />
-				<div className="chat-bottom">
-					<div className="trays">
-						{approvals.map(request => <ApprovalCard key={request.id} request={request} />)}
-						{questions[0] ? <QuestionCard key={questions[0].id} request={questions[0]} /> : null}
-						{thread?.limit ? <LimitTray chatId={chatId} thread={thread} /> : null}
-						{thread && !thread.active && thread.pause && thread.pause !== 'limit' && thread.queue.length ? <PausedTray chatId={chatId} thread={thread} /> : null}
-						{thread ? <QueueTray chatId={chatId} thread={thread} /> : null}
-					</div>
-					<Composer
-						draftKey={chatId}
-						running={running}
-						mode={mode}
-						onModeChange={setMode}
-						modelRef={effectiveModel}
-						onModelChange={ref => {
-							setModelTouched(true);
-							setModelRef(ref);
-						}}
-						accessMode={session?.accessMode ?? runtime.accessMode}
-						onAccessChange={(m: AccessMode) => void client.setAccessMode(m, chatId)}
-						onSend={(text, delivery) => {
-							client.send({ threadId: chatId, text, mode, ...(effectiveModel ? { modelRef: effectiveModel } : {}), delivery });
-						}}
-						onStop={() => void client.stop(chatId)}
-						contextUsed={transcript?.contextUsed}
-						contextWindow={transcript?.contextWindow}
-						autoFocus
-					/>
 				</div>
+				{showDetails ? <ChatDetails chatId={chatId} folder={folder} branch={branch} onClose={toggleDetails} /> : null}
+				<PromptDialog open={renaming} title="Rename chat" initial={meta?.title} onClose={() => setRenaming(false)} onSubmit={title => void client.rename(chatId, title)} />
+				<ConfirmDialog open={deleting} title="Delete this chat?" body="Its transcript is removed from Volt on your computer. This can't be undone." confirm="Delete" danger onClose={() => setDeleting(false)}
+					onConfirm={() => {
+						void client.deleteChat(chatId);
+						navigate('/');
+					}} />
 			</div>
-			{detailsOpen ? <ChatDetails chatId={chatId} folder={folder} branch={branch} onClose={toggleDetails} /> : null}
-			<PromptDialog open={renaming} title="Rename chat" initial={meta?.title} onClose={() => setRenaming(false)} onSubmit={title => void client.rename(chatId, title)} />
-			<ConfirmDialog open={deleting} title="Delete this chat?" body="Its transcript is removed from Volt on your computer. This can't be undone." confirm="Delete" danger onClose={() => setDeleting(false)}
-				onConfirm={() => {
-					void client.deleteChat(chatId);
-					navigate('/');
-				}} />
-		</div>
+		</ChatRowContext.Provider>
 	);
 }
 

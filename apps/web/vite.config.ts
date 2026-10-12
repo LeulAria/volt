@@ -44,11 +44,13 @@ export default defineConfig({
 			'/.well-known': proxy(),
 		} : undefined,
 	},
+	worker: { format: 'es' },
 	build: {
 		outDir: fileURLToPath(new URL('../../out-volt-web', import.meta.url)),
 		emptyOutDir: true,
 		target: 'es2022',
 		sourcemap: false,
-		chunkSizeWarningLimit: 900,
+		// The editor (Monaco) is its own lazily loaded chunk of a few MB; the chat app stays small.
+		chunkSizeWarningLimit: 4000,
 	},
 });

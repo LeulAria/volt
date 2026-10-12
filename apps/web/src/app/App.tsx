@@ -3,17 +3,21 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { type ISavedEnvironment, VoltClient } from '@volt/client-core';
-import { useEffect, useState } from 'react';
-import { ChatView } from '../chat/ChatView';
+import { basename, type ISavedEnvironment, VoltClient } from '@volt/client-core';
+import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react';
+import { ChatView, openPathInEditor } from '../chat/ChatView';
+import { LightboxHost } from '../chat/Lightbox';
+import { ChangesView } from '../ide/ChangesView';
+import { Explorer } from '../ide/Explorer';
+import { Workbench } from '../ide/WorkbenchView';
 import { NewChat } from '../home/NewChat';
 import { Sidebar } from '../home/Sidebar';
 import { PairPage } from '../pair/PairPage';
 import { Settings } from '../settings/Settings';
 import { Toasts } from '../ui/overlays';
-import { Button, EmptyState, Icon, Spinner } from '../ui/primitives';
+import { Button, EmptyState, Icon, IconButton, Spinner } from '../ui/primitives';
 import { ClientProvider, useClient, useStatus } from './client';
-import { navigate, useRoute } from './router';
+import { navigate, type Route, useRoute } from './router';
 import { bootstrap, type BootResult, clientId, forgetEnvironment, serverOrigin, webStorage } from './session';
 import { useAppliedTheme } from './theme';
 
@@ -77,7 +81,42 @@ function Connected({ environment, onSignedOut }: { readonly environment: ISavedE
 		<ClientProvider client={client}>
 			<Shell onSignedOut={onSignedOut} />
 			<Toasts />
+			<LightboxHost />
 		</ClientProvider>
+	);
+}
+
+const WIDE = '(min-width: 900px)';
+
+/** Wide windows get the IDE workbench; phones and narrow windows one pane at a time. */
+function useWide(): boolean {
+	return useSyncExternalStore(listener => {
+		const query = window.matchMedia(WIDE);
+		query.addEventListener('change', listener);
+		return () => query.removeEventListener('change', listener);
+	}, () => window.matchMedia(WIDE).matches, () => true);
+}
+
+const CodeEditorPane = lazy(() => import('../ide/monaco/Editors').then(m => ({ default: m.CodeEditorPane })));
+const DiffEditorPane = lazy(() => import('../ide/monaco/Editors').then(m => ({ default: m.DiffEditorPane })));
+
+/** A file, a diff or a review on a phone: full screen with a way back. */
+function NarrowEditor({ route }: { readonly route: Extract<Route, { name: 'file' | 'diff' | 'changes' | 'files' }> }) {
+	const client = useClient();
+	const title = route.name === 'files' ? 'Files' : route.name === 'changes' ? 'Changes' : basename(route.path);
+	return (
+		<div className="narrow-editor">
+			<header className="chat-header">
+				<IconButton icon="chevronLeft" label="Back" onClick={() => window.history.length > 1 ? window.history.back() : navigate('/')} />
+				<div className="chat-heading"><div className="chat-title">{title}</div>{route.name === 'file' || route.name === 'diff' ? <div className="chat-sub mono">{route.path}</div> : null}</div>
+			</header>
+			<div className="narrow-editor-body">
+				{route.name === 'files' ? <Explorer /> : null}
+				{route.name === 'changes' ? <ChangesView chatId={route.chatId} /> : null}
+				{route.name === 'file' ? <Suspense fallback={<Spinner />}><CodeEditorPane client={client} path={route.path} /></Suspense> : null}
+				{route.name === 'diff' ? <Suspense fallback={<Spinner />}><DiffEditorPane client={client} tab={{ id: `diff:${route.path}`, kind: 'diff', path: route.path, base: route.base }} /></Suspense> : null}
+			</div>
+		</div>
 	);
 }
 
@@ -85,6 +124,7 @@ function Shell({ onSignedOut }: { readonly onSignedOut: () => void }) {
 	const route = useRoute();
 	const status = useStatus();
 	const client = useClient();
+	const wide = useWide();
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -118,13 +158,20 @@ function Shell({ onSignedOut }: { readonly onSignedOut: () => void }) {
 		);
 	}
 
+	if (wide && route.name !== 'pair') {
+		return <Workbench onSignedOut={onSignedOut} />;
+	}
+
 	const chatId = route.name === 'chat' ? route.id : undefined;
+	if (route.name === 'file' || route.name === 'diff' || route.name === 'changes' || route.name === 'files') {
+		return <NarrowEditor route={route} />;
+	}
 	return (
 		<div className={`app route-${route.name}`}>
 			<Sidebar activeChatId={chatId} />
 			<main className="main">
 				{!status.live && status.ready ? <OfflineBanner /> : null}
-				{route.name === 'chat' ? <ChatView key={route.id} chatId={route.id} /> : null}
+				{route.name === 'chat' ? <ChatView key={route.id} chatId={route.id} openPath={openPathInEditor} /> : null}
 				{route.name === 'home' || route.name === 'new' ? <NewChat initialProjectId={route.name === 'new' ? route.projectId : undefined} /> : null}
 				{route.name === 'settings' ? <Settings section={route.section} onSignedOut={onSignedOut} /> : null}
 				{route.name === 'pair' ? <NewChat /> : null}

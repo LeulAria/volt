@@ -95,7 +95,8 @@ const ChatRow = memo(function ChatRow({ item, active }: { readonly item: IChatLi
 	);
 });
 
-export function Sidebar({ activeChatId }: { readonly activeChatId?: string }) {
+/** The chat list. `embedded`: the IDE's Chats view (the title and status bars carry the rest). */
+export function Sidebar({ activeChatId, embedded }: { readonly activeChatId?: string; readonly embedded?: boolean }) {
 	const client = useClient();
 	const status = useStatus();
 	const items = useChatItems();
@@ -115,15 +116,17 @@ export function Sidebar({ activeChatId }: { readonly activeChatId?: string }) {
 	];
 
 	return (
-		<aside className="sidebar">
-			<div className="sb-head">
-				<Wordmark />
-				<span className="sb-head-spacer" />
-				<IconButton icon="compose" label="New chat" onClick={() => navigate('/new')} />
-			</div>
-			<div className="sb-env">
-				<ConnectionBadge />
-			</div>
+		<aside className={`sidebar${embedded ? ' embedded' : ''}`}>
+			{embedded ? null : <>
+				<div className="sb-head">
+					<Wordmark />
+					<span className="sb-head-spacer" />
+					<IconButton icon="compose" label="New chat" onClick={() => navigate('/new')} />
+				</div>
+				<div className="sb-env">
+					<ConnectionBadge />
+				</div>
+			</>}
 			<div className="sb-search">
 				<Icon name="search" size={14} />
 				<input value={query} placeholder="Search chats" onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key === 'Escape' && setQuery('')} />
@@ -161,13 +164,14 @@ export function Sidebar({ activeChatId }: { readonly activeChatId?: string }) {
 					</div>
 				)}
 			</div>
-			<div className="sb-foot">
+			{embedded ? null : <div className="sb-foot">
 				<button type="button" className="sb-foot-btn" onClick={() => navigate('/settings')}>
 					<Icon name="settings" size={15} />Settings
 				</button>
 				<span className="sb-head-spacer" />
 				{counts.attention ? <button type="button" className="sb-foot-btn" onClick={() => void client.markAllRead()} title="Mark all as read"><Icon name="checkCircle" size={14} /></button> : null}
-			</div>
+				<button type="button" className="sb-foot-btn" onClick={() => navigate('/files')} title="Browse files"><Icon name="folder" size={15} /></button>
+			</div>}
 		</aside>
 	);
 }

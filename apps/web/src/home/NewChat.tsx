@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { type AccessMode, type ComposerMode, selectProjects, shortPath } from '@volt/client-core';
+import { type AccessMode, type ComposerMode, type IPromptAttachment, selectProjects, shortPath } from '@volt/client-core';
 import { useEffect, useMemo, useState } from 'react';
 import { useChatItems, useClient, useCollections, useRuntime, useStatus } from '../app/client';
 import { chatPath, navigate } from '../app/router';
@@ -20,7 +20,7 @@ const SUGGESTIONS = [
 	{ icon: 'listChecks' as const, text: 'Plan the next feature with me' },
 ];
 
-export function NewChat({ initialProjectId }: { readonly initialProjectId?: string }) {
+export function NewChat({ initialProjectId, compact, onStarted }: { readonly initialProjectId?: string; readonly compact?: boolean; readonly onStarted?: (chatId: string) => void }) {
 	const client = useClient();
 	const runtime = useRuntime();
 	const status = useStatus();
@@ -54,7 +54,7 @@ export function NewChat({ initialProjectId }: { readonly initialProjectId?: stri
 		{ id: 'add', label: 'Add a project folder…', icon: 'folderPlus', onSelect: () => setAdding(true) },
 	];
 
-	const start = (text: string) => {
+	const start = (text: string, attachments: readonly IPromptAttachment[] = []) => {
 		if (!projectId) {
 			setAdding(true);
 			return false;
@@ -64,13 +64,17 @@ export function NewChat({ initialProjectId }: { readonly initialProjectId?: stri
 		} catch {
 			// private mode
 		}
-		const id = client.startChat({ projectId, text, mode, ...(effectiveModel ? { modelRef: effectiveModel } : {}), ...(access ? { accessMode: access } : {}) });
-		navigate(chatPath(id));
+		const id = client.startChat({ projectId, text, mode, ...(effectiveModel ? { modelRef: effectiveModel } : {}), ...(access ? { accessMode: access } : {}), ...(attachments.length ? { attachments } : {}) });
+		if (onStarted) {
+			onStarted(id);
+		} else {
+			navigate(chatPath(id));
+		}
 		return true;
 	};
 
 	return (
-		<div className="newchat">
+		<div className={`newchat${compact ? ' compact' : ''}`}>
 			<div className="newchat-center">
 				<div className="newchat-hero">
 					<div className="hero-mark"><Icon name="bolt" size={22} /></div>
@@ -90,8 +94,11 @@ export function NewChat({ initialProjectId }: { readonly initialProjectId?: stri
 					}}
 					accessMode={access ?? runtime.accessMode}
 					onAccessChange={setAccess}
-					onSend={text => start(text)}
-					placeholder={project ? `Ask Volt to work in ${project.name}…` : 'Add a project to start'}
+					onSend={(text, _delivery, attachments) => start(text, attachments)}
+					mentionRoot={project?.path}
+					acceptsInserts
+					placeholder={project ? `Ask Volt to work in ${project.name}… @ to mention a file` : 'Add a project to start'}
+					compact={compact}
 					disabled={!status.live && !status.ready}
 					leading={
 						<MenuButton className="pill pill-project" items={projectItems} placement="top-start" width={320} label="Project">

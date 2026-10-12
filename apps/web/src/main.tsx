@@ -8,6 +8,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './app/App';
 import { installThemeVariables } from './app/theme';
 import './styles/app.css';
+import './styles/ide.css';
 
 installThemeVariables();
 
