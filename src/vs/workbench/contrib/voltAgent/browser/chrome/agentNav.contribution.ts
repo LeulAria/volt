@@ -147,6 +147,7 @@ class AgentNavContribution extends Disposable {
 	private createBrandLogo(titlebar: boolean): HTMLElement {
 		const logo = $(titlebar ? '.volt-agent-brand-logo.in-titlebar' : '.volt-agent-brand-logo');
 		logo.setAttribute('aria-hidden', 'true');
+		append(logo, $('span.volt-agent-brand-wordmark')).textContent = 'VOLT';
 		this._register({ dispose: () => logo.remove() });
 		return logo;
 	}

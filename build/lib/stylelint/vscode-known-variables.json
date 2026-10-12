@@ -1148,6 +1148,7 @@
 		"--stroke",
 		"--swatch",
 		"--volt-agent-brand-logo",
+		"--volt-agent-brand-wordmark-width",
 		"--volt-changes-add",
 		"--volt-changes-bg",
 		"--volt-changes-border",
