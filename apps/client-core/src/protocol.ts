@@ -122,7 +122,8 @@ export interface IEnvironmentDescriptor {
 	readonly serverVersion: string;
 	readonly protocol: number;
 	readonly network: boolean;
-	readonly capabilities: { readonly pairing: boolean };
+	/** `workbench`: browsers can open Volt's workbench at `/code/` (older servers leave it out). */
+	readonly capabilities: { readonly pairing: boolean; readonly workbench?: boolean };
 }
 
 export type PairingClientKind = 'mobile' | 'tablet' | 'web';

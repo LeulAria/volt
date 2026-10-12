@@ -11,14 +11,32 @@ npm run typecheck
 VOLT_SERVER=http://127.0.0.1:<port> npm run dev   # proxies the server's routes for development
 ```
 
-Signing in:
+Signing in (then, on a computer, on to Volt's workbench; see below):
 
 - On the computer Volt runs on, the page signs itself in over loopback (`POST /api/auth/local`).
   In Volt, run **Volt: Open Volt in the Browser**.
 - From another device, open the pairing link or enter the code from **Settings › Devices** (or
   **Volt: Pair a Phone or Browser…** in Volt). The code is spent once for a device token.
 
-## The IDE
+## Volt's workbench (VS Code in the browser)
+
+On a computer (a wide window with a mouse), a signed-in page moves on to `/code/`: Volt's own
+workbench, the desktop's UI running in the tab, the way code-server serves VS Code. The agent
+server runs VS Code's server inside itself (`src/vs/server/node/voltAgent/serverWorkbench.ts`):
+the remote extension host with the desktop's extensions, terminals, files, search and git on this
+computer. It starts with the first page load. The agent UI is the desktop's with the agent server
+on, opening in the Agent layout with the desktop's settings (theme, fonts, editor) as defaults.
+
+- **Signing in**: this app signs the browser in as before, then `POST /api/workbench/session` (with
+  the device token) sets an http-only cookie the server checks on every workbench request and
+  socket, so removing a device locks it out at once. `/code/` without it comes back here first.
+- **Files**: `file:` paths are the computer's, as on the desktop (`voltServerDiskFileSystemProvider.ts`).
+- **Desktop only**: Lid-Closed Mode, dictation, the in-app browser, Claude account sign-in, the
+  relay and connecting other agents say so when used.
+- **The lightweight app** stays for phones and narrow windows; on a computer, `/?lite=1` keeps it
+  (`/?lite=0` goes back to the workbench) and **Volt: Open the Lightweight Web App** opens it.
+
+## The lightweight app
 
 On a wide window the app is laid out like Volt on the desktop: a title bar with the command
 center, an activity bar (Chats, Explorer, Search, Source Control), editor tabs, the agent panel on

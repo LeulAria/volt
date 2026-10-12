@@ -60,7 +60,7 @@ export function browserLabel(): string {
 }
 
 export type BootResult =
-	| { readonly kind: 'ready'; readonly environment: ISavedEnvironment }
+	| { readonly kind: 'ready'; readonly environment: ISavedEnvironment; readonly workbench?: boolean }
 	| { readonly kind: 'pair'; readonly code?: string; readonly error?: string };
 
 /**
@@ -96,11 +96,12 @@ export async function bootstrap(): Promise<BootResult> {
 		// Offline or restarting: the cached state can still be shown.
 		return saved ? { kind: 'ready', environment: saved } : { kind: 'pair', error: errorMessage(err) };
 	}
+	workbenchAvailable = !!descriptor.capabilities?.workbench;
 	const saved = catalog.environments.find(env => env.environmentId === descriptor.environmentId);
 	if (saved) {
 		const environment = { ...saved, label: descriptor.label, routes: mergeRoutes(saved.routes, [{ baseUrl: origin, kind: classifyHost(window.location.hostname) }]) };
 		saveCatalog(upsertEnvironment(catalog, environment));
-		return { kind: 'ready', environment };
+		return { kind: 'ready', environment, workbench: workbenchAvailable };
 	}
 	if (isLoopback()) {
 		try {
@@ -116,7 +117,7 @@ export async function bootstrap(): Promise<BootResult> {
 				platform: descriptor.platform,
 			};
 			saveCatalog(upsertEnvironment(catalog, environment));
-			return { kind: 'ready', environment };
+			return { kind: 'ready', environment, workbench: workbenchAvailable };
 		} catch (err) {
 			return { kind: 'pair', error: errorMessage(err) };
 		}
@@ -129,6 +130,80 @@ export async function pairWithCode(code: string): Promise<ISavedEnvironment> {
 	saveCatalog(upsertEnvironment(loadCatalog(), environment));
 	return environment;
 }
+
+//#region Volt's workbench (VS Code in the browser, at /code/)
+
+const UI_KEY = 'volt.web.ui';
+const WORKBENCH_SESSION_PATH = '/api/workbench/session';
+
+/** Whether the server that served this page also serves the workbench (known once it answered). */
+let workbenchAvailable = false;
+
+export function isWorkbenchAvailable(): boolean {
+	return workbenchAvailable;
+}
+
+/** Asks the server again (a page that paired from a link never probed it). */
+export async function refreshWorkbenchAvailable(): Promise<boolean> {
+	try {
+		workbenchAvailable = !!(await probeEnvironment(serverOrigin())).capabilities?.workbench;
+	} catch {
+		// keep what is known
+	}
+	return workbenchAvailable;
+}
+
+/** `lite`: this browser chose the lightweight app over the workbench. */
+export function prefersLiteApp(): boolean {
+	return safe(() => window.localStorage.getItem(UI_KEY), null) === 'lite';
+}
+
+export function setPrefersLiteApp(lite: boolean): void {
+	safe(() => lite ? window.localStorage.setItem(UI_KEY, 'lite') : window.localStorage.removeItem(UI_KEY), undefined);
+}
+
+/**
+ * Where a signed-in page goes instead of the lightweight app: the workbench page it was sent
+ * from (`?next=/code/…`), or the workbench itself on a computer (a wide window with a mouse),
+ * unless this browser chose the lightweight app (`?lite=1`). Phones stay here.
+ */
+export function workbenchTarget(workbench: boolean | undefined): string | undefined {
+	const params = new URLSearchParams(window.location.search);
+	if (params.has('lite')) {
+		setPrefersLiteApp(params.get('lite') !== '0');
+		params.delete('lite');
+		const query = params.toString();
+		window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
+	}
+	const next = params.get('next');
+	if (next && /^\/code(\/|$|\?)/.test(next)) {
+		return next;
+	}
+	if (!workbench || prefersLiteApp() || window.location.pathname !== '/') {
+		return undefined;
+	}
+	return window.matchMedia('(min-width: 900px) and (pointer: fine)').matches ? '/code/' : undefined;
+}
+
+/**
+ * Signs this browser in to the workbench (cookies the server checks on every request) and goes
+ * there. Resolves false when the server would not, so the page can stay.
+ */
+export async function openWorkbench(environment: ISavedEnvironment, target = '/code/'): Promise<boolean> {
+	try {
+		const response = await fetch(WORKBENCH_SESSION_PATH, { method: 'POST', credentials: 'same-origin', headers: { Authorization: `Bearer ${environment.token}` } });
+		if (!response.ok) {
+			return false;
+		}
+		setPrefersLiteApp(false);
+		window.location.replace(target);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+//#endregion
 
 export function forgetEnvironment(environmentId: string): void {
 	saveCatalog(removeEnvironment(loadCatalog(), environmentId));

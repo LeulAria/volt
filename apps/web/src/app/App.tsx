@@ -18,20 +18,28 @@ import { Toasts } from '../ui/overlays';
 import { Button, EmptyState, Icon, IconButton, Spinner } from '../ui/primitives';
 import { ClientProvider, useClient, useStatus } from './client';
 import { navigate, type Route, useRoute } from './router';
-import { bootstrap, type BootResult, clientId, forgetEnvironment, serverOrigin, webStorage } from './session';
+import { bootstrap, type BootResult, clientId, forgetEnvironment, openWorkbench, refreshWorkbenchAvailable, serverOrigin, webStorage, workbenchTarget } from './session';
 import { useAppliedTheme } from './theme';
 
 export function App() {
 	useAppliedTheme();
 	const [boot, setBoot] = useState<BootResult | undefined>();
+	// Signed in on a computer: on to Volt's workbench (VS Code in the browser), unless it can't.
+	const ready = async (next: BootResult) => {
+		const target = next.kind === 'ready' ? workbenchTarget(next.workbench) : undefined;
+		if (next.kind === 'ready' && target && await openWorkbench(next.environment, target)) {
+			return;
+		}
+		setBoot(next);
+	};
 	useEffect(() => {
-		void bootstrap().then(setBoot);
+		void bootstrap().then(ready);
 	}, []);
 	if (!boot) {
 		return <Splash />;
 	}
 	if (boot.kind === 'pair') {
-		return <PairPage code={boot.code} error={boot.error} onPaired={environment => setBoot({ kind: 'ready', environment })} />;
+		return <PairPage code={boot.code} error={boot.error} onPaired={environment => void refreshWorkbenchAvailable().then(workbench => ready({ kind: 'ready', environment, workbench }))} />;
 	}
 	return <Connected key={boot.environment.environmentId + boot.environment.token} environment={boot.environment} onSignedOut={() => setBoot({ kind: 'pair' })} />;
 }

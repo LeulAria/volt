@@ -7,6 +7,7 @@ import { chatCounts } from '@volt/client-core';
 import { type ReactNode, useMemo } from 'react';
 import { useChatItems, useClient, useNow, useStatus } from '../app/client';
 import { navigate } from '../app/router';
+import { isWorkbenchAvailable, openWorkbench } from '../app/session';
 import { setThemePreference, useThemePreference } from '../app/theme';
 import { connectionText, Sidebar } from '../home/Sidebar';
 import { type IMenuItem, MenuButton } from '../ui/overlays';
@@ -76,11 +77,13 @@ export function ActivityBar() {
 	const { root } = useActiveRoot();
 	const git = useGitStatus(root?.path);
 	const theme = useThemePreference();
+	const client = useClient();
 	const badges: Partial<Record<ActivityId, { readonly count: number; readonly tone?: string }>> = {
 		chats: counts.attention ? { count: counts.attention, tone: 'warn' } : counts.working ? { count: counts.working, tone: 'busy' } : undefined,
 		scm: git?.changes.length ? { count: git.changes.length } : undefined,
 	};
 	const settingsItems: IMenuItem[] = [
+		...(isWorkbenchAvailable() ? [{ id: 'workbench', label: 'Open Volt Workbench', icon: 'code', detail: 'VS Code in the browser', onSelect: () => void openWorkbench(client.environment) } satisfies IMenuItem, { id: 'ws', label: '', separator: true } satisfies IMenuItem] : []),
 		{ id: 'commands', label: 'Command Palette…', icon: 'search', detail: keys('⇧⌘P'), onSelect: () => openQuick('commands') },
 		{ id: 'settings', label: 'Settings', icon: 'settings', detail: keys('⌘,'), onSelect: () => openTab({ name: 'settings', section: 'general' }) },
 		{ id: 'models', label: 'Models and Providers', icon: 'cpu', onSelect: () => openTab({ name: 'settings', section: 'models' }) },
