@@ -13,6 +13,7 @@ import { Disposable, DisposableStore, toDisposable } from '../../base/common/lif
 import { BrowserWorkbenchEnvironmentService, IBrowserWorkbenchEnvironmentService } from '../services/environment/browser/environmentService.js';
 import { Workbench } from './workbench.js';
 import { RemoteFileSystemProviderClient } from '../services/remote/common/remoteFileSystemProviderClient.js';
+import { RemoteDiskFileSystemProvider } from '../services/remote/browser/voltServerDiskFileSystemProvider.js';
 import { IWorkbenchEnvironmentService } from '../services/environment/common/environmentService.js';
 import { IProductService } from '../../platform/product/common/productService.js';
 import product from '../../platform/product/common/product.js';
@@ -344,6 +345,10 @@ export class BrowserMain extends Disposable {
 		const remoteAgentService = this._register(new RemoteAgentService(remoteSocketFactoryService, userDataProfileService, environmentService, productService, remoteAuthorityResolverService, signService, logService));
 		serviceCollection.set(IRemoteAgentService, remoteAgentService);
 		this._register(RemoteFileSystemProviderClient.register(remoteAgentService, fileService, logService));
+		if (this.servesVoltDisk(environmentService)) {
+			// Volt names files with `file:` URIs; in its browser workbench they are the server's.
+			this._register(RemoteDiskFileSystemProvider.register(remoteAgentService, fileService, logService));
+		}
 
 		// Long running services (workspace, config, storage)
 		const [configurationService, storageService] = await Promise.all([
@@ -448,6 +453,11 @@ export class BrowserMain extends Disposable {
 		}
 	}
 
+	/** Volt's agent server served this page: `file:` is the server's disk, as on the desktop. */
+	private servesVoltDisk(environmentService: IWorkbenchEnvironmentService): boolean {
+		return !!environmentService.remoteAuthority && !!(this.configuration as { voltAgentServer?: unknown }).voltAgentServer;
+	}
+
 	private async registerIndexedDBFileSystemProviders(environmentService: IWorkbenchEnvironmentService, fileService: IFileService, logService: ILogService, loggerService: ILoggerService, logsPath: URI): Promise<void> {
 
 		// IndexedDB is used for logging and user data
@@ -485,8 +495,8 @@ export class BrowserMain extends Disposable {
 		}
 		fileService.registerProvider(Schemas.vscodeUserData, userDataProvider);
 
-		// Local file access (if supported by browser)
-		if (WebFileSystemAccess.supported(mainWindow)) {
+		// Local file access (if supported by browser). Volt's workbench uses the server's disk instead.
+		if (WebFileSystemAccess.supported(mainWindow) && !this.servesVoltDisk(environmentService)) {
 			fileService.registerProvider(Schemas.file, new HTMLFileSystemProvider(indexedDB, handlesStore, logService));
 		}
 

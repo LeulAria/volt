@@ -172,6 +172,9 @@ import './contrib/remote/browser/remoteStartEntry.contribution.js';
 // Process Explorer
 import './contrib/processExplorer/browser/processExplorer.web.contribution.js';
 
+// Volt: the agents in the agent server, the machine's services over the remote connection
+import './contrib/voltAgent/browser/web/voltWorkbenchWeb.contribution.js';
+
 //#endregion
 
 

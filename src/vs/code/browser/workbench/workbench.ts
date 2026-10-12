@@ -537,7 +537,9 @@ class WorkspaceProvider implements IWorkspaceProvider {
 	}
 
 	private encodeWorkspacePath(uri: URI): string {
-		if (this.config.remoteAuthority && uri.scheme === Schemas.vscodeRemote) {
+		// Volt's agent server served this page: its `file:` folders are the server's, so they open as remote ones.
+		const voltDisk = !!(this.config as { voltAgentServer?: unknown }).voltAgentServer && uri.scheme === Schemas.file;
+		if (this.config.remoteAuthority && (uri.scheme === Schemas.vscodeRemote || voltDisk)) {
 
 			// when connected to a remote and having a folder
 			// or workspace for that remote, only use the path

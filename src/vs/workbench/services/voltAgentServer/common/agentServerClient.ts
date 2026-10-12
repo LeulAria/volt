@@ -5,6 +5,7 @@
 
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, IDisposable } from '../../../../base/common/lifecycle.js';
+import { isWeb } from '../../../../base/common/platform.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { CollectionMirror } from '../../../../platform/voltAgentServer/common/collections.js';
@@ -24,7 +25,8 @@ let enabledAtStartup: boolean | undefined;
  * contributions made later must agree with the ones made first, so a change needs a restart.
  */
 export function agentServerEnabled(configurationService: IConfigurationService): boolean {
-	enabledAtStartup ??= configurationService.getValue<boolean>(AGENT_SERVER_ENABLED_SETTING) === true;
+	// Volt in a browser is always a window on the agent server that served it.
+	enabledAtStartup ??= isWeb || configurationService.getValue<boolean>(AGENT_SERVER_ENABLED_SETTING) === true;
 	return enabledAtStartup;
 }
 

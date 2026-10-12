@@ -5,7 +5,7 @@
 
 import { IChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../platform/voltStdio/common/voltStdio.js';
-import { projectRunEnv } from '../common/projectRunEnv.js';
+import { projectRunEnv } from './projectRunEnv.js';
 
 /**
  * The main-process stdio service, with each project's environment added to the agent processes
