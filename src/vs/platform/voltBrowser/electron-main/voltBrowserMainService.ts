@@ -6,7 +6,7 @@
 import { session, webContents, type WebContents } from 'electron';
 import { ILogService } from '../../log/common/log.js';
 import { isPreviewPartition, IVoltCookieImportRequest, IVoltCookieImportResult, IVoltCookieSource, matchesDomainFilter, parseDomainFilter, siteOf, toElectronCookie } from '../common/browserCookies.js';
-import { IVoltBrowserService, VOLT_BROWSER_PARTITION, VoltBrowserColorScheme, VoltBrowserDataKind } from '../common/voltBrowser.js';
+import { IVoltBrowserService, IVoltSiteData, VOLT_BROWSER_PARTITION, VoltBrowserColorScheme, VoltBrowserDataKind, VoltSiteDataKind } from '../common/voltBrowser.js';
 import { listCookieSources, readCookies } from '../node/browserCookieReader.js';
 
 export class VoltBrowserMainService implements IVoltBrowserService {
@@ -29,6 +29,62 @@ export class VoltBrowserMainService implements IVoltBrowserService {
 				await browserSession.clearStorageData({ storages: ['localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'filesystem', 'shadercache', 'websql'] });
 				return;
 		}
+	}
+
+	async siteData(webContentsId: number): Promise<IVoltSiteData | undefined> {
+		const contents = this.browserPage(webContentsId);
+		const url = contents?.getURL();
+		if (!contents || !url || !/^https?:/i.test(url)) {
+			return undefined;
+		}
+		const cookies = await contents.session.cookies.get({ url });
+		return {
+			url,
+			origin: new URL(url).origin,
+			cookies: cookies.map(cookie => ({
+				name: cookie.name,
+				value: cookie.value,
+				...(cookie.domain ? { domain: cookie.domain } : {}),
+				...(cookie.path ? { path: cookie.path } : {}),
+				httpOnly: !!cookie.httpOnly,
+				secure: !!cookie.secure,
+				...(cookie.sameSite ? { sameSite: cookie.sameSite } : {}),
+				session: !!cookie.session,
+				...(cookie.expirationDate !== undefined ? { expires: Math.round(cookie.expirationDate) } : {}),
+			})),
+		};
+	}
+
+	async clearSiteData(webContentsId: number, kinds: readonly VoltSiteDataKind[]): Promise<boolean> {
+		const contents = this.browserPage(webContentsId);
+		const url = contents?.getURL();
+		if (!contents || !url) {
+			return false;
+		}
+		const origin = /^https?:/i.test(url) ? new URL(url).origin : undefined;
+		const storages = new Set<'cookies' | 'localstorage' | 'indexdb' | 'cachestorage' | 'serviceworkers' | 'websql' | 'filesystem'>();
+		for (const kind of kinds) {
+			switch (kind) {
+				case 'cookies': storages.add('cookies'); break;
+				case 'storage': storages.add('localstorage').add('websql').add('filesystem'); break;
+				case 'indexeddb': storages.add('indexdb'); break;
+				case 'cache_storage': storages.add('cachestorage'); break;
+				case 'service_workers': storages.add('serviceworkers'); break;
+				case 'http_cache': break;
+			}
+		}
+		if (storages.size) {
+			// A page without an http(s) origin (file:, about:) has no site to scope to: nothing to clear by origin.
+			if (origin) {
+				await contents.session.clearStorageData({ origin, storages: [...storages] });
+			}
+		}
+		if (kinds.includes('http_cache')) {
+			// Chromium keeps one HTTP cache per profile; there is no per-origin clear.
+			await contents.session.clearCache();
+			await contents.session.clearCodeCaches({});
+		}
+		return true;
 	}
 
 	async setColorScheme(webContentsId: number, scheme: VoltBrowserColorScheme): Promise<boolean> {

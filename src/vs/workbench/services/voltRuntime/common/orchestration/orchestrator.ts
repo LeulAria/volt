@@ -438,6 +438,8 @@ export const ORCH_RESUME_AFTER_RESTART_SETTING = 'volt.agent.resumeAfterRestart'
 export const ORCH_MAX_PARALLEL_SETTING = 'volt.agent.multitask.maxParallel';
 /** Multitask agents and subagents the whole window runs at once (`runningTotal`). */
 export const ORCH_MAX_PARALLEL_TOTAL_SETTING = 'volt.agent.multitask.maxParallelTotal';
+/** Agents one delegate_task call may start with `tasks` (`spawnsPerCall`). */
+export const ORCH_MAX_PER_CALL_SETTING = 'volt.agent.multitask.maxPerCall';
 
 export type OrchCommand = OrchCommandBody & {
 	/** Idempotency key. A command id seen before is acknowledged without effect. */
@@ -529,6 +531,8 @@ export interface IOrchLimits {
 	/** Volt subagents across the window that run at once. */
 	readonly runningTotal: number;
 	readonly maxDepth: number;
+	/** Volt subagents one delegate_task call may start with `tasks`. */
+	readonly spawnsPerCall: number;
 	/**
 	 * Delegation doom-loop guards. Subagents one turn may start: an agent that keeps delegating in
 	 * one turn is refused and told to wait for the reports it has.
@@ -552,6 +556,7 @@ export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
 	runningPerParent: 6,
 	runningTotal: 12,
 	maxDepth: 2,
+	spawnsPerCall: 8,
 	maxSpawnsPerTurn: 16,
 	maxBriefRepeats: 3,
 	maxRounds: 6,
@@ -560,6 +565,26 @@ export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
 	maxWakeups: 8,
 	maxRestartResumes: 2,
 };
+
+/** The most each multitask setting accepts. */
+export const ORCH_LIMIT_MAX = { runningPerParent: 16, runningTotal: 32, spawnsPerCall: 16 } as const;
+
+/**
+ * The limits with the user's multitask settings applied. Values are clamped to 1 and
+ * `ORCH_LIMIT_MAX`; one left unset (or not a number) keeps its default.
+ */
+export function readOrchLimits(get: (key: string) => unknown): IOrchLimits {
+	const read = (key: string, fallback: number, max: number) => {
+		const value = get(key);
+		return typeof value === 'number' && Number.isFinite(value) ? Math.max(1, Math.min(max, Math.floor(value))) : fallback;
+	};
+	const runningPerParent = read(ORCH_MAX_PARALLEL_SETTING, DEFAULT_ORCH_LIMITS.runningPerParent, ORCH_LIMIT_MAX.runningPerParent);
+	const runningTotal = Math.max(runningPerParent, read(ORCH_MAX_PARALLEL_TOTAL_SETTING, DEFAULT_ORCH_LIMITS.runningTotal, ORCH_LIMIT_MAX.runningTotal));
+	const spawnsPerCall = read(ORCH_MAX_PER_CALL_SETTING, DEFAULT_ORCH_LIMITS.spawnsPerCall, ORCH_LIMIT_MAX.spawnsPerCall);
+	// The doom-loop guard always leaves room for two full calls in one turn.
+	const maxSpawnsPerTurn = Math.max(DEFAULT_ORCH_LIMITS.maxSpawnsPerTurn, spawnsPerCall * 2);
+	return { ...DEFAULT_ORCH_LIMITS, runningPerParent, runningTotal, spawnsPerCall, maxSpawnsPerTurn };
+}
 
 //#endregion
 

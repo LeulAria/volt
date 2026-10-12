@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { buildTaskNotification, isLiveTaskState, isTerminalTaskState, taskNotificationDisplay } from './agentTasks.js';
-import { isRetryableFailure } from '../jobs/retryPolicy.js';
+import { isRetryableFailure, isTransientFailure } from '../jobs/retryPolicy.js';
 import { LIMIT_CANARY_WAIT_MS, LIMIT_RESUME_TEXT, LIMIT_STAGGER_MS, limitAutoResumes, limitDueAt, limitResumeDisplay } from './limitRecovery.js';
 import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimitPark, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
 import { applyOrchEvent, applyOrchEvents } from './orchestratorProjector.js';
@@ -833,12 +833,18 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 		// the run that ended is an earlier turn's (one Volt settled itself after a stop that hung).
 		return { events: [] };
 	}
+	// The resume of a park that has not heard from the provider yet (its park is still on).
+	const previous = active.limitProbe !== undefined ? thread.limit : undefined;
+	// The attempt broke, not the work (the network, an overloaded provider, an agent process that
+	// crashed or went silent): the turn continues by itself before anyone has to resend it.
+	if (outcome === 'failed' && !superseded && !limit && !previous && recoversFromFailure(thread, active, error)) {
+		const task = thread.taskId ? state.tasks[thread.taskId] : undefined;
+		return { events: restartTurn(state, thread, active, task, at, failureResume(active, error!)) };
+	}
 	const events: OrchEvent[] = [{ type: 'turn.settled', threadId: thread.id, turnId: active.id, outcome, at, ...(error ? { error } : {}) }];
 	// A usage limit parks the chat until the reset instead of failing it. A subagent's chat fails as
 	// before: its parent hears about it and decides (another model, or wait).
 	const parks = !!limit && outcome === 'failed' && !superseded && !thread.taskId;
-	// The resume of a park that has not heard from the provider yet (its park is still on).
-	const previous = active.limitProbe !== undefined ? thread.limit : undefined;
 	// It could not reach the provider for another reason (network, the agent process, a restart):
 	// the park stays and the resume is tried again, until it gets an answer or fails for good.
 	const retries = !!previous && !parks && !superseded && !thread.taskId
@@ -1221,13 +1227,71 @@ function continuesAfterRestart(thread: IOrchThread, task: IOrchTask | undefined,
 /** The text a turn cut off by a restart continues with. Model-facing; the transcript shows a short line. */
 export const RESTART_RESUME_TEXT = '[Volt] Volt restarted while you were working, so your previous run was cut off part way. Continue where you left off: check what is already done (files, git status, command output) before redoing anything, then finish the work. If you were in the middle of a delegated task, end with your report as before.';
 
+/** Automatic continuations of one turn after transient failures, before its chat waits for the user. */
+export const MAX_FAILURE_RETRIES = 3;
+
+/** The suffix a turn continued after a transient failure gets; its count bounds a failure loop. */
+const FAILURE_TURN_SUFFIX = /~f(\d+)(?:~r\d+)?$/;
+
+export function failureRetryCount(turnId: string): number {
+	const match = FAILURE_TURN_SUFFIX.exec(turnId);
+	return match ? Number(match[1]) : 0;
+}
+
+/** The turn continues one that just failed for a passing reason (not a restart of such a turn). */
+export function isFailureRetryTurn(turnId: string): boolean {
+	return /~f\d+$/.test(turnId);
+}
+
+/** The model-facing text a turn continues with after a transient failure. */
+export function failureResumeText(error: string): string {
+	return `[Volt] Your previous run stopped part way because of a passing problem (${error.replace(/\s+/g, ' ').trim().slice(0, 200)}), so Volt started this one to continue it. Continue where you left off: check what is already done (files, git status, command output) before redoing anything, then finish the work. If you were in the middle of a delegated task, end with your report as before.`;
+}
+
+/** Why a turn is continued: Volt restarted, or the attempt failed for a passing reason. */
+interface IRestartCause {
+	readonly outcome: Extract<OrchOutcome, 'interrupted' | 'failed'>;
+	readonly error?: string;
+	readonly id: string;
+	readonly text: string;
+	readonly label: string;
+}
+
+function restartCause(active: IOrchTurn): IRestartCause {
+	return {
+		outcome: 'interrupted',
+		id: `${active.id.replace(RESTART_TURN_SUFFIX, '')}~r${restartCount(active.id) + 1}`,
+		text: RESTART_RESUME_TEXT,
+		label: 'Continued after Volt restarted',
+	};
+}
+
+function failureResume(active: IOrchTurn, error: string): IRestartCause {
+	const base = active.id.replace(RESTART_TURN_SUFFIX, '').replace(/~f\d+$/, '');
+	const attempt = failureRetryCount(active.id) + 1;
+	return { outcome: 'failed', error, id: `${base}~f${attempt}`, text: failureResumeText(error), label: `Continued after a passing error (attempt ${attempt + 1} of ${MAX_FAILURE_RETRIES + 1})` };
+}
+
 /**
- * Ends the turn the restart cut off and starts its continuation. A turn that never reached the
- * agent is sent again as it was; one that ran gets the resume prompt (the transcript holds what
- * it did, and the next agent session is briefed from it).
+ * A failed turn continues by itself when the failure was the attempt's (see `isTransientFailure`),
+ * its chat is not stopping, moving or switching models, Volt dispatched it, and it has continued
+ * fewer than `MAX_FAILURE_RETRIES` times. Usage limits park instead (decideRunSettled).
  */
-function restartTurn(state: IOrchState, thread: IOrchThread, active: IOrchTurn, task: IOrchTask | undefined, at: number): OrchEvent[] {
-	const events: OrchEvent[] = [{ type: 'turn.settled', threadId: thread.id, turnId: active.id, outcome: 'interrupted', at }];
+function recoversFromFailure(thread: IOrchThread, active: IOrchTurn, error: string | undefined): boolean {
+	return isTransientFailure(error)
+		&& active.kind !== 'external'
+		&& active.phase !== 'cancelling'
+		&& !thread.blocked && !thread.moving && !thread.pendingMove && !thread.pendingHandoff
+		&& failureRetryCount(active.id) < MAX_FAILURE_RETRIES;
+}
+
+/**
+ * Ends the turn a restart (or a transient failure) cut off and starts its continuation. A turn that
+ * never reached the agent is sent again as it was; one that ran gets the resume prompt (the
+ * transcript holds what it did, and the next agent session is briefed from it).
+ */
+function restartTurn(state: IOrchState, thread: IOrchThread, active: IOrchTurn, task: IOrchTask | undefined, at: number, cause: IRestartCause = restartCause(active)): OrchEvent[] {
+	const events: OrchEvent[] = [{ type: 'turn.settled', threadId: thread.id, turnId: active.id, outcome: cause.outcome, at, ...(cause.error ? { error: cause.error } : {}) }];
 	// Harness subagents live inside the turn and died with it.
 	for (const other of Object.values(state.tasks)) {
 		if (other.source === 'harness' && other.parentId === thread.id && !isTerminalTaskState(other.state)) {
@@ -1239,18 +1303,20 @@ function restartTurn(state: IOrchState, thread: IOrchThread, active: IOrchTurn, 
 			// Its question or approval died with the agent; the continued turn asks again if it must.
 			events.push({ type: 'task.waiting', taskId: task.id, on: undefined });
 		}
-		events.push({ type: 'task.restarted', taskId: task.id, at });
+		// Restarts are budgeted per task (continuesAfterRestart); failures per turn (the id's suffix).
+		if (cause.outcome === 'interrupted') {
+			events.push({ type: 'task.restarted', taskId: task.id, at });
+		}
 	}
-	const id = `${active.id.replace(RESTART_TURN_SUFFIX, '')}~r${restartCount(active.id) + 1}`;
 	const unsent = active.phase === 'dispatching' && !active.runId;
 	const prompt: IOrchPrompt = unsent ? active.prompt : {
-		text: RESTART_RESUME_TEXT,
-		display: { text: 'Continued after Volt restarted', notification: true },
+		text: cause.text,
+		display: { text: cause.label, notification: true },
 		...(active.prompt.mode ? { mode: active.prompt.mode } : {}),
 		...(active.prompt.modelRef ? { modelRef: active.prompt.modelRef } : {}),
 	};
 	events.push(dispatch(thread.id, {
-		id,
+		id: cause.id,
 		kind: unsent ? active.kind : 'resume',
 		prompt,
 		at,

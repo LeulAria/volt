@@ -55,6 +55,18 @@ export function isRetryableFailure(message: string | undefined): boolean {
 	return !message || !NON_RETRYABLE.test(message);
 }
 
+/**
+ * Failures that say the attempt itself broke, not the request: the network dropped, the provider
+ * was overloaded or answered 5xx, the agent process crashed, exited or went silent, the stream was
+ * cut. Another attempt of the same work usually succeeds. Narrower than `isRetryableFailure`: an
+ * error that names none of these (a bad prompt, a tool the agent refused) is the model's answer.
+ */
+const TRANSIENT = /\b(?:e(?:connreset|connrefused|connaborted|timedout|pipe|notfound|ai_again|netunreach|hostunreach|netdown)|socket hang up|fetch failed|network (?:error|request failed|is unreachable|changed)|connection (?:reset|refused|closed|error|lost|terminated|dropped)|timed out|timeout|overloaded|over capacity|temporarily unavailable|service unavailable|bad gateway|gateway time-?out|internal server error|server error|upstream|5(?:00|02|03|04|29)\b|stream (?:ended|closed|error|interrupted|was cut)|premature close|unexpected end of|terminated|exited|crashed|was killed|sigkill|sigterm|segmentation fault|process (?:exited|died|ended|crashed)|agent (?:process|exited|crashed|disconnected|stopped)|disconnected|stopped responding|did not start within|ended without reporting)/i;
+
+export function isTransientFailure(message: string | undefined): boolean {
+	return !!message && TRANSIENT.test(message) && isRetryableFailure(message);
+}
+
 /** A stable number in [0, 1) from a string (FNV-1a). */
 export function unitHash(value: string): number {
 	let hash = 0x811c9dc5;

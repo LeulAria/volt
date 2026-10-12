@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { isMemoryToolName } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
-import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, CANVAS_READ_TOOL_NAME, CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, MOCKUPS_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME, THREAD_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, CANVAS_READ_TOOL_NAME, CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, MOCKUPS_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME, THREAD_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /** How one of Volt's own MCP tools reads in the activity trail, the way Cursor words its browser actions. */
 export interface IHostToolActivity {
@@ -67,6 +67,17 @@ export function describeHostToolActivity(name: string | undefined, title: string
 	}
 	if (tool === BROWSER_NETWORK_TOOL_NAME) {
 		return { tool, label: 'Read network' };
+	}
+	if (tool === BROWSER_DEVTOOLS_TOOL_NAME) {
+		switch (args.action) {
+			case 'storage': return { tool, label: 'Read site storage', detail: text(args.filter, 60) };
+			case 'clear': return { tool, label: 'Cleared site data', detail: Array.isArray(args.what) ? args.what.filter((item): item is string => typeof item === 'string').join(', ') : undefined };
+			case 'set_storage': return { tool, label: args.value === undefined ? 'Removed storage key' : 'Set storage key', detail: text(args.key, 60) };
+			case 'hard_reload': return { tool, label: 'Hard reloaded page' };
+			case 'inspect': return { tool, label: 'Inspected element', detail: text(args.selector, 60) ?? text(args.ref, 20) };
+			case 'performance': return { tool, label: 'Measured performance' };
+			default: return { tool, label: 'Opened DevTools' };
+		}
 	}
 	if ((PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(tool)) {
 		const which = typeof args.number === 'number' || (typeof args.number === 'string' && args.number) ? `#${args.number}` : text(args.url, 80);

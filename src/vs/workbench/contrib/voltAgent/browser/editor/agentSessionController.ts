@@ -94,6 +94,16 @@ export interface IAgentSessionControl extends IDisposable {
 	setHost(host: IAgentSessionHost): void;
 	skipCurrentRun(): void;
 	beginTurn(spec: IAgentTurnSpec): IAgentAssistantMessage;
+	/**
+	 * Shows a prompt the user just sent as its turn (their message and a "Thinking" reply) before
+	 * the orchestrator starts it, so the chat answers at once. Nothing is recorded: `beginTurn`
+	 * adopts the rows when the turn starts, `dropPendingTurn` removes them when it does not (it was
+	 * queued, steered into the running turn, or refused). Absent when another process owns the transcript.
+	 */
+	showPendingTurn?(spec: IAgentTurnSpec): void;
+	dropPendingTurn?(turnId: string): void;
+	/** The turn is on screen from `showPendingTurn` and not started yet. */
+	isPendingTurn?(turnId: string): boolean;
 	endUnstartedTurn(turnId: string, failure: string | undefined): void;
 	recordSteer(text: string): boolean;
 	/**
@@ -293,6 +303,10 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 	private sessionCostBase: number | undefined;
 	/** A mirrored run is open ({@link applyMirroredEvent}): the runtime knows no run for this chat. */
 	private mirroredRun = false;
+	/** Turns on screen since the user sent them that have not started yet ({@link showPendingTurn}). */
+	private readonly pendingTurns = new Set<string>();
+	/** The CLI agent the current run is starting, named on the live line until its first step. */
+	private startingAgent: string | undefined;
 
 	constructor(
 		private host: IAgentSessionHost,
@@ -355,13 +369,69 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 	beginTurn(spec: IAgentTurnSpec): IAgentAssistantMessage {
 		const existing = this.host.messages.findIndex(message => message.kind === 'user' && message.id === spec.turnId);
 		if (existing >= 0) {
-			// A retried start of the same turn reuses its messages.
 			const reply = this.host.messages[existing + 1];
+			if (reply?.kind === 'agent' && reply.id === spec.turnId && this.pendingTurns.delete(spec.turnId)) {
+				// Shown since the send: it is the turn now, with what the host added (a handoff, page
+				// state) and on record. The reply's clock keeps the send time the user saw.
+				this.cancelPartialRecord();
+				const user = this.turnMessages(spec).user;
+				this.host.messages[existing] = user;
+				this.host.recordUser?.(user);
+				this.host.recordMode?.(spec.mode);
+				this.fire({ kind: 'render' });
+				return reply;
+			}
+			// A retried start of the same turn reuses its messages.
 			if (reply?.kind === 'agent') {
 				return reply;
 			}
 		}
 		this.cancelPartialRecord();
+		const { user, reply } = this.turnMessages(spec);
+		this.host.messages.push(user, reply);
+		// The prompt is durable before the model is asked.
+		this.host.recordUser?.(user);
+		this.host.recordMode?.(spec.mode);
+		this.fire({ kind: 'turnStart', turnId: spec.turnId });
+		return reply;
+	}
+
+	showPendingTurn(spec: IAgentTurnSpec): void {
+		// Only onto an idle transcript: a live run's events land on the last reply.
+		if (this.isRunning || this.host.messages.some(message => message.id === spec.turnId)) {
+			return;
+		}
+		const { user, reply } = this.turnMessages(spec);
+		this.host.messages.push(user, reply);
+		this.pendingTurns.add(spec.turnId);
+		this.fire({ kind: 'turnStart', turnId: spec.turnId });
+	}
+
+	isPendingTurn(turnId: string): boolean {
+		return this.pendingTurns.has(turnId);
+	}
+
+	dropPendingTurn(turnId: string): void {
+		if (!this.pendingTurns.delete(turnId)) {
+			return;
+		}
+		const index = this.host.messages.findIndex(message => message.kind === 'user' && message.id === turnId);
+		if (index < 0) {
+			return;
+		}
+		const next = this.host.messages[index + 1];
+		this.host.messages.splice(index, next?.kind === 'agent' && next.id === turnId ? 2 : 1);
+		this.fire({ kind: 'render' });
+	}
+
+	/** The catalog label of a CLI agent ("Claude Code"), or undefined for a native model. */
+	private agentLabel(ref: string | undefined): string | undefined {
+		const item = ref ? this.runtime.listCatalog().find(entry => entry.ref === ref) : undefined;
+		return item?.kind === 'agent' ? item.label : undefined;
+	}
+
+	/** A turn's user message and the streaming reply its run's events land in. */
+	private turnMessages(spec: IAgentTurnSpec): { readonly user: IAgentUserMessage; readonly reply: IAgentAssistantMessage } {
 		const user: IAgentUserMessage = {
 			kind: 'user',
 			id: spec.turnId,
@@ -397,12 +467,7 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 			reply.activity.status = localize('voltAgent.compaction.running', "Compacting context");
 			reply.activity.statusPinned = true;
 		}
-		this.host.messages.push(user, reply);
-		// The prompt is durable before the model is asked.
-		this.host.recordUser?.(user);
-		this.host.recordMode?.(spec.mode);
-		this.fire({ kind: 'turnStart', turnId: spec.turnId });
-		return reply;
+		return { user, reply };
 	}
 
 	/** The turn never reached the runtime (it failed or was stopped while starting): close its reply. */
@@ -847,12 +912,17 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 				activity.streaming = true;
 				activity.status = localize('voltAgent.thinking', "Thinking");
 				this.runWantsPreview = false;
+				this.startingAgent = this.agentLabel(event.providerRef);
 				break;
 			case 'lane':
 				this.runWantsPreview = event.wantsPreview;
 				break;
 			case 'lifecycle':
-				if (event.phase === 'planning') {
+				if (event.phase === 'planning' && this.startingAgent) {
+					// A CLI agent's run plans while its process starts and connects: say that, until it speaks.
+					activity.status = localize('voltAgent.startingAgent', "Starting {0}", this.startingAgent);
+					this.startingAgent = undefined;
+				} else if (event.phase === 'planning') {
 					activity.status = localize('voltAgent.planning', "Planning");
 				} else if (event.phase === 'verifying') {
 					activity.status = localize('voltAgent.verifying', "Verifying");

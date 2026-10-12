@@ -56,9 +56,21 @@ export interface IVoltDesktopTree {
 	/** The window read (the focused one, unless a window title was asked for). */
 	readonly window?: string;
 	readonly windows: readonly string[];
+	/** Titles of the windows that are minimized to the Dock. */
+	readonly minimized?: readonly string[];
+	/** The window's tree, with the app's open context menus and popups as its last children. */
 	readonly root?: IVoltDesktopNode;
 	readonly truncated?: boolean;
 }
+
+/** What an action reports back: `activate` whether the app came up with a window, `window` the window it acted on. */
+export interface IVoltDesktopActResult {
+	readonly app?: string;
+	readonly ready?: boolean;
+	readonly window?: string;
+}
+
+export type VoltDesktopWindowOp = 'raise' | 'minimize' | 'restore' | 'close' | 'zoom' | 'fullscreen';
 
 export type VoltDesktopAction =
 	/** An accessibility action on an element: AXPress (default), AXIncrement, AXShowMenu, AXConfirm, … */
@@ -71,8 +83,13 @@ export type VoltDesktopAction =
 	/** A key chord, e.g. "cmd+s", "enter", "shift+tab". */
 	| { readonly kind: 'key'; readonly combo: string }
 	| { readonly kind: 'scroll'; readonly x: number; readonly y: number; readonly dx: number; readonly dy: number }
-	/** Brings an app to the front, opening it if needed (name or bundle id), or opens a URL. */
-	| { readonly kind: 'activate'; readonly app: string }
+	/**
+	 * Brings an app to the front, opening it (or a window of it) if needed, by name or bundle id,
+	 * or opens a URL. Waits up to `wait` seconds (default 10) until the app is in front with a window.
+	 */
+	| { readonly kind: 'activate'; readonly app: string; readonly wait?: number }
+	/** Acts on one of an app's windows by (part of) its title; no title: its first window. */
+	| { readonly kind: 'window'; readonly app?: string; readonly title?: string; readonly op: VoltDesktopWindowOp }
 	/** Picks a menu bar item by its path, e.g. ["File", "Export", "PDF…"]. */
 	| { readonly kind: 'menu'; readonly app?: string; readonly path: readonly string[] };
 
@@ -87,5 +104,5 @@ export interface IVoltDesktopService {
 	apps(): Promise<IVoltDesktopApp[]>;
 	/** The accessibility tree of an app's focused window (or the frontmost app's). */
 	tree(target: { readonly app?: string; readonly pid?: number; readonly window?: string; readonly max?: number }): Promise<IVoltDesktopTree>;
-	act(action: VoltDesktopAction): Promise<void>;
+	act(action: VoltDesktopAction): Promise<IVoltDesktopActResult>;
 }

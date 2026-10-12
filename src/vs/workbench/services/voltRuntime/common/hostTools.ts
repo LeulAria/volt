@@ -92,6 +92,7 @@ export interface IVoltVisualRef {
 	readonly detail?: string;
 }
 export const BROWSER_NETWORK_TOOL_NAME = 'browser_network';
+export const BROWSER_DEVTOOLS_TOOL_NAME = 'browser_devtools';
 export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
 
 /**
@@ -236,7 +237,7 @@ export const BROWSER_TOOL_NAMES = [
 export type VoltBrowserToolName = typeof BROWSER_TOOL_NAMES[number];
 
 /** Browser tools for design and debugging work, added after the activity trail named the ones above. */
-export const BROWSER_DESIGN_TOOL_NAMES = [BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME] as const;
+export const BROWSER_DESIGN_TOOL_NAMES = [BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME] as const;
 
 /** Every tool the chat's browser tab runs (`AUTOMATE_BROWSER_COMMAND_ID`). */
 export type VoltBrowserAutomationToolName = VoltBrowserToolName | typeof BROWSER_DESIGN_TOOL_NAMES[number];
@@ -468,6 +469,28 @@ If you know the page (you wrote it), skip browser_snapshot. Pass observe: "on_fa
 		},
 	},
 	{
+		name: BROWSER_DEVTOOLS_TOOL_NAME,
+		title: 'Used DevTools',
+		group: 'browser',
+		description: 'The in-app browser\'s DevTools for the current page in one call, instead of browser_evaluate scripts. action: storage (Application panel: cookies including HttpOnly, local and session storage, IndexedDB, Cache Storage, service workers, quota), clear (this site\'s data only, then a reload that skips the cache: stale bundles, broken sessions, an old service worker), set_storage (set or remove a storage key, e.g. a feature flag or token), hard_reload (reload skipping the cache), inspect (Elements panel: an element\'s box, computed styles, the CSS rules that match it, what covers it, overflow), performance (load timings, LCP, CLS, slowest and largest resources, DOM size, heap), open (show DevTools to the user).',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				action: { type: 'string', enum: ['storage', 'clear', 'set_storage', 'hard_reload', 'inspect', 'performance', 'open'] },
+				what: { type: 'array', items: { type: 'string', enum: ['cookies', 'storage', 'indexeddb', 'cache_storage', 'service_workers', 'http_cache', 'all'] }, description: 'clear: which data (default all). storage covers local and session storage; http_cache is the whole browser profile\'s.' },
+				reload: { type: 'boolean', description: 'clear: reload the page after (default true).' },
+				filter: { type: 'string', description: 'storage: only keys and cookies whose name contains this.' },
+				reveal: { type: 'boolean', description: 'storage: show cookie values (hidden by default; they are often credentials).' },
+				area: { type: 'string', enum: ['local', 'session'], description: 'set_storage: which storage (default local).' },
+				key: { type: 'string', description: 'set_storage: the key.' },
+				value: { type: 'string', description: 'set_storage: the value; leave out to remove the key.' },
+				ref: { ...REF, description: 'inspect: the element ref.' },
+				selector: { type: 'string', description: 'inspect: a CSS selector, instead of ref.' },
+			},
+			required: ['action'],
+		},
+	},
+	{
 		name: 'browser_navigate_back',
 		title: 'Went back',
 		group: 'browser',
@@ -667,6 +690,14 @@ export function browserToolVerdict(name: string, args: Record<string, unknown>, 
 	switch (name) {
 		case 'browser_evaluate':
 			return { kind: 'ask', reason: 'runs JavaScript in the page' };
+		case BROWSER_DEVTOOLS_TOOL_NAME: {
+			// Reading timings, styles or a local page's storage only looks; another site's storage and cookies can be the user's sign-ins.
+			const action = args.action;
+			if (action === 'performance' || action === 'inspect' || action === 'open' || action === 'hard_reload' || !pageUrl || isLocalBrowserUrl(pageUrl)) {
+				return ALLOW;
+			}
+			return { kind: 'ask', reason: action === 'storage' ? `reads the storage and cookies of ${hostOf(pageUrl)}` : `changes the stored data of ${hostOf(pageUrl)}` };
+		}
 		case 'browser_navigate':
 		case BROWSER_COMPARE_IMAGE_TOOL_NAME:
 			if (name === BROWSER_COMPARE_IMAGE_TOOL_NAME && !target) {

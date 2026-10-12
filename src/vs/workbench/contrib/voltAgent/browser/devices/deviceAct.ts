@@ -5,6 +5,7 @@
 
 import { timeout } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
+import type { VoltDesktopWindowOp } from '../../../../../platform/voltDesktop/common/voltDesktop.js';
 import type { VoltDeviceButton } from '../../../../../platform/voltDevices/common/voltDevices.js';
 import { checkOnDevice, deviceView, IDeviceElement, IDeviceScreen, locateOnDevice } from '../../../../services/voltRuntime/common/tools/deviceUi.js';
 import { describeExpectation, describeLocator, diffPage, IActStep, IPageExpectation, IPageLocator, isActingStep } from '../../../../services/voltRuntime/common/tools/pageModel.js';
@@ -40,6 +41,8 @@ export interface IDeviceDriver {
 	key?(combo: string): Promise<void>;
 	/** Desktop: picks a menu bar item by its path. */
 	menu?(path: readonly string[]): Promise<void>;
+	/** Desktop: raises, minimizes, restores, closes, zooms or fullscreens a window by (part of) its title. Resolves the window's title. */
+	window?(title: string | undefined, op: VoltDesktopWindowOp): Promise<string | undefined>;
 }
 
 /** After input, the screen needs a moment before its tree says what the input did. */
@@ -433,6 +436,20 @@ export class DeviceActRunner {
 					throw new StepError('NOT_FOUND', err instanceof Error ? err.message : String(err));
 				}
 				return `${step.values!.join(' > ')} · ${describeScreenChange(before, await this.afterInput())}`;
+			}
+			case 'window': {
+				if (!this.driver.window) {
+					throw new StepError('NOT_FOUND', 'window is for desktop apps');
+				}
+				let title: string | undefined;
+				try {
+					title = await this.driver.window(step.values?.[0], step.key as VoltDesktopWindowOp);
+				} catch (err) {
+					throw new StepError('NOT_FOUND', err instanceof Error ? err.message : String(err));
+				}
+				// Another window is another screen: what changed is that window, not a diff of the last.
+				this.screen = undefined;
+				return `${step.key ?? 'raise'} ${JSON.stringify(title ?? step.values?.[0] ?? '')}`;
 			}
 		}
 	}

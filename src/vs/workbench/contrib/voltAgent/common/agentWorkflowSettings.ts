@@ -8,10 +8,10 @@ import { Extensions, IConfigurationRegistry } from '../../../../platform/configu
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING } from '../../../services/voltRuntime/common/compaction.js';
 import { HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_DEFAULT_MAX_TOKENS, HANDOFF_DEFAULT_PERCENT, HANDOFF_MAX_TOKENS_SETTING, HANDOFF_MIN_TOKENS } from '../../../services/voltRuntime/common/contextHandoff.js';
-import { DEFAULT_ORCH_LIMITS, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, ORCH_LIMIT_MAX, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING } from '../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 
-export { ORCH_RESUME_AFTER_RESTART_SETTING as AGENT_RESUME_AFTER_RESTART_SETTING, COMPACT_OLD_THREADS_SETTING as AGENT_COMPACT_OLD_THREADS_SETTING, LIMIT_AUTO_RESUME_SETTING as AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING };
+export { ORCH_MAX_PARALLEL_SETTING as AGENT_MULTITASK_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING as AGENT_MULTITASK_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING as AGENT_MULTITASK_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING as AGENT_RESUME_AFTER_RESTART_SETTING, COMPACT_OLD_THREADS_SETTING as AGENT_COMPACT_OLD_THREADS_SETTING, LIMIT_AUTO_RESUME_SETTING as AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING };
 
 Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfiguration({
 	id: 'volt.agent.workflow',
@@ -33,15 +33,22 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			type: 'number',
 			default: DEFAULT_ORCH_LIMITS.runningPerParent,
 			minimum: 1,
-			maximum: 16,
+			maximum: ORCH_LIMIT_MAX.runningPerParent,
 			description: localize('voltAgent.multitaskMaxParallel', "How many multitask agents and subagents one chat runs at once. More wait their turn and start as others finish. Each one is its own agent session, so more at once costs more memory and usage."),
 		},
 		[ORCH_MAX_PARALLEL_TOTAL_SETTING]: {
 			type: 'number',
 			default: DEFAULT_ORCH_LIMITS.runningTotal,
 			minimum: 1,
-			maximum: 32,
-			description: localize('voltAgent.multitaskMaxParallelTotal', "How many multitask agents and subagents run at once across all chats in this window."),
+			maximum: ORCH_LIMIT_MAX.runningTotal,
+			description: localize('voltAgent.multitaskMaxParallelTotal', "How many multitask agents and subagents run at once across all chats in this window. Never fewer than one chat's limit."),
+		},
+		[ORCH_MAX_PER_CALL_SETTING]: {
+			type: 'number',
+			default: DEFAULT_ORCH_LIMITS.spawnsPerCall,
+			minimum: 1,
+			maximum: ORCH_LIMIT_MAX.spawnsPerCall,
+			description: localize('voltAgent.multitaskMaxPerCall', "How many multitask agents or subagents an agent can start in one go (one delegate_task call). It starts the rest once those report. Those over the running limits wait their turn."),
 		},
 		[LIMIT_AUTO_RESUME_SETTING]: {
 			type: 'boolean',

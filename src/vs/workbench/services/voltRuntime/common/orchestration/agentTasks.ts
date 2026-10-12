@@ -47,7 +47,7 @@ export function isLiveTaskState(state: OrchTaskState): boolean {
 export const MAX_RUNNING_TASKS_PER_CHAT = 6;
 /** Children across the window that run at once (the default; Settings can change it). */
 export const MAX_RUNNING_TASKS = 12;
-/** Tasks one delegate_task call may start with `tasks`. */
+/** Tasks one delegate_task call may start with `tasks` (the default, as `DEFAULT_ORCH_LIMITS.spawnsPerCall`; Settings can change it). */
 export const MAX_BATCH_TASKS = 8;
 /** A task may start tasks of its own, one level down. */
 export const MAX_TASK_DEPTH = 2;
@@ -107,14 +107,9 @@ export interface IAgentTaskToolInfo {
 	readonly inputSchema: object;
 }
 
-export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
-	{
-		name: LIST_MODELS_TOOL_NAME,
-		title: 'Listed models',
-		description: 'List the agents and models Volt can run delegated tasks on (the same list as the user\'s model picker), with the model this chat is on. Use it before delegate_task or handoff when you want a specific model.',
-		inputSchema: { type: 'object', properties: {} },
-	},
-	{
+/** delegate_task, with `tasks` taking at most `maxPerCall` entries (the user's setting). */
+function delegateTaskTool(maxPerCall: number): IAgentTaskToolInfo {
+	return {
 		name: DELEGATE_TASK_TOOL_NAME,
 		title: 'Delegated task',
 		description: [
@@ -130,8 +125,8 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 				task: { type: 'string', description: 'The complete brief for the subagent. Give `task` for one subagent, or `tasks` for several.' },
 				tasks: {
 					type: 'array',
-					maxItems: MAX_BATCH_TASKS,
-					description: `Start up to ${MAX_BATCH_TASKS} independent subagents in one call, one entry per part of the work. Each entry takes the same fields as a single task (task, title, model, role, isolation, scope); fields left out use this call's top-level values. Use instead of \`task\`.`,
+					maxItems: maxPerCall,
+					description: `Start up to ${maxPerCall} independent subagents in one call, one entry per part of the work. Each entry takes the same fields as a single task (task, title, model, role, isolation, scope); fields left out use this call's top-level values. Use instead of \`task\`.`,
 					items: {
 						type: 'object',
 						properties: {
@@ -170,7 +165,17 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 				client_request_id: { type: 'string', description: 'Optional idempotency key: a retry with the same key returns the same task instead of starting another.' },
 			},
 		},
+	};
+}
+
+export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
+	{
+		name: LIST_MODELS_TOOL_NAME,
+		title: 'Listed models',
+		description: 'List the agents and models Volt can run delegated tasks on (the same list as the user\'s model picker), with the model this chat is on. Use it before delegate_task or handoff when you want a specific model.',
+		inputSchema: { type: 'object', properties: {} },
 	},
+	delegateTaskTool(MAX_BATCH_TASKS),
 	{
 		name: TASK_STATUS_TOOL_NAME,
 		title: 'Checked task',
@@ -224,6 +229,11 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 		},
 	},
 ];
+
+/** The task tools, with delegate_task's `tasks` capped at `maxPerCall`. */
+export function agentTaskTools(maxPerCall: number): readonly IAgentTaskToolInfo[] {
+	return maxPerCall === MAX_BATCH_TASKS ? AGENT_TASK_TOOLS : AGENT_TASK_TOOLS.map(tool => tool.name === DELEGATE_TASK_TOOL_NAME ? delegateTaskTool(maxPerCall) : tool);
+}
 
 //#endregion
 

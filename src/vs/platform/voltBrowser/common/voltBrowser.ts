@@ -16,6 +16,32 @@ export type VoltBrowserColorScheme = 'system' | 'light' | 'dark';
 
 export type VoltBrowserDataKind = 'cookies' | 'cache' | 'siteData';
 
+/** What one site keeps in the browser, cleared per origin (the HTTP cache is per profile). */
+export type VoltSiteDataKind = 'cookies' | 'storage' | 'indexeddb' | 'cache_storage' | 'service_workers' | 'http_cache';
+
+export const VOLT_SITE_DATA_KINDS: readonly VoltSiteDataKind[] = ['cookies', 'storage', 'indexeddb', 'cache_storage', 'service_workers', 'http_cache'];
+
+/** A cookie as DevTools' Application panel lists it. */
+export interface IVoltSiteCookie {
+	readonly name: string;
+	readonly value: string;
+	readonly domain?: string;
+	readonly path?: string;
+	readonly httpOnly: boolean;
+	readonly secure: boolean;
+	readonly sameSite?: string;
+	readonly session: boolean;
+	/** Seconds since the epoch. */
+	readonly expires?: number;
+}
+
+/** What the main process sees of a page's site that the page's own script cannot (HttpOnly cookies). */
+export interface IVoltSiteData {
+	readonly url: string;
+	readonly origin: string;
+	readonly cookies: readonly IVoltSiteCookie[];
+}
+
 /**
  * The parts of the in-app browser that need the main process: the session (cookies, cache) and
  * the DevTools protocol (color scheme emulation). The window is sandboxed and reaches neither.
@@ -25,6 +51,12 @@ export interface IVoltBrowserService {
 
 	/** Clears one kind of data from the in-app browser's session, for every site. */
 	clearData(kind: VoltBrowserDataKind): Promise<void>;
+
+	/** A browser page's site data the page cannot read itself: every cookie for its URL, HttpOnly ones too. */
+	siteData(webContentsId: number): Promise<IVoltSiteData | undefined>;
+
+	/** Clears these kinds of data of a browser page's origin only; other sites keep theirs. False when the page is gone. */
+	clearSiteData(webContentsId: number, kinds: readonly VoltSiteDataKind[]): Promise<boolean>;
 
 	/** Emulates `prefers-color-scheme` for one browser page; `system` follows the OS again. */
 	setColorScheme(webContentsId: number, scheme: VoltBrowserColorScheme): Promise<boolean>;

@@ -36,14 +36,16 @@ click button "New Note"
 type "Search" groceries      (sets the field's value; checked after)
 check "Show all accounts"
 menu File > Export as PDF…
+window "Inbox"               (bring that window to the front; then minimize, restore, close, zoom or fullscreen)
 press cmd+s                  (any chord: cmd/ctrl/alt/shift + key)
 scroll down until "Archive"
 expect "Saved" and gone "Untitled"
-Targets: "text" (for type/check: the field's label), role "name" (button, textbox, checkbox, switch, radio, tab, row, cell, menuitem, link, combobox...), a ref from desktop_snapshot, id "AXIdentifier", "in <target>", "#2", "exact". "=> condition" verifies a step. Buttons and fields are used through accessibility, so it works on a window behind others without moving the user's mouse; keys go to the app in front. Each step waits for its target, re-reads the window and reports what changed; the run stops at the first failure and ends with the window's changes since your last read. save / run / vars work like browser_act's flows. The user approves desktop control once per chat.`,
+Targets: "text" (for type/check: the field's label), role "name" (button, textbox, checkbox, switch, radio, tab, row, cell, menuitem, link, combobox...), a ref from desktop_snapshot, id "AXIdentifier", "in <target>", "#2", "exact". "=> condition" verifies a step. Buttons and fields are used through accessibility, so it works on a window behind others without moving the user's mouse; keys go to the app in front. Each step waits for its target, re-reads the window and reports what changed; the run stops at the first failure and ends with the window's changes since your last read. "open" returns as soon as the app is in front with a window. Open context menus and popups are read with the window. save / run / vars work like browser_act's flows. The user approves desktop control once per chat.`,
 		inputSchema: {
 			type: 'object',
 			properties: {
 				app: APP,
+				window: { type: 'string', description: 'Text in the title of the window to work in. Default: the focused one.' },
 				script: { type: 'string', description: 'The steps, one per line (see above).' },
 				run: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }], description: 'Saved flow(s) to run instead of a script.' },
 				vars: { type: 'object', description: 'Values for ${name} placeholders.' },

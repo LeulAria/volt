@@ -518,7 +518,10 @@ export function describeExpectation(expectation: IPageExpectation): string {
 	return parts.join(' and ');
 }
 
-export type ActStepAction = 'navigate' | 'click' | 'type' | 'press' | 'select' | 'check' | 'uncheck' | 'hover' | 'scroll' | 'wait' | 'expect' | 'back' | 'reload' | 'flow' | 'menu';
+export type ActStepAction = 'navigate' | 'click' | 'type' | 'press' | 'select' | 'check' | 'uncheck' | 'hover' | 'scroll' | 'wait' | 'expect' | 'back' | 'reload' | 'flow' | 'menu' | 'window';
+
+/** What a desktop `window` step does to the window (`key`); `values[0]` is (part of) its title. */
+export const WINDOW_OPS = ['raise', 'minimize', 'restore', 'close', 'zoom', 'fullscreen'] as const;
 
 const ACTION_ALIASES: Readonly<Record<string, ActStepAction>> = {
 	goto: 'navigate', open: 'navigate', visit: 'navigate',
@@ -530,7 +533,7 @@ const ACTION_ALIASES: Readonly<Record<string, ActStepAction>> = {
 	go_back: 'back', navigate_back: 'back', refresh: 'reload',
 };
 
-const ACTIONS: readonly ActStepAction[] = ['navigate', 'click', 'type', 'press', 'select', 'check', 'uncheck', 'hover', 'scroll', 'wait', 'expect', 'back', 'reload', 'flow', 'menu'];
+const ACTIONS: readonly ActStepAction[] = ['navigate', 'click', 'type', 'press', 'select', 'check', 'uncheck', 'hover', 'scroll', 'wait', 'expect', 'back', 'reload', 'flow', 'menu', 'window'];
 
 export interface IActStep {
 	readonly action: ActStepAction;
@@ -607,8 +610,8 @@ function parseStep(value: unknown): IActStep | string {
 		target,
 		url: str(raw.url),
 		text: typeof raw.text === 'string' ? raw.text : typeof raw.value === 'string' && action === 'type' ? raw.value : undefined,
-		key: str(raw.key),
-		values: action === 'select' ? values : action === 'menu' ? (Array.isArray(raw.path) ? raw.path.map(item => String(item)) : typeof raw.path === 'string' ? raw.path.split('>').map(item => item.trim()).filter(Boolean) : values) : undefined,
+		key: action === 'window' ? str(raw.op ?? raw.key)?.toLowerCase() ?? 'raise' : str(raw.key),
+		values: action === 'window' ? (str(raw.title ?? raw.window) ? [str(raw.title ?? raw.window)!] : undefined) : action === 'select' ? values : action === 'menu' ? (Array.isArray(raw.path) ? raw.path.map(item => String(item)) : typeof raw.path === 'string' ? raw.path.split('>').map(item => item.trim()).filter(Boolean) : values) : undefined,
 		submit: raw.submit === true ? true : undefined,
 		clear: raw.clear === false ? false : undefined,
 		double: raw.double === true || raw.doubleClick === true || name === 'dblclick' || name === 'double_click' || name === 'doubleclick' ? true : undefined,
@@ -628,6 +631,8 @@ function parseStep(value: unknown): IActStep | string {
 			return step.flow ? step : 'flow needs `flow` (the saved flow\'s name).';
 		case 'menu':
 			return step.values?.length ? step : 'menu needs `path`, e.g. ["File", "Save As…"].';
+		case 'window':
+			return (WINDOW_OPS as readonly string[]).includes(step.key!) ? step : `window \`op\` is one of ${WINDOW_OPS.join(', ')}.`;
 		case 'navigate':
 			return step.url ? step : 'navigate needs `url`.';
 		case 'click':
@@ -678,6 +683,7 @@ export function describeStep(step: IActStep): string {
 		case 'reload': return 'reload';
 		case 'flow': return `run flow ${step.flow}`;
 		case 'menu': return `menu ${step.values!.join(' > ')}`;
+		case 'window': return `${step.key ?? 'raise'} window${step.values?.[0] ? ` ${JSON.stringify(step.values[0])}` : ''}`;
 	}
 }
 

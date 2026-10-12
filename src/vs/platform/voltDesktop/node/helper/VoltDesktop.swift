@@ -205,8 +205,18 @@ func tree(_ request: [String: Any]) throws -> [String: Any] {
 	]
 	if let window = window {
 		result["window"] = string(attribute(window, kAXTitleAttribute)) ?? ""
-		result["root"] = read(window, depth: 0, budget: &budget)
+		if var root = read(window, depth: 0, budget: &budget) {
+			// A context menu or a popup opens as the app's own child, not the window's: read it too.
+			let menus = elements(attribute(appElement, kAXChildrenAttribute)).filter { string(attribute($0, kAXRoleAttribute)) == kAXMenuRole }
+			let opened = menus.compactMap { read($0, depth: 1, budget: &budget) }
+			if !opened.isEmpty {
+				root["c"] = ((root["c"] as? [[String: Any]]) ?? []) + opened
+			}
+			result["root"] = root
+		}
 	}
+	let minimized = windows.filter { bool(attribute($0, kAXMinimizedAttribute)) == true }.compactMap { string(attribute($0, kAXTitleAttribute)) }
+	if !minimized.isEmpty { result["minimized"] = minimized }
 	result["truncated"] = budget <= 0
 	return result
 }
@@ -330,27 +340,118 @@ func scroll(_ request: [String: Any]) throws {
 	post(event)
 }
 
-/// Brings a running app to the front, or opens it (by name or bundle id), or opens a URL.
-func activate(_ request: [String: Any]) throws {
-	let target = request["app"] as? String ?? ""
-	if let app = try? runningApp(["app": target]), !target.isEmpty {
-		app.activate(options: [])
-		return
+/// The app's windows (focused first), for an app that answers accessibility in time.
+func windowsOf(_ app: NSRunningApplication, timeout: Float = 1.5) -> (AXUIElement, [AXUIElement]) {
+	let appElement = AXUIElementCreateApplication(app.processIdentifier)
+	AXUIElementSetMessagingTimeout(appElement, timeout)
+	return (appElement, elements(attribute(appElement, kAXWindowsAttribute)))
+}
+
+/// Lets the run loop deliver workspace changes (launches, activations) while waiting for them.
+func pump(_ seconds: Double) {
+	RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(seconds))
+}
+
+/**
+ * Waits until the app is running, done launching, in front and has a window, so the next read
+ * sees it, instead of sleeping a fixed time. Returns the app, or nil if it is not ready in time.
+ */
+func waitUntilReady(_ query: String, timeout: Double) -> NSRunningApplication? {
+	let started = Date()
+	var asked = Date.distantPast
+	var reopened = false
+	while Date().timeIntervalSince(started) < timeout {
+		if let app = try? runningApp(["app": query]), app.isFinishedLaunching {
+			if app.isActive && !windowsOf(app, timeout: 0.5).1.isEmpty {
+				return app
+			}
+			if !app.isActive && Date().timeIntervalSince(asked) > 0.3 {
+				asked = Date()
+				app.activate(options: [])
+				// macOS may refuse an activation a background helper asks for; `open` always brings the app.
+				if !reopened && Date().timeIntervalSince(started) > 0.8, let bundle = app.bundleIdentifier {
+					reopened = true
+					_ = try? openWith(["-b", bundle])
+				}
+			}
+		}
+		pump(0.05)
 	}
+	return nil
+}
+
+/// Runs `/usr/bin/open` with these arguments; true when it succeeded.
+func openWith(_ arguments: [String]) throws -> Bool {
 	let process = Process()
 	process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-	if target.contains("://") {
-		process.arguments = [target]
-	} else if target.contains(".") && !target.contains(" ") && !target.hasSuffix(".app") {
-		process.arguments = ["-b", target]
-	} else {
-		process.arguments = ["-a", target]
-	}
+	process.arguments = arguments
 	try process.run()
 	process.waitUntilExit()
-	if process.terminationStatus != 0 {
+	return process.terminationStatus == 0
+}
+
+/// Brings a running app to the front (opening a window if it has none), or opens it (by name or bundle id), or opens a URL.
+func activate(_ request: [String: Any]) throws -> [String: Any] {
+	let target = request["app"] as? String ?? ""
+	let wait = min(30, max(0, request["wait"] as? Double ?? 10))
+	if !target.isEmpty, !target.contains("://"), let app = try? runningApp(["app": target]), !windowsOf(app).1.isEmpty {
+		app.activate(options: [])
+		let ready = waitUntilReady(target, timeout: min(wait, 2)) != nil
+		return ["app": app.localizedName ?? target, "ready": ready]
+	}
+	let arguments = target.contains("://") ? [target] : target.contains(".") && !target.contains(" ") && !target.hasSuffix(".app") ? ["-b", target] : ["-a", target]
+	if !(try openWith(arguments)) {
 		throw Failure("Could not open \(target).")
 	}
+	if target.contains("://") {
+		// The URL's app comes to the front on its own; the next read takes whichever is in front.
+		pump(0.3)
+		return ["ready": true]
+	}
+	let app = waitUntilReady(target, timeout: wait)
+	return ["app": app?.localizedName ?? target, "ready": app != nil]
+}
+
+/// Acts on one of an app's windows by (part of) its title: raise, minimize, restore, close, zoom or fullscreen.
+func windowAction(_ request: [String: Any]) throws -> [String: Any] {
+	try requireTrust()
+	let app = try runningApp(request)
+	let (appElement, windows) = windowsOf(app)
+	let wanted = normalized(request["title"] as? String ?? "")
+	let titles = windows.map { string(attribute($0, kAXTitleAttribute)) ?? "" }
+	let index = wanted.isEmpty ? (windows.isEmpty ? nil : 0) : titles.firstIndex(where: { normalized($0) == wanted }) ?? titles.firstIndex(where: { normalized($0).contains(wanted) })
+	guard let found = index else {
+		let listed = titles.filter { !$0.isEmpty }.map { "\"\($0)\"" }.joined(separator: ", ")
+		throw Failure(windows.isEmpty ? "\(app.localizedName ?? "The app") has no open window." : "No window titled \"\(request["title"] as? String ?? "")\". Windows: \(listed).")
+	}
+	let window = windows[found]
+	let op = (request["op"] as? String ?? "raise").lowercased()
+	func set(_ name: String, _ value: Bool) throws {
+		let error = AXUIElementSetAttributeValue(window, name as CFString, value ? kCFBooleanTrue : kCFBooleanFalse)
+		if error != .success { throw Failure("The window does not allow \(op) (\(error.rawValue)).") }
+	}
+	func pressButton(_ name: String) throws {
+		guard let button = attribute(window, name), CFGetTypeID(button) == AXUIElementGetTypeID() else {
+			throw Failure("The window has no \(op) button.")
+		}
+		AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
+	}
+	switch op {
+	case "raise", "focus", "front", "show":
+		if bool(attribute(window, kAXMinimizedAttribute)) == true { try set(kAXMinimizedAttribute, false) }
+		app.activate(options: [])
+		AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+		AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+		AXUIElementSetAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, window)
+	case "minimize", "min": try set(kAXMinimizedAttribute, true)
+	case "restore", "unminimize": try set(kAXMinimizedAttribute, false)
+	case "close": try pressButton(kAXCloseButtonAttribute)
+	case "zoom", "maximize": try pressButton(kAXZoomButtonAttribute)
+	case "fullscreen": try set("AXFullScreen", !(bool(attribute(window, "AXFullScreen")) ?? false))
+	default: throw Failure("Unknown window action \(op): use raise, minimize, restore, close, zoom or fullscreen.")
+	}
+	pump(0.15)
+	return ["window": titles[found]]
 }
 
 func normalized(_ title: String) -> String {
@@ -446,7 +547,8 @@ func handleLine(_ line: String) {
 		case "type": try typeText(request)
 		case "key": try key(request)
 		case "scroll": try scroll(request)
-		case "activate": try activate(request)
+		case "activate": result = try activate(request)
+		case "window": result = try windowAction(request)
 		case "menu": try menu(request)
 		default: throw Failure("unknown command")
 		}

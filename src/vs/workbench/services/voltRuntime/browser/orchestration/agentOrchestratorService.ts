@@ -6,7 +6,7 @@
 import { DeferredPromise, IntervalTimer, raceTimeout, timeout } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
@@ -21,13 +21,14 @@ import { IWorkspaceMoveSpec, workspaceTargetLabel } from '../../common/git/works
 import { IAgentWorktreeSetupService } from '../../common/git/worktreeSetupPlan.js';
 import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
+import { retryDelay, RUN_START_RETRY } from '../../common/jobs/retryPolicy.js';
 import { normalizeVoltMode } from '../../common/modes.js';
-import { AGENT_TASK_TOOLS, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, MAX_BATCH_TASKS, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
+import { agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume } from '../../common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, readOrchLimits } from '../../common/orchestration/orchestrator.js';
 import { ILimitSignal, isClaudeProvider, isRealAnswer, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitAutoResumes, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
 import { extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
-import { harnessTaskId, IOrchStep, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
+import { failureRetryCount, harnessTaskId, IOrchStep, isFailureRetryTurn, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
 import { IVoltSessionContextService } from '../../common/sessionContext.js';
 import { DeadlineTimer } from '../jobs/deadlineTimer.js';
@@ -44,8 +45,17 @@ const CHILD_ID_PREFIX = 'agent-';
 const WATCHDOG_MS = 20_000;
 /** Watchdog ticks in a row a turn must look stuck before Volt acts on it (an event may be on its way). */
 const WATCHDOG_STRIKES = 2;
-/** A turn whose start has not reached the runtime after this long fails, so its chat does not hang on "Starting". */
+/** A turn whose start has not reached the runtime after this long fails (and is tried again), so its chat does not hang on "Starting". */
 const START_STALL_MS = 180_000;
+/**
+ * A live run that has sent nothing for this long (no text, reasoning or tool event) and is not
+ * waiting on the user is taken as hung: its agent is restarted and the turn continues.
+ */
+const SILENT_RUN_MS = 10 * 60_000;
+/** The same while one of its tool calls is open: builds, test suites and installs may run quietly. */
+const SILENT_TOOL_RUN_MS = 30 * 60_000;
+/** A gap this much longer than the watchdog's tick means the machine slept: silence over it is not the agent's. */
+const SLEEP_GAP_MS = WATCHDOG_MS * 3;
 /** A message put into a running agent that is not taken within this long goes back to the queue instead. */
 const STEER_TIMEOUT_MS = 60_000;
 /** Failed writes are tried again after 1 s, doubling up to this. */
@@ -58,6 +68,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private state: IOrchState = emptyOrchState();
 	/** Concurrency from Settings (multitask agents and subagents at once), the rest the defaults. */
 	private limits: IOrchLimits = DEFAULT_ORCH_LIMITS;
+	private readonly taskTools = this._register(new MutableDisposable());
 	private readonly store: OrchestratorStore;
 	/** Newest events per root, persisted with the root as its audit trail. */
 	private readonly rootEvents = new Map<string, IOrchEventEnvelope[]>();
@@ -78,6 +89,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private readonly owedStarts = new Set<string>();
 	/** Watchdog ticks in a row each suspect looked stuck. */
 	private suspects = new Map<string, number>();
+	/** The last sign of life of each live run, and its tool calls still open (see `silence`). */
+	private readonly pulses = new Map<string, { at: number; readonly tools: Set<string> }>();
+	/** Runs the watchdog restarted for going silent: their end settles as a transient failure. */
+	private readonly silentRuns = new Set<string>();
+	private lastWatchdogTick = Date.now();
 	private readonly cancelWatch = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly lastError = new Map<string, string>();
 	private readonly worktreesInFlight = new Set<string>();
@@ -113,7 +129,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		@IEnvironmentService environmentService: IEnvironmentService,
 		@ILogService private readonly logService: ILogService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
-		@IVoltHostToolService hostTools: IVoltHostToolService,
+		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
@@ -125,10 +141,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		this.claims = new DurableClaims(joinPath(environmentService.userRoamingDataHome, 'voltJobs', 'claims'), fileService, logService);
 		this.limitTimer = this._register(new DeadlineTimer(() => this.limitTick()));
 		this._register(runtime.onDidEmit(envelope => this.observe(envelope)));
-		this._register(hostTools.registerToolProvider({
-			tools: AGENT_TASK_TOOLS.map(tool => ({ ...tool, group: 'tasks' as const })),
-			invoke: (name, args, call) => this.invokeTaskTool(name, args, call),
-		}));
+		this.limits = this.readLimits();
+		this.registerTaskTools();
 		// Changes from the last quarter second (and writes still retrying) reach the disk before the window closes.
 		this._register(lifecycleService.onWillShutdown(e => e.join(this.flush(), { id: 'volt.agentOrchestrator', label: 'Saving agent orchestration' })));
 		this._register(new IntervalTimer()).cancelAndSet(() => this.checkLiveness(), WATCHDOG_MS);
@@ -145,10 +159,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		}));
 		// Parked chats wake at their reset: the timer follows the state.
 		this._register(this.onDidChange(() => this.scheduleLimitTick()));
-		this.limits = this.readLimits();
 		this._register(configurationService.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration(ORCH_MAX_PARALLEL_SETTING) || e.affectsConfiguration(ORCH_MAX_PARALLEL_TOTAL_SETTING)) {
+			if (e.affectsConfiguration(ORCH_MAX_PARALLEL_SETTING) || e.affectsConfiguration(ORCH_MAX_PARALLEL_TOTAL_SETTING) || e.affectsConfiguration(ORCH_MAX_PER_CALL_SETTING)) {
+				const perCall = this.limits.spawnsPerCall;
 				this.limits = this.readLimits();
+				if (this.limits.spawnsPerCall !== perCall) {
+					this.registerTaskTools();
+				}
 				// A no-op command runs the scheduler: queued agents start at once when there is more room.
 				this.apply({ type: 'task.ack', taskIds: [] });
 			}
@@ -161,13 +178,15 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	private readLimits(): IOrchLimits {
-		const read = (key: string, fallback: number, max: number) => {
-			const value = this.configurationService.getValue<unknown>(key);
-			return typeof value === 'number' && Number.isFinite(value) ? Math.max(1, Math.min(max, Math.floor(value))) : fallback;
-		};
-		const runningPerParent = read(ORCH_MAX_PARALLEL_SETTING, DEFAULT_ORCH_LIMITS.runningPerParent, 16);
-		const runningTotal = Math.max(runningPerParent, read(ORCH_MAX_PARALLEL_TOTAL_SETTING, DEFAULT_ORCH_LIMITS.runningTotal, 32));
-		return { ...DEFAULT_ORCH_LIMITS, runningPerParent, runningTotal };
+		return readOrchLimits(key => this.configurationService.getValue<unknown>(key));
+	}
+
+	/** Serves the task tools; registering again (a new per-call limit) has MCP clients re-read the list. */
+	private registerTaskTools(): void {
+		this.taskTools.value = this.hostTools.registerToolProvider({
+			tools: agentTaskTools(this.limits.spawnsPerCall).map(tool => ({ ...tool, group: 'tasks' as const })),
+			invoke: (name, args, call) => this.invokeTaskTool(name, args, call),
+		});
 	}
 
 	//#region State and commands
@@ -492,6 +511,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		}, 250);
 	}
 
+	/**
+	 * Writes the roots changed so far. Resolves when this round's files are on disk (the store orders
+	 * writes per file, so an earlier write of the same root lands first); `persisting` follows every
+	 * round, for `flush`. An effect waits only for its own events, not for other chats' writes.
+	 */
 	private persistNow(): Promise<void> {
 		if (this.persistTimer !== undefined) {
 			clearTimeout(this.persistTimer);
@@ -542,7 +566,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 		});
 		this.persisting = Promise.all([this.persisting, round]).then(() => undefined);
-		return this.persisting;
+		return round;
 	}
 
 	private retryPersist(): void {
@@ -564,7 +588,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			clearTimeout(this.persistRetry);
 			this.persistRetry = undefined;
 		}
-		await this.persistNow();
+		void this.persistNow();
+		await this.persisting;
 		if (this.dirtyRoots.size || !this.lastIndex) {
 			await this.persistNow();
 		}
@@ -696,9 +721,17 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 	private runEffect(effect: OrchEffect): void {
 		switch (effect.kind) {
-			case 'startTurn':
-				void this.startTurn(effect);
+			case 'startTurn': {
+				// A turn continuing a transient failure waits out a short back-off, so a provider having a
+				// bad minute is not hit again at once. It stays owed meanwhile: the watchdog leaves it be.
+				const retry = failureRetryCount(effect.turn.id);
+				if (retry && isFailureRetryTurn(effect.turn.id)) {
+					void timeout(retryDelay(RUN_START_RETRY, retry, { key: effect.turn.id })).then(() => this._store.isDisposed ? undefined : this.startTurn(effect));
+				} else {
+					void this.startTurn(effect);
+				}
 				return;
+			}
 			case 'steer':
 				void this.steer(effect);
 				return;
@@ -924,6 +957,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			return;
 		}
 		const event = envelope.event;
+		this.recordPulse(envelope);
 		switch (event.type) {
 			case 'run.start': {
 				const turnId = this.dispatching.get(threadId);
@@ -932,7 +966,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				return;
 			}
 			case 'error': {
-				this.lastError.set(envelope.runId, event.message);
+				// A run the watchdog stopped for silence keeps that as its reason, not the stop's echo.
+				if (!this.silentRuns.has(envelope.runId)) {
+					this.lastError.set(envelope.runId, event.message);
+				}
 				const limit = limitFromError(event.message, Date.now());
 				if (limit) {
 					this.limitedRuns.set(envelope.runId, mergeLimitSignals(this.limitedRuns.get(envelope.runId), limit));
@@ -1068,6 +1105,25 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		}
 	}
 
+	/** Any event is a sign of life of its run; tool calls are tracked so a quiet build is not taken for a hang. */
+	private recordPulse(envelope: IVoltEventEnvelope): void {
+		const event = envelope.event;
+		if (event.type === 'run.end') {
+			this.pulses.delete(envelope.runId);
+			return;
+		}
+		let pulse = this.pulses.get(envelope.runId);
+		if (!pulse) {
+			this.pulses.set(envelope.runId, pulse = { at: 0, tools: new Set() });
+		}
+		pulse.at = Date.now();
+		if (event.type === 'tool.start') {
+			pulse.tools.add(event.callId);
+		} else if (event.type === 'tool.end') {
+			pulse.tools.delete(event.callId);
+		}
+	}
+
 	private observeHarnessCall(threadId: string, callId: string, name: string | undefined, title: string | undefined, input: string | undefined): void {
 		const call = harnessSubagentCall(name, title, input);
 		if (!call) {
@@ -1094,6 +1150,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 	/** A run ended (its `run.end`, or the watchdog saw the runtime finish it): settle its turn. */
 	private settleRun(threadId: string, runId: string, reason: 'done' | 'abort' | 'fail', fallbackError?: string): void {
+		this.pulses.delete(runId);
+		// The watchdog stopped it for going silent: that stop is a failure to recover from, unless the user stopped it too.
+		if (this.silentRuns.delete(runId) && this.state.threads[threadId]?.active?.phase !== 'cancelling') {
+			reason = 'fail';
+		}
 		let outcome: OrchOutcome = reason === 'done' ? 'done' : reason === 'abort' ? 'cancelled' : 'failed';
 		const error = this.lastError.get(runId) ?? fallbackError;
 		this.lastError.delete(runId);
@@ -1217,6 +1278,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	 */
 	private checkLiveness(): void {
 		const now = Date.now();
+		// The machine slept: every run looks silent for as long as it was off, so their clocks start again.
+		if (now - this.lastWatchdogTick > SLEEP_GAP_MS) {
+			for (const pulse of this.pulses.values()) {
+				pulse.at = now;
+			}
+		}
+		this.lastWatchdogTick = now;
 		const previous = this.suspects;
 		const suspects = new Map<string, number>();
 		const strike = (key: string): boolean => {
@@ -1239,6 +1307,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 					this.settleRun(thread.id, active.runId, run.status === 'completed' ? 'done' : run.status === 'cancelled' ? 'abort' : 'fail', 'The run ended without reporting why.');
 					continue;
 				}
+				const silent = run?.runId === active.runId && run.status === 'running' && active.phase === 'running' && !thread.inputs.length
+					? this.silence(thread.id, active.runId, run.startedAt, now)
+					: undefined;
+				if (silent !== undefined && strike(`silent\0${key}`)) {
+					this.reviveSilentRun(thread.id, active.runId, silent);
+					continue;
+				}
 			}
 			if (active.phase === 'cancelling') {
 				if (!this.cancelWatch.has(key) && strike(`stop\0${key}`)) {
@@ -1253,7 +1328,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				const since = this.startingSince.get(active.id) ?? now;
 				if (now - since >= START_STALL_MS) {
 					this.logService.warn(`[volt orchestrator] ${thread.id}: turn ${active.id} did not start within ${START_STALL_MS / 1000} s; failing it`);
-					this.apply({ type: 'dispatch.failed', threadId: thread.id, turnId: active.id, error: `The agent did not start within ${Math.round(START_STALL_MS / 60_000)} minutes. Send again to retry.` });
+					this.apply({ type: 'dispatch.failed', threadId: thread.id, turnId: active.id, error: `The agent did not start within ${Math.round(START_STALL_MS / 60_000)} minutes.` });
 				}
 				continue;
 			}
@@ -1263,6 +1338,37 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 		}
 		this.suspects = suspects;
+	}
+
+	/**
+	 * How long a live run has been silent past its allowance (`SILENT_RUN_MS`, or `SILENT_TOOL_RUN_MS`
+	 * while a tool call or a harness subagent of its turn is open), or undefined while it is not.
+	 */
+	private silence(threadId: string, runId: string, startedAt: number, now: number): number | undefined {
+		const pulse = this.pulses.get(runId);
+		const quiet = now - Math.max(pulse?.at ?? 0, startedAt);
+		const working = !!pulse?.tools.size || Object.values(this.state.tasks).some(task => task.source === 'harness' && task.parentId === threadId && !isTerminalTaskState(task.state));
+		return quiet >= (working ? SILENT_TOOL_RUN_MS : SILENT_RUN_MS) ? quiet : undefined;
+	}
+
+	/**
+	 * A live run went silent. A hung agent process does not answer a stop, so its agent is restarted
+	 * (the next turn starts a fresh one, briefed from the transcript) and the run settles as a
+	 * transient failure, which the decider continues (see `MAX_FAILURE_RETRIES`).
+	 */
+	private reviveSilentRun(threadId: string, runId: string, silentMs: number): void {
+		const minutes = Math.max(1, Math.round(silentMs / 60_000));
+		this.logService.warn(`[volt orchestrator] ${threadId}: run ${runId} sent nothing for ${minutes} min; restarting its agent`);
+		this.silentRuns.add(runId);
+		this.lastError.set(runId, `The agent stopped responding (nothing for ${minutes} minute${minutes === 1 ? '' : 's'}).`);
+		this.runtime.restartAgent(threadId, { cancel: true }).catch(err => this.logService.warn('[volt orchestrator] restarting a silent agent failed', err));
+		// A hung agent may never report its end: the run settles here once the stop had time to land.
+		setTimeout(() => {
+			if (!this._store.isDisposed && this.silentRuns.has(runId) && this.state.threads[threadId]?.active?.runId === runId) {
+				this.settleRun(threadId, runId, 'fail');
+			}
+			this.silentRuns.delete(runId);
+		}, CANCEL_SETTLE_MS);
 	}
 
 	private lastReply(threadId: string): string | undefined {
@@ -1436,7 +1542,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	 */
 	async multitaskQueue(threadId: string): Promise<number> {
 		await this.whenReady;
-		const items = (this.state.threads[threadId]?.queue ?? []).filter(item => (item.kind ?? 'prompt') === 'prompt').slice(0, MAX_BATCH_TASKS);
+		const items = (this.state.threads[threadId]?.queue ?? []).filter(item => (item.kind ?? 'prompt') === 'prompt').slice(0, this.limits.spawnsPerCall);
 		let started = 0;
 		for (const item of items) {
 			const display = item.prompt.display as { readonly text?: unknown } | undefined;
@@ -1466,8 +1572,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		if (entries.length !== list.length) {
 			return { error: 'delegate_task `tasks` takes objects, one per part: { task, title?, model?, role?, isolation?, scope? }.' };
 		}
-		if (entries.length > MAX_BATCH_TASKS) {
-			return { error: `delegate_task starts at most ${MAX_BATCH_TASKS} tasks in one call. Start the most important ones now and the rest once these report.` };
+		if (entries.length > this.limits.spawnsPerCall) {
+			return { error: `delegate_task starts at most ${this.limits.spawnsPerCall} tasks in one call (the user's setting). Start the most important ones now and the rest once these report.` };
 		}
 		const missing = entries.findIndex(entry => typeof entry.task !== 'string' || !entry.task.trim());
 		if (missing >= 0) {

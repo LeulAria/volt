@@ -13,7 +13,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { decodeDataUrl, encodeImage, ImageFormat, scaleScreenshot } from '../../../../services/voltRuntime/browser/host/imageCodec.js';
-import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_ACT_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostToolResult, IVoltHostToolService, VoltBrowserAutomationToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_ACT_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostToolResult, IVoltHostToolService, VoltBrowserAutomationToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 import { VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { diffAx, formatAxLine, IAxItem, placeOnImage, readingOrder, strokeBoxes } from '../../../../services/voltRuntime/common/tools/axAnnotations.js';
@@ -24,6 +24,7 @@ import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { keepUserFocus } from './agentFocusGuard.js';
 import { formatActRun, formatFlowRuns, IActDriver, IFlowRun, IPageSnapshotBase, pageStateLines, probe, runActSteps, settle, unsafeToSave } from './browserAct.js';
 import { fileFlowStore, resolveActInput } from '../actFlows.js';
+import { runDevtools } from './browserDevtools.js';
 import { IVoltBrowserViews, IVoltConsoleMessage, normalizeBrowserUrl, VoltBrowserView } from './browserEditor.js';
 import { clickFallbackScript, evaluateScript, focusScript, INetworkEntry, NETWORK_SCRIPT, readStateScript, rectScript, scrollScript, selectOptionScript, setValueScript, SNAPSHOT_SCRIPT, snapshotScript, targetScript, textPresentScript } from './browserAutomationScripts.js';
 
@@ -742,6 +743,8 @@ async function act(view: VoltBrowserView, tool: VoltBrowserAutomationToolName, a
 		}
 		case BROWSER_NETWORK_TOOL_NAME:
 			return network(view, args, token);
+		case BROWSER_DEVTOOLS_TOOL_NAME:
+			return runDevtools(view, args, { run: (code, runToken) => run(view, code, runToken), pageState: () => pageState(view) }, token);
 		case 'browser_navigate_back':
 			await view.historyForAgent('back', token);
 			cancelled(token);

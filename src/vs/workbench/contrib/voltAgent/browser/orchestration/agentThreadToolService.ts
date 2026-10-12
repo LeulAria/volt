@@ -18,7 +18,7 @@ import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/com
 import { AgentSessionStatus, IAgentHistoryService, IAgentSessionMeta, IAgentSessionTurn } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltExternalCaller, IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
-import { DEFAULT_ORCH_LIMITS, IAgentOrchestratorService, IOrchPrompt, IOrchThread } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { IAgentOrchestratorService, IOrchPrompt, IOrchThread, readOrchLimits } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { isTerminalTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import {
 	agentMessagePrompt, branchSlug, clip, describeModelCatalog, describeThreadLine, forkPrompt, formatTurns, IThreadLineInfo, IThreadTurnText, isSettledStatus, MAX_LAUNCH_MODELS,
@@ -307,6 +307,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		const meta = caller.external ? undefined : this.history.get(caller.id);
 		const current = this.defaultModel(caller);
 		const models = this.runtime.listCatalog().filter(item => item.enabled);
+		const limits = readOrchLimits(key => this.configurationService.getValue<unknown>(key));
 		const head = caller.external ? [
 			'## You',
 			`An outside agent ("${caller.title}") connected over OAuth with scopes: ${caller.external.scopes.join(' ')}. You are not a Volt chat: pass thread_id to every tool. Chats you start or message show "${caller.title} · external" to the user.`,
@@ -324,8 +325,8 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			...(models.length ? describeModelCatalog(models, current?.ref) : ['- none connected']),
 			'',
 			'## Limits',
-			`- Subagents: ${DEFAULT_ORCH_LIMITS.runningPerParent} at once per chat (${DEFAULT_ORCH_LIMITS.runningTotal} across Volt), nested ${DEFAULT_ORCH_LIMITS.maxDepth} deep; more wait their turn.`,
-			`- A chat answers at most ${DEFAULT_ORCH_LIMITS.maxWakeups} automatic turns in a row (agent messages, subagent reports, pull request updates), then waits for the user.`,
+			`- Subagents: ${limits.runningPerParent} at once per chat (${limits.runningTotal} across Volt), up to ${limits.spawnsPerCall} per delegate_task call, nested ${limits.maxDepth} deep; more wait their turn.`,
+			`- A chat answers at most ${limits.maxWakeups} automatic turns in a row (agent messages, subagent reports, pull request updates), then waits for the user.`,
 			`- Per turn of yours: ${MAX_STARTS_PER_TURN} new chats (launch, fork) and ${MAX_SENDS_PER_TURN} messages to other chats. Waits return after ${THREAD_WAIT_MS / 1000} s; call again to keep waiting.`,
 			'',
 			'## Which tool',

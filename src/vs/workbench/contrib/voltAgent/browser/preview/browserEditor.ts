@@ -29,7 +29,7 @@ import { IOpenerService } from '../../../../../platform/opener/common/opener.js'
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
-import { IVoltBrowserService, VOLT_BROWSER_PARTITION } from '../../../../../platform/voltBrowser/common/voltBrowser.js';
+import { IVoltBrowserService, IVoltSiteData, VOLT_BROWSER_PARTITION, VoltSiteDataKind } from '../../../../../platform/voltBrowser/common/voltBrowser.js';
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
@@ -2561,6 +2561,38 @@ export class VoltBrowserView extends Disposable {
 		});
 		await timeout(30);
 		await this.automationReady(15000, token);
+	}
+
+	/** The page's webContents id, for the main process's session and DevTools protocol calls. */
+	private pageContentsId(): number | undefined {
+		try {
+			return this.guestReady ? this.webview?.getWebContentsId?.() : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** Cookies for the page's URL as the session holds them (HttpOnly too), for browser_devtools. */
+	async siteDataForAgent(): Promise<IVoltSiteData | undefined> {
+		const id = this.pageContentsId();
+		const service = this.browserService();
+		return id !== undefined && service ? service.siteData(id) : undefined;
+	}
+
+	/** Clears the page's own site data (its origin only), for browser_devtools. False when it could not. */
+	async clearSiteForAgent(kinds: readonly VoltSiteDataKind[]): Promise<boolean> {
+		const id = this.pageContentsId();
+		const service = this.browserService();
+		return id !== undefined && !!service && await service.clearSiteData(id, kinds);
+	}
+
+	/** Opens DevTools on the page for the user (the agent cannot read the panel itself). */
+	openDevToolsForUser(): boolean {
+		if (!this.webview || !this.guestReady) {
+			return false;
+		}
+		this.callGuest(() => this.webview?.openDevTools?.());
+		return true;
 	}
 
 	/** The page the tab shows (what the address bar says). */

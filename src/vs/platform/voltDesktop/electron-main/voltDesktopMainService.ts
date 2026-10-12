@@ -11,7 +11,7 @@ import { FileAccess } from '../../../base/common/network.js';
 import { join } from '../../../base/common/path.js';
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILogService } from '../../log/common/log.js';
-import { IVoltDesktopApp, IVoltDesktopService, IVoltDesktopStatus, IVoltDesktopTree, VoltDesktopAction } from '../common/voltDesktop.js';
+import { IVoltDesktopActResult, IVoltDesktopApp, IVoltDesktopService, IVoltDesktopStatus, IVoltDesktopTree, VoltDesktopAction } from '../common/voltDesktop.js';
 
 interface IPending {
 	readonly resolve: (value: unknown) => void;
@@ -19,7 +19,7 @@ interface IPending {
 	readonly timer: ReturnType<typeof setTimeout>;
 }
 
-const TIMEOUT_MS: Partial<Record<string, number>> = { tree: 20_000, activate: 20_000, menu: 10_000, type: 30_000 };
+const TIMEOUT_MS: Partial<Record<string, number>> = { tree: 20_000, activate: 40_000, window: 10_000, menu: 10_000, type: 30_000 };
 
 /**
  * Runs `VoltDesktop.swift` (compiled on first use with the system's Swift compiler and cached by
@@ -64,9 +64,10 @@ export class VoltDesktopMainService extends Disposable implements IVoltDesktopSe
 		return await this.request('tree', { ...target }) as IVoltDesktopTree;
 	}
 
-	async act(action: VoltDesktopAction): Promise<void> {
+	async act(action: VoltDesktopAction): Promise<IVoltDesktopActResult> {
 		const { kind, ...args } = action;
-		await this.request(kind, args);
+		const result = await this.request(kind, args);
+		return result && typeof result === 'object' ? result as IVoltDesktopActResult : {};
 	}
 
 	private async request(cmd: string, args: Record<string, unknown>): Promise<unknown> {

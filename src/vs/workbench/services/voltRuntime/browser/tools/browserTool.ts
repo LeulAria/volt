@@ -4,13 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { CancellationTokenSource } from '../../../../../base/common/cancellation.js';
-import { BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, IVoltHostToolInfo, IVoltHostToolService, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
+import { BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, IVoltHostToolInfo, IVoltHostToolService, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
 import { IToolContext, IToolResult, IVoltTool } from '../../common/tools/tool.js';
 
 /** Tools that only look: safe to run alongside others (the browser still runs one call per chat at a time). */
 const READ_ONLY = new Set<string>(['browser_snapshot', BROWSER_SCREENSHOT_TOOL_NAME, 'browser_console_messages', BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME]);
 
 const TIMEOUT_MS: Record<string, number> = {
+	[BROWSER_DEVTOOLS_TOOL_NAME]: 45_000,
 	[BROWSER_COMPARE_IMAGE_TOOL_NAME]: 120_000,
 	browser_navigate: 60_000,
 	browser_wait_for: 45_000,

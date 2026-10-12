@@ -17,7 +17,7 @@ import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
 import { disposableTimeout, raceTimeout } from '../../../../../base/common/async.js';
-import { DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { DisposableMap, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename, dirname, isAbsolute } from '../../../../../base/common/path.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
@@ -714,6 +714,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	/** Voice when the send button is not the mic: in follow-ups and while a draft is typed. */
 	private micButton!: HTMLButtonElement;
 	private sendButton!: HTMLButtonElement;
+	/** Turns shown on send, watched until the turn host adopts them (see `showPendingTurn`). */
+	private readonly pendingTurnWatches = this._register(new DisposableMap<string, DisposableStore>());
+	/** Pending turns the user stopped before the orchestrator took them: stopped once it does. */
+	private readonly stoppedPendingTurns = new Set<string>();
 
 	private voiceDictation!: AgentVoiceDictation;
 
@@ -6224,6 +6228,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			...(request.worktreeTarget ? { worktreeTarget: request.worktreeTarget } : {}),
 		};
 		const frozen = this.freezeDisplay(display);
+		const pending = delivery !== 'queue' ? this.showPendingTurn(input, threadId, turnId, value, display, mode) : undefined;
 		const submitted = this.submitChain.then(async () => {
 			const prompt: IOrchPrompt = {
 				text: value,
@@ -6234,17 +6239,62 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				...(Object.keys(host).length ? { host } : {}),
 			};
 			const result = await this.orchestrator.submit(threadId, prompt, delivery, turnId);
+			pending?.settle(result.outcome === 'started');
 			if (result.outcome === 'rejected') {
 				this.logService.warn(`[volt agent] the orchestrator did not take the prompt: ${result.reason ?? 'rejected'}`);
 				return false;
 			}
 			return true;
 		}).catch(err => {
+			pending?.settle(false);
 			this.logService.warn('[volt agent] sending the prompt failed', err);
 			return false;
 		});
 		this.submitChain = submitted.then(() => undefined);
 		return submitted;
+	}
+
+	/**
+	 * Shows a prompt sent to an idle chat as its turn at once ({@link IAgentSessionControl.showPendingTurn}),
+	 * instead of after the orchestrator's write, the chat load and the checkpoint. `settle` says
+	 * whether the orchestrator started it: if not, the rows go; if so, they stay until the turn host
+	 * adopts them, or go when the turn ends before it did (stopped, or it could not start).
+	 */
+	private showPendingTurn(input: AgentEditorInput | undefined, threadId: string, turnId: string, text: string, display: IAgentPromptDisplay | undefined, mode: string): { settle(started: boolean): void } | undefined {
+		const controller = input?.controller;
+		const thread = this.orchestrator.getThread(threadId);
+		if (!controller?.showPendingTurn || thread?.active || thread?.queue.length || thread?.pause || thread?.moving || thread?.blocked) {
+			return undefined;
+		}
+		controller.showPendingTurn({ turnId, text, ...(display ? { display } : {}), mode });
+		const watch = new DisposableStore();
+		this.pendingTurnWatches.set(turnId, watch);
+		const drop = () => {
+			this.pendingTurnWatches.deleteAndDispose(turnId);
+			controller.dropPendingTurn?.(turnId);
+		};
+		return {
+			settle: started => {
+				if (this.stoppedPendingTurns.delete(turnId)) {
+					drop();
+					if (started) {
+						void this.orchestrator.cancel(threadId, { cascade: 'turn' });
+					}
+					return;
+				}
+				if (!started || this.orchestrator.getThread(threadId)?.active?.id !== turnId) {
+					drop();
+					return;
+				}
+				// Adopted by `beginTurn` once the turn host runs: dropping an adopted turn does nothing.
+				watch.add(this.orchestrator.onDidChange(change => {
+					if (change.threads.includes(threadId) && this.orchestrator.getThread(threadId)?.active?.id !== turnId) {
+						drop();
+					}
+				}));
+				watch.add(disposableTimeout(drop, 10 * 60_000));
+			},
+		};
 	}
 
 	/** The display as history stores it (attachments by reference), so a queued prompt survives a restart. */
@@ -6620,6 +6670,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private stopAgent(): void {
 		const last = this.messages.at(-1);
+		const controller = this.input instanceof AgentEditorInput ? this.input.controller : undefined;
+		const pendingId = last?.kind === 'agent' ? last.id : undefined;
+		if (pendingId && controller?.isPendingTurn?.(pendingId)) {
+			// Stopped before the orchestrator took the prompt: nothing ran, so nothing is recorded. The
+			// rows go, and the turn stops the moment it starts (see `showPendingTurn`).
+			this.stoppedPendingTurns.add(pendingId);
+			controller.dropPendingTurn?.(pendingId);
+			this.updateSendButton();
+			void this.orchestrator.cancel(this.sessionKey, { cascade: 'turn' });
+			return;
+		}
 		if (last?.kind === 'agent' && last.activity?.streaming) {
 			last.cancelled = true;
 			last.outcome = 'stopped';

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IActStep, IPageExpectation, IPageLocator, MAX_ACT_STEPS, PageElementState, REF_RE } from './pageModel.js';
+import { IActStep, IPageExpectation, IPageLocator, MAX_ACT_STEPS, PageElementState, REF_RE, WINDOW_OPS } from './pageModel.js';
 
 /**
  * The step script `browser_act`, `device_act` and `desktop_act` take as `script`: one step per
@@ -23,6 +23,7 @@ import { IActStep, IPageExpectation, IPageLocator, MAX_ACT_STEPS, PageElementSta
  *   expect count listitem in "Todos" 2
  *   ? click "Accept cookies"        (optional: keep going if it is not there)
  *   run login email=ada@example.com (a saved flow)
+ *   window "Inbox" minimize         (desktop: raise, minimize, restore, close, zoom, fullscreen)
  */
 
 const ROLES = new Set(['button', 'link', 'textbox', 'searchbox', 'checkbox', 'radio', 'switch', 'combobox', 'listbox', 'option', 'slider', 'spinbutton', 'tab', 'menuitem', 'treeitem', 'listitem', 'row', 'cell', 'heading', 'img', 'dialog', 'alertdialog', 'list', 'table', 'navigation', 'form', 'region', 'menu', 'tablist', 'text', 'group', 'alert', 'status', 'banner', 'main', 'article']);
@@ -270,6 +271,7 @@ const VERBS: Readonly<Record<string, string>> = {
 	check: 'check', uncheck: 'uncheck', hover: 'hover', scroll: 'scroll', swipe: 'scroll',
 	wait: 'wait', expect: 'expect', assert: 'expect', verify: 'expect',
 	back: 'back', reload: 'reload', refresh: 'reload', run: 'flow', flow: 'flow', menu: 'menu',
+	window: 'window', win: 'window',
 };
 
 function parseLine(line: string): IActStep {
@@ -287,7 +289,7 @@ function parseLine(line: string): IActStep {
 	const verbWord = c.word().toLowerCase();
 	const verb = VERBS[verbWord];
 	if (!verb) {
-		throw new ScriptError(`unknown step ${JSON.stringify(verbWord)}: use goto, click, type, submit, press, select, check, uncheck, hover, scroll, wait, expect, back, reload or run`);
+		throw new ScriptError(`unknown step ${JSON.stringify(verbWord)}: use goto, click, type, submit, press, select, check, uncheck, hover, scroll, wait, expect, back, reload, run, menu or window`);
 	}
 	const extra: { -readonly [K in keyof IActStep]?: IActStep[K] } = optional ? { optional } : {};
 	if (arrow !== undefined) {
@@ -397,6 +399,21 @@ function parseLine(line: string): IActStep {
 				throw new ScriptError('menu needs a path, e.g. menu File > Save As…');
 			}
 			return { action: 'menu', values: path, ...extra };
+		}
+		case 'window': {
+			// window "Inbox" · window "Inbox" minimize · window close · window Inbox
+			const ops: readonly string[] = WINDOW_OPS;
+			let title = c.quoted();
+			let op = 'raise';
+			if (!c.done && ops.includes(c.peek().toLowerCase())) {
+				op = c.word().toLowerCase();
+			} else if (title === undefined && !c.done) {
+				title = c.rest().trim();
+			}
+			if (!c.done) {
+				throw new ScriptError(`window ${JSON.stringify(title ?? '')}: then one of ${WINDOW_OPS.join(', ')}`);
+			}
+			return { action: 'window', key: op, ...(title ? { values: [title] } : {}), ...extra };
 		}
 		case 'flow': {
 			const name = c.word();
@@ -583,6 +600,7 @@ export function formatActScript(steps: readonly IActStep[]): string {
 			case 'reload': return `${head}${step.action}${arrow}`;
 			case 'flow': return `${head}run ${step.flow}${Object.entries(step.vars ?? {}).map(([key, value]) => ` ${key}=${value}`).join('')}`;
 			case 'menu': return `${head}menu ${step.values!.join(' > ')}${arrow}`;
+			case 'window': return `${head}window${step.values?.[0] ? ` ${q(step.values[0])}` : ''}${step.key && step.key !== 'raise' ? ` ${step.key}` : ''}${arrow}`;
 		}
 	}).join('\n');
 }

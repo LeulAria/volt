@@ -437,6 +437,8 @@ async function runStep(driver: IActDriver, step: IActStep, token: CancellationTo
 			throw new StepError('NOT_FOUND', `flow ${step.flow} was not expanded`);
 		case 'menu':
 			throw new StepError('NOT_FOUND', 'menu is for desktop apps (desktop_act); on a web page click the menu instead');
+		case 'window':
+			throw new StepError('NOT_FOUND', 'window is for desktop apps (desktop_act); the in-app browser has one page per chat');
 	}
 }
 

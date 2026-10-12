@@ -772,3 +772,151 @@ try {
 }
 })()`;
 }
+
+//#region DevTools (browser_devtools)
+
+/**
+ * What the Application panel shows of the page's own origin: local and session storage (values
+ * cut short), IndexedDB databases, Cache Storage caches with their entry counts, service workers
+ * and the storage quota. Cookies come from the main process (HttpOnly ones are invisible here).
+ */
+export function pageStorageScript(filter: string | undefined): string {
+	return `(async () => {
+const filter = ${JSON.stringify((filter ?? '').toLowerCase())};
+const keep = key => !filter || String(key).toLowerCase().includes(filter);
+const read = store => {
+	const items = [];
+	let bytes = 0;
+	try {
+		for (let i = 0; i < store.length; i++) {
+			const key = store.key(i);
+			const value = store.getItem(key) || '';
+			bytes += key.length + value.length;
+			if (keep(key)) { items.push({ key, size: value.length, value: value.length > 160 ? value.slice(0, 160) + '…' : value }); }
+		}
+	} catch (err) { return { error: String(err) }; }
+	return { count: store.length, bytes, items: items.slice(0, 40) };
+};
+const out = { origin: location.origin, local: read(localStorage), session: read(sessionStorage) };
+try { out.indexedDB = (await indexedDB.databases()).map(db => ({ name: db.name, version: db.version })); } catch (err) { out.indexedDB = { error: String(err) }; }
+try {
+	const names = await caches.keys();
+	out.caches = await Promise.all(names.slice(0, 20).map(async name => ({ name, entries: (await (await caches.open(name)).keys()).length })));
+} catch (err) { out.caches = { error: String(err) }; }
+try {
+	out.serviceWorkers = (await navigator.serviceWorker.getRegistrations()).map(reg => {
+		const worker = reg.active || reg.waiting || reg.installing;
+		return { scope: reg.scope, state: worker ? worker.state : 'none', script: worker ? worker.scriptURL : '', waiting: !!reg.waiting, controlling: !!navigator.serviceWorker.controller };
+	});
+} catch (err) { out.serviceWorkers = { error: String(err) }; }
+try { const est = await navigator.storage.estimate(); out.quota = { usage: est.usage, quota: est.quota }; } catch { }
+return out;
+})()`;
+}
+
+/** What only the page can clear of its own data: session storage (per tab), and local storage of a page without an http origin. */
+export function clearPageStorageScript(local: boolean): string {
+	return `(() => {
+try { sessionStorage.clear(); } catch { }
+${local ? 'try { localStorage.clear(); } catch { }' : ''}
+return true;
+})()`;
+}
+
+/** Sets (or removes, with `value` undefined) one key of local or session storage. */
+export function setStorageScript(area: 'local' | 'session', key: string, value: string | undefined): string {
+	return `(() => {
+const store = ${area === 'session' ? 'sessionStorage' : 'localStorage'};
+const before = store.getItem(${JSON.stringify(key)});
+${value === undefined ? `store.removeItem(${JSON.stringify(key)});` : `store.setItem(${JSON.stringify(key)}, ${JSON.stringify(value)});`}
+return { before: before === null ? null : before.length > 160 ? before.slice(0, 160) + '…' : before };
+})()`;
+}
+
+/**
+ * What the Elements panel tells about one element: its box (and margin, border, padding), the
+ * computed styles layout bugs come from, the stylesheet rules that match it (with the properties
+ * they set), what covers its center, and whether its content overflows.
+ */
+export function inspectElementScript(ref: string | undefined, selector: string | undefined): string {
+	return `(() => {
+${RUNTIME}
+const el = ${ref ? `byRef(${JSON.stringify(ref)})` : `document.querySelector(${JSON.stringify(selector ?? '')})`};
+if (!el) { return { missing: true }; }
+const name = node => node.tagName.toLowerCase() + (node.id ? '#' + node.id : '') + (typeof node.className === 'string' && node.className.trim() ? '.' + node.className.trim().split(/\\s+/).slice(0, 3).join('.') : '');
+const r = el.getBoundingClientRect();
+const cs = getComputedStyle(el);
+const PROPS = ['display', 'position', 'top', 'right', 'bottom', 'left', 'z-index', 'width', 'height', 'min-width', 'max-width', 'min-height', 'max-height', 'margin', 'padding', 'border', 'box-sizing', 'flex', 'flex-direction', 'align-items', 'justify-content', 'gap', 'grid-template-columns', 'overflow', 'visibility', 'opacity', 'transform', 'pointer-events', 'color', 'background-color', 'font', 'line-height', 'text-align', 'white-space'];
+const styles = {};
+for (const prop of PROPS) {
+	const value = cs.getPropertyValue(prop);
+	if (value && value !== 'none' && value !== 'normal' && value !== 'auto' && value !== '0px' && value !== 'static' && value !== 'visible' && value !== '1') { styles[prop] = value.length > 120 ? value.slice(0, 120) + '…' : value; }
+}
+const rules = [];
+const walk = list => {
+	for (const rule of list) {
+		if (rules.length >= 10) { return; }
+		if (rule.cssRules && !rule.selectorText) { try { if (!rule.media || matchMedia(rule.media.mediaText).matches) { walk(rule.cssRules); } } catch { } continue; }
+		try {
+			if (rule.selectorText && el.matches(rule.selectorText)) {
+				const text = rule.style ? rule.style.cssText : '';
+				rules.push({ selector: rule.selectorText.slice(0, 120), declarations: text.length > 240 ? text.slice(0, 240) + '…' : text, sheet: rule.parentStyleSheet && rule.parentStyleSheet.href ? rule.parentStyleSheet.href.split('/').pop() : 'inline' });
+			}
+		} catch { }
+	}
+};
+let blocked = 0;
+for (const sheet of document.styleSheets) { try { walk(sheet.cssRules); } catch { blocked++; } }
+const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+const top = r.width && r.height ? document.elementFromPoint(cx, cy) : null;
+const covered = top && top !== el && !el.contains(top) ? name(top) : undefined;
+return {
+	element: name(el),
+	ref: refOf(el),
+	box: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+	inViewport: r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth,
+	covered,
+	overflow: el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1 ? { scroll: [el.scrollWidth, el.scrollHeight], client: [el.clientWidth, el.clientHeight] } : undefined,
+	styles,
+	rules,
+	blockedSheets: blocked,
+	text: (el.innerText || '').trim().slice(0, 160),
+	attributes: Array.from(el.attributes).slice(0, 12).map(a => a.name + '=' + JSON.stringify(a.value.length > 80 ? a.value.slice(0, 80) + '…' : a.value)),
+};
+})()`;
+}
+
+/** What the Performance panel would point at first: load timings, paints, layout shifts, the slowest and largest resources, DOM size and heap. */
+export const PERFORMANCE_SCRIPT = `(async () => {
+const nav = performance.getEntriesByType('navigation')[0];
+const paints = Object.fromEntries(performance.getEntriesByType('paint').map(p => [p.name, Math.round(p.startTime)]));
+const buffered = type => new Promise(resolve => {
+	try {
+		const seen = [];
+		const po = new PerformanceObserver(list => seen.push(...list.getEntries()));
+		po.observe({ type, buffered: true });
+		setTimeout(() => { po.disconnect(); resolve(seen); }, 60);
+	} catch { resolve([]); }
+});
+const [lcp, shifts] = await Promise.all([buffered('largest-contentful-paint'), buffered('layout-shift')]);
+const resources = performance.getEntriesByType('resource');
+const short = url => { try { const u = new URL(url); return (u.host === location.host ? '' : u.host) + u.pathname.slice(-60); } catch { return String(url).slice(-60); } };
+const mem = performance.memory;
+return {
+	url: location.href,
+	ttfb: nav ? Math.round(nav.responseStart) : undefined,
+	domContentLoaded: nav ? Math.round(nav.domContentLoadedEventEnd) : undefined,
+	load: nav ? Math.round(nav.loadEventEnd) : undefined,
+	fcp: paints['first-contentful-paint'],
+	lcp: lcp.length ? Math.round(lcp[lcp.length - 1].startTime) : undefined,
+	cls: Math.round(shifts.filter(s => !s.hadRecentInput).reduce((sum, s) => sum + s.value, 0) * 1000) / 1000,
+	resources: resources.length,
+	transferKB: Math.round(resources.reduce((sum, r) => sum + (r.transferSize || 0), 0) / 1024),
+	slowest: resources.slice().sort((a, b) => b.duration - a.duration).slice(0, 5).map(r => ({ url: short(r.name), ms: Math.round(r.duration), type: r.initiatorType })),
+	largest: resources.slice().sort((a, b) => (b.transferSize || 0) - (a.transferSize || 0)).slice(0, 5).filter(r => r.transferSize).map(r => ({ url: short(r.name), kb: Math.round(r.transferSize / 1024), type: r.initiatorType })),
+	domNodes: document.getElementsByTagName('*').length,
+	heapMB: mem ? Math.round(mem.usedJSHeapSize / 1048576) : undefined,
+};
+})()`;
+
+//#endregion

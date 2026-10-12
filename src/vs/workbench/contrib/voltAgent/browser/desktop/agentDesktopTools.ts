@@ -3,12 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { timeout } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
-import { IVoltDesktopService, IVoltDesktopTree } from '../../../../../platform/voltDesktop/common/voltDesktop.js';
+import { IVoltDesktopService, IVoltDesktopTree, VoltDesktopAction } from '../../../../../platform/voltDesktop/common/voltDesktop.js';
 import type { VoltDeviceButton } from '../../../../../platform/voltDevices/common/voltDevices.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { DESKTOP_TOOLS, VoltDesktopToolName } from '../../../../services/voltRuntime/common/desktopTools.js';
@@ -60,6 +59,8 @@ export class AgentDesktopTools extends Disposable {
 				if (name === 'desktop_apps' || (call?.sessionId && this.allowed.has(this.runtime.chatFor(call.sessionId)))) {
 					return undefined;
 				}
+				// The helper builds (first use) and starts while the user reads the prompt, not after they allow it.
+				void this.desktop.status(false).catch(() => undefined);
 				const app = str(args.app);
 				return `controls apps on your Mac for this chat (reads their windows, clicks and types${app ? `, starting with ${app}` : ''})`;
 			},
@@ -112,9 +113,10 @@ export class AgentDesktopTools extends Disposable {
 		const view = deviceView(screen);
 		const observation = observe === 'full' ? { lines: ['- Window:', '```yaml', ...renderPage(view, { unfold }), '```'] } : observePage(this.seen.get(key), view, undefined, unfold);
 		this.seen.set(key, view);
-		const others = tree.windows.filter(title => title && title !== tree.window);
+		const minimized = new Set(tree.minimized ?? []);
+		const others = tree.windows.filter(title => title && title !== tree.window).map(title => `${JSON.stringify(title)}${minimized.has(title) ? ' (minimized)' : ''}`);
 		return [
-			`- App: ${tree.app} (${tree.bundle}) · window ${JSON.stringify(tree.window ?? '')}${others.length ? ` · other windows: ${others.slice(0, 8).map(title => JSON.stringify(title)).join(', ')}` : ''}${tree.truncated ? ' · long window: read in part' : ''}`,
+			`- App: ${tree.app} (${tree.bundle}) · window ${JSON.stringify(tree.window ?? '')}${others.length ? ` · other windows: ${others.slice(0, 8).join(', ')}${others.length > 8 ? ` +${others.length - 8}` : ''} (switch with a \`window "title"\` step)` : ''}${tree.truncated ? ' · long window: read in part' : ''}`,
 			...observation.lines.map(line => line.replace(/^- Page Snapshot:$/, '- Window:').replace(/^- Page changes since your last view/, '- Window changes since your last read').replace(/^- Page: unchanged since your last view of it\.$/, '- Window: unchanged since your last read.')),
 		];
 	}
@@ -157,14 +159,19 @@ export class AgentDesktopTools extends Disposable {
 			return { error: input.error };
 		}
 		let app = str(args.app);
+		// The window the steps work in: the focused one, until a `window` step picks another.
+		let windowTitle = str(args.window);
 		let lastTree: IVoltDesktopTree | undefined;
 		let front = false;
 		const desktop = this.desktop;
+		const act = async (action: VoltDesktopAction): Promise<void> => {
+			await desktop.act(action);
+		};
 		// Keys go to the app in front: bring the target there before the first keyboard step.
 		const keyboard = async (fn: () => Promise<void>) => {
 			if (!front && app) {
-				await desktop.act({ kind: 'activate', app });
-				await timeout(150);
+				// The helper returns once the app is in front with a window, not after a fixed pause.
+				await desktop.act({ kind: 'activate', app, wait: 3 });
 			}
 			front = true;
 			await fn();
@@ -172,24 +179,34 @@ export class AgentDesktopTools extends Disposable {
 		const driver: IDeviceDriver = {
 			platform: 'desktop',
 			read: async () => {
-				lastTree = await desktop.tree({ app });
+				lastTree = await desktop.tree({ app, ...(windowTitle ? { window: windowTitle } : {}) });
 				app ??= lastTree.bundle || lastTree.app;
 				return this.screenOf(lastTree);
 			},
-			tap: (x, y) => desktop.act({ kind: 'click', x, y }),
-			swipe: (x1, y1, x2, y2) => desktop.act({ kind: 'scroll', x: x1, y: Math.round((y1 + y2) / 2), dx: x1 - x2, dy: y1 - y2 }),
-			type: text => keyboard(() => desktop.act({ kind: 'type', text })),
+			tap: (x, y) => act({ kind: 'click', x, y }),
+			swipe: (x1, y1, x2, y2) => act({ kind: 'scroll', x: x1, y: Math.round((y1 + y2) / 2), dx: x1 - x2, dy: y1 - y2 }),
+			type: text => keyboard(() => act({ kind: 'type', text })),
 			clear: () => keyboard(async () => {
-				await desktop.act({ kind: 'key', combo: 'cmd+a' });
-				await desktop.act({ kind: 'key', combo: 'delete' });
+				await act({ kind: 'key', combo: 'cmd+a' });
+				await act({ kind: 'key', combo: 'delete' });
 			}),
-			press: button => keyboard(() => desktop.act({ kind: 'key', combo: KEY_FOR_BUTTON[button] ?? button })),
+			press: button => keyboard(() => act({ kind: 'key', combo: KEY_FOR_BUTTON[button] ?? button })),
 			launch: async target => {
-				await desktop.act({ kind: 'activate', app: target });
+				const opened = await desktop.act({ kind: 'activate', app: target });
 				// A URL opens in the user's browser: read whichever app came to the front.
 				app = /^[a-z][a-z0-9+.-]*:/i.test(target) ? undefined : target;
+				windowTitle = undefined;
 				front = true;
-				await timeout(500);
+				if (opened.ready === false) {
+					throw new Error(`${opened.app ?? target} did not come up with a window in time. Read it with desktop_snapshot, or open it again.`);
+				}
+			},
+			window: async (title, op) => {
+				const result = await desktop.act({ kind: 'window', ...(app ? { app } : {}), ...(title ? { title } : {}), op });
+				// A raised window is where the next steps work; one minimized or closed hands back to the focused one.
+				windowTitle = op === 'raise' || op === 'restore' || op === 'zoom' || op === 'fullscreen' ? result.window ?? title : undefined;
+				front = front || op === 'raise';
+				return result.window;
 			},
 			activate: async element => {
 				await desktop.act({ kind: 'press', h: element.handle! });
@@ -199,8 +216,8 @@ export class AgentDesktopTools extends Disposable {
 				await desktop.act({ kind: 'setValue', h: element.handle!, value: text });
 				return true;
 			},
-			key: combo => keyboard(() => desktop.act({ kind: 'key', combo })),
-			menu: path => desktop.act({ kind: 'menu', app, path }),
+			key: combo => keyboard(() => act({ kind: 'key', combo })),
+			menu: path => act({ kind: 'menu', app, path }),
 		};
 		const runner = new DeviceActRunner(driver, call?.token ?? CancellationToken.None);
 		const runs: IFlowRun[] = [];
@@ -217,7 +234,7 @@ export class AgentDesktopTools extends Disposable {
 		}
 		const observe = args.observe === 'none' || (args.observe === 'on_failure' && ok) ? 'none' : args.observe === 'full' ? 'full' : 'auto';
 		if (observe !== 'none' && (single || !ok)) {
-			const tree = lastTree ?? await desktop.tree({ app }).catch(() => undefined);
+			const tree = lastTree ?? await desktop.tree({ app, ...(windowTitle ? { window: windowTitle } : {}) }).catch(() => undefined);
 			const screen = runner.last ?? (tree ? this.screenOf(tree) : undefined);
 			if (tree && screen) {
 				lines.push('', ...this.windowLines(tree, screen, observe));

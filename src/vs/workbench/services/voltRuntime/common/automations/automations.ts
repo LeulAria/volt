@@ -887,7 +887,7 @@ function newerRun(a: IAutomationRun, b: IAutomationRun): IAutomationRun {
 
 /** The orchestrator turn a run's turn became (`auto-r1~l1` continues `auto-r1` after a usage limit). */
 export function isTurnOfRun(turnId: string | undefined, runTurnId: string | undefined): boolean {
-	return !!turnId && !!runTurnId && (turnId === runTurnId || turnId.replace(/(?:~[lmr]\d+)+$/, '') === runTurnId);
+	return !!turnId && !!runTurnId && (turnId === runTurnId || turnId.replace(/(?:~[flmr]\d+)+$/, '') === runTurnId);
 }
 
 /**
