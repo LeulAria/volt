@@ -49,7 +49,10 @@ const vscodeEntryPoints = [
 	buildfile.workerOutputLinks,
 	buildfile.workerBackgroundTokenization,
 	buildfile.workbenchDesktop,
-	buildfile.code
+	buildfile.code,
+	// Volt's workbench for browsers, served by the agent server under /code/ (see serverWorkbench.ts).
+	buildfile.keyboardMaps,
+	buildfile.codeWeb
 ].flat();
 
 const vscodeResourceIncludes = [
@@ -60,6 +63,11 @@ const vscodeResourceIncludes = [
 
 	// Workbench
 	'out-build/vs/code/electron-browser/workbench/workbench.html',
+
+	// Workbench for browsers (the agent server's /code/)
+	'out-build/vs/code/browser/workbench/workbench.html',
+	'out-build/vs/code/browser/workbench/callback.html',
+	'out-build/nls.messages.js',
 
 	// Electron Preload
 	'out-build/vs/base/parts/sandbox/electron-browser/preload.js',
@@ -115,7 +123,6 @@ const vscodeResources = [
 	...vscodeResourceIncludes,
 
 	// Excludes
-	'!out-build/vs/code/browser/**',
 	'!out-build/vs/editor/standalone/**',
 	'!out-build/vs/code/**/*-dev.html',
 	'!out-build/vs/workbench/contrib/issue/**/*-dev.html',
@@ -253,8 +260,10 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 
 		// Volt's web app (apps/web, built into out-volt-web), served by the agent server to browsers and phones.
 		const voltWeb = gulp.src('out-volt-web/**', { base: '.', dot: true });
+		// The browser workbench's icon and manifest.
+		const serverResources = gulp.src('resources/server/*.{png,ico,json}', { base: '.' });
 
-		const sources = es.merge(src, extensions, voltWeb)
+		const sources = es.merge(src, extensions, voltWeb, serverResources)
 			.pipe(filter(['**', '!**/*.{js,mjs,cjs,css}.map'], { dot: true }));
 
 		let version = packageJson.version;

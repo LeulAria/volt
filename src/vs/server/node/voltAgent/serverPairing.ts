@@ -55,6 +55,8 @@ export interface IPairingHttpContext {
 	readonly port: number;
 	readonly network: boolean;
 	readonly serverVersion: string;
+	/** This build serves Volt's workbench to browsers. */
+	readonly workbench?: boolean;
 }
 
 function hashToken(token: string): string {
@@ -75,7 +77,7 @@ export function normalizePairingCode(code: string): string {
 }
 
 /** `Leul's MacBook Pro` from `Leuls-MacBook-Pro.local`. */
-function machineLabel(): string {
+export function machineLabel(): string {
 	const name = hostname().replace(/\.(local|lan|home)$/i, '');
 	return name.replace(/-/g, ' ').trim() || 'Volt';
 }
@@ -186,7 +188,7 @@ export class ServerPairing extends Disposable {
 			serverVersion: ctx.serverVersion,
 			protocol: AGENT_SERVER_PROTOCOL_VERSION,
 			network: ctx.network,
-			capabilities: { pairing: true },
+			capabilities: { pairing: true, workbench: !!ctx.workbench },
 		};
 	}
 

@@ -88,7 +88,8 @@ import { IAgentServerClients } from './serverClients.js';
 import { ServerEditsJournal } from './serverEditsJournal.js';
 import { importDesktopStorage, ServerCommandService, ServerConsoleLogger, ServerLifecycleService, ServerNotificationService, ServerPathService, ServerSearchService, ServerSecretStorageService, ServerStorageService, ServerTextModelService, serverTextFileService, ServerWorkspaceContextService } from './serverPlatformServices.js';
 import { ServerSessionHost } from './serverSessionHost.js';
-import { IPairingHttpContext, ServerPairing } from './serverPairing.js';
+import { IPairingHttpContext, machineLabel, ServerPairing } from './serverPairing.js';
+import { ServerWorkbench } from './serverWorkbench.js';
 
 /** Settings keys the server takes over from the desktop's storage the first time it starts. */
 const IMPORTED_STORAGE_PREFIXES = ['volt.runtime.', 'volt.agent.', 'volt.pullRequests.', 'volt.access.'];
@@ -319,9 +320,24 @@ export async function main(argv: string[]): Promise<void> {
 	// The checkout in dev, the app's Resources/app when packaged (where this module is bundled into out/).
 	const appRoot = FileAccess.asFileUri('').fsPath.replace(/[\\/]out[\\/]?$/, '');
 	const webRoot = args.webRoot ?? join(appRoot, 'out-volt-web');
-	const server = http.createServer((req, res) => void serveHttp(req, res, webRoot, token, epoch, pairing, httpContext));
+	// Volt's workbench for browsers (VS Code's server, started with the first page load).
+	const workbench = disposables.add(instantiationService.createInstance(ServerWorkbench, {
+		userDataDir: args.userDataDir,
+		serverDir: paths.dir,
+		label: machineLabel(),
+		environmentId: () => pairing.environmentId,
+		authorize: deviceToken => pairing.authorize(deviceToken),
+		resolveEnv,
+		git: instantiationService.invokeFunction(accessor => accessor.get(IVoltGitService)),
+		sendFile,
+	}));
+	httpContext = { ...httpContext, workbench: workbench.available };
+	const server = http.createServer((req, res) => void serveHttp(req, res, webRoot, token, epoch, pairing, workbench, httpContext));
 	server.on('upgrade', (req, socket: Socket) => {
 		const url = new URL(req.url ?? '/', 'http://localhost');
+		if (url.pathname !== '/ws' && workbench.handleUpgrade(req, socket)) {
+			return;
+		}
 		if (url.pathname !== '/ws' || !originAllowed(req.headers.origin, req.headers.host)) {
 			socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
 			return;
@@ -434,10 +450,14 @@ const MIME: Record<string, string> = {
 	'.gif': 'image/gif',
 	'.wasm': 'application/wasm',
 	'.txt': 'text/plain; charset=utf-8',
+	'.mjs': 'text/javascript; charset=utf-8',
+	'.mp3': 'audio/mpeg',
+	'.otf': 'font/otf',
+	'.scm': 'text/plain; charset=utf-8',
 };
 
 /** Text assets worth compressing; the web IDE's editor bundle shrinks to about a quarter. */
-const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg', '.map', '.webmanifest', '.ttf', '.txt', '.wasm']);
+const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.svg', '.map', '.webmanifest', '.ttf', '.otf', '.txt', '.wasm', '.scm']);
 /** Compressed copies of the served files, by path and modification time (the app is a few MB). */
 const compressed = new Map<string, { readonly mtime: number; readonly encoding: 'br' | 'gzip'; readonly data: Promise<Buffer> }>();
 
@@ -460,8 +480,11 @@ function compressedCopy(file: string, mtime: number, data: Buffer, encoding: 'br
 	return result;
 }
 
-async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, webRoot: string, token: string, epoch: string, pairing: ServerPairing, ctx: IPairingHttpContext): Promise<void> {
+async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, webRoot: string, token: string, epoch: string, pairing: ServerPairing, workbench: ServerWorkbench, ctx: IPairingHttpContext): Promise<void> {
 	if (await pairing.handleHttp(req, res, ctx)) {
+		return;
+	}
+	if (await workbench.handleHttp(req, res)) {
 		return;
 	}
 	const url = new URL(req.url ?? '/', 'http://localhost');
@@ -478,14 +501,25 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, we
 		res.writeHead(403).end();
 		return;
 	}
+	// The web app routes on the client (/pair, /t/<chat>): a path without an extension is the app.
+	// Hashed bundles never change under their name: cached for good. Everything else (the page,
+	// the manifest) revalidates, so a rebuilt app never mixes with an older bundle.
+	if (!await sendFile(req, res, extname(file) ? file : join(webRoot, 'index.html'), relative.startsWith('assets/'))) {
+		res.writeHead(404, { 'Content-Type': 'text/plain' }).end(`Not found. The web app is built into ${webRoot}.`);
+	}
+}
+
+/**
+ * Sends a file with an ETag, compressed when the browser takes it, and cached for good when
+ * `immutable` (its name changes with its content). Resolves false when there is no such file.
+ */
+async function sendFile(req: http.IncomingMessage, res: http.ServerResponse, served: string, immutable: boolean): Promise<boolean> {
 	try {
-		// The web app routes on the client (/pair, /t/<chat>): a path without an extension is the app.
-		const served = extname(file) ? file : join(webRoot, 'index.html');
 		const stat = await fs.stat(served);
+		if (!stat.isFile()) {
+			return false;
+		}
 		const etag = `W/"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}"`;
-		// Hashed bundles never change under their name: cached for good. Everything else (the page,
-		// the manifest) revalidates, so a rebuilt app never mixes with an older bundle.
-		const immutable = relative.startsWith('assets/');
 		const headers: Record<string, string> = {
 			'Content-Type': MIME[extname(served)] ?? 'application/octet-stream',
 			'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
@@ -495,7 +529,7 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, we
 		};
 		if (req.headers['if-none-match'] === etag) {
 			res.writeHead(304, headers).end();
-			return;
+			return true;
 		}
 		let data = await fs.readFile(served);
 		const encoding = COMPRESSIBLE.has(extname(served)) && data.length > 1024 ? preferredEncoding(req.headers['accept-encoding']) : undefined;
@@ -506,8 +540,9 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, we
 		headers['Content-Length'] = String(data.length);
 		res.writeHead(200, headers);
 		res.end(req.method === 'HEAD' ? undefined : data);
+		return true;
 	} catch {
-		res.writeHead(404, { 'Content-Type': 'text/plain' }).end(`Not found. The web app is built into ${webRoot}.`);
+		return false;
 	}
 }
 

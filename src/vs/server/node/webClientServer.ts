@@ -92,6 +92,9 @@ export async function serveFile(filePath: string, cacheControl: CacheControl, lo
 
 const APP_ROOT = dirname(FileAccess.asFileUri('').fsPath);
 
+/** More workbench construction options for a page, from the process that embeds the server. */
+export type WebConfigurationProvider = (req: http.IncomingMessage) => Promise<Record<string, unknown> | undefined>;
+
 const STATIC_PATH = `/static`;
 const CALLBACK_PATH = `/callback`;
 const WEB_EXTENSION_PATH = `/web-extension-resource`;
@@ -104,6 +107,7 @@ export class WebClientServer {
 		private readonly _connectionToken: ServerConnectionToken,
 		private readonly _basePath: string,
 		private readonly _productPath: string,
+		private readonly _webConfiguration: WebConfigurationProvider | undefined,
 		@IServerEnvironmentService private readonly _environmentService: IServerEnvironmentService,
 		@ILogService private readonly _logService: ILogService,
 		@IRequestService private readonly _requestService: IRequestService,
@@ -369,6 +373,12 @@ export class WebClientServer {
 			productConfiguration,
 			callbackRoute: callbackRoute
 		};
+		const embedded = await this._webConfiguration?.(req);
+		if (embedded) {
+			const { productConfiguration: embeddedProduct, ...rest } = embedded as { productConfiguration?: Partial<IProductConfiguration> };
+			Object.assign(workbenchWebConfiguration, rest);
+			Object.assign(productConfiguration, embeddedProduct);
+		}
 
 		const cookies = cookie.parse(req.headers.cookie || '');
 		const locale = cookies['vscode.nls.locale'] || req.headers['accept-language']?.split(',')[0]?.toLowerCase() || 'en';

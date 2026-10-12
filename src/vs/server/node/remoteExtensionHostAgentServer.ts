@@ -38,7 +38,7 @@ import { ManagementConnection } from './remoteExtensionManagement.js';
 import { determineServerConnectionToken, requestHasValidConnectionToken as httpRequestHasValidConnectionToken, ServerConnectionToken, ServerConnectionTokenParseError, ServerConnectionTokenType } from './serverConnectionToken.js';
 import { IServerEnvironmentService, ServerParsedArgs } from './serverEnvironmentService.js';
 import { setupServerServices, SocketServer } from './serverServices.js';
-import { CacheControl, serveError, serveFile, WebClientServer } from './webClientServer.js';
+import { CacheControl, serveError, serveFile, WebClientServer, WebConfigurationProvider } from './webClientServer.js';
 const require = createRequire(import.meta.url);
 
 const SHUTDOWN_TIMEOUT = 5 * 60 * 1000;
@@ -76,6 +76,7 @@ class RemoteExtensionHostAgentServer extends Disposable implements IServerAPI {
 		private readonly _vsdaMod: typeof vsda | null,
 		hasWebClient: boolean,
 		serverBasePath: string | undefined,
+		webConfiguration: WebConfigurationProvider | undefined,
 		@IServerEnvironmentService private readonly _environmentService: IServerEnvironmentService,
 		@IProductService private readonly _productService: IProductService,
 		@ILogService private readonly _logService: ILogService,
@@ -95,7 +96,7 @@ class RemoteExtensionHostAgentServer extends Disposable implements IServerAPI {
 		this._allReconnectionTokens = new Set<string>();
 		this._webClientServer = (
 			hasWebClient
-				? this._instantiationService.createInstance(WebClientServer, this._connectionToken, serverBasePath ?? '/', this._serverProductPath)
+				? this._instantiationService.createInstance(WebClientServer, this._connectionToken, serverBasePath ?? '/', this._serverProductPath, webConfiguration)
 				: null
 		);
 		this._logService.info(`Extension host agent started.`);
@@ -634,7 +635,16 @@ export interface IServerAPI {
 	dispose(): void;
 }
 
-export async function createServer(address: string | net.AddressInfo | null, args: ServerParsedArgs, REMOTE_DATA_FOLDER: string): Promise<IServerAPI> {
+/**
+ * What a process that hosts this server in itself adds (Volt's agent server serves the web
+ * workbench this way): channels of its own on every connection, and workbench options per page.
+ */
+export interface IServerEmbedder {
+	registerChannels?(socketServer: SocketServer<RemoteAgentConnectionContext>, instantiationService: IInstantiationService): void;
+	readonly webConfiguration?: WebConfigurationProvider;
+}
+
+export async function createServer(address: string | net.AddressInfo | null, args: ServerParsedArgs, REMOTE_DATA_FOLDER: string, embedder?: IServerEmbedder): Promise<IServerAPI> {
 
 	const connectionToken = await determineServerConnectionToken(args);
 	if (connectionToken instanceof ServerConnectionTokenParseError) {
@@ -676,6 +686,7 @@ export async function createServer(address: string | net.AddressInfo | null, arg
 
 	const disposables = new DisposableStore();
 	const { socketServer, instantiationService } = await setupServerServices(connectionToken, args, REMOTE_DATA_FOLDER, disposables);
+	embedder?.registerChannels?.(socketServer, instantiationService);
 
 	// Set the unexpected error handler after the services have been initialized, to avoid having
 	// the telemetry service overwrite our handler
@@ -758,7 +769,7 @@ export async function createServer(address: string | net.AddressInfo | null, arg
 		console.log(`Web UI available at http://localhost${address.port === 80 ? '' : `:${address.port}`}${serverBasePath ?? ''}${queryPart}`);
 	}
 
-	const remoteExtensionHostAgentServer = instantiationService.createInstance(RemoteExtensionHostAgentServer, socketServer, connectionToken, vsdaMod, hasWebClient, serverBasePath);
+	const remoteExtensionHostAgentServer = instantiationService.createInstance(RemoteExtensionHostAgentServer, socketServer, connectionToken, vsdaMod, hasWebClient, serverBasePath, embedder?.webConfiguration);
 
 	perf.mark('code/server/ready');
 	const currentTime = performance.now();

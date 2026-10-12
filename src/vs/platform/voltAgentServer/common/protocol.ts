@@ -158,7 +158,8 @@ export interface IVoltEnvironmentDescriptor {
 	readonly protocol: number;
 	/** The server listens on the network, not only on loopback: phones can reach it. */
 	readonly network: boolean;
-	readonly capabilities: { readonly pairing: boolean };
+	/** `workbench`: browsers can open Volt's workbench at `/code/` (older servers leave it out). */
+	readonly capabilities: { readonly pairing: boolean; readonly workbench?: boolean };
 }
 
 export type VoltPairingClientKind = 'mobile' | 'tablet' | 'web';
