@@ -1326,3 +1326,47 @@ button.volt-tr-subagent-head:hover .volt-tr-chevron,
 .volt-agent-run-marker-label {
 	margin-right: 4px;
 }
+
+/*
+ * Tool call density (Settings > Appearance): standard lists a line per call; detailed draws each
+ * edit and each call with output as a card that starts open on its diff or output.
+ */
+
+.volt-tr-step-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.volt-tr-step-list.cards {
+	gap: 6px;
+}
+
+.volt-tr-details.command {
+	opacity: 0.75;
+}
+
+.volt-tr-group.step.card {
+	border: 1px solid var(--volt-md-stroke);
+	border-radius: 8px;
+	background: var(--volt-md-card-bg);
+	overflow: hidden;
+}
+
+.volt-tr-group.step.card > .volt-tr-header {
+	height: 30px;
+	padding: 0 10px;
+	line-height: 30px;
+}
+
+.volt-tr-group.step.card > .volt-tr-body {
+	padding-top: 0;
+	border-top: 1px solid var(--volt-md-stroke-faint);
+}
+
+.volt-tr-group.step.card > .volt-tr-body > .volt-tr-diff,
+.volt-tr-group.step.card > .volt-tr-body > .volt-tr-terminal {
+	border: 0;
+	border-radius: 0;
+}

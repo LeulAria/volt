@@ -9,7 +9,8 @@ import { basename } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
 import { isSnapshotActivity } from '../preview/browserSnapshot.js';
 import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
-import { AgentBlock, AgentSegment, createPlanBlock, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPhantomFileBlock, isPlanTool, IVisualBlock, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
+import { AgentBlock, AgentSegment, createPlanBlock, humanTerminalTitle, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPhantomFileBlock, isPlanTool, IVisualBlock, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind, terminalCommandLabels } from '../blocks/agentBlocks.js';
+import type { AgentToolDensity } from '../../common/agentAppearanceSettings.js';
 import { computeChangeStats } from '../review/fileChangePreviewModel.js';
 import { isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
@@ -33,6 +34,8 @@ export interface ITranscriptStep {
 	readonly action: string;
 	/** The rest of the line, in the quaternary tone. */
 	readonly detail?: string;
+	/** A command's program names after its title ("Ran focused tests npm test"), quieter still. */
+	readonly command?: string;
 	readonly additions?: number;
 	readonly deletions?: number;
 	readonly item?: IAgentActivityItem;
@@ -47,8 +50,14 @@ export interface ITranscriptStep {
 	readonly live?: boolean;
 }
 
+/**
+ * How a steps row is drawn (the tool call density): folded behind its group line (the default),
+ * as one line per call, or with each edit and call that has output as an open card.
+ */
+export type StepsDisplay = 'group' | 'lines' | 'cards';
+
 export type TranscriptRow =
-	| { readonly kind: 'steps'; readonly id: string; readonly steps: readonly ITranscriptStep[]; readonly live: boolean }
+	| { readonly kind: 'steps'; readonly id: string; readonly steps: readonly ITranscriptStep[]; readonly live: boolean; readonly display?: StepsDisplay }
 	| { readonly kind: 'thought'; readonly id: string; readonly step: ITranscriptStep; readonly live: boolean }
 	| { readonly kind: 'markdown'; readonly id: string; readonly content: string }
 	| { readonly kind: 'block'; readonly block: AgentBlock }
@@ -75,7 +84,13 @@ export function isSubagentTool(block: IToolBlock): boolean {
 		|| voltTaskToolOf(block.name, block.title, block.input) === DELEGATE_TASK_TOOL_NAME;
 }
 
-export function buildTranscriptRows(segments: readonly AgentSegment[] | undefined, fallbackText: string | undefined, streaming: boolean, steers: readonly ITranscriptSteer[] = []): TranscriptRow[] {
+/**
+ * `density` is the tool call density setting. Compact and standard fold commands into the steps
+ * like any other call; detailed, and no density at all, keep each command its own card.
+ */
+export function buildTranscriptRows(segments: readonly AgentSegment[] | undefined, fallbackText: string | undefined, streaming: boolean, steers: readonly ITranscriptSteer[] = [], density?: AgentToolDensity): TranscriptRow[] {
+	const foldCommands = density === 'compact' || density === 'standard';
+	const display: StepsDisplay | undefined = density === 'standard' ? 'lines' : density === 'detailed' ? 'cards' : undefined;
 	const source: readonly AgentSegment[] = segments?.length
 		? segments
 		: (fallbackText ? [{ kind: 'text', text: fallbackText }] : []);
@@ -106,7 +121,7 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 			// Reasoning straight before an answer is its own "Thought 4s" row.
 			rows.push({ kind: 'thought', id: `thought-${groupIndex++}`, step: mergeThoughts(pending), live: false });
 		} else {
-			rows.push({ kind: 'steps', id: `steps-${groupIndex++}`, steps: pending, live: false });
+			rows.push({ kind: 'steps', id: `steps-${groupIndex++}`, steps: pending, live: false, ...(display ? { display } : {}) });
 		}
 		pending = [];
 	};
@@ -183,7 +198,9 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 			case 'block': {
 				flushReply();
 				const block = segment.block;
-				if (block.type === 'terminal') {
+				if (block.type === 'terminal' && foldCommands) {
+					pending.push(terminalStep(block));
+				} else if (block.type === 'terminal') {
 					// A command is its own card (title, command names, output tail), not a "Ran 1 command" fold.
 					flushSteps();
 					rows.push({ kind: 'block', block });
@@ -455,6 +472,21 @@ function editStep(block: IFileChangeBlock): ITranscriptStep {
 		additions: preview.additions,
 		deletions: preview.deletions,
 		file: block,
+	};
+}
+
+/** A command folded into the steps: "Ran focused tests npm test"; it opens on its output. */
+function terminalStep(block: ITerminalBlock): ITranscriptStep {
+	const title = humanTerminalTitle(block.title, block.command);
+	const labels = terminalCommandLabels(block.command).join(', ');
+	const command = labels && !title.toLowerCase().includes(labels.toLowerCase()) ? labels : undefined;
+	return {
+		id: block.id,
+		kind: 'run',
+		action: localize('voltAgent.step.ran', "Ran"),
+		detail: title,
+		...(command ? { command } : {}),
+		terminal: block,
 	};
 }
 

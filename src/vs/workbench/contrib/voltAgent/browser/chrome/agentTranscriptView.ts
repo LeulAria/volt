@@ -405,7 +405,7 @@ function rowSignature(row: TranscriptRow, host: ITranscriptHost): string {
 		case 'markdown':
 			return row.content;
 		case 'steps': {
-			let signature = `${row.live}|${host.isExpanded(row.id)}`;
+			let signature = `${row.display}|${row.live}|${host.isExpanded(row.id)}`;
 			for (const step of row.steps) {
 				signature += `|${host.isExpanded(`${row.id}:${step.id}`)}:${shapeOf(step)}`;
 			}
@@ -752,6 +752,18 @@ export function formatWorkedTime(ms: number): string {
 }
 
 function renderStepsGroup(parent: HTMLElement, row: Extract<TranscriptRow, { kind: 'steps' }>, host: ITranscriptHost): void {
+	if (row.display === 'lines' || row.display === 'cards') {
+		// Standard density: a line per call. Detailed: edits and calls with output as open cards.
+		const list = append(parent, $(`.volt-tr-step-list.${row.display}`));
+		for (const step of row.steps) {
+			if (step.kind === 'thought') {
+				renderThoughtRow(list, `${row.id}:${step.id}`, step, !!step.live, host);
+			} else {
+				renderStepRow(list, `${row.id}:${step.id}`, step, host, row.display === 'cards');
+			}
+		}
+		return;
+	}
 	const title = stepsGroupTitle(row.steps, row.live);
 	const open = host.isExpanded(row.id) ?? false;
 	const group = append(parent, $('.volt-tr-group'));
@@ -812,12 +824,14 @@ function renderThoughtRow(parent: HTMLElement, id: string, step: ITranscriptStep
 	}
 }
 
-function renderStepRow(parent: HTMLElement, id: string, step: ITranscriptStep, host: ITranscriptHost): void {
+/** `card` draws a step with a body as a card that starts open (detailed density). */
+function renderStepRow(parent: HTMLElement, id: string, step: ITranscriptStep, host: ITranscriptHost, card = false): void {
 	const expandable = !!(step.terminal || step.file || (step.tool && (step.tool.output || step.tool.input)));
 	const opensItem = !expandable && !!step.item && isOpenable(step.item);
-	const open = expandable && (host.isExpanded(id) ?? false);
+	const open = expandable && (host.isExpanded(id) ?? card);
 	const row = append(parent, $(`.volt-tr-group.step.${step.kind}`));
 	row.classList.toggle('live', !!step.live);
+	row.classList.toggle('card', card && expandable);
 	const header = collapsibleHeader(row, open, expandable || opensItem);
 	const action = appendAction(header, step.live ? liveVerb(step) : step.action, host);
 	if (step.live) {
@@ -825,6 +839,9 @@ function renderStepRow(parent: HTMLElement, id: string, step: ITranscriptStep, h
 	}
 	if (step.detail) {
 		appendDetail(header, step.detail, host);
+	}
+	if (step.command) {
+		appendDetail(header, step.command, host).classList.add('command');
 	}
 	appendStats(header, step.additions ?? 0, step.deletions ?? 0);
 	const exitCode = step.terminal?.exitCode;

@@ -134,6 +134,7 @@ import { IAgentPendingFile } from '../review/agentEditsService.js';
 import { AgentComposerLists } from '../composer/agentComposerLists.js';
 import { AgentPromptHistoryNavigator, IAgentPromptHistoryEntry, readStoredPrompts, rememberPrompt } from '../composer/agentPromptHistory.js';
 import { AGENT_PROMPT_HISTORY_SETTING } from '../../common/agentComposerSettings.js';
+import { AGENT_TOOL_DENSITY_SETTING, readToolDensity } from '../../common/agentAppearanceSettings.js';
 import { AgentComposerQueue, IAgentComposerQueueState, QueuePause } from '../composer/agentComposerQueue.js';
 import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
@@ -1427,6 +1428,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.applyCodeFont();
 				this.updateComposerEditorOptions();
 				this.layoutInputEditor();
+			}
+			if (e.affectsConfiguration(AGENT_TOOL_DENSITY_SETTING)) {
+				this.renderThreadUnlessStreaming();
 			}
 		}));
 
@@ -4253,7 +4257,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (streaming) {
 			this.liveTurns.add(message);
 		}
-		const built = buildTranscriptRows(message.segments, message.text, streaming, message.steers);
+		const built = buildTranscriptRows(message.segments, message.text, streaming, message.steers, readToolDensity(this.configurationService));
 		// A failed turn shows its error once, in the tray at its end.
 		const rows = !streaming && message.outcome === 'failed' ? withoutFailureNotice(built, message.failure?.message) : built;
 		const replies = renderTranscript(body, rows, this.transcriptHost(message, ctx), {
@@ -4307,7 +4311,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private paintLiveTurn(live: ILiveTurn): void {
 		const message = live.message;
 		this.liveTurns.add(message);
-		const rows = buildTranscriptRows(message.segments, message.text, true, message.steers);
+		const rows = buildTranscriptRows(message.segments, message.text, true, message.steers, readToolDensity(this.configurationService));
 		const parts = live.transcript.render(rows, store => this.transcriptHost(message, this.blockRenderContext(message, store), store), {
 			streaming: true,
 			status: this.liveStatusPhrase(message),
