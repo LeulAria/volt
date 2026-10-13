@@ -37,6 +37,7 @@ import { ProjectSettingsDialog } from './projectSettingsDialog.js';
 import { IVoltProjectSettingsService, ProjectDefaultModelContribution, VoltProjectSettingsService } from './projectSettingsService.js';
 import { VOLT_MANAGE_STORAGE_COMMAND_ID, VOLT_PROJECT_SETTINGS_COMMAND_ID, VOLT_SETUP_COMMAND_ID } from './settingsSections.js';
 import { SetupStep, VoltSetupWizard } from './setupWizard.js';
+import { VoltWorktreeCleanupContribution } from './worktreeCleanup.js';
 
 // Desktop registers the main-process versions over these.
 registerSingleton(IVoltStorageService, NullVoltStorageService, InstantiationType.Delayed);
@@ -242,3 +243,4 @@ class ProjectRowMenuContribution extends Disposable implements IWorkbenchContrib
 registerWorkbenchContribution2(VoltFirstRunContribution.ID, VoltFirstRunContribution, WorkbenchPhase.Eventually);
 registerWorkbenchContribution2(ProjectRowMenuContribution.ID, ProjectRowMenuContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(ProjectDefaultModelContribution.ID, ProjectDefaultModelContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(VoltWorktreeCleanupContribution.ID, VoltWorktreeCleanupContribution, WorkbenchPhase.Eventually);
