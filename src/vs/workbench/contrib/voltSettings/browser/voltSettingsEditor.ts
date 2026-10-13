@@ -57,6 +57,7 @@ import { AgentModelPicker, type IModelOption, type IProviderGroup } from '../../
 import { appendSettingsBlock, SettingsStickyHeads } from './settingsStickyHeads.js';
 import { VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
 import { renderProjectsSection, renderStorageSection } from '../../voltSetup/browser/settingsSections.js';
+import { clampWorktreeMaxCount, clampWorktreeMaxSizeGB, WORKTREE_MAX_COUNT_SETTING, WORKTREE_MAX_SIZE_GB_SETTING } from '../../voltSetup/common/worktreeLimits.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { AppearancePage } from './appearancePage.js';
 import { CodeIntelligencePage } from './codeIntelligencePage.js';
@@ -68,7 +69,7 @@ import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { createAgentHeaderSeparatorIcon } from '../../voltAgent/browser/chrome/agentTitlebarHeader.js';
 import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/browser/home/agentHomeFooterActions.js';
 
-type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'security' | 'connected' | 'projects' | 'storage';
+type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'security' | 'connected' | 'projects' | 'worktrees' | 'storage';
 
 /** The Modes nav glyph (a small robot face), drawn in currentColor like the codicons beside it. */
 /** The nav, in groups separated by a gap. Icons come from settingsIcons.ts; the codicon is the fallback. */
@@ -84,6 +85,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield, group: 2 },
 	{ id: 'connected', label: localize('voltSettings.connectedAgents', "Connected agents"), icon: Codicon.link, group: 2 },
 	{ id: 'projects', label: localize('voltSettings.projects', "Projects"), icon: Codicon.repo, group: 2 },
+	{ id: 'worktrees', label: localize('voltSettings.worktrees', "Worktrees"), icon: Codicon.repoForked, group: 2 },
 	{ id: 'storage', label: localize('voltSettings.storage', "Storage"), icon: Codicon.database, group: 2 },
 ];
 
@@ -517,6 +519,9 @@ export class VoltSettingsEditor extends EditorPane {
 				this.pageHead(localize('voltSettings.projects', "Projects"), localize('voltSettings.projectsLead', "What new chats in each project start with, its worktree setup and its agents' environment."));
 				renderProjectsSection(this.target, this.instantiationService, this.renderStore, this.search.trim().toLowerCase());
 				break;
+			case 'worktrees':
+				this.renderWorktrees();
+				break;
 			case 'storage':
 				this.pageHead(localize('voltSettings.storage', "Storage"), localize('voltSettings.storageLead', "What Volt keeps on this machine, and what can go. Nothing in use is removed."));
 				renderStorageSection(this.target, this.instantiationService, this.renderStore);
@@ -616,7 +621,9 @@ export class VoltSettingsEditor extends EditorPane {
 		value.value = valueText;
 		const plus = append(stepper, $('button.step')) as HTMLButtonElement;
 		plus.textContent = '+';
-		append(parent, $('.volt-settings-stepper-unit')).textContent = unit;
+		if (unit) {
+			append(parent, $('.volt-settings-stepper-unit')).textContent = unit;
+		}
 		const commit = (next: number) => {
 			value.value = String(onCommit(next));
 		};
@@ -1212,6 +1219,49 @@ export class VoltSettingsEditor extends EditorPane {
 				void this.configurationService.updateValue(key, input.value.trim());
 			}));
 		});
+	}
+
+	/** Cleanup limits for the checkouts in ~/.volt/worktrees, as Cursor's Worktrees settings. */
+	private renderWorktrees(): void {
+		this.pageHead(
+			localize('voltSettings.worktrees', "Worktrees"),
+			localize('voltSettings.worktreesLead', "Checkouts Volt makes in ~/.volt/worktrees for chats that run in a new worktree."),
+		);
+		this.sectionLabel(localize('voltSettings.worktreesCleanup', "Cleanup"));
+		append(this.target, $('.volt-settings-section-hint')).textContent = localize('voltSettings.worktreesCleanupHint', "Volt periodically removes old worktrees to free disk space. Tune how aggressively cleanup runs. Worktrees with uncommitted changes or a running agent are never removed, and a chat gets its worktree back from its branch on the next message.");
+		const cleanup = this.settingsGroup();
+		this.settingRow(
+			cleanup,
+			localize('voltSettings.maxWorktrees', "Max Worktrees"),
+			localize('voltSettings.maxWorktreesDesc', "Maximum number of Volt-managed worktrees to retain across all projects. Older worktrees are removed first."),
+			host => this.stepper(host, String(clampWorktreeMaxCount(this.configurationService.getValue(WORKTREE_MAX_COUNT_SETTING))), '', count => {
+				const next = clampWorktreeMaxCount(count);
+				void this.configurationService.updateValue(WORKTREE_MAX_COUNT_SETTING, next);
+				return next;
+			}, 1),
+		);
+		this.settingRow(
+			cleanup,
+			localize('voltSettings.maxWorktreeSize', "Max Total Size (GB)"),
+			localize('voltSettings.maxWorktreeSizeDesc', "Maximum total size in GB across all Volt-managed worktrees. Set to 0 to disable the size limit."),
+			host => this.stepper(host, String(clampWorktreeMaxSizeGB(this.configurationService.getValue(WORKTREE_MAX_SIZE_GB_SETTING))), '', gb => {
+				const next = clampWorktreeMaxSizeGB(gb);
+				void this.configurationService.updateValue(WORKTREE_MAX_SIZE_GB_SETTING, next);
+				return next;
+			}, 5),
+		);
+
+		this.sectionLabel(localize('voltSettings.managedWorktrees', "Volt-Managed Worktrees"));
+		this.settingRow(
+			this.settingsGroup(),
+			localize('voltSettings.worktreeStorage', "Disk use"),
+			localize('voltSettings.worktreeStorageDesc', "See each worktree's size, which chat it belongs to, and clean up now."),
+			host => {
+				const open = this.renderStore.add(createVoltButton(host, 'secondary'));
+				open.label = localize('voltSettings.openStorage', "Open Storage");
+				this.renderStore.add(open.onDidClick(() => this.setSection('storage')));
+			},
+		);
 	}
 
 	private renderSecurity(): void {
