@@ -21,6 +21,7 @@ import { AGENT_COMPOSER_SCHEME } from '../../../services/voltRuntime/common/pred
 import { describeStats } from '../../../services/voltRuntime/common/prediction/predictionStats.js';
 import { ClipboardWatch } from './clipboardWatch.js';
 import { VoltAiEditAction } from './oneShotEdit.js';
+import { TabAutoImports } from './tabAutoImports.js';
 import { TerminalCommandTracker } from './terminalCommandTracker.js';
 import { VoltComposerCompletionsProvider } from './voltComposerCompletionsProvider.js';
 import { VoltInlineCompletionsProvider } from './voltInlineCompletionsProvider.js';
@@ -57,7 +58,8 @@ class VoltPredictionContribution extends Disposable {
 		const index = this._register(instantiationService.createInstance(WorkspaceContextIndex));
 		const terminals = this._register(instantiationService.createInstance(TerminalCommandTracker));
 		const clipboard = instantiationService.createInstance(ClipboardWatch);
-		const provider = this._register(instantiationService.createInstance(VoltInlineCompletionsProvider, this.recentEdits, index, terminals, clipboard));
+		const autoImports = this._register(instantiationService.createInstance(TabAutoImports));
+		const provider = this._register(instantiationService.createInstance(VoltInlineCompletionsProvider, this.recentEdits, index, terminals, clipboard, autoImports));
 		this._register(languageFeaturesService.inlineCompletionsProvider.register('*', provider));
 		const composer = this._register(instantiationService.createInstance(VoltComposerCompletionsProvider, terminals, clipboard));
 		// The composers' models are simple-widget models: a provider only sees them with hasAccessToAllModels.

@@ -23,6 +23,7 @@ import {
 	InlineCompletionsProvider,
 	InlineCompletionTriggerKind,
 } from '../../../../editor/common/languages.js';
+import { StandardTokenType } from '../../../../editor/common/encodedTokenAttributes.js';
 import { ITextModel } from '../../../../editor/common/model.js';
 import { IModelService } from '../../../../editor/common/services/model.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
@@ -43,6 +44,7 @@ import { resolveEditInModel, sortByPosition } from '../../../services/voltRuntim
 import { ITypingState, RecentEditsTracker } from '../../../services/voltRuntime/browser/prediction/recentEditsTracker.js';
 import { WorkspaceContextIndex } from '../../../services/voltRuntime/browser/prediction/workspaceContextIndex.js';
 import { ClipboardWatch } from './clipboardWatch.js';
+import { TabAutoImports } from './tabAutoImports.js';
 import { TerminalCommandTracker } from './terminalCommandTracker.js';
 
 type VoltItemKind = 'inline' | 'queued' | 'jump';
@@ -120,6 +122,7 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 		private readonly index: WorkspaceContextIndex,
 		private readonly terminals: TerminalCommandTracker,
 		private readonly clipboard: ClipboardWatch,
+		private readonly autoImports: TabAutoImports,
 		@IVoltPredictionService private readonly predictionService: IVoltPredictionService,
 		@IMarkerService private readonly markerService: IMarkerService,
 		@IModelService private readonly modelService: IModelService,
@@ -155,6 +158,10 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 
 		const explicit = context.triggerKind === InlineCompletionTriggerKind.Explicit;
 		if (settings.mode === 'subtle' && !explicit) {
+			return undefined;
+		}
+		// Settings > Tab > Suggestions While Commenting; the explicit trigger still asks.
+		if (!settings.inComments && !explicit && inComment(model, position)) {
 			return undefined;
 		}
 
@@ -232,7 +239,7 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 	}
 
 	/** A local guess, shown with no model call. */
-	private localList(model: ITextModel, position: Position, completion: string): IVoltCompletionList {
+	private localList(model: ITextModel, position: Position, completion: string): IVoltCompletionList | undefined {
 		this.predictionService.stats.bump('local');
 		return this.inlineList(model, position, completion);
 	}
@@ -241,10 +248,13 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 	 * Builds the ghost-text item for `completion` at `position`, fitted to the rest of the line.
 	 * `features`: the suggestion came from the model, and what Tab or Escape does with it trains the gate.
 	 */
-	private inlineList(model: ITextModel, position: Position, completion: string, features?: readonly number[]): IVoltCompletionList {
+	private inlineList(model: ITextModel, position: Position, completion: string, features?: readonly number[]): IVoltCompletionList | undefined {
 		// Re-read the line: the cursor's line may have changed while the model was answering.
 		const lineContent = model.getLineContent(position.lineNumber);
 		const edit = inlineEditForLine(completion, lineContent.slice(0, position.column - 1), lineContent.slice(position.column - 1));
+		if (!this.predictionService.getSettings().whitespaceOnly && whitespaceOnly(edit.insertText, edit.replacesLineSuffix ? lineContent.slice(position.column - 1) : '')) {
+			return undefined;
+		}
 		const item: IVoltInlineItem = {
 			voltKind: 'inline',
 			voltFeatures: features,
@@ -314,6 +324,12 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 		if (reason.kind === InlineCompletionEndOfLifeReasonKind.Accepted) {
 			if (item.voltKind === 'inline') {
 				this.lastAccept = { uri: completions.sourceModel.uri.toString(), at: Date.now() };
+			}
+			// Settings > Tab > Imports: names the suggestion used that the file does not import yet.
+			const accepted = item.voltKind === 'queued' && item.voltEdit ? item.voltEdit.replacement : item.voltKind === 'inline' && typeof item.insertText === 'string' ? item.insertText : undefined;
+			const start = Range.lift(item.range)?.getStartPosition();
+			if (accepted && start) {
+				this.autoImports.afterAccept(completions.sourceModel, start, accepted);
 			}
 			if (item.voltKind === 'queued' && item.voltEdit) {
 				this.dropAccepted(item.voltEdit);
@@ -388,7 +404,8 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 				continue;
 			}
 			const placed = resolveEditInModel(edit, model, position);
-			if (placed) {
+			// Settings > Tab > Whitespace-Only Suggestions: new lines and indentation alone are dropped.
+			if (placed && (this.predictionService.getSettings().whitespaceOnly || !whitespaceOnly(placed.replacement, model.getValueInRange(placed.range)))) {
 				local.push(placed);
 			}
 		}
@@ -499,6 +516,18 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
  */
 function pauseFor(ctx: IPredictionContext, typing: ITypingState): number {
 	return /[\p{L}\p{N}_$]$/u.test(ctx.linePrefix) && typing.keysLastSecond >= 3 ? MID_WORD_PAUSE_MS : 0;
+}
+
+/** The character before the cursor is in a comment, by the language's tokens. */
+function inComment(model: ITextModel, position: Position): boolean {
+	model.tokenization.tokenizeIfCheap(position.lineNumber);
+	const tokens = model.tokenization.getLineTokens(position.lineNumber);
+	return tokens.getStandardTokenType(tokens.findTokenIndexAtOffset(Math.max(0, position.column - 2))) === StandardTokenType.Comment;
+}
+
+/** The edit only adds, removes or moves whitespace: a new line, indentation. */
+function whitespaceOnly(inserted: string, replaced: string): boolean {
+	return inserted.replace(/\s+/g, '') === replaced.replace(/\s+/g, '');
 }
 
 /** An old clipboard still matters when it names code around the cursor. */
