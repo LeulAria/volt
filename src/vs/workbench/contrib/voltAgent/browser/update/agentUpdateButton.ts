@@ -10,6 +10,7 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { disposableTimeout } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { isLinux } from '../../../../../base/common/platform.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../../nls.js';
 import { Categories } from '../../../../../platform/action/common/actionCommonCategories.js';
@@ -284,20 +285,32 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 	private title(state: State): string {
 		const update = updateOf(state);
 		const version = update?.productVersion ?? '';
+		// Another channel is its own app, installed next to this one rather than over it.
+		const other = update?.voltChannel ? channelName(update.voltChannel) : undefined;
 		switch (state.type) {
 			case StateType.AvailableForDownload:
-				return update?.voltChannel
-					? localize('voltUpdate.otherChannel', "{0} {1} is available", channelName(update.voltChannel), version)
-					: localize('voltUpdate.available', "{0} {1} is available", this.productService.nameLong, version);
+				return localize('voltUpdate.available', "{0} {1} is available", other ?? this.productService.nameLong, version);
 			case StateType.Downloading:
+				if (other) {
+					return state.progress !== undefined
+						? localize('voltUpdate.downloadingOtherProgress', "Downloading {0} ({1}%)", other, Math.round(state.progress * 100))
+						: localize('voltUpdate.downloadingOther', "Downloading {0}…", other);
+				}
 				return state.progress !== undefined
 					? localize('voltUpdate.downloadingProgress', "Downloading update ({0}%)", Math.round(state.progress * 100))
 					: localize('voltUpdate.downloading', "Downloading update…");
 			case StateType.Downloaded:
 				return localize('voltUpdate.downloaded', "Update downloaded");
 			case StateType.Updating:
-				return localize('voltUpdate.installing', "Installing update…");
+				return other
+					? localize('voltUpdate.installingOther', "Installing {0}…", other)
+					: localize('voltUpdate.installing', "Installing update…");
 			case StateType.Ready:
+				if (other) {
+					return version
+						? localize('voltUpdate.installedOtherVersion', "{0} {1} is installed", other, version)
+						: localize('voltUpdate.installedOther', "{0} is installed", other);
+				}
 				return localize('voltUpdate.ready', "Restart to update");
 			default:
 				return '';
@@ -420,16 +433,20 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 
 	private detail(state: State, update: IVoltUpdate | undefined): string | undefined {
 		const version = update?.productVersion;
+		const other = update?.voltChannel ? channelName(update.voltChannel) : undefined;
 		switch (state.type) {
 			case StateType.AvailableForDownload:
-				return update?.voltChannel
-					? localize('voltUpdate.otherChannelDetail', "Installs next to {0} and keeps its own settings.", this.productService.nameLong)
+				return other
+					? localize('voltUpdate.otherChannelDetail2', "Installs next to {0} with its own settings, and keeps itself up to date.", this.productService.nameLong)
 					: localize('voltUpdate.availableDetail', "Download the new version from GitHub.");
 			case StateType.Downloading:
 			case StateType.Downloaded:
 			case StateType.Updating:
-				return version ? localize('voltUpdate.toVersion', "{0} {1}", this.productService.nameLong, version) : undefined;
+				return version ? localize('voltUpdate.toVersion', "{0} {1}", other ?? this.productService.nameLong, version) : undefined;
 			case StateType.Ready:
+				if (other) {
+					return localize('voltUpdate.installedOtherDetail', "It runs next to {0} with its own settings, and keeps itself up to date.", this.productService.nameLong);
+				}
 				return version
 					? localize('voltUpdate.readyDetail', "{0} {1} is installed and starts after a restart.", this.productService.nameLong, version)
 					: undefined;
@@ -444,13 +461,18 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 				? { label: localize('voltUpdate.restart', "Restart to Update"), run: async () => AgentUpdateButtonContribution.simulate(undefined) }
 				: undefined;
 		}
+		const channel = updateOf(state)?.voltChannel;
 		switch (state.type) {
 			case StateType.AvailableForDownload:
-				return { label: localize('voltUpdate.download', "Download"), run: () => this.updateService.downloadUpdate() };
+				return channel && !isLinux
+					? { label: localize('voltUpdate.installOther', "Install {0}", channelName(channel)), run: () => this.updateService.downloadUpdate() }
+					: { label: localize('voltUpdate.download', "Download"), run: () => this.updateService.downloadUpdate() };
 			case StateType.Downloaded:
 				return { label: localize('voltUpdate.install', "Install Update"), run: () => this.updateService.applyUpdate() };
 			case StateType.Ready:
-				return { label: localize('voltUpdate.restart', "Restart to Update"), run: () => this.updateService.quitAndInstall() };
+				return channel
+					? { label: localize('voltUpdate.openOther', "Open {0}", channelName(channel)), run: () => this.updateService.quitAndInstall() }
+					: { label: localize('voltUpdate.restart', "Restart to Update"), run: () => this.updateService.quitAndInstall() };
 			default:
 				return undefined;
 		}

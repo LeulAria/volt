@@ -17,7 +17,7 @@ import { INotificationService, NotificationPriority, Severity } from '../../../.
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IBrowserWorkbenchEnvironmentService } from '../../../services/environment/browser/environmentService.js';
 import { ReleaseNotesManager } from './releaseNotesEditor.js';
-import { isMacintosh, isWeb, isWindows } from '../../../../base/common/platform.js';
+import { isLinux, isMacintosh, isWeb, isWindows } from '../../../../base/common/platform.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { RawContextKey, IContextKey, IContextKeyService, ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { MenuRegistry, MenuId, registerAction2, Action2 } from '../../../../platform/actions/common/actions.js';
@@ -357,7 +357,7 @@ export class UpdateContribution extends Disposable implements IWorkbenchContribu
 			severity.Info,
 			message,
 			[{
-				label: nls.localize('download update', "Download Update"),
+				label: voltChannel && !isLinux ? nls.localize('voltInstallOtherChannel', "Install {0}", voltChannelName(voltChannel)) : nls.localize('download update', "Download Update"),
 				run: () => this.updateService.downloadUpdate()
 			}, {
 				label: nls.localize('later', "Later"),
@@ -412,6 +412,18 @@ export class UpdateContribution extends Disposable implements IWorkbenchContribu
 	// windows and mac
 	private onUpdateReady(update: IUpdate): void {
 		if (!(isWindows && this.productService.target !== 'user') && !this.shouldShowNotification()) {
+			return;
+		}
+
+		// Volt: another channel's app was installed next to this one; offer to open it.
+		const voltChannel = (update as IVoltUpdate).voltChannel;
+		if (voltChannel) {
+			this.notificationService.prompt(
+				severity.Info,
+				nls.localize('voltOtherChannelInstalled', "{0} {1} is installed next to {2}.", voltChannelName(voltChannel), update.productVersion, this.productService.nameLong),
+				[{ label: nls.localize('voltOpenOtherChannel', "Open {0}", voltChannelName(voltChannel)), run: () => this.updateService.quitAndInstall() }],
+				{ priority: NotificationPriority.OPTIONAL }
+			);
 			return;
 		}
 
