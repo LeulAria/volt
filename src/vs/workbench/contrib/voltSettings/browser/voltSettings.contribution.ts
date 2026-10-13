@@ -16,6 +16,7 @@ import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/edit
 import { EditorExtensions, IEditorFactoryRegistry } from '../../../common/editor.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { VoltSettingsEditor } from './voltSettingsEditor.js';
+import './voltAppearance.contribution.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID, VOLT_SETTINGS_EDITOR_ID, VoltSettingsEditorInput, VoltSettingsEditorInputSerializer } from './voltSettingsEditorInput.js';
 
 Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(

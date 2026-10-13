@@ -1,0 +1,21 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Settings > Appearance, applied to the workbench by voltAppearance.contribution.ts. */
+
+/* UI Font Family: the interface typeface (editors keep the code font). */
+:root .monaco-workbench.volt-ui-font,
+:root .monaco-workbench.volt-ui-font :is(input, textarea, button, select) {
+	font-family: var(--volt-ui-font-family);
+}
+
+/*
+ * Reduce Transparency: the see-through agent window and its sidebar paint solid, exactly as they
+ * do in full screen (agentHomePane.css).
+ */
+.monaco-workbench.volt-layout-agent.volt-reduce-transparency {
+	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000);
+}
