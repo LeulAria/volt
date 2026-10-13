@@ -3,12 +3,17 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { execFile } from 'child_process';
 import * as electron from 'electron';
+import * as fs from 'fs';
+import { homedir, tmpdir } from 'os';
+import { promisify } from 'util';
 import { CancellationToken } from '../../../base/common/cancellation.js';
 import { memoize } from '../../../base/common/decorators.js';
 import { Event } from '../../../base/common/event.js';
 import { hash } from '../../../base/common/hash.js';
 import { DisposableStore } from '../../../base/common/lifecycle.js';
+import * as path from '../../../base/common/path.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILifecycleMainService, IRelaunchHandler, IRelaunchOptions } from '../../lifecycle/electron-main/lifecycleMainService.js';
@@ -17,8 +22,9 @@ import { IProductService } from '../../product/common/productService.js';
 import { IRequestService } from '../../request/common/request.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { AvailableForDownload, IUpdate, State, StateType, UpdateType } from '../common/update.js';
-import { IVoltUpdate, voltFeedUrl, VoltReleaseChannel } from '../common/voltUpdateFeed.js';
+import { IVoltUpdate, VOLT_CHANNEL_APP_NAMES, voltFeedUrl, VoltReleaseChannel } from '../common/voltUpdateFeed.js';
 import { AbstractUpdateService, createUpdateURL, UpdateErrorClassification } from './abstractUpdateService.js';
+import { downloadVoltUpdate } from './voltUpdateDownload.js';
 
 export class DarwinUpdateService extends AbstractUpdateService implements IRelaunchHandler {
 
@@ -54,7 +60,7 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 			return false; // we cannot apply an update and restart with different args
 		}
 
-		if (this.state.type !== StateType.Ready) {
+		if (this.state.type !== StateType.Ready || (this.state.update as IVoltUpdate).voltChannel) {
 			return false; // we only handle the relaunch when we have a pending update
 		}
 
@@ -169,12 +175,106 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 	}
 
 	protected override async doDownloadUpdate(state: AvailableForDownload): Promise<void> {
-		// Volt: open the dmg (or the other channel's download page) in the browser.
 		const update = state.update as IVoltUpdate;
-		if (update.url) {
-			await electron.shell.openExternal(update.voltChannel ? update.url : (update.downloadUrl ?? this.productService.voltRelease?.downloadPage ?? update.url));
+		if (update.voltChannel && update.url?.endsWith('.zip')) {
+			return this.installVoltChannel(update, update.voltChannel);
+		}
+		// Volt: Squirrel.Mac can't install this build; open the dmg (or the download page) in the browser.
+		const url = update.downloadUrl ?? this.productService.voltRelease?.downloadPage ?? update.url;
+		if (url) {
+			await electron.shell.openExternal(url);
 		}
 		this.setState(State.Idle(UpdateType.Archive));
+	}
+
+	/**
+	 * Volt: installs another channel's app next to this one (each channel is its own app, with its
+	 * own bundle id and settings, so Squirrel.Mac can't swap it in). Downloads the channel's zip,
+	 * unpacks it with ditto beside the destination, and moves the app into place.
+	 */
+	private async installVoltChannel(update: IVoltUpdate, channel: VoltReleaseChannel): Promise<void> {
+		const name = `${VOLT_CHANNEL_APP_NAMES[channel]}.app`;
+		this.setState(State.DownloadingUpdate(update, 0));
+		const staging = await fs.promises.mkdtemp(path.join(tmpdir(), `volt-${channel}-`));
+		try {
+			const zip = path.join(staging, 'update.zip');
+			await downloadVoltUpdate(this.requestService, update.url!, zip, {
+				sha256hash: update.sha256hash,
+				size: update.size,
+				onProgress: progress => {
+					if (this.state.type === StateType.Downloading) {
+						this.setState(State.DownloadingUpdate(update, progress));
+					}
+				},
+			});
+			this.setState(State.Updating(update));
+			const folder = await this.writableAppFolder();
+			const target = path.join(folder, name);
+			// Unpacked next to the destination, so moving it in is a rename on one volume.
+			const unpacked = await fs.promises.mkdtemp(path.join(folder, `.${name}-`));
+			try {
+				await promisify(execFile)('/usr/bin/ditto', ['-x', '-k', zip, unpacked]);
+				const app = (await fs.promises.readdir(unpacked)).find(entry => entry.endsWith('.app'));
+				if (!app) {
+					throw new Error(`The ${VOLT_CHANNEL_APP_NAMES[channel]} download has no app in it`);
+				}
+				if (!fs.existsSync(target)) {
+					await fs.promises.rename(path.join(unpacked, app), target);
+				}
+			} finally {
+				await fs.promises.rm(unpacked, { recursive: true, force: true });
+			}
+			this.logService.info(`update#darwin - installed ${target}`);
+			this.setState(State.Ready(update));
+		} catch (err) {
+			this.logService.error(`update#darwin - installing ${name} failed`, err);
+			this.setState(State.Idle(UpdateType.Archive, err instanceof Error ? err.message : String(err)));
+		} finally {
+			await fs.promises.rm(staging, { recursive: true, force: true });
+		}
+	}
+
+	/** Volt: where channel apps live: next to this app, then /Applications and ~/Applications. */
+	private voltAppFolders(): string[] {
+		const bundle = path.resolve(process.execPath, '..', '..', '..');
+		return [...new Set([path.dirname(bundle), '/Applications', path.join(homedir(), 'Applications')])];
+	}
+
+	/** Volt: the first app folder this user can write to (a translocated or dmg-mounted app's isn't). */
+	private async writableAppFolder(): Promise<string> {
+		const folders = this.voltAppFolders();
+		for (const folder of folders) {
+			try {
+				await fs.promises.access(folder, fs.constants.W_OK);
+				return folder;
+			} catch {
+				// next
+			}
+		}
+		const fallback = folders[folders.length - 1];
+		await fs.promises.mkdir(fallback, { recursive: true });
+		return fallback;
+	}
+
+	private voltChannelAppPath(channel: VoltReleaseChannel): string | undefined {
+		const name = `${VOLT_CHANNEL_APP_NAMES[channel]}.app`;
+		return this.voltAppFolders().map(folder => path.join(folder, name)).find(app => fs.existsSync(app));
+	}
+
+	protected override isVoltChannelInstalled(channel: VoltReleaseChannel): boolean {
+		return !!this.voltChannelAppPath(channel);
+	}
+
+	protected override openVoltChannel(channel: VoltReleaseChannel): void {
+		const app = this.voltChannelAppPath(channel);
+		if (!app) {
+			return;
+		}
+		void electron.shell.openPath(app).then(error => {
+			if (error) {
+				this.logService.error(`update#darwin - opening ${app} failed: ${error}`);
+			}
+		});
 	}
 
 	private onUpdateAvailable(): void {
