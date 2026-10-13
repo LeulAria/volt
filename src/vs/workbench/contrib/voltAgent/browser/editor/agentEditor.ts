@@ -163,6 +163,7 @@ import { SHOW_AGENT_COMMANDS_COMMAND_ID } from './agentSessionCommands.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
+import { IAgentTurnReveal, onDidRequestAgentTurnReveal, takeAgentTurnReveal } from '../search/agentTurnReveal.js';
 import { AgentThreadView } from './agentThreadView.js';
 import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { renderHandoffDivider } from '../chrome/agentHandoffDivider.js';
@@ -750,6 +751,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	/** Compact context was clicked and its turn has not started yet. */
 	private compactRequested = false;
 	private readonly compactRequestTimeout = this._register(new MutableDisposable());
+	/** Waits for the thread to render before landing on a turn Search Chats picked. */
+	private readonly turnRevealTimer = this._register(new MutableDisposable());
 	/** The chip showed a running compaction; when it ends, the chip says so for a moment. */
 	private compactChipWasRunning = false;
 	private readonly compactChipDone = this._register(new MutableDisposable());
@@ -1436,6 +1439,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 		this.findWidget = this._register(this.instantiationService.createInstance(AgentFindWidget, this));
 		this.container.appendChild(this.findWidget.getDomNode());
+		// Search Chats asks a chat already on screen to land on a message; others take the request in setInput.
+		this._register(onDidRequestAgentTurnReveal(sessionId => {
+			if (this.input instanceof AgentEditorInput && this.input.sessionId === sessionId && this.messages.length) {
+				this.revealRequestedTurn(sessionId);
+			}
+		}));
 
 		// The text line is only 22px of the box: a click on the rest of it (padding, placeholder, toolbar gaps) focuses the input too.
 		const blankSurfaces = new Set<EventTarget>([this.inputBox, this.monacoHost, this.placeholderEl, this.toolbarEl, this.toolbarStartEl, this.toolbarEndEl]);
@@ -7469,6 +7478,37 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.inputEditor?.focus();
 		}
 		this.schedulePrewarm();
+		this.revealRequestedTurn(input.sessionId);
+	}
+
+	/** Lands on the message Search Chats picked, its matched words highlighted by the find widget. */
+	private revealRequestedTurn(sessionId: string): void {
+		const reveal = takeAgentTurnReveal(sessionId);
+		if (reveal) {
+			this.revealTurnMatch(reveal, 0);
+		}
+	}
+
+	private revealTurnMatch(reveal: IAgentTurnReveal, attempt: number): void {
+		const index = this.messages.findIndex(message => message.kind === 'user' && message.id === reveal.turnId);
+		const turn = index >= 0 ? this.userTurnAt(index) : undefined;
+		if (!turn && attempt < 20) {
+			// The thread renders a moment after the chat loads.
+			this.turnRevealTimer.value = disposableTimeout(() => this.revealTurnMatch(reveal, attempt + 1), 50);
+			return;
+		}
+		if (reveal.find) {
+			this.findWidget.reveal(reveal.find, false);
+			// The widget went to the chat's first match; start from the picked turn instead.
+			const at = turn ? this.findMatches.findIndex(match => turn.compareDocumentPosition(match) & Node.DOCUMENT_POSITION_FOLLOWING) : -1;
+			if (at >= 0) {
+				this.currentFindIndex = at;
+				this.highlightCurrentMatch();
+				void this.findWidget.updateResultCount();
+				return;
+			}
+		}
+		turn?.scrollIntoView({ block: 'start', inline: 'nearest' });
 	}
 
 	/**

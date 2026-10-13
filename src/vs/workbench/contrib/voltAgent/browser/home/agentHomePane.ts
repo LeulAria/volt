@@ -50,6 +50,7 @@ import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGE
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { appendAgentFooterActions } from './agentHomeFooterActions.js';
+import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.js';
 import { createHomeAutomationsIcon, createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeStatusBadgeIcon } from './agentHomeIcons.js';
 import { showAgentSnoozeMenu } from './agentSnoozeMenu.js';
 import { activateAgentProject, startAgentChat } from '../workspace/agentPanels.js';
@@ -1446,7 +1447,7 @@ export class AgentHomePane extends Disposable {
 	private async runAction(id: AgentHomeActionId): Promise<void> {
 		switch (id) {
 			case 'search':
-				await this.commandService.executeCommand('workbench.action.showCommands');
+				await this.commandService.executeCommand(SEARCH_AGENT_CHATS_COMMAND_ID);
 				return;
 			case 'automations':
 				await this.commandService.executeCommand(OPEN_AUTOMATIONS_COMMAND_ID);

@@ -25,7 +25,6 @@ import { ActiveEditorContext } from '../../../../common/contextkeys.js';
 import { EditorExtensions, IEditorFactoryRegistry } from '../../../../common/editor.js';
 import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
-import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
 import { getLayoutMode, revealAgentSidePanel } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { LAYOUT_MODE_CONTEXT_KEY } from '../../../../browser/parts/titlebar/layoutKeybindingMode.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
@@ -53,6 +52,7 @@ import { findAgentPanelGroup, openAgentPanel } from '../workspace/agentPanels.js
 import { agentSideChatParents, liveAgentToolsPart, revealAgentSideChat } from '../workspace/agentSurfaceHost.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
+import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.js';
 
 const agentTitleActions = ContextKeyExpr.or(
 	ActiveEditorContext.isEqualTo(AGENT_EDITOR_ID),
@@ -63,26 +63,6 @@ async function showAgentSidePanel(accessor: ServicesAccessor, focus: boolean): P
 	const layoutService = accessor.get(IWorkbenchLayoutService);
 	revealAgentSidePanel(layoutService);
 	return (await accessor.get(IViewsService).openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, focus)) ?? undefined;
-}
-
-async function searchAgentSessions(accessor: ServicesAccessor): Promise<void> {
-	const history = accessor.get(IAgentHistoryService);
-	await history.whenReady;
-	const items = history.list({ limit: 80 }).map(session => ({
-		label: session.title || session.preview || session.id,
-		description: session.workspaceLabel,
-		detail: session.summary || (session.title ? session.preview : undefined),
-		sessionId: session.id,
-	} satisfies IQuickPickItem & { sessionId: string }));
-	const picked = await accessor.get(IQuickInputService).pick(items, {
-		placeHolder: localize('voltAgent.home.searchSessions', "Search chats"),
-		matchOnDescription: true,
-		matchOnDetail: true,
-	});
-	if (picked) {
-		const view = await showAgentSidePanel(accessor, false);
-		await view?.openSession(picked.sessionId);
-	}
 }
 
 /** Open (or replace) a new agent in the group that owns the `+`, not the other pane. */
@@ -200,7 +180,7 @@ registerAction2(class ShowAgentHistoryAction extends Action2 {
 	/** The tab-bar icon opens a dropdown (see AgentEditor.getActionViewItem); everywhere else opens the drawer. */
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		if (getLayoutMode(accessor.get(IWorkbenchLayoutService)) === 'agent') {
-			await searchAgentSessions(accessor);
+			await accessor.get(ICommandService).executeCommand(SEARCH_AGENT_CHATS_COMMAND_ID);
 			return;
 		}
 		const view = await showAgentSidePanel(accessor, false);

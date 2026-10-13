@@ -27,6 +27,7 @@ import { AuxiliaryBarPart } from '../../../../browser/parts/auxiliarybar/auxilia
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { createHomeNewChatIcon, createHomeSearchIcon } from '../home/agentHomeIcons.js';
+import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { activateAgentProject, startAgentChat } from '../workspace/agentPanels.js';
@@ -99,7 +100,7 @@ export class AgentSidebarRailContribution extends Disposable implements IWorkben
 		this.button(top, 'new-chat', localize('voltAgent.rail.newChat', "New Chat"), createHomeNewChatIcon(),
 			() => void this.commandService.executeCommand(NEW_AGENT_COMMAND_ID), this.keybindingService.lookupKeybinding(NEW_AGENT_COMMAND_ID)?.getLabel() ?? undefined);
 		this.button(top, 'search', localize('voltAgent.rail.search', "Search"), createHomeSearchIcon(),
-			() => void this.commandService.executeCommand('workbench.action.showCommands'));
+			() => void this.commandService.executeCommand(SEARCH_AGENT_CHATS_COMMAND_ID));
 		append(this.rail, $('.volt-rail-sep'));
 		this.projectsEl = append(this.rail, $('.volt-rail-group.volt-rail-projects'));
 		this.projectsEl.setAttribute('role', 'group');

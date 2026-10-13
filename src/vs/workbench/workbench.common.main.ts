@@ -220,6 +220,7 @@ import './contrib/voltCodeIntelligence/browser/voltCodeIntelligence.contribution
 // New Agent editor
 import './contrib/voltAgent/browser/editor/agentEditor.contribution.js';
 import './contrib/voltAgent/browser/history/agentHistory.contribution.js';
+import './contrib/voltAgent/browser/search/agentChatSearch.contribution.js';
 import './contrib/voltAgent/browser/customize/agentCustomize.contribution.js';
 import './contrib/voltAgent/browser/home/agentThreadLifecycle.contribution.js';
 // Per-project tokens, cost and agent time, for Project Settings
