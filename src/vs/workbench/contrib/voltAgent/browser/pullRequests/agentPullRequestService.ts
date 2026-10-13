@@ -14,6 +14,7 @@ import { IEnvironmentService } from '../../../../../platform/environment/common/
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { ILifecycleService } from '../../../../services/lifecycle/common/lifecycle.js';
@@ -47,6 +48,7 @@ import { IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolResult, IVoltHostToo
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { AGENT_BRANCH_PREFIX_SETTING, AGENT_PR_ATTRIBUTION_SETTING, readBranchPrefix, withPullRequestAttribution } from '../../common/agentGitSettings.js';
 import {
 	addLink,
 	buildPullRequestTextPrompt,
@@ -254,6 +256,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		@ILifecycleService lifecycleService: ILifecycleService,
 		@IHostService hostService: IHostService,
 		@ISecretStorageService private readonly secretStorage: ISecretStorageService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 	) {
 		super();
 		this.storeFile = joinPath(environmentService.userRoamingDataHome, 'voltPullRequests', 'links.json');
@@ -462,8 +465,13 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		return this.api.stack({ folder, branch });
 	}
 
+	/** What new branches Volt names start with (Settings > Git & PRs). */
+	private branchPrefix(): string {
+		return readBranchPrefix(this.configurationService.getValue(AGENT_BRANCH_PREFIX_SETTING));
+	}
+
 	stackNewBranch(folder: string, title: string): Promise<{ readonly branch: string; readonly parent: string }> {
-		return this.api.stackNewBranch({ folder, title });
+		return this.api.stackNewBranch({ folder, title, prefix: this.branchPrefix() });
 	}
 
 	async restack(folder: string, branch: string | undefined, syncTrunk: boolean): Promise<IVoltPrRestackOutcome> {
@@ -1207,7 +1215,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			head: repo.branch!,
 			base: options.base,
 			title: options.title.trim(),
-			body: options.body,
+			body: this.configurationService.getValue<boolean>(AGENT_PR_ATTRIBUTION_SETTING) !== false ? withPullRequestAttribution(options.body) : options.body,
 			draft: options.draft,
 		};
 		const pr = await this.api.create(request);
@@ -1328,7 +1336,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 					if (!title) {
 						return { error: 'Give a title for the new layer.' };
 					}
-					return json(await this.api.stackNewBranch({ folder, title }));
+					return json(await this.api.stackNewBranch({ folder, title, prefix: this.branchPrefix() }));
 				}
 				case RESTACK_TOOL: {
 					const folder = this.folderFor(sessionId);

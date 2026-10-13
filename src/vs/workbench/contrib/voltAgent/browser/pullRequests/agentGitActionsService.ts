@@ -13,6 +13,7 @@ import { localize } from '../../../../../nls.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { createDecorator, IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IVoltGitStatus, IVoltPullRequest, voltPrErrorMessage } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { Action } from '../../../../../base/common/actions.js';
@@ -33,6 +34,7 @@ import {
 	summarizeResult,
 } from '../../common/agentGitActions.js';
 import { currentLink, isOpenState } from '../../common/agentPullRequests.js';
+import { AGENT_BRANCH_PREFIX_SETTING, AGENT_COMMIT_ATTRIBUTION_SETTING, readBranchPrefix, withCommitAttribution } from '../../common/agentGitSettings.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
 import { openPullRequest } from './agentPullRequestUi.js';
 import { showAgentGitCommitDialog } from './agentGitCommitDialog.js';
@@ -109,6 +111,7 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 		@INotificationService private readonly notificationService: INotificationService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@ILogService private readonly logService: ILogService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IFileService fileService: IFileService,
 		@IHostService hostService: IHostService,
 	) {
@@ -388,6 +391,9 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 					}) ?? fallbackCommitMessage(status);
 				}
 				const newBranch = featureBranch ? await this.freeBranchName(folder, message.split('\n')[0]) : undefined;
+				if (this.configurationService.getValue<boolean>(AGENT_COMMIT_ATTRIBUTION_SETTING) !== false) {
+					message = withCommitAttribution(message);
+				}
 				this.setProgress(folder, newBranch ? localize('voltGit.stage.commitOn', "Committing on {0}…", newBranch) : localize('voltGit.stage.commit', "Committing…"));
 				const commit = await this.pullRequests.api.commit({ folder, message, paths, ...(newBranch ? { newBranch } : {}) });
 				result.commit = { sha: commit.sha, subject: commit.subject };
@@ -495,7 +501,7 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 		} catch (err) {
 			this.logService.trace('[volt-git] could not list remote branches', err);
 		}
-		return featureBranchName(subject, existing);
+		return featureBranchName(subject, existing, readBranchPrefix(this.configurationService.getValue(AGENT_BRANCH_PREFIX_SETTING)));
 	}
 
 	private setProgress(folder: string, label: string | undefined): void {

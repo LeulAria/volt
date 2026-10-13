@@ -665,7 +665,8 @@ export interface IVoltPullRequestService {
 	/** The stack the branch (the checked out one by default) is in, bottom first, with each layer's pull request. */
 	stack(request: { readonly folder: string; readonly branch?: string }): Promise<IVoltPrStackView | undefined>;
 	/** Creates a layer on the checked out branch, named from `title`, and checks it out. */
-	stackNewBranch(request: { readonly folder: string; readonly title: string }): Promise<{ readonly branch: string; readonly parent: string }>;
+	/** `prefix` starts the new branch's name (`volt/` when left out). */
+	stackNewBranch(request: { readonly folder: string; readonly title: string; readonly prefix?: string }): Promise<{ readonly branch: string; readonly parent: string }>;
 	/**
 	 * Moves the layers above whatever changed: a parent that was amended, rebased or squash-merged.
 	 * Children of a merged pull request first sit on its parent (and their pull requests target it).

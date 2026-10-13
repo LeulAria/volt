@@ -1523,7 +1523,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		return { stack, layers, checkedOut: status.branch };
 	}
 
-	async stackNewBranch(request: { readonly folder: string; readonly title: string }): Promise<{ readonly branch: string; readonly parent: string }> {
+	async stackNewBranch(request: { readonly folder: string; readonly title: string; readonly prefix?: string }): Promise<{ readonly branch: string; readonly parent: string }> {
 		const status = await this.gitStatus(request.folder);
 		if (!status?.branch || !status.head) {
 			throw new VoltPrError('failed', 'Check out a branch with a commit to stack on.');
@@ -1532,7 +1532,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		const parentOid = status.head;
 		const context = this.stackContext(status.root, status.defaultBranch, status.remote);
 		return this.gitQueue.queue(status.root, async () => {
-			const branch = stackBranchName(request.title, new Set((await readBranchStates(context)).keys()));
+			const branch = stackBranchName(request.title, new Set((await readBranchStates(context)).keys()), request.prefix);
 			const created = await this.run('git', ['checkout', '-b', branch], { cwd: status.root, timeoutMs: 30_000 });
 			if (created.code !== 0) {
 				throw new VoltPrError('failed', `git checkout -b ${branch} failed: ${ghErrorText(created.stderr)}`);

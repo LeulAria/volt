@@ -197,7 +197,7 @@ export function actionIncludesPr(action: AgentGitAction): boolean {
 }
 
 /** A branch name for the work, from the commit subject: `volt/add-word-counts`, made unique against `existing`. */
-export function featureBranchName(subject: string | undefined, existing: readonly string[]): string {
+export function featureBranchName(subject: string | undefined, existing: readonly string[], prefix = 'volt/'): string {
 	const slug = (subject ?? '')
 		.toLowerCase()
 		.replace(/^(feat|fix|chore|docs|refactor|test|perf|build|ci|style)(\([^)]*\))?!?:\s*/, '')
@@ -207,7 +207,7 @@ export function featureBranchName(subject: string | undefined, existing: readonl
 		.filter(Boolean)
 		.slice(0, 6)
 		.join('-');
-	const base = `volt/${slug || 'changes'}`;
+	const base = `${prefix}${slug || 'changes'}`;
 	const taken = new Set(existing.map(name => name.toLowerCase()));
 	if (!taken.has(base)) {
 		return base;

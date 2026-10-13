@@ -33,6 +33,7 @@ import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/ru
 import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { AGENT_DEFAULT_MODEL_SETTING } from '../../common/agentComposerSettings.js';
+import { AGENT_BRANCH_PREFIX_SETTING, readBranchPrefix } from '../../common/agentGitSettings.js';
 import { externalCallerId, externalSpendWindow } from './agentExternalCaller.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
@@ -682,7 +683,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			if (!root) {
 				throw new Error('The chat has no project folder to make a worktree from.');
 			}
-			created = await this.worktrees.create(root, { kind: 'new', name: `volt/${branchSlug(title)}-${forkId.slice(-4)}`, ...(base ? { from: base } : {}) });
+			created = await this.worktrees.create(root, { kind: 'new', name: `${this.branchPrefix()}${branchSlug(title)}-${forkId.slice(-4)}`, ...(base ? { from: base } : {}) });
 		}
 		if (project) {
 			attachSessionToProject(this.sessionContext, this.workspace, this.history, forkId, project);
@@ -947,9 +948,14 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			return { kind: 'new', name: workspace.branch, ...(workspace.baseRef ? { from: await this.resolveRef(root, workspace.baseRef) } : {}) };
 		}
 		if (workspace.baseRef) {
-			return { kind: 'new', name: `volt/${branchSlug(title)}-${threadId.slice(-4)}`, from: await this.resolveRef(root, workspace.baseRef) };
+			return { kind: 'new', name: `${this.branchPrefix()}${branchSlug(title)}-${threadId.slice(-4)}`, from: await this.resolveRef(root, workspace.baseRef) };
 		}
 		return undefined;
+	}
+
+	/** What the branches Volt names for delegated work start with (Settings > Git & PRs). */
+	private branchPrefix(): string {
+		return readBranchPrefix(this.configurationService.getValue(AGENT_BRANCH_PREFIX_SETTING));
 	}
 
 	/** A branch, tag, remote branch or commit as the full ref the worktree service expects. */
