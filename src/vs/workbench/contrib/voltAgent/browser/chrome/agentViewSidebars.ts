@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentViewSidebars.css';
-import { $, addDisposableListener, append, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, EventHelper, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
@@ -26,6 +26,7 @@ import {
 	SET_IDE_LAYOUT_MODE_COMMAND_ID,
 } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
+import { showAgentBranchMenu } from '../picker/agentBranchMenu.js';
 import { OPEN_BROWSER_COMMAND_ID, VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { AgentChangesEditorInput, OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
 import { createPrimarySidebarToggleIcon } from '../../../../browser/parts/titlebar/sidebarToggleIcon.js';
@@ -93,6 +94,8 @@ interface IDockAction {
 	readonly command: string;
 	/** Arguments read at click time. */
 	readonly args?: () => unknown[];
+	/** Runs instead of {@link command}, given the row, e.g. to open a menu under it. */
+	readonly run?: (row: HTMLElement) => void;
 }
 
 /**
@@ -399,8 +402,21 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.createActionRow(workspace, browser);
 
 		const git = append(append(body, $('.volt-agent-dock-section.volt-agent-dock-git')), $('.volt-agent-dock-actions'));
-		// The project's repository goes along, or git first asks which repository (agent worktrees are repositories too).
-		this.branchLabel = this.createActionRow(git, { id: 'branch', label: '', icon: Codicon.gitBranch, command: 'git.checkout', args: () => this.branchRepository?.provider.rootUri ? [this.branchRepository.provider.rootUri] : [] });
+		// The branch dropdown under the row, as the new chat's Branch pill opens it; git.checkout is the fallback without a repository.
+		this.branchLabel = this.createActionRow(git, {
+			id: 'branch',
+			label: '',
+			icon: Codicon.gitBranch,
+			command: 'git.checkout',
+			run: row => {
+				const repository = this.branchRepository;
+				if (repository?.provider.rootUri) {
+					instantiationService.invokeFunction(showAgentBranchMenu, { anchor: row, root: repository.provider.rootUri, repository });
+				} else {
+					void this.commandService.executeCommand('git.checkout');
+				}
+			},
+		});
 		this.branchRow = this.branchLabel.parentElement!;
 		const changesLabel = this.createActionRow(git, changes);
 		this.changesAdd = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.add'));
@@ -555,7 +571,12 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.appendActionIcon(row, action);
 		const label = append(row, $('span.volt-agent-dock-row-label'));
 		label.textContent = action.label;
-		this._register(addDisposableListener(row, 'click', () => {
+		this._register(addDisposableListener(row, 'click', e => {
+			if (action.run) {
+				EventHelper.stop(e, true);
+				action.run(row);
+				return;
+			}
 			void this.commandService.executeCommand(action.command, ...(action.args?.() ?? []));
 		}));
 		return label;

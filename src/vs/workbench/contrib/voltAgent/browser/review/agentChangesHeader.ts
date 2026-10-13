@@ -24,6 +24,7 @@ import { ScmHistoryItemResolver } from '../../../multiDiffEditor/browser/scmMult
 import { getHistoryItemEditorTitle } from '../../../scm/browser/util.js';
 import { ISCMHistoryItem } from '../../../scm/common/history.js';
 import { ISCMRepository, ISCMService } from '../../../scm/common/scm.js';
+import { showAgentBranchMenu } from '../picker/agentBranchMenu.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { SHOW_AGENT_SCM_COMMAND_ID } from '../../common/agentGitActions.js';
 import { AgentChangesScope, IAgentChangesTurn, agentScopeTurnId } from './agentSessionChanges.js';
@@ -150,8 +151,9 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 		}));
 		this._register(addDisposableListener(this.branchButton, 'click', e => {
 			EventHelper.stop(e, true);
-			const root = this.repository?.provider.rootUri;
-			void this.commandService.executeCommand('git.checkout', root);
+			// The same dropdown as the new chat's Branch pill, under the button, not the quick pick up top.
+			const repository = this.repository;
+			this.instantiationService.invokeFunction(showAgentBranchMenu, { anchor: this.branchButton, root: repository?.provider.rootUri, repository });
 		}));
 		this._register(addDisposableListener(commit, 'click', e => {
 			EventHelper.stop(e, true);
