@@ -30,6 +30,7 @@ import { MenuPreventer } from '../../../codeEditor/browser/menuPreventer.js';
 import { SelectionClipboardContributionID } from '../../../codeEditor/browser/selectionClipboard.js';
 import { getSimpleEditorOptions } from '../../../codeEditor/browser/simpleEditorOptions.js';
 import { markupToFragment } from './agentMarkupDom.js';
+import { AGENT_CODE_WRAP_SETTING } from '../../common/agentAppearanceSettings.js';
 
 export interface ICodeCardOptions {
 	readonly store: DisposableStore;
@@ -417,7 +418,7 @@ export function mountMonacoCode(scroll: HTMLElement, text: string, alias: string
 					lineNumbersMinChars: display.lineNumbers ? 2 : 0,
 					minimap: { enabled: false },
 					scrollBeyondLastLine: false,
-					wordWrap: 'off',
+					wordWrap: configurationService.getValue<boolean>(AGENT_CODE_WRAP_SETTING) ? 'on' : 'off',
 					renderLineHighlight: 'none',
 					renderLineHighlightOnlyWhenFocus: false,
 					overviewRulerLanes: 0,
@@ -512,6 +513,11 @@ export function mountMonacoCode(scroll: HTMLElement, text: string, alias: string
 			};
 			const win = getWindow(host);
 			options.store.add(editor.onDidContentSizeChange(() => layout()));
+			options.store.add(configurationService.onDidChangeConfiguration(e => {
+				if (e.affectsConfiguration(AGENT_CODE_WRAP_SETTING)) {
+					editor.updateOptions({ wordWrap: configurationService.getValue<boolean>(AGENT_CODE_WRAP_SETTING) ? 'on' : 'off' });
+				}
+			}));
 			const observer = new win.ResizeObserver(() => layout());
 			observer.observe(host);
 			options.store.add(toDisposable(() => observer.disconnect()));

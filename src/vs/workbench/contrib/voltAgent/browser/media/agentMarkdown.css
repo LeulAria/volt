@@ -1339,3 +1339,32 @@ code.volt-md-code.volt-md-diff {
 	background: color-mix(in srgb, var(--vscode-textLink-foreground) 18%, transparent);
 	transition: background-color 0.3s ease;
 }
+
+/*
+ * Settings > Appearance > Agent Conversations. Themed Diff Backgrounds takes line tints from the
+ * color theme's diff colors (Volt's own when it has none); off, lines stay untinted and only the
+ * markers, strip and line numbers carry the color. Code Block Word Wrap wraps static code cards
+ * (Monaco cards turn on wordWrap themselves, agentCodeBlock.ts).
+ */
+.monaco-workbench.volt-themed-diffs {
+	--volt-md-diff-added: var(--vscode-diffEditor-insertedLineBackground, oklch(0.638 0.129 153.739 / 0.2));
+	--volt-md-diff-removed: var(--vscode-diffEditor-removedLineBackground, oklch(0.5 0.2 9.842 / 0.2));
+}
+
+.monaco-workbench.volt-plain-diffs {
+	--volt-md-diff-added: transparent;
+	--volt-md-diff-removed: transparent;
+}
+
+.monaco-workbench.volt-code-wrap .volt-agent-markdown code.volt-md-code,
+.monaco-workbench.volt-code-wrap code.volt-md-code {
+	width: auto;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.monaco-workbench.volt-code-wrap .volt-md-code-line,
+.monaco-workbench.volt-code-wrap .volt-md-diff-line {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
