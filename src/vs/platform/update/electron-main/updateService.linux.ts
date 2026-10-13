@@ -62,8 +62,10 @@ export class LinuxUpdateService extends AbstractUpdateService {
 		// Use the download URL if available as we don't currently detect the package type that was
 		// installed and the website download page is more useful than the tarball generally.
 		// Another Volt channel is its own app: open its download (the page, preselected).
-		if ((state.update as IVoltUpdate).voltChannel && state.update.url) {
-			this.nativeHostMainService.openExternal(undefined, state.update.url);
+		const update = state.update as IVoltUpdate;
+		const channelDownload = update.voltChannel ? update.downloadUrl ?? update.url : undefined;
+		if (channelDownload) {
+			this.nativeHostMainService.openExternal(undefined, channelDownload);
 		} else if (this.productService.downloadUrl && this.productService.downloadUrl.length > 0) {
 			this.nativeHostMainService.openExternal(undefined, this.productService.downloadUrl);
 		} else if (state.update.url) {

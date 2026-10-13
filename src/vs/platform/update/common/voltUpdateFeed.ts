@@ -16,6 +16,13 @@ export type VoltReleaseChannel = typeof VOLT_RELEASE_CHANNELS[number];
 
 export const VOLT_RELEASE_CHANNEL_SETTING = 'update.releaseChannel';
 
+/** Each channel's app name (product `nameLong`, the .app and install folder name), as in build/volt/qualities.json. */
+export const VOLT_CHANNEL_APP_NAMES: Record<VoltReleaseChannel, string> = {
+	stable: 'Volt',
+	beta: 'Volt Beta',
+	nightly: 'Volt Nightly',
+};
+
 export interface IVoltFeedEntry {
 	readonly version: string;
 	readonly productVersion: string;
@@ -85,7 +92,8 @@ function isFeedEntry(value: unknown): value is IVoltFeedEntry {
  * Decides whether a feed entry is an update for the running build.
  * Same channel: newer only when the commit differs and the entry was published after this
  * build was made (never offers a downgrade). Another channel: that channel is a separate app,
- * so its latest build is always offered as a download, never installed over this one.
+ * so its latest build is always offered, to install next to this one (`url` is still the
+ * installable archive; `downloadUrl` is the channel's download page for platforms that can't).
  */
 export function decideVoltUpdate(entry: unknown, current: IVoltCurrentBuild, channel: VoltReleaseChannel, downloadPage: string | undefined): IVoltUpdate | undefined {
 	if (!isFeedEntry(entry)) {
@@ -105,13 +113,13 @@ export function decideVoltUpdate(entry: unknown, current: IVoltCurrentBuild, cha
 		version: entry.commit,
 		productVersion: entry.productVersion || entry.version,
 		timestamp: entry.timestamp,
-		url: crossChannel ? (downloadPage ? `${downloadPage}?channel=${channel}` : entry.downloadUrl ?? entry.url) : entry.url,
-		sha256hash: crossChannel ? undefined : entry.sha256hash,
+		url: entry.url,
+		sha256hash: entry.sha256hash,
 		voltChannel: crossChannel ? channel : undefined,
 		releaseUrl: entry.releaseUrl,
-		downloadUrl: entry.downloadUrl,
+		downloadUrl: crossChannel && downloadPage ? `${downloadPage}?channel=${channel}` : entry.downloadUrl,
 		notes: typeof entry.notes === 'string' && entry.notes ? entry.notes.slice(0, 8000) : undefined,
-		size: crossChannel ? undefined : entry.size,
+		size: entry.size,
 	};
 }
 

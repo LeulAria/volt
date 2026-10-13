@@ -62,12 +62,13 @@ suite('Volt update feed', () => {
 		assert.strictEqual(decideVoltUpdate({ ...entry, timestamp: Date.parse(current.date) }, current, 'stable', page), undefined);
 	});
 
-	test('offers another channel as a download', () => {
+	test('offers another channel to install next to this one', () => {
 		const update = decideVoltUpdate({ ...entry, timestamp: 1 }, current, 'nightly', page);
 		assert.strictEqual(update?.voltChannel, 'nightly');
-		assert.strictEqual(update?.url, 'https://volt.leularia.com/download?channel=nightly');
-		assert.strictEqual(update?.sha256hash, undefined);
-		assert.strictEqual(decideVoltUpdate(entry, current, 'beta', undefined)?.url, entry.downloadUrl);
+		assert.strictEqual(update?.url, entry.url);
+		assert.strictEqual(update?.sha256hash, 'abc');
+		assert.strictEqual(update?.downloadUrl, 'https://volt.leularia.com/download?channel=nightly');
+		assert.strictEqual(decideVoltUpdate(entry, current, 'beta', undefined)?.downloadUrl, entry.downloadUrl);
 	});
 
 	test('rejects malformed entries', () => {

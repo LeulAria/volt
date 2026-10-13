@@ -14,7 +14,7 @@ import { IProductService } from '../../product/common/productService.js';
 import { IRequestContext } from '../../../base/parts/request/common/request.js';
 import { asJson, IRequestService } from '../../request/common/request.js';
 import { AvailableForDownload, DisablementReason, IUpdate, IUpdateService, State, StateType, UpdateType } from '../common/update.js';
-import { decideVoltUpdate, IVoltUpdate, resolveVoltReleaseChannel, VOLT_RELEASE_CHANNEL_SETTING, VoltReleaseChannel, voltFeedUrl } from '../common/voltUpdateFeed.js';
+import { decideVoltUpdate, isVoltReleaseChannel, IVoltUpdate, resolveVoltReleaseChannel, VOLT_RELEASE_CHANNEL_SETTING, VoltReleaseChannel, voltFeedUrl } from '../common/voltUpdateFeed.js';
 
 export function createUpdateURL(platform: string, quality: string, productService: IProductService): string {
 	if (productService.voltRelease) {
@@ -72,26 +72,52 @@ export abstract class AbstractUpdateService implements IUpdateService {
 		});
 	}
 
-	/** Volt: follow a newly picked release channel right away. */
+	/**
+	 * Volt: act on a newly picked release channel right away. Another channel is its own app:
+	 * when it is already installed, offer to open it; otherwise check its feed, which offers to
+	 * install it next to this one. An update of this app that is under way is left alone.
+	 */
 	private onDidChangeReleaseChannel(): void {
 		if (!this.productService.voltRelease || !this.url) {
 			return;
 		}
+		if (this.state.type === StateType.AvailableForDownload || (this.state.type === StateType.Ready && (this.state.update as IVoltUpdate).voltChannel)) {
+			this.setState(State.Idle(this.getUpdateType()));
+		}
+		const picked = this.pickedVoltChannel(this.configurationService.getValue<string>('update.mode'));
+		if (picked && picked !== this.productService.quality && this.state.type === StateType.Idle && this.isVoltChannelInstalled(picked)) {
+			const installed: IVoltUpdate = { version: picked, productVersion: '', voltChannel: picked };
+			this.setState(State.Ready(installed));
+		}
+		if (this.syncVoltChannel()) {
+			this.checkForUpdates(false);
+		}
+	}
+
+	/** Volt: points the feed at the channel to follow now. True when that changed. */
+	private syncVoltChannel(): boolean {
 		const channel = this.getProductQuality(this.configurationService.getValue<string>('update.mode'));
 		if (!channel || channel === this.channel) {
-			return;
+			return false;
 		}
 		const url = this.buildUpdateFeedUrl(channel);
 		if (!url) {
-			return;
+			return false;
 		}
 		this.logService.info(`update#releaseChannel - following ${channel}`);
 		this.channel = channel as VoltReleaseChannel;
 		this.url = url;
-		if (this.state.type === StateType.AvailableForDownload) {
-			this.setState(State.Idle(this.getUpdateType()));
-		}
-		this.checkForUpdates(false);
+		return true;
+	}
+
+	/** Volt: whether another channel's app is installed on this machine. */
+	protected isVoltChannelInstalled(channel: VoltReleaseChannel): boolean {
+		return false;
+	}
+
+	/** Volt: opens another channel's installed app. */
+	protected openVoltChannel(channel: VoltReleaseChannel): void {
+		// noop
 	}
 
 	/**
@@ -164,9 +190,17 @@ export abstract class AbstractUpdateService implements IUpdateService {
 			return undefined;
 		}
 		if (this.productService.voltRelease) {
-			return resolveVoltReleaseChannel(this.configurationService.getValue(VOLT_RELEASE_CHANNEL_SETTING), this.productService.quality);
+			// Once another channel's app is installed it updates itself; this app follows its own channel.
+			const picked = this.pickedVoltChannel(updateMode);
+			const own = this.productService.quality;
+			return picked && picked !== own && isVoltReleaseChannel(own) && this.isVoltChannelInstalled(picked) ? own : picked;
 		}
 		return this.productService.quality;
+	}
+
+	/** Volt: the channel the setting asks for (`default` is this build's own). */
+	private pickedVoltChannel(updateMode: string): VoltReleaseChannel | undefined {
+		return updateMode === 'none' ? undefined : resolveVoltReleaseChannel(this.configurationService.getValue(VOLT_RELEASE_CHANNEL_SETTING), this.productService.quality);
 	}
 
 	/**
@@ -209,6 +243,11 @@ export abstract class AbstractUpdateService implements IUpdateService {
 			return;
 		}
 
+		// Volt: another channel's app may have been installed or removed since the last check.
+		if (this.productService.voltRelease) {
+			this.syncVoltChannel();
+		}
+
 		this.doCheckForUpdates(explicit);
 	}
 
@@ -244,6 +283,14 @@ export abstract class AbstractUpdateService implements IUpdateService {
 		this.logService.trace('update#quitAndInstall, state = ', this.state.type);
 
 		if (this.state.type !== StateType.Ready) {
+			return Promise.resolve(undefined);
+		}
+
+		// Volt: another channel's app was installed next to this one. Open it; nothing restarts.
+		const channel = (this.state.update as IVoltUpdate).voltChannel;
+		if (channel) {
+			this.openVoltChannel(channel);
+			this.setState(State.Idle(this.getUpdateType()));
 			return Promise.resolve(undefined);
 		}
 
