@@ -46,6 +46,8 @@ import { AGENT_PR_POST_REVIEW_COMMENTS_SETTING, AGENT_PR_REVIEW_MODEL_SETTING, A
 import { AUTO_REVIEW_MODES } from '../../common/agentPrReview.js';
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../../platform/configuration/common/configurationRegistry.js';
 import { AgentPullRequestsViewPane } from './agentPullRequestsViewPane.js';
+import './agentPrLinks.js';
+import '../../common/agentGitSettings.js';
 import { AGENT_PULL_REQUESTS_CONTAINER_ID, AGENT_PULL_REQUESTS_VIEW_ID, setPullRequestsViewSession } from './agentPullRequestsViewState.js';
 import { composeInChat, openPullRequest, visibleChatSession } from './agentPullRequestUi.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
@@ -294,15 +296,17 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({ id: SIGN_IN_HOST_COMMAND_ID, title: localize2('voltPr.signInCommand', "Sign In to a Code Host"), category: localize2('volt', "Volt"), f1: true });
 	}
-	override async run(accessor: ServicesAccessor): Promise<void> {
+	/** `kind` skips the question of what kind of host it is (Settings > Git & PRs asks for one). Resolves true when signed in. */
+	override async run(accessor: ServicesAccessor, kind?: unknown): Promise<boolean> {
 		const pullRequests = accessor.get(IAgentPullRequestService);
 		const quickInputService = accessor.get(IQuickInputService);
 		const notificationService = accessor.get(INotificationService);
-		const picked = await quickInputService.pick(VOLT_PR_PROVIDERS.filter(provider => provider !== 'github').map(provider => ({ id: provider, label: hostProductLabel(provider) })), {
+		const given = VOLT_PR_PROVIDERS.find(provider => provider !== 'github' && provider === kind);
+		const picked = given ? { id: given } : await quickInputService.pick(VOLT_PR_PROVIDERS.filter(provider => provider !== 'github').map(provider => ({ id: provider, label: hostProductLabel(provider) })), {
 			placeHolder: localize('voltPr.signInProvider', "What kind of code host is it?"),
 		});
 		if (!picked) {
-			return;
+			return false;
 		}
 		const provider = picked.id as VoltPrSupportedProvider;
 		const server = await quickInputService.input({
@@ -312,7 +316,7 @@ registerAction2(class extends Action2 {
 		});
 		const host = server && normalizeHost(server);
 		if (!server || !host) {
-			return;
+			return false;
 		}
 		const token = await quickInputService.input({
 			prompt: localize('voltPr.signInToken', "An access token for {0} ({1})", hostProductLabel(provider), host),
@@ -320,13 +324,15 @@ registerAction2(class extends Action2 {
 			validateInput: async input => input.trim() ? undefined : localize('voltPr.signInTokenEmpty', "Enter an access token"),
 		});
 		if (!token) {
-			return;
+			return false;
 		}
 		try {
 			const account = await pullRequests.signInHost({ host, provider, token, webUrl: server.trim().replace(/\/+$/, '') });
 			notificationService.info(localize('voltPr.signedIn', "Signed in to {0} as {1}.", host, account.login));
+			return true;
 		} catch (err) {
 			notificationService.error(voltPrErrorMessage(err));
+			return false;
 		}
 	}
 });

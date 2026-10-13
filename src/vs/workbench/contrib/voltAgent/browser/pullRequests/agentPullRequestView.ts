@@ -63,6 +63,7 @@ import { openPullRequestDiff } from './agentPullRequestDiff.js';
 import { AgentPullRequestEditorInput } from './agentPullRequestEditorInput.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
 import { ago, avatar, checkDuration, checkIcon, composeInChat, iconSpan, MERGE_LABELS, openPullRequest, problemText, prStateIcon, signInWithGh, visibleChatSession } from './agentPullRequestUi.js';
+import { openOnHost } from './agentPrLinks.js';
 
 type Tab = 'summary' | 'timeline' | 'code';
 type Order = 'newest' | 'oldest';
@@ -443,7 +444,7 @@ export class AgentPullRequestView extends Disposable {
 		append(number, $('span')).textContent = `#${pr.number}`;
 		number.appendChild(renderIcon(Codicon.linkExternal));
 		number.href = pr.url;
-		this.onClick(number, () => this.openerService.open(pr.url));
+		this.onClick(number, () => openOnHost(this.openerService, pr.url));
 		const fold = append(this.header, $('.volt-pr-fold'));
 		append(fold, $('h1.volt-pr-title')).textContent = pr.title;
 		const byline = append(fold, $('.volt-pr-byline'));
@@ -499,7 +500,7 @@ export class AgentPullRequestView extends Disposable {
 		number.appendChild(renderIcon(Codicon.linkExternal));
 		number.href = pr.url;
 		setAgentTooltip(number, localize('voltPr.openOnHost', "Open on GitHub"));
-		this.onClick(number, () => this.openerService.open(pr.url));
+		this.onClick(number, () => openOnHost(this.openerService, pr.url));
 		const condensed = append(crumbs, $('.volt-pr-crumbs-condensed'));
 		append(condensed, $(`span.volt-pr-number.state-${pr.state}`)).textContent = `#${pr.number}`;
 		append(condensed, $('span.volt-pr-condensed-title')).textContent = pr.title;
@@ -983,7 +984,7 @@ export class AgentPullRequestView extends Disposable {
 			}
 		}
 		const general: IVoltMenuItem<Pick>[] = [
-			{ id: 'openHost', label: localize('voltPr.openOnHost', "Open on GitHub"), icon: Codicon.linkExternal, data: () => this.openerService.open(pr.url) },
+			{ id: 'openHost', label: localize('voltPr.openOnHost', "Open on GitHub"), icon: Codicon.linkExternal, data: () => openOnHost(this.openerService, pr.url) },
 			{ id: 'copyLink', label: localize('voltPr.copyLink', "Copy Link"), icon: Codicon.copy, data: () => this.copy(pr.url, localize('voltPr.copiedLink', "Copied the link")) },
 			{ id: 'copyNumber', label: localize('voltPr.copyNumber', "Copy PR Number"), icon: Codicon.symbolNumeric, data: () => this.copy(`#${pr.number}`, localize('voltPr.copiedNumber', "Copied #{0}", pr.number)) },
 		];
@@ -1328,7 +1329,7 @@ export class AgentPullRequestView extends Disposable {
 		const time = append(head, $('a.volt-pr-time')) as HTMLAnchorElement;
 		time.textContent = ago(comment.createdAt);
 		time.href = comment.url;
-		this.onClick(time, () => this.openerService.open(comment.url));
+		this.onClick(time, () => openOnHost(this.openerService, comment.url));
 		const content = append(card, $('.volt-pr-markdown'));
 		if (folded) {
 			card.classList.add('folded');
@@ -1352,7 +1353,7 @@ export class AgentPullRequestView extends Disposable {
 		const time = append(head, $('a.volt-pr-time')) as HTMLAnchorElement;
 		time.textContent = ago(review.at);
 		time.href = review.url;
-		this.onClick(time, () => this.openerService.open(review.url));
+		this.onClick(time, () => openOnHost(this.openerService, review.url));
 		if (review.body.trim()) {
 			this.markdown(append(card, $('.volt-pr-markdown')), review.body);
 		}
@@ -1911,7 +1912,7 @@ export class AgentPullRequestView extends Disposable {
 	private openDiff(pr: IVoltPullRequestDetail, path?: string): void {
 		const folder = this.cloneFolder();
 		if (!folder) {
-			void this.openerService.open(`${pr.url}/files`);
+			void openOnHost(this.openerService, `${pr.url}/files`);
 			return;
 		}
 		void this.instantiationService.invokeFunction(accessor => openPullRequestDiff(accessor, { repo: pr.repo, number: pr.number, folder }, pr.title, path, this.sessionId))
