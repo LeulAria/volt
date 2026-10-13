@@ -19,10 +19,12 @@ import { Button, EmptyState, Icon, IconButton, Spinner } from '../ui/primitives'
 import { ClientProvider, useClient, useStatus } from './client';
 import { navigate, type Route, useRoute } from './router';
 import { bootstrap, type BootResult, clientId, forgetEnvironment, openWorkbench, refreshWorkbenchAvailable, serverOrigin, webStorage, workbenchTarget } from './session';
+import { useAppliedConversationPrefs } from './prefs';
 import { useAppliedTheme } from './theme';
 
 export function App() {
 	useAppliedTheme();
+	useAppliedConversationPrefs();
 	const [boot, setBoot] = useState<BootResult | undefined>();
 	// Signed in on a computer: on to Volt's workbench (VS Code in the browser), unless it can't.
 	const ready = async (next: BootResult) => {

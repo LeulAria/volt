@@ -915,3 +915,41 @@ code, pre, kbd { font-family: var(--font-mono); }
 	.file-actions { opacity: 1; }
 	.cr-menu { opacity: 1; background: transparent; }
 }
+
+/* Agent conversations (Settings > Appearance): tool call density, code wrap, diff tints */
+.steps-lines > .steps-list, .steps-cards > .steps-list { margin: 0; padding-left: 0; animation: none; }
+.step-line .file-stats { flex: none; margin-left: 0; }
+.step-line:has(.file-stats) .step-detail { flex: 0 1 auto; }
+.step-line:has(.file-stats) .step-chevron { margin-left: auto; }
+.step-card { margin: 3px 0; border: 1px solid var(--stroke-faint); border-radius: 10px; background: var(--fill-faint); overflow: hidden; }
+.step-card > .step-line { min-height: 34px; padding: 4px 10px; border-radius: 0; }
+.step-card > .step-body { margin: 0; border: 0; border-top: 1px solid var(--stroke-faint); border-radius: 0; animation: none; }
+[data-code-wrap] .code-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+[data-plain-diffs] .dl-line.add, [data-plain-diffs] .dl-line.del, [data-plain-diffs] .diff-line.add, [data-plain-diffs] .diff-line.del { background: none; }
+[data-plain-diffs] .dl-line .dl-gutter { background: var(--code-bg); }
+
+/* Tool call density slider: three stops, the middle one marked, a preview while hovered */
+.density { position: relative; display: flex; flex-direction: column; align-items: stretch; width: 240px; max-width: 100%; }
+.density-range { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; margin: 0; background: transparent; cursor: pointer; }
+.density-range::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: radial-gradient(circle, var(--fg4) 0 1.5px, transparent 2px) center / 6px 6px no-repeat, var(--fill-strong); }
+.density-range::-moz-range-track { height: 6px; border-radius: 3px; background: radial-gradient(circle, var(--fg4) 0 1.5px, transparent 2px) center / 6px 6px no-repeat, var(--fill-strong); }
+.density-range::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -6px; border-radius: 50%; background: #f2f2f2; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
+.density-range::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #f2f2f2; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
+.density-range:focus-visible { outline: none; }
+.density-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+.density-labels { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--fg3); }
+.density-preview { position: absolute; top: calc(100% + 10px); right: -8px; z-index: 20; width: 280px; max-height: 300px; overflow: hidden; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; border: 1px solid var(--stroke); background: var(--raised); box-shadow: 0 12px 32px var(--shadow); text-align: left; opacity: 0; pointer-events: none; transform: translateY(-4px); transition: opacity 140ms ease, transform 140ms ease; }
+.density:hover .density-preview, .density:focus-within .density-preview { opacity: 1; transform: none; }
+.dp-line { font-size: 13px; color: var(--fg3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dp-verb { color: var(--fg2); }
+.dp-detail, .dp-add, .dp-del { color: var(--fg3); }
+.dp-card { border: 1px solid var(--stroke); border-radius: 8px; overflow: hidden; }
+.dp-card .dp-line { padding: 7px 10px; border-bottom: 1px solid var(--stroke-faint); }
+.dp-body { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; }
+.dp-body i { display: block; height: 7px; border-radius: 2px; background: var(--fill-strong); }
+.dp-body i.short { width: 75%; }
+.dp-body i.add { background: color-mix(in srgb, var(--diff-add-fg) 45%, transparent); }
+.dp-body i.del { background: color-mix(in srgb, var(--diff-del-fg) 45%, transparent); }
+@media (hover: none) {
+	.density-preview { position: static; width: auto; margin-top: 10px; opacity: 1; transform: none; box-shadow: none; }
+}

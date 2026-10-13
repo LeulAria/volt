@@ -9,6 +9,7 @@ import {
 } from '@volt/client-core';
 import { Fragment, memo, type ReactNode, useState } from 'react';
 import { useAttachment, useClient } from '../app/client';
+import { useConversationPrefs } from '../app/prefs';
 import { Dialog } from '../ui/overlays';
 import { Button, Icon, LiveTimer, Shimmer, Spinner } from '../ui/primitives';
 import { openTab } from '../ide/workbench';
@@ -238,20 +239,33 @@ function StepBodyView({ step }: { readonly step: IStepItem }) {
 		);
 	}
 	if (body.kind === 'diff') {
-		return <div className="step-body flush"><DiffLines diff={body.diff} /></div>;
+		return <div className="step-body flush"><DiffLines diff={body.diff} {...(body.path ? { path: body.path } : {})} /></div>;
 	}
 	return <pre className={`step-body${body.mono ? ' mono' : ''}`}>{body.text.length > 8000 ? `${body.text.slice(0, 8000)}\n…` : body.text}</pre>;
 }
 
-function StepLine({ step }: { readonly step: IStepItem }) {
-	const [open, setOpen] = useState(false);
+function StepStats({ step }: { readonly step: IStepItem }) {
+	if (!step.additions && !step.deletions) {
+		return null;
+	}
+	return (
+		<span className="file-stats">
+			{step.additions ? <span className="add">+{step.additions}</span> : null}
+			{step.deletions ? <span className="del">{'−'}{step.deletions}</span> : null}
+		</span>
+	);
+}
+
+function StepLine({ step, card }: { readonly step: IStepItem; readonly card?: boolean }) {
+	const [open, setOpen] = useState(!!card);
 	const expandable = !!step.body;
 	return (
-		<div className={`step step-${step.status}`}>
+		<div className={`step step-${step.status}${card && expandable ? ' step-card' : ''}`}>
 			<button type="button" className="step-line" disabled={!expandable} onClick={() => setOpen(o => !o)} aria-expanded={expandable ? open : undefined}>
 				<span className="step-icon">{step.status === 'running' ? <Spinner size={11} /> : <Icon name={step.status === 'error' ? 'xCircle' : step.icon} size={13} />}</span>
 				<Shimmer active={step.status === 'running'}><span className="step-label">{step.label}</span></Shimmer>
 				{step.detail ? <span className="step-detail">{step.detail}</span> : null}
+				<StepStats step={step} />
 				{expandable ? <Icon name="chevronRight" size={11} className={`step-chevron${open ? ' open' : ''}`} /> : null}
 			</button>
 			{open ? <StepBodyView step={step} /> : null}
@@ -261,6 +275,16 @@ function StepLine({ step }: { readonly step: IStepItem }) {
 
 function StepsRow({ row }: { readonly row: RowOf<'steps'> }) {
 	const [open, setOpen] = useState<boolean | undefined>(undefined);
+	if (row.display === 'lines' || row.display === 'cards') {
+		// Standard: a line per call. Detailed: calls with output or a diff open as cards.
+		return (
+			<div className={`row-steps steps-${row.display}`}>
+				<div className="steps-list">
+					{row.items.map(step => <StepLine key={step.key} step={step} card={row.display === 'cards'} />)}
+				</div>
+			</div>
+		);
+	}
 	// A live group shows its latest steps; a finished one folds behind its summary.
 	const expanded = open ?? row.live;
 	const shown = expanded ? (row.live && open === undefined ? row.items.slice(-4) : row.items) : [];
@@ -287,7 +311,9 @@ export function DiffView({ diff, path }: { readonly diff: string; readonly path?
 function FileRow({ row }: { readonly row: RowOf<'file'> }) {
 	const ctx = useChatRow();
 	const client = useClient();
-	const [open, setOpen] = useState(false);
+	const { toolDensity } = useConversationPrefs();
+	// Detailed density opens each edit on its diff.
+	const [open, setOpen] = useState(toolDensity === 'detailed');
 	const dir = dirname(row.path);
 	const absolute = row.path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(row.path) ? row.path : ctx?.root ? `${ctx.root}/${row.path}` : undefined;
 	const openDiff = async () => {

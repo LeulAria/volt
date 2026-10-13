@@ -4,11 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	ACCESS_MODES, type AccessMode, approvalsFor, buildRows, chatStatus, type ComposerMode, compactNumber, COMPOSER_MODES, duration, historyOf, type IPromptAttachment, isStreaming,
+	ACCESS_MODES, type AccessMode, applyToolDensity, approvalsFor, buildRows, chatStatus, type ComposerMode, compactNumber, COMPOSER_MODES, duration, historyOf, type IPromptAttachment, isStreaming,
 	modelLabel, projectOf, questionsFor, relativeTime, runtimeOf, sessionsOf, shortPath, tasksOf, threadsOf, uriPath
 } from '@volt/client-core';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useCheckpoints, useClient, useCollections, usePending, useTranscript } from '../app/client';
+import { useConversationPrefs } from '../app/prefs';
 import { changesPath, chatPath, filePath, navigate } from '../app/router';
 import { revealInFile } from '../ide/workbench';
 import { ConfirmDialog, type IMenuItem, MenuButton, PromptDialog } from '../ui/overlays';
@@ -24,7 +25,8 @@ const DETAILS_KEY = 'volt.web.details';
 function Transcript({ chatId }: { readonly chatId: string }) {
 	const transcript = useTranscript(chatId);
 	const pending = usePending(chatId);
-	const rows = useMemo(() => buildRows(transcript?.messages ?? [], pending), [transcript?.messages, pending]);
+	const { toolDensity } = useConversationPrefs();
+	const rows = useMemo(() => applyToolDensity(buildRows(transcript?.messages ?? [], pending), toolDensity), [transcript?.messages, pending, toolDensity]);
 	const scroller = useRef<HTMLDivElement>(null);
 	const content = useRef<HTMLDivElement>(null);
 	const stuck = useRef(true);

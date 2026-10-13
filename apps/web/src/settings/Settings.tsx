@@ -4,11 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	ACCESS_MODES, formatCode, type ICatalogItem, type IconName, type IEnvironmentDescriptor, type IPairedDevice, type IPairingCode, modelLabel, providerName, relativeTime, routeLabel, timer
+	ACCESS_MODES, DENSITY_PREVIEW_STEPS, DENSITY_PREVIEW_SUMMARY, formatCode, type ICatalogItem, type IconName, type IEnvironmentDescriptor, type IPairedDevice, type IPairingCode, modelLabel, providerName, relativeTime, routeLabel, timer, TOOL_DENSITIES, TOOL_DENSITY_LABELS, type ToolDensity
 } from '@volt/client-core';
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { Fragment, type ReactNode, useCallback, useEffect, useState } from 'react';
 import { useClient, useNow, useRuntime, useStatus } from '../app/client';
 import { navigate } from '../app/router';
+import { conversationPrefs, useConversationPrefs } from '../app/prefs';
 import { forgetEnvironment } from '../app/session';
 import { setThemePreference, useThemePreference } from '../app/theme';
 import { ConfirmDialog, type IMenuItem, MenuButton } from '../ui/overlays';
@@ -294,15 +295,73 @@ function Models() {
 
 function Appearance() {
 	const preference = useThemePreference();
+	const prefs = useConversationPrefs();
 	return (
-		<Section title="Appearance" description="Volt's dark and light themes, as on the desktop.">
-			<Row label="Theme">
-				<Segmented value={preference} onChange={setThemePreference} options={[
-					{ id: 'system', label: 'System', icon: 'contrast' },
-					{ id: 'light', label: 'Light', icon: 'sun' },
-					{ id: 'dark', label: 'Dark', icon: 'moon' },
-				]} />
-			</Row>
-		</Section>
+		<>
+			<Section title="Appearance" description="Volt's dark and light themes, as on the desktop.">
+				<Row label="Theme">
+					<Segmented value={preference} onChange={setThemePreference} options={[
+						{ id: 'system', label: 'System', icon: 'contrast' },
+						{ id: 'light', label: 'Light', icon: 'sun' },
+						{ id: 'dark', label: 'Dark', icon: 'moon' },
+					]} />
+				</Row>
+			</Section>
+			<Section title="Agent conversations" description="How chats show the agent's work in this browser.">
+				<Row label="Tool call density" detail="Adjust how much detail is shown for tool calls">
+					<DensitySlider value={prefs.toolDensity} onChange={toolDensity => conversationPrefs.set({ toolDensity })} />
+				</Row>
+				<Row label="Code block word wrap" detail="Wrap long lines in agent conversation code blocks">
+					<Toggle checked={prefs.codeWrap} label="Code block word wrap" onChange={codeWrap => conversationPrefs.set({ codeWrap })} />
+				</Row>
+				<Row label="Themed diff backgrounds" detail="Use themed background colors for inline code diffs">
+					<Toggle checked={prefs.themedDiffs} label="Themed diff backgrounds" onChange={themedDiffs => conversationPrefs.set({ themedDiffs })} />
+				</Row>
+			</Section>
+		</>
+	);
+}
+
+/** Compact, standard or detailed on a three-stop slider; hovering it previews what a chat shows. */
+function DensitySlider({ value, onChange }: { readonly value: ToolDensity; readonly onChange: (value: ToolDensity) => void }) {
+	const index = TOOL_DENSITIES.indexOf(value);
+	return (
+		<div className="density">
+			<input type="range" className="density-range" min={0} max={TOOL_DENSITIES.length - 1} step={1} value={index}
+				aria-label="Tool call density" aria-valuetext={TOOL_DENSITY_LABELS[value]}
+				onChange={e => onChange(TOOL_DENSITIES[Number(e.target.value)] ?? 'compact')} />
+			<div className="density-labels"><span>{TOOL_DENSITY_LABELS.compact}</span><span>{TOOL_DENSITY_LABELS.detailed}</span></div>
+			<DensityPreview density={value} />
+		</div>
+	);
+}
+
+function DensityPreview({ density }: { readonly density: ToolDensity }) {
+	if (density === 'compact') {
+		return <div className="density-preview" aria-hidden><div className="dp-line"><span className="dp-verb">{DENSITY_PREVIEW_SUMMARY.verb}</span> {DENSITY_PREVIEW_SUMMARY.detail}</div></div>;
+	}
+	return (
+		<div className={`density-preview ${density}`} aria-hidden>
+			{DENSITY_PREVIEW_STEPS.map(step => {
+				const line = (
+					<div className="dp-line">
+						<span className="dp-verb">{step.verb} {step.name}</span>
+						{step.command ? <span className="dp-detail"> {step.command}</span> : null}
+						{step.additions ? <span className="dp-add"> +{step.additions}</span> : null}
+						{step.deletions ? <span className="dp-del"> -{step.deletions}</span> : null}
+					</div>
+				);
+				return density === 'detailed' ? (
+					<div key={step.name} className="dp-card">
+						{line}
+						<div className="dp-body">
+							{step.kind === 'edit'
+								? <><i className="del" /><i className="del short" /><i className="add" /><i className="add short" /></>
+								: <><i /><i className="short" /></>}
+						</div>
+					</div>
+				) : <Fragment key={step.name}>{line}</Fragment>;
+			})}
+		</div>
 	);
 }
