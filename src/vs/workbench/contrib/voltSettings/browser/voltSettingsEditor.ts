@@ -61,6 +61,7 @@ import { clampWorktreeMaxCount, clampWorktreeMaxSizeGB, WORKTREE_MAX_COUNT_SETTI
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { AppearancePage } from './appearancePage.js';
 import { CodeIntelligencePage } from './codeIntelligencePage.js';
+import { GitPage } from './gitPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
 import { createSettingsIcon } from './settingsIcons.js';
@@ -69,7 +70,7 @@ import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { createAgentHeaderSeparatorIcon } from '../../voltAgent/browser/chrome/agentTitlebarHeader.js';
 import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/browser/home/agentHomeFooterActions.js';
 
-type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'security' | 'connected' | 'projects' | 'worktrees' | 'storage';
+type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'security' | 'connected' | 'projects' | 'git' | 'worktrees' | 'storage';
 
 /** The Modes nav glyph (a small robot face), drawn in currentColor like the codicons beside it. */
 /** The nav, in groups separated by a gap. Icons come from settingsIcons.ts; the codicon is the fallback. */
@@ -85,6 +86,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield, group: 2 },
 	{ id: 'connected', label: localize('voltSettings.connectedAgents', "Connected agents"), icon: Codicon.link, group: 2 },
 	{ id: 'projects', label: localize('voltSettings.projects', "Projects"), icon: Codicon.repo, group: 2 },
+	{ id: 'git', label: localize('voltSettings.git', "Git & PRs"), icon: Codicon.gitPullRequest, group: 2 },
 	{ id: 'worktrees', label: localize('voltSettings.worktrees', "Worktrees"), icon: Codicon.repoForked, group: 2 },
 	{ id: 'storage', label: localize('voltSettings.storage', "Storage"), icon: Codicon.database, group: 2 },
 ];
@@ -100,6 +102,8 @@ const SECTION_ALIASES: Record<string, SettingsSection> = {
 	agents: 'providers',
 	acp: 'providers',
 	theme: 'appearance',
+	pullRequests: 'git',
+	integrations: 'git',
 };
 
 const MODE_COPY: Record<VoltMode, { title: string; body: string }> = {
@@ -518,6 +522,9 @@ export class VoltSettingsEditor extends EditorPane {
 			case 'projects':
 				this.pageHead(localize('voltSettings.projects', "Projects"), localize('voltSettings.projectsLead', "What new chats in each project start with, its worktree setup and its agents' environment."));
 				renderProjectsSection(this.target, this.instantiationService, this.renderStore, this.search.trim().toLowerCase());
+				break;
+			case 'git':
+				this.renderGit();
 				break;
 			case 'worktrees':
 				this.renderWorktrees();
@@ -1102,6 +1109,35 @@ export class VoltSettingsEditor extends EditorPane {
 			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
 			rerender: () => this.renderContent(),
 			isCurrent: () => this.section === 'codeIntelligence',
+		}).render();
+	}
+
+	/** Pull request links and reviews, attribution, branch names and code hosts (gitPage.ts). */
+	private renderGit(): void {
+		this.instantiationService.createInstance(GitPage, {
+			store: this.renderStore,
+			pageHead: (title, lead) => void this.pageHead(title, lead),
+			sectionLabel: label => this.sectionLabel(label),
+			sectionHint: text => void (append(this.target, $('.volt-settings-section-hint')).textContent = text),
+			settingsGroup: () => this.settingsGroup(),
+			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
+			toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
+			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+			select: (parent, options, selected, label, onSelect) => {
+				const box = this.selectBox(append(parent, $('.volt-settings-select')), options.map(text => ({ text })), Math.max(0, selected), label);
+				this.renderStore.add(box.onDidSelect(e => onSelect(e.index)));
+			},
+			input: (parent, value, placeholder, label, onCommit) => {
+				const box = this.renderStore.add(new InputBox(append(parent, $('.volt-settings-input')), this.contextViewService, {
+					placeholder,
+					ariaLabel: label,
+					inputBoxStyles: this.inputBoxStyles(),
+				}));
+				box.value = value;
+				this.renderStore.add(addDisposableListener(box.inputElement, 'change', () => onCommit(box.value)));
+			},
+			rerender: () => this.renderContent(),
+			isCurrent: () => this.section === 'git',
 		}).render();
 	}
 
