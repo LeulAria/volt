@@ -17,6 +17,7 @@ import {
 	IVoltStorageItem,
 	IVoltStorageReport,
 	IVoltStorageService,
+	IVoltWorktreeLimits,
 	VoltStorageId,
 	VoltStorageKeep,
 } from '../common/voltStorage.js';
@@ -30,6 +31,7 @@ import {
 	logKeep,
 	machineRows,
 	nativeTranscriptKeep,
+	overWorktreeLimits,
 	samePathKey,
 	sessionIdFromFile,
 	summarizeRow,
@@ -37,6 +39,7 @@ import {
 	workspaceStorageKeep,
 	workspaceStorageTarget,
 	worktreeKeep,
+	worktreeLimitCandidates,
 	worktreeRepoKey,
 } from '../common/voltStorageRules.js';
 
@@ -155,6 +158,48 @@ export class VoltStorageService implements IVoltStorageService {
 		const run = this.cleaning.then(() => this.doClean(id, context, project));
 		this.cleaning = run.catch(() => undefined);
 		return run;
+	}
+
+	enforceWorktreeLimits(context: IVoltStorageContext, limits: IVoltWorktreeLimits): Promise<IVoltStorageCleanResult> {
+		const run = this.cleaning.then(() => this.doEnforceWorktreeLimits(context, limits));
+		this.cleaning = run.catch(() => undefined);
+		return run;
+	}
+
+	private async doEnforceWorktreeLimits(context: IVoltStorageContext, limits: IVoltWorktreeLimits): Promise<IVoltStorageCleanResult> {
+		const checkouts = await this.worktreeCheckouts(this.layout.worktreesRoot);
+		// Sizes only matter with a size limit; counting is cheap, walking every checkout is not.
+		const sized = limits.maxBytes > 0;
+		const entries = await Promise.all(checkouts.map(async path => ({ path, bytes: sized ? (await measurePath(path)).bytes : 0 })));
+		let count = entries.length;
+		let bytes = entries.reduce((sum, entry) => sum + entry.bytes, 0);
+		const skipped: { path: string; keep: VoltStorageKeep }[] = [];
+		const errors: string[] = [];
+		let freedBytes = 0;
+		let removed = 0;
+		for (const entry of worktreeLimitCandidates(entries, context)) {
+			if (!overWorktreeLimits(count, bytes, limits)) {
+				break;
+			}
+			try {
+				const kept = await this.removeWorktree(entry.path);
+				if (kept) {
+					skipped.push({ path: entry.path, keep: kept });
+					continue;
+				}
+				count--;
+				bytes -= entry.bytes;
+				freedBytes += entry.bytes;
+				removed++;
+			} catch (err) {
+				errors.push(`${entry.path}: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}
+		if (removed) {
+			await this.removeEmptyRepoFolders();
+			this.logService.info(`[volt-storage] worktree limits (${limits.maxCount} checkouts, ${limits.maxBytes} bytes): ${removed} removed, ${skipped.length} kept, ${errors.length} failed, ${freedBytes} bytes`);
+		}
+		return { freedBytes, removed, skipped, errors };
 	}
 
 	private async doClean(id: VoltStorageId, context: IVoltStorageContext, project: IVoltProjectStorageRequest | undefined): Promise<IVoltStorageCleanResult> {
@@ -316,6 +361,12 @@ export class VoltStorageService implements IVoltStorageService {
 	/** `~/.volt/worktrees/<repo>/<checkout>`: each checkout is an entry. */
 	private async machineWorktrees(spec: IStorageRowSpec, context: IVoltStorageContext): Promise<IVoltStorageItem> {
 		const root = spec.roots[0];
+		const checkouts = await this.worktreeCheckouts(root);
+		const bytes = (await measurePath(root)).bytes;
+		return summarizeRow(spec, bytes, await this.worktreeEntries(checkouts, context));
+	}
+
+	private async worktreeCheckouts(root: string): Promise<string[]> {
 		const checkouts: string[] = [];
 		for (const repo of await children(root)) {
 			if (repo.isDirectory()) {
@@ -326,8 +377,7 @@ export class VoltStorageService implements IVoltStorageService {
 				}
 			}
 		}
-		const bytes = (await measurePath(root)).bytes;
-		return summarizeRow(spec, bytes, await this.worktreeEntries(checkouts, context));
+		return checkouts;
 	}
 
 	private worktreeEntries(paths: readonly string[], context: IVoltStorageContext): Promise<IVoltStorageEntry[]> {

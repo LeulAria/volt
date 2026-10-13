@@ -12,6 +12,7 @@ export class NullVoltStorageService implements IVoltStorageService {
 	async machineReport(): Promise<IVoltStorageReport> { return { items: [], measuredAt: Date.now(), durationMs: 0 }; }
 	async projectReport(): Promise<IVoltStorageReport> { return { items: [], measuredAt: Date.now(), durationMs: 0 }; }
 	async clean(): Promise<IVoltStorageCleanResult> { return { freedBytes: 0, removed: 0, skipped: [], errors: [] }; }
+	async enforceWorktreeLimits(): Promise<IVoltStorageCleanResult> { return { freedBytes: 0, removed: 0, skipped: [], errors: [] }; }
 }
 
 /** Other editors' recent folders can only be read on the desktop. */

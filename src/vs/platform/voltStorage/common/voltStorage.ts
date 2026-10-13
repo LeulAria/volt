@@ -80,6 +80,8 @@ export interface IVoltStorageWorktreeRef {
 	readonly sessionId: string;
 	/** Archived chats no longer hold their checkout. */
 	readonly archived: boolean;
+	/** The chat's last activity: the worktree limits remove the oldest checkouts first. */
+	readonly updatedAt?: number;
 }
 
 /** What only the window knows: which chats exist, which run, which workspace it has open. */
@@ -107,6 +109,13 @@ export interface IVoltStorageCleanResult {
 	readonly errors: readonly string[];
 }
 
+/** How many checkouts `~/.volt/worktrees` holds at most, and how much disk they take. */
+export interface IVoltWorktreeLimits {
+	readonly maxCount: number;
+	/** 0 turns the size limit off. */
+	readonly maxBytes: number;
+}
+
 /**
  * Disk use of Volt's own data (machine-wide and per project), measured and cleaned in the main
  * process so a large cache never blocks a window. Clean re-measures first and never removes
@@ -118,4 +127,10 @@ export interface IVoltStorageService {
 	projectReport(request: IVoltProjectStorageRequest): Promise<IVoltStorageReport>;
 	/** Cleans one row. `project` is required for project rows. */
 	clean(id: VoltStorageId, context: IVoltStorageContext, project?: IVoltProjectStorageRequest): Promise<IVoltStorageCleanResult>;
+	/**
+	 * Removes the oldest checkouts in `~/.volt/worktrees` until they are within the limits:
+	 * archived chats' first, then idle chats' (their next send restores one from its branch).
+	 * A running chat's, a dirty one and one no chat here knows always stay.
+	 */
+	enforceWorktreeLimits(context: IVoltStorageContext, limits: IVoltWorktreeLimits): Promise<IVoltStorageCleanResult>;
 }

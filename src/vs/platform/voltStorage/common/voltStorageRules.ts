@@ -5,7 +5,7 @@
 
 import { hash } from '../../../base/common/hash.js';
 import { normalize } from '../../../base/common/path.js';
-import { IVoltStorageEntry, IVoltStorageItem, IVoltStorageWorktreeRef, VoltStorageId, VoltStorageKeep } from './voltStorage.js';
+import { IVoltStorageContext, IVoltStorageEntry, IVoltStorageItem, IVoltStorageWorktreeRef, IVoltWorktreeLimits, VoltStorageId, VoltStorageKeep } from './voltStorage.js';
 
 /**
  * Pure rules for Volt's storage cleanup: what each row covers and which of its entries Clean may
@@ -163,6 +163,31 @@ export function worktreeKeep(path: string, refs: readonly IVoltStorageWorktreeRe
 		return 'unknown';
 	}
 	return dirty ? 'dirty' : undefined;
+}
+
+/** True while the checkouts are over a limit; a size limit of 0 is off. */
+export function overWorktreeLimits(count: number, bytes: number, limits: IVoltWorktreeLimits): boolean {
+	return count > limits.maxCount || (limits.maxBytes > 0 && bytes > limits.maxBytes);
+}
+
+/**
+ * The checkouts the worktree limits may remove, in the order they go: archived chats' first,
+ * then idle chats', each oldest activity first. One a running chat uses, and one no chat here
+ * knows (another profile's), never is. Dirty ones are listed; removal refuses them.
+ */
+export function worktreeLimitCandidates<E extends { readonly path: string }>(entries: readonly E[], context: Pick<IVoltStorageContext, 'worktrees' | 'runningSessionIds'>): E[] {
+	const running = new Set(context.runningSessionIds);
+	const ranked: { readonly entry: E; readonly open: boolean; readonly updatedAt: number }[] = [];
+	for (const entry of entries) {
+		const key = samePathKey(entry.path);
+		const refs = context.worktrees.filter(ref => samePathKey(ref.path) === key);
+		if (!refs.length || refs.some(ref => running.has(ref.sessionId))) {
+			continue;
+		}
+		ranked.push({ entry, open: refs.some(ref => !ref.archived), updatedAt: Math.max(...refs.map(ref => ref.updatedAt ?? 0)) });
+	}
+	ranked.sort((a, b) => Number(a.open) - Number(b.open) || a.updatedAt - b.updatedAt);
+	return ranked.map(candidate => candidate.entry);
 }
 
 /** Normalized, without a trailing separator, for comparing two spellings of a folder. */
