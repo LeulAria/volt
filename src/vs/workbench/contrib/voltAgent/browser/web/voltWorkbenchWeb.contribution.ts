@@ -10,6 +10,7 @@
 // workbench's remote connection.
 
 import './media/voltWorkbenchWeb.css';
+import './voltWebFolders.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';

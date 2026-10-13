@@ -205,6 +205,7 @@ class RemoteAuthoritiesImpl {
 	private _preferredWebSchema: 'http' | 'https' = 'http';
 	private _delegate: ((uri: URI) => URI) | null = null;
 	private _serverRootPath: string = '/';
+	private _fileAuthority: string | undefined;
 
 	setPreferredWebSchema(schema: 'http' | 'https') {
 		this._preferredWebSchema = schema;
@@ -212,6 +213,18 @@ class RemoteAuthoritiesImpl {
 
 	setDelegate(delegate: (uri: URI) => URI): void {
 		this._delegate = delegate;
+	}
+
+	/**
+	 * Volt's workbench in a browser: `file:` is the disk of the server at `authority`, so the
+	 * browser loads `file:` resources (images, fonts) from there.
+	 */
+	setFileAuthority(authority: string): void {
+		this._fileAuthority = authority;
+	}
+
+	getFileAuthority(): string | undefined {
+		return this._fileAuthority;
 	}
 
 	setServerRootPath(product: { quality?: string; commit?: string }, serverBasePath: string | undefined): void {
@@ -317,6 +330,12 @@ class FileAccessImpl {
 		// Handle remote URIs via `RemoteAuthorities`
 		if (uri.scheme === Schemas.vscodeRemote) {
 			return RemoteAuthorities.rewrite(uri);
+		}
+
+		// Volt's workbench in a browser: `file:` resources are the server's
+		const fileAuthority = RemoteAuthorities.getFileAuthority();
+		if (uri.scheme === Schemas.file && fileAuthority && !platform.isNative) {
+			return RemoteAuthorities.rewrite(uri.with({ scheme: Schemas.vscodeRemote, authority: fileAuthority }));
 		}
 
 		// Convert to `vscode-file` resource..

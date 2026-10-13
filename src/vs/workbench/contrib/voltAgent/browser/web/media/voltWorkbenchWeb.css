@@ -78,3 +78,15 @@
 		overflow: hidden;
 	}
 }
+
+/* The preview's page is an iframe here (no `<webview>`): the same rules as the desktop's frame. */
+.volt-browser-editor.drag-passthrough iframe.volt-browser-frame,
+.volt-browser-editor.device-resizing iframe.volt-browser-frame,
+.volt-agent-tools-area.float-dragging iframe.volt-browser-frame {
+	pointer-events: none !important;
+}
+
+.volt-browser-stage.device-mode iframe.volt-browser-frame {
+	inset: auto;
+	transform-origin: 0 0;
+}

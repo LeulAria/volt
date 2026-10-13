@@ -6,6 +6,7 @@
 import '../media/browserEditor.css';
 import { $, addDisposableListener, append, Dimension, disposableWindowInterval, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
+import { isWeb } from '../../../../../base/common/platform.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IAction, Separator, toAction } from '../../../../../base/common/actions.js';
 import { disposableTimeout, timeout } from '../../../../../base/common/async.js';
@@ -44,6 +45,7 @@ import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTool
 import { BrowserDeviceMode } from './browserDevices.js';
 import { BrowserAgentDock } from './browserDock.js';
 import { BROWSER_PRESENT_EVENT, BROWSER_PRESENTATION_EVENT, BrowserPresentation, DEFAULT_BROWSER_URL, VoltBrowserEditorInput } from './browserEditorInput.js';
+import { createBrowserFrame } from './browserFrame.js';
 import { BrowserAppearance, IBrowserHistoryEntry, isRememberedUrl, IVoltBrowserHistory, shortBrowserUrl } from './browserHistory.js';
 import { BrowserMenuEntry, showBrowserMenu } from './browserMenu.js';
 import { browserMenuExtras } from './browserMenuExtras.js';
@@ -989,7 +991,8 @@ export class VoltBrowserView extends Disposable {
 		if (this.webview) {
 			return this.webview;
 		}
-		const webview = this.container.ownerDocument.createElement('webview') as IVoltWebview;
+		// A browser tab has no `<webview>`: an iframe stands in for showing the page.
+		const webview = (isWeb ? createBrowserFrame(this.container.ownerDocument) : this.container.ownerDocument.createElement('webview')) as IVoltWebview;
 		webview.className = 'volt-browser-frame';
 		webview.setAttribute('allowpopups', 'true');
 		webview.setAttribute('partition', VOLT_BROWSER_PARTITION);

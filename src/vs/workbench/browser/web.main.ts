@@ -23,7 +23,7 @@ import { IRemoteAuthorityResolverService, RemoteConnectionType } from '../../pla
 import { IRemoteAgentService } from '../services/remote/common/remoteAgentService.js';
 import { IFileService } from '../../platform/files/common/files.js';
 import { FileService } from '../../platform/files/common/fileService.js';
-import { Schemas, connectionTokenCookieName } from '../../base/common/network.js';
+import { RemoteAuthorities, Schemas, connectionTokenCookieName } from '../../base/common/network.js';
 import { IAnyWorkspaceIdentifier, IWorkspaceContextService, UNKNOWN_EMPTY_WINDOW_WORKSPACE, isTemporaryWorkspace, isWorkspaceIdentifier } from '../../platform/workspace/common/workspace.js';
 import { IWorkbenchConfigurationService } from '../services/configuration/common/configuration.js';
 import { onUnexpectedError } from '../../base/common/errors.js';
@@ -345,9 +345,10 @@ export class BrowserMain extends Disposable {
 		const remoteAgentService = this._register(new RemoteAgentService(remoteSocketFactoryService, userDataProfileService, environmentService, productService, remoteAuthorityResolverService, signService, logService));
 		serviceCollection.set(IRemoteAgentService, remoteAgentService);
 		this._register(RemoteFileSystemProviderClient.register(remoteAgentService, fileService, logService));
-		if (this.servesVoltDisk(environmentService)) {
+		if (this.servesVoltDisk(environmentService) && environmentService.remoteAuthority) {
 			// Volt names files with `file:` URIs; in its browser workbench they are the server's.
 			this._register(RemoteDiskFileSystemProvider.register(remoteAgentService, fileService, logService));
+			RemoteAuthorities.setFileAuthority(environmentService.remoteAuthority);
 		}
 
 		// Long running services (workspace, config, storage)

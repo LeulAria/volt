@@ -431,14 +431,15 @@ export class WebClientServer {
 
 		const cspDirectives = [
 			'default-src \'self\';',
-			'img-src \'self\' https: data: blob:;',
-			'media-src \'self\';',
+			`img-src 'self' https: data: blob:${this._webConfiguration ? ' http:' : ''};`,
+			`media-src 'self'${this._webConfiguration ? ' blob:' : ''};`,
 			`script-src 'self' 'unsafe-eval' ${WORKBENCH_NLS_BASE_URL ?? ''} blob: 'nonce-1nline-m4p' ${this._getScriptCspHashes(data).join(' ')} '${webWorkerExtensionHostIframeScriptSHA}' 'sha256-/r7rqQ+yrxt57sxLuQ6AMYcy/lUpvAIzHjIJt/OeLWU=' ${useTestResolver ? '' : `http://${remoteAuthority}`};`,  // the sha is the same as in src/vs/workbench/services/extensions/worker/webWorkerExtensionHostIframe.html
 			'child-src \'self\';',
-			`frame-src 'self' https://*.vscode-cdn.net data:;`,
+			// Volt's workbench shows the agents' pages (a dev server's preview) in frames.
+			`frame-src 'self' https://*.vscode-cdn.net data:${this._webConfiguration ? ' http: https:' : ''};`,
 			'worker-src \'self\' data: blob:;',
 			'style-src \'self\' \'unsafe-inline\';',
-			'connect-src \'self\' ws: wss: https:;',
+			`connect-src 'self' ws: wss: https:${this._webConfiguration ? ' http:' : ''};`,
 			'font-src \'self\' blob:;',
 			'manifest-src \'self\';'
 		].join(' ');

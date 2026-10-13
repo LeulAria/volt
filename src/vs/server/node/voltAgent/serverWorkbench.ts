@@ -342,12 +342,15 @@ export class ServerWorkbench extends Disposable {
 		}
 		// The agent window: the agent list on the left, the primary side bar on the right.
 		defaults['workbench.sideBar.location'] = 'right';
+		// The desktop's title (a browser's adds the server's address).
+		defaults['window.title'] ??= '${dirty}${activeEditorShort}${separator}${rootName}${separator}${profileName}${separator}${appName}';
 		return {
 			configurationDefaults: defaults,
 			// The first frame in the desktop's colors, before the theme loads (no white flash).
 			initialColorTheme: initialColorTheme(settings['workbench.colorTheme']),
 			productConfiguration: productForWeb(),
-			windowIndicator: { label: `$(remote) ${this.options.label}`, tooltip: `Volt on ${this.options.label}` },
+			// The desktop's remote button: the icon alone, the computer in its tooltip.
+			windowIndicator: { label: '$(remote)', tooltip: `Volt on ${this.options.label}` },
 			voltAgentServer: { environmentId: this.options.environmentId(), wsPath: '/ws' },
 		};
 	}
