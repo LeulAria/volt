@@ -127,7 +127,8 @@ export class AcceptNextWordOfInlineCompletion extends EditorAction {
 			kbOpts: {
 				weight: KeybindingWeight.EditorContrib + 1,
 				primary: KeyMod.CtrlCmd | KeyCode.RightArrow,
-				kbExpr: ContextKeyExpr.and(EditorContextKeys.writable, InlineCompletionContextKeys.inlineSuggestionVisible, InlineCompletionContextKeys.cursorBeforeGhostText, CONTEXT_ACCESSIBILITY_MODE_ENABLED.negate()),
+				// Volt: Settings > Tab > Partial Accepts sets `voltTabPartialAcceptsOff` while it is off.
+				kbExpr: ContextKeyExpr.and(EditorContextKeys.writable, InlineCompletionContextKeys.inlineSuggestionVisible, InlineCompletionContextKeys.cursorBeforeGhostText, CONTEXT_ACCESSIBILITY_MODE_ENABLED.negate(), ContextKeyExpr.not('voltTabPartialAcceptsOff')),
 			},
 			menuOpts: [{
 				menuId: MenuId.InlineSuggestionToolbar,

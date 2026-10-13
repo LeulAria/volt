@@ -8,6 +8,7 @@ import { ILanguageFeaturesService } from '../../../../editor/common/services/lan
 import { localize2 } from '../../../../nls.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
@@ -24,6 +25,9 @@ import { TerminalCommandTracker } from './terminalCommandTracker.js';
 import { VoltComposerCompletionsProvider } from './voltComposerCompletionsProvider.js';
 import { VoltInlineCompletionsProvider } from './voltInlineCompletionsProvider.js';
 
+/** Read by the editor's Accept Next Word keybinding (inlineCompletions/browser/controller/commands.ts). */
+const TAB_PARTIAL_ACCEPTS_OFF = new RawContextKey<boolean>('voltTabPartialAcceptsOff', false);
+
 /**
  * Wires the Prediction Runtime into the editor: one InlineCompletionsProvider on every
  * language (D23) plus what feeds its context (recent edits, the workspace index of open files,
@@ -39,10 +43,16 @@ class VoltPredictionContribution extends Disposable {
 		@IInstantiationService instantiationService: IInstantiationService,
 		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
 		@IVoltPredictionService predictionService: IVoltPredictionService,
+		@IContextKeyService contextKeyService: IContextKeyService,
 	) {
 		super();
 		// The predictor agent starts with Volt, so the first keystroke and the first dictation find it ready.
 		predictionService.warmUp();
+		// Settings > Tab > Partial Accepts: off, Cmd+Right moves the cursor instead of taking the next word.
+		const partialAcceptsOff = TAB_PARTIAL_ACCEPTS_OFF.bindTo(contextKeyService);
+		const syncPartialAccepts = () => partialAcceptsOff.set(!predictionService.getSettings().partialAccepts);
+		syncPartialAccepts();
+		this._register(predictionService.onDidChangeSettings(syncPartialAccepts));
 		this.recentEdits = this._register(instantiationService.createInstance(RecentEditsTracker));
 		const index = this._register(instantiationService.createInstance(WorkspaceContextIndex));
 		const terminals = this._register(instantiationService.createInstance(TerminalCommandTracker));
