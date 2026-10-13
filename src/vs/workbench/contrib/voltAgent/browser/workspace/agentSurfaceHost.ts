@@ -41,12 +41,16 @@ import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { isTerminalLive } from '../../../../services/voltRuntime/common/terminalTools.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { ITerminalEditorService, ITerminalInstance, ITerminalInstanceService, ITerminalService, TerminalDataTransfers } from '../../../terminal/browser/terminal.js';
 import { TerminalEditorInput } from '../../../terminal/browser/terminalEditorInput.js';
 import { ITerminalProfileService } from '../../../terminal/common/terminal.js';
 import { getTerminalResourcesFromDragEvent } from '../../../terminal/browser/terminalUri.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
+import { IAgentTerminalsService, isAgentTerminal } from '../terminals/agentTerminals.js';
+import { AgentTerminalsEditorInput } from '../terminals/agentTerminalsEditor.js';
 import { BROWSER_PRESENT_EVENT, BROWSER_PRESENTATION_EVENT, BrowserPresentation, DEFAULT_BROWSER_URL, VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { AgentChangesEditorInput, isAgentChangesDiffFor, openAgentChangesDiff } from '../review/agentChangesEditor.js';
@@ -449,6 +453,8 @@ export class AgentSurfaceHost extends Disposable {
 		@IContextKeyService private readonly contextKeyService: IContextKeyService,
 		@IStorageService private readonly storageService: IStorageService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+		@IAgentTerminalsService private readonly agentTerminals: IAgentTerminalsService,
+		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 	) {
 		super();
 		hosts.add(this);
@@ -512,6 +518,12 @@ export class AgentSurfaceHost extends Disposable {
 			}
 		}));
 		this._register(this.editorService.onDidEditorsChange(() => this.syncOpen()));
+		// The agent's running terminals join the chat's Terminals tab while it is there; nothing opens for them.
+		this._register(this.agentTerminals.onDidChange(chatId => {
+			if (this.sessionId && chatId === this.runtime.chatFor(this.sessionId)) {
+				this.listAgentTerminals();
+			}
+		}));
 		const resize = new ResizeObserver(() => this.place());
 		resize.observe(this.container);
 		this._register(toDisposable(() => resize.disconnect()));
@@ -699,7 +711,7 @@ export class AgentSurfaceHost extends Disposable {
 		void this.target()?.openTerminalInTools();
 	}
 
-	/** Shows a terminal the agent started (a chip click) as a tab in this chat's tools. Its process is untouched. */
+	/** Shows a terminal the agent started (a chip click) in this chat's Terminals tab. Its process is untouched. */
 	revealTerminal(instance: ITerminalInstance, preserveFocus: boolean): void {
 		void this.target()?.showTerminalInTools(instance, preserveFocus);
 	}
@@ -1815,73 +1827,109 @@ export class AgentSurfaceHost extends Disposable {
 	}
 
 	/**
-	 * Opens a terminal as an editor tab in the tools group, same as the browser.
-	 * `location: { viewColumn }` is a column index in the main editor grid, not this
-	 * group's id, so it cannot target the tools part.
+	 * Opens a new terminal in the chat's Terminals tab (made on first use), in front of the others.
+	 * With `reuseExisting`, a terminal of the user's already in the tools is used instead.
 	 */
 	private async openTerminalInTools(cwd?: string, reuseExisting = false): Promise<ITerminalInstance | undefined> {
-		const group = this.toolsGroup();
-		if (!group) {
+		if (!this.toolsGroup()) {
 			return undefined;
 		}
 		if (reuseExisting) {
-			const existing = this.terminalInTools();
+			const existing = this.userTerminalInTools();
 			if (existing) {
-				await existing.group.openEditor(existing.editor, { pinned: true });
-				this.syncOpen();
-				existing.instance.setVisible(true);
-				return existing.instance;
+				await this.showTerminalInTools(existing, true);
+				return existing;
 			}
 		}
 		const instance = await this.createToolsTerminal(cwd ?? this.executionRoot()?.fsPath);
-		const input = this.terminalEditorService.getInputFromResource(this.terminalEditorService.resolveResource(instance));
-		input.setGroup(group);
-		await group.openEditor(input, { pinned: true });
-		this.syncOpen();
-		instance.setVisible(true);
+		await this.showTerminalInTools(instance, false);
 		return instance;
 	}
 
-	/** Opens an existing terminal as a tab in the tools, or brings its tab forward where it already is. */
+	/**
+	 * Brings a terminal forward: in its own tab when it has one (the user dragged it out of the
+	 * list), else in the chat's Terminals tab, which it joins. Its process is untouched.
+	 */
 	private async showTerminalInTools(instance: ITerminalInstance, preserveFocus: boolean): Promise<void> {
 		if (instance.isDisposed) {
 			return;
 		}
-		const input = this.terminalEditorService.getInputFromResource(this.terminalEditorService.resolveResource(instance));
-		const open = this.editorGroupsService.groups.find(candidate => candidate.contains(input));
-		const group = open ?? this.toolsGroup();
-		if (!group) {
-			return;
+		const own = this.terminalTabOf(instance);
+		if (own) {
+			await own.group.openEditor(own.editor, { pinned: true, preserveFocus });
+		} else {
+			const existing = this.terminalsTab();
+			const group = existing?.group ?? this.toolsGroup();
+			if (!group) {
+				return;
+			}
+			const tab = existing?.editor ?? this.instantiationService.createInstance(AgentTerminalsEditorInput);
+			tab.add(instance, true);
+			await group.openEditor(tab, { pinned: true, preserveFocus });
+			if (!existing) {
+				this.listAgentTerminals();
+			}
 		}
-		if (!open) {
-			input.setGroup(group);
-		}
-		await group.openEditor(input, { pinned: true, preserveFocus });
 		this.syncOpen();
-		instance.setVisible(true);
 		if (!preserveFocus) {
 			await instance.focusWhenReady(true);
 		}
 	}
 
-	/** A terminal tab already in this chat's tools. Panel terminals are left alone. */
-	private terminalInTools(): { group: IEditorGroup; editor: TerminalEditorInput; instance: ITerminalInstance } | undefined {
-		const part = this.shown?.part;
-		if (!part) {
-			return undefined;
+	/** The chat's Terminals tab, where it is in the tools on screen. */
+	private terminalsTab(): { group: IEditorGroup; editor: AgentTerminalsEditorInput } | undefined {
+		for (const group of this.shown?.part.groups ?? []) {
+			const editor = group.editors.find((candidate): candidate is AgentTerminalsEditorInput => candidate instanceof AgentTerminalsEditorInput && !candidate.isDisposed());
+			if (editor) {
+				return { group, editor };
+			}
 		}
-		const groups = [part.activeGroup, ...part.groups.filter(candidate => candidate !== part.activeGroup)];
-		for (const group of groups) {
-			const editors = group.activeEditor
-				? [group.activeEditor, ...group.editors.filter(editor => editor !== group.activeEditor)]
-				: [...group.editors];
-			for (const editor of editors) {
-				if (!(editor instanceof TerminalEditorInput)) {
-					continue;
-				}
-				const instance = editor.terminalInstance;
-				if (instance && !instance.isDisposed) {
-					return { group, editor, instance };
+		return undefined;
+	}
+
+	/** The tab a terminal has to itself, in any editor area. */
+	private terminalTabOf(instance: ITerminalInstance): { group: IEditorGroup; editor: TerminalEditorInput } | undefined {
+		for (const group of this.editorGroupsService.groups) {
+			const editor = group.editors.find((candidate): candidate is TerminalEditorInput => candidate instanceof TerminalEditorInput && candidate.terminalInstance === instance);
+			if (editor) {
+				return { group, editor };
+			}
+		}
+		return undefined;
+	}
+
+	/** Lists the agent's running terminals in the Terminals tab, behind the one in front. */
+	private listAgentTerminals(): void {
+		const tab = this.terminalsTab()?.editor;
+		const sessionId = this.sessionId;
+		if (!tab || !sessionId) {
+			return;
+		}
+		for (const info of this.agentTerminals.list(this.runtime.chatFor(sessionId))) {
+			const instance = info.kind === 'terminal' && isTerminalLive(info.status) ? this.agentTerminals.instanceOf(info.id) : undefined;
+			if (instance && !tab.instances.includes(instance) && !this.terminalTabOf(instance)) {
+				tab.add(instance, false);
+			}
+		}
+	}
+
+	/**
+	 * A terminal of the user's in this chat's tools, to run a command in: the Terminals tab's front
+	 * one first. The agent's terminals, finished ones, and the panel's are left alone.
+	 */
+	private userTerminalInTools(): ITerminalInstance | undefined {
+		const usable = (instance: ITerminalInstance | undefined): instance is ITerminalInstance =>
+			!!instance && !instance.isDisposed && instance.exitCode === undefined && !isAgentTerminal(instance);
+		const tab = this.terminalsTab()?.editor;
+		const grouped = [tab?.activeInstance, ...(tab?.instances ?? [])].find(usable);
+		if (grouped) {
+			return grouped;
+		}
+		const part = this.shown?.part;
+		for (const group of part ? [part.activeGroup, ...part.groups.filter(candidate => candidate !== part.activeGroup)] : []) {
+			for (const editor of group.editors) {
+				if (editor instanceof TerminalEditorInput && usable(editor.terminalInstance)) {
+					return editor.terminalInstance;
 				}
 			}
 		}

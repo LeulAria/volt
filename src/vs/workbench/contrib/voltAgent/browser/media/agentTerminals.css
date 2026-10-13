@@ -298,3 +298,153 @@
 .volt-agent-terminal-runs-dots .dot.completed { background: var(--vscode-testing-iconPassed, #3fb950); }
 .volt-agent-terminal-runs-dots .dot.attention { background: var(--vscode-editorWarning-foreground, #cca700); }
 .volt-agent-terminal-runs-dots .dot.failed { background: var(--vscode-errorForeground, #f14c4c); }
+
+/*
+ * A chat's Terminals tab (agentTerminalsEditor.ts): the terminal in front fills the tab, and from two
+ * terminals on, a list on the right switches between them, as the terminal panel's tabs list does.
+ */
+.volt-agent-terminals {
+	position: relative;
+	display: flex;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+}
+
+.volt-agent-terminals-view {
+	position: relative;
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 100%;
+}
+
+.volt-agent-terminals-view > .terminal-overflow-guard {
+	width: 100%;
+}
+
+.volt-agent-terminals-list {
+	display: none;
+	flex: none;
+	box-sizing: border-box;
+	width: var(--volt-agent-terminals-list-width, 160px);
+	height: 100%;
+	padding: 4px 0;
+	overflow-x: hidden;
+	overflow-y: auto;
+	border-left: 1px solid var(--vscode-panel-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+}
+
+.volt-agent-terminals.has-list .volt-agent-terminals-list {
+	display: block;
+}
+
+/* The grab strip on the list's edge; the line itself is the list's border. */
+.volt-agent-terminals-sash {
+	display: none;
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: calc(var(--volt-agent-terminals-list-width, 160px) - 2px);
+	width: 4px;
+	z-index: 5;
+	cursor: ew-resize;
+}
+
+.volt-agent-terminals.has-list .volt-agent-terminals-sash {
+	display: block;
+}
+
+.volt-agent-terminals-sash:hover,
+.volt-agent-terminals-sash.active {
+	background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+}
+
+.volt-agent-terminals-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 24px;
+	padding: 0 4px 0 10px;
+	color: var(--vscode-foreground);
+	font-size: 13px;
+	cursor: pointer;
+	user-select: none;
+}
+
+.volt-agent-terminals-row:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.volt-agent-terminals-row.active {
+	background: var(--vscode-list-inactiveSelectionBackground);
+	color: var(--vscode-list-inactiveSelectionForeground, var(--vscode-foreground));
+}
+
+.volt-agent-terminals-row.dragging {
+	opacity: 0.5;
+}
+
+.volt-agent-terminals-row-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 16px;
+	height: 16px;
+	color: var(--vscode-icon-foreground, currentColor);
+}
+
+.volt-agent-terminals-row-label {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-terminals-row.exited .volt-agent-terminals-row-label {
+	opacity: 0.6;
+}
+
+/* An agent terminal's state, as on its chip: a dot only while it needs a look or is up. */
+.volt-agent-terminals-row-dot {
+	display: none;
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+}
+
+.volt-agent-terminals-row[data-status="running"] .volt-agent-terminals-row-dot,
+.volt-agent-terminals-row[data-status="starting"] .volt-agent-terminals-row-dot { display: block; background: var(--vscode-charts-blue, #3794ff); }
+.volt-agent-terminals-row[data-status="ready"] .volt-agent-terminals-row-dot { display: block; background: var(--vscode-testing-iconPassed, #3fb950); }
+.volt-agent-terminals-row[data-status="attention"] .volt-agent-terminals-row-dot { display: block; background: var(--vscode-editorWarning-foreground, #cca700); }
+.volt-agent-terminals-row[data-status="failed"] .volt-agent-terminals-row-dot { display: block; background: var(--vscode-errorForeground, #f14c4c); }
+
+.volt-agent-terminals-row-action {
+	display: none;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.volt-agent-terminals-row:hover .volt-agent-terminals-row-action,
+.volt-agent-terminals-row.active .volt-agent-terminals-row-action {
+	display: inline-flex;
+}
+
+.volt-agent-terminals-row-action:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-agent-terminals-row-action .codicon {
+	font-size: 14px;
+}

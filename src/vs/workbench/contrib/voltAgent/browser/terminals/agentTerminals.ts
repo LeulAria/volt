@@ -72,8 +72,9 @@ export const IAgentTerminalsService = createDecorator<IAgentTerminalsService>('a
 /**
  * Long-running commands of a chat (dev servers, watchers, `docker compose up`) in real terminals.
  * The pty host runs the process; this service watches its output, readiness and exit whether or
- * not its tab is open, so the agent keeps working and the chat shows it as a chip. The tab opens
- * in the chat's tools only when the user asks (a chip click), never on start.
+ * not it is on screen, so the agent keeps working and the chat shows it as a chip. While the chat
+ * has a Terminals tab, its running terminals are listed there (marked as the agent's); the tab
+ * itself opens only when the user asks (a chip click), never on start.
  */
 export interface IAgentTerminalsService {
 	readonly _serviceBrand: undefined;
@@ -91,6 +92,18 @@ export interface IAgentTerminalsService {
 	reveal(id: string, preserveFocus?: boolean): void;
 	/** Plain-text output after `offset` (all of it kept when omitted). */
 	output(id: string, offset?: number): { readonly text: string; readonly offset: number } | undefined;
+	/** The managed terminal a terminal instance runs, if the agent started it. */
+	forInstance(instance: ITerminalInstance): IAgentTerminalInfo | undefined;
+	/** The terminal instance of a managed terminal, while it is open. */
+	instanceOf(id: string): ITerminalInstance | undefined;
+}
+
+/** Set in the environment of every terminal the agent starts. */
+const AGENT_TERMINAL_ENV = 'VOLT_AGENT_TERMINAL';
+
+/** A terminal Volt's agent started, whether or not this service still tracks it. */
+export function isAgentTerminal(instance: ITerminalInstance): boolean {
+	return instance.shellLaunchConfig.env?.[AGENT_TERMINAL_ENV] === '1';
 }
 
 /** Output kept per terminal: the head whole, then a rolling tail. */
@@ -305,6 +318,20 @@ export class AgentTerminalsService extends Disposable implements IAgentTerminals
 		return terminal ? { text: terminal.log.since(offset ?? 0), offset: terminal.log.total } : undefined;
 	}
 
+	forInstance(instance: ITerminalInstance): IAgentTerminalInfo | undefined {
+		for (const terminal of this.terminals.values()) {
+			if (terminal.instance === instance) {
+				return terminal.info();
+			}
+		}
+		return undefined;
+	}
+
+	instanceOf(id: string): ITerminalInstance | undefined {
+		const instance = this.terminals.get(id)?.instance;
+		return instance && !instance.isDisposed ? instance : undefined;
+	}
+
 	async start(chatId: string, options: IAgentTerminalStart): Promise<IAgentTerminalInfo> {
 		const live = [...this.terminals.values()].filter(terminal => terminal.chatId === chatId && isTerminalLive(terminal.status));
 		if (live.length >= MAX_LIVE_PER_CHAT) {
@@ -396,7 +423,7 @@ export class AgentTerminalsService extends Disposable implements IAgentTerminals
 		const shell = await this.shell();
 		const env: Record<string, string> = {
 			...projectRunEnv(terminal.cwd),
-			VOLT_AGENT_TERMINAL: '1',
+			[AGENT_TERMINAL_ENV]: '1',
 			GIT_PAGER: 'cat',
 			PAGER: 'cat',
 		};
@@ -732,7 +759,8 @@ function shape(text: string, limit = RESULT_CHARS): string {
 	return `${text.slice(0, head)}\n[... ${text.length - head - tail} characters omitted ...]\n${text.slice(-tail)}`;
 }
 
-function describeStatus(info: IAgentTerminalInfo): string {
+/** A managed terminal's state in a few words: `ready`, `exited 1`. */
+export function describeAgentTerminalStatus(info: Pick<IAgentTerminalInfo, 'status' | 'exitCode'>): string {
 	switch (info.status) {
 		case 'starting': return 'starting';
 		case 'running': return 'running';
@@ -746,7 +774,7 @@ function describeStatus(info: IAgentTerminalInfo): string {
 }
 
 function header(info: IAgentTerminalInfo, offset: number): string {
-	const parts = [`${info.id}`, info.label, describeStatus(info)];
+	const parts = [`${info.id}`, info.label, describeAgentTerminalStatus(info)];
 	if (info.urls.length) {
 		parts.push(info.urls.slice(0, 3).join(' '));
 	}
@@ -802,7 +830,7 @@ class AgentTerminalTools extends Disposable implements IWorkbenchContribution {
 				return { text: 'No terminals in this chat. Start one with terminal_start.' };
 			}
 			return {
-				text: terminals.map(info => `- ${info.id} \u00b7 ${info.label} \u00b7 ${describeStatus(info)}${info.urls.length ? ` \u00b7 ${info.urls.join(' ')}` : ''}\n  $ ${info.command}${info.error && info.status === 'failed' ? `\n  ${info.error}` : ''}`).join('\n'),
+				text: terminals.map(info => `- ${info.id} \u00b7 ${info.label} \u00b7 ${describeAgentTerminalStatus(info)}${info.urls.length ? ` \u00b7 ${info.urls.join(' ')}` : ''}\n  $ ${info.command}${info.error && info.status === 'failed' ? `\n  ${info.error}` : ''}`).join('\n'),
 			};
 		}
 		if (name === TERMINAL_START_TOOL_NAME) {
@@ -836,7 +864,7 @@ class AgentTerminalTools extends Disposable implements IWorkbenchContribution {
 			case TERMINAL_SEND_TOOL_NAME: {
 				const instance = terminal.instance;
 				if (!instance || instance.isDisposed || !isTerminalLive(terminal.status)) {
-					return { error: `${id} is not running (${describeStatus(terminal.info())}).` };
+					return { error: `${id} is not running (${describeAgentTerminalStatus(terminal.info())}).` };
 				}
 				const text = (typeof args.text === 'string' ? args.text : '').replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
 				await instance.sendText(text, args.enter !== false);

@@ -13,6 +13,7 @@ import type { IAgentAssistantMessage, IAgentUserMessage } from '../editor/agentE
 import type { IAgentDisplayMention, IAgentImagePayload, IAgentVideoPayload } from '../composer/agentMentions.js';
 import type { IAgentVideoFrame, ITimeRange } from '../composer/agentVideoAttachments.js';
 import { reviveCitation } from '../composer/agentCitation.js';
+import { reviveTerminalQuote } from '../composer/agentTerminalQuote.js';
 import { AgentSegment, IAgentActivityItem } from '../blocks/agentBlocks.js';
 
 /**
@@ -132,6 +133,7 @@ export class AgentHistoryCodec {
 				image: item.image ? await this.thawImage(item.image) : undefined,
 				video: item.video ? await this.thawVideo(item.video) : undefined,
 				citation: reviveCitation(item.citation),
+				terminalQuote: reviveTerminalQuote(item.terminalQuote),
 			});
 		}
 		return mentions;

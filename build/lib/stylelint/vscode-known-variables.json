@@ -945,6 +945,7 @@
 		"--volt-mention-accent",
 		"--volt-mode-bg",
 		"--volt-terminal-tone",
+		"--volt-agent-terminals-list-width",
 		"--volt-mode-border",
 		"--volt-mode-fg",
 		"--volt-mode-send-bg",

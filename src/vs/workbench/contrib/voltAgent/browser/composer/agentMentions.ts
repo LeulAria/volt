@@ -63,6 +63,8 @@ import { AgentImageStrip, formatImageSize, imageExtension, imageThumbClass } fro
 import { AgentImageViewer, showAgentImageViewer } from './agentImageViewer.js';
 import { citationLabel, IAgentCitation, serializeChatSelection, withCitationComment } from './agentCitation.js';
 import { showCitationCommentEditor } from './agentCitationComment.js';
+import { IAgentTerminalQuote, serializeTerminalSelection, terminalQuoteLabel, terminalQuoteSource } from './agentTerminalQuote.js';
+import { IAgentTerminalCopyService } from '../terminals/agentTerminalCopy.js';
 import { formatDuration, IAgentVideoFrame, ITimeRange, mapRangesToSource, MAX_VIDEO_BYTES, normalizeVideoMime, probeVideo, rangesDuration, videoExtensionForMime, videoMimeForExtension } from './agentVideoAttachments.js';
 import { AgentVideoViewer, IAgentVideoClip, showAgentVideoViewer } from './agentVideoViewer.js';
 import { IAgentCustomizeService, IAgentSlashItem } from '../customize/agentCustomizeService.js';
@@ -120,6 +122,8 @@ export interface IAgentMention {
 	file?: IAgentFilePayload;
 	/** `selection` only: where the quote came from and the user's comment on it. */
 	citation?: IAgentCitation;
+	/** `terminal` only: text copied out of a terminal, and which terminal (`value` holds the block the agent reads). */
+	terminalQuote?: IAgentTerminalQuote;
 	/** `skill` only: the `/` entry the token stands for (`value` holds its name). */
 	slash?: IAgentSlashItem;
 	/** `skill` only: kept on for every message (picked with Alt+Enter). */
@@ -144,6 +148,7 @@ export interface IAgentDisplayMention {
 	video?: IAgentVideoPayload;
 	file?: IAgentFilePayload;
 	citation?: IAgentCitation;
+	terminalQuote?: IAgentTerminalQuote;
 }
 
 export { imageAttachmentsFromMentions, resourceAttachmentsFromMentions, videoFrameName } from './agentMentionImages.js';
@@ -219,6 +224,7 @@ export function cloneDisplayMentions(mentions: readonly IAgentDisplayMention[]):
 		video: mention.video ? { ...mention.video } : undefined,
 		file: mention.file ? { ...mention.file } : undefined,
 		citation: mention.citation ? { ...mention.citation } : undefined,
+		terminalQuote: mention.terminalQuote ? { ...mention.terminalQuote } : undefined,
 	}));
 }
 
@@ -350,6 +356,25 @@ function citationHover(citation: IAgentCitation): MarkdownString {
 	return hover;
 }
 
+/** The copied lines and the terminal they came from. */
+function terminalQuoteHover(quote: IAgentTerminalQuote): MarkdownString {
+	const hover = new MarkdownString();
+	const lines = quote.text.replace(/\r\n?/g, '\n').trimEnd().split('\n');
+	for (const line of lines.slice(0, 12)) {
+		hover.appendMarkdown('> ');
+		hover.appendText(line);
+		hover.appendMarkdown('\n');
+	}
+	if (lines.length > 12) {
+		hover.appendMarkdown('> ');
+		hover.appendText(localize('voltAgent.terminalQuoteMore', "... {0} more lines", lines.length - 12));
+		hover.appendMarkdown('\n');
+	}
+	hover.appendMarkdown('\n\n');
+	hover.appendText(localize('voltAgent.terminalQuoteFrom', "Copied from terminal {0}", terminalQuoteSource(quote)));
+	return hover;
+}
+
 /** `0:09 · 3.2 MB`, or just the size until the video is decoded. */
 export function videoDetail(video: Pick<IAgentVideoPayload, 'duration' | 'size'>): string {
 	return [video.duration ? formatDuration(video.duration) : undefined, formatImageSize(video.size)].filter(Boolean).join(' · ');
@@ -450,6 +475,7 @@ export class AgentMentionController extends Disposable {
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IAgentCustomizeService private readonly customize: IAgentCustomizeService,
 		@IPathService private readonly pathService: IPathService,
+		@IAgentTerminalCopyService private readonly terminalCopy: IAgentTerminalCopyService,
 	) {
 		super();
 		this.attachmentStore = instantiationService.createInstance(AgentAttachmentStore);
@@ -809,6 +835,7 @@ export class AgentMentionController extends Disposable {
 			video: mention.video,
 			file: mention.file,
 			citation: mention.citation,
+			terminalQuote: mention.terminalQuote,
 		}));
 	}
 
@@ -845,6 +872,7 @@ export class AgentMentionController extends Disposable {
 				video: item.video,
 				file: item.file,
 				citation: item.citation,
+				terminalQuote: item.terminalQuote,
 			};
 			this.addDecoration(mention, {
 				startLineNumber: start.lineNumber,
@@ -957,6 +985,25 @@ export class AgentMentionController extends Disposable {
 			label: citationLabel(citation),
 			value: serializeChatSelection(citation),
 			citation,
+		}, insertRange);
+	}
+
+	/** Text copied out of a terminal, sent as a `terminal_selection` block naming the terminal. Replaces the selection. */
+	addTerminalQuoteMention(quote: IAgentTerminalQuote): void {
+		const selection = this.editor.getSelection();
+		if (selection && !selection.isEmpty()) {
+			this.editor.executeEdits('volt-agent-terminal-quote', [{ range: selection, text: '' }]);
+		}
+		const insertRange = this.cursorRangeAfterSpacer();
+		if (!insertRange) {
+			return;
+		}
+		this.insertMention({
+			id: `terminal-quote:${generateUuid()}`,
+			kind: 'terminal',
+			label: terminalQuoteLabel(quote),
+			value: serializeTerminalSelection(quote),
+			terminalQuote: quote,
 		}, insertRange);
 	}
 
@@ -3078,6 +3125,9 @@ export class AgentMentionController extends Disposable {
 		if (mention.kind === 'skill') {
 			return slashTagFor(mention.slash ?? { name: mention.label.replace(/^\//, ''), type: 'skill' });
 		}
+		if (mention.terminalQuote) {
+			return mention.value ?? serializeTerminalSelection(mention.terminalQuote);
+		}
 		// Named references; a chat's or terminal's content follows the prompt (see contextBlocks).
 		if (mention.kind === 'chat' || mention.kind === 'terminal' || mention.kind === 'mcp') {
 			return `@${mention.kind}/${mention.label}`;
@@ -3121,6 +3171,9 @@ export class AgentMentionController extends Disposable {
 		}
 		if (mention.citation) {
 			return citationHover(mention.citation);
+		}
+		if (mention.terminalQuote) {
+			return terminalQuoteHover(mention.terminalQuote);
 		}
 		return new MarkdownString(this.tagValueFor(mention));
 	}
@@ -3348,6 +3401,14 @@ export class AgentMentionController extends Disposable {
 		const text = data.getData('text/plain');
 		const model = this.editor.getModel();
 		if (!text || !model) {
+			return;
+		}
+		// Copied out of a terminal: a chip that tells the agent which terminal (Cmd+Shift+V pastes it as text).
+		const quote = this.terminalCopy.sourceOf(text);
+		if (quote) {
+			e.preventDefault();
+			e.stopPropagation();
+			this.addTerminalQuoteMention(quote);
 			return;
 		}
 		const replaced = (this.editor.getSelections() ?? []).reduce((sum, selection) => sum + model.getValueLengthInRange(selection), 0);
