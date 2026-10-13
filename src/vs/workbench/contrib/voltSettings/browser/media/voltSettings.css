@@ -512,6 +512,32 @@
 	line-height: 1.3;
 }
 
+/* An (i) after a title, with more on hover (Tab > Partial Accepts). */
+.volt-settings-row label .volt-settings-title-info {
+	display: inline-flex;
+	margin-left: 5px;
+	vertical-align: -2px;
+	opacity: 0.6;
+	cursor: default;
+}
+
+.volt-settings-row label .volt-settings-title-info .codicon {
+	font-size: 13px;
+}
+
+/* A tag after a title (BETA), as Cursor marks experimental settings. */
+.volt-settings-row label .volt-settings-title-badge {
+	display: inline-block;
+	margin-left: 6px;
+	padding: 1px 5px;
+	border-radius: 4px;
+	background: var(--volt-settings-hover);
+	font-size: 10.5px;
+	letter-spacing: 0.03em;
+	vertical-align: 1px;
+	opacity: 0.75;
+}
+
 .volt-settings-row .desc,
 .volt-settings-card-copy .meta {
 	margin-top: 4px;

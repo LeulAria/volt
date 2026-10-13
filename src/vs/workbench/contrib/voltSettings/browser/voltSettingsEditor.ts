@@ -42,7 +42,7 @@ import { ACCESS_MODE_OPTIONS, accessModeOption, VoltAccessMode } from '../../../
 import { IPermissionRule } from '../../../services/voltRuntime/common/access/accessTypes.js';
 import { VOLT_MODES, VoltMode, modePolicy } from '../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
-import { IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
+import { IPredictionSettings, IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
 import { IWorkbenchThemeService, ThemeSettings } from '../../../services/themes/common/workbenchThemeService.js';
 import { AGENT_DEFAULT_MODEL_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_PROMPT_HISTORY_SETTING, AGENT_VOICE_DEFAULT_REALTIME_MODEL, AGENT_VOICE_ENDPOINT_SETTING, AGENT_VOICE_ENGINE_SETTING, AGENT_VOICE_MODEL_SETTING, AGENT_VOICE_REALTIME_MODEL_SETTING, AGENT_VOICE_REALTIME_MODELS, AgentVoiceEngine } from '../../voltAgent/common/agentComposerSettings.js';
 import { AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING } from '../../voltAgent/common/agentWorkflowSettings.js';
@@ -69,6 +69,9 @@ import { AgentUsagePage } from '../../voltAgent/browser/usage/agentUsagePage.js'
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { createAgentHeaderSeparatorIcon } from '../../voltAgent/browser/chrome/agentTitlebarHeader.js';
 import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/browser/home/agentHomeFooterActions.js';
+
+/** The Tab page's on/off settings. */
+type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' | 'autoImport' | 'autoImportPython';
 
 type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'beta' | 'security' | 'connected' | 'projects' | 'git' | 'worktrees' | 'storage';
 
@@ -1143,24 +1146,92 @@ export class VoltSettingsEditor extends EditorPane {
 		}).render();
 	}
 
+	/** An (i) after a row's title with more about it on hover. */
+	private titleInfo(row: HTMLElement, text: string): void {
+		const label = row.querySelector('label');
+		if (label) {
+			const info = append(label, $('span.volt-settings-title-info'));
+			info.appendChild(renderIcon(Codicon.info));
+			setAgentTooltip(info, text);
+		}
+	}
+
+	/** A small tag after a row's title, such as BETA. */
+	private titleBadge(row: HTMLElement, text: string): void {
+		const label = row.querySelector('label');
+		if (label) {
+			append(label, $('span.volt-settings-title-badge')).textContent = text;
+		}
+	}
+
 	private renderTab(): void {
 		this.pageHead(
 			localize('voltSettings.tab', "Tab & Prediction"),
 			localize('voltSettings.tabLead2', "Ghost text wherever you type: code in any editor, the next words in the agent composer. Tab accepts."),
 		);
 		const settings = this.prediction.getSettings();
-		const group = this.settingsGroup();
 
+		// Cursor's Tab page: one switch per behavior, then the files Tab stays out of.
+		const tab = this.settingsGroup();
+		const toggle = (key: TabToggle, title: string, desc: string) => this.settingRow(tab, title, desc, host => this.switch(host, settings[key], title, () => {
+			const update: Partial<IPredictionSettings> = {};
+			update[key] = !settings[key];
+			this.prediction.updateSettings(update);
+			this.renderContent();
+		}));
+		toggle('enabled', localize('voltSettings.voltTab', "Volt Tab"), localize('voltSettings.voltTabDesc', "Context-aware, multi-line suggestions around your cursor based on recent edits"));
+		const partial = toggle('partialAccepts', localize('voltSettings.partialAccepts', "Partial Accepts"), localize('voltSettings.partialAcceptsDesc', "Accept the next word of a suggestion via {0}", isMacintosh ? '\u2318\u2192' : 'Ctrl+\u2192'));
+		this.titleInfo(partial, localize('voltSettings.partialAcceptsInfo', "Each press takes one more word of the suggestion; Tab still takes all of it. Off, the key moves the cursor as usual."));
+		toggle('inComments', localize('voltSettings.tabInComments', "Suggestions While Commenting"), localize('voltSettings.tabInCommentsDesc', "Allow Tab to trigger while in a comment region"));
+		toggle('whitespaceOnly', localize('voltSettings.tabWhitespace', "Whitespace-Only Suggestions"), localize('voltSettings.tabWhitespaceDesc', "Suggest edits like new lines and indentation that modify whitespace only"));
+		toggle('autoImport', localize('voltSettings.tabImports', "Imports"), localize('voltSettings.tabImportsDesc', "Automatically import necessary modules for TypeScript"));
+		const python = toggle('autoImportPython', localize('voltSettings.tabPythonImports', "Auto Import for Python"), localize('voltSettings.tabPythonImportsDesc', "Enable auto import for Python. This is a beta feature."));
+		this.titleBadge(python, localize('voltSettings.beta', "BETA"));
 		this.settingRow(
-			group,
-			localize('voltSettings.tabEnabled', "Enable predictions"),
-			localize('voltSettings.tabEnabledDesc', "Show AI suggestions as you type. Accept with Tab."),
-			host => this.switch(host, settings.enabled, localize('voltSettings.tabEnabled', "Enable predictions"), () => {
-				this.prediction.updateSettings({ enabled: !settings.enabled });
-				this.renderContent();
-			}),
+			tab,
+			localize('voltSettings.tabIgnoredFiles', "Ignored Files"),
+			localize('voltSettings.tabIgnoredFilesDesc', "Glob patterns for files where Volt Tab will not suggest"),
+			host => {
+				const globInput = this.renderStore.add(new InputBox(append(host, $('.volt-settings-input.wide')), this.contextViewService, {
+					placeholder: localize('voltSettings.tabIgnoredFilesPlaceholder', "e.g., *.md, **/generated/**"),
+					ariaLabel: localize('voltSettings.tabIgnoredFiles', "Ignored Files"),
+					inputBoxStyles: this.inputBoxStyles(),
+				}));
+				globInput.value = settings.disabledGlobs.join(', ');
+				this.renderStore.add(addDisposableListener(globInput.inputElement, 'change', () => {
+					this.prediction.updateSettings({ disabledGlobs: globInput.value.split(',').map(glob => glob.trim()).filter(Boolean) });
+				}));
+			},
 		);
-		this.predictionModelRow(group);
+
+		this.sectionLabel(localize('voltSettings.editorPrediction', "Editors"));
+		const editors = this.settingsGroup();
+		this.predictionModelRow(editors);
+		const modeOptions: ISelectOptionItem[] = [
+			{ text: localize('voltSettings.tabEager', "Eager"), detail: 'eager' },
+			{ text: localize('voltSettings.tabSubtle', "Subtle"), detail: 'subtle' },
+		];
+		this.settingRow(
+			editors,
+			localize('voltSettings.tabMode', "Prediction mode"),
+			localize('voltSettings.tabModeDesc', "Eager predicts while you type. Subtle only predicts on the explicit trigger (Alt+\\)."),
+			host => {
+				const modeBox = this.selectBox(append(host, $('.volt-settings-select')), modeOptions, settings.mode === 'subtle' ? 1 : 0, localize('voltSettings.tabMode', "Prediction mode"));
+				this.renderStore.add(modeBox.onDidSelect(e => {
+					this.prediction.updateSettings({ mode: modeOptions[e.index].detail as 'eager' | 'subtle' });
+				}));
+			},
+		);
+		this.settingRow(
+			editors,
+			localize('voltSettings.tabDebounce', "Debounce"),
+			localize('voltSettings.tabDebounceDesc', "Extra wait before a model request is sent. Lower is snappier; higher saves tokens while typing fast."),
+			host => this.stepper(host, String(settings.debounceMs), localize('voltSettings.ms', "ms"), ms => {
+				const clamped = Math.max(0, Math.min(2000, Math.round(ms)));
+				this.prediction.updateSettings({ debounceMs: clamped });
+				return clamped;
+			}, 25),
+		);
 
 		this.sectionLabel(localize('voltSettings.composerPrediction', "Agent composer"));
 		const composer = this.settingsGroup();
@@ -1182,51 +1253,6 @@ export class VoltSettingsEditor extends EditorPane {
 				this.prediction.updateSettings({ composerDelayMs: clamped });
 				return clamped;
 			}, 100),
-		);
-
-		this.sectionLabel(localize('voltSettings.editorPrediction', "Editors"));
-		const editors = this.settingsGroup();
-		const modeOptions: ISelectOptionItem[] = [
-			{ text: localize('voltSettings.tabEager', "Eager"), detail: 'eager' },
-			{ text: localize('voltSettings.tabSubtle', "Subtle"), detail: 'subtle' },
-		];
-		this.settingRow(
-			editors,
-			localize('voltSettings.tabMode', "Prediction mode"),
-			localize('voltSettings.tabModeDesc', "Eager predicts while you type. Subtle only predicts on the explicit trigger (Alt+\\)."),
-			host => {
-				const modeBox = this.selectBox(append(host, $('.volt-settings-select')), modeOptions, settings.mode === 'subtle' ? 1 : 0, localize('voltSettings.tabMode', "Prediction mode"));
-				this.renderStore.add(modeBox.onDidSelect(e => {
-					this.prediction.updateSettings({ mode: modeOptions[e.index].detail as 'eager' | 'subtle' });
-				}));
-			},
-		);
-
-		this.settingRow(
-			editors,
-			localize('voltSettings.tabDebounce', "Debounce"),
-			localize('voltSettings.tabDebounceDesc', "Extra wait before a model request is sent. Lower is snappier; higher saves tokens while typing fast."),
-			host => this.stepper(host, String(settings.debounceMs), localize('voltSettings.ms', "ms"), ms => {
-				const clamped = Math.max(0, Math.min(2000, Math.round(ms)));
-				this.prediction.updateSettings({ debounceMs: clamped });
-				return clamped;
-			}, 25),
-		);
-
-		this.settingRow(
-			editors,
-			localize('voltSettings.tabGlobs', "Disabled files"),
-			localize('voltSettings.tabGlobsDesc', "Glob patterns that never receive predictions (comma separated). Secrets and lockfiles are excluded by default."),
-			host => {
-				const globInput = this.renderStore.add(new InputBox(append(host, $('.volt-settings-input.wide')), this.contextViewService, {
-					ariaLabel: localize('voltSettings.tabGlobs', "Disabled files"),
-					inputBoxStyles: this.inputBoxStyles(),
-				}));
-				globInput.value = settings.disabledGlobs.join(', ');
-				this.renderStore.add(addDisposableListener(globInput.inputElement, 'change', () => {
-					this.prediction.updateSettings({ disabledGlobs: globInput.value.split(',').map(glob => glob.trim()).filter(Boolean) });
-				}));
-			},
 		);
 
 		this.sectionLabel(localize('voltSettings.voice', "Voice"));
