@@ -108,6 +108,8 @@ export interface IVoltSubmenu<T> {
 	readonly footer?: readonly IVoltMenuItem<T>[];
 	readonly width?: number;
 	readonly emptyMessage?: string;
+	/** Extra classes on the menu, for its own styling; a flyout takes its submenu's. */
+	readonly className?: string;
 }
 
 export interface IVoltMenuOptions<T> extends IVoltSubmenu<T> {
@@ -119,7 +121,6 @@ export interface IVoltMenuOptions<T> extends IVoltSubmenu<T> {
 	readonly gap?: number;
 	/** Something stacked on top of the anchor that the menu should not cover (the composer's chips). */
 	readonly above?: () => HTMLElement | undefined;
-	readonly className?: string;
 	readonly ariaLabel: string;
 	readonly onPick: (item: IVoltMenuItem<T>) => void | Promise<void>;
 	readonly onHide?: () => void;
@@ -808,6 +809,7 @@ class VoltMenuWidget<T> extends Disposable {
 			hide: this.context.hide,
 			relayout: () => this.placeFlyout(host, this.flyoutRow ?? row),
 			pick: this.context.pick,
+			className: submenu.className,
 			ariaLabel: item.label,
 			idle: !focus,
 			back: () => {
