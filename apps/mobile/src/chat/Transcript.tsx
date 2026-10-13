@@ -3,11 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { buildRows, type TranscriptRow } from '@volt/client-core';
+import { applyToolDensity, buildRows, type TranscriptRow } from '@volt/client-core';
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { FlatList, type NativeScrollEvent, type NativeSyntheticEvent, Platform, StyleSheet, View, type ViewToken } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { usePending, useTranscript } from '../state/client';
+import { useConversationPrefs } from '../state/prefs';
 import { useTheme } from '../theme/theme';
 import { EmptyState, haptic, Icon, Tap } from '../ui/core';
 import { PinnedPrompt, RowView, rowGap } from './Rows';
@@ -37,8 +38,9 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 	const [away, setAway] = useState(false);
 	// A cell keeps its object while its row and spacing hold, so only the rows a patch touched re-render.
 	const cellCache = useRef(new WeakMap<TranscriptRow, ICell>());
+	const { toolDensity } = useConversationPrefs();
 	const cells = useMemo(() => {
-		const rows = buildRows(transcript?.messages ?? [], pending);
+		const rows = applyToolDensity(buildRows(transcript?.messages ?? [], pending), toolDensity);
 		const out: ICell[] = new Array(rows.length);
 		for (let i = 0; i < rows.length; i++) {
 			const gap = rowGap(rows[i], rows[i - 1]);
@@ -50,7 +52,7 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 			out[rows.length - 1 - i] = cell;
 		}
 		return out;
-	}, [transcript?.messages, pending]);
+	}, [transcript?.messages, pending, toolDensity]);
 
 	// For each cell, the prompt that opened its turn (the newest user row at or above it).
 	const owners = useMemo(() => {

@@ -6,6 +6,7 @@
 import { highlight, type IDiffHunk, type IDiffLine, type IVoltPalette, parseUnifiedDiff, wordChanges } from '@volt/client-core';
 import { memo, type ReactElement, type ReactNode, useMemo, useState } from 'react';
 import { FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useConversationPrefs } from '../state/prefs';
 import { FONT, useTheme } from '../theme/theme';
 import { T, Tap } from '../ui/core';
 
@@ -88,15 +89,16 @@ function contentWidth(items: readonly DiffItem[], gutter: number): number {
 	return Math.ceil(Math.min(longest, 600) * CHAR_WIDTH) + gutter * 2 + 40;
 }
 
-function lineColors(p: IVoltPalette, kind: IDiffLine['kind']): { readonly bg: string; readonly sign: string; readonly word: string } {
+/** `plain` drops the line tints (Themed diff backgrounds off): the +/- signs keep their colours. */
+function lineColors(p: IVoltPalette, kind: IDiffLine['kind'], plain?: boolean): { readonly bg: string; readonly sign: string; readonly word: string } {
 	return kind === 'add'
-		? { bg: p.diffAdded, sign: p.diffAddedFg, word: `${p.diffAddedFg}45` }
+		? { bg: plain ? 'transparent' : p.diffAdded, sign: p.diffAddedFg, word: `${p.diffAddedFg}45` }
 		: kind === 'del'
-			? { bg: p.diffRemoved, sign: p.diffRemovedFg, word: `${p.diffRemovedFg}45` }
+			? { bg: plain ? 'transparent' : p.diffRemoved, sign: p.diffRemovedFg, word: `${p.diffRemovedFg}45` }
 			: { bg: 'transparent', sign: p.fgQuaternary, word: 'transparent' };
 }
 
-export const DiffRow = memo(function DiffRow({ item, gutter, wrap, fence }: { readonly item: DiffItem; readonly gutter: number; readonly wrap: boolean; readonly fence?: string }) {
+export const DiffRow = memo(function DiffRow({ item, gutter, wrap, fence, plain }: { readonly item: DiffItem; readonly gutter: number; readonly wrap: boolean; readonly fence?: string; readonly plain?: boolean }) {
 	const { p } = useTheme();
 	const tokens = useMemo(() => item.type === 'line' && fence && !item.words && item.line.text.length < 400 ? highlight(item.line.text, fence)[0] : undefined, [item, fence]);
 	if (item.type === 'hunk') {
@@ -114,7 +116,7 @@ export const DiffRow = memo(function DiffRow({ item, gutter, wrap, fence }: { re
 		);
 	}
 	const { line, words } = item;
-	const colors = lineColors(p, line.kind);
+	const colors = lineColors(p, line.kind, plain);
 	const text = line.text || ' ';
 	let body: ReactNode = text;
 	if (words?.length) {
@@ -177,6 +179,7 @@ const COLLAPSED_LINES = 60;
 /** A unified diff inside the transcript (an edit block): the first lines, then "Show all". */
 export const InlineDiff = memo(function InlineDiff({ diff, fence }: { readonly diff: string; readonly fence?: string }) {
 	const { p } = useTheme();
+	const { themedDiffs } = useConversationPrefs();
 	const [expanded, setExpanded] = useState(false);
 	const items = useMemo(() => parseUnifiedDiff(diff).flatMap((file, f) => diffItems(file.hunks, `f${f}:`)), [diff]);
 	const gutter = useMemo(() => gutterWidth(items), [items]);
@@ -190,7 +193,7 @@ export const InlineDiff = memo(function InlineDiff({ diff, fence }: { readonly d
 		<View style={{ backgroundColor: p.codeBg }}>
 			<ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
 				<View style={{ minWidth: width, paddingVertical: 4 }}>
-					{shown.map(item => <DiffRow key={item.key} item={item} gutter={gutter} wrap={false} fence={fence} />)}
+					{shown.map(item => <DiffRow key={item.key} item={item} gutter={gutter} wrap={false} fence={fence} plain={!themedDiffs} />)}
 				</View>
 			</ScrollView>
 			{long ? (

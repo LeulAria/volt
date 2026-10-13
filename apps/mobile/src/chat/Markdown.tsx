@@ -11,6 +11,7 @@ import { Fragment, memo, type ReactNode, useEffect, useMemo, useState } from 're
 import { Image, Linking, ScrollView, StyleSheet, Text, type TextStyle, useWindowDimensions, View } from 'react-native';
 import { haptic, Icon, T, Tap } from '../ui/core';
 import { showImage } from '../ui/ImageViewer';
+import { useConversationPrefs } from '../state/prefs';
 import { FONT, useTheme } from '../theme/theme';
 import { openFile, resolveFileLink, useChatContext } from './context';
 import { InlineDiff } from './Diff';
@@ -255,12 +256,24 @@ const COLLAPSE_LINES = 60;
 
 export const CodeBlock = memo(function CodeBlock({ code, lang, path, streaming }: { readonly code: string; readonly lang?: string; readonly path?: string; readonly streaming?: boolean }) {
 	const { p } = useTheme();
+	const { codeWrap } = useConversationPrefs();
 	const [copied, setCopied] = useState(false);
 	const [expanded, setExpanded] = useState(false);
 	const isDiff = !streaming && resolveLanguage(lang) === 'diff' && /^@@ /m.test(code);
 	const all = useMemo(() => isDiff ? [] : highlight(code, lang), [code, lang, isDiff]);
 	const long = !streaming && all.length > COLLAPSE_LINES;
 	const lines = long && !expanded ? all.slice(0, COLLAPSE_LINES - 20) : all;
+	// Code block word wrap (Settings) wraps long lines instead of scrolling them sideways.
+	const text = (
+		<Text selectable style={{ fontFamily: FONT.mono, fontSize: 12.5, lineHeight: 19, color: p.syntax.plain, paddingHorizontal: 14, paddingVertical: 12 }}>
+			{lines.map((tokens, i) => (
+				<Fragment key={i}>
+					{tokens.map((token, j) => token.k === 'plain' ? token.v : <Text key={j} style={{ color: p.syntax[token.k], ...(token.k === 'comment' ? styles.em : {}) }}>{token.v}</Text>)}
+					{i < lines.length - 1 ? '\n' : ''}
+				</Fragment>
+			))}
+		</Text>
+	);
 	return (
 		<View style={{ marginVertical: 8, borderRadius: RADIUS.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: p.stroke, backgroundColor: p.codeBg, overflow: 'hidden' }}>
 			<View style={{ flexDirection: 'row', alignItems: 'center', height: 36, paddingLeft: 12, paddingRight: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint, gap: 6 }}>
@@ -277,15 +290,8 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, path, streaming }
 					<T variant="footnote" color={p.fgTertiary}>{copied ? 'Copied' : 'Copy'}</T>
 				</Tap>
 			</View>
-			{isDiff ? <InlineDiff diff={code} /> : <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
-				<Text selectable style={{ fontFamily: FONT.mono, fontSize: 12.5, lineHeight: 19, color: p.syntax.plain, paddingHorizontal: 14, paddingVertical: 12 }}>
-					{lines.map((tokens, i) => (
-						<Fragment key={i}>
-							{tokens.map((token, j) => token.k === 'plain' ? token.v : <Text key={j} style={{ color: p.syntax[token.k], ...(token.k === 'comment' ? styles.em : {}) }}>{token.v}</Text>)}
-							{i < lines.length - 1 ? '\n' : ''}
-						</Fragment>
-					))}
-				</Text>
+			{isDiff ? <InlineDiff diff={code} /> : codeWrap ? text : <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
+				{text}
 			</ScrollView>}
 			{long ? (
 				<Tap haptics="selection" onPress={() => setExpanded(e => !e)} style={{ height: 38, alignItems: 'center', justifyContent: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}>

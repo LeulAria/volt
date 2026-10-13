@@ -8,6 +8,7 @@ import { memo, type ReactNode, useState } from 'react';
 import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useAttachment, useClient } from '../state/client';
+import { useConversationPrefs } from '../state/prefs';
 import { FONT, useTheme } from '../theme/theme';
 import { haptic, Icon, LiveTimer, Shimmer, T, Tap } from '../ui/core';
 import { showImage } from '../ui/ImageViewer';
@@ -162,13 +163,16 @@ function ThoughtRow({ row }: { readonly row: RowOf<'thought'> }) {
 	);
 }
 
-function StepBody({ step }: { readonly step: IStepItem }) {
+/** `flush` is the body of a card: no margin or frame of its own, a hairline above. */
+function StepBody({ step, flush }: { readonly step: IStepItem; readonly flush?: boolean }) {
 	const { p } = useTheme();
 	const body = step.body;
 	if (!body) {
 		return null;
 	}
-	const box = { marginLeft: 24, marginTop: 4, marginBottom: 6, borderRadius: RADIUS.md, backgroundColor: p.codeBg, borderWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint, overflow: 'hidden' as const };
+	const box = flush
+		? { backgroundColor: p.codeBg, borderTopWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint, overflow: 'hidden' as const }
+		: { marginLeft: 24, marginTop: 4, marginBottom: 6, borderRadius: RADIUS.md, backgroundColor: p.codeBg, borderWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint, overflow: 'hidden' as const };
 	if (body.kind === 'command') {
 		return (
 			<Animated.View entering={FadeIn.duration(180)} style={box}>
@@ -181,7 +185,7 @@ function StepBody({ step }: { readonly step: IStepItem }) {
 		);
 	}
 	if (body.kind === 'diff') {
-		return <View style={box}><InlineDiff diff={body.diff} /></View>;
+		return <View style={box}><InlineDiff diff={body.diff} {...(body.path ? { fence: languageForPath(body.path).fence } : {})} /></View>;
 	}
 	return (
 		<Animated.View entering={FadeIn.duration(180)} style={box}>
@@ -190,20 +194,35 @@ function StepBody({ step }: { readonly step: IStepItem }) {
 	);
 }
 
-function StepLine({ step }: { readonly step: IStepItem }) {
+function StepLine({ step, card }: { readonly step: IStepItem; readonly card?: boolean }) {
 	const { p } = useTheme();
-	const [open, setOpen] = useState(false);
+	const [open, setOpen] = useState(!!card);
 	const color = step.status === 'error' ? p.danger : p.fgTertiary;
+	const line = (
+		<Tap disabled={!step.body} haptics="selection" onPress={() => setOpen(o => !o)} onLongPress={() => step.detail && copyWithHaptic(step.detail)} style={{ flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 30, ...(card ? { paddingHorizontal: 10, minHeight: 38 } : {}) }}>
+			<View style={{ width: 15, alignItems: 'center' }}>
+				{step.status === 'running' ? <ActivityIndicator size="small" color={p.info} style={{ transform: [{ scale: 0.65 }] }} /> : <Icon name={step.status === 'error' ? 'xCircle' : step.icon} size={14} color={step.status === 'error' ? p.danger : p.fgTertiary} />}
+			</View>
+			<Shimmer active={step.status === 'running'}><T variant="small" weight="300" color={color}>{step.label}</T></Shimmer>
+			{step.detail ? <T variant="small" color={p.fgQuaternary} numberOfLines={1} style={{ flexShrink: 1 }}>{step.detail}</T> : null}
+			{step.additions ? <T variant="footnote" mono color={p.diffAddedFg}>+{step.additions}</T> : null}
+			{step.deletions ? <T variant="footnote" mono color={p.diffRemovedFg}>{'−'}{step.deletions}</T> : null}
+			<View style={{ flex: 1 }} />
+			{step.body ? <View style={{ transform: [{ rotate: open ? '90deg' : '0deg' }] }}><Icon name="chevronRight" size={12} color={p.fgQuaternary} /></View> : null}
+		</Tap>
+	);
+	if (card && step.body) {
+		// Detailed density: the call as a card, open on its output or diff.
+		return (
+			<View style={{ marginVertical: 3, borderRadius: RADIUS.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: p.stroke, backgroundColor: p.fillFaint, overflow: 'hidden' }}>
+				{line}
+				{open ? <StepBody step={step} flush /> : null}
+			</View>
+		);
+	}
 	return (
 		<View>
-			<Tap disabled={!step.body} haptics="selection" onPress={() => setOpen(o => !o)} onLongPress={() => step.detail && copyWithHaptic(step.detail)} style={{ flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 30 }}>
-				<View style={{ width: 15, alignItems: 'center' }}>
-					{step.status === 'running' ? <ActivityIndicator size="small" color={p.info} style={{ transform: [{ scale: 0.65 }] }} /> : <Icon name={step.status === 'error' ? 'xCircle' : step.icon} size={14} color={step.status === 'error' ? p.danger : p.fgTertiary} />}
-				</View>
-				<Shimmer active={step.status === 'running'}><T variant="small" weight="300" color={color}>{step.label}</T></Shimmer>
-				{step.detail ? <T variant="small" color={p.fgQuaternary} numberOfLines={1} style={{ flex: 1 }}>{step.detail}</T> : <View style={{ flex: 1 }} />}
-				{step.body ? <View style={{ transform: [{ rotate: open ? '90deg' : '0deg' }] }}><Icon name="chevronRight" size={12} color={p.fgQuaternary} /></View> : null}
-			</Tap>
+			{line}
 			{open ? <StepBody step={step} /> : null}
 		</View>
 	);
@@ -212,6 +231,14 @@ function StepLine({ step }: { readonly step: IStepItem }) {
 function StepsRow({ row }: { readonly row: RowOf<'steps'> }) {
 	const { p } = useTheme();
 	const [open, setOpen] = useState<boolean | undefined>(undefined);
+	if (row.display === 'lines' || row.display === 'cards') {
+		// Standard: a line per call. Detailed: calls with output or a diff as open cards.
+		return (
+			<View style={{ paddingLeft: 2 }}>
+				{row.items.map(step => <StepLine key={step.key} step={step} card={row.display === 'cards'} />)}
+			</View>
+		);
+	}
 	const expanded = open ?? row.live;
 	const tail = row.live && open === undefined;
 	const shown = expanded ? (tail ? row.items.slice(-3) : row.items) : [];
@@ -236,7 +263,9 @@ function StepsRow({ row }: { readonly row: RowOf<'steps'> }) {
 
 function FileRow({ row }: { readonly row: RowOf<'file'> }) {
 	const { p } = useTheme();
-	const [open, setOpen] = useState(false);
+	const { toolDensity } = useConversationPrefs();
+	// Detailed density opens each edit on its diff.
+	const [open, setOpen] = useState(toolDensity === 'detailed');
 	const dir = dirname(row.path);
 	return (
 		<View style={{ borderRadius: RADIUS.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: p.stroke, backgroundColor: p.fillFaint, overflow: 'hidden' }}>

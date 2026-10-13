@@ -3,17 +3,18 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ACCESS_MODES, type IEnvironmentDescriptor, modelLabel, providerName, routeLabel } from '@volt/client-core';
+import { ACCESS_MODES, DENSITY_PREVIEW_STEPS, DENSITY_PREVIEW_SUMMARY, type IEnvironmentDescriptor, modelLabel, providerName, RADIUS, routeLabel, TOOL_DENSITIES, TOOL_DENSITY_LABELS, type ToolDensity } from '@volt/client-core';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Platform, ScrollView, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useConnectionTone } from '../../src/home/Connection';
 import { useClient, useOptionalClient, useRuntime, useStatus } from '../../src/state/client';
 import { activate, forget, useEnvironments } from '../../src/state/environments';
+import { conversationPrefs, useConversationPrefs } from '../../src/state/prefs';
 import { useTheme } from '../../src/theme/theme';
-import { Segmented, T } from '../../src/ui/core';
+import { haptic, Segmented, T } from '../../src/ui/core';
 import { Group, ListRow } from '../../src/ui/list';
 import { ActionSheet, ConfirmSheet, type ISheetAction } from '../../src/ui/sheets';
 
@@ -41,6 +42,7 @@ export default function SettingsScreen() {
 					]} />
 				</View>
 			</Group>
+			<AgentConversations />
 			<Group title="About">
 				<ListRow icon="bolt" label="Volt" value={`${Constants.expoConfig?.version ?? '0.1.0'} · ${Platform.OS === 'ios' ? 'iOS' : 'Android'}`} />
 			</Group>
@@ -106,5 +108,66 @@ function Connected() {
 					}
 				}} />
 		</>
+	);
+}
+
+/** Tool call density, code wrap and diff tints, as on the desktop's Appearance page. */
+function AgentConversations() {
+	const { p } = useTheme();
+	const prefs = useConversationPrefs();
+	const toggle = (value: boolean, set: (next: boolean) => void) => (
+		<Switch value={value} onValueChange={next => {
+			haptic.selection();
+			set(next);
+		}} trackColor={{ true: p.success, false: p.fillStrong }} />
+	);
+	return (
+		<Group title="Agent conversations" footer="These apply to chats on this phone.">
+			<View style={{ padding: 14, gap: 10 }}>
+				<View>
+					<T variant="body">Tool call density</T>
+					<T variant="footnote" color={p.fgTertiary}>Adjust how much detail is shown for tool calls</T>
+				</View>
+				<Segmented value={prefs.toolDensity} onChange={toolDensity => conversationPrefs.set({ toolDensity })} options={TOOL_DENSITIES.map(id => ({ id, label: TOOL_DENSITY_LABELS[id] }))} />
+				<DensityPreview density={prefs.toolDensity} />
+			</View>
+			<ListRow label="Code block word wrap" detail="Wrap long lines in code blocks" right={toggle(prefs.codeWrap, codeWrap => conversationPrefs.set({ codeWrap }))} />
+			<ListRow label="Themed diff backgrounds" detail="Use themed background colors for inline code diffs" right={toggle(prefs.themedDiffs, themedDiffs => conversationPrefs.set({ themedDiffs }))} />
+		</Group>
+	);
+}
+
+/** What a chat shows at each density, drawn small with made-up work. */
+function DensityPreview({ density }: { readonly density: ToolDensity }) {
+	const { p } = useTheme();
+	const frame = { borderRadius: RADIUS.md, borderWidth: StyleSheet.hairlineWidth, borderColor: p.stroke, backgroundColor: p.codeBg, padding: 10, gap: 8 };
+	const bar = (color: string, short?: boolean) => <View style={{ height: 6, borderRadius: 2, width: short ? '75%' : '100%', backgroundColor: color }} />;
+	if (density === 'compact') {
+		return <View style={frame}><T variant="small" color={p.fgTertiary}><T variant="small" color={p.fgSecondary}>{DENSITY_PREVIEW_SUMMARY.verb}</T> {DENSITY_PREVIEW_SUMMARY.detail}</T></View>;
+	}
+	return (
+		<View style={frame}>
+			{DENSITY_PREVIEW_STEPS.map(step => {
+				const line = (
+					<T variant="small" color={p.fgTertiary} numberOfLines={1}>
+						<T variant="small" color={p.fgSecondary}>{step.verb} {step.name}</T>
+						{step.command ? ` ${step.command}` : ''}{step.additions ? ` +${step.additions}` : ''}{step.deletions ? ` -${step.deletions}` : ''}
+					</T>
+				);
+				if (density === 'standard') {
+					return <View key={step.name}>{line}</View>;
+				}
+				return (
+					<View key={step.name} style={{ borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: p.stroke, overflow: 'hidden' }}>
+						<View style={{ paddingHorizontal: 10, paddingVertical: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}>{line}</View>
+						<View style={{ padding: 10, gap: 4 }}>
+							{step.kind === 'edit'
+								? <>{bar(`${p.diffRemovedFg}70`)}{bar(`${p.diffRemovedFg}70`, true)}{bar(`${p.diffAddedFg}70`)}{bar(`${p.diffAddedFg}70`, true)}</>
+								: <>{bar(p.fillStrong)}{bar(p.fillStrong, true)}</>}
+						</View>
+					</View>
+				);
+			})}
+		</View>
 	);
 }
