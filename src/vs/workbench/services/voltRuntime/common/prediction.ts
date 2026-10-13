@@ -104,6 +104,16 @@ export interface IPredictionSettings {
 	composerDelayMs: number;
 	/** Dictated text is cleaned up by the prediction model (punctuation, misheard names, spoken code, fillers). */
 	voice: boolean;
+	/** Cmd+Right (Ctrl+Right) takes the next word of a suggestion instead of the whole of it. */
+	partialAccepts: boolean;
+	/** Suggestions while the cursor is in a comment. */
+	inComments: boolean;
+	/** Suggestions that only add or change whitespace: new lines, indentation. */
+	whitespaceOnly: boolean;
+	/** An accepted suggestion that names something not imported yet gets its import (TypeScript, JavaScript). */
+	autoImport: boolean;
+	/** The same for Python, through the Python language server's quick fixes. */
+	autoImportPython: boolean;
 }
 
 export const DEFAULT_PREDICTION_SETTINGS: IPredictionSettings = {
@@ -114,6 +124,11 @@ export const DEFAULT_PREDICTION_SETTINGS: IPredictionSettings = {
 	composer: true,
 	composerDelayMs: 300,
 	voice: true,
+	partialAccepts: false,
+	inComments: true,
+	whitespaceOnly: false,
+	autoImport: true,
+	autoImportPython: false,
 };
 
 /** What the composer's model continuation is built from. */
