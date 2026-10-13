@@ -11,22 +11,19 @@ import { CancellationToken } from '../../../base/common/cancellation.js';
 import { memoize } from '../../../base/common/decorators.js';
 import { hash } from '../../../base/common/hash.js';
 import * as path from '../../../base/common/path.js';
-import { URI } from '../../../base/common/uri.js';
-import { checksum } from '../../../base/node/crypto.js';
 import * as pfs from '../../../base/node/pfs.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
-import { IFileService } from '../../files/common/files.js';
 import { ILifecycleMainService, IRelaunchHandler, IRelaunchOptions } from '../../lifecycle/electron-main/lifecycleMainService.js';
 import { ILogService } from '../../log/common/log.js';
 import { INativeHostMainService } from '../../native/electron-main/nativeHostMainService.js';
 import { IProductService } from '../../product/common/productService.js';
-import { IRequestContext } from '../../../base/parts/request/common/request.js';
 import { IRequestService } from '../../request/common/request.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { AvailableForDownload, DisablementReason, IUpdate, State, StateType, UpdateType } from '../common/update.js';
 import { AbstractUpdateService, createUpdateURL, UpdateErrorClassification } from './abstractUpdateService.js';
-import { IVoltUpdate } from '../common/voltUpdateFeed.js';
+import { IVoltUpdate, VOLT_CHANNEL_APP_NAMES, VoltReleaseChannel } from '../common/voltUpdateFeed.js';
+import { downloadVoltUpdate } from './voltUpdateDownload.js';
 
 async function pollUntil(fn: () => boolean, millis = 1000): Promise<void> {
 	while (!fn()) {
@@ -67,7 +64,6 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 		@IEnvironmentMainService environmentMainService: IEnvironmentMainService,
 		@IRequestService requestService: IRequestService,
 		@ILogService logService: ILogService,
-		@IFileService private readonly fileService: IFileService,
 		@INativeHostMainService private readonly nativeHostMainService: INativeHostMainService,
 		@IProductService productService: IProductService
 	) {
@@ -146,16 +142,11 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 								return Promise.resolve(updatePackagePath);
 							}
 
-							const downloadPath = `${updatePackagePath}.tmp`;
-
-							return this.requestService.request({ url: update.url }, CancellationToken.None)
-								.then(context => {
-									this.reportDownloadProgress(update, context);
-									return this.fileService.writeFile(URI.file(downloadPath), context.stream);
-								})
-								.then(update.sha256hash ? () => checksum(downloadPath, update.sha256hash) : () => undefined)
-								.then(() => pfs.Promises.rename(downloadPath, updatePackagePath, false /* no retry */))
-								.then(() => updatePackagePath);
+							return downloadVoltUpdate(this.requestService, update.url!, updatePackagePath, {
+								sha256hash: update.sha256hash,
+								size: (update as IVoltUpdate).size,
+								onProgress: this.productService.voltRelease ? progress => this.reportDownloadProgress(update, progress) : undefined,
+							}).then(() => updatePackagePath);
 						});
 					}).then(packagePath => {
 						this.availableUpdate = { packagePath };
@@ -182,32 +173,71 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 			});
 	}
 
-	/** Volt: report download progress (about every 2%) so the update popover can show it. */
-	private reportDownloadProgress(update: IUpdate, context: IRequestContext): void {
-		if (!this.productService.voltRelease) {
-			return;
+	/** Volt: download progress, so the update popover can show it. */
+	private reportDownloadProgress(update: IUpdate, progress: number): void {
+		if (this.state.type === StateType.Downloading) {
+			this.setState(State.DownloadingUpdate(update, progress));
 		}
-		const total = Number(context.res.headers['content-length']) || (update as IVoltUpdate).size || 0;
-		if (!total) {
-			return;
-		}
-		let received = 0;
-		let reported = 0;
-		context.stream.on('data', chunk => {
-			received += chunk.byteLength;
-			const progress = Math.min(1, received / total);
-			if (progress - reported >= 0.02 && this.state.type === StateType.Downloading) {
-				reported = progress;
-				this.setState(State.DownloadingUpdate(update, progress));
-			}
-		});
 	}
 
 	protected override async doDownloadUpdate(state: AvailableForDownload): Promise<void> {
-		if (state.update.url) {
-			this.nativeHostMainService.openExternal(undefined, state.update.url);
+		const update = state.update as IVoltUpdate;
+		// Volt: a user setup installs another channel's app next to this one, without admin rights.
+		if (update.voltChannel && update.url && getUpdateType() === UpdateType.Setup && this.productService.target === 'user') {
+			return this.installVoltChannel(update, update.voltChannel);
+		}
+		const url = update.voltChannel ? update.downloadUrl ?? update.url : update.url;
+		if (url) {
+			this.nativeHostMainService.openExternal(undefined, url);
 		}
 		this.setState(State.Idle(getUpdateType()));
+	}
+
+	/** Volt: downloads another channel's user setup and runs it quietly; it installs into its own folder. */
+	private async installVoltChannel(update: IVoltUpdate, channel: VoltReleaseChannel): Promise<void> {
+		this.setState(State.DownloadingUpdate(update, 0));
+		try {
+			const setup = path.join(await this.cachePath, `VoltSetup-${channel}-${update.version}.exe`);
+			if (!await pfs.Promises.exists(setup)) {
+				await downloadVoltUpdate(this.requestService, update.url!, setup, {
+					sha256hash: update.sha256hash,
+					size: update.size,
+					onProgress: progress => this.reportDownloadProgress(update, progress),
+				});
+			}
+			this.setState(State.Updating(update));
+			const code = await new Promise<number | null>((resolve, reject) => {
+				const child = spawn(setup, ['/verysilent', '/log', '/mergetasks=!runcode,!desktopicon,!quicklaunchicon'], { stdio: 'ignore' });
+				child.once('error', reject);
+				child.once('exit', resolve);
+			});
+			await fs.promises.rm(setup, { force: true });
+			if (code !== 0 || !this.isVoltChannelInstalled(channel)) {
+				throw new Error(`The ${VOLT_CHANNEL_APP_NAMES[channel]} installer exited with code ${code}`);
+			}
+			this.setState(State.Ready(update));
+		} catch (err) {
+			this.logService.error(`update#win32 - installing ${VOLT_CHANNEL_APP_NAMES[channel]} failed`, err);
+			this.setState(State.Idle(getUpdateType(), err instanceof Error ? err.message : String(err)));
+		}
+	}
+
+	/** Volt: a channel app's exe, in the user or the machine-wide install folder (build/win32/code.iss). */
+	private voltChannelExe(channel: VoltReleaseChannel): string | undefined {
+		const name = VOLT_CHANNEL_APP_NAMES[channel];
+		const roots = [process.env['LOCALAPPDATA'] && path.join(process.env['LOCALAPPDATA'], 'Programs'), process.env['ProgramFiles']];
+		return roots.filter((root): root is string => !!root).map(root => path.join(root, name, `${name}.exe`)).find(exe => fs.existsSync(exe));
+	}
+
+	protected override isVoltChannelInstalled(channel: VoltReleaseChannel): boolean {
+		return !!this.voltChannelExe(channel);
+	}
+
+	protected override openVoltChannel(channel: VoltReleaseChannel): void {
+		const exe = this.voltChannelExe(channel);
+		if (exe) {
+			spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
+		}
 	}
 
 	private async getUpdatePackagePath(version: string): Promise<string> {
