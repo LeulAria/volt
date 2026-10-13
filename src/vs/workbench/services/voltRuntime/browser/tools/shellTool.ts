@@ -3,9 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { isWindows } from '../../../../../base/common/platform.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IVoltExecResult, IVoltJobOutput, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { RTK_COMMAND_ENV, RTK_WRAPPER, wantsRtk } from '../../common/codeIntelligence.js';
 import { IVoltHostToolService } from '../../common/hostTools.js';
 import { isLongRunningCommand, TERMINAL_START_TOOL_NAME } from '../../common/terminalTools.js';
 import { pickBoolean, pickNumber, pickString } from '../../common/tools/args.js';
@@ -33,6 +35,8 @@ export interface IShellToolHost {
 	readonly onLog?: (path: string) => void;
 	/** Managed terminals: servers and watchers run there, visible to the user, instead of as hidden jobs. */
 	readonly hostTools?: IVoltHostToolService;
+	/** Settings > Code Intelligence > RTK: compact the output of common dev commands with RTK when installed. */
+	readonly rtk?: () => boolean;
 }
 
 export function createShellTools(host: IShellToolHost): IVoltTool[] {
@@ -57,6 +61,7 @@ export function createShellTools(host: IShellToolHost): IVoltTool[] {
 				`A command still running after ${YIELD_AFTER_MS / 1000}s returns its output so far and keeps running as a job: continue with job_wait / job_output / job_stop.`,
 				'Servers, watchers and other commands that never exit (or background: true) run in a terminal the user can watch; they return once ready with a terminal id for terminal_output / terminal_wait / terminal_stop.',
 				'Do not use to read, search, or edit files (read_file, grep, glob, edit_file are faster), or to open a browser.',
+				'When RTK is installed, common commands (git, ls, test runners, linters, package managers) run through it and print compact output; prefix a command with `rtk proxy` for the raw output.',
 			].join(' '),
 			schema: objectSchema({
 				command: { type: 'string' },
@@ -163,11 +168,14 @@ async function runShell(host: IShellToolHost, args: unknown, ctx: IToolContext):
 		return fail('Cancelled before the command started.');
 	}
 	ctx.signal.addEventListener('abort', onAbort);
+	// RTK picks the compact form of the command, if it has one, inside the same shell call.
+	const viaRtk = !isWindows && !!host.rtk?.() && wantsRtk(command);
 	let result: IVoltExecResult;
 	try {
 		result = await host.stdio.exec({
 			id,
-			command,
+			command: viaRtk ? RTK_WRAPPER : command,
+			...(viaRtk ? { env: { [RTK_COMMAND_ENV]: command } } : {}),
 			cwd,
 			timeoutMs,
 			background,
