@@ -59,6 +59,7 @@ import { VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
 import { renderProjectsSection, renderStorageSection } from '../../voltSetup/browser/settingsSections.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { AppearancePage } from './appearancePage.js';
+import { CodeIntelligencePage } from './codeIntelligencePage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
 import { createSettingsIcon } from './settingsIcons.js';
@@ -67,7 +68,7 @@ import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { createAgentHeaderSeparatorIcon } from '../../voltAgent/browser/chrome/agentTitlebarHeader.js';
 import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/browser/home/agentHomeFooterActions.js';
 
-type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'security' | 'connected' | 'projects' | 'storage';
+type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'security' | 'connected' | 'projects' | 'storage';
 
 /** The Modes nav glyph (a small robot face), drawn in currentColor like the codicons beside it. */
 /** The nav, in groups separated by a gap. Icons come from settingsIcons.ts; the codicon is the fallback. */
@@ -79,6 +80,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 	{ id: 'modes', label: localize('voltSettings.modes', "Modes"), icon: Codicon.sparkle, group: 1 },
 	{ id: 'composer', label: localize('voltSettings.composer', "Composer"), icon: Codicon.commentDiscussion, group: 1 },
 	{ id: 'tab', label: localize('voltSettings.tab', "Tab & Prediction"), icon: Codicon.keyboard, group: 1 },
+	{ id: 'codeIntelligence', label: localize('voltSettings.codeIntelligence', "Code Intelligence"), icon: Codicon.database, group: 1 },
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield, group: 2 },
 	{ id: 'connected', label: localize('voltSettings.connectedAgents', "Connected agents"), icon: Codicon.link, group: 2 },
 	{ id: 'projects', label: localize('voltSettings.projects', "Projects"), icon: Codicon.repo, group: 2 },
@@ -495,6 +497,9 @@ export class VoltSettingsEditor extends EditorPane {
 				break;
 			case 'tab':
 				this.renderTab();
+				break;
+			case 'codeIntelligence':
+				this.renderCodeIntelligence();
 				break;
 			case 'security':
 				this.renderSecurity();
@@ -1076,6 +1081,21 @@ export class VoltSettingsEditor extends EditorPane {
 	private policyPill(parent: HTMLElement, label: string, allowed: boolean): void {
 		const pill = append(parent, $(`span.volt-settings-pill.${allowed ? 'on' : 'off'}`));
 		pill.textContent = label;
+	}
+
+	/** Instant grep's code index and the language servers agents use (codeIntelligencePage.ts). */
+	private renderCodeIntelligence(): void {
+		this.instantiationService.createInstance(CodeIntelligencePage, {
+			store: this.renderStore,
+			pageHead: (title, lead) => void this.pageHead(title, lead),
+			sectionLabel: label => this.sectionLabel(label),
+			settingsGroup: () => this.settingsGroup(),
+			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
+			toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
+			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+			rerender: () => this.renderContent(),
+			isCurrent: () => this.section === 'codeIntelligence',
+		}).render();
 	}
 
 	private renderTab(): void {

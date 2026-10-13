@@ -1,0 +1,124 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.volt-code-index-list {
+	display: flex;
+	flex-direction: column;
+}
+
+.volt-code-index-row {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	padding: 12px 16px;
+	border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.15));
+}
+
+.volt-code-index-row:first-child {
+	border-top: none;
+}
+
+.volt-code-index-copy {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.volt-code-index-name {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-weight: 500;
+	color: var(--vscode-foreground);
+}
+
+.volt-code-index-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	flex-shrink: 0;
+	background: var(--vscode-descriptionForeground);
+}
+
+.volt-code-index-dot.ready {
+	background: var(--vscode-testing-iconPassed, #3fb950);
+}
+
+.volt-code-index-dot.indexing {
+	background: var(--vscode-progressBar-background, #3b82f6);
+	animation: volt-code-index-pulse 1.2s ease-in-out infinite;
+}
+
+.volt-code-index-dot.error {
+	background: var(--vscode-errorForeground, #f85149);
+}
+
+@keyframes volt-code-index-pulse {
+	50% {
+		opacity: 0.35;
+	}
+}
+
+.volt-code-index-tag {
+	font-size: 11px;
+	font-weight: 400;
+	padding: 1px 6px;
+	border-radius: 4px;
+	color: var(--vscode-descriptionForeground);
+	background: var(--vscode-badge-background, rgba(128, 128, 128, 0.18));
+}
+
+.volt-code-index-path {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-code-index-desc {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-code-index-bar {
+	height: 3px;
+	margin-top: 4px;
+	border-radius: 2px;
+	overflow: hidden;
+	background: var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+}
+
+.volt-code-index-bar > span {
+	display: block;
+	height: 100%;
+	background: var(--vscode-progressBar-background, #3b82f6);
+	transition: width 0.3s ease;
+}
+
+.volt-code-index-actions {
+	display: flex;
+	gap: 8px;
+	flex-shrink: 0;
+}
+
+.volt-code-index-footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 10px 16px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.15));
+}
+
+.volt-code-index-empty {
+	padding: 12px 16px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
