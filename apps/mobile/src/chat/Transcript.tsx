@@ -5,12 +5,12 @@
 
 import { buildRows, type TranscriptRow } from '@volt/client-core';
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
-import { FlatList, type NativeScrollEvent, type NativeSyntheticEvent, Platform, StyleSheet, View } from 'react-native';
+import { FlatList, type NativeScrollEvent, type NativeSyntheticEvent, Platform, StyleSheet, View, type ViewToken } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { usePending, useTranscript } from '../state/client';
 import { useTheme } from '../theme/theme';
 import { EmptyState, haptic, Icon, Tap } from '../ui/core';
-import { RowView, rowGap } from './Rows';
+import { PinnedPrompt, RowView, rowGap } from './Rows';
 
 interface ICell {
 	readonly row: TranscriptRow;
@@ -52,6 +52,39 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 		return out;
 	}, [transcript?.messages, pending]);
 
+	// For each cell, the prompt that opened its turn (the newest user row at or above it).
+	const owners = useMemo(() => {
+		const out: (number | undefined)[] = new Array(cells.length);
+		let owner: number | undefined;
+		for (let i = cells.length - 1; i >= 0; i--) {
+			if (cells[i].row.kind === 'user') {
+				owner = i;
+			}
+			out[i] = owner;
+		}
+		return out;
+	}, [cells]);
+	const latest = useRef({ cells, owners });
+	latest.current = { cells, owners };
+	const [pinned, setPinned] = useState<number | undefined>();
+	// The turn at the top of the screen keeps its prompt in view once the prompt scrolls away.
+	const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken<ICell>[] }) => {
+		const { cells: current, owners: owned } = latest.current;
+		const seen = new Set<number>();
+		let top = -1;
+		for (const item of viewableItems) {
+			if (item.index !== null && item.index !== undefined) {
+				seen.add(item.index);
+				top = Math.max(top, item.index);
+			}
+		}
+		const owner = top >= 0 ? owned[top] : undefined;
+		const next = owner !== undefined && !seen.has(owner) && current[owner]?.row.kind === 'user' ? owner : undefined;
+		setPinned(prev => prev === next ? prev : next);
+	}).current;
+	const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 40 }).current;
+	const pinnedRow = pinned !== undefined ? cells[pinned]?.row : undefined;
+
 	const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
 		const next = e.nativeEvent.contentOffset.y > 480;
 		setAway(prev => prev === next ? prev : next);
@@ -81,6 +114,9 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 				renderItem={renderItem}
 				onScroll={onScroll}
 				scrollEventThrottle={64}
+				onViewableItemsChanged={onViewableItemsChanged}
+				viewabilityConfig={viewabilityConfig}
+				onScrollToIndexFailed={info => list.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: true })}
 				keyboardDismissMode="interactive"
 				keyboardShouldPersistTaps="handled"
 				initialNumToRender={14}
@@ -90,6 +126,15 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 				contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: topInset + 12 }}
 				showsVerticalScrollIndicator={false}
 			/>
+			{pinnedRow?.kind === 'user' ? (
+				<Animated.View key={pinnedRow.key} entering={FadeIn.duration(140)} exiting={FadeOut.duration(120)} style={{ position: 'absolute', left: 16, right: 16, top: topInset + 6 }}>
+					<PinnedPrompt row={pinnedRow} onPress={() => {
+						if (pinned !== undefined) {
+							list.current?.scrollToIndex({ index: pinned, animated: true, viewPosition: 1 });
+						}
+					}} />
+				</Animated.View>
+			) : null}
 			{away ? (
 				<Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(140)} style={{ position: 'absolute', right: 16, bottom: 10 }}>
 					<Tap haptics="light" accessibilityLabel="Jump to latest" onPress={() => {
@@ -108,7 +153,7 @@ function Skeleton() {
 	const { p } = useTheme();
 	return (
 		<View style={{ paddingHorizontal: 20, gap: 14 }}>
-			<View style={{ alignSelf: 'flex-end', width: '62%', height: 44, borderRadius: 18, backgroundColor: p.fill }} />
+			<View style={{ height: 40, borderRadius: 8, backgroundColor: p.fill }} />
 			{[0.92, 0.78, 0.85, 0.4].map((w, i) => <View key={i} style={{ width: `${w * 100}%`, height: 12, borderRadius: 6, backgroundColor: p.fill }} />)}
 		</View>
 	);

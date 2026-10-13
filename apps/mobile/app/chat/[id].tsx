@@ -238,7 +238,7 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 					<Transcript chatId={chatId} topInset={top} />
 					<Animated.View layout={LinearTransition.duration(220)} style={{ paddingBottom: Math.max(insets.bottom, 8), paddingTop: 6, gap: 8 }}>
 						{approvals.length || questions.length || thread?.limit || (thread?.queue.length ?? 0) > 0 ? (
-							<View style={{ paddingHorizontal: 10, gap: 8 }}>
+							<View style={{ paddingHorizontal: 16, gap: 8 }}>
 								{approvals.map(request => <ApprovalCard key={request.id} request={request} />)}
 								{questions[0] ? <QuestionCard key={questions[0].id} request={questions[0]} /> : null}
 								{thread?.limit ? <LimitBanner chatId={chatId} thread={thread} /> : null}
@@ -263,7 +263,7 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 							prefill={prefill}
 							placeholder={editing ? 'Edit your message…' : undefined}
 							banner={editing ? (
-								<Animated.View entering={FadeInDown.duration(180)} exiting={FadeOutDown.duration(140)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6, marginHorizontal: 4, paddingLeft: 12, paddingRight: 4, height: 36, borderRadius: 12, backgroundColor: `${p.info}1A`, borderWidth: StyleSheet.hairlineWidth, borderColor: `${p.info}44` }}>
+								<Animated.View entering={FadeInDown.duration(180)} exiting={FadeOutDown.duration(140)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6, paddingLeft: 12, paddingRight: 4, height: 36, borderRadius: 12, backgroundColor: `${p.info}1A`, borderWidth: StyleSheet.hairlineWidth, borderColor: `${p.info}44` }}>
 									<Icon name="pencil" size={14} color={p.info} />
 									<T variant="small" weight="600" color={p.info} style={{ flex: 1 }}>Editing message</T>
 									<Tap haptics="selection" onPress={cancelEdit} hitSlop={6} style={{ height: 28, paddingHorizontal: 10, borderRadius: 8, justifyContent: 'center' }}>

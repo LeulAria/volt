@@ -194,12 +194,10 @@ export function Composer(props: IComposerProps) {
 	const sheetTitle = sheet === 'mode' ? 'Mode' : sheet === 'model' ? 'Model' : sheet === 'access' ? 'Access' : sheet === 'send' ? 'Send while it works' : sheet === 'attach' ? 'Attach images' : options.find(d => sheet === `option:${d.id}`)?.label;
 
 	return (
-		<View style={{ paddingHorizontal: 10 }}>
+		<View style={{ paddingHorizontal: 16 }}>
 			{props.banner}
-			<View style={{
-				backgroundColor: p.composer, borderRadius: 22, borderWidth: StyleSheet.hairlineWidth, borderColor: props.mode === 'Agent' ? p.stroke : `${tint.fg}66`,
-				shadowColor: '#000', shadowOpacity: p.scheme === 'dark' ? 0.35 : 0.08, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, elevation: 4,
-			}}>
+			{/* agentEditor.css `.volt-agent-input-box`: 20px radius, a 1px edge, flat. */}
+			<View style={{ backgroundColor: p.composer, borderRadius: 20, borderWidth: 1, borderColor: props.mode === 'Agent' ? p.bubbleBorder : `${tint.fg}66` }}>
 				{images.length ? (
 					<Animated.View entering={FadeIn.duration(160)} layout={LinearTransition.duration(180)}>
 						<ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 8, paddingHorizontal: 12, paddingTop: 12 }}>

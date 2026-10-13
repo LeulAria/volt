@@ -41,9 +41,9 @@ const MessageImage = memo(function MessageImage({ image, size }: { readonly imag
 });
 
 function MessageImages({ images }: { readonly images: readonly IRowImage[] }) {
-	const size = images.length === 1 ? 180 : images.length === 2 ? 118 : 86;
+	const size = images.length === 1 ? 200 : images.length === 2 ? 132 : 92;
 	return (
-		<View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 6, maxWidth: '88%' }}>
+		<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
 			{images.map(image => <MessageImage key={image.ref} image={image} size={size} />)}
 		</View>
 	);
@@ -68,7 +68,7 @@ function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId
 	};
 	const imageOnly = !!row.images?.length && /^See the (\d+ )?attached images?\.$/.test(row.text);
 	return (
-		<Animated.View entering={row.pending ? FadeInDown.duration(220) : undefined} style={{ alignItems: 'flex-end', gap: 5 }}>
+		<Animated.View entering={row.pending ? FadeInDown.duration(220) : undefined} style={{ gap: 6 }}>
 			{row.from ? (
 				<View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
 					<Icon name="message" size={12} color={p.fgTertiary} />
@@ -76,16 +76,12 @@ function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId
 				</View>
 			) : null}
 			{row.images?.length ? <MessageImages images={row.images} /> : null}
-			<View style={styles.userLine}>
-				{actionable ? (
-					<Tap haptics="selection" onPress={menu} hitSlop={8} accessibilityLabel="Message actions" style={styles.userMore}>
-						<Icon name="more" size={15} color={p.fgQuaternary} />
-					</Tap>
-				) : null}
-				{imageOnly ? null : (
-					<Tap onLongPress={menu} delayLongPress={320} onPress={long ? () => setExpanded(e => !e) : undefined} style={[styles.bubble, {
-						backgroundColor: p.bubble, borderColor: row.pending === 'failed' ? p.danger : p.bubbleBorder, opacity: row.pending && row.pending !== 'failed' ? 0.7 : 1,
-					}]}>
+			{imageOnly ? null : (
+				// The desktop's prompt: a full-width card in the composer's fill, not a chat bubble.
+				<Tap onLongPress={menu} delayLongPress={320} onPress={long ? () => setExpanded(e => !e) : undefined} style={[styles.prompt, {
+					backgroundColor: p.bubble, borderColor: row.pending === 'failed' ? p.danger : p.bubbleBorder, opacity: row.pending && row.pending !== 'failed' ? 0.7 : 1,
+				}]}>
+					<View style={styles.promptMain}>
 						{row.mode && tint ? (
 							<View style={[styles.userMode, { backgroundColor: tint.bg }]}>
 								<T variant="caption" weight="700" color={tint.fg}>{row.mode}</T>
@@ -102,12 +98,17 @@ function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId
 								))}
 							</View>
 						) : null}
-						{long ? <T variant="footnote" weight="600" color={p.fgTertiary} style={{ marginTop: 6 }}>{expanded ? 'Show less' : 'Show more'}</T> : null}
-					</Tap>
-				)}
-			</View>
+						{long ? <T variant="footnote" weight="600" color={p.fgTertiary}>{expanded ? 'Show less' : 'Show more'}</T> : null}
+					</View>
+					{actionable ? (
+						<Tap haptics="selection" onPress={menu} hitSlop={10} accessibilityLabel="Message actions" style={styles.userMore}>
+							<Icon name="more" size={15} color={p.fgTertiary} />
+						</Tap>
+					) : null}
+				</Tap>
+			)}
 			{ctx && row.turnId && ctx.redoTurnId === row.turnId ? (
-				<Tap haptics="light" onPress={ctx.onRedo} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 28, paddingHorizontal: 11, borderRadius: 14, backgroundColor: p.fill }}>
+				<Tap haptics="light" onPress={ctx.onRedo} style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, height: 28, paddingHorizontal: 11, borderRadius: 14, backgroundColor: p.fill }}>
 					<Icon name="undo" size={13} color={p.fgSecondary} />
 					<T variant="footnote" weight="600" color={p.fgSecondary}>Redo checkpoint</T>
 				</Tap>
@@ -125,6 +126,20 @@ function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId
 				</View>
 			) : null}
 		</Animated.View>
+	);
+}
+
+/**
+ * The prompt of the turn being read, held at the top while its reply scrolls by (the desktop's
+ * sticky prompt). Tapping it goes back to it.
+ */
+export function PinnedPrompt({ row, onPress }: { readonly row: RowOf<'user'>; readonly onPress: () => void }) {
+	const { p } = useTheme();
+	return (
+		<Tap haptics="selection" onPress={onPress} accessibilityLabel="Go to this prompt" style={[styles.prompt, { backgroundColor: p.bubble, borderColor: p.bubbleBorder }]}>
+			<Text numberOfLines={2} style={[styles.userText, { flex: 1, color: p.fg }]}>{row.text}</Text>
+			<View style={{ paddingTop: 3 }}><Icon name="arrowUp" size={13} color={p.fgTertiary} /></View>
+		</Tap>
 	);
 }
 
@@ -178,15 +193,15 @@ function StepBody({ step }: { readonly step: IStepItem }) {
 function StepLine({ step }: { readonly step: IStepItem }) {
 	const { p } = useTheme();
 	const [open, setOpen] = useState(false);
-	const color = step.status === 'error' ? p.danger : p.fgSecondary;
+	const color = step.status === 'error' ? p.danger : p.fgTertiary;
 	return (
 		<View>
 			<Tap disabled={!step.body} haptics="selection" onPress={() => setOpen(o => !o)} onLongPress={() => step.detail && copyWithHaptic(step.detail)} style={{ flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 30 }}>
 				<View style={{ width: 15, alignItems: 'center' }}>
 					{step.status === 'running' ? <ActivityIndicator size="small" color={p.info} style={{ transform: [{ scale: 0.65 }] }} /> : <Icon name={step.status === 'error' ? 'xCircle' : step.icon} size={14} color={step.status === 'error' ? p.danger : p.fgTertiary} />}
 				</View>
-				<Shimmer active={step.status === 'running'}><T variant="small" weight="500" color={color}>{step.label}</T></Shimmer>
-				{step.detail ? <T variant="footnote" mono color={p.fgTertiary} numberOfLines={1} style={{ flex: 1 }}>{step.detail}</T> : <View style={{ flex: 1 }} />}
+				<Shimmer active={step.status === 'running'}><T variant="small" weight="300" color={color}>{step.label}</T></Shimmer>
+				{step.detail ? <T variant="small" color={p.fgQuaternary} numberOfLines={1} style={{ flex: 1 }}>{step.detail}</T> : <View style={{ flex: 1 }} />}
 				{step.body ? <View style={{ transform: [{ rotate: open ? '90deg' : '0deg' }] }}><Icon name="chevronRight" size={12} color={p.fgQuaternary} /></View> : null}
 			</Tap>
 			{open ? <StepBody step={step} /> : null}
@@ -474,7 +489,8 @@ export function rowGap(row: TranscriptRow, prev: TranscriptRow | undefined): num
 		return 0;
 	}
 	if (row.kind === 'user' || row.kind === 'system') {
-		return prev.kind === 'divider' ? 10 : 26;
+		// The desktop's 20px between turns.
+		return prev.kind === 'divider' ? 10 : 20;
 	}
 	if (row.kind === 'footer') {
 		return 2;
@@ -490,11 +506,12 @@ export function rowGap(row: TranscriptRow, prev: TranscriptRow | undefined): num
 }
 
 const styles = StyleSheet.create({
-	userLine: { alignSelf: 'stretch', flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'flex-end', gap: 4 },
-	userMore: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
-	bubble: { maxWidth: '86%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18, borderBottomRightRadius: 6, borderWidth: StyleSheet.hairlineWidth },
-	userMode: { alignSelf: 'flex-start', paddingHorizontal: 7, height: 19, borderRadius: 6, justifyContent: 'center', marginBottom: 5 },
-	userText: { fontSize: 15.5, lineHeight: 22 },
-	chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 8 },
+	// agentEditor.css `.volt-agent-turn.user .volt-agent-bubble`: 8px radius, a 1px edge, 8/12 padding.
+	prompt: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, borderRadius: RADIUS.md, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8 },
+	promptMain: { flex: 1, minWidth: 0, gap: 6 },
+	userMore: { width: 24, height: 24, marginRight: -6, marginTop: -1, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
+	userMode: { alignSelf: 'flex-start', paddingHorizontal: 7, height: 19, borderRadius: 6, justifyContent: 'center' },
+	userText: { fontSize: 15, lineHeight: 22 },
+	chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 2 },
 	chip: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 22, paddingHorizontal: 7, borderRadius: 6 },
 });

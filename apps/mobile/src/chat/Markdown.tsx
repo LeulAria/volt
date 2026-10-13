@@ -128,7 +128,8 @@ const BlockView = memo(function BlockView({ block, open, depth, compact }: { rea
 				return <MarkdownImage src={only.src} alt={only.alt} />;
 			}
 			return (
-				<Text selectable style={{ color: p.fg, fontSize: body.size, lineHeight: body.line, marginVertical: compact ? 2 : 4 }}>
+				// The desktop's reply text is a light face (agentMarkdown.css `.volt-agent-reply`: weight 300).
+				<Text selectable style={{ color: p.fg, fontSize: body.size, lineHeight: body.line, fontWeight: '300', marginVertical: compact ? 2 : 4 }}>
 					{renderInlines(parseInline(block.text, open), ctx)}
 					{open ? <Caret /> : null}
 				</Text>
