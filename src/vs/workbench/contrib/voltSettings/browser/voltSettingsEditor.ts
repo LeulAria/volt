@@ -51,7 +51,7 @@ import '../../voltAgent/common/agentAwakeSettings.js';
 
 /** Settings on the Composer page whose rows redraw when they change. */
 /** Settings on the Appearance page whose controls redraw when they change. */
-const APPEARANCE_PAGE_SETTINGS = [ThemeSettings.DETECT_COLOR_SCHEME, ThemeSettings.PREFERRED_DARK_THEME, ThemeSettings.PREFERRED_LIGHT_THEME, ThemeSettings.FILE_ICON_THEME, 'editor.fontSize', 'window.zoomLevel'];
+const APPEARANCE_PAGE_SETTINGS = [ThemeSettings.DETECT_COLOR_SCHEME, ThemeSettings.PREFERRED_DARK_THEME, ThemeSettings.PREFERRED_LIGHT_THEME, ThemeSettings.FILE_ICON_THEME, 'editor.fontSize', 'editor.fontFamily', 'window.zoomLevel'];
 const COMPOSER_PAGE_SETTINGS = [AGENT_PROMPT_HISTORY_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING, AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING, AGENT_HOME_AUTO_SETTLE_DAYS_SETTING];
 import { AgentModelPicker, type IModelOption, type IProviderGroup } from '../../voltAgent/browser/picker/agentModelPicker.js';
 import { appendSettingsBlock, SettingsStickyHeads } from './settingsStickyHeads.js';
@@ -59,7 +59,7 @@ import { VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
 import { renderProjectsSection, renderStorageSection } from '../../voltSetup/browser/settingsSections.js';
 import { clampWorktreeMaxCount, clampWorktreeMaxSizeGB, WORKTREE_MAX_COUNT_SETTING, WORKTREE_MAX_SIZE_GB_SETTING } from '../../voltSetup/common/worktreeLimits.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
-import { AppearancePage } from './appearancePage.js';
+import { AppearancePage, ISettingsPageKit } from './appearancePage.js';
 import { CodeIntelligencePage } from './codeIntelligencePage.js';
 import { GitPage } from './gitPage.js';
 import { ProvidersPage } from './providersPage.js';
@@ -794,34 +794,16 @@ export class VoltSettingsEditor extends EditorPane {
 			}
 		}, () => undefined);
 
-		this.sectionLabel(localize('voltSettings.typography', "Typography"));
-		const type = this.settingsGroup();
+		const kit = this.settingsKit();
+		this.appearance.renderAgentConversations(kit);
+		this.appearance.renderColors(kit);
+		this.appearance.renderTypography(kit);
+		this.appearance.renderHighContrast(kit);
+		this.appearance.renderMotion(kit);
+
+		this.sectionLabel(localize('voltSettings.icons', "Icons"));
 		this.settingRow(
-			type,
-			localize('voltSettings.codeFontSize', "Code font size"),
-			localize('voltSettings.codeFontSizeDesc', "Editors, diffs and code blocks."),
-			host => this.stepper(host, String(this.configurationService.getValue<number>('editor.fontSize') ?? 13), localize('voltSettings.px', "px"), size => {
-				const clamped = Math.max(8, Math.min(32, Math.round(size)));
-				void this.configurationService.updateValue('editor.fontSize', clamped);
-				return clamped;
-			}, 1),
-		);
-		this.settingRow(
-			type,
-			localize('voltSettings.zoom', "Interface zoom"),
-			localize('voltSettings.zoomDesc', "Scales the whole window, text and icons alike."),
-			host => this.stepper(host, String(Math.round(100 * Math.pow(1.2, this.configurationService.getValue<number>('window.zoomLevel') ?? 0))), '%', percent => {
-				const steps = [67, 80, 90, 100, 110, 120, 133, 150, 170, 200];
-				const current = Math.round(100 * Math.pow(1.2, this.configurationService.getValue<number>('window.zoomLevel') ?? 0));
-				// The buttons move one step; a typed value snaps to the nearest step.
-				const index = steps.reduce((best, value, i) => Math.abs(value - percent) < Math.abs(steps[best] - percent) ? i : best, 0);
-				const next = percent > current && steps[index] <= current ? steps[Math.min(steps.length - 1, index + 1)] : percent < current && steps[index] >= current ? steps[Math.max(0, index - 1)] : steps[index];
-				void this.configurationService.updateValue('window.zoomLevel', Math.log(next / 100) / Math.log(1.2));
-				return next;
-			}, 1),
-		);
-		this.settingRow(
-			type,
+			this.settingsGroup(),
 			localize('voltSettings.fileIcons', "File icons"),
 			localize('voltSettings.fileIconsDesc', "Icons next to files in the explorer, changes and tabs."),
 			host => {
@@ -838,6 +820,17 @@ export class VoltSettingsEditor extends EditorPane {
 			},
 		);
 		return galleryReady;
+	}
+
+	/** The row helpers the Appearance page's sections draw with. */
+	private settingsKit(): ISettingsPageKit {
+		return {
+			sectionLabel: label => this.sectionLabel(label),
+			settingsGroup: () => this.settingsGroup(),
+			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
+			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+			selectBox: (host, options, selected, ariaLabel) => this.selectBox(host, options, selected, ariaLabel),
+		};
 	}
 
 	/** Version and a manual update check. The release channel lives on the Beta page. */

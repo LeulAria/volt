@@ -1,0 +1,216 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Settings > Appearance: sliders, the tool call density preview, the code font preview. */
+
+.volt-appearance-slider {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 240px;
+	height: 20px;
+	margin: 0;
+	background: transparent;
+	cursor: pointer;
+}
+
+.volt-appearance-slider:focus {
+	outline: none;
+}
+
+.volt-appearance-slider::-webkit-slider-runnable-track {
+	height: 6px;
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.volt-appearance-slider::-moz-range-track {
+	height: 6px;
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+/* Density's middle stop is a dot on the track. */
+.volt-appearance-slider.stops::-webkit-slider-runnable-track {
+	background:
+		radial-gradient(circle, color-mix(in srgb, var(--vscode-foreground) 45%, transparent) 0 1.5px, transparent 2px) center / 6px 6px no-repeat,
+		color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.volt-appearance-slider.stops::-moz-range-track {
+	background:
+		radial-gradient(circle, color-mix(in srgb, var(--vscode-foreground) 45%, transparent) 0 1.5px, transparent 2px) center / 6px 6px no-repeat,
+		color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.volt-appearance-slider::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	width: 18px;
+	height: 18px;
+	margin-top: -6px;
+	border-radius: 50%;
+	background: #f4f4f4;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.volt-appearance-slider::-moz-range-thumb {
+	width: 18px;
+	height: 18px;
+	border: 0;
+	border-radius: 50%;
+	background: #f4f4f4;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.volt-appearance-slider:focus-visible::-webkit-slider-thumb {
+	box-shadow: 0 0 0 2px var(--vscode-focusBorder);
+}
+
+.volt-appearance-slider-row {
+	gap: 14px;
+}
+
+.volt-appearance-swatch {
+	flex: none;
+	width: 26px;
+	height: 26px;
+	border-radius: 50%;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+	box-sizing: border-box;
+}
+
+.volt-appearance-slider-value {
+	flex: none;
+	width: 36px;
+	text-align: right;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* Tool call density: the slider over its end labels. */
+.volt-settings-row-control.volt-appearance-density {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
+	width: 240px;
+}
+
+.volt-appearance-density-labels {
+	display: flex;
+	justify-content: space-between;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* The preview card, in a context view under the slider while it is hovered or focused. */
+.volt-appearance-density-preview {
+	box-sizing: border-box;
+	width: 280px;
+	max-height: 300px;
+	margin-top: 10px;
+	padding: 12px;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	border-radius: 12px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+	background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+	box-shadow: 0 12px 32px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	font-size: 13px;
+	pointer-events: none;
+}
+
+.volt-appearance-density-preview .line {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+}
+
+.volt-appearance-density-preview .title {
+	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
+	margin-right: 4px;
+}
+
+.volt-appearance-density-preview .card {
+	flex: none;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.volt-appearance-density-preview .card .line {
+	padding: 7px 10px;
+	border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+}
+
+.volt-appearance-density-preview .body {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px 10px;
+}
+
+.volt-appearance-density-preview .bar {
+	height: 7px;
+	border-radius: 2px;
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+.volt-appearance-density-preview .bar.short {
+	width: 75%;
+}
+
+.volt-appearance-density-preview .bar.insert {
+	background: color-mix(in srgb, var(--volt-md-diff-added-fg, #3fa266) 40%, transparent);
+}
+
+.volt-appearance-density-preview .bar.delete {
+	background: color-mix(in srgb, var(--volt-md-diff-removed-fg, #e34671) 40%, transparent);
+}
+
+/* Code Font Family's preview: an edit in the code font and size, tinted like chat diffs. */
+.volt-settings-row.has-preview {
+	padding-bottom: 10px;
+}
+
+.volt-appearance-code-preview {
+	margin: 0 16px 14px;
+	padding: 4px 0;
+	overflow: hidden;
+	font-family: var(--monaco-monospace-font, "Geist Mono", Menlo, monospace);
+	line-height: 1.6;
+	color: var(--vscode-editor-foreground);
+}
+
+.volt-appearance-code-preview + .volt-settings-row {
+	border-top: 1px solid var(--volt-settings-border);
+}
+
+.volt-appearance-code-line {
+	display: flex;
+	white-space: pre;
+	box-shadow: inset 3px 0 0 var(--volt-appearance-strip);
+}
+
+.volt-appearance-code-line.insert {
+	--volt-appearance-strip: var(--volt-md-diff-added-fg);
+	background: var(--volt-md-diff-added);
+}
+
+.volt-appearance-code-line.delete {
+	--volt-appearance-strip: var(--volt-md-diff-removed-fg);
+	background: var(--volt-md-diff-removed);
+}
+
+.volt-appearance-code-line .num {
+	flex: none;
+	width: 48px;
+	padding-right: 14px;
+	text-align: right;
+	box-sizing: border-box;
+	color: var(--volt-appearance-strip);
+}
