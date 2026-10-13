@@ -70,7 +70,7 @@ import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { createAgentHeaderSeparatorIcon } from '../../voltAgent/browser/chrome/agentTitlebarHeader.js';
 import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/browser/home/agentHomeFooterActions.js';
 
-type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'security' | 'connected' | 'projects' | 'git' | 'worktrees' | 'storage';
+type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'beta' | 'security' | 'connected' | 'projects' | 'git' | 'worktrees' | 'storage';
 
 /** The Modes nav glyph (a small robot face), drawn in currentColor like the codicons beside it. */
 /** The nav, in groups separated by a gap. Icons come from settingsIcons.ts; the codicon is the fallback. */
@@ -83,6 +83,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 	{ id: 'composer', label: localize('voltSettings.composer', "Composer"), icon: Codicon.commentDiscussion, group: 1 },
 	{ id: 'tab', label: localize('voltSettings.tab', "Tab & Prediction"), icon: Codicon.keyboard, group: 1 },
 	{ id: 'codeIntelligence', label: localize('voltSettings.codeIntelligence', "Code Intelligence"), icon: Codicon.database, group: 1 },
+	{ id: 'beta', label: localize('voltSettings.betaPage', "Beta"), icon: Codicon.beaker, group: 1 },
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield, group: 2 },
 	{ id: 'connected', label: localize('voltSettings.connectedAgents', "Connected agents"), icon: Codicon.link, group: 2 },
 	{ id: 'projects', label: localize('voltSettings.projects', "Projects"), icon: Codicon.repo, group: 2 },
@@ -507,6 +508,9 @@ export class VoltSettingsEditor extends EditorPane {
 			case 'codeIntelligence':
 				this.renderCodeIntelligence();
 				break;
+			case 'beta':
+				this.renderBeta();
+				break;
 			case 'security':
 				this.renderSecurity();
 				break;
@@ -836,29 +840,11 @@ export class VoltSettingsEditor extends EditorPane {
 		return galleryReady;
 	}
 
-	/** Release channel, version and a manual update check. */
+	/** Version and a manual update check. The release channel lives on the Beta page. */
 	private renderUpdates(): void {
 		const { product, updates } = this.instantiationService.invokeFunction(accessor => ({ product: accessor.get(IProductService), updates: accessor.get(IUpdateService) }));
 		this.sectionLabel(localize('voltSettings.updates', "Updates"));
 		const group = this.settingsGroup();
-
-		const channels = [
-			{ id: 'default', text: localize('voltSettings.channelDefault', "This app's channel") },
-			{ id: 'stable', text: localize('voltSettings.channelStable', "Stable") },
-			{ id: 'beta', text: localize('voltSettings.channelBeta', "Beta") },
-			{ id: 'nightly', text: localize('voltSettings.channelNightly', "Nightly") },
-		];
-		this.settingRow(
-			group,
-			localize('voltSettings.releaseChannel', "Release channel"),
-			localize('voltSettings.releaseChannelDesc', "Volt, Volt Beta and Volt Nightly are separate apps that install side by side. Picking another channel offers its download."),
-			host => {
-				const current = this.configurationService.getValue<string>(VOLT_RELEASE_CHANNEL_SETTING);
-				const selected = Math.max(0, channels.findIndex(c => c.id === current));
-				const box = this.selectBox(append(host, $('.volt-settings-select')), channels.map(c => ({ text: c.text })), selected, localize('voltSettings.releaseChannel', "Release channel"));
-				this.renderStore.add(box.onDidSelect(e => void this.configurationService.updateValue(VOLT_RELEASE_CHANNEL_SETTING, channels[e.index].id)));
-			},
-		);
 
 		const version = product.voltVersion ?? product.version;
 		const build = [product.quality, product.commit?.slice(0, 8)].filter(Boolean).join(' · ');
@@ -878,6 +864,29 @@ export class VoltSettingsEditor extends EditorPane {
 				render(updates.state);
 				this.renderStore.add(updates.onStateChange(render));
 				this.renderStore.add(check.onDidClick(() => void updates.checkForUpdates(true)));
+			},
+		);
+	}
+
+	/** Pre-release access: which release channel's updates this app offers. */
+	private renderBeta(): void {
+		this.pageHead(localize('voltSettings.betaPage', "Beta"));
+		const group = this.settingsGroup();
+		const channels = [
+			{ id: 'default', text: localize('voltSettings.channelDefault', "Default") },
+			{ id: 'stable', text: localize('voltSettings.channelStable', "Stable") },
+			{ id: 'beta', text: localize('voltSettings.channelBeta', "Beta") },
+			{ id: 'nightly', text: localize('voltSettings.channelNightly', "Nightly") },
+		];
+		this.settingRow(
+			group,
+			localize('voltSettings.updateAccess', "Update Access"),
+			localize('voltSettings.updateAccessDesc2', "By default, this app keeps itself up to date. Another channel installs from the update button as its own app beside this one, with its own settings, and updates itself. Beta and Nightly are pre-release builds that may be unstable for production work."),
+			host => {
+				const current = this.configurationService.getValue<string>(VOLT_RELEASE_CHANNEL_SETTING);
+				const selected = Math.max(0, channels.findIndex(c => c.id === current));
+				const box = this.selectBox(append(host, $('.volt-settings-select')), channels.map(c => ({ text: c.text })), selected, localize('voltSettings.updateAccess', "Update Access"));
+				this.renderStore.add(box.onDidSelect(e => void this.configurationService.updateValue(VOLT_RELEASE_CHANNEL_SETTING, channels[e.index].id)));
 			},
 		);
 	}
