@@ -5,6 +5,7 @@
 
 import { basename, firstLine, pluralize } from './format';
 import type { IconName } from './icons';
+import type { ToolDensity } from './prefs';
 import type { ActivityKind, AgentBlock, AgentMessage, IActivityItem, IAssistantMessage, IPromptAttachment, ITodoStep, IUserMessage } from './types';
 
 export type StepStatus = 'running' | 'done' | 'error';
@@ -12,7 +13,7 @@ export type StepStatus = 'running' | 'done' | 'error';
 export type StepBody =
 	| { readonly kind: 'command'; readonly command: string; readonly output: string; readonly exitCode?: number }
 	| { readonly kind: 'text'; readonly text: string; readonly mono?: boolean }
-	| { readonly kind: 'diff'; readonly diff: string };
+	| { readonly kind: 'diff'; readonly diff: string; readonly path?: string };
 
 /** One line of the work log (a read, a search, a command, a tool call). */
 export interface IStepItem {
@@ -23,7 +24,16 @@ export interface IStepItem {
 	readonly status: StepStatus;
 	readonly category: StepCategory;
 	readonly body?: StepBody;
+	/** An edit's line counts. */
+	readonly additions?: number;
+	readonly deletions?: number;
 }
+
+/**
+ * How a steps row draws its calls ({@link applyToolDensity}): `group` folds them behind the
+ * summary, `lines` lists one line per call, `cards` draws calls with a body as open cards.
+ */
+export type StepsDisplay = 'group' | 'lines' | 'cards';
 
 export type StepCategory = 'read' | 'search' | 'command' | 'edit' | 'web' | 'agent' | 'other';
 
@@ -35,7 +45,7 @@ export type TranscriptRow =
 	| { readonly kind: 'system'; readonly key: string; readonly icon: IconName; readonly title: string; readonly body: string }
 	| { readonly kind: 'markdown'; readonly key: string; readonly docKey: string; readonly text: string; readonly streaming: boolean }
 	| { readonly kind: 'thought'; readonly key: string; readonly text: string; readonly durationMs?: number; readonly streaming: boolean }
-	| { readonly kind: 'steps'; readonly key: string; readonly items: readonly IStepItem[]; readonly live: boolean; readonly summary: string }
+	| { readonly kind: 'steps'; readonly key: string; readonly items: readonly IStepItem[]; readonly live: boolean; readonly summary: string; readonly display?: StepsDisplay }
 	| { readonly kind: 'file'; readonly key: string; readonly path: string; readonly verb: 'Edited' | 'Created' | 'Deleted'; readonly additions?: number; readonly deletions?: number; readonly diff?: string; readonly status: StepStatus }
 	| { readonly kind: 'code'; readonly key: string; readonly lang?: string; readonly code: string; readonly path?: string; readonly streaming: boolean }
 	| { readonly kind: 'table'; readonly key: string; readonly headers: readonly string[]; readonly rows: readonly (readonly string[])[]; readonly caption?: string }
@@ -199,25 +209,32 @@ function blockStep(block: Extract<AgentBlock, { type: 'tool' } | { type: 'termin
 	};
 }
 
-/** "Explored 3 files, 2 searches · Ran 2 commands" */
+/**
+ * The group line, as the desktop writes it: edits lead ("Edited math.ts, ran 2 commands",
+ * "Edited 2 files, explored 3 files"), then exploration, commands and the rest.
+ */
 export function summarizeSteps(items: readonly IStepItem[]): string {
 	const counts: Record<StepCategory, number> = { read: 0, search: 0, command: 0, edit: 0, web: 0, agent: 0, other: 0 };
+	const edited = new Set<string>();
 	for (const item of items) {
 		counts[item.category]++;
+		if (item.category === 'edit') {
+			edited.add(item.detail ?? item.key);
+		}
 	}
+	const explored = [counts.read ? pluralize(counts.read, 'file') : '', counts.search ? pluralize(counts.search, 'search', 'searches') : ''].filter(Boolean).join(', ');
 	const parts: string[] = [];
-	if (counts.read || counts.search) {
-		const explored = [counts.read ? pluralize(counts.read, 'file') : '', counts.search ? pluralize(counts.search, 'search', 'searches') : ''].filter(Boolean).join(', ');
-		parts.push(`Explored ${explored}`);
+	if (edited.size) {
+		parts.push(`edited ${edited.size === 1 ? [...edited][0] : pluralize(edited.size, 'file')}`);
+	}
+	if (explored) {
+		parts.push(`explored ${explored}`);
 	}
 	if (counts.command) {
-		parts.push(`Ran ${pluralize(counts.command, 'command')}`);
-	}
-	if (counts.edit) {
-		parts.push(`Edited ${pluralize(counts.edit, 'file')}`);
+		parts.push(`ran ${pluralize(counts.command, 'command')}`);
 	}
 	if (counts.web) {
-		parts.push(`Browsed ${pluralize(counts.web, 'page')}`);
+		parts.push(`browsed ${pluralize(counts.web, 'page')}`);
 	}
 	if (counts.agent) {
 		parts.push(pluralize(counts.agent, 'subagent'));
@@ -225,7 +242,73 @@ export function summarizeSteps(items: readonly IStepItem[]): string {
 	if (counts.other) {
 		parts.push(pluralize(counts.other, 'step'));
 	}
-	return parts.join(' · ') || pluralize(items.length, 'step');
+	const line = parts.join(', ') || pluralize(items.length, 'step');
+	return line.charAt(0).toUpperCase() + line.slice(1);
+}
+
+type StepsRow = Extract<TranscriptRow, { kind: 'steps' }>;
+type FileRow = Extract<TranscriptRow, { kind: 'file' }>;
+
+/** An edit card as a step line: "Edited math.ts +4 -1", its diff as the body. */
+function fileStep(row: FileRow): IStepItem {
+	return {
+		key: row.key,
+		icon: row.verb === 'Created' ? 'plus' : row.verb === 'Deleted' ? 'trash' : 'pencil',
+		label: row.status === 'running' ? 'Editing' : row.verb,
+		detail: basename(row.path),
+		status: row.status,
+		category: 'edit',
+		...(row.additions !== undefined ? { additions: row.additions } : {}),
+		...(row.deletions !== undefined ? { deletions: row.deletions } : {}),
+		...(row.diff ? { body: { kind: 'diff', diff: row.diff, path: row.path } } : {}),
+	};
+}
+
+/** Rows {@link applyToolDensity} made, by their first source row: the same sources give back the same row. */
+const densityCache = new WeakMap<TranscriptRow, { readonly density: ToolDensity; readonly sources: readonly TranscriptRow[]; readonly row: TranscriptRow }>();
+
+function cachedRow(sources: readonly TranscriptRow[], density: ToolDensity, make: () => TranscriptRow): TranscriptRow {
+	const hit = densityCache.get(sources[0]);
+	if (hit && hit.density === density && hit.sources.length === sources.length && hit.sources.every((source, i) => source === sources[i])) {
+		return hit.row;
+	}
+	const row = make();
+	densityCache.set(sources[0], { density, sources, row });
+	return row;
+}
+
+/**
+ * Applies the tool call density to built rows. Compact and standard fold each stretch of tool
+ * work (step groups and edit cards between two pieces of text) into one steps row, drawn as a
+ * summary line or as a line per call. Detailed keeps edit cards and draws steps as cards.
+ */
+export function applyToolDensity(rows: readonly TranscriptRow[], density: ToolDensity): TranscriptRow[] {
+	const out: TranscriptRow[] = [];
+	if (density === 'detailed') {
+		for (const row of rows) {
+			out.push(row.kind === 'steps' ? cachedRow([row], density, () => ({ ...row, display: 'cards' })) : row);
+		}
+		return out;
+	}
+	const display: StepsDisplay = density === 'compact' ? 'group' : 'lines';
+	for (let i = 0; i < rows.length; i++) {
+		const row = rows[i];
+		if (row.kind !== 'steps' && row.kind !== 'file') {
+			out.push(row);
+			continue;
+		}
+		const run: (StepsRow | FileRow)[] = [row];
+		while (i + 1 < rows.length && (rows[i + 1].kind === 'steps' || rows[i + 1].kind === 'file')) {
+			run.push(rows[++i] as StepsRow | FileRow);
+		}
+		out.push(cachedRow(run, density, () => {
+			const items = run.flatMap(source => source.kind === 'steps' ? source.items : [fileStep(source)]);
+			const last = run[run.length - 1];
+			const live = last.kind === 'steps' ? last.live : last.status === 'running';
+			return { kind: 'steps', key: run[0].key, items, live, summary: run.length === 1 && row.kind === 'steps' ? row.summary : summarizeSteps(items), display };
+		}));
+	}
+	return out;
 }
 
 //#endregion

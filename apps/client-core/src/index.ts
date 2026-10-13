@@ -17,5 +17,6 @@ export * from './languages';
 export * from './ids';
 export * from './icons';
 export * from './theme';
+export * from './prefs';
 export * from './markdown/parse';
 export * from './markdown/highlight';
