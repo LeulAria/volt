@@ -30,6 +30,8 @@ export class CodeIntelHost extends Disposable implements ICodeIntelHost {
 
 	private readonly writes = new ResourceMap<number>();
 	private readonly open = new ResourceMap<{ ref: IReference<IResolvedTextEditorModel>; timer: ReturnType<typeof setTimeout> }>();
+	/** Settings > Code Intelligence: which files language servers may be asked about. */
+	private policy: (uri: URI) => boolean = () => true;
 
 	constructor(
 		private readonly markerService: IMarkerService,
@@ -39,6 +41,31 @@ export class CodeIntelHost extends Disposable implements ICodeIntelHost {
 	) {
 		super();
 		this._register({ dispose: () => this.closeAll() });
+	}
+
+	setLspPolicy(policy: (uri: URI) => boolean): void {
+		this.policy = policy;
+	}
+
+	lspAllowed(uri: URI): boolean {
+		return this.policy(uri);
+	}
+
+	async wordAt(uri: URI, line: number, column: number): Promise<string | undefined> {
+		const text = await this.fileService.readFile(uri).then(file => file.value.toString(), () => undefined);
+		const content = text?.split('\n')[line - 1];
+		if (content === undefined) {
+			return undefined;
+		}
+		const at = Math.max(0, column - 1);
+		const re = /[A-Za-z_$][\w$]*/g;
+		let match: RegExpExecArray | null;
+		while ((match = re.exec(content))) {
+			if (at >= match.index && at <= match.index + match[0].length) {
+				return match[0];
+			}
+		}
+		return undefined;
 	}
 
 	/** Called for every agent write, so the next diagnostics call waits for fresh results. */
@@ -58,6 +85,9 @@ export class CodeIntelHost extends Disposable implements ICodeIntelHost {
 
 	/** Errors on `uri` beyond those in `baseline`. Opens the file and waits for fresh markers first. */
 	async newErrors(uri: URI, baseline: ReadonlyMap<string, number>): Promise<IDiagnostic[]> {
+		if (!this.policy(uri)) {
+			return []; // opening it would start a language server for this checkout
+		}
 		await this.freshen(uri);
 		const seen = new Map<string, number>();
 		const added: IDiagnostic[] = [];
