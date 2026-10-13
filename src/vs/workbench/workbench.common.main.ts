@@ -215,6 +215,7 @@ import './services/voltRuntime/browser/history/agentHistoryService.js';
 import './services/voltRuntime/browser/git/agentWorktreeService.js';
 import './services/voltRuntime/browser/queryCache.js';
 import './contrib/voltSettings/browser/voltSettings.contribution.js';
+import './contrib/voltCodeIntelligence/browser/voltCodeIntelligence.contribution.js';
 
 // New Agent editor
 import './contrib/voltAgent/browser/editor/agentEditor.contribution.js';
