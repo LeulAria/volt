@@ -50,6 +50,8 @@ import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, pref
 import { acceptWebSocket } from '../../../platform/voltAgentServer/node/webSocket.js';
 import { IVoltGitService } from '../../../platform/voltGit/common/voltGit.js';
 import { VoltGitService } from '../../../platform/voltGit/node/voltGitService.js';
+import { IVoltCodeIndexService } from '../../../platform/voltCodeIndex/common/voltCodeIndex.js';
+import { VoltCodeIndexService } from '../../../platform/voltCodeIndex/node/voltCodeIndexService.js';
 import { IVoltHostMcpService } from '../../../platform/voltHostMcp/common/voltHostMcp.js';
 import { VoltHostMcpService } from '../../../platform/voltHostMcp/node/voltHostMcpService.js';
 import { IVoltStdioService } from '../../../platform/voltStdio/common/voltStdio.js';
@@ -188,6 +190,9 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(IVoltStdioService, stdioService);
 	services.set(IVoltGitService, disposables.add(new VoltGitService(resolveEnv, logService, { shadowRoot: join(args.userDataDir, 'volt-checkpoints') })));
 	services.set(IVoltHostMcpService, disposables.add(new VoltHostMcpService(logService)));
+	// Its own index folder: the desktop's index process may be writing to the desktop one.
+	const codeIndex = disposables.add(new VoltCodeIndexService(join(args.userDataDir, 'volt-index-server'), logService));
+	services.set(IVoltCodeIndexService, codeIndex);
 
 	//#endregion
 
@@ -329,6 +334,7 @@ export async function main(argv: string[]): Promise<void> {
 		authorize: deviceToken => pairing.authorize(deviceToken),
 		resolveEnv,
 		git: instantiationService.invokeFunction(accessor => accessor.get(IVoltGitService)),
+		codeIndex,
 		sendFile,
 	}));
 	httpContext = { ...httpContext, workbench: workbench.available };

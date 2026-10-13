@@ -33,6 +33,7 @@ import { IVoltBrowserService } from '../../../../../platform/voltBrowser/common/
 import { IVoltExternalMcpService } from '../../../../../platform/voltExternalMcp/common/voltExternalMcp.js';
 import { IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME } from '../../../../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../../../../platform/voltGit/common/voltGit.js';
+import { IVoltCodeIndexService, VOLT_CODE_INDEX_CHANNEL_NAME } from '../../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { IVoltSkillsDirectoryService } from '../../../../../platform/voltMarketplace/common/voltMarketplace.js';
 import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { IVoltRelayService, IVoltRelayState } from '../../../../../platform/voltRelay/common/voltRelay.js';
@@ -162,6 +163,7 @@ function registerServerService<T>(id: ServiceIdentifier<T>, channelName: string,
 
 registerServerService(IVoltStdioService, VOLT_STDIO_CHANNEL_NAME, channel => new ProjectEnvVoltStdioService(channel));
 registerServerService(IVoltGitService, VOLT_GIT_CHANNEL_NAME);
+registerServerService(IVoltCodeIndexService, VOLT_CODE_INDEX_CHANNEL_NAME);
 registerServerService(IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME);
 registerServerService(IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME);
 registerServerService(IVoltUsageService, VOLT_USAGE_CHANNEL_NAME);

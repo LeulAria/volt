@@ -24,6 +24,7 @@ import { IAgentServerAuth } from '../../../platform/voltAgentServer/common/proto
 import { VOLT_FS_BROWSE_CHANNEL_NAME } from '../../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../../platform/voltGit/common/voltGit.js';
+import { IVoltCodeIndexService, VOLT_CODE_INDEX_CHANNEL_NAME } from '../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
 import { VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestService } from '../../../platform/voltPullRequests/node/voltPullRequestService.js';
@@ -61,6 +62,8 @@ export interface IServerWorkbenchOptions {
 	readonly authorize: (token: string) => IAgentServerAuth | undefined;
 	readonly resolveEnv: () => Promise<NodeJS.ProcessEnv>;
 	readonly git: IVoltGitService;
+	/** The code index (instant grep) the agents here use; the browser's settings page shows it. */
+	readonly codeIndex?: IVoltCodeIndexService;
 	/** Serves a file with the agent server's caching and compression. Resolves false when it is missing. */
 	readonly sendFile: (req: http.IncomingMessage, res: http.ServerResponse, file: string, immutable: boolean) => Promise<boolean>;
 }
@@ -297,7 +300,7 @@ export class ServerWorkbench extends Disposable {
 	/** Volt's machine-side services, for the workbench windows (the desktop gets them from its main process). */
 	private registerChannels(socketServer: SocketServer<RemoteAgentConnectionContext>): void {
 		const store = this._register(new DisposableStore());
-		const { resolveEnv, git, userDataDir } = this.options;
+		const { resolveEnv, git, codeIndex, userDataDir } = this.options;
 
 		// Each window's processes stop when its connection goes, as a desktop window's do when it closes.
 		const stdio = store.add(new WorkbenchStdioService(this.logService, this.configurationService, userDataDir));
@@ -320,6 +323,9 @@ export class ServerWorkbench extends Disposable {
 		socketServer.registerChannel(VOLT_STDIO_CHANNEL_NAME, stdioChannel(stdio, ownerOf, store));
 
 		socketServer.registerChannel(VOLT_GIT_CHANNEL_NAME, ProxyChannel.fromService(git, store));
+		if (codeIndex) {
+			socketServer.registerChannel(VOLT_CODE_INDEX_CHANNEL_NAME, ProxyChannel.fromService(codeIndex, store));
+		}
 		socketServer.registerChannel(VOLT_FS_BROWSE_CHANNEL_NAME, ProxyChannel.fromService(store.add(new VoltFsBrowseService()), store));
 		const pullRequests = store.add(new VoltPullRequestService(resolveEnv, this.logService, 'gh', {
 			hostSettings: () => this.configurationService.getValue(VOLT_SOURCE_CONTROL_HOSTS_SETTING),

@@ -131,6 +131,8 @@ import { IVoltExternalMcpService, VOLT_EXTERNAL_MCP_CHANNEL_NAME } from '../../p
 import { VoltExternalMcpMainService } from '../../platform/voltExternalMcp/electron-main/voltExternalMcpMainService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../platform/voltGit/common/voltGit.js';
 import { VoltGitMainService } from '../../platform/voltGit/electron-main/voltGitMainService.js';
+import { IVoltCodeIndexService, VOLT_CODE_INDEX_CHANNEL_NAME } from '../../platform/voltCodeIndex/common/voltCodeIndex.js';
+import { VoltCodeIndexMainService } from '../../platform/voltCodeIndex/electron-main/voltCodeIndexMainService.js';
 import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestMainService } from '../../platform/voltPullRequests/electron-main/voltPullRequestMainService.js';
 import { IVoltRelayService, VOLT_RELAY_CHANNEL_NAME } from '../../platform/voltRelay/common/voltRelay.js';
@@ -1100,6 +1102,9 @@ export class CodeApplication extends Disposable {
 		services.set(IVoltGitService, new SyncDescriptor(VoltGitMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltPullRequestService, new SyncDescriptor(VoltPullRequestMainService, undefined, false /* proxied to other processes */));
 
+		// Volt code index (instant grep) and the language server budget
+		services.set(IVoltCodeIndexService, new SyncDescriptor(VoltCodeIndexMainService, undefined, true));
+
 		// Volt usage and limits
 		services.set(IVoltUsageService, new SyncDescriptor(VoltUsageMainService, undefined, true));
 		// Not delayed: automatic account switching runs from startup when it is on.
@@ -1308,6 +1313,9 @@ export class CodeApplication extends Disposable {
 		mainProcessElectronServer.registerChannel(VOLT_GIT_CHANNEL_NAME, voltGitChannel);
 		const voltPullRequestChannel = ProxyChannel.fromService(accessor.get(IVoltPullRequestService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_PULL_REQUEST_CHANNEL_NAME, voltPullRequestChannel);
+
+		// Volt code index (instant grep) and the language server budget
+		mainProcessElectronServer.registerChannel(VOLT_CODE_INDEX_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltCodeIndexService), disposables));
 
 		// Volt usage and limits
 		const voltUsageChannel = ProxyChannel.fromService(accessor.get(IVoltUsageService), disposables);
