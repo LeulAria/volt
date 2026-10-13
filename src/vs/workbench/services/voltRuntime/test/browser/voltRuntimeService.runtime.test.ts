@@ -11,6 +11,7 @@ import { Event } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { isEqualOrParent, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
+import { NullVoltCodeIndexService } from '../../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { FileService } from '../../../../../platform/files/common/fileService.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -181,6 +182,8 @@ suite('Agent runtime orchestration', () => {
 			stub({ getValue: () => undefined }),
 			// No hooks: every tool runs as it is.
 			stub({ run: async () => ({ context: [] }), wrapTool: (tool: unknown) => tool, definitions: async () => [] }),
+			// No code index: searches use ripgrep.
+			new NullVoltCodeIndexService(),
 		));
 		await service.refreshProviders();
 		const internals = service as unknown as IRuntimeInternals;

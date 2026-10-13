@@ -45,7 +45,11 @@ import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, normalizeSandboxSetting
 import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelAccess.js';
 import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltTaskModels } from '../common/runtime.js';
 import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
+import { Schemas } from '../../../../base/common/network.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
+import { codeIndexEnabled, INSTANT_GREP_TOOL_NAME, lspAllowedFor, readCodeIndexOptions, rtkEnabled } from '../common/codeIntelligence.js';
+import type { ISearchIndex } from './tools/searchTools.js';
 import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
 import { agentCompactionPrompt, compactedHistory, compactInstructions, isCompactCommand } from '../common/compaction.js';
 import { buildContextHandoff, compactionBudget, handoffBudget, HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_MAX_TOKENS_SETTING, handoffPath, handoffToolCall, HandoffReason, IContextHandoff, IHandoffActivity, IHandoffFile, IHandoffToolCall } from '../common/contextHandoff.js';
@@ -120,6 +124,8 @@ import { OllamaProvider } from './providers/ollama.js';
 import { createCompatProvider, createLMStudioProvider, createOpenAIProvider, createOpenRouterProvider } from './providers/openaiCompat.js';
 
 const RECEIPT_LIMIT = 500;
+/** Below this many files ripgrep is quick enough that CLI agents need no hint about instant_grep. */
+const LARGE_INDEXED_PROJECT_FILES = 2_000;
 /** Per-chat access picks kept; the oldest fall back to the default. */
 const ACCESS_CHATS_LIMIT = 500;
 /** Access-broker session id for the predictor agent (Tab, composer ghost text, dictation). */
@@ -391,6 +397,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	/** Times a `stop` hook sent the agent back to work in the current run, per chat. */
 	private readonly hookFollowups = new Map<string, number>();
 	private readonly codeIntel: CodeIntelHost;
+	private readonly searchIndex: ISearchIndex;
 	private readonly mcpHost: McpHost;
 	private readonly journal: NativeJournal;
 	private readonly nativeRestores = new Map<string, Promise<void>>();
@@ -457,9 +464,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@IEnvironmentService environmentService: IEnvironmentService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IVoltHooksService private readonly hooks: IVoltHooksService,
+		@IVoltCodeIndexService codeIndexService: IVoltCodeIndexService,
 	) {
 		super();
 		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeaturesService, fileService));
+		// Worktrees are outside the workspace folders; their language servers are opt-in (Settings > Code Intelligence).
+		this.codeIntel.setLspPolicy(uri => lspAllowedFor(this.configurationService, !this.workspace.isInsideWorkspace(uri)));
+		this.searchIndex = {
+			service: codeIndexService,
+			enabled: () => codeIndexEnabled(this.configurationService),
+			options: () => readCodeIndexOptions(this.configurationService),
+		};
 		this.mcpHost = this._register(new McpHost(fileService, stdio, requestService, logService));
 		this.journal = this._register(new NativeJournal(joinPath(environmentService.userRoamingDataHome, 'voltNative'), fileService, logService));
 		this.traces = this._register(new RunTraceJournal(joinPath(environmentService.userRoamingDataHome, 'voltTraces'), fileService, logService));
@@ -2308,6 +2323,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			stdio: this.stdio,
 			hostTools: this.hostTools,
 			root: () => this.executionRoot(session),
+			codeIndex: this.searchIndex,
+			rtk: () => rtkEnabled(this.configurationService),
 			meta: {
 				grantGroups: () => session.extraGroups ?? [],
 				...(state ? {
@@ -3234,7 +3251,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			...(intent.shape ? { shape: intent.shape } : {}),
 			...(mode === 'multitask' ? { taskModels: [...new Set(this.listCatalog().filter(item => item.enabled).map(item => item.label))] } : {}),
 			visuals: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
+			...(withMemory && await this.largeIndexedProject(root) ? { codeIndexed: true } : {}),
 		};
+	}
+
+	/** Worth telling a CLI agent about instant_grep: a big project whose index is ready. */
+	private async largeIndexedProject(root: URI | undefined): Promise<boolean> {
+		if (!root || root.scheme !== Schemas.file || !this.searchIndex.enabled() || !this.hostTools.getMcpServers().length || !this.hostTools.listTools().some(tool => tool.name === INSTANT_GREP_TOOL_NAME)) {
+			return false;
+		}
+		const [status] = await this.searchIndex.service.status([root.fsPath]).catch(() => []);
+		return status?.state === 'ready' && status.files >= LARGE_INDEXED_PROJECT_FILES;
 	}
 
 	private async executeAgent(session: ISessionState, run: IRunState, request: IVoltSendRequest, profile: IProviderProfile, item: IVoltCatalogItem, intent: IIntent, previous: IRunState | undefined): Promise<void> {

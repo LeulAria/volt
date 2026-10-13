@@ -12,11 +12,12 @@ import { FileLedger } from '../../common/harness/fileLedger.js';
 import { IVoltHostToolService } from '../../common/hostTools.js';
 import { IVoltTool } from '../../common/tools/tool.js';
 import { createBrowserTools } from './browserTool.js';
+import { createCodeIndexNav } from './codeIndexNav.js';
 import { createCodeTools, ICodeIntelHost } from './codeTools.js';
 import { createFileTools, IToolDocuments } from './fileTools.js';
 import { createGitTools } from './gitTools.js';
 import { createMetaTools, IMetaToolHost } from './metaTools.js';
-import { createSearchTools } from './searchTools.js';
+import { createSearchTools, ISearchIndex } from './searchTools.js';
 import { createShellTools } from './shellTool.js';
 import { createTerminalTools } from './terminalTool.js';
 import { createWebTools } from './webTools.js';
@@ -34,6 +35,10 @@ export interface IBuiltinToolServices {
 	readonly readRoots?: () => readonly URI[];
 	readonly rulesFor?: (uri: URI) => string | undefined;
 	readonly codeIntel?: ICodeIntelHost;
+	/** Volt's code index: instant grep, glob and symbol lookup (ripgrep when it cannot answer). */
+	readonly codeIndex?: ISearchIndex;
+	/** Run shell commands through RTK when it is installed (Settings > Code Intelligence). */
+	readonly rtk?: () => boolean;
 	readonly spillDir?: () => string | undefined;
 	readonly onLog?: (path: string) => void;
 }
@@ -52,9 +57,9 @@ export function createBuiltinTools(services: IBuiltinToolServices): IVoltTool[] 
 			documents: services.documents,
 			rulesFor: services.rulesFor,
 		}),
-		...createSearchTools(services.searchService, services.root),
-		...(services.codeIntel ? createCodeTools(services.codeIntel, services.root) : []),
-		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog, hostTools: services.hostTools }),
+		...createSearchTools(services.searchService, services.root, services.codeIndex),
+		...(services.codeIntel ? createCodeTools(services.codeIntel, services.root, services.codeIndex ? createCodeIndexNav(services.codeIndex) : undefined) : []),
+		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog, hostTools: services.hostTools, rtk: services.rtk }),
 		...createTerminalTools(services.hostTools),
 		...createGitTools(services.stdio, services.root),
 		...createWebTools(services.requestService),

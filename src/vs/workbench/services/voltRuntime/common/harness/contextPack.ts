@@ -47,6 +47,8 @@ export interface IContextPackInput {
 	readonly taskModels?: readonly string[];
 	/** The agent gets Volt's visual tools (render_chart, render_html) through the volt MCP server. */
 	readonly visuals?: boolean;
+	/** A large project with a ready code index, and instant_grep on the volt MCP server. */
+	readonly codeIndexed?: boolean;
 }
 
 export interface IEnvironmentFacts {
@@ -216,6 +218,9 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.intent.wantsServices && modePolicy(input.mode).allowTerminal) {
 		parts.push(`[Volt] ${MANAGED_TERMINALS}`);
 	}
+	if (input.codeIndexed && input.intent.lane !== 'chat' && input.intent.lane !== 'fast') {
+		parts.push(`[Volt] ${INDEXED_SEARCH}`);
+	}
 	for (const gallery of galleryHints(input)) {
 		parts.push(`[Volt] ${gallery}`);
 	}
@@ -258,6 +263,13 @@ export const TEST_INTEGRITY = 'Make tests pass by fixing the code. Never special
  * timeout or vanish into a background job the user cannot see. Volt's terminals do neither.
  */
 export const MANAGED_TERMINALS = `Start servers, watchers, \`docker compose up\` and anything else that keeps running with ${TERMINAL_START_TOOL_NAME} from the volt MCP server, not your own shell or background tasks: it returns once the process is up, the user sees it as a chip and can open it, and you keep working. Read it with ${TERMINAL_OUTPUT_TOOL_NAME} or ${TERMINAL_WAIT_TOOL_NAME}, stop it with ${TERMINAL_STOP_TOOL_NAME}. When Docker is needed, call ${DOCKER_ENSURE_TOOL_NAME} once instead of opening Docker and polling it. Run commands that finish on their own (builds, tests, installs) as usual.`;
+
+/**
+ * CLI agents grep with their own tools, which re-read the whole tree each time; in a large repo
+ * Volt's index answers the same search in milliseconds. Their MCP tools sit behind tool search,
+ * so name them. Sent once per agent session, and only for large indexed projects.
+ */
+export const INDEXED_SEARCH = 'This project is indexed: search code with instant_grep (regex or literal, the same results as rg) and find symbol declarations with find_symbol, both from the volt MCP server. They answer in milliseconds where Grep, rg and find re-read every file.';
 
 /**
  * Tool descriptions say what the visual tools do; this says when to reach for them unasked. Not
