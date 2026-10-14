@@ -13,7 +13,7 @@ import type { IPageExpectation, IPageLocator } from '../../../../services/voltRu
  * and when the page has settled.
  */
 
-const RUNTIME = `
+export const RUNTIME = `
 const S = window.__voltAgent || (window.__voltAgent = { next: 0, refs: new Map(), ids: new WeakMap() });
 if (!S.doc) { S.doc = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 const refOf = el => {
@@ -247,6 +247,9 @@ const valueOf = el => {
 /** Values read into the model never include what was typed into a password field. */
 const shownValue = el => { const v = valueOf(el); return isSecret(el) && v ? '•'.repeat(Math.min(8, v.length)) : v; };
 `;
+
+/** The role, name, visibility and state helpers, for the browser_run, audit and status scripts (`browserAgentScripts`). */
+export const ROLE_HELPERS = A11Y;
 
 /**
  * Finds elements by meaning: role + accessible name, visible text, form label, placeholder or CSS

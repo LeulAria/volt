@@ -27,6 +27,8 @@ export interface IIntent {
 	readonly referencesWorkspace: boolean;
 	/** Build a UI from a reference image (a design file or an attached screenshot). */
 	readonly matchesDesign?: boolean;
+	/** Building, fixing or checking something a person sees in a browser (pages, forms, layout, flows). */
+	readonly uiWork?: boolean;
 	/** An open-ended change ("make it production ready", "harden", "refactor") that can alter what callers see. */
 	readonly broadChange?: boolean;
 	/** The request is about making tests pass or keeping them green. */
@@ -103,6 +105,8 @@ const MOCKUP_INTENT = new RegExp(`\\bmock[- ]?ups?\\b|\\bwire ?frames?\\b|\\b${U
 /** Designing several screens, a flow or a board: the design canvas. */
 const CANVAS_INTENT = /\b(?:design canvas|figma|(?:user|screen|ux) flows?|(?:design|mock ?up|prototype|sketch|wireframe)\b[^.?!]{0,40}\b(?:screens|flows?|(?:mobile|ios|android|iphone) app|website|landing page|prototype)|(?:mobile|ios|android|iphone|ipad|tablet|app) (?:screens|ui|design|mockups?|prototype)|clickable prototype|screen designs?|responsive (?:design|layouts?|previews?)|(?:phone|tablet|desktop) (?:and|&|\/) (?:phone|tablet|desktop))\b/i;
 const SCREENS_INTENT = /\b(?:(?:all|every|each) (?:of )?(?:the |our |my )?(?:app'?s? |current |existing |mobile |web )?(?:screens|pages|views)|(?:current|existing|app'?s?|mobile) screens|screen ?shots? of (?:all|every|each|the)|inspect (?:the |our |my )?(?:app|ui|screens|pages|mobile)|(?:light|dark) (?:and|&|\/) (?:light|dark)(?: (?:mode|theme)s?)?)\b/i;
+/** Web UI work: something rendered in a browser that an agent should check there, not only in code. */
+const UI_WORK = /\b(?:buttons?|click(?:ing|s)?|pages?|layout|ui|ux|css|styles?|styling|responsive|mobile|phones?|tablet|viewport|overflow|scroll(?:s|ing)? sideways|horizontal scroll|forms?|modal|dialog|dropdown|navbar|nav ?bar|header|footer|widget|component|frontend|front-end|accessib\w*|a11y|contrast|screen ?reader|dark mode|prototype|mock ?ups?|draft|landing page|html|in the browser|e2e|end[- ]to[- ]end|user flow|sign ?up|log ?in|checkout|loading state|empty state|error state|renders?|visual(?:ly)?)\b/i;
 
 export function classifyIntent(text: string, mode: VoltMode, context: IIntentContext = {}): IIntent {
 	const raw = text.trim();
@@ -149,6 +153,9 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	const matchesDesign = hasWorkspace && mode !== 'ask' && DESIGN_VERB.test(raw)
 		&& (IMAGE_FILE.test(raw) || (context.attachments ?? []).some(name => IMAGE_FILE.test(name)));
 	if (matchesDesign) { signals.push('design-reference'); }
+
+	const uiWork = hasWorkspace && (wantsPreview || matchesDesign || UI_WORK.test(raw));
+	if (uiWork) { signals.push('ui'); }
 
 	const broadChange = hasWorkspace && mode !== 'ask' && mode !== 'plan' && BROAD_CHANGE.test(raw);
 	if (broadChange) { signals.push('broad-change'); }
@@ -234,6 +241,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		wantsWeb,
 		referencesWorkspace,
 		...(matchesDesign ? { matchesDesign } : {}),
+		...(uiWork ? { uiWork } : {}),
 		...(broadChange ? { broadChange } : {}),
 		...(mentionsTests ? { mentionsTests } : {}),
 		...(wantsMockups ? { wantsMockups } : {}),
