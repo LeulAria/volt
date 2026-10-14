@@ -4,7 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { nativeImage } from 'electron';
+import { join } from '../../../base/common/path.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
+import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { IRawFrame } from '../common/deviceCommands.js';
@@ -29,6 +31,7 @@ export class VoltDevicesMainService extends VoltDevicesService {
 	constructor(
 		@IConfigurationService configurationService: IConfigurationService,
 		@ILogService logService: ILogService,
+		@IEnvironmentMainService environmentMainService: IEnvironmentMainService,
 	) {
 		let env: Promise<NodeJS.ProcessEnv> | undefined;
 		super(() => env ??= getResolvedShellEnv(configurationService, logService, { _: [] }, process.env)
@@ -36,6 +39,6 @@ export class VoltDevicesMainService extends VoltDevicesService {
 			.catch(err => {
 				logService.warn('[volt-devices] could not resolve the shell environment', err);
 				return process.env;
-			}), logService, encodeJpeg);
+			}), logService, encodeJpeg, join(environmentMainService.userDataPath, 'voltTools'));
 	}
 }

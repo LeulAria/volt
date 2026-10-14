@@ -176,10 +176,11 @@ export default tseslint.config(
 			]
 		}
 	},
-	// Device studio: a standalone three.js bundle with no localized strings
+	// Device studio and device viewer: standalone three.js bundles with no localized strings
 	{
 		files: [
-			'build/volt/deviceStudio/**/*.{ts,mjs}'
+			'build/volt/deviceStudio/**/*.{ts,mjs}',
+			'build/volt/deviceViewer/**/*.{ts,mjs}'
 		],
 		plugins: {
 			'local': pluginLocal,

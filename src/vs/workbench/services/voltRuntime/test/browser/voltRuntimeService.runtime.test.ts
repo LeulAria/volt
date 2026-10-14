@@ -184,6 +184,7 @@ suite('Agent runtime orchestration', () => {
 			stub({ run: async () => ({ context: [] }), wrapTool: (tool: unknown) => tool, definitions: async () => [] }),
 			// No code index: searches use ripgrep.
 			new NullVoltCodeIndexService(),
+			stub({ executeCommand: async () => undefined }),
 		));
 		await service.refreshProviders();
 		const internals = service as unknown as IRuntimeInternals;
