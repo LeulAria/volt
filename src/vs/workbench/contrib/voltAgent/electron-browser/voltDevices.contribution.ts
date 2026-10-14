@@ -24,6 +24,7 @@ import { DEVICE_EDITOR_ID, DevicePreviewEditor, DevicePreviewEditorInput, Device
 import { agentToolsSessionOnScreen, openInAgentTools } from '../browser/workspace/agentSurfaceHost.js';
 import '../browser/preview/browserCookieImport.js';
 import './voltWindowCapture.js';
+import './agentComputerUse.contribution.js';
 
 registerMainProcessRemoteService(IVoltDevicesService, VOLT_DEVICES_CHANNEL_NAME);
 registerMainProcessRemoteService(IVoltCaptureService, VOLT_CAPTURE_CHANNEL_NAME);

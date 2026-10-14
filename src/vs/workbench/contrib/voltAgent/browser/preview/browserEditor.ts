@@ -2332,6 +2332,20 @@ export class VoltBrowserView extends Disposable {
 		return await webview.executeJavaScript(code) as T;
 	}
 
+	/** The page's web contents, for the main-process features agents use (network mocks, emulation, full-page capture). */
+	agentWebContentsId(): number | undefined {
+		try {
+			return this.webview?.getWebContentsId?.();
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** The in-app browser's main-process side, when this window has one (desktop). */
+	agentBrowserService(): IVoltBrowserService | undefined {
+		return this.browserService();
+	}
+
 	canSendInput(): boolean {
 		return typeof this.webview?.sendInputEvent === 'function';
 	}

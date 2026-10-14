@@ -39,6 +39,12 @@ export interface IVoltCaptureService {
 	capture(sourceId: string, maxSide?: number): Promise<IVoltCaptureImage>;
 	/** The source id of the window that hosts `windowId` (a Volt window), for recording itself. */
 	sourceIdOfWindow(windowId: number): Promise<string | undefined>;
+	/**
+	 * Desktop computer use (macOS): runs one command of the `volt-computer` helper (status, apps,
+	 * tree, act, input) and returns its JSON. `{ error }` when it fails, e.g. `accessibility` when
+	 * Volt has no Accessibility permission yet.
+	 */
+	computer(command: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
 /** `window:1234:0` → `1234`: the CGWindowID (macOS), HWND (Windows) or X window id (Linux). */

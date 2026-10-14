@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { describeLocator, parseLocator } from '../../../../services/voltRuntime/common/tools/browserRun.js';
 import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, THREAD_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /** How one of Volt's own MCP tools reads in the activity trail, the way Cursor words its browser actions. */
@@ -97,10 +98,15 @@ export function describeHostToolActivity(name: string | undefined, title: string
 	if (tool === PREVIEW_HTML_TOOL_NAME) {
 		return { tool, label: 'Previewed page', detail: typeof args.width === 'number' ? `${args.width}px` : undefined };
 	}
+	const agentBrowser = describeAgentBrowserTool(tool, args);
+	if (agentBrowser) {
+		return agentBrowser;
+	}
 	if (!isBrowserToolName(tool)) {
 		return undefined;
 	}
-	const element = text(args.element);
+	const target = parseLocator(args.target);
+	const element = text(args.element) ?? (target ? describeLocator(target) : undefined);
 	switch (tool) {
 		case 'browser_navigate':
 			return { tool, label: 'Navigated to', detail: text(args.url, 120) };
@@ -146,6 +152,30 @@ export function describeHostToolActivity(name: string | undefined, title: string
 		case 'browser_screenshot':
 			return { tool, label: 'Took screenshot' };
 	}
+}
+
+/** Scripted runs, mocks, emulation, audits and playgrounds, in the words a reader would use. */
+function describeAgentBrowserTool(tool: string, args: Record<string, unknown>): IHostToolActivity | undefined {
+	switch (tool) {
+		case 'browser_run': {
+			const steps = Array.isArray(args.steps) ? args.steps.length : 0;
+			const asserts = Array.isArray(args.steps) ? args.steps.filter(step => step && typeof step === 'object' && /^(assert|expect|verify)$/i.test(String((step as Record<string, unknown>).action ?? ''))).length : 0;
+			return { tool, label: 'Ran browser test', detail: `${steps} step${steps === 1 ? '' : 's'}${asserts ? `, ${asserts} check${asserts === 1 ? '' : 's'}` : ''}` };
+		}
+		case 'browser_status': return { tool, label: 'Checked browser' };
+		case 'browser_network': return { tool, label: 'Read network', detail: text(args.filter) };
+		case 'browser_mock': {
+			const routes = Array.isArray(args.routes) ? args.routes.map(route => text((route as Record<string, unknown>)?.url, 40)).filter(Boolean) : [];
+			return args.clear === true && !routes.length ? { tool, label: 'Cleared network mocks' } : { tool, label: 'Mocked', detail: routes.join(', ') || undefined };
+		}
+		case 'browser_emulate': return { tool, label: args.reset === true ? 'Reset emulation' : 'Emulated', detail: ['color_scheme', 'network', 'timezone', 'locale'].map(key => text(args[key])).filter(Boolean).join(', ') || (args.reduced_motion === true ? 'reduced motion' : undefined) };
+		case 'browser_audit': return { tool, label: 'Audited page', detail: Array.isArray(args.checks) ? args.checks.join(', ') : undefined };
+		case 'playground_create': return { tool, label: 'Created playground', detail: text(args.title, 60) };
+		case 'playground_update': return { tool, label: 'Updated playground', detail: text(args.id) };
+		case 'playground_list': return { tool, label: 'Listed playgrounds' };
+		case 'playground_delete': return { tool, label: 'Deleted playground', detail: args.all === true ? 'all' : text(args.id) };
+	}
+	return undefined;
 }
 
 /** A chat id as a short tag (`…3f9a1c`); the row's result names the chat in full. */

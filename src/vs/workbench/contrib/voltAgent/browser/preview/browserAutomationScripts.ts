@@ -9,8 +9,9 @@
  * so a ref from an earlier snapshot still names the same node after the page re-renders around it.
  */
 
-const RUNTIME = `
+export const RUNTIME = `
 const S = window.__voltAgent || (window.__voltAgent = { next: 0, refs: new Map(), ids: new WeakMap() });
+if (!S.doc) { S.doc = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 const refOf = el => {
 	let id = S.ids.get(el);
 	if (!id) {
@@ -63,16 +64,10 @@ if (!S.net) {
 `;
 
 /**
- * An accessibility snapshot in the YAML shape Cursor shows (role, name, ref, states, children).
- * Wrappers without a role are flattened; hidden nodes and empty text are dropped.
+ * Role, accessible name, visibility and state helpers shared by the snapshot and by the
+ * locator, assertion and audit scripts, so `{ role, name }` finds what a snapshot shows.
  */
-export function snapshotScript(options: { selector?: string; interactive?: boolean } = {}): string {
-	return `(() => {
-${RUNTIME}
-const MAX_NODES = 600;
-const SELECTOR = ${JSON.stringify(options.selector ?? null)};
-const ONLY_INTERACTIVE = ${options.interactive === true};
-let count = 0;
+export const ROLE_HELPERS = `
 const INTERACTIVE = new Set(['button', 'link', 'textbox', 'searchbox', 'checkbox', 'radio', 'switch', 'combobox', 'listbox', 'option', 'slider', 'spinbutton', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'treeitem']);
 const LANDMARK = new Set(['heading', 'img', 'navigation', 'main', 'banner', 'contentinfo', 'form', 'dialog', 'alertdialog', 'alert', 'status', 'list', 'listitem', 'table', 'row', 'cell', 'columnheader', 'rowheader', 'region', 'group', 'radiogroup', 'tablist', 'tabpanel', 'menu', 'menubar', 'toolbar', 'grid', 'gridcell', 'article', 'complementary', 'progressbar', 'meter', 'separator']);
 const implicitRole = el => {
@@ -177,6 +172,20 @@ const statesOf = (el, role) => {
 	if (document.activeElement === el) { states.push('focused'); }
 	return states;
 };
+`;
+
+/**
+ * An accessibility snapshot in the YAML shape Cursor shows (role, name, ref, states, children).
+ * Wrappers without a role are flattened; hidden nodes and empty text are dropped.
+ */
+export function snapshotScript(options: { selector?: string; interactive?: boolean } = {}): string {
+	return `(() => {
+${RUNTIME}
+const MAX_NODES = 600;
+const SELECTOR = ${JSON.stringify(options.selector ?? null)};
+const ONLY_INTERACTIVE = ${options.interactive === true};
+let count = 0;
+${ROLE_HELPERS}
 const directText = el => {
 	let text = '';
 	for (const node of el.childNodes) {
@@ -251,6 +260,7 @@ const doc = document.scrollingElement || document.documentElement;
 return {
 	url: location.href,
 	title: document.title,
+	doc: S.doc,
 	yaml: lines.join('\\n'),
 	viewport: { width: innerWidth, height: innerHeight, scrollY: Math.round(doc.scrollTop), scrollHeight: doc.scrollHeight, scrollWidth: doc.scrollWidth },
 };

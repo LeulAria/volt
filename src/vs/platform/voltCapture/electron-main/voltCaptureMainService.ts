@@ -4,13 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { execFile } from 'child_process';
-import { BrowserWindow, desktopCapturer, nativeImage, type DesktopCapturerSource, type NativeImage } from 'electron';
+import { createHash } from 'crypto';
+import { app, BrowserWindow, desktopCapturer, nativeImage, type DesktopCapturerSource, type NativeImage } from 'electron';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
 import { fitSize, IVoltCaptureImage, IVoltCaptureService, IVoltCaptureSource, platformCaptureCommand } from '../common/voltCapture.js';
+import { COMPUTER_HELPER_SWIFT } from '../node/computerHelperSource.js';
 
 const DEFAULT_MAX_SIDE = 1920;
 
@@ -18,7 +20,57 @@ export class VoltCaptureMainService implements IVoltCaptureService {
 
 	declare readonly _serviceBrand: undefined;
 
+	private helper: Promise<string> | undefined;
+
 	constructor(@ILogService private readonly logService: ILogService) { }
+
+	async computer(command: Record<string, unknown>): Promise<Record<string, unknown>> {
+		if (process.platform !== 'darwin') {
+			return { error: 'Desktop computer use is only available on macOS so far.' };
+		}
+		let binary: string;
+		try {
+			binary = await (this.helper ??= this.buildHelper().catch(err => { this.helper = undefined; throw err; }));
+		} catch (err) {
+			return { error: err instanceof Error ? err.message : String(err) };
+		}
+		const timeoutMs = command.op === 'input' ? 60_000 : 20_000;
+		return new Promise(resolve => execFile(binary, [JSON.stringify(command)], { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
+			try {
+				resolve(JSON.parse(String(stdout)));
+			} catch {
+				resolve({ error: error ? `The helper failed: ${error.message.split('\n')[0]}` : 'The helper returned no result.' });
+			}
+		}));
+	}
+
+	/** Compiles the helper once per version of its source, into Volt's user data folder. */
+	private async buildHelper(): Promise<string> {
+		const hash = createHash('sha256').update(COMPUTER_HELPER_SWIFT).digest('hex').slice(0, 16);
+		const dir = join(app.getPath('userData'), 'volt-computer');
+		const binary = join(dir, `volt-computer-${hash}`);
+		try {
+			await fs.access(binary);
+			return binary;
+		} catch {
+			// not built yet
+		}
+		await fs.mkdir(dir, { recursive: true });
+		const source = join(dir, `volt-computer-${hash}.swift`);
+		await fs.writeFile(source, COMPUTER_HELPER_SWIFT);
+		this.logService.info(`[volt] building the computer-use helper ${binary}`);
+		await new Promise<void>((resolve, reject) => execFile('swiftc', ['-O', source, '-o', binary], { timeout: 180_000 }, (error, _stdout, stderr) => {
+			if (error) {
+				reject(new Error(/not found|ENOENT|xcrun: error/i.test(String(stderr) + error.message)
+					? 'Computer use needs the Xcode command line tools (run `xcode-select --install`).'
+					: `Could not build the computer-use helper: ${String(stderr).split('\n').find(line => /error/.test(line)) ?? error.message}`));
+			} else {
+				resolve();
+			}
+		}));
+		await fs.rm(source, { force: true });
+		return binary;
+	}
 
 	private ownSourceIds(): Map<string, BrowserWindow> {
 		const own = new Map<string, BrowserWindow>();

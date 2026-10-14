@@ -6,11 +6,15 @@
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
+import type { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
+import { PLAYGROUND_TOOL_NAMES } from './playgroundTools.js';
+import { COMPUTER_TOOL_NAMES } from './computerTools.js';
 import type { VoltMode } from './modes.js';
 import type { AgentQuestionDraft, IAgentQuestionResponse } from './questions.js';
 import type { IRgbaImage } from './tools/imageAnalysis.js';
+import { MUTATING_RUN_ACTIONS, parseRunSteps } from './tools/browserRun.js';
 
 export const IVoltHostToolService = createDecorator<IVoltHostToolService>('voltHostToolService');
 
@@ -26,6 +30,27 @@ export const CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID = 'volt.browser.captureSnapshot
 export const AUTOMATE_BROWSER_COMMAND_ID = 'volt.browser.automate';
 /** `(sessionId) => string | undefined`: the URL of the page in the chat's browser tab, if it has one. */
 export const BROWSER_PAGE_URL_COMMAND_ID = 'volt.browser.pageUrl';
+/** `(sessionId, IVoltBrowserPreflightRequest) => IVoltBrowserPreflightResult`: the browser half of the turn primer. */
+export const PREFLIGHT_BROWSER_COMMAND_ID = 'volt.browser.preflight';
+
+export interface IVoltBrowserPreflightRequest {
+	/** The chat's folder. */
+	readonly cwd: string;
+	/** The project's start command, if one was detected. */
+	readonly start?: string;
+	/** Volt may start the app (the mode and policy allow running it). */
+	readonly allowStart: boolean;
+	readonly a11y: boolean;
+	readonly widths: readonly number[];
+	readonly perf: boolean;
+}
+
+export interface IVoltBrowserPreflightResult {
+	/** Lines for the agent's first prompt; empty when there was nothing to report. */
+	readonly lines: readonly string[];
+	/** The app's URL when it is serving. */
+	readonly url?: string;
+}
 
 export const BROWSER_COMPARE_IMAGE_TOOL_NAME = 'browser_compare_image';
 
@@ -64,6 +89,11 @@ export interface IVoltVisualRef {
 	readonly cap?: number;
 }
 export const BROWSER_NETWORK_TOOL_NAME = 'browser_network';
+export const BROWSER_RUN_TOOL_NAME = 'browser_run';
+export const BROWSER_STATUS_TOOL_NAME = 'browser_status';
+export const BROWSER_MOCK_TOOL_NAME = 'browser_mock';
+export const BROWSER_EMULATE_TOOL_NAME = 'browser_emulate';
+export const BROWSER_AUDIT_TOOL_NAME = 'browser_audit';
 export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
 
 /**
@@ -73,7 +103,7 @@ export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
  * and Android emulators. `capture`: screenshots and recordings of windows. An agent can be
  * handed a subset (`getMcpServers(sessionId, { groups })`) to keep its tool list short.
  */
-export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture';
+export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture' | 'computer';
 
 export interface IVoltHostToolInfo {
 	readonly name: string;
@@ -94,6 +124,15 @@ export interface IVoltHostToolResult {
 	readonly error?: string;
 	/** Set by the render tools: the transcript draws it above the reply. */
 	readonly visual?: IVoltVisualRef;
+	/** Files the call changed (browser_run `edits`), for the chat's change set. Not sent to the agent. */
+	readonly changes?: readonly IVoltHostFileChange[];
+}
+
+export interface IVoltHostFileChange {
+	readonly uri: URI;
+	readonly kind: 'edit' | 'create';
+	readonly before?: string;
+	readonly existed: boolean;
 }
 
 export interface IVoltMcpServer {
@@ -144,6 +183,8 @@ export interface IVoltBrowserAutomationOptions {
 	/** `browser_compare_image`: the decoded reference image and how to name it in the result. */
 	readonly reference?: IRgbaImage;
 	readonly referenceLabel?: string;
+	/** The chat's folder (worktree or workspace), to tell its dev servers from others. */
+	readonly cwd?: string;
 }
 
 /** A host tool ran for a chat; the transcript attaches the result to the agent's matching tool row. */
@@ -165,7 +206,16 @@ export const AWAIT_ANSWERS_TOOL_NAME = 'await_answers';
 
 const REF = { type: 'string', description: 'Exact target element reference from the latest page snapshot (e.g. "e12").' };
 const ELEMENT = { type: 'string', description: 'Human-readable element description used to obtain permission to interact with the element, shown to the user (e.g. "Top-left cell").' };
-const PAGE_STATE_NOTE = 'Returns the page URL, title and an accessibility snapshot with element refs.';
+const PAGE_STATE_NOTE = 'Returns the page URL and title, new console errors, and what changed on the page (the full snapshot after a navigation).';
+const LOCATOR = {
+	type: 'object',
+	description: 'The element, found by meaning instead of a ref: {"role":"button","name":"Add"}, {"label":"Email"}, {"text":"Sign up"}, {"placeholder":"Search"}, {"testId":"save"}, {"selector":"#id"} or {"ref":"e12"}. Names and text match case-insensitively by "contains"; exact: true for the whole text, nth to pick one of several matches. A string works too: "e12", "role=button[name=Add]", "label=Email", "text=Sign up", "#css".',
+	properties: {
+		role: { type: 'string' }, name: { type: 'string' }, label: { type: 'string' }, text: { type: 'string' }, placeholder: { type: 'string' },
+		testId: { type: 'string' }, selector: { type: 'string' }, ref: { type: 'string' }, exact: { type: 'boolean' }, nth: { type: 'number' },
+	},
+};
+const SNAPSHOT_MODE = { type: 'string', enum: ['diff', 'full', 'none'], description: 'Page state to return: diff (default: only what changed since the last snapshot), full (the whole accessibility snapshot) or none.' };
 const SCREENSHOT_AFTER = { type: 'boolean', description: 'Also return a screenshot after the action (saves a browser_screenshot call).' };
 const RECT = {
 	type: 'object',
@@ -193,8 +243,11 @@ export const BROWSER_TOOL_NAMES = [
 
 export type VoltBrowserToolName = typeof BROWSER_TOOL_NAMES[number];
 
-/** Browser tools for design and debugging work, added after the activity trail named the ones above. */
-export const BROWSER_DESIGN_TOOL_NAMES = [BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME] as const;
+/**
+ * Browser tools for design, debugging and testing work, added after the activity trail named the
+ * ones above: scripted runs with assertions, status, network mocks, emulation and audits.
+ */
+export const BROWSER_DESIGN_TOOL_NAMES = [BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_RUN_TOOL_NAME, BROWSER_STATUS_TOOL_NAME, BROWSER_MOCK_TOOL_NAME, BROWSER_EMULATE_TOOL_NAME, BROWSER_AUDIT_TOOL_NAME] as const;
 
 /** Every tool the chat's browser tab runs (`AUTOMATE_BROWSER_COMMAND_ID`). */
 export type VoltBrowserAutomationToolName = VoltBrowserToolName | typeof BROWSER_DESIGN_TOOL_NAMES[number];
@@ -249,14 +302,14 @@ export const VOLT_HOST_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: 'browser_navigate',
 		title: 'Navigated to',
 		group: 'browser',
-		description: `Open a URL in this chat's Volt in-app browser (the tab beside the chat; it opens if needed) and wait for it to load. Use it to preview and test local dev servers or files (http://localhost:3000, file:///path/index.html). ${PAGE_STATE_NOTE}`,
-		inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'The URL to open.' }, screenshot: SCREENSHOT_AFTER }, required: ['url'] },
+		description: `Open a URL in this chat's Volt in-app browser (the tab beside the chat; it opens if needed) and wait for it to load. Use it to preview and test local dev servers or files (http://localhost:3000, file:///path/index.html); browser_status lists the servers running here. Returns the page URL, title, console errors and the accessibility snapshot with element refs. To act and check in the same call, use browser_run.`,
+		inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'The URL to open, or a bare port such as "4400" for http://localhost:4400.' }, screenshot: SCREENSHOT_AFTER, snapshot: SNAPSHOT_MODE }, required: ['url'] },
 	},
 	{
 		name: 'browser_snapshot',
 		title: 'Read page',
 		group: 'browser',
-		description: `Capture an accessibility snapshot of the current page in the in-app browser. Better than a screenshot for deciding what to click. ${PAGE_STATE_NOTE}`,
+		description: 'Capture an accessibility snapshot (YAML: role, name, ref, states) of the current page in the in-app browser. Better than a screenshot for deciding what to click. Refs stay valid for the life of the page. Usually you can skip it: browser_run and the action tools accept targets by role/name, label or text.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -269,37 +322,40 @@ export const VOLT_HOST_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: 'browser_click',
 		title: 'Clicked',
 		group: 'browser',
-		description: `Click an element in the in-app browser with a real (trusted) mouse click. Take a snapshot first to get refs; or pass x/y viewport coordinates instead of a ref. ${PAGE_STATE_NOTE}`,
+		description: `Click an element in the in-app browser with a real (trusted) mouse click. Name it with target ({"role":"button","name":"Save"}, {"text":"Sign up"}…), a ref from a snapshot, or x/y viewport coordinates. ${PAGE_STATE_NOTE}`,
 		inputSchema: {
 			type: 'object',
 			properties: {
 				element: ELEMENT,
+				target: LOCATOR,
 				ref: REF,
+				snapshot: SNAPSHOT_MODE,
 				x: { type: 'number', description: 'Viewport x in CSS px (instead of ref).' },
 				y: { type: 'number', description: 'Viewport y in CSS px (instead of ref).' },
 				doubleClick: { type: 'boolean' },
 				button: { type: 'string', enum: ['left', 'right', 'middle'] },
 				screenshot: SCREENSHOT_AFTER,
 			},
-			required: ['element'],
 		},
 	},
 	{
 		name: 'browser_type',
 		title: 'Typed',
 		group: 'browser',
-		description: `Type text into an editable element in the in-app browser. ${PAGE_STATE_NOTE}`,
+		description: `Type text into an editable element in the in-app browser (target {"label":"Email"}, {"placeholder":"…"} or a ref). ${PAGE_STATE_NOTE}`,
 		inputSchema: {
 			type: 'object',
 			properties: {
 				element: ELEMENT,
+				target: LOCATOR,
 				ref: REF,
+				snapshot: SNAPSHOT_MODE,
 				text: { type: 'string' },
 				submit: { type: 'boolean', description: 'Press Enter after typing.' },
 				clear: { type: 'boolean', description: 'Replace the current value instead of appending (default true).' },
 				screenshot: SCREENSHOT_AFTER,
 			},
-			required: ['element', 'ref', 'text'],
+			required: ['text'],
 		},
 	},
 	{
@@ -307,28 +363,28 @@ export const VOLT_HOST_TOOLS: readonly IVoltHostToolInfo[] = [
 		title: 'Pressed',
 		group: 'browser',
 		description: `Press a key in the in-app browser, e.g. "Enter", "Escape", "ArrowLeft", "a", "Meta+a". ${PAGE_STATE_NOTE}`,
-		inputSchema: { type: 'object', properties: { key: { type: 'string' }, screenshot: SCREENSHOT_AFTER }, required: ['key'] },
+		inputSchema: { type: 'object', properties: { key: { type: 'string' }, screenshot: SCREENSHOT_AFTER, snapshot: SNAPSHOT_MODE }, required: ['key'] },
 	},
 	{
 		name: 'browser_hover',
 		title: 'Hovered',
 		group: 'browser',
 		description: `Move the mouse over an element in the in-app browser. ${PAGE_STATE_NOTE}`,
-		inputSchema: { type: 'object', properties: { element: ELEMENT, ref: REF, screenshot: SCREENSHOT_AFTER }, required: ['element', 'ref'] },
+		inputSchema: { type: 'object', properties: { element: ELEMENT, target: LOCATOR, ref: REF, screenshot: SCREENSHOT_AFTER, snapshot: SNAPSHOT_MODE } },
 	},
 	{
 		name: 'browser_select_option',
 		title: 'Selected',
 		group: 'browser',
 		description: `Select option(s) in a <select> in the in-app browser. ${PAGE_STATE_NOTE}`,
-		inputSchema: { type: 'object', properties: { element: ELEMENT, ref: REF, values: { type: 'array', items: { type: 'string' } }, screenshot: SCREENSHOT_AFTER }, required: ['element', 'ref', 'values'] },
+		inputSchema: { type: 'object', properties: { element: ELEMENT, target: LOCATOR, ref: REF, values: { type: 'array', items: { type: 'string' } }, screenshot: SCREENSHOT_AFTER, snapshot: SNAPSHOT_MODE }, required: ['values'] },
 	},
 	{
 		name: 'browser_scroll',
 		title: 'Scrolled',
 		group: 'browser',
 		description: `Scroll the page (or the element with ref) in the in-app browser by deltaY pixels (negative scrolls up). ${PAGE_STATE_NOTE}`,
-		inputSchema: { type: 'object', properties: { element: ELEMENT, ref: REF, deltaY: { type: 'number' }, deltaX: { type: 'number' }, screenshot: SCREENSHOT_AFTER } },
+		inputSchema: { type: 'object', properties: { element: ELEMENT, target: LOCATOR, ref: REF, deltaY: { type: 'number' }, deltaX: { type: 'number' }, screenshot: SCREENSHOT_AFTER, snapshot: SNAPSHOT_MODE } },
 	},
 	{
 		name: 'browser_resize',
@@ -389,11 +445,14 @@ export const VOLT_HOST_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: BROWSER_SCREENSHOT_TOOL_NAME,
 		title: 'Took screenshot',
 		group: 'browser',
-		description: 'Take a screenshot of the current page (or one element) in the in-app browser to check how it looks. One image pixel is one CSS pixel up to max_side. Use browser_snapshot to find elements to act on, and browser_compare_image to check a page against a design image.',
+		description: 'Take a screenshot of the current page (or one element) in the in-app browser to check how it looks. One image pixel is one CSS pixel up to max_side. widths captures the page at several viewport widths in one image (a responsive contact sheet); full_page captures beyond the viewport. Prefer browser_run assertions for checking behaviour, browser_snapshot for finding elements, and browser_compare_image for matching a design image.',
 		inputSchema: {
 			type: 'object',
 			properties: {
 				ref: { ...REF, description: 'Optional element ref: capture only this element.' },
+				target: { ...LOCATOR, description: 'Optional element to capture, by meaning (see browser_click).' },
+				widths: { type: 'array', items: { type: 'number' }, description: 'Capture at each of these viewport widths (e.g. [375, 768, 1280]) side by side; the viewport is restored afterwards.' },
+				full_page: { type: 'boolean', description: 'Capture the whole scrollable page, not just the viewport.' },
 				format: { type: 'string', enum: ['jpeg', 'png', 'webp'], description: 'Default jpeg (smallest). png for pixel-exact checks.' },
 				max_side: { type: 'number', description: 'Longest side in pixels, 256-2560. Default 1280.' },
 			},
@@ -418,6 +477,137 @@ export const VOLT_HOST_TOOLS: readonly IVoltHostToolInfo[] = [
 				image: { type: 'string', enum: ['heatmap', 'side_by_side', 'none'], description: 'heatmap (default): differences in red; side_by_side: reference | page | heatmap; none: text only.' },
 			},
 			required: ['reference_path'],
+		},
+	},
+	{
+		name: BROWSER_RUN_TOOL_NAME,
+		title: 'Ran browser steps',
+		group: 'browser',
+		description: 'Fix and verify in ONE call: `edits` (optional) change files first (exact old → new text, all applied or none; the page reloads after), then the steps run in order in this chat\'s in-app browser with real mouse and keyboard input. Actions: navigate, click, dblclick, type, fill, press, select, check, uncheck, hover, scroll, wait, resize, reload, back, evaluate, snapshot, screenshot, assert, mock (fake API responses: {"action":"mock","routes":[{"url":"/api/x","status":500}],"reload":true}; routes [] clears), emulate (network offline/slow-3g, color_scheme, locale, timezone, cpu_slowdown; reset), audit (checks a11y/layout/perf, widths; fails on accessibility errors or overflow). Target elements by meaning ({"role":"button","name":"Add"}, {"label":"Email"}, {"text":"Saved"}, {"placeholder":"…"}, {"testId":"…"}, {"selector":"…"}) or by a snapshot ref; no snapshot is needed first. An assert step waits (timeout_ms, default 5000) until it holds: visible, hidden, text, value, count, checked, unchecked, enabled, disabled, focused, attribute, css, url, title, no_overflow, no_console_errors, no_failed_requests. Returns one ✓/✗ line per step with the actual value on failure (a failed action stops the run, a failed assertion does not), console errors and failed requests during the run, and what changed on the page. Use it instead of one tool call per action whenever you know the next steps, and to prove a fix works end to end.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				url: { type: 'string', description: 'Open this URL first (same as a first navigate step).' },
+				edits: {
+					type: 'array',
+					description: 'File changes to apply before the steps: [{"path":"src/app.js","old":"exact text","new":"replacement"}] or {"path":"…","content":"whole file"}. Paths are relative to the project. Not allowed in Ask or Plan mode.',
+					items: {
+						type: 'object',
+						properties: { path: { type: 'string' }, old: { type: 'string' }, new: { type: 'string' }, content: { type: 'string' }, replace_all: { type: 'boolean' } },
+						required: ['path'],
+					},
+				},
+				steps: {
+					type: 'array',
+					description: 'E.g. [{"action":"fill","target":{"label":"Email"},"text":"a@b.co"},{"action":"click","target":{"role":"button","name":"Sign up"}},{"action":"assert","target":{"role":"status"},"expect":"text","value":"Account created"}]',
+					items: {
+						type: 'object',
+						properties: {
+							action: { type: 'string', enum: ['navigate', 'click', 'dblclick', 'type', 'fill', 'press', 'select', 'check', 'uncheck', 'hover', 'scroll', 'wait', 'resize', 'reload', 'back', 'evaluate', 'snapshot', 'screenshot', 'assert', 'mock', 'emulate', 'audit'] },
+							target: LOCATOR,
+							url: { type: 'string' },
+							text: { type: 'string', description: 'type/fill: the text. fill replaces the value; type appends unless clear is true.' },
+							submit: { type: 'boolean', description: 'type/fill: press Enter afterwards.' },
+							key: { type: 'string', description: 'press: e.g. "Enter", "Escape", "Tab", "Meta+a".' },
+							values: { type: 'array', items: { type: 'string' }, description: 'select: option values or labels.' },
+							expect: { type: 'string', enum: ['visible', 'hidden', 'text', 'value', 'count', 'checked', 'unchecked', 'enabled', 'disabled', 'focused', 'attribute', 'css', 'url', 'title', 'no_overflow', 'no_console_errors', 'no_failed_requests'] },
+							value: { description: 'assert: expected text/value/url/title (contains by default), a number for count, or {"min":1,"max":3}.', anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'object' }] },
+							match: { type: 'string', enum: ['contains', 'equals', 'regex'] },
+							name: { type: 'string', description: 'assert attribute/css: the attribute name or CSS property.' },
+							deltaY: { type: 'number' },
+							ms: { type: 'number', description: 'wait: milliseconds.' },
+							width: { type: 'number' },
+							height: { type: 'number' },
+							expression: { type: 'string', description: 'evaluate: a JS expression or () => {...}; its JSON result is logged.' },
+							timeout_ms: { type: 'number' },
+							optional: { type: 'boolean', description: 'Keep going if this step fails.' },
+							routes: { type: 'array', items: { type: 'object' }, description: 'mock: [{"url":"/api/stats","status":200,"json":[],"delay_ms":3000,"abort":false,"method":"GET"}]. Replaces earlier mocks.' },
+							reload: { type: 'boolean', description: 'mock/emulate: reload the page afterwards so requests made at load see it.' },
+							network: { type: 'string', enum: ['none', 'offline', 'slow-3g', 'fast-3g', 'slow-4g'] },
+							color_scheme: { type: 'string', enum: ['light', 'dark', 'system'] },
+							checks: { type: 'array', items: { type: 'string', enum: ['a11y', 'layout', 'perf'] }, description: 'audit: default a11y.' },
+							widths: { type: 'array', items: { type: 'number' }, description: 'audit layout: viewport widths.' },
+							scope: { type: 'string', description: 'audit: CSS selector to limit it to.' },
+						},
+						required: ['action'],
+					},
+				},
+				snapshot: SNAPSHOT_MODE,
+				screenshot: { type: 'boolean', description: 'Attach a screenshot of the final state.' },
+			},
+		},
+	},
+	{
+		name: BROWSER_STATUS_TOOL_NAME,
+		title: 'Checked browser',
+		group: 'browser',
+		description: 'One cheap look at the in-app browser and what is running: the tab\'s URL, title and load state, viewport, focused element and open dialogs, console errors and failed requests so far, active network mocks and emulation, this chat\'s playgrounds, and the dev servers listening on this machine (port, command, folder). Call it first when you do not know what is open or which port the app uses.',
+		inputSchema: { type: 'object', properties: {} },
+	},
+	{
+		name: BROWSER_MOCK_TOOL_NAME,
+		title: 'Mocked network',
+		group: 'browser',
+		description: 'Fake the in-app browser page\'s network responses to test loading, empty and error states without touching the backend or its code. Each route answers requests whose URL matches `url` (a substring, or a glob with *) with a status and a json/body, optionally after delay_ms (to see loading states), or fails them like a dropped connection (abort: true). Routes apply to fetch, XHR and every resource until cleared (clear: true) or this turn ends; the first matching route wins. reload: true reloads the page so requests made while loading are mocked too. The result lists which requests each route answered.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				routes: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							url: { type: 'string', description: 'Substring or glob, e.g. "/api/stats" or "*/api/users/*".' },
+							method: { type: 'string' },
+							status: { type: 'number', description: 'Default 200.' },
+							json: { description: 'Response body as JSON.', anyOf: [{ type: 'object' }, { type: 'array' }, { type: 'string' }, { type: 'number' }, { type: 'boolean' }] },
+							body: { type: 'string', description: 'Raw response body (instead of json).' },
+							content_type: { type: 'string' },
+							headers: { type: 'object' },
+							delay_ms: { type: 'number' },
+							abort: { type: 'boolean', description: 'Fail the request at the network level.' },
+							times: { type: 'number', description: 'Only answer this many matching requests.' },
+						},
+						required: ['url'],
+					},
+				},
+				clear: { type: 'boolean', description: 'Remove all routes (with routes: replace them).' },
+				reload: { type: 'boolean', description: 'Reload the page after setting the routes.' },
+			},
+		},
+	},
+	{
+		name: BROWSER_EMULATE_TOOL_NAME,
+		title: 'Emulated conditions',
+		group: 'browser',
+		description: 'Emulate conditions in the in-app browser page: color_scheme (light, dark, system), reduced_motion, network (offline, slow-3g, fast-3g, slow-4g, none), cpu_slowdown (e.g. 4), timezone (IANA, e.g. "Asia/Tokyo") and locale (e.g. "de-DE"). Use browser_resize or a resize step for the viewport. Everything is cleared when this turn ends, or now with reset: true.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				color_scheme: { type: 'string', enum: ['light', 'dark', 'system'] },
+				reduced_motion: { type: 'boolean' },
+				network: { type: 'string', enum: ['none', 'offline', 'slow-3g', 'fast-3g', 'slow-4g'] },
+				cpu_slowdown: { type: 'number' },
+				timezone: { type: 'string' },
+				locale: { type: 'string' },
+				reset: { type: 'boolean' },
+				reload: { type: 'boolean', description: 'Reload the page afterwards (locale and timezone apply to new page loads).' },
+			},
+		},
+	},
+	{
+		name: BROWSER_AUDIT_TOOL_NAME,
+		title: 'Audited page',
+		group: 'browser',
+		description: 'Audit the in-app browser page in one call and get exact findings with refs and CSS selectors: accessibility (controls without names, fields labelled only by a placeholder, images without alt, text contrast with the measured ratio, status/error messages screen readers will not announce, heading order, small targets), layout at each viewport width (horizontal overflow with the element and the CSS that cause it, clipped text), and performance (TTFB, load, LCP, CLS, long tasks, DOM size, transfer size). Use it to find accessibility, responsive and speed problems, then again to confirm the fix.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				checks: { type: 'array', items: { type: 'string', enum: ['a11y', 'layout', 'perf'] }, description: 'Default: all three.' },
+				widths: { type: 'array', items: { type: 'number' }, description: 'Viewport widths for the layout check. Default [375, 768, 1280]; the viewport is restored afterwards.' },
+				scope: { type: 'string', description: 'CSS selector: audit only this part of the page.' },
+				url: { type: 'string', description: 'Open this URL first.' },
+			},
 		},
 	},
 	{
@@ -488,7 +678,7 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (SCHEDULE_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id)) {
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (SCHEDULE_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || (PLAYGROUND_TOOL_NAMES as readonly string[]).includes(id) || (COMPUTER_TOOL_NAMES as readonly string[]).includes(id)) {
 				return canonicalHostToolName(id);
 			}
 		}
@@ -568,10 +758,27 @@ export function browserToolVerdict(name: string, args: Record<string, unknown>, 
 				return ALLOW;
 			}
 			return isLocalBrowserUrl(target) ? ALLOW : { kind: 'ask', reason: `opens ${hostOf(target) || 'a site'}, which is not a local page` };
+		case BROWSER_AUDIT_TOOL_NAME:
+			return !target || isLocalBrowserUrl(target) ? ALLOW : { kind: 'ask', reason: `opens ${hostOf(target)}, which is not a local page` };
+		case BROWSER_RUN_TOOL_NAME: {
+			const { steps } = parseRunSteps(args.steps);
+			const urls = [target, ...steps.map(step => step.url)].filter((url): url is string => !!url);
+			const offsite = urls.find(url => !isLocalBrowserUrl(url));
+			if (offsite) {
+				return { kind: 'ask', reason: `opens ${hostOf(offsite)}, which is not a local page` };
+			}
+			if (steps.some(step => step.action === 'evaluate')) {
+				return { kind: 'ask', reason: 'runs JavaScript in the page' };
+			}
+			const acts = steps.some(step => MUTATING_RUN_ACTIONS.has(step.action));
+			return !acts || urls.length || !pageUrl || isLocalBrowserUrl(pageUrl) ? ALLOW : { kind: 'ask', reason: `acts on ${hostOf(pageUrl)}, which is not a local page` };
+		}
 		case 'browser_click':
 		case 'browser_type':
 		case 'browser_press_key':
 		case 'browser_select_option':
+		case BROWSER_MOCK_TOOL_NAME:
+		case BROWSER_EMULATE_TOOL_NAME:
 			return !pageUrl || isLocalBrowserUrl(pageUrl) ? ALLOW : { kind: 'ask', reason: `acts on ${hostOf(pageUrl)}, which is not a local page` };
 	}
 	return ALLOW;
@@ -579,7 +786,7 @@ export function browserToolVerdict(name: string, args: Record<string, unknown>, 
 
 /** Tools whose verdict depends on the page the browser shows. */
 export function browserVerdictNeedsPage(name: string): boolean {
-	return name === 'browser_click' || name === 'browser_type' || name === 'browser_press_key' || name === 'browser_select_option';
+	return name === 'browser_click' || name === 'browser_type' || name === 'browser_press_key' || name === 'browser_select_option' || name === BROWSER_RUN_TOOL_NAME || name === BROWSER_MOCK_TOOL_NAME || name === BROWSER_EMULATE_TOOL_NAME;
 }
 
 /** Another part of Volt that serves tools on the host MCP server (the orchestrator's task tools). */
@@ -596,6 +803,8 @@ export interface IVoltHostToolService {
 	readonly onDidChangeTools: Event<void>;
 	listTools(): readonly IVoltHostToolInfo[];
 	registerToolProvider(provider: IVoltHostToolProvider): IDisposable;
+	/** The browser half of an ACP agent's turn primer (the app serving and open in the chat's browser, audits). */
+	preflightBrowser(sessionId: string, request: IVoltBrowserPreflightRequest, token: CancellationToken): Promise<IVoltBrowserPreflightResult>;
 	invokeTool(name: string, input?: unknown, call?: IVoltHostToolCall): Promise<IVoltHostToolResult>;
 	/**
 	 * The MCP server to hand a chat's agent; tool calls through it are tied to `sessionId` and carry

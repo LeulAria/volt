@@ -6,19 +6,21 @@
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { isAbsolute } from '../../../../../base/common/path.js';
-import { joinPath } from '../../../../../base/common/resources.js';
+import { isEqualOrParent, joinPath, relativePath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
-import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltHostFileChange, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
 import { browserBlockedMessage, IVoltBrowserAccessService } from '../../common/browserAccess.js';
 import { VoltMode } from '../../common/modes.js';
 import '../browserAccessService.js';
 import { AgentQuestionDraft, parseQuestionDraft, questionResponseText } from '../../common/questions.js';
 import { cropImage, describeInspection, flattenAlpha, IImagePoint, IImageRect, inspectImage, IRgbaImage, MAX_ANALYSIS_PIXELS, parseRect } from '../../common/tools/imageAnalysis.js';
+import { applyFileEdits, groupFileEdits, parseFileEdits, safeEditPath } from '../../common/tools/fileEdits.js';
 import { decodeImage, ImageFormat, MAX_IMAGE_BYTES, scaleScreenshot, zoomImage } from './imageCodec.js';
 
 /** Under the 60s default MCP request timeout of the agents' SDK clients. */
@@ -82,6 +84,14 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		});
 	}
 
+	async preflightBrowser(sessionId: string, request: IVoltBrowserPreflightRequest, token: CancellationToken): Promise<IVoltBrowserPreflightResult> {
+		if (this.browserAccess.blockReason(sessionId)) {
+			return { lines: [] };
+		}
+		const result = await this.commandService.executeCommand<IVoltBrowserPreflightResult>(PREFLIGHT_BROWSER_COMMAND_ID, sessionId, request, token).catch(() => undefined);
+		return result ?? { lines: [] };
+	}
+
 	async invokeTool(requested: string, input?: unknown, call?: IVoltHostToolCall): Promise<IVoltHostToolResult> {
 		// An agent may still use a tool's earlier name (render_html); it runs, and is recorded, as the current one.
 		const name = canonicalHostToolName(requested);
@@ -121,20 +131,86 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 				return name === BROWSER_SCREENSHOT_TOOL_NAME ? this.captureBrowser(args) : { error: 'The in-app browser tools need a Volt chat.' };
 			}
 			const token = call.token ?? CancellationToken.None;
+			const mode = call.mode ?? this.sessions?.mode(call.sessionId);
+			if (name === BROWSER_RUN_TOOL_NAME && args.edits !== undefined && (mode === 'ask' || mode === 'plan')) {
+				return { error: `browser_run did not start: \`edits\` change files, which ${MODE_LABEL[mode]} mode does not allow. Run the steps without edits.` };
+			}
 			const refusal = await this.checkMode(call.sessionId, name, args, call);
 			if (refusal) {
 				return refusal;
 			}
+			const cwd = call.cwd ?? this.sessions?.cwd(call.sessionId) ?? this.workspace.getWorkspace().folders[0]?.uri.fsPath;
 			const options: IVoltBrowserAutomationOptions = name === BROWSER_COMPARE_IMAGE_TOOL_NAME
-				? { token, ...await this.loadReference(args, call) }
-				: { token };
+				? { token, cwd, ...await this.loadReference(args, call) }
+				: { token, cwd };
 			if (token.isCancellationRequested) {
 				return { error: 'Cancelled.' };
+			}
+			if (name === BROWSER_RUN_TOOL_NAME && args.edits !== undefined) {
+				return this.editThenRun(call.sessionId, args, options);
 			}
 			const result = await this.commandService.executeCommand<IVoltHostToolResult>(AUTOMATE_BROWSER_COMMAND_ID, call.sessionId, name, args, options);
 			return result ?? { error: 'The in-app browser is not available in this window.' };
 		}
 		return { error: `Unknown tool ${name}` };
+	}
+
+	/**
+	 * browser_run with `edits`: the fix and its check in one call. Every edit is validated against
+	 * the files first and nothing is written unless all of them fit; then the page reloads and the
+	 * steps run. The changes join the chat's change set like any other agent edit.
+	 */
+	private async editThenRun(sessionId: string, args: Record<string, unknown>, options: IVoltBrowserAutomationOptions): Promise<IVoltHostToolResult> {
+		const { edits, errors } = parseFileEdits(args.edits);
+		if (errors.length) {
+			return { error: `browser_run did not start: ${errors.join('; ')}` };
+		}
+		const root = options.cwd ? URI.file(options.cwd) : undefined;
+		if (!root) {
+			return { error: 'browser_run did not start: no folder is open to resolve the edit paths against.' };
+		}
+		const planned: { uri: URI; path: string; before?: string; text: string; replacements: number }[] = [];
+		for (const [path, group] of groupFileEdits(edits)) {
+			const absolute = isAbsolute(path) ? URI.file(path) : undefined;
+			const relative = absolute ? (isEqualOrParent(absolute, root) ? relativePath(root, absolute) : undefined) : safeEditPath(path);
+			if (!relative) {
+				return { error: `browser_run did not start: no file was changed. ${path} is outside the project.` };
+			}
+			const uri = joinPath(root, relative);
+			const before = await this.fileService.readFile(uri).then(content => content.value.toString(), () => undefined);
+			const applied = applyFileEdits(before, group, relative);
+			if ('error' in applied) {
+				return { error: `browser_run did not start: no file was changed. ${applied.error}` };
+			}
+			planned.push({ uri, path: relative, before, text: applied.text, replacements: applied.replacements });
+		}
+		const changes: IVoltHostFileChange[] = [];
+		for (const item of planned) {
+			if (item.before === item.text) {
+				continue;
+			}
+			try {
+				await this.fileService.writeFile(item.uri, VSBuffer.fromString(item.text));
+			} catch (err) {
+				const written = changes.map(change => relativePath(root, change.uri)).join(', ');
+				return { error: `Could not write ${item.path}: ${err instanceof Error ? err.message : String(err)}.${written ? ` Already written: ${written}.` : ''}`, changes };
+			}
+			changes.push({ uri: item.uri, kind: item.before === undefined ? 'create' : 'edit', ...(item.before !== undefined ? { before: item.before } : {}), existed: item.before !== undefined });
+		}
+		const summary = `### Edited ${planned.length} file(s): ${planned.map(item => `${item.path} (${item.before === undefined ? 'created' : item.before === item.text ? 'unchanged' : `${item.replacements} change(s)`})`).join(', ')}`;
+		const rest: Record<string, unknown> = { ...args };
+		delete rest.edits;
+		const hasSteps = Array.isArray(rest.steps) && rest.steps.length > 0;
+		const pageUrl = hasSteps ? undefined : await this.commandService.executeCommand<string | undefined>(BROWSER_PAGE_URL_COMMAND_ID, sessionId).catch(() => undefined);
+		if (!hasSteps && !pageUrl && !rest.url) {
+			return { text: summary, changes };
+		}
+		const runArgs = hasSteps ? { ...rest, reload_first: true } : { ...rest, steps: [{ action: 'reload' }] };
+		const result = await this.commandService.executeCommand<IVoltHostToolResult>(AUTOMATE_BROWSER_COMMAND_ID, sessionId, BROWSER_RUN_TOOL_NAME, runArgs, options).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) }));
+		if (!result || result.error) {
+			return { text: `${summary}\n\nThe browser steps did not run: ${result?.error ?? 'the in-app browser is not available in this window.'}`, changes };
+		}
+		return { ...result, text: `${summary}\n\n${result.text ?? ''}`, changes };
 	}
 
 	/**
