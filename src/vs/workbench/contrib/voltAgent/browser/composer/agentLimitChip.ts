@@ -17,6 +17,7 @@ import { ILimitChipView, limitChipView, limitParkedClock, nextBannerTick } from 
 import { IAgentOrchestratorService, IOrchThread } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { rescueChipView, rescueWaits } from '../../../../services/voltRuntime/common/orchestration/rescue.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { IAgentThreadLifecycleService } from '../home/agentThreadLifecycle.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 
 export interface IAgentLimitChipHost {
@@ -57,6 +58,7 @@ export class AgentLimitChip extends Disposable {
 		private readonly host: IAgentLimitChipHost,
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
+		@IAgentThreadLifecycleService private readonly lifecycle: IAgentThreadLifecycleService,
 	) {
 		super();
 		this.element = $('.volt-agent-composer-chip.terminal-runs.volt-agent-limit-chip.volt-browser-dock-chip.hidden');
@@ -154,20 +156,23 @@ export class AgentLimitChip extends Disposable {
 	private renderRescue(chatId: string, thread: IOrchThread): void {
 		const now = Date.now();
 		const view = rescueChipView(thread.rescue!, thread.id, now);
-		const chip = append(this.element, $('.volt-agent-terminal-chip.volt-agent-limit-chip.armed'));
-		const main = append(chip, $('button.volt-agent-terminal-chip-main')) as HTMLButtonElement;
+		// The limit chip's shape and blue "armed" tone: Volt will continue the chat by itself.
+		const chip = this.element;
+		chip.classList.remove('waiting', 'checking', 'error');
+		chip.classList.add('armed');
+		const main = append(chip, $('button.volt-agent-terminal-runs-main')) as HTMLButtonElement;
 		main.type = 'button';
-		const icon = append(main, $('span.volt-agent-terminal-status.volt-agent-limit-chip-icon'));
+		const icon = append(main, $('span.volt-agent-limit-chip-icon'));
 		icon.appendChild(renderIcon(view.dueAt > now ? Codicon.history : ThemeIcon.modify(Codicon.loading, 'spin')));
-		append(main, $('span.label')).textContent = this.error ?? view.label;
+		append(main, $('span.volt-agent-composer-chip-label.volt-agent-limit-chip-label')).textContent = this.error ?? view.label;
 		if (view.detail && !this.error) {
-			append(main, $('span.detail')).textContent = view.detail;
+			append(main, $('span.volt-agent-terminal-runs-detail')).textContent = view.detail;
 		}
 		setAgentTooltip(main, view.tooltip);
 		main.setAttribute('aria-label', [view.label, view.detail].filter(Boolean).join(', '));
 		const open = (anchor: HTMLElement) => showVoltMenu<'now' | 'stop'>(this.contextViewService, {
 			anchor,
-			position: 'below',
+			position: 'above',
 			align: 'left',
 			width: 320,
 			ariaLabel: localize('voltAgent.rescueChip.menu', "Restart"),
@@ -182,6 +187,10 @@ export class AgentLimitChip extends Disposable {
 			}],
 			onPick: async item => {
 				this.error = undefined;
+				if (item.data === 'now') {
+					// A settled or archived chat does not run until the user brings it back.
+					await this.lifecycle.bringBack(chatId);
+				}
 				const events = await this.orchestrator.dispatch(item.data === 'now' ? { type: 'rescue.now', threadId: chatId } : { type: 'rescue.stop', threadId: chatId });
 				if (item.data === 'now' && !events.length) {
 					this.error = localize('voltAgent.rescueChip.cannot', "This chat cannot restart right now");
@@ -193,7 +202,7 @@ export class AgentLimitChip extends Disposable {
 			EventHelper.stop(e, true);
 			open(chip);
 		}));
-		const more = append(chip, $('button.volt-agent-terminal-chip-more')) as HTMLButtonElement;
+		const more = append(chip, $('button.volt-agent-terminal-runs-more')) as HTMLButtonElement;
 		more.type = 'button';
 		more.setAttribute('aria-haspopup', 'menu');
 		more.appendChild(renderIcon(Codicon.chevronDown));
@@ -235,6 +244,9 @@ export class AgentLimitChip extends Disposable {
 
 	private async act(chatId: string, action: LimitAction, anchor: HTMLElement): Promise<void> {
 		this.error = undefined;
+		if (action === 'arm' || action === 'resume') {
+			await this.lifecycle.bringBack(chatId);
+		}
 		switch (action) {
 			case 'arm':
 				await this.orchestrator.configureLimit(chatId, true);

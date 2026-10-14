@@ -89,21 +89,22 @@ export function planContinueText(open: readonly string[]): string {
 
 export interface IRescueChipView {
 	readonly label: string;
-	/** The countdown ("4m"), while the restart is ahead. */
-	readonly detail?: string;
+	/** The countdown ("in 4m"), or "restarting…" once it is due. */
+	readonly detail: string;
 	readonly tooltip: string;
 	readonly dueAt: number;
 }
 
-/** The chat's chip while Volt waits to restart it: "Stopped by an error · restarting 3:12 PM · 4m". */
+/** The chat's chip while Volt waits to restart it: "Stopped by an error · in 4m", the clock time on hover. */
 export function rescueChipView(rescue: IOrchRescue, key: string, now: number, locale?: string): IRescueChipView {
 	const dueAt = rescueDueAt(rescue, key);
-	const what = rescue.reason === 'interrupted' ? 'Cut off by a restart' : rescue.reason === 'wakeups' ? 'Paused after many wake-ups' : 'Stopped by an error';
-	const label = dueAt > now ? `${what} · restarting ${formatClock(dueAt, now, locale)}` : `${what} · restarting…`;
+	const label = rescue.reason === 'interrupted' ? 'Cut off by a restart' : rescue.reason === 'wakeups' ? 'Paused after many wake-ups' : 'Stopped by an error';
+	const left = dueAt - now;
+	const detail = left <= 0 ? 'restarting\u2026' : left < 60_000 ? 'in under 1m' : `in ${formatCountdown(left)}`;
 	const so = rescue.attempts ? ` ${rescue.attempts} restart${rescue.attempts === 1 ? '' : 's'} so far.` : '';
 	const tooltip = [
 		rescue.error,
-		`Volt restarts this chat on its own until its work is done, waiting longer each time (at most 30 minutes).${so} Stop retrying to have it wait for you instead.`,
+		`${left > 0 ? `Volt restarts this chat at ${formatClock(dueAt, now, locale)}.` : 'Volt is restarting this chat.'} It keeps restarting it until its work is done, waiting longer each time (at most 30 minutes).${so} Stop retrying to have it wait for you instead.`,
 	].filter(Boolean).join('\n\n');
-	return { label, ...(dueAt > now ? { detail: formatCountdown(dueAt - now) } : {}), tooltip, dueAt };
+	return { label, detail, tooltip, dueAt };
 }
