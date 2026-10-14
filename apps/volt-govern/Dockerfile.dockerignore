@@ -1,0 +1,11 @@
+# Paths are relative to the build context (apps/): only the two packages the image needs.
+*
+!volt-govern
+!client-core
+**/node_modules
+**/dist
+**/*.db
+**/*.db-*
+**/.env
+**/.env.*
+!volt-govern/.env.example
