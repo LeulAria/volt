@@ -38,6 +38,10 @@ import { INotificationService } from '../../../platform/notification/common/noti
 import { NullPolicyService } from '../../../platform/policy/common/policy.js';
 import { IProductService } from '../../../platform/product/common/productService.js';
 import product from '../../../platform/product/common/product.js';
+import { VOLT_USAGE_PROVIDERS, VoltUsageProvider } from '../../../platform/voltUsage/common/voltUsage.js';
+import { ResetCreditError } from '../../../platform/voltUsage/node/usageAccounts.js';
+import { MACHINE_REDEEM_PATH, MACHINE_USAGE_PATH } from '../../../platform/voltUsage/node/usageMachines.js';
+import { VoltUsageService } from '../../../platform/voltUsage/node/voltUsageService.js';
 import { IRequestService } from '../../../platform/request/common/request.js';
 import { RequestService } from '../../../platform/request/node/requestService.js';
 import { ISecretStorageService } from '../../../platform/secrets/common/secrets.js';
@@ -45,7 +49,7 @@ import { getResolvedShellEnv } from '../../../platform/shell/node/shellEnv.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../platform/workspace/common/workspace.js';
 import { AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo } from '../../../platform/voltAgentServer/common/protocol.js';
-import { AgentServerProtocol } from '../../../platform/voltAgentServer/common/protocolServer.js';
+import { AgentServerProtocol, tokensEqual } from '../../../platform/voltAgentServer/common/protocolServer.js';
 import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
 import { acceptWebSocket } from '../../../platform/voltAgentServer/node/webSocket.js';
 import { IVoltGitService } from '../../../platform/voltGit/common/voltGit.js';
@@ -325,6 +329,8 @@ export async function main(argv: string[]): Promise<void> {
 	// The checkout in dev, the app's Resources/app when packaged (where this module is bundled into out/).
 	const appRoot = FileAccess.asFileUri('').fsPath.replace(/[\\/]out[\\/]?$/, '');
 	const webRoot = args.webRoot ?? join(appRoot, 'out-volt-web');
+	// Usage and limits: the browser workbench's Usage page, and other machines reading this one's (`/api/usage`).
+	const usage = new VoltUsageService(resolveEnv, logService, join(args.userDataDir, 'volt-usage'));
 	// Volt's workbench for browsers (VS Code's server, started with the first page load).
 	const workbench = disposables.add(instantiationService.createInstance(ServerWorkbench, {
 		userDataDir: args.userDataDir,
@@ -336,9 +342,10 @@ export async function main(argv: string[]): Promise<void> {
 		git: instantiationService.invokeFunction(accessor => accessor.get(IVoltGitService)),
 		codeIndex,
 		sendFile,
+		usage,
 	}));
 	httpContext = { ...httpContext, workbench: workbench.available };
-	const server = http.createServer((req, res) => void serveHttp(req, res, webRoot, token, epoch, pairing, workbench, httpContext));
+	const server = http.createServer((req, res) => void serveHttp(req, res, webRoot, token, epoch, pairing, workbench, httpContext, usage, logService));
 	server.on('upgrade', (req, socket: Socket) => {
 		const url = new URL(req.url ?? '/', 'http://localhost');
 		if (url.pathname !== '/ws' && workbench.handleUpgrade(req, socket)) {
@@ -486,8 +493,12 @@ function compressedCopy(file: string, mtime: number, data: Buffer, encoding: 'br
 	return result;
 }
 
-async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, webRoot: string, token: string, epoch: string, pairing: ServerPairing, workbench: ServerWorkbench, ctx: IPairingHttpContext): Promise<void> {
+async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, webRoot: string, token: string, epoch: string, pairing: ServerPairing, workbench: ServerWorkbench, ctx: IPairingHttpContext, usage: VoltUsageService, logService: ILogService): Promise<void> {
 	if (await pairing.handleHttp(req, res, ctx)) {
+		return;
+	}
+	if (req.url?.startsWith(MACHINE_USAGE_PATH)) {
+		await serveUsage(req, res, bearer => tokensEqual(bearer, token) || !!pairing.authorize(bearer), usage, logService);
 		return;
 	}
 	if (await workbench.handleHttp(req, res)) {
@@ -513,6 +524,60 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, we
 	if (!await sendFile(req, res, extname(file) ? file : join(webRoot, 'index.html'), relative.startsWith('assets/'))) {
 		res.writeHead(404, { 'Content-Type': 'text/plain' }).end(`Not found. The web app is built into ${webRoot}.`);
 	}
+}
+
+function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
+	res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+	res.end(JSON.stringify(body));
+}
+
+/**
+ * Another machine's Volt reading this one's usage: `GET /api/usage` answers this machine's own
+ * usage and limits, `POST /api/usage/redeem` spends a reset credit for a login held here. Both
+ * need the server's token or a paired device's, like the socket.
+ */
+async function serveUsage(req: http.IncomingMessage, res: http.ServerResponse, authorized: (bearer: string) => boolean, usage: VoltUsageService, logService: ILogService): Promise<void> {
+	const header = req.headers.authorization ?? '';
+	if (!header.startsWith('Bearer ') || !authorized(header.slice('Bearer '.length))) {
+		sendJson(res, 401, { error: 'unauthorized' });
+		return;
+	}
+	try {
+		const url = new URL(req.url ?? '/', 'http://localhost');
+		if (url.pathname === MACHINE_USAGE_PATH && req.method === 'GET') {
+			sendJson(res, 200, await usage.getMachineReport(url.searchParams.get('force') === '1'));
+			return;
+		}
+		if (url.pathname === MACHINE_REDEEM_PATH && req.method === 'POST') {
+			const body = JSON.parse(await readBody(req, 4096)) as { provider?: unknown; accountId?: unknown };
+			if (!VOLT_USAGE_PROVIDERS.includes(body.provider as VoltUsageProvider) || typeof body.accountId !== 'string') {
+				sendJson(res, 400, { error: 'Bad request.', settled: true });
+				return;
+			}
+			sendJson(res, 200, { outcome: await usage.redeemLocal(body.provider as VoltUsageProvider, body.accountId) });
+			return;
+		}
+		sendJson(res, 404, { error: 'Not found.' });
+	} catch (err) {
+		logService.warn('[volt agent server] usage request failed', err);
+		sendJson(res, 500, { error: err instanceof Error ? err.message : String(err), settled: err instanceof ResetCreditError ? err.settled : false });
+	}
+}
+
+function readBody(req: http.IncomingMessage, limit: number): Promise<string> {
+	return new Promise((resolve, reject) => {
+		let body = '';
+		req.setEncoding('utf8');
+		req.on('data', (chunk: string) => {
+			body += chunk;
+			if (body.length > limit) {
+				reject(new Error('Request too large.'));
+				req.destroy();
+			}
+		});
+		req.on('end', () => resolve(body));
+		req.on('error', reject);
+	});
 }
 
 /**

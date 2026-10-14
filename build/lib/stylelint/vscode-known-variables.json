@@ -911,6 +911,7 @@
 		"--volt-agent-window-bg-base",
 		"--volt-appearance-strip",
 		"--volt-ui-font-family",
+		"--volt-font",
 		"--volt-button-bg",
 		"--volt-button-fg",
 		"--volt-code-font",

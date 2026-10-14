@@ -214,7 +214,7 @@
 	background: #1b1b1b;
 	color: var(--volt-image-viewer-fg);
 	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 60px rgba(0, 0, 0, 0.5);
-	font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+	font-family: var(--volt-font);
 	font-size: 13px;
 	overflow: hidden;
 }

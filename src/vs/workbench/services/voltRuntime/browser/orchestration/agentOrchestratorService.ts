@@ -36,6 +36,7 @@ import { DeadlineTimer } from '../jobs/deadlineTimer.js';
 import { DurableClaims } from '../jobs/durableClaims.js';
 import { BEACON_TTL_MS, WorkbenchBeacons } from '../jobs/workbenchBeacons.js';
 import { OrchestratorStore } from './orchestratorStore.js';
+import { orchIsTurnCurrent, orchTaskForToolCall, orchTasksOf } from '../../common/orchestration/orchestratorQueries.js';
 
 /** Models one delegate_task call may run the same brief on. */
 const MAX_FAN_OUT = 4;
@@ -235,12 +236,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	tasksOf(threadId: string): readonly IOrchTask[] {
-		return Object.values(this.state.tasks).filter(task => task.parentId === threadId).sort((a, b) => a.createdAt - b.createdAt);
+		return orchTasksOf(this.state, threadId);
 	}
 
 	taskForToolCall(threadId: string, toolCallId: string): IOrchTask | undefined {
-		return this.state.tasks[harnessTaskId(toolCallId)]
-			?? Object.values(this.state.tasks).find(task => task.parentId === threadId && task.toolCallId === toolCallId);
+		return orchTaskForToolCall(this.state, threadId, toolCallId);
 	}
 
 	async dispatch(command: OrchCommandBody & { readonly id?: string }): Promise<readonly OrchEvent[]> {
@@ -315,8 +315,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	isTurnCurrent(threadId: string, turnId: string): boolean {
-		const active = this.state.threads[threadId]?.active;
-		return active?.id === turnId && active.phase !== 'cancelling';
+		return orchIsTurnCurrent(this.state, threadId, turnId);
 	}
 
 	setWorkspaceMover(mover: IOrchWorkspaceMover): IDisposable {

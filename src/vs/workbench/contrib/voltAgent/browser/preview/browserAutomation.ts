@@ -17,7 +17,6 @@ import { describeMockRoute, IVoltEmulation, IVoltMockRoute, parseEmulation, pars
 import { decodeDataUrl, encodeImage, IImageLabel, ImageFormat, scaleScreenshot } from '../../../../services/voltRuntime/browser/host/imageCodec.js';
 import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_ACT_TOOL_NAME, BROWSER_AUDIT_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, BROWSER_EMULATE_TOOL_NAME, BROWSER_MOCK_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_STATUS_TOOL_NAME, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, PREFLIGHT_BROWSER_COMMAND_ID, IVoltHostToolResult, IVoltHostToolService, VoltBrowserAutomationToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 import { BrowserAuditCheck, describeLocator, describeStep, formatRunLog, HOST_EXPECTATIONS, IBrowserAssertion, IBrowserLocator, IBrowserRunStep, IBrowserStepOutcome, parseLocator, parseRunSteps } from '../../../../services/voltRuntime/common/tools/browserRun.js';
-import { VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { diffAx, formatAxLine, IAxItem, placeOnImage, readingOrder, strokeBoxes } from '../../../../services/voltRuntime/common/tools/axAnnotations.js';
 import { clampRect, compareImages, compareLayout, cropImage, describeComparison, describeLayout, diffHeatmap, IRgbaImage, parseRect, sideBySide } from '../../../../services/voltRuntime/common/tools/imageAnalysis.js';
@@ -31,6 +30,7 @@ import { runDevtools } from './browserDevtools.js';
 import { IVoltBrowserViews, IVoltConsoleMessage, normalizeBrowserUrl, VoltBrowserView } from './browserEditor.js';
 import { assertScript, auditScript, IAuditFinding, IAuditPage, IPageStatus, locateScript as agentLocateScript, NET_MARK_SCRIPT, netSinceScript, STATUS_SCRIPT } from './browserAgentScripts.js';
 import { clickFallbackScript, evaluateScript, focusScript, INetworkEntry, NETWORK_SCRIPT, readStateScript, rectScript, scrollScript, selectOptionScript, setValueScript, SNAPSHOT_SCRIPT, snapshotScript, targetScript, textPresentScript } from './browserAutomationScripts.js';
+import { RunModeTracker } from '../../../../services/voltRuntime/common/hostSessionResolver.js';
 
 interface IPageSnapshot extends IPageSnapshotBase {
 	items?: IAxItem[];
@@ -1620,22 +1620,15 @@ class AgentBrowserLockContribution extends Disposable implements IWorkbenchContr
 	static readonly ID = 'workbench.contrib.voltAgentBrowserLock';
 
 	private readonly takeControl = this._register(new DisposableMap<VoltBrowserView>());
-	private readonly modes = new Map<string, VoltMode>();
 
 	constructor(
 		@IAgentRuntimeService runtime: IAgentRuntimeService,
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 	) {
 		super();
-		hostTools.setSessionResolver({
-			mode: sessionId => this.modes.get(sessionId),
-			cwd: sessionId => this.modes.has(sessionId) ? runtime.getOrCreateSession(sessionId).worktreePath : undefined,
-		});
+		hostTools.setSessionResolver(this._register(new RunModeTracker(runtime)));
 		this._register(toDisposable(() => hostTools.setSessionResolver(undefined)));
 		this._register(runtime.onDidEmit(({ sessionId, event }) => {
-			if (event.type === 'run.start') {
-				this.modes.set(sessionId, event.mode);
-			}
 			const view = locked.get(sessionId);
 			if (view && !this.takeControl.has(view)) {
 				this.takeControl.set(view, view.onDidTakeControl(() => {

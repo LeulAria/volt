@@ -10,8 +10,10 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
 import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
-import { IVoltUsageSnapshot, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
+import { IVoltUsageModelPrice, IVoltUsageSnapshot, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
+import { Button } from '../../../../../base/browser/ui/button/button.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { createVoltButton } from '../chrome/voltButton.js';
 import { IUsageChartSeriesStyle, UsageChart } from './agentUsageChart.js';
 import { formatCost, formatShare, formatTokens } from './agentUsageFormat.js';
 import { cacheHitRate, costPerMillionTokens, IUsageModelRow, summarizeUsage, UsageMetric, UsageRange } from './agentUsageModel.js';
@@ -29,6 +31,10 @@ export interface IUsageModelDialogOptions {
 	readonly style: IUsageChartSeriesStyle;
 	/** The usage page under the dialog; a blurred copy of it frosts the card. */
 	readonly page: HTMLElement;
+	/** The price the user set for this model, if any. */
+	readonly price?: IVoltUsageModelPrice;
+	/** Saves (or with `undefined`, clears) the model's price; the page reloads after. */
+	readonly setPrice: (price: IVoltUsageModelPrice | undefined) => Promise<void>;
 }
 
 /**
@@ -136,6 +142,7 @@ export function showUsageModelDialog(host: HTMLElement, options: IUsageModelDial
 	if (totals.unpricedTokens > 0) {
 		append(body, $('.volt-usage-dialog-footnote')).textContent = localize('voltUsage.unpricedTokens', "{0} tokens have no known price", formatTokens(totals.unpricedTokens));
 	}
+	renderPriceEditor(body, options, store, unpriced);
 
 	const dismiss = () => store.dispose();
 	store.add(addDisposableListener(close, EventType.CLICK, dismiss));
@@ -150,4 +157,104 @@ export function showUsageModelDialog(host: HTMLElement, options: IUsageModelDial
 	store.add(toDisposable(() => previousFocus?.focus?.()));
 	window.requestAnimationFrame(() => close.focus());
 	return store;
+}
+
+const PRICE_FIELDS: { key: keyof IVoltUsageModelPrice; label: string; optional: boolean }[] = [
+	{ key: 'input', label: localize('voltUsage.priceInput', "Input"), optional: false },
+	{ key: 'output', label: localize('voltUsage.priceOutput', "Output"), optional: false },
+	{ key: 'cacheRead', label: localize('voltUsage.priceCacheRead', "Cache read"), optional: true },
+	{ key: 'cacheWrite', label: localize('voltUsage.priceCacheWrite', "Cache write"), optional: true },
+];
+
+function formatRate(value: number): string {
+	return `$${value.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
+}
+
+/**
+ * The model's price in USD per million tokens: the one the user set, or a button to set one.
+ * It replaces automatic pricing for every row of the model, here and from other machines.
+ */
+function renderPriceEditor(body: HTMLElement, options: IUsageModelDialogOptions, store: DisposableStore, unpriced: boolean): void {
+	const section = append(body, $('.volt-usage-price'));
+	// The buttons of the view shown (summary or form); cleared when the other one replaces it.
+	const view = store.add(new DisposableStore());
+	const button = (parent: HTMLElement, kind: 'primary' | 'secondary' | 'ghost', label: string, run: (button: Button) => void) => {
+		const created = view.add(createVoltButton(parent, kind));
+		created.label = label;
+		view.add(created.onDidClick(() => run(created)));
+		return created;
+	};
+	const save = async (price: IVoltUsageModelPrice | undefined, saving: Button, error?: HTMLElement) => {
+		saving.enabled = false;
+		try {
+			await options.setPrice(price);
+		} catch (e) {
+			saving.enabled = true;
+			if (error) {
+				error.textContent = e instanceof Error ? e.message : String(e);
+			}
+		}
+	};
+	const showSummary = () => {
+		view.clear();
+		section.replaceChildren();
+		const line = append(section, $('.summary'));
+		const price = options.price;
+		append(line, $('span.text')).textContent = price
+			? localize('voltUsage.priceSet', "Your price per 1M tokens: {0} input, {1} output, {2} cache read, {3} cache write",
+				formatRate(price.input), formatRate(price.output), formatRate(price.cacheRead ?? price.input), formatRate(price.cacheWrite ?? price.input))
+			: unpriced
+				? localize('voltUsage.priceMissing', "No public price is known for this model.")
+				: localize('voltUsage.priceAuto', "Priced automatically from public API prices.");
+		button(line, 'secondary', price ? localize('voltUsage.editPrice', "Edit Price") : localize('voltUsage.setPrice', "Set Price"), showForm);
+		if (price) {
+			button(line, 'ghost', localize('voltUsage.resetPrice', "Reset to Automatic"), reset => void save(undefined, reset));
+		}
+	};
+	const showForm = () => {
+		view.clear();
+		section.replaceChildren();
+		append(section, $('.caption')).textContent = localize('voltUsage.priceCaption', "USD per 1M tokens. Blank cache rates use the input rate; enter 0 for free tokens.");
+		const grid = append(section, $('.fields'));
+		const inputs = new Map<keyof IVoltUsageModelPrice, HTMLInputElement>();
+		for (const field of PRICE_FIELDS) {
+			const label = append(grid, $('label.field'));
+			append(label, $('span')).textContent = field.label;
+			const input = append(label, $('input')) as HTMLInputElement;
+			input.type = 'number';
+			input.min = '0';
+			input.step = 'any';
+			input.placeholder = field.optional ? localize('voltUsage.priceSameAsInput', "Input rate") : '0.00';
+			const current = options.price?.[field.key];
+			if (current !== undefined) {
+				input.value = String(current);
+			}
+			inputs.set(field.key, input);
+		}
+		const error = append(section, $('.error'));
+		const actions = append(section, $('.actions'));
+		button(actions, 'ghost', localize('voltUsage.cancel', "Cancel"), showSummary);
+		button(actions, 'primary', localize('voltUsage.savePrice', "Save Price"), submit => {
+			const price: Record<string, number> = {};
+			for (const field of PRICE_FIELDS) {
+				const text = inputs.get(field.key)!.value.trim();
+				if (!text) {
+					if (!field.optional) {
+						error.textContent = localize('voltUsage.priceRequired', "Enter the {0} rate.", field.label.toLowerCase());
+						return;
+					}
+					continue;
+				}
+				const value = Number(text);
+				if (!Number.isFinite(value) || value < 0) {
+					error.textContent = localize('voltUsage.priceInvalid', "{0} must be a number of 0 or more.", field.label);
+					return;
+				}
+				price[field.key] = value;
+			}
+			void save(price as unknown as IVoltUsageModelPrice, submit, error);
+		});
+		inputs.get('input')!.focus();
+	};
+	showSummary();
 }

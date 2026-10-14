@@ -271,7 +271,10 @@ function renderLane(parent: HTMLElement, lane: IRunwayLane, style: IRunwayStyle,
 	// The icon names the provider, so the lane leads with the window; the plan or scope goes under it.
 	append(text, $('.label')).textContent = window?.label ?? style.label(group.provider);
 	const sub = append(text, $('.sub'));
-	sub.textContent = window?.scope ?? (group.plan ? `${style.label(group.provider)} ${group.plan}` : style.label(group.provider));
+	const plan = group.plan ? `${style.label(group.provider)} ${group.plan}` : style.label(group.provider);
+	// Several accounts of one provider (other logins, other machines) each get lanes: say whose.
+	const owner = [group.account?.label, group.machines?.join(', ')].filter(Boolean).join(' \u00b7 ');
+	sub.textContent = [window?.scope ?? plan, owner].filter(Boolean).join(' \u00b7 ');
 	setAgentTooltip(name, window ? `${style.label(group.provider)} \u00b7 ${window.label}` : style.label(group.provider));
 	if (window?.note) {
 		setAgentTooltip(row, window.note);
@@ -292,7 +295,7 @@ function renderLane(parent: HTMLElement, lane: IRunwayLane, style: IRunwayStyle,
 
 	// The meter ends at now: how much of the window is gone, with a tick where even use would be.
 	const gauge = append(track, $('.volt-usage-runway-gauge'));
-	store.add(new DotMatrixMeter(gauge, used / 100, `${group.provider}:${window.id}`, animate));
+	store.add(new DotMatrixMeter(gauge, used / 100, `${group.provider}:${group.account?.id ?? ''}:${window.id}`, animate));
 	if (window.resetsAt && window.windowMs && used > 0 && !full) {
 		const elapsed = 1 - (window.resetsAt - now) / window.windowMs;
 		if (elapsed > 0 && elapsed < 1) {

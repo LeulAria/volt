@@ -5,6 +5,7 @@
 
 import { promises as fs } from 'fs';
 import { dirname } from '../../../base/common/path.js';
+import { IVoltUsageBucket, IVoltUsageModelPrice } from '../common/voltUsage.js';
 import { IUsageRecord } from './usageTranscripts.js';
 
 /** LiteLLM's public price list, the same source ccusage and T3 Code use. */
@@ -279,4 +280,75 @@ function costByCategory(record: IUsageRecord, rates: ITokenRates): ICategoryCost
 		cacheWrite: record.cacheWrite * rates.cacheWrite,
 		output: record.output * rates.output,
 	};
+}
+
+/**
+ * Re-prices every bucket of a model the user set a price for (USD per million tokens). Their
+ * price replaces the list price and any cost the provider reported, at every speed: the fast and
+ * ultrafast shares keep their proportion of the new cost.
+ */
+export function applyModelPrices(buckets: readonly IVoltUsageBucket[], prices: Readonly<Record<string, IVoltUsageModelPrice>>): IVoltUsageBucket[] {
+	if (!Object.keys(prices).length) {
+		return [...buckets];
+	}
+	return buckets.map(bucket => {
+		const price = modelPriceFor(prices, bucket.model);
+		if (!price) {
+			return bucket;
+		}
+		const perToken = (value: number | undefined, fallback: number) => (value ?? fallback) / 1_000_000;
+		const input = perToken(price.input, 0);
+		const cacheRead = perToken(price.cacheRead, price.input);
+		const cacheWrite = perToken(price.cacheWrite, price.input);
+		const output = perToken(price.output, 0);
+		const inputCostUsd = bucket.uncached * input;
+		const cacheReadCostUsd = bucket.cached * cacheRead;
+		const cacheWriteCostUsd = bucket.cacheWrite * cacheWrite;
+		const outputCostUsd = bucket.output * output;
+		const costUsd = inputCostUsd + cacheReadCostUsd + cacheWriteCostUsd + outputCostUsd;
+		const scale = bucket.costUsd > 0 ? costUsd / bucket.costUsd : 0;
+		return {
+			...bucket,
+			costUsd,
+			savingsUsd: bucket.cached * Math.max(0, input - cacheRead),
+			unpriced: false,
+			inputCostUsd, cacheReadCostUsd, cacheWriteCostUsd, outputCostUsd,
+			fastCostUsd: bucket.fastCostUsd * scale,
+			ultrafastCostUsd: bucket.ultrafastCostUsd * scale,
+			speedPremiumUsd: bucket.speedPremiumUsd * scale,
+		};
+	});
+}
+
+/** The price the user set for `model`, matched as the price table matches ids (provider prefix, version suffix). */
+export function modelPriceFor(prices: Readonly<Record<string, IVoltUsageModelPrice>>, model: string): IVoltUsageModelPrice | undefined {
+	const key = rateKey(model);
+	let bare: IVoltUsageModelPrice | undefined;
+	for (const [id, price] of Object.entries(prices)) {
+		const priceKey = rateKey(id);
+		if (priceKey === key) {
+			return price;
+		}
+		if (priceKey === bareName(key)) {
+			bare = price;
+		}
+	}
+	return bare;
+}
+
+/** A price as the user typed it, checked: finite and not negative, input and output required. */
+export function validModelPrice(value: unknown): IVoltUsageModelPrice | undefined {
+	if (!value || typeof value !== 'object') {
+		return undefined;
+	}
+	const raw = value as Record<string, unknown>;
+	const rate = (key: string) => typeof raw[key] === 'number' && Number.isFinite(raw[key]) && (raw[key] as number) >= 0 ? raw[key] as number : undefined;
+	const input = rate('input');
+	const output = rate('output');
+	if (input === undefined || output === undefined) {
+		return undefined;
+	}
+	const cacheRead = rate('cacheRead');
+	const cacheWrite = rate('cacheWrite');
+	return { input, output, ...(cacheRead !== undefined ? { cacheRead } : {}), ...(cacheWrite !== undefined ? { cacheWrite } : {}) };
 }

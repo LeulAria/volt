@@ -69,6 +69,65 @@ export class AgentThreadView extends Disposable {
 		}));
 	}
 
+	/**
+	 * Drag to scroll with momentum, for touch screens (Volt's workbench in a phone or tablet
+	 * browser). The scroller is not native, so touches move it here; listeners stay passive so
+	 * taps still click.
+	 */
+	enableTouchScrolling(): IDisposable {
+		const node = this.scroll.getDomNode();
+		const targetWindow = getWindow(node);
+		node.classList.add('touch-scrolling');
+		let lastY = 0;
+		let samples: { y: number; t: number }[] = [];
+		let frame: number | undefined;
+		const stopMomentum = () => {
+			if (frame !== undefined) {
+				targetWindow.cancelAnimationFrame(frame);
+				frame = undefined;
+			}
+		};
+		const scrollBy = (dy: number) => this.scroll.setScrollPosition({ scrollTop: this.scroll.getScrollPosition().scrollTop + dy });
+		const listeners = [
+			addDisposableListener(node, 'touchstart', (e: TouchEvent) => {
+				stopMomentum();
+				lastY = e.touches[0].clientY;
+				samples = [{ y: lastY, t: e.timeStamp }];
+			}, { passive: true }),
+			addDisposableListener(node, 'touchmove', (e: TouchEvent) => {
+				const y = e.touches[0].clientY;
+				scrollBy(lastY - y);
+				lastY = y;
+				samples.push({ y, t: e.timeStamp });
+				samples = samples.filter(sample => e.timeStamp - sample.t < 100);
+			}, { passive: true }),
+			addDisposableListener(node, 'touchend', (e: TouchEvent) => {
+				const first = samples[0];
+				const last = samples.at(-1);
+				if (!first || !last || last.t - first.t <= 0 || e.timeStamp - last.t > 60) {
+					return;
+				}
+				// px per ms, decaying like UIScrollView's normal deceleration rate.
+				let velocity = (first.y - last.y) / (last.t - first.t);
+				let previous = targetWindow.performance.now();
+				const step = (now: number) => {
+					const dt = now - previous;
+					previous = now;
+					velocity *= Math.pow(0.998, dt);
+					const before = this.scroll.getScrollPosition().scrollTop;
+					scrollBy(velocity * dt);
+					frame = Math.abs(velocity) > 0.02 && this.scroll.getScrollPosition().scrollTop !== before ? targetWindow.requestAnimationFrame(step) : undefined;
+				};
+				frame = targetWindow.requestAnimationFrame(step);
+			}, { passive: true }),
+		];
+		return toDisposable(() => {
+			stopMomentum();
+			node.classList.remove('touch-scrolling');
+			listeners.forEach(listener => listener.dispose());
+		});
+	}
+
 	/** True during the scroll event of a native scroll being adopted (see the constructor), which may not be the reader's. */
 	get isAdoptingNativeScroll(): boolean {
 		return this.adoptingNative;

@@ -8,7 +8,6 @@ import { language } from '../../../../../base/common/platform.js';
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
-const DAY_MS = 24 * HOUR_MS;
 
 const usd = safeIntl.NumberFormat(language, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const usdWhole = safeIntl.NumberFormat(language, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -66,16 +65,19 @@ export function formatDuration(ms: number): string {
 	if (ms < MINUTE_MS) {
 		return '<1m';
 	}
-	if (ms < HOUR_MS) {
-		return `${Math.round(ms / MINUTE_MS)}m`;
+	// Round to the shown unit first, so 4h 59.6m reads "5h", never "4h 60m".
+	const totalMinutes = Math.round(ms / MINUTE_MS);
+	if (totalMinutes < 60) {
+		return `${totalMinutes}m`;
 	}
-	if (ms < DAY_MS) {
-		const hours = Math.floor(ms / HOUR_MS);
-		const minutes = Math.round((ms - hours * HOUR_MS) / MINUTE_MS);
+	if (totalMinutes < 24 * 60) {
+		const hours = Math.floor(totalMinutes / 60);
+		const minutes = totalMinutes % 60;
 		return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 	}
-	const days = Math.floor(ms / DAY_MS);
-	const hours = Math.round((ms - days * DAY_MS) / HOUR_MS);
+	const totalHours = Math.round(ms / HOUR_MS);
+	const days = Math.floor(totalHours / 24);
+	const hours = totalHours % 24;
 	return hours ? `${days}d ${hours}h` : `${days}d`;
 }
 

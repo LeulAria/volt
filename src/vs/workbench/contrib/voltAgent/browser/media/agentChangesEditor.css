@@ -587,7 +587,7 @@
 	color: color-mix(in srgb, var(--volt-changes-hunk) 60%, transparent);
 	box-shadow: none;
 	/* The workbench's UI font, not the editor's monospace one. */
-	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, "Ubuntu", "Droid Sans", sans-serif;
+	font-family: var(--volt-font);
 	font-size: 12px;
 }
 

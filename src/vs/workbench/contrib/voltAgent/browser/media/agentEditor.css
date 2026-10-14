@@ -6,6 +6,17 @@
 @import './agentTooltip.css';
 @import './fileChangePreview.css';
 
+/*
+ * Volt's UI typeface: the system font, or the interface font set in Settings > Appearance
+ * (voltAppearance.contribution.ts sets --volt-ui-font-family). Only code uses the monospace font.
+ * Keep the fallback in sync with VOLT_FONT_FAMILY (agentTypography.ts). Layers outside the
+ * workbench (on the document root) get the system font.
+ */
+:root,
+.monaco-workbench {
+	--volt-font: var(--volt-ui-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif);
+}
+
 .volt-agent-editor {
 	--volt-agent-chat-bg: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
 	--volt-mode-fg: var(--vscode-foreground);
@@ -4271,7 +4282,7 @@ pre.volt-agent-searchable {
 	left: 10px;
 	right: 10px;
 	z-index: 1;
-	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif;
+	font-family: var(--volt-font);
 	font-size: 14px;
 	font-weight: 300;
 	line-height: 22px;

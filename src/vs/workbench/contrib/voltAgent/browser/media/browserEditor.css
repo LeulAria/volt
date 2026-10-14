@@ -424,7 +424,7 @@ webview.volt-browser-frame {
 	border-radius: 0 50% 50% 50%;
 	background: var(--vscode-editor-background, #1e1e1e);
 	color: var(--vscode-foreground, #cccccc);
-	font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif;
+	font: 600 12px/1 var(--volt-font);
 	letter-spacing: -0.02em;
 	cursor: pointer;
 	user-select: none;
@@ -692,7 +692,7 @@ webview.volt-browser-frame {
 	border-radius: 999px;
 	background: transparent;
 	color: #c8c8c8;
-	font: 300 13px/1 -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif;
+	font: 300 13px/1 var(--volt-font);
 	white-space: nowrap;
 	cursor: pointer;
 	flex-shrink: 0;
@@ -1895,7 +1895,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 	border-radius: 9999px;
 	background: rgb(244, 244, 245);
 	color: rgb(36, 36, 36);
-	font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+	font-family: var(--volt-font);
 	font-size: 13px;
 	line-height: 18px;
 	white-space: nowrap;

@@ -32,6 +32,7 @@ import { createModeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
 import { AgentModelPicker } from '../picker/agentModelPicker.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { normalizeVoltMode } from '../../../../services/voltRuntime/common/modes.js';
+import { VOLT_FONT_FAMILY } from '../../common/agentTypography.js';
 
 export interface IBrowserComposerCallbacks {
 	onSubmit(text: string): void;
@@ -726,7 +727,7 @@ export class BrowserAgentComposer extends Disposable {
 		const editorConfiguration = this.textResourceConfigurationService.getValue<ICodeEditorOptions>(this.model?.uri, 'editor');
 		return {
 			...editorConfiguration,
-			fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif',
+			fontFamily: VOLT_FONT_FAMILY,
 			fontSize: 14,
 			fontWeight: '300',
 			lineHeight: 22,
