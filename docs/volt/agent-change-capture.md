@@ -1,451 +1,587 @@
-# Volt Agent Change Capture: Keep / Undo per Message
+# Volt: Per-Message Agent Diffs, Inline Keep / Undo (T3-style)
 
-> **Goal:** Every message sent to an agent (Claude, Codex, Cursor, DeepSeek-native, any ACP CLI) produces an exact, reviewable diff. **The user's checkout doesn't change while the agent runs.** When the run ends, the user reviews it and picks **Keep** (the change lands in the workspace and is **staged** in Git) or **Undo** (it's gone, with no trace in Git).
+> **One line:** every message you send gets a before and after Git snapshot stored under hidden refs. The diff between them is exactly what the agent changed. Volt draws it **inline in the editor like Cursor**, with Keep and Undo per change, **Keep File** at the top, and **Review** to open the full diff. **Keep stages in Git. Undo removes it from disk and from Git.**
 
 ---
 
 ## 0. TL;DR
 
-| What | How |
+| | Decision |
 |---|---|
-| Isolation | Each agent session runs in its **own Git worktree** outside the workspace. The agent's `cwd` and Volt's tool root point there. |
-| Capture | At the end of each turn: `git add -A` into a **private index**, then `write-tree` and `commit-tree`. The result goes to a hidden ref `refs/volt/s/<session>/t/<n>`. |
-| Diff | `git diff <base> <turnN>` gives the exact per-turn diff. Nothing depends on what the agent *says* it changed. |
-| Keep | `git diff --binary <base> <tip> \| git apply --3way --index` in the real repo applies the change and stages it. |
-| Undo (before Keep) | Reset the worktree to the previous turn and drop the ref. The real repo and index are never touched. |
-| Undo (after Keep) | `git apply -R --3way --index` with the same patch. It leaves the working tree **and** the index. |
-| Non-Git folders | The same flow runs against a **shadow repo** in `userData` (`--git-dir` outside the workspace). |
-| Why it beats others | Covers every agent (it captures the filesystem, not tool calls), gives per-turn refs like T3, isolation like Cursor/Conductor worktrees, and fixes the known failure modes of opencode, T3 and Cline (§3). |
+| **Model** | T3 Code approach: **in-place by default** (the agent edits your real files on your branch), with an **optional worktree per thread** |
+| **Capture** | Per turn: `pre` snapshot before sending and `post` snapshot after the agent responds, each a hidden commit under `refs/volt/s/<session>/<turn>/…` |
+| **Truth** | `git diff pre post`, meaning the filesystem, not what the agent says it changed. It catches shell edits, `apply_patch`, codegen and formatters |
+| **Inline UI** | Reuse VS Code's own chat-editing inline diff (`ChatEditingCodeEditorIntegration` with its hunk widget) and its theme colors |
+| **Review** | Reuse the existing multi-diff editor (`AgentChangesEditor`). Its original side comes from the built-in **`git:` URI** at the snapshot commit |
+| **Keep** | Hunk or file: write the accepted content into the **Git index** (staged) |
+| **Undo** | Hunk or file: revert the text in the real file. After Keep: also restore the index entry |
+| **Parity** | Before building, run a **Cursor side-by-side protocol** (§11) and repeat it after each phase until Volt matches or beats it |
 
 ---
 
-## 1. Where Volt is today
-
-| Piece | File | Status |
-|---|---|---|
-| Change list is **derived from transcript blocks** (`type:'file'`) | `contrib/voltAgent/browser/review/agentSessionChanges.ts` | ❌ Misses edits the agent makes via shell, `apply_patch`, or its own write tool (Codex/Cursor write directly to disk) |
-| Changes service, multi-diff source, snapshot URIs, discard | `contrib/voltAgent/browser/review/agentSessionChangesService.ts` | ⚠️ Good surface; unreliable data. Discard writes `original` text from the transcript |
-| Changes editor + actions (Copy Path, Discard) | `review/agentChangesEditor.ts`, `review/agentChangesActions.ts` | ✅ Reuse |
-| Inline diff cards in the thread | `review/fileChangePreview*.ts`, `blocks/agentBlocks.ts` | ✅ Reuse |
-| `file.change` event (native tools only) | `services/voltRuntime/common/events.ts`, `browser/tools/fileTools.ts` | ⚠️ Only DeepSeek-native emits it |
-| ACP `fs/write_text_file` handler | `services/voltRuntime/browser/agents/acpProvider.ts` → `bindClientRequests` | ⚠️ Writes straight to the real workspace |
-| Agent cwd / tool root = `folders[0]` | `browser/voltRuntimeService.ts` (≈L257, 603, 1011, 1028, 1171, 1231) | 🔧 Must become the session's worktree root |
-| Process spawn (supports `env`) | `platform/voltStdio/*` | ✅ Pattern to copy for the Git service |
-| Harness checkpoint event (`kind:'git'`) | `common/events.ts`, `common/harness/runHarness.ts` | 🔧 Wire to real snapshots |
-
-**Root problem:** the source of truth is the agent's narration. It needs to be the **filesystem**.
-
----
-
-## 2. Research snapshot (what others do)
-
-| Tool | Mechanism | Lesson |
-|---|---|---|
-| **Cursor** | Agent edits live; inline Keep/Undo per hunk plus checkpoints; 2.0 adds **worktree** isolation (up to 8 parallel) | Worktrees are the proven isolation model. Its live-edit mode causes "Keep/Undo missing" and "checkpoint didn't revert" bugs |
-| **T3 Code** | Per-thread optional worktree; **per-turn hidden refs** `refs/t3/checkpoints/<thread>/turn/<n>` via `add / write-tree / commit-tree / update-ref` | Per-turn refs are the right shape. Known issues: **ref retention/GC**, `git add` **timeouts on big monorepos**, **flush objects before publishing refs** |
-| **opencode** | Separate snapshot gitdir in data dir; `track()` = `write-tree` hash; revert = checkout files | Bugs: **`index.lock` races** across processes, **silently swallowed `git add` failures** → stale snapshot → data loss on undo, stale baseline |
-| **Cline** | Shadow Git repo in global storage, commit after **every tool use** | Captures untracked files; slow on large repos |
-| **Conductor / Claude Code / Codex app** | Worktree per workspace/agent, built-in diff viewer | Isolation plus a diff viewer is now standard |
-| **Antigravity** | Agent artifacts plus review surface | Review as a first-class artifact, not a side effect |
-
-**Rules we adopt from their bugs:**
-
-1. **Never swallow Git errors.** A failed snapshot marks the turn `captureFailed` and blocks Undo from using it.
-2. **One private index per session.** It's never shared, so there are no `index.lock` races, and all Git ops per repo go through a serial queue.
-3. **Publish the ref only after objects are written.** `commit-tree` then `update-ref`, never the other way around.
-4. **Retention built in.** Delete refs when the session is deleted; prune stale refs after N days.
-5. **Incremental capture.** Keep the private index warm (stat cache), use `core.untrackedCache`, optionally fsmonitor, and add a timeout with a fallback to watcher-reported paths.
-6. **The baseline rotates** on every Keep/Undo, so it never goes stale.
-
----
-
-## 3. Mental model
+## 1. Mental model
 
 ```
-Real workspace (user sees)          Session worktree (agent sees)
-────────────────────────────        ─────────────────────────────
-HEAD + user's dirty edits  ──snap──▶ base  (refs/volt/s/S/base)
-                                      │ agent turn 1 → refs/volt/s/S/t/1
-                                      │ agent turn 2 → refs/volt/s/S/t/2   ← "pending stack"
-   ◀──────── Keep (apply + stage) ────┘
-   ✗ Undo → worktree reset, refs dropped, real repo untouched
+You: "make the header blue"                           You: "and the button"
+        │                                                    │
+   pre₁ ─── agent edits real files ─── post₁            pre₂ ─── agent ─── post₂
+   (snapshot)                          (snapshot)        (snapshot)         (snapshot)
+        └──── turn 1 diff = pre₁..post₁ ────┘                └── turn 2 = pre₂..post₂ ──┘
+
+Editor shows (per file):  accepted content  ⇄  live file on disk
+                          (starts = pre of the first turn that touched it)
+Keep hunk  → accepted += hunk → written to Git index (staged)
+Undo hunk  → live file −= hunk (agent's change removed from disk)
 ```
 
-- **Session** means one agent thread and one worktree (the agent process is long-lived and its `cwd` is fixed at `start()`).
-- **Turn** means one user message and one snapshot commit.
-- **Pending stack** means the turns not yet reviewed. New messages keep building on the stack, so the agent always sees its own work.
+- A **hidden ref** is a Git name like a branch, but outside `refs/heads/`. `git branch`, `git log` and `git status` don't show it, and it isn't pushed by default. It keeps the snapshot commit alive for diffing and restoring.
+- Snapshots use a **private `GIT_INDEX_FILE`**, so your real staging area is never touched by capture.
+- Taking a **`pre` per turn** (not just `post`) means edits you make between messages are never blamed on the agent.
 
 ---
 
-## 4. Architecture
+## 2. What exists today (reuse, don't rebuild)
+
+| Existing | Path | Use it for |
+|---|---|---|
+| Changes service + multi-diff source + snapshot URIs | `src/vs/workbench/contrib/voltAgent/browser/review/agentSessionChangesService.ts` | Keep the API and **swap the data source** from transcript blocks to the ledger |
+| Changes editor (scopes: uncommitted, last turn, staged, unstaged) | `review/agentChangesEditor.ts` | **Review** target; add "Turn N" scopes |
+| File toolbar actions (Copy Path, Discard) | `review/agentChangesActions.ts` | Add Keep / Undo |
+| Thread diff cards | `review/fileChangePreview*.ts`, `blocks/agentBlocks.ts` | Per-turn summary card |
+| Composer "Changes" chip | `composer/agentComposerChips.ts` | Pending stats + Keep All / Undo All |
+| **Inline diff + hunk Keep/Undo widget** | `src/vs/workbench/contrib/chat/browser/chatEditing/chatEditingCodeEditorIntegration.ts` (`DiffHunkWidget`, `IDocumentDiff2.keep/undo`) | **Inline editor UI.** Same look as VS Code and Cursor |
+| Editor overlay bar (`‹ 1/3 ›  Keep  Undo`) | `chatEditing/chatEditingEditorOverlay.ts` | Top-of-file **Keep File / Undo File** bar |
+| Keep/Undo actions and keybindings pattern | `chatEditing/chatEditingEditorActions.ts` | Copy action shapes and keybindings |
+| Git content provider (`git:` scheme, `git show <ref>:<path>`) | `extensions/git/src/uri.ts` → `toGitUri`, `fileSystemProvider.ts` | Original side of diffs. **No new content provider** in in-place mode |
+| Diff engine | `IEditorWorkerService.computeDiff`, `linesDiffComputers` | Hunks for inline and cards |
+| Theme tokens | `diffEditor.insertedLineBackground`, `diffEditor.removedLineBackground`, `editorGutter.*` | **No new colors** |
+| Spawn with `env` (IPC service pattern) | `src/vs/platform/voltStdio/*` + registration in `src/vs/code/electron-main/app.ts` (≈L1205) | Template for the new Git service |
+| Agent cwd and tool root | `services/voltRuntime/browser/voltRuntimeService.ts` (≈L257, 603, 1011, 1028, 1171, 1231) | Point at the worktree only when a thread opts in |
+
+**Root bug today:** `agentSessionChanges.ts` builds the change list from what the agent *reports* (`file` blocks). Codex and Cursor CLI write straight to disk or run shell commands, so those edits are missed. Snapshots fix this.
+
+---
+
+## 3. Architecture
 
 ```mermaid
 flowchart LR
-  subgraph Renderer["Renderer (workbench)"]
-    UI["Agent Editor / Composer\nchips: Changes · Keep · Undo"]
-    CE["AgentChangesEditor\n(multi-diff)"]
-    INL["Inline Review Overlay\n(per-hunk Keep/Undo)"]
-    CS["IAgentSessionChangesService\n(ledger-backed)"]
-    RT["IAgentRuntimeService\n(voltRuntimeService.ts)"]
-    WS["IAgentWorkspaceService  ★new\nsession → worktree, turn lifecycle"]
+  subgraph Renderer
+    RT["IAgentRuntimeService\nsend → run.end"]
+    TS["IAgentTurnSnapshotService ★\npre/post, ledger, keep/undo"]
+    CS["IAgentSessionChangesService ✎\nread model for UI"]
+    INL["VoltInlineReview ★\n(reuses ChatEditingCodeEditorIntegration)"]
+    BAR["File bar ★  Keep File · Undo File · Review"]
+    RV["AgentChangesEditor ✎\n(multi-diff, git: URIs)"]
+    CARD["Turn card + Changes chip ✎"]
   end
   subgraph Main["Electron main"]
-    GIT["IVoltGitService  ★new\nqueued git plumbing (execFile)"]
-    STDIO["IVoltStdioService\n(agent processes)"]
+    G["IVoltGitService ★\nqueued plumbing (execFile)"]
   end
-  subgraph Disk
-    REPO[("User repo\n.git objects + refs/volt/*")]
-    WT[("userData/volt/worktrees/<repo>/<session>")]
-    LEDGER[("userData/volt/changes/<session>.json")]
-  end
+  REPO[("repo .git\nrefs/volt/s/*")]
+  LED[("userData/volt/changes/<session>.json")]
 
-  UI -- send --> RT
-  RT -- beginTurn/endTurn --> WS
-  RT -- spawn cwd=worktree --> STDIO
-  STDIO -- agent edits --> WT
-  WS -- snapshot/apply/reset --> GIT
-  GIT --> REPO
-  GIT --> WT
-  WS -- ChangeSets --> CS
-  CS --> CE & INL & UI
-  WS --> LEDGER
+  RT -- beginTurn / endTurn --> TS
+  TS --> G --> REPO
+  TS --> LED
+  TS --> CS --> CARD & RV & INL & BAR
+  INL -- keep/undo hunk --> TS
+  BAR -- keep/undo file --> TS
 ```
 
-### Layers
-
-| Layer | Responsibility | Knows about |
+| Layer | Owns | Must NOT |
 |---|---|---|
-| `IVoltGitService` (main) | Raw Git plumbing: `snapshot`, `diff`, `apply`, `resetWorktree`, `updateRef`, `deleteRefs`. Serial queue per repo. No UI. | Paths, SHAs |
-| `IAgentWorkspaceService` (renderer) | Session → worktree mapping, turn lifecycle, ledger, Keep/Undo semantics, conflict routing | Sessions, turns, Git service |
-| `IAgentSessionChangesService` (existing, rewired) | Read model for UI: files, stats, multi-diff items, snapshot text | Ledger only |
-| UI (existing, extended) | Cards, chips, changes editor, inline overlay | Changes service |
+| `IVoltGitService` (main) | Plumbing: snapshot, diff, blob read and write, index update, refs, worktree. **Serial queue per repo** | Know about sessions or UI |
+| `IAgentTurnSnapshotService` | Turn lifecycle, ledger, accepted-content per file, Keep/Undo semantics | Render anything |
+| `IAgentSessionChangesService` | UI read model (files, stats, multi-diff items) | Call Git directly |
+| UI (inline, bar, review, card, chip) | Presentation and commands | Hold state beyond view state |
 
 ---
 
-## 5. Key decisions (ADR-lite)
+## 4. Key decisions
 
-| # | Decision | Why | Rejected |
-|---|---|---|---|
-| D1 | **Filesystem snapshot is the truth**, not tool events | Works for every CLI agent, whether it edits via shell, `apply_patch` or MCP | Parsing ACP `tool_call` diffs (lossy, agent-specific) |
-| D2 | **Git worktree per session** (default `isolation: "worktree"`) | Real checkout stays untouched while the agent runs; the agent can run builds and tests; parallel sessions don't collide | FS overlay/interception (impossible for native CLIs); copying the repo (slow) |
-| D3 | Worktrees live in **`userData/volt/worktrees/…`**, outside the workspace | No file-watcher churn, no search/indexing noise, no SCM noise | `.volt/worktrees` inside the repo |
-| D4 | Baseline = **snapshot of the user's working tree** (tracked + untracked, respects `.gitignore`), not `HEAD` | The agent sees the user's uncommitted work; the diff shows only what the agent did | `HEAD`-based worktree (loses dirty state) |
-| D5 | Snapshots are **commits under `refs/volt/s/<session>/…`** in the user's object DB | Deduped, fast, survives restart, invisible to branches, not pushed by default | Separate object DB (duplicates blobs) |
-| D6 | **Private `GIT_INDEX_FILE` per session** for capture | No lock contention with the user's index or the agent's own `git` usage | Using the worktree's own index |
-| D7 | **Keep = `git apply --3way --index`** | Stages exactly the agent's change; 3-way merges if the user edited meanwhile | Overwriting files |
-| D8 | **Hunk-level ops computed in TS** (existing `linesDiffComputers`), file/all-level ops via Git | Git can't cherry-pick hunks cleanly; TS already has the diff engine | Hand-built partial patches |
-| D9 | `isolation: "inPlace"` fallback (also for non-Git and quick edits) | Same snapshots and refs, but the agent writes into the real tree; Undo = reverse apply | – |
-| D10 | Live `file.change` events are **UX hints only**; the end-of-turn snapshot wins | Fast feedback plus correct final state | – |
+| # | Decision | Why |
+|---|---|---|
+| D1 | **Snapshots, not tool events**, are the truth | Works for Claude, Codex, Cursor CLI, DeepSeek-native, any ACP agent |
+| D2 | **In-place default, worktree opt-in per thread** (T3) | Fast and familiar; isolation only when you want parallel or long runs |
+| D3 | **`pre` and `post` per turn** | Precise per-message diff even if you edit between messages |
+| D4 | Snapshot commits live in the **user's object DB** under `refs/volt/s/…` | Deduped, fast, survive restart, not pushed |
+| D5 | **Private index** per session (`userData/volt/index/<session>.idx`) | No `index.lock` races, warm stat cache, so capture is O(changed files) |
+| D6 | Inline diff = **accepted content ⇄ live file** | Identical to VS Code chat-editing and Cursor; multiple turns stack naturally |
+| D7 | **Keep writes the index** (`hash-object -w` then `update-index --cacheinfo`) | Hunk-level staging without touching the working file. Cursor doesn't stage on Keep; **we do**, by requirement |
+| D8 | **Undo edits the text model** (not a raw disk write) | Respects open buffers, the editor undo stack and dirty state |
+| D9 | **Reuse VS Code components and theme** | Native look, less code, fewer bugs |
+| D10 | **Never swallow Git errors**; publish the ref only after objects are written | The known failure modes of opencode and T3 |
 
 ---
 
-## 6. Data model (interfaces)
+## 5. Data model
 
 ```ts
 // services/voltRuntime/common/changes/changeTypes.ts
-export type IsolationMode = 'worktree' | 'inPlace';
-export type TurnState = 'running' | 'pending' | 'kept' | 'undone' | 'partial' | 'captureFailed';
-export type FileState = 'pending' | 'kept' | 'undone';
+export type TurnState = 'running' | 'captured' | 'captureFailed';
+export type HunkState = 'pending' | 'kept' | 'undone';
 
-export interface IAgentWorkspace {
+export interface ITurnSnapshot {
   readonly sessionId: string;
-  readonly repoRoot: string;          // real repo (or shadow git-dir owner)
-  readonly gitDir: string;            // real .git or userData shadow
-  readonly root: string;              // where the agent runs (worktree path or repoRoot)
-  readonly isolation: IsolationMode;
-  readonly baseRef: string;           // refs/volt/s/<id>/base
-}
-
-export interface ITurnChangeSet {
-  readonly sessionId: string;
-  readonly turnId: string;            // == runId
-  readonly index: number;             // 1..n
-  readonly parentCommit: string;      // base or previous turn
-  readonly commit?: string;           // snapshot commit (undefined while running)
+  readonly turnId: string;           // == runId
+  readonly index: number;            // 1..n
+  readonly pre: string;              // commit sha  (refs/volt/s/<S>/<n>/pre)
+  readonly post?: string;            // commit sha  (refs/volt/s/<S>/<n>/post)
+  readonly indexTree: string;        // your real index at turn start (for Undo-after-Keep)
   readonly state: TurnState;
-  readonly files: readonly ITurnFileChange[];
+  readonly files: readonly ITurnFile[];
   readonly stats: { files: number; additions: number; deletions: number };
-  readonly startedAt: number;
-  readonly endedAt?: number;
   readonly error?: string;
 }
 
-export interface ITurnFileChange {
-  readonly path: string;              // repo-relative, posix
-  readonly oldPath?: string;          // renames (git diff -M)
+export interface ITurnFile {
+  readonly path: string;             // repo-relative posix
+  readonly oldPath?: string;         // rename (-M)
   readonly kind: 'added' | 'modified' | 'deleted' | 'renamed';
   readonly binary: boolean;
   readonly additions: number;
   readonly deletions: number;
-  readonly oldBlob?: string;          // git blob sha → content on demand
-  readonly newBlob?: string;
-  state: FileState;
+  readonly preBlob?: string;
+  readonly postBlob?: string;
+}
+
+/** Per-file review state across all pending turns. Drives the inline editor. */
+export interface IPendingFile {
+  readonly path: string;
+  acceptedBlob: string | null;       // "original" side; null = file did not exist
+  readonly turns: readonly string[]; // turnIds that touched it
+  readonly firstPreIndexBlob?: string; // index entry before the first touching turn
 }
 ```
 
 ```ts
-// platform/voltGit/common/voltGit.ts  (IPC like voltStdio)
+// platform/voltGit/common/voltGit.ts
 export interface IVoltGitService {
   readonly _serviceBrand: undefined;
   resolveRepo(folder: string): Promise<{ repoRoot: string; gitDir: string } | undefined>;
-  ensureShadowRepo(folder: string, shadowDir: string): Promise<{ gitDir: string }>;
-  snapshot(o: { repoRoot: string; workTree: string; indexFile: string; parent?: string; message: string; ref: string; paths?: string[] }): Promise<{ commit: string; tree: string }>;
-  addWorktree(o: { repoRoot: string; path: string; commit: string }): Promise<void>;
-  resetWorktree(o: { workTree: string; commit: string; keepPaths: string[] }): Promise<void>;
-  removeWorktree(o: { repoRoot: string; path: string }): Promise<void>;
+  snapshot(o: { repoRoot: string; workTree: string; indexFile: string; parent?: string; ref: string; message: string; paths?: string[] }): Promise<{ commit: string; tree: string }>;
+  writeIndexTree(o: { repoRoot: string }): Promise<string>;                  // git write-tree (real index, read-only)
   diffSummary(o: { repoRoot: string; from: string; to: string }): Promise<IDiffEntry[]>; // --raw --numstat -M -z
-  patch(o: { repoRoot: string; from: string; to: string; paths?: string[] }): Promise<string>; // --binary --full-index
-  apply(o: { repoRoot: string; patch: string; reverse?: boolean; index: boolean; threeWay: boolean; check?: boolean }): Promise<IApplyResult>;
   readBlob(o: { repoRoot: string; sha: string }): Promise<Uint8Array>;
-  updateRef(o: { repoRoot: string; ref: string; commit?: string /* undefined = delete */ }): Promise<void>;
+  writeBlob(o: { repoRoot: string; content: Uint8Array }): Promise<string>;  // hash-object -w --stdin
+  setIndexEntry(o: { repoRoot: string; path: string; blob: string | null; mode?: string }): Promise<void>; // update-index --cacheinfo / --force-remove
+  resetIndexPaths(o: { repoRoot: string; treeish: string; paths: string[] }): Promise<void>;          // git reset -q <treeish> -- paths
+  updateRef(o: { repoRoot: string; ref: string; commit?: string }): Promise<void>;
   deleteRefs(o: { repoRoot: string; prefix: string }): Promise<void>;
+  // worktree (opt-in threads)
+  addWorktree(o: { repoRoot: string; path: string; commit: string }): Promise<void>;
+  removeWorktree(o: { repoRoot: string; path: string }): Promise<void>;
+  applyPatch(o: { repoRoot: string; from: string; to: string; paths?: string[]; reverse?: boolean; index: boolean }): Promise<IApplyResult>; // diff --binary | apply --3way
 }
 ```
 
 ```ts
-// services/voltRuntime/common/changes/agentWorkspace.ts
-export interface IAgentWorkspaceService {
-  readonly onDidChangeTurns: Event<string /*sessionId*/>;
-  prepare(sessionId: string): Promise<IAgentWorkspace>;           // before provider.start()
-  beginTurn(sessionId: string, runId: string): Promise<void>;     // before send
-  endTurn(sessionId: string, runId: string, reason: 'done'|'abort'|'fail'): Promise<ITurnChangeSet>;
-  getTurns(sessionId: string): readonly ITurnChangeSet[];
-  getPending(sessionId: string): { files: readonly ITurnFileChange[]; from: string; to: string };
-  keep(sessionId: string, target: ReviewTarget): Promise<IApplyOutcome>;
-  undo(sessionId: string, target: ReviewTarget): Promise<IApplyOutcome>;
-  dispose(sessionId: string, opts?: { keepRefs?: boolean }): Promise<void>;
+// services/voltRuntime/common/changes/turnSnapshots.ts
+export interface IAgentTurnSnapshotService {
+  readonly onDidChange: Event<string /* sessionId */>;
+  beginTurn(sessionId: string, runId: string): Promise<void>;
+  endTurn(sessionId: string, runId: string, reason: 'done' | 'abort' | 'fail'): Promise<ITurnSnapshot>;
+  getTurns(sessionId: string): readonly ITurnSnapshot[];
+  getPendingFiles(sessionId: string): readonly IPendingFile[];
+  keep(sessionId: string, t: ReviewTarget): Promise<void>;
+  undo(sessionId: string, t: ReviewTarget): Promise<void>;
+  disposeSession(sessionId: string): Promise<void>;
 }
 export type ReviewTarget =
-  | { kind: 'all' }
-  | { kind: 'turn'; turnId: string }
-  | { kind: 'file'; path: string }
-  | { kind: 'hunk'; path: string; hunkId: string };
+  | { kind: 'all' } | { kind: 'turn'; turnId: string }
+  | { kind: 'file'; path: string } | { kind: 'hunk'; path: string; range: LineRangeMapping };
 ```
 
-**Ledger file:** `userData/volt/changes/<sessionId>.json` holds `{ workspace, turns: ITurnChangeSet[] }` and is written atomically (same `ATOMIC` pattern as `agentHistoryService.ts`). Refs are the durable data; the ledger is an index you can rebuild from refs.
+**Ledger:** `userData/volt/changes/<sessionId>.json`, written atomically (same `ATOMIC` pattern as `agentHistoryService.ts`). Refs are the durable truth; the ledger can be rebuilt from them.
 
 ---
 
-## 7. Workflows
+## 5a. Worktree snapshotting and live changes (how git captures a snapshot)
 
-### 7.1 Send a message (isolated)
+This is the core mechanic. It's worth understanding before touching code.
+
+**Three things that sound alike but aren't:**
+
+| Thing | What it is | Who owns it |
+|---|---|---|
+| **Working tree** | The actual files on disk (`src/Header.css`) | You and the agent |
+| **Your index** (`.git/index`) | Your staging area: what `git commit` would record | **You.** Volt only writes it on **Keep** |
+| **Volt's private index** (`userData/volt/index/<session>.idx`) | A second staging area Volt uses only to build snapshots | **Volt capture only** |
+
+`GIT_INDEX_FILE=<path>` tells any Git command to use a different index file. Snapshotting with the private index lets Volt do `git add -A` and `write-tree` **without ever touching your staged changes**.
+
+### How one snapshot is built (4 plumbing commands)
+
+```bash
+export GIT_INDEX_FILE=$USERDATA/volt/index/<session>.idx
+git -C <root> -c core.untrackedCache=true add -A [-- <touched paths>]  # 1. copy working-tree state into the private index
+TREE=$(git -C <root> write-tree)                                      # 2. index → tree object (a full folder snapshot)
+C=$(git -C <root> commit-tree $TREE -p <parent> -m "volt <S> t<n> pre|post")  # 3. wrap it in a commit (timestamp + parent chain)
+git -C <root> update-ref refs/volt/s/<S>/<n>/pre|post $C             # 4. publish a hidden name LAST (atomic)
+```
+
+1. `add -A` hashes changed files into blobs (`.git/objects`) and records them in the **private** index. Untracked files are included and `.gitignore` is respected.
+2. `write-tree` turns the index into a **tree**, a complete folder snapshot. Unchanged files reuse existing blobs, so it's nearly free.
+3. `commit-tree` wraps the tree in a commit. It moves no branch and doesn't change `HEAD`.
+4. `update-ref` gives the commit a **hidden name**, which protects it from `git gc` and makes it findable after a restart.
+
+**Why it's fast:** the private index persists between turns, so it caches each file's size and mtime. Step 1 only re-hashes files whose stat changed: O(changed files), not O(repo). On huge repos, pass the paths the file watcher saw change (`-- <paths>`) and use `core.untrackedCache` (optionally `core.fsmonitor`).
+
+### Live changes during a run (before `post` exists)
+
+The snapshot is the **truth**; live updates are **hints** so the UI isn't frozen for a long run:
+
+```
+beginTurn → pre snapshot
+   │  agent writes files ──► IFileService.onDidFilesChange (in-place: the workspace watcher already sees it)
+   │                         └► collect touchedPaths; update chip "Working… · 3 files"
+   │                         └► optional: throttled mini-snapshot (every ~2s, only touchedPaths) for a live "Peek" diff
+   │  ACP tool_call diffs / DeepSeek `file.change` events → draw provisional cards immediately
+endTurn → post snapshot (full `add -A`, touchedPaths first) → diff pre..post → replace provisional cards with exact ones
+```
+
+- **In-place:** the agent writes into your real files, so you see text change live (same as Cursor). **Inline hunks with Keep/Undo appear when the turn ends**, from the exact `pre..post` diff. Optional: show a subtle "agent editing" gutter marker on touched files during the run.
+- **Worktree mode:** the agent writes in `userData/volt/worktrees/<repo>/<S>`, and **your files don't change at all**. Watch the worktree folder with `IFileService.watch(worktreeUri)` to power the live chip and the "Peek live diff" (read-only multi-diff `pre..current`).
+
+### Worktree mode, step by step (opt-in per thread)
+
+```bash
+# 1. Snapshot YOUR current state (tracked + untracked + uncommitted edits) → base
+GIT_INDEX_FILE=<priv> git -C <repo> add -A && T=$(git write-tree) && B=$(git commit-tree $T -p HEAD -m base)
+git update-ref refs/volt/s/<S>/base $B
+# 2. Create a detached checkout of that exact state outside the workspace
+git -C <repo> worktree add --detach $USERDATA/volt/worktrees/<repo>/<S> $B
+# 3. Link heavy ignored dirs so builds and tests work (setting: node_modules, .venv, target…)
+ln -s <repo>/node_modules <wt>/node_modules
+# 4. Start the agent with cwd = <wt>. Each turn snapshots <wt> (not <repo>) with the same 4 commands.
+# 5. Keep = bring the change back into your repo, staged
+git -C <repo> diff --binary --full-index <pre> <post> [-- paths] | git -C <repo> apply --3way --index
+# 6. Undo (before Keep) = reset the worktree; your repo was never touched
+git -C <wt> reset --hard -q <pre> && git -C <wt> clean -fdq -e node_modules
+```
+
+- The worktree shares **the same object database** as your repo, so snapshots from the worktree are directly diffable and appliable in your repo with no copying.
+- Base = **your working tree**, not `HEAD`, so the agent sees your uncommitted work and the diff shows only the agent's changes.
+- In worktree mode the inline hunks appear **after Keep**, or you review first in the multi-diff (Review) and then Keep.
+
+### Gotchas to handle (learned from T3, opencode and Cline)
+
+| Gotcha | Guard |
+|---|---|
+| `git add` fails silently, leaving a stale snapshot and data loss on undo (opencode) | Check exit codes; mark the turn `captureFailed` and never Undo from it |
+| Two processes using the same index hit `index.lock` (opencode) | One private index **per session**, and a per-repo serial queue |
+| Ref published before objects are flushed (T3) | Order is always add, then write-tree, then commit-tree, then **update-ref last** |
+| Monorepo `add -A` times out (T3) | Warm index, then `-- touchedPaths`, then untrackedCache and fsmonitor, then a timeout with a visible fallback |
+| Refs pile up forever (T3) | Retention: delete on session delete, plus a `retentionDays` sweep |
+| Agent writes outside the worktree via absolute paths | Map ACP `fs/*` paths into the worktree, give prompts repo-relative paths, and run a post-turn leak check on the real repo |
+
+---
+
+## 6. Workflows
+
+### 6.1 Send → capture
 
 ```mermaid
 sequenceDiagram
-  participant U as User
-  participant RT as RuntimeService
-  participant WS as AgentWorkspaceService
-  participant G as VoltGitService
-  participant A as Agent CLI
-  U->>RT: send(text)
-  RT->>WS: prepare(session)  (first turn only)
-  WS->>G: snapshot(real tree) → base; addWorktree(base)
-  RT->>A: start(cwd = worktree)  (first turn only)
-  RT->>WS: beginTurn(runId)
-  WS-->>RT: parent = last pending commit or base
-  A->>A: edits files in worktree (real checkout untouched)
+  participant U as You
+  participant RT as Runtime
+  participant TS as TurnSnapshots
+  participant G as VoltGit
+  participant A as Agent
+  U->>RT: send("make header blue")
+  RT->>TS: beginTurn(runId)
+  TS->>G: writeIndexTree() → indexTree ; snapshot(private idx) → pre
+  RT->>A: prompt
+  A->>A: edits files (any tool, shell, formatter)
   A-->>RT: run.end
-  RT->>WS: endTurn(runId)
-  WS->>G: snapshot(worktree, privateIndex, parent) → t/n
-  WS->>G: diffSummary(parent, t/n)
-  WS-->>RT: ITurnChangeSet (pending)
-  RT-->>U: Turn card "3 files +42 −7 · Review · Keep · Undo"
+  RT->>TS: endTurn(runId)
+  TS->>G: snapshot(parent=pre) → post ; diffSummary(pre, post)
+  TS-->>U: turn card "2 files +3 −1 · Review" + inline hunks in open editors
 ```
 
-### 7.2 Keep
+### 6.2 Inline Keep / Undo (per change, like Cursor)
 
-1. `patch = git diff --binary --full-index <base> <tipOfSelection>` (optionally with `-- <paths>`)
-2. `git apply --check --3way --index` in the real repo, then the real apply.
-3. Success: files mark `kept`. If everything is kept: **rotate baseline** (new base = snapshot of the real tree; worktree reset to it; drop turn refs, or keep them for history per setting).
-4. Conflict: open the merge editor for the conflicted paths; the turn is `partial` until resolved.
-5. Open dirty editors on target files: prompt "Save or revert first" (never clobber unsaved buffers).
+| Action | Effect on disk | Effect on Git |
+|---|---|---|
+| **Keep hunk** | none | `accepted += hunk` → `writeBlob` → `setIndexEntry` (**staged**) |
+| **Undo hunk** | text-model edit removes the hunk, then save | none (if already staged by an earlier Keep: restore that part of the index too) |
+| **Keep file** (top bar) | none | index entry = live file (`git add -- path`; `git rm --cached` if deleted) |
+| **Undo file** (top bar) | file = accepted content (created → delete; deleted → restore) | index entry = `firstPreIndexBlob` |
+| **Keep all / Undo all** | loop over files in one progress operation | same |
+| **Undo after Keep** (from the turn card) | restore `pre` content for the turn's files | `resetIndexPaths(indexTree, paths)`, which **removes it from Git** |
 
-### 7.3 Undo
+**The hunk is fully resolved** when nothing is left between accepted and live, and the file then leaves the pending list.
 
-| When | Action |
-|---|---|
-| Latest pending turn | `resetWorktree(parentCommit)`, `updateRef(t/n, delete)`, state `undone`. **Real repo untouched.** |
-| Older pending turn | Allowed only as "Undo back to here" (pops the stack), which keeps the rule simple and deterministic |
-| Pending file | `git checkout <base> -- path` in the worktree (the agent sees the revert on its next turn) |
-| Pending hunk | TS: rebuild file content without that hunk and write it into the worktree |
-| **Already kept** | `git apply -R --3way --index` with the kept patch. It leaves the working tree and index (the user's "remove from Git" requirement) |
+### 6.3 Second message
 
-### 7.4 Follow-up while turns are pending
+`beginTurn` takes a fresh `pre₂` (so your edits in between aren't counted). After `post₂`, the new hunks **stack** onto the same inline view. `accepted` for already-pending files is unchanged, so the editor shows everything still unreviewed, and each turn card shows only its own `preₙ..postₙ` diff.
 
-The agent continues on top of `t/n`. The review UI shows **per-turn** diffs (`t/n-1..t/n`) and **cumulative** diffs (`base..t/n`). Keep All applies `base..tip`.
+### 6.4 You type in a file that has pending hunks
 
-### 7.5 User edits the real repo mid-run
+Mirror non-overlapping user edits into the `accepted` model, the same way chat-editing does in `chatEditingModifiedDocumentEntry.ts`. Otherwise your own typing shows up as agent hunks.
 
-Nothing breaks. Keep uses `--3way`. Before the next turn starts, if there are no pending turns, the baseline rotates to pick up the user's edits. If turns are pending, offer "Sync my edits into agent workspace" (3-way apply `oldBase..newSnapshot` into the worktree).
+### 6.5 Worktree thread (opt-in toggle in the composer: `Local ▾ / Worktree`)
 
-### 7.6 Crash / restart
+A detached worktree lives at `userData/volt/worktrees/<repo>/<session>`, based on a snapshot of your working tree. The agent's cwd and tool root point there. Keep = `applyPatch(pre, post, paths, index:true)` into the real repo. Undo = reset the worktree. The same Review diff is used. Snapshots from the worktree use the volt snapshot scheme (the `git:` provider only knows opened repos).
 
-On startup: read ledgers, then `git worktree list` and `refs/volt/s/*`. A turn stuck in `running` gets re-snapshotted and marked `pending`. Orphan worktrees get `git worktree prune`.
+### 6.6 Restart / crash
 
-### 7.7 Non-Git folder
-
-`ensureShadowRepo(folder, userData/volt/shadow/<hash>.git)` then the same flow with `--git-dir=<shadow>`. Keep writes files with no staging and shows a toast: "Not a Git repo; changes applied."
+On startup, load ledgers and `refs/volt/s/*`. A turn stuck in `running` gets `post` captured now. Rebuild pending files and inline state.
 
 ---
 
-## 8. Git plumbing cheat-sheet
+## 7. Git cheat-sheet
 
 ```bash
-# Snapshot any tree without touching the user's index (baseline or turn)
-export GIT_INDEX_FILE=$USERDATA/volt/index/<session>.idx     # private, persistent → warm stat cache
-git -C <workTree> -c core.untrackedCache=true add -A [-- <paths>]
-TREE=$(git -C <workTree> write-tree)
-COMMIT=$(git -C <workTree> commit-tree $TREE -p <parent> -m "volt turn <n> <runId>")
-git -C <repoRoot> update-ref refs/volt/s/<session>/t/<n> $COMMIT   # publish LAST
+# pre/post snapshot (never touches your index)
+export GIT_INDEX_FILE=$USERDATA/volt/index/<S>.idx
+git -C <root> -c core.untrackedCache=true add -A [-- <touched paths>]
+C=$(git -C <root> commit-tree $(git -C <root> write-tree) -p <parent> -m "volt <S> t<n> pre|post")
+git -C <root> update-ref refs/volt/s/<S>/<n>/pre|post $C      # publish LAST
+unset GIT_INDEX_FILE && git -C <root> write-tree               # indexTree (your real index, read-only)
 
-# Worktree (detached, outside workspace)
-git -C <repoRoot> worktree add --detach $USERDATA/volt/worktrees/<repo>/<session> <baseCommit>
-# link heavy ignored dirs (node_modules, .venv, target) per setting
-git -C <wt> reset --hard -q <commit> && git -C <wt> clean -fdq -e <linkedDirs>   # resetWorktree
+# review data
+git diff --raw --numstat -M -z <pre> <post>
+git cat-file blob <sha>
 
-# Review data
-git -C <repoRoot> diff --raw --numstat -M -z <from> <to>      # summary
-git -C <repoRoot> diff --binary --full-index <from> <to> [-- paths]   # patch
-git -C <repoRoot> cat-file blob <sha>                          # side content
+# keep hunk/file → staged
+SHA=$(git hash-object -w --stdin < accepted.txt)
+git update-index --add --cacheinfo 100644,$SHA,<path>          # or: git add -- <path> / git rm --cached -- <path>
 
-# Keep / Undo-after-keep (real repo)
-git -C <repoRoot> apply --3way --index [--reverse] --whitespace=nowarn -   # patch on stdin
+# undo after keep → remove from Git
+git reset -q <indexTree> -- <paths>
 
-# Cleanup
-git -C <repoRoot> for-each-ref --format='delete %(refname)' refs/volt/s/<session>/ | git update-ref --stdin
-git -C <repoRoot> worktree remove --force <wt> && git worktree prune
+# cleanup
+git for-each-ref --format='delete %(refname)' refs/volt/s/<S>/ | git update-ref --stdin
 ```
 
 ---
 
-## 9. Folder structure (new ★ / changed ✎)
+## 8. UI spec (match Cursor, native VS Code look)
 
 ```
-src/vs/platform/voltGit/                         ★ main-process Git plumbing
-  common/voltGit.ts                              ★ IVoltGitService, types, channel name
-  electron-main/voltGitMainService.ts            ★ execFile git, per-repo serial queue, timeouts, typed errors
-src/vs/code/electron-main/app.ts                 ✎ register VOLT_GIT channel (next to voltStdio ≈L1205)
+┌ Header.tsx ─────────────────────────────────  ‹ 1/3 ›  Keep File ⌘⏎  Undo File ⌘⌫  Review ┐  ← file bar (reuse ChatEditingEditorOverlay style)
+│ 12   <h1                                                                                  │
+│ 13 - style={{ color: 'red' }}          ░ removed line (diffEditor.removedLineBackground)   │
+│ 13 + style={{ color: 'blue' }}         ▓ inserted line (diffEditor.insertedLineBackground) │
+│                                        [ Keep ⌘Y ] [ Undo ⌘N ]   ← DiffHunkWidget on hover  │
+└───────────────────────────────────────────────────────────────────────────────────────────┘
+Thread:  ● Turn 2 · Edited 2 files  +3 −1   [Review]  [Undo]
+Chip:    Changes +12 −4 ▾   → Keep All · Undo All · Review
+```
+
+- **Inline:** removed lines as a view zone and inserted lines highlighted, with a hover hunk toolbar. This is `ChatEditingCodeEditorIntegration`, reused as is.
+- **File bar:** `‹ n/m ›` navigation, **Keep File**, **Undo File**, **Review**. It follows the `ChatEditingEditorOverlay` pattern with Volt's own `MenuId`s.
+- **Review:** opens `AgentChangesEditor` (multi-diff) scoped to `All pending | Turn n | Staged | Unstaged`. The file toolbar has Keep / Undo. It must work from the thread card, the chip and the file bar.
+- **Keybindings** (copy chat-editing): next/prev hunk, keep/undo hunk, keep/undo file, keep all.
+- **Theme:** only existing tokens and codicons. No new colors.
+
+---
+
+## 9. Folder structure (★ new, ✎ changed)
+
+```
+src/vs/platform/voltGit/
+  common/voltGit.ts                                  ★ interface + channel name
+  electron-main/voltGitMainService.ts                ★ execFile git, per-repo queue, typed errors, timeouts
+src/vs/code/electron-main/app.ts                     ✎ register channel (next to voltStdio)
 
 src/vs/workbench/services/voltRuntime/
-  common/changes/
-    changeTypes.ts                               ★ ITurnChangeSet, ITurnFileChange, ReviewTarget
-    agentWorkspace.ts                            ★ IAgentWorkspaceService decorator + interface
-    ledger.ts                                    ★ pure: state transitions, stack rules (unit-testable)
-    hunks.ts                                     ★ pure: hunk ids, apply/drop hunk on text (uses linesDiffComputers)
-    pathMap.ts                                   ★ real-root ↔ worktree-root mapping + leak detection
-  browser/changes/
-    agentWorkspaceService.ts                     ★ lifecycle, ledger IO, keep/undo orchestration
-    worktreeProvisioner.ts                       ★ create/reuse/reset/link-ignored/prune
-  electron-browser/voltGit.contribution.ts       ★ registerMainProcessRemoteService(IVoltGitService)
-  browser/voltRuntimeService.ts                  ✎ prepare/beginTurn/endTurn; cwd + tool root = workspace.root
-  browser/agents/acpProvider.ts                  ✎ fs/read|write_text_file → map to worktree; reject writes into real root
-  browser/tools/workspacePath.ts                 ✎ resolve against session root, not folders[0]
-  browser/prompt/promptCompiler.ts               ✎ emit mentions as repo-relative paths (no real absolute paths)
-  common/events.ts                               ✎ + { type:'changes.captured'; turn: ITurnChangeSet }
-  test/common/changes/{ledger,hunks,pathMap}.test.ts   ★
-  test/node/voltGit.integration.test.ts          ★ real temp repos
+  common/changes/changeTypes.ts                      ★
+  common/changes/turnSnapshots.ts                    ★ service interface
+  common/changes/pendingModel.ts                     ★ PURE: accepted⇄live, hunk keep/undo math, stacking
+  common/changes/ledger.ts                           ★ PURE: (de)serialize, rebuild from refs
+  browser/changes/agentTurnSnapshotService.ts        ★ lifecycle, ledger IO, keep/undo orchestration
+  browser/changes/worktreeProvisioner.ts             ★ opt-in threads
+  electron-browser/voltGit.contribution.ts           ★ registerMainProcessRemoteService
+  browser/voltRuntimeService.ts                      ✎ beginTurn/endTurn around each run; worktree cwd when opted in
+  browser/agents/acpProvider.ts                      ✎ fs/* path mapping for worktree threads
+  common/events.ts                                   ✎ + { type: 'changes.captured', turn }
+  test/common/changes/*.test.ts                      ★ pendingModel, ledger
+  test/node/voltGit.integration.test.ts              ★ real temp repos
 
 src/vs/workbench/contrib/voltAgent/browser/review/
-  agentSessionChanges.ts                         ✎ keep helpers; transcript path becomes fallback only
-  agentSessionChangesService.ts                  ✎ back getFiles/getMultiDiffItems/getSnapshotText with the ledger (blob SHAs)
-  agentChangesActions.ts                         ✎ + Keep / Undo (file, turn, all), Undo-after-Keep
-  agentChangesEditor.ts                          ✎ scope picker gets "Turn n" entries + Keep All / Undo All header
-  agentReviewOverlay.ts                          ★ per-hunk Keep/Undo in the real code editor (see §10)
-  agentTurnSummaryBlock.ts                       ★ end-of-turn card in the thread
-src/vs/workbench/contrib/voltAgent/browser/composer/agentComposerChips.ts  ✎ "Changes" chip → pending stats + Keep/Undo
-src/vs/workbench/contrib/voltSettings/…          ✎ settings (§11)
+  agentSessionChangesService.ts                      ✎ back with ledger; original side = git: URI at pre sha
+  agentSessionChanges.ts                             ✎ transcript parsing = provisional cards only
+  agentChangesEditor.ts / agentChangesActions.ts     ✎ Turn scopes, Keep/Undo actions
+  inline/voltInlineReview.contribution.ts            ★ attach ChatEditingCodeEditorIntegration to pending files
+  inline/voltModifiedFileEntry.ts                    ★ adapter implementing IModifiedFileEntry
+  inline/voltFileReviewBar.ts                        ★ Keep File / Undo File / Review bar
+  inline/voltInlineReviewActions.ts                  ★ keybindings + menus
+  agentTurnSummaryBlock.ts                           ★ per-turn card
+src/vs/workbench/contrib/voltAgent/browser/composer/agentComposerChips.ts   ✎ chip actions + Local/Worktree toggle
 ```
 
----
-
-## 10. UX spec (Cursor-grade, brief)
-
-- **While running:** the composer chip shows `Working… · 3 files` (from live watcher hints). The real editor is **untouched**. An optional read-only "Peek live diff" opens the changes editor on `base..worktree`.
-- **Turn end:** a `agentTurnSummaryBlock` card shows files with `+/−`, plus **Review**, **Keep**, **Undo**. Undo is the Undo of the *last turn*; the chip carries Keep All / Undo All.
-- **Review:** the multi-diff editor (existing), with scopes `All pending · Turn 1…n · Staged · Unstaged`. Each file toolbar has Keep / Undo.
-- **In-file review:** opening a file with pending changes shows an **inline diff overlay** (green/red) with per-hunk Keep/Undo and a floating bar `‹ 2/5 › Keep file · Undo file`. Borrow patterns from `contrib/chat/browser/chatEditing/chatEditingCodeEditorIntegration.ts` and `chatEditingEditorOverlay.ts`; don't depend on the chat service.
-- **Keyboard:** `⌘⏎` Keep file, `⌘⌫` Undo file, `⌥]`/`⌥[` next/prev hunk, `⌘⇧⏎` Keep all.
-- **After Keep:** files show as **staged** in the SCM view immediately. The thread card flips to `Kept ✓ (staged)` with an `Undo` affordance (reverse apply).
+**Adapter note:** `IModifiedFileEntry` (`contrib/chat/common/chatEditingService.ts`) references `IChatResponseModel` only through observables. Implement those as `constObservable(undefined)`. If the coupling blocks you, fork `DiffHunkWidget` and the decoration code into `inline/` and **keep the same CSS classes**, so the theme and look carry over.
 
 ---
 
-## 11. Settings
+## 10. Settings
 
 ```jsonc
-"volt.agent.changes.isolation": "worktree",          // "worktree" | "inPlace" | "auto" (auto: inPlace for Ask/Plan & non-git tiny edits)
+"volt.agent.changes.enabled": true,
 "volt.agent.changes.stageOnKeep": true,
-"volt.agent.worktree.linkIgnored": ["node_modules", ".venv", "target", "dist"],
-"volt.agent.worktree.linkMode": "symlink",          // "symlink" | "reflinkCopy" | "none"
-"volt.agent.changes.retentionDays": 14,              // prune refs/volt/s/* of deleted/old sessions
-"volt.agent.changes.captureTimeoutMs": 20000         // then fall back to watcher paths (never silent)
+"volt.agent.changes.defaultIsolation": "local",       // "local" | "worktree"
+"volt.agent.worktree.linkIgnored": ["node_modules", ".venv", "target"],
+"volt.agent.changes.retentionDays": 14,
+"volt.agent.changes.captureTimeoutMs": 20000
 ```
 
 ---
 
-## 12. Performance and reliability rules
+## 11. Cursor parity protocol (run BEFORE building, then after every phase)
 
-| Rule | Detail |
-|---|---|
-| Warm private index | Persist `index/<session>.idx`, so `add -A` is stat-only for unchanged files (O(changed)) |
-| Path hints | A worktree watcher collects touched paths during the turn. Large repos run `add -A -- <paths>` first and a full scan only if `status --porcelain` disagrees |
-| One queue per repo | All `IVoltGitService` ops per `gitDir` are serialized. Parallel sessions are fine (separate indexes and worktrees) |
-| Worktree reuse | One worktree per session, reset between baselines (`reset --hard` touches only differing files) |
-| Pooled worktrees (Phase 3) | Pre-create 1 spare worktree per repo so the first message has near-zero latency |
-| Lazy content | The ledger stores blob SHAs only. Text is loaded on demand via `cat-file`, with an LRU cache in the snapshot content provider |
-| No silent failure | Every Git call returns `{ok:false, code, stderr}`. The turn becomes `captureFailed` with a visible error and a "Retry capture" action |
-| Atomic publish | Objects are written, then `update-ref`, then the ledger write |
-| Binary / large | `diff --binary` for apply. The UI shows "Binary file changed" and skips files over 2 MB in inline preview |
-| Leak detection | After each turn, cheaply check the real tree for paths the agent touched outside the worktree (absolute-path writes). If found, warn and offer to fold them into the turn |
+**Setup:** the same small repo (for example a Vite + React app) opened in **Cursor** and in **Volt**, the same model family where possible, and a clean `git status`.
 
----
+| # | Prompt / action | Observe and record (screenshots or a short screen recording) |
+|---|---|---|
+| S1 | "Change the header text color to blue" | Where the diff appears, hunk widget placement, colors, Keep/Undo labels and shortcuts |
+| S2 | "Rename `Button` to `PrimaryButton` everywhere and add a `Badge` component" | Multi-file list, new-file display, file-top bar, **Review** view |
+| S3 | Second message: "also make the button blue" | How turns stack, what each message's diff shows, per-message undo |
+| S4 | "Run a script that generates `src/version.ts`" | Are **shell-made** edits tracked? (Cursor: often not. Volt: must be) |
+| S5 | Type in a file with pending hunks, then Keep | User edits vs agent hunks |
+| S6 | Keep one hunk, Undo another, Keep File on a third | `git status` / `git diff --cached` after each step. **Volt must stage kept parts** |
+| S7 | Undo after Keep | File **and** index are back to their state before the turn |
+| S8 | Restart the app with pending changes | Are the pending diffs still there? |
+| S9 | 3,000-line file with 20 scattered edits | Latency and navigation (`‹ n/m ›`) |
 
-## 13. Edge cases checklist
-
-- Agent runs `git commit` or `git checkout` inside the worktree: capture uses the private index plus the working files, so this is unaffected.
-- Submodules: record as gitlinks; don't recurse in v1.
-- Renames: detect with `-M`, show as `renamed`, and apply cleanly via the patch.
-- File-mode or permission changes: covered by `--binary --full-index` patches.
-- Line endings (CRLF): let Git's `core.autocrlf` apply; don't normalize in TS.
-- User switches branch mid-review: Keep still works via 3-way. If base is unreachable from the new HEAD, warn "Review based on a different branch".
-- Multi-root workspace: one `IAgentWorkspace` per repo root (v1: `folders[0]`, matching today's runtime).
-- Dirty editor buffers: block apply on those paths and prompt.
-- Cancelled or failed run: still snapshot (partial work is reviewable), and label the card "Stopped".
-- Session delete: `dispose()` removes the worktree, refs and ledger.
+**Record** into `docs/volt/cursor-parity.md`: a table with Cursor and Volt behaviour, a verdict (match / better / worse) and a fix note. **Loop:** implement, run S1–S9 in both, fix every "worse", and repeat until everything is match or better. Copy Cursor's interaction details (placement, wording, shortcuts, navigation). **Deliberate divergences:** Keep stages in Git, and shell edits are tracked.
 
 ---
 
-## 14. Implementation plan (hand this to the implementing agent)
+## 12. Phases and "done when"
 
 | Phase | Scope | Done when |
 |---|---|---|
-| **P1 · Plumbing** | `platform/voltGit` service and IPC; `snapshot`, `diffSummary`, `patch`, `apply`, `readBlob`, refs; integration tests on temp repos | Tests: snapshot of dirty tree + untracked; apply/reverse round-trip leaves index identical; errors are typed |
-| **P2 · Capture (inPlace)** | `agentWorkspaceService` with `isolation:inPlace`; `beginTurn/endTurn` hooked in `voltRuntimeService.send/finish`; ledger; rewire `agentSessionChangesService` to the ledger | Codex/Cursor shell edits appear in the review with exact `+/−`; Undo last turn restores bytes exactly |
-| **P3 · Isolation (worktree)** | Provisioner, cwd/tool-root switch (all `folders[0]` call sites), ACP fs mapping, prompt path relativization, leak detection, Keep via `apply --3way --index` | During a run the real tree hash is unchanged; after Keep, `git diff --cached` equals the turn diff; after Undo, `git status` is identical to before |
-| **P4 · Review UX** | Turn summary block, chip actions, changes-editor turn scopes, Keep/Undo actions (file/turn/all), Undo-after-Keep | Manual script in §15 passes |
-| **P5 · Hunk-level plus inline overlay** | `hunks.ts`, `agentReviewOverlay.ts`, keybindings | Keep 1 of 3 hunks leaves exactly that hunk staged |
-| **P6 · Hardening** | Retention/prune, crash recovery, pooled worktrees, non-Git shadow repo, big-repo path hints | 50k-file repo: capture < 300 ms for a 5-file turn; restart mid-run recovers |
-
-**Coding guidelines:** match the existing Volt style (tabs, `localize`, `registerAction2`, `Disposable` services, `createDecorator`). Keep `common/changes/*` **pure** (no services) so it's unit-testable. Never call `git` from the renderer except through `IVoltGitService`.
+| **P0** | Cursor baseline (§11), `cursor-parity.md` filled | S1–S9 documented with screenshots |
+| **P1** | `IVoltGitService` + integration tests | Snapshots of dirty and untracked trees; the user's index is byte-identical before and after capture |
+| **P2** | Turn capture wired into runtime; ledger; changes service swapped to the ledger | Codex/Cursor-CLI shell edits appear with exact `+/−` per message |
+| **P3** | Inline review (adapter), file bar, keybindings | S1, S3, S5 match Cursor |
+| **P4** | Keep → index, Undo, Undo-after-Keep, Review scopes | S6, S7 pass with `git diff --cached` checks |
+| **P5** | Worktree opt-in threads | Real files unchanged mid-run; Keep lands staged |
+| **P6** | Hardening: retention, crash recovery, big-repo path hints, perf | S8, S9 pass; 5-file capture under 300 ms on a 50k-file repo |
 
 ---
 
-## 15. Test plan
+## 13. Reliability rules (learned from T3, opencode and Cline)
 
-- **Unit** (`test/common/changes`): ledger transitions (pending→kept/undone/partial, stack pop rules), hunk drop/keep on text, path mapping and leak detection.
-- **Integration** (`test/node`): real temp repos covering dirty base, untracked, rename, binary, delete, 3-way conflict, reverse apply, non-Git shadow.
-- **Manual smoke:**
-  1. Dirty a file, ask the agent to edit 3 files (one new). The editor shows no change mid-run.
-  2. The card shows 3 files. Keep 1 file: SCM **Staged** shows exactly it.
-  3. Undo the rest: `git status` shows only the user's original dirt.
-  4. Send 2 more turns and Undo the latest: the worktree is back at turn 1 and the agent's next read confirms it.
-  5. Keep all, then Undo-after-Keep: index and working tree are back to the pre-Keep state.
+1. Every Git call returns `{ ok, code, stderr }`. **A failure is visible** (`captureFailed` plus Retry), never silent.
+2. **Private index per session** and a **serial queue per repo**, so there are no `index.lock` races.
+3. Order: objects, then `update-ref`, then ledger. Publish the ref last.
+4. Warm private index plus touched-path hints from `IFileService.onDidFilesChange`, then a full scan, with a timeout.
+5. Retention: delete refs on session delete, plus a `retentionDays` sweep.
+6. Never write over a **dirty editor buffer**. Go through text models.
+7. Binary files and files over 2 MB: no inline diff, show a "Binary/large file changed" row with Keep/Undo.
 
 ---
 
 ## Sources
 
-- Cursor: [Worktrees docs](https://cursor.com/docs/configuration/worktrees) · [Checkpoints (Steve Kinney)](https://stevekinney.com/courses/ai-development/cursor-checkpoints) · [Keep/Undo bugs](https://forum.cursor.com/t/keep-undo-buttons-missing-and-discard-to-checkpoint-not-reverting-changes-auto-applies-edits/152621) · [Checkpoint not agent-independent](https://forum.cursor.com/t/in-2-0-undo-checkpoint-is-not-agent-independent/139630) · [Cursor 2.0 guide](https://www.digitalapplied.com/blog/cursor-2-0-agent-first-architecture-guide)
-- T3 Code: [Checkpoint ref retention #14090](https://github.com/pingdotgg/t3code/issues/14090) · [Flush objects before refs #10944](https://github.com/pingdotgg/t3code/pull/10944) · [Big-monorepo add timeout #3646](https://github.com/pingdotgg/t3code/issues/3646) · [Better Stack guide](https://betterstack.com/community/guides/ai/t3-code/)
-- opencode: [index.lock race #48848](https://github.com/anomalyco/opencode/issues/48848) · [Swallowed git add #12719](https://github.com/anomalyco/opencode/issues/12719) · [Stale baseline #49732](https://github.com/anomalyco/opencode/issues/49732) · [Mutation epochs redesign #44511](https://github.com/anomalyco/opencode/issues/44511)
-- Cline: [Checkpoints docs](https://docs.cline.bot/core-workflows/checkpoints) · [DeepWiki](https://deepwiki.com/cline/cline/10.1-checkpoints-and-snapshots)
-- Worktrees for agents: [Claude Code worktrees](https://code.claude.com/docs/en/worktrees) · [Nimbalyst guide](https://nimbalyst.com/blog/git-worktrees-for-ai-coding-agents-complete-guide/)
+[T3 checkpoint refs #14090](https://github.com/pingdotgg/t3code/issues/14090) · [T3 flush-before-publish #10944](https://github.com/pingdotgg/t3code/pull/10944) · [T3 monorepo timeout #3646](https://github.com/pingdotgg/t3code/issues/3646) · [opencode index.lock #48848](https://github.com/anomalyco/opencode/issues/48848) · [opencode swallowed add #12719](https://github.com/anomalyco/opencode/issues/12719) · [Cursor worktrees](https://cursor.com/docs/configuration/worktrees) · [Cursor Keep/Undo issues](https://forum.cursor.com/t/keep-undo-buttons-missing-and-discard-to-checkpoint-not-reverting-changes-auto-applies-edits/152621) · [Cline checkpoints](https://docs.cline.bot/core-workflows/checkpoints)
+
+---
+
+## 14. Implementation prompt (copy-paste to the implementing agent)
+
+```text
+ROLE
+You are a senior engineer on Volt, a Cursor-class editor built on VS Code (Code-OSS).
+Volt runs agents: Claude Code, Codex and Cursor CLI over ACP, plus a native DeepSeek loop.
+
+MISSION
+After every message sent to an agent, Volt captures exactly what the agent changed.
+It shows those changes inline in the editor the way Cursor does, and lets the user
+Keep or Undo each change, each file, or everything. Keep stages the change in Git.
+Undo removes it from disk and from Git.
+
+READ FIRST (required)
+1. docs/volt/agent-change-capture.md. This is the spec. Follow its architecture,
+   decisions (D1-D10), the snapshot mechanics (§5a), the data model and the phases.
+2. Existing code you must reuse:
+   - src/vs/workbench/contrib/voltAgent/browser/review/* (changes service, multi-diff
+     changes editor, actions, cards)
+   - src/vs/workbench/contrib/chat/browser/chatEditing/chatEditingCodeEditorIntegration.ts
+     (inline diff + DiffHunkWidget), chatEditingEditorOverlay.ts,
+     chatEditingEditorActions.ts
+   - extensions/git/src/uri.ts (the `git:` scheme; `git show <ref>:<path>` content)
+   - src/vs/platform/voltStdio/* (the main-process IPC service pattern)
+   - src/vs/workbench/services/voltRuntime/browser/voltRuntimeService.ts (send/run
+     lifecycle, cwd and tool root)
+
+STEP 0: CURSOR BASELINE (before writing any code)
+Open the same small test repo in Cursor and in Volt. Run scenarios S1-S9 from §11 in Cursor.
+For each one, record where diffs appear, what the hunk controls look like, the Keep/Undo
+wording and shortcuts, the file-top bar, what "Review" opens, how a second message stacks
+its changes, and what `git status` / `git diff --cached` show after Keep and after Undo.
+Save the notes and screenshots to docs/volt/cursor-parity.md.
+If you cannot drive Cursor yourself, stop and ask the user to run S1-S9 and share
+screenshots or recordings. Do not guess Cursor's behaviour.
+
+REQUIREMENTS
+R1 Capture: for every turn, take a pre snapshot before the send and a post snapshot after
+   the agent responds. Store them as hidden commits under refs/volt/s/<session>/<turn>/{pre,post},
+   built with a private GIT_INDEX_FILE. The user's index must be byte-identical before and
+   after capture. The per-message diff is `git diff pre post`, so shell, apply_patch,
+   formatter and codegen edits are all included.
+R2 Inline review: every file with pending changes shows Cursor-style inline diffs
+   (removed lines as a view zone, inserted lines highlighted) with Keep and Undo on each
+   hunk, and next/prev navigation. Reuse ChatEditingCodeEditorIntegration through an
+   IModifiedFileEntry adapter. Fork only if the coupling blocks you, and keep the same
+   CSS classes if you do.
+R3 File bar: at the top of each changed file, show `‹ n/m ›  Keep File  Undo File  Review`.
+   Keep File accepts every change in that file at once.
+R4 Review: clicking Review (from the thread turn card, the Changes chip or the file bar)
+   opens AgentChangesEditor with scopes All pending / Turn N / Staged / Unstaged. Build
+   the original side with the built-in `git:` URI at the pre commit. Keep/Undo must work
+   from there too.
+R5 Git semantics:
+   - Keep (hunk/file/all): write the accepted content to the Git index (staged), using
+     hash-object -w and update-index --cacheinfo, or git add / git rm --cached.
+   - Undo (hunk/file/all): edit through text models (never clobber dirty buffers), then
+     save.
+   - Undo after Keep: also restore the index entries from the turn's indexTree
+     (git reset -q <indexTree> -- <paths>).
+R6 Multiple messages: each turn card shows only its own pre..post diff. The inline view
+   stacks every pending change. Edits the user makes between messages or while reviewing
+   must never appear as agent changes.
+R7 Worktree mode is opt-in per thread (composer toggle Local / Worktree). The agent's cwd
+   and tool root point at a detached worktree in userData. Keep applies the patch with
+   --3way --index into the real repo.
+R8 Reliability: never swallow Git errors (show captureFailed with a Retry action). Use a
+   serial queue per repo, publish refs last, clean refs up on session delete plus a
+   retention sweep, recover pending state after a restart, and use touched-path hints for
+   large repos.
+R9 Look and feel: reuse existing VS Code components, codicons and theme tokens
+   (diffEditor.insertedLineBackground, diffEditor.removedLineBackground, editorGutter.*).
+   Add no new colors. Match Volt's code style (tabs, localize, registerAction2, Disposable
+   services, createDecorator). Keep common/changes/* pure and unit-tested.
+
+EXECUTION
+Work in the phases from §12 (P0 to P6). Commit after each phase with a clear message.
+After each phase:
+  1. Run the unit tests and the voltGit integration tests on real temp repos (dirty base,
+     untracked, rename, delete, binary, conflict, reverse).
+  2. Run the relevant S1-S9 scenarios in Volt and in Cursor, side by side.
+  3. Update docs/volt/cursor-parity.md with verdicts (match / better / worse).
+  4. Fix every "worse", copying Cursor's interaction details where they are better.
+     Repeat until nothing is marked worse.
+The only deliberate divergences from Cursor are: Keep stages in Git, and shell-made edits
+are tracked.
+
+DEFINITION OF DONE
+- Every agent message produces an exact, reviewable diff, including shell edits.
+- Inline Keep/Undo per hunk, Keep File/Undo File, and Keep All/Undo All all work.
+  Review opens from every entry point.
+- After Keep, `git diff --cached` equals exactly the kept content.
+- After Undo, or Undo after Keep, `git status` and `git diff --cached` match the state
+  before the turn.
+- Pending review state survives a restart.
+- On a 50k-file repo, capturing a 5-file turn takes under 300 ms.
+- docs/volt/cursor-parity.md shows match or better on S1-S9, with screenshots.
+- Unit and integration tests pass, and the changed files are lint clean.
+
+NON-GOALS (v1)
+Multi-root workspaces (use folders[0], like today), submodule recursion, notebook diffs,
+and auto-commit.
+```
